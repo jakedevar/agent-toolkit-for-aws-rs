@@ -1,0 +1,3528 @@
+{
+  "schema_version": 1,
+  "baseline_commit": "86edeadd0da48e03a8d3045e2775881bd6450e68",
+  "programme_issue": 4369,
+  "classification_status": "initial; independent audit #4371 pending",
+  "files": [
+    {
+      "path": "plugins/aws-agents/skills/agents-build/scripts/process_payment_tool.py",
+      "original_blob": "aef6e8601e32f6f34ebe87e8abaf17e8d3d782e7",
+      "canonical_identical_path": "plugins/aws-agents/skills/agents-build/scripts/process_payment_tool.py",
+      "slice": "payments-policy",
+      "issue": 4410,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-agents/skills/agents-build/scripts/setup_payment_user.py",
+      "original_blob": "9a011401681aaf7986ca49844d06a7542f3ade32",
+      "canonical_identical_path": "plugins/aws-agents/skills/agents-build/scripts/setup_payment_user.py",
+      "slice": "payments-policy",
+      "issue": 4410,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-agents/skills/agents-pay/packages/openclaw/runtime/agentcore_bridge.py",
+      "original_blob": "5f8e3167db782bc67963adc5ce747f21830de8bc",
+      "canonical_identical_path": "plugins/aws-agents/skills/agents-pay/packages/openclaw/runtime/agentcore_bridge.py",
+      "slice": "payments-bridge",
+      "issue": 4411,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-agents/skills/agents-pay/packages/openclaw/test/test_agentcore_bridge.py",
+      "original_blob": "0155eace5b51ab42c85179ebf343f89721bc6639",
+      "canonical_identical_path": "plugins/aws-agents/skills/agents-pay/packages/openclaw/test/test_agentcore_bridge.py",
+      "slice": "payments-bridge",
+      "issue": 4411,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-agents/skills/agents-pay/packages/openclaw/test/test_setup_openclaw.py",
+      "original_blob": "80765e3e8da5d8d463da2e201bee10985e90fae1",
+      "canonical_identical_path": "plugins/aws-agents/skills/agents-pay/packages/openclaw/test/test_setup_openclaw.py",
+      "slice": "payments-bridge",
+      "issue": 4411,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-agents/skills/agents-pay/scripts/agents_pay_admin.py",
+      "original_blob": "852c08142db9240b40af9d957c8e2856a519f95a",
+      "canonical_identical_path": "plugins/aws-agents/skills/agents-pay/scripts/agents_pay_admin.py",
+      "slice": "payments-policy",
+      "issue": 4410,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-agents/skills/agents-pay/scripts/test_portability.py",
+      "original_blob": "ea50174ca00dbf0d95ce62e6294fc57b44dc0695",
+      "canonical_identical_path": "plugins/aws-agents/skills/agents-pay/scripts/test_portability.py",
+      "slice": "payments-policy",
+      "issue": 4410,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-agents/skills/agents-pay/scripts/test_resource_resolution.py",
+      "original_blob": "3b94ff24fed03fb82cdf75ad88c5f08f6486b04e",
+      "canonical_identical_path": "plugins/aws-agents/skills/agents-pay/scripts/test_resource_resolution.py",
+      "slice": "payments-policy",
+      "issue": 4410,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-agents/skills/agents-pay/scripts/test_x402_policy.py",
+      "original_blob": "72f788117bb482b00b081cd034e4e18079ab6b4c",
+      "canonical_identical_path": "plugins/aws-agents/skills/agents-pay/scripts/test_x402_policy.py",
+      "slice": "payments-policy",
+      "issue": 4410,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-agents/skills/agents-pay/scripts/x402_fetch.py",
+      "original_blob": "41ce676d3253c0367351264f709ba3d976ae530b",
+      "canonical_identical_path": "plugins/aws-agents/skills/agents-pay/scripts/x402_fetch.py",
+      "slice": "payments-policy",
+      "issue": 4410,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-agents/skills/agents-pay/scripts/x402_fetch_cli.py",
+      "original_blob": "aed5329d6fb15c59e7b077fa29b59a70f870f12b",
+      "canonical_identical_path": "plugins/aws-agents/skills/agents-pay/scripts/x402_fetch_cli.py",
+      "slice": "payments-policy",
+      "issue": 4410,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-agents/skills/agents-pay/scripts/x402_policy.py",
+      "original_blob": "95b510c15d577f14d8b0135b291f705bbfb316c8",
+      "canonical_identical_path": "plugins/aws-agents/skills/agents-pay/scripts/x402_policy.py",
+      "slice": "payments-policy",
+      "issue": 4410,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-core/com.anthropic.claude-code/hooks/secret-safety.py",
+      "original_blob": "9eee7a9890a7f27cdf8711888f5af9bc3edf9803",
+      "canonical_identical_path": "plugins/aws-core/com.anthropic.claude-code/hooks/secret-safety.py",
+      "slice": "security-hooks",
+      "issue": 4412,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-core/skills/amazon-bedrock/scripts/fetch_bedrock_agent.py",
+      "original_blob": "b9784956a6d9eae72c013aec4669d750b185cc9d",
+      "canonical_identical_path": "skills/core-skills/amazon-bedrock/scripts/fetch_bedrock_agent.py",
+      "slice": "bedrock-fetch",
+      "issue": 4383,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-core/skills/aws-ai-ml/references/dataset-evaluation/scripts/format_detector.py",
+      "original_blob": "b826cd21daeee78e876d598c0851dec864cda55c",
+      "canonical_identical_path": "skills/core-skills/aws-ai-ml/references/dataset-evaluation/scripts/format_detector.py",
+      "slice": "ai-data",
+      "issue": 4385,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-core/skills/aws-ai-ml/references/dataset-transformation/code_templates/transformation.py",
+      "original_blob": "0ee156ee3f554d0fddd0d83d4f02fbfcc0c7105b",
+      "canonical_identical_path": "skills/core-skills/aws-ai-ml/references/dataset-transformation/code_templates/transformation.py",
+      "slice": "ai-payloads",
+      "issue": 4386,
+      "classification": "external-service-payload",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-core/skills/aws-ai-ml/references/dataset-transformation/scripts/transformation_tools.py",
+      "original_blob": "522f42b0ee31c6d02aba83e8d8ab0c1071634657",
+      "canonical_identical_path": "skills/core-skills/aws-ai-ml/references/dataset-transformation/scripts/transformation_tools.py",
+      "slice": "ai-data",
+      "issue": 4385,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-core/skills/aws-ai-ml/references/endpoint-diagnostics/scripts/collect_diagnostics.py",
+      "original_blob": "974af33d50c93a53066ca626ff5f5791cd9df66e",
+      "canonical_identical_path": "skills/core-skills/aws-ai-ml/references/endpoint-diagnostics/scripts/collect_diagnostics.py",
+      "slice": "ai-models",
+      "issue": 4384,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-core/skills/aws-ai-ml/references/finetuning-technique/scripts/get_recipes.py",
+      "original_blob": "7d9775ce1dcd2bfa476063e5613964aefd7f8cd2",
+      "canonical_identical_path": "skills/core-skills/aws-ai-ml/references/finetuning-technique/scripts/get_recipes.py",
+      "slice": "ai-models",
+      "issue": 4384,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-core/skills/aws-ai-ml/references/finetuning/code_templates/dpo.py",
+      "original_blob": "15ec02f5fddd186924099e3f952f1a6291470745",
+      "canonical_identical_path": "skills/core-skills/aws-ai-ml/references/finetuning/code_templates/dpo.py",
+      "slice": "ai-payloads",
+      "issue": 4386,
+      "classification": "external-service-payload",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-core/skills/aws-ai-ml/references/finetuning/code_templates/rlaif_builtin.py",
+      "original_blob": "a1c0e5a43979eef144871562085c0c82c50bf0e4",
+      "canonical_identical_path": "skills/core-skills/aws-ai-ml/references/finetuning/code_templates/rlaif_builtin.py",
+      "slice": "ai-payloads",
+      "issue": 4386,
+      "classification": "external-service-payload",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-core/skills/aws-ai-ml/references/finetuning/code_templates/rlaif_custom_prompt.py",
+      "original_blob": "de4b1f2b8893913847188181fc31943ec3e59014",
+      "canonical_identical_path": "skills/core-skills/aws-ai-ml/references/finetuning/code_templates/rlaif_custom_prompt.py",
+      "slice": "ai-payloads",
+      "issue": 4386,
+      "classification": "external-service-payload",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-core/skills/aws-ai-ml/references/finetuning/code_templates/rlvr.py",
+      "original_blob": "f1faf0de94c6e8988083846e460474cbc9ab10bd",
+      "canonical_identical_path": "skills/core-skills/aws-ai-ml/references/finetuning/code_templates/rlvr.py",
+      "slice": "ai-payloads",
+      "issue": 4386,
+      "classification": "external-service-payload",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-core/skills/aws-ai-ml/references/finetuning/code_templates/sft.py",
+      "original_blob": "0447d5fb79934f30d2a07fe83979592d93a19d99",
+      "canonical_identical_path": "skills/core-skills/aws-ai-ml/references/finetuning/code_templates/sft.py",
+      "slice": "ai-payloads",
+      "issue": 4386,
+      "classification": "external-service-payload",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-core/skills/aws-ai-ml/references/finetuning/scripts/mlflow_reference.py",
+      "original_blob": "960fa719cc848c7958b222adef62ce05e52d9228",
+      "canonical_identical_path": "skills/core-skills/aws-ai-ml/references/finetuning/scripts/mlflow_reference.py",
+      "slice": "ai-payloads",
+      "issue": 4386,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-core/skills/aws-ai-ml/references/finetuning/templates/nova_rlvr_reward_function_source_template.py",
+      "original_blob": "c05b1146d30d7d28df29314ad2e4e8606bee4ac7",
+      "canonical_identical_path": "skills/core-skills/aws-ai-ml/references/finetuning/templates/nova_rlvr_reward_function_source_template.py",
+      "slice": "ai-payloads",
+      "issue": 4386,
+      "classification": "external-service-payload",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-core/skills/aws-ai-ml/references/finetuning/templates/rlvr_reward_function_source_template.py",
+      "original_blob": "7a6bfbd9327004271dc5fcb251630771dc4f7284",
+      "canonical_identical_path": "skills/core-skills/aws-ai-ml/references/finetuning/templates/rlvr_reward_function_source_template.py",
+      "slice": "ai-payloads",
+      "issue": 4386,
+      "classification": "external-service-payload",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-core/skills/aws-ai-ml/references/model-deployment/code_templates/deploy-jumpstart-sagemaker.py",
+      "original_blob": "efe037e63c3943b1c3a8b6e3f6538e4d712a34f6",
+      "canonical_identical_path": "skills/core-skills/aws-ai-ml/references/model-deployment/code_templates/deploy-jumpstart-sagemaker.py",
+      "slice": "ai-payloads",
+      "issue": 4386,
+      "classification": "external-service-payload",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-core/skills/aws-ai-ml/references/model-deployment/code_templates/deploy-nova-bedrock.py",
+      "original_blob": "38d28c3e17e98316154fb41e98c3ec138be08ad4",
+      "canonical_identical_path": "skills/core-skills/aws-ai-ml/references/model-deployment/code_templates/deploy-nova-bedrock.py",
+      "slice": "ai-payloads",
+      "issue": 4386,
+      "classification": "external-service-payload",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-core/skills/aws-ai-ml/references/model-deployment/code_templates/deploy-nova-sagemaker.py",
+      "original_blob": "88b605bdb65ede3e980e599fb7be774ac2255d4c",
+      "canonical_identical_path": "skills/core-skills/aws-ai-ml/references/model-deployment/code_templates/deploy-nova-sagemaker.py",
+      "slice": "ai-payloads",
+      "issue": 4386,
+      "classification": "external-service-payload",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-core/skills/aws-ai-ml/references/model-deployment/code_templates/deploy-oss-bedrock.py",
+      "original_blob": "a1d5d334ebed86e0f6efbcba144a1a7333d42fc4",
+      "canonical_identical_path": "skills/core-skills/aws-ai-ml/references/model-deployment/code_templates/deploy-oss-bedrock.py",
+      "slice": "ai-payloads",
+      "issue": 4386,
+      "classification": "external-service-payload",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-core/skills/aws-ai-ml/references/model-deployment/code_templates/deploy-oss-sagemaker.py",
+      "original_blob": "d71bfdae14eaf077e5764d94cac7b61e2146dfcf",
+      "canonical_identical_path": "skills/core-skills/aws-ai-ml/references/model-deployment/code_templates/deploy-oss-sagemaker.py",
+      "slice": "ai-payloads",
+      "issue": 4386,
+      "classification": "external-service-payload",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-core/skills/aws-ai-ml/references/model-deployment/code_templates/optimize-benchmark.py",
+      "original_blob": "623a9b4b5ac3931d433524fd98ee3086c3815b79",
+      "canonical_identical_path": "skills/core-skills/aws-ai-ml/references/model-deployment/code_templates/optimize-benchmark.py",
+      "slice": "ai-payloads",
+      "issue": 4386,
+      "classification": "external-service-payload",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-core/skills/aws-ai-ml/references/model-deployment/code_templates/optimize-huggingface-to-s3.py",
+      "original_blob": "1eaee08f68aacbd923f84d2a2dd826d82fdbc793",
+      "canonical_identical_path": "skills/core-skills/aws-ai-ml/references/model-deployment/code_templates/optimize-huggingface-to-s3.py",
+      "slice": "ai-payloads",
+      "issue": 4386,
+      "classification": "external-service-payload",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-core/skills/aws-ai-ml/references/model-deployment/code_templates/optimize-recommendation.py",
+      "original_blob": "8bacc6205844ed61017febe3e4def5852d046590",
+      "canonical_identical_path": "skills/core-skills/aws-ai-ml/references/model-deployment/code_templates/optimize-recommendation.py",
+      "slice": "ai-payloads",
+      "issue": 4386,
+      "classification": "external-service-payload",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-core/skills/aws-ai-ml/references/model-evaluation/code_templates/custom_scorer_evaluator.py",
+      "original_blob": "4513b0df5b16d8616969482d50090197e4f7d2ff",
+      "canonical_identical_path": "skills/core-skills/aws-ai-ml/references/model-evaluation/code_templates/custom_scorer_evaluator.py",
+      "slice": "ai-payloads",
+      "issue": 4386,
+      "classification": "external-service-payload",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-core/skills/aws-ai-ml/references/model-evaluation/code_templates/llmaaj_evaluator.py",
+      "original_blob": "ba8e285b1438dcab6bb55b85b3da87ea843bdf0a",
+      "canonical_identical_path": "skills/core-skills/aws-ai-ml/references/model-evaluation/code_templates/llmaaj_evaluator.py",
+      "slice": "ai-payloads",
+      "issue": 4386,
+      "classification": "external-service-payload",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-core/skills/aws-ai-ml/references/model-evaluation/scripts/nova_reward_function_source_template.py",
+      "original_blob": "1f3ad5f36431083f33f6d5480537afe8b23fe7f3",
+      "canonical_identical_path": "skills/core-skills/aws-ai-ml/references/model-evaluation/scripts/nova_reward_function_source_template.py",
+      "slice": "ai-payloads",
+      "issue": 4386,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-core/skills/aws-ai-ml/references/model-evaluation/scripts/reward_function_source_template.py",
+      "original_blob": "cb43ae9e329c02b37e823c5438b30bee4a7bacdf",
+      "canonical_identical_path": "skills/core-skills/aws-ai-ml/references/model-evaluation/scripts/reward_function_source_template.py",
+      "slice": "ai-payloads",
+      "issue": 4386,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-core/skills/aws-ai-ml/references/model-evaluation/scripts/validate_custom_metrics.py",
+      "original_blob": "6d0807d9b471322265991051abf0f3152dbe2f99",
+      "canonical_identical_path": "skills/core-skills/aws-ai-ml/references/model-evaluation/scripts/validate_custom_metrics.py",
+      "slice": "ai-data",
+      "issue": 4385,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-core/skills/aws-ai-ml/references/model-selection/scripts/filter_deployable_models.py",
+      "original_blob": "984f29492292d27802e778b37495fa332f3c7ef5",
+      "canonical_identical_path": "skills/core-skills/aws-ai-ml/references/model-selection/scripts/filter_deployable_models.py",
+      "slice": "ai-models",
+      "issue": 4384,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-core/skills/aws-ai-ml/references/model-selection/scripts/get_deployable_models.py",
+      "original_blob": "b8a4d317f4d0ff58ca319b799756312526f03662",
+      "canonical_identical_path": "skills/core-skills/aws-ai-ml/references/model-selection/scripts/get_deployable_models.py",
+      "slice": "ai-models",
+      "issue": 4384,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-core/skills/aws-ai-ml/references/model-selection/scripts/get_model_names.py",
+      "original_blob": "ec643fd67cd0d917fc43d59d08dcb0d98d54c58f",
+      "canonical_identical_path": "skills/core-skills/aws-ai-ml/references/model-selection/scripts/get_model_names.py",
+      "slice": "ai-models",
+      "issue": 4384,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-core/skills/aws-ai-ml/references/model-selection/scripts/search_deployable_models.py",
+      "original_blob": "91b8bac969fbc8bfffe1ec178452c4a42a7a4766",
+      "canonical_identical_path": "skills/core-skills/aws-ai-ml/references/model-selection/scripts/search_deployable_models.py",
+      "slice": "ai-models",
+      "issue": 4384,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-core/skills/aws-ai-ml/references/processing-jobs/code_templates/dataset_definition_processing.py",
+      "original_blob": "e19bf8d6e05128a7b62bc57fe6366e2063b2ad88",
+      "canonical_identical_path": "skills/core-skills/aws-ai-ml/references/processing-jobs/code_templates/dataset_definition_processing.py",
+      "slice": "ai-payloads",
+      "issue": 4386,
+      "classification": "external-service-payload",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-core/skills/aws-ai-ml/references/processing-jobs/code_templates/framework_processing.py",
+      "original_blob": "203d1a4456447dc2a393d35b98d5edad46d1a4f6",
+      "canonical_identical_path": "skills/core-skills/aws-ai-ml/references/processing-jobs/code_templates/framework_processing.py",
+      "slice": "ai-payloads",
+      "issue": 4386,
+      "classification": "external-service-payload",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-core/skills/aws-ai-ml/references/processing-jobs/code_templates/script_processing.py",
+      "original_blob": "4f72ca9c853c6022f8433eb6d5909c8dd32a7718",
+      "canonical_identical_path": "skills/core-skills/aws-ai-ml/references/processing-jobs/code_templates/script_processing.py",
+      "slice": "ai-payloads",
+      "issue": 4386,
+      "classification": "external-service-payload",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-core/skills/aws-ai-ml/references/processing-jobs/code_templates/spark_processing.py",
+      "original_blob": "a75a884cc3ef9fdc6a3a906ff76e287dffcdb722",
+      "canonical_identical_path": "skills/core-skills/aws-ai-ml/references/processing-jobs/code_templates/spark_processing.py",
+      "slice": "ai-payloads",
+      "issue": 4386,
+      "classification": "external-service-payload",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-core/skills/aws-ai-ml/references/training-jobs/code_templates/custom_training.py",
+      "original_blob": "c51d4485df392d44a879d7453467aa0b1f6194b6",
+      "canonical_identical_path": "skills/core-skills/aws-ai-ml/references/training-jobs/code_templates/custom_training.py",
+      "slice": "ai-payloads",
+      "issue": 4386,
+      "classification": "external-service-payload",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-core/skills/aws-ai-ml/references/training-jobs/code_templates/jumpstart_training.py",
+      "original_blob": "a3eade28eea4de2b4b4c793b6367b7da48497feb",
+      "canonical_identical_path": "skills/core-skills/aws-ai-ml/references/training-jobs/code_templates/jumpstart_training.py",
+      "slice": "ai-payloads",
+      "issue": 4386,
+      "classification": "external-service-payload",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-core/skills/aws-ai-ml/references/training-jobs/code_templates/recipe_training.py",
+      "original_blob": "b9090e84424729f59f8797c652236e838314817c",
+      "canonical_identical_path": "skills/core-skills/aws-ai-ml/references/training-jobs/code_templates/recipe_training.py",
+      "slice": "ai-payloads",
+      "issue": 4386,
+      "classification": "external-service-payload",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-core/skills/aws-observability/scripts/cloudwatch-omni/capture_dataset_from_traces.py",
+      "original_blob": "742755ebba565be4e3289f8d38eada1c12171b85",
+      "canonical_identical_path": "skills/core-skills/aws-observability/scripts/cloudwatch-omni/capture_dataset_from_traces.py",
+      "slice": "cw-api",
+      "issue": 4381,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-core/skills/aws-observability/scripts/cloudwatch-omni/evaluate_traces.py",
+      "original_blob": "8562773e694d4d9fbf89ed95cbfe3830782aabd5",
+      "canonical_identical_path": "skills/core-skills/aws-observability/scripts/cloudwatch-omni/evaluate_traces.py",
+      "slice": "cw-api",
+      "issue": 4381,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-core/skills/aws-observability/scripts/cloudwatch-omni/test_evaluate_traces.py",
+      "original_blob": "e0e6d15c83a806a45a97971b7d459488a61b6a3d",
+      "canonical_identical_path": "skills/core-skills/aws-observability/scripts/cloudwatch-omni/test_evaluate_traces.py",
+      "slice": "cw-api",
+      "issue": 4381,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-core/skills/aws-observability/scripts/cloudwatch/di_app_signals_client.py",
+      "original_blob": "761733603bb73770bb95775bb45416d90d367616",
+      "canonical_identical_path": "skills/core-skills/aws-observability/scripts/cloudwatch/di_app_signals_client.py",
+      "slice": "cw-api",
+      "issue": 4381,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-core/skills/aws-observability/scripts/cloudwatch/di_capture.py",
+      "original_blob": "003fbf16be2db9bff0b496aebbcffa8bbb8ed9f6",
+      "canonical_identical_path": "skills/core-skills/aws-observability/scripts/cloudwatch/di_capture.py",
+      "slice": "cw-domain",
+      "issue": 4380,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-core/skills/aws-observability/scripts/cloudwatch/di_constants.py",
+      "original_blob": "b90eb2ce926c29089f016fd360bf5f6133383875",
+      "canonical_identical_path": "skills/core-skills/aws-observability/scripts/cloudwatch/di_constants.py",
+      "slice": "cw-domain",
+      "issue": 4380,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-core/skills/aws-observability/scripts/cloudwatch/di_crud_rendering.py",
+      "original_blob": "ce2970a12f9ebb1378e2937abec943a56a58330b",
+      "canonical_identical_path": "skills/core-skills/aws-observability/scripts/cloudwatch/di_crud_rendering.py",
+      "slice": "cw-domain",
+      "issue": 4380,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-core/skills/aws-observability/scripts/cloudwatch/di_crud_tools.py",
+      "original_blob": "2255e4fb13b682a651fe27b8c17528c8e3925448",
+      "canonical_identical_path": "skills/core-skills/aws-observability/scripts/cloudwatch/di_crud_tools.py",
+      "slice": "cw-api",
+      "issue": 4381,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-core/skills/aws-observability/scripts/cloudwatch/di_error_translation.py",
+      "original_blob": "1b43cd5567c374b8077e094370fb8a289a9119c4",
+      "canonical_identical_path": "skills/core-skills/aws-observability/scripts/cloudwatch/di_error_translation.py",
+      "slice": "cw-domain",
+      "issue": 4380,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-core/skills/aws-observability/scripts/cloudwatch/di_formatting.py",
+      "original_blob": "861ffc00c748ba0336151a7bb154da795f7eb31c",
+      "canonical_identical_path": "skills/core-skills/aws-observability/scripts/cloudwatch/di_formatting.py",
+      "slice": "cw-domain",
+      "issue": 4380,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-core/skills/aws-observability/scripts/cloudwatch/di_gateway.py",
+      "original_blob": "acf0692ca62c4faea851785e474a76b4165a6c9e",
+      "canonical_identical_path": "skills/core-skills/aws-observability/scripts/cloudwatch/di_gateway.py",
+      "slice": "cw-api",
+      "issue": 4381,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-core/skills/aws-observability/scripts/cloudwatch/di_instrumentation.py",
+      "original_blob": "cc650f1661e869d22c26f59c7f16f3b42d7230b6",
+      "canonical_identical_path": "skills/core-skills/aws-observability/scripts/cloudwatch/di_instrumentation.py",
+      "slice": "cw-api",
+      "issue": 4381,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-core/skills/aws-observability/scripts/cloudwatch/di_location.py",
+      "original_blob": "0c8183da5cf3a6e2df94c105f20002069f23325f",
+      "canonical_identical_path": "skills/core-skills/aws-observability/scripts/cloudwatch/di_location.py",
+      "slice": "cw-domain",
+      "issue": 4380,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-core/skills/aws-observability/scripts/cloudwatch/di_logs_client.py",
+      "original_blob": "64b23ca84894d5e7a7d9fbf123c889fc199c653b",
+      "canonical_identical_path": "skills/core-skills/aws-observability/scripts/cloudwatch/di_logs_client.py",
+      "slice": "cw-api",
+      "issue": 4381,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-core/skills/aws-observability/scripts/cloudwatch/di_region.py",
+      "original_blob": "e8eeef88bc850d5c4aef0b1da50e3bd974eb0960",
+      "canonical_identical_path": "skills/core-skills/aws-observability/scripts/cloudwatch/di_region.py",
+      "slice": "cw-domain",
+      "issue": 4380,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-core/skills/aws-observability/scripts/cloudwatch/di_result.py",
+      "original_blob": "e98668ff75c4a1b9e0174e38b152a7ef182a792c",
+      "canonical_identical_path": "skills/core-skills/aws-observability/scripts/cloudwatch/di_result.py",
+      "slice": "cw-domain",
+      "issue": 4380,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-core/skills/aws-observability/scripts/cloudwatch/di_session.py",
+      "original_blob": "bc1af469f36e8fa854bc36845ec78f324996670b",
+      "canonical_identical_path": "skills/core-skills/aws-observability/scripts/cloudwatch/di_session.py",
+      "slice": "cw-api",
+      "issue": 4381,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-core/skills/aws-observability/scripts/cloudwatch/di_snapshot_parsing.py",
+      "original_blob": "bd20bd5052b86ddc97d90a6834e1d7a40a85e100",
+      "canonical_identical_path": "skills/core-skills/aws-observability/scripts/cloudwatch/di_snapshot_parsing.py",
+      "slice": "cw-domain",
+      "issue": 4380,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-core/skills/aws-observability/scripts/cloudwatch/di_snapshot_queries.py",
+      "original_blob": "4b834039b33dd1f2d60e372d5aac410f704a97a7",
+      "canonical_identical_path": "skills/core-skills/aws-observability/scripts/cloudwatch/di_snapshot_queries.py",
+      "slice": "cw-api",
+      "issue": 4381,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-core/skills/aws-observability/scripts/cloudwatch/di_snapshot_rendering.py",
+      "original_blob": "63cbbe5e4704417b294b7189adb6ebb8fb7484a9",
+      "canonical_identical_path": "skills/core-skills/aws-observability/scripts/cloudwatch/di_snapshot_rendering.py",
+      "slice": "cw-domain",
+      "issue": 4380,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-core/skills/aws-observability/scripts/cloudwatch/di_snapshot_tools.py",
+      "original_blob": "1be6a63a43914f7d864d8993c90e10cc8f31c73d",
+      "canonical_identical_path": "skills/core-skills/aws-observability/scripts/cloudwatch/di_snapshot_tools.py",
+      "slice": "cw-api",
+      "issue": 4381,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-core/skills/aws-observability/scripts/cloudwatch/di_snapshots.py",
+      "original_blob": "77b260b7e818951aa22b4bf24e3f60b73de83f7b",
+      "canonical_identical_path": "skills/core-skills/aws-observability/scripts/cloudwatch/di_snapshots.py",
+      "slice": "cw-api",
+      "issue": 4381,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-core/skills/aws-observability/scripts/cloudwatch/di_status_assessment.py",
+      "original_blob": "6263f23e951c8c09f1d7d8fccdcf64fc111661c7",
+      "canonical_identical_path": "skills/core-skills/aws-observability/scripts/cloudwatch/di_status_assessment.py",
+      "slice": "cw-domain",
+      "issue": 4380,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-core/skills/aws-observability/scripts/cloudwatch/di_status_rendering.py",
+      "original_blob": "78eab5695866fece399436558b544a1a21c5f159",
+      "canonical_identical_path": "skills/core-skills/aws-observability/scripts/cloudwatch/di_status_rendering.py",
+      "slice": "cw-domain",
+      "issue": 4380,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-core/skills/aws-observability/scripts/cloudwatch/di_status_tools.py",
+      "original_blob": "84d7f770b95f5e6a8e97f4d5ceda8a4454b1b563",
+      "canonical_identical_path": "skills/core-skills/aws-observability/scripts/cloudwatch/di_status_tools.py",
+      "slice": "cw-api",
+      "issue": 4381,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-core/skills/aws-observability/scripts/cloudwatch/di_validation.py",
+      "original_blob": "4ad99cc2ed588ef3cb266028821a0fc362e92037",
+      "canonical_identical_path": "skills/core-skills/aws-observability/scripts/cloudwatch/di_validation.py",
+      "slice": "cw-domain",
+      "issue": 4380,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-core/skills/aws-serverless/assets/powertools-handler.py",
+      "original_blob": "9a16b028c01d7c521a729ce6fd5ada76fcec0ce0",
+      "canonical_identical_path": "skills/core-skills/aws-serverless/assets/powertools-handler.py",
+      "slice": "serverless",
+      "issue": 4397,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-core/skills/launch-with-aws/scripts/archive.py",
+      "original_blob": "0cba3f8cf5e9b0129c3ca379f0ed29485b2f1080",
+      "canonical_identical_path": "skills/core-skills/launch-with-aws/scripts/archive.py",
+      "slice": "launch",
+      "issue": 4382,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-core/skills/launch-with-aws/scripts/auth.py",
+      "original_blob": "9160961683a862dd0759fe3d00a9b4e356e170a4",
+      "canonical_identical_path": "skills/core-skills/launch-with-aws/scripts/auth.py",
+      "slice": "launch",
+      "issue": 4382,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-core/skills/launch-with-aws/scripts/auth_callback_server.py",
+      "original_blob": "9e1cf85faa13b905eab3253b87ae3589bd8282ac",
+      "canonical_identical_path": "skills/core-skills/launch-with-aws/scripts/auth_callback_server.py",
+      "slice": "launch",
+      "issue": 4382,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-core/skills/launch-with-aws/scripts/launch_api_client.py",
+      "original_blob": "a00a4367c25dde8e37ab341ad4969d86a5becdc8",
+      "canonical_identical_path": "skills/core-skills/launch-with-aws/scripts/launch_api_client.py",
+      "slice": "launch",
+      "issue": 4382,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-core/skills/launch-with-aws/scripts/launch_config.py",
+      "original_blob": "ddea280cdb7145a782519b100e3f708ad6811a40",
+      "canonical_identical_path": "skills/core-skills/launch-with-aws/scripts/launch_config.py",
+      "slice": "launch",
+      "issue": 4382,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-core/skills/launch-with-aws/scripts/launch_with_aws.py",
+      "original_blob": "eb770b0c401f08c95f48689b3d8779a60ea0b328",
+      "canonical_identical_path": "skills/core-skills/launch-with-aws/scripts/launch_with_aws.py",
+      "slice": "launch",
+      "issue": 4382,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-data-analytics/skills/managing-amazon-msk/scripts/msk_sizing.py",
+      "original_blob": "e13d4fd853adb211a9ac6ceb9e0a088a3087073c",
+      "canonical_identical_path": "skills/specialized-skills/analytics-skills/managing-amazon-msk/scripts/msk_sizing.py",
+      "slice": "msk",
+      "issue": 4387,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-data-analytics/skills/migrate-to-msk/scripts/compatibility.py",
+      "original_blob": "b7eb3533f98f74d21444eb826c228d001c884e08",
+      "canonical_identical_path": "skills/specialized-skills/analytics-skills/migrate-to-msk/scripts/compatibility.py",
+      "slice": "msk",
+      "issue": 4387,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-data-analytics/skills/migrate-to-msk/scripts/simulation_load_test_config.py",
+      "original_blob": "97b11b62c7b4e5066e91da612f812e24e3f7688b",
+      "canonical_identical_path": "skills/specialized-skills/analytics-skills/migrate-to-msk/scripts/simulation_load_test_config.py",
+      "slice": "msk",
+      "issue": 4387,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/fixtures/azure-iac-terraform/check_expected_clarify.py",
+      "original_blob": "146cd4ebd8c0452af7088a24d05afc48e36ba4d5",
+      "canonical_identical_path": "plugins/aws-startup-advisor/fixtures/azure-iac-terraform/check_expected_clarify.py",
+      "slice": "startup-fixtures",
+      "issue": 4408,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/fixtures/azure-iac-terraform/check_expected_clarify_complete.py",
+      "original_blob": "29c883a55ad9b5ab7a38512648e9c994bae11b42",
+      "canonical_identical_path": "plugins/aws-startup-advisor/fixtures/azure-iac-terraform/check_expected_clarify_complete.py",
+      "slice": "startup-fixtures",
+      "issue": 4408,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/fixtures/azure-iac-terraform/check_expected_clarify_fast_path.py",
+      "original_blob": "c7562354204fb6e262c8444d8c6f620c8a91ab9b",
+      "canonical_identical_path": "plugins/aws-startup-advisor/fixtures/azure-iac-terraform/check_expected_clarify_fast_path.py",
+      "slice": "startup-fixtures",
+      "issue": 4408,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/fixtures/azure-iac-terraform/check_expected_design.py",
+      "original_blob": "3257e558e164b838491f8b37bbfbceb9cbbaa6e6",
+      "canonical_identical_path": "plugins/aws-startup-advisor/fixtures/azure-iac-terraform/check_expected_design.py",
+      "slice": "startup-fixtures",
+      "issue": 4408,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/fixtures/azure-iac-terraform/check_expected_estimate.py",
+      "original_blob": "45bc0ccc7a7171196878eb86ddb47dbc08aa2700",
+      "canonical_identical_path": "plugins/aws-startup-advisor/fixtures/azure-iac-terraform/check_expected_estimate.py",
+      "slice": "startup-fixtures",
+      "issue": 4408,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/fixtures/azure-iac-terraform/check_expected_iac_terraform.py",
+      "original_blob": "eb0f9c41d75e5bdf222deb1e1197d3b3b72324b9",
+      "canonical_identical_path": "plugins/aws-startup-advisor/fixtures/azure-iac-terraform/check_expected_iac_terraform.py",
+      "slice": "startup-fixtures",
+      "issue": 4408,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/fixtures/gcp-decision-gate/check_expected_decide.py",
+      "original_blob": "dac52df46b78a291039f7bf4e549721d8b13df5f",
+      "canonical_identical_path": "plugins/aws-startup-advisor/fixtures/gcp-decision-gate/check_expected_decide.py",
+      "slice": "startup-fixtures",
+      "issue": 4408,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/fixtures/gcp-live-capture/check_expected_baseline.py",
+      "original_blob": "a4e6f6759ded672b2bfc3fffe9db70e8e506faa2",
+      "canonical_identical_path": "plugins/aws-startup-advisor/fixtures/gcp-live-capture/check_expected_baseline.py",
+      "slice": "startup-fixtures",
+      "issue": 4408,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/fixtures/gcp-live-capture/check_expected_drift.py",
+      "original_blob": "7979a1a9e28f3b2cb47c6fa691997d8c3ec647e4",
+      "canonical_identical_path": "plugins/aws-startup-advisor/fixtures/gcp-live-capture/check_expected_drift.py",
+      "slice": "startup-fixtures",
+      "issue": 4408,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/fixtures/gcp-workshop/check_expected_workshop.py",
+      "original_blob": "6afa0998d304a0fd02be7601f481db445b05e808",
+      "canonical_identical_path": "plugins/aws-startup-advisor/fixtures/gcp-workshop/check_expected_workshop.py",
+      "slice": "startup-fixtures",
+      "issue": 4408,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/fixtures/heroku-decision-gate/check_expected_decide.py",
+      "original_blob": "0ba412ed1a9678f5240c0b4e819b717335fdfc0d",
+      "canonical_identical_path": "plugins/aws-startup-advisor/fixtures/heroku-decision-gate/check_expected_decide.py",
+      "slice": "startup-fixtures",
+      "issue": 4408,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/fixtures/heroku-decision-gate/check_expected_decide_with_retained_pack.py",
+      "original_blob": "fa3fcbf419ad64338310fdc67505dda6cdc90818",
+      "canonical_identical_path": "plugins/aws-startup-advisor/fixtures/heroku-decision-gate/check_expected_decide_with_retained_pack.py",
+      "slice": "startup-fixtures",
+      "issue": 4408,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/fixtures/heroku-live-capture/check_expected_drift.py",
+      "original_blob": "0dc183011b09a629f8ba6eb9a4982ea99f84ad03",
+      "canonical_identical_path": "plugins/aws-startup-advisor/fixtures/heroku-live-capture/check_expected_drift.py",
+      "slice": "startup-fixtures",
+      "issue": 4408,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/fixtures/heroku-live-capture/check_expected_estimate.py",
+      "original_blob": "2c4425a586ac4ff6f6cc2f673cfde395a132f4dc",
+      "canonical_identical_path": "plugins/aws-startup-advisor/fixtures/heroku-live-capture/check_expected_estimate.py",
+      "slice": "startup-fixtures",
+      "issue": 4408,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/fixtures/heroku-nonweb-scaling/check_expected_nonweb_scaling.py",
+      "original_blob": "d0135ed26f76c27491562b4e9b268a51aa0d231b",
+      "canonical_identical_path": "plugins/aws-startup-advisor/fixtures/heroku-nonweb-scaling/check_expected_nonweb_scaling.py",
+      "slice": "startup-fixtures",
+      "issue": 4408,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/fixtures/heroku-workshop/check_expected_workshop.py",
+      "original_blob": "c460b36459208c763ddd11e88bed28622e42708a",
+      "canonical_identical_path": "plugins/aws-startup-advisor/fixtures/heroku-workshop/check_expected_workshop.py",
+      "slice": "startup-fixtures",
+      "issue": 4408,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/scripts/check-bedrock-pricing-parity.py",
+      "original_blob": "539e337f08bdff5acbfcc5d586cacbcd238b7885",
+      "canonical_identical_path": "plugins/aws-startup-advisor/scripts/check-bedrock-pricing-parity.py",
+      "slice": "startup-validators",
+      "issue": 4399,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/scripts/consent-disclosure-audit.py",
+      "original_blob": "e11e7444848920f8d4f5964dd93f063042936ffd",
+      "canonical_identical_path": "plugins/aws-startup-advisor/scripts/consent-disclosure-audit.py",
+      "slice": "startup-validators",
+      "issue": 4399,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/scripts/emit-plan-json.py",
+      "original_blob": "afad771ead476cbba57d4610d3312b6d1171d5d9",
+      "canonical_identical_path": "plugins/aws-startup-advisor/scripts/emit-plan-json.py",
+      "slice": "startup-validators",
+      "issue": 4399,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/scripts/model-id-lint.py",
+      "original_blob": "c0c16eef4e5f65021fc27393e296ecd4963b6a4e",
+      "canonical_identical_path": "plugins/aws-startup-advisor/scripts/model-id-lint.py",
+      "slice": "startup-validators",
+      "issue": 4399,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/scripts/telemetry/cli.py",
+      "original_blob": "dc3cb33e7967b5cb3e9828cf7ff4d89d0eccfe45",
+      "canonical_identical_path": "plugins/aws-startup-advisor/scripts/telemetry/cli.py",
+      "slice": "telemetry",
+      "issue": 4398,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/scripts/telemetry/consent/accept.py",
+      "original_blob": "26bf180ab00e00856a1e2567afc35ddcf67b9a33",
+      "canonical_identical_path": "plugins/aws-startup-advisor/scripts/telemetry/consent/accept.py",
+      "slice": "telemetry",
+      "issue": 4398,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/scripts/telemetry/consent/cli.py",
+      "original_blob": "36808b5643a0f45b3ac96e3b138229eb8580e5bb",
+      "canonical_identical_path": "plugins/aws-startup-advisor/scripts/telemetry/consent/cli.py",
+      "slice": "telemetry",
+      "issue": 4398,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/scripts/telemetry/consent/notice.py",
+      "original_blob": "4f40de54b8e446687b8ac107460ecef4f8bd68ce",
+      "canonical_identical_path": "plugins/aws-startup-advisor/scripts/telemetry/consent/notice.py",
+      "slice": "telemetry",
+      "issue": 4398,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/scripts/telemetry/consent/opt_out.py",
+      "original_blob": "49e29b1d3609af721263b53afca3940fb78ddad8",
+      "canonical_identical_path": "plugins/aws-startup-advisor/scripts/telemetry/consent/opt_out.py",
+      "slice": "telemetry",
+      "issue": 4398,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/scripts/telemetry/consent/record.py",
+      "original_blob": "f4a7ce8b084d0cee87d686203da849cbbbef1892",
+      "canonical_identical_path": "plugins/aws-startup-advisor/scripts/telemetry/consent/record.py",
+      "slice": "telemetry",
+      "issue": 4398,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/scripts/telemetry/consent/session_start.py",
+      "original_blob": "629a22f0bbd4a3021b7633585ca035c8a4b9a993",
+      "canonical_identical_path": "plugins/aws-startup-advisor/scripts/telemetry/consent/session_start.py",
+      "slice": "telemetry",
+      "issue": 4398,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/scripts/telemetry/metric_emission/client.py",
+      "original_blob": "94cbff5d831483496791efe4eeaccc9c122c9c64",
+      "canonical_identical_path": "plugins/aws-startup-advisor/scripts/telemetry/metric_emission/client.py",
+      "slice": "telemetry",
+      "issue": 4398,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/scripts/telemetry/metric_emission/migration.py",
+      "original_blob": "95c06426af5eed0af61678b028ddaa84652d339a",
+      "canonical_identical_path": "plugins/aws-startup-advisor/scripts/telemetry/metric_emission/migration.py",
+      "slice": "telemetry",
+      "issue": 4398,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/scripts/telemetry/metric_emission/migration_attributes.py",
+      "original_blob": "ff7ef7a08cba414d47c7db321b63da08b010682c",
+      "canonical_identical_path": "plugins/aws-startup-advisor/scripts/telemetry/metric_emission/migration_attributes.py",
+      "slice": "telemetry",
+      "issue": 4398,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/scripts/telemetry/metric_emission/skill_invoked.py",
+      "original_blob": "efe8a3a0a2316e2fd4fcb850a89ab0b38f54f203",
+      "canonical_identical_path": "plugins/aws-startup-advisor/scripts/telemetry/metric_emission/skill_invoked.py",
+      "slice": "telemetry",
+      "issue": 4398,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/scripts/telemetry/sync_bundles.py",
+      "original_blob": "5859f47ca73f46f511a0dac6741b7a0e3a64477b",
+      "canonical_identical_path": "plugins/aws-startup-advisor/scripts/telemetry/sync_bundles.py",
+      "slice": "telemetry",
+      "issue": 4398,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/scripts/telemetry/test/conftest.py",
+      "original_blob": "ac914178c87a67349dc973000ddc4e7494c8367d",
+      "canonical_identical_path": "plugins/aws-startup-advisor/scripts/telemetry/test/conftest.py",
+      "slice": "telemetry",
+      "issue": 4398,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/scripts/telemetry/test/test_cli.py",
+      "original_blob": "d98bc1aed6c666f64b480cf2a841d99dc1f3d20b",
+      "canonical_identical_path": "plugins/aws-startup-advisor/scripts/telemetry/test/test_cli.py",
+      "slice": "telemetry",
+      "issue": 4398,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/scripts/telemetry/test/test_consent.py",
+      "original_blob": "df48f2f2263b2881026b83a72b36010810a34a60",
+      "canonical_identical_path": "plugins/aws-startup-advisor/scripts/telemetry/test/test_consent.py",
+      "slice": "telemetry",
+      "issue": 4398,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/scripts/telemetry/test/test_metric_emission.py",
+      "original_blob": "d8c62859a844dace19316e2d61c8e3ecbd6dad21",
+      "canonical_identical_path": "plugins/aws-startup-advisor/scripts/telemetry/test/test_metric_emission.py",
+      "slice": "telemetry",
+      "issue": 4398,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/scripts/telemetry/test/test_migration.py",
+      "original_blob": "75e06cf8068bbcd8cdb361809ac7c873a3eaa212",
+      "canonical_identical_path": "plugins/aws-startup-advisor/scripts/telemetry/test/test_migration.py",
+      "slice": "telemetry",
+      "issue": 4398,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/scripts/test_validate_migration_report_decision_core.py",
+      "original_blob": "b0b74b5b9de1c98814b0d62d608b8fbcd8abacfa",
+      "canonical_identical_path": "plugins/aws-startup-advisor/scripts/test_validate_migration_report_decision_core.py",
+      "slice": "startup-validators",
+      "issue": 4399,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/scripts/validate-artifacts.py",
+      "original_blob": "42ecd6383520155ae863f85921a141753f2a31a9",
+      "canonical_identical_path": "plugins/aws-startup-advisor/scripts/validate-artifacts.py",
+      "slice": "startup-validators",
+      "issue": 4399,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/scripts/validate-migration-report.py",
+      "original_blob": "aa576fdcd9c8aa48f11428a1c8b4c0ba2fd96b61",
+      "canonical_identical_path": "plugins/aws-startup-advisor/scripts/validate-migration-report.py",
+      "slice": "startup-validators",
+      "issue": 4399,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/scripts/validate-model-pricing.py",
+      "original_blob": "a5704fcc57ab878230273f9457ba028986bd336a",
+      "canonical_identical_path": "plugins/aws-startup-advisor/scripts/validate-model-pricing.py",
+      "slice": "startup-validators",
+      "issue": 4399,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/scripts/validate-startup-program-artifacts.py",
+      "original_blob": "aaf5be9c695abce8ee3ade227945e1997f335cb7",
+      "canonical_identical_path": "plugins/aws-startup-advisor/scripts/validate-startup-program-artifacts.py",
+      "slice": "startup-validators",
+      "issue": 4399,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/agent-advisor/scripts/anthropic_model_recommendation.py",
+      "original_blob": "54c9e48e3321a14287a48d6ad9f1de47ea7b1852",
+      "canonical_identical_path": "plugins/aws-startup-advisor/skills/agent-advisor/scripts/anthropic_model_recommendation.py",
+      "slice": "startup-models",
+      "issue": 4401,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/agent-advisor/scripts/build_diagram.py",
+      "original_blob": "a1eed7ed1e5cf4ad120aef4a48103bb70bf3209f",
+      "canonical_identical_path": "plugins/aws-startup-advisor/skills/agent-advisor/scripts/build_diagram.py",
+      "slice": "startup-diagram",
+      "issue": 4402,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/agent-advisor/scripts/model_recommendation.py",
+      "original_blob": "4e68188f583895af761cf0cc82e0f1d11327c33a",
+      "canonical_identical_path": "plugins/aws-startup-advisor/skills/agent-advisor/scripts/model_recommendation.py",
+      "slice": "startup-models",
+      "issue": 4401,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/agent-advisor/scripts/openai_model_recommendation.py",
+      "original_blob": "a7f1289cf3123b31d35fe2aa9e5d7d4b98d1b843",
+      "canonical_identical_path": "plugins/aws-startup-advisor/skills/agent-advisor/scripts/openai_model_recommendation.py",
+      "slice": "startup-models",
+      "issue": 4401,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/agent-advisor/scripts/score_units.py",
+      "original_blob": "fea30e85896d418dfb6d63957c4fc24f644779c8",
+      "canonical_identical_path": "plugins/aws-startup-advisor/skills/agent-advisor/scripts/score_units.py",
+      "slice": "startup-scoring",
+      "issue": 4400,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/agent-advisor/scripts/scoring.py",
+      "original_blob": "c53f0692785ea5635bf252ea9b85564b4b6cab22",
+      "canonical_identical_path": "plugins/aws-startup-advisor/skills/agent-advisor/scripts/scoring.py",
+      "slice": "startup-scoring",
+      "issue": 4400,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/agent-advisor/scripts/test_build_diagram.py",
+      "original_blob": "dc307cb046f29ba314f98f1a59b1d7721ca228be",
+      "canonical_identical_path": "plugins/aws-startup-advisor/skills/agent-advisor/scripts/test_build_diagram.py",
+      "slice": "startup-diagram",
+      "issue": 4402,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/agent-advisor/scripts/test_collapse_invariant.py",
+      "original_blob": "170f56a33b9e3c12788590d02a5d214547ce50aa",
+      "canonical_identical_path": "plugins/aws-startup-advisor/skills/agent-advisor/scripts/test_collapse_invariant.py",
+      "slice": "startup-scoring",
+      "issue": 4400,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/agent-advisor/scripts/test_cost_levers.py",
+      "original_blob": "798c6f48f301d1df3b4ea0591810df348ee45b4c",
+      "canonical_identical_path": "plugins/aws-startup-advisor/skills/agent-advisor/scripts/test_cost_levers.py",
+      "slice": "startup-scoring",
+      "issue": 4400,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/agent-advisor/scripts/test_model_recommendation.py",
+      "original_blob": "64c8d4fa99aa4a826030e2edc10b24b55d0306c8",
+      "canonical_identical_path": "plugins/aws-startup-advisor/skills/agent-advisor/scripts/test_model_recommendation.py",
+      "slice": "startup-models",
+      "issue": 4401,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/agent-advisor/scripts/test_openai_model_recommendation.py",
+      "original_blob": "ef92d729172769d99dd78769441f8a71704c03ac",
+      "canonical_identical_path": "plugins/aws-startup-advisor/skills/agent-advisor/scripts/test_openai_model_recommendation.py",
+      "slice": "startup-models",
+      "issue": 4401,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/agent-advisor/scripts/test_opus55_generation_contracts.py",
+      "original_blob": "4ad45801fd32d55b396e6de4caedb47a8964aefa",
+      "canonical_identical_path": "plugins/aws-startup-advisor/skills/agent-advisor/scripts/test_opus55_generation_contracts.py",
+      "slice": "startup-models",
+      "issue": 4401,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/agent-advisor/scripts/test_opus55_integration.py",
+      "original_blob": "14525ffdaf8d6c53407f5d52ada75f90188e8a4a",
+      "canonical_identical_path": "plugins/aws-startup-advisor/skills/agent-advisor/scripts/test_opus55_integration.py",
+      "slice": "startup-models",
+      "issue": 4401,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/agent-advisor/scripts/test_poc_shapes.py",
+      "original_blob": "8f69fecf7a11b7dd085c0f9875726430b27d9d08",
+      "canonical_identical_path": "plugins/aws-startup-advisor/skills/agent-advisor/scripts/test_poc_shapes.py",
+      "slice": "startup-scoring",
+      "issue": 4400,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/agent-advisor/scripts/test_scoring.py",
+      "original_blob": "a2e5074289c0ea4a0cfcb269a34777e83a5130cb",
+      "canonical_identical_path": "plugins/aws-startup-advisor/skills/agent-advisor/scripts/test_scoring.py",
+      "slice": "startup-scoring",
+      "issue": 4400,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/agent-advisor/scripts/test_temporal_decision_refs.py",
+      "original_blob": "946d70cb6540abe44bfa0f030d880eae517de843",
+      "canonical_identical_path": "plugins/aws-startup-advisor/skills/agent-advisor/scripts/test_temporal_decision_refs.py",
+      "slice": "startup-scoring",
+      "issue": 4400,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/agent-advisor/scripts/test_unit_grouping.py",
+      "original_blob": "b97a9c8bc391a769b8110df94137d29ba58d90cf",
+      "canonical_identical_path": "plugins/aws-startup-advisor/skills/agent-advisor/scripts/test_unit_grouping.py",
+      "slice": "startup-scoring",
+      "issue": 4400,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/agent-advisor/scripts/test_verify_model_path.py",
+      "original_blob": "96f53ce3b298e063e7fbf2c1a0dd4489149a26cf",
+      "canonical_identical_path": "plugins/aws-startup-advisor/skills/agent-advisor/scripts/test_verify_model_path.py",
+      "slice": "startup-diagram",
+      "issue": 4402,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/agent-advisor/scripts/test_workload_classes.py",
+      "original_blob": "c615676a3910f4794048b6edee2d518d5c530c64",
+      "canonical_identical_path": "plugins/aws-startup-advisor/skills/agent-advisor/scripts/test_workload_classes.py",
+      "slice": "startup-scoring",
+      "issue": 4400,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/agent-advisor/scripts/verify_model_path.py",
+      "original_blob": "bee09fa7c60d1d5f411792130a0a0862aa58fbaa",
+      "canonical_identical_path": "plugins/aws-startup-advisor/skills/agent-advisor/scripts/verify_model_path.py",
+      "slice": "startup-diagram",
+      "issue": 4402,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/azure-to-aws/references/vendored/telemetry/cli.py",
+      "original_blob": "dc3cb33e7967b5cb3e9828cf7ff4d89d0eccfe45",
+      "canonical_identical_path": "plugins/aws-startup-advisor/scripts/telemetry/cli.py",
+      "slice": "telemetry",
+      "issue": 4398,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/azure-to-aws/references/vendored/telemetry/consent/accept.py",
+      "original_blob": "26bf180ab00e00856a1e2567afc35ddcf67b9a33",
+      "canonical_identical_path": "plugins/aws-startup-advisor/scripts/telemetry/consent/accept.py",
+      "slice": "telemetry",
+      "issue": 4398,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/azure-to-aws/references/vendored/telemetry/consent/cli.py",
+      "original_blob": "36808b5643a0f45b3ac96e3b138229eb8580e5bb",
+      "canonical_identical_path": "plugins/aws-startup-advisor/scripts/telemetry/consent/cli.py",
+      "slice": "telemetry",
+      "issue": 4398,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/azure-to-aws/references/vendored/telemetry/consent/notice.py",
+      "original_blob": "4f40de54b8e446687b8ac107460ecef4f8bd68ce",
+      "canonical_identical_path": "plugins/aws-startup-advisor/scripts/telemetry/consent/notice.py",
+      "slice": "telemetry",
+      "issue": 4398,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/azure-to-aws/references/vendored/telemetry/consent/opt_out.py",
+      "original_blob": "49e29b1d3609af721263b53afca3940fb78ddad8",
+      "canonical_identical_path": "plugins/aws-startup-advisor/scripts/telemetry/consent/opt_out.py",
+      "slice": "telemetry",
+      "issue": 4398,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/azure-to-aws/references/vendored/telemetry/consent/record.py",
+      "original_blob": "f4a7ce8b084d0cee87d686203da849cbbbef1892",
+      "canonical_identical_path": "plugins/aws-startup-advisor/scripts/telemetry/consent/record.py",
+      "slice": "telemetry",
+      "issue": 4398,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/azure-to-aws/references/vendored/telemetry/metric_emission/client.py",
+      "original_blob": "94cbff5d831483496791efe4eeaccc9c122c9c64",
+      "canonical_identical_path": "plugins/aws-startup-advisor/scripts/telemetry/metric_emission/client.py",
+      "slice": "telemetry",
+      "issue": 4398,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/azure-to-aws/references/vendored/telemetry/metric_emission/migration.py",
+      "original_blob": "95c06426af5eed0af61678b028ddaa84652d339a",
+      "canonical_identical_path": "plugins/aws-startup-advisor/scripts/telemetry/metric_emission/migration.py",
+      "slice": "telemetry",
+      "issue": 4398,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/azure-to-aws/references/vendored/telemetry/metric_emission/migration_attributes.py",
+      "original_blob": "ff7ef7a08cba414d47c7db321b63da08b010682c",
+      "canonical_identical_path": "plugins/aws-startup-advisor/scripts/telemetry/metric_emission/migration_attributes.py",
+      "slice": "telemetry",
+      "issue": 4398,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/gcp-to-aws/references/vendored/telemetry/cli.py",
+      "original_blob": "dc3cb33e7967b5cb3e9828cf7ff4d89d0eccfe45",
+      "canonical_identical_path": "plugins/aws-startup-advisor/scripts/telemetry/cli.py",
+      "slice": "telemetry",
+      "issue": 4398,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/gcp-to-aws/references/vendored/telemetry/consent/accept.py",
+      "original_blob": "26bf180ab00e00856a1e2567afc35ddcf67b9a33",
+      "canonical_identical_path": "plugins/aws-startup-advisor/scripts/telemetry/consent/accept.py",
+      "slice": "telemetry",
+      "issue": 4398,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/gcp-to-aws/references/vendored/telemetry/consent/cli.py",
+      "original_blob": "36808b5643a0f45b3ac96e3b138229eb8580e5bb",
+      "canonical_identical_path": "plugins/aws-startup-advisor/scripts/telemetry/consent/cli.py",
+      "slice": "telemetry",
+      "issue": 4398,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/gcp-to-aws/references/vendored/telemetry/consent/notice.py",
+      "original_blob": "4f40de54b8e446687b8ac107460ecef4f8bd68ce",
+      "canonical_identical_path": "plugins/aws-startup-advisor/scripts/telemetry/consent/notice.py",
+      "slice": "telemetry",
+      "issue": 4398,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/gcp-to-aws/references/vendored/telemetry/consent/opt_out.py",
+      "original_blob": "49e29b1d3609af721263b53afca3940fb78ddad8",
+      "canonical_identical_path": "plugins/aws-startup-advisor/scripts/telemetry/consent/opt_out.py",
+      "slice": "telemetry",
+      "issue": 4398,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/gcp-to-aws/references/vendored/telemetry/consent/record.py",
+      "original_blob": "f4a7ce8b084d0cee87d686203da849cbbbef1892",
+      "canonical_identical_path": "plugins/aws-startup-advisor/scripts/telemetry/consent/record.py",
+      "slice": "telemetry",
+      "issue": 4398,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/gcp-to-aws/references/vendored/telemetry/metric_emission/client.py",
+      "original_blob": "94cbff5d831483496791efe4eeaccc9c122c9c64",
+      "canonical_identical_path": "plugins/aws-startup-advisor/scripts/telemetry/metric_emission/client.py",
+      "slice": "telemetry",
+      "issue": 4398,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/gcp-to-aws/references/vendored/telemetry/metric_emission/migration.py",
+      "original_blob": "95c06426af5eed0af61678b028ddaa84652d339a",
+      "canonical_identical_path": "plugins/aws-startup-advisor/scripts/telemetry/metric_emission/migration.py",
+      "slice": "telemetry",
+      "issue": 4398,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/gcp-to-aws/references/vendored/telemetry/metric_emission/migration_attributes.py",
+      "original_blob": "ff7ef7a08cba414d47c7db321b63da08b010682c",
+      "canonical_identical_path": "plugins/aws-startup-advisor/scripts/telemetry/metric_emission/migration_attributes.py",
+      "slice": "telemetry",
+      "issue": 4398,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/heroku-to-aws/references/vendored/telemetry/cli.py",
+      "original_blob": "dc3cb33e7967b5cb3e9828cf7ff4d89d0eccfe45",
+      "canonical_identical_path": "plugins/aws-startup-advisor/scripts/telemetry/cli.py",
+      "slice": "telemetry",
+      "issue": 4398,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/heroku-to-aws/references/vendored/telemetry/consent/accept.py",
+      "original_blob": "26bf180ab00e00856a1e2567afc35ddcf67b9a33",
+      "canonical_identical_path": "plugins/aws-startup-advisor/scripts/telemetry/consent/accept.py",
+      "slice": "telemetry",
+      "issue": 4398,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/heroku-to-aws/references/vendored/telemetry/consent/cli.py",
+      "original_blob": "36808b5643a0f45b3ac96e3b138229eb8580e5bb",
+      "canonical_identical_path": "plugins/aws-startup-advisor/scripts/telemetry/consent/cli.py",
+      "slice": "telemetry",
+      "issue": 4398,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/heroku-to-aws/references/vendored/telemetry/consent/notice.py",
+      "original_blob": "4f40de54b8e446687b8ac107460ecef4f8bd68ce",
+      "canonical_identical_path": "plugins/aws-startup-advisor/scripts/telemetry/consent/notice.py",
+      "slice": "telemetry",
+      "issue": 4398,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/heroku-to-aws/references/vendored/telemetry/consent/opt_out.py",
+      "original_blob": "49e29b1d3609af721263b53afca3940fb78ddad8",
+      "canonical_identical_path": "plugins/aws-startup-advisor/scripts/telemetry/consent/opt_out.py",
+      "slice": "telemetry",
+      "issue": 4398,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/heroku-to-aws/references/vendored/telemetry/consent/record.py",
+      "original_blob": "f4a7ce8b084d0cee87d686203da849cbbbef1892",
+      "canonical_identical_path": "plugins/aws-startup-advisor/scripts/telemetry/consent/record.py",
+      "slice": "telemetry",
+      "issue": 4398,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/heroku-to-aws/references/vendored/telemetry/metric_emission/client.py",
+      "original_blob": "94cbff5d831483496791efe4eeaccc9c122c9c64",
+      "canonical_identical_path": "plugins/aws-startup-advisor/scripts/telemetry/metric_emission/client.py",
+      "slice": "telemetry",
+      "issue": 4398,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/heroku-to-aws/references/vendored/telemetry/metric_emission/migration.py",
+      "original_blob": "95c06426af5eed0af61678b028ddaa84652d339a",
+      "canonical_identical_path": "plugins/aws-startup-advisor/scripts/telemetry/metric_emission/migration.py",
+      "slice": "telemetry",
+      "issue": 4398,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/heroku-to-aws/references/vendored/telemetry/metric_emission/migration_attributes.py",
+      "original_blob": "ff7ef7a08cba414d47c7db321b63da08b010682c",
+      "canonical_identical_path": "plugins/aws-startup-advisor/scripts/telemetry/metric_emission/migration_attributes.py",
+      "slice": "telemetry",
+      "issue": 4398,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/heroku-to-aws/scripts/emit-plan-json.py",
+      "original_blob": "afad771ead476cbba57d4610d3312b6d1171d5d9",
+      "canonical_identical_path": "plugins/aws-startup-advisor/scripts/emit-plan-json.py",
+      "slice": "heroku",
+      "issue": 4406,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/heroku-to-aws/scripts/test_validate_heroku_migration_report.py",
+      "original_blob": "234a69d55d6af39b6e26c74135c7acfc7c42734c",
+      "canonical_identical_path": "plugins/aws-startup-advisor/skills/heroku-to-aws/scripts/test_validate_heroku_migration_report.py",
+      "slice": "heroku",
+      "issue": 4406,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/heroku-to-aws/scripts/test_validate_heroku_migration_report_cost.py",
+      "original_blob": "3fdd8c0ce67a354c3f0d7cd87740f1f83ff7af45",
+      "canonical_identical_path": "plugins/aws-startup-advisor/skills/heroku-to-aws/scripts/test_validate_heroku_migration_report_cost.py",
+      "slice": "heroku",
+      "issue": 4406,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/heroku-to-aws/scripts/test_validate_heroku_migration_report_currency.py",
+      "original_blob": "baa6b8d76cefcd1349677e2eed22e83d411ae2dc",
+      "canonical_identical_path": "plugins/aws-startup-advisor/skills/heroku-to-aws/scripts/test_validate_heroku_migration_report_currency.py",
+      "slice": "heroku",
+      "issue": 4406,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/heroku-to-aws/scripts/validate-heroku-migration-report.py",
+      "original_blob": "1e07fefa256662445cb5e71e2c2e1d74bb55a073",
+      "canonical_identical_path": "plugins/aws-startup-advisor/skills/heroku-to-aws/scripts/validate-heroku-migration-report.py",
+      "slice": "heroku",
+      "issue": 4406,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/llm-to-bedrock/references/vendored/telemetry/cli.py",
+      "original_blob": "dc3cb33e7967b5cb3e9828cf7ff4d89d0eccfe45",
+      "canonical_identical_path": "plugins/aws-startup-advisor/scripts/telemetry/cli.py",
+      "slice": "telemetry",
+      "issue": 4398,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/llm-to-bedrock/references/vendored/telemetry/consent/accept.py",
+      "original_blob": "26bf180ab00e00856a1e2567afc35ddcf67b9a33",
+      "canonical_identical_path": "plugins/aws-startup-advisor/scripts/telemetry/consent/accept.py",
+      "slice": "telemetry",
+      "issue": 4398,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/llm-to-bedrock/references/vendored/telemetry/consent/cli.py",
+      "original_blob": "36808b5643a0f45b3ac96e3b138229eb8580e5bb",
+      "canonical_identical_path": "plugins/aws-startup-advisor/scripts/telemetry/consent/cli.py",
+      "slice": "telemetry",
+      "issue": 4398,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/llm-to-bedrock/references/vendored/telemetry/consent/notice.py",
+      "original_blob": "4f40de54b8e446687b8ac107460ecef4f8bd68ce",
+      "canonical_identical_path": "plugins/aws-startup-advisor/scripts/telemetry/consent/notice.py",
+      "slice": "telemetry",
+      "issue": 4398,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/llm-to-bedrock/references/vendored/telemetry/consent/opt_out.py",
+      "original_blob": "49e29b1d3609af721263b53afca3940fb78ddad8",
+      "canonical_identical_path": "plugins/aws-startup-advisor/scripts/telemetry/consent/opt_out.py",
+      "slice": "telemetry",
+      "issue": 4398,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/llm-to-bedrock/references/vendored/telemetry/consent/record.py",
+      "original_blob": "f4a7ce8b084d0cee87d686203da849cbbbef1892",
+      "canonical_identical_path": "plugins/aws-startup-advisor/scripts/telemetry/consent/record.py",
+      "slice": "telemetry",
+      "issue": 4398,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/llm-to-bedrock/references/vendored/telemetry/metric_emission/client.py",
+      "original_blob": "94cbff5d831483496791efe4eeaccc9c122c9c64",
+      "canonical_identical_path": "plugins/aws-startup-advisor/scripts/telemetry/metric_emission/client.py",
+      "slice": "telemetry",
+      "issue": 4398,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/llm-to-bedrock/references/vendored/telemetry/metric_emission/migration.py",
+      "original_blob": "95c06426af5eed0af61678b028ddaa84652d339a",
+      "canonical_identical_path": "plugins/aws-startup-advisor/scripts/telemetry/metric_emission/migration.py",
+      "slice": "telemetry",
+      "issue": 4398,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/llm-to-bedrock/references/vendored/telemetry/metric_emission/migration_attributes.py",
+      "original_blob": "ff7ef7a08cba414d47c7db321b63da08b010682c",
+      "canonical_identical_path": "plugins/aws-startup-advisor/scripts/telemetry/metric_emission/migration_attributes.py",
+      "slice": "telemetry",
+      "issue": 4398,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/llm-to-bedrock/scripts/bedrock_pricing.py",
+      "original_blob": "87e005dae97be4c142345458984d748d153b6018",
+      "canonical_identical_path": "plugins/aws-startup-advisor/skills/llm-to-bedrock/scripts/bedrock_pricing.py",
+      "slice": "bedrock-resolve",
+      "issue": 4403,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/llm-to-bedrock/scripts/iam_policy.py",
+      "original_blob": "5b56d2fd246f804ab436517b2ba90b04489b23ff",
+      "canonical_identical_path": "plugins/aws-startup-advisor/skills/llm-to-bedrock/scripts/iam_policy.py",
+      "slice": "bedrock-probes",
+      "issue": 4404,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/llm-to-bedrock/scripts/image_input.py",
+      "original_blob": "e8ec6567e24a71050829d8ca811a56a9d69718d8",
+      "canonical_identical_path": "plugins/aws-startup-advisor/skills/llm-to-bedrock/scripts/image_input.py",
+      "slice": "bedrock-resolve",
+      "issue": 4403,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/llm-to-bedrock/scripts/model_identity.py",
+      "original_blob": "f66c270e2a2cc227147bc2a7f2710f109699906e",
+      "canonical_identical_path": "plugins/aws-startup-advisor/skills/llm-to-bedrock/scripts/model_identity.py",
+      "slice": "bedrock-resolve",
+      "issue": 4403,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/llm-to-bedrock/scripts/preflight_bedrock.py",
+      "original_blob": "2a4c031bb0b862ac22e615b913dbc2554b711050",
+      "canonical_identical_path": "plugins/aws-startup-advisor/skills/llm-to-bedrock/scripts/preflight_bedrock.py",
+      "slice": "bedrock-probes",
+      "issue": 4404,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/llm-to-bedrock/scripts/render_report.py",
+      "original_blob": "8edc02a4406fe7760e8eb203b91aceaed57e7a91",
+      "canonical_identical_path": "plugins/aws-startup-advisor/skills/llm-to-bedrock/scripts/render_report.py",
+      "slice": "bedrock-report",
+      "issue": 4405,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/llm-to-bedrock/scripts/resolve_source_model.py",
+      "original_blob": "a032681ca0fde6bbd0cb7ac50c145a76ebc09a7e",
+      "canonical_identical_path": "plugins/aws-startup-advisor/skills/llm-to-bedrock/scripts/resolve_source_model.py",
+      "slice": "bedrock-resolve",
+      "issue": 4403,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/llm-to-bedrock/scripts/source_baseline.py",
+      "original_blob": "78c4f9f733f9e9c390c78507b3457a08b2272a6f",
+      "canonical_identical_path": "plugins/aws-startup-advisor/skills/llm-to-bedrock/scripts/source_baseline.py",
+      "slice": "bedrock-probes",
+      "issue": 4404,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/llm-to-bedrock/scripts/test_astra_execution_contract.py",
+      "original_blob": "244677d1b3af889d35260d5fd3e1077c5fa8b341",
+      "canonical_identical_path": "plugins/aws-startup-advisor/skills/llm-to-bedrock/scripts/test_astra_execution_contract.py",
+      "slice": "bedrock-report",
+      "issue": 4405,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/llm-to-bedrock/scripts/test_bedrock_pricing.py",
+      "original_blob": "b03bcfefac56332f0224851e98f8789c3cefaf2a",
+      "canonical_identical_path": "plugins/aws-startup-advisor/skills/llm-to-bedrock/scripts/test_bedrock_pricing.py",
+      "slice": "bedrock-resolve",
+      "issue": 4403,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/llm-to-bedrock/scripts/test_delta_reference_schema.py",
+      "original_blob": "1d5b4b58e474b659e5dc2cc0b82f12a17da38a04",
+      "canonical_identical_path": "plugins/aws-startup-advisor/skills/llm-to-bedrock/scripts/test_delta_reference_schema.py",
+      "slice": "bedrock-report",
+      "issue": 4405,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/llm-to-bedrock/scripts/test_iam_policy.py",
+      "original_blob": "7544ad18c48c898b9e9c8e7a9951e4ca9416f547",
+      "canonical_identical_path": "plugins/aws-startup-advisor/skills/llm-to-bedrock/scripts/test_iam_policy.py",
+      "slice": "bedrock-probes",
+      "issue": 4404,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/llm-to-bedrock/scripts/test_image_input.py",
+      "original_blob": "127077ae03e04701e9c3cbfbc006280bc3663e73",
+      "canonical_identical_path": "plugins/aws-startup-advisor/skills/llm-to-bedrock/scripts/test_image_input.py",
+      "slice": "bedrock-resolve",
+      "issue": 4403,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/llm-to-bedrock/scripts/test_model_identity.py",
+      "original_blob": "246fe0a26a3c99aa412753c0163985654f411668",
+      "canonical_identical_path": "plugins/aws-startup-advisor/skills/llm-to-bedrock/scripts/test_model_identity.py",
+      "slice": "bedrock-resolve",
+      "issue": 4403,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/llm-to-bedrock/scripts/test_preflight_bedrock.py",
+      "original_blob": "71f526976cd05491b04795d3e675c155c2d63666",
+      "canonical_identical_path": "plugins/aws-startup-advisor/skills/llm-to-bedrock/scripts/test_preflight_bedrock.py",
+      "slice": "bedrock-probes",
+      "issue": 4404,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/llm-to-bedrock/scripts/test_render_report.py",
+      "original_blob": "6635a11a2ab9066ae0fbad0a00fd2c62dabd70f1",
+      "canonical_identical_path": "plugins/aws-startup-advisor/skills/llm-to-bedrock/scripts/test_render_report.py",
+      "slice": "bedrock-report",
+      "issue": 4405,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/llm-to-bedrock/scripts/test_resolve_source_model.py",
+      "original_blob": "8c6e0c4970293a02c7a04e6c59efbca2b75c207e",
+      "canonical_identical_path": "plugins/aws-startup-advisor/skills/llm-to-bedrock/scripts/test_resolve_source_model.py",
+      "slice": "bedrock-resolve",
+      "issue": 4403,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/llm-to-bedrock/scripts/test_source_baseline.py",
+      "original_blob": "03662ee51553524a7a1d5d383c91cb52b20bb931",
+      "canonical_identical_path": "plugins/aws-startup-advisor/skills/llm-to-bedrock/scripts/test_source_baseline.py",
+      "slice": "bedrock-probes",
+      "issue": 4404,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/llm-to-bedrock/scripts/test_validate_result.py",
+      "original_blob": "1929bb6267e8b6ac57d9874810a2b2fcfba47c88",
+      "canonical_identical_path": "plugins/aws-startup-advisor/skills/llm-to-bedrock/scripts/test_validate_result.py",
+      "slice": "bedrock-report",
+      "issue": 4405,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/llm-to-bedrock/scripts/validate_result.py",
+      "original_blob": "0642d234b5bd9fee1c2dd0d6d6e479b765530329",
+      "canonical_identical_path": "plugins/aws-startup-advisor/skills/llm-to-bedrock/scripts/validate_result.py",
+      "slice": "bedrock-report",
+      "issue": 4405,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/shared/telemetry/cli.py",
+      "original_blob": "dc3cb33e7967b5cb3e9828cf7ff4d89d0eccfe45",
+      "canonical_identical_path": "plugins/aws-startup-advisor/scripts/telemetry/cli.py",
+      "slice": "telemetry",
+      "issue": 4398,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/shared/telemetry/consent/accept.py",
+      "original_blob": "26bf180ab00e00856a1e2567afc35ddcf67b9a33",
+      "canonical_identical_path": "plugins/aws-startup-advisor/scripts/telemetry/consent/accept.py",
+      "slice": "telemetry",
+      "issue": 4398,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/shared/telemetry/consent/cli.py",
+      "original_blob": "36808b5643a0f45b3ac96e3b138229eb8580e5bb",
+      "canonical_identical_path": "plugins/aws-startup-advisor/scripts/telemetry/consent/cli.py",
+      "slice": "telemetry",
+      "issue": 4398,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/shared/telemetry/consent/notice.py",
+      "original_blob": "4f40de54b8e446687b8ac107460ecef4f8bd68ce",
+      "canonical_identical_path": "plugins/aws-startup-advisor/scripts/telemetry/consent/notice.py",
+      "slice": "telemetry",
+      "issue": 4398,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/shared/telemetry/consent/opt_out.py",
+      "original_blob": "49e29b1d3609af721263b53afca3940fb78ddad8",
+      "canonical_identical_path": "plugins/aws-startup-advisor/scripts/telemetry/consent/opt_out.py",
+      "slice": "telemetry",
+      "issue": 4398,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/shared/telemetry/consent/record.py",
+      "original_blob": "f4a7ce8b084d0cee87d686203da849cbbbef1892",
+      "canonical_identical_path": "plugins/aws-startup-advisor/scripts/telemetry/consent/record.py",
+      "slice": "telemetry",
+      "issue": 4398,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/shared/telemetry/metric_emission/client.py",
+      "original_blob": "94cbff5d831483496791efe4eeaccc9c122c9c64",
+      "canonical_identical_path": "plugins/aws-startup-advisor/scripts/telemetry/metric_emission/client.py",
+      "slice": "telemetry",
+      "issue": 4398,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/shared/telemetry/metric_emission/migration.py",
+      "original_blob": "95c06426af5eed0af61678b028ddaa84652d339a",
+      "canonical_identical_path": "plugins/aws-startup-advisor/scripts/telemetry/metric_emission/migration.py",
+      "slice": "telemetry",
+      "issue": 4398,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/shared/telemetry/metric_emission/migration_attributes.py",
+      "original_blob": "ff7ef7a08cba414d47c7db321b63da08b010682c",
+      "canonical_identical_path": "plugins/aws-startup-advisor/scripts/telemetry/metric_emission/migration_attributes.py",
+      "slice": "telemetry",
+      "issue": 4398,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/tf-best-practices/scripts/test_validate_terraform_policy.py",
+      "original_blob": "c89c7ba1076bd0e8804ab1ce1666af081fb00651",
+      "canonical_identical_path": "plugins/aws-startup-advisor/skills/tf-best-practices/scripts/test_validate_terraform_policy.py",
+      "slice": "startup-validators",
+      "issue": 4399,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/skills/tf-best-practices/scripts/validate-terraform-policy.py",
+      "original_blob": "0c6ed3818daf450eba6aab1b245da0f81da20c95",
+      "canonical_identical_path": "plugins/aws-startup-advisor/skills/tf-best-practices/scripts/validate-terraform-policy.py",
+      "slice": "startup-validators",
+      "issue": 4399,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/tests/test_ai_capability_catalog_contracts.py",
+      "original_blob": "a4328afdc8b116d1cbe27e1defcfb34f8b9b2c32",
+      "canonical_identical_path": "plugins/aws-startup-advisor/tests/test_ai_capability_catalog_contracts.py",
+      "slice": "startup-contracts",
+      "issue": 4409,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/tests/test_ai_migration_matrix_contracts.py",
+      "original_blob": "7843c6818f08f2c9015e02422647c3186fac0490",
+      "canonical_identical_path": "plugins/aws-startup-advisor/tests/test_ai_migration_matrix_contracts.py",
+      "slice": "startup-contracts",
+      "issue": 4409,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/tests/test_ai_only_option_c_framework_route.py",
+      "original_blob": "67e767ca1797bed7f9d326eca159ab6691034547",
+      "canonical_identical_path": "plugins/aws-startup-advisor/tests/test_ai_only_option_c_framework_route.py",
+      "slice": "startup-contracts",
+      "issue": 4409,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/tests/test_ai_workload_profile_contracts.py",
+      "original_blob": "18792054c805ef6c0b987c0d58ede28942297a67",
+      "canonical_identical_path": "plugins/aws-startup-advisor/tests/test_ai_workload_profile_contracts.py",
+      "slice": "startup-contracts",
+      "issue": 4409,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/tests/test_aws_design_ai_contracts.py",
+      "original_blob": "2a81a4b3e07687fbd917622a579386dbca5bc83c",
+      "canonical_identical_path": "plugins/aws-startup-advisor/tests/test_aws_design_ai_contracts.py",
+      "slice": "startup-contracts",
+      "issue": 4409,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/tests/test_azure_clarify_fast_path_contracts.py",
+      "original_blob": "8d4bba5b220aa0cbb2e7c9793b764de849f15acd",
+      "canonical_identical_path": "plugins/aws-startup-advisor/tests/test_azure_clarify_fast_path_contracts.py",
+      "slice": "startup-contracts",
+      "issue": 4409,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/tests/test_azure_discover_ordering.py",
+      "original_blob": "724fc80f557bc99d1a4eeba719f4fd88e4504f04",
+      "canonical_identical_path": "plugins/aws-startup-advisor/tests/test_azure_discover_ordering.py",
+      "slice": "startup-contracts",
+      "issue": 4409,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/tests/test_azure_discovery_source_guidance.py",
+      "original_blob": "1dae4316fd6d6aaaf9f02eb3ad7f0888508c9033",
+      "canonical_identical_path": "plugins/aws-startup-advisor/tests/test_azure_discovery_source_guidance.py",
+      "slice": "startup-contracts",
+      "issue": 4409,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/tests/test_azure_rdfa_discover_contracts.py",
+      "original_blob": "73860424d1d60c0e008e744c9c75a72fad1d5be1",
+      "canonical_identical_path": "plugins/aws-startup-advisor/tests/test_azure_rdfa_discover_contracts.py",
+      "slice": "startup-contracts",
+      "issue": 4409,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/tests/test_consent_disclosure_audit.py",
+      "original_blob": "5ecbb3c4ea67689166ec822e3da59a52b66c1809",
+      "canonical_identical_path": "plugins/aws-startup-advisor/tests/test_consent_disclosure_audit.py",
+      "slice": "startup-contracts",
+      "issue": 4409,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/tests/test_cost_completeness.py",
+      "original_blob": "6850c20c50f9ddef4fed2d9f1400dcfaf5328bd4",
+      "canonical_identical_path": "plugins/aws-startup-advisor/tests/test_cost_completeness.py",
+      "slice": "startup-contracts",
+      "issue": 4409,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/tests/test_credential_lifecycle.py",
+      "original_blob": "f63524dc9321b35471d5c01246ed92d2d38f644e",
+      "canonical_identical_path": "plugins/aws-startup-advisor/tests/test_credential_lifecycle.py",
+      "slice": "startup-contracts",
+      "issue": 4409,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/tests/test_decision_gate_wiring.py",
+      "original_blob": "2f5c57625019cf3d2f7ff59edb7ede33598e9473",
+      "canonical_identical_path": "plugins/aws-startup-advisor/tests/test_decision_gate_wiring.py",
+      "slice": "startup-contracts",
+      "issue": 4409,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/tests/test_emit_plan_json.py",
+      "original_blob": "e9d7222e284401101a6974964fe7e152fcbe86aa",
+      "canonical_identical_path": "plugins/aws-startup-advisor/tests/test_emit_plan_json.py",
+      "slice": "startup-contracts",
+      "issue": 4409,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/tests/test_estimate_assemble_stale_artifacts.py",
+      "original_blob": "430a6add8b7e0771e3844682ce65c6ae38671344",
+      "canonical_identical_path": "plugins/aws-startup-advisor/tests/test_estimate_assemble_stale_artifacts.py",
+      "slice": "startup-contracts",
+      "issue": 4409,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/tests/test_estimate_clarify_volume_resolution.py",
+      "original_blob": "9babc7458b30621137123fbdeede00e426a8af69",
+      "canonical_identical_path": "plugins/aws-startup-advisor/tests/test_estimate_clarify_volume_resolution.py",
+      "slice": "startup-contracts",
+      "issue": 4409,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/tests/test_estimate_option_a_single_close.py",
+      "original_blob": "c01d1ad593d5116283ae394f3063083bb411da3b",
+      "canonical_identical_path": "plugins/aws-startup-advisor/tests/test_estimate_option_a_single_close.py",
+      "slice": "startup-contracts",
+      "issue": 4409,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/tests/test_estimation_ai_contracts.py",
+      "original_blob": "1585f992dc9300083b4d5d3e88bdd711475f0645",
+      "canonical_identical_path": "plugins/aws-startup-advisor/tests/test_estimation_ai_contracts.py",
+      "slice": "startup-contracts",
+      "issue": 4409,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/tests/test_gcp_design_guide_selection.py",
+      "original_blob": "30fa775dba898d7bed52f933cad2835f2d58a922",
+      "canonical_identical_path": "plugins/aws-startup-advisor/tests/test_gcp_design_guide_selection.py",
+      "slice": "startup-contracts",
+      "issue": 4409,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/tests/test_gemini_guide_body_parity.py",
+      "original_blob": "1cfa3be981038929c6cffee21f921a3cd0af06ab",
+      "canonical_identical_path": "plugins/aws-startup-advisor/tests/test_gemini_guide_body_parity.py",
+      "slice": "startup-contracts",
+      "issue": 4409,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/tests/test_generate_mantle_dispatch.py",
+      "original_blob": "92722d8fdb15bf5b4ad78160f1ecf171b0256bd4",
+      "canonical_identical_path": "plugins/aws-startup-advisor/tests/test_generate_mantle_dispatch.py",
+      "slice": "startup-contracts",
+      "issue": 4409,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/tests/test_generation_ai_contracts.py",
+      "original_blob": "175f53168e4a532c58ea9b129731a59456c9fd00",
+      "canonical_identical_path": "plugins/aws-startup-advisor/tests/test_generation_ai_contracts.py",
+      "slice": "startup-contracts",
+      "issue": 4409,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/tests/test_gpt6_review_round2.py",
+      "original_blob": "7af115742d773905a25b9dc56e18e078ed498134",
+      "canonical_identical_path": "plugins/aws-startup-advisor/tests/test_gpt6_review_round2.py",
+      "slice": "startup-contracts",
+      "issue": 4409,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/tests/test_gpt6_review_round5.py",
+      "original_blob": "c73b08235e48d70aa7c2868747b02c960c9658cc",
+      "canonical_identical_path": "plugins/aws-startup-advisor/tests/test_gpt6_review_round5.py",
+      "slice": "startup-contracts",
+      "issue": 4409,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/tests/test_gpt6_round4_findings.py",
+      "original_blob": "716ddda3ce2e4ca370c2735e67adc008c0b878cf",
+      "canonical_identical_path": "plugins/aws-startup-advisor/tests/test_gpt6_round4_findings.py",
+      "slice": "startup-contracts",
+      "issue": 4409,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/tests/test_gpt6_source_breakpoint.py",
+      "original_blob": "92509a5d94d6ab91b7673f9efc8362d4e7a67dca",
+      "canonical_identical_path": "plugins/aws-startup-advisor/tests/test_gpt6_source_breakpoint.py",
+      "slice": "startup-contracts",
+      "issue": 4409,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/tests/test_heroku_discover_addon_identity.py",
+      "original_blob": "a01a3bd5d3d18abe3dee7a9db363fd1e0b1125f1",
+      "canonical_identical_path": "plugins/aws-startup-advisor/tests/test_heroku_discover_addon_identity.py",
+      "slice": "startup-contracts",
+      "issue": 4409,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/tests/test_heroku_estimate_deferred_cost_comparison.py",
+      "original_blob": "32c1ccc767e372fcfd7f375f5e73ffc5d3148cd1",
+      "canonical_identical_path": "plugins/aws-startup-advisor/tests/test_heroku_estimate_deferred_cost_comparison.py",
+      "slice": "startup-contracts",
+      "issue": 4409,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/tests/test_heroku_postgres_advanced_pricing.py",
+      "original_blob": "c7be85a7965119222d433f66d977953d999f83c6",
+      "canonical_identical_path": "plugins/aws-startup-advisor/tests/test_heroku_postgres_advanced_pricing.py",
+      "slice": "startup-contracts",
+      "issue": 4409,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/tests/test_llm_to_bedrock_run_state.py",
+      "original_blob": "aab7c41ed14e9db92113e1c79211d460b8d533a9",
+      "canonical_identical_path": "plugins/aws-startup-advisor/tests/test_llm_to_bedrock_run_state.py",
+      "slice": "startup-contracts",
+      "issue": 4409,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/tests/test_model_id_lint.py",
+      "original_blob": "b17a79c4aaef219be970614071d3b0a60ee9a4e3",
+      "canonical_identical_path": "plugins/aws-startup-advisor/tests/test_model_id_lint.py",
+      "slice": "startup-contracts",
+      "issue": 4409,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/tests/test_openrouter_byok_detection_fixes.py",
+      "original_blob": "138fb3281dfb469cc509367245fecfcb498f2d8c",
+      "canonical_identical_path": "plugins/aws-startup-advisor/tests/test_openrouter_byok_detection_fixes.py",
+      "slice": "startup-contracts",
+      "issue": 4409,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/tests/test_report_generator_capture_warnings_gate.py",
+      "original_blob": "5b95794d18a53d4251f874aeee600634958405a3",
+      "canonical_identical_path": "plugins/aws-startup-advisor/tests/test_report_generator_capture_warnings_gate.py",
+      "slice": "startup-contracts",
+      "issue": 4409,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/tests/test_report_generator_cost_pricing.py",
+      "original_blob": "1b3f813e9197e8dc70ce9dcccb056c7a9ae00327",
+      "canonical_identical_path": "plugins/aws-startup-advisor/tests/test_report_generator_cost_pricing.py",
+      "slice": "startup-contracts",
+      "issue": 4409,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/tests/test_resume_and_sentinel_consistency.py",
+      "original_blob": "70c0620569370b9d95c1bbe4f8e4df694c7155b8",
+      "canonical_identical_path": "plugins/aws-startup-advisor/tests/test_resume_and_sentinel_consistency.py",
+      "slice": "startup-contracts",
+      "issue": 4409,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/tests/test_usage_api_request_params.py",
+      "original_blob": "163cbf7aed8d861b1e6ffd53dbbafb4e9dd6a079",
+      "canonical_identical_path": "plugins/aws-startup-advisor/tests/test_usage_api_request_params.py",
+      "slice": "startup-contracts",
+      "issue": 4409,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/tests/test_validate_artifacts.py",
+      "original_blob": "9ebb18a6240c6d687d3dbfff07f9b594a4422249",
+      "canonical_identical_path": "plugins/aws-startup-advisor/tests/test_validate_artifacts.py",
+      "slice": "startup-contracts",
+      "issue": 4409,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/tools/check-skill-refs.py",
+      "original_blob": "656c8ab16cce9181ded12b8fd4c00f2a2c3e78ae",
+      "canonical_identical_path": "plugins/aws-startup-advisor/tools/check-skill-refs.py",
+      "slice": "startup-tools",
+      "issue": 4407,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/tools/model-staleness.py",
+      "original_blob": "45fca39be3733ccf0e79acea1b0951609002fcc1",
+      "canonical_identical_path": "plugins/aws-startup-advisor/tools/model-staleness.py",
+      "slice": "startup-tools",
+      "issue": 4407,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/tools/sync-vendored.py",
+      "original_blob": "2692bfc66a43779f9b09cd4afccba952b9cdf2a6",
+      "canonical_identical_path": "plugins/aws-startup-advisor/tools/sync-vendored.py",
+      "slice": "sync",
+      "issue": 4377,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/tools/test_check_skill_refs.py",
+      "original_blob": "9a16e532b661f2c7b4ad4212dc53e71d43a0594e",
+      "canonical_identical_path": "plugins/aws-startup-advisor/tools/test_check_skill_refs.py",
+      "slice": "startup-tools",
+      "issue": 4407,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "plugins/aws-startup-advisor/tools/test_sync_vendored.py",
+      "original_blob": "8c582c60b7e8904efd9f919424a6bc8442cd510f",
+      "canonical_identical_path": "plugins/aws-startup-advisor/tools/test_sync_vendored.py",
+      "slice": "sync",
+      "issue": 4377,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "skills/core-skills/amazon-bedrock/scripts/fetch_bedrock_agent.py",
+      "original_blob": "b9784956a6d9eae72c013aec4669d750b185cc9d",
+      "canonical_identical_path": "skills/core-skills/amazon-bedrock/scripts/fetch_bedrock_agent.py",
+      "slice": "bedrock-fetch",
+      "issue": 4383,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/core-skills/aws-ai-ml/references/dataset-evaluation/scripts/format_detector.py",
+      "original_blob": "b826cd21daeee78e876d598c0851dec864cda55c",
+      "canonical_identical_path": "skills/core-skills/aws-ai-ml/references/dataset-evaluation/scripts/format_detector.py",
+      "slice": "ai-data",
+      "issue": 4385,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/core-skills/aws-ai-ml/references/dataset-transformation/code_templates/transformation.py",
+      "original_blob": "0ee156ee3f554d0fddd0d83d4f02fbfcc0c7105b",
+      "canonical_identical_path": "skills/core-skills/aws-ai-ml/references/dataset-transformation/code_templates/transformation.py",
+      "slice": "ai-payloads",
+      "issue": 4386,
+      "classification": "external-service-payload",
+      "status": "pending"
+    },
+    {
+      "path": "skills/core-skills/aws-ai-ml/references/dataset-transformation/scripts/transformation_tools.py",
+      "original_blob": "522f42b0ee31c6d02aba83e8d8ab0c1071634657",
+      "canonical_identical_path": "skills/core-skills/aws-ai-ml/references/dataset-transformation/scripts/transformation_tools.py",
+      "slice": "ai-data",
+      "issue": 4385,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/core-skills/aws-ai-ml/references/endpoint-diagnostics/scripts/collect_diagnostics.py",
+      "original_blob": "974af33d50c93a53066ca626ff5f5791cd9df66e",
+      "canonical_identical_path": "skills/core-skills/aws-ai-ml/references/endpoint-diagnostics/scripts/collect_diagnostics.py",
+      "slice": "ai-models",
+      "issue": 4384,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/core-skills/aws-ai-ml/references/finetuning-technique/scripts/get_recipes.py",
+      "original_blob": "7d9775ce1dcd2bfa476063e5613964aefd7f8cd2",
+      "canonical_identical_path": "skills/core-skills/aws-ai-ml/references/finetuning-technique/scripts/get_recipes.py",
+      "slice": "ai-models",
+      "issue": 4384,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/core-skills/aws-ai-ml/references/finetuning/code_templates/dpo.py",
+      "original_blob": "15ec02f5fddd186924099e3f952f1a6291470745",
+      "canonical_identical_path": "skills/core-skills/aws-ai-ml/references/finetuning/code_templates/dpo.py",
+      "slice": "ai-payloads",
+      "issue": 4386,
+      "classification": "external-service-payload",
+      "status": "pending"
+    },
+    {
+      "path": "skills/core-skills/aws-ai-ml/references/finetuning/code_templates/rlaif_builtin.py",
+      "original_blob": "a1c0e5a43979eef144871562085c0c82c50bf0e4",
+      "canonical_identical_path": "skills/core-skills/aws-ai-ml/references/finetuning/code_templates/rlaif_builtin.py",
+      "slice": "ai-payloads",
+      "issue": 4386,
+      "classification": "external-service-payload",
+      "status": "pending"
+    },
+    {
+      "path": "skills/core-skills/aws-ai-ml/references/finetuning/code_templates/rlaif_custom_prompt.py",
+      "original_blob": "de4b1f2b8893913847188181fc31943ec3e59014",
+      "canonical_identical_path": "skills/core-skills/aws-ai-ml/references/finetuning/code_templates/rlaif_custom_prompt.py",
+      "slice": "ai-payloads",
+      "issue": 4386,
+      "classification": "external-service-payload",
+      "status": "pending"
+    },
+    {
+      "path": "skills/core-skills/aws-ai-ml/references/finetuning/code_templates/rlvr.py",
+      "original_blob": "f1faf0de94c6e8988083846e460474cbc9ab10bd",
+      "canonical_identical_path": "skills/core-skills/aws-ai-ml/references/finetuning/code_templates/rlvr.py",
+      "slice": "ai-payloads",
+      "issue": 4386,
+      "classification": "external-service-payload",
+      "status": "pending"
+    },
+    {
+      "path": "skills/core-skills/aws-ai-ml/references/finetuning/code_templates/sft.py",
+      "original_blob": "0447d5fb79934f30d2a07fe83979592d93a19d99",
+      "canonical_identical_path": "skills/core-skills/aws-ai-ml/references/finetuning/code_templates/sft.py",
+      "slice": "ai-payloads",
+      "issue": 4386,
+      "classification": "external-service-payload",
+      "status": "pending"
+    },
+    {
+      "path": "skills/core-skills/aws-ai-ml/references/finetuning/scripts/mlflow_reference.py",
+      "original_blob": "960fa719cc848c7958b222adef62ce05e52d9228",
+      "canonical_identical_path": "skills/core-skills/aws-ai-ml/references/finetuning/scripts/mlflow_reference.py",
+      "slice": "ai-payloads",
+      "issue": 4386,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/core-skills/aws-ai-ml/references/finetuning/templates/nova_rlvr_reward_function_source_template.py",
+      "original_blob": "c05b1146d30d7d28df29314ad2e4e8606bee4ac7",
+      "canonical_identical_path": "skills/core-skills/aws-ai-ml/references/finetuning/templates/nova_rlvr_reward_function_source_template.py",
+      "slice": "ai-payloads",
+      "issue": 4386,
+      "classification": "external-service-payload",
+      "status": "pending"
+    },
+    {
+      "path": "skills/core-skills/aws-ai-ml/references/finetuning/templates/rlvr_reward_function_source_template.py",
+      "original_blob": "7a6bfbd9327004271dc5fcb251630771dc4f7284",
+      "canonical_identical_path": "skills/core-skills/aws-ai-ml/references/finetuning/templates/rlvr_reward_function_source_template.py",
+      "slice": "ai-payloads",
+      "issue": 4386,
+      "classification": "external-service-payload",
+      "status": "pending"
+    },
+    {
+      "path": "skills/core-skills/aws-ai-ml/references/model-deployment/code_templates/deploy-jumpstart-sagemaker.py",
+      "original_blob": "efe037e63c3943b1c3a8b6e3f6538e4d712a34f6",
+      "canonical_identical_path": "skills/core-skills/aws-ai-ml/references/model-deployment/code_templates/deploy-jumpstart-sagemaker.py",
+      "slice": "ai-payloads",
+      "issue": 4386,
+      "classification": "external-service-payload",
+      "status": "pending"
+    },
+    {
+      "path": "skills/core-skills/aws-ai-ml/references/model-deployment/code_templates/deploy-nova-bedrock.py",
+      "original_blob": "38d28c3e17e98316154fb41e98c3ec138be08ad4",
+      "canonical_identical_path": "skills/core-skills/aws-ai-ml/references/model-deployment/code_templates/deploy-nova-bedrock.py",
+      "slice": "ai-payloads",
+      "issue": 4386,
+      "classification": "external-service-payload",
+      "status": "pending"
+    },
+    {
+      "path": "skills/core-skills/aws-ai-ml/references/model-deployment/code_templates/deploy-nova-sagemaker.py",
+      "original_blob": "88b605bdb65ede3e980e599fb7be774ac2255d4c",
+      "canonical_identical_path": "skills/core-skills/aws-ai-ml/references/model-deployment/code_templates/deploy-nova-sagemaker.py",
+      "slice": "ai-payloads",
+      "issue": 4386,
+      "classification": "external-service-payload",
+      "status": "pending"
+    },
+    {
+      "path": "skills/core-skills/aws-ai-ml/references/model-deployment/code_templates/deploy-oss-bedrock.py",
+      "original_blob": "a1d5d334ebed86e0f6efbcba144a1a7333d42fc4",
+      "canonical_identical_path": "skills/core-skills/aws-ai-ml/references/model-deployment/code_templates/deploy-oss-bedrock.py",
+      "slice": "ai-payloads",
+      "issue": 4386,
+      "classification": "external-service-payload",
+      "status": "pending"
+    },
+    {
+      "path": "skills/core-skills/aws-ai-ml/references/model-deployment/code_templates/deploy-oss-sagemaker.py",
+      "original_blob": "d71bfdae14eaf077e5764d94cac7b61e2146dfcf",
+      "canonical_identical_path": "skills/core-skills/aws-ai-ml/references/model-deployment/code_templates/deploy-oss-sagemaker.py",
+      "slice": "ai-payloads",
+      "issue": 4386,
+      "classification": "external-service-payload",
+      "status": "pending"
+    },
+    {
+      "path": "skills/core-skills/aws-ai-ml/references/model-deployment/code_templates/optimize-benchmark.py",
+      "original_blob": "623a9b4b5ac3931d433524fd98ee3086c3815b79",
+      "canonical_identical_path": "skills/core-skills/aws-ai-ml/references/model-deployment/code_templates/optimize-benchmark.py",
+      "slice": "ai-payloads",
+      "issue": 4386,
+      "classification": "external-service-payload",
+      "status": "pending"
+    },
+    {
+      "path": "skills/core-skills/aws-ai-ml/references/model-deployment/code_templates/optimize-huggingface-to-s3.py",
+      "original_blob": "1eaee08f68aacbd923f84d2a2dd826d82fdbc793",
+      "canonical_identical_path": "skills/core-skills/aws-ai-ml/references/model-deployment/code_templates/optimize-huggingface-to-s3.py",
+      "slice": "ai-payloads",
+      "issue": 4386,
+      "classification": "external-service-payload",
+      "status": "pending"
+    },
+    {
+      "path": "skills/core-skills/aws-ai-ml/references/model-deployment/code_templates/optimize-recommendation.py",
+      "original_blob": "8bacc6205844ed61017febe3e4def5852d046590",
+      "canonical_identical_path": "skills/core-skills/aws-ai-ml/references/model-deployment/code_templates/optimize-recommendation.py",
+      "slice": "ai-payloads",
+      "issue": 4386,
+      "classification": "external-service-payload",
+      "status": "pending"
+    },
+    {
+      "path": "skills/core-skills/aws-ai-ml/references/model-evaluation/code_templates/custom_scorer_evaluator.py",
+      "original_blob": "4513b0df5b16d8616969482d50090197e4f7d2ff",
+      "canonical_identical_path": "skills/core-skills/aws-ai-ml/references/model-evaluation/code_templates/custom_scorer_evaluator.py",
+      "slice": "ai-payloads",
+      "issue": 4386,
+      "classification": "external-service-payload",
+      "status": "pending"
+    },
+    {
+      "path": "skills/core-skills/aws-ai-ml/references/model-evaluation/code_templates/llmaaj_evaluator.py",
+      "original_blob": "ba8e285b1438dcab6bb55b85b3da87ea843bdf0a",
+      "canonical_identical_path": "skills/core-skills/aws-ai-ml/references/model-evaluation/code_templates/llmaaj_evaluator.py",
+      "slice": "ai-payloads",
+      "issue": 4386,
+      "classification": "external-service-payload",
+      "status": "pending"
+    },
+    {
+      "path": "skills/core-skills/aws-ai-ml/references/model-evaluation/scripts/nova_reward_function_source_template.py",
+      "original_blob": "1f3ad5f36431083f33f6d5480537afe8b23fe7f3",
+      "canonical_identical_path": "skills/core-skills/aws-ai-ml/references/model-evaluation/scripts/nova_reward_function_source_template.py",
+      "slice": "ai-payloads",
+      "issue": 4386,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/core-skills/aws-ai-ml/references/model-evaluation/scripts/reward_function_source_template.py",
+      "original_blob": "cb43ae9e329c02b37e823c5438b30bee4a7bacdf",
+      "canonical_identical_path": "skills/core-skills/aws-ai-ml/references/model-evaluation/scripts/reward_function_source_template.py",
+      "slice": "ai-payloads",
+      "issue": 4386,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/core-skills/aws-ai-ml/references/model-evaluation/scripts/validate_custom_metrics.py",
+      "original_blob": "6d0807d9b471322265991051abf0f3152dbe2f99",
+      "canonical_identical_path": "skills/core-skills/aws-ai-ml/references/model-evaluation/scripts/validate_custom_metrics.py",
+      "slice": "ai-data",
+      "issue": 4385,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/core-skills/aws-ai-ml/references/model-selection/scripts/filter_deployable_models.py",
+      "original_blob": "984f29492292d27802e778b37495fa332f3c7ef5",
+      "canonical_identical_path": "skills/core-skills/aws-ai-ml/references/model-selection/scripts/filter_deployable_models.py",
+      "slice": "ai-models",
+      "issue": 4384,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/core-skills/aws-ai-ml/references/model-selection/scripts/get_deployable_models.py",
+      "original_blob": "b8a4d317f4d0ff58ca319b799756312526f03662",
+      "canonical_identical_path": "skills/core-skills/aws-ai-ml/references/model-selection/scripts/get_deployable_models.py",
+      "slice": "ai-models",
+      "issue": 4384,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/core-skills/aws-ai-ml/references/model-selection/scripts/get_model_names.py",
+      "original_blob": "ec643fd67cd0d917fc43d59d08dcb0d98d54c58f",
+      "canonical_identical_path": "skills/core-skills/aws-ai-ml/references/model-selection/scripts/get_model_names.py",
+      "slice": "ai-models",
+      "issue": 4384,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/core-skills/aws-ai-ml/references/model-selection/scripts/search_deployable_models.py",
+      "original_blob": "91b8bac969fbc8bfffe1ec178452c4a42a7a4766",
+      "canonical_identical_path": "skills/core-skills/aws-ai-ml/references/model-selection/scripts/search_deployable_models.py",
+      "slice": "ai-models",
+      "issue": 4384,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/core-skills/aws-ai-ml/references/processing-jobs/code_templates/dataset_definition_processing.py",
+      "original_blob": "e19bf8d6e05128a7b62bc57fe6366e2063b2ad88",
+      "canonical_identical_path": "skills/core-skills/aws-ai-ml/references/processing-jobs/code_templates/dataset_definition_processing.py",
+      "slice": "ai-payloads",
+      "issue": 4386,
+      "classification": "external-service-payload",
+      "status": "pending"
+    },
+    {
+      "path": "skills/core-skills/aws-ai-ml/references/processing-jobs/code_templates/framework_processing.py",
+      "original_blob": "203d1a4456447dc2a393d35b98d5edad46d1a4f6",
+      "canonical_identical_path": "skills/core-skills/aws-ai-ml/references/processing-jobs/code_templates/framework_processing.py",
+      "slice": "ai-payloads",
+      "issue": 4386,
+      "classification": "external-service-payload",
+      "status": "pending"
+    },
+    {
+      "path": "skills/core-skills/aws-ai-ml/references/processing-jobs/code_templates/script_processing.py",
+      "original_blob": "4f72ca9c853c6022f8433eb6d5909c8dd32a7718",
+      "canonical_identical_path": "skills/core-skills/aws-ai-ml/references/processing-jobs/code_templates/script_processing.py",
+      "slice": "ai-payloads",
+      "issue": 4386,
+      "classification": "external-service-payload",
+      "status": "pending"
+    },
+    {
+      "path": "skills/core-skills/aws-ai-ml/references/processing-jobs/code_templates/spark_processing.py",
+      "original_blob": "a75a884cc3ef9fdc6a3a906ff76e287dffcdb722",
+      "canonical_identical_path": "skills/core-skills/aws-ai-ml/references/processing-jobs/code_templates/spark_processing.py",
+      "slice": "ai-payloads",
+      "issue": 4386,
+      "classification": "external-service-payload",
+      "status": "pending"
+    },
+    {
+      "path": "skills/core-skills/aws-ai-ml/references/training-jobs/code_templates/custom_training.py",
+      "original_blob": "c51d4485df392d44a879d7453467aa0b1f6194b6",
+      "canonical_identical_path": "skills/core-skills/aws-ai-ml/references/training-jobs/code_templates/custom_training.py",
+      "slice": "ai-payloads",
+      "issue": 4386,
+      "classification": "external-service-payload",
+      "status": "pending"
+    },
+    {
+      "path": "skills/core-skills/aws-ai-ml/references/training-jobs/code_templates/jumpstart_training.py",
+      "original_blob": "a3eade28eea4de2b4b4c793b6367b7da48497feb",
+      "canonical_identical_path": "skills/core-skills/aws-ai-ml/references/training-jobs/code_templates/jumpstart_training.py",
+      "slice": "ai-payloads",
+      "issue": 4386,
+      "classification": "external-service-payload",
+      "status": "pending"
+    },
+    {
+      "path": "skills/core-skills/aws-ai-ml/references/training-jobs/code_templates/recipe_training.py",
+      "original_blob": "b9090e84424729f59f8797c652236e838314817c",
+      "canonical_identical_path": "skills/core-skills/aws-ai-ml/references/training-jobs/code_templates/recipe_training.py",
+      "slice": "ai-payloads",
+      "issue": 4386,
+      "classification": "external-service-payload",
+      "status": "pending"
+    },
+    {
+      "path": "skills/core-skills/aws-observability/scripts/cloudwatch-omni/capture_dataset_from_traces.py",
+      "original_blob": "742755ebba565be4e3289f8d38eada1c12171b85",
+      "canonical_identical_path": "skills/core-skills/aws-observability/scripts/cloudwatch-omni/capture_dataset_from_traces.py",
+      "slice": "cw-api",
+      "issue": 4381,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/core-skills/aws-observability/scripts/cloudwatch-omni/evaluate_traces.py",
+      "original_blob": "8562773e694d4d9fbf89ed95cbfe3830782aabd5",
+      "canonical_identical_path": "skills/core-skills/aws-observability/scripts/cloudwatch-omni/evaluate_traces.py",
+      "slice": "cw-api",
+      "issue": 4381,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/core-skills/aws-observability/scripts/cloudwatch-omni/test_evaluate_traces.py",
+      "original_blob": "e0e6d15c83a806a45a97971b7d459488a61b6a3d",
+      "canonical_identical_path": "skills/core-skills/aws-observability/scripts/cloudwatch-omni/test_evaluate_traces.py",
+      "slice": "cw-api",
+      "issue": 4381,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "skills/core-skills/aws-observability/scripts/cloudwatch/di_app_signals_client.py",
+      "original_blob": "761733603bb73770bb95775bb45416d90d367616",
+      "canonical_identical_path": "skills/core-skills/aws-observability/scripts/cloudwatch/di_app_signals_client.py",
+      "slice": "cw-api",
+      "issue": 4381,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/core-skills/aws-observability/scripts/cloudwatch/di_capture.py",
+      "original_blob": "003fbf16be2db9bff0b496aebbcffa8bbb8ed9f6",
+      "canonical_identical_path": "skills/core-skills/aws-observability/scripts/cloudwatch/di_capture.py",
+      "slice": "cw-domain",
+      "issue": 4380,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/core-skills/aws-observability/scripts/cloudwatch/di_constants.py",
+      "original_blob": "b90eb2ce926c29089f016fd360bf5f6133383875",
+      "canonical_identical_path": "skills/core-skills/aws-observability/scripts/cloudwatch/di_constants.py",
+      "slice": "cw-domain",
+      "issue": 4380,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/core-skills/aws-observability/scripts/cloudwatch/di_crud_rendering.py",
+      "original_blob": "ce2970a12f9ebb1378e2937abec943a56a58330b",
+      "canonical_identical_path": "skills/core-skills/aws-observability/scripts/cloudwatch/di_crud_rendering.py",
+      "slice": "cw-domain",
+      "issue": 4380,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/core-skills/aws-observability/scripts/cloudwatch/di_crud_tools.py",
+      "original_blob": "2255e4fb13b682a651fe27b8c17528c8e3925448",
+      "canonical_identical_path": "skills/core-skills/aws-observability/scripts/cloudwatch/di_crud_tools.py",
+      "slice": "cw-api",
+      "issue": 4381,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/core-skills/aws-observability/scripts/cloudwatch/di_error_translation.py",
+      "original_blob": "1b43cd5567c374b8077e094370fb8a289a9119c4",
+      "canonical_identical_path": "skills/core-skills/aws-observability/scripts/cloudwatch/di_error_translation.py",
+      "slice": "cw-domain",
+      "issue": 4380,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/core-skills/aws-observability/scripts/cloudwatch/di_formatting.py",
+      "original_blob": "861ffc00c748ba0336151a7bb154da795f7eb31c",
+      "canonical_identical_path": "skills/core-skills/aws-observability/scripts/cloudwatch/di_formatting.py",
+      "slice": "cw-domain",
+      "issue": 4380,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/core-skills/aws-observability/scripts/cloudwatch/di_gateway.py",
+      "original_blob": "acf0692ca62c4faea851785e474a76b4165a6c9e",
+      "canonical_identical_path": "skills/core-skills/aws-observability/scripts/cloudwatch/di_gateway.py",
+      "slice": "cw-api",
+      "issue": 4381,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/core-skills/aws-observability/scripts/cloudwatch/di_instrumentation.py",
+      "original_blob": "cc650f1661e869d22c26f59c7f16f3b42d7230b6",
+      "canonical_identical_path": "skills/core-skills/aws-observability/scripts/cloudwatch/di_instrumentation.py",
+      "slice": "cw-api",
+      "issue": 4381,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/core-skills/aws-observability/scripts/cloudwatch/di_location.py",
+      "original_blob": "0c8183da5cf3a6e2df94c105f20002069f23325f",
+      "canonical_identical_path": "skills/core-skills/aws-observability/scripts/cloudwatch/di_location.py",
+      "slice": "cw-domain",
+      "issue": 4380,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/core-skills/aws-observability/scripts/cloudwatch/di_logs_client.py",
+      "original_blob": "64b23ca84894d5e7a7d9fbf123c889fc199c653b",
+      "canonical_identical_path": "skills/core-skills/aws-observability/scripts/cloudwatch/di_logs_client.py",
+      "slice": "cw-api",
+      "issue": 4381,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/core-skills/aws-observability/scripts/cloudwatch/di_region.py",
+      "original_blob": "e8eeef88bc850d5c4aef0b1da50e3bd974eb0960",
+      "canonical_identical_path": "skills/core-skills/aws-observability/scripts/cloudwatch/di_region.py",
+      "slice": "cw-domain",
+      "issue": 4380,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/core-skills/aws-observability/scripts/cloudwatch/di_result.py",
+      "original_blob": "e98668ff75c4a1b9e0174e38b152a7ef182a792c",
+      "canonical_identical_path": "skills/core-skills/aws-observability/scripts/cloudwatch/di_result.py",
+      "slice": "cw-domain",
+      "issue": 4380,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/core-skills/aws-observability/scripts/cloudwatch/di_session.py",
+      "original_blob": "bc1af469f36e8fa854bc36845ec78f324996670b",
+      "canonical_identical_path": "skills/core-skills/aws-observability/scripts/cloudwatch/di_session.py",
+      "slice": "cw-api",
+      "issue": 4381,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/core-skills/aws-observability/scripts/cloudwatch/di_snapshot_parsing.py",
+      "original_blob": "bd20bd5052b86ddc97d90a6834e1d7a40a85e100",
+      "canonical_identical_path": "skills/core-skills/aws-observability/scripts/cloudwatch/di_snapshot_parsing.py",
+      "slice": "cw-domain",
+      "issue": 4380,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/core-skills/aws-observability/scripts/cloudwatch/di_snapshot_queries.py",
+      "original_blob": "4b834039b33dd1f2d60e372d5aac410f704a97a7",
+      "canonical_identical_path": "skills/core-skills/aws-observability/scripts/cloudwatch/di_snapshot_queries.py",
+      "slice": "cw-api",
+      "issue": 4381,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/core-skills/aws-observability/scripts/cloudwatch/di_snapshot_rendering.py",
+      "original_blob": "63cbbe5e4704417b294b7189adb6ebb8fb7484a9",
+      "canonical_identical_path": "skills/core-skills/aws-observability/scripts/cloudwatch/di_snapshot_rendering.py",
+      "slice": "cw-domain",
+      "issue": 4380,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/core-skills/aws-observability/scripts/cloudwatch/di_snapshot_tools.py",
+      "original_blob": "1be6a63a43914f7d864d8993c90e10cc8f31c73d",
+      "canonical_identical_path": "skills/core-skills/aws-observability/scripts/cloudwatch/di_snapshot_tools.py",
+      "slice": "cw-api",
+      "issue": 4381,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/core-skills/aws-observability/scripts/cloudwatch/di_snapshots.py",
+      "original_blob": "77b260b7e818951aa22b4bf24e3f60b73de83f7b",
+      "canonical_identical_path": "skills/core-skills/aws-observability/scripts/cloudwatch/di_snapshots.py",
+      "slice": "cw-api",
+      "issue": 4381,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/core-skills/aws-observability/scripts/cloudwatch/di_status_assessment.py",
+      "original_blob": "6263f23e951c8c09f1d7d8fccdcf64fc111661c7",
+      "canonical_identical_path": "skills/core-skills/aws-observability/scripts/cloudwatch/di_status_assessment.py",
+      "slice": "cw-domain",
+      "issue": 4380,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/core-skills/aws-observability/scripts/cloudwatch/di_status_rendering.py",
+      "original_blob": "78eab5695866fece399436558b544a1a21c5f159",
+      "canonical_identical_path": "skills/core-skills/aws-observability/scripts/cloudwatch/di_status_rendering.py",
+      "slice": "cw-domain",
+      "issue": 4380,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/core-skills/aws-observability/scripts/cloudwatch/di_status_tools.py",
+      "original_blob": "84d7f770b95f5e6a8e97f4d5ceda8a4454b1b563",
+      "canonical_identical_path": "skills/core-skills/aws-observability/scripts/cloudwatch/di_status_tools.py",
+      "slice": "cw-api",
+      "issue": 4381,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/core-skills/aws-observability/scripts/cloudwatch/di_validation.py",
+      "original_blob": "4ad99cc2ed588ef3cb266028821a0fc362e92037",
+      "canonical_identical_path": "skills/core-skills/aws-observability/scripts/cloudwatch/di_validation.py",
+      "slice": "cw-domain",
+      "issue": 4380,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/core-skills/aws-serverless/assets/powertools-handler.py",
+      "original_blob": "9a16b028c01d7c521a729ce6fd5ada76fcec0ce0",
+      "canonical_identical_path": "skills/core-skills/aws-serverless/assets/powertools-handler.py",
+      "slice": "serverless",
+      "issue": 4397,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/core-skills/launch-with-aws/scripts/archive.py",
+      "original_blob": "0cba3f8cf5e9b0129c3ca379f0ed29485b2f1080",
+      "canonical_identical_path": "skills/core-skills/launch-with-aws/scripts/archive.py",
+      "slice": "launch",
+      "issue": 4382,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/core-skills/launch-with-aws/scripts/auth.py",
+      "original_blob": "9160961683a862dd0759fe3d00a9b4e356e170a4",
+      "canonical_identical_path": "skills/core-skills/launch-with-aws/scripts/auth.py",
+      "slice": "launch",
+      "issue": 4382,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/core-skills/launch-with-aws/scripts/auth_callback_server.py",
+      "original_blob": "9e1cf85faa13b905eab3253b87ae3589bd8282ac",
+      "canonical_identical_path": "skills/core-skills/launch-with-aws/scripts/auth_callback_server.py",
+      "slice": "launch",
+      "issue": 4382,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/core-skills/launch-with-aws/scripts/launch_api_client.py",
+      "original_blob": "a00a4367c25dde8e37ab341ad4969d86a5becdc8",
+      "canonical_identical_path": "skills/core-skills/launch-with-aws/scripts/launch_api_client.py",
+      "slice": "launch",
+      "issue": 4382,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/core-skills/launch-with-aws/scripts/launch_config.py",
+      "original_blob": "ddea280cdb7145a782519b100e3f708ad6811a40",
+      "canonical_identical_path": "skills/core-skills/launch-with-aws/scripts/launch_config.py",
+      "slice": "launch",
+      "issue": 4382,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/core-skills/launch-with-aws/scripts/launch_with_aws.py",
+      "original_blob": "eb770b0c401f08c95f48689b3d8779a60ea0b328",
+      "canonical_identical_path": "skills/core-skills/launch-with-aws/scripts/launch_with_aws.py",
+      "slice": "launch",
+      "issue": 4382,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/specialized-skills/analytics-skills/managing-amazon-msk/scripts/msk_sizing.py",
+      "original_blob": "e13d4fd853adb211a9ac6ceb9e0a088a3087073c",
+      "canonical_identical_path": "skills/specialized-skills/analytics-skills/managing-amazon-msk/scripts/msk_sizing.py",
+      "slice": "msk",
+      "issue": 4387,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/specialized-skills/analytics-skills/migrate-to-msk/scripts/compatibility.py",
+      "original_blob": "b7eb3533f98f74d21444eb826c228d001c884e08",
+      "canonical_identical_path": "skills/specialized-skills/analytics-skills/migrate-to-msk/scripts/compatibility.py",
+      "slice": "msk",
+      "issue": 4387,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/specialized-skills/analytics-skills/migrate-to-msk/scripts/simulation_load_test_config.py",
+      "original_blob": "97b11b62c7b4e5066e91da612f812e24e3f7688b",
+      "canonical_identical_path": "skills/specialized-skills/analytics-skills/migrate-to-msk/scripts/simulation_load_test_config.py",
+      "slice": "msk",
+      "issue": 4387,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "skills/specialized-skills/aws-marketplace-skills/aws-marketplace-metering/scripts/aggregator.py",
+      "original_blob": "ec28810c9fadf9b734119897c4ae929b1ec17bd3",
+      "canonical_identical_path": "skills/specialized-skills/aws-marketplace-skills/aws-marketplace-metering/scripts/aggregator.py",
+      "slice": "marketplace",
+      "issue": 4396,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/specialized-skills/aws-marketplace-skills/aws-marketplace-metering/scripts/cleanup.py",
+      "original_blob": "92fa19116a57b18c655fd4b36fd10962475bc206",
+      "canonical_identical_path": "skills/specialized-skills/aws-marketplace-skills/aws-marketplace-metering/scripts/cleanup.py",
+      "slice": "marketplace",
+      "issue": 4396,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/specialized-skills/aws-marketplace-skills/aws-marketplace-metering/scripts/deprovision_cleanup.py",
+      "original_blob": "669b3f3746a9e09c4e5c5ac7f46ec708787c799f",
+      "canonical_identical_path": "skills/specialized-skills/aws-marketplace-skills/aws-marketplace-metering/scripts/deprovision_cleanup.py",
+      "slice": "marketplace",
+      "issue": 4396,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/specialized-skills/aws-marketplace-skills/aws-marketplace-metering/scripts/discoverer.py",
+      "original_blob": "de2e97b2c3c916af09cad8260734773af550a300",
+      "canonical_identical_path": "skills/specialized-skills/aws-marketplace-skills/aws-marketplace-metering/scripts/discoverer.py",
+      "slice": "marketplace",
+      "issue": 4396,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/specialized-skills/aws-marketplace-skills/aws-marketplace-metering/scripts/expiry.py",
+      "original_blob": "2a0a3478ef1dcb6d56562690ff40fcc7f9272103",
+      "canonical_identical_path": "skills/specialized-skills/aws-marketplace-skills/aws-marketplace-metering/scripts/expiry.py",
+      "slice": "marketplace",
+      "issue": 4396,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/specialized-skills/aws-marketplace-skills/aws-marketplace-metering/scripts/metering_core.py",
+      "original_blob": "20a8edc612941c483b935ee729d85cda26e35551",
+      "canonical_identical_path": "skills/specialized-skills/aws-marketplace-skills/aws-marketplace-metering/scripts/metering_core.py",
+      "slice": "marketplace",
+      "issue": 4396,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/specialized-skills/aws-marketplace-skills/aws-marketplace-metering/scripts/query_metering.py",
+      "original_blob": "251306a6a5761f1d9ecd0402ff19b5c85a2d3f44",
+      "canonical_identical_path": "skills/specialized-skills/aws-marketplace-skills/aws-marketplace-metering/scripts/query_metering.py",
+      "slice": "marketplace",
+      "issue": 4396,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/specialized-skills/aws-marketplace-skills/aws-marketplace-metering/scripts/register.py",
+      "original_blob": "ea3a128fcdc6351c2a7e02489be4171392245f42",
+      "canonical_identical_path": "skills/specialized-skills/aws-marketplace-skills/aws-marketplace-metering/scripts/register.py",
+      "slice": "marketplace",
+      "issue": 4396,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/specialized-skills/aws-marketplace-skills/aws-marketplace-metering/scripts/submitter.py",
+      "original_blob": "49ef5fd8149eee822aeb82d06121313b76c88519",
+      "canonical_identical_path": "skills/specialized-skills/aws-marketplace-skills/aws-marketplace-metering/scripts/submitter.py",
+      "slice": "marketplace",
+      "issue": 4396,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/specialized-skills/aws-marketplace-skills/aws-marketplace-metering/scripts/subscription.py",
+      "original_blob": "9ec1f90352002d29171d7d20fa4d4876095ccfe7",
+      "canonical_identical_path": "skills/specialized-skills/aws-marketplace-skills/aws-marketplace-metering/scripts/subscription.py",
+      "slice": "marketplace",
+      "issue": 4396,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/specialized-skills/aws-marketplace-skills/aws-marketplace-metering/scripts/test_event_publisher.py",
+      "original_blob": "932748235097ca167686751aa07f2b21ec9b9623",
+      "canonical_identical_path": "skills/specialized-skills/aws-marketplace-skills/aws-marketplace-metering/scripts/test_event_publisher.py",
+      "slice": "marketplace",
+      "issue": 4396,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "skills/specialized-skills/database-skills/amazon-aurora-mysql/scripts/acu_calculator.py",
+      "original_blob": "e5c2e856c6c1044a21016c0dc19b4fd06b2c6fd0",
+      "canonical_identical_path": "skills/specialized-skills/database-skills/amazon-aurora-mysql/scripts/acu_calculator.py",
+      "slice": "aurora",
+      "issue": 4388,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/specialized-skills/database-skills/amazon-aurora-mysql/scripts/commitment_pricing_analyzer.py",
+      "original_blob": "87575bc92186181ee920ff11375b969b2c36d565",
+      "canonical_identical_path": "skills/specialized-skills/database-skills/amazon-aurora-mysql/scripts/commitment_pricing_analyzer.py",
+      "slice": "aurora",
+      "issue": 4388,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/specialized-skills/database-skills/amazon-aurora-mysql/scripts/io_optimized_analyzer.py",
+      "original_blob": "5b86f5aa379b1095bab875171de9e57bb626bb2c",
+      "canonical_identical_path": "skills/specialized-skills/database-skills/amazon-aurora-mysql/scripts/io_optimized_analyzer.py",
+      "slice": "aurora",
+      "issue": 4388,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/specialized-skills/database-skills/amazon-aurora-postgresql/scripts/acu_calculator.py",
+      "original_blob": "5bc9851743123d3f7bcc709f81ac576cd2b3c64a",
+      "canonical_identical_path": "skills/specialized-skills/database-skills/amazon-aurora-postgresql/scripts/acu_calculator.py",
+      "slice": "aurora",
+      "issue": 4388,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/specialized-skills/database-skills/amazon-aurora-postgresql/scripts/commitment_pricing_analyzer.py",
+      "original_blob": "67e1c150e91deabf9012266feabae223d2ec4dcb",
+      "canonical_identical_path": "skills/specialized-skills/database-skills/amazon-aurora-postgresql/scripts/commitment_pricing_analyzer.py",
+      "slice": "aurora",
+      "issue": 4388,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/specialized-skills/database-skills/amazon-aurora-postgresql/scripts/io_optimized_analyzer.py",
+      "original_blob": "7fd8e2707126693eb2639c93479644a49ce7941e",
+      "canonical_identical_path": "skills/specialized-skills/database-skills/amazon-aurora-postgresql/scripts/io_optimized_analyzer.py",
+      "slice": "aurora",
+      "issue": 4388,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/specialized-skills/database-skills/amazon-documentdb/scripts/wa_review.py",
+      "original_blob": "8bbef6dc6ac050d98ab885ee73a740049bf52224",
+      "canonical_identical_path": "skills/specialized-skills/database-skills/amazon-documentdb/scripts/wa_review.py",
+      "slice": "docgraph",
+      "issue": 4395,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/specialized-skills/database-skills/amazon-dynamodb/scripts/benchmark_lambda.py",
+      "original_blob": "ebb767de41dc42ffc4a5ad37c140619b8a1284fe",
+      "canonical_identical_path": "skills/specialized-skills/database-skills/amazon-dynamodb/scripts/benchmark_lambda.py",
+      "slice": "dynamo-bench",
+      "issue": 4390,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/specialized-skills/database-skills/amazon-dynamodb/scripts/benchmark_model.py",
+      "original_blob": "021c6d5027bd34e566985933aa50aeea8815f21f",
+      "canonical_identical_path": "skills/specialized-skills/database-skills/amazon-dynamodb/scripts/benchmark_model.py",
+      "slice": "dynamo-bench",
+      "issue": 4390,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/specialized-skills/database-skills/amazon-dynamodb/scripts/calculate_costs.py",
+      "original_blob": "a54cf8561543d6e42089e3114d2606e7747b3578",
+      "canonical_identical_path": "skills/specialized-skills/database-skills/amazon-dynamodb/scripts/calculate_costs.py",
+      "slice": "dynamo-cost",
+      "issue": 4389,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/specialized-skills/database-skills/amazon-dynamodb/scripts/deploy_model.py",
+      "original_blob": "dc102a14a713ad5632e39978f4dddd39228df136",
+      "canonical_identical_path": "skills/specialized-skills/database-skills/amazon-dynamodb/scripts/deploy_model.py",
+      "slice": "dynamo-deploy",
+      "issue": 4391,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/specialized-skills/database-skills/amazon-dynamodb/scripts/generate_perf_report.py",
+      "original_blob": "679b571dfa43039d426dacdcc68d8d65a655a82d",
+      "canonical_identical_path": "skills/specialized-skills/database-skills/amazon-dynamodb/scripts/generate_perf_report.py",
+      "slice": "dynamo-bench",
+      "issue": 4390,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/specialized-skills/database-skills/amazon-dynamodb/scripts/generate_teardown.py",
+      "original_blob": "cf726569454dd17450c3ab03c2519702beebab69",
+      "canonical_identical_path": "skills/specialized-skills/database-skills/amazon-dynamodb/scripts/generate_teardown.py",
+      "slice": "dynamo-deploy",
+      "issue": 4391,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/specialized-skills/database-skills/amazon-dynamodb/scripts/iterate_design.py",
+      "original_blob": "7b4f034e63858f8fdde40a890408d0d8a32513bb",
+      "canonical_identical_path": "skills/specialized-skills/database-skills/amazon-dynamodb/scripts/iterate_design.py",
+      "slice": "dynamo-cost",
+      "issue": 4389,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/specialized-skills/database-skills/amazon-elasticache/scripts/command_classifier.py",
+      "original_blob": "6c162adefe44e9d547483389b54cef40fda2ca6c",
+      "canonical_identical_path": "skills/specialized-skills/database-skills/amazon-elasticache/scripts/command_classifier.py",
+      "slice": "cache-analysis",
+      "issue": 4392,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/specialized-skills/database-skills/amazon-elasticache/scripts/find_tunnel_host.py",
+      "original_blob": "c9d359e19d6df626fd6b4fbfca5ca2957b93a457",
+      "canonical_identical_path": "skills/specialized-skills/database-skills/amazon-elasticache/scripts/find_tunnel_host.py",
+      "slice": "cache-ops",
+      "issue": 4393,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/specialized-skills/database-skills/amazon-elasticache/scripts/generate_dashboards.py",
+      "original_blob": "00e93653e5c3eba279fa9afc3b0fd4d1361ee73d",
+      "canonical_identical_path": "skills/specialized-skills/database-skills/amazon-elasticache/scripts/generate_dashboards.py",
+      "slice": "cache-analysis",
+      "issue": 4392,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/specialized-skills/database-skills/amazon-elasticache/scripts/input_validator.py",
+      "original_blob": "bc0bd6a574f7b2436f3d5f0e6bdd8afbb6082bbd",
+      "canonical_identical_path": "skills/specialized-skills/database-skills/amazon-elasticache/scripts/input_validator.py",
+      "slice": "cache-analysis",
+      "issue": 4392,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/specialized-skills/database-skills/amazon-elasticache/scripts/migration_preflight.py",
+      "original_blob": "6afd5eae77cdbf547956c69c003822dc5e8b863b",
+      "canonical_identical_path": "skills/specialized-skills/database-skills/amazon-elasticache/scripts/migration_preflight.py",
+      "slice": "cache-analysis",
+      "issue": 4392,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/specialized-skills/database-skills/amazon-elasticache/scripts/price_calculator.py",
+      "original_blob": "10df938c2acb398e56bd9558f9ac87cbd3caad7b",
+      "canonical_identical_path": "skills/specialized-skills/database-skills/amazon-elasticache/scripts/price_calculator.py",
+      "slice": "cache-analysis",
+      "issue": 4392,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/specialized-skills/database-skills/amazon-elasticache/scripts/pricing.py",
+      "original_blob": "60e36498dd173d410d135a5a64156b7c872b7df2",
+      "canonical_identical_path": "skills/specialized-skills/database-skills/amazon-elasticache/scripts/pricing.py",
+      "slice": "cache-analysis",
+      "issue": 4392,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/specialized-skills/database-skills/amazon-elasticache/scripts/security_audit.py",
+      "original_blob": "88a0fe59a9f858ec07a5c01e8737a4815fc2ca93",
+      "canonical_identical_path": "skills/specialized-skills/database-skills/amazon-elasticache/scripts/security_audit.py",
+      "slice": "cache-analysis",
+      "issue": 4392,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/specialized-skills/database-skills/amazon-elasticache/scripts/serverless_estimator.py",
+      "original_blob": "ce2244b60dc665311df137f18093eebc7d3a5c80",
+      "canonical_identical_path": "skills/specialized-skills/database-skills/amazon-elasticache/scripts/serverless_estimator.py",
+      "slice": "cache-analysis",
+      "issue": 4392,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/specialized-skills/database-skills/amazon-elasticache/scripts/start_tunnel.py",
+      "original_blob": "4a01551393160d883e1a0d70c5858116a7cfa6db",
+      "canonical_identical_path": "skills/specialized-skills/database-skills/amazon-elasticache/scripts/start_tunnel.py",
+      "slice": "cache-ops",
+      "issue": 4393,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/specialized-skills/database-skills/amazon-elasticache/scripts/test_connection.py",
+      "original_blob": "201015056226c9d2ae7603f63e38dff15c266be7",
+      "canonical_identical_path": "skills/specialized-skills/database-skills/amazon-elasticache/scripts/test_connection.py",
+      "slice": "cache-ops",
+      "issue": 4393,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "skills/specialized-skills/database-skills/amazon-elasticache/scripts/validate_references.py",
+      "original_blob": "4ee37e95f566e636f0aa17fd273e6559c606a3dc",
+      "canonical_identical_path": "skills/specialized-skills/database-skills/amazon-elasticache/scripts/validate_references.py",
+      "slice": "cache-analysis",
+      "issue": 4392,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/specialized-skills/database-skills/amazon-neptune/scripts/agentic_memory.py",
+      "original_blob": "10ea8a52df7d3a2dbc2e4d632e9bafe539258088",
+      "canonical_identical_path": "skills/specialized-skills/database-skills/amazon-neptune/scripts/agentic_memory.py",
+      "slice": "docgraph",
+      "issue": 4395,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/specialized-skills/database-skills/amazon-neptune/scripts/cdk_test_env.py",
+      "original_blob": "51620be76d857f8141a82dc64755136099dd1e8e",
+      "canonical_identical_path": "skills/specialized-skills/database-skills/amazon-neptune/scripts/cdk_test_env.py",
+      "slice": "docgraph",
+      "issue": 4395,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "skills/specialized-skills/database-skills/amazon-neptune/scripts/graphrag_pipeline.py",
+      "original_blob": "c7b4c43f2bd592bd07be9f3ac99451bb1def08d9",
+      "canonical_identical_path": "skills/specialized-skills/database-skills/amazon-neptune/scripts/graphrag_pipeline.py",
+      "slice": "docgraph",
+      "issue": 4395,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/specialized-skills/database-skills/amazon-neptune/scripts/input_validator.py",
+      "original_blob": "04512ca608f042ddbc9dff8a0c27cae75f4d85e9",
+      "canonical_identical_path": "skills/specialized-skills/database-skills/amazon-neptune/scripts/input_validator.py",
+      "slice": "docgraph",
+      "issue": 4395,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/specialized-skills/database-skills/amazon-neptune/scripts/seed_test_data.py",
+      "original_blob": "25c978c0c77dd64bdf89def0ec57b55cc95370e3",
+      "canonical_identical_path": "skills/specialized-skills/database-skills/amazon-neptune/scripts/seed_test_data.py",
+      "slice": "docgraph",
+      "issue": 4395,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "skills/specialized-skills/database-skills/aurora-dsql/scripts/safe_query.py",
+      "original_blob": "e8fc6a01d831e95f2621a4444c5c92e5cd2bf679",
+      "canonical_identical_path": "skills/specialized-skills/database-skills/aurora-dsql/scripts/safe_query.py",
+      "slice": "relational",
+      "issue": 4394,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/specialized-skills/database-skills/aurora-dsql/scripts/tenant_query.py",
+      "original_blob": "5d4a501ca7529519dd1eace9b2b8038307c35d5a",
+      "canonical_identical_path": "skills/specialized-skills/database-skills/aurora-dsql/scripts/tenant_query.py",
+      "slice": "relational",
+      "issue": 4394,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/specialized-skills/database-skills/rds-oracle/scripts/test_oracle_connection.py",
+      "original_blob": "bedb254c2c269e810bc71029fbdd9a69d9b24200",
+      "canonical_identical_path": "skills/specialized-skills/database-skills/rds-oracle/scripts/test_oracle_connection.py",
+      "slice": "relational",
+      "issue": 4394,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "skills/specialized-skills/database-skills/rds-oss/scripts/rds_commitment_pricing_analyzer.py",
+      "original_blob": "ac3d8be1cae25aa53ff0390f37670407dfc97a18",
+      "canonical_identical_path": "skills/specialized-skills/database-skills/rds-oss/scripts/rds_commitment_pricing_analyzer.py",
+      "slice": "relational",
+      "issue": 4394,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/specialized-skills/database-skills/timestream-influxdb/scripts/input_validator.py",
+      "original_blob": "c5d7619de8a4f8ccbd1cc1b30730f38050c657fd",
+      "canonical_identical_path": "skills/specialized-skills/database-skills/timestream-influxdb/scripts/input_validator.py",
+      "slice": "relational",
+      "issue": 4394,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/specialized-skills/database-skills/timestream-influxdb/scripts/instance_types.py",
+      "original_blob": "03b7a06599a5b4b65795c92c89460f7e76b7993e",
+      "canonical_identical_path": "skills/specialized-skills/database-skills/timestream-influxdb/scripts/instance_types.py",
+      "slice": "relational",
+      "issue": 4394,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/specialized-skills/serverless-skills/processing-s3-uploads-with-step-functions/scripts/fargate_processor.py",
+      "original_blob": "f52b786036dd63268636c93215f1c510204f013f",
+      "canonical_identical_path": "skills/specialized-skills/serverless-skills/processing-s3-uploads-with-step-functions/scripts/fargate_processor.py",
+      "slice": "serverless",
+      "issue": 4397,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "skills/specialized-skills/serverless-skills/processing-s3-uploads-with-step-functions/scripts/lambda_function.py",
+      "original_blob": "2e17d4800902541bc5d9896aa99c9009d8804351",
+      "canonical_identical_path": "skills/specialized-skills/serverless-skills/processing-s3-uploads-with-step-functions/scripts/lambda_function.py",
+      "slice": "serverless",
+      "issue": 4397,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "tools/sync-plugin-skills.py",
+      "original_blob": "812f07754197ee091d707f50513f7f48d974b33e",
+      "canonical_identical_path": "tools/sync-plugin-skills.py",
+      "slice": "sync",
+      "issue": 4377,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "tools/tests/test_validate.py",
+      "original_blob": "d42fbe7890077729192d8815d7f5ba550a8ef192",
+      "canonical_identical_path": "tools/tests/test_validate.py",
+      "slice": "manifests",
+      "issue": 4375,
+      "classification": "test-or-diagnostic",
+      "status": "pending"
+    },
+    {
+      "path": "tools/validate.py",
+      "original_blob": "4277ceb1ef7d8c84dd288954845a721e2b5220fc",
+      "canonical_identical_path": "tools/validate.py",
+      "slice": "manifests",
+      "issue": 4375,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    },
+    {
+      "path": "tools/validate_spec.py",
+      "original_blob": "f32c89f0634f7b6a826f992137e30744cae1dd7a",
+      "canonical_identical_path": "tools/validate_spec.py",
+      "slice": "spec",
+      "issue": 4376,
+      "classification": "toolkit-helper",
+      "status": "pending"
+    }
+  ]
+}
+

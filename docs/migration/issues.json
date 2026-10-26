@@ -1,0 +1,612 @@
+{
+  "schema_version": 1,
+  "programme_issue": 4369,
+  "epic_id": "527005f6-9f08-477e-8628-7411156e4725",
+  "issues": [
+    {
+      "issue": 4369,
+      "issue_id": "5b47d028-cb76-5468-9d74-15fbe70f3aeb",
+      "key": "program",
+      "title": "Rust conversion: agent-managed delivery programme",
+      "owner": "manager",
+      "model": "Codex/gpt-6.1-sol",
+      "wave": 0,
+      "dependencies": []
+    },
+    {
+      "issue": 4370,
+      "issue_id": "4ff5ae1e-20e1-5b62-800e-c46528630c7a",
+      "key": "governance",
+      "title": "Establish Rust-only repository instructions and agent contribution policy",
+      "owner": "manager",
+      "model": "Codex/gpt-6.1-sol",
+      "wave": 0,
+      "dependencies": []
+    },
+    {
+      "issue": 4371,
+      "issue_id": "bf0ea61e-8a5c-5e32-bc03-f20d14fabb35",
+      "key": "inventory",
+      "title": "Audit complete Python inventory, compatibility contracts and instruction conflicts",
+      "owner": "glm",
+      "model": "z-ai/glm-5.3-flash",
+      "wave": 0,
+      "dependencies": [
+        4370
+      ]
+    },
+    {
+      "issue": 4372,
+      "issue_id": "b408bb18-82e5-51f1-9987-fc9c7c8b58c1",
+      "key": "topology",
+      "title": "Create reusable Python-to-Rust topology with two OpenRouter model profiles",
+      "owner": "manager",
+      "model": "Codex/gpt-6.1-sol",
+      "wave": 0,
+      "dependencies": [
+        4370
+      ]
+    },
+    {
+      "issue": 4373,
+      "issue_id": "4c53c299-cd30-55b8-bf90-e981888e179c",
+      "key": "foundation",
+      "title": "Bootstrap Rust workspace and trustworthy RSI verification adapter",
+      "owner": "deepseek",
+      "model": "deepseek/deepseek-v4.1-flash-1017",
+      "wave": 0,
+      "dependencies": [
+        4370
+      ]
+    },
+    {
+      "issue": 4374,
+      "issue_id": "a85be171-f246-57c6-b270-a2eb78dc1c6b",
+      "key": "core",
+      "title": "Implement shared Rust CLI, JSON/schema, path and error contracts",
+      "owner": "glm",
+      "model": "z-ai/glm-5.3-flash",
+      "wave": 1,
+      "dependencies": [
+        4373
+      ]
+    },
+    {
+      "issue": 4375,
+      "issue_id": "f0313b54-f495-50c4-a2b4-39dd59eb760f",
+      "key": "manifests",
+      "title": "Port repository manifest and skill-frontmatter validator",
+      "owner": "deepseek",
+      "model": "deepseek/deepseek-v4.1-flash-1017",
+      "wave": 1,
+      "dependencies": [
+        4374
+      ]
+    },
+    {
+      "issue": 4376,
+      "issue_id": "b25f0926-6897-56c9-b0f2-d4cad1d3392e",
+      "key": "spec",
+      "title": "Port Agent Plugins specification validator",
+      "owner": "glm",
+      "model": "z-ai/glm-5.3-flash",
+      "wave": 1,
+      "dependencies": [
+        4374
+      ]
+    },
+    {
+      "issue": 4377,
+      "issue_id": "80e25783-a075-567e-830f-1a3b26c59011",
+      "key": "sync",
+      "title": "Port canonical skill and vendored-content synchronization",
+      "owner": "glm",
+      "model": "z-ai/glm-5.3-flash",
+      "wave": 1,
+      "dependencies": [
+        4374
+      ]
+    },
+    {
+      "issue": 4378,
+      "issue_id": "1bf340ee-1dc6-5958-8853-909eb816f820",
+      "key": "ci",
+      "title": "Replace Python development recipes and CI gates with Rust checks",
+      "owner": "deepseek",
+      "model": "deepseek/deepseek-v4.1-flash-1017",
+      "wave": 1,
+      "dependencies": [
+        4375,
+        4376,
+        4377
+      ]
+    },
+    {
+      "issue": 4379,
+      "issue_id": "b6f8a301-f6af-5f46-be04-f313118f1978",
+      "key": "aws-core",
+      "title": "Implement shared AWS/API client boundaries in Rust",
+      "owner": "deepseek",
+      "model": "deepseek/deepseek-v4.1-flash-1017",
+      "wave": 1,
+      "dependencies": [
+        4374
+      ]
+    },
+    {
+      "issue": 4380,
+      "issue_id": "dc00a895-49ff-5057-9fe9-4fafd57d63c3",
+      "key": "cw-domain",
+      "title": "Port CloudWatch parsing, validation, status and rendering logic",
+      "owner": "glm",
+      "model": "z-ai/glm-5.3-flash",
+      "wave": 2,
+      "dependencies": [
+        4374
+      ]
+    },
+    {
+      "issue": 4381,
+      "issue_id": "6ac579de-77e7-5cb4-8b41-5d78c9735399",
+      "key": "cw-api",
+      "title": "Port CloudWatch clients, CRUD, instrumentation and trace evaluation",
+      "owner": "deepseek",
+      "model": "deepseek/deepseek-v4.1-flash-1017",
+      "wave": 2,
+      "dependencies": [
+        4379,
+        4380
+      ]
+    },
+    {
+      "issue": 4382,
+      "issue_id": "0f7b78e1-2bf7-5f01-aaed-c8b154e7efc0",
+      "key": "launch",
+      "title": "Port Launch with AWS authentication, archive and API CLI",
+      "owner": "deepseek",
+      "model": "deepseek/deepseek-v4.1-flash-1017",
+      "wave": 2,
+      "dependencies": [
+        4379
+      ]
+    },
+    {
+      "issue": 4383,
+      "issue_id": "f84c4ed5-e957-5047-a794-de62dd4ab142",
+      "key": "bedrock-fetch",
+      "title": "Port Bedrock agent discovery helper",
+      "owner": "glm",
+      "model": "z-ai/glm-5.3-flash",
+      "wave": 2,
+      "dependencies": [
+        4379
+      ]
+    },
+    {
+      "issue": 4384,
+      "issue_id": "ef00b6b6-b38f-5490-8b77-341a84124c0e",
+      "key": "ai-models",
+      "title": "Port deployable-model discovery, filtering and diagnostics utilities",
+      "owner": "deepseek",
+      "model": "deepseek/deepseek-v4.1-flash-1017",
+      "wave": 2,
+      "dependencies": [
+        4379
+      ]
+    },
+    {
+      "issue": 4385,
+      "issue_id": "fff2cce4-7f4b-5b4c-9a01-a965cb900825",
+      "key": "ai-data",
+      "title": "Port AI dataset detection, transformation and metric validation tools",
+      "owner": "glm",
+      "model": "z-ai/glm-5.3-flash",
+      "wave": 2,
+      "dependencies": [
+        4374
+      ]
+    },
+    {
+      "issue": 4386,
+      "issue_id": "afd823b0-9322-5625-af4b-37b5ca6610fb",
+      "key": "ai-payloads",
+      "title": "Replace AI training, evaluation, deployment and processing Python templates",
+      "owner": "deepseek",
+      "model": "deepseek/deepseek-v4.1-flash-1017",
+      "wave": 3,
+      "dependencies": [
+        4379,
+        4384,
+        4385
+      ]
+    },
+    {
+      "issue": 4387,
+      "issue_id": "728f45fc-457a-553e-9858-130ad9ac59bf",
+      "key": "msk",
+      "title": "Port MSK sizing, compatibility and simulation configuration tools",
+      "owner": "glm",
+      "model": "z-ai/glm-5.3-flash",
+      "wave": 2,
+      "dependencies": [
+        4374
+      ]
+    },
+    {
+      "issue": 4388,
+      "issue_id": "ff7f5e70-4f98-531e-9529-5d501b53ac7c",
+      "key": "aurora",
+      "title": "Port Aurora ACU, commitment and I/O pricing analyzers",
+      "owner": "deepseek",
+      "model": "deepseek/deepseek-v4.1-flash-1017",
+      "wave": 2,
+      "dependencies": [
+        4374,
+        4379
+      ]
+    },
+    {
+      "issue": 4389,
+      "issue_id": "9887140f-0993-559e-a311-84fa25a29def",
+      "key": "dynamo-cost",
+      "title": "Port DynamoDB cost calculation and design iteration",
+      "owner": "glm",
+      "model": "z-ai/glm-5.3-flash",
+      "wave": 2,
+      "dependencies": [
+        4374,
+        4379
+      ]
+    },
+    {
+      "issue": 4390,
+      "issue_id": "3925a7d0-47ce-57b5-b13c-5ff1cdc6ecb3",
+      "key": "dynamo-bench",
+      "title": "Port DynamoDB benchmark orchestration and performance reporting",
+      "owner": "deepseek",
+      "model": "deepseek/deepseek-v4.1-flash-1017",
+      "wave": 3,
+      "dependencies": [
+        4379,
+        4389
+      ]
+    },
+    {
+      "issue": 4391,
+      "issue_id": "618981fe-7e03-5301-b47c-29547dc24813",
+      "key": "dynamo-deploy",
+      "title": "Port DynamoDB deployment and teardown generation",
+      "owner": "glm",
+      "model": "z-ai/glm-5.3-flash",
+      "wave": 3,
+      "dependencies": [
+        4379,
+        4389
+      ]
+    },
+    {
+      "issue": 4392,
+      "issue_id": "a97e9736-b724-5a49-bcad-2a78e6857d83",
+      "key": "cache-analysis",
+      "title": "Port ElastiCache pricing, validation and command analysis",
+      "owner": "deepseek",
+      "model": "deepseek/deepseek-v4.1-flash-1017",
+      "wave": 2,
+      "dependencies": [
+        4374,
+        4379
+      ]
+    },
+    {
+      "issue": 4393,
+      "issue_id": "34f6a29a-7320-59d6-aaec-b73c123214be",
+      "key": "cache-ops",
+      "title": "Port ElastiCache tunnel discovery, connection and migration operations",
+      "owner": "glm",
+      "model": "z-ai/glm-5.3-flash",
+      "wave": 3,
+      "dependencies": [
+        4379,
+        4392
+      ]
+    },
+    {
+      "issue": 4394,
+      "issue_id": "79ae517f-5b52-5d23-9d84-30e99de01392",
+      "key": "relational",
+      "title": "Port RDS, Aurora DSQL and Timestream helpers",
+      "owner": "deepseek",
+      "model": "deepseek/deepseek-v4.1-flash-1017",
+      "wave": 2,
+      "dependencies": [
+        4374,
+        4379
+      ]
+    },
+    {
+      "issue": 4395,
+      "issue_id": "78310dd4-c0f4-543b-a0bf-61a68b54eba9",
+      "key": "docgraph",
+      "title": "Port DocumentDB and Neptune analysis/data utilities",
+      "owner": "glm",
+      "model": "z-ai/glm-5.3-flash",
+      "wave": 3,
+      "dependencies": [
+        4379
+      ]
+    },
+    {
+      "issue": 4396,
+      "issue_id": "f9d02b74-13aa-5412-badf-82bbff59faf9",
+      "key": "marketplace",
+      "title": "Port Marketplace metering, subscription and cleanup helpers",
+      "owner": "deepseek",
+      "model": "deepseek/deepseek-v4.1-flash-1017",
+      "wave": 3,
+      "dependencies": [
+        4379
+      ]
+    },
+    {
+      "issue": 4397,
+      "issue_id": "53b07b99-29eb-5bd5-b9c4-7f47f0962019",
+      "key": "serverless",
+      "title": "Port bundled Lambda/Fargate application examples to Rust",
+      "owner": "glm",
+      "model": "z-ai/glm-5.3-flash",
+      "wave": 3,
+      "dependencies": [
+        4379
+      ]
+    },
+    {
+      "issue": 4398,
+      "issue_id": "2fb4cbea-8ed1-54e5-a797-5a81d57afd0d",
+      "key": "telemetry",
+      "title": "Port telemetry consent, persistence and emission across vendored bundles",
+      "owner": "deepseek",
+      "model": "deepseek/deepseek-v4.1-flash-1017",
+      "wave": 2,
+      "dependencies": [
+        4374,
+        4379,
+        4377
+      ]
+    },
+    {
+      "issue": 4399,
+      "issue_id": "f5c3194e-79a6-5b7a-9a42-d8598948fb91",
+      "key": "startup-validators",
+      "title": "Port startup artifact, migration-report and pricing validators",
+      "owner": "glm",
+      "model": "z-ai/glm-5.3-flash",
+      "wave": 2,
+      "dependencies": [
+        4374
+      ]
+    },
+    {
+      "issue": 4400,
+      "issue_id": "d01e6a55-d8eb-55bb-87dc-59dcdabea856",
+      "key": "startup-scoring",
+      "title": "Port startup architecture scoring and unit grouping",
+      "owner": "deepseek",
+      "model": "deepseek/deepseek-v4.1-flash-1017",
+      "wave": 2,
+      "dependencies": [
+        4374
+      ]
+    },
+    {
+      "issue": 4401,
+      "issue_id": "c00002c9-62b3-5a05-8345-90b80eff7c7f",
+      "key": "startup-models",
+      "title": "Port startup model recommendation engines",
+      "owner": "glm",
+      "model": "z-ai/glm-5.3-flash",
+      "wave": 2,
+      "dependencies": [
+        4374
+      ]
+    },
+    {
+      "issue": 4402,
+      "issue_id": "e4c2461f-1174-58fa-8c05-3cd0171fe441",
+      "key": "startup-diagram",
+      "title": "Port startup diagram generation and model-path verification",
+      "owner": "deepseek",
+      "model": "deepseek/deepseek-v4.1-flash-1017",
+      "wave": 2,
+      "dependencies": [
+        4374,
+        4379
+      ]
+    },
+    {
+      "issue": 4403,
+      "issue_id": "a3efeef6-8876-556f-be6d-5081ac6be046",
+      "key": "bedrock-resolve",
+      "title": "Port Bedrock migration identity, image and pricing resolution",
+      "owner": "glm",
+      "model": "z-ai/glm-5.3-flash",
+      "wave": 2,
+      "dependencies": [
+        4374,
+        4379
+      ]
+    },
+    {
+      "issue": 4404,
+      "issue_id": "3a714456-dce1-5d05-bec4-8cb42d081fbb",
+      "key": "bedrock-probes",
+      "title": "Port Bedrock baseline, preflight and IAM policy tools",
+      "owner": "deepseek",
+      "model": "deepseek/deepseek-v4.1-flash-1017",
+      "wave": 3,
+      "dependencies": [
+        4379,
+        4403
+      ]
+    },
+    {
+      "issue": 4405,
+      "issue_id": "ac696f07-705c-549f-a4ff-719d93af90a8",
+      "key": "bedrock-report",
+      "title": "Port Bedrock migration report and result validation",
+      "owner": "glm",
+      "model": "z-ai/glm-5.3-flash",
+      "wave": 2,
+      "dependencies": [
+        4374,
+        4403
+      ]
+    },
+    {
+      "issue": 4406,
+      "issue_id": "f50ca58c-28b4-562a-87dd-9c12e12dd1b5",
+      "key": "heroku",
+      "title": "Port Heroku migration report validation and plan emitters",
+      "owner": "deepseek",
+      "model": "deepseek/deepseek-v4.1-flash-1017",
+      "wave": 2,
+      "dependencies": [
+        4374
+      ]
+    },
+    {
+      "issue": 4407,
+      "issue_id": "78a4e31f-8964-5eb9-ba6e-11413d322809",
+      "key": "startup-tools",
+      "title": "Port startup reference checking and model-staleness tooling",
+      "owner": "glm",
+      "model": "z-ai/glm-5.3-flash",
+      "wave": 2,
+      "dependencies": [
+        4374,
+        4377
+      ]
+    },
+    {
+      "issue": 4408,
+      "issue_id": "ee81ecc1-3477-5984-8e80-b9463ea71a3d",
+      "key": "startup-fixtures",
+      "title": "Port Azure, GCP and Heroku fixture assertion programs",
+      "owner": "deepseek",
+      "model": "deepseek/deepseek-v4.1-flash-1017",
+      "wave": 2,
+      "dependencies": [
+        4374,
+        4399
+      ]
+    },
+    {
+      "issue": 4409,
+      "issue_id": "07c54f41-e446-51b3-bb66-fe5e25f6eed1",
+      "key": "startup-contracts",
+      "title": "Migrate remaining startup cross-file and workflow contract tests",
+      "owner": "glm",
+      "model": "z-ai/glm-5.3-flash",
+      "wave": 3,
+      "dependencies": [
+        4399,
+        4400,
+        4401,
+        4402,
+        4405,
+        4406
+      ]
+    },
+    {
+      "issue": 4410,
+      "issue_id": "96bcd61e-2c3f-5904-9ba9-f588d0d66787",
+      "key": "payments-policy",
+      "title": "Port x402 fetch, policy and payment administration",
+      "owner": "deepseek",
+      "model": "deepseek/deepseek-v4.1-flash-1017",
+      "wave": 3,
+      "dependencies": [
+        4379
+      ]
+    },
+    {
+      "issue": 4411,
+      "issue_id": "a5cde149-e67a-50bc-9327-89525fbb55d7",
+      "key": "payments-bridge",
+      "title": "Port OpenClaw AgentCore runtime bridge and setup integration",
+      "owner": "glm",
+      "model": "z-ai/glm-5.3-flash",
+      "wave": 3,
+      "dependencies": [
+        4379,
+        4410
+      ]
+    },
+    {
+      "issue": 4412,
+      "issue_id": "f20f32d0-3f03-5f35-8e3a-6fc1a1263932",
+      "key": "security-hooks",
+      "title": "Port secret-safety plugin hook to Rust without weakening controls",
+      "owner": "glm",
+      "model": "z-ai/glm-5.3-flash",
+      "wave": 2,
+      "dependencies": [
+        4374
+      ]
+    },
+    {
+      "issue": 4413,
+      "issue_id": "abad62eb-8294-51d9-8456-726f28cb397e",
+      "key": "mcp",
+      "title": "Replace uvx Python MCP proxy in plugin runtime configuration",
+      "owner": "deepseek",
+      "model": "deepseek/deepseek-v4.1-flash-1017",
+      "wave": 3,
+      "dependencies": [
+        4379,
+        4374
+      ]
+    },
+    {
+      "issue": 4414,
+      "issue_id": "5dd10751-f897-5e1e-b6ce-66ba32563cb6",
+      "key": "cutover",
+      "title": "Update installation, skills, launchers and packaging for Rust commands",
+      "owner": "glm",
+      "model": "z-ai/glm-5.3-flash",
+      "wave": 4,
+      "dependencies": [
+        4378,
+        4413,
+        4398,
+        4386,
+        4411,
+        4397,
+        4412
+      ]
+    },
+    {
+      "issue": 4415,
+      "issue_id": "ecdcae7e-0b5b-5179-849c-9793c4c2ef87",
+      "key": "retire",
+      "title": "Audit final Rust-only installation and retire covered Python artifacts",
+      "owner": "deepseek",
+      "model": "deepseek/deepseek-v4.1-flash-1017",
+      "wave": 4,
+      "dependencies": [
+        4414,
+        4409,
+        4396,
+        4394,
+        4395,
+        4393,
+        4391,
+        4390,
+        4388,
+        4387,
+        4382,
+        4383
+      ]
+    }
+  ]
+}
+

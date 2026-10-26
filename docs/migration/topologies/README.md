@@ -1,0 +1,28 @@
+# Repeatable Python-to-Rust topology
+
+Programme #4369; workflow Issue #4372. Definitions are manager-owned, durable daemon records plus versioned JSON in this directory.
+
+| Profile | Implement / fix / repair | Plan and independent review | Topology id |
+| --- | --- | --- | --- |
+| DeepSeek | deepseek/deepseek-v4.1-flash-1017 | z-ai/glm-5.3-flash | a50c475b-884f-4d1e-8a9f-1ea13405d9b4 |
+| GLM | z-ai/glm-5.3-flash | deepseek/deepseek-v4.1-flash-1017 | 466d3b4a-0d17-473a-8a3b-a9c0a7c7c1cf |
+
+Both use OpenRouter high effort and passed AgentTopologyUpsert validate_only with zero diagnostics. Revision 1 stored. This records definition validation, not a successful migration execution.
+
+## One run per Issue
+
+1. Read live manager authority, Issue, dependency evidence, topology record/digest and OpenRouter provider health/spend cap. No worker launch without allowed_launches and headroom.
+2. Choose profile matching Issue owner. Resolve exact base commit; bootstrap uses pushed manager source, normal runs use integrated tip. Use an Epic in current scope.
+3. Execute AgentTopologyExecute with topology_id, expected_digest, epic_id, base_commit, inputs {issue: NUMBER}, unique idempotency_key. Default owner wake arms one settlement watch; do not add another or poll.
+4. Plan node maps Python contracts and risks. Implementation commits Rust changes and owns daemon verification/wake. Review checks exact verified SHA with opposite model family.
+5. Changes-requested routes to bounded fix and re-review. Accepted review routes to daemon merge queue and automatic closure. Queue refusal routes to bounded repair/review/land; persistent failures settle blocked for manager.
+6. On settlement inspect typed outcome, final SHA, job/review/landing evidence and Issue. Do not equate execution acceptance, worker completion or queued publication with landed work.
+
+## Versioning and feedback
+
+Retrieve definition with AgentTopologyGet. Change per-node prompts/models in versioned JSON and validate through AgentTopologyUpsert validate_only. Update stored definition using observed expected_revision and new idempotency key; retain returned digest/revision in source. Running executions retain snapshots; message affected workers when policy/plan changes.
+
+Track first-pass acceptance, repair rounds, verified behavior coverage, elapsed time, token/API cost and infrastructure refusals. Improve prompts/process from observed failures. Do not increase loops, spend or concurrency to conceal a broken verification/integration adapter.
+
+Keep model roles explicit; optional Opus/Sol planning or Sonnet/Terra review requires a revision selecting an operator-granted model. No provider-native delegation. No auto-upgrading model ids.
+

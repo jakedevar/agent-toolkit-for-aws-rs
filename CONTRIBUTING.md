@@ -1,27 +1,15 @@
-# Contributing
+# Contributing to this Rust fork
 
-Thank you for your interest in this project. This project is not accepting external code contributions at this time. You can still help us improve the project by reporting bugs, requesting features, and reporting security issues.
+This fork accepts agent-managed Rust conversion work. RSI programme Issue #4369 is the delivery tracker. [AGENTS.md](AGENTS.md) governs repository development; [migration plan](docs/migration/README.md) lists assigned slices and dependencies.
 
-## Table of Contents
+1. Manager assigns one bounded RSI Issue and an allowed model.
+2. Worker reads allocated source, acceptance criteria and [worker contract](docs/agents/worker-contract.md).
+3. Worker ports covered behavior to Rust, migrates tests/callers and records compatibility decisions.
+4. Worker commits on allocated branch and verifies exact committed source through daemon jobs.
+5. Independent model reviews verified SHA. RSI merge queue integrates accepted work and records Issue closure.
 
-- [Reporting Bugs](#reporting-bugs)
-- [Feature Requests](#feature-requests)
-- [Security](#security)
+No pull request or upstream AWS team approval is required for this fork. Do not switch branches or publish main/releases. Primary implementation uses DeepSeek and GLM through OpenRouter; optional planning/review assistance follows live RSI grants.
 
-## Reporting Bugs
+Legacy Python remains migration evidence until each replacement passes. New executable implementation and tests are Rust. Existing product docs/examples do not impose Python development dependencies.
 
-- Before reporting a bug, make sure you are on the latest version.
-- Check existing issues to see if the bug has already been reported.
-- Submit a [GitHub Issue](https://github.com/aws/agent-toolkit-for-aws/issues/new?template=bug_report.yml) with detailed steps to reproduce the bug, plus your system information (AI assistant and version, operating system).
-
-## Feature Requests
-
-- Before submitting a feature request, make sure you are on the latest version.
-- Check existing issues to see if the feature has already been requested.
-- Submit a [GitHub Issue](https://github.com/aws/agent-toolkit-for-aws/issues/new?template=feature_request.yml) with a clear description of the feature and your use case.
-
-## Security
-
-If you discover a potential security issue in this project, please notify AWS/Amazon Security via the [vulnerability reporting page](https://aws.amazon.com/security/vulnerability-reporting/) or directly via email to aws-security@amazon.com. Please do **not** create a public GitHub issue, pull request, or other public disclosure.
-
-See [SECURITY.md](SECURITY.md) for more information.
+Report fork bugs and follow-ups in RSI project Issue tracker. Keep security-sensitive details private; never paste credentials. AWS service or upstream AWS product vulnerabilities retain their appropriate AWS private reporting process. Preserve upstream LICENSE, NOTICE and attribution.

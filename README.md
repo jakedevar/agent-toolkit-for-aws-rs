@@ -1,4 +1,6 @@
-# Agent Toolkit for AWS
+# Agent Toolkit for AWS Rust fork
+
+This fork is converting toolkit implementation and development tools from Python to Rust, managed by agents through RSI. See [migration plan](docs/migration/README.md), [repository instructions](AGENTS.md), and [contribution workflow](CONTRIBUTING.md). Inherited AWS setup instructions below describe legacy behavior until their assigned migration slices land.
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Build](https://github.com/aws/agent-toolkit-for-aws/actions/workflows/build.yml/badge.svg)](https://github.com/aws/agent-toolkit-for-aws/actions/workflows/build.yml)
