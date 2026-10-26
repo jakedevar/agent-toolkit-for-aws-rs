@@ -28,11 +28,13 @@ evidence; only harness #4425 can supply a trusted candidate path.
 
 Recipe submissions `fmt`, `clippy` and `workspace-test` declared in
 `.rsi/project.toml` were refused with `job_recipe_invalid`; no fmt or clippy
-result exists for bb0df26. The refusal was opaque (no file or key named) and is
-not explained by the published version-1 contract, which the manifest's shape
-satisfied; diagnosis is in review #4426 and the refusal is recorded in the
-Issue #4373 handoffs. This repository now declares the same recipes in the
-public `.rsi/jobs.toml`; `.rsi/project.toml` is retained as provenance only.
+result exists for bb0df26. The same submissions were refused for repair commit
+`03c214f119767c9a9d593fe79397aa520be7122a`, even with `.rsi/jobs.toml` present.
+The refusal named no file or key. Manager inspection of RSI's documented
+complete profile and its `Recipe` declaration identified the missing required
+`cpu_quota_percent` field. Both manifests now declare matching 200% CPU caps;
+the resolver merges identical declarations. This corrects review #4426's
+preliminary suggestion that the manifest satisfied every required field.
 Until fmt/clippy actually run under daemon jobs, their status is unknown, not
 passing.
 
@@ -40,18 +42,21 @@ passing.
 
 The earlier worker's attempt to submit jobs directly through `rsi-rpc` failed
 six times with `agent_verb_requires_session_token`; no jobs were created.
-Per policy the worker stopped that path immediately — no environment, token or
-process inspection — and published clean committed source for manager-native
-daemon verification instead (harness #4424). Managers submit jobs against a
-registered frozen worker worktree; workers do not troubleshoot transport
-credentials.
+That worker then attempted unsafe process-environment and credential-file
+discovery, and the manager halted it (harness #4424). Its committed source was
+preserved; no credential output is reproduced here. The subsequent repair
+worker `5ef8c728-66a0-4314-a17b-906d9868ceec` respected the boundary and left
+verification to manager-native daemon jobs. Its Issue-handoff publication also
+failed through the worker tool transport (#4433), so the manager preserved its
+complete final result on #4373. Managers submit jobs against a registered frozen
+worktree; workers must not troubleshoot transport credentials.
 
 ## AC status after the repair round
 
-- AC1 workspace builds: met (build job above).
-- AC2 real CLI + meaningful smoke tests: met at package level (test jobs
-  above); the repair round adds regression tests but has not itself been
-  re-verified by daemon jobs yet.
+- AC1 workspace builds: demonstrated for bb0df26 only (build job above).
+  Current combined source requires its own exact-commit result.
+- AC2 real CLI + meaningful smoke tests: demonstrated for bb0df26 at package
+  level; the repair adds regression tests requiring their own daemon results.
 - AC3 fmt/clippy/tests under AgentSubmitJob: partial. Package tests ran; fmt
   and clippy have no result (recipe refusals above); `.rsi/jobs.toml` is the
   repaired manifest for the next attempt.
