@@ -3,7 +3,9 @@
 //! A *skill* is a directory that directly contains a `SKILL.md` file. Discovery
 //! walks the supplied root recursively, skips hidden directories and
 //! `node_modules`, never follows symlinks, and keeps every result path inside
-//! the supplied root.
+//! the supplied root. That includes `SKILL.md` itself: a symlinked
+//! `SKILL.md` (to a file anywhere, including outside ROOT) is skipped, not
+//! read.
 
 use std::fmt;
 use std::fs;
@@ -57,7 +59,8 @@ fn is_skipped(name: &str) -> bool {
 
 /// Enumerates skills under `root`, sorted by frontmatter name (directory name
 /// when the frontmatter has none), then by relative path. Every result stays
-/// inside `root`; symlinked directories are never followed.
+/// inside `root`; symlinked directories are never followed and a symlinked
+/// `SKILL.md` is skipped instead of read.
 ///
 /// # Errors
 ///
@@ -116,7 +119,10 @@ pub fn discover_skills(root: &Path) -> Result<Vec<SkillEntry>, SkillsError> {
         children.sort();
         for (child_dir, child_relative) in children {
             let skill_file = child_dir.join("SKILL.md");
-            match fs::metadata(&skill_file) {
+            // symlink_metadata does not follow symlinks, so a SKILL.md that is
+            // itself a symlink (to anywhere, including outside ROOT) is skipped
+            // rather than read; only real regular files pass.
+            match fs::symlink_metadata(&skill_file) {
                 Ok(metadata) if metadata.is_file() => {
                     entries.push(read_entry(&child_dir, &skill_file, &child_relative)?);
                 }
@@ -283,6 +289,47 @@ mod tests {
         let entries = discover_skills(&root).expect("discover");
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].path, "real");
+
+        fs::remove_dir_all(&root).expect("cleanup");
+        fs::remove_dir_all(&outside).expect("cleanup");
+    }
+
+    #[test]
+    fn symlinked_skill_md_file_is_skipped_not_read() {
+        // A SKILL.md that is itself a symlink to a file outside ROOT must not
+        // be read; containment covers the metadata file, not only directories.
+        let root = temp_dir("symlink-skill-md");
+        let outside = temp_dir("symlink-skill-md-outside");
+        fs::create_dir_all(outside.join("victim")).expect("create outside dir");
+        fs::write(
+            outside.join("victim").join("secret.md"),
+            "---\nname: leaked\ndescription: from outside\n---\n",
+        )
+        .expect("write outside file");
+        skill(&root, "real", Some("real"), None);
+
+        #[cfg(unix)]
+        {
+            fs::create_dir_all(root.join("leaky")).expect("create skill dir");
+            std::os::unix::fs::symlink(
+                outside.join("victim").join("secret.md"),
+                root.join("leaky").join("SKILL.md"),
+            )
+            .expect("create SKILL.md symlink");
+
+            let entries = discover_skills(&root).expect("discover");
+            assert_eq!(entries.len(), 1, "only the real skill is listed");
+            assert_eq!(entries[0].path, "real");
+            assert_eq!(entries[0].name, "real");
+            assert!(
+                !entries.iter().any(|entry| entry.name == "leaked"),
+                "symlinked SKILL.md content must not leak"
+            );
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = &outside;
+        }
 
         fs::remove_dir_all(&root).expect("cleanup");
         fs::remove_dir_all(&outside).expect("cleanup");

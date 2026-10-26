@@ -76,6 +76,12 @@ pub fn parse_frontmatter(content: &str) -> Frontmatter {
         }
 
         flush_block(&mut block, &mut result);
+        // Only top-level keys count: an indented line here belongs to a nested
+        // mapping (e.g. `metadata:`), never to `name`/`description`. split_key
+        // would otherwise trim the indentation and misread it.
+        if line.starts_with(' ') || line.starts_with('\t') {
+            continue;
+        }
         let Some((raw_key, value)) = split_key(line) else {
             continue;
         };
@@ -198,6 +204,67 @@ mod tests {
         content.push_str(&"filler: x\n".repeat(1000));
         let fm = parse_frontmatter(&content);
         assert_eq!(fm.name.as_deref(), Some("ok"));
+    }
+
+    #[test]
+    fn nested_metadata_keys_do_not_override_top_level() {
+        // A nested `metadata:` mapping must not contribute a top-level
+        // name/description; split_key would otherwise trim its indentation.
+        let content = concat!(
+            "---\n",
+            "metadata:\n",
+            "  name: nested-override\n",
+            "  description: nested description\n",
+            "name: top-level\n",
+            "---\n"
+        );
+        let fm = parse_frontmatter(content);
+        assert_eq!(fm.name.as_deref(), Some("top-level"));
+        assert_eq!(fm.description, None);
+    }
+
+    #[test]
+    fn indented_lines_without_block_scalar_are_not_block_bodies() {
+        // Without an open block scalar, indented lines are nested/continued
+        // content, not top-level keys, and must not set name/description.
+        let content = concat!(
+            "---\n",
+            "  name: indented\n",
+            "  description: also indented\n",
+            "---\n"
+        );
+        assert_eq!(parse_frontmatter(content), Frontmatter::default());
+    }
+
+    #[test]
+    fn body_of_non_target_block_scalar_is_not_a_target_key() {
+        // The body of a block scalar for an unrelated key (`allowed-tools: >`)
+        // must not be read as `name`/`description` once the block closes.
+        let content = concat!(
+            "---\n",
+            "allowed-tools: >\n",
+            "  description: fake\n",
+            "name: real\n",
+            "---\n"
+        );
+        let fm = parse_frontmatter(content);
+        assert_eq!(fm.name.as_deref(), Some("real"));
+        assert_eq!(fm.description, None);
+    }
+
+    #[test]
+    fn nested_key_inside_description_block_still_joins() {
+        // Indented lines inside a real block scalar for a target key remain
+        // block body: they are joined into the value, not treated as keys.
+        let content = concat!(
+            "---\n",
+            "description: >\n",
+            "  intro\n",
+            "  more: text\n",
+            "---\n"
+        );
+        let fm = parse_frontmatter(content);
+        assert_eq!(fm.description.as_deref(), Some("intro more: text"));
     }
 
     #[test]

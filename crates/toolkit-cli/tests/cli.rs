@@ -7,7 +7,7 @@
 use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
 
 const BIN: &str = env!("CARGO_BIN_EXE_toolkit");
 
@@ -222,6 +222,61 @@ fn help_prints_usage_on_stdout_with_success() {
         assert!(stdout(&output).contains("skills list"));
         assert!(stdout(&output).contains("Exit codes:"));
     }
+    cleanup(&cwd);
+}
+
+#[test]
+#[cfg(unix)]
+fn closed_stdout_pipe_is_success_not_panic() {
+    // `toolkit skills list | head` closes the read end once the consumer is
+    // done. Rust ignores SIGPIPE, so the write surfaces as BrokenPipe; the CLI
+    // must exit 0 (or at worst a clean signal-free death), never panic with
+    // exit 101. The listing is far larger than the 64 KiB pipe buffer so the
+    // child really does hit the closed pipe.
+    let root = temp_root("broken-pipe");
+    for index in 0..2000u32 {
+        let name = format!("skill-{index:04}");
+        skill(&root, &name, Some(&name), Some(&"x".repeat(80)));
+    }
+
+    let mut child = Command::new(BIN)
+        .args(["skills", "list", root.to_str().expect("utf-8 root")])
+        .current_dir(&root)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn toolkit binary");
+    // Take and drop the stdout handle: the child's next write past the pipe
+    // buffer fails with EPIPE.
+    drop(child.stdout.take());
+    let status = child.wait().expect("wait for toolkit");
+
+    assert_eq!(
+        status.code(),
+        Some(0),
+        "closed pipe is documented success; exit 101 would mean a stdout panic: {status:?}"
+    );
+    cleanup(&root);
+}
+
+#[test]
+#[cfg(unix)]
+fn non_utf8_arguments_are_usage_errors_not_panics() {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+
+    let cwd = temp_root("non-utf8-arg");
+    let bad = OsStr::from_bytes(b"skills\xff");
+    let output = Command::new(BIN)
+        .arg(bad)
+        .current_dir(&cwd)
+        .output()
+        .expect("spawn toolkit binary");
+    assert_eq!(code(&output), 2, "non-UTF-8 argument is a usage error");
+    assert_eq!(stdout(&output), "");
+    assert!(stderr(&output).starts_with("error: invalid arguments"));
+    assert!(stderr(&output).contains("valid UTF-8"));
+    assert!(stderr(&output).contains("Usage:"), "usage text is printed");
     cleanup(&cwd);
 }
 

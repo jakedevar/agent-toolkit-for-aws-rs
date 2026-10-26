@@ -3,10 +3,36 @@
 //! Bootstrap slice #4373. The full command contract (commands, flags, exit
 //! codes and the JSON shape) is documented in `crates/toolkit-cli/README.md`.
 
+use std::io::{self, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
 use toolkit_core::{discover_skills, skills_to_json};
+
+/// Writes one line to a stream, tolerating a closed pipe: the conventional
+/// `toolkit ... | head` consumer is a success, not a crash (Rust ignores
+/// SIGPIPE, so a closed pipe surfaces as a `BrokenPipe` write error).
+fn write_line<W: Write>(stream: &mut W, line: &str) -> Result<(), io::Error> {
+    stream
+        .write_all(line.as_bytes())
+        .and_then(|()| stream.write_all(b"\n"))
+        .or_else(|error| {
+            if error.kind() == io::ErrorKind::BrokenPipe {
+                Ok(())
+            } else {
+                Err(error)
+            }
+        })
+}
+
+fn print_line(line: &str) -> Result<(), io::Error> {
+    write_line(&mut io::stdout().lock(), line)
+}
+
+/// Reports a message on stderr without panicking when stderr is closed too.
+fn print_error(message: &str) {
+    let _ = write_line(&mut io::stderr().lock(), message);
+}
 
 const USAGE: &str = "\
 Usage:
@@ -27,7 +53,8 @@ Options:
 Exit codes:
   0  success (including help, version and an empty result)
   1  runtime error (missing root, root not a directory, unreadable files)
-  2  usage error (unknown command, missing or unknown arguments)";
+  2  usage error (unknown command, missing or unknown arguments,
+     or a non-UTF-8 argument)";
 
 /// Parsed command line. `Help` and `Version` short-circuit before `run`.
 #[derive(Debug, PartialEq, Eq)]
@@ -73,28 +100,38 @@ fn parse_args(args: &[String]) -> Result<Command, &'static str> {
 fn execute(command: &Command) -> ExitCode {
     match command {
         Command::Help => {
-            println!("{USAGE}");
-            ExitCode::SUCCESS
+            match print_line(USAGE) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(_) => ExitCode::FAILURE,
+            }
         }
         Command::Version => {
-            println!("toolkit {}", env!("CARGO_PKG_VERSION"));
-            ExitCode::SUCCESS
+            match print_line(&format!("toolkit {}", env!("CARGO_PKG_VERSION"))) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(_) => ExitCode::FAILURE,
+            }
         }
         Command::SkillsList { root, json } => {
             let root = PathBuf::from(root.clone().unwrap_or_else(|| "skills".to_string()));
             match discover_skills(&root) {
                 Ok(entries) => {
                     if *json {
-                        println!("{}", skills_to_json(&entries));
+                        if print_line(&skills_to_json(&entries)).is_err() {
+                            return ExitCode::FAILURE;
+                        }
                     } else {
                         for entry in entries {
-                            println!("{}\t{}", entry.name, entry.description.replace('\n', " "));
+                            let description = entry.description.replace('\n', " ");
+                            let line = format!("{}\t{}", entry.name, description);
+                            if print_line(&line).is_err() {
+                                return ExitCode::FAILURE;
+                            }
                         }
                     }
                     ExitCode::SUCCESS
                 }
                 Err(error) => {
-                    eprintln!("error: {error}");
+                    print_error(&format!("error: {error}"));
                     ExitCode::from(1)
                 }
             }
@@ -103,11 +140,29 @@ fn execute(command: &Command) -> ExitCode {
 }
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    // args_os, not args(): a non-UTF-8 argument must be a reported usage
+    // error (exit 2), never an implicit panic.
+    let mut invalid = false;
+    let args: Vec<String> = std::env::args_os()
+        .skip(1)
+        .map(|arg| match arg.into_string() {
+            Ok(text) => text,
+            Err(_) => {
+                invalid = true;
+                String::new()
+            }
+        })
+        .collect();
+    if invalid {
+        print_error(&format!(
+            "error: invalid arguments: arguments must be valid UTF-8\n\n{USAGE}"
+        ));
+        return ExitCode::from(2);
+    }
     match parse_args(&args) {
         Ok(command) => execute(&command),
         Err(usage) => {
-            eprintln!("error: invalid arguments\n\n{usage}");
+            print_error(&format!("error: invalid arguments\n\n{usage}"));
             ExitCode::from(2)
         }
     }

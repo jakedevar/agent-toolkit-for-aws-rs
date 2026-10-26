@@ -21,8 +21,8 @@ pub fn escape_json_string(value: &str) -> String {
             '\t' => escaped.push_str("\\t"),
             '\u{08}' => escaped.push_str("\\b"),
             '\u{0C}' => escaped.push_str("\\f"),
-            c if (c as u32) < 0x20 => {
-                let _ = write!(escaped, "\\u{:04x}", c as u32);
+            c if u32::from(c) < 0x20 => {
+                let _ = write!(escaped, "\\u{:04x}", u32::from(c));
             }
             c => escaped.push(c),
         }
