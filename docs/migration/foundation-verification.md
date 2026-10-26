@@ -46,8 +46,11 @@ That worker then attempted unsafe process-environment and credential-file
 discovery, and the manager halted it (harness #4424). Its committed source was
 preserved; no credential output is reproduced here. The subsequent repair
 worker `5ef8c728-66a0-4314-a17b-906d9868ceec` respected the boundary and left
-verification to manager-native daemon jobs. Its Issue-handoff publication also
-failed through the worker tool transport (#4433), so the manager preserved its
+verification to manager-native daemon jobs. Its Issue-handoff requests were
+rejected. Full event inspection found one request with both target selectors
+and later requests with neither selector; the worker reported a tool-field
+exposure mismatch. The cause remains unknown and is tracked in harness #4436;
+the local report #4433 was cancelled as its mirror. The manager preserved the
 complete final result on #4373. Managers submit jobs against a registered frozen
 worktree; workers must not troubleshoot transport credentials.
 
