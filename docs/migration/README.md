@@ -16,6 +16,8 @@ Primary implementation: DeepSeek deepseek/deepseek-v4.1-flash-1017 and GLM z-ai/
 
 Initial bootstrap: DeepSeek #4373 creates workspace and trustworthy verification through the DeepSeek topology; GLM #4371 separately audits inventory/instruction conflicts. They may start from same pinned manager policy commit before it lands, with nonoverlapping paths. The research audit is hand-driven because no runnable Rust verification/integration baseline exists yet; it must not fake verification. Foundation is the first live topology trial; an adapter impasse is recorded and fixed before downstream runs.
 
+Bootstrap update: the first two #4373 topology trials stopped at planning (scratch-only preserved work, then invalid handoff stage). Neither delivered implementation. Revision 3 supplies parser-checked handoff templates; foundation now uses a hand-driven DeepSeek Issue worker under the [foundation plan](foundation-plan.md), retaining verification, independent review and queue gates. Later ports use the repaired topologies. See #4418 and harness #4419 for evidence.
+
 Dependencies exist in manager ledger with require_integrated true, as well as linked Issue bodies. Pinned bootstrap stacking is an explicit exception recorded by manager. At most two initial workers; normal concurrency stays inside project cap. No ready label bypasses prerequisites.
 
 ## Issue map

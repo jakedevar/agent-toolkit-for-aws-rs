@@ -56,3 +56,18 @@ Plan pass_content now true; prompts prohibit schema dumps and distinguish node m
 Next: commit/push this clean manager source, restart #4373 with DeepSeek revision 2 and exact base; execute owns one settle wake. Old plan is preserved in its session, but restart rereads actual source. Candidate gate infrastructure is not yet proven for this fork. Do not claim completed bootstrap or closed #4418 until observed recovery criteria hold. #4371 findings should reach foundation worker before acceptance when relevant.
 
 Open friction: #4360, #4416 (harness); #4418 (this fork). No kaizen fix integrated yet. No runaway jobs stopped; cancelled one pre-implementation topology for clean restart. Friction: #4360, #4416, #4418.
+
+## Bootstrap dispatch correction (2026-10-26 22:51 UTC)
+
+Revision 2 execution 538d00c0-0bea-486e-9f5b-3a301b348119 failed handoff_invalid before implementation. Plan 903bd09b-feb5-5a36-b2ec-3f7f9477ce53 event 107 kept tree clean but lacked stage; format correction event 122 guessed unsupported VERIFICATION and lost substantive plan context. Harness kaizen #4419 filed, no duplicate found in accessible project search. #4418 expanded to literal-format recovery and remains open.
+
+Both topology profiles now revision 3, validated with zero diagnostics and stored:
+- DeepSeek sha256:2c4793be2006fc339596544180f2a30495697656197536a223fbda04b7a71f9d.
+- GLM sha256:6a54228d2587c903ee0cc81d7cda78a0c369ac14d0b3e1f6cad9b58e2267acf4.
+Literal PLAN/IMPLEMENTATION/FIX/blocked examples passed the installed Rust rsi-contract-validate; those were syntax examples only, never source evidence. docs/migration/foundation-plan.md bounds actual workspace work and the unsupported-adapter path.
+
+Manager decision: do not spend a third run on planning before runnable Rust verification exists. Use bootstrap exception in #4373: direct DeepSeek Issue worker from this clean committed source, current scoped Epic 527005f6-9f08-477e-8628-7411156e4725. Bound worker owns daemon jobs and result wake. Then exact-SHA independent review and queue; no manual integration and no generic-profile waiver. Record action/worker ids on #4373 after launch; terminal watch is daemon-owned. Downstream slices use revision 3 only after prerequisites integrated.
+
+GLM inventory 7042bad4-9e9a-4dd4-95bd-e131bcd8809f still running, no final report at this observation. Prior amendment queued/claimed, never assumed delivered. Current scope/policy 1/2, max_active_sessions 4, primary models still allowed; re-probe paid spend cap before dispatch. No operator requests or human gates observed. Health watch remains armed. No source has landed.
+
+Kaizen open: harness #4360, #4416, #4419; fork #4418. Fixed locally: transient source files, plan forwarding, literal handoff format; integration and execution proof pending. Friction: #4360, #4416, #4418, #4419.

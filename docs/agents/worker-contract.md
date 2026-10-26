@@ -20,7 +20,7 @@ If verification infrastructure cannot support this fork, report exact refusal/lo
 
 ## Handoff and review
 
-Topology sessions finish with daemon-valid PIPELINE HANDOFF: status, doc_path/manifest_path (inline allowed), exact commit, AC-by-AC evidence, test/job results and compatibility decisions. Blocked handoffs include blocker_class, blocker_evidence and blocker_question. End final handoff with Friction: none or filed Issue references.
+Topology sessions finish with daemon-valid PIPELINE HANDOFF: status, doc_path/manifest_path (inline allowed), exact commit, AC-by-AC evidence, test/job results and compatibility decisions. Use the literal stage and fields in [handoff-contract.md](../migration/topologies/handoff-contract.md); the first line is `PIPELINE HANDOFF — PLAN:`, `PIPELINE HANDOFF — IMPLEMENTATION:` or `PIPELINE HANDOFF — FIX:` for the corresponding node. Blocked handoffs include blocker, blocker_class, blocker_evidence and blocker_question. End final handoff with Friction: none or filed Issue references.
 
 Review is by another model family against exact verified SHA. Reviewer checks behavior, security, test evidence and scope. Manager/daemon owns merge-queue landing; workers do not publish integration branches. Issue completion requires independent integration evidence.
 
