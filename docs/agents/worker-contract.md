@@ -6,6 +6,8 @@ Take one assigned Issue. Read AGENTS.md, Issue acceptance criteria, inventory ro
 
 Keep allocated sandbox/base ancestry. Read Python; write executable implementation/tests in Rust. Preserve source behavior and shipped security controls. Update canonical content and mirrors through shared synchronization. Do not remove unrelated features or rewrite existing JS/TS/Terraform solely for language uniformity.
 
+Keep transient schema/RPC inspection files outside the source tree, using a task-specific temporary directory. Reserve the stamped Cargo target for build output. Planning and review nodes leave no source changes or untracked files; inspect `git status --short` before handoff. A tool result is not a source artifact.
+
 Use plan node output as an aid; actual source and Issue acceptance criteria are ground truth. Add boundary/negative fixtures and document deliberate changes. If scope is too large or a remote service requires unsupported language/runtime behavior, record a bounded follow-up through manager; never silently omit coverage.
 
 ## Verification

@@ -41,3 +41,18 @@ Programme/governance/topology Issues InProgress; foundational execution and inve
 Next wake: inspect actual outcome, exact source SHA and daemon evidence; repair technical adapter/integration impasses; cross-review source and queue accepted changes. Ordinary downstream slices wait for prerequisites. Native health-anomaly watch armed in addition to owned execution/terminal watches; no periodic polling.
 
 Kaizen filed: harness #4416 open (work schema permits zero weight and priority >9 while runtime refuses). Existing #4360 remains open. No kaizen fix landed in this fork. ManagerUpdate stage expected_row_version uses current work row version, not zero for an existing work record.
+
+## Context-cap recovery (2026-10-26 22:42 UTC)
+
+Current seat f69b953c-1d24-4850-b110-38cd3945e39c, Codex/gpt-6.1-sol/xhigh, same logical manager. Catalog and live overview confirmed Execute, scope 1/policy 2, max_active_sessions 4, all six operator model choices still granted. No human gates. GLM inventory 7042bad4-9e9a-4dd4-95bd-e131bcd8809f remains running; original terminal watch carried. Two duplicate health-anomaly watches carried; retain only rust-migration-health after recovery. No manager-owned running jobs or queue entries at rotation.
+
+Foundation execution 6e9378b2-0c80-4b69-b8c8-dd564e8f41ab blocked on plan attempt c20f89d4-2264-53f4-b648-dc488b859183 before any implementation. Inspection found only target/.rsi-tmp/{cat.json,extract.txt,job-schema.json}; preserved commit 60be731a8ce0bbd31cfc0e0560dbf1acffe0b410 contains scratch output, no product work. Plan session 23da0a64-5b2f-5a48-a1de-c1b2b16a97c4 final handoff was read; its generic profile is advisory and cannot meet AC4. Original run cancelled via RSI, confirmed terminal row_version 8. Scratch ref retained for audit; never enqueue it.
+
+Kaizen #4418 filed for clean planning. Added /target/ ignore and transient-file contract. Both profiles now revision 2, validate_only zero diagnostics and real upsert accepted:
+- DeepSeek digest sha256:e59d7ad72c467445b41795116b481af89196e9c49bf891ce2b5d8efceeecf377.
+- GLM digest sha256:d976d5063a6c88b6b4c84714777d741ed9bd4274d7060279c06305ce858d31b0.
+Plan pass_content now true; prompts prohibit schema dumps and distinguish node model from implementation owner. Primary implementation stays OpenRouter. No harness/host policy changes.
+
+Next: commit/push this clean manager source, restart #4373 with DeepSeek revision 2 and exact base; execute owns one settle wake. Old plan is preserved in its session, but restart rereads actual source. Candidate gate infrastructure is not yet proven for this fork. Do not claim completed bootstrap or closed #4418 until observed recovery criteria hold. #4371 findings should reach foundation worker before acceptance when relevant.
+
+Open friction: #4360, #4416 (harness); #4418 (this fork). No kaizen fix integrated yet. No runaway jobs stopped; cancelled one pre-implementation topology for clean restart. Friction: #4360, #4416, #4418.

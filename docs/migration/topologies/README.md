@@ -7,7 +7,9 @@ Programme #4369; workflow Issue #4372. Definitions are manager-owned, durable da
 | DeepSeek | deepseek/deepseek-v4.1-flash-1017 | z-ai/glm-5.3-flash | a50c475b-884f-4d1e-8a9f-1ea13405d9b4 |
 | GLM | z-ai/glm-5.3-flash | deepseek/deepseek-v4.1-flash-1017 | 466d3b4a-0d17-473a-8a3b-a9c0a7c7c1cf |
 
-Both use OpenRouter high effort and passed AgentTopologyUpsert validate_only with zero diagnostics. Revision 1 stored. This records definition validation, not a successful migration execution.
+Both use OpenRouter high effort and passed AgentTopologyUpsert validate_only with zero diagnostics. Revision 2 stored. This records definition validation, not a successful migration execution.
+
+Revision 2 addresses #4418: planning passes its inline plan to implementation and keeps transient schema/RPC inspection files outside source. Cargo output is ignored at repository root. The initial foundation execution `6e9378b2-0c80-4b69-b8c8-dd564e8f41ab` was cancelled after planning left untracked scratch files; preserved commit `60be731a8ce0bbd31cfc0e0560dbf1acffe0b410` contains those files only and is not an accepted source. Restart from the clean manager revision. Implementation must resolve the real Rust verification adapter; a generic project profile does not satisfy candidate verification.
 
 ## One run per Issue
 
