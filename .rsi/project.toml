@@ -1,0 +1,19 @@
+# Diagnostic recipes for daemon AgentSubmitJob kind=test {recipe}. These are
+# diagnostics only; they do not substitute for the required committed-source
+# scoped_test candidate evidence (Issue #4373 AC4).
+version = 1
+
+[recipes.fmt]
+runner = "make"
+target = "fmt"
+timeout_minutes = 5
+
+[recipes.clippy]
+runner = "make"
+target = "clippy"
+timeout_minutes = 10
+
+[recipes.workspace-test]
+runner = "make"
+target = "test"
+timeout_minutes = 10
