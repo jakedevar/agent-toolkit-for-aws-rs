@@ -27,3 +27,17 @@ Skill: /home/jakedevar/rsi/.claude/skills/rsi-project-manager/SKILL.md. Maintain
 Kaizen carried: harness #4360 open (language restriction publication). New schema mismatch observed: ManagerUpdate work accepts weight minimum 0 in catalog but refuses zero; use weight 1. File/dedupe follow-up before final handoff.
 
 Bootstrap revision: use DeepSeek topology for foundation #4373 immediately, pinned to manager policy commit. GLM inventory #4371 remains hand-driven read-only research + documentation because verification adapter is not yet present. This exercises reusable topology on first implementation slice. Operator confirmed optional Sonnet/Terra assistance; primary work stays OpenRouter.
+
+## First dispatch accepted (2026-10-26)
+
+Source f86cc8fb464b26fd4d187bfa9d5cd0eb59615f26 pushed to origin/rsi/0dd33d25-9c5a-4f66-8053-9d48b025263e. JSON syntax, 47-Issue count, 391-path coverage and git diff whitespace checks passed. No Rust replacement test suite exists yet; no source landing claimed.
+
+Foundation #4373: DeepSeek topology execution 6e9378b2-0c80-4b69-b8c8-dd564e8f41ab accepted, owner settle wake armed. Observed running GLM plan node; downstream DeepSeek implementation and GLM review are not yet observed started. Execution base is exact source above. Do not start a duplicate run or add a second settle wake.
+
+Inventory #4371: GLM session 7042bad4-9e9a-4dd4-95bd-e131bcd8809f established, action 277ea761-9e47-402c-927f-1036abeb28fb succeeded with provider_established. Daemon launch owns terminal watch. Scope only docs/migration/python-inventory.json and inventory-audit.md. Preserve pending work; inspect exact action/session when acting.
+
+Programme/governance/topology Issues InProgress; foundational execution and inventory worker own their Issue progress. Manager ledger stages record partial bootstrap implementation and running planning. No review or integration evidence fabricated. Dependencies require integrated sources except documented pinned bootstrap start.
+
+Next wake: inspect actual outcome, exact source SHA and daemon evidence; repair technical adapter/integration impasses; cross-review source and queue accepted changes. Ordinary downstream slices wait for prerequisites. Native health-anomaly watch armed in addition to owned execution/terminal watches; no periodic polling.
+
+Kaizen filed: harness #4416 open (work schema permits zero weight and priority >9 while runtime refuses). Existing #4360 remains open. No kaizen fix landed in this fork. ManagerUpdate stage expected_row_version uses current work row version, not zero for an existing work record.
