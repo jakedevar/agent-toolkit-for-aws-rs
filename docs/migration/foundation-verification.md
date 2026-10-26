@@ -70,3 +70,27 @@ worktree; workers must not troubleshoot transport credentials.
 - AC7 document unsupported harness behavior with exact refusal: met by this
   page (`job_recipe_invalid`, `scoped_test_receipt_missing`,
   `scoped_test_rolling_tool_unavailable`, `agent_verb_requires_session_token`).
+
+## Exact combined source 1ab92d8 batch (manager-native, 2026-10-26)
+
+After the manager merged the preserved GLM repair and committed the recipe CPU
+cap/evidence correction, the combined source
+`1ab92d8732ec780027260c7077670ce394865570` was verified clean
+(`source_dirty:false`, source head exact) under one daemon batch:
+
+| Job | Kind | Result |
+| --- | --- | --- |
+| `30270908-671e-4adb-b8f9-a1777772826e` | build | succeeded, exit 0, `source_dirty:false`, head exact |
+| `fbc16ce3-4d8e-495a-b2a0-1bf9b9d50aa3` | test (workspace) | succeeded, 42 tests passed (5 CLI unit + 11 actual-binary integration + 26 core), no failures |
+| `e862922e-2b19-44a4-83e5-015bd04613d8` | fmt (recipe) | FAILED, exit 2: two formatting sites — `crates/toolkit-cli/src/main.rs` `execute()` Help/Version arms carried outer braces around their inner `match`; `crates/toolkit-core/src/frontmatter.rs` `is_block_body` condition was split across three lines |
+| `a00a343c-5d5e-46cd-b2f7-dc93d34f84cd` | clippy (recipe) | FAILED, exit 2: exactly one lint, `clippy::single_match_else` at `crates/toolkit-cli/src/main.rs:148:20` (the `args_os().map(|arg| match arg.into_string())` closure); no other diagnostics |
+
+The fmt and clippy failures were diagnostics-only, not behavior defects. A
+bounded follow-up commit applies exactly those repairs: the Help/Version arms
+become direct `match` expressions, the `map` closure becomes
+`if let Ok(text) = arg.into_string() { text } else { ... }`, and the
+`is_block_body` condition collapses to one line. No lint allowance, workspace
+lint weakening, dependency, test or behavior change accompanies them. Until the
+manager reruns fmt, clippy and tests against that new exact head, the new
+source remains unverified: AC3 (fmt/clippy) and AC4 (trusted candidate,
+harness #4425) stay unmet, and no result on this page covers the new commit.

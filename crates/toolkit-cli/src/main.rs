@@ -99,18 +99,14 @@ fn parse_args(args: &[String]) -> Result<Command, &'static str> {
 /// Executes a parsed command and returns the process exit code.
 fn execute(command: &Command) -> ExitCode {
     match command {
-        Command::Help => {
-            match print_line(USAGE) {
-                Ok(()) => ExitCode::SUCCESS,
-                Err(_) => ExitCode::FAILURE,
-            }
-        }
-        Command::Version => {
-            match print_line(&format!("toolkit {}", env!("CARGO_PKG_VERSION"))) {
-                Ok(()) => ExitCode::SUCCESS,
-                Err(_) => ExitCode::FAILURE,
-            }
-        }
+        Command::Help => match print_line(USAGE) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(_) => ExitCode::FAILURE,
+        },
+        Command::Version => match print_line(&format!("toolkit {}", env!("CARGO_PKG_VERSION"))) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(_) => ExitCode::FAILURE,
+        },
         Command::SkillsList { root, json } => {
             let root = PathBuf::from(root.clone().unwrap_or_else(|| "skills".to_string()));
             match discover_skills(&root) {
@@ -145,9 +141,10 @@ fn main() -> ExitCode {
     let mut invalid = false;
     let args: Vec<String> = std::env::args_os()
         .skip(1)
-        .map(|arg| match arg.into_string() {
-            Ok(text) => text,
-            Err(_) => {
+        .map(|arg| {
+            if let Ok(text) = arg.into_string() {
+                text
+            } else {
                 invalid = true;
                 String::new()
             }

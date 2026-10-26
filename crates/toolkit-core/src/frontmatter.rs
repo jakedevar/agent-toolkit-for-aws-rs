@@ -61,9 +61,7 @@ pub fn parse_frontmatter(content: &str) -> Frontmatter {
 
         let is_block_body = |line: &str, block: &Option<(Key, char, Vec<String>)>| {
             block.is_some()
-                && (line.starts_with(' ')
-                    || line.starts_with('\t')
-                    || line.trim().is_empty())
+                && (line.starts_with(' ') || line.starts_with('\t') || line.trim().is_empty())
         };
         if is_block_body(line, &block) {
             if let Some((_, _, segments)) = &mut block {
