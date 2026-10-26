@@ -1,0 +1,22 @@
+# Public daemon recipe manifest (AgentSubmitJob kind=test {recipe}).
+# Recipes run `make <target>` in the worktree; the Makefile relies on the
+# daemon-stamped build environment (CARGO_TARGET_DIR, RUSTC_WRAPPER/sccache)
+# and never overrides it. These recipes cover fmt, clippy and the workspace
+# test suite; candidate verification itself remains the daemon scoped_test
+# path (Issue #4373 AC4).
+version = 1
+
+[recipes.fmt]
+runner = "make"
+target = "fmt"
+timeout_minutes = 5
+
+[recipes.clippy]
+runner = "make"
+target = "clippy"
+timeout_minutes = 10
+
+[recipes.workspace-test]
+runner = "make"
+target = "test"
+timeout_minutes = 10

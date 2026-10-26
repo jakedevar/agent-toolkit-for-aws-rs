@@ -1,0 +1,10 @@
+[package]
+name = "toolkit-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Shared library for the Agent Toolkit Rust CLI (bootstrap slice #4373)."
+
+[lints]
+workspace = true

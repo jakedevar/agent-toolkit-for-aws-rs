@@ -1,0 +1,17 @@
+[package]
+name = "toolkit-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Read-only Agent Toolkit command-line interface (bootstrap slice #4373)."
+
+[[bin]]
+name = "toolkit"
+path = "src/main.rs"
+
+[dependencies]
+toolkit-core = { path = "../toolkit-core" }
+
+[lints]
+workspace = true

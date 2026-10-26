@@ -1,0 +1,26 @@
+# Diagnostic recipes for daemon AgentSubmitJob kind=test {recipe}. These are
+# diagnostics only; they do not substitute for the required committed-source
+# scoped_test candidate evidence (Issue #4373 AC4).
+#
+# SUPERSEDED for job submission by .rsi/jobs.toml (same three recipes). This
+# file is kept only as provenance: recipe submissions declared through this
+# profile were refused with `job_recipe_invalid` at 2026-10-26 (Issue #4373
+# handoffs; review #4426 recipe-manifest diagnosis). The refusal was opaque —
+# no file or key was named — so this manifest is not known to be malformed;
+# the public version-1 .rsi/jobs.toml contract is what the daemon documents.
+version = 1
+
+[recipes.fmt]
+runner = "make"
+target = "fmt"
+timeout_minutes = 5
+
+[recipes.clippy]
+runner = "make"
+target = "clippy"
+timeout_minutes = 10
+
+[recipes.workspace-test]
+runner = "make"
+target = "test"
+timeout_minutes = 10
