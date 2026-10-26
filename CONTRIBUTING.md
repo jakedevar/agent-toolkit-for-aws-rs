@@ -12,4 +12,6 @@ No pull request or upstream AWS team approval is required for this fork. Do not 
 
 Legacy Python remains migration evidence until each replacement passes. New executable implementation and tests are Rust. Existing product docs/examples do not impose Python development dependencies.
 
+Contributions to this fork are licensed under [Apache-2.0](LICENSE).
+
 Report fork bugs and follow-ups in RSI project Issue tracker. Keep security-sensitive details private; never paste credentials. AWS service or upstream AWS product vulnerabilities retain their appropriate AWS private reporting process. Preserve upstream LICENSE, NOTICE and attribution.

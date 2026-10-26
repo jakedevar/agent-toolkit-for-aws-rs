@@ -12,15 +12,17 @@ Every Python path maps to an assigned slice. Inventory is an auditable baseline,
 
 Two durable topology profiles share one versioned process: plan -> implement and daemon verification -> independent review -> bounded fixes -> queue landing and Issue closure. A refused landing has one bounded repair/review path. Definitions are [DeepSeek](topologies/deepseek.json) and [GLM](topologies/glm.json); see [runbook](topologies/README.md). Prompts apply root Rust policy and source/verification custody.
 
-Primary implementation: DeepSeek deepseek/deepseek-v4.1-flash-1017 and GLM z-ai/glm-5.3-flash, high effort. Default independent review uses the opposite family. Opus 5.5 / GPT-6.1 Sol may plan; Sonnet 5.5 / GPT-6.1 Terra may review/assist. Future managers re-read live grants, provider health and spend caps before launch. Do not auto-select an ungranted model.
+Preferred primary implementation: DeepSeek deepseek/deepseek-v4.1-flash-1017 and GLM z-ai/glm-5.3-flash, high effort. Default independent review uses the opposite family. Opus 5.5 / GPT-6.1 Sol may plan; Sonnet 5.5 / GPT-6.1 Terra may review/assist. Live grants currently permit GLM but exclude DeepSeek. Retain the stored DeepSeek profile without execution; the GLM revision uses Sol planning and Sonnet independent review. Future managers re-read live grants, provider health and spend caps before launch. Do not auto-select an ungranted model.
 
 Initial bootstrap: DeepSeek #4373 creates workspace and trustworthy verification through the DeepSeek topology; GLM #4371 separately audits inventory/instruction conflicts. They may start from same pinned manager policy commit before it lands, with nonoverlapping paths. The research audit is hand-driven because no runnable Rust verification/integration baseline exists yet; it must not fake verification. Foundation is the first live topology trial; an adapter impasse is recorded and fixed before downstream runs.
 
-Bootstrap update: the first two #4373 topology trials stopped at planning (scratch-only preserved work, then invalid handoff stage). Neither delivered implementation. Revision 3 supplies parser-checked handoff templates; foundation now uses a hand-driven DeepSeek Issue worker under the [foundation plan](foundation-plan.md), retaining verification, independent review and queue gates. Later ports use the repaired topologies. See #4418 and harness #4419 for evidence.
+Bootstrap update: the first two #4373 topology trials stopped at planning (scratch-only preserved work, then invalid handoff stage). Neither delivered implementation. Revision 3 supplied parser-checked handoff templates. The hand-driven DeepSeek foundation worker was halted for prohibited Python bridge work; replacement GLM worker `b5d95527-4f41-4584-828f-e892e358ab24` committed the Rust workspace as `bb0df26d290b3823d2661e4e856f621ac6d238a6`. It was then halted after unsafe credential discovery while troubleshooting job transport. Source is preserved and unaccepted; manager-owned daemon verification is pending. Allowed Sonnet assistance must independently review the exact GLM source after verification; the earlier DeepSeek review assignment is superseded by the live grant. The [foundation plan](foundation-plan.md) retains verification, review and queue gates. GLM revision 4 tightens generic prompts and records review-step limitations; the DeepSeek profile remains at stored revision 3, unavailable under current launch policy. No revision has a successful end-to-end execution. See #4418 and harness #4419, #4423 and #4424.
 
 Dependencies exist in manager ledger with require_integrated true, as well as linked Issue bodies. Pinned bootstrap stacking is an explicit exception recorded by manager. At most two initial workers; normal concurrency stays inside project cap. No ready label bypasses prerequisites.
 
 ## Issue map
+
+The table and issues.json preserve the initial owner map. Bootstrap substitutions above and the daemon ledger determine the current implementer and opposite-family reviewer.
 
 | Issue | Slice | Primary owner | Prerequisites |
 | --- | --- | --- | --- |
@@ -81,4 +83,3 @@ No bulk deletion before replacements pass. No Python wrappers counted as Rust po
 ## Manager continuity
 
 Durable Issues and manager ledger carry assignments/dependencies. [issues.json](issues.json) freezes initial map; daemon state is current. Manager notebook: docs/agents/manager-handoff.md (maintain with Bash cat/tail). Preserve active jobs, topology revisions, exact source/base SHAs, review/queue outcomes and genuine gates during succession. Update active workers explicitly when plan changes.
-

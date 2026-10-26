@@ -35,4 +35,3 @@ Run long tests/builds through AgentSubmitJob, keeping stamped CARGO_TARGET_DIR a
 Use manager-owned versioned Python-to-Rust topologies after bootstrap. Bounded review/repair loops, at most project-authorized concurrency, one accepted source per queue gate. Human approvals, credentials, real spending beyond grants, main/releases and user-data deletion remain operator-owned. Do not weaken secret handling or run live AWS changes/payments as ordinary tests.
 
 Keep Issue handoffs and docs/migration status current. No secrets or tokens in source, logs, prompts or Issues. Report friction durably and preserve enough state for the next manager.
-

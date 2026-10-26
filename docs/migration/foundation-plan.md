@@ -1,6 +1,6 @@
 # Foundation bootstrap plan (#4373)
 
-Manager decision, 2026-10-26: hand-drive this bootstrap after two plan-only topology failures. Primary implementation remains DeepSeek; another model family reviews the exact verified source. Later ports use the versioned topologies. This plan gives engineering defaults; Issue acceptance criteria and actual source behavior govern delivery.
+Manager decision, 2026-10-26: hand-drive this bootstrap after two plan-only topology failures. The initial DeepSeek worker was replaced by GLM after scope violations. The current launch grant excludes DeepSeek; use allowed Sonnet assistance to review the exact verified GLM source. Later ports use the versioned topologies. This plan gives engineering defaults; Issue acceptance criteria and actual source behavior govern delivery.
 
 Evidence: GLM planning sessions `23da0a64-5b2f-5a48-a1de-c1b2b16a97c4` and `903bd09b-feb5-5a36-b2ec-3f7f9477ce53`. Their outputs are migration research, not test results. The original workspace has no Cargo project or Rust test baseline. The installed harness documents a separate Rust scoped-test adapter; generic recipe evidence does not waive it.
 

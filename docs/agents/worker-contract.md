@@ -27,4 +27,3 @@ Review is by another model family against exact verified SHA. Reviewer checks be
 ## Resource and authority boundaries
 
 No real payments, AWS deployment/deletion, live model probes, raw secret retrieval or load generation in default tests. Use mocks. Follow live spend/capacity/authority grants and genuine human gates. Engineering and tooling problems go to project manager. Never use provider-native delegation or shell/RPC bypasses.
-
