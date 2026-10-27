@@ -534,6 +534,55 @@ toolkit ai-data transform describe JOB_NAME [--region R]
 Parity table, the S3/SageMaker service seams, the remote-payload classification
 and every intentional change: [docs/migration/ai-data.md](../../docs/migration/ai-data.md).
 
+## bedrock-report (#4405)
+
+`toolkit bedrock-report` replaces `render_report.py` and `validate_result.py` of
+the `llm-to-bedrock` skill (plugin `aws-startup-advisor`). Value flags are
+`--name VALUE` or `--name=VALUE` (not empty, not starting with `-`).
+
+```
+toolkit bedrock-report render [PAYLOAD_JSON] [--phase-results DIR --repo DIR]
+    [--date-suffix YYYY-MM-DD] [--results-dir DIR]
+toolkit bedrock-report validate (--schema analysis|ingestion|eval|rewrite|delta-decisions FILE
+    | --check-run-context SAVED_JSON --current CURRENT_JSON)
+```
+
+- `render` prints the in-chat summary of a finished Execute run (`AI Migration
+  Complete!`, branch, eval pass rate, files modified, parsed test counts, applied
+  behavior-delta decisions, report path) from `rewrite.json`, `eval.json` and
+  `delta-decisions.json` in `--phase-results DIR` (needs `--repo`), or from one
+  legacy payload file; exactly one of the two inputs is required. A missing,
+  unreadable or blocked/partial result file degrades to `(none)` or
+  `(unavailable)`. The repository's `MIGRATION_REPORT_<date-suffix>.md` (else the
+  last `MIGRATION_REPORT_*.md` by name) is copied to `--results-dir` (default
+  `~/saws-migrate-results`) before the summary is printed. Only regular files
+  that are not symbolic links are read, listed or written, and a date suffix with
+  a path separator never names a report. Every value from the result files is
+  escaped before it is printed. An unreadable legacy payload or a failed copy
+  prints `render_report: ...` on stderr and exits 1.
+- `validate --schema NAME FILE` checks a phase result against the schema that
+  ships with the skill (`scripts/schemas/NAME.json`, compiled into the binary):
+  `RESULT=valid CONTROL=ok`, `RESULT=valid CONTROL=blocked REASON=...` or
+  `RESULT=valid CONTROL=partial COMPLETED=n TOTAL=m` (exit 0);
+  `RESULT=invalid` plus one `$.path: finding` line per problem (exit 1; for a
+  `oneOf` schema the findings are those of the control-state branch when the
+  file has a `blocked` or `partial` key, else of the payload branch); and
+  `RESULT=error ...` for an unreadable file (exit 2). An analysis with
+  `same_model_family: true` must name an unchanged model identity in every
+  `source -> target` pair. Findings name the path, the JSON type and the
+  allowed values; they never repeat a value of the checked file.
+- `validate --check-run-context SAVED --current CURRENT` compares two run
+  contexts field by field: `RUN_CONTEXT=match` (exit 0) or `RUN_CONTEXT=mismatch`
+  plus `MISMATCH $.path saved=... current=...` lines (exit 1; `source_key_sha256`
+  prints only `differs`; `report_date_suffix` is ignored; the current
+  `evaluation_contract_version` is always enforced); `RUN_CONTEXT=error ...`
+  for an unreadable file (exit 2).
+
+Usage errors (both or neither input, a missing companion option, an unknown
+`--schema`) exit 2 with the usage text. Parity table, the schema and identity
+seams and every intentional change:
+[docs/migration/bedrock-report.md](../../docs/migration/bedrock-report.md).
+
 ## asm exec (#4451)
 
 `toolkit asm exec [--] COMMAND [ARG...]` is the Rust port of the

@@ -40,7 +40,7 @@ mod pricing;
 mod program;
 mod report;
 mod terraform;
-mod text;
+pub(crate) mod text;
 
 pub use artifacts::artifacts_command;
 pub use consent::consent_audit_command;
