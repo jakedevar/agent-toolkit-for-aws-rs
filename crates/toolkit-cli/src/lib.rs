@@ -24,6 +24,7 @@ use std::path::PathBuf;
 
 use toolkit_core::{discover_skills, skills_to_json, ErrorKind, ToolkitError};
 
+mod ai_data;
 mod aurora;
 pub mod dynamodb;
 pub mod manifests;
@@ -72,6 +73,13 @@ Usage:
   toolkit aurora io [offline] --engine ENGINE [--region R] [--format json|table] [--days N]
       [--cluster ID | --all] [--instance TYPE] [--num-instances N]
       [--storage-gib GIB] [--monthly-io-millions N]
+  toolkit ai-data detect-format PATH_OR_S3_URI [--sample-size BYTES] [--json]
+  toolkit ai-data validate-metrics [JSON_OR_FILE]
+  toolkit ai-data transform plan --script FILE --source-s3 URI --output-s3 URI
+      [--instance-type T] [--region R] [--execution-role ARN]
+      [--base-job-name N] [--image-uri URI]
+  toolkit ai-data transform submit (same options as plan)
+  toolkit ai-data transform describe JOB_NAME [--region R]
   toolkit --version
   toolkit help
 
@@ -128,6 +136,16 @@ Commands:
                 which this build cannot do (exit 2), except `acu`, which falls
                 back to the built-in us-east-1 prices. Output is JSON unless
                 --format table. See docs/migration/aurora.md.
+  ai-data       Dataset and metric tools of the AWS AI/ML skill (#4385).
+                detect-format samples the first --sample-size bytes (default
+                1 MiB, at most 16 MiB) of a local JSONL file or s3:// object and
+                reports one of 11 training formats with its validation errors
+                (exit 1 when invalid). validate-metrics checks a custom-metric
+                JSON array (inline or a file). transform builds (plan) or
+                submits and describes (submit, describe) a SageMaker Processing
+                job; this build has no SageMaker or S3 client, so submit and
+                describe exit 1 and s3:// inputs are refused. See
+                docs/migration/ai-data.md.
 
 Options:
   --json        Emit a JSON array of {name, description, path} objects.
@@ -518,6 +536,46 @@ pub const COMMANDS: &[CommandSpec] = &[
         strict_values: false,
         max_positionals: 1,
         handler: aurora::io_command,
+    },
+    CommandSpec {
+        path: &["ai-data", "detect-format"],
+        flags: ai_data::DETECT_FORMAT_FLAGS,
+        value_flags: ai_data::DETECT_FORMAT_VALUE_FLAGS,
+        strict_values: true,
+        max_positionals: 1,
+        handler: ai_data::detect_format_command,
+    },
+    CommandSpec {
+        path: &["ai-data", "validate-metrics"],
+        flags: &[],
+        value_flags: &[],
+        strict_values: false,
+        max_positionals: 1,
+        handler: ai_data::validate_metrics_command,
+    },
+    CommandSpec {
+        path: &["ai-data", "transform", "plan"],
+        flags: &[],
+        value_flags: ai_data::TRANSFORM_VALUE_FLAGS,
+        strict_values: true,
+        max_positionals: 0,
+        handler: ai_data::transform_plan_command,
+    },
+    CommandSpec {
+        path: &["ai-data", "transform", "submit"],
+        flags: &[],
+        value_flags: ai_data::TRANSFORM_VALUE_FLAGS,
+        strict_values: true,
+        max_positionals: 0,
+        handler: ai_data::transform_submit_command,
+    },
+    CommandSpec {
+        path: &["ai-data", "transform", "describe"],
+        flags: &[],
+        value_flags: ai_data::DESCRIBE_VALUE_FLAGS,
+        strict_values: true,
+        max_positionals: 1,
+        handler: ai_data::transform_describe_command,
     },
 ];
 
