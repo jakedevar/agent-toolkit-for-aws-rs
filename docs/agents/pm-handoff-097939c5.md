@@ -216,3 +216,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 23:08Z: safety net: 5060cb2e still queued (HOL) + queue held_for_deploy (deploy 5d77a9b3, release_by 23:38Z). 4 workers parked on jobs (16f724e9 #4381, a7277981 #4391, 36d6de30 #4799, b4182810 #4793). Net re-armed 00:08Z.
 - 23:11Z: #4793 impl 362c237df7b5598d1332216fe1ae1e965bf2bc0c (b4182810; annotated-let + matches! delimiters, COVERS #4794; test-only; scoped bb481d4e ok base ec2740ed, 2086). Review #4805 worker 72d2e61e (Codex sol, limited blocking; op a9d80cee).
   Round 13 note: if #4805 accepts, merge 362c237d after #4799's head; stricter scanner may flag more lines in relational/cloudwatch -> marker-only or stop.
+- 23:18Z: #4793 ACCEPT 362c237d (#4805, 72d2e61e). Close-on-land additions: #4793 #4794 #4805. Mailed #4799 worker 36d6de30 to merge 362c237d before final verification (msg 5d3be873).
+  New slice #4409 (startup contract tests -> Rust) worker 8fba463c (Sonnet) from f6fac27d (op 7dcf18e5).
+  4/4 busy: 16f724e9 (#4381 r2), a7277981 (#4391), 36d6de30 (#4799), 8fba463c (#4409).
