@@ -34,8 +34,10 @@
 //!    `optional_list`, `optional_object`, `optional_text`, `same_json`, ...);
 //! 2. it reads no JSON shape: a `Json::Array`, `Json::Object`, `Value::Array`
 //!    or `Value::Object` in a pattern (`match`, `if let`, `let ... else`,
-//!    `matches!`, a guard, behind `Some(..)`, a struct-field pattern, tuple
-//!    form `Json::Array(v)` and brace form `Json::Array { 0: v }` or
+//!    `matches!` in any macro delimiter (#4794), a guard, behind `Some(..)`, a
+//!    struct-field pattern, a `let` with a type annotation `let P: T = ..`
+//!    (#4793), tuple form `Json::Array(v)` and brace form
+//!    `Json::Array { 0: v }` or
 //!    `Json::Object { .. }` alike (#4774); also through an alias or a
 //!    `use Json::{Array, Object}` import), and any call or path `as_array`,
 //!    `as_object`, `as_array_mut`, `as_object_mut`, is refused unless a marker
@@ -725,9 +727,39 @@ fn call_start(toks: &[Tok], open: usize) -> usize {
     start
 }
 
+/// Whether the `:` at `colon` starts the type annotation of a `let` pattern
+/// (`let PATTERN: Type = ..`, #4793): a type, then an `=` that is neither `==`
+/// nor `=>`. Anything that ends the type first (a `;`, a block, a closing
+/// bracket, a `,` or `|` at the top level) is not a `let` annotation: a
+/// parameter's type is no read.
+fn annotated_let(toks: &[Tok], colon: usize) -> bool {
+    let mut depth = 0i32;
+    for (index, tok) in toks.iter().enumerate().skip(colon + 1) {
+        let after_arrow = index > 0 && toks[index - 1].is("-");
+        if tok.is("(") || tok.is("[") || tok.is("<") {
+            depth += 1;
+        } else if tok.is(")") || tok.is("]") || (tok.is(">") && !after_arrow) {
+            depth -= 1;
+            if depth < 0 {
+                return false;
+            }
+        } else if depth == 0 {
+            if tok.is("=") {
+                let next = toks.get(index + 1);
+                return !next.is_some_and(|t| t.is("=") || t.is(">"));
+            }
+            if tok.is(";") || tok.is("{") || tok.is("}") || tok.is(",") || tok.is("|") {
+                return false;
+            }
+        }
+    }
+    false
+}
+
 /// Whether the expression or pattern covering `start..=end` is in a pattern
-/// position: followed by `=>`, `=` (a `let`), `|` or a guard `if`, directly
-/// or through the tuple-struct, tuple, slice or `matches!` pattern around it.
+/// position: followed by `=>`, `=` (a `let`), `: Type =` (an annotated `let`,
+/// #4793), `|` or a guard `if`, directly or through the tuple-struct, tuple,
+/// slice, struct-field or `matches!` pattern around it.
 fn in_pattern_position(toks: &[Tok], start: usize, end: usize) -> bool {
     let Some(after) = toks.get(end + 1) else {
         return false;
@@ -742,12 +774,31 @@ fn in_pattern_position(toks: &[Tok], start: usize, end: usize) -> bool {
     if after.is("if") {
         return true;
     }
+    if after.is(":") {
+        // `let PATTERN: Type = ..` reads like `let PATTERN = ..` (#4793).
+        return annotated_let(toks, end + 1);
+    }
     if !(after.is(",") || after.is(")") || after.is("]") || after.is("}")) {
         return false;
     }
     let Some(open) = enclosing_open(toks, start) else {
         return false;
     };
+    if open >= 2 && toks[open - 1].is("!") && toks[open - 2].is("matches") {
+        // `matches!(value, PATTERN)`, in any macro delimiter (#4794):
+        // everything after the first comma.
+        let mut depth = 0i32;
+        for tok in &toks[open + 1..start] {
+            if tok.is("(") || tok.is("[") || tok.is("{") {
+                depth += 1;
+            } else if tok.is(")") || tok.is("]") || tok.is("}") {
+                depth -= 1;
+            } else if tok.is(",") && depth == 0 {
+                return true;
+            }
+        }
+        return false;
+    }
     if toks[open].is("{") {
         // A field of a struct pattern or of a brace-form variant (#4774):
         // `Holder { body: Json::Array(v), .. }`, `Some { 0: Json::Array(v) }`.
@@ -762,20 +813,6 @@ fn in_pattern_position(toks: &[Tok], start: usize, end: usize) -> bool {
         return is_field && in_pattern_position(toks, call_start(toks, open), matching(toks, open));
     }
     if after.is("}") {
-        return false;
-    }
-    if toks[open].is("(") && open >= 2 && toks[open - 1].is("!") && toks[open - 2].is("matches") {
-        // `matches!(value, PATTERN)`: everything after the first comma.
-        let mut depth = 0i32;
-        for tok in &toks[open + 1..start] {
-            if tok.is("(") || tok.is("[") || tok.is("{") {
-                depth += 1;
-            } else if tok.is(")") || tok.is("]") || tok.is("}") {
-                depth -= 1;
-            } else if tok.is(",") && depth == 0 {
-                return true;
-            }
-        }
         return false;
     }
     in_pattern_position(toks, call_start(toks, open), matching(toks, open))
@@ -1995,5 +2032,125 @@ type Handle<'h> = &'h mut dyn FnMut(&Json) -> bool;
 fn f(v: &Json) -> String { <Json as ToString>::to_string(v) }
 ";
     let report = analyse_one("fresh/types.rs", source);
+    assert!(report.is_clean(), "{report:?}");
+}
+
+// ------------------------------------- review #4745 round 3 (#4793, #4794)
+
+/// Every round-3 evasion: each passes the scanner of ec2740ed and fails this
+/// one. `(label, files)`; the in-scope slice is `fresh`. In order: annotated
+/// `let` patterns (#4793, 0..5), `matches!` delimiters (#4794, 5..).
+fn third_review_evasions() -> Vec<(&'static str, Vec<SourceFile>)> {
+    let one = |text: String| vec![file("fresh/deep/recording.rs", &text)];
+    let use_line = "use toolkit_aws::recorded::Step;";
+    vec![
+        (
+            "annotated tuple let else",
+            one(format!(
+                "{use_line}\nfn items(r: &Json) -> &[Json] {{\n    let Some(Json::Array(v)): Option<&Json> = r.get(\"Items\") else {{ return &[]; }};\n    v\n}}"
+            )),
+        ),
+        (
+            "annotated brace let else",
+            one(format!(
+                "{use_line}\nfn items(r: &Json) -> &[Json] {{\n    let Some(Json::Array {{ 0: v }}): Option<&Json> = r.get(\"Items\") else {{ return &[]; }};\n    v\n}}"
+            )),
+        ),
+        (
+            "annotated nested let else",
+            one(format!(
+                "{use_line}\nfn n<'a>(r: &'a Json) -> usize {{\n    let Ok(Some(&Json::Object(ref m))): Result<Option<&'a Json>, ()> = Ok(r.get(\"M\")) else {{ return 0; }};\n    m.len()\n}}"
+            )),
+        ),
+        (
+            "annotated tuple of patterns",
+            one(format!(
+                "{use_line}\nfn n(r: &Json) -> usize {{\n    let (Some(Json::Array(v)), k): (Option<&Json>, fn(&Json) -> bool) = (r.get(\"I\"), |_| true) else {{ return 0; }};\n    v.len() + usize::from(k(r))\n}}"
+            )),
+        ),
+        (
+            "annotated direct let else",
+            one(format!(
+                "{use_line}\nfn n(r: &Json) -> usize {{\n    let &Json::Array(ref v): &Json = r else {{ return 0; }};\n    v.len()\n}}"
+            )),
+        ),
+        (
+            "annotated struct-field let else",
+            one(format!(
+                "{use_line}\nstruct Holder<'a> {{ body: &'a Json }}\nfn n(h: Holder) -> usize {{\n    let Holder {{ body: Json::Array(v) }}: Holder = h else {{ return 0; }};\n    v.len()\n}}"
+            )),
+        ),
+        (
+            "matches! with braces",
+            one(format!(
+                "{use_line}\nfn objects(r: &Json) -> bool {{ matches! {{ r, Json::Object(_) }} }}"
+            )),
+        ),
+        (
+            "matches! with brackets",
+            one(format!(
+                "{use_line}\nfn objects(r: &Json) -> bool {{ matches![r.get(\"A\"), Some(Json::Array(_))] }}"
+            )),
+        ),
+    ]
+}
+
+#[test]
+fn every_round_three_evasion_fails_the_whole_contract() {
+    for (label, files) in third_review_evasions() {
+        let report = analyse(&files);
+        assert!(
+            report.scope.contains_key("fresh"),
+            "{label}: {:?}",
+            report.scope
+        );
+        assert!(!report.is_clean(), "accepted: {label}\n{report:?}");
+        assert_eq!(report.reads.len(), 1, "{label}: {report:?}");
+    }
+}
+
+#[test]
+fn annotated_lets_and_every_matches_delimiter_are_reads_but_constructions_are_not() {
+    // The marked positive control: a required member, every other shape
+    // rejected, with the annotation an author adds for documentation.
+    let marked = "use toolkit_aws::recorded::Step;
+fn name(r: &Json) -> Result<&str, String> {
+    // recorded-shape: a required member of the snapshot; every other shape is rejected.
+    let Some(Json::Object(m)): Option<&Json> = r.get(\"Doc\") else {
+        return Err(\"Doc must be an object\".into());
+    };
+    Ok(m.name())
+}
+";
+    let report = analyse_one("fresh/marked.rs", marked);
+    assert!(report.is_clean(), "{report:?}");
+    // The same lines without the marker are one read.
+    let unmarked = marked.replace(
+        "    // recorded-shape: a required member of the snapshot; every other shape is rejected.\n",
+        "",
+    );
+    let report = analyse_one("fresh/marked.rs", &unmarked);
+    assert_eq!(report.reads.len(), 1, "{report:?}");
+    // Building a value is not a read, whatever the annotation around it.
+    let source = "use toolkit_aws::recorded::Step;
+struct Holder { body: Json }
+fn f(list: Vec<Json>, pairs: Vec<(String, Json)>) -> Holder {
+    let built: Json = Json::Array(list.clone());
+    let braced: Json = Json::Array { 0: list.clone() };
+    let some: Option<Json> = Some(Json::Object(pairs.clone()));
+    let nested: Result<Option<Json>, ()> = Ok(Some(Json::Array { 0: list.clone() }));
+    let held: Holder = Holder { body: Json::Array(list) };
+    let table: [(&str, fn(&Json) -> Json); 1] = [(\"a\", |_| Json::Object(Vec::new()))];
+    let same: bool = held.body == built && some.is_some() && nested.is_ok() && table.len() == 1;
+    let _: Json = braced;
+    let _ = same;
+    held
+}
+fn g(list: Vec<Json>) -> Json {
+    let tuple: (Json, usize) = (Json::Array(list), 1);
+    tuple.0
+}
+";
+    let report = analyse_one("fresh/build.rs", source);
     assert!(report.is_clean(), "{report:?}");
 }

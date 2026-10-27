@@ -423,7 +423,8 @@ module in scope must:
 - not define its own `optional_*`, `nullable_text` or `same_json` helper;
 - not **read a JSON shape**: any `Json::Array`, `Json::Object`, `Value::Array`
   or `Value::Object` in a pattern (`match`, `if let`, `let ... else`,
-  `matches!`, a guard, behind `Some(..)` or a nested `match`, inside a
+  `matches!` in any delimiter, a guard, behind `Some(..)` or a nested `match`,
+  a `let` with a type annotation (`let Some(Json::Array(v)): Option<&Json> = ..`), inside a
   struct-field pattern; tuple form `Json::Array(v)` and brace form
   `Json::Array { 0: v }` or `Json::Object { .. }` alike; through an alias or a
   `use Json::{Array, Object}`), and any `as_array`, `as_object`,
