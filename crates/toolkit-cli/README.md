@@ -255,3 +255,32 @@ runtime error (exit 1), never a pass. Dependencies are listed and justified in
   (exit 0). Any finding ends with `error: Spec validation failed with N
   error(s).` on stderr (exit 1). An unusable root, `plugins/` directory or
   schema is a runtime error (exit 1); bad arguments are usage errors (exit 2).
+
+## startup validators (#4399)
+
+```
+toolkit startup model-pricing [--plugin-root DIR]
+toolkit startup program-artifacts --migration-dir DIR
+toolkit startup model-id-lint [--plugin-root DIR]
+```
+
+Replacements for `validate-model-pricing.py`,
+`validate-startup-program-artifacts.py` and `model-id-lint.py` of
+`plugins/aws-startup-advisor/scripts`; rule parity table, recorded differences
+and the list of slice files not yet ported are in
+`docs/migration/startup-validators.md`. All three are read-only and offline,
+add no dependency, and never follow symbolic links. `--plugin-root` defaults
+to the current directory.
+
+- Findings use the Python text on stderr (`program-artifacts`:
+  `STARTUP_FAIL | startup-program-artifacts` plus `  - <finding>` lines;
+  `model-id-lint`: `model-id lint: N problem(s)` plus `  - <finding>` lines;
+  `model-pricing`: one `<cloud>: candidate <id> has no numeric Active price
+  row.` line per finding) and a final `error: ...` summary line; exit 1.
+- Success lines on stdout: `Model pricing coverage: all Anthropic candidates
+  have numeric Active cache rows.`, `STARTUP_OK | startup_program_status aligned
+  with artifacts`, `model-id lint: OK (N retired IDs enforced from the
+  registry)`; exit 0.
+- An unreadable or malformed input is `error: <message>` (exit 1). A missing
+  `--migration-dir` is a usage error and a missing `--plugin-root` directory in
+  `model-id-lint` exits 2, like the Python scripts.

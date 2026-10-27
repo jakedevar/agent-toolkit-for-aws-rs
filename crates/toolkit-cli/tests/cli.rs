@@ -824,3 +824,106 @@ fn spec_validate_rejects_symlinks_under_plugins() {
          error: Spec validation failed with 1 error(s).\n"
     );
 }
+
+// ---- startup validators (#4399) ---------------------------------------------
+
+fn real_startup_plugin() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../plugins/aws-startup-advisor")
+}
+
+#[test]
+fn startup_model_pricing_and_lint_pass_on_the_real_plugin_through_the_binary() {
+    let plugin = real_startup_plugin();
+    let root = plugin.to_str().expect("utf-8 plugin path");
+
+    let output = run(
+        &["startup", "model-pricing", "--plugin-root", root],
+        &plugin,
+    );
+    assert_eq!(code(&output), 0, "stderr: {}", stderr(&output));
+    assert_eq!(stderr(&output), "");
+    assert_eq!(
+        stdout(&output),
+        "Model pricing coverage: all Anthropic candidates have numeric Active cache rows.\n"
+    );
+
+    // The plugin directory is also the default root.
+    let output = run(&["startup", "model-id-lint"], &plugin);
+    assert_eq!(code(&output), 0, "stderr: {}", stderr(&output));
+    assert_eq!(stderr(&output), "");
+    assert!(
+        stdout(&output).starts_with("model-id lint: OK ("),
+        "{}",
+        stdout(&output)
+    );
+}
+
+#[test]
+fn startup_model_id_lint_reports_findings_on_stderr_and_exits_one() {
+    let root = temp_root("startup-lint");
+    write_file(
+        &root,
+        "skills/shared/ai/ai-model-lifecycle.md",
+        "| Model | Model ID | Status |\n| - | - | - |\n| A | `vendor.alpha-v1:0` | **excluded** |\n\n**Removed:**\n- Gone (`vendor.gone-v1:0`)\n",
+    );
+    write_file(&root, "skills/x/SKILL.md", "use `vendor.gone-v1:0`\n");
+    let output = run(&["startup", "model-id-lint"], &root);
+    assert_eq!(code(&output), 1);
+    assert_eq!(stdout(&output), "");
+    assert_eq!(
+        stderr(&output),
+        "model-id lint: 1 problem(s)\n  - skills/x/SKILL.md:1: retired Bedrock model `vendor.gone-v1:0` (excluded/removed per ai-model-lifecycle.md) used outside the model catalog\nerror: model-id lint found 1 problem(s)\n"
+    );
+
+    let missing = root.join("absent");
+    let output = run(
+        &[
+            "startup",
+            "model-id-lint",
+            "--plugin-root",
+            missing.to_str().expect("utf-8 path"),
+        ],
+        &root,
+    );
+    assert_eq!(code(&output), 2);
+    assert!(stderr(&output).starts_with("error: Plugin directory not found: "));
+}
+
+#[test]
+fn startup_program_artifacts_exit_codes_and_streams() {
+    let dir = temp_root("startup-program");
+    let dir_arg = dir.to_str().expect("utf-8 dir");
+    write_file(
+        &dir,
+        "preferences.json",
+        r#"{"startup_constraints":{"startup_program_status":{"value":"unknown"}}}"#,
+    );
+    write_file(&dir, "STARTUP_PROGRAMS.md", "Your status: eligible\n");
+    let output = run(
+        &["startup", "program-artifacts", "--migration-dir", dir_arg],
+        &dir,
+    );
+    assert_eq!(code(&output), 1);
+    assert_eq!(stdout(&output), "");
+    assert_eq!(
+        stderr(&output),
+        "STARTUP_FAIL | startup-program-artifacts\n  - STARTUP_PROGRAMS.md: startup_program_status is \"unknown\" but content implies a confirmed Activate tier (your\\s+status:\\s*eligible)\nerror: 1 startup program artifact problem(s)\n"
+    );
+
+    write_file(&dir, "STARTUP_PROGRAMS.md", "No tier claimed.\n");
+    let output = run(
+        &["startup", "program-artifacts", "--migration-dir", dir_arg],
+        &dir,
+    );
+    assert_eq!(code(&output), 0, "stderr: {}", stderr(&output));
+    assert_eq!(
+        stdout(&output),
+        "STARTUP_OK | startup_program_status aligned with artifacts\n"
+    );
+    assert_eq!(stderr(&output), "");
+
+    let output = run(&["startup", "program-artifacts"], &dir);
+    assert_eq!(code(&output), 2);
+    assert!(stderr(&output)
+        .starts_with("error: the following arguments are required: --migration-dir\n"));
+}

@@ -663,7 +663,7 @@ pub(crate) fn universal_newlines(text: &str) -> String {
 
 /// Python's `str.strip()` whitespace: Unicode whitespace plus the ASCII
 /// separators `\x1c`-`\x1f`.
-fn is_py_space(c: char) -> bool {
+pub(crate) fn is_py_space(c: char) -> bool {
     c.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&c)
 }
 
@@ -673,7 +673,7 @@ pub(crate) fn py_strip(text: &str) -> &str {
 
 /// Python's `str.splitlines()`: line boundaries are `\n`, `\r`, `\r\n`, `\v`,
 /// `\f`, `\x1c`-`\x1e`, `\x85`, `\u{2028}` and `\u{2029}`; no empty trailing line.
-fn py_splitlines(text: &str) -> Vec<&str> {
+pub(crate) fn py_splitlines(text: &str) -> Vec<&str> {
     let mut lines = Vec::new();
     let mut start = 0;
     let mut chars = text.char_indices().peekable();

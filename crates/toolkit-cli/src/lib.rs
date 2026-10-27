@@ -26,6 +26,7 @@ use toolkit_core::{discover_skills, skills_to_json, ErrorKind, ToolkitError};
 
 pub mod manifests;
 pub mod spec;
+pub mod startup;
 
 /// Usage text printed by `help` (stdout) and after usage errors (stderr).
 pub const USAGE: &str = "\
@@ -33,6 +34,9 @@ Usage:
   toolkit skills list [ROOT] [--json]
   toolkit manifests validate [ROOT] [--plugin NAME]
   toolkit spec validate [ROOT]
+  toolkit startup model-pricing [--plugin-root DIR]
+  toolkit startup program-artifacts --migration-dir DIR
+  toolkit startup model-id-lint [--plugin-root DIR]
   toolkit --version
   toolkit help
 
@@ -53,10 +57,29 @@ Commands:
                 the schemas cannot express, and the SKILL.md frontmatter of
                 each plugin skill. Problems are reported as `  ERROR: ...`
                 lines on stderr and exit status 1.
+  startup model-pricing
+                Require a numeric Active price row in the gcp-to-aws and
+                azure-to-aws Bedrock pricing caches for every default
+                Anthropic candidate model of the aws-startup-advisor plugin
+                at --plugin-root DIR (default: the current directory).
+  startup program-artifacts
+                Check that STARTUP_PROGRAMS.md, ai-migration/STARTUP_PROGRAMS.md
+                and migration-report.html in the migration directory do not
+                imply a confirmed AWS Activate tier when preferences.json
+                records startup_program_status as unknown, and that they link
+                to the Activate application page when they mention it.
+  startup model-id-lint
+                Fail when a file of the plugin at --plugin-root DIR (default: the current
+                directory) names a Bedrock model the lifecycle registry has
+                retired, outside the catalog files that record it.
 
 Options:
   --json        Emit a JSON array of {name, description, path} objects.
   --plugin NAME Validate only the plugin directory ROOT/plugins/NAME.
+  --plugin-root DIR
+                Plugin directory for the startup commands (default: .).
+  --migration-dir DIR
+                Migration run directory holding preferences.json.
   -h, --help    Print this help.
   -V, --version Print the version.
 
@@ -252,6 +275,27 @@ pub const COMMANDS: &[CommandSpec] = &[
         value_flags: &[],
         max_positionals: 1,
         handler: spec::validate_command,
+    },
+    CommandSpec {
+        path: &["startup", "model-pricing"],
+        flags: &[],
+        value_flags: &["--plugin-root"],
+        max_positionals: 0,
+        handler: startup::pricing_command,
+    },
+    CommandSpec {
+        path: &["startup", "program-artifacts"],
+        flags: &[],
+        value_flags: &["--migration-dir"],
+        max_positionals: 0,
+        handler: startup::program_artifacts_command,
+    },
+    CommandSpec {
+        path: &["startup", "model-id-lint"],
+        flags: &[],
+        value_flags: &["--plugin-root"],
+        max_positionals: 0,
+        handler: startup::model_id_lint_command,
     },
 ];
 
