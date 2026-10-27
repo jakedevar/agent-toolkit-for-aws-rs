@@ -451,8 +451,7 @@ fn is_word_boundary(bytes: &[u8], i: usize) -> bool {
 
 /// Bytes that end an unquoted labelled value or a scheme credential.
 fn is_value_end(byte: u8) -> bool {
-    byte.is_ascii_whitespace()
-        || matches!(byte, b'&' | b',' | b';' | b'"' | b'\'' | b')' | b'}' | b']')
+    byte.is_ascii_whitespace() || matches!(byte, b'&' | b',' | b';' | b'"' | b'\'' | b')' | b'}')
 }
 
 /// Bytes that may begin a scheme credential (token68 and common token forms).
@@ -689,8 +688,9 @@ fn value_span(input: &str, after_key: usize, whole_line: bool) -> Option<(usize,
     unquoted_value_span(input, value_at)
 }
 
-/// An unquoted value: a token ending at whitespace, `&`, `,`, `;`, `)`, `}`,
-/// `]` or the end. A value cut short by a quote (plain or escaped) is trusted
+/// An unquoted value: a token ending at whitespace, `&`, `,`, `;`, `)`, `}` or
+/// the end (not `]`, which ends the `[REDACTED]` marker itself and would stop
+/// redaction converging). A value cut short by a quote (plain or escaped) is trusted
 /// only when that quote closes cleanly; otherwise it is hidden to the end.
 fn unquoted_value_span(input: &str, start: usize) -> Option<(usize, usize)> {
     let bytes = input.as_bytes();
@@ -1481,6 +1481,26 @@ mod tests {
                 }
                 assert_eq!(redact_text(&shown), shown, "not idempotent: {input:?}");
             }
+        }
+    }
+
+    #[test]
+    fn the_marker_itself_is_a_fixpoint_in_every_position() {
+        // Each recognizer must treat an already-redacted value as complete;
+        // otherwise passes never converge and the whole text is hidden.
+        for text in [
+            "token=[REDACTED]",
+            "token=[REDACTED] rest",
+            "password: [REDACTED]",
+            "{\"password\":\"[REDACTED]\"}",
+            "{\"password\":\"[REDACTED]",
+            "Authorization: [REDACTED]\nHost: h",
+            "https://[REDACTED]@h.example/",
+            "Bearer  [REDACTED]",
+            "Digest [REDACTED]",
+        ] {
+            assert_eq!(scrub_once(text), text, "{text:?}");
+            assert_eq!(redact_text(text), text, "{text:?}");
         }
     }
 }

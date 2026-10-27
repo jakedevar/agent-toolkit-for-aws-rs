@@ -108,7 +108,7 @@ a secret ends, it hides more.
   `}`, `]`, `;`, `)` or the end (possibly after the quotes that close
   enclosing strings); otherwise, or when unterminated, the value is hidden to
   the end of the input. An unquoted value ends at whitespace, `&`, `,`, `;`,
-  `)`, `}` or `]`; if a quote cuts it short, the same clean-close rule applies.
+  `)` or `}`; if a quote cuts it short, the same clean-close rule applies.
   Header-line keys (`authorization`, `cookie`, ...) hide to the end of the
   line.
 - **Authentication schemes.** `Bearer`, `Basic`, `NTLM`, `DPoP`, `GNAP`,

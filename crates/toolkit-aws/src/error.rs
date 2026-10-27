@@ -486,16 +486,10 @@ impl fmt::Debug for Guidance<'_> {
     /// Every entry is scrubbed, like the rendered block.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write_scrubbed_debug(f, |f| {
-            let causes: Vec<Scrubbed<'_>> = self
-                .possible_causes
-                .iter()
-                .map(|item| Scrubbed(*item))
-                .collect();
-            let steps: Vec<Scrubbed<'_>> = self
-                .troubleshooting
-                .iter()
-                .map(|item| Scrubbed(*item))
-                .collect();
+            let causes: Vec<Scrubbed<'_>> =
+                self.possible_causes.iter().copied().map(Scrubbed).collect();
+            let steps: Vec<Scrubbed<'_>> =
+                self.troubleshooting.iter().copied().map(Scrubbed).collect();
             f.debug_struct("Guidance")
                 .field("possible_causes", &causes)
                 .field("troubleshooting", &steps)
