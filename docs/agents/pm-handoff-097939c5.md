@@ -96,3 +96,4 @@ rust-migration-health (health_anomaly), pm-safety-net (hourly resume), terminal 
   #4708 review of #4407: CHANGES_REQUESTED #4714 (quadratic scan_file) -> repair worker 79398972 (continue_from 0e783946).
   Reported up to GM (msg 7161c110): gate dcd47147 ready + restart loop.
 - 18:46Z: #4383 repair 58e314de (8693bedd; #4712 optional_member accessor, #4713 optional_list at all sites). Re-review #4709 worker 055ac3ad (pinned).
+- 18:48Z: #4407 repair 9d0e54c8 (79398972; LineIndex linear scan + PythonScan oracle). Re-review #4708 worker e79425fe (pinned).
