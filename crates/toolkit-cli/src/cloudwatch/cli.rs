@@ -450,6 +450,7 @@ impl Args {
     pub(super) fn opt_strings(&self, key: &str) -> Result<Option<Vec<String>>, ToolkitError> {
         match self.present(key) {
             None => Ok(None),
+            // recorded-shape: caller arguments, typed by the #4380 origin table; not a response.
             Some(Json::Array(items)) => items
                 .iter()
                 .map(|item| match item {
@@ -465,6 +466,7 @@ impl Args {
     pub(super) fn opt_array(&self, key: &str) -> Result<&[Json], ToolkitError> {
         match self.present(key) {
             None => Ok(&[]),
+            // recorded-shape: caller arguments, typed by the #4380 origin table; not a response.
             Some(Json::Array(items)) => Ok(items),
             Some(other) => Err(self.mistyped(key, "an array", other)),
         }
@@ -803,6 +805,7 @@ fn render_failure_text(args: &Args) -> Result<String, ToolkitError> {
     let failure = failure_from(args)?;
     let attempted: Vec<(String, Json)> = match args.present("attempted") {
         None => Vec::new(),
+        // recorded-shape: caller arguments, typed by the #4380 origin table; not a response.
         Some(Json::Object(pairs)) => pairs.clone(),
         Some(other) => return Err(args.mistyped("attempted", "an object", other)),
     };

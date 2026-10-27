@@ -64,7 +64,7 @@ repeated token or a runaway walk is an error); the row cap is the scripts'
 ```json
 {"calls": [
   {"service": "application-signals", "operation": "ListInstrumentationConfigurations",
-   "request": {"Service": "svc"}, "response": {"Configurations": []}},
+   "request": {"Service": "svc"}, "response": {"LatestConfigurations": []}},
   {"service": "logs", "operation": "GetQueryResults",
    "error": {"kind": "client", "code": "ThrottlingException", "message": "slow down"}}
 ]}
@@ -85,8 +85,37 @@ naming the service and operation only, never a request value. The file is read
 through the symlink-refusing reader; a missing, non-object or wrong-typed member
 (`request`, `error.kind`, `error.code`, `error.message`, `null` included)
 rejects the whole recording with the entry index and member name, never the
-value (the shared `optional_member` rule, #4712/#4713; the helpers are the
-`bedrock_agent` ones, now `pub(crate)`).
+value (#4712/#4713). Since repair round 1 every step is parsed by the shared
+`toolkit_aws::recorded::step_fields`, stored as a shared `Step` (expected
+request and outcome, success and error steps alike) and compared with the
+shared `KeyOrder::Contained` rule before either outcome is replayed (#4727,
+#4726 class); the optional members are read with the shared `optional_text`.
+`KeyOrder::Contained` is an additive variant of the #4727 module: this slice's
+fixtures leave generated members out of the recorded request.
+
+**Responses.** Every response member a command reads is checked before any
+result is formed (`response_shape.rs`, over the shared accessors): absent takes
+its default; a present `null` or wrong type is an invalid response that names
+only the member path and both types. Per operation:
+
+| Operation | Members checked |
+| --- | --- |
+| `CreateInstrumentationConfiguration` | `LocationHash`, `ARN` (string); `CreatedAt`, `ExpiresAt` (timestamp) |
+| `ListInstrumentationConfigurations` | `LatestConfigurations` (list of configuration objects, every member below); `SyncedAt`; `NextToken` (string or `null`) |
+| `GetInstrumentationConfiguration` | `Configuration` (object: `InstrumentationType`, `SignalType`, `LocationHash`, `Description`, `ARN` strings; `Location`, `CaptureConfiguration` objects with their code members; `AttributeFilters` list of objects; `CreatedAt`, `ExpiresAt`) |
+| `BatchDeleteInstrumentationConfigurations` | `DeletedCount` (integer); `SuccessfulDeletions`, `Errors` (lists of objects with string members) |
+| `GetInstrumentationConfigurationStatus` | `Events` (list of objects: `Time`, `Status`, `ErrorCause`); `Service`, `Environment`, `SignalType`, `Status`, `LocationHash` (string); `Location` (object); `NextToken` (string or `null`) |
+| `StartQuery` / `GetQueryResults` | `queryId`, `status` (string); `results`, `messages` (list); each row a list of objects whose `field` / `value` are strings |
+| Omni `StartTelemetryQuerySession` / `StartTelemetryQuery` / `GetTelemetryQueryResults` | `sessionId`, `queryId`, `status` (string); `rows` (list of objects); `nextToken` (`next_token_from`) |
+| `Evaluate` | the response is an object; `evaluationResults` (list of objects: `value` number or `null`, `evaluatorId`, `label`, `explanation`, `errorCode`, `errorMessage` strings) |
+| `ListDatasets` / `GetDataset` | `datasets` (list of objects: `datasetId`, `datasetName` strings); `nextToken` (string or `null`); `exampleCount` (integer) |
+| `CreateDataset` / `AddDatasetExamples` | `datasetId` (required non-empty string), `status` (string); `exampleIds` (list of strings) |
+
+The only nullable members are explicit opt-ins: a display-only `NextToken`
+(`null` = no further page) and an `Evaluate` `value` (`null` = an error row
+without a score). Members a command never reads are not checked (a recording
+may carry them; unknown members stay forward-compatible, as in Python).
+The #4380 renderers stay tolerant; they only ever see a checked response.
 
 Request timestamps (`ExpiresAt`, `StartTime`, `EndTime`) are ISO strings
 (`isoformat().replace("+00:00", "Z")`), as the #4380 boundary documents; a
@@ -161,10 +190,10 @@ resource are gated anyway, so the live binding inherits the rule:
    `limit` is coerced like `int()`: integers, booleans, truncated floats and
    decimal strings.
 6. **Recorded responses are validated, not trusted.** A wrong-typed response
-   member (`Events`, `evaluationResults`, `rows`, `datasets`), a result row of an
-   unexpected shape, or a missing `sessionId` / `queryId` becomes a reported
-   error (`API error:`, `Error` query status, `evaluate failed:`, a receipt
-   `error`) where Python raised `AttributeError` / `KeyError`.
+   member (every member of the table above), a result row of an unexpected
+   shape, or a missing `sessionId` / `queryId` becomes a reported error
+   (`API error:`, `Error` query status, `evaluate failed:`, a receipt `error`)
+   where Python raised `AttributeError` / `KeyError`. See items 15-20.
 7. **`check-status` and `CreatedAt`.** A `CreatedAt` that is neither an ISO string
    nor epoch seconds, or a non-object `Configuration`, is an `ERROR: Failed to
    fetch created_at: ...` instead of an exception.
@@ -183,9 +212,49 @@ resource are gated anyway, so the live binding inherits the rule:
     idempotency token, not a secret.
 13. **Contract text.** `--print-contract` `encoding` and the `service` notes name
     the Rust commands instead of `python3 scripts/...`.
-14. **File output.** `snapshots --out` creates the file `0600` with `create_new`,
-    narrows an existing file to `0600` before writing, and refuses a symbolic
-    link or non-regular file (Python opened with `O_NOFOLLOW`).
+14. **File output (repair round 1, #4757).** `snapshots --out` never opens the
+    final path. The text is written to a new private file
+    `.<name>.<pid>.<n>.tmp` in the same directory (`create_new`, i.e.
+    `O_CREAT|O_EXCL`, mode `0600`, which follows no link and reuses no entry),
+    synced, then renamed over the final path. `rename` replaces the directory
+    entry, so a symbolic link swapped in after the check is replaced, never
+    followed: its target is not opened, truncated, chmodded or written. A
+    pre-existing symbolic link or non-regular file at the final path is still
+    refused before any file is created (Python opened with `O_NOFOLLOW`). An
+    existing regular file is replaced by a new inode (Python truncated it in
+    place), so its hard links and its old mode are not carried over; the result
+    is always `0600`. No parent directory is created; the parent components
+    are the caller's (as with Python's `O_NOFOLLOW`, which guards the last
+    component only). A failed write removes its temporary file. Platforms
+    without POSIX `rename` semantics over an existing entry are not supported
+    targets of this slice.
+15. **Malformed responses fail closed (repair round 1, #4749/#4750/#4755/#4758).**
+    Per the table above, a present `null` or wrong-typed member is an invalid
+    response: the instrumentation ops print `Failed to <action>` /
+    `Unexpected error: the <Operation> response is invalid: ...` and exit 1
+    (never `No active ... found`, `Events Returned: 0` or `BATCH DELETE
+    COMPLETED`); the snapshot tools return query status `Error` (exit 1, never
+    `NO_SNAPSHOTS_FOUND`); `capture-dataset` returns a failure receipt that
+    keeps `conversionErrors` (never `examplesWritten`); `evaluate-traces`
+    records a `scoreErrors` entry for that evaluator call (never a scored pair,
+    a `tracesScored` count or a writeback record). Python crashed or, for the
+    tolerant `.get(..., [])` reads, silently showed an empty result.
+16. **`evaluationResults` must be a list when present.** Python treated `null`
+    and other falsy values as no results; they are now a score error. A score
+    counts only when `value` is a number (zero included) and the row has no
+    `errorCode`.
+17. **`CreateDataset` needs its `datasetId`.** An absent or empty id is an
+    invalid response (Python printed `"datasetId": null` with a write count).
+    `AddDatasetExamples` without `exampleIds` (or with `[]`) keeps the script's
+    fallback to the number of examples sent.
+18. **`GetDataset` before an add.** A failed call still does not block the
+    write (the service enforces the cap); a response that is not an object or
+    whose `exampleCount` is present and not an integer stops the write.
+19. **`Configuration: null`** from `GetInstrumentationConfiguration` is an invalid
+    response for `get` and `check-status` (it read as "No instrumentation
+    found"); an absent or empty `Configuration` still reads as not found.
+20. **Log query rows.** A row `field` or `value` that is present and not a
+    string is an invalid row (Python copied any value).
 
 ## Python callers left for #4415
 

@@ -12,6 +12,91 @@ use toolkit_core::Json;
 
 use super::aws_client::{failure_of, AwsCalls, Service};
 use super::errors::{render_failure, AwsFailure, Context, Prose};
+use super::response_shape::{check, Field, Shape};
+
+/// The members of a code location (`CodeLocation`, or the same members at
+/// the top of a `Location` union).
+const CODE_LOCATION: &[Field] = &[
+    ("Language", Shape::Text),
+    ("FilePath", Shape::Text),
+    ("CodeUnit", Shape::Text),
+    ("ClassName", Shape::Text),
+    ("MethodName", Shape::Text),
+    ("LineNumber", Shape::Int),
+];
+
+/// A `Location` union.
+const LOCATION: &[Field] = &[
+    ("CodeLocation", Shape::Object(CODE_LOCATION)),
+    ("Language", Shape::Text),
+    ("FilePath", Shape::Text),
+    ("CodeUnit", Shape::Text),
+    ("ClassName", Shape::Text),
+    ("MethodName", Shape::Text),
+    ("LineNumber", Shape::Int),
+];
+
+const CAPTURE_LIMITS: &[Field] = &[
+    ("MaxHits", Shape::Int),
+    ("MaxStringLength", Shape::Int),
+    ("MaxCollectionWidth", Shape::Int),
+    ("MaxCollectionDepth", Shape::Int),
+    ("MaxStackFrames", Shape::Int),
+    ("MaxStackTraceSize", Shape::Int),
+    ("MaxObjectDepth", Shape::Int),
+    ("MaxFieldsPerObject", Shape::Int),
+];
+
+const CODE_CAPTURE: &[Field] = &[
+    ("CaptureReturn", Shape::Bool),
+    ("CaptureStackTrace", Shape::Bool),
+    ("CaptureArguments", Shape::StringList),
+    ("CaptureLocals", Shape::StringList),
+    ("CaptureLimits", Shape::Object(CAPTURE_LIMITS)),
+];
+
+/// A `CaptureConfiguration` union.
+const CAPTURE: &[Field] = &[
+    ("CodeCapture", Shape::Object(CODE_CAPTURE)),
+    ("CaptureReturn", Shape::Bool),
+    ("CaptureStackTrace", Shape::Bool),
+    ("CaptureArguments", Shape::StringList),
+    ("CaptureLocals", Shape::StringList),
+    ("CaptureLimits", Shape::Object(CAPTURE_LIMITS)),
+];
+
+/// One instrumentation configuration (`Configuration`, an item of
+/// `LatestConfigurations`).
+const CONFIGURATION: &[Field] = &[
+    ("InstrumentationType", Shape::Text),
+    ("SignalType", Shape::Text),
+    ("LocationHash", Shape::Text),
+    ("Location", Shape::Object(LOCATION)),
+    ("CaptureConfiguration", Shape::Object(CAPTURE)),
+    ("AttributeFilters", Shape::ObjectList(&[])),
+    ("Description", Shape::Text),
+    ("CreatedAt", Shape::Timestamp),
+    ("ExpiresAt", Shape::Timestamp),
+    ("ARN", Shape::Text),
+];
+
+const DELETION: &[Field] = &[
+    ("ResourceArn", Shape::Text),
+    ("SignalType", Shape::Text),
+    ("LocationHash", Shape::Text),
+];
+
+const DELETION_ERROR: &[Field] = &[
+    ("ResourceArn", Shape::Text),
+    ("Code", Shape::Text),
+    ("Message", Shape::Text),
+];
+
+const STATUS_EVENT: &[Field] = &[
+    ("Time", Shape::Timestamp),
+    ("Status", Shape::Text),
+    ("ErrorCause", Shape::Text),
+];
 
 /// The `application-signals` operations the tools may call.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -59,6 +144,44 @@ impl AppSignalsOp {
     pub fn is_mutating(self) -> bool {
         matches!(self, Self::Create | Self::Delete | Self::BatchDelete)
     }
+
+    /// The response members the tools read from this operation, with their
+    /// shapes (#4749). [`Gateway::call`] checks them before any result is
+    /// formed, so a malformed listing, event list or deletion report is a
+    /// failed call, never an empty or successful result.
+    #[must_use]
+    pub fn response_fields(self) -> &'static [Field] {
+        match self {
+            Self::Create => &[
+                ("LocationHash", Shape::Text),
+                ("ARN", Shape::Text),
+                ("CreatedAt", Shape::Timestamp),
+                ("ExpiresAt", Shape::Timestamp),
+            ],
+            Self::List => &[
+                ("LatestConfigurations", Shape::ObjectList(CONFIGURATION)),
+                ("SyncedAt", Shape::Timestamp),
+                ("NextToken", Shape::NullableText),
+            ],
+            Self::Get => &[("Configuration", Shape::Object(CONFIGURATION))],
+            Self::Delete => &[],
+            Self::BatchDelete => &[
+                ("DeletedCount", Shape::Int),
+                ("SuccessfulDeletions", Shape::ObjectList(DELETION)),
+                ("Errors", Shape::ObjectList(DELETION_ERROR)),
+            ],
+            Self::GetStatus => &[
+                ("Events", Shape::ObjectList(STATUS_EVENT)),
+                ("Service", Shape::Text),
+                ("Environment", Shape::Text),
+                ("SignalType", Shape::Text),
+                ("Status", Shape::Text),
+                ("Location", Shape::Object(LOCATION)),
+                ("LocationHash", Shape::Text),
+                ("NextToken", Shape::NullableText),
+            ],
+        }
+    }
 }
 
 /// Wraps any failure of an `application-signals` call. The failure keeps
@@ -89,7 +212,14 @@ impl<'a> Gateway<'a> {
     pub fn call(&mut self, op: AppSignalsOp, request: &Json) -> Result<Json, GatewayError> {
         let name = op.api_name();
         match self.client.call(Service::ApplicationSignals, name, request) {
-            Ok(response @ Json::Object(_)) => Ok(response),
+            // recorded-shape: the response envelope must be an object; every
+            // other shape is refused, and its members are checked next.
+            Ok(response @ Json::Object(_)) => match check(&response, op.response_fields()) {
+                Ok(()) => Ok(response),
+                Err(shape) => Err(GatewayError {
+                    failure: AwsFailure::Other(format!("the {name} response is invalid: {shape}")),
+                }),
+            },
             Ok(other) => Err(GatewayError {
                 failure: AwsFailure::Other(format!(
                     "the {name} response is not an object (it is {})",

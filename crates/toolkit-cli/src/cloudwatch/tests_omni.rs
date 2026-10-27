@@ -228,6 +228,7 @@ fn int(receipt: &Json, key: &str) -> i64 {
 
 fn notes(receipt: &Json) -> Vec<String> {
     match receipt.get("notes") {
+        // recorded-shape: test assertion over a receipt, request or fixture the test holds.
         Some(Json::Array(items)) => items
             .iter()
             .filter_map(Json::as_str)
@@ -251,6 +252,7 @@ fn single_trace_scores_one_pair_with_one_fetch() {
     let (receipt, counters) = scored(World::default(), &opts);
     assert_eq!(int(&receipt, "pairsScored"), 1);
     assert_eq!(counters.borrow().fetch, 1);
+    // recorded-shape: test assertion over a receipt, request or fixture the test holds.
     let Some(Json::Array(results)) = receipt.get("results") else {
         panic!("results")
     };
@@ -322,6 +324,7 @@ fn caps_truncate_with_a_note_and_never_silently() {
             .join(","),
     );
     let (receipt, _) = scored(World::default(), &many_evaluators);
+    // recorded-shape: test assertion over a receipt, request or fixture the test holds.
     let Some(Json::Array(evaluators)) = receipt.get("evaluators") else {
         panic!()
     };
@@ -393,6 +396,7 @@ fn tool_spans_are_chunked_ten_ids_per_call() {
                 .get("evaluationTarget")
                 .and_then(|t| t.get("spanIds"))
             {
+                // recorded-shape: test assertion over a receipt, request or fixture the test holds.
                 Some(Json::Array(ids)) => ids.len(),
                 other => panic!("{other:?}"),
             }
@@ -469,6 +473,7 @@ fn a_shared_session_is_fetched_and_scored_once() {
         &opts,
     );
     assert_eq!(counters.borrow().fetch, 1);
+    // recorded-shape: test assertion over a receipt, request or fixture the test holds.
     let Some(Json::Array(results)) = receipt.get("results") else {
         panic!()
     };
@@ -613,6 +618,7 @@ fn writeback_persists_the_result_record_including_the_explanation() {
         request.get("logStreamName").and_then(Json::as_str),
         Some("on-demand")
     );
+    // recorded-shape: test assertion over a receipt, request or fixture the test holds.
     let Some(Json::Array(events)) = request.get("logEvents") else {
         panic!()
     };
@@ -824,6 +830,7 @@ fn service_names_become_safe_single_log_group_segments() {
             use super::aws_client::AwsCalls;
             let mut response = inner.call(service, operation, request)?;
             if operation == "GetTelemetryQueryResults" {
+                // recorded-shape: test assertion over a receipt, request or fixture the test holds.
                 if let Some(Json::Array(rows)) = response.get("rows").cloned() {
                     let renamed = rows
                         .into_iter()
@@ -970,6 +977,7 @@ fn span_kinds_are_coerced_to_bare_otel_strings() {
         (Some(Json::string("SpanKind.INTERNAL")), "INTERNAL"),
         (Some(Json::string("SPAN_KIND_BOGUS")), "UNSPECIFIED"),
         (Some(Json::string("\u{b2}")), "UNSPECIFIED"),
+        // recorded-shape: test assertion over a receipt, request or fixture the test holds.
         (Some(Json::Array(Vec::new())), "UNSPECIFIED"),
     ];
     for (value, expected) in cases {
@@ -1514,4 +1522,322 @@ fn an_incomplete_or_failing_omni_query_ends_the_capture() {
             .any(|c| c.1 == "StopTelemetryQuerySession"),
         "the session is stopped on every path"
     );
+}
+
+// ---- malformed Evaluate results are never a score (#4758) ---------------
+
+/// A world whose `Evaluate` answers `evaluationResults` per evaluator, with
+/// writeback on, so a persisted record would show in the Logs calls.
+fn evaluate_world(
+    results: impl Fn(&str) -> Json + 'static,
+    counters: &Rc<RefCell<Counters>>,
+) -> Fake {
+    let mut inner = world_client(World::default(), counters);
+    Fake::new(move |service, operation, request| {
+        use super::aws_client::AwsCalls;
+        if operation == "Evaluate" {
+            let evaluator = request
+                .get("evaluatorId")
+                .and_then(Json::as_str)
+                .unwrap_or_default()
+                .to_string();
+            return Ok(results(&evaluator));
+        }
+        inner.call(service, operation, request)
+    })
+}
+
+fn evaluate_with(client: &mut Fake, evaluators: &str) -> Result<Json, Json> {
+    let mut opts = options("aa");
+    opts.no_writeback = false;
+    opts.evaluator_ids = Some(evaluators.to_string());
+    evaluate::run(
+        client,
+        &mut VirtualPacer::default(),
+        &opts,
+        &Limits::default(),
+        now(),
+    )
+}
+
+#[test]
+fn a_wrong_typed_score_is_a_score_error_never_a_scored_pair_or_a_record() {
+    for value in ["{}", "[]", r#""0.5""#, "true", r#"{"score": 1}"#] {
+        let counters = Rc::new(RefCell::new(Counters::default()));
+        let mut client = evaluate_world(
+            move |evaluator| {
+                json(&format!(
+                    r#"{{"evaluationResults": [{{"evaluatorId": "{evaluator}", "value": {value}, "explanation": ""}}]}}"#
+                ))
+            },
+            &counters,
+        );
+        let payload = evaluate_with(&mut client, "Builtin.Helpfulness").expect_err(value);
+        let text = failure_text(&payload);
+        assert!(
+            text.contains("no (trace, evaluator) pair produced a score"),
+            "{value}: {text}"
+        );
+        assert!(
+            text.contains(
+                "the member `evaluationResults[0].value` of the response is not a number or null"
+            ),
+            "{value}: {text}"
+        );
+        assert!(!text.contains("pairsScored"), "{value}: {text}");
+        assert!(
+            counters.borrow().logs.is_empty(),
+            "{value}: nothing is written back"
+        );
+    }
+}
+
+#[test]
+fn a_malformed_evaluate_envelope_or_member_is_a_score_error() {
+    for response in [
+        r#"{"evaluationResults": null}"#,
+        r#"{"evaluationResults": false}"#,
+        r#"{"evaluationResults": {}}"#,
+        r#"{"evaluationResults": "x"}"#,
+        r#"{"evaluationResults": [1]}"#,
+        r#"{"evaluationResults": [{"value": 1, "label": null}]}"#,
+        r#"{"evaluationResults": [{"value": 1, "evaluatorId": 5}]}"#,
+        r#"{"evaluationResults": [{"value": 1, "explanation": {}}]}"#,
+        r#"{"evaluationResults": [{"value": 1, "errorCode": false}]}"#,
+    ] {
+        let counters = Rc::new(RefCell::new(Counters::default()));
+        let mut client = evaluate_world(move |_| json(response), &counters);
+        let payload = evaluate_with(&mut client, "Builtin.Helpfulness").expect_err(response);
+        let text = failure_text(&payload);
+        assert!(
+            text.contains("evaluate failed: the Evaluate response is invalid"),
+            "{response}: {text}"
+        );
+        assert!(counters.borrow().logs.is_empty(), "{response}");
+    }
+}
+
+#[test]
+fn mixed_validity_runs_count_and_persist_only_the_valid_scores() {
+    let counters = Rc::new(RefCell::new(Counters::default()));
+    let mut client = evaluate_world(
+        |evaluator| {
+            if evaluator == "Builtin.Correctness" {
+                json(
+                    r#"{"evaluationResults": [{"evaluatorId": "Builtin.Correctness", "value": {}}]}"#,
+                )
+            } else {
+                // Numeric zero is a real score.
+                json(
+                    r#"{"evaluationResults": [{"evaluatorId": "Builtin.Helpfulness", "value": 0, "label": "Not helpful"}]}"#,
+                )
+            }
+        },
+        &counters,
+    );
+    let receipt = evaluate_with(&mut client, "Builtin.Helpfulness,Builtin.Correctness")
+        .expect("one pair scored");
+    assert_eq!(int(&receipt, "pairsScored"), 1);
+    assert_eq!(int(&receipt, "tracesScored"), 1);
+    let text = pyfmt::dumps(&receipt, false);
+    assert!(
+        text.contains(r#""evaluatorId": "Builtin.Correctness", "error": "evaluate failed: the Evaluate response is invalid"#),
+        "{text}"
+    );
+    assert!(text.contains(r#""value": 0"#), "{text}");
+    assert!(!text.contains(r#""value": {}"#), "{text}");
+    let logs = counters.borrow();
+    let put: Vec<String> = logs
+        .logs
+        .iter()
+        .filter(|(operation, _)| operation == "PutLogEvents")
+        .map(|(_, request)| pyfmt::dumps(request, false))
+        .collect();
+    assert!(!put.is_empty(), "the valid score is written back");
+    assert!(
+        put.iter()
+            .all(|request| !request.contains("Builtin.Correctness")),
+        "{put:?}"
+    );
+}
+
+#[test]
+fn an_error_row_without_a_score_stays_a_score_error_not_a_scored_pair() {
+    for value in ["null", "absent"] {
+        let counters = Rc::new(RefCell::new(Counters::default()));
+        let member = if value == "null" {
+            r#""value": null, "#
+        } else {
+            ""
+        };
+        let response = format!(
+            r#"{{"evaluationResults": [{{"evaluatorId": "E", {member}"errorCode": "AgentSpanMappingException", "errorMessage": "boom"}}]}}"#
+        );
+        let mut client = evaluate_world(move |_| json(&response), &counters);
+        let receipt = evaluate_with(&mut client, "E").expect("error row kept");
+        assert_eq!(int(&receipt, "pairsScored"), 0, "{value}");
+        assert_eq!(int(&receipt, "tracesScored"), 0, "{value}");
+    }
+}
+
+// ---- malformed dataset responses never become a write (#4755) -----------
+
+/// `capture_client` with the control-plane `operation` answered by `answer`.
+fn capture_override(
+    rows: Vec<Json>,
+    datasets: Vec<Json>,
+    example_count: Option<i64>,
+    operation: &'static str,
+    answer: &'static str,
+) -> Fake {
+    let mut inner = capture_client(rows, datasets, example_count);
+    Fake::new(move |service, called, request| {
+        use super::aws_client::AwsCalls;
+        if called == operation {
+            return Ok(json(answer));
+        }
+        inner.call(service, called, request)
+    })
+}
+
+fn one_row() -> Vec<Json> {
+    vec![attr_row(
+        "aa",
+        "r",
+        None,
+        "1",
+        &[("input_value", "q1"), ("output_value", "a1")],
+    )]
+}
+
+fn add_options() -> dataset::Options {
+    let mut opts = capture_options("aa,bb");
+    opts.mode = Mode::Add;
+    opts.dataset_name = None;
+    opts.dataset_id = Some("target".to_string());
+    opts
+}
+
+fn target_datasets() -> Vec<Json> {
+    vec![json(r#"{"datasetId": "ds-b", "datasetName": "target"}"#)]
+}
+
+fn assert_no_write_receipt(payload: &Json, what: &str) {
+    let text = failure_text(payload);
+    assert!(!text.contains("examplesWritten"), "{what}: {text}");
+    assert!(
+        text.contains(r#""conversionErrors": [{"traceId": "bb""#),
+        "{what}: the conversion errors are kept: {text}"
+    );
+}
+
+#[test]
+fn a_malformed_create_response_is_never_a_write_receipt() {
+    for answer in [
+        r#"{"datasetId": null, "status": false}"#,
+        r#"{"datasetId": null, "status": "CREATING"}"#,
+        r#"{"datasetId": 5, "status": "CREATING"}"#,
+        r#"{"datasetId": {}, "status": "CREATING"}"#,
+        r#"{"datasetId": "ds-1", "status": false}"#,
+        r#"{"datasetId": "ds-1", "status": null}"#,
+        r#"{"datasetId": "ds-1", "status": ["CREATING"]}"#,
+        r#"{"status": "CREATING"}"#,
+        r#"{"datasetId": "", "status": "CREATING"}"#,
+    ] {
+        let mut client = capture_override(one_row(), Vec::new(), None, "CreateDataset", answer);
+        let payload = dataset::run(
+            &mut client,
+            &mut VirtualPacer::default(),
+            &capture_options("aa,bb"),
+        )
+        .expect_err(answer);
+        assert!(
+            payload
+                .get("error")
+                .and_then(Json::as_str)
+                .is_some_and(|e| e
+                    .starts_with("create_dataset failed: the CreateDataset response is invalid")),
+            "{answer}: {}",
+            failure_text(&payload)
+        );
+        assert_no_write_receipt(&payload, answer);
+    }
+}
+
+#[test]
+fn malformed_example_ids_are_never_a_write_count() {
+    for answer in [
+        r#"{"exampleIds": null}"#,
+        r#"{"exampleIds": false}"#,
+        r#"{"exampleIds": {}}"#,
+        r#"{"exampleIds": "e1"}"#,
+        r#"{"exampleIds": [1]}"#,
+        r#"{"exampleIds": ["e1", null]}"#,
+    ] {
+        let mut client = capture_override(
+            one_row(),
+            target_datasets(),
+            Some(1),
+            "AddDatasetExamples",
+            answer,
+        );
+        let payload = dataset::run(&mut client, &mut VirtualPacer::default(), &add_options())
+            .expect_err(answer);
+        assert!(
+            payload
+                .get("error")
+                .and_then(Json::as_str)
+                .is_some_and(|e| e.starts_with(
+                    "add_dataset_examples failed: the AddDatasetExamples response is invalid"
+                )),
+            "{answer}: {}",
+            failure_text(&payload)
+        );
+        assert_no_write_receipt(&payload, answer);
+    }
+    // Absent ids keep the script's fallback to the number of examples sent.
+    let mut client = capture_override(
+        one_row(),
+        target_datasets(),
+        Some(1),
+        "AddDatasetExamples",
+        "{}",
+    );
+    let receipt =
+        dataset::run(&mut client, &mut VirtualPacer::default(), &add_options()).expect("written");
+    assert_eq!(int(&receipt, "examplesWritten"), 1);
+}
+
+#[test]
+fn malformed_listings_and_counts_stop_the_add_before_any_write() {
+    for (operation, answer) in [
+        ("ListDatasets", r#"{"datasets": null}"#),
+        ("ListDatasets", r#"{"datasets": false}"#),
+        (
+            "ListDatasets",
+            r#"{"datasets": [{"datasetId": null, "datasetName": "target"}]}"#,
+        ),
+        (
+            "ListDatasets",
+            r#"{"datasets": [{"datasetId": "ds-b", "datasetName": 3}]}"#,
+        ),
+        ("ListDatasets", r#"{"datasets": [], "nextToken": 4}"#),
+        ("GetDataset", r#"{"exampleCount": null}"#),
+        ("GetDataset", r#"{"exampleCount": "10"}"#),
+        ("GetDataset", r#"{"exampleCount": 1.5}"#),
+        ("GetDataset", "[]"),
+    ] {
+        let mut client = capture_override(one_row(), target_datasets(), None, operation, answer);
+        let payload = dataset::run(&mut client, &mut VirtualPacer::default(), &add_options())
+            .expect_err(answer);
+        assert!(
+            failure_text(&payload).contains("response is"),
+            "{operation} {answer}: {}",
+            failure_text(&payload)
+        );
+        assert!(
+            !control_calls(&client).contains(&"AddDatasetExamples"),
+            "{operation} {answer}: no write"
+        );
+    }
 }

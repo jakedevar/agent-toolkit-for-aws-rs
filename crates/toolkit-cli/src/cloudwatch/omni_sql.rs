@@ -9,12 +9,12 @@
 //! `SPAN_ROW_LIMIT + 1` probe: once more than `SPAN_ROW_LIMIT` rows are
 //! collected no further page is requested.
 
+use toolkit_aws::recorded::{optional_object_list, optional_text};
 use toolkit_aws::{collect_pages, next_token_from, AwsError, Page, PageLimits};
 use toolkit_core::Json;
 
 use super::aws_client::{failure_of, failure_text, AwsCalls, Service};
 use super::logs_query::Pacer;
-use super::aws_client::optional_list;
 
 /// Fetch `LIMIT + 1` rows so an exactly-full result is detectable as truncated.
 pub const SPAN_ROW_LIMIT: usize = 1000;
@@ -37,6 +37,9 @@ fn call(
     request: &Json,
 ) -> Result<Json, super::errors::AwsFailure> {
     match client.call(Service::CloudWatchOmni, operation, request) {
+        // recorded-shape: the response envelope must be an object; every
+        // other shape is refused, and the members are read by the shared
+        // accessors.
         Ok(response @ Json::Object(_)) => Ok(response),
         Ok(other) => Err(super::errors::AwsFailure::Other(format!(
             "the {operation} response is not an object (it is {})",
@@ -46,11 +49,11 @@ fn call(
     }
 }
 
-/// A required string member of a response, or the failure text.
+/// A required string member of a response, or the failure text: absent or
+/// empty is "has no", `null` or another type an invalid response.
 fn response_id(response: &Json, key: &str, operation: &str) -> Result<String, String> {
-    response
-        .get(key)
-        .and_then(Json::as_str)
+    optional_text(response, key)
+        .map_err(|error| format!("Omni {operation} failed: the response is invalid: {error}"))?
         .filter(|text| !text.is_empty())
         .map(str::to_string)
         .ok_or_else(|| format!("Omni {operation} failed: the response has no {key}"))
@@ -99,9 +102,10 @@ fn query_rows(
                 failure_text(&failure)
             )
         })?;
-        status = poll
-            .get("status")
-            .and_then(Json::as_str)
+        status = optional_text(&poll, "status")
+            .map_err(|error| {
+                format!("Omni get_telemetry_query_results failed: the response is invalid: {error}")
+            })?
             .map(str::to_string);
         if matches!(status.as_deref(), Some("Complete" | "Failed" | "Cancelled")) {
             break;
@@ -134,7 +138,11 @@ fn query_rows(
                 AwsError::invalid_response("the page could not be fetched")
             },
         )?;
-        let rows = optional_list(&page, "rows")?;
+        // Absent and `[]` are no rows; `null`, a non-list or a non-object row
+        // is an invalid response, never an empty result (#4727).
+        let rows = optional_object_list(&page, "rows")
+            .map_err(|error| AwsError::invalid_response(error.to_string()))?
+            .to_vec();
         let mut next_token = next_token_from(&page, "nextToken")?;
         collected += rows.len();
         if collected > SPAN_ROW_LIMIT || (empty_page == EmptyPage::Stop && rows.is_empty()) {

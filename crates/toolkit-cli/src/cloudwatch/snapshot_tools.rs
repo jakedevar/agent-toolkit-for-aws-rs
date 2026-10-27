@@ -39,6 +39,7 @@ pub fn is_failure(result: &str) -> bool {
         return true;
     }
     match parse_json(result) {
+        // recorded-shape: parses this command's own result text, not a response.
         Ok(data @ Json::Object(_)) => {
             let status = data.get("status").map_or_else(String::new, pyfmt::text);
             QUERY_FAILURE_STATUSES.contains(&strip(&status).to_uppercase().as_str())
@@ -115,6 +116,7 @@ fn custom_filters(args: &Args) -> Result<Vec<String>, ToolkitError> {
     match args.present("custom_filters") {
         None => Ok(Vec::new()),
         Some(Json::String(text)) => Ok(vec![text.clone()]),
+        // recorded-shape: caller arguments; not a response.
         Some(Json::Array(items)) => items
             .iter()
             .map(|item| match item {

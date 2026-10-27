@@ -17,6 +17,9 @@
 use std::collections::HashSet;
 
 use toolkit_aws::next_token_from;
+use toolkit_aws::recorded::{
+    optional_member, optional_object_list, optional_string_list, optional_text, MemberError,
+};
 use toolkit_core::Json;
 
 use super::aws_client::{failure_of, failure_text, AwsCalls, Service};
@@ -25,7 +28,7 @@ use super::evaluate::is_trace_id;
 use super::logs_query::Pacer;
 use super::omni_sql::{omni_query, EmptyPage, SPAN_ROW_LIMIT};
 use super::pytext::strip;
-use super::aws_client::optional_list;
+use super::response_shape::{check, Field, Shape};
 use crate::dynamodb::pyfmt;
 
 const INPUT_KEYS: [&str; 2] = ["input.value", "gen_ai.input_value"];
@@ -199,11 +202,13 @@ pub fn to_example(trace_id: &str, spans: &[Json], partial: bool) -> Json {
 #[must_use]
 pub fn invalid(example: &Json) -> Option<String> {
     let turns = match example.get("turns") {
+        // recorded-shape: reads the example this command built, not a response.
         Some(Json::Array(turns)) if !turns.is_empty() => turns,
         _ => return Some("no turns".to_string()),
     };
     let input_ok = match turns[0].get("input") {
         Some(Json::String(text)) => !strip(text).is_empty(),
+        // recorded-shape: reads the example this command built, not a response.
         Some(Json::Object(members)) => !members.is_empty(),
         _ => false,
     };
@@ -320,13 +325,38 @@ fn fetch_spans_by_trace(
     })
 }
 
+/// The members of a `ListDatasets` item that are read.
+const DATASET_SUMMARY: &[Field] = &[("datasetId", Shape::Text), ("datasetName", Shape::Text)];
+
+/// The response members each control-plane operation reads (#4755): a
+/// present `null` or wrong-typed one is an invalid response, so a malformed
+/// write never becomes a receipt or a write count.
+fn control_fields(operation: &str) -> &'static [Field] {
+    match operation {
+        "ListDatasets" => &[
+            ("datasets", Shape::ObjectList(DATASET_SUMMARY)),
+            ("nextToken", Shape::NullableText),
+        ],
+        "CreateDataset" => &[("datasetId", Shape::Text), ("status", Shape::Text)],
+        "AddDatasetExamples" => &[("exampleIds", Shape::StringList)],
+        _ => &[],
+    }
+}
+
 fn control_call(
     client: &mut dyn AwsCalls,
     operation: &str,
     request: &Json,
 ) -> Result<Json, AwsFailure> {
     match client.call(Service::BedrockAgentCoreControl, operation, request) {
-        Ok(response @ Json::Object(_)) => Ok(response),
+        // recorded-shape: the response envelope must be an object; every
+        // other shape is refused, and its members are checked next.
+        Ok(response @ Json::Object(_)) => match check(&response, control_fields(operation)) {
+            Ok(()) => Ok(response),
+            Err(shape) => Err(AwsFailure::Other(format!(
+                "the {operation} response is invalid: {shape}"
+            ))),
+        },
         Ok(other) => Err(AwsFailure::Other(format!(
             "the {operation} response is not an object (it is {})",
             other.type_name()
@@ -347,11 +377,15 @@ fn resolve_dataset_id(client: &mut dyn AwsCalls, id_or_name: &str) -> Result<Str
         let response = control_call(client, "ListDatasets", &request).map_err(|failure| {
             error_receipt(format!("list_datasets failed: {}", failure_text(&failure)))
         })?;
-        let datasets = optional_list(&response, "datasets")
-            .map_err(|error| error_receipt(format!("list_datasets failed: {error}")))?;
-        for dataset in &datasets {
-            let id = dataset.get("datasetId").and_then(Json::as_str);
-            let name = dataset.get("datasetName").and_then(Json::as_str);
+        let invalid = |error: MemberError| {
+            error_receipt(format!(
+                "list_datasets failed: the ListDatasets response is invalid: {error}"
+            ))
+        };
+        let datasets = optional_object_list(&response, "datasets").map_err(invalid)?;
+        for dataset in datasets {
+            let id = optional_text(dataset, "datasetId").map_err(invalid)?;
+            let name = optional_text(dataset, "datasetName").map_err(invalid)?;
             if id == Some(id_or_name) || name == Some(id_or_name) {
                 if let Some(id) = id {
                     return Ok(id.to_string());
@@ -373,16 +407,30 @@ fn resolve_dataset_id(client: &mut dyn AwsCalls, id_or_name: &str) -> Result<Str
 }
 
 /// The dataset's current example count, or `None` when unknown. A failed
-/// lookup must not block the write: the service enforces the cap anyway.
-fn count_examples(client: &mut dyn AwsCalls, dataset_id: &str) -> Option<i64> {
+/// call must not block the write: the service enforces the cap anyway. A
+/// response that is not an object, or whose `exampleCount` is present and
+/// `null` or not an integer, is invalid (#4755) and stops the write.
+fn count_examples(client: &mut dyn AwsCalls, dataset_id: &str) -> Result<Option<i64>, String> {
     let request = Json::object(vec![("datasetId", Json::string(dataset_id))]);
-    match control_call(client, "GetDataset", &request)
-        .ok()?
-        .get("exampleCount")
-    {
-        Some(Json::Int(count)) => Some(*count),
-        _ => None,
+    let Ok(response) = client.call(Service::BedrockAgentCoreControl, "GetDataset", &request) else {
+        return Ok(None);
+    };
+    if !matches!(response, Json::Object(_)) {
+        return Err(format!(
+            "get_dataset failed: the GetDataset response is not an object (it is {})",
+            response.type_name()
+        ));
     }
+    optional_member(
+        &response,
+        "exampleCount",
+        "an integer",
+        |member| match member {
+            Json::Int(count) => Some(*count),
+            _ => None,
+        },
+    )
+    .map_err(|error| format!("get_dataset failed: the GetDataset response is invalid: {error}"))
 }
 
 /// A random version-4 UUID for the idempotency `clientToken`.
@@ -577,16 +625,27 @@ pub fn run(
                     Json::Array(conversion_errors.clone()),
                 )
             })?;
+        // `control_call` has checked both members; a created dataset needs
+        // its id, so an absent or empty `datasetId` is an invalid response
+        // too (#4755): no receipt and no write count without it.
+        let invalid = |message: String| {
+            error_with(
+                format!("create_dataset failed: the CreateDataset response is invalid: {message}"),
+                "conversionErrors",
+                Json::Array(conversion_errors.clone()),
+            )
+        };
+        let dataset_id = optional_text(&response, "datasetId")
+            .map_err(|error| invalid(error.to_string()))?
+            .filter(|id| !id.is_empty())
+            .ok_or_else(|| invalid("it has no datasetId".to_string()))?;
+        let status = optional_text(&response, "status")
+            .map_err(|error| invalid(error.to_string()))?
+            .map_or(Json::Null, Json::string);
         receipt = vec![
             ("mode".to_string(), Json::string("create")),
-            (
-                "datasetId".to_string(),
-                response.get("datasetId").cloned().unwrap_or(Json::Null),
-            ),
-            (
-                "status".to_string(),
-                response.get("status").cloned().unwrap_or(Json::Null),
-            ),
+            ("datasetId".to_string(), Json::string(dataset_id)),
+            ("status".to_string(), status),
             (
                 "examplesWritten".to_string(),
                 Json::Int(i64::try_from(examples.len()).unwrap_or(i64::MAX)),
@@ -598,7 +657,14 @@ pub fn run(
             .unwrap_or_default();
         let dataset_id = resolve_dataset_id(client, wanted)?;
         let added = i64::try_from(examples.len()).unwrap_or(i64::MAX);
-        if let Some(existing) = count_examples(client, &dataset_id) {
+        let counted = count_examples(client, &dataset_id).map_err(|message| {
+            error_with(
+                message,
+                "conversionErrors",
+                Json::Array(conversion_errors.clone()),
+            )
+        })?;
+        if let Some(existing) = counted {
             if existing + added > MAX_DATASET_EXAMPLES {
                 return Err(error_with(
                     format!(
@@ -624,10 +690,23 @@ pub fn run(
                 Json::Array(conversion_errors.clone()),
             )
         })?;
-        let example_ids = match response.get("exampleIds") {
-            Some(Json::Array(ids)) => ids.clone(),
-            _ => Vec::new(),
-        };
+        // Absent or `[]` falls back to the number of examples sent (the
+        // script's `len(ids) or len(examples)`); `null`, a non-list or a
+        // non-string id is an invalid response, never a write count (#4755).
+        let example_ids: Vec<Json> = optional_string_list(&response, "exampleIds")
+            .map_err(|error| {
+                error_with(
+                    format!(
+                        "add_dataset_examples failed: the AddDatasetExamples response is invalid: \
+                         {error}"
+                    ),
+                    "conversionErrors",
+                    Json::Array(conversion_errors.clone()),
+                )
+            })?
+            .into_iter()
+            .map(Json::string)
+            .collect();
         let written = if example_ids.is_empty() {
             examples.len()
         } else {

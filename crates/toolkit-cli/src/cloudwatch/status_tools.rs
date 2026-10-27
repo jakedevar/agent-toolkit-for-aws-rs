@@ -1,6 +1,7 @@
 //! Operation entrypoints for status queries and reporting
 //! (`di_status_tools.py`).
 
+use toolkit_aws::recorded::{optional_object, optional_object_list};
 use toolkit_core::{Json, ToolkitError};
 
 use super::aws_client::failure_text;
@@ -19,7 +20,6 @@ use super::timefmt::{parse_iso_timestamp, time_from_json, UtcTime};
 use super::validation::{
     is_valid_location_hash, normalize_instrumentation_type, validate_snapshot_signal,
 };
-use super::aws_client::optional_list;
 
 const STATUS_IDENTIFIER_HELP: &str = "ERROR: Must provide one of:\n\
 - location_hash\n\
@@ -70,10 +70,12 @@ fn check_status_with_time_range(
             };
         }
     };
-    match optional_list(&response, "Events") {
+    // `Gateway::call` has checked `Events` already (#4749); read it through
+    // the shared accessor all the same.
+    match optional_object_list(&response, "Events") {
         Ok(events) => StatusCheckResult {
             has_events: !events.is_empty(),
-            events,
+            events: events.to_vec(),
             error: None,
         },
         Err(error) => StatusCheckResult {
@@ -215,19 +217,23 @@ fn fetch_created_at(
             safe_text(failure_text(&error.failure))
         ))
     })?;
-    let config = match response.get("Configuration") {
-        Some(config @ Json::Object(members)) if !members.is_empty() => config,
-        Some(Json::Object(_) | Json::Null) | None => {
+    // `Gateway::call` has checked the shape of `Configuration` (#4749): a
+    // `null` or wrong-typed one is an invalid response, never "not found".
+    let config = match optional_object(&response, "Configuration") {
+        Ok(Some(config)) if matches!(config, Json::Object(members) if !members.is_empty()) => {
+            config
+        }
+        Ok(_) => {
             return Err(OpResult::failure(format!(
                 "ERROR: Failed to fetch created_at: No instrumentation found for LocationHash \
                  {location_hash}"
             )));
         }
-        Some(other) => {
+        Err(error) => {
             return Err(OpResult::failure(format!(
                 "ERROR: Failed to fetch created_at: the Configuration of the response is not an \
                  object (it is {})",
-                other.type_name()
+                error.found()
             )));
         }
     };

@@ -579,41 +579,109 @@ fn emit(out: &mut Output<'_>, result: &OpResult) -> Result<(), ToolkitError> {
     out.line(&safe_block(&result.text))
 }
 
+/// A point of [`write_owner_only_with`] where a test may change the file
+/// system, to prove the write survives a swap (#4757).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum WriteStage {
+    /// The final path was checked and no file has been opened yet.
+    Checked,
+    /// The private temporary file is written, before the rename.
+    TempWritten,
+}
+
 /// Writes `text` to `path` with owner-only permissions, refusing a symbolic
 /// link or a non-regular file at the path. Snapshots may hold PII or secrets
 /// from live request arguments.
 fn write_owner_only(path: &Path, text: &str) -> Result<(), String> {
-    let metadata = std::fs::symlink_metadata(path);
-    match &metadata {
+    write_owner_only_with(path, text, &mut |_| {})
+}
+
+/// [`write_owner_only`] with a hook at each [`WriteStage`].
+///
+/// The final path is never opened (#4757). The text goes to a new private
+/// file in the same directory, created with `create_new` (`O_CREAT|O_EXCL`,
+/// which never follows a link and never reuses an existing entry) and mode
+/// 0600, and is then renamed over the final path. `rename` replaces the
+/// directory entry itself, so a symbolic link swapped in after the check is
+/// replaced, never followed: its target is not opened, truncated, chmodded
+/// or written. A pre-existing symbolic link or non-regular file at the final
+/// path is still refused up front, as the Python `O_NOFOLLOW` open refused
+/// it. The parent directories are the caller's; none is created.
+pub(super) fn write_owner_only_with(
+    path: &Path,
+    text: &str,
+    hook: &mut dyn FnMut(WriteStage),
+) -> Result<(), String> {
+    match std::fs::symlink_metadata(path) {
         Ok(found) if found.file_type().is_symlink() => {
             return Err("the path is a symbolic link".to_string());
         }
         Ok(found) if !found.is_file() => return Err("the path is not a regular file".to_string()),
         _ => {}
     }
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true);
-    if metadata.is_ok() {
-        options.truncate(true);
-    } else {
-        options.create_new(true);
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    let mut file = options.open(path).map_err(|error| error.to_string())?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        // A pre-existing file keeps its old mode through `open`: narrow it
-        // before the snapshot text is written.
-        file.set_permissions(std::fs::Permissions::from_mode(0o600))
+    let name = path
+        .file_name()
+        .ok_or_else(|| "the path has no file name".to_string())?;
+    let directory = match path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent,
+        _ => Path::new("."),
+    };
+    hook(WriteStage::Checked);
+
+    let (temp, mut file) = create_private_temp(directory, name)?;
+    let written = (|| {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            // `create_new` applied 0600 through the umask; set it exactly.
+            file.set_permissions(std::fs::Permissions::from_mode(0o600))
+                .map_err(|error| error.to_string())?;
+        }
+        file.write_all(text.as_bytes())
             .map_err(|error| error.to_string())?;
+        file.sync_all().map_err(|error| error.to_string())?;
+        drop(file);
+        hook(WriteStage::TempWritten);
+        std::fs::rename(&temp, path).map_err(|error| error.to_string())
+    })();
+    if written.is_err() {
+        let _ = std::fs::remove_file(&temp);
     }
-    file.write_all(text.as_bytes())
-        .map_err(|error| error.to_string())
+    written
+}
+
+/// A new owner-only file `.<name>.<pid>.<n>.tmp` in `directory`, created
+/// with `create_new` so it can be neither an existing file nor a link.
+fn create_private_temp(
+    directory: &Path,
+    name: &std::ffi::OsStr,
+) -> Result<(std::path::PathBuf, std::fs::File), String> {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.subsec_nanos());
+    for attempt in 0..16_u32 {
+        let mut temp_name = std::ffi::OsString::from(".");
+        temp_name.push(name);
+        temp_name.push(format!(
+            ".{}.{}.tmp",
+            std::process::id(),
+            stamp.wrapping_add(attempt)
+        ));
+        let temp = directory.join(temp_name);
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        match options.open(&temp) {
+            Ok(file) => return Ok((temp, file)),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+    Err("cannot create a private temporary file next to the path".to_string())
 }
 
 /// `toolkit cloudwatch snapshots OP (--json TEXT | --json-file FILE)

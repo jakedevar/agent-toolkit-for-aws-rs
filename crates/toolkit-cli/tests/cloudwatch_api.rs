@@ -852,3 +852,176 @@ fn capture_dataset_replays_a_create_end_to_end() {
         "{\n  \"mode\": \"create\",\n  \"datasetId\": \"ds-1\",\n  \"status\": \"CREATING\",\n  \"examplesWritten\": 1\n}\n"
     );
 }
+
+// ---- the review #4742 fixtures: malformed responses fail closed ---------
+
+const SCOPE_ARGS: &str =
+    r#"{"service":"svc","environment":"prod","instrumentation_type":"BREAKPOINT"}"#;
+
+/// #4749: a `null` listing, event list or deletion report exits 1 and never
+/// reads as an empty or completed result.
+#[test]
+fn malformed_instrumentation_responses_exit_one_and_claim_nothing() {
+    let root = temp_root("bad-appsignals");
+    let cases: [(&str, &[&str], &str, &[&str]); 3] = [
+        (
+            r#"{"calls":[{"service":"application-signals","operation":"ListInstrumentationConfigurations","response":{"LatestConfigurations":null}}]}"#,
+            &["instrumentation", "list"],
+            SCOPE_ARGS,
+            &["No active", "TIP: Use create_instrumentation"],
+        ),
+        (
+            r#"{"calls":[{"service":"application-signals","operation":"GetInstrumentationConfigurationStatus","response":{"Events":null}}]}"#,
+            &["instrumentation", "get-status"],
+            r#"{"service":"svc","environment":"prod","instrumentation_type":"BREAKPOINT","location_hash":"0123456789abcdef","status":"READY"}"#,
+            &["Events Returned", "No READY status events found"],
+        ),
+        (
+            r#"{"calls":[{"service":"application-signals","operation":"BatchDeleteInstrumentationConfigurations","response":{"Errors":null}}]}"#,
+            &[
+                "instrumentation",
+                "batch-delete-by-scope",
+                "--i-have-confirmed",
+            ],
+            SCOPE_ARGS,
+            &["BATCH DELETE COMPLETED", "Errors: 0"],
+        ),
+    ];
+    for (index, (recording, command, args, forbidden)) in cases.iter().enumerate() {
+        let recorded = write(&root, &format!("bad-{index}.json"), recording);
+        let mut argv = vec!["cloudwatch"];
+        argv.extend_from_slice(command);
+        argv.extend_from_slice(&["--json", args, "--recorded", &recorded]);
+        let output = toolkit(&argv);
+        let stdout = text(&output.stdout);
+        assert_eq!(status(&output), 1, "{command:?}: {stdout}");
+        assert!(
+            stdout.contains("of the response is not a list of objects (it is null)"),
+            "{command:?}: {stdout}"
+        );
+        for text in *forbidden {
+            assert!(
+                !stdout.contains(text),
+                "{command:?} printed {text:?}: {stdout}"
+            );
+        }
+    }
+}
+
+/// #4750: `results: false` is an invalid response (exit 1), never
+/// `NO_SNAPSHOTS_FOUND`.
+#[test]
+fn wrong_typed_query_results_exit_one_instead_of_no_snapshots() {
+    let root = temp_root("bad-logs");
+    for results in ["false", "null", "{}", r#""x""#, "1"] {
+        let recorded = write(
+            &root,
+            "results.json",
+            &format!(
+                r#"{{"calls":[{{"service":"logs","operation":"StartQuery","response":{{"queryId":"q"}}}},{{"service":"logs","operation":"GetQueryResults","response":{{"status":"Complete","results":{results}}}}}]}}"#
+            ),
+        );
+        let output = toolkit(&[
+            "cloudwatch",
+            "snapshots",
+            "sample",
+            "--json",
+            SAMPLE_ARGS,
+            "--recorded",
+            &recorded,
+        ]);
+        let stdout = text(&output.stdout);
+        assert_eq!(status(&output), 1, "results={results}: {stdout}");
+        assert!(
+            !stdout.contains("NO_SNAPSHOTS_FOUND"),
+            "{results}: {stdout}"
+        );
+        assert!(
+            stdout.contains("the member `results` of the response is not a list"),
+            "{results}: {stdout}"
+        );
+    }
+}
+
+fn omni_prelude(row: &str) -> String {
+    format!(
+        r#"{{"service":"cloudwatchomni","operation":"StartTelemetryQuerySession","response":{{"sessionId":"s"}}}},
+{{"service":"cloudwatchomni","operation":"StartTelemetryQuery","response":{{"queryId":"q"}}}},
+{{"service":"cloudwatchomni","operation":"GetTelemetryQueryResults","request":{{"maxResults":1}},"response":{{"status":"Complete"}}}},
+{{"service":"cloudwatchomni","operation":"GetTelemetryQueryResults","request":{{"maxResults":1000}},"response":{{"rows":[{row}]}}}},
+{{"service":"cloudwatchomni","operation":"StopTelemetryQuerySession","response":{{}}}}"#
+    )
+}
+
+/// #4755: `{datasetId: null, status: false}` is a failed write (exit 1), not
+/// `examplesWritten: 1`.
+#[test]
+fn a_malformed_create_dataset_response_exits_one_without_a_write_count() {
+    let root = temp_root("bad-dataset");
+    let prelude = omni_prelude(
+        r#"{"traceId":"aa","spanId":"0000000000000001","input_value":"hi","output_value":"hello"}"#,
+    );
+    let recorded = write(
+        &root,
+        "create.json",
+        &format!(
+            r#"{{"calls":[{prelude},
+{{"service":"bedrock-agentcore-control","operation":"CreateDataset","response":{{"datasetId":null,"status":false}}}}]}}"#
+        ),
+    );
+    let output = toolkit(&[
+        "cloudwatch",
+        "capture-dataset",
+        "--trace-ids",
+        "aa",
+        "--dataset-name",
+        "fixture",
+        "--i-have-confirmed",
+        "--recorded",
+        &recorded,
+    ]);
+    let stdout = text(&output.stdout);
+    assert_eq!(status(&output), 1, "{stdout}");
+    assert!(!stdout.contains("examplesWritten"), "{stdout}");
+    assert!(
+        stdout.contains("the member `datasetId` of the response is not a string (it is null)"),
+        "{stdout}"
+    );
+}
+
+/// #4758: an object-valued score is a score error (exit 1), never
+/// `tracesScored: 1` / `pairsScored: 1`.
+#[test]
+fn an_object_valued_score_exits_one_and_scores_nothing() {
+    let root = temp_root("bad-score");
+    let prelude = omni_prelude(
+        r#"{"traceId":"aa","spanId":"0000000000000001","name":"root","input_value":"hi","output_value":"hello","kind":2}"#,
+    );
+    let recorded = write(
+        &root,
+        "evaluate.json",
+        &format!(
+            r#"{{"calls":[{prelude},
+{{"service":"bedrock-agentcore","operation":"Evaluate","response":{{"evaluationResults":[{{"evaluatorId":"Builtin.Helpfulness","value":{{}},"explanation":""}}]}}}}]}}"#
+        ),
+    );
+    let output = toolkit(&[
+        "cloudwatch",
+        "evaluate-traces",
+        "--trace-id",
+        "aa",
+        "--session-id",
+        "sid",
+        "--no-writeback",
+        "--recorded",
+        &recorded,
+    ]);
+    let stdout = text(&output.stdout);
+    assert_eq!(status(&output), 1, "{stdout}");
+    assert!(!stdout.contains("tracesScored"), "{stdout}");
+    assert!(!stdout.contains("pairsScored"), "{stdout}");
+    assert!(
+        stdout.contains("`evaluationResults[0].value` of the response is not a number or null"),
+        "{stdout}"
+    );
+}

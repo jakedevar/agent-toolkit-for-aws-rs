@@ -275,6 +275,7 @@ fn fixture_leaves() -> Vec<(&'static str, Json, Vec<Leaf>)> {
                 for (member_key, _) in *inner {
                     assert!(
                         fixtures.iter().any(|fixture| match fixture.get(key) {
+                            // recorded-shape: test assertion over a document the test built.
                             Some(Json::Object(members)) => members
                                 .iter()
                                 .any(|(_, member)| member.get(member_key).is_some()),

@@ -153,23 +153,3 @@ pub fn client_error_code(failure: &AwsFailure) -> &str {
         _ => "",
     }
 }
-
-/// An optional list member of a response through the shared
-/// `toolkit_aws::recorded` accessor: absent and `[]` are empty; `null` and any
-/// other type are an `aws_invalid_response`.
-///
-/// # Errors
-///
-/// The member is present and not a list.
-pub fn optional_list(response: &Json, key: &str) -> Result<Vec<Json>, AwsError> {
-    toolkit_aws::recorded::optional_list(response, key)
-        .map(<[Json]>::to_vec)
-        .map_err(|error| {
-            AwsError::invalid_response(format!(
-                "the member `{}` of a response is not {} (it is {})",
-                error.key(),
-                error.expected(),
-                error.found()
-            ))
-        })
-}

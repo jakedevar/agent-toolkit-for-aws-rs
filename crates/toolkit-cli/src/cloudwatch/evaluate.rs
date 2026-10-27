@@ -16,6 +16,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+use toolkit_aws::recorded::{optional_object_list, optional_text};
 use toolkit_core::Json;
 
 use super::aws_client::{
@@ -25,6 +26,7 @@ use super::errors::AwsFailure;
 use super::logs_query::Pacer;
 use super::omni_sql::{omni_query, EmptyPage, SPAN_ROW_LIMIT};
 use super::pytext::strip;
+use super::response_shape::{check, Field, Shape};
 use super::timefmt::UtcTime;
 use crate::dynamodb::pyfmt;
 
@@ -546,31 +548,46 @@ fn set(pairs: &mut Vec<(String, Json)>, key: &str, value: Json) {
 /// returned. The judge's explanation quotes the agent's own inputs and
 /// outputs, so it stays off the receipt unless asked for; it is kept on the
 /// private `_explanation` key because the writeback record persists it.
+/// One evaluation result: `value` is a number, or `null` for a result that
+/// carries no score (an error row, the explicit nullable opt-in); every other
+/// member read is a string when present.
+const EVALUATION_RESULT: &[Field] = &[
+    ("evaluatorId", Shape::Text),
+    ("value", Shape::NullableNumber),
+    ("label", Shape::Text),
+    ("explanation", Shape::Text),
+    ("errorCode", Shape::Text),
+    ("errorMessage", Shape::Text),
+];
+
+/// The `Evaluate` response members read.
+const EVALUATE_RESPONSE: &[Field] = &[("evaluationResults", Shape::ObjectList(EVALUATION_RESULT))];
+
 fn summarize(
     response: &Json,
     evaluator_id: &str,
     include_explanations: bool,
 ) -> Result<Vec<Json>, String> {
-    let results = match response.get("evaluationResults") {
-        None | Some(Json::Null) => Vec::new(),
-        Some(Json::Array(items)) => items.clone(),
-        Some(other) if !pyfmt::truthy(other) => Vec::new(),
-        Some(other) => {
-            return Err(format!(
-                "the evaluationResults of the response are not a list (it is {})",
-                other.type_name()
-            ));
-        }
-    };
+    // The whole response is checked before any row is built (#4758): a
+    // present member of the wrong type, `null` included, rejects it, so a
+    // malformed result is a score error and never a scored pair, a persisted
+    // record or a count.
+    if !matches!(response, Json::Object(_)) {
+        return Err(format!(
+            "the Evaluate response is not an object (it is {})",
+            response.type_name()
+        ));
+    }
+    check(response, EVALUATE_RESPONSE)
+        .map_err(|error| format!("the Evaluate response is invalid: {error}"))?;
+    let results = optional_object_list(response, "evaluationResults")
+        .map_err(|error| format!("the Evaluate response is invalid: {error}"))?;
     let mut rows = Vec::with_capacity(results.len());
-    for result in &results {
-        if !matches!(result, Json::Object(_)) {
-            return Err("an evaluation result of the response is not an object".to_string());
-        }
-        let explanation = match result.get("explanation") {
-            Some(value) if pyfmt::truthy(value) => pyfmt::text(value),
-            _ => String::new(),
-        };
+    for result in results {
+        let explanation = optional_text(result, "explanation")
+            .map_err(|error| format!("the Evaluate response is invalid: {error}"))?
+            .unwrap_or_default()
+            .to_string();
         let clipped = if explanation.chars().count() > 600 {
             format!("{}\u{2026}", clip(&explanation, 600))
         } else {
@@ -1005,8 +1022,10 @@ fn score_pair(
     }
 }
 
+/// A row holds a score when its `value` is a number (zero included) and it
+/// carries no `errorCode`. `summarize` has already rejected any other type.
 fn is_scored(row: &Json) -> bool {
-    !matches!(row.get("value"), None | Some(Json::Null)) && !truthy(row.get("errorCode"))
+    matches!(row.get("value"), Some(Json::Int(_) | Json::Float(_))) && !truthy(row.get("errorCode"))
 }
 
 /// Everything `run` needs to keep between traces.

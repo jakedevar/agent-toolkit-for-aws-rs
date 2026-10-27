@@ -14,8 +14,8 @@ use super::errors::AwsFailure;
 use super::gateway::{AppSignalsOp, Gateway};
 use super::logs_query::{execute_cloudwatch_query, LogsOp, Pacer, VirtualPacer};
 use super::ops_cli::{
-    instrumentation_contract, snapshot_contract, INSTRUMENTATION_ARGUMENTS, INSTRUMENTATION_OPS,
-    SNAPSHOT_ARGUMENTS, SNAPSHOT_OPS,
+    instrumentation_contract, snapshot_contract, write_owner_only_with, WriteStage,
+    INSTRUMENTATION_ARGUMENTS, INSTRUMENTATION_OPS, SNAPSHOT_ARGUMENTS, SNAPSHOT_OPS,
 };
 use super::recorded::RecordedClient;
 use super::snapshot_tools;
@@ -1381,4 +1381,346 @@ fn contract_carries_required_defaults_and_hints() {
         pyfmt::dumps(sample.get("include_raw").unwrap(), false),
         r#"{"required": false, "default": false}"#
     );
+}
+
+// ---- malformed responses fail closed (#4749, #4750) ---------------------
+
+const SCOPE: &str =
+    r#"{"service": "svc", "environment": "prod", "instrumentation_type": "BREAKPOINT"}"#;
+
+/// Every wrong JSON type of a present member, `null` included.
+const WRONG_LISTS: [&str; 5] = ["null", "false", "0", r#""x""#, "{}"];
+
+#[test]
+fn a_malformed_listing_is_a_failure_never_an_empty_list() {
+    let args = instrumentation_args("list", SCOPE);
+    for bad in WRONG_LISTS {
+        let mut fake = Fake::always(&format!(r#"{{"LatestConfigurations": {bad}}}"#));
+        let result =
+            crud_tools::list_instrumentations(&mut Gateway::new(&mut fake), &args).unwrap();
+        assert!(!result.ok, "LatestConfigurations: {bad} -> {}", result.text);
+        assert!(!result.text.contains("No active"), "{bad}: {}", result.text);
+        assert!(
+            result.text.contains("`LatestConfigurations`"),
+            "{bad}: {}",
+            result.text
+        );
+    }
+    for bad in [
+        r#"{"LatestConfigurations": [1]}"#,
+        r#"{"LatestConfigurations": [{"Location": null}]}"#,
+        r#"{"LatestConfigurations": [{"CaptureConfiguration": {"CodeCapture": []}}]}"#,
+        r#"{"LatestConfigurations": [{"LocationHash": 5}]}"#,
+        r#"{"LatestConfigurations": [], "NextToken": 7}"#,
+    ] {
+        let mut fake = Fake::always(bad);
+        let result =
+            crud_tools::list_instrumentations(&mut Gateway::new(&mut fake), &args).unwrap();
+        assert!(!result.ok, "{bad} -> {}", result.text);
+    }
+    // Absence and an empty list are the genuine empty listing; a null token
+    // is the explicit end-of-pages opt-in.
+    for good in [
+        "{}",
+        r#"{"LatestConfigurations": []}"#,
+        r#"{"LatestConfigurations": [], "NextToken": null}"#,
+    ] {
+        let mut fake = Fake::always(good);
+        let result =
+            crud_tools::list_instrumentations(&mut Gateway::new(&mut fake), &args).unwrap();
+        assert!(result.ok, "{good} -> {}", result.text);
+        assert!(
+            result.text.starts_with("No active BREAKPOINT"),
+            "{}",
+            result.text
+        );
+    }
+}
+
+#[test]
+fn malformed_events_are_a_failure_never_zero_events() {
+    let base = r#""service": "svc", "environment": "prod", "instrumentation_type": "BREAKPOINT",
+        "location_hash": "0123456789abcdef", "status": "READY""#;
+    for bad in WRONG_LISTS
+        .iter()
+        .map(|bad| format!(r#"{{"Events": {bad}}}"#))
+        .chain([
+            r#"{"Events": [null]}"#.to_string(),
+            r#"{"Events": [{"Time": null}]}"#.to_string(),
+            r#"{"Events": [], "Status": false}"#.to_string(),
+        ])
+    {
+        let mut fake = Fake::always(&bad);
+        let result = get_status(&format!("{{{base}}}"), &mut fake);
+        assert!(!result.ok, "{bad} -> {}", result.text);
+        assert!(
+            !result.text.contains("Events Returned"),
+            "{bad}: {}",
+            result.text
+        );
+        assert!(!result.text.contains("No READY"), "{bad}: {}", result.text);
+    }
+    let mut empty = Fake::always(r#"{"Events": []}"#);
+    let result = get_status(&format!("{{{base}}}"), &mut empty);
+    assert!(result.ok, "{}", result.text);
+    assert!(
+        result.text.contains("Events Returned: 0"),
+        "{}",
+        result.text
+    );
+}
+
+#[test]
+fn a_malformed_deletion_report_is_never_a_completed_batch() {
+    let scope = instrumentation_args("batch-delete-by-scope", SCOPE);
+    let arns = instrumentation_args(
+        "batch-delete-by-arns",
+        r#"{"resource_arns": ["arn:a"], "instrumentation_type": "BREAKPOINT"}"#,
+    );
+    let bad_reports = WRONG_LISTS
+        .iter()
+        .flat_map(|bad| {
+            [
+                format!(r#"{{"Errors": {bad}}}"#),
+                format!(r#"{{"SuccessfulDeletions": {bad}}}"#),
+            ]
+        })
+        .chain([
+            r#"{"DeletedCount": "2"}"#.to_string(),
+            r#"{"DeletedCount": null}"#.to_string(),
+            r#"{"Errors": [{"Code": 5}]}"#.to_string(),
+        ]);
+    for bad in bad_reports {
+        for by_scope in [true, false] {
+            let mut fake = Fake::always(&bad);
+            let result = if by_scope {
+                crud_tools::batch_delete_by_scope(&mut Gateway::new(&mut fake), &scope)
+            } else {
+                crud_tools::batch_delete_by_arns(&mut Gateway::new(&mut fake), &arns)
+            }
+            .unwrap();
+            assert!(!result.ok, "{bad} -> {}", result.text);
+            assert!(
+                !result.text.contains("BATCH DELETE COMPLETED"),
+                "{bad}: {}",
+                result.text
+            );
+        }
+    }
+}
+
+#[test]
+fn malformed_create_and_get_responses_fail_and_name_only_the_member() {
+    let mut get = Fake::always(r#"{"Configuration": null}"#);
+    let args = instrumentation_args(
+        "get",
+        r#"{"service": "s", "environment": "e", "instrumentation_type": "BREAKPOINT",
+            "location_hash": "0123456789abcdef"}"#,
+    );
+    let result = crud_tools::get_instrumentation(&mut Gateway::new(&mut get), &args).unwrap();
+    assert!(!result.ok);
+    assert!(
+        result
+            .text
+            .contains("the member `Configuration` of the response is not an object (it is null)"),
+        "{}",
+        result.text
+    );
+
+    let created = create(
+        r#"{"service": "s", "environment": "e", "instrumentation_type": "BREAKPOINT",
+            "language": "python", "file_path": "/a.py", "method_name": "f", "ttl_hours": 2}"#,
+        &mut Fake::always(r#"{"ARN": {"secret": "AWS-SECRET-SENTINEL"}}"#),
+    );
+    assert!(!created.ok, "{}", created.text);
+    assert!(created.text.contains("`ARN`"), "{}", created.text);
+    assert!(
+        !created.text.contains("AWS-SECRET-SENTINEL"),
+        "{}",
+        created.text
+    );
+}
+
+#[test]
+fn malformed_query_results_are_an_error_never_no_snapshots() {
+    let script = |poll: &'static str| {
+        Fake::new(move |_, operation, _| {
+            if operation == "StartQuery" {
+                Ok(json(r#"{"queryId": "q"}"#))
+            } else {
+                Ok(json(poll))
+            }
+        })
+    };
+    let wrong = WRONG_LISTS.iter().flat_map(|bad| {
+        [
+            format!(r#"{{"status": "Complete", "results": {bad}}}"#),
+            format!(r#"{{"status": "Complete", "results": [], "messages": {bad}}}"#),
+        ]
+    });
+    for bad in wrong.chain([
+        r#"{"status": null, "results": []}"#.to_string(),
+        r#"{"status": "Complete", "results": [[{"field": null, "value": "v"}]]}"#.to_string(),
+        r#"{"status": "Complete", "results": [[{"field": "@message", "value": 7}]]}"#.to_string(),
+    ]) {
+        let poll: &'static str = Box::leak(bad.clone().into_boxed_str());
+        let result = query_with(&mut script(poll), 30);
+        assert_eq!(result.status, "Error", "{bad}");
+        assert_eq!(result.query_id, Json::string("q"), "{bad}");
+
+        let args = snapshot_args(
+            "sample",
+            &format!(
+                r#"{{"service": "s", "environment": "e", "location_hash": "{HASH}", "status_timestamp": "2025-02-03T18:42:00Z"}}"#
+            ),
+        );
+        let output =
+            snapshot_tools::sample_snapshot(&mut script(poll), &mut VirtualPacer::default(), &args)
+                .unwrap();
+        assert!(snapshot_tools::is_failure(&output), "{bad}: {output}");
+        assert!(!output.contains("NO_SNAPSHOTS_FOUND"), "{bad}: {output}");
+
+        let output = search(
+            &format!(
+                r#"{{"service": "s", "environment": "e", "location_hash": "{HASH}", "start_time": "2025-02-03T18:00:00Z", "end_time": "2025-02-03T19:00:00Z"}}"#
+            ),
+            &mut script(poll),
+        );
+        assert!(snapshot_tools::is_failure(&output), "{bad}: {output}");
+        assert!(!output.contains("NO_SNAPSHOTS_FOUND"), "{bad}: {output}");
+    }
+    // An absent or empty `results` is the genuine empty result.
+    for good in [
+        r#"{"status": "Complete"}"#,
+        r#"{"status": "Complete", "results": [], "messages": []}"#,
+    ] {
+        let result = query_with(&mut script(good), 30);
+        assert_eq!(result.status, "Complete", "{good}");
+        assert!(result.results.is_empty());
+    }
+    // A wrong-typed queryId is an invalid response, not a missing one.
+    let mut bad_id = Fake::always(r#"{"queryId": 5}"#);
+    let result = query_with(&mut bad_id, 30);
+    assert_eq!(result.status, "Error");
+    assert!(
+        result
+            .error
+            .as_deref()
+            .is_some_and(|e| e.contains("`queryId`") && e.contains("(it is integer)")),
+        "{:?}",
+        result.error
+    );
+    assert_eq!(bad_id.calls.len(), 1, "no poll after an invalid start");
+}
+
+// ---- the --out write never follows a swapped link (#4757) ---------------
+
+#[cfg(unix)]
+fn out_dir(label: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!(
+        "toolkit-cloudwatch-out-{label}-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    dir
+}
+
+#[cfg(unix)]
+#[test]
+fn a_symlink_swapped_in_after_the_check_is_replaced_never_followed() {
+    use std::os::unix::fs::PermissionsExt;
+
+    for stage in [WriteStage::Checked, WriteStage::TempWritten] {
+        let dir = out_dir(&format!("{stage:?}"));
+        let out = dir.join("out.json");
+        let victim = dir.join("victim.txt");
+        std::fs::write(&out, "PLACEHOLDER\n").expect("placeholder");
+        std::fs::write(&victim, "VICTIM_SENTINEL\n").expect("victim");
+        std::fs::set_permissions(&victim, std::fs::Permissions::from_mode(0o644)).expect("chmod");
+
+        // The interleaving of the review (#4757): the checked regular file is
+        // replaced by a link to the victim before the write.
+        write_owner_only_with(&out, "SNAPSHOT\n", &mut |at| {
+            if at == stage {
+                std::fs::rename(&out, dir.join("out.before")).expect("move away");
+                std::os::unix::fs::symlink(&victim, &out).expect("plant link");
+            }
+        })
+        .expect("written");
+
+        assert_eq!(
+            std::fs::read_to_string(&victim).expect("victim"),
+            "VICTIM_SENTINEL\n",
+            "{stage:?}: the link target is never written"
+        );
+        assert_eq!(
+            std::fs::metadata(&victim)
+                .expect("meta")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o644,
+            "{stage:?}: the link target is never chmodded"
+        );
+        let written = std::fs::symlink_metadata(&out).expect("out");
+        assert!(
+            written.file_type().is_file(),
+            "{stage:?}: the link was replaced"
+        );
+        assert_eq!(written.permissions().mode() & 0o777, 0o600);
+        assert_eq!(std::fs::read_to_string(&out).expect("out"), "SNAPSHOT\n");
+        let leftovers: Vec<_> = std::fs::read_dir(&dir)
+            .expect("list")
+            .filter_map(Result::ok)
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.ends_with(".tmp"))
+            .collect();
+        assert!(leftovers.is_empty(), "{stage:?}: {leftovers:?}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_dangling_link_planted_at_a_new_path_is_replaced_and_its_target_never_created() {
+    let dir = out_dir("dangling");
+    let out = dir.join("new.json");
+    let target = dir.join("created-through-link.txt");
+    write_owner_only_with(&out, "SNAPSHOT\n", &mut |at| {
+        if at == WriteStage::Checked {
+            std::os::unix::fs::symlink(&target, &out).expect("plant link");
+        }
+    })
+    .expect("written");
+    assert!(!target.exists(), "the link target is never created");
+    assert!(std::fs::symlink_metadata(&out)
+        .expect("out")
+        .file_type()
+        .is_file());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[cfg(unix)]
+#[test]
+fn pre_existing_links_and_non_files_are_refused_before_any_file_is_created() {
+    let dir = out_dir("refused");
+    let victim = dir.join("victim.txt");
+    std::fs::write(&victim, "untouched").expect("victim");
+    let link = dir.join("link.json");
+    std::os::unix::fs::symlink(&victim, &link).expect("link");
+    let mut stages = Vec::new();
+    let error =
+        write_owner_only_with(&link, "SNAPSHOT", &mut |at| stages.push(at)).expect_err("refused");
+    assert_eq!(error, "the path is a symbolic link");
+    let error =
+        write_owner_only_with(&dir, "SNAPSHOT", &mut |at| stages.push(at)).expect_err("refused");
+    assert_eq!(error, "the path is not a regular file");
+    assert!(stages.is_empty(), "refused before any file is created");
+    assert_eq!(
+        std::fs::read_to_string(&victim).expect("victim"),
+        "untouched"
+    );
+    assert_eq!(std::fs::read_dir(&dir).expect("list").count(), 2);
+    let _ = std::fs::remove_dir_all(&dir);
 }

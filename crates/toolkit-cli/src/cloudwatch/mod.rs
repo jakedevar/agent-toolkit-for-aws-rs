@@ -62,6 +62,7 @@ pub mod omni_sql;
 pub mod pytext;
 pub mod recorded;
 pub mod region;
+pub mod response_shape;
 pub mod result;
 pub mod snapshot_parsing;
 pub mod snapshot_rendering;
