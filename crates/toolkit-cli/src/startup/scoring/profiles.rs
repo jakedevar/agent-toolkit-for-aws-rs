@@ -20,6 +20,23 @@ pub(crate) fn profile_id(profile: &Json) -> &str {
     profile.get("id").and_then(Json::as_str).unwrap_or("")
 }
 
+/// Refuses a linked profile (a dangling link included) with a diagnostic that
+/// names only the escaped file name: the shared link walk formats the raw path,
+/// which a hostile registry file name could use to forge output (#4602, #4625).
+fn refuse_profile_link(path: &Path, shown_name: &str) -> Res<()> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => Err(ScoreError::new(format!(
+            "cannot read {shown_name}: symbolic links are not followed"
+        ))),
+        Ok(_) => Ok(()),
+        // A vanished entry is reported by the read that follows.
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(ScoreError::new(format!(
+            "cannot read {shown_name}: {error}"
+        ))),
+    }
+}
+
 /// Loads the runtime profiles of `dir` whose status is in `statuses`, sorted
 /// by id. Every `*.json` file is read and checked, whatever its status; a
 /// file that is a link or not a regular file is refused.
@@ -60,6 +77,7 @@ pub(crate) fn load_profiles(dir: &Path, statuses: &[&str]) -> Res<Vec<Json>> {
     let mut profiles = Vec::new();
     for name in &names {
         let label = shown(&dir.join(name).display().to_string());
+        refuse_profile_link(&dir.join(name), &shown(name))?;
         let text = read_text_under(dir, &dir.join(name), &shown(name)).map_err(ScoreError::new)?;
         let profile = parse_json(&text)
             .map_err(|error| ScoreError::new(format!("{label}: invalid JSON ({error})")))?;

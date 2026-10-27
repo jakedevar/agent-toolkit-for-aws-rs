@@ -531,6 +531,14 @@ pub(crate) fn score(input: &Json, profiles: &[Json], run_evidence: Option<&Json>
             answers.insert(name.clone(), value.clone());
         }
     }
+    // scoring.py assigns the trusted entry point after the overlay, so a raw
+    // `answers._entry_point` can never steer a constraint (a JSON null stays
+    // null, as Python's `None` does).
+    let entry_point = input
+        .get("entry_point")
+        .cloned()
+        .unwrap_or_else(|| Json::string("build_scratch"));
+    answers.insert("_entry_point".to_string(), entry_point);
 
     let outcome = evaluate_hard_constraints(&answers, profiles, verifications)?;
     let Eliminations {

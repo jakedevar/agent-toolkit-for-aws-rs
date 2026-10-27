@@ -1621,3 +1621,161 @@ fn the_verdict_line_escapes_a_hostile_runtime_id() {
     let written = fs::read_to_string(dir.join("scoring-result.json")).expect("result");
     assert!(written.contains("x\\u001b[2J\\nFORGED"), "{written}");
 }
+
+// ---- trusted entry point and linked-registry diagnostics (#4624, #4625) ----------------------
+
+/// A registry whose profile `gated` is eliminated by `_entry_point == value`
+/// and whose profile `open` is unconstrained.
+fn entry_point_registry(value: &str) -> Vec<Json> {
+    vec![
+        hard("gated", "_entry_point", value, "entry gate"),
+        minimal("open", "ga"),
+    ]
+}
+
+fn entry_point_result(input: &str, profiles: &[Json]) -> Json {
+    score(&j(input), profiles, None).expect("the input scores")
+}
+
+#[test]
+fn an_explicit_entry_point_gates_a_constraint_like_scoring_py() {
+    let profiles = entry_point_registry("migrate");
+    let result = entry_point_result(r#"{"entry_point":"migrate","answers":{}}"#, &profiles);
+    assert_eq!(eliminated_ids(&result), ["gated"]);
+    assert_eq!(field(&result, "verdict"), &j(r#""open""#));
+}
+
+#[test]
+fn an_omitted_entry_point_defaults_to_build_scratch() {
+    let by_default = entry_point_registry("build_scratch");
+    let result = entry_point_result(r#"{"answers":{}}"#, &by_default);
+    assert_eq!(eliminated_ids(&result), ["gated"]);
+
+    let migrate = entry_point_registry("migrate");
+    let result = entry_point_result(r#"{"answers":{}}"#, &migrate);
+    assert!(eliminated_ids(&result).is_empty());
+}
+
+#[test]
+fn a_raw_entry_point_answer_cannot_steer_a_constraint() {
+    let profiles = entry_point_registry("migrate");
+    // The trusted default overwrites the spoofed answer.
+    let spoofed = entry_point_result(r#"{"answers":{"_entry_point":"migrate"}}"#, &profiles);
+    assert!(eliminated_ids(&spoofed).is_empty());
+    // An explicit entry point wins over a conflicting raw answer both ways.
+    let hidden = entry_point_result(
+        r#"{"entry_point":"migrate","answers":{"_entry_point":"build_scratch"}}"#,
+        &profiles,
+    );
+    assert_eq!(eliminated_ids(&hidden), ["gated"]);
+}
+
+#[test]
+fn a_null_entry_point_stays_null_like_python_none() {
+    let migrate = entry_point_registry("migrate");
+    let result = entry_point_result(r#"{"entry_point":null,"answers":{}}"#, &migrate);
+    assert!(eliminated_ids(&result).is_empty());
+    let scratch = entry_point_registry("build_scratch");
+    let result = entry_point_result(r#"{"entry_point":null,"answers":{}}"#, &scratch);
+    assert!(eliminated_ids(&result).is_empty());
+}
+
+#[test]
+fn score_units_passes_the_trusted_entry_point_to_every_unit() {
+    let profiles = entry_point_registry("migrate");
+    let unit = r#""units":{"u":{"workload_class":"agent_session"}}"#;
+    let unit_eliminated = |document: &str| {
+        let out = score_units(&j(document), &profiles, None).expect("units score");
+        let unit = out
+            .get("units")
+            .and_then(|units| units.get("u"))
+            .expect("unit");
+        (eliminated_ids(unit), eliminated_ids(&out))
+    };
+
+    let (unit_ids, mirrored) = unit_eliminated(&format!(
+        r#"{{"entry_point":"migrate","system":{{}},"primary_unit":"u",{unit}}}"#
+    ));
+    assert_eq!(unit_ids, ["gated"]);
+    assert_eq!(mirrored, ["gated"]);
+
+    let (unit_ids, _) = unit_eliminated(&format!(r#"{{"system":{{}},{unit}}}"#));
+    assert!(
+        unit_ids.is_empty(),
+        "the default entry point is build_scratch"
+    );
+
+    // A raw `_entry_point` in the system or unit answers is overwritten.
+    let (unit_ids, _) = unit_eliminated(&format!(
+        r#"{{"system":{{"_entry_point":"migrate"}},"units":{{"u":{{"workload_class":"agent_session","_entry_point":"migrate"}}}}}}"#
+    ));
+    assert!(unit_ids.is_empty());
+}
+
+#[cfg(unix)]
+fn hostile_link_name() -> &'static str {
+    "a\u{1b}[2J\nFORGED\u{202e}.json"
+}
+
+#[cfg(unix)]
+fn assert_one_escaped_line(text: &str) {
+    assert!(!text.contains('\u{1b}'), "{text:?}");
+    assert!(!text.contains('\u{202e}'), "{text:?}");
+    assert!(!text.contains('\n'), "{text:?}");
+    assert!(!text.contains('\r'), "{text:?}");
+    assert!(text.contains("\\u{001b}"), "{text}");
+    assert!(text.contains("symbolic links are not followed"), "{text}");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_hostile_named_linked_profile_is_refused_with_an_escaped_diagnostic() {
+    for dangling in [true, false] {
+        let dir = TempDir::new("hostile-link");
+        let outside = TempDir::new("hostile-link-target");
+        write_profile(&outside, &minimal("evil", "ga"));
+        let target = if dangling {
+            outside.join("absent.json")
+        } else {
+            outside.join("evil.json")
+        };
+        std::os::unix::fs::symlink(target, dir.join(hostile_link_name())).expect("create link");
+        let text = load_profiles(&dir, &GA_ONLY)
+            .expect_err("link refused")
+            .to_string();
+        assert_one_escaped_line(&text);
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn commands_refuse_a_hostile_named_linked_profile_without_raw_controls() {
+    let plugin = TempDir::new("hostile-plugin");
+    let runtimes = plugin.dir("skills/agent-advisor/references/runtimes");
+    write(&runtimes, "ok.json", &profile_text(&minimal("ok", "ga")));
+    let outside = TempDir::new("hostile-plugin-target");
+    std::os::unix::fs::symlink(
+        outside.join("absent.json"),
+        runtimes.join(hostile_link_name()),
+    )
+    .expect("create dangling link");
+    let (_root, run) = run_dir("hostile-link-cli");
+    write(&run, "answers.json", r#"{"answers":{}}"#);
+    write(
+        &run,
+        "units.json",
+        r#"{"system":{},"units":{"u":{"workload_class":"agent_session"}}}"#,
+    );
+    for (command, file) in [("score", "answers.json"), ("score-units", "units.json")] {
+        let answers = run.join(file);
+        let (status, _, stderr) = exec(&[
+            "startup",
+            command,
+            path_text(&answers),
+            "--runtimes-dir",
+            path_text(&runtimes),
+        ]);
+        assert_eq!(status, 1, "{command}");
+        assert_one_escaped_line(stderr.trim_end_matches('\n'));
+    }
+}

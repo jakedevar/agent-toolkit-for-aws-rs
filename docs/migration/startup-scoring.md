@@ -83,6 +83,9 @@ The router entries follow the canonical contract: `value_flags`,
    characters, escapes and other non-printing characters as `\u{..}` so a hostile
    file name or runtime id cannot forge or hide output lines. The JSON documents
    are data and keep every value, ASCII-escaped by the JSON writer like Python's.
+   This holds for the link refusal too: a linked registry profile (a dangling
+   link included) is refused with a diagnostic that names only the escaped file
+   name (#4625), never the raw path the shared link walk would format.
 6. **Usage.** A missing ANSWERS is a usage error (exit 2) with
    `usage: toolkit startup score ANSWERS.json [--plugin-root DIR]`; Python
    printed the docstring's last line for `score_units.py` and used `argparse`
@@ -96,6 +99,15 @@ and reason texts, the tie threshold, the neutral score, the treatment of an
 explicit `null` answer (dropped from the scoring answers but not counted as an
 assumption), duplicate runtime ids (the later profile overwrites the score in
 the first one's position), and Python's number semantics for scores.
+
+Parity decision (#4624): `score` assigns the trusted `_entry_point` exactly as
+`scoring.py` does, after the raw answers are merged. It is the input's
+`entry_point` (default `build_scratch`; a JSON `null` stays null, as Python's
+`None`), so a hard or selection constraint on `_entry_point` behaves as in
+Python and a raw `answers._entry_point` is overwritten and can never steer it.
+`score-units` passes the document's `entry_point` to every unit the same way.
+The bundled registry has no such constraint; custom registries (`--runtimes-dir`)
+may.
 
 ## Test mapping (AC1-AC3)
 
