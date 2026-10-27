@@ -45,6 +45,8 @@ impl Key {
 /// closing marker cannot make discovery treat an unbounded body as metadata.
 pub fn parse_frontmatter(content: &str) -> Frontmatter {
     let mut result = Frontmatter::default();
+    // A UTF-8 byte-order mark (common from Windows editors) is not content.
+    let content = content.strip_prefix('\u{feff}').unwrap_or(content);
     let mut lines = content.lines();
     if lines.next().map(str::trim) != Some("---") {
         return result;
@@ -263,6 +265,36 @@ mod tests {
         );
         let fm = parse_frontmatter(content);
         assert_eq!(fm.description.as_deref(), Some("intro more: text"));
+    }
+
+    #[test]
+    fn utf8_bom_before_the_opening_marker_is_ignored() {
+        let fm = parse_frontmatter("\u{feff}---\nname: bom\ndescription: still read\n---\n");
+        assert_eq!(fm.name.as_deref(), Some("bom"));
+        assert_eq!(fm.description.as_deref(), Some("still read"));
+    }
+
+    #[test]
+    fn crlf_line_endings_are_read_like_lf() {
+        let fm =
+            parse_frontmatter("---\r\nname: crlf\r\ndescription: >\r\n  one\r\n  two\r\n---\r\n");
+        assert_eq!(fm.name.as_deref(), Some("crlf"));
+        assert_eq!(fm.description.as_deref(), Some("one two"));
+    }
+
+    #[test]
+    fn empty_values_are_reported_as_empty_not_absent() {
+        // The parser keeps the distinction; skill discovery decides that an
+        // empty name falls back to the directory name.
+        let fm = parse_frontmatter("---\nname:\ndescription: \"\"\n---\n");
+        assert_eq!(fm.name.as_deref(), Some(""));
+        assert_eq!(fm.description.as_deref(), Some(""));
+    }
+
+    #[test]
+    fn literal_block_name_keeps_its_newlines() {
+        let fm = parse_frontmatter("---\nname: |\n  first\n  second\n---\n");
+        assert_eq!(fm.name.as_deref(), Some("first\nsecond"));
     }
 
     #[test]
