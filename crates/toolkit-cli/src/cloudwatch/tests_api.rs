@@ -1529,7 +1529,7 @@ fn malformed_create_and_get_responses_fail_and_name_only_the_member() {
 
     let created = create(
         r#"{"service": "s", "environment": "e", "instrumentation_type": "BREAKPOINT",
-            "language": "python", "file_path": "/a.py", "method_name": "f", "ttl_hours": 2}"#,
+            "language": "python", "file_path": "/a.py", "code_unit": "a", "method_name": "f", "ttl_hours": 2}"#,
         &mut Fake::always(r#"{"ARN": {"secret": "AWS-SECRET-SENTINEL"}}"#),
     );
     assert!(!created.ok, "{}", created.text);
@@ -1582,7 +1582,7 @@ fn malformed_query_results_are_an_error_never_no_snapshots() {
 
         let output = search(
             &format!(
-                r#"{{"service": "s", "environment": "e", "location_hash": "{HASH}", "start_time": "2025-02-03T18:00:00Z", "end_time": "2025-02-03T19:00:00Z"}}"#
+                r#"{{"service": "s", "environment": "e", "location_hash": "{HASH}", "status_timestamp": "2025-02-03T18:42:00Z"}}"#
             ),
             &mut script(poll),
         );
