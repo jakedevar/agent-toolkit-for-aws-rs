@@ -83,8 +83,8 @@ the verifier.
 3. **Lenient `null`s.** `platform`, `temporal` and a result's `model_recommendation` set to `null` count as
    absent (Python crashed); non-text entries of a service or queue list name no service/queue.
 4. **Escaped diagram text.** Unit ids, models, runtimes, deployment models and task queues are escaped
-   (`\x1b`, `‮`, ...) before they reach `diagram.md`, and `"` inside a quoted Mermaid label is
-   written `#quot;`, so hostile names cannot add lines or leave a label. Plain text is unchanged.
+   (`\x1b`, `‮`, ...) before they reach `diagram.md`, so hostile names cannot add lines. Everything
+   else that reaches Mermaid goes through the one encoder of item 13 (#4679).
 5. **Stdout.** `RUNTIME=` is redacted and escaped (bounded to 120 characters).
 6. **Symlinks.** RESULT, CONFIRM, DESIGN, RECOMMENDATION are read without following links, and a link
    at `diagram.md` / the verification output is never written through. An existing CONFIRM or DESIGN
@@ -102,6 +102,37 @@ the verifier.
 11. **`response_model_id`.** A non-text `model` / `modelId` in a response is stored as `null`; the
     `date-time` format is not re-checked because the tool writes the timestamps itself.
 12. **Duplicate JSON keys** are rejected by the shared parser (Python kept the last).
+
+13. **Mermaid-safe encoding (#4679).** Python wrote unit ids, models, runtimes, deployment models and task
+    queues into the flowchart with at most hyphen replacement, so a value such as
+    `q| injected[Injected] -->|q` added a node and an edge. Every caller-derived string now passes
+    one encoder in `startup/diagram.rs`; fixed text (runtime and service display names, `User / Client`,
+    `Queue`, ...) is written as before.
+    - **Labels** (node text, subgraph titles, edge labels, queue names, models, runtimes, deployment
+      models): control, bidirectional and invisible characters become visible `\x..` / `\u....` text
+      first; then every ASCII character other than letters, digits, space and `_ . , : / - + \` is a
+      Mermaid entity (`"` is `#quot;`, everything else `#<decimal>;`, so `|` is `#124;`, `[` is `#91;`,
+      `;` is `#59;`, `<` is `#60;`, `#` is `#35;`, `%` is `#37;`). Non-ASCII text that is neither control
+      nor invisible stays. A label therefore cannot close its quotes, open a bracket, start a pipe or
+      comment, or carry HTML, whether it is in `["..."]` or in an unquoted `-->|edge label|`. A Mermaid
+      viewer shows the entity as the character, so the label reads the same.
+    - **Node ids** (one per unit, plus the inner `<id>_node` node): an id of the form
+      `[A-Za-z][A-Za-z0-9_-]*` keeps its readable form with hyphens as underscores (`chat-agent` is
+      `chat_agent`, as before) unless it is a Mermaid word (`end`, `subgraph`, `class`, ...), one of the
+      ids the composer writes itself (`user`, `rt`, `model`, `svcs`, `handoff`, `queue`, `gateway`,
+      `temporal_cloud`, `n`), or would equal another unit's id or `<id>_node` id. Every other id
+      (spaces, brackets, quotes, pipes, semicolons, a leading digit, non-ASCII, empty) becomes
+      `u_<8 hex digits of its FNV-1a digest>` (`_2`, `_3`, ... on a collision). The real id stays visible
+      in the subgraph title. The mapping depends only on the ordered unit ids, so output stays
+      byte-identical for the same input. This is the only change to ordinary diagrams: a unit named
+      like a reserved word, or a model/queue containing one of the encoded characters (a model with
+      parentheses, `=`, `@`), renders differently from the Python.
+    - **ASCII** output is not Mermaid and keeps only the control-character escaping.
+    - Tests: `a_queue_cannot_add_a_node_or_an_edge`, `a_unit_id_cannot_become_graph_syntax`,
+      `node_ids_are_readable_when_safe_and_deterministic_when_not`, `mermaid_text_keeps_names_and_encodes_syntax`
+      and `every_caller_field_that_reaches_the_diagram_is_encoded`, which renders fourteen hostile values
+      through every caller field (legacy, single-unit, multi-unit queue/gateway, Temporal) and checks that
+      each line is one of the statement shapes the composer writes.
 
 ## Verification
 

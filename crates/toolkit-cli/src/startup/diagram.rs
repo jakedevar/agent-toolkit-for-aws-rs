@@ -12,9 +12,10 @@
 //! one-line error (exit status 1) naming the field and its JSON type, never the
 //! value. Text that comes from the documents (unit ids, model names, runtime
 //! ids, task queues) has its control, bidirectional and invisible characters
-//! escaped before it reaches `diagram.md` or stdout, and `"` inside a quoted
-//! Mermaid label is written `#quot;`, so a hostile name cannot add lines or
-//! break out of a node (`docs/migration/startup-diagram.md`).
+//! escaped before it reaches `diagram.md` or stdout. Every such string that reaches
+//! the Mermaid text goes through one encoder (`mermaid_text` for labels,
+//! `NodeIds` for node ids), so a hostile name can neither add lines nor graph
+//! statements (#4679, `docs/migration/startup-diagram.md`).
 //!
 //! The composer writes text only. It does not run Mermaid, a renderer or any
 //! other program: rendering `diagram.md` stays with the reader's own tooling.
@@ -185,9 +186,146 @@ fn esc(text: &str) -> String {
     safe_path(text)
 }
 
-/// [`esc`] for text inside a quoted Mermaid label.
-fn quoted(text: &str) -> String {
-    esc(text).replace('"', "#quot;")
+/// The one encoder for caller-derived text that reaches Mermaid (labels, edge
+/// labels, subgraph titles, queue names): control and invisible characters
+/// become visible `\x..` text first ([`esc`]), then every ASCII character that
+/// is not an ASCII letter, digit, space or one of `_ . , : / - + \` becomes a
+/// Mermaid entity (`"` is `#quot;`, anything else `#<decimal>;`). Quotes,
+/// brackets, braces, parentheses, pipes, semicolons, angle brackets, `#`, `%`,
+/// `&`, backticks and the rest of the syntax characters therefore never reach
+/// the output raw, whether the text sits in a `"quoted"` label or an unquoted
+/// `|edge label|`. Non-ASCII characters that are not control or invisible stay.
+fn mermaid_text(text: &str) -> String {
+    use std::fmt::Write as _;
+
+    let mut out = String::with_capacity(text.len());
+    for c in esc(text).chars() {
+        match c {
+            '"' => out.push_str("#quot;"),
+            c if c.is_ascii_alphanumeric()
+                || matches!(c, ' ' | '_' | '.' | ',' | ':' | '/' | '-' | '+' | '\\')
+                || !c.is_ascii() =>
+            {
+                out.push(c);
+            }
+            c => {
+                let _ = write!(out, "#{};", u32::from(c));
+            }
+        }
+    }
+    out
+}
+
+/// Words a Mermaid flowchart treats as syntax, plus the node ids this module
+/// writes itself. A unit id equal to one of them (in any case) is not used as
+/// a node id.
+const RESERVED_NODE_IDS: [&str; 24] = [
+    "end",
+    "subgraph",
+    "graph",
+    "flowchart",
+    "style",
+    "classdef",
+    "class",
+    "click",
+    "linkstyle",
+    "direction",
+    "default",
+    "interpolate",
+    "call",
+    "href",
+    "callback",
+    "user",
+    "rt",
+    "model",
+    "svcs",
+    "handoff",
+    "queue",
+    "gateway",
+    "temporal_cloud",
+    "n",
+];
+
+/// FNV-1a over the bytes of `text`: a stable, dependency-free digest for the
+/// fallback node ids (collisions are resolved by [`NodeIds`]).
+fn fnv1a(text: &str) -> u32 {
+    text.bytes().fold(0x811c_9dc5_u32, |hash, byte| {
+        (hash ^ u32::from(byte)).wrapping_mul(0x0100_0193)
+    })
+}
+
+/// The Mermaid node id of every unit of a design. An id written
+/// `[A-Za-z][A-Za-z0-9_-]*` keeps its readable form (hyphens become
+/// underscores) unless it is a reserved word, would equal another unit's id or
+/// inner `<id>_node` id, or an id this module writes itself; every other id
+/// (spaces, brackets, quotes, pipes, semicolons, a leading digit, non-ASCII)
+/// maps to `u_<8 hex digits of its FNV-1a digest>`, with `_2`, `_3`, ... on a
+/// collision. The mapping depends only on the ordered unit ids, so the same
+/// input always renders the same text; the real id stays visible in the label.
+struct NodeIds {
+    by_raw: std::collections::HashMap<String, String>,
+    used: std::collections::HashSet<String>,
+}
+
+impl NodeIds {
+    fn for_units(units: &[&Json]) -> Res<Self> {
+        let mut table = Self {
+            by_raw: std::collections::HashMap::new(),
+            used: std::collections::HashSet::new(),
+        };
+        for unit in units {
+            let raw = unit_id(unit)?;
+            if table.by_raw.contains_key(raw) {
+                continue;
+            }
+            let id = table.assign(raw);
+            table.used.insert(format!("{id}_node"));
+            table.used.insert(id.clone());
+            table.by_raw.insert(raw.to_string(), id);
+        }
+        Ok(table)
+    }
+
+    fn free(&self, id: &str) -> bool {
+        !self.used.contains(id) && !self.used.contains(&format!("{id}_node"))
+    }
+
+    fn assign(&self, raw: &str) -> String {
+        let mut chars = raw.chars();
+        let readable = chars
+            .next()
+            .is_some_and(|first| first.is_ascii_alphabetic())
+            && chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+        if readable {
+            let plain = raw.replace('-', "_");
+            let lower = plain.to_ascii_lowercase();
+            if !RESERVED_NODE_IDS.contains(&lower.as_str()) && self.free(&plain) {
+                return plain;
+            }
+        }
+        let base = format!("u_{:08x}", fnv1a(raw));
+        let mut candidate = base.clone();
+        let mut counter = 2_u32;
+        while !self.free(&candidate) {
+            candidate = format!("{base}_{counter}");
+            counter += 1;
+        }
+        candidate
+    }
+
+    /// The node id of a unit of the design the table was built from.
+    fn get(&self, raw: &str) -> &str {
+        self.by_raw.get(raw).map_or("u_missing", String::as_str)
+    }
+}
+
+/// The Mermaid label of a runtime: a known runtime keeps its fixed display
+/// name, anything else is caller text and is encoded.
+fn runtime_label_text(runtime: &str) -> String {
+    RUNTIME_LABELS
+        .iter()
+        .find(|(id, _)| *id == runtime)
+        .map_or_else(|| mermaid_text(runtime), |(_, label)| (*label).to_string())
 }
 
 // ---- runtime, services, model ---------------------------------------------
@@ -268,10 +406,10 @@ fn render_mermaid(
     model: Option<&str>,
     deployment_model: Option<&str>,
 ) -> String {
-    let mut label = quoted(runtime_label(runtime));
+    let mut label = runtime_label_text(runtime);
     if runtime == "agentcore" {
         if let Some(deployment) = deployment_model {
-            label = format!("{label}<br/>({})", quoted(deployment));
+            label = format!("{label}<br/>({})", mermaid_text(deployment));
         }
     }
     let mut lines = vec![
@@ -283,7 +421,7 @@ fn render_mermaid(
     if let Some(model) = model {
         lines.push(format!(
             "    model[\"Bedrock model:<br/>{}\"]",
-            quoted(model)
+            mermaid_text(model)
         ));
         lines.push("    rt -->|invoke| model".to_string());
     }
@@ -587,11 +725,6 @@ fn units_needing_handoff<'a>(units: &[&'a Json]) -> Res<Vec<&'a Json>> {
     Ok(selected)
 }
 
-/// Mermaid node id of a unit: hyphens become underscores.
-fn node_id(id: &str) -> String {
-    esc(id).replace('-', "_")
-}
-
 /// The orchestrator name of a Temporal design: the chosen Way is kept, a
 /// self-hosted server is never drawn as Temporal Cloud.
 fn temporal_name(temporal: &Json) -> &'static str {
@@ -682,14 +815,18 @@ impl<'a> MultiUnit<'a> {
 fn render_multi_unit_mermaid(design: &Json) -> Res<String> {
     let multi = MultiUnit::new(design)?;
     let mut lines = vec!["flowchart TD".to_string()];
+    let ids = NodeIds::for_units(&multi.units)?;
     let subgraph = |lines: &mut Vec<String>, unit: &Json| -> Res<String> {
         let id = unit_id(unit)?;
-        let sanitized = node_id(id);
-        let mut parts = vec![quoted(runtime_label(&unit_runtime_text(unit)?))];
+        let sanitized = ids.get(id).to_string();
+        let mut parts = vec![runtime_label_text(&unit_runtime_text(unit)?)];
         if let Some(model) = unit_model(unit)? {
-            parts.push(quoted(model));
+            parts.push(mermaid_text(model));
         }
-        lines.push(format!("    subgraph {sanitized}[\"{}\"]", quoted(id)));
+        lines.push(format!(
+            "    subgraph {sanitized}[\"{}\"]",
+            mermaid_text(id)
+        ));
         lines.push(format!(
             "        {sanitized}_node[\"{}\"]",
             parts.join("<br/>")
@@ -706,16 +843,19 @@ fn render_multi_unit_mermaid(design: &Json) -> Res<String> {
         for worker in &multi.workers {
             lines.push(format!(
                 "    temporal_cloud --> {}",
-                node_id(unit_id(worker)?)
+                ids.get(unit_id(worker)?)
             ));
         }
         for worker in &multi.workers {
-            let worker_id = node_id(unit_id(worker)?);
+            let worker_id = ids.get(unit_id(worker)?);
             for (activity, queue) in multi.fleet_edges(worker)? {
-                let activity_id = node_id(unit_id(activity)?);
+                let activity_id = ids.get(unit_id(activity)?);
                 match queue {
                     Some(queue) => {
-                        lines.push(format!("    {worker_id} -->|{}| {activity_id}", esc(queue)));
+                        lines.push(format!(
+                            "    {worker_id} -->|{}| {activity_id}",
+                            mermaid_text(queue)
+                        ));
                     }
                     None => lines.push(format!("    {worker_id} --> {activity_id}")),
                 }
@@ -738,13 +878,13 @@ fn render_multi_unit_mermaid(design: &Json) -> Res<String> {
             if queue.len() > 1 {
                 lines.push("    queue[\"Queue\"]".to_string());
                 for unit in queue {
-                    lines.push(format!("    {} -.-> queue", node_id(unit_id(unit)?)));
+                    lines.push(format!("    {} -.-> queue", ids.get(unit_id(unit)?)));
                 }
             }
             if gateway.len() > 1 {
                 lines.push("    gateway[\"Gateway\"]".to_string());
                 for unit in gateway {
-                    lines.push(format!("    {} -.-> gateway", node_id(unit_id(unit)?)));
+                    lines.push(format!("    {} -.-> gateway", ids.get(unit_id(unit)?)));
                 }
             }
         }
@@ -753,7 +893,7 @@ fn render_multi_unit_mermaid(design: &Json) -> Res<String> {
     if !handoff.is_empty() {
         lines.push(HANDOFF_NODE.to_string());
         for unit in handoff {
-            lines.push(format!("    {} -.-> handoff", node_id(unit_id(unit)?)));
+            lines.push(format!("    {} -.-> handoff", ids.get(unit_id(unit)?)));
         }
     }
     Ok(lines.join("\n"))

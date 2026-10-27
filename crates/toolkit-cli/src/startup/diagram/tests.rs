@@ -857,8 +857,9 @@ fn hostile_names_cannot_add_lines_or_leave_a_label() {
     let plain = diagram("{}", "{}", Some(&benign));
     for text in [&out.mermaid, &out.ascii] {
         assert_clean(text);
-        assert!(text.contains("\\x1b[31m\\x07\\x0d\\x0ab\\u202ey"), "{text}");
     }
+    assert!(out.ascii.contains("\\x1b[31m\\x07\\x0d\\x0ab\\u202ey"));
+    assert!(out.mermaid.contains("\\x1b#91;31m\\x07\\x0d\\x0ab\\u202ey"));
     assert_eq!(out.mermaid.lines().count(), plain.mermaid.lines().count());
     assert_eq!(out.ascii.lines().count(), plain.ascii.lines().count());
     let quoted_label = diagram(
@@ -868,8 +869,251 @@ fn hostile_names_cannot_add_lines_or_leave_a_label() {
     );
     assert!(quoted_label
         .mermaid
-        .contains("a#quot;]\\x0a    evil[#quot;x"));
+        .contains("a#quot;#93;\\x0a    evil#91;#quot;x"));
     assert_eq!(quoted_label.mermaid.lines().count(), 6);
+}
+
+// ---- Mermaid syntax injection (#4679) -------------------------------------------------
+
+/// Values that are Mermaid syntax, not names: pipes, brackets, quotes,
+/// semicolons, comments, classes, HTML, reserved words and entities.
+const SYNTAX: [&str; 14] = [
+    "q| injected[Injected] -->|q",
+    "a\"]; evil[\"x",
+    "x]:::cls",
+    "%% comment",
+    "{{x}}",
+    "a(b)c",
+    "<img src=x onerror=1>",
+    "end",
+    "subgraph x",
+    "click a href \"x:alert(1)\"",
+    "queue",
+    "a --- ob",
+    "`code` & #quot; #35;",
+    "a\nb[\"c\"]\n    injected[X]",
+];
+
+fn is_node_id(text: &str) -> bool {
+    let mut chars = text.chars();
+    chars
+        .next()
+        .is_some_and(|first| first.is_ascii_alphabetic())
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// Whether `text` holds no Mermaid syntax: no quote, bracket, brace, pipe,
+/// semicolon, angle bracket, `&`, `%` or backtick, and `#` only opens an entity.
+fn is_plain_label(text: &str) -> bool {
+    let mut rest = text;
+    while let Some(c) = rest.chars().next() {
+        if "\"[]{}|;<>&%`".contains(c) {
+            return false;
+        }
+        rest = &rest[c.len_utf8()..];
+        if c == '#' {
+            let end = rest.find(';').unwrap_or(0);
+            let entity = &rest[..end];
+            if entity != "quot"
+                && (entity.is_empty() || !entity.bytes().all(|b| b.is_ascii_digit()))
+            {
+                return false;
+            }
+            rest = &rest[end + 1..];
+        }
+    }
+    true
+}
+
+/// The graph statements of a rendered flowchart, each checked against the only
+/// shapes the composer writes; a line of any other shape is a failure.
+fn assert_only_composer_statements(mermaid: &str) {
+    for line in mermaid.lines() {
+        let text = line.trim_start();
+        let ok = if matches!(text, "flowchart TD" | "end" | "direction LR") {
+            true
+        } else if let Some(body) = text.strip_suffix("\"]") {
+            let (head, label) = body.split_once("[\"").expect("a node line has a label");
+            let head = head.strip_prefix("subgraph ").unwrap_or(head);
+            let label = label.replace("<br/>", " ");
+            is_node_id(head) && is_plain_label(&label.replace(['(', ')'], ""))
+        } else if let Some((from, rest)) = text.split_once(" -->|") {
+            let (label, to) = rest.rsplit_once("| ").expect("an edge label closes");
+            is_node_id(from) && is_plain_label(label) && is_node_id(to)
+        } else if let Some((from, to)) = text.split_once(" --> ") {
+            is_node_id(from) && is_node_id(to)
+        } else if let Some((from, to)) = text.split_once(" -.-> ") {
+            is_node_id(from) && is_node_id(to)
+        } else {
+            false
+        };
+        assert!(ok, "not a composer statement: {line:?} in\n{mermaid}");
+    }
+}
+
+#[test]
+fn a_queue_cannot_add_a_node_or_an_edge() {
+    let queue = "q| injected[Injected] -->|q";
+    let design = format!(
+        r#"{{"units":[
+        {{"id":"worker","workload_class":"temporal_worker_poll","verdict":"ecs","queues":[{q}]}},
+        {{"id":"activity","verdict":"lambda","task_queue":{q}}}],
+        "temporal":{{"way":"cloud"}}}}"#,
+        q = json_string(queue)
+    );
+    let out = mermaid("{}", &design);
+    assert!(out.contains("\n    worker -->|q#124; injected#91;Injected#93; --#62;#124;q| activity"));
+    assert!(!out.contains("injected["));
+    assert_only_composer_statements(&out);
+    let benign = mermaid("{}", &design.replace(queue, "q"));
+    assert_eq!(out.lines().count(), benign.lines().count());
+}
+
+#[test]
+fn a_unit_id_cannot_become_graph_syntax() {
+    let id = "a b] --> c[X";
+    let design = format!(
+        r#"{{"units":[{{"id":{},"workload_class":"agent_session","verdict":"agentcore"}},
+        {{"id":"b","verdict":"ecs"}}]}}"#,
+        json_string(id)
+    );
+    let out = mermaid("{}", &design);
+    let node = format!("u_{:08x}", fnv1a(id));
+    assert!(out.contains(&format!("    subgraph {node}[\"a b#93; --#62; c#91;X\"]")));
+    assert!(out.contains(&format!("    user -->|request| {node}\n")));
+    assert!(!out.contains("c[X") && !out.contains("b]"));
+    assert_only_composer_statements(&out);
+}
+
+#[test]
+fn node_ids_are_readable_when_safe_and_deterministic_when_not() {
+    let units = j(
+        r#"[{"id":"chat-agent"},{"id":"end"},{"id":"Queue"},{"id":"a b"},{"id":"1st"},
+            {"id":"a-b"},{"id":"a_b"},{"id":"a"},{"id":"a_node"},{"id":"äb"},{"id":""}]"#,
+    );
+    let Json::Array(items) = &units else {
+        panic!("an array")
+    };
+    let refs: Vec<&Json> = items.iter().collect();
+    let ids = NodeIds::for_units(&refs).expect("ids");
+    assert_eq!(ids.get("chat-agent"), "chat_agent");
+    assert_eq!(ids.get("a-b"), "a_b");
+    for hashed in ["end", "Queue", "a b", "1st", "äb", ""] {
+        assert_eq!(
+            ids.get(hashed),
+            format!("u_{:08x}", fnv1a(hashed)),
+            "{hashed:?}"
+        );
+    }
+    assert_eq!(ids.get("a_b"), format!("u_{:08x}", fnv1a("a_b")));
+    assert_eq!(ids.get("a"), "a");
+    assert_eq!(
+        ids.get("a_node"),
+        format!("u_{:08x}", fnv1a("a_node")),
+        "an id equal to another unit's inner node id is hashed"
+    );
+    let mut seen = std::collections::HashSet::new();
+    for unit in &refs {
+        let id = ids.get(unit_id(unit).expect("id"));
+        assert!(is_node_id(id), "{id}");
+        assert!(seen.insert(id.to_string()) && seen.insert(format!("{id}_node")));
+    }
+    let again = NodeIds::for_units(&refs).expect("ids");
+    for unit in &refs {
+        let raw = unit_id(unit).expect("id");
+        assert_eq!(ids.get(raw), again.get(raw));
+    }
+}
+
+#[test]
+fn mermaid_text_keeps_names_and_encodes_syntax() {
+    assert_eq!(mermaid_text("claude_sonnet_5"), "claude_sonnet_5");
+    assert_eq!(
+        mermaid_text("us.anthropic.claude-sonnet-4-5-v1:0"),
+        "us.anthropic.claude-sonnet-4-5-v1:0"
+    );
+    assert_eq!(mermaid_text("agent tasks/日本"), "agent tasks/日本");
+    assert_eq!(
+        mermaid_text("a\"b[c]d|e;f{g}h(i)<j>&k#l%m`n=o"),
+        "a#quot;b#91;c#93;d#124;e#59;f#123;g#125;h#40;i#41;#60;j#62;#38;k#35;l#37;m#96;n#61;o"
+    );
+    assert_eq!(mermaid_text("a\nb\r\u{202e}"), "a\\x0ab\\x0d\\u202e");
+}
+
+#[test]
+fn every_caller_field_that_reaches_the_diagram_is_encoded() {
+    let documents = [
+        // legacy (no design): verdict, model, deployment model
+        (
+            r#"{"verdict":"agentcore","deployment_model":@H@,
+                "model_recommendation":{"model":@H@}}"#,
+            None,
+        ),
+        (
+            r#"{"verdict":@H@,"model_recommendation":{"model":@H@}}"#,
+            None,
+        ),
+        // single unit: runtime, model, deployment model
+        (
+            "{}",
+            Some(
+                r#"{"units":[{"id":@H@,"verdict":"agentcore","deployment_model":@H@,
+                    "model_recommendation":{"model":@H@}}]}"#,
+            ),
+        ),
+        (
+            "{}",
+            Some(r#"{"units":[{"id":@H@,"verdict":@H@,"model_recommendation":{"model":@H@}}]}"#),
+        ),
+        // several units on a queue/gateway: id, runtime, model, coupling targets
+        (
+            "{}",
+            Some(
+                r#"{"units":[
+                {"id":@H@,"workload_class":"agent_session","verdict":@H@,
+                 "effective_runtime":@H@,"model_recommendation":{"model":@H@},
+                 "coupling":{"mode":"queue","interacts_with":[@H2@]}},
+                {"id":@H2@,"verdict":"ecs","effective_runtime":"ecs",
+                 "coupling":{"mode":"api","interacts_with":[@H@]}}]}"#,
+            ),
+        ),
+        // temporal: ids, queues, task queues, runtimes, models
+        (
+            "{}",
+            Some(
+                r#"{"units":[
+                {"id":@H@,"workload_class":"temporal_worker_poll","verdict":@H@,"queues":[@H@]},
+                {"id":@H2@,"verdict":@H@,"task_queue":@H@,
+                 "model_recommendation":{"model":@H@}}],"temporal":{"way":"cloud"}}"#,
+            ),
+        ),
+    ];
+    for hostile in SYNTAX {
+        for (result, design) in documents {
+            let fill = |text: &str, value: &str| {
+                text.replace("@H2@", &json_string(&format!("{value}2")))
+                    .replace("@H@", &json_string(value))
+            };
+            let hostile_design = design.map(|text| fill(text, hostile));
+            let benign_design = design.map(|text| fill(text, "h"));
+            let out = diagram(&fill(result, hostile), "{}", hostile_design.as_deref());
+            let plain = diagram(&fill(result, "h"), "{}", benign_design.as_deref());
+            assert_only_composer_statements(&out.mermaid);
+            assert_eq!(
+                out.mermaid.lines().count(),
+                plain.mermaid.lines().count(),
+                "{hostile:?}\n{}",
+                out.mermaid
+            );
+            for raw in ["injected[", "evil[", "<img", "{{", "]:::"] {
+                assert!(
+                    !out.mermaid.contains(raw),
+                    "{hostile:?} left {raw:?} raw:\n{}",
+                    out.mermaid
+                );
+            }
+        }
+    }
 }
 
 // ---- the command -------------------------------------------------------------------
