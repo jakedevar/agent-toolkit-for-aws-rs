@@ -29,6 +29,7 @@ use toolkit_core::{
 mod ai_data;
 pub mod asm_exec;
 mod aurora;
+mod bedrock_agent;
 mod bedrock_report;
 pub mod cloudwatch;
 pub mod dynamodb;
@@ -108,6 +109,9 @@ Usage:
       [--base-job-name N] [--image-uri URI]
   toolkit ai-data transform submit (same options as plan)
   toolkit ai-data transform describe JOB_NAME [--region R]
+  toolkit bedrock-agent fetch --agent-id ID --out FILE [--agent-version VERSION]
+      [--agent-alias-id ID] [--region REGION] [--profile PROFILE]
+      [--inline-s3-schemas] [--recorded FILE]
   toolkit bedrock-report render [PAYLOAD_JSON] [--phase-results DIR --repo DIR]
       [--date-suffix YYYY-MM-DD] [--results-dir DIR]
   toolkit bedrock-report validate (--schema analysis|ingestion|eval|rewrite|delta-decisions FILE
@@ -312,6 +316,15 @@ Commands:
                 job; this build has no SageMaker or S3 client, so submit and
                 describe exit 1 and s3:// inputs are refused. See
                 docs/migration/ai-data.md.
+  bedrock-agent fetch
+                Bedrock Agent discovery (#4383): fetch the agent, its action
+                groups, knowledge bases and data sources, collaborators,
+                aliases, versions and execution role into one manifest JSON file
+                (owner-only permissions, a link at --out is refused). This build
+                has no live AWS client: --recorded FILE replays recorded
+                responses, otherwise the first call fails with exit 1.
+                Prints Wrote FILE and one WARNING line per discovery warning;
+                no region exits 2. See docs/migration/bedrock-fetch.md.
   bedrock-report
                 Reports of the llm-to-bedrock skill (#4405). render prints the
                 in-chat summary of a finished run from the phase-result files
@@ -999,6 +1012,15 @@ pub const COMMANDS: &[CommandSpec] = &[
         max_positionals: 1,
         passthrough: false,
         handler: ai_data::transform_describe_command,
+    },
+    CommandSpec {
+        path: &["bedrock-agent", "fetch"],
+        flags: bedrock_agent::FETCH_FLAGS,
+        value_flags: bedrock_agent::FETCH_VALUE_FLAGS,
+        strict_values: true,
+        max_positionals: 0,
+        passthrough: false,
+        handler: bedrock_agent::fetch_command,
     },
     CommandSpec {
         path: &["bedrock-report", "render"],
