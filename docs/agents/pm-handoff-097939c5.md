@@ -148,3 +148,4 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 20:25Z: #4736 review of #4394 294179ff: CHANGES_REQUESTED #4738 (ReadOnly cursor accepts write-capable SELECT). Ruling: narrow to unforgeable TenantRead template type, no blacklist; general read-only raw SQL -> follow-up needing DB-enforced read-only. Repair (Opus) e1952dc1 (continue_from a33d3291).
 - 20:18Z: SEAT -> c76fd1a6 (context-cap rotation of f9df4bb0). Scoped 6ad13616 on c464befb progressing (toolkit-aws/cli/core done). Load 18, disk 142G free.
   Workers: e1952dc1 #4394 repair running; c65e27aa #4408, 2205a1f9 #4727, ad948f84 #4381 parked on jobs (disk_floor holds). db36d49d #4736 done. No GM mail (gm-1b353269-4452-live-1) yet.
+- 20:34Z: scoped 6ad13616 on c464befb OK (2499 tests), check ok. GATE = c464befb9eb0f9d6d65bbbc173c972f1405703b0 / source_session_id 5ed0647c-beda-43b9-8324-c63a41267ba1 (supersedes a1db6c61). Noted #4575 (handoff seq 27). Still no GM mail.
