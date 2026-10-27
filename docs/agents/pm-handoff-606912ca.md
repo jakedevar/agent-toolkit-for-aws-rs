@@ -26,7 +26,7 @@ Branches pushed by continuation workers sometimes went to the predecessor's rsi/
 ## In flight (terminal watches armed by launches)
 - #4379 toolkit-aws: 2nd security repair, Opus worker 3740a89e from b897cd82 (re-review #4467 findings 1-3, #4468, #4494; conservative-by-construction scrubber ruling). Then re-review on #4467 (Codex gpt-6.1-sol).
 - #4399 startup-validators: Sonnet 8b65101f (base 81cc6189 + merge 98957f87).
-- #4378 ci: Sonnet e719d866 (base 81cc6189 + merges 98957f87, 3a4c08d5); repoints mise/CI, retires covered Python.
+- #4378 ci: implemented at 35640f1276f5a72a339f2292a29d90099a797b80 (81cc6189 + merges 98957f87, 3a4c08d5; retires tools/validate.py, test_validate.py, validate_spec.py, sync-plugin-skills.py; keeps plugin sync-vendored.py for other slices). Review #4502 Codex sol 21b9e6b0 in flight. Landing it supersedes landing #4374/#4375/#4376/#4377 separately only if the queue requires one change per gate: land in stack order anyway.
 - #4463 (SDK adapter for toolkit-aws): ruling recorded on the Issue; dispatch only after #4379 is accepted.
 
 ## Rulings to keep
