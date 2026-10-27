@@ -14,9 +14,9 @@ use std::path::Path;
 use toolkit_core::{parse_json, read_regular_file, Json, ToolkitError, MAX_TEXT_FILE_BYTES};
 use toolkit_msk::pyfmt::{ascii_escape, py_float_repr, py_str};
 
-use super::identity::{same_model, strip};
 use super::{path_reason, usage};
 use crate::ai_data::parse_failure_text;
+use crate::bedrock_resolve::identity::{same_model, strip};
 use crate::safe_text::{safe_path, safe_text};
 use crate::spec::engine::{self, Issue, Segment};
 use crate::{Invocation, Output};

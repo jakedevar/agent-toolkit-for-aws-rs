@@ -16,9 +16,9 @@ use toolkit_core::{
 };
 use toolkit_msk::pyfmt::py_str;
 
-use super::identity::is_decimal;
 use super::{path_reason, usage};
 use crate::ai_data::parse_failure_text;
+use crate::bedrock_resolve::identity::is_decimal;
 use crate::safe_text::{safe_path, safe_text};
 use crate::startup::text::is_space;
 use crate::{Invocation, Output};

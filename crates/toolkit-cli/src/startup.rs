@@ -38,7 +38,7 @@ use toolkit_core::{parse_json, read_regular_file, Json};
 
 use crate::manifests::{read_failure, universal_newlines};
 
-mod artifacts;
+pub(crate) mod artifacts;
 mod consent;
 mod diagram;
 mod model_ids;

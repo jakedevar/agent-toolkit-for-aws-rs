@@ -313,9 +313,11 @@ the remainder below.
     The drift-failure test now uses a synthetic grown split section; a second test runs
     the checks against the real tree and the pinned commits.
 37. **`pricing_behavior` is carried by the Bedrock pricing slice.** The step that executes
-    the old and new `bedrock_pricing.py` (item 30) is carried by #4403 (`bedrock-resolve`,
-    llm-to-bedrock `bedrock_pricing.py` and its tests) as a Rust test; the report keeps
-    `pricing_behavior: not checked`.
+    the old and new `bedrock_pricing.py` (item 30) is carried by #4403 (`bedrock-resolve`)
+    as Rust tests: the rate table is compared with the Python source row for row and the
+    probes of the check are replayed (`docs/migration/bedrock-resolve.md`, "Pricing
+    behaviour parity"). The command keeps `pricing_behavior: not checked`; reporting the
+    Rust table from it is follow-up #4677 (after the Python file is retired, #4415).
 
 ### Intentional changes of `startup terraform-policy`
 

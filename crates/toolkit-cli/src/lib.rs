@@ -32,6 +32,7 @@ mod aurora;
 mod bedrock_agent;
 mod bedrock_report;
 pub mod cloudwatch;
+mod bedrock_resolve;
 pub mod dynamodb;
 pub mod elasticache;
 pub mod manifests;
@@ -143,6 +144,13 @@ Usage:
       [--read-latency-threshold N] [--write-latency-threshold N]
       [--ecpu-threshold N] [--evictions-threshold N]
       [--new-connections-threshold N] [--output FILE]
+  toolkit bedrock-resolve identity --provider anthropic|openai
+      (--source MODEL --target BEDROCK_ID | --mappings FILE)
+  toolkit bedrock-resolve image --emit format|mime|data-url|converse|responses|chat
+      [--image PATH] [--prompt TEXT | --prompt-file FILE] [--detail low|high|auto|original]
+  toolkit bedrock-resolve pricing --region REGION --models ID[,ID...] [--price-list FILE]
+  toolkit bedrock-resolve source-model ENV_FILE --catalog FILE
+      [--plan-model-id ID] [--source-provider NAME]
   toolkit asm exec [--] COMMAND [ARG...]
   toolkit --version
   toolkit help
@@ -388,6 +396,22 @@ Commands:
                 --pricing-csv / --pricing-json (the AWS bulk pricing file):
                 this build has no AWS or Redis client. See
                 docs/migration/elasticache.md.
+  bedrock-resolve
+                Model identity, image, pricing and source-model resolution of
+                the llm-to-bedrock skill (#4403), offline. identity prints
+                {\"same_model\": bool} for a source model and a Bedrock id (or
+                {\"same_model_family\": bool} for a mappings file). image builds
+                a Converse, Responses or Chat Completions user message, a data
+                URL or the Converse format of an image file. pricing prints
+                the per-1K-token USD rates of the listed model ids from the
+                built-in table (available: false for anything unpriced; a
+                recorded Pricing API answer may be given with --price-list).
+                source-model resolves PLAN_MODEL_ID (or --plan-model-id)
+                against a recorded provider catalog (--catalog), picking the
+                same line only for a date or pure version suffix: exit 2
+                {\"status\": \"no_key\"}, exit 3 {\"status\": \"error\"}. Recorded
+                inputs replace the live provider and Pricing API calls. See
+                docs/migration/bedrock-resolve.md.
   asm exec      Replace every {{resolve:secretsmanager:ID[:SecretString[:KEY
                 [:STAGE]]]}} reference in COMMAND, its arguments and the
                 environment with the secret value, then run COMMAND with the
@@ -1250,6 +1274,46 @@ pub const COMMANDS: &[CommandSpec] = &[
         max_positionals: 0,
         passthrough: false,
         handler: elasticache::dashboard_command,
+    },
+    CommandSpec {
+        path: &["bedrock-resolve", "identity"],
+        flags: &[],
+        value_flags: bedrock_resolve::IDENTITY_VALUE_FLAGS,
+        strict_values: true,
+        repeatable_flags: &[],
+        max_positionals: 0,
+        passthrough: false,
+        handler: bedrock_resolve::identity_command,
+    },
+    CommandSpec {
+        path: &["bedrock-resolve", "image"],
+        flags: &[],
+        value_flags: bedrock_resolve::IMAGE_VALUE_FLAGS,
+        strict_values: true,
+        repeatable_flags: &[],
+        max_positionals: 0,
+        passthrough: false,
+        handler: bedrock_resolve::image_command,
+    },
+    CommandSpec {
+        path: &["bedrock-resolve", "pricing"],
+        flags: &[],
+        value_flags: bedrock_resolve::PRICING_VALUE_FLAGS,
+        strict_values: true,
+        repeatable_flags: &[],
+        max_positionals: 0,
+        passthrough: false,
+        handler: bedrock_resolve::pricing_command,
+    },
+    CommandSpec {
+        path: &["bedrock-resolve", "source-model"],
+        flags: &[],
+        value_flags: bedrock_resolve::SOURCE_VALUE_FLAGS,
+        strict_values: true,
+        repeatable_flags: &[],
+        max_positionals: 1,
+        passthrough: false,
+        handler: bedrock_resolve::source_command,
     },
     CommandSpec {
         path: &["asm", "exec"],
