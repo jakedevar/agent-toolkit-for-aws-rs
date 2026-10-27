@@ -128,6 +128,8 @@ root (`lint_registry_rows…`, `lint_never_follows_symbolic_links`).
     (`error: the following arguments are required: --migration-dir` plus the
     usage text, exit 2).
 
+11. **Kept quirk.** Dual-ID rebuilding treats any later token that starts with `v` as a continuation of the previous revisioned ID (`startswith("v")`), so a full ID beginning with `v` listed after a revisioned one is mangled exactly as in Python; real provider prefixes (`amazon.`, `anthropic.`, `meta.` ...) are unaffected. Pinned by `lint_dual_ids_rebuild_against_the_preceding_full_id`.
+
 ## File membership (#4371 U-10)
 
 Of the eleven inventory rows with `slice == "startup-validators"`:

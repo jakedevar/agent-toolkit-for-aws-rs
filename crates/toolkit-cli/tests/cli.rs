@@ -864,15 +864,15 @@ fn startup_model_id_lint_reports_findings_on_stderr_and_exits_one() {
     write_file(
         &root,
         "skills/shared/ai/ai-model-lifecycle.md",
-        "| Model | Model ID | Status |\n| - | - | - |\n| A | `vendor.alpha-v1:0` | **excluded** |\n\n**Removed:**\n- Gone (`vendor.gone-v1:0`)\n",
+        "| Model | Model ID | Status |\n| - | - | - |\n| A | `acme.alpha-v1:0` | **excluded** |\n\n**Removed:**\n- Gone (`acme.gone-v1:0`)\n",
     );
-    write_file(&root, "skills/x/SKILL.md", "use `vendor.gone-v1:0`\n");
+    write_file(&root, "skills/x/SKILL.md", "use `acme.gone-v1:0`\n");
     let output = run(&["startup", "model-id-lint"], &root);
     assert_eq!(code(&output), 1);
     assert_eq!(stdout(&output), "");
     assert_eq!(
         stderr(&output),
-        "model-id lint: 1 problem(s)\n  - skills/x/SKILL.md:1: retired Bedrock model `vendor.gone-v1:0` (excluded/removed per ai-model-lifecycle.md) used outside the model catalog\nerror: model-id lint found 1 problem(s)\n"
+        "model-id lint: 1 problem(s)\n  - skills/x/SKILL.md:1: retired Bedrock model `acme.gone-v1:0` (excluded/removed per ai-model-lifecycle.md) used outside the model catalog\nerror: model-id lint found 1 problem(s)\n"
     );
 
     let missing = root.join("absent");

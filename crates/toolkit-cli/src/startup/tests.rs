@@ -4,10 +4,11 @@
 //! fixture here, plus the migrated Python unit tests
 //! (`tests/test_model_id_lint.py`) and runs against the real plugin tree.
 //! Fixtures live in unique temporary directories removed on drop. Retired
-//! model IDs used by the fixtures are invented (`vendor.*`) so the real
+//! model IDs used by the fixtures are invented (`acme.*`) so the real
 //! plugin lint never sees them.
 
 use std::ffi::OsString;
+use std::fmt::Write as _;
 use std::fs;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
@@ -108,6 +109,8 @@ fn whitespace_and_word_classes_follow_python_str() {
     assert!(!is_space('x'));
 }
 
+const GREEDY: Pattern = Pattern::new("greedy", &[Tok::Space0, Tok::Lit(" x")]);
+
 const PHRASE: Pattern = Pattern::new(
     "phrase",
     &[
@@ -162,7 +165,6 @@ fn optional_and_class_tokens_backtrack_like_a_regular_expression() {
         assert!(!LINK.is_match(miss), "{miss:?}");
     }
     // `\s*` may give back characters the next literal needs.
-    const GREEDY: Pattern = Pattern::new("greedy", &[Tok::Space0, Tok::Lit(" x")]);
     assert!(GREEDY.is_match("   x"));
     assert!(!GREEDY.is_match("x"));
 }
@@ -660,10 +662,11 @@ fn startup_fail<S: AsRef<str>>(lines: &[S]) -> String {
         text.push_str(line.as_ref());
         text.push('\n');
     }
-    text.push_str(&format!(
-        "error: {} startup program artifact problem(s)\n",
+    let _ = writeln!(
+        text,
+        "error: {} startup program artifact problem(s)",
         lines.len()
-    ));
+    );
     text
 }
 
@@ -765,7 +768,7 @@ fn program_status_block_without_a_value_or_with_other_shapes_is_not_enforced() {
         r#"{"startup_constraints":{"other":1}}"#,
         r#"{"startup_constraints":null}"#,
         r#"{"startup_constraints":{}}"#,
-        r#"{}"#,
+        r"{}",
     ] {
         let dir = TempDir::new("program-shapes");
         write(&dir, "preferences.json", prefs_json);
@@ -1111,28 +1114,28 @@ const REGISTRY: &str = "\
 
 | Model | Model ID | Status | Active Replacement |
 | --- | --- | --- | --- |
-| Alpha | `vendor.alpha-v1:0` | **excluded** (EOL soon) | `vendor.beta-v1:0` |
-| Reel | `vendor.reel-v1:0` / `v1:1` | **excluded** | `vendor.next-v1:0` |
-| Glob | `vendor.llama3-2-*-instruct-v1:0` | **excluded** | `vendor.llama3-3-70b-instruct-v1:0` |
-| Old | `vendor.legacy-v1:0` | **legacy** | none |
+| Alpha | `acme.alpha-v1:0` | **excluded** (EOL soon) | `acme.beta-v1:0` |
+| Reel | `acme.reel-v1:0` / `v1:1` | **excluded** | `acme.next-v1:0` |
+| Glob | `acme.llama3-2-*-instruct-v1:0` | **excluded** | `acme.llama3-3-70b-instruct-v1:0` |
+| Old | `acme.legacy-v1:0` | **legacy** | none |
 
 **Removed (past EOL):**
 
-- Gone (`vendor.gone-v1:0`), replacement: `vendor.fresh-v1:0`
-- Pair (`vendor.pair-a-v1:0`, `vendor.pair-b-v1:0`)
+- Gone (`acme.gone-v1:0`), replacement: `acme.fresh-v1:0`
+- Pair (`acme.pair-a-v1:0`, `acme.pair-b-v1:0`)
 
-> Notes: `vendor.note-v1:0` is not an ID list.
-- not in the Removed list any more: `vendor.later-v1:0`
+> Notes: `acme.note-v1:0` is not an ID list.
+- not in the Removed list any more: `acme.later-v1:0`
 ";
 
 const BANNED: [&str; 7] = [
-    "vendor.alpha-v1:0",
-    "vendor.reel-v1:0",
-    "vendor.reel-v1:1",
-    "vendor.llama3-2-*-instruct-v1:0",
-    "vendor.gone-v1:0",
-    "vendor.pair-a-v1:0",
-    "vendor.pair-b-v1:0",
+    "acme.alpha-v1:0",
+    "acme.reel-v1:0",
+    "acme.reel-v1:1",
+    "acme.llama3-2-*-instruct-v1:0",
+    "acme.gone-v1:0",
+    "acme.pair-a-v1:0",
+    "acme.pair-b-v1:0",
 ];
 
 const REGISTRY_REL: &str = "skills/shared/ai/ai-model-lifecycle.md";
@@ -1184,10 +1187,11 @@ fn lint_every_retired_id_fails_outside_the_catalog() {
     assert_eq!(stdout, "");
     let mut expected = String::from("model-id lint: 7 problem(s)\n");
     for (index, id) in BANNED.iter().enumerate() {
-        expected.push_str(&format!(
-            "  - {}\n",
+        let _ = writeln!(
+            expected,
+            "  - {}",
             lint_message(&format!("skills/example/bad-{index}.md:1"), id)
-        ));
+        );
     }
     expected.push_str("error: model-id lint found 7 problem(s)\n");
     assert_eq!(stderr, expected);
@@ -1195,21 +1199,18 @@ fn lint_every_retired_id_fails_outside_the_catalog() {
 
 #[test]
 fn lint_glob_ids_stay_inside_one_token() {
-    let matcher = IdMatcher::new("vendor.llama3-2-*-instruct-v1:0");
+    let matcher = IdMatcher::new("acme.llama3-2-*-instruct-v1:0");
     for (line, hit) in [
-        ("use `vendor.llama3-2-90b-instruct-v1:0` now", true),
-        ("vendor.llama3-2--instruct-v1:0", true),
-        ("x vendor.llama3-2-a-b-c-instruct-v1:0 y", true),
+        ("use `acme.llama3-2-90b-instruct-v1:0` now", true),
+        ("acme.llama3-2--instruct-v1:0", true),
+        ("x acme.llama3-2-a-b-c-instruct-v1:0 y", true),
         // The wildcard does not run over whitespace or a backtick into the
         // replacement ID named right after it.
-        (
-            "vendor.llama3-2-x and vendor.llama3-3-70b-instruct-v1:0",
-            false,
-        ),
-        ("`vendor.llama3-2-` then `-instruct-v1:0`", false),
-        ("vendor.llama3-2-\u{a0}x-instruct-v1:0", false),
-        ("vendor.llama3-3-70b-instruct-v1:0", false),
-        ("VENDOR.LLAMA3-2-90B-INSTRUCT-V1:0", false),
+        ("acme.llama3-2-x and acme.llama3-3-70b-instruct-v1:0", false),
+        ("`acme.llama3-2-` then `-instruct-v1:0`", false),
+        ("acme.llama3-2-\u{a0}x-instruct-v1:0", false),
+        ("acme.llama3-3-70b-instruct-v1:0", false),
+        ("ACME.LLAMA3-2-90B-INSTRUCT-V1:0", false),
     ] {
         let chars: Vec<char> = line.chars().collect();
         assert_eq!(matcher.is_match(line, &chars), hit, "{line:?}");
@@ -1228,12 +1229,12 @@ fn lint_ids_are_substring_matches_like_the_python_search() {
     write(
         &root,
         "skills/example/a.md",
-        "prefix-vendor.alpha-v1:0-suffix\n",
+        "prefix-acme.alpha-v1:0-suffix\n",
     );
     write(
         &root,
         "skills/example/b.md",
-        "vendor.alpha-v1:1 is another revision\n",
+        "acme.alpha-v1:1 is another revision\n",
     );
     let (status, _, stderr) = lint(&root);
     assert_eq!(status, 1);
@@ -1250,10 +1251,10 @@ fn lint_dual_id_continuations_are_rebuilt_not_banned_as_bare_text() {
         "versions v1:1 and v1:0 are fine\n",
     );
     assert_eq!(lint(&root).0, 0);
-    write(&root, "skills/example/bad.md", "`vendor.reel-v1:1`\n");
+    write(&root, "skills/example/bad.md", "`acme.reel-v1:1`\n");
     let (status, _, stderr) = lint(&root);
     assert_eq!(status, 1);
-    assert!(stderr.contains(&lint_message("skills/example/bad.md:1", "vendor.reel-v1:1")));
+    assert!(stderr.contains(&lint_message("skills/example/bad.md:1", "acme.reel-v1:1")));
 }
 
 #[test]
@@ -1262,7 +1263,7 @@ fn lint_replacements_and_notes_are_not_banned() {
     write(
         &root,
         "skills/example/ok.md",
-        "vendor.beta-v1:0 vendor.next-v1:0 vendor.fresh-v1:0 vendor.legacy-v1:0 vendor.note-v1:0 vendor.later-v1:0 vendor.llama3-3-70b-instruct-v1:0\n",
+        "acme.beta-v1:0 acme.next-v1:0 acme.fresh-v1:0 acme.legacy-v1:0 acme.note-v1:0 acme.later-v1:0 acme.llama3-3-70b-instruct-v1:0\n",
     );
     assert_eq!(lint(&root).0, 0);
 }
@@ -1273,7 +1274,7 @@ fn lint_legacy_model_outside_the_exclusion_zone_is_allowed() {
     write(
         &root,
         "skills/example/legacy.md",
-        "recommend `vendor.legacy-v1:0`\n",
+        "recommend `acme.legacy-v1:0`\n",
     );
     assert_eq!(lint(&root).0, 0);
 }
@@ -1281,7 +1282,7 @@ fn lint_legacy_model_outside_the_exclusion_zone_is_allowed() {
 #[test]
 fn lint_catalog_files_may_name_retired_ids_and_vendored_copies_inherit() {
     let root = lint_fixture("lint-catalog");
-    let text = "existing users may still see `vendor.alpha-v1:0`\n";
+    let text = "existing users may still see `acme.alpha-v1:0`\n";
     for rel in [
         "skills/shared/ai/bedrock-pricing-cache.md",
         "skills/azure-to-aws/references/shared/pricing-cache.md",
@@ -1324,7 +1325,7 @@ fn lint_catalog_files_may_name_retired_ids_and_vendored_copies_inherit() {
 fn lint_checks_every_scanned_extension_and_nothing_else() {
     let root = lint_fixture("lint-exts");
     for ext in ["md", "py", "json", "ts", "tf", "sh", "template", "html"] {
-        write(&root, &format!("fixtures/f.{ext}"), "`vendor.alpha-v1:0`\n");
+        write(&root, &format!("fixtures/f.{ext}"), "`acme.alpha-v1:0`\n");
     }
     for skipped in [
         "fixtures/f.txt",
@@ -1333,10 +1334,10 @@ fn lint_checks_every_scanned_extension_and_nothing_else() {
         "fixtures/f.md.bak",
         "fixtures/f.",
     ] {
-        write(&root, skipped, "`vendor.alpha-v1:0`\n");
+        write(&root, skipped, "`acme.alpha-v1:0`\n");
     }
-    write(&root, "node_modules/pkg/index.md", "`vendor.alpha-v1:0`\n");
-    write(&root, "skills/x/node_modules/y.md", "`vendor.alpha-v1:0`\n");
+    write(&root, "node_modules/pkg/index.md", "`acme.alpha-v1:0`\n");
+    write(&root, "skills/x/node_modules/y.md", "`acme.alpha-v1:0`\n");
     let (status, _, stderr) = lint(&root);
     assert_eq!(status, 1);
     assert_eq!(
@@ -1363,22 +1364,16 @@ fn lint_reports_line_numbers_with_universal_newlines() {
     write(
         &root,
         "skills/example/crlf.md",
-        "one\r\ntwo\rthree `vendor.alpha-v1:0`\n\nfive\u{2028}six `vendor.gone-v1:0`\n",
+        "one\r\ntwo\rthree `acme.alpha-v1:0`\n\nfive\u{2028}six `acme.gone-v1:0`\n",
     );
     let (status, _, stderr) = lint(&root);
     assert_eq!(status, 1);
     assert!(
-        stderr.contains(&lint_message(
-            "skills/example/crlf.md:3",
-            "vendor.alpha-v1:0"
-        )),
+        stderr.contains(&lint_message("skills/example/crlf.md:3", "acme.alpha-v1:0")),
         "{stderr}"
     );
     assert!(
-        stderr.contains(&lint_message(
-            "skills/example/crlf.md:6",
-            "vendor.gone-v1:0"
-        )),
+        stderr.contains(&lint_message("skills/example/crlf.md:6", "acme.gone-v1:0")),
         "{stderr}"
     );
 }
@@ -1386,9 +1381,9 @@ fn lint_reports_line_numbers_with_universal_newlines() {
 #[test]
 fn lint_orders_files_like_python_paths_not_like_strings() {
     let root = lint_fixture("lint-order");
-    write(&root, "a-b.md", "`vendor.alpha-v1:0`\n");
-    write(&root, "a/z.md", "`vendor.alpha-v1:0`\n");
-    write(&root, "B.md", "`vendor.alpha-v1:0`\n");
+    write(&root, "a-b.md", "`acme.alpha-v1:0`\n");
+    write(&root, "a/z.md", "`acme.alpha-v1:0`\n");
+    write(&root, "B.md", "`acme.alpha-v1:0`\n");
     let (_, _, stderr) = lint(&root);
     let order: Vec<&str> = stderr
         .lines()
@@ -1401,27 +1396,23 @@ fn lint_orders_files_like_python_paths_not_like_strings() {
 #[test]
 fn lint_one_line_can_report_several_ids_in_registry_order() {
     let root = lint_fixture("lint-multi");
-    write(
-        &root,
-        "x.md",
-        "`vendor.pair-b-v1:0` and `vendor.alpha-v1:0`\n",
-    );
+    write(&root, "x.md", "`acme.pair-b-v1:0` and `acme.alpha-v1:0`\n");
     let (_, _, stderr) = lint(&root);
     let lines: Vec<&str> = stderr.lines().collect();
     assert_eq!(
         lines[1],
-        format!("  - {}", lint_message("x.md:1", "vendor.alpha-v1:0"))
+        format!("  - {}", lint_message("x.md:1", "acme.alpha-v1:0"))
     );
     assert_eq!(
         lines[2],
-        format!("  - {}", lint_message("x.md:1", "vendor.pair-b-v1:0"))
+        format!("  - {}", lint_message("x.md:1", "acme.pair-b-v1:0"))
     );
 }
 
 #[test]
 fn lint_html_fixtures_are_scanned() {
     let root = lint_fixture("lint-html");
-    write(&root, "fixtures/report.html", "<p>vendor.alpha-v1:0</p>\n");
+    write(&root, "fixtures/report.html", "<p>acme.alpha-v1:0</p>\n");
     let (status, _, stderr) = lint(&root);
     assert_eq!(status, 1);
     assert!(stderr.contains("fixtures/report.html:1:"), "{stderr}");
@@ -1457,7 +1448,7 @@ fn lint_fabricated_dated_ids_fail_except_in_the_repair_helper() {
     write(
         &allowed,
         "skills/llm-to-bedrock/references/helpers/resolve-bedrock-model-id/resolve-bedrock-model-id.md",
-        "`vendor.alpha-v1:0`\n",
+        "`acme.alpha-v1:0`\n",
     );
     assert_eq!(lint(&allowed).0, 1);
 }
@@ -1537,24 +1528,24 @@ fn lint_registry_rows_read_only_the_model_id_column() {
     let registry = "\
 | Model | Model ID | Status | Replacement |
 |---|---|---|---|
-|  | `vendor.cell-v1:0` | excluded | `vendor.replacement-v1:0` |
+|  | `acme.cell-v1:0` | excluded | `acme.replacement-v1:0` |
 | only one cell excluded |
 ||| excluded |
-  | Indented | `vendor.indented-v1:0` | Excluded | none |
-| Missing status | `vendor.fine-v1:0` | legacy | none |
+  | Indented | `acme.indented-v1:0` | Excluded | none |
+| Missing status | `acme.fine-v1:0` | legacy | none |
 
 **Removed:**
-  - indented (`vendor.removed-v1:0`) replacement: `vendor.after-v1:0`
--no space (`vendor.tight-v1:0`)
+  - indented (`acme.removed-v1:0`) replacement: `acme.after-v1:0`
+-no space (`acme.tight-v1:0`)
 **Next section**
-- `vendor.after-section-v1:0`
+- `acme.after-section-v1:0`
 ";
     let root = TempDir::new("lint-columns");
     write(&root, REGISTRY_REL, registry);
     write(
         &root,
         "x.md",
-        "vendor.replacement-v1:0 vendor.fine-v1:0 vendor.after-v1:0 vendor.after-section-v1:0\n",
+        "acme.replacement-v1:0 acme.fine-v1:0 acme.after-v1:0 acme.after-section-v1:0\n",
     );
     let (status, stdout, stderr) = lint(&root);
     assert_eq!((status, stderr.as_str()), (0, ""), "{stderr}");
@@ -1563,10 +1554,10 @@ fn lint_registry_rows_read_only_the_model_id_column() {
         "model-id lint: OK (4 retired IDs enforced from the registry)\n"
     );
     for banned in [
-        "vendor.cell-v1:0",
-        "vendor.indented-v1:0",
-        "vendor.removed-v1:0",
-        "vendor.tight-v1:0",
+        "acme.cell-v1:0",
+        "acme.indented-v1:0",
+        "acme.removed-v1:0",
+        "acme.tight-v1:0",
     ] {
         write(&root, "y.md", &format!("`{banned}`\n"));
         assert_eq!(lint(&root).0, 1, "{banned}");
@@ -1575,7 +1566,7 @@ fn lint_registry_rows_read_only_the_model_id_column() {
 
 #[test]
 fn lint_duplicate_registry_ids_are_counted_once() {
-    let registry = format!("{REGISTRY}\n**Removed again:**\n- again (`vendor.gone-v1:0`)\n");
+    let registry = format!("{REGISTRY}\n**Removed again:**\n- again (`acme.gone-v1:0`)\n");
     let root = TempDir::new("lint-dupe");
     write(&root, REGISTRY_REL, &registry);
     let (status, stdout, _) = lint(&root);
@@ -1586,7 +1577,7 @@ fn lint_duplicate_registry_ids_are_counted_once() {
 #[test]
 fn lint_skips_non_utf8_files_like_the_python_lint() {
     let root = lint_fixture("lint-skip");
-    fs::write(root.join("binary.md"), b"\xff\xfe`vendor.alpha-v1:0`").expect("write");
+    fs::write(root.join("binary.md"), b"\xff\xfe`acme.alpha-v1:0`").expect("write");
     let (status, _, stderr) = lint(&root);
     assert_eq!(status, 0, "{stderr}");
 }
@@ -1596,8 +1587,8 @@ fn lint_skips_non_utf8_files_like_the_python_lint() {
 fn lint_never_follows_symbolic_links() {
     let root = lint_fixture("lint-symlink");
     let outside = TempDir::new("lint-symlink-outside");
-    write(&outside, "bad.md", "`vendor.alpha-v1:0`\n");
-    write(&outside, "dir/bad.md", "`vendor.alpha-v1:0`\n");
+    write(&outside, "bad.md", "`acme.alpha-v1:0`\n");
+    write(&outside, "dir/bad.md", "`acme.alpha-v1:0`\n");
     std::os::unix::fs::symlink(outside.join("bad.md"), root.join("linked.md")).expect("file link");
     std::os::unix::fs::symlink(outside.join("dir"), root.join("linked-dir")).expect("dir link");
     let (status, stdout, stderr) = lint(&root);
@@ -1619,9 +1610,9 @@ fn lint_never_follows_symbolic_links() {
 #[test]
 fn lint_skips_the_legacy_python_script_only_at_its_own_path() {
     let root = lint_fixture("lint-self");
-    write(&root, "scripts/model-id-lint.py", "# `vendor.alpha-v1:0`\n");
+    write(&root, "scripts/model-id-lint.py", "# `acme.alpha-v1:0`\n");
     assert_eq!(lint(&root).0, 0);
-    write(&root, "tools/model-id-lint.py", "# `vendor.alpha-v1:0`\n");
+    write(&root, "tools/model-id-lint.py", "# `acme.alpha-v1:0`\n");
     assert_eq!(lint(&root).0, 1);
 }
 
@@ -1699,6 +1690,12 @@ fn lint_dual_ids_rebuild_against_the_preceding_full_id() {
         strings(&["a.b-v1", "v1:1"])
     );
     assert_eq!(rebuild_dual_ids(&strings(&["v1:1"])), strings(&["v1:1"]));
+    // Quirk kept from the Python lint: any token starting with `v` after a full
+    // ID that has a revision is read as a continuation, even a full ID.
+    assert_eq!(
+        rebuild_dual_ids(&strings(&["vx.a-v1:0", "vx.b-v1:0"])),
+        strings(&["vx.a-v1:0", "vx.a-vx.b-v1:0"])
+    );
     // No "-v" in the stem: the whole ID is the stem.
     assert_eq!(
         rebuild_dual_ids(&strings(&["a.b:0", "v2:3"])),
