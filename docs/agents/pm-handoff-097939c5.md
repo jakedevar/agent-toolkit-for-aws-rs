@@ -64,3 +64,5 @@ rust-migration-health (health_anomaly), pm-safety-net (hourly resume), terminal 
 - 17:45Z: ACCEPT #4380 ac3e7d44 (#4632, 524d5796; friction #4683 #4692) and #4402 c5f847e6 (#4674, 2b3ad766; friction #4693).
   Round 7 worker 80238d9c (continue_from 0c85ed62) merging both onto 9df52366. Then scoped_test (worktree its sandbox, 180m) -> new gate.
   Close-on-land additions: #4380 #4632 #4662 #4402 #4674 #4679.
+- 17:42Z: #4670 impl f440232a (worker 30281162; scoped aedbe2a7 ok base 9df52366). Adds required CommandSpec::repeatable_flags field to all rows
+  -> in-flight slices adding COMMANDS rows need `repeatable_flags: &[]` after merge. Review #4696 worker 588af726 (asked to judge a non-breaking ..DEFAULT form).
