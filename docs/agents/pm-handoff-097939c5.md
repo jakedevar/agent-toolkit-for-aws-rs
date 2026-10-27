@@ -169,3 +169,5 @@ Friction: #4727, Rsi #4694, Rsi #4704
   Round 12 worker e43420e5 (continue_from 5ed0647c, op 4479d1dd): #4394 72c730b2 onto c464befb. Then manager scoped (base origin/rolling, timeout 180) -> new gate.
   4/4 busy: ecf77dbc (#4727), 14bc584a (#4381), fa5c7051 (#4408), e43420e5 (#4575 r12).
 - 21:06Z: safety net: no GM mail; 4 workers healthy (14bc584a running; ecf77dbc, fa5c7051, e43420e5 parked on jobs). pm-safety-net re-armed 22:06Z (96891d73); rust-migration-health armed.
+- 21:23Z: round 12 head f6fac27de0ae4ff0c737c319a1c270635ddb2217 (e43420e5; merge 72c730b2 #4394, one Usage-block hunk; remerge-diff verified: 3 marker lines only). fmt/clippy/ws-test ok. Worker friction #4764 (stray `)` in relational help, slice text; fix in a later round).
+  Manager scoped bbba211c pending (held disk_floor at submit). If ok: GATE = f6fac27d / source_session_id e43420e5-1934-4a5c-ba4e-d377f7e1301c.
