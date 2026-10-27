@@ -82,3 +82,4 @@ rust-migration-health (health_anomaly), pm-safety-net (hourly resume), terminal 
 - 18:10Z: hub rsid restarted 18:04:49 (same build). Workers 0e783946 (#4407) and 9a7fd936 (#4383) marked Failed with uncommitted work -> AgentContinueChild both (calls timed out but took effect; running). Harness kaizen Rsi #4704.
   scoped b4cf6561 on dcd47147 OK (2163 tests), check ok. GATE = dcd47147 / source_session_id 2c1dd570. Noted on #4575 with full close-on-land additions.
   #4403 repair2 6ea6a0d7 alive at f7d80466 (fixing clippy dead-code), handoff pending.
+- 18:20Z: #4403 repair2 e201e143 (classify Rejected/KnownRow/WellFormedUnknown before any price source; scoped d57d9204 ok). Re-review round 3 on #4682 worker ca7b456a (pinned).
