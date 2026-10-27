@@ -24,6 +24,7 @@ use std::path::PathBuf;
 
 use toolkit_core::{discover_skills, skills_to_json, ErrorKind, ToolkitError};
 
+mod aurora;
 pub mod manifests;
 pub mod spec;
 mod sync;
@@ -36,6 +37,17 @@ Usage:
   toolkit spec validate [ROOT]
   toolkit sync plugin-skills [--root DIR] [--plugin NAME] [--check]
   toolkit sync vendored [--plugin-root DIR] [--check]
+  toolkit aurora acu estimate --engine mysql|postgresql --instance TYPE --cpu-p95 N --cpu-max N
+      [--cpu-avg N] [--connections N] [--working-set GIB] [--storage GIB]
+      [--num-instances N] [--format json|table] [--region R] [--offline]
+  toolkit aurora acu list-instances --engine ENGINE [--region R] [--offline]
+  toolkit aurora acu pricing-source --engine ENGINE [--region R] [--offline]
+  toolkit aurora commitment [offline] --engine ENGINE [--region R] [--format json|table]
+      [--cluster ID | --all] [--instance TYPE] [--num-instances N] [--io-optimized]
+      [--serverless --avg-acu N]
+  toolkit aurora io [offline] --engine ENGINE [--region R] [--format json|table] [--days N]
+      [--cluster ID | --all] [--instance TYPE] [--num-instances N]
+      [--storage-gib GIB] [--monthly-io-millions N]
   toolkit --version
   toolkit help
 
@@ -65,6 +77,14 @@ Commands:
                 at --plugin-root (default plugins/aws-startup-advisor)
                 byte-identical to skills/shared and its README table. --check
                 reports drift, exits 1 and writes nothing.
+  aurora acu | commitment | io
+                Aurora ACU sizing, Reserved Instance and Savings Plan, and
+                Standard versus I/O-Optimized cost analyzers (#4388). --engine
+                (mysql or postgresql) is required. `offline` prices a
+                user-supplied workload; without it the command reads AWS,
+                which this build cannot do (exit 2), except `acu`, which falls
+                back to the built-in us-east-1 prices. Output is JSON unless
+                --format table. See docs/migration/aurora.md.
 
 Options:
   --json        Emit a JSON array of {name, description, path} objects.
@@ -297,6 +317,85 @@ pub const COMMANDS: &[CommandSpec] = &[
         strict_values: true,
         max_positionals: 0,
         handler: sync::vendored,
+    },
+    CommandSpec {
+        path: &["aurora", "acu", "estimate"],
+        flags: &["--offline"],
+        value_flags: &[
+            "--engine",
+            "--region",
+            "--instance",
+            "--cpu-p95",
+            "--cpu-max",
+            "--cpu-avg",
+            "--connections",
+            "--working-set",
+            "--storage",
+            "--num-instances",
+            "--format",
+        ],
+        strict_values: false,
+        max_positionals: 0,
+        handler: aurora::acu_estimate_command,
+    },
+    CommandSpec {
+        path: &["aurora", "acu", "list-instances"],
+        flags: &["--offline"],
+        value_flags: &["--engine", "--region"],
+        strict_values: false,
+        max_positionals: 0,
+        handler: aurora::acu_list_instances_command,
+    },
+    CommandSpec {
+        path: &["aurora", "acu", "pricing-source"],
+        flags: &["--offline"],
+        value_flags: &["--engine", "--region"],
+        strict_values: false,
+        max_positionals: 0,
+        handler: aurora::acu_pricing_source_command,
+    },
+    // `aurora acu` alone prints the help; it must follow the longer `acu` paths.
+    CommandSpec {
+        path: &["aurora", "acu"],
+        flags: &["--offline"],
+        value_flags: &["--engine", "--region"],
+        strict_values: false,
+        max_positionals: 0,
+        handler: aurora::acu_help_command,
+    },
+    CommandSpec {
+        path: &["aurora", "commitment"],
+        flags: &["--all", "--serverless", "--io-optimized"],
+        value_flags: &[
+            "--engine",
+            "--region",
+            "--format",
+            "--cluster",
+            "--instance",
+            "--num-instances",
+            "--avg-acu",
+        ],
+        strict_values: false,
+        max_positionals: 1,
+        handler: aurora::commitment_command,
+    },
+    CommandSpec {
+        path: &["aurora", "io"],
+        flags: &["--all"],
+        value_flags: &[
+            "--engine",
+            "--region",
+            "--format",
+            "--days",
+            "--cluster",
+            "--instance",
+            "--num-instances",
+            "--storage-gib",
+            "--monthly-io-millions",
+        ],
+        strict_values: false,
+        max_positionals: 1,
+        handler: aurora::io_command,
     },
 ];
 
