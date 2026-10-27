@@ -199,3 +199,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 22:08Z: safety net: queue entry 5060cb2e still queued (27 min, no admitted/gating entry visible in scope; daemon healthy 9a67b848, load 9, disk 119G). 4 repairs parked on jobs. Net re-armed 23:08Z with escalation check.
 - 22:24Z: #4727 final repair ec2740ed0f6b68eb4d6e59fb6681d2aea200c4bf (93a325d6; markers need >=3-word reason, scoped to line/item; brace patterns; alias tracking; README tripwire; 29 new fixtures pass old/fail new; scoped ffdea152 ok base c464befb). Round-3 FINAL re-review #4745 worker 8188efb5 (op 859baca1), blocking limited per ruling.
 - 22:29Z: #4743 repair 37973da8afa21119dcd6550a725c456956030369 (238d72f3; STDIO_DASH allowlist shipped empty; scoped 7e397886 ok base f6fac27d, 2157). Follow-up #4787 (non-strict_values commands accept `-`, pre-existing; not blocking). Re-review round 2 #4776 worker d1bc7e93 (op f5139022).
+- 22:32Z: #4745 round 3 on ec2740ed: CHANGES_REQUESTED #4793 (type-annotated let-else not recognised; tripwire parser gap, no runtime defect), #4794 non-blocking.
+  MANAGER ACCEPT #4727 at ec2740ed0f6b68eb4d6e59fb6681d2aea200c4bf (loop ended per ruling; recorded on #4727 handoff seq 4). Close-on-land: #4727 #4745 #4751 #4752 #4773 #4774 #4775.
+  Follow-up #4793 worker b4182810 (Sonnet) from ec2740ed (op 9b776959); round 13 includes it if accepted in time.
