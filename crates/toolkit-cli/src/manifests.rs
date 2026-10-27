@@ -39,7 +39,7 @@ pub enum Event {
 /// The ordered result of a validation run.
 #[derive(Debug, Default)]
 pub struct Report {
-    events: Vec<Event>,
+    pub(crate) events: Vec<Event>,
 }
 
 impl Report {
@@ -609,7 +609,7 @@ fn check_inside(plugin_root: &Path, declared: &str) -> PathCheck {
 
 /// Canonicalizes the longest existing prefix of `path` and appends the rest,
 /// so a path that does not exist yet still has its existing symlinks resolved.
-fn resolve_lenient(path: &Path) -> PathBuf {
+pub(crate) fn resolve_lenient(path: &Path) -> PathBuf {
     let mut existing = path.to_path_buf();
     let mut tail: Vec<OsString> = Vec::new();
     loop {
@@ -632,7 +632,7 @@ fn resolve_lenient(path: &Path) -> PathBuf {
     }
 }
 
-fn read_failure(error: &PathError) -> String {
+pub(crate) fn read_failure(error: &PathError) -> String {
     match error {
         PathError::Invalid(reason) => reason.clone(),
         PathError::NotFound(_) => "file does not exist".to_string(),
@@ -647,7 +647,7 @@ fn read_failure(error: &PathError) -> String {
 
 /// Mirrors Python's text-mode newline translation: `\r\n` and lone `\r`
 /// become `\n`.
-fn universal_newlines(text: &str) -> String {
+pub(crate) fn universal_newlines(text: &str) -> String {
     text.replace("\r\n", "\n").replace('\r', "\n")
 }
 
@@ -657,7 +657,7 @@ fn is_py_space(c: char) -> bool {
     c.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&c)
 }
 
-fn py_strip(text: &str) -> &str {
+pub(crate) fn py_strip(text: &str) -> &str {
     text.trim_matches(is_py_space)
 }
 
@@ -742,7 +742,7 @@ fn is_kebab(name: &str) -> bool {
 }
 
 /// Python truthiness of a JSON value (`float` zero is not special-cased).
-fn is_falsy(value: &Json) -> bool {
+pub(crate) fn is_falsy(value: &Json) -> bool {
     match value {
         Json::Null | Json::Bool(false) | Json::Int(0) => true,
         Json::String(text) => text.is_empty(),
@@ -760,12 +760,12 @@ fn display_value(value: &Json) -> String {
     }
 }
 
-fn py_repr_opt(value: Option<&Json>) -> String {
+pub(crate) fn py_repr_opt(value: Option<&Json>) -> String {
     value.map_or_else(|| "None".to_string(), py_repr)
 }
 
 /// Python-style `repr()` of a JSON value, used in mismatch messages.
-fn py_repr(value: &Json) -> String {
+pub(crate) fn py_repr(value: &Json) -> String {
     match value {
         Json::Null => "None".to_string(),
         Json::Bool(true) => "True".to_string(),
@@ -787,7 +787,7 @@ fn py_repr(value: &Json) -> String {
     }
 }
 
-fn py_repr_str(text: &str) -> String {
+pub(crate) fn py_repr_str(text: &str) -> String {
     let quote = if text.contains('\'') && !text.contains('"') {
         '"'
     } else {

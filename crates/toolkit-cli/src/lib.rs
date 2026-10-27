@@ -25,12 +25,14 @@ use std::path::PathBuf;
 use toolkit_core::{discover_skills, skills_to_json, ErrorKind, ToolkitError};
 
 pub mod manifests;
+pub mod spec;
 
 /// Usage text printed by `help` (stdout) and after usage errors (stderr).
 pub const USAGE: &str = "\
 Usage:
   toolkit skills list [ROOT] [--json]
   toolkit manifests validate [ROOT] [--plugin NAME]
+  toolkit spec validate [ROOT]
   toolkit --version
   toolkit help
 
@@ -44,6 +46,13 @@ Commands:
                 (default: the current directory). With --plugin NAME only
                 that plugin under ROOT/plugins is validated. Problems are
                 reported as `  ERROR: ...` lines on stderr and exit status 1.
+  spec validate
+                Validate every plugin under ROOT/plugins (default ROOT: the
+                current directory) against the Agent Plugins v1.0.0 schemas in
+                ROOT/tools/schemas/1.0.0, the path, placeholder and MCP rules
+                the schemas cannot express, and the SKILL.md frontmatter of
+                each plugin skill. Problems are reported as `  ERROR: ...`
+                lines on stderr and exit status 1.
 
 Options:
   --json        Emit a JSON array of {name, description, path} objects.
@@ -54,7 +63,8 @@ Options:
 Exit codes:
   0  success (including help, version and an empty result)
   1  runtime error (missing root, root not a directory, unreadable files,
-     stdout write failure, unknown plugin, failed manifest validation)
+     stdout write failure, unknown plugin, failed manifest or
+     spec validation)
   2  usage error (unknown command, missing or unknown arguments,
      or a non-UTF-8 argument)";
 
@@ -235,6 +245,13 @@ pub const COMMANDS: &[CommandSpec] = &[
         value_flags: &["--plugin"],
         max_positionals: 1,
         handler: manifests::validate_command,
+    },
+    CommandSpec {
+        path: &["spec", "validate"],
+        flags: &[],
+        value_flags: &[],
+        max_positionals: 1,
+        handler: spec::validate_command,
     },
 ];
 

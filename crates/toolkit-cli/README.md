@@ -212,3 +212,27 @@ and the recorded differences are in `docs/migration/manifests-validator.md`.
 The routing table gained value flags (`--name value` / `--name=value`,
 `Invocation::value`, last value wins, missing value is a usage error) and
 `Output::with_diagnostics` / `Output::diagnostic` for stderr lines (#4375).
+
+## spec validate (#4376)
+
+```
+toolkit spec validate [ROOT]
+```
+
+Replacement for `python3 tools/validate_spec.py`; full rule parity table and
+the recorded differences are in `docs/migration/spec-validator.md`. `ROOT`
+defaults to the current directory. The command is read-only and offline; it has
+no Python or `jsonschema` dependency.
+
+- Checks every directory under `ROOT/plugins`: no symbolic links, `plugin.json`
+  and `mcp.json` against the vendored schemas in `ROOT/tools/schemas/1.0.0`,
+  the rules the schemas cannot express (path containment, placeholders, MCP URL
+  and header rules) and the frontmatter, length and naming rules of every
+  `plugins/*/skills/*/SKILL.md`.
+- `Validating plugin: plugins/NAME` and `Validating skills` progress lines go to
+  stdout. Each finding is a `  ERROR: <label>: <message> (at <path>)` or
+  `  ERROR: <message>` line on stderr and the run continues.
+- Success prints a blank line and `All Agent Plugins v1.0.0 checks passed.`
+  (exit 0). Any finding ends with `error: Spec validation failed with N
+  error(s).` on stderr (exit 1). An unusable root, `plugins/` directory or
+  schema is a runtime error (exit 1); bad arguments are usage errors (exit 2).
