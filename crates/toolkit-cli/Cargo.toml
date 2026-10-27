@@ -11,6 +11,7 @@ name = "toolkit"
 path = "src/main.rs"
 
 [dependencies]
+toolkit-aws = { path = "../toolkit-aws" }
 toolkit-core = { path = "../toolkit-core" }
 jsonschema = { version = "0.60", default-features = false }
 unicode-normalization = { version = "0.1", default-features = false, features = ["std"] }

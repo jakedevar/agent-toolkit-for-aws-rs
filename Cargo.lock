@@ -610,6 +610,7 @@ version = "0.1.0"
 dependencies = [
  "jsonschema",
  "serde_json",
+ "toolkit-aws",
  "toolkit-core",
  "unicode-normalization",
 ]

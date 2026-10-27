@@ -24,6 +24,7 @@ use std::path::PathBuf;
 
 use toolkit_core::{discover_skills, skills_to_json, ErrorKind, ToolkitError};
 
+pub mod asm_exec;
 pub mod manifests;
 pub mod spec;
 mod sync;
@@ -36,6 +37,7 @@ Usage:
   toolkit spec validate [ROOT]
   toolkit sync plugin-skills [--root DIR] [--plugin NAME] [--check]
   toolkit sync vendored [--plugin-root DIR] [--check]
+  toolkit asm exec [--] COMMAND [ARG...]
   toolkit --version
   toolkit help
 
@@ -65,6 +67,14 @@ Commands:
                 at --plugin-root (default plugins/aws-startup-advisor)
                 byte-identical to skills/shared and its README table. --check
                 reports drift, exits 1 and writes nothing.
+  asm exec      Replace every {{resolve:secretsmanager:ID[:SecretString[:KEY
+                [:STAGE]]]}} reference in COMMAND, its arguments and the
+                environment with the secret value, then run COMMAND with the
+                result. One optional leading `--` is dropped; every other word,
+                dash-prefixed ones included, belongs to COMMAND. Exits with
+                COMMAND's status; 1 when a reference cannot be resolved or
+                COMMAND cannot be started (nothing is run then). See
+                docs/migration/asm-exec.md.
 
 Options:
   --json        Emit a JSON array of {name, description, path} objects.
@@ -83,13 +93,16 @@ Exit codes:
      stdout write failure, unknown plugin, failed manifest or spec
      validation, or drift found by a sync --check)
   2  usage error (unknown command, missing or unknown arguments,
-     or a non-UTF-8 argument)";
+     or a non-UTF-8 argument)
+  asm exec exits with the status of COMMAND (a command ended by signal N
+  exits 256-N); its own failures exit 1, including a missing COMMAND.";
 
 /// Buffered stdout lines with the closed-pipe and write-error contract.
 pub struct Output<'a> {
     sink: &'a mut dyn Write,
     diagnostics: Option<&'a mut dyn Write>,
     closed: bool,
+    exit_status: u8,
 }
 
 impl<'a> Output<'a> {
@@ -99,7 +112,21 @@ impl<'a> Output<'a> {
             sink,
             diagnostics: None,
             closed: false,
+            exit_status: 0,
         }
+    }
+
+    /// Process exit status a handler that returned `Ok` asked for (default 0).
+    #[must_use]
+    pub fn exit_status(&self) -> u8 {
+        self.exit_status
+    }
+
+    /// Asks for a non-zero exit status without an `error:` report, for a
+    /// handler that already wrote its own diagnostics or that forwards the exit
+    /// status of a program it ran (`asm exec`, #4451).
+    pub fn set_exit_status(&mut self, status: u8) {
+        self.exit_status = status;
     }
 
     /// Wraps a stdout writer plus a diagnostics (stderr) writer for commands
@@ -109,6 +136,7 @@ impl<'a> Output<'a> {
             sink,
             diagnostics: Some(diagnostics),
             closed: false,
+            exit_status: 0,
         }
     }
 
@@ -242,6 +270,11 @@ pub struct CommandSpec {
     pub strict_values: bool,
     /// Maximum number of positional arguments.
     pub max_positionals: usize,
+    /// Whether every word after the command path is a positional argument,
+    /// verbatim: dash-prefixed words, `--` and `-h`/`--help` are not
+    /// interpreted and `max_positionals` is ignored. For commands that run
+    /// another program (`asm exec`, #4451) whose own flags must reach it.
+    pub passthrough: bool,
     /// The implementation.
     pub handler: Handler,
 }
@@ -264,6 +297,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         value_flags: &[],
         strict_values: false,
         max_positionals: 1,
+        passthrough: false,
         handler: skills_list,
     },
     CommandSpec {
@@ -272,6 +306,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         value_flags: &["--plugin"],
         strict_values: false,
         max_positionals: 1,
+        passthrough: false,
         handler: manifests::validate_command,
     },
     CommandSpec {
@@ -280,6 +315,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         value_flags: &[],
         strict_values: false,
         max_positionals: 1,
+        passthrough: false,
         handler: spec::validate_command,
     },
     CommandSpec {
@@ -288,6 +324,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         value_flags: &["--root", "--plugin"],
         strict_values: true,
         max_positionals: 0,
+        passthrough: false,
         handler: sync::plugin_skills,
     },
     CommandSpec {
@@ -296,7 +333,17 @@ pub const COMMANDS: &[CommandSpec] = &[
         value_flags: &["--plugin-root"],
         strict_values: true,
         max_positionals: 0,
+        passthrough: false,
         handler: sync::vendored,
+    },
+    CommandSpec {
+        path: &["asm", "exec"],
+        flags: &[],
+        value_flags: &[],
+        strict_values: false,
+        max_positionals: usize::MAX,
+        passthrough: true,
+        handler: asm_exec::exec_command,
     },
 ];
 
@@ -356,6 +403,10 @@ pub fn route<'a>(specs: &'a [CommandSpec], args: &[String]) -> Result<Routed<'a>
     };
 
     let mut invocation = Invocation::default();
+    if spec.passthrough {
+        invocation.positionals = args[spec.path.len()..].to_vec();
+        return Ok(Routed::Run(spec, invocation));
+    }
     let mut rest = args[spec.path.len()..].iter();
     while let Some(arg) = rest.next() {
         let word = arg.as_str();
@@ -455,7 +506,7 @@ pub fn run(args: &[OsString], out: &mut dyn Write, err: &mut dyn Write) -> u8 {
             let mut output = Output::with_diagnostics(out, err);
             let result = (spec.handler)(&invocation, &mut output).and_then(|()| output.finish());
             match result {
-                Ok(()) => 0,
+                Ok(()) => output.exit_status(),
                 Err(error) => report(err, &error),
             }
         }
@@ -684,6 +735,41 @@ mod tests {
         let paths: Vec<&[&str]> = COMMANDS.iter().map(|spec| spec.path).collect();
         for (index, path) in paths.iter().enumerate() {
             assert!(!paths[..index].contains(path), "duplicate route {path:?}");
+        }
+    }
+
+    #[test]
+    fn passthrough_commands_take_every_word_verbatim() {
+        let routed = route_words(&["asm", "exec", "--", "ls", "-la", "--help", "-h", "x=1"]);
+        let Ok(Routed::Run(spec, invocation)) = routed else {
+            panic!("asm exec must route to its handler");
+        };
+        assert_eq!(spec.path, ["asm", "exec"]);
+        assert_eq!(
+            invocation.positionals,
+            words(&["--", "ls", "-la", "--help", "-h", "x=1"])
+        );
+        assert!(invocation.flags.is_empty() && invocation.values.is_empty());
+        // No words at all still routes (the handler prints the usage line).
+        assert!(matches!(
+            route_words(&["asm", "exec"]),
+            Ok(Routed::Run(_, invocation)) if invocation.positionals.is_empty()
+        ));
+        // Other commands still reject unknown flags.
+        assert!(route_words(&["skills", "list", "--bogus"]).is_err());
+    }
+
+    #[test]
+    fn a_handler_can_return_a_status_without_an_error_report() {
+        let (status, stdout, stderr) = exec(&["asm", "exec"]);
+        assert_eq!(
+            (status, stdout.as_str(), stderr.as_str()),
+            (1, "", "Usage: asm-exec <command> [args...]\n")
+        );
+        #[cfg(unix)]
+        {
+            let (status, stdout, stderr) = exec(&["asm", "exec", "/bin/sh", "-c", "exit 3"]);
+            assert_eq!((status, stdout.as_str(), stderr.as_str()), (3, "", ""));
         }
     }
 
