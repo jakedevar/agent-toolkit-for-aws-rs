@@ -188,7 +188,7 @@ pub fn guarded_addresses(
 /// Find a [`GuardRejection`] anywhere in an error chain, following both
 /// `source()` and the payload of `std::io::Error` (which `source()` skips).
 #[must_use]
-pub fn find_guard_rejection(error: &(dyn Error + 'static)) -> Option<&GuardRejection> {
+pub fn find_guard_rejection<'e>(error: &'e (dyn Error + 'static)) -> Option<&'e GuardRejection> {
     let mut next = Some(error);
     // Bounded so a cyclic chain cannot loop forever.
     for _ in 0..64 {
