@@ -1097,3 +1097,47 @@ toolkit cloudwatch region [--region REGION]
 
 Function-by-function parity, the injected-seam design for #4381 and every
 intentional change: [docs/migration/cw-domain.md](../../docs/migration/cw-domain.md).
+
+## relational (#4394)
+
+Helpers of the `aurora-dsql`, `rds-oss`, `rds-oracle` and
+`timestream-influxdb` skills. This build has **no live AWS or database client**:
+every command reads a recording (`--recorded FILE`) or works offline, opens no
+socket and reads no credential. Details, recorded formats, intentional changes
+and the Python callers left for #4415 are in
+[docs/migration/relational.md](../../docs/migration/relational.md).
+
+```
+toolkit dsql selftest
+toolkit dsql tenant-sql --tenant SLUG
+toolkit dsql tenant-query --tenant SLUG [--recorded FILE]
+toolkit rds commitment [offline] [--region R] [--format json] [--instance ID]
+    [--instance-type TYPE] [--engine mysql|mariadb|postgres] [--num-instances N]
+    [--multi-az] [--recorded FILE]
+toolkit rds-oracle test-connection ENDPOINT PORT SERVICE_NAME USERNAME [--verbose]
+    [--recorded FILE]
+toolkit timestream-influxdb validate-input [KEY=VALUE...]
+toolkit timestream-influxdb instance-types [recommend WRITES QUERIES DAYS]
+```
+
+- `dsql tenant-sql` prints `SELECT * FROM "entities" WHERE tenant_id = 'SLUG'`
+  for a slug of 1-64 lowercase letters, digits and hyphens; anything else is an
+  error (exit 1) and prints no SQL. `tenant-query` runs that statement, the only one
+  its cursor accepts (no raw SQL reaches a cursor), and prints the rows as JSON; without `--recorded` it
+  fails with exit 1. `selftest` prints `safe_query self-test passed`.
+- `rds commitment` prints the Reserved Instance / Database Savings Plan
+  comparison as JSON (the script's keys and rounding). `offline` needs
+  `--instance-type` and `--engine`; otherwise `--instance ID` is looked up. With
+  no mode and no `--instance` it prints the usage and exits 0. Without
+  `--recorded` only the bundled us-east-1 on-demand prices are used. No purchase
+  API exists.
+- `rds-oracle test-connection` prints the four-check report. Endpoint, port,
+  DSN and user are hidden unless `--verbose`. Exit 1 when the driver or the
+  connection fails (with the script's ORA-code hints), 0 otherwise; fewer than
+  four arguments print the usage on stdout and exit 1. No password is read.
+- `timestream-influxdb validate-input` prints `All inputs valid.` or
+  `Validation FAILED:` with one escaped line per bad input (exit 1); unknown
+  keys pass. `instance-types` lists the table or recommends a type from write
+  rate, query concurrency and retention days.
+- Text from a recording, AWS or the command line is redacted (`redact_text`)
+  and escaped on one line before it reaches stdout or stderr.
