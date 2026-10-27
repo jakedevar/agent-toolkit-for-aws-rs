@@ -149,3 +149,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 20:18Z: SEAT -> c76fd1a6 (context-cap rotation of f9df4bb0). Scoped 6ad13616 on c464befb progressing (toolkit-aws/cli/core done). Load 18, disk 142G free.
   Workers: e1952dc1 #4394 repair running; c65e27aa #4408, 2205a1f9 #4727, ad948f84 #4381 parked on jobs (disk_floor holds). db36d49d #4736 done. No GM mail (gm-1b353269-4452-live-1) yet.
 - 20:34Z: scoped 6ad13616 on c464befb OK (2499 tests), check ok. GATE = c464befb9eb0f9d6d65bbbc173c972f1405703b0 / source_session_id 5ed0647c-beda-43b9-8324-c63a41267ba1 (supersedes a1db6c61). Noted #4575 (handoff seq 27). Still no GM mail.
+- 20:38Z: #4381 impl 036c0b669edaa23f9063d6cdeb0c55340e7e57b7 (ad948f84; cloudwatch instrumentation/snapshots/evaluate-traces/capture-dataset; scoped 3b602e91 ok base a1db6c61, 2029; check says generic_cargo_commit_mismatch because base != rolling, irrelevant: integration round re-verifies). Follow-up #4734 live binding.
+  Review #4742 worker c53fe35c (Codex sol high, pinned 036c0b66, op 9e95b2ef). Ruling: evaluate-traces writeback default stays (nothing sent); #4734 decides live default, leaning fail-closed opt-in.
+  Kaizen filed #4743 (router rejects bare `-` value; `--json -` stdin lost).
