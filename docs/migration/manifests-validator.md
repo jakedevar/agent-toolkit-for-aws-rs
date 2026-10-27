@@ -44,12 +44,12 @@ repository-relative `/` path. Tests are in `crates/toolkit-cli/src/manifests/tes
 | 2 | invalid JSON -> `Invalid JSON in rel: <err>` | same prefix; detail is the core parser message (see changes 1-3) | T: `marketplace_invalid_json_is_reported` |
 | 3 | missing required key -> `Missing key 'k' in rel` | same, in declared order | T: `marketplace_missing_keys_are_reported`, `codex_manifest_requires_all_keys`, `mcp_structure_errors_are_reported` |
 | 4 | marketplace: plugin without `name` -> `Plugin missing 'name' in rel` | same (non-object entries included) | T: `marketplace_plugin_without_name_is_reported` |
-| 5 | marketplace: `source` (string or `{path}` object) must be an existing directory from the repo root -> `Plugin source 'S' does not exist for 'N'`; empty/absent source skipped | same | T: `marketplace_source_must_exist_as_a_directory`, `marketplace_empty_or_absent_source_is_not_checked`, `marketplace_source_resolves_from_the_repository_root` |
+| 5 | marketplace: `source` (string or `{path}` object) must be an existing directory from the repo root -> `Plugin source 'S' does not exist for 'N'`; empty/absent source skipped | same, plus containment (intentional change 10): absolute, `..` or symlink-escaping sources -> `Plugin source 'S' must stay inside the repository for 'N'` | T: `marketplace_source_must_exist_as_a_directory`, `marketplace_empty_or_absent_source_is_not_checked`, `marketplace_source_resolves_from_the_repository_root`, `marketplace_source_must_stay_inside_the_repository`, `marketplace_source_symlink_leaving_the_repository_escapes` |
 | 6 | Claude manifest requires `name` | `validate_plugin` | T: `claude_manifest_missing_name_is_reported_with_parity_detail` |
 | 7 | Codex manifest requires `name version description author interface` | `validate_plugin` | T: `codex_manifest_requires_all_keys` |
 | 8 | Cursor manifest optional; `name` must equal the directory -> `Name 'X' does not match directory 'D' in rel` | `check_cursor` | T: `cursor_manifest_is_optional_and_name_must_match` |
 | 9 | Devin manifest optional; `name` must be a non-empty string; must equal the directory | `check_devin` | T: `devin_manifest_is_optional`, `devin_name_must_be_a_non_empty_matching_string`, `devin_missing_name_key_is_reported` |
-| 10 | Devin `name`/`version`/`description` must equal the Claude manifest (`'k' in D does not match C: 'a' != 'b'`, no detail for description); skipped without a Claude manifest | `check_devin` with Python-style `repr` of the values | T: `matching_devin_metadata_passes`, `devin_version_mismatch_fails`, `devin_description_mismatch_fails_without_detail`, `devin_missing_version_fails_with_none_detail`, `missing_claude_manifest_skips_devin_parity` |
+| 10 | Devin `name`/`version`/`description` must equal the Claude manifest (`'k' in D does not match C: 'a' != 'b'`, no detail for description); skipped without a Claude manifest | `check_devin` comparing with Python `==` semantics (`py_eq_opt`, see "Parity equality semantics") and Python-style `repr` of the values in the detail | T: `matching_devin_metadata_passes`, `devin_version_mismatch_fails`, `devin_description_mismatch_fails_without_detail`, `devin_missing_version_fails_with_none_detail`, `missing_claude_manifest_skips_devin_parity`, `parity_treats_a_missing_key_as_null`, `parity_ignores_object_member_order_recursively`, `parity_treats_equal_numbers_and_booleans_as_equal`, `py_eq_compares_large_integers_and_floats_exactly` |
 | 11 | Devin `skills`/`mcpServers` (string or list) entries: non-string -> `'k' entry X is not a path string in rel`; absolute, `..` component or resolving outside the plugin -> `must stay inside the plugin directory`; missing -> `does not exist` | `check_devin_paths`, `check_inside` (canonicalizes the longest existing prefix so symlink escapes are caught) | T: `devin_declared_paths_must_stay_inside_and_exist`, `devin_valid_declared_paths_pass`, `devin_non_string_path_entries_are_reported`, `devin_symlink_leaving_the_plugin_escapes`, `check_inside_classifies_paths` |
 | 12 | `.mcp.json` optional; requires `mcpServers`; stdio (default type) needs `command`; http needs `url` | `check_mcp`, `check_mcp_server` (messages carry no path, as before) | T: `mcp_valid_servers_pass`, `mcp_stdio_server_needs_a_command`, `mcp_http_server_needs_a_url`, `mcp_file_is_optional` |
 | 13 | `${` in an MCP `url` string rejected | `check_mcp_server` | T: `mcp_url_interpolation_is_rejected` |
@@ -109,6 +109,42 @@ listed in the Issue handoff.
    reproduced for strings, numbers, booleans, `None`, lists and dicts; floats
    use Rust formatting.
 9. **Deep directory trees** under `skills/` stop at depth 64 with an error.
+10. **Marketplace source containment (hardening, manager-approved).** Python only
+    checked that `root/<source>` is a directory, so an absolute path, a `..`
+    component or a symlink could name a directory outside the repository. The
+    Rust validator applies the same containment helper as the Devin declared
+    paths (`check_inside`, against the canonical repository root): such a source
+    is `Plugin source 'S' must stay inside the repository for 'N'`, checked
+    before existence. A nonexistent source is still `does not exist`; a symlink
+    that stays inside the repository is accepted; a dangling symlink is `does
+    not exist`. The real repository tree still passes (its sources are
+    `./plugins/<name>`).
+
+## Parity equality semantics
+
+The Devin/Claude parity check (`name`, `version`, `description`) compares the
+two values the way Python's `devin.get(key) != claude.get(key)` does, not with
+derived structural equality:
+
+- An absent key is `None`, so it equals a JSON `null` (`{"version": null}`
+  against no `version` key passes). This applies to the top-level lookups only;
+  inside an object a missing key is not `None` (Python dict equality).
+- Objects compare as dicts: same set of keys and equal values, member order is
+  irrelevant, recursively (also inside arrays). Arrays compare element by
+  element in order.
+- Numbers compare numerically: `1 == 1.0`, `1e2 == 100`, `-0.0 == 0`, and
+  integer/float comparison is exact (an `int` above 2^53 does not equal the
+  nearest `float`).
+- `bool` is an `int` subclass: `true == 1`, `false == 0` (also `1.0`, `0.0`),
+  recursively; `true` never equals the string `"true"`, and `null`/`false`/`0`/
+  `""` are all different from each other.
+- On a mismatch the detail text keeps the Python `repr` form (`None`, `True`,
+  `'str'`, `{'k': v}` in the file's member order); `description` still prints no
+  detail.
+
+Inputs that cannot occur in Python's `json.loads` result differ only through the
+strict parser (change 1). Integers outside `i64` are parsed by `toolkit-core` as
+floats, so such a value compares as a float.
 
 ## Shared-code changes (additive, called out)
 

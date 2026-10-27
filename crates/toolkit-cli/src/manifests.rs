@@ -254,6 +254,8 @@ impl<'a> Validator<'a> {
                 return;
             }
         };
+        let repository_root =
+            fs::canonicalize(self.root).unwrap_or_else(|_| self.root.to_path_buf());
         for plugin in plugins {
             let Some(name) = plugin.get("name") else {
                 self.error(format!("Plugin missing 'name' in {rel}"));
@@ -269,13 +271,21 @@ impl<'a> Validator<'a> {
             match source {
                 None => {}
                 Some(value) if is_falsy(value) => {}
-                Some(Json::String(path)) => {
-                    if !self.root.join(path).is_dir() {
-                        self.error(format!(
-                            "Plugin source '{path}' does not exist for '{name}'"
-                        ));
+                Some(Json::String(path)) => match check_inside(&repository_root, path) {
+                    PathCheck::Escapes => self.error(format!(
+                        "Plugin source '{path}' must stay inside the repository for '{name}'"
+                    )),
+                    PathCheck::Missing => self.error(format!(
+                        "Plugin source '{path}' does not exist for '{name}'"
+                    )),
+                    PathCheck::Inside => {
+                        if !self.root.join(path).is_dir() {
+                            self.error(format!(
+                                "Plugin source '{path}' does not exist for '{name}'"
+                            ));
+                        }
                     }
-                }
+                },
                 Some(_) => self.error(format!(
                     "Plugin source for '{name}' must be a string in {rel}"
                 )),
@@ -344,7 +354,7 @@ impl<'a> Validator<'a> {
         if let Some(claude) = claude {
             let claude_rel = format!("{dir}/.claude-plugin/plugin.json");
             for key in ["name", "version", "description"] {
-                if devin.get(key) != claude.get(key) {
+                if !py_eq_opt(devin.get(key), claude.get(key)) {
                     let detail = if key == "description" {
                         String::new()
                     } else {
@@ -762,6 +772,68 @@ fn display_value(value: &Json) -> String {
 
 pub(crate) fn py_repr_opt(value: Option<&Json>) -> String {
     value.map_or_else(|| "None".to_string(), py_repr)
+}
+
+/// Python `==` between the values `dict.get` returns: an absent key is `None`,
+/// so it equals a JSON `null`.
+fn py_eq_opt(left: Option<&Json>, right: Option<&Json>) -> bool {
+    py_eq(left.unwrap_or(&Json::Null), right.unwrap_or(&Json::Null))
+}
+
+/// Python `==` on parsed JSON, recursively: objects compare as dicts (same
+/// keys, member order irrelevant; an absent nested key is not `None`), `True`
+/// and `False` equal `1` and `0`, and integers equal floats of the same value.
+fn py_eq(left: &Json, right: &Json) -> bool {
+    match (left, right) {
+        (Json::Null, Json::Null) => true,
+        (Json::String(a), Json::String(b)) => a == b,
+        (Json::Array(a), Json::Array(b)) => {
+            a.len() == b.len() && a.iter().zip(b).all(|(x, y)| py_eq(x, y))
+        }
+        (Json::Object(a), Json::Object(b)) => {
+            a.len() == b.len()
+                && a.iter()
+                    .all(|(key, x)| right.get(key).is_some_and(|y| py_eq(x, y)))
+        }
+        _ => match (py_number(left), py_number(right)) {
+            (Some(a), Some(b)) => numbers_equal(a, b),
+            _ => false,
+        },
+    }
+}
+
+/// A Python number: `bool` is an `int` subclass.
+#[derive(Clone, Copy)]
+enum PyNumber {
+    Int(i64),
+    Float(f64),
+}
+
+fn py_number(value: &Json) -> Option<PyNumber> {
+    match value {
+        Json::Bool(flag) => Some(PyNumber::Int(i64::from(*flag))),
+        Json::Int(number) => Some(PyNumber::Int(*number)),
+        Json::Float(number) => Some(PyNumber::Float(*number)),
+        _ => None,
+    }
+}
+
+/// Exact numeric equality, as Python compares an `int` with a `float`. Exact
+/// float comparison and the range-checked `f64` -> `i64` conversion are the
+/// intent here.
+#[allow(clippy::float_cmp, clippy::cast_possible_truncation)]
+fn numbers_equal(left: PyNumber, right: PyNumber) -> bool {
+    match (left, right) {
+        (PyNumber::Int(a), PyNumber::Int(b)) => a == b,
+        (PyNumber::Float(a), PyNumber::Float(b)) => a == b,
+        (PyNumber::Int(int), PyNumber::Float(float))
+        | (PyNumber::Float(float), PyNumber::Int(int)) => {
+            // The i64 range is [-2^63, 2^63); both bounds are exact in f64.
+            float.fract() == 0.0
+                && (-9_223_372_036_854_775_808.0..9_223_372_036_854_775_808.0).contains(&float)
+                && float as i64 == int
+        }
+    }
 }
 
 /// Python-style `repr()` of a JSON value, used in mismatch messages.
