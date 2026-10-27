@@ -19,7 +19,9 @@ use toolkit_core::{parse_json, Json};
 use super::cli::{render_report, ArgSpec, Origin, RENDERERS, RENDERER_ARGUMENTS};
 use super::result::OpResult;
 
-const TOKEN: &str = "CALLERTOKEN";
+/// Shares [`HOSTILE`]'s prefix so a renderer that sorts keys (the location
+/// detail lines do) places the benign and the hostile key on the same line.
+const TOKEN: &str = "REVIEW_SENTINEL_TOKEN";
 const HOSTILE: &str = "REVIEW_SENTINEL\u{1b}[2J\r\n\u{202e}FORGED_REPORT";
 /// [`HOSTILE`] as a text report shows it (`safe_text`).
 const SHOWN: &str = "REVIEW_SENTINEL\\x1b[2J\\r\\n\x5cu202eFORGED_REPORT";
