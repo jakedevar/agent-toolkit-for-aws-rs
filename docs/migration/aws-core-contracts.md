@@ -18,7 +18,7 @@ A new crate `crates/toolkit-aws` depending only on `toolkit-core` and `std`
 | `config` | `resolve_region` (flag > `AWS_REGION` > `AWS_DEFAULT_REGION` > `us-east-1`, empty = unset, profile region ignored), `resolve_profile` (`AWS_PROFILE`, credentials only), `resolve_endpoint` (flag > `AWS_ENDPOINT_URL_<SERVICE>` > `AWS_ENDPOINT_URL`), `ClientConfig::resolve` | `di_region.py`, `di_session.py` |
 | `endpoint` | `validate_endpoint`: https only, no userinfo/query/fragment, restricted host characters, host allowlist (`.api.aws`, `.amazonaws.com`), every DNS answer must be public per the explicit range policy below (injected `HostResolver`); `Endpoint::for_service` synthesizes `https://<service>.<region>.amazonaws.com` after label/region validation | `launch_config._validate_base_url` |
 | `credentials` | `CredentialsProvider` seam; `ProviderChain` with botocore rules (first success wins, `NoCredentials` falls through, any other error stops); `Credentials`/`Secret` with fixed redacted `Debug`; `reject_credential_arguments`; `STANDARD_CHAIN_STAGES` pins the stage names an SDK adapter must report | `di_session.build_client`, absence of credential arguments everywhere |
-| `retry` | `RetryPolicy` (default 3 retries, `Adaptive` label, 1 s base, 20 s cap, hard cap 10 retries), `run_with_retry`, injected `Sleeper`/`Jitter` | `launch_api_client.py` (`max_attempts: 3, mode: adaptive`) |
+| `retry` | `RetryPolicy` (default 3 retries, `Adaptive` label (inert: no rate limiter), 1 s base, 20 s cap, hard cap 10 retries), `run_with_retry`, injected `Sleeper`/`Jitter` | `launch_api_client.py` (`max_attempts: 3, mode: adaptive`) |
 | `transport` | `ApiRequest` → `HttpRequest`, `Transport` and `Signer` seams, `Timeouts` (default 60 s; the launch slice sets 120 s), header-injection and path validation, percent-encoded queries, redacting `Debug` | `launch_api_client.py` timeouts |
 | `client` | `ApiClient::execute`/`execute_json`: per-attempt fresh signature, status ≥ 400 → `ServiceError` (code from `x-amzn-ErrorType` or JSON `__type`/`code`/`Code`/`errorCode`, message from JSON, request id header), retries | `launch_api_client._client_error_to_api_error` |
 | `paginate` | `collect_pages` with page cap (1000), item cap (100 000), repeated-token detection, empty token ends the walk; `next_token_from` | `nextToken`/`NextToken` loops in `fetch_bedrock_agent.py`, `evaluate_traces.py`, `di_*_tools.py` |
@@ -54,7 +54,7 @@ No `toolkit` subcommand is added: this is a library for the domain slices.
 | The credential troubleshooting step reads "Verify AWS credentials with: aws configure list" (Python: "Verify AWS credentials: aws configure list") | Under full-key label matching (#4516) `credentials:` is a labelled key, so the Python wording would render as `credentials: [REDACTED] configure list` |
 | Service errors keep a redacted, truncated (1024 char) message; raw bodies are never kept | The Python `ApiError` kept the raw body on the exception |
 | `max_attempts` is expressed as `max_retries` (3 retries = 4 attempts) | botocore's `Config(retries=...)` counts retries, so the Python made four attempts |
-| `Adaptive` is carried as a label; the runner applies the standard schedule | The client-side rate limiter belongs to the SDK binding |
+| `Adaptive` is carried as a label only; the runner applies the standard schedule for both modes and no client-side rate limiter exists (the SDK adapter adds none) | Kept so the Python `mode: adaptive` setting maps to a named value; adding a limiter would change behaviour and was ruled out on #4463 |
 
 ## Non-public address policy (#4470)
 
@@ -280,8 +280,10 @@ under `rustls-webpki` and is never compiled. No `openssl` or `native-tls`.
   one retry loop. The transport sends exactly one request per call. The SDK's
   client-side rate limiter (adaptive mode) runs only inside the SDK
   orchestrator for generated service clients, which this adapter does not use.
-  So `Adaptive` stays a label, as recorded above. Wiring a token-bucket rate
-  limiter into `run_with_retry` is a separate, behavior-changing follow-up.
+  So `Adaptive` is a label only: nothing in this crate, the SDK adapter
+  included, applies a client-side rate limiter, and `run_with_retry` uses the
+  standard schedule for both modes. Per the #4463 ruling no rate limiter is
+  added; the label is documented as inert instead.
 - **`AWS_PROFILE` stays strict** (#4473): `default_chain` passes only the
   validated name. Relaxing it is backward compatible and left for a real need.
 - **IMDS, container and STS/SSO traffic** of the credential chain uses
@@ -291,10 +293,12 @@ under `rustls-webpki` and is never compiled. No `openssl` or `native-tls`.
 - **SDK tracing**: `aws-sigv4` emits `trace`-level events of its inputs. The
   SDK's own `Debug` for credentials redacts the secret. This crate installs no
   `tracing` subscriber, so nothing is emitted.
-- **Verification gap**: the fmt, clippy and workspace-test recipes build only
-  the default feature set. The `sdk` module is formatted by `make fmt`, but is
-  compiled, linted and tested only by a `--features sdk` build, which no
-  recipe runs today. A `clippy-sdk`/`test-sdk` recipe was ruled for #4463 but
-  deliberately not added in this slice (manager brief); the handoff records it.
+- **Verification**: the fmt, clippy and workspace-test recipes build only the
+  default feature set, so the default build stays SDK-free. The `sdk` feature
+  has its own recipes, `clippy-sdk`
+  (`cargo clippy -p toolkit-aws --features sdk --all-targets --locked -- -D warnings`)
+  and `test-sdk` (`cargo test -p toolkit-aws --features sdk --locked`),
+  declared in `.rsi/jobs.toml` and `.rsi/project.toml` with a 20-minute
+  timeout and a 200% CPU cap (#4463 ruling, #4577).
 - The DNS-rebinding residual recorded in T3 is **closed for the SDK
   transport**: the guard checks the addresses the socket connects to.

@@ -7,9 +7,10 @@
 //! injected ([`Sleeper`], [`Jitter`]) so tests run instantly and
 //! deterministically.
 //!
-//! [`RetryMode::Adaptive`] is carried as configuration for the SDK binding,
-//! which owns the client-side rate limiter; [`run_with_retry`] always applies the
-//! standard schedule.
+//! [`RetryMode::Adaptive`] is a label only, kept so the Python `mode: adaptive`
+//! setting maps to a named value. Nothing in this crate, the `sdk` adapter
+//! included, applies a client-side rate limiter: [`run_with_retry`] uses the
+//! standard schedule for both modes.
 
 use std::collections::hash_map::RandomState;
 use std::fmt;
@@ -30,7 +31,8 @@ pub const MAX_BACKOFF_CAP: Duration = Duration::from_secs(300);
 pub enum RetryMode {
     /// Exponential backoff with jitter.
     Standard,
-    /// Standard plus a client-side rate limiter (applied by the SDK binding).
+    /// botocore's `adaptive` name, carried as a label only. No client-side
+    /// rate limiter is applied; retries follow the standard schedule.
     Adaptive,
 }
 
@@ -44,7 +46,7 @@ pub struct RetryPolicy {
 }
 
 impl Default for RetryPolicy {
-    /// Three retries, adaptive mode, 1 s base delay, 20 s cap (the Python
+    /// Three retries, the `Adaptive` label, 1 s base delay, 20 s cap (the Python
     /// `launch-with-aws` and botocore standard values).
     fn default() -> Self {
         Self {

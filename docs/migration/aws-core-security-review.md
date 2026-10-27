@@ -203,6 +203,6 @@ dependency justifications and the test list are in `aws-core-contracts.md`
   SDK `ProvideCredentials` and `HttpConnector` traits and the existing
   `HostResolver`.
 
-Open verification point: no daemon recipe compiles `--features sdk` today, so
-the feature build's compile, clippy and test evidence is outstanding (see the
-#4463 handoff).
+Feature verification: the `clippy-sdk` and `test-sdk` recipes compile, lint
+and test `--features sdk` (`.rsi/jobs.toml`, `.rsi/project.toml`); the job
+ids and results at the verified SHA are in the #4463 handoff.
