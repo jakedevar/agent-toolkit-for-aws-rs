@@ -402,9 +402,9 @@ impl<'m> WellFormedId<'m> {
 
 /// Classifies `model_id` against `table`: grammar first, then an exact row,
 /// then the one row sharing its date/revision normal form. A normal form
-/// shared by several rows is ambiguous, and an id outside the table that
-/// shows as a row's display name under the same prefix (`...claude-opus-4.8`
-/// for `...claude-opus-4-8`) is a respelling of that row: both are rejected.
+/// shared by several rows is ambiguous, and an id outside the table that is a
+/// respelling of a row's model identity under any geo scope, listed or not
+/// (see [`is_respelling`]), is rejected too.
 pub(crate) fn classify<'t, 'm>(
     table: &'t [(&'t str, f64, f64)],
     model_id: &'m str,
@@ -424,11 +424,74 @@ pub(crate) fn classify<'t, 'm>(
         (Some(_), Some(_)) => return Identity::Rejected,
         (None, _) => {}
     }
-    let shown = display_parts(model_id);
-    if table.iter().any(|(key, _, _)| display_parts(key) == shown) {
+    if is_respelling(table, model_id) {
         return Identity::Rejected;
     }
     Identity::WellFormedUnknown(id)
+}
+
+/// The providers of the table rows: a row is `[scope.]provider.model` with
+/// `provider` one of these and `scope` (a geo profile) none of them.
+pub(crate) const TABLE_PROVIDERS: &[&str] = &["amazon", "anthropic", "openai"];
+
+/// A row's model identity: the row without its geo scope.
+pub(crate) fn row_identity(key: &str) -> &str {
+    match key.split_once('.') {
+        Some((scope, rest)) if !TABLE_PROVIDERS.contains(&scope) => rest,
+        _ => key,
+    }
+}
+
+/// The ways to read `model_id` without a geo scope: the id itself
+/// (`provider.model`) and the id without its first segment, whatever that
+/// segment spells (`<scope>.provider.model`). Each reading keeps a provider
+/// and a model.
+fn scope_free_readings(model_id: &str) -> impl Iterator<Item = &str> {
+    [
+        Some(model_id),
+        model_id.split_once('.').map(|(_, rest)| rest),
+    ]
+    .into_iter()
+    .flatten()
+    .filter(|reading| reading.contains('.'))
+}
+
+/// The display name of a scope-free `provider.model[-date][-revision]`.
+fn identity_display(reading: &str) -> String {
+    let base = reading.split(':').next().unwrap_or(reading);
+    display_words(base.split_once('.').map_or(base, |(_, model)| model))
+}
+
+/// A respelling of a table row (#4711), decided without the geo scope: a
+/// scope-free reading of the id, or the display name a recorded lookup would
+/// use, shows as the display name of a row's model identity (any row, any
+/// geo), yet the reading's `provider.model`, once the `-v<N>[:<M>]` revision
+/// and the `-YYYYMMDD` date are removed, is not exactly that row's. So
+/// `apac.anthropic.claude-opus-4.8`, `ca.anthropic.claude-opus-4-8:0` and
+/// `foo.claude-opus-4-8` are respellings of `anthropic.claude-opus-4-8`,
+/// while `apac.anthropic.claude-opus-4-8-20250514-v1:0` is that model under a
+/// geo scope the table does not list.
+fn is_respelling(table: &[(&str, f64, f64)], model_id: &str) -> bool {
+    let rows: Vec<(&str, String)> = table
+        .iter()
+        .map(|(key, _, _)| {
+            let identity = row_identity(key);
+            (normalized_id(identity), identity_display(identity))
+        })
+        .collect();
+    let readings: Vec<(&str, String)> = scope_free_readings(model_id)
+        .map(|reading| (normalized_id(reading), identity_display(reading)))
+        .collect();
+    // A display name shown by some row that none of `identities` matches.
+    let unmatched = |shown: &str, identities: &[&str]| {
+        let mut named = rows.iter().filter(|(_, row_shown)| row_shown == shown);
+        named.clone().next().is_some() && !named.any(|(row, _)| identities.contains(row))
+    };
+    let all: Vec<&str> = readings.iter().map(|(reading, _)| *reading).collect();
+    readings
+        .iter()
+        .any(|(reading, shown)| unmatched(shown, &[reading]))
+        || unmatched(&display_parts(model_id).1, &all)
 }
 
 /// The fixed answer for a [`Identity::Rejected`] id; it repeats nothing of it.
@@ -568,6 +631,11 @@ fn display_parts(model_id: &str) -> (&str, String) {
         .split_once('.')
         .map_or(after_geo, |(_, rest)| rest);
     let scope = &base[..base.len() - named.len()];
+    (scope, display_words(named))
+}
+
+/// The guessed display name of a model name without scope and provider.
+fn display_words(named: &str) -> String {
     let named = without_v_revision(named);
     let named = without_date_stamp(&named);
     let mut words: Vec<String> = Vec::new();
@@ -581,7 +649,7 @@ fn display_parts(model_id: &str) -> (&str, String) {
             words.push(capitalize(token));
         }
     }
-    (scope, words.join(" "))
+    words.join(" ")
 }
 
 /// A recorded `pricing.get_products` answer for one display name and region.

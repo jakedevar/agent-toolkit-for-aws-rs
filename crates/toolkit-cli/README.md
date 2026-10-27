@@ -636,8 +636,9 @@ toolkit bedrock-resolve source-model ENV_FILE --catalog FILE
 - `pricing` prints `{model_id: {input_per_1k_usd, output_per_1k_usd, available,
   note}}` (indent 2). Every id is validated first: a malformed, truncated or
   ambiguous id (not lowercase-ASCII `[geo.]provider.model[-YYYYMMDD][-v<N>[:<M>]]`,
-  a base shared by several rows, or a respelling of a row such as
-  `...claude-opus-4.8`) is `available: false` with a fixed note, even when
+  a base shared by several rows, or a respelling of a row's model under any geo
+  scope, listed or not, such as `apac.anthropic.claude-opus-4.8`) is
+  `available: false` with a fixed note, even when
   `--price-list` holds an answer for its display name. Then the built-in table
   (44 rows) and the region-aware Opus 5.5 rule answer; an id is priced from the
   table only when it or its date/revision-normalized form equals exactly one row;

@@ -163,11 +163,22 @@ Rust tests, command output re-deferred**.
       a trailing separator, the provisioned-throughput `...:28k` forms and an
       ARN that is not an inference-profile ARN (`claude-opus-5-5` and such an
       ARN no longer get the Opus 5.5 note). It is also rejected when its normal
-      form is shared by more than one row, or when it is outside the table but
-      shows as a row's display name under the same geo/provider prefix
-      (`anthropic.claude-opus-4.8`, `anthropic.claude-opus-4-8:0` for
-      `anthropic.claude-opus-4-8`): a matching display name alone never
-      validates a model id.
+      form is shared by more than one row, or when it is outside the table and
+      is a respelling of a row's model identity (#4711). The respelling check
+      ignores the geo scope, whether the table lists it or not. The id is read
+      without a scope and without its first segment (any spelling: `us.`,
+      `apac.`, `ca.`, `xx.`); a profile ARN is unwrapped first. Each reading
+      loses its `-v<N>[:<M>]` revision and `-YYYYMMDD` date, which leaves a
+      `provider.model`. When a reading, or the display name a recorded lookup
+      would ask for, shows as the display name of any table row's model
+      identity (the row without its geo scope, any geo), the id is rejected
+      unless its `provider.model` is exactly that row's. So
+      `anthropic.claude-opus-4.8`, `apac.anthropic.claude-opus-4.8`,
+      `ca.anthropic.claude-opus-4-8:0`, `xx.anthropic.claude-opus-4.8-v1:0`,
+      `amazon.claude-opus-4-8` and `foo.claude-opus-4-8` are all rejected as
+      respellings of `anthropic.claude-opus-4-8`. A matching display name
+      alone never validates a model id. Table rows are
+      `[scope.]provider.model` with the provider in `TABLE_PROVIDERS`.
     - **Known row**: the id is a table key, or after removing a strict
       `-v<N>[:<M>]` revision and then a `-YYYYMMDD` date stamp it equals the
       same normal form of exactly one row (`anthropic.claude-haiku-4-5`,
@@ -175,8 +186,12 @@ Rust tests, command output re-deferred**.
       ids still need an exact key. The table answers; a recorded answer is not
       consulted.
     - **Well-formed unknown**: any other well-formed id (`anthropic.claude`,
-      `...opus-4-8-foo`, `apac.anthropic.claude-opus-4-8`,
-      `openai.gpt-oss-120b-1:0`). Only these reach `display_name_guess` and the
+      `...opus-4-8-foo`, `openai.gpt-oss-120b-1:0`, and canonical spellings
+      of a table model under a scope the table does not list, such as
+      `apac.anthropic.claude-opus-4-8`,
+      `apac.anthropic.claude-opus-4-8-20250514-v1:0` or
+      `ca.anthropic.claude-haiku-4-5-20251001-v1:0`). Only these reach
+      `display_name_guess` and the
       recorded answers; without a recorded answer for their own display name
       they are `available: false`.
 
@@ -186,6 +201,7 @@ Rust tests, command output re-deferred**.
     `rejected_ids_are_never_priced_even_by_a_matching_recorded_answer`,
     `every_negative_pricing_input_stays_unpriced_with_a_recorded_answer`,
     `the_pricing_command_rejects_malformed_revisions_with_a_recorded_answer`,
+    `the_pricing_command_rejects_respellings_under_any_geo_scope`,
     `well_formed_ids_outside_the_table_still_use_a_recorded_answer`,
     `every_table_row_is_a_well_formed_known_row`.
 11. **Ambiguous snapshots are not resolved (#4685, intentional change).** The

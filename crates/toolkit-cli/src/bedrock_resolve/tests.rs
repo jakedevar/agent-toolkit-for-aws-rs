@@ -1511,6 +1511,171 @@ fn rejected_ids_are_never_priced_even_by_a_matching_recorded_answer() {
         }
         assert_eq!(pricing::static_fallback(id), None, "{id:?}");
     }
+    // #4711: a respelling is decided without the geo scope, so a listed, an
+    // unlisted or a made-up scope (and a profile ARN wrapping one) is still
+    // rejected, even when the recorded answers hold the exact display name a
+    // recorded lookup would ask for and the #4698 `Claude Opus 4.8` answer.
+    let respelled = respellings_4711();
+    let matching = recorded_answers_for(&respelled);
+    for id in &respelled {
+        let unwrapped = id.rsplit('/').next().unwrap();
+        assert!(WellFormedId::parse(unwrapped).is_some(), "{id:?}");
+        assert_eq!(
+            pricing::classify(STATIC_FALLBACK, unwrapped),
+            Identity::Rejected,
+            "{id:?}"
+        );
+        for price_list in [Some(&matching), Some(&list), None] {
+            let price = pricing::lookup("us-east-1", id, price_list);
+            assert_eq!(price, pricing::rejected(), "{id:?}");
+            assert_eq!(rates(&price), (None, None), "{id:?}");
+        }
+    }
+    // The positive controls: the same recorded answers do price the
+    // canonical spellings under scopes the table does not list.
+    let canonical = canonical_unlisted_scope_ids();
+    let matching = recorded_answers_for(&canonical);
+    for id in &canonical {
+        assert!(
+            matches!(
+                pricing::classify(STATIC_FALLBACK, id.rsplit('/').next().unwrap()),
+                Identity::WellFormedUnknown(_)
+            ),
+            "{id}"
+        );
+        let price = pricing::lookup("us-east-1", id, Some(&matching));
+        assert!(price.available, "{id}");
+        assert_eq!(rates(&price), (Some(0.005), Some(0.025)), "{id}");
+    }
+}
+
+/// Every #4711 respelling, under no scope, the listed scopes, scopes the
+/// table does not list (`apac`, `ca`) and a made-up one (`xx`), plus profile
+/// ARNs wrapping the `apac` and `ca` ones.
+fn respellings_4711() -> Vec<String> {
+    const SPELLINGS: &[&str] = &[
+        "anthropic.claude-opus-4.8",
+        "anthropic.claude-opus-4-8:0",
+        "anthropic.claude-opus-4.8-20250610",
+        "anthropic.claude-opus-4.8-v1",
+        "anthropic.claude-opus-4.8-v1:0",
+        "anthropic.claude-opus-4.8-20250610-v1:0",
+        "anthropic.claude-opus-4-8-20250610:0",
+        "anthropic.claude-haiku-4.5-20251001-v1:0",
+        "anthropic.claude-sonnet-4.6",
+        "anthropic.claude-sonnet-5:0",
+        // Another provider showing as the same model.
+        "amazon.claude-opus-4-8",
+        "foo.claude-opus-4-8-v1:0",
+        "openai.gpt-5-6-luna",
+    ];
+    let mut ids = Vec::new();
+    for scope in ["", "apac.", "eu.", "us.", "global.", "in.", "ca.", "xx."] {
+        for spelling in SPELLINGS {
+            ids.push(format!("{scope}{spelling}"));
+        }
+    }
+    for scope in ["apac.", "ca."] {
+        for spelling in SPELLINGS {
+            ids.push(format!(
+                "arn:aws:bedrock:ap-southeast-2:123456789012:inference-profile/{scope}{spelling}"
+            ));
+        }
+    }
+    ids
+}
+
+/// Canonical spellings of table models under scopes the table does not list.
+fn canonical_unlisted_scope_ids() -> Vec<String> {
+    let mut ids = Vec::new();
+    for scope in ["apac.", "ca.", "xx."] {
+        for spelling in [
+            "anthropic.claude-opus-4-8",
+            "anthropic.claude-opus-4-8-20250514-v1:0",
+            "anthropic.claude-opus-4-8-v2",
+            "anthropic.claude-haiku-4-5-20251001-v1:0",
+        ] {
+            ids.push(format!("{scope}{spelling}"));
+        }
+    }
+    ids.push(
+        "arn:aws:bedrock:ap-southeast-2:123456789012:inference-profile/apac.anthropic.claude-opus-4-8"
+            .to_string(),
+    );
+    ids
+}
+
+/// A recorded answer (0.005 in, 0.025 out, us-east-1) for the display name a
+/// recorded lookup would ask for for each id, and for every table row's.
+fn recorded_answers_for(ids: &[String]) -> PriceList {
+    let item = price_item(&[
+        ("d1", "0.005", "Input tokens"),
+        ("d2", "0.025", "Output tokens"),
+    ])
+    .to_compact_string();
+    let names = ids
+        .iter()
+        .filter_map(|id| WellFormedId::parse(id.rsplit('/').next().unwrap()))
+        .map(pricing::display_name_guess)
+        .chain(
+            STATIC_FALLBACK
+                .iter()
+                .filter_map(|row| WellFormedId::parse(row.0))
+                .map(pricing::display_name_guess),
+        );
+    PriceList(
+        names
+            .map(|model| pricing::RecordedPriceList {
+                region: "us-east-1".to_string(),
+                model,
+                items: vec![Json::string(item.clone())],
+            })
+            .collect(),
+    )
+}
+
+#[test]
+fn the_pricing_command_rejects_respellings_under_any_geo_scope() {
+    // The #4711 reproduction, through the command, with the #4698 response.
+    let dir = TempDir::new("price-4711");
+    let file = dir.file("prices.json", OPUS_4_8_RESPONSE);
+    let (status, out, err) = exec(&[
+        "bedrock-resolve",
+        "pricing",
+        "--region",
+        "us-east-1",
+        "--models",
+        "anthropic.claude-opus-4.8,anthropic.claude-opus-4-8:0,apac.anthropic.claude-opus-4.8,\
+apac.anthropic.claude-opus-4-8:0,ca.anthropic.claude-opus-4.8,xx.anthropic.claude-opus-4-8:0,\
+apac.anthropic.claude-opus-4.8-20250610-v1:0,\
+arn:aws:bedrock:ap-southeast-2:123456789012:inference-profile/apac.anthropic.claude-opus-4.8,\
+apac.anthropic.claude-opus-4-8,apac.anthropic.claude-opus-4-8-20250514-v1:0",
+        "--price-list",
+        &file,
+    ]);
+    assert_eq!((status, err.as_str()), (0, ""));
+    let answer = json(&out);
+    for id in [
+        "anthropic.claude-opus-4.8",
+        "anthropic.claude-opus-4-8:0",
+        "apac.anthropic.claude-opus-4.8",
+        "apac.anthropic.claude-opus-4-8:0",
+        "ca.anthropic.claude-opus-4.8",
+        "xx.anthropic.claude-opus-4-8:0",
+        "apac.anthropic.claude-opus-4.8-20250610-v1:0",
+        "arn:aws:bedrock:ap-southeast-2:123456789012:inference-profile/apac.anthropic.claude-opus-4.8",
+    ] {
+        let entry = answer.get(id).unwrap_or_else(|| panic!("{id}"));
+        assert_eq!(entry, &pricing::rejected().to_json(), "{id}");
+    }
+    for id in [
+        "apac.anthropic.claude-opus-4-8",
+        "apac.anthropic.claude-opus-4-8-20250514-v1:0",
+    ] {
+        let entry = answer.get(id).unwrap_or_else(|| panic!("{id}"));
+        assert_eq!(entry.get("available"), Some(&Json::Bool(true)), "{id}");
+        assert_eq!(entry.get("input_per_1k_usd"), Some(&Json::Float(0.005)));
+    }
 }
 
 #[test]
@@ -1629,6 +1794,14 @@ fn well_formed_ids_outside_the_table_still_use_a_recorded_answer() {
 fn every_table_row_is_a_well_formed_known_row() {
     for row in STATIC_FALLBACK {
         assert!(WellFormedId::parse(row.0).is_some(), "{}", row.0);
+        // `[scope.]provider.model`, so the respelling rule can drop the scope.
+        let identity = pricing::row_identity(row.0);
+        let (provider, _) = identity.split_once('.').unwrap();
+        assert!(pricing::TABLE_PROVIDERS.contains(&provider), "{}", row.0);
+        if let Some(scope) = row.0.strip_suffix(identity) {
+            let scope = scope.strip_suffix('.').unwrap_or(scope);
+            assert!(!pricing::TABLE_PROVIDERS.contains(&scope), "{}", row.0);
+        }
         assert_eq!(
             pricing::classify(STATIC_FALLBACK, row.0),
             Identity::KnownRow { row, exact: true },
