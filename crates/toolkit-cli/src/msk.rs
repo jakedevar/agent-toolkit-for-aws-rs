@@ -367,7 +367,9 @@ pub(crate) fn sim_compute(
 fn resolve_output_path(raw: &str) -> Result<PathBuf, String> {
     let expanded = if raw == "~" || raw.starts_with("~/") {
         match std::env::var_os("HOME") {
-            Some(home) => PathBuf::from(home).join(raw.trim_start_matches('~').trim_start_matches('/')),
+            Some(home) => {
+                PathBuf::from(home).join(raw.trim_start_matches('~').trim_start_matches('/'))
+            }
             None => PathBuf::from(raw),
         }
     } else {
@@ -453,15 +455,11 @@ pub(crate) fn sim_render(
         return Err(arg_error("missing required arguments"));
     };
 
-    let rendered = match render_template(
-        SOURCE_TEMPLATE,
-        instance_type,
-        broker_count,
-        kafka_version,
-    ) {
-        Ok(rendered) => rendered,
-        Err(message) => return sim_error(output, &message),
-    };
+    let rendered =
+        match render_template(SOURCE_TEMPLATE, instance_type, broker_count, kafka_version) {
+            Ok(rendered) => rendered,
+            Err(message) => return sim_error(output, &message),
+        };
     let out = match resolve_output_path(raw_output) {
         Ok(path) => path,
         Err(message) => return sim_error(output, &message),
@@ -503,7 +501,8 @@ pub(crate) fn sim_validate(
 ) -> Result<(), ToolkitError> {
     let (instance_type, broker_count) = sim_instance_and_count(invocation)?;
     require_options(invocation, &["--test", "--config"])?;
-    let (Some(test), Some(config_text)) = (invocation.option("--test"), invocation.option("--config"))
+    let (Some(test), Some(config_text)) =
+        (invocation.option("--test"), invocation.option("--config"))
     else {
         return Err(arg_error("missing required arguments"));
     };
@@ -636,7 +635,10 @@ mod tests {
             let line = format!("  {label:<16} ${amount:>14}");
             assert!(stdout.contains(&line), "missing {line:?} in\n{stdout}");
         }
-        assert!(stdout.starts_with('\n'), "the banner starts with a blank line");
+        assert!(
+            stdout.starts_with('\n'),
+            "the banner starts with a blank line"
+        );
     }
 
     #[test]
@@ -677,7 +679,8 @@ mod tests {
             "--emit-static-pricing",
         ]);
         assert_eq!((status, stderr.as_str()), (0, ""));
-        assert!(stdout.starts_with("STATIC_PRICING_REGION = \"us-east-1\"\nSTATIC_PRICING_CAPTURED = \"20"));
+        assert!(stdout
+            .starts_with("STATIC_PRICING_REGION = \"us-east-1\"\nSTATIC_PRICING_CAPTURED = \"20"));
         for expected in [
             "STATIC_BROKER_PRICE_PER_HR = {",
             "    \"kafka.m5.large\": 0.21,",
@@ -686,7 +689,10 @@ mod tests {
             "    \"cross_az_cost_per_gb\": 0.02,",
             "    \"pst_cost_per_mbs_month\": 0.08,",
         ] {
-            assert!(stdout.contains(expected), "missing {expected:?} in\n{stdout}");
+            assert!(
+                stdout.contains(expected),
+                "missing {expected:?} in\n{stdout}"
+            );
         }
     }
 
@@ -772,9 +778,8 @@ mod tests {
         auto.extend(["--region", "eu-west-1"]);
         let (status, _, stderr) = exec(&auto);
         assert_eq!(status, 1);
-        assert!(stderr.contains(
-            "Falling back to static pricing is not possible for --region eu-west-1"
-        ));
+        assert!(stderr
+            .contains("Falling back to static pricing is not possible for --region eu-west-1"));
 
         // Workload validation keeps the legacy messages.
         let (status, _, stderr) = exec(&[
@@ -845,9 +850,18 @@ mod tests {
         };
         assert_eq!(
             keys,
-            ["cluster_name", "assessed_at", "overall", "pillars", "summary"]
+            [
+                "cluster_name",
+                "assessed_at",
+                "overall",
+                "pillars",
+                "summary"
+            ]
         );
-        let assessed_at = doc.get("assessed_at").and_then(Json::as_str).expect("timestamp");
+        let assessed_at = doc
+            .get("assessed_at")
+            .and_then(Json::as_str)
+            .expect("timestamp");
         assert_eq!(assessed_at.len(), 20);
         assert!(assessed_at.ends_with('Z') && assessed_at.contains('T'));
         let pillar = |name: &str| {
@@ -879,8 +893,11 @@ mod tests {
         assert!(stderr.contains("JSON parse error"), "{stderr}");
 
         let incomplete = dir.path().join("incomplete.json");
-        fs::write(&incomplete, r#"{"cluster_name": "x", "kafka": {"version": "3.6"}}"#)
-            .expect("write");
+        fs::write(
+            &incomplete,
+            r#"{"cluster_name": "x", "kafka": {"version": "3.6"}}"#,
+        )
+        .expect("write");
         let (status, _, stderr) = exec(&["msk", "compat", incomplete.to_str().expect("utf-8")]);
         assert_eq!(status, 1);
         assert_eq!(
@@ -932,7 +949,10 @@ mod tests {
         symlink(&config, &link).expect("symlink");
         let (status, _, stderr) = exec(&["msk", "compat", link.to_str().expect("utf-8")]);
         assert_eq!(status, 1);
-        assert!(stderr.contains("refusing to follow symbolic link"), "{stderr}");
+        assert!(
+            stderr.contains("refusing to follow symbolic link"),
+            "{stderr}"
+        );
 
         let out_dir = dir.path().join("out");
         fs::create_dir_all(&out_dir).expect("out dir");
@@ -947,7 +967,10 @@ mod tests {
             out_dir.to_str().expect("utf-8"),
         ]);
         assert_eq!(status, 1);
-        assert!(stderr.contains("refusing to follow symbolic link"), "{stderr}");
+        assert!(
+            stderr.contains("refusing to follow symbolic link"),
+            "{stderr}"
+        );
         assert_eq!(fs::read_to_string(&victim).expect("read"), "keep");
     }
 
@@ -956,10 +979,12 @@ mod tests {
         let (status, stdout, stderr) = exec(&["msk", "sim", "compute"]);
         assert_eq!((status, stderr.as_str()), (0, ""));
         let doc = parse_json(&stdout).expect("valid JSON");
-        let int = |key: &str| doc.get(key).and_then(|value| match value {
-            Json::Int(number) => Some(*number),
-            _ => None,
-        });
+        let int = |key: &str| {
+            doc.get(key).and_then(|value| match value {
+                Json::Int(number) => Some(*number),
+                _ => None,
+            })
+        };
         // express.m7g.4xlarge x 12: max ingress 187.5 * 12 = 2250.0 MB/s,
         // fleet = ceil(2250.0 * 1.5 / 400) = 9 producers = 3600 MB/s.
         assert_eq!(int("broker_count"), Some(12));
@@ -996,9 +1021,16 @@ mod tests {
 
     #[test]
     fn sim_validate_pass_warn_and_reject() {
-        let pass = r#"{"throughput_mbps":10,"duration_minutes":10,"num_producers":1,"num_consumers":1}"#;
+        let pass =
+            r#"{"throughput_mbps":10,"duration_minutes":10,"num_producers":1,"num_consumers":1}"#;
         let (status, stdout, stderr) = exec(&[
-            "msk", "sim", "validate", "--test", "e2e_latency", "--config", pass,
+            "msk",
+            "sim",
+            "validate",
+            "--test",
+            "e2e_latency",
+            "--config",
+            pass,
         ]);
         assert_eq!((status, stderr.as_str()), (0, ""));
         assert_eq!(
@@ -1006,26 +1038,43 @@ mod tests {
             "{\n  \"decision\": \"PASS\",\n  \"errors\": [],\n  \"warnings\": []\n}\n"
         );
 
-        let warn = r#"{"throughput_mbps":2000,"duration_minutes":10,"num_producers":1,"num_consumers":1}"#;
+        let warn =
+            r#"{"throughput_mbps":2000,"duration_minutes":10,"num_producers":1,"num_consumers":1}"#;
         let (status, stdout, _) = exec(&[
-            "msk", "sim", "validate", "--test", "e2e_latency", "--config", warn,
+            "msk",
+            "sim",
+            "validate",
+            "--test",
+            "e2e_latency",
+            "--config",
+            warn,
         ]);
         assert_eq!(status, 0);
         assert!(stdout.contains("\"decision\": \"PASS\""));
         assert!(stdout.contains(
             "throughput_mbps=2000 MB/s is above the cluster's sustained/recommended ingress (1498.8 MB/s)"
         ));
-        assert!(stdout.contains("num_producers=1 may not sustain 2000 MB/s; consider >= 5 producers."));
+        assert!(
+            stdout.contains("num_producers=1 may not sustain 2000 MB/s; consider >= 5 producers.")
+        );
         assert!(stdout.is_ascii());
 
         let reject = r#"{"target_throughput_mbps":99999,"duration_minutes":10,"reboot_at_minute":9,"num_producers":1}"#;
         let (status, stdout, stderr) = exec(&[
-            "msk", "sim", "validate", "--test", "broker_restart", "--config", reject,
+            "msk",
+            "sim",
+            "validate",
+            "--test",
+            "broker_restart",
+            "--config",
+            reject,
         ]);
         assert_eq!(status, 1, "REJECT exits 1");
         assert_eq!(stderr, "");
         assert!(stdout.contains("\"decision\": \"REJECT\""));
-        assert!(stdout.contains("target_throughput_mbps=99999 is outside the allowed range [1, 3600]"));
+        assert!(
+            stdout.contains("target_throughput_mbps=99999 is outside the allowed range [1, 3600]")
+        );
         assert!(stdout.contains("reboot_at_minute=9 is outside the allowed range [2, 8]"));
     }
 
@@ -1035,26 +1084,43 @@ mod tests {
         assert_eq!(status, 2);
         assert!(stderr.starts_with("error: the following arguments are required: --test\n"));
 
-        let (status, _, stderr) = exec(&[
-            "msk", "sim", "validate", "--test", "nope", "--config", "{}",
-        ]);
+        let (status, _, stderr) =
+            exec(&["msk", "sim", "validate", "--test", "nope", "--config", "{}"]);
         assert_eq!(status, 2);
         assert!(stderr.contains("argument --test: invalid choice: 'nope'"));
 
         let (status, stdout, stderr) = exec(&[
-            "msk", "sim", "validate", "--test", "e2e_latency", "--config", "{}",
+            "msk",
+            "sim",
+            "validate",
+            "--test",
+            "e2e_latency",
+            "--config",
+            "{}",
         ]);
         assert_eq!((status, stdout.as_str()), (2, ""));
         assert_eq!(stderr, "{\"error\": \"'throughput_mbps'\"}\n");
 
         let (status, _, stderr) = exec(&[
-            "msk", "sim", "validate", "--test", "e2e_latency", "--config", "[1]",
+            "msk",
+            "sim",
+            "validate",
+            "--test",
+            "e2e_latency",
+            "--config",
+            "[1]",
         ]);
         assert_eq!(status, 2);
         assert_eq!(stderr, "{\"error\": \"--config must be a JSON object\"}\n");
 
         let (status, _, stderr) = exec(&[
-            "msk", "sim", "validate", "--test", "e2e_latency", "--config", "{nope",
+            "msk",
+            "sim",
+            "validate",
+            "--test",
+            "e2e_latency",
+            "--config",
+            "{nope",
         ]);
         assert_eq!(status, 2);
         assert!(stderr.starts_with("{\"error\": \"invalid --config JSON: JSON parse error"));
@@ -1167,7 +1233,10 @@ mod tests {
             link.to_str().expect("utf-8"),
         ]);
         assert_eq!(status, 2);
-        assert!(stderr.contains("refusing to follow symbolic link"), "{stderr}");
+        assert!(
+            stderr.contains("refusing to follow symbolic link"),
+            "{stderr}"
+        );
         assert_eq!(fs::read_to_string(&victim).expect("read"), "keep");
     }
 

@@ -9,9 +9,7 @@ use crate::pricing::{
     format_static_pricing_literals, pricing_provenance, resolve_pricing, PricingApi,
     STATIC_PRICING_CAPTURED,
 };
-use crate::pyfmt::{
-    format_fixed, format_g, format_int_grouped, pad_left, pad_right, round_to,
-};
+use crate::pyfmt::{format_fixed, format_g, format_int_grouped, pad_left, pad_right, round_to};
 use crate::sizing::{
     calculate_express_sizing, calculate_standard_sizing, recommend_per_class, BrokerGroup,
     SizingInputs, SizingResult, EBS_HEADROOM_FACTOR,
@@ -166,13 +164,11 @@ fn format_broker_table(results: &[SizingResult], shared: &[(CostField, f64)]) ->
     for field in &per_instance_costs {
         headers.push(format!("{} / mo", field.label()));
     }
-    headers.push(
-        if shared.is_empty() {
-            "total cost / mo".to_string()
-        } else {
-            "total cost / mo incl. shared".to_string()
-        },
-    );
+    headers.push(if shared.is_empty() {
+        "total cost / mo".to_string()
+    } else {
+        "total cost / mo incl. shared".to_string()
+    });
 
     let mut lines = vec![
         format!("| {} |", headers.join(" | ")),
@@ -276,10 +272,26 @@ fn format_inputs_block(
     };
 
     let mut rows: Vec<(String, String, String)> = vec![
-        row("average ingress", format_fixed(inputs.avg_data_in_mbs, 2, true), "MiB/s"),
-        row("peak ingress", format_fixed(inputs.peak_data_in_mbs, 2, true), "MiB/s"),
-        row("average egress", format_fixed(inputs.avg_data_out_mbs, 2, true), "MiB/s"),
-        row("peak egress", format_fixed(inputs.peak_data_out_mbs, 2, true), "MiB/s"),
+        row(
+            "average ingress",
+            format_fixed(inputs.avg_data_in_mbs, 2, true),
+            "MiB/s",
+        ),
+        row(
+            "peak ingress",
+            format_fixed(inputs.peak_data_in_mbs, 2, true),
+            "MiB/s",
+        ),
+        row(
+            "average egress",
+            format_fixed(inputs.avg_data_out_mbs, 2, true),
+            "MiB/s",
+        ),
+        row(
+            "peak egress",
+            format_fixed(inputs.peak_data_out_mbs, 2, true),
+            "MiB/s",
+        ),
         row(
             "partitions",
             format_int_grouped(inputs.num_partitions),
@@ -349,7 +361,11 @@ fn format_inputs_block(
 
     rows.push(row(
         "consumer rack awareness",
-        if inputs.rack_affined_consumers { "yes" } else { "no" },
+        if inputs.rack_affined_consumers {
+            "yes"
+        } else {
+            "no"
+        },
         if inputs.rack_affined_consumers {
             "consumers fetch from local-AZ replicas, so cross-AZ cost excludes consumer fetch"
         } else {
@@ -387,8 +403,16 @@ fn format_inputs_block(
         },
     ));
 
-    let label_width = rows.iter().map(|(label, _, _)| label.chars().count()).max().unwrap_or(0);
-    let value_width = rows.iter().map(|(_, value, _)| value.chars().count()).max().unwrap_or(0);
+    let label_width = rows
+        .iter()
+        .map(|(label, _, _)| label.chars().count())
+        .max()
+        .unwrap_or(0);
+    let value_width = rows
+        .iter()
+        .map(|(_, value, _)| value.chars().count())
+        .max()
+        .unwrap_or(0);
     rows.iter()
         .map(|(label, value, note)| {
             format!(

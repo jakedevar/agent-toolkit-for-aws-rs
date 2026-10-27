@@ -133,11 +133,10 @@ pub fn compute(
     // Provision 1.5x the cluster's MAXIMUM ingress quota so the fleet can drive
     // the cluster to its throttle ceiling with headroom and never be the
     // bottleneck, even when deliberately probing past the limit.
-    let fleet_producer_count =
-        std::cmp::max(
-            2,
-            (cluster_max_ingress * 1.5 / FLEET_NODE_THROUGHPUT_MBPS as f64).ceil() as i64,
-        );
+    let fleet_producer_count = std::cmp::max(
+        2,
+        (cluster_max_ingress * 1.5 / FLEET_NODE_THROUGHPUT_MBPS as f64).ceil() as i64,
+    );
     Ok(Caps {
         instance_type: instance_type.to_string(),
         broker_count,
@@ -409,10 +408,7 @@ fn config_number(config: &Json, key: &str) -> Result<Num, String> {
         None => Err(py_str_repr(key)),
         Some(Json::Int(number)) => Ok(Num::Int(*number)),
         Some(Json::Float(number)) => Ok(Num::Float(*number)),
-        Some(other) => Err(format!(
-            "{key} must be a number, not {}",
-            other.type_name()
-        )),
+        Some(other) => Err(format!("{key} must be a number, not {}", other.type_name())),
     }
 }
 
@@ -549,7 +545,13 @@ pub fn validate(test: &str, config: &Json, caps: &Caps) -> Result<Validation, St
                 Some(fleet_max),
                 &mut errors,
             );
-            check_range("duration_minutes", dur, 10, Some(Num::Int(120)), &mut errors);
+            check_range(
+                "duration_minutes",
+                dur,
+                10,
+                Some(Num::Int(120)),
+                &mut errors,
+            );
             check_range(
                 "reboot_at_minute",
                 reboot,
@@ -700,14 +702,20 @@ mod tests {
             );
         }
         for count in [3, 6, 15, 60] {
-            assert!(compute(DEFAULT_INSTANCE_TYPE, count, None).is_ok(), "{count}");
+            assert!(
+                compute(DEFAULT_INSTANCE_TYPE, count, None).is_ok(),
+                "{count}"
+            );
         }
     }
 
     #[test]
     fn kafka_version_is_only_checked_when_supplied() {
         for version in SUPPORTED_KAFKA_VERSIONS {
-            assert!(compute(DEFAULT_INSTANCE_TYPE, 3, Some(version)).is_ok(), "{version}");
+            assert!(
+                compute(DEFAULT_INSTANCE_TYPE, 3, Some(version)).is_ok(),
+                "{version}"
+            );
         }
         for version in ["3.9.x", "3.9", "3.7.0", "", "3.9.x.KRAFT", "4.0"] {
             assert_eq!(
@@ -746,11 +754,21 @@ mod tests {
                 "tests",
             ]
         );
-        assert_eq!(doc.get("fleet_instance_type").and_then(Json::as_str), Some("c5.2xlarge"));
-        assert_eq!(doc.get("fleet_instance_bandwidth_mbps"), Some(&Json::Int(400)));
+        assert_eq!(
+            doc.get("fleet_instance_type").and_then(Json::as_str),
+            Some("c5.2xlarge")
+        );
+        assert_eq!(
+            doc.get("fleet_instance_bandwidth_mbps"),
+            Some(&Json::Int(400))
+        );
         let tests = doc.get("tests").expect("tests");
         let bounds = |test: &str, key: &str| {
-            tests.get(test).and_then(|t| t.get(key)).cloned().expect("bounds")
+            tests
+                .get(test)
+                .and_then(|t| t.get(key))
+                .cloned()
+                .expect("bounds")
         };
         assert_eq!(
             bounds("e2e_latency", "throughput_mbps"),
@@ -804,7 +822,9 @@ mod tests {
     #[test]
     fn set_param_default_rewrites_only_the_first_default_of_the_named_block() {
         let text = set_param_default(MINI, "InstanceType", "new").expect("rewritten");
-        assert!(text.contains("  InstanceType:\n    Type: String\n    Default: new\n    Default: second\n"));
+        assert!(text.contains(
+            "  InstanceType:\n    Type: String\n    Default: new\n    Default: second\n"
+        ));
         assert!(text.contains("Other:\n    Default: untouched"));
         assert!(text.contains("Foo:\n    Default: not-a-param"));
         assert!(text.ends_with('\n'), "trailing newline preserved");
@@ -820,9 +840,15 @@ mod tests {
     #[test]
     fn set_param_default_keeps_a_missing_trailing_newline() {
         let source = "  P:\n    Default: 1";
-        assert_eq!(set_param_default(source, "P", "2").expect("ok"), "  P:\n    Default: 2");
+        assert_eq!(
+            set_param_default(source, "P", "2").expect("ok"),
+            "  P:\n    Default: 2"
+        );
         let source = "  P:\n    Default: 1\n";
-        assert_eq!(set_param_default(source, "P", "2").expect("ok"), "  P:\n    Default: 2\n");
+        assert_eq!(
+            set_param_default(source, "P", "2").expect("ok"),
+            "  P:\n    Default: 2\n"
+        );
     }
 
     #[test]
@@ -838,14 +864,18 @@ mod tests {
             "  P:\n    Type: String\nResources:\n    Default: 1\n",
             "",
         ] {
-            assert_eq!(set_param_default(source, "P", "2"), Err(drift.to_string()), "{source:?}");
+            assert_eq!(
+                set_param_default(source, "P", "2"),
+                Err(drift.to_string()),
+                "{source:?}"
+            );
         }
     }
 
     #[test]
     fn rendering_bakes_sizing_and_fleet_into_six_defaults() {
-        let rendered = render_template(SOURCE_TEMPLATE, "express.m7g.8xlarge", 9, "3.8.x")
-            .expect("rendered");
+        let rendered =
+            render_template(SOURCE_TEMPLATE, "express.m7g.8xlarge", 9, "3.8.x").expect("rendered");
         // 375.0 * 9 = 3375 MB/s max quota -> ceil(3375 * 1.5 / 400) = 13 producers.
         assert_eq!(rendered.caps.fleet_producer_count, 13);
         let before: Vec<&str> = SOURCE_TEMPLATE.lines().collect();
@@ -869,26 +899,44 @@ mod tests {
             "ClientInstanceType already defaults to c5.2xlarge"
         );
         assert!(rendered.template.ends_with('\n'));
-        assert!(rendered.template.contains("Default: /aws/service/ami-amazon-linux-latest"));
-        let names: Vec<&str> = rendered.baked_parameters.iter().map(|(name, _)| *name).collect();
+        assert!(rendered
+            .template
+            .contains("Default: /aws/service/ami-amazon-linux-latest"));
+        let names: Vec<&str> = rendered
+            .baked_parameters
+            .iter()
+            .map(|(name, _)| *name)
+            .collect();
         assert_eq!(
             names,
-            ["InstanceType", "BrokerCount", "KafkaVersion", "ClientInstanceType", "ProducerCount", "ConsumerCount"]
+            [
+                "InstanceType",
+                "BrokerCount",
+                "KafkaVersion",
+                "ClientInstanceType",
+                "ProducerCount",
+                "ConsumerCount"
+            ]
         );
     }
 
     #[test]
     fn rendering_rejects_bad_sizing_and_a_drifted_template() {
-        assert!(render_template(SOURCE_TEMPLATE, "express.m7g.4xlarge", 10, "3.9.x.kraft").is_err());
+        assert!(
+            render_template(SOURCE_TEMPLATE, "express.m7g.4xlarge", 10, "3.9.x.kraft").is_err()
+        );
         assert!(render_template(SOURCE_TEMPLATE, "x", 12, "3.9.x.kraft").is_err());
         assert_eq!(
             render_template(SOURCE_TEMPLATE, "express.m7g.4xlarge", 12, "3.9.x"),
-            Err("unsupported kafka_version '3.9.x'; valid: ['3.6.0', '3.8.x', '3.9.x.kraft'] \
+            Err(
+                "unsupported kafka_version '3.9.x'; valid: ['3.6.0', '3.8.x', '3.9.x.kraft'] \
                  (3.9 is KRaft-only on Express)"
-                .to_string())
+                    .to_string()
+            )
         );
         let drifted = SOURCE_TEMPLATE.replace("  ProducerCount:", "  ProducerCountX:");
-        let Err(message) = render_template(&drifted, "express.m7g.4xlarge", 12, "3.9.x.kraft") else {
+        let Err(message) = render_template(&drifted, "express.m7g.4xlarge", 12, "3.9.x.kraft")
+        else {
             panic!("drift must fail");
         };
         assert!(message.starts_with("could not set Default for parameter 'ProducerCount'"));
@@ -899,7 +947,10 @@ mod tests {
         let rendered = render_template(SOURCE_TEMPLATE, "express.m7g.4xlarge", 12, "3.9.x.kraft")
             .expect("rendered");
         let doc = render_result_json(&rendered, "/work/stack.yaml");
-        assert_eq!(doc.get("output_path").and_then(Json::as_str), Some("/work/stack.yaml"));
+        assert_eq!(
+            doc.get("output_path").and_then(Json::as_str),
+            Some("/work/stack.yaml")
+        );
         assert_eq!(
             doc.get("deploy_command").and_then(Json::as_str),
             Some(
@@ -918,7 +969,10 @@ mod tests {
         );
         assert_eq!(doc.get("fleet_producer_count"), Some(&Json::Int(9)));
         assert_eq!(doc.get("fleet_consumer_count"), Some(&Json::Int(9)));
-        assert_eq!(doc.get("fleet_instance_type").and_then(Json::as_str), Some("c5.2xlarge"));
+        assert_eq!(
+            doc.get("fleet_instance_type").and_then(Json::as_str),
+            Some("c5.2xlarge")
+        );
     }
 
     // --- validate: e2e_latency ------------------------------------------
@@ -927,7 +981,10 @@ mod tests {
     fn e2e_defaults_pass_cleanly() {
         let result = e2e("10", "10", "1", "1");
         assert_eq!(result.decision(), "PASS");
-        assert!(result.errors.is_empty() && result.warnings.is_empty(), "{result:?}");
+        assert!(
+            result.errors.is_empty() && result.warnings.is_empty(),
+            "{result:?}"
+        );
     }
 
     #[test]
@@ -945,14 +1002,20 @@ mod tests {
                 _ => e2e("10", "10", "1", value),
             };
             for ok in [low_ok, high_ok] {
-                assert!(with(ok).errors.is_empty(), "{field}={ok}: {:?}", with(ok).errors);
+                assert!(
+                    with(ok).errors.is_empty(),
+                    "{field}={ok}: {:?}",
+                    with(ok).errors
+                );
             }
             for bad in [low_bad, high_bad] {
                 let result = with(bad);
                 assert_eq!(result.decision(), "REJECT", "{field}={bad}");
                 assert_eq!(
                     result.errors,
-                    [format!("{field}={bad} is outside the allowed range {window}")]
+                    [format!(
+                        "{field}={bad} is outside the allowed range {window}"
+                    )]
                 );
             }
         }
@@ -979,26 +1042,36 @@ mod tests {
         assert!(sixty("899").is_empty());
         assert_eq!(
             sixty("900"),
-            ["throughput_mbps=900 is above 60% of sustained ingress; high load can inflate \
-              latency. For a clean signal, consider <= 749 MB/s."]
+            [
+                "throughput_mbps=900 is above 60% of sustained ingress; high load can inflate \
+              latency. For a clean signal, consider <= 749 MB/s."
+            ]
         );
         assert_eq!(sixty("899.3").len(), 1);
         // At the sustained rate there is no sustained warning, only the 60% note.
         assert_eq!(sixty("1498.8").len(), 1);
         assert_eq!(
             sixty("1500"),
-            ["throughput_mbps=1500 MB/s is above the cluster's sustained/recommended ingress \
+            [
+                "throughput_mbps=1500 MB/s is above the cluster's sustained/recommended ingress \
               (1498.8 MB/s); it can run but expect performance degradation (elevated latency), \
-              with no throttling until the 2250.0 MB/s ceiling."],
+              with no throttling until the 2250.0 MB/s ceiling."
+            ],
             "the degradation warning replaces the 60% note"
         );
-        assert_eq!(sixty("2250").len(), 1, "the quota itself is still only degradation");
+        assert_eq!(
+            sixty("2250").len(),
+            1,
+            "the quota itself is still only degradation"
+        );
         assert!(sixty("2250")[0].contains("sustained/recommended"));
         assert_eq!(
             sixty("2251"),
-            ["throughput_mbps=2251 MB/s exceeds the cluster's maximum ingress quota (2250.0 \
+            [
+                "throughput_mbps=2251 MB/s exceeds the cluster's maximum ingress quota (2250.0 \
               MB/s) \u{2014} MSK Express throttles read/write traffic beyond this, so the \
-              cluster cannot actually sustain that rate."]
+              cluster cannot actually sustain that rate."
+            ]
         );
     }
 
@@ -1045,7 +1118,10 @@ mod tests {
               during the restart is limited, so recovery may take longer."]
         );
         let result = restart("500", "15", "5", "2");
-        assert!(result.errors.is_empty() && result.warnings.is_empty(), "{result:?}");
+        assert!(
+            result.errors.is_empty() && result.warnings.is_empty(),
+            "{result:?}"
+        );
     }
 
     #[test]
@@ -1141,11 +1217,7 @@ mod tests {
             Err("throughput_mbps must be a number, not string".to_string())
         );
         assert_eq!(
-            validate(
-                "e2e_latency",
-                &json("{\"throughput_mbps\": null}"),
-                &caps()
-            ),
+            validate("e2e_latency", &json("{\"throughput_mbps\": null}"), &caps()),
             Err("throughput_mbps must be a number, not null".to_string())
         );
     }

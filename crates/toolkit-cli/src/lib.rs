@@ -86,7 +86,6 @@ Exit codes:
      or a non-UTF-8 argument); msk sim: invalid sizing, config or output
      (JSON {\"error\": ...} on stderr)";
 
-
 /// Buffered stdout lines with the closed-pipe and write-error contract.
 pub struct Output<'a> {
     sink: &'a mut dyn Write,
@@ -773,9 +772,13 @@ mod tests {
 
     #[test]
     fn value_options_consume_the_next_word_even_when_it_looks_like_a_flag() {
-        let Ok(Routed::Run(_, invocation)) =
-            route_words(&["msk", "size", "--avg-data-in-mbs", "-5", "--use-max-partitions"])
-        else {
+        let Ok(Routed::Run(_, invocation)) = route_words(&[
+            "msk",
+            "size",
+            "--avg-data-in-mbs",
+            "-5",
+            "--use-max-partitions",
+        ]) else {
             panic!("expected a runnable route");
         };
         assert_eq!(invocation.option("--avg-data-in-mbs"), Some("-5"));
@@ -826,7 +829,8 @@ mod tests {
             max_positionals: 0,
             handler,
         };
-        let Ok(Routed::Run(spec, invocation)) = route(std::slice::from_ref(&spec), &words(&["demo"]))
+        let Ok(Routed::Run(spec, invocation)) =
+            route(std::slice::from_ref(&spec), &words(&["demo"]))
         else {
             panic!("expected a runnable route");
         };

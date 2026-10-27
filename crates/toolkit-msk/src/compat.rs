@@ -88,6 +88,11 @@ impl Evidence {
 
 type Pillar = (Severity, Vec<Evidence>);
 
+/// Inclusive integer bounds (`None` = open).
+pub type Bounds = (Option<i128>, Option<i128>);
+
+type PillarFn = fn(&Json) -> Result<Pillar, String>;
+
 /// A shared `null` for lookups of absent members.
 static NULL: Json = Json::Null;
 
@@ -163,8 +168,10 @@ pub const EXPRESS_BROKER_RO: &[&str] = &[
 pub const ONE_DAY_MS: i128 = 24 * 60 * 60 * 1000;
 
 /// Inclusive bounds (`None` = open) Express enforces on broker configs.
-pub const EXPRESS_BROKER_RANGES: &[(&str, (Option<i128>, Option<i128>))] =
-    &[("log.cleaner.max.compaction.lag.ms", (Some(ONE_DAY_MS), None))];
+pub const EXPRESS_BROKER_RANGES: &[(&str, Bounds)] = &[(
+    "log.cleaner.max.compaction.lag.ms",
+    (Some(ONE_DAY_MS), None),
+)];
 
 /// A value Express forces.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -208,7 +215,7 @@ pub const EXPRESS_TOPIC_RW: &[&str] = &[
 ];
 
 /// Inclusive bounds Express enforces on topic configs.
-pub const EXPRESS_TOPIC_RANGES: &[(&str, (Option<i128>, Option<i128>))] =
+pub const EXPRESS_TOPIC_RANGES: &[(&str, Bounds)] =
     &[("max.compaction.lag.ms", (Some(ONE_DAY_MS), None))];
 
 /// Forced topic values.
@@ -349,7 +356,9 @@ fn py_int(value: &Json, what: &str) -> Result<i128, String> {
         Json::Int(number) => Ok(i128::from(*number)),
         Json::Bool(flag) => Ok(i128::from(*flag)),
         Json::Float(number) if number.is_finite() => Ok(number.trunc() as i128),
-        Json::Float(_) => Err(format!("{what}: cannot convert a non-finite float to integer")),
+        Json::Float(_) => Err(format!(
+            "{what}: cannot convert a non-finite float to integer"
+        )),
         Json::String(text) => py_int_parse(text).ok_or_else(|| {
             format!(
                 "{what}: invalid literal for int() with base 10: {}",
@@ -398,12 +407,7 @@ struct RangeProblem {
 
 /// Evidence-style problem if `value` is not an integer within `bounds`.
 /// `subject` names whose setting it is ("Your cluster" or "Topic 'name'").
-fn check_range(
-    key: &str,
-    value: &Json,
-    bounds: (Option<i128>, Option<i128>),
-    subject: &str,
-) -> Option<RangeProblem> {
+fn check_range(key: &str, value: &Json, bounds: Bounds, subject: &str) -> Option<RangeProblem> {
     let (lo, hi) = bounds;
     let lo_text = lo.map_or_else(|| "INT_MIN".to_string(), |bound| bound.to_string());
     let hi_text = hi.map_or_else(|| "INT_MAX".to_string(), |bound| bound.to_string());
@@ -933,10 +937,7 @@ fn security_text(cfg: &Json, key: &str) -> Result<Option<String>, String> {
         return Ok(None);
     };
     object_of(security, "security")?;
-    Ok(security
-        .get(key)
-        .and_then(Json::as_str)
-        .map(str::to_string))
+    Ok(security.get(key).and_then(Json::as_str).map(str::to_string))
 }
 
 fn assess_auth(cfg: &Json) -> Result<Pillar, String> {
@@ -1160,11 +1161,12 @@ fn assess_quotas(cfg: &Json) -> Result<Pillar, String> {
         .filter(|value| truthy(value))
         .and_then(|security| security.get("authentication"))
         .and_then(Json::as_str);
-    let connections = if authentication.is_some_and(|auth| IAM_AUTHENTICATION_VALUES.contains(&auth)) {
-        metric(metrics, "peak_connections_per_broker")?
-    } else {
-        None
-    };
+    let connections =
+        if authentication.is_some_and(|auth| IAM_AUTHENTICATION_VALUES.contains(&auth)) {
+            metric(metrics, "peak_connections_per_broker")?
+        } else {
+            None
+        };
     if let Some((json, number)) = connections {
         if number > EXPRESS_MAX_IAM_CONNS_PER_BROKER as f64 {
             evidence.push(over_limit_evidence(
@@ -1248,11 +1250,7 @@ fn missing_fields(block: &Json, required: &[&str]) -> Option<Json> {
     }
 }
 
-fn check_enum(
-    security: &Json,
-    key: &str,
-    allowed: &'static [&'static str],
-) -> Result<(), String> {
+fn check_enum(security: &Json, key: &str, allowed: &'static [&'static str]) -> Result<(), String> {
     match security.get(key) {
         None | Some(Json::Null) => Ok(()),
         Some(Json::String(text)) if allowed.contains(&text.as_str()) => Ok(()),
@@ -1351,7 +1349,7 @@ pub fn validate_input(cfg: &Json) -> Result<(), String> {
 /// unusable type.
 pub fn assess(cfg: &Json, assessed_at: &str) -> Result<Json, String> {
     validate_input(cfg)?;
-    let pillars: [(&str, fn(&Json) -> Result<Pillar, String>); 5] = [
+    let pillars: [(&str, PillarFn); 5] = [
         ("topology", assess_topology),
         ("kafka_version", assess_kafka_version),
         ("configs", assess_configs),
@@ -1483,7 +1481,10 @@ mod tests {
                 "kafka".into(),
                 "{\"version\": \"3.6.0\", \"coordination_mechanism\": \"KRaft\"}".into(),
             ),
-            ("topology".into(), "{\"num_brokers\": 3, \"num_azs\": 3}".into()),
+            (
+                "topology".into(),
+                "{\"num_brokers\": 3, \"num_azs\": 3}".into(),
+            ),
             ("topics".into(), "[]".into()),
         ];
         for (key, value) in overrides {
@@ -1529,8 +1530,14 @@ mod tests {
             .iter()
             .map(|item| {
                 (
-                    item.get("code").and_then(Json::as_str).expect("code").to_string(),
-                    item.get("severity").and_then(Json::as_str).expect("severity").to_string(),
+                    item.get("code")
+                        .and_then(Json::as_str)
+                        .expect("code")
+                        .to_string(),
+                    item.get("severity")
+                        .and_then(Json::as_str)
+                        .expect("severity")
+                        .to_string(),
                 )
             })
             .collect()
@@ -1564,7 +1571,10 @@ mod tests {
     #[test]
     fn a_clean_cluster_is_info_everywhere_except_missing_metrics() {
         let doc = assessed(&[
-            ("security", "{\"encryption_in_transit\": \"TLS\", \"authentication\": \"SASL_IAM\"}"),
+            (
+                "security",
+                "{\"encryption_in_transit\": \"TLS\", \"authentication\": \"SASL_IAM\"}",
+            ),
             ("metrics", "{}"),
         ]);
         assert_eq!(doc.get("overall").and_then(Json::as_str), Some("INFO"));
@@ -1580,7 +1590,10 @@ mod tests {
             Some(&Json::Array(vec![Json::string("VERSION_SUPPORTED")]))
         );
         assert_eq!(summary.get("advisory_codes"), Some(&Json::Array(vec![])));
-        assert_eq!(summary.get("action_required_codes"), Some(&Json::Array(vec![])));
+        assert_eq!(
+            summary.get("action_required_codes"),
+            Some(&Json::Array(vec![]))
+        );
     }
 
     #[test]
@@ -1590,20 +1603,40 @@ mod tests {
             panic!("object");
         };
         let keys: Vec<&str> = pairs.iter().map(|(key, _)| key.as_str()).collect();
-        assert_eq!(keys, ["cluster_name", "assessed_at", "overall", "pillars", "summary"]);
+        assert_eq!(
+            keys,
+            [
+                "cluster_name",
+                "assessed_at",
+                "overall",
+                "pillars",
+                "summary"
+            ]
+        );
         assert_eq!(doc.get("cluster_name").and_then(Json::as_str), Some("demo"));
         assert_eq!(doc.get("assessed_at").and_then(Json::as_str), Some(AT));
         let Some(Json::Object(pillars)) = doc.get("pillars") else {
             panic!("pillars");
         };
         let names: Vec<&str> = pillars.iter().map(|(key, _)| key.as_str()).collect();
-        assert_eq!(names, ["topology", "kafka_version", "configs", "auth", "quotas"]);
-        let first = finding(&assessed(&[("topology", "{\"num_brokers\": 1, \"num_azs\": 3}")]), "topology", "BROKER_COUNT_LT_3").clone();
+        assert_eq!(
+            names,
+            ["topology", "kafka_version", "configs", "auth", "quotas"]
+        );
+        let first = finding(
+            &assessed(&[("topology", "{\"num_brokers\": 1, \"num_azs\": 3}")]),
+            "topology",
+            "BROKER_COUNT_LT_3",
+        )
+        .clone();
         let Json::Object(fields) = first else {
             panic!("evidence object");
         };
         let order: Vec<&str> = fields.iter().map(|(key, _)| key.as_str()).collect();
-        assert_eq!(order, ["code", "severity", "detail", "observed", "required"]);
+        assert_eq!(
+            order,
+            ["code", "severity", "detail", "observed", "required"]
+        );
     }
 
     #[test]
@@ -1615,7 +1648,10 @@ mod tests {
                 "{\"encryption_in_transit\": \"PLAINTEXT\", \"authentication\": \"SASL_SCRAM\"}",
             ),
         ]);
-        assert_eq!(doc.get("overall").and_then(Json::as_str), Some("ACTION_REQUIRED"));
+        assert_eq!(
+            doc.get("overall").and_then(Json::as_str),
+            Some("ACTION_REQUIRED")
+        );
         let summary = doc.get("summary").expect("summary");
         let list = |key: &str| match summary.get(key) {
             Some(Json::Array(items)) => items
@@ -1639,7 +1675,10 @@ mod tests {
         assert_eq!(parse_version(None), Ok(None));
         assert_eq!(parse_version(Some("3.6")), Ok(Some(vec![3, 6])));
         assert_eq!(parse_version(Some("3.6.0")), Ok(Some(vec![3, 6, 0])));
-        assert_eq!(parse_version(Some("  3.9.12-rc1")), Ok(Some(vec![3, 9, 12])));
+        assert_eq!(
+            parse_version(Some("  3.9.12-rc1")),
+            Ok(Some(vec![3, 9, 12]))
+        );
         assert_eq!(parse_version(Some("3.6.x")), Ok(Some(vec![3, 6])));
         assert_eq!(parse_version(Some("3.6.1.7")), Ok(Some(vec![3, 6, 1])));
         for bad in ["", "3", "3.", "abc", "v3.6", ".6", "3.x"] {
@@ -1667,12 +1706,22 @@ mod tests {
         );
 
         for az in ["3", "\"3\"", "3.0"] {
-            let doc = assessed(&[("topology", &format!("{{\"num_brokers\": 3, \"num_azs\": {az}}}"))]);
+            let doc = assessed(&[(
+                "topology",
+                &format!("{{\"num_brokers\": 3, \"num_azs\": {az}}}"),
+            )]);
             assert!(evidence(&doc, "topology").is_empty(), "az {az}");
         }
-        for topology in ["{\"num_brokers\": 3}", "{\"num_brokers\": 3, \"num_azs\": null}"] {
+        for topology in [
+            "{\"num_brokers\": 3}",
+            "{\"num_brokers\": 3, \"num_azs\": null}",
+        ] {
             let doc = assessed(&[("topology", topology)]);
-            assert_eq!(code_list(&doc, "topology"), ["AZ_COUNT_UNKNOWN"], "{topology}");
+            assert_eq!(
+                code_list(&doc, "topology"),
+                ["AZ_COUNT_UNKNOWN"],
+                "{topology}"
+            );
             assert_eq!(verdict(&doc, "topology"), "ADVISORY");
         }
     }
@@ -1680,7 +1729,10 @@ mod tests {
     #[test]
     fn topology_broker_floor_is_a_note_not_a_failure() {
         for (brokers, expected) in [(1, true), (2, true), (3, false), (6, false)] {
-            let doc = assessed(&[("topology", &format!("{{\"num_brokers\": {brokers}, \"num_azs\": 3}}"))]);
+            let doc = assessed(&[(
+                "topology",
+                &format!("{{\"num_brokers\": {brokers}, \"num_azs\": 3}}"),
+            )]);
             assert_eq!(
                 code_list(&doc, "topology").contains(&"BROKER_COUNT_LT_3".to_string()),
                 expected,
@@ -1690,7 +1742,8 @@ mod tests {
         let doc = assessed(&[("topology", "{\"num_brokers\": 2, \"num_azs\": 3}")]);
         let item = finding(&doc, "topology", "BROKER_COUNT_LT_3");
         assert_eq!(item.get("observed"), Some(&Json::Int(2)));
-        assert!(detail(&doc, "topology", "BROKER_COUNT_LT_3").starts_with("Your cluster has 2 broker(s). "));
+        assert!(detail(&doc, "topology", "BROKER_COUNT_LT_3")
+            .starts_with("Your cluster has 2 broker(s). "));
         // num_brokers may be a numeric string, like int() accepts.
         let doc = assessed(&[("topology", "{\"num_brokers\": \"2\", \"num_azs\": 3}")]);
         assert_eq!(code_list(&doc, "topology"), ["BROKER_COUNT_LT_3"]);
@@ -1717,7 +1770,10 @@ mod tests {
             );
         }
         let doc = assessed(&[("kafka", "{\"version\": \"3.9.0\"}")]);
-        assert!(evidence(&doc, "topology").is_empty(), "no coordination field");
+        assert!(
+            evidence(&doc, "topology").is_empty(),
+            "no coordination field"
+        );
     }
 
     #[test]
@@ -1731,7 +1787,10 @@ mod tests {
         assert_eq!(
             item.get("supported"),
             Some(&Json::Array(
-                ["3.6", "3.8", "3.9", "4.2"].iter().map(|v| Json::string(*v)).collect()
+                ["3.6", "3.8", "3.9", "4.2"]
+                    .iter()
+                    .map(|v| Json::string(*v))
+                    .collect()
             ))
         );
         assert!(detail(&doc, "configs", "VERSION_UNKNOWN").contains("generic baseline"));
@@ -1743,7 +1802,11 @@ mod tests {
     fn supported_versions_are_info() {
         for version in ["3.6", "3.6.0", "3.8.1", "3.9.0", "4.2.0", "3.9.x"] {
             let doc = assessed(&[("kafka", &format!("{{\"version\": \"{version}\"}}"))]);
-            assert_eq!(code_list(&doc, "kafka_version"), ["VERSION_SUPPORTED"], "{version}");
+            assert_eq!(
+                code_list(&doc, "kafka_version"),
+                ["VERSION_SUPPORTED"],
+                "{version}"
+            );
             assert_eq!(verdict(&doc, "kafka_version"), "INFO");
         }
         let doc = assessed(&[]);
@@ -1772,8 +1835,14 @@ mod tests {
             let item = finding(&doc, "kafka_version", "VERSION_NOT_IN_EXPRESS_SET");
             assert_eq!(item.get("observed").and_then(Json::as_str), Some(version));
             let text = detail(&doc, "kafka_version", "VERSION_NOT_IN_EXPRESS_SET");
-            assert!(text.starts_with("MSK Express supports Apache Kafka 3.6, 3.8, 3.9, 4.2. Your cluster runs "));
-            assert_eq!(text.contains("MSK Replicator can only copy data"), replicator, "{version}");
+            assert!(text.starts_with(
+                "MSK Express supports Apache Kafka 3.6, 3.8, 3.9, 4.2. Your cluster runs "
+            ));
+            assert_eq!(
+                text.contains("MSK Replicator can only copy data"),
+                replicator,
+                "{version}"
+            );
         }
     }
 
@@ -1804,7 +1873,11 @@ mod tests {
              \"min.insync.replicas\": 1, \"default.replication.factor\": 1, \
              \"log.message.timestamp.type\": \"createtime\", \"num.network.threads\": \" 3 \"}",
         );
-        assert!(evidence(&doc, "configs").is_empty(), "{:?}", evidence(&doc, "configs"));
+        assert!(
+            evidence(&doc, "configs").is_empty(),
+            "{:?}",
+            evidence(&doc, "configs")
+        );
         assert_eq!(verdict(&doc, "configs"), "INFO");
     }
 
@@ -1840,7 +1913,10 @@ mod tests {
         let doc = broker(&format!("{{\"{key}\": \"1000\"}}"));
         assert_eq!(verdict(&doc, "configs"), "ACTION_REQUIRED");
         let item = finding(&doc, "configs", "BROKER_CONFIG_OUT_OF_RANGE");
-        assert_eq!(item.get("severity").and_then(Json::as_str), Some("ACTION_REQUIRED"));
+        assert_eq!(
+            item.get("severity").and_then(Json::as_str),
+            Some("ACTION_REQUIRED")
+        );
         assert_eq!(item.get("config_key").and_then(Json::as_str), Some(key));
         assert_eq!(item.get("observed"), Some(&Json::Int(1000)));
         assert_eq!(
@@ -1860,7 +1936,12 @@ mod tests {
     #[test]
     fn broker_range_rule_flags_values_that_are_not_integers() {
         let key = "log.cleaner.max.compaction.lag.ms";
-        for (value, shown) in [("\"abc\"", "'abc'"), ("true", "True"), ("3.5", "3.5"), ("null", "None")] {
+        for (value, shown) in [
+            ("\"abc\"", "'abc'"),
+            ("true", "True"),
+            ("3.5", "3.5"),
+            ("null", "None"),
+        ] {
             let doc = broker(&format!("{{\"{key}\": {value}}}"));
             assert_eq!(verdict(&doc, "configs"), "ACTION_REQUIRED", "{value}");
             assert_eq!(
@@ -1905,7 +1986,10 @@ mod tests {
             "{\"min.insync.replicas\": 1}",
             "{\"unclean.leader.election.enable\": false}",
         ] {
-            assert!(evidence(&broker(configs), "configs").is_empty(), "{configs}");
+            assert!(
+                evidence(&broker(configs), "configs").is_empty(),
+                "{configs}"
+            );
         }
 
         let doc = broker("{\"unclean.leader.election.enable\": true, \"min.insync.replicas\": 3}");
@@ -1915,7 +1999,10 @@ mod tests {
         );
         let text = detail(&doc, "configs", "BROKER_CONFIG_FORCED_VALUE");
         assert!(text.contains("sets it to 'false'"), "{text}");
-        assert!(text.contains("your current value of True won't apply"), "{text}");
+        assert!(
+            text.contains("your current value of True won't apply"),
+            "{text}"
+        );
         assert_eq!(
             finding(&doc, "configs", "BROKER_CONFIG_FORCED_VALUE").get("enforced"),
             Some(&Json::string("false"))
@@ -1955,17 +2042,31 @@ mod tests {
     #[test]
     fn broker_config_dump_shapes() {
         for configs in ["null", "{}", "[]", "0", "\"\""] {
-            assert!(evidence(&broker(configs), "configs").is_empty(), "{configs}");
+            assert!(
+                evidence(&broker(configs), "configs").is_empty(),
+                "{configs}"
+            );
         }
         let doc = assessed(&[("broker_configs", "-")]);
         assert!(evidence(&doc, "configs").is_empty());
-        assert_eq!(error_of(&[("broker_configs", "5")]), "broker_configs must be an object");
-        assert_eq!(error_of(&[("broker_configs", "[1]")]), "broker_configs must be an object");
+        assert_eq!(
+            error_of(&[("broker_configs", "5")]),
+            "broker_configs must be an object"
+        );
+        assert_eq!(
+            error_of(&[("broker_configs", "[1]")]),
+            "broker_configs must be an object"
+        );
         // Evidence follows the dump's key order.
         let doc = broker("{\"log.dirs\": \"a\", \"broker.id\": 1, \"listeners\": \"x\"}");
         let keys: Vec<String> = evidence(&doc, "configs")
             .iter()
-            .map(|item| item.get("config_key").and_then(Json::as_str).expect("key").to_string())
+            .map(|item| {
+                item.get("config_key")
+                    .and_then(Json::as_str)
+                    .expect("key")
+                    .to_string()
+            })
             .collect();
         assert_eq!(keys, ["log.dirs", "broker.id", "listeners"]);
     }
@@ -1989,7 +2090,9 @@ mod tests {
              action needed."
         );
         for factor in ["3", "\"3\""] {
-            let doc = topics(&format!("[{{\"name\": \"t\", \"replication_factor\": {factor}}}]"));
+            let doc = topics(&format!(
+                "[{{\"name\": \"t\", \"replication_factor\": {factor}}}]"
+            ));
             assert!(evidence(&doc, "configs").is_empty(), "rf {factor}");
         }
     }
@@ -2014,7 +2117,10 @@ mod tests {
              migrated as-is."
         );
         assert!(evidence(&make("86400000"), "configs").is_empty());
-        assert!(evidence(&make("9223372036854775807"), "configs").is_empty(), "Apache default");
+        assert!(
+            evidence(&make("9223372036854775807"), "configs").is_empty(),
+            "Apache default"
+        );
         assert_eq!(verdict(&make("\"soon\""), "configs"), "ACTION_REQUIRED");
     }
 
@@ -2025,7 +2131,9 @@ mod tests {
                 "[{{\"name\": \"t\", \"replication_factor\": 3, \"configs\": {configs}}}]"
             ))
         };
-        let doc = make("{\"min.insync.replicas\": \"3\", \"segment.bytes\": 1024, \"retention.ms\": 1000}");
+        let doc = make(
+            "{\"min.insync.replicas\": \"3\", \"segment.bytes\": 1024, \"retention.ms\": 1000}",
+        );
         assert_eq!(
             code_list(&doc, "configs"),
             ["TOPIC_CONFIG_FORCED_VALUE", "TOPIC_CONFIG_NOT_EXPOSED"]
@@ -2077,12 +2185,21 @@ mod tests {
             "topics[0] is missing required field 'replication_factor'"
         );
         assert_eq!(
-            error_of(&[("topics", "[{\"name\": \"t\", \"replication_factor\": \"x\"}]")]),
+            error_of(&[(
+                "topics",
+                "[{\"name\": \"t\", \"replication_factor\": \"x\"}]"
+            )]),
             "topics[0].replication_factor: invalid literal for int() with base 10: 'x'"
         );
-        assert_eq!(error_of(&[("topics", "[5]")]), "topics[0] must be an object");
         assert_eq!(
-            error_of(&[("topics", "[{\"name\": \"t\", \"replication_factor\": 3, \"configs\": 5}]")]),
+            error_of(&[("topics", "[5]")]),
+            "topics[0] must be an object"
+        );
+        assert_eq!(
+            error_of(&[(
+                "topics",
+                "[{\"name\": \"t\", \"replication_factor\": 3, \"configs\": 5}]"
+            )]),
             "topics[0].configs must be an object"
         );
     }
@@ -2121,8 +2238,11 @@ mod tests {
             finding(&doc, "auth", "AUTH_OAUTHBEARER_NOT_SUPPORTED").get("observed"),
             Some(&Json::string("SASL_OAUTHBEARER"))
         );
-        assert!(detail(&doc, "auth", "AUTH_OAUTHBEARER_NOT_SUPPORTED")
-            .starts_with("Your cluster uses SASL/OAUTHBEARER. MSK Express accepts OAUTHBEARER only"));
+        assert!(
+            detail(&doc, "auth", "AUTH_OAUTHBEARER_NOT_SUPPORTED").starts_with(
+                "Your cluster uses SASL/OAUTHBEARER. MSK Express accepts OAUTHBEARER only"
+            )
+        );
 
         let doc = security("\"TLS\"", "\"OTHER\"");
         assert_eq!(code_list(&doc, "auth"), ["AUTH_MECHANISM_NOT_SUPPORTED"]);
@@ -2147,7 +2267,10 @@ mod tests {
             vec![("security", "-")],
             vec![("security", "null")],
             vec![("security", "{}")],
-            vec![("security", "{\"encryption_in_transit\": null, \"authentication\": null}")],
+            vec![(
+                "security",
+                "{\"encryption_in_transit\": null, \"authentication\": null}",
+            )],
         ] {
             let doc = assessed(&overrides);
             assert_eq!(
@@ -2168,7 +2291,11 @@ mod tests {
             ("TLS_PLAINTEXT", "SASL_SCRAM"),
         ] {
             let doc = security(&format!("\"{encryption}\""), &format!("\"{auth}\""));
-            assert_eq!(code_list(&doc, "auth"), ["ENCRYPTION_NOT_TLS"], "{encryption} {auth}");
+            assert_eq!(
+                code_list(&doc, "auth"),
+                ["ENCRYPTION_NOT_TLS"],
+                "{encryption} {auth}"
+            );
             assert_eq!(verdict(&doc, "auth"), "ACTION_REQUIRED");
             assert_eq!(
                 finding(&doc, "auth", "ENCRYPTION_NOT_TLS").get("observed"),
@@ -2209,7 +2336,10 @@ mod tests {
             "security.authentication=5 is not in the allowed enum ['OTHER', 'SASL_IAM', \
              'SASL_OAUTHBEARER', 'SASL_SCRAM', 'TLS', 'UNAUTHENTICATED', 'UNKNOWN']"
         );
-        assert_eq!(error_of(&[("security", "[1]")]), "security must be an object");
+        assert_eq!(
+            error_of(&[("security", "[1]")]),
+            "security must be an object"
+        );
     }
 
     // --- pillar 5: quotas --------------------------------------------------
@@ -2233,9 +2363,21 @@ mod tests {
     #[test]
     fn per_broker_limits_are_exclusive_upper_bounds() {
         for (field, code, limit) in [
-            ("peak_bytes_in_per_broker_mbps", "INGRESS_OVER_MAX_BROKER", 750),
-            ("peak_bytes_out_per_broker_mbps", "EGRESS_OVER_MAX_BROKER", 1875),
-            ("peak_partitions_per_broker", "PARTITIONS_OVER_MAX_BROKER", 32_000),
+            (
+                "peak_bytes_in_per_broker_mbps",
+                "INGRESS_OVER_MAX_BROKER",
+                750,
+            ),
+            (
+                "peak_bytes_out_per_broker_mbps",
+                "EGRESS_OVER_MAX_BROKER",
+                1875,
+            ),
+            (
+                "peak_partitions_per_broker",
+                "PARTITIONS_OVER_MAX_BROKER",
+                32_000,
+            ),
         ] {
             let at_limit = metrics(&format!("\"{field}\": {limit}"));
             assert!(
@@ -2247,7 +2389,10 @@ mod tests {
             let item = finding(&over, "quotas", code);
             assert_eq!(item.get("observed"), Some(&Json::Int(limit + 1)));
             assert_eq!(item.get("limit"), Some(&Json::Int(limit)));
-            assert_eq!(item.get("severity").and_then(Json::as_str), Some("ADVISORY"));
+            assert_eq!(
+                item.get("severity").and_then(Json::as_str),
+                Some("ADVISORY")
+            );
         }
         let doc = metrics("\"peak_bytes_in_per_broker_mbps\": 800.5");
         assert_eq!(
@@ -2262,13 +2407,19 @@ mod tests {
             finding(&doc, "quotas", "INGRESS_OVER_MAX_BROKER").get("observed"),
             Some(&Json::Float(800.5))
         );
-        let doc = metrics("\"peak_bytes_out_per_broker_mbps\": 2000, \"peak_partitions_per_broker\": 40000");
+        let doc = metrics(
+            "\"peak_bytes_out_per_broker_mbps\": 2000, \"peak_partitions_per_broker\": 40000",
+        );
         assert_eq!(
             code_list(&doc, "quotas"),
             ["EGRESS_OVER_MAX_BROKER", "PARTITIONS_OVER_MAX_BROKER"]
         );
         // null metrics are skipped.
-        assert!(evidence(&metrics("\"peak_bytes_in_per_broker_mbps\": null"), "quotas").is_empty());
+        assert!(evidence(
+            &metrics("\"peak_bytes_in_per_broker_mbps\": null"),
+            "quotas"
+        )
+        .is_empty());
     }
 
     #[test]
@@ -2277,15 +2428,27 @@ mod tests {
             assessed(&[
                 (
                     "security",
-                    &format!("{{\"encryption_in_transit\": \"TLS\", \"authentication\": \"{auth}\"}}"),
+                    &format!(
+                        "{{\"encryption_in_transit\": \"TLS\", \"authentication\": \"{auth}\"}}"
+                    ),
                 ),
-                ("metrics", &format!("{{\"peak_connections_per_broker\": {connections}}}")),
+                (
+                    "metrics",
+                    &format!("{{\"peak_connections_per_broker\": {connections}}}"),
+                ),
             ])
         };
         for auth in ["SASL_IAM", "SASL_OAUTHBEARER"] {
-            assert!(evidence(&make(auth, 3000), "quotas").is_empty(), "{auth} at the cap");
+            assert!(
+                evidence(&make(auth, 3000), "quotas").is_empty(),
+                "{auth} at the cap"
+            );
             let doc = make(auth, 3001);
-            assert_eq!(code_list(&doc, "quotas"), ["CONNECTIONS_OVER_IAM_LIMIT"], "{auth}");
+            assert_eq!(
+                code_list(&doc, "quotas"),
+                ["CONNECTIONS_OVER_IAM_LIMIT"],
+                "{auth}"
+            );
             assert_eq!(
                 finding(&doc, "quotas", "CONNECTIONS_OVER_IAM_LIMIT").get("limit"),
                 Some(&Json::Int(3000))
@@ -2298,7 +2461,11 @@ mod tests {
         let doc = assessed(&[("metrics", "{\"peak_connections_per_broker\": 50000}")]);
         assert!(evidence(&doc, "quotas").is_empty());
         assert_eq!(
-            detail(&make("SASL_IAM", 3001), "quotas", "CONNECTIONS_OVER_IAM_LIMIT"),
+            detail(
+                &make("SASL_IAM", 3001),
+                "quotas",
+                "CONNECTIONS_OVER_IAM_LIMIT"
+            ),
             "Your peak of 3001 connections per broker is above the MSK Express IAM limit of 3000 \
              per broker. You can spread the connections across more brokers, or use a non-IAM \
              authentication mechanism, which MSK Express doesn't cap (monitor CPU and memory \
@@ -2325,7 +2492,10 @@ mod tests {
         };
         // 100 * 3 / 10 = 30.0 MB/s > 15.
         let doc = make("100", 3, 10);
-        assert_eq!(code_list(&doc, "quotas"), ["PARTITION_THROUGHPUT_OVER_LIMIT"]);
+        assert_eq!(
+            code_list(&doc, "quotas"),
+            ["PARTITION_THROUGHPUT_OVER_LIMIT"]
+        );
         let item = finding(&doc, "quotas", "PARTITION_THROUGHPUT_OVER_LIMIT");
         assert_eq!(item.get("observed"), Some(&Json::Float(30.0)));
         assert_eq!(item.get("limit"), Some(&Json::Int(15)));
@@ -2342,13 +2512,17 @@ mod tests {
         let doc = make("7.7", 3, 1);
         let item = finding(&doc, "quotas", "PARTITION_THROUGHPUT_OVER_LIMIT");
         assert_eq!(item.get("observed"), Some(&Json::Float(23.1)));
-        assert!(detail(&doc, "quotas", "PARTITION_THROUGHPUT_OVER_LIMIT").contains("throughput of 23.1 MB/s"));
+        assert!(detail(&doc, "quotas", "PARTITION_THROUGHPUT_OVER_LIMIT")
+            .contains("throughput of 23.1 MB/s"));
     }
 
     #[test]
     fn per_partition_throughput_needs_partitions_and_ingress() {
         let doc = assessed(&[("metrics", "{\"peak_bytes_in_per_broker_mbps\": 700}")]);
-        assert!(evidence(&doc, "quotas").is_empty(), "no topics, no partitions");
+        assert!(
+            evidence(&doc, "quotas").is_empty(),
+            "no topics, no partitions"
+        );
         let doc = assessed(&[
             (
                 "topics",
@@ -2386,7 +2560,10 @@ mod tests {
         let incomplete = parse_json("{\"cluster_name\": \"x\"}").expect("json");
         assert_eq!(
             validate_input(&incomplete),
-            Err("discovery contract missing top-level fields: ['kafka', 'topology', 'topics']".to_string())
+            Err(
+                "discovery contract missing top-level fields: ['kafka', 'topology', 'topics']"
+                    .to_string()
+            )
         );
         assert_eq!(
             error_of(&[("kafka", "{}")]),
@@ -2403,7 +2580,10 @@ mod tests {
             Err("discovery contract must be an object".to_string())
         );
         assert_eq!(error_of(&[("kafka", "\"3.6\"")]), "kafka must be an object");
-        assert_eq!(error_of(&[("topology", "[]")]), "topology must be an object");
+        assert_eq!(
+            error_of(&[("topology", "[]")]),
+            "topology must be an object"
+        );
         assert!(validate_input(&config(&[])).is_ok());
     }
 
@@ -2417,7 +2597,10 @@ mod tests {
             "{\"pricing_discount_pct\": 99.5}",
             "null",
         ] {
-            assert!(assess(&config(&[("target", target)]), AT).is_ok(), "{target}");
+            assert!(
+                assess(&config(&[("target", target)]), AT).is_ok(),
+                "{target}"
+            );
         }
         assert_eq!(
             error_of(&[("target", "{\"rack_affined_consumers\": \"yes\"}")]),
@@ -2452,7 +2635,10 @@ mod tests {
     fn severity_ordering_and_names() {
         assert!(Severity::Info < Severity::Advisory);
         assert!(Severity::Advisory < Severity::ActionRequired);
-        assert_eq!(Severity::Info.worst(Severity::ActionRequired), Severity::ActionRequired);
+        assert_eq!(
+            Severity::Info.worst(Severity::ActionRequired),
+            Severity::ActionRequired
+        );
         assert_eq!(Severity::Advisory.worst(Severity::Info), Severity::Advisory);
         assert_eq!(Severity::Info.as_str(), "INFO");
         assert_eq!(Severity::Advisory.as_str(), "ADVISORY");
@@ -2469,12 +2655,18 @@ mod tests {
             output_file_name(&Json::string(".hidden name")),
             Ok("compatibility..hidden name.json".to_string())
         );
-        assert_eq!(output_file_name(&Json::Int(42)), Ok("compatibility.42.json".to_string()));
+        assert_eq!(
+            output_file_name(&Json::Int(42)),
+            Ok("compatibility.42.json".to_string())
+        );
         for bad in ["", ".", "..", "a/b", "../x", "a\\b", "x\ny", "nul\u{0}"] {
             let Err(message) = output_file_name(&Json::string(bad)) else {
                 panic!("{bad:?} must be refused");
             };
-            assert!(message.contains("cannot be used in an output file name"), "{message}");
+            assert!(
+                message.contains("cannot be used in an output file name"),
+                "{message}"
+            );
         }
     }
 

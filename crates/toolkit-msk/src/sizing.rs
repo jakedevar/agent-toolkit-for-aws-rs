@@ -460,7 +460,9 @@ fn pick_bottleneck(details: &[BottleneckDetail]) -> (i64, &'static str) {
             best = Some(detail);
         }
     }
-    best.map_or((0, "ingress"), |detail| (detail.brokers_needed, detail.name))
+    best.map_or((0, "ingress"), |detail| {
+        (detail.brokers_needed, detail.name)
+    })
 }
 
 /// Calculates sizing for all Standard (M5 / M7g) instance types that have a
@@ -485,8 +487,12 @@ pub fn calculate_standard_sizing(
     let ebs_gb = ebs_gb_data * EBS_HEADROOM_FACTOR;
 
     let ts_in_use = inputs.retention_hours > inputs.primary_retention_hours;
-    let storage_factor =
-        STORAGE_IO_FACTOR_BASE + if ts_in_use { STORAGE_IO_FACTOR_TS_ADD } else { 0.0 };
+    let storage_factor = STORAGE_IO_FACTOR_BASE
+        + if ts_in_use {
+            STORAGE_IO_FACTOR_TS_ADD
+        } else {
+            0.0
+        };
     let network_base = NETWORK_IO_BASE + if ts_in_use { NETWORK_IO_TS_ADD } else { 0.0 };
 
     let ts_gb = if ts_in_use {
@@ -826,10 +832,16 @@ mod tests {
         let m5 = find(&results, "kafka.m5.large");
         // network factor 3.0 + 5.7 = 8.7 -> 96 / 8.7 * 0.5 = 5.517 -> 3.625 -> 4 -> 6
         assert_eq!(m5.broker_count, 6);
-        approx(m5.bottleneck_details[0].per_broker_capacity, 96.0 / 8.7 * 0.5);
+        approx(
+            m5.bottleneck_details[0].per_broker_capacity,
+            96.0 / 8.7 * 0.5,
+        );
         approx(m5.monthly_ts_cost, 0.0);
         // EBS holds the full retention: 10 * 168 * 3600 * 3 / 1024 * 2.
-        approx(m5.bottleneck_details[3].demand, 10.0 * 168.0 * 3600.0 * 3.0 / 1024.0 * 2.0);
+        approx(
+            m5.bottleneck_details[3].demand,
+            10.0 * 168.0 * 3600.0 * 3.0 / 1024.0 * 2.0,
+        );
     }
 
     #[test]
@@ -862,8 +874,14 @@ mod tests {
         assert_eq!(pst.per_broker_capacity, 500.0);
         assert_eq!(pst.demand, 30.0);
         approx(big.monthly_pst_cost, 3.0 * 500.0 * 0.08);
-        approx(big.total_monthly_cost, big.monthly_broker_cost + big.monthly_ebs_cost
-            + big.monthly_ts_cost + big.monthly_cross_az_cost + 120.0);
+        approx(
+            big.total_monthly_cost,
+            big.monthly_broker_cost
+                + big.monthly_ebs_cost
+                + big.monthly_ts_cost
+                + big.monthly_cross_az_cost
+                + 120.0,
+        );
 
         // Not PST eligible: no detail and no cost.
         let small = find(&results, "kafka.m5.2xlarge");
@@ -875,7 +893,10 @@ mod tests {
         let results = standard(&inputs, 0.0);
         let big = find(&results, "kafka.m5.4xlarge");
         assert_eq!(
-            big.bottleneck_details.last().expect("pst").per_broker_capacity,
+            big.bottleneck_details
+                .last()
+                .expect("pst")
+                .per_broker_capacity,
             593.75
         );
         approx(big.monthly_pst_cost, 3.0 * 593.75 * 0.08);
@@ -887,13 +908,19 @@ mod tests {
         inputs.pst_per_broker_mbs = Some(500.0);
         let list = standard(&inputs, 0.0);
         let discounted = standard(&inputs, 20.0);
-        let (a, b) = (find(&list, "kafka.m5.4xlarge"), find(&discounted, "kafka.m5.4xlarge"));
+        let (a, b) = (
+            find(&list, "kafka.m5.4xlarge"),
+            find(&discounted, "kafka.m5.4xlarge"),
+        );
         approx(b.monthly_broker_cost, a.monthly_broker_cost * 0.8);
         approx(b.monthly_ebs_cost, a.monthly_ebs_cost * 0.8);
         approx(b.monthly_ts_cost, a.monthly_ts_cost * 0.8);
         approx(b.monthly_cross_az_cost, a.monthly_cross_az_cost * 0.8);
         approx(b.monthly_pst_cost, a.monthly_pst_cost * 0.8);
-        assert_eq!(a.broker_count, b.broker_count, "discount never changes sizing");
+        assert_eq!(
+            a.broker_count, b.broker_count,
+            "discount never changes sizing"
+        );
 
         approx(discount_multiplier(0.0).expect("ok"), 1.0);
         approx(discount_multiplier(15.0).expect("ok"), 0.85);
@@ -916,8 +943,14 @@ mod tests {
         inputs.rack_affined_consumers = false;
         let across = standard(&inputs, 0.0);
         // (10 + 30) * 2/3 MiB/s -> 68437.5 GiB/month at $0.02.
-        approx(find(&across, "kafka.m5.large").monthly_cross_az_cost, 1368.75);
-        approx(find(&affined, "kafka.m5.large").monthly_cross_az_cost, 342.1875);
+        approx(
+            find(&across, "kafka.m5.large").monthly_cross_az_cost,
+            1368.75,
+        );
+        approx(
+            find(&affined, "kafka.m5.large").monthly_cross_az_cost,
+            342.1875,
+        );
         assert_eq!(
             find(&across, "kafka.m5.large").broker_count,
             find(&affined, "kafka.m5.large").broker_count
@@ -938,8 +971,14 @@ mod tests {
         assert_eq!(large.bottleneck_details.len(), 3);
         approx(large.bottleneck_details[1].per_broker_capacity, 39.0625);
         approx(large.monthly_broker_cost, 3.0 * 0.408 * 730.0);
-        approx(large.monthly_ebs_cost, 10.0 * 168.0 * 3600.0 / 1024.0 * 0.10);
-        approx(large.monthly_data_in_cost, 10.0 * 3600.0 * 730.0 / 1024.0 * 0.01);
+        approx(
+            large.monthly_ebs_cost,
+            10.0 * 168.0 * 3600.0 / 1024.0 * 0.10,
+        );
+        approx(
+            large.monthly_data_in_cost,
+            10.0 * 3600.0 * 730.0 / 1024.0 * 0.01,
+        );
         approx(large.monthly_cross_az_cost, 342.1875);
         approx(large.monthly_ts_cost, 0.0);
         approx(large.monthly_pst_cost, 0.0);
@@ -967,7 +1006,9 @@ mod tests {
     #[test]
     fn instances_without_a_price_are_excluded() {
         let mut priced = pricing();
-        priced.broker_price_per_hr.retain(|(name, _)| *name != "kafka.m5.large");
+        priced
+            .broker_price_per_hr
+            .retain(|(name, _)| *name != "kafka.m5.large");
         let results = calculate_standard_sizing(&workload(), &priced, 0.0).expect("sizing");
         assert_eq!(results.len(), 14);
         assert!(results.iter().all(|r| r.instance_type != "kafka.m5.large"));
@@ -1100,8 +1141,14 @@ mod tests {
 
     #[test]
     fn broker_class_selection_parses_like_the_legacy_option() {
-        assert_eq!(parse_broker_classes("standard"), Ok(vec![BrokerGroup::Standard]));
-        assert_eq!(parse_broker_classes("express"), Ok(vec![BrokerGroup::Express]));
+        assert_eq!(
+            parse_broker_classes("standard"),
+            Ok(vec![BrokerGroup::Standard])
+        );
+        assert_eq!(
+            parse_broker_classes("express"),
+            Ok(vec![BrokerGroup::Express])
+        );
         assert_eq!(
             parse_broker_classes(" Express , standard,express,,"),
             Ok(vec![BrokerGroup::Express, BrokerGroup::Standard])
@@ -1120,9 +1167,11 @@ mod tests {
         );
         assert_eq!(
             parse_broker_classes("standard, Gold"),
-            Err("invalid broker class 'Gold'; choose from: express, standard \
+            Err(
+                "invalid broker class 'Gold'; choose from: express, standard \
                  (comma-separate to select both)"
-                .to_string())
+                    .to_string()
+            )
         );
     }
 
@@ -1173,7 +1222,10 @@ mod tests {
         assert!(!is_pst_eligible("kafka.m7g.2xlarge"));
         assert!(!is_pst_eligible("kafka.m7g.4xlarge (Express)"));
         // Spot values from the published capacity tables.
-        let m5_24 = INSTANCE_SPECS.iter().find(|s| s.name == "kafka.m5.24xlarge").expect("row");
+        let m5_24 = INSTANCE_SPECS
+            .iter()
+            .find(|s| s.name == "kafka.m5.24xlarge")
+            .expect("row");
         assert_eq!((m5_24.rec_partitions, m5_24.max_partitions), (4000, 4000));
         assert_eq!(
             m5_24.capacity,
@@ -1188,7 +1240,10 @@ mod tests {
     fn classification_groups_instances() {
         assert_eq!(classify("kafka.m5.large"), Some(BrokerClass::M5Standard));
         assert_eq!(classify("kafka.m7g.large"), Some(BrokerClass::M7gStandard));
-        assert_eq!(classify("kafka.m7g.large (Express)"), Some(BrokerClass::Express));
+        assert_eq!(
+            classify("kafka.m7g.large (Express)"),
+            Some(BrokerClass::Express)
+        );
         assert_eq!(classify("kafka.t3.small"), None);
         assert_eq!(BrokerClass::M5Standard.label(), "Standard M5");
         assert_eq!(BrokerGroup::Standard.classes().len(), 2);

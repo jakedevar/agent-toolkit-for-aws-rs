@@ -88,7 +88,7 @@ pub fn format_g(value: f64) -> String {
 fn group_thousands(digits: &str) -> String {
     let mut out = String::with_capacity(digits.len() + digits.len() / 3);
     for (index, c) in digits.chars().enumerate() {
-        if index > 0 && (digits.len() - index) % 3 == 0 {
+        if index > 0 && (digits.len() - index).is_multiple_of(3) {
             out.push(',');
         }
         out.push(c);
@@ -166,7 +166,10 @@ pub fn py_int_parse(text: &str) -> Option<i128> {
         Some(rest) => (true, rest),
         None => (false, trimmed.strip_prefix('+').unwrap_or(trimmed)),
     };
-    if digits.is_empty() || digits.starts_with('_') || digits.ends_with('_') || digits.contains("__")
+    if digits.is_empty()
+        || digits.starts_with('_')
+        || digits.ends_with('_')
+        || digits.contains("__")
     {
         return None;
     }
@@ -282,7 +285,7 @@ pub fn ascii_escape(text: &str) -> String {
             out.push(c);
         } else {
             let mut buffer = [0_u16; 2];
-            for unit in c.encode_utf16(&mut buffer).iter().copied() {
+            for unit in c.encode_utf16(&mut buffer).iter() {
                 let _ = write!(out, "\\u{unit:04x}");
             }
         }
@@ -447,6 +450,9 @@ mod tests {
             json_dumps(&value),
             "{\n  \"text\": \"a \\u2014 b \\u00e9 \\ud83d\\ude00\",\n  \"list\": [\n    1\n  ],\n  \"empty\": []\n}"
         );
-        assert_eq!(error_json("bad \"x\" —"), "{\"error\": \"bad \\\"x\\\" \\u2014\"}");
+        assert_eq!(
+            error_json("bad \"x\" —"),
+            "{\"error\": \"bad \\\"x\\\" \\u2014\"}"
+        );
     }
 }

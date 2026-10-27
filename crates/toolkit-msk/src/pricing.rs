@@ -333,7 +333,10 @@ fn price_per_unit_usd(product: &Json) -> Result<f64, PricingError> {
             "no OnDemand priceDimensions found in pricing product (sku={sku})"
         )));
     };
-    match dimension.get("pricePerUnit").and_then(|price| price.get("USD")) {
+    match dimension
+        .get("pricePerUnit")
+        .and_then(|price| price.get("USD"))
+    {
         Some(Json::String(text)) => text.trim().parse().map_err(|_| {
             PricingError::Dimension(format!(
                 "unparseable USD price {} in pricing product",
@@ -398,7 +401,9 @@ pub fn fetch_pricing(
         )?;
         let mut price_by_compute_family: BTreeMap<String, f64> = BTreeMap::new();
         for product in &products {
-            let attributes = product.get("product").and_then(|inner| inner.get("attributes"));
+            let attributes = product
+                .get("product")
+                .and_then(|inner| inner.get("attributes"));
             let Some(attributes) = attributes else {
                 return Err(PricingError::Dimension(
                     "pricing product has no product.attributes".to_string(),
@@ -720,7 +725,10 @@ mod tests {
         assert_eq!(pricing.region, "us-east-1");
         assert_eq!(pricing.broker_price_per_hr.len(), 22);
         assert_eq!(pricing.broker_price_per_hr("kafka.m5.large"), Some(0.21));
-        assert_eq!(pricing.broker_price_per_hr("kafka.m7g.16xlarge (Express)"), Some(13.056));
+        assert_eq!(
+            pricing.broker_price_per_hr("kafka.m7g.16xlarge (Express)"),
+            Some(13.056)
+        );
         assert_eq!(pricing.broker_price_per_hr("kafka.nope"), None);
         assert_eq!(pricing.ebs_cost_per_gb_month, 0.10);
         assert_eq!(pricing.tiered_storage_cost_per_gb_month, 0.06);
@@ -731,22 +739,26 @@ mod tests {
         // Every instance of the table has a static price.
         assert_eq!(STATIC_BROKER_PRICE_PER_HR.len(), INSTANCE_SPECS.len());
         for spec in INSTANCE_SPECS {
-            assert!(pricing.broker_price_per_hr(spec.name).is_some(), "{}", spec.name);
+            assert!(
+                pricing.broker_price_per_hr(spec.name).is_some(),
+                "{}",
+                spec.name
+            );
         }
     }
 
     #[test]
     fn static_pricing_zeroes_dimensions_of_unselected_classes() {
-        let standard = static_pricing("us-east-1", &[BrokerGroup::Standard], &mut Vec::new())
-            .expect("static");
+        let standard =
+            static_pricing("us-east-1", &[BrokerGroup::Standard], &mut Vec::new()).expect("static");
         assert_eq!(standard.broker_price_per_hr.len(), 15);
         assert_eq!(standard.express_storage_cost_per_gb_month, 0.0);
         assert_eq!(standard.express_data_in_per_gb, 0.0);
         assert_eq!(standard.ebs_cost_per_gb_month, 0.10);
         assert_eq!(standard.cross_az_cost_per_gb, 0.02);
 
-        let express = static_pricing("us-east-1", &[BrokerGroup::Express], &mut Vec::new())
-            .expect("static");
+        let express =
+            static_pricing("us-east-1", &[BrokerGroup::Express], &mut Vec::new()).expect("static");
         assert_eq!(express.broker_price_per_hr.len(), 7);
         assert_eq!(express.ebs_cost_per_gb_month, 0.0);
         assert_eq!(express.tiered_storage_cost_per_gb_month, 0.0);
@@ -775,7 +787,10 @@ mod tests {
     fn compute_family_maps_instance_names() {
         assert_eq!(compute_family("kafka.m5.large"), "m5.large");
         assert_eq!(compute_family("kafka.m7g.16xlarge"), "m7g.16xlarge");
-        assert_eq!(compute_family("kafka.m7g.large (Express)"), "express.m7g.large");
+        assert_eq!(
+            compute_family("kafka.m7g.large (Express)"),
+            "express.m7g.large"
+        );
         assert_eq!(compute_family("custom"), "custom");
     }
 
@@ -790,11 +805,16 @@ mod tests {
         assert_eq!(pricing.broker_price_per_hr("kafka.m7g.xlarge"), None);
         assert_eq!(
             warnings,
-            ["no us-east-1 pricing found for kafka.m7g.xlarge (computeFamily=m7g.xlarge); \
-              excluding from sizing"]
+            [
+                "no us-east-1 pricing found for kafka.m7g.xlarge (computeFamily=m7g.xlarge); \
+              excluding from sizing"
+            ]
         );
         assert_eq!(pricing.broker_price_per_hr("kafka.m5.large"), Some(1.1));
-        assert_eq!(pricing.broker_price_per_hr("kafka.m7g.large (Express)"), Some(1.1));
+        assert_eq!(
+            pricing.broker_price_per_hr("kafka.m7g.large (Express)"),
+            Some(1.1)
+        );
         assert_eq!(pricing.ebs_cost_per_gb_month, 0.11);
         assert_eq!(pricing.tiered_storage_cost_per_gb_month, 0.07);
         assert_eq!(pricing.pst_cost_per_mbs_month, 0.09);
@@ -805,7 +825,10 @@ mod tests {
         // One RunBroker call per region, not one per instance type.
         let calls = api.calls.borrow();
         assert_eq!(calls.iter().filter(|c| c.contains("RunBroker")).count(), 1);
-        assert_eq!(calls[0], "AmazonMSK:regionCode=us-east-1,operation=RunBroker");
+        assert_eq!(
+            calls[0],
+            "AmazonMSK:regionCode=us-east-1,operation=RunBroker"
+        );
     }
 
     #[test]
@@ -816,7 +839,9 @@ mod tests {
         assert_eq!(pricing.broker_price_per_hr.len(), 7);
         assert_eq!(pricing.ebs_cost_per_gb_month, 0.0);
         let calls = api.calls.borrow();
-        assert!(calls.iter().all(|c| !c.contains("GP2") && !c.contains("TieredStorage")));
+        assert!(calls
+            .iter()
+            .all(|c| !c.contains("GP2") && !c.contains("TieredStorage")));
         assert!(calls.iter().any(|c| c.contains("Express storage")));
         assert!(calls.iter().any(|c| c.contains("AmazonEC2")));
 
@@ -841,7 +866,11 @@ mod tests {
         let pricing = fetch_pricing(&api, "ap-south-2", &BOTH, &mut warnings).expect("pricing");
         assert_eq!(pricing.cross_az_cost_per_gb, 0.02);
         assert!(pricing.broker_price_per_hr.is_empty());
-        assert_eq!(warnings.len(), 23, "22 missing brokers plus the cross-AZ note");
+        assert_eq!(
+            warnings.len(),
+            23,
+            "22 missing brokers plus the cross-AZ note"
+        );
         assert_eq!(
             warnings.last().map(String::as_str),
             Some(
@@ -864,7 +893,10 @@ mod tests {
             Ok(vec![product("S", None, "0.5")])
         }));
         let result = fetch_pricing(&api, "us-east-1", &BOTH, &mut Vec::new());
-        assert_eq!(result, Err(PricingError::Unavailable("AccessDenied".to_string())));
+        assert_eq!(
+            result,
+            Err(PricingError::Unavailable("AccessDenied".to_string()))
+        );
     }
 
     #[test]
@@ -908,7 +940,10 @@ mod tests {
             r#"{"terms": {"OnDemand": {"T": {"priceDimensions": {"D": {"pricePerUnit": {"EUR": "1"}}}}}}}"#,
         )
         .expect("json");
-        assert!(matches!(price_per_unit_usd(&no_usd), Err(PricingError::Dimension(_))));
+        assert!(matches!(
+            price_per_unit_usd(&no_usd),
+            Err(PricingError::Dimension(_))
+        ));
         let bad_number = parse_json(
             r#"{"terms": {"OnDemand": {"T": {"priceDimensions": {"D": {"pricePerUnit": {"USD": "free"}}}}}}}"#,
         )
@@ -939,20 +974,32 @@ mod tests {
     fn resolve_auto_falls_back_only_when_the_api_pathway_is_unusable() {
         // No client in this build: us-east-1 falls back with two warning lines.
         let mut warnings = Vec::new();
-        let pricing = resolve_pricing(&UnlinkedPricingApi, "us-east-1", &BOTH, "auto", &mut warnings)
-            .expect("fallback");
+        let pricing = resolve_pricing(
+            &UnlinkedPricingApi,
+            "us-east-1",
+            &BOTH,
+            "auto",
+            &mut warnings,
+        )
+        .expect("fallback");
         assert_eq!(pricing.source, "static");
         assert_eq!(warnings.len(), 1);
-        assert!(warnings[0].starts_with("the AWS Pricing API is unavailable (this toolkit build has no AWS Pricing API client"));
+        assert!(warnings[0].starts_with(
+            "the AWS Pricing API is unavailable (this toolkit build has no AWS Pricing API client"
+        ));
         assert!(warnings[0].contains(
             ").\nWARNING: falling back to embedded us-east-1 pricing captured on 2026-10-05; \
              rates may be stale. Re-run with --pricing-source api once credentials are available to confirm."
         ));
 
         // Another region cannot fall back.
-        let Err(PricingError::General(message)) =
-            resolve_pricing(&UnlinkedPricingApi, "eu-west-1", &BOTH, "auto", &mut Vec::new())
-        else {
+        let Err(PricingError::General(message)) = resolve_pricing(
+            &UnlinkedPricingApi,
+            "eu-west-1",
+            &BOTH,
+            "auto",
+            &mut Vec::new(),
+        ) else {
             panic!("expected a general error");
         };
         assert!(message.contains(
@@ -964,24 +1011,43 @@ mod tests {
 
         // A missing SKU is a data problem the static table cannot fix: no fallback.
         let api = FakeApi::new(Box::new(|_, _| Ok(Vec::new())));
-        let result = resolve_pricing(&api, "us-east-1", &[BrokerGroup::Standard], "auto", &mut Vec::new());
+        let result = resolve_pricing(
+            &api,
+            "us-east-1",
+            &[BrokerGroup::Standard],
+            "auto",
+            &mut Vec::new(),
+        );
         assert!(matches!(result, Err(PricingError::Dimension(_))));
     }
 
     #[test]
     fn resolve_forces_one_pathway_and_rejects_unknown_sources() {
         let api = full_api();
-        let pricing = resolve_pricing(&api, "us-east-1", &BOTH, "api", &mut Vec::new()).expect("api");
+        let pricing =
+            resolve_pricing(&api, "us-east-1", &BOTH, "api", &mut Vec::new()).expect("api");
         assert_eq!(pricing.source, "api");
-        let pricing = resolve_pricing(&api, "us-east-1", &BOTH, "auto", &mut Vec::new()).expect("auto");
+        let pricing =
+            resolve_pricing(&api, "us-east-1", &BOTH, "auto", &mut Vec::new()).expect("auto");
         assert_eq!(pricing.source, "api", "auto prefers a working API");
         let before = api.calls.borrow().len();
-        let pricing = resolve_pricing(&api, "us-east-1", &BOTH, "static", &mut Vec::new()).expect("static");
+        let pricing =
+            resolve_pricing(&api, "us-east-1", &BOTH, "static", &mut Vec::new()).expect("static");
         assert_eq!(pricing.source, "static");
-        assert_eq!(api.calls.borrow().len(), before, "static never calls the API");
+        assert_eq!(
+            api.calls.borrow().len(),
+            before,
+            "static never calls the API"
+        );
 
         assert!(matches!(
-            resolve_pricing(&UnlinkedPricingApi, "us-east-1", &BOTH, "api", &mut Vec::new()),
+            resolve_pricing(
+                &UnlinkedPricingApi,
+                "us-east-1",
+                &BOTH,
+                "api",
+                &mut Vec::new()
+            ),
             Err(PricingError::Unavailable(_))
         ));
         assert_eq!(
@@ -1031,7 +1097,12 @@ mod tests {
              current published pricing)"
         );
         assert_eq!(PRICING_SOURCES, ["auto", "api", "static"]);
-        assert_eq!(UnlinkedPricingApi.get_products("x", &[]).map_err(|e| e.message().len() > 10), Err(true));
+        assert_eq!(
+            UnlinkedPricingApi
+                .get_products("x", &[])
+                .map_err(|e| e.message().len() > 10),
+            Err(true)
+        );
         assert_eq!(PricingError::General("m".into()).to_string(), "m");
     }
 }
