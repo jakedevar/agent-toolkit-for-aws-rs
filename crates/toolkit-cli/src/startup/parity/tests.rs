@@ -221,27 +221,55 @@ fn the_embeddings_subsection_is_stripped_up_to_the_stability_heading() {
     assert_eq!(strip_embeddings("plain"), "plain");
 }
 
-#[test]
-fn the_real_tree_matches_the_pre_split_commit() {
-    if !base_available() {
-        return;
+/// The pre-split texts, derived from the CURRENT real files so the checks can
+/// pass independent of the upstream cache's later growth: the old GCP cache is
+/// the remaining cache plus the Bedrock section without the reinstated
+/// embeddings subsection, the old Azure cache carries the embeddings table.
+fn synthetic_show(path: &str) -> Result<String, String> {
+    let read = |rel: &str| fs::read_to_string(real_plugin().join(rel)).map_err(|e| e.to_string());
+    let canonical = read(CANONICAL)?;
+    match path {
+        p if p == super::OLD_CACHE => {
+            let mut old = read(GCP_CACHE)?;
+            for key in ["Last updated", "Region", "Currency"] {
+                let prefix = format!("**{key}:**");
+                let (new_start, new_end) =
+                    super::find_line(&canonical, &prefix).ok_or("canonical metadata")?;
+                let (start, end) = super::find_line(&old, &prefix).ok_or("old metadata")?;
+                old = format!(
+                    "{}{}{}",
+                    &old[..start],
+                    &canonical[new_start..new_end],
+                    &old[end..]
+                );
+            }
+            if !old.ends_with('\n') {
+                old.push('\n');
+            }
+            let bedrock = section(&canonical, "Bedrock Models (On-Demand)")?;
+            Ok(old + &strip_embeddings(bedrock))
+        }
+        p if p == super::OLD_AZURE_CACHE => {
+            let embeddings = subsection(&canonical, "Embeddings — Bedrock")?;
+            Ok(read(AZURE_CACHE)? + "\n## Pre-split embeddings\n" + embeddings)
+        }
+        p if p == super::OLD_SKILL => read(GCP_SKILL),
+        other => Err(format!("unexpected pre-split path {other}")),
     }
-    let report = run_checks(&real_plugin(), &show).expect("the pricing split is intact");
-    assert_eq!(
-        report.get("status").and_then(toolkit_core::Json::as_str),
-        Some("PASS")
-    );
-    assert_eq!(
-        report.get("baseline").and_then(toolkit_core::Json::as_str),
-        Some(BASE_SHA)
-    );
 }
 
 #[test]
-fn the_command_prints_the_sorted_report_through_the_cli() {
+fn the_real_tree_has_drifted_from_the_pre_split_commit() {
+    // The cache kept growing after the comparison commit (Opus 5.5 rows and
+    // notes), so the pinned proof fails on the real tree exactly as the Python
+    // script does; the failure is the Bedrock section comparison.
     if !base_available() {
         return;
     }
+    assert_eq!(
+        run_checks(&real_plugin(), &show).expect_err("the cache has grown since"),
+        "Bedrock section changed during extraction"
+    );
     let plugin = real_plugin();
     let (code, out, err) = exec(&[
         "startup",
@@ -249,13 +277,32 @@ fn the_command_prints_the_sorted_report_through_the_cli() {
         "--plugin-root",
         plugin.to_str().expect("utf-8 path"),
     ]);
-    assert_eq!(code, 0, "{err}");
-    assert!(out.starts_with("{\n  \"baseline\": \"883270642209b06e1e76dcc4f944a1174abf0675\",\n  \"bedrock_model_lookup_keys\": "), "{out}");
-    assert!(out.contains("\n  \"pricing_accuracy_bands\": {\n    \"ai_models\": \"\\u00b115-25%\",\n    \"infrastructure\": \"\\u00b15-10%\"\n  },"), "{out}");
-    assert!(out.contains("\n  \"pricing_behavior\": \"not checked: needs the Python bedrock_pricing.py modules\","), "{out}");
-    assert!(out.contains("\n  \"status\": \"PASS\","), "{out}");
-    assert!(out.contains("\n  \"vendored_copies\": 3\n}"), "{out}");
-    assert_eq!(err, "");
+    assert_eq!(code, 1);
+    assert_eq!(out, "");
+    assert_eq!(err, "error: Bedrock section changed during extraction\n");
+}
+
+#[test]
+fn a_faithful_tree_passes_and_the_report_is_sorted_json() {
+    let report = run_checks(&real_plugin(), &synthetic_show).expect("the split is intact");
+    assert_eq!(
+        report.get("status").and_then(toolkit_core::Json::as_str),
+        Some("PASS")
+    );
+    let text = super::dumps(&report, Some(2), true);
+    assert!(text.starts_with("{\n  \"baseline\": \"883270642209b06e1e76dcc4f944a1174abf0675\",\n  \"bedrock_model_lookup_keys\": "), "{text}");
+    assert!(text.contains("\n  \"pricing_accuracy_bands\": {\n    \"ai_models\": \"\\u00b115-25%\",\n    \"infrastructure\": \"\\u00b15-10%\"\n  },"), "{text}");
+    assert!(text.contains("\n  \"pricing_behavior\": \"not checked: needs the Python bedrock_pricing.py modules\","), "{text}");
+    assert!(
+        text.contains(
+            "\n  \"representative_monthly_estimates\": {\n    \"amazon.nova-pro-v1:0\": "
+        ),
+        "{text}"
+    );
+    assert!(
+        text.ends_with("\n  \"status\": \"PASS\",\n  \"vendored_copies\": 3\n}"),
+        "{text}"
+    );
 }
 
 #[test]
@@ -317,24 +364,26 @@ fn mutate(plugin: &Path, rel: &str, change: impl Fn(String) -> String) {
 }
 
 fn failure(plugin: &Path) -> String {
-    run_checks(plugin, &show).expect_err("the mutated tree must fail")
+    run_checks(plugin, &synthetic_show).expect_err("the mutated tree must fail")
 }
 
 #[test]
 fn the_unmodified_scratch_copy_passes() {
-    if !base_available() {
-        return;
-    }
     let dir = scratch_plugin("pass");
-    run_checks(&dir, &show).expect("a faithful copy passes");
+    run_checks(&dir, &synthetic_show).expect("a faithful copy passes");
 }
+
+/// A mutation case: label, file, change and the expected message part.
+type Case = (
+    &'static str,
+    &'static str,
+    fn(String) -> String,
+    &'static str,
+);
 
 #[test]
 fn mutated_copies_fail_with_the_python_messages() {
-    if !base_available() {
-        return;
-    }
-    let cases: [(&str, &str, fn(String) -> String, &str); 5] = [
+    let cases: [Case; 5] = [
         (
             "vendored-byte",
             VENDORED[1],

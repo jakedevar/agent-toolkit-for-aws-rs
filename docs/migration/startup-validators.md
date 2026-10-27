@@ -280,6 +280,17 @@ the remainder below.
 32. **Matchers instead of `re`.** Heading, metadata (`\s*(.+)` backtracking included), data
     row, accuracy band and embeddings-strip rules are hand-written; `\d` is ASCII-only.
 
+36. **Finding: the pinned proof fails on the current tree.** Against the real files the
+    comparison fails at the first data check, `Bedrock section changed during extraction`:
+    the canonical Bedrock cache has grown since the comparison commit `883270642209`
+    (Opus 5.5 rows and notes, Sonnet 5.5 note, GPT-6 rows), which the script's own header
+    anticipates for legitimate upstream changes. The Python script behaves the same (it
+    needs the base SHA re-pinned past the growth), so this is recorded as a finding, not
+    hidden: the Rust test pins the failure, and the passing path is covered with
+    pre-split texts derived from the current files. Suggested follow-up for the manager:
+    re-pin `BASE_SHA` to a post-growth commit or retire the one-off proof with the
+    `llm-to-bedrock` conversion.
+
 ### Intentional changes of `startup terraform-policy`
 
 33. **Command shape.** `toolkit startup terraform-policy DIR [--json FILE]`. A missing

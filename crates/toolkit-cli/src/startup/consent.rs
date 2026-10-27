@@ -153,9 +153,9 @@ fn method_at(chars: &[char], at: usize) -> Option<(&'static str, usize)> {
     })
 }
 
-/// One `_METHOD_CALL_RE` match at `at`:
-/// `\b(METHOD)\b\s*(?:to that same base|against)?\s*[`/]`. Returns the method
-/// and the end of the match.
+/// One call-site match at `at`: a method word, optional spaces, an optional
+/// `to that same base` or `against`, optional spaces and then a backtick or a
+/// slash. Returns the method and the end of the match.
 fn call_at(chars: &[char], at: usize) -> Option<(&'static str, usize)> {
     if !at_boundary(chars, at) {
         return None;

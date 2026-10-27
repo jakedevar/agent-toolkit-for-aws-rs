@@ -344,7 +344,9 @@ cache and the remaining GCP/Azure caches with the pre-split commit `883270642209
 (`git show`, so the history must contain it) and prints a JSON report with sorted keys on
 success. A failed assertion is `error: <message>` (exit 1). The step that executed the old
 and new `bedrock_pricing.py` is not ported (the report says `pricing_behavior: not
-checked`).
+checked`). On the current tree the comparison fails at `Bedrock section changed during
+extraction`: the cache has grown since the pinned commit (item 36 of
+`docs/migration/startup-validators.md`).
 
 ### startup terraform-policy
 

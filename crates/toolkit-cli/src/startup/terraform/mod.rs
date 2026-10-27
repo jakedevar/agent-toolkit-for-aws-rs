@@ -7,7 +7,7 @@
 //! unambiguous, in-block literal evidence, so a valid stack is never falsely
 //! blocked. The rules are the ALB TLS posture, public RDS, public database and
 //! admin ports in inline security-group ingress (IPv4 and IPv6), wildcard IAM
-//! `Allow` statements, RDS and ElastiCache encryption. See
+//! `Allow` statements, RDS and `ElastiCache` encryption. See
 //! `docs/migration/startup-validators.md` for the parity table.
 
 use std::fs;
@@ -108,6 +108,8 @@ fn text(chars: &[char]) -> String {
 /// Every `*.tf` file below `dir`, sorted by path components. Links are not
 /// followed and a linked file is an error.
 fn read_tf_files(dir: &Path) -> Result<Vec<TfFile>, String> {
+    // `*.tf` is a case-sensitive glob in the Python script.
+    #[allow(clippy::case_sensitive_file_extension_comparisons)]
     fn walk(dir: &Path, prefix: &[String], found: &mut Vec<Vec<String>>) -> Result<(), String> {
         let entries =
             fs::read_dir(dir).map_err(|error| format!("cannot read {}: {error}", dir.display()))?;
@@ -144,7 +146,7 @@ fn read_tf_files(dir: &Path) -> Result<Vec<TfFile>, String> {
         .collect()
 }
 
-/// An aws_lb listener as the ALB rules see it.
+/// An `aws_lb` listener as the ALB rules see it.
 struct Listener {
     file: String,
     name: String,
@@ -155,7 +157,7 @@ struct Listener {
     has_certificate_arn: bool,
 }
 
-/// True if any aws_lb is an internet-facing APPLICATION load balancer. Network
+/// True if any `aws_lb` is an internet-facing APPLICATION load balancer. Network
 /// and gateway balancers have no HTTPS listener by design; an absent or
 /// variable-driven type or `internal` flag is treated as internet-facing.
 fn has_internet_facing_alb(files: &[TfFile]) -> bool {
@@ -492,7 +494,7 @@ fn check_rds_encryption_at_rest(files: &[TfFile]) -> Vec<Violation> {
     violations
 }
 
-/// ElastiCache replication groups without `at_rest_encryption_enabled = true`.
+/// `ElastiCache` replication groups without `at_rest_encryption_enabled = true`.
 fn check_elasticache_encryption_at_rest(files: &[TfFile]) -> Vec<Violation> {
     let mut violations = Vec::new();
     for file in files {
