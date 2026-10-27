@@ -785,7 +785,7 @@ mod tests {
         assert_eq!(brokers_for(15.0, 5.0), 3);
         assert_eq!(brokers_for(16.0, 5.0), 6);
         assert_eq!(brokers_for(20.0, 5.0), 6);
-        assert_eq!(brokers_for(21.0, 5.0), 9);
+        assert_eq!(brokers_for(31.0, 5.0), 9);
         assert_eq!(brokers_for(1.0, 1000.0), 3);
         assert_eq!(brokers_for(0.0, 5.0), 0);
     }

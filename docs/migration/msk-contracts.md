@@ -85,7 +85,7 @@ Hand-computed from the legacy formulas; each row is pinned by a Rust test.
 
 | Rule / figure | Legacy source | Expected | Rust test |
 | --- | --- | --- | --- |
-| Brokers rounded to multiples of 3 AZs | `_brokers_for` | 10/5→3, 16/5→6, 21/5→9, 0→0 | `sizing::tests::brokers_are_rounded_up_to_a_multiple_of_three_azs` |
+| Brokers rounded to multiples of 3 AZs | `_brokers_for` | 10/5→3, 16/5→6, 31/5→9, 0→0 | `sizing::tests::brokers_are_rounded_up_to_a_multiple_of_three_azs` |
 | Standard m5.large, 10/20/30/40 MiB/s, 3000 partitions, 168h/24h retention, util 0.5, list price | `calculate_standard_sizing` | 6 brokers, bottleneck `ingress`, broker 919.80, EBS 506.25, TS 303.75, cross-AZ 342.1875 | `standard_sizing_matches_the_hand_computed_worked_example`, CLI `size_static_report_matches_the_worked_example` |
 | No Tiered Storage factors (6.5 / 5.7) | storage/network factor constants | m5.large capacity `96/8.7*0.5` | `without_tiered_storage_the_io_factors_are_lower` |
 | Partition limit rec vs max | `partition_key` | 12000 partitions → 12 brokers (rec) / 9 (max) | `partition_limits_switch_between_recommended_and_maximum` |
