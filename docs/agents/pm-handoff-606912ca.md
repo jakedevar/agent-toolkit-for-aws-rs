@@ -18,13 +18,15 @@ No waiver, no hand-landing. origin/rolling was created at 86edeadd per GM ruling
 | #4374 core contracts | 98957f87de81bbd765e4cfb1e1f0264fcac9a0aa | e5670754->c208205a->f08f4d2->98957f87 |
 | #4375 manifests validator | 505a404373b45a60b667a750364b344d621d1434 | on c208205a |
 | #4376 spec validator | 81cc6189c9d1df968468ab6b009d27642fb46d26 | contains merge of 505a404; new deps jsonschema/fancy-regex/unicode-normalization (toolkit-cli only) |
+| #4377 sync | 3a4c08d56d9020a09b62e1dfe8b4f510263abbf1 | on f08f4d2 (core docs-only behind 98957f87) |
 | #4412 secret-safety hook | 44c15ea94de0f74259bc060f9e1160eda096ec9a | on 98957f87. Ruling: land crate only; hold hooks.json at pre-#4412 content until #4487 (binary packaging) lands it atomically (fail-closed would deny every guarded call) |
 
 Branches pushed by continuation workers sometimes went to the predecessor's rsi/ branch (fast-forward only).
 
 ## In flight (terminal watches armed by launches)
 - #4379 toolkit-aws: 2nd security repair, Opus worker 3740a89e from b897cd82 (re-review #4467 findings 1-3, #4468, #4494; conservative-by-construction scrubber ruling). Then re-review on #4467 (Codex gpt-6.1-sol).
-- #4377 sync: repair worker 05955dcd from 7341f3af for re-review #4479 finding 1 (#4495, stage cleanup). Then re-review on #4479 (Codex sol).
+- #4399 startup-validators: Sonnet 8b65101f (base 81cc6189 + merge 98957f87).
+- #4378 ci: Sonnet e719d866 (base 81cc6189 + merges 98957f87, 3a4c08d5); repoints mise/CI, retires covered Python.
 - #4463 (SDK adapter for toolkit-aws): ruling recorded on the Issue; dispatch only after #4379 is accepted.
 
 ## Rulings to keep
