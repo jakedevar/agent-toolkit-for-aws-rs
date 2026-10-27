@@ -472,7 +472,7 @@ mod tests {
 
     #[test]
     fn dumps_never_emits_a_byte_outside_the_printable_ascii_range() {
-        for code in (0..=0xffff_u32).chain([0x10000, 0x1f600, 0x10ffff]) {
+        for code in (0..=0xffff_u32).chain([0x1_0000, 0x1_f600, 0x10_ffff]) {
             let Some(c) = char::from_u32(code) else {
                 continue; // surrogate code points are not Rust chars
             };

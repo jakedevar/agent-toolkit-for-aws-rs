@@ -1320,12 +1320,12 @@ pub fn iterate_design_command(
         loop_state: PathBuf::from(required_option(invocation, "--loop-state")?),
         manifest: PathBuf::from(
             invocation
-                .option("--manifest")
+                .value("--manifest")
                 .unwrap_or("created_resources.json"),
         ),
         apply_change: invocation.value("--apply-change").map(PathBuf::from),
         mode: invocation
-            .option("--mode")
+            .value("--mode")
             .unwrap_or("representative")
             .to_string(),
         timestamp: invocation.value("--timestamp").map(ToString::to_string),
