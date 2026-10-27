@@ -59,7 +59,7 @@ pub mod validator;
 
 use dashboards::{CacheType, TemplateOptions};
 use pricing::{PricingKind, PricingLoader, CSV_NOTE};
-use text::{kv, quoted, set_member, shell_quote, show, splitext};
+use text::{escape_controls, kv, quoted, set_member, shell_quote, show, splitext};
 
 /// Upper bound for input CSV and JSON files (16 MiB).
 pub const MAX_INPUT_BYTES: u64 = 16 * 1024 * 1024;
@@ -326,7 +326,10 @@ pub fn estimate_serverless_command(
 
     let pricing = load_pricing(invocation, "--pricing", out)?;
 
-    out.line(&format!("Loading clusters from: {}", show(input)))?;
+    out.line(&format!(
+        "Loading clusters from: {}",
+        escape_controls(input)
+    ))?;
     let cluster_text = read_regular_file(Path::new(input), MAX_INPUT_BYTES)?;
     let clusters = serverless::load_clusters(&cluster_text)
         .map_err(|message| runtime("input_invalid", message))?;
@@ -334,7 +337,10 @@ pub fn estimate_serverless_command(
 
     let mut all_commandstats = None;
     if let Some(path) = invocation.value("--commandstats") {
-        out.line(&format!("Loading commandstats from: {}", show(path)))?;
+        out.line(&format!(
+            "Loading commandstats from: {}",
+            escape_controls(path)
+        ))?;
         let stats_text = read_regular_file(Path::new(path), MAX_INPUT_BYTES)?;
         let parsed = serverless::parse_commandstats_file(&stats_text)
             .map_err(|message| runtime("input_invalid", message))?;
@@ -363,7 +369,7 @@ pub fn estimate_serverless_command(
         .unwrap_or("serverless_estimate.csv");
     if !results.is_empty() {
         write_regular_file(Path::new(output), &serverless::csv_report(&results))?;
-        out.line(&format!("Output written to: {}", show(output)))?;
+        out.line(&format!("Output written to: {}", escape_controls(output)))?;
     }
     for line in serverless::summary_lines(&results) {
         out.line(&line)?;
@@ -379,7 +385,7 @@ pub fn estimate_serverless_command(
                 .collect(),
         );
         write_regular_file(Path::new(&json_path), &dumps(&document))?;
-        out.line(&format!("JSON written to: {}", show(&json_path)))?;
+        out.line(&format!("JSON written to: {}", escape_controls(&json_path)))?;
     }
     Ok(())
 }
@@ -560,7 +566,7 @@ pub fn dashboard_command(
     match invocation.value("--output") {
         Some(path) => {
             write_regular_file(Path::new(path), &rendered)?;
-            out.line(&format!("Written to {}", show(path)))?;
+            out.line(&format!("Written to {}", escape_controls(path)))?;
             out.line("")?;
             out.line("Deploy with:")?;
             out.line(&format!(

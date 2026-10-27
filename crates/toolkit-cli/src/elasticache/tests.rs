@@ -1296,7 +1296,8 @@ fn cluster_names_in_the_summary_are_escaped_and_cut_to_30_characters() {
     let (result, _) = estimate(&hostile, None);
     let text = serverless::summary_lines(&[result]).join("\n");
     assert!(!text.contains('\u{1b}'));
-    assert!(text.contains(&format!("  {:<30} ", "x\\x1b[2Jyyyyyyyyyyyyyyyyyyyyyyy")));
+    let expected_name = format!("x\\x1b[2J{}", "y".repeat(22));
+    assert!(text.contains(&format!("  {expected_name:<30} ")));
 }
 
 // ---------------------------------------------------------------------------
