@@ -341,3 +341,31 @@ slice is `Output::set_exit_status`/`exit_status`: a command whose published
 contract prints regular output together with a non-zero status (`sim validate`
 REJECT, `sim` JSON errors exit 2) cannot express that through `Err`, which
 always reports on stderr as `error: ...`.
+
+## aurora (#4388)
+
+`toolkit aurora acu`, `toolkit aurora commitment` and `toolkit aurora io` replace
+the six Aurora MySQL / PostgreSQL Python analyzers with one calculation core.
+`--engine mysql|postgresql` is required; value flags accept `--flag VALUE` or
+`--flag=VALUE` and come after the command path.
+
+- `aurora acu estimate --engine E --instance TYPE --cpu-p95 N --cpu-max N
+  [--cpu-avg N] [--connections N] [--working-set GIB] [--storage GIB]
+  [--num-instances N] [--format json|table] [--region R] [--offline]`;
+  `aurora acu list-instances` and `aurora acu pricing-source` take
+  `--engine`, `--region` and `--offline`.
+- `aurora commitment [offline] --engine E`: `offline` needs `--instance TYPE`
+  (with `--num-instances N`, `--io-optimized`) or `--serverless --avg-acu N`;
+  without it `--cluster ID` or `--all` read the account (see below).
+- `aurora io [offline] --engine E`: `offline` needs `--instance TYPE`,
+  `--storage-gib GIB` and `--monthly-io-millions N` (`--num-instances N`);
+  without it `--cluster ID` or `--all` with `--days N`.
+
+Output is the scripts' JSON (`json.dumps(indent=2)`, including `0` versus
+`0.0`) or `--format table`. Exit 0 on success, 1 for a runtime error (unknown
+instance class in `acu`, non-finite input), 2 for a usage error. This build has
+no AWS transport: `acu` falls back to the built-in us-east-1 prices (the
+reasons are in `pricing_source`), and the live `--cluster` / `--all` modes exit 2
+with "AWS SDK access is not available in this build; use the 'offline'
+subcommand." Parity table, mock-transport design and intentional changes:
+[docs/migration/aurora.md](../../docs/migration/aurora.md).
