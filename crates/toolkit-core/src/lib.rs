@@ -36,7 +36,8 @@ pub mod yaml;
 mod testutil;
 
 pub use diag::{
-    escape_untrusted, is_unsafe_char, neutralize_line, quote_untrusted, quote_untrusted_bounded,
+    escape_untrusted, is_unsafe_char, neutralize_line, neutralize_text, quote_untrusted,
+    quote_untrusted_bounded,
 };
 pub use digest::sha256_hex;
 pub use error::{ErrorKind, ParseError, ToolkitError};

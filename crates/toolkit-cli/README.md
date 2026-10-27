@@ -284,16 +284,22 @@ escaping, so there is now one helper and one contract test.
    two call sites keep their pinned output and are not migrated: `skills list`
    flattens into a tab-separated line and `asm exec` flattens after redaction,
    so the helper would change bytes tests already pin.
-5. **Safety net at the sinks.** `Output::diagnostic` and the final `error:`
-   report pass their text through `toolkit_core::neutralize_line`, which writes
-   every control character (newline and tab included), bidirectional override
-   and similar invisible character as `\n`, `\r`, `\t` or `\uXXXX` and changes
-   nothing else. It exists so an echo a slice forgot to quote still cannot forge
-   a line or drive the terminal (this closed a real hole: every command echoed a
-   path or flag argument raw in its error text). Safe text is unchanged. It does
-   not quote, so call sites should still use `quote_untrusted`. Stdout lines are
-   not rewritten: a handler that prints untrusted text on stdout must escape it
-   itself.
+5. **Safety net at the sinks.** `Output::diagnostic` passes its text through
+   `toolkit_core::neutralize_text` and the final `error:` report passes its
+   message through `neutralize_line`. Both write every control character (tab and
+   carriage return included), bidirectional override and similar invisible
+   character as `\r`, `\t` or `\uXXXX` and change nothing else; `neutralize_line`
+   also escapes newlines (`\n`), `neutralize_text` keeps them because some
+   diagnostics are deliberately multi-line blocks (the `msk size` pricing
+   warning). So an echoed argument can no longer drive the terminal (this closed
+   a real hole: nearly every command echoed a path or flag argument with raw ESC,
+   BEL, CR or U+202E in its error text), but a diagnostic that embeds an
+   argument containing a newline can still forge a line. Escape such values at
+   the call site: `neutralize_line(&value)` keeps benign output byte-identical
+   (used for the `startup program-artifacts` and `startup terraform-policy`
+   not-a-directory diagnostics), `quote_untrusted` adds quotes and a bound.
+   Stdout lines are not rewritten: a handler that prints untrusted text on
+   stdout must escape it itself.
 
 `tests/diag_contract.rs` runs every entry of `COMMANDS` through the real binary
 with hostile argv (ESC, BEL, CR, LF, U+202E and a marker in every value flag

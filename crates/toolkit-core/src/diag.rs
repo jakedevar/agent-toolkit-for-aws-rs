@@ -106,16 +106,32 @@ pub fn quote_untrusted(text: &str) -> String {
 /// literal backslash sequence.
 #[must_use]
 pub fn neutralize_line(line: &str) -> Cow<'_, str> {
-    if !line.chars().any(is_unsafe_char) {
-        return Cow::Borrowed(line);
+    neutralize(line, false)
+}
+
+/// Like [`neutralize_line`] but newlines stay as line separators, for text that
+/// is legitimately several lines (a multi-line warning block). Every other
+/// unsafe character, carriage return and tab included, is escaped. A newline
+/// that came from untrusted text is NOT neutralised here, so call sites that
+/// echo such text into a multi-line block must quote it with
+/// [`quote_untrusted`].
+#[must_use]
+pub fn neutralize_text(text: &str) -> Cow<'_, str> {
+    neutralize(text, true)
+}
+
+fn neutralize(text: &str, keep_newlines: bool) -> Cow<'_, str> {
+    let unsafe_here = |c: char| is_unsafe_char(c) && !(keep_newlines && c == '\n');
+    if !text.chars().any(unsafe_here) {
+        return Cow::Borrowed(text);
     }
-    let mut out = String::with_capacity(line.len() + 16);
-    for c in line.chars() {
+    let mut out = String::with_capacity(text.len() + 16);
+    for c in text.chars() {
         match c {
-            '\n' => out.push_str("\\n"),
             '\r' => out.push_str("\\r"),
             '\t' => out.push_str("\\t"),
-            c if is_unsafe_char(c) => {
+            '\n' if !keep_newlines => out.push_str("\\n"),
+            c if unsafe_here(c) => {
                 let _ = write!(out, "\\u{:04X}", u32::from(c));
             }
             c => out.push(c),
@@ -254,6 +270,8 @@ mod tests {
         );
         let all: String = (0..=0x2_ffff_u32).filter_map(char::from_u32).collect();
         assert!(!neutralize_line(&all).chars().any(is_unsafe_char));
+        assert_eq!(neutralize_text("a\nb\r\u{1b}c"), "a\nb\\r\\u001Bc");
+        assert!(matches!(neutralize_text("one\ntwo\n"), Cow::Borrowed(_)));
     }
 
     #[test]

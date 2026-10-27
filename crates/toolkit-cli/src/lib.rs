@@ -22,7 +22,9 @@ use std::fmt;
 use std::io::{self, Write};
 use std::path::PathBuf;
 
-use toolkit_core::{discover_skills, neutralize_line, skills_to_json, ErrorKind, ToolkitError};
+use toolkit_core::{
+    discover_skills, neutralize_line, neutralize_text, skills_to_json, ErrorKind, ToolkitError,
+};
 
 mod ai_data;
 pub mod asm_exec;
@@ -299,14 +301,16 @@ impl<'a> Output<'a> {
     /// Failures are ignored: when stderr itself is gone there is nowhere left
     /// to report that, which is also the rule for the final error report.
     ///
-    /// A diagnostic is one line: control characters (including embedded
-    /// newlines, ESC, BEL), bidirectional overrides and the like are escaped by
-    /// [`neutralize_line`] so echoed caller text cannot forge lines or drive the
-    /// terminal (#4639). Safe text is written unchanged.
+    /// Control characters other than newline (ESC, BEL, CR, tab), bidirectional
+    /// overrides and similar invisible characters are escaped by
+    /// [`neutralize_text`] so echoed caller text cannot drive the terminal
+    /// (#4639); newlines stay because some diagnostics are multi-line blocks, so
+    /// a handler that echoes untrusted text must quote it itself. Safe text is
+    /// written unchanged.
     pub fn diagnostic(&mut self, text: &str) {
         if let Some(writer) = self.diagnostics.as_mut() {
             let _ = writer
-                .write_all(neutralize_line(text).as_bytes())
+                .write_all(neutralize_text(text).as_bytes())
                 .and_then(|()| writer.write_all(b"\n"));
         }
     }

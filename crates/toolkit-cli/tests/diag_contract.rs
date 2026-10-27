@@ -201,8 +201,8 @@ fn flag_is_excluded(flag: &str) -> bool {
         .any(|word| flag.contains(word))
 }
 
-fn value_for(fill: Fill, scratch: &Path, file: &Path, dir: &Path) -> String {
-    match fill {
+fn value_for(mode: Fill, scratch: &Path, file: &Path, dir: &Path) -> String {
+    match mode {
         Fill::Text | Fill::Attached => format!("{HOSTILE}{ARG_MARKER}"),
         Fill::HostilePath => format!("{}/{HOSTILE}{ARG_MARKER}", scratch.display()),
         Fill::PayloadFile => file.display().to_string(),
@@ -213,12 +213,12 @@ fn value_for(fill: Fill, scratch: &Path, file: &Path, dir: &Path) -> String {
 /// The argument vectors that exercise `spec` for one fill.
 fn argv_variants(
     spec: &CommandSpec,
-    fill: Fill,
+    mode: Fill,
     scratch: &Path,
     file: &Path,
     dir: &Path,
 ) -> Vec<Vec<String>> {
-    let value = value_for(fill, scratch, file, dir);
+    let value = value_for(mode, scratch, file, dir);
     let base: Vec<String> = spec.path.iter().map(|word| (*word).to_string()).collect();
     let mut with_values = base.clone();
     for flag in spec
@@ -226,7 +226,7 @@ fn argv_variants(
         .iter()
         .filter(|flag| !flag_is_excluded(flag))
     {
-        if matches!(fill, Fill::Attached) {
+        if matches!(mode, Fill::Attached) {
             with_values.push(format!("{flag}={value}"));
         } else {
             with_values.push((*flag).to_string());
@@ -253,7 +253,7 @@ fn argv_variants(
         .filter(|flag| !flag_is_excluded(flag))
     {
         let mut one = base.clone();
-        if matches!(fill, Fill::Attached) {
+        if matches!(mode, Fill::Attached) {
             one.push(format!("{flag}={value}"));
         } else {
             one.push((*flag).to_string());
@@ -357,8 +357,8 @@ fn every_registered_command_keeps_untrusted_text_out_of_its_output() {
     let mut spawns = 0_usize;
     for spec in COMMANDS {
         let mut variants: Vec<Vec<String>> = Vec::new();
-        for fill in FILLS {
-            variants.extend(argv_variants(spec, fill, &scratch.0, &file, &dir));
+        for mode in FILLS {
+            variants.extend(argv_variants(spec, mode, &scratch.0, &file, &dir));
         }
         variants.extend(usage_variants(spec));
         variants.sort();
@@ -430,8 +430,8 @@ fn every_command_has_hostile_variants() {
     let dir = scratch.join("payload");
     for spec in COMMANDS {
         let mut count = usage_variants(spec).len();
-        for fill in FILLS {
-            count += argv_variants(spec, fill, &scratch, &file, &dir).len();
+        for mode in FILLS {
+            count += argv_variants(spec, mode, &scratch, &file, &dir).len();
         }
         assert!(count > 0, "{:?}", spec.path);
     }
