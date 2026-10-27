@@ -24,7 +24,7 @@ No waiver, no hand-landing. origin/rolling was created at 86edeadd per GM ruling
 Branches pushed by continuation workers sometimes went to the predecessor's rsi/ branch (fast-forward only).
 
 ## In flight (terminal watches armed by launches)
-- #4379 toolkit-aws: 2nd security repair, Opus worker 3740a89e from b897cd82 (re-review #4467 findings 1-3, #4468, #4494; conservative-by-construction scrubber ruling). Then re-review on #4467 (Codex gpt-6.1-sol).
+- #4379 toolkit-aws: 2nd repair done at 6ba2ac9084f8495e5cc551a4e93c6ca427be02e4 (Opus 3740a89e, conservative scrubber, 152 tests green). 3rd re-review on #4467: Codex sol d0fdd020.
 - #4399 startup-validators: partial 3/11 files at abf87cfe86e88f3b3e5e7060980e00a6d738cfd8 (green); continuation Sonnet 53a51585 porting the remainder. Review once complete (one review, not per partial).
 - #4378 ci: implemented at 35640f1276f5a72a339f2292a29d90099a797b80 (81cc6189 + merges 98957f87, 3a4c08d5; retires tools/validate.py, test_validate.py, validate_spec.py, sync-plugin-skills.py; keeps plugin sync-vendored.py for other slices). Review #4502 Codex sol 21b9e6b0 in flight. Landing it supersedes landing #4374/#4375/#4376/#4377 separately only if the queue requires one change per gate: land in stack order anyway.
 - #4463 (SDK adapter for toolkit-aws): ruling recorded on the Issue; dispatch only after #4379 is accepted.
