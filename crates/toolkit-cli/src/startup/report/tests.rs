@@ -1451,11 +1451,15 @@ fn the_decision_mode_line_names_its_mode() {
 // Python word-boundary semantics (#4585)
 // ---------------------------------------------------------------------------
 
-/// Runs the command over the reference report with `extra` appended.
+/// Runs the command over the reference report with `extra` added at the end
+/// of its body (the readability rules only read the body).
 fn run_with_appended(extra: &str) -> (u8, String, String) {
     let dir = TempDir::new("word-boundary");
     let report = dir.join("migration-report.html");
-    fs::write(&report, format!("{}{extra}", reference_html())).expect("write report");
+    let html = reference_html();
+    let at = html.rfind("</body>").expect("the reference has a body");
+    let page = format!("{}{extra}{}", &html[..at], &html[at..]);
+    fs::write(&report, page).expect("write report");
     let report = report.to_string_lossy().into_owned();
     let infra = fixture_arg("estimation-infra-reference.json");
     let ai = fixture_arg("estimation-ai-reference.json");

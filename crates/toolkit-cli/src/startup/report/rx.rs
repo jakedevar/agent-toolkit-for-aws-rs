@@ -28,6 +28,8 @@ const WORD_CLASS: &str = r"\p{L}\p{N}_";
 fn python_word_semantics(pattern: &str) -> String {
     let word = format!("[{WORD_CLASS}]");
     let boundary = format!("(?:(?<={word})(?!{word})|(?<!{word})(?={word}))");
+    let non_word = format!("[^{WORD_CLASS}]");
+    let not_boundary = format!("(?:(?<={word})(?={word})|(?<!{word})(?!{word}))");
     let mut out = String::with_capacity(pattern.len() + 64);
     let mut in_class = false;
     let mut chars = pattern.chars();
@@ -42,12 +44,8 @@ fn python_word_semantics(pattern: &str) -> String {
                     ('b', false) => out.push_str(&boundary),
                     ('w', false) => out.push_str(&word),
                     ('w', true) => out.push_str(WORD_CLASS),
-                    ('W', false) => {
-                        out.push_str(&format!("[^{WORD_CLASS}]"));
-                    }
-                    ('B', false) => {
-                        out.push_str(&format!("(?:(?<={word})(?={word})|(?<!{word})(?!{word}))"));
-                    }
+                    ('W', false) => out.push_str(&non_word),
+                    ('B', false) => out.push_str(&not_boundary),
                     ('b' | 'W' | 'B', true) => {
                         panic!("a word escape inside a bracket class is not supported");
                     }
