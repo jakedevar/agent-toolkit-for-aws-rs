@@ -8,20 +8,20 @@ Nothing landed yet. Enqueue waits for GM mail key gm-1b353269-4452-live-1 (Rsi #
 GM ETA (mail 14:00Z): ~22:00-24:00Z. Do not poll. GM asked: keep integrating so we enqueue FEW gates.
 
 ## Landing plan: ONE gate
-Current verified gate: #4575 integration head 7dd92dc7b51978a7d839be42f7e620fa59603c7e
-(scoped 34249602 ok, 1609 tests; AgentCheckLandingCandidate ok; merges cleanly onto rolling 86edeadd).
-Enqueue: AgentEnqueueLandingSource {source_commit: 7dd92dc7…, source_session_id: 1217d166-c8e9-46c0-ad9e-985a03ae3694,
+Current verified gate: #4575 round-5 head a8719b8c5c3d101ba61aee74c4e40842deb635bd (adds #4406 9ab72114, #4392 e0f0b372 to 7dd92dc7)
+(scoped f4bb8acb ok, 1806 tests; AgentCheckLandingCandidate ok; merges cleanly onto rolling 86edeadd).
+Enqueue: AgentEnqueueLandingSource {source_commit: a8719b8c…, source_session_id: d1c6cb13-991e-49a7-b4d9-e419f228bb6b,
 derive_filters: true, issue: 4575}. If a later round head is scoped-verified first, enqueue that instead (it descends).
 7dd92dc7 contains: #4373 e5670754, #4371 497dea6f, #4378 35640f12 (#4374-#4377), round1 #4387 #4389 #4388 #4379,
 round2 #4399 98eec66b #4451 2dab20bc, round3 #4463 eb81e617 #4385 9421ae15, round4 #4405 eab7de00 #4400 903e6bff.
 On landing close (confirm each): #4373 #4371 #4374-#4378 #4387 #4539-#4542 #4389 #4543 #4388 #4379 #4515 #4516 #4469
-#4536 #4468 #4494 #4399 #4584-#4587 #4596 #4451 #4463 #4593 #4594 #4577 #4385 #4602 #4405 #4400 #4624 #4625 #4575.
+#4536 #4468 #4494 #4399 #4584-#4587 #4596 #4451 #4463 #4593 #4594 #4577 #4385 #4602 #4405 #4400 #4624 #4625 #4406 #4392 #4636 #4637 #4644 #4655 #4656 #4575.
 
 ## Integration rounds (#4575; worker continues with continue_from the previous round's worker)
-Round 5 in flight (d1c6cb13, from 7dd92dc7): + #4406 9ab72114 + #4392 e0f0b372. On its handoff: PM audit with
-`git show --remerge-diff <merge>` (only registration hunks allowed), submit scoped_test with worktree = that worker's
+Round 5 DONE (a8719b8c, worker d1c6cb13). Next round continues_from d1c6cb13.
+On each round handoff: `git show --remerge-diff <merge>` (only registration hunks allowed), submit scoped_test with worktree = that worker's
 sandbox, base origin/rolling, timeout_minutes 180, then AgentCheckLandingCandidate, note on #4575.
-Round 6 candidates: #4380, #4639, #4401 once accepted.
+Round 6 candidates: #4401 d56b762a (accepted, #4667), #4380, #4639, #4402, #4403 once accepted.
 
 ## In flight
 - #4380 cloudwatch: repair 3 (Opus ecdf0cdf) for #4662 (structural SafeLine escaping) on cd80d723. Then re-review on #4632.
