@@ -495,6 +495,45 @@ with "AWS SDK access is not available in this build; use the 'offline'
 subcommand." Parity table, mock-transport design and intentional changes:
 [docs/migration/aurora.md](../../docs/migration/aurora.md).
 
+## ai-data (#4385)
+
+`toolkit ai-data` replaces `format_detector.py`, `validate_custom_metrics.py` and
+`transformation_tools.py` of the `aws-ai-ml` skill. Value flags are `--name VALUE`
+or `--name=VALUE` (not empty, not starting with `-`).
+
+```
+toolkit ai-data detect-format PATH_OR_S3_URI [--sample-size BYTES] [--json]
+toolkit ai-data validate-metrics [JSON_OR_FILE]
+toolkit ai-data transform plan|submit --script FILE --source-s3 URI --output-s3 URI
+    [--instance-type T] [--region R] [--execution-role ARN] [--base-job-name N] [--image-uri URI]
+toolkit ai-data transform describe JOB_NAME [--region R]
+```
+
+- `detect-format` samples the first `--sample-size` bytes (default 1 MiB, at
+  most 16 MiB) of a regular file, keeps the complete lines, and reports which of
+  the 11 formats (Nova SFT/DPO/RLVR, GPT-OSS SFT/DPO, Open Weights SFT/SFT Conv/DPO,
+  Verl, Verl Legacy, SageMaker Eval) the first parsed record is, validating every
+  parsed record against it. Text report (`Format:`, `Valid: ✓|✗`, `Confidence:
+  HIGH|LOW|NONE`, `Lines sampled:`, `Errors:`) or `--json` (the script's document,
+  ASCII-escaped). Exit 0 when valid, 1 when invalid or unreadable (`Error: ...` on
+  stderr), 2 for a usage error. Symbolic links are refused. `s3://` URIs are
+  validated, but this build has no S3 client, so they exit 1 with
+  `Error: S3 access is not available in this build; use a local file path.`
+- `validate-metrics` validates a Bedrock LLM-as-Judge custom metric array given
+  inline or as the path of a file (at most 1 MiB; a missing path or a directory
+  is read as inline JSON). Prints `✅ Valid — N custom metric(s) defined.` (exit
+  0) or `❌ Validation failed:` with `  - Metric [i]: ...` lines on stdout (exit 1);
+  no argument prints the usage line (exit 1).
+- `transform plan` prints the Processing job specification (`code`, `source_dir`,
+  `arguments`, input and output mounts) as JSON without contacting anything.
+  `transform submit` and `transform describe` need SageMaker; this build has no
+  client and exits 1 with `error: SageMaker SDK access is not available in this
+  build`. The transformation script itself is a remote payload (see the
+  document below).
+
+Parity table, the S3/SageMaker service seams, the remote-payload classification
+and every intentional change: [docs/migration/ai-data.md](../../docs/migration/ai-data.md).
+
 ## asm exec (#4451)
 
 `toolkit asm exec [--] COMMAND [ARG...]` is the Rust port of the
