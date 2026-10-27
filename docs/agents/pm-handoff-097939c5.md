@@ -90,3 +90,4 @@ rust-migration-health (health_anomaly), pm-safety-net (hourly resume), terminal 
   Round 9 candidates: #4403 (if #4682 accepts e201e143), #4407 a4f27c60, #4383 1e7e237e (both need `repeatable_flags: &[]` on their rows).
 - 18:35Z: #4682 round 3 on e201e143: CHANGES_REQUESTED -> #4711 (respelling check bypassed via unlisted geo, e.g. apac.anthropic.claude-opus-4.8). Reviewer ACCEPTED WellFormedUnknown for bare ids.
   Repair 3 (FINAL round, Opus) worker dd4c1327, continue_from 6ea6a0d7: geo-independent respelling rule. If it fails again: consult Fable/Astra on the design or narrow scope (do not loop).
+- 18:45Z: #4709 review of #4383 1e7e237e: CHANGES_REQUESTED -> #4712 (wrong-typed recorded optional fields defaulted), #4713 (null/wrong-type listing members -> empty). Repair worker 8693bedd (continue_from 9a7fd936).
