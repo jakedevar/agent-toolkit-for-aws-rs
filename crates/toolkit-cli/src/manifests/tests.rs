@@ -258,6 +258,141 @@ fn missing_claude_manifest_skips_devin_parity() {
     assert_eq!(errors, vec![format!("Missing file: {CLAUDE_REL}")]);
 }
 
+/// Writes a Claude and a Devin manifest body for `demo` and returns the errors.
+fn parity_errors(claude: &str, devin: &str) -> Vec<String> {
+    plugin_errors(|root| {
+        write(root, CLAUDE_REL, claude);
+        write(root, DEVIN_REL, devin);
+    })
+}
+
+#[test]
+fn parity_treats_a_missing_key_as_null() {
+    // Python `dict.get` returns None for both, so they are equal.
+    let claude = r#"{"name":"demo","version":null,"description":"Demo plugin."}"#;
+    let devin = r#"{"name":"demo","description":"Demo plugin."}"#;
+    assert_eq!(parity_errors(claude, devin), Vec::<String>::new());
+    // The other direction and null against null.
+    assert_eq!(parity_errors(devin, claude), Vec::<String>::new());
+    let both_null = r#"{"name":"demo","version":null,"description":"Demo plugin."}"#;
+    assert_eq!(parity_errors(both_null, both_null), Vec::<String>::new());
+    // Negative: null against a real value still mismatches, with None detail.
+    let errors = parity_errors(
+        r#"{"name":"demo","version":"1.2.0","description":"Demo plugin."}"#,
+        both_null,
+    );
+    assert_eq!(
+        errors,
+        vec![format!(
+            "'version' in {DEVIN_REL} does not match {CLAUDE_REL}: None != '1.2.0'"
+        )]
+    );
+}
+
+#[test]
+fn parity_ignores_object_member_order_recursively() {
+    let claude = r#"{"name":"demo","version":{"a":1,"b":{"x":[1,{"p":true,"q":null}],"y":"z"}},"description":{"k":1,"j":2}}"#;
+    let devin = r#"{"name":"demo","version":{"b":{"y":"z","x":[1,{"q":null,"p":true}]},"a":1},"description":{"j":2,"k":1}}"#;
+    assert_eq!(parity_errors(claude, devin), Vec::<String>::new());
+    // Negative: a nested value differs; the detail keeps the Python repr form.
+    let changed = r#"{"name":"demo","version":{"b":{"y":"w","x":[1,{"q":null,"p":true}]},"a":1},"description":{"j":2,"k":1}}"#;
+    assert_eq!(
+        parity_errors(claude, changed),
+        vec![format!(
+            "'version' in {DEVIN_REL} does not match {CLAUDE_REL}: {{'b': {{'y': 'w', 'x': [1, {{'q': None, 'p': True}}]}}, 'a': 1}} != {{'a': 1, 'b': {{'x': [1, {{'p': True, 'q': None}}], 'y': 'z'}}}}"
+        )]
+    );
+    // Negative: arrays are ordered, a nested absent key is not null (dict
+    // equality), and different key sets differ.
+    let array_order = r#"{"name":"demo","version":{"a":[1,2]},"description":"Demo plugin."}"#;
+    let array_swapped = r#"{"name":"demo","version":{"a":[2,1]},"description":"Demo plugin."}"#;
+    assert_eq!(parity_errors(array_order, array_swapped).len(), 1);
+    let nested_null = r#"{"name":"demo","version":{"a":null},"description":"Demo plugin."}"#;
+    let nested_absent = r#"{"name":"demo","version":{},"description":"Demo plugin."}"#;
+    assert_eq!(parity_errors(nested_null, nested_absent).len(), 1);
+    let extra_key = r#"{"name":"demo","version":{"a":null,"b":1},"description":"Demo plugin."}"#;
+    assert_eq!(parity_errors(nested_null, extra_key).len(), 1);
+}
+
+#[test]
+fn parity_treats_equal_numbers_and_booleans_as_equal() {
+    // 1 == 1.0, 1 == true, 0 == false, nested too.
+    for (claude_version, devin_version) in [
+        ("1", "1.0"),
+        ("1.0", "1"),
+        ("1", "true"),
+        ("true", "1.0"),
+        ("0", "false"),
+        ("false", "0.0"),
+        ("-0.0", "0"),
+        ("[1,{\"a\":true}]", "[1.0,{\"a\":1}]"),
+        ("1e2", "100"),
+    ] {
+        let claude = format!(r#"{{"name":"demo","version":{claude_version},"description":"D"}}"#);
+        let devin = format!(r#"{{"name":"demo","version":{devin_version},"description":"D"}}"#);
+        assert_eq!(
+            parity_errors(&claude, &devin),
+            Vec::<String>::new(),
+            "{claude_version} == {devin_version}"
+        );
+    }
+    // Negative: values that are not equal in Python stay mismatches.
+    for (claude_version, devin_version) in [
+        ("1", "1.5"),
+        ("1", "2"),
+        ("true", "2"),
+        ("false", "1"),
+        ("0", "null"),
+        ("false", "null"),
+        ("1", "\"1\""),
+        ("true", "\"true\""),
+        ("[1]", "[2]"),
+    ] {
+        let claude = format!(r#"{{"name":"demo","version":{claude_version},"description":"D"}}"#);
+        let devin = format!(r#"{{"name":"demo","version":{devin_version},"description":"D"}}"#);
+        assert_eq!(
+            parity_errors(&claude, &devin).len(),
+            1,
+            "{claude_version} != {devin_version}"
+        );
+    }
+    // The mismatch detail keeps the Python repr form.
+    assert_eq!(
+        parity_errors(
+            r#"{"name":"demo","version":true,"description":"D"}"#,
+            r#"{"name":"demo","version":2,"description":"D"}"#
+        ),
+        vec![format!(
+            "'version' in {DEVIN_REL} does not match {CLAUDE_REL}: 2 != True"
+        )]
+    );
+}
+
+#[test]
+fn py_eq_compares_large_integers_and_floats_exactly() {
+    use super::{py_eq, py_eq_opt};
+    // 2^53 + 1 is not representable as f64: Python's exact comparison says no.
+    assert!(!py_eq(
+        &Json::Int(9_007_199_254_740_993),
+        &Json::Float(9_007_199_254_740_992.0)
+    ));
+    assert!(py_eq(
+        &Json::Int(9_007_199_254_740_992),
+        &Json::Float(9_007_199_254_740_992.0)
+    ));
+    assert!(py_eq(
+        &Json::Int(i64::MIN),
+        &Json::Float(-9_223_372_036_854_775_808.0)
+    ));
+    assert!(!py_eq(
+        &Json::Int(i64::MAX),
+        &Json::Float(9_223_372_036_854_775_808.0)
+    ));
+    assert!(py_eq_opt(None, Some(&Json::Null)));
+    assert!(!py_eq_opt(None, Some(&Json::Bool(false))));
+    assert!(!py_eq_opt(None, Some(&Json::String(String::new()))));
+}
+
 #[test]
 fn real_repository_tree_passes() {
     // Migrated from TestRepoPlugins.test_every_devin_plugin_passes, widened to
@@ -452,6 +587,69 @@ fn marketplace_source_resolves_from_the_repository_root() {
         );
     });
     assert_eq!(errors, Vec::<String>::new());
+}
+
+#[test]
+fn marketplace_source_must_stay_inside_the_repository() {
+    // Intentional hardening (not in the Python validator): absolute paths and
+    // `..` components are rejected before the directory check, for the string
+    // and the object form alike, even when the target exists.
+    let outside = TempDir::new("market-outside");
+    let absolute = outside.to_string_lossy().replace('\\', "/");
+    let errors = repo_errors(|root| {
+        write(
+            root,
+            ".claude-plugin/marketplace.json",
+            &marketplace(&format!("{absolute:?}")),
+        );
+        write(
+            root,
+            ".agents/plugins/marketplace.json",
+            &marketplace(r#"{"source":"local","path":"../elsewhere"}"#),
+        );
+        write(
+            root,
+            ".cursor-plugin/marketplace.json",
+            &marketplace(r#""./plugins/../plugins/demo""#),
+        );
+    });
+    assert_eq!(
+        errors,
+        vec![
+            format!("Plugin source '{absolute}' must stay inside the repository for 'demo'"),
+            "Plugin source '../elsewhere' must stay inside the repository for 'demo'".to_string(),
+            "Plugin source './plugins/../plugins/demo' must stay inside the repository for 'demo'"
+                .to_string(),
+        ]
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn marketplace_source_symlink_leaving_the_repository_escapes() {
+    use std::os::unix::fs::symlink;
+    let outside = TempDir::new("market-link-outside");
+    fs::create_dir_all(outside.join("plugin")).expect("create outside plugin");
+    let errors = repo_errors(|root| {
+        symlink(&*outside, root.join("linked")).expect("create outward symlink");
+        // A symlink that stays inside the repository is accepted.
+        symlink(root.join("plugins/demo"), root.join("inner")).expect("create inner symlink");
+        // A dangling symlink does not exist, even if it points outside.
+        symlink(outside.join("nowhere"), root.join("dangling")).expect("create dangling symlink");
+        write(
+            root,
+            ".claude-plugin/marketplace.json",
+            r#"{"name":"m","plugins":[{"name":"a","source":"./linked"},{"name":"b","source":"./linked/plugin"},{"name":"c","source":"./inner"},{"name":"d","source":"./dangling"}]}"#,
+        );
+    });
+    assert_eq!(
+        errors,
+        vec![
+            "Plugin source './linked' must stay inside the repository for 'a'",
+            "Plugin source './linked/plugin' must stay inside the repository for 'b'",
+            "Plugin source './dangling' does not exist for 'd'",
+        ]
+    );
 }
 
 #[test]
