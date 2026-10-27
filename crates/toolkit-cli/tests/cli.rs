@@ -230,6 +230,9 @@ fn help_prints_usage_on_stdout_with_success() {
         assert!(stdout(&output).contains("Usage:"));
         assert!(stdout(&output).contains("skills list"));
         assert!(stdout(&output).contains("Exit codes:"));
+        // The heading is exactly `Options:` (#4764), not `Options:)`.
+        assert!(stdout(&output).lines().any(|line| line == "Options:"));
+        assert!(!stdout(&output).contains("Options:)"));
     }
 }
 

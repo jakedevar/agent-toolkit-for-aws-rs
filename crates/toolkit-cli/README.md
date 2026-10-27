@@ -203,8 +203,9 @@ re-parse `argv`.
 
 - `help`, `-h`, `--help` and `version`, `-V`, `--version` as the first word win
   over everything after them. Inside a command, `-h`/`--help` selects help; any
-  other `-`-prefixed word (including a bare `-`) must be one of the command's
-  flags or it is a usage error; a flag repeated is accepted once.
+  other `-`-prefixed word must be one of the command's flags or it is a usage
+  error; a flag repeated is accepted once. A bare `-` is refused the same way
+  unless the command opts in (see "The bare `-` stdio marker").
 - Handlers return `Result<(), ToolkitError>`. `ToolkitError` has a class (usage
   = exit 2, runtime = exit 1), a stable machine code (for example
   `root_not_found`, `invalid_arguments`, `stdout_write`, `parse_error`,
@@ -262,6 +263,34 @@ let workloads: Vec<&str> = invocation.values_of("--workload").collect();
 - Values are caller text. Escape them with the `toolkit_core` diagnostic helpers
   (or `Output::diagnostic`) before they reach a message, as for any other value flag
   (see "Untrusted text in diagnostics").
+
+### The bare `-` stdio marker (#4743, #4780)
+
+argparse treats a lone `-` as an ordinary value, and scripts use it to mean
+"standard input" (`--json -`). Most slices turn a path argument straight into a
+filesystem path, where a `-` would read or overwrite a file literally named `-`
+(`dynamodb calculate-costs --output -` truncated `./-`). So the router fails
+closed: a command receives `-` only if it opts in.
+
+- The allowlist is `STDIO_DASH` in `src/lib.rs`, a list of `(command path, flag)`
+  pairs: the space-joined `CommandSpec::path` and either a value flag name
+  (`"--json"`) or `STDIO_DASH_POSITIONAL` (`"<positional>"`). It ships empty. There
+  is no field on `CommandSpec`, so adding a pair never touches a command row.
+- For a listed pair the exact token `-` is a value of that flag, spaced
+  (`--json -`) or attached (`--json=-`), plain or repeatable, even on a
+  `strict_values` command; or, for `<positional>`, a positional that counts against
+  `max_positionals`. Every other `-`-prefixed value (`-x`, `--foo`, `--`) and the
+  empty value are still refused.
+- For every other pair `-` is refused exactly as before #4743: a positional `-` is
+  an unknown flag, and on a `strict_values` command a value of `-` is the usual
+  `invalid arguments` usage error (exit 2, before the handler runs). A command
+  without `strict_values` keeps taking any value verbatim, as it always did.
+- A slice requests stdin/stdout support by adding its pair in the same change that
+  makes its handler treat `-` explicitly: bounded, UTF-8 checked, diagnostics
+  escaped like its other inputs, and no fallback to a file named `-` (`./-` is
+  how a caller names that file). `tests/diag_contract.rs` checks that every entry
+  names a real command and flag.
+- The router never reads stdin itself.
 
 ## Shared library contracts (`toolkit-core`)
 
