@@ -465,7 +465,7 @@ mod tests {
     use std::net::IpAddr;
     use std::time::UNIX_EPOCH;
 
-    /// 2015-08-30T12:36:00Z, the AWS SigV4 test-suite time.
+    /// 2015-08-30T12:36:00Z, the AWS `SigV4` test-suite time.
     fn suite_time() -> SystemTime {
         UNIX_EPOCH + Duration::from_secs(1_440_938_160)
     }
@@ -497,24 +497,24 @@ mod tests {
         }
     }
 
-    fn sdk_keys() -> Result<SdkCredentials, CredentialsError> {
-        Ok(SdkCredentials::new(
+    fn sdk_keys() -> SdkCredentials {
+        SdkCredentials::new(
             "FAKEKEYID",
             "fake-secret-value",
             Some("fake-session".to_string()),
             Some(suite_time() + Duration::from_secs(3600)),
             "fake",
-        ))
+        )
     }
 
-    fn sdk_expired() -> Result<SdkCredentials, CredentialsError> {
-        Ok(SdkCredentials::new(
+    fn sdk_expired() -> SdkCredentials {
+        SdkCredentials::new(
             "FAKEKEYID",
             "fake-secret-value",
             None,
             Some(suite_time() - Duration::from_secs(1)),
             "fake",
-        ))
+        )
     }
 
     fn sdk_not_loaded() -> Result<SdkCredentials, CredentialsError> {
@@ -548,7 +548,7 @@ mod tests {
 
     #[test]
     fn sdk_credentials_are_adopted_and_never_printed() {
-        let provider = sdk_provider(sdk_keys);
+        let provider = sdk_provider(|| Ok(sdk_keys()));
         assert_eq!(provider.name(), SDK_DEFAULT_CHAIN);
         let loaded = provider.load().expect("credentials");
         assert_eq!(loaded.access_key_id().expose(), "FAKEKEYID");
@@ -566,7 +566,7 @@ mod tests {
     #[test]
     fn sdk_credential_failures_map_onto_the_chain_rules() {
         assert_eq!(
-            sdk_provider(sdk_expired).load().unwrap_err(),
+            sdk_provider(|| Ok(sdk_expired())).load().unwrap_err(),
             AwsError::CredentialsExpired
         );
         assert_eq!(
