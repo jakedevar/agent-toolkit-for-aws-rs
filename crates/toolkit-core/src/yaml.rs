@@ -1107,7 +1107,11 @@ after: 1
                 text.push_str("-\n");
             }
             text.push_str(&" ".repeat(2 * blocks));
-            text.push_str(&format!("- {}0{}\n", "[".repeat(flow), "]".repeat(flow)));
+            text.push_str("- ");
+            text.push_str(&"[".repeat(flow));
+            text.push('0');
+            text.push_str(&"]".repeat(flow));
+            text.push('\n');
             text
         };
         // `blocks` outer sequences + the sequence holding the flow item + flow.
