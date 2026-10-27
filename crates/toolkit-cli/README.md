@@ -302,3 +302,19 @@ baseline unless `--baseline FILE` is given. The report (or, with `--json`, the
 report object) is stdout; a run with a non-baselined error finding exits 1 and
 adds `error: N artifact contract problem(s)` on stderr. Details and the recorded
 differences (items 12-20) are in `docs/migration/startup-validators.md`.
+
+### startup emit-plan
+
+```
+toolkit startup emit-plan --migration-dir DIR [--plugin-root DIR] [--plugin-json FILE]
+```
+
+Replacement for `emit-plan-json.py` and `tests/test_emit_plan_json.py`. Copies the
+validated cost figures of a finished GCP or Heroku run (`estimation-infra.json`,
+`estimation-billing.json`, `estimation-ai.json`) into `DIR/plan.json` for the AWS
+Startups Migrate web import. Fail-open: any missing or unreadable input prints
+`PLAN_SKIP | reason=...` on stdout, writes nothing and exits 0 (a deterministic skip
+also drops a stale `plan.json`; an unreadable input keeps it). Success prints
+`PLAN_OK | path=... | platform=... | scope=...`. Only a missing `--migration-dir` is a
+usage error (exit 2). `producerVersion` comes from `.claude-plugin/plugin.json` of
+`--plugin-root` (default `.`) unless `--plugin-json` names the file.

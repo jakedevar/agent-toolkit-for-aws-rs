@@ -1018,3 +1018,68 @@ fn startup_artifacts_failures_use_stdout_for_the_report_and_stderr_for_the_summa
     assert!(stderr(&output)
         .starts_with("error: exactly one of --self-check, --fixtures or --run-dir is required"));
 }
+
+#[test]
+fn startup_emit_plan_writes_the_plan_and_fails_open_through_the_binary() {
+    let root = temp_root("emit-plan");
+    let plugin = root.join("plugin");
+    let run_dir = root.join("run");
+    write_file(
+        &plugin,
+        ".claude-plugin/plugin.json",
+        r#"{"version": "9.8.7"}"#,
+    );
+    write_file(
+        &run_dir,
+        ".phase-status.json",
+        r#"{"owning_skill": "HEROKU_TO_AWS", "run_id": "ABCDEF01-0000-4000-8000-000000000001"}"#,
+    );
+    write_file(
+        &run_dir,
+        "estimation-infra.json",
+        r#"{"projected_costs": {"aws_monthly_balanced": 42.5}}"#,
+    );
+    let run_arg = run_dir.to_str().expect("utf-8 dir");
+    let plugin_arg = plugin.to_str().expect("utf-8 dir");
+
+    let output = run(
+        &[
+            "startup",
+            "emit-plan",
+            "--migration-dir",
+            run_arg,
+            "--plugin-root",
+            plugin_arg,
+        ],
+        &root,
+    );
+    assert_eq!(code(&output), 0, "{}", stderr(&output));
+    assert_eq!(
+        stdout(&output),
+        format!("PLAN_OK | path={run_arg}/plan.json | platform=HEROKU | scope=INFRA_ONLY\n")
+    );
+    assert_eq!(stderr(&output), "");
+    assert_eq!(
+        fs::read_to_string(run_dir.join("plan.json")).expect("plan.json"),
+        "{\n  \"schemaVersion\": 1,\n  \"sourcePlatform\": \"HEROKU\",\n  \"scope\": \"INFRA_ONLY\",\n  \"runId\": \"abcdef01-0000-4000-8000-000000000001\",\n  \"cost\": {\n    \"awsMonthly\": 42.5,\n    \"awsMonthlyBasis\": \"BALANCED\"\n  },\n  \"producerVersion\": \"9.8.7\"\n}\n"
+    );
+
+    // Fail-open: an unusable estimate is a skip with exit 0 and drops the plan.
+    write_file(
+        &run_dir,
+        "estimation-infra.json",
+        r#"{"projected_costs": {}}"#,
+    );
+    let output = run(&["startup", "emit-plan", "--migration-dir", run_arg], &root);
+    assert_eq!(code(&output), 0);
+    assert_eq!(
+        stdout(&output),
+        "PLAN_SKIP | reason=no usable projected_costs.aws_monthly_balanced\n"
+    );
+    assert!(!run_dir.join("plan.json").exists());
+
+    // Only a usage error is non-zero.
+    let output = run(&["startup", "emit-plan"], &root);
+    assert_eq!(code(&output), 2);
+    assert!(stderr(&output).contains("--migration-dir"));
+}

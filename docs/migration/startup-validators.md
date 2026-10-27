@@ -19,6 +19,7 @@ Issue #4399 handoff, not in this file.
 | `toolkit startup program-artifacts --migration-dir DIR` | `.../scripts/validate-startup-program-artifacts.py` | artifacts do not imply a confirmed Activate tier when `startup_program_status` is `unknown`, and link to the Activate page when they mention it |
 | `toolkit startup model-id-lint [--plugin-root DIR]` | `.../scripts/model-id-lint.py` and its tests (`tests/test_model_id_lint.py`) | no retired or fabricated Bedrock model ID outside the catalog files |
 | `toolkit startup artifacts (--self-check \| --fixtures \| --run-dir DIR --skill NAME) [--plugin-root DIR] [--manifest FILE] [--baseline FILE] [--no-baseline] [--json]` | `.../scripts/validate-artifacts.py` (+ `scripts/artifact-contracts.json`, `artifact-contracts-baseline.json`, `scripts/contracts/*.schema.json`) and the migrated cases of `tests/test_validate_artifacts.py` | published artifact contracts (JSON examples in the schema documents plus two JSON Schemas) checked against run directories and the fixture goldens |
+| `toolkit startup emit-plan --migration-dir DIR [--plugin-root DIR] [--plugin-json FILE]` | `.../scripts/emit-plan-json.py` (and the byte-identical copy in `skills/heroku-to-aws/scripts`) and `tests/test_emit_plan_json.py` | copies validated cost figures of a finished GCP or Heroku run into `plan.json` for the web import; fail-open (`PLAN_OK` / `PLAN_SKIP`, exit 0) |
 
 `--plugin-root` defaults to the current directory (the Python scripts defaulted
 to the directory they lived in; `mise` tasks already run in the plugin
@@ -217,6 +218,31 @@ the remainder below.
     overflowing the stack.
 20. **`scenario-\d+\.`** in `artifact_name` and `\w` in headings follow the
     same ASCII-digit and Unicode-word conventions as items 6 and 7.
+
+### Intentional changes of `startup emit-plan`
+
+21. **Plugin manifest location.** Python read `producerVersion` from the plugin
+    next to the script; `--plugin-root DIR` (default `.`) or `--plugin-json
+    FILE` replaces it. The heroku skill copy of the script is the same command,
+    so the byte-parity guard test has nothing left to guard.
+22. **Messages of unreadable input.** `PLAN_SKIP | reason=unreadable input: ...`
+    keeps Python's `JSONDecodeError` text (same pure-Python reader as item 15);
+    OS and decode errors carry Rust texts, and a symbolic link is refused as
+    unreadable input (Python followed it). Write failures read `could not write
+    plan.json: <Rust io error>`.
+23. **Number handling.** Integers beyond `i64` are floats; a sum that overflows
+    `i64` continues as a float (Python integers are unbounded; the USD cap
+    makes both a skip). `\d` in the accuracy band is ASCII-only (Python's
+    matched any Unicode digit and `float()` converted it); the band is matched
+    by an exact hand-written matcher (no regex engine), with the `\s`, `\b`
+    and `\w` conventions of items 6 and 7. A digit string too long for a float
+    fails open (`cannot convert float infinity to integer`) like Python.
+24. **Temp file.** The unique write temp is created exclusively with mode 0600
+    on Unix (`create_new`), renamed into place atomically; orphan temps
+    (`.plan-*.json.tmp` older than an hour) are reclaimed on every run, without
+    following links.
+25. **Displayed path** is normalised the way `pathlib` does (no `.`
+    components, no repeated or trailing separators).
 
 ## File membership (#4371 U-10)
 

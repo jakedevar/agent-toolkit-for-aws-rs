@@ -40,6 +40,7 @@ Usage:
   toolkit startup artifacts (--self-check | --fixtures | --run-dir DIR --skill NAME)
                             [--plugin-root DIR] [--manifest FILE] [--baseline FILE]
                             [--no-baseline] [--json]
+  toolkit startup emit-plan --migration-dir DIR [--plugin-root DIR] [--plugin-json FILE]
   toolkit --version
   toolkit help
 
@@ -75,6 +76,14 @@ Commands:
                 Fail when a file of the plugin at --plugin-root DIR (default: the current
                 directory) names a Bedrock model the lifecycle registry has
                 retired, outside the catalog files that record it.
+  startup emit-plan
+                Copy the validated cost figures of a finished GCP or Heroku
+                migration run in --migration-dir DIR into plan.json for the
+                AWS Startups Migrate web import (producerVersion from
+                --plugin-json FILE, default: .claude-plugin/plugin.json of
+                --plugin-root DIR). Fail-open: any missing or unreadable input
+                prints `PLAN_SKIP | reason=...`, writes no file and exits 0;
+                success prints `PLAN_OK | path=... | platform=... | scope=...`.
   startup artifacts
                 Validate migration artifacts against the contracts the skills
                 publish (JSON examples in the schema documents plus the JSON
@@ -322,6 +331,13 @@ pub const COMMANDS: &[CommandSpec] = &[
         ],
         max_positionals: 0,
         handler: startup::artifacts_command,
+    },
+    CommandSpec {
+        path: &["startup", "emit-plan"],
+        flags: &[],
+        value_flags: &["--migration-dir", "--plugin-root", "--plugin-json"],
+        max_positionals: 0,
+        handler: startup::emit_plan_command,
     },
 ];
 

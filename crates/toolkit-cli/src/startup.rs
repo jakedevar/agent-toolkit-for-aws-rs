@@ -1,6 +1,6 @@
 //! AWS startup advisor validators (#4399, slice `startup-validators`).
 //!
-//! Three commands port the repository-health scripts of
+//! Several commands port the repository-health scripts of
 //! `plugins/aws-startup-advisor/scripts`:
 //!
 //! | Command | Python original |
@@ -8,6 +8,8 @@
 //! | `startup model-pricing` | `validate-model-pricing.py` |
 //! | `startup program-artifacts` | `validate-startup-program-artifacts.py` |
 //! | `startup model-id-lint` | `model-id-lint.py` |
+//! | `startup artifacts` | `validate-artifacts.py` |
+//! | `startup emit-plan` | `emit-plan-json.py` |
 //!
 //! Each prints the Python messages unchanged: findings go to stderr through
 //! [`Output::diagnostic`] and a failing run additionally ends with one
@@ -27,12 +29,14 @@ use crate::manifests::{read_failure, universal_newlines};
 
 mod artifacts;
 mod model_ids;
+mod plan;
 mod pricing;
 mod program;
 mod text;
 
 pub use artifacts::artifacts_command;
 pub use model_ids::model_id_lint_command;
+pub use plan::emit_plan_command;
 pub use pricing::pricing_command;
 pub use program::program_artifacts_command;
 
