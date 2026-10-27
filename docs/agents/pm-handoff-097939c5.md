@@ -138,3 +138,4 @@ Kaizen: filed this seat #4727 (P2 shared recorded validator; dispatch after #438
 Hub: rsid restart loop 18:04/18:26/18:29 (health keys accepted in rust-migration-health ignore list).
 Wakes: rust-migration-health (health_anomaly), pm-safety-net (resume, 20:04Z), per-worker terminal watches.
 Friction: #4727, Rsi #4694, Rsi #4704
+- 19:10Z: #4384 repair 8d914f2b (fc047609; recorded.rs + shared shape helpers; scoped adf75143 ok, 1856). Re-review #4721 worker 61635e9e (pinned). If ACCEPT: round 11 = #4697 ffc0c74e + #4384 8d914f2b (continue_from 215a5c49), then kaizen #4727.
