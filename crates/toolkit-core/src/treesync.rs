@@ -444,17 +444,44 @@ pub fn ensure_dir_chain(base: &Path, relative_dir: &str) -> Result<(), ToolkitEr
 /// directory is removed last. Extra files in `dest` disappear; empty source
 /// directories and source permission bits are reproduced.
 ///
+/// Both sibling names (staging and moved-aside backup) are reserved by
+/// creating them exclusively, retrying with a fresh suffix on a collision, so
+/// no existing path is ever renamed onto or removed. Before the old directory
+/// is deleted, owner permissions are restored on the directories inside the
+/// moved-aside copy only (links are never followed), so a read-only old tree
+/// is removed too.
+///
 /// `source_entries` is the listing of `source` and must be free of links and
 /// special files; `dest` must be a real directory, not a link (both checked).
 ///
 /// # Errors
 ///
 /// Returns a runtime error on any refusal or I/O failure; on failure before
-/// the swap `dest` is untouched and the staging directory is removed.
+/// the swap `dest` is untouched and the staging directory is removed. If only
+/// the final removal of the old copy fails, the new tree stays installed and
+/// the error (`cleanup_failed`) names the leftover backup path.
 pub fn replace_tree(
     source: &Path,
     source_entries: &[TreeEntry],
     dest: &Path,
+) -> Result<(), ToolkitError> {
+    replace_tree_with(
+        source,
+        source_entries,
+        dest,
+        &mut unique_suffix,
+        &remove_old_tree,
+    )
+}
+
+/// [`replace_tree`] with the suffix source and the old-copy removal injected
+/// so tests can force name collisions and cleanup failures.
+fn replace_tree_with(
+    source: &Path,
+    source_entries: &[TreeEntry],
+    dest: &Path,
+    next_suffix: &mut dyn FnMut() -> String,
+    remove_backup: &dyn Fn(&Path) -> io::Result<()>,
 ) -> Result<(), ToolkitError> {
     if let Some(entry) = first_unsafe_entry(source_entries) {
         return Err(ToolkitError::runtime(
@@ -480,16 +507,23 @@ pub fn replace_tree(
             format!("invalid destination: {}", dest.display()),
         ));
     };
-    let suffix = unique_suffix();
-    let stage: PathBuf = parent.join(format!(".{name}.toolkit-sync-new-{suffix}"));
-    let backup: PathBuf = parent.join(format!(".{name}.toolkit-sync-old-{suffix}"));
-    fs::create_dir(&stage).map_err(|e| io_failure("create directory", &stage, &e))?;
+    let stage = reserve_sibling(parent, name, "new", next_suffix)?;
     if let Err(error) = populate_stage(source, source_entries, &stage) {
         let _ = fs::remove_dir_all(&stage);
         return Err(error);
     }
+    let backup = match reserve_sibling(parent, name, "old", next_suffix) {
+        Ok(backup) => backup,
+        Err(error) => {
+            let _ = fs::remove_dir_all(&stage);
+            return Err(error);
+        }
+    };
+    // `backup` is an empty directory this call just created, so the rename
+    // below replaces only that placeholder, never a pre-existing path.
     if let Err(error) = fs::rename(dest, &backup) {
         let _ = fs::remove_dir_all(&stage);
+        let _ = fs::remove_dir(&backup);
         return Err(io_failure("move aside", dest, &error));
     }
     if let Err(error) = fs::rename(&stage, dest) {
@@ -497,7 +531,74 @@ pub fn replace_tree(
         let _ = fs::remove_dir_all(&stage);
         return Err(io_failure("install", dest, &error));
     }
-    fs::remove_dir_all(&backup).map_err(|e| io_failure("remove the replaced copy", &backup, &e))
+    remove_backup(&backup).map_err(|error| {
+        ToolkitError::runtime(
+            "cleanup_failed",
+            format!(
+                "installed the new copy of {} but could not remove the replaced copy ({error}); \
+                 remove it manually: {}",
+                dest.display(),
+                backup.display()
+            ),
+        )
+    })
+}
+
+/// Creates the empty directory `parent/.<name>.toolkit-sync-<tag>-<suffix>`
+/// exclusively, retrying with a new suffix when the name is taken.
+fn reserve_sibling(
+    parent: &Path,
+    name: &str,
+    tag: &str,
+    next_suffix: &mut dyn FnMut() -> String,
+) -> Result<PathBuf, ToolkitError> {
+    // Bounded so a pathological directory cannot loop forever.
+    for _ in 0..1000 {
+        let path = parent.join(format!(".{name}.toolkit-sync-{tag}-{}", next_suffix()));
+        match fs::create_dir(&path) {
+            Ok(()) => return Ok(path),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(io_failure("create directory", &path, &error)),
+        }
+    }
+    Err(ToolkitError::runtime(
+        "path_invalid",
+        format!(
+            "could not reserve a free sibling name for {}",
+            parent.join(name).display()
+        ),
+    ))
+}
+
+/// Removes the moved-aside old tree: first restores owner access on the
+/// directories inside it (so a read-only tree can be emptied), then deletes it.
+fn remove_old_tree(backup: &Path) -> io::Result<()> {
+    make_dirs_owner_writable(backup)?;
+    fs::remove_dir_all(backup)
+}
+
+/// Adds owner read/write/search permission to `dir` and every directory below
+/// it, never following symbolic links and never touching anything outside.
+#[cfg(unix)]
+fn make_dirs_owner_writable(dir: &Path) -> io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let metadata = fs::symlink_metadata(dir)?;
+    if !metadata.is_dir() {
+        return Ok(());
+    }
+    let mode = metadata.permissions().mode();
+    if mode & 0o700 != 0o700 {
+        fs::set_permissions(dir, fs::Permissions::from_mode(mode | 0o700))?;
+    }
+    for entry in fs::read_dir(dir)? {
+        make_dirs_owner_writable(&entry?.path())?;
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn make_dirs_owner_writable(_dir: &Path) -> io::Result<()> {
+    Ok(())
 }
 
 fn populate_stage(source: &Path, entries: &[TreeEntry], stage: &Path) -> Result<(), ToolkitError> {
@@ -862,5 +963,159 @@ mod tests {
             replace_tree(&root.join("src"), &entries, &root.join("dest")).expect_err("link");
         assert_eq!(error.code(), "not_a_directory");
         assert_eq!(fs::read(outside.join("data")).expect("read"), b"data");
+    }
+
+    #[test]
+    fn replace_tree_never_clobbers_a_pre_existing_backup_name() {
+        let root = TempDir::new("ts-replace-backup");
+        write(&root, "src/new", b"new");
+        write(&root, "dest/old", b"old");
+        // The siblings a naive fixed-suffix swap would pick.
+        fs::create_dir(root.join(".dest.toolkit-sync-old-a")).expect("empty sibling");
+        write(&root, ".dest.toolkit-sync-new-a/keep", b"keep");
+        let entries = list_tree(&root.join("src")).expect("list");
+        // stage: a (taken) then b; backup: a (taken) then c.
+        let mut names = ["a", "b", "a", "c"].into_iter().map(String::from);
+        replace_tree_with(
+            &root.join("src"),
+            &entries,
+            &root.join("dest"),
+            &mut || names.next().expect("suffix"),
+            &remove_old_tree,
+        )
+        .expect("replace");
+        assert_eq!(fs::read(root.join("dest/new")).expect("read"), b"new");
+        assert!(!root.join("dest/old").exists());
+        assert!(
+            root.join(".dest.toolkit-sync-old-a").is_dir(),
+            "pre-existing empty sibling must survive"
+        );
+        assert_eq!(
+            fs::read(root.join(".dest.toolkit-sync-new-a/keep")).expect("read"),
+            b"keep"
+        );
+        let leftovers: Vec<String> = fs::read_dir(&*root)
+            .expect("dir")
+            .map(|e| e.expect("entry").file_name().into_string().expect("utf8"))
+            .filter(|n| n.contains("toolkit-sync-") && !n.ends_with("-a"))
+            .collect();
+        assert!(
+            leftovers.is_empty(),
+            "own staging/backup left: {leftovers:?}"
+        );
+    }
+
+    #[test]
+    fn replace_tree_refuses_when_no_free_sibling_name_exists() {
+        let root = TempDir::new("ts-replace-exhaust");
+        write(&root, "src/new", b"new");
+        write(&root, "dest/old", b"old");
+        fs::create_dir(root.join(".dest.toolkit-sync-new-x")).expect("taken");
+        let entries = list_tree(&root.join("src")).expect("list");
+        let error = replace_tree_with(
+            &root.join("src"),
+            &entries,
+            &root.join("dest"),
+            &mut || "x".to_string(),
+            &remove_old_tree,
+        )
+        .expect_err("exhausted");
+        assert_eq!(error.code(), "path_invalid");
+        assert_eq!(fs::read(root.join("dest/old")).expect("read"), b"old");
+        assert!(root.join(".dest.toolkit-sync-new-x").is_dir());
+    }
+
+    /// True when this process can delete files from a read-only directory,
+    /// i.e. it is privileged and permission-based tests prove nothing.
+    #[cfg(unix)]
+    fn permissions_are_not_enforced() -> bool {
+        use std::os::unix::fs::PermissionsExt;
+        let probe = TempDir::new("ts-perm-probe");
+        write(&probe, "d/f", b"x");
+        fs::set_permissions(probe.join("d"), fs::Permissions::from_mode(0o555)).expect("chmod");
+        let removable = fs::remove_file(probe.join("d/f")).is_ok();
+        let _ = fs::set_permissions(probe.join("d"), fs::Permissions::from_mode(0o755));
+        removable
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn replace_tree_replaces_a_read_only_old_tree_and_leaves_no_backup() {
+        use std::os::unix::fs::PermissionsExt;
+        if permissions_are_not_enforced() {
+            eprintln!("skipped: running with privileges that ignore directory modes");
+            return;
+        }
+        let root = TempDir::new("ts-replace-readonly");
+        write(&root, "src/new", b"new");
+        write(&root, "dest/old", b"old");
+        write(&root, "dest/sub/deeper/old2", b"old2");
+        for dir in ["dest/sub/deeper", "dest/sub", "dest"] {
+            fs::set_permissions(root.join(dir), fs::Permissions::from_mode(0o555)).expect("chmod");
+        }
+        let entries = list_tree(&root.join("src")).expect("list");
+        replace_tree(&root.join("src"), &entries, &root.join("dest")).expect("replace");
+        assert_eq!(fs::read(root.join("dest/new")).expect("read"), b"new");
+        assert!(!root.join("dest/old").exists());
+        let top: Vec<String> = fs::read_dir(&*root)
+            .expect("dir")
+            .map(|e| e.expect("entry").file_name().into_string().expect("utf8"))
+            .collect();
+        assert_eq!(top.len(), 2, "no staging or backup left: {top:?}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn read_only_cleanup_does_not_follow_links_out_of_the_old_tree() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+        let outside = TempDir::new("ts-replace-ro-out");
+        write(&outside, "data/file", b"data");
+        fs::set_permissions(outside.join("data"), fs::Permissions::from_mode(0o500))
+            .expect("chmod");
+        let root = TempDir::new("ts-replace-ro-link");
+        write(&root, "src/new", b"new");
+        write(&root, "dest/old", b"old");
+        symlink(outside.join("data"), root.join("dest/link")).expect("link");
+        let entries = list_tree(&root.join("src")).expect("list");
+        replace_tree(&root.join("src"), &entries, &root.join("dest")).expect("replace");
+        let mode = fs::metadata(outside.join("data"))
+            .expect("meta")
+            .permissions()
+            .mode();
+        fs::set_permissions(outside.join("data"), fs::Permissions::from_mode(0o755))
+            .expect("restore");
+        assert_eq!(mode & 0o777, 0o500, "link target permissions untouched");
+        assert_eq!(fs::read(outside.join("data/file")).expect("read"), b"data");
+    }
+
+    #[test]
+    fn replace_tree_keeps_the_new_tree_and_names_the_backup_when_cleanup_fails() {
+        let root = TempDir::new("ts-replace-cleanup-fail");
+        write(&root, "src/new", b"new");
+        write(&root, "dest/old", b"old");
+        let entries = list_tree(&root.join("src")).expect("list");
+        let error = replace_tree_with(
+            &root.join("src"),
+            &entries,
+            &root.join("dest"),
+            &mut unique_suffix,
+            &|_| Err(io::Error::new(io::ErrorKind::PermissionDenied, "forced")),
+        )
+        .expect_err("cleanup failure");
+        assert_eq!(error.code(), "cleanup_failed");
+        assert_eq!(fs::read(root.join("dest/new")).expect("read"), b"new");
+        assert!(!root.join("dest/old").exists());
+        let backups: Vec<PathBuf> = fs::read_dir(&*root)
+            .expect("dir")
+            .map(|e| e.expect("entry").path())
+            .filter(|p| p.to_string_lossy().contains("toolkit-sync-old-"))
+            .collect();
+        assert_eq!(backups.len(), 1, "one leftover backup: {backups:?}");
+        assert_eq!(fs::read(backups[0].join("old")).expect("read"), b"old");
+        let message = error.message();
+        assert!(
+            message.contains(&backups[0].display().to_string()),
+            "error names the leftover path: {message}"
+        );
     }
 }

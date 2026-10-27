@@ -63,6 +63,28 @@ never write. Exit 0 = in sync (or synced), 1 = drift / refusal / runtime error,
   counterpart. `remove_dir_all` unlinks symlinks it meets instead of following
   them, so link targets inside a bundled copy are never touched. `vendored`
   deletes nothing at all.
+- Backup and staging names are reserved, never assumed free. The staging
+  directory (`.<skill>.toolkit-sync-new-<pid>-<n>`) and the moved-aside backup
+  (`.<skill>.toolkit-sync-old-<pid>-<n>`) are each created exclusively
+  (`create_dir`; `AlreadyExists` retries with a fresh suffix, bounded). The
+  `rename(dest, backup)` therefore only replaces the empty placeholder this
+  call created, so a pre-existing sibling with a would-be name (including an
+  empty directory, which POSIX `rename` would otherwise silently replace)
+  survives untouched. Fixture: `replace_tree_never_clobbers_a_pre_existing_backup_name`.
+- Read-only old trees (review #4479). Before the final `remove_dir_all`, the
+  moved-aside backup is walked with `symlink_metadata` (links are never
+  followed, nothing outside the backup is touched) and owner `rwx` is added to
+  each directory inside it; a bundled skill directory with mode `0555` and
+  files therefore syncs and leaves no backup. Tests run unprivileged; the
+  read-only test probes whether directory modes are enforced and skips with a
+  message when running as root. If the cleanup still fails the **new tree
+  stays installed**, the other skills are still processed and the command exits 1 with the
+  `cleanup_failed` error (listed as `<plugin>: <skill>: installed the new copy ...`) naming the leftover backup path
+  (`installed the new copy of <dest> but could not remove the replaced copy
+  (<cause>); remove it manually: <backup>`); the leftover is the previous
+  bundled copy and can be deleted by hand. Test:
+  `replace_tree_keeps_the_new_tree_and_names_the_backup_when_cleanup_fails`
+  (failure injected, so it needs no privileges).
 - Symbolic links are never followed: a link as plugin, `skills/` or bundled
   skill is an error; a link inside a canonical source stops that skill (nothing
   is copied, everything else continues); a link inside a bundled copy or a
