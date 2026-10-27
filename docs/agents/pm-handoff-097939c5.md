@@ -152,3 +152,4 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 20:38Z: #4381 impl 036c0b669edaa23f9063d6cdeb0c55340e7e57b7 (ad948f84; cloudwatch instrumentation/snapshots/evaluate-traces/capture-dataset; scoped 3b602e91 ok base a1db6c61, 2029; check says generic_cargo_commit_mismatch because base != rolling, irrelevant: integration round re-verifies). Follow-up #4734 live binding.
   Review #4742 worker c53fe35c (Codex sol high, pinned 036c0b66, op 9e95b2ef). Ruling: evaluate-traces writeback default stays (nothing sent); #4734 decides live default, leaning fail-closed opt-in.
   Kaizen filed #4743 (router rejects bare `-` value; `--json -` stdin lost).
+- 20:39Z: #4408 impl 3bf3a8db89d375340463063283e25b1ced5286cc (c65e27aa; 16 check_expected programs -> `toolkit startup check-expected`; scoped 85da6f1e ok base dcd47147, 1802). Review #4744 worker b22a9bdd (Codex sol high, pinned, op d2ce75c6). 4/4 workers busy.
