@@ -164,3 +164,4 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 20:57Z: #4744 review of #4408 3bf3a8db: CHANGES_REQUESTED #4746 #4747 #4748 #4753 #4754 #4759 (truncated inputs, empty-doc success, dropped warnings, bool-as-number, invalid explanations, symlink bypass). Reviewer friction Rsi #4756.
   Repair (Sonnet) fa5c7051 continue_from c65e27aa (op 5111e7f3), scoped base dcd47147. Then re-review #4744 pinned.
   4/4 busy: e1952dc1 (#4394), ecf77dbc (#4727), 14bc584a (#4381), fa5c7051 (#4408).
+- 20:58Z: #4394 repair 72c730b23b78b823c891e655ef1dd39809ff6a00 (e1952dc1; TenantRead template type, ReadOnly guard deleted; scoped e4f6faa7 ok base 550b629d, 1932). Re-review round 2 #4736 worker e70d7b66 (Codex sol high, pinned, op 7da27b2b).
