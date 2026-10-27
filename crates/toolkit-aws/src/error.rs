@@ -1,0 +1,772 @@
+//! Redacted error contract for the AWS boundary.
+//!
+//! [`AwsError`] is the one error type of this crate. Every message is passed
+//! through [`redact_text`] when it is built and again when it is displayed, so
+//! a credential that slips into an SDK or HTTP message never reaches stderr.
+//! [`AwsError::is_retryable`] drives [`crate::retry`]; [`render_failure`]
+//! reproduces the human-readable `Failed to <action>` blocks of the Python
+//! `di_error_translation` module; the `From<AwsError> for ToolkitError`
+//! conversion maps onto the shared CLI exit-status contract.
+
+use std::fmt;
+
+use toolkit_core::ToolkitError;
+
+use crate::redact::{is_secret_name, redact_text, sanitize_path, snippet, REDACTED};
+
+/// Longest response message kept in a [`ServiceError`].
+pub const MAX_MESSAGE_CHARS: usize = 1024;
+
+/// Error codes AWS services use for throttling (retryable).
+const THROTTLING_CODES: &[&str] = &[
+    "Throttling",
+    "ThrottlingException",
+    "ThrottledException",
+    "RequestThrottledException",
+    "TooManyRequestsException",
+    "ProvisionedThroughputExceededException",
+    "TransactionInProgressException",
+    "RequestLimitExceeded",
+    "BandwidthLimitExceeded",
+    "LimitExceededException",
+    "RequestThrottled",
+    "SlowDown",
+    "PriorRequestNotComplete",
+    "EC2ThrottledException",
+];
+
+/// Error codes AWS services use for transient server-side failures (retryable).
+const TRANSIENT_CODES: &[&str] = &[
+    "RequestTimeout",
+    "RequestTimeoutException",
+    "InternalError",
+    "InternalFailure",
+    "ServiceUnavailable",
+    "ServiceUnavailableException",
+];
+
+/// Which timeout fired.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TimeoutPhase {
+    /// Establishing the connection.
+    Connect,
+    /// Waiting for response bytes.
+    Read,
+}
+
+impl fmt::Display for TimeoutPhase {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Connect => "connect",
+            Self::Read => "read",
+        })
+    }
+}
+
+/// An HTTP-level error response from a service.
+///
+/// The request path is stored sanitized and the message redacted and
+/// truncated; the raw response body is never kept.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServiceError {
+    method: String,
+    path: String,
+    status: u16,
+    code: Option<String>,
+    message: String,
+    request_id: Option<String>,
+}
+
+impl ServiceError {
+    /// Build a service error, sanitizing the path and redacting the message.
+    #[must_use]
+    pub fn new(
+        method: &str,
+        path: &str,
+        status: u16,
+        code: Option<&str>,
+        message: &str,
+        request_id: Option<&str>,
+    ) -> Self {
+        Self {
+            method: method.to_ascii_uppercase(),
+            path: sanitize_path(path),
+            status,
+            code: code.filter(|c| !c.is_empty()).map(|c| snippet(c, 128)),
+            message: snippet(message, MAX_MESSAGE_CHARS),
+            request_id: request_id
+                .filter(|r| !r.is_empty())
+                .map(|r| snippet(r, 128)),
+        }
+    }
+
+    /// HTTP method, upper case.
+    #[must_use]
+    pub fn method(&self) -> &str {
+        &self.method
+    }
+
+    /// Sanitized request path (`<id>` for id-like segments, no query).
+    #[must_use]
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+
+    /// HTTP status code.
+    #[must_use]
+    pub fn status(&self) -> u16 {
+        self.status
+    }
+
+    /// Structured error code such as `ThrottlingException`, when present.
+    #[must_use]
+    pub fn code(&self) -> Option<&str> {
+        self.code.as_deref()
+    }
+
+    /// Redacted, truncated service message (may be empty).
+    #[must_use]
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+
+    /// Service request id, when the response carried one.
+    #[must_use]
+    pub fn request_id(&self) -> Option<&str> {
+        self.request_id.as_deref()
+    }
+
+    fn is_throttling(&self) -> bool {
+        self.status == 429
+            || self
+                .code
+                .as_deref()
+                .is_some_and(|code| THROTTLING_CODES.contains(&code))
+    }
+
+    fn is_transient(&self) -> bool {
+        matches!(self.status, 500 | 502 | 503 | 504)
+            || self
+                .code
+                .as_deref()
+                .is_some_and(|code| TRANSIENT_CODES.contains(&code))
+    }
+}
+
+impl fmt::Display for ServiceError {
+    /// `<METHOD> <sanitized path> failed (<status>)[: <code>]`; like the Python
+    /// `ApiError`, the message is not part of the one-line form.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} {} failed ({})", self.method, self.path, self.status)?;
+        if let Some(code) = &self.code {
+            write!(f, ": {code}")?;
+        }
+        Ok(())
+    }
+}
+
+/// The one error type of the AWS boundary.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AwsError {
+    /// A region, endpoint, profile, timeout or request setting is invalid.
+    InvalidConfig {
+        /// Setting name, such as `region` or `AWS_ENDPOINT_URL`.
+        field: &'static str,
+        /// Why it was rejected (never the raw rejected value).
+        reason: String,
+    },
+    /// A credential-bearing command-line flag was supplied.
+    CredentialArgument {
+        /// The flag name only, without any value.
+        flag: String,
+    },
+    /// The provider chain found no credentials.
+    NoCredentials,
+    /// A provider found some but not all credential parts.
+    PartialCredentials {
+        /// Name of the missing part.
+        missing: &'static str,
+    },
+    /// The credentials are past their expiry.
+    CredentialsExpired,
+    /// A credential provider failed for another reason.
+    CredentialProvider {
+        /// Provider name.
+        provider: &'static str,
+        /// Redacted failure message.
+        message: String,
+    },
+    /// The endpoint could not be reached.
+    Connect {
+        /// Redacted failure message.
+        message: String,
+    },
+    /// A connect or read timeout fired.
+    Timeout {
+        /// Which timeout.
+        phase: TimeoutPhase,
+        /// Redacted failure message.
+        message: String,
+    },
+    /// The service returned an HTTP error response.
+    Service(Box<ServiceError>),
+    /// A paginated walk was malformed or exceeded its limits.
+    Pagination {
+        /// What went wrong.
+        reason: String,
+    },
+    /// A success response could not be understood (for example invalid JSON).
+    InvalidResponse {
+        /// What was wrong with the response.
+        reason: String,
+    },
+}
+
+impl AwsError {
+    /// An invalid-setting error; `reason` is redacted.
+    #[must_use]
+    pub fn invalid_config(field: &'static str, reason: impl AsRef<str>) -> Self {
+        Self::InvalidConfig {
+            field,
+            reason: redact_text(reason.as_ref()),
+        }
+    }
+
+    /// A connection failure; `message` is redacted.
+    #[must_use]
+    pub fn connect(message: impl AsRef<str>) -> Self {
+        Self::Connect {
+            message: redact_text(message.as_ref()),
+        }
+    }
+
+    /// A timeout; `message` is redacted.
+    #[must_use]
+    pub fn timeout(phase: TimeoutPhase, message: impl AsRef<str>) -> Self {
+        Self::Timeout {
+            phase,
+            message: redact_text(message.as_ref()),
+        }
+    }
+
+    /// A credential provider failure; `message` is redacted.
+    #[must_use]
+    pub fn provider(provider: &'static str, message: impl AsRef<str>) -> Self {
+        Self::CredentialProvider {
+            provider,
+            message: redact_text(message.as_ref()),
+        }
+    }
+
+    /// A service error response (boxed to keep `Result<_, AwsError>` small).
+    #[must_use]
+    pub fn service(error: ServiceError) -> Self {
+        Self::Service(Box::new(error))
+    }
+
+    /// A pagination failure; `reason` is redacted.
+    #[must_use]
+    pub fn pagination(reason: impl AsRef<str>) -> Self {
+        Self::Pagination {
+            reason: redact_text(reason.as_ref()),
+        }
+    }
+
+    /// A response that could not be understood; `reason` is redacted.
+    #[must_use]
+    pub fn invalid_response(reason: impl AsRef<str>) -> Self {
+        Self::InvalidResponse {
+            reason: redact_text(reason.as_ref()),
+        }
+    }
+
+    /// Stable machine-readable code (also the `ToolkitError` code).
+    #[must_use]
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::InvalidConfig { .. } => "aws_invalid_config",
+            Self::CredentialArgument { .. } => "aws_credential_argument",
+            Self::NoCredentials => "aws_no_credentials",
+            Self::PartialCredentials { .. } => "aws_partial_credentials",
+            Self::CredentialsExpired => "aws_credentials_expired",
+            Self::CredentialProvider { .. } => "aws_credential_provider",
+            Self::Connect { .. } => "aws_connect",
+            Self::Timeout { .. } => "aws_timeout",
+            Self::Service(_) => "aws_service_error",
+            Self::Pagination { .. } => "aws_pagination",
+            Self::InvalidResponse { .. } => "aws_invalid_response",
+        }
+    }
+
+    /// Whether the failure is a service throttle.
+    #[must_use]
+    pub fn is_throttling(&self) -> bool {
+        matches!(self, Self::Service(service) if service.is_throttling())
+    }
+
+    /// Whether retrying the same request can succeed: throttling, HTTP
+    /// 429/500/502/503/504, transient service codes, timeouts and connection
+    /// failures. Credential, validation, configuration and pagination errors
+    /// are never retried.
+    #[must_use]
+    pub fn is_retryable(&self) -> bool {
+        match self {
+            Self::Connect { .. } | Self::Timeout { .. } => true,
+            Self::Service(service) => service.is_throttling() || service.is_transient(),
+            _ => false,
+        }
+    }
+}
+
+impl fmt::Display for AwsError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidConfig { field, reason } => {
+                write!(f, "invalid {field}: {}", redact_text(reason))
+            }
+            Self::CredentialArgument { flag } => write!(
+                f,
+                "{} is not accepted: credentials come only from the standard AWS provider \
+                 chain (environment, shared config or profile, SSO, container or instance \
+                 role); set AWS_PROFILE to choose a profile",
+                snippet(flag, 64)
+            ),
+            Self::NoCredentials => f.write_str("Unable to locate credentials"),
+            Self::PartialCredentials { missing } => {
+                write!(f, "Partial credentials found: missing {missing}")
+            }
+            Self::CredentialsExpired => f.write_str("The AWS credentials have expired"),
+            Self::CredentialProvider { provider, message } => write!(
+                f,
+                "credential provider {provider} failed: {}",
+                redact_text(message)
+            ),
+            Self::Connect { message } => {
+                write!(
+                    f,
+                    "could not connect to the endpoint: {}",
+                    redact_text(message)
+                )
+            }
+            Self::Timeout { phase, message } => {
+                write!(f, "{phase} timeout: {}", redact_text(message))
+            }
+            Self::Service(service) => fmt::Display::fmt(service, f),
+            Self::Pagination { reason } => {
+                write!(f, "pagination failed: {}", redact_text(reason))
+            }
+            Self::InvalidResponse { reason } => {
+                write!(f, "invalid response: {}", redact_text(reason))
+            }
+        }
+    }
+}
+
+impl std::error::Error for AwsError {}
+
+impl From<AwsError> for ToolkitError {
+    /// Credential-argument mistakes are usage errors (exit 2); everything else
+    /// is a runtime error (exit 1). The message is the redacted `Display`.
+    fn from(error: AwsError) -> Self {
+        let message = error.to_string();
+        if matches!(error, AwsError::CredentialArgument { .. }) {
+            Self::usage(error.code(), message)
+        } else {
+            Self::runtime(error.code(), message)
+        }
+    }
+}
+
+/// Tool-specific wording for [`render_failure_with`].
+#[derive(Debug, Clone, Copy)]
+pub struct Guidance<'a> {
+    /// Numbered `POSSIBLE CAUSES:` entries.
+    pub possible_causes: &'a [&'a str],
+    /// Numbered `TROUBLESHOOTING:` entries.
+    pub troubleshooting: &'a [&'a str],
+}
+
+const DEFAULT_CAUSES: &[&str] = &[
+    "Invalid input parameters (validation error)",
+    "Resource not found, already exists, or scoped to a different account",
+    "Insufficient IAM permissions",
+    "Service-side throttling or transient error",
+];
+
+const DEFAULT_TROUBLESHOOTING: &[&str] = &[
+    "Re-read the error message above for the specific failure cause",
+    "Verify the identifiers and parameters passed in the request",
+    "Verify credentials map to an account/region with access",
+];
+
+/// Render the human-readable failure block for `error` with the default
+/// wording. See [`render_failure_with`].
+#[must_use]
+pub fn render_failure(action: &str, error: &AwsError, attempted: &[(&str, &str)]) -> String {
+    render_failure_with(action, error, attempted, None)
+}
+
+/// Render the human-readable failure block, the Rust form of the Python
+/// `translate_aws_error`: `Failed to <action>`, an `Error:` line, an optional
+/// `ATTEMPTED PARAMETERS:` block (empty values skipped, values redacted) and
+/// `POSSIBLE CAUSES:` / `TROUBLESHOOTING:` sections matched to the failure.
+/// `guidance` replaces the wording used for service errors only.
+#[must_use]
+pub fn render_failure_with(
+    action: &str,
+    error: &AwsError,
+    attempted: &[(&str, &str)],
+    guidance: Option<&Guidance<'_>>,
+) -> String {
+    let attempted = attempted_block(attempted);
+    let head = format!("Failed to {}\n\n", redact_text(action));
+    match error {
+        AwsError::Service(service) => {
+            let code = service.code().unwrap_or("ClientError");
+            let message = if service.message().is_empty() {
+                error.to_string()
+            } else {
+                service.message().to_string()
+            };
+            let (causes, steps) = guidance.map_or((DEFAULT_CAUSES, DEFAULT_TROUBLESHOOTING), |g| {
+                (g.possible_causes, g.troubleshooting)
+            });
+            format!(
+                "{head}Error: {code} - {message}\n{attempted}{}{}",
+                numbered("POSSIBLE CAUSES:", causes),
+                numbered("TROUBLESHOOTING:", steps)
+            )
+        }
+        AwsError::Connect { .. } => format!(
+            "{head}Error: EndpointConnectionError - {error}\n{attempted}{}",
+            numbered(
+                "TROUBLESHOOTING:",
+                &[
+                    "Check network connectivity to the AWS endpoint",
+                    "Verify AWS region resolution (AWS_REGION env var or profile)",
+                ]
+            )
+        ),
+        AwsError::Timeout { .. } => format!(
+            "{head}Error: TimeoutError - {error}\n{attempted}{}",
+            numbered(
+                "TROUBLESHOOTING:",
+                &[
+                    "Retry the request — the AWS endpoint did not respond within the socket timeout",
+                    "Check network connectivity",
+                ]
+            )
+        ),
+        AwsError::NoCredentials
+        | AwsError::PartialCredentials { .. }
+        | AwsError::CredentialsExpired => {
+            let name = match error {
+                AwsError::NoCredentials => "NoCredentialsError",
+                AwsError::PartialCredentials { .. } => "PartialCredentialsError",
+                _ => "ExpiredCredentialsError",
+            };
+            format!(
+                "{head}Error: {name} - {error}\n{attempted}{}",
+                numbered(
+                    "TROUBLESHOOTING:",
+                    &[
+                        "Verify AWS credentials: aws configure list",
+                        "Set AWS_PROFILE or supply credentials via env vars",
+                    ]
+                )
+            )
+        }
+        _ => format!("{head}Unexpected error: {error}\n{attempted}"),
+    }
+}
+
+fn attempted_block(attempted: &[(&str, &str)]) -> String {
+    let lines: Vec<String> = attempted
+        .iter()
+        .filter(|(_, value)| !value.is_empty())
+        .map(|(key, value)| {
+            let shown = if is_secret_name(key) {
+                REDACTED.to_string()
+            } else {
+                snippet(value, 512)
+            };
+            format!("- {}: {shown}", redact_text(key))
+        })
+        .collect();
+    if lines.is_empty() {
+        String::new()
+    } else {
+        format!("\nATTEMPTED PARAMETERS:\n{}\n", lines.join("\n"))
+    }
+}
+
+fn numbered(label: &str, items: &[&str]) -> String {
+    if items.is_empty() {
+        return String::new();
+    }
+    let body: Vec<String> = items
+        .iter()
+        .enumerate()
+        .map(|(index, item)| format!("{}. {item}", index + 1))
+        .collect();
+    format!("\n{label}\n{}\n", body.join("\n"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use toolkit_core::ErrorKind;
+
+    fn service(status: u16, code: Option<&str>) -> AwsError {
+        AwsError::service(ServiceError::new(
+            "post",
+            "/api/launches/3f2504e0-4f89-41d3-9a0c-0305e82c3301?x=1",
+            status,
+            code,
+            "boom",
+            Some("req-1"),
+        ))
+    }
+
+    #[test]
+    fn service_error_display_is_method_sanitized_path_status_code() {
+        let error = service(400, Some("ValidationException"));
+        assert_eq!(
+            error.to_string(),
+            "POST /api/launches/<id> failed (400): ValidationException"
+        );
+        assert_eq!(
+            service(502, None).to_string(),
+            "POST /api/launches/<id> failed (502)"
+        );
+        let AwsError::Service(inner) = &error else {
+            panic!("expected service error");
+        };
+        assert_eq!(inner.method(), "POST");
+        assert_eq!(inner.status(), 400);
+        assert_eq!(inner.request_id(), Some("req-1"));
+        assert_eq!(inner.message(), "boom");
+    }
+
+    #[test]
+    fn service_error_redacts_and_truncates_message() {
+        let long = format!("token=abc {}", "x".repeat(2000));
+        let error = ServiceError::new("GET", "/", 500, None, &long, None);
+        assert!(error.message().starts_with("token=[REDACTED] x"));
+        assert!(error.message().ends_with('…'));
+        assert!(error.message().chars().count() <= MAX_MESSAGE_CHARS + 1);
+    }
+
+    #[test]
+    fn retryability_matches_the_documented_classes() {
+        for retryable in [
+            service(429, None),
+            service(400, Some("ThrottlingException")),
+            service(400, Some("SlowDown")),
+            service(500, None),
+            service(502, None),
+            service(503, None),
+            service(504, None),
+            service(400, Some("RequestTimeout")),
+            AwsError::connect("refused"),
+            AwsError::timeout(TimeoutPhase::Read, "slow"),
+        ] {
+            assert!(retryable.is_retryable(), "{retryable}");
+        }
+        for fatal in [
+            service(400, Some("ValidationException")),
+            service(403, Some("AccessDeniedException")),
+            service(404, None),
+            AwsError::NoCredentials,
+            AwsError::CredentialsExpired,
+            AwsError::PartialCredentials { missing: "secret" },
+            AwsError::invalid_config("region", "bad"),
+            AwsError::pagination("loop"),
+            AwsError::provider("p", "x"),
+        ] {
+            assert!(!fatal.is_retryable(), "{fatal}");
+        }
+        assert!(service(400, Some("Throttling")).is_throttling());
+        assert!(!service(500, None).is_throttling());
+        assert!(!AwsError::NoCredentials.is_throttling());
+    }
+
+    #[test]
+    fn display_redacts_even_hand_built_variants() {
+        let error = AwsError::Connect {
+            message: "failed with token=abc123".to_string(),
+        };
+        assert_eq!(
+            error.to_string(),
+            "could not connect to the endpoint: failed with token=[REDACTED]"
+        );
+        let error = AwsError::CredentialProvider {
+            provider: "env",
+            message: "password: hunter2".to_string(),
+        };
+        assert_eq!(
+            error.to_string(),
+            "credential provider env failed: password: [REDACTED]"
+        );
+        let built = AwsError::provider("env", "AKIAIOSFODNN7EXAMPLE rejected");
+        assert_eq!(
+            built.to_string(),
+            "credential provider env failed: [REDACTED] rejected"
+        );
+    }
+
+    #[test]
+    fn codes_are_stable() {
+        let codes = [
+            (
+                AwsError::invalid_config("region", "x"),
+                "aws_invalid_config",
+            ),
+            (
+                AwsError::CredentialArgument { flag: "--x".into() },
+                "aws_credential_argument",
+            ),
+            (AwsError::NoCredentials, "aws_no_credentials"),
+            (
+                AwsError::PartialCredentials { missing: "m" },
+                "aws_partial_credentials",
+            ),
+            (AwsError::CredentialsExpired, "aws_credentials_expired"),
+            (AwsError::provider("p", "m"), "aws_credential_provider"),
+            (AwsError::connect("m"), "aws_connect"),
+            (AwsError::timeout(TimeoutPhase::Connect, "m"), "aws_timeout"),
+            (service(400, None), "aws_service_error"),
+            (AwsError::pagination("m"), "aws_pagination"),
+            (AwsError::invalid_response("m"), "aws_invalid_response"),
+        ];
+        for (error, code) in codes {
+            assert_eq!(error.code(), code);
+        }
+    }
+
+    #[test]
+    fn toolkit_error_conversion_maps_exit_classes() {
+        let usage: ToolkitError = AwsError::CredentialArgument {
+            flag: "--secret-access-key".to_string(),
+        }
+        .into();
+        assert_eq!(usage.kind(), ErrorKind::Usage);
+        assert_eq!(usage.exit_code(), 2);
+        assert_eq!(usage.code(), "aws_credential_argument");
+        assert!(usage
+            .message()
+            .starts_with("--secret-access-key is not accepted"));
+
+        let runtime: ToolkitError = service(500, None).into();
+        assert_eq!(runtime.kind(), ErrorKind::Runtime);
+        assert_eq!(runtime.exit_code(), 1);
+        assert_eq!(runtime.code(), "aws_service_error");
+    }
+
+    #[test]
+    fn service_failure_block_matches_the_python_layout() {
+        let error = AwsError::service(ServiceError::new(
+            "POST",
+            "/x",
+            400,
+            Some("ValidationException"),
+            "bad input",
+            None,
+        ));
+        let text = render_failure(
+            "create BREAKPOINT instrumentation",
+            &error,
+            &[
+                ("service", "checkout"),
+                ("empty", ""),
+                ("region", "us-east-1"),
+            ],
+        );
+        let expected = "\
+Failed to create BREAKPOINT instrumentation
+
+Error: ValidationException - bad input
+
+ATTEMPTED PARAMETERS:
+- service: checkout
+- region: us-east-1
+
+POSSIBLE CAUSES:
+1. Invalid input parameters (validation error)
+2. Resource not found, already exists, or scoped to a different account
+3. Insufficient IAM permissions
+4. Service-side throttling or transient error
+
+TROUBLESHOOTING:
+1. Re-read the error message above for the specific failure cause
+2. Verify the identifiers and parameters passed in the request
+3. Verify credentials map to an account/region with access
+";
+        assert_eq!(text, expected);
+    }
+
+    #[test]
+    fn custom_guidance_replaces_service_wording_only() {
+        let error = service(404, Some("ResourceNotFoundException"));
+        let guidance = Guidance {
+            possible_causes: &["gone"],
+            troubleshooting: &["look again", "ask"],
+        };
+        let text = render_failure_with("get thing", &error, &[], Some(&guidance));
+        assert_eq!(
+            text,
+            "Failed to get thing\n\nError: ResourceNotFoundException - boom\n\
+             \nPOSSIBLE CAUSES:\n1. gone\n\nTROUBLESHOOTING:\n1. look again\n2. ask\n"
+        );
+        let connect = render_failure_with(
+            "get thing",
+            &AwsError::connect("down"),
+            &[],
+            Some(&guidance),
+        );
+        assert!(connect.contains("EndpointConnectionError"));
+        assert!(!connect.contains("gone"));
+    }
+
+    #[test]
+    fn transport_and_credential_blocks_have_their_own_troubleshooting() {
+        let connect = render_failure("list", &AwsError::connect("refused"), &[]);
+        assert_eq!(
+            connect,
+            "Failed to list\n\nError: EndpointConnectionError - could not connect to the endpoint: refused\n\
+             \nTROUBLESHOOTING:\n1. Check network connectivity to the AWS endpoint\n\
+             2. Verify AWS region resolution (AWS_REGION env var or profile)\n"
+        );
+        let timeout = render_failure("list", &AwsError::timeout(TimeoutPhase::Read, "slow"), &[]);
+        assert!(timeout.contains("Error: TimeoutError - read timeout: slow"));
+        assert!(timeout.contains("1. Retry the request"));
+        let none = render_failure("list", &AwsError::NoCredentials, &[("a", "b")]);
+        assert!(none.contains("Error: NoCredentialsError - Unable to locate credentials"));
+        assert!(none.contains("ATTEMPTED PARAMETERS:\n- a: b\n"));
+        assert!(none.contains("1. Verify AWS credentials: aws configure list"));
+        let partial = render_failure(
+            "list",
+            &AwsError::PartialCredentials {
+                missing: "secret_access_key",
+            },
+            &[],
+        );
+        assert!(partial.contains("PartialCredentialsError"));
+        let expired = render_failure("list", &AwsError::CredentialsExpired, &[]);
+        assert!(expired.contains("ExpiredCredentialsError"));
+    }
+
+    #[test]
+    fn unexpected_errors_and_redaction_in_failure_blocks() {
+        let text = render_failure(
+            "paginate",
+            &AwsError::pagination("repeated token=abc"),
+            &[("password", "hunter2")],
+        );
+        assert_eq!(
+            text,
+            "Failed to paginate\n\nUnexpected error: pagination failed: repeated token=[REDACTED]\n\
+             \nATTEMPTED PARAMETERS:\n- password: [REDACTED]\n"
+        );
+    }
+}

@@ -1,0 +1,13 @@
+[package]
+name = "toolkit-aws"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Shared AWS/API client boundaries for the Agent Toolkit Rust CLI (aws-core slice #4379)."
+
+[dependencies]
+toolkit-core = { path = "../toolkit-core" }
+
+[lints]
+workspace = true
