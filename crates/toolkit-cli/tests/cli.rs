@@ -824,3 +824,305 @@ fn spec_validate_rejects_symlinks_under_plugins() {
          error: Spec validation failed with 1 error(s).\n"
     );
 }
+
+// ---- startup validators (#4399) ---------------------------------------------
+
+fn real_startup_plugin() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../plugins/aws-startup-advisor")
+}
+
+#[test]
+fn startup_model_pricing_and_lint_pass_on_the_real_plugin_through_the_binary() {
+    let plugin = real_startup_plugin();
+    let root = plugin.to_str().expect("utf-8 plugin path");
+
+    let output = run(
+        &["startup", "model-pricing", "--plugin-root", root],
+        &plugin,
+    );
+    assert_eq!(code(&output), 0, "stderr: {}", stderr(&output));
+    assert_eq!(stderr(&output), "");
+    assert_eq!(
+        stdout(&output),
+        "Model pricing coverage: all Anthropic candidates have numeric Active cache rows.\n"
+    );
+
+    // The plugin directory is also the default root.
+    let output = run(&["startup", "model-id-lint"], &plugin);
+    assert_eq!(code(&output), 0, "stderr: {}", stderr(&output));
+    assert_eq!(stderr(&output), "");
+    assert!(
+        stdout(&output).starts_with("model-id lint: OK ("),
+        "{}",
+        stdout(&output)
+    );
+}
+
+#[test]
+fn startup_model_id_lint_reports_findings_on_stderr_and_exits_one() {
+    let root = temp_root("startup-lint");
+    write_file(
+        &root,
+        "skills/shared/ai/ai-model-lifecycle.md",
+        "| Model | Model ID | Status |\n| - | - | - |\n| A | `acme.alpha-v1:0` | **excluded** |\n\n**Removed:**\n- Gone (`acme.gone-v1:0`)\n",
+    );
+    write_file(&root, "skills/x/SKILL.md", "use `acme.gone-v1:0`\n");
+    let output = run(&["startup", "model-id-lint"], &root);
+    assert_eq!(code(&output), 1);
+    assert_eq!(stdout(&output), "");
+    assert_eq!(
+        stderr(&output),
+        "model-id lint: 1 problem(s)\n  - skills/x/SKILL.md:1: retired Bedrock model `acme.gone-v1:0` (excluded/removed per ai-model-lifecycle.md) used outside the model catalog\nerror: model-id lint found 1 problem(s)\n"
+    );
+
+    let missing = root.join("absent");
+    let output = run(
+        &[
+            "startup",
+            "model-id-lint",
+            "--plugin-root",
+            missing.to_str().expect("utf-8 path"),
+        ],
+        &root,
+    );
+    assert_eq!(code(&output), 2);
+    assert!(stderr(&output).starts_with("error: Plugin directory not found: "));
+}
+
+#[test]
+fn startup_program_artifacts_exit_codes_and_streams() {
+    let dir = temp_root("startup-program");
+    let dir_arg = dir.to_str().expect("utf-8 dir");
+    write_file(
+        &dir,
+        "preferences.json",
+        r#"{"startup_constraints":{"startup_program_status":{"value":"unknown"}}}"#,
+    );
+    write_file(&dir, "STARTUP_PROGRAMS.md", "Your status: eligible\n");
+    let output = run(
+        &["startup", "program-artifacts", "--migration-dir", dir_arg],
+        &dir,
+    );
+    assert_eq!(code(&output), 1);
+    assert_eq!(stdout(&output), "");
+    assert_eq!(
+        stderr(&output),
+        "STARTUP_FAIL | startup-program-artifacts\n  - STARTUP_PROGRAMS.md: startup_program_status is \"unknown\" but content implies a confirmed Activate tier (your\\s+status:\\s*eligible)\nerror: 1 startup program artifact problem(s)\n"
+    );
+
+    write_file(&dir, "STARTUP_PROGRAMS.md", "No tier claimed.\n");
+    let output = run(
+        &["startup", "program-artifacts", "--migration-dir", dir_arg],
+        &dir,
+    );
+    assert_eq!(code(&output), 0, "stderr: {}", stderr(&output));
+    assert_eq!(
+        stdout(&output),
+        "STARTUP_OK | startup_program_status aligned with artifacts\n"
+    );
+    assert_eq!(stderr(&output), "");
+
+    let output = run(&["startup", "program-artifacts"], &dir);
+    assert_eq!(code(&output), 2);
+    assert!(stderr(&output)
+        .starts_with("error: the following arguments are required: --migration-dir\n"));
+}
+
+#[test]
+fn startup_artifacts_self_check_and_fixtures_pass_on_the_real_plugin_through_the_binary() {
+    let plugin = real_startup_plugin();
+    let root = plugin.to_str().expect("utf-8 plugin path");
+
+    let output = run(
+        &[
+            "startup",
+            "artifacts",
+            "--self-check",
+            "--plugin-root",
+            root,
+        ],
+        &plugin,
+    );
+    assert_eq!(code(&output), 0, "stdout: {}", stdout(&output));
+    assert_eq!(stderr(&output), "");
+    assert!(
+        stdout(&output)
+            .ends_with("PASS — 0 artifact(s) checked, 0 error(s), 0 baselined, 0 info\n"),
+        "{}",
+        stdout(&output)
+    );
+
+    let output = run(&["startup", "artifacts", "--fixtures", "--json"], &plugin);
+    assert_eq!(code(&output), 0, "stdout: {}", stdout(&output));
+    assert_eq!(stderr(&output), "");
+    assert!(
+        stdout(&output).contains("\"errors\": []"),
+        "{}",
+        stdout(&output)
+    );
+    assert!(
+        stdout(&output).contains("\"stale_baseline_entries\": []"),
+        "{}",
+        stdout(&output)
+    );
+}
+
+#[test]
+fn startup_artifacts_failures_use_stdout_for_the_report_and_stderr_for_the_summary() {
+    let plugin = real_startup_plugin();
+    let root = plugin.to_str().expect("utf-8 plugin path");
+    let run_dir = temp_root("startup-artifacts");
+    write_file(
+        &run_dir,
+        ".phase-status.json",
+        r#"{"migration_id": "x", "last_updated": "2026-01-01T00:00:00Z", "phases": {}}"#,
+    );
+    let dir_arg = run_dir.to_str().expect("utf-8 dir");
+    let output = run(
+        &[
+            "startup",
+            "artifacts",
+            "--run-dir",
+            dir_arg,
+            "--skill",
+            "gcp-to-aws",
+            "--plugin-root",
+            root,
+        ],
+        &plugin,
+    );
+    assert_eq!(code(&output), 1);
+    assert!(
+        stdout(&output).contains("SCHEMA_VIOLATION"),
+        "{}",
+        stdout(&output)
+    );
+    assert!(
+        stdout(&output).contains("minProperties"),
+        "{}",
+        stdout(&output)
+    );
+    assert!(
+        stdout(&output).contains("\nFAIL — 1 artifact(s) checked, "),
+        "{}",
+        stdout(&output)
+    );
+    assert!(
+        stderr(&output).starts_with("error: "),
+        "{}",
+        stderr(&output)
+    );
+
+    let output = run(&["startup", "artifacts"], &plugin);
+    assert_eq!(code(&output), 2);
+    assert!(stderr(&output)
+        .starts_with("error: exactly one of --self-check, --fixtures or --run-dir is required"));
+}
+
+#[test]
+fn startup_emit_plan_writes_the_plan_and_fails_open_through_the_binary() {
+    let root = temp_root("emit-plan");
+    let plugin = root.join("plugin");
+    let run_dir = root.join("run");
+    write_file(
+        &plugin,
+        ".claude-plugin/plugin.json",
+        r#"{"version": "9.8.7"}"#,
+    );
+    write_file(
+        &run_dir,
+        ".phase-status.json",
+        r#"{"owning_skill": "HEROKU_TO_AWS", "run_id": "ABCDEF01-0000-4000-8000-000000000001"}"#,
+    );
+    write_file(
+        &run_dir,
+        "estimation-infra.json",
+        r#"{"projected_costs": {"aws_monthly_balanced": 42.5}}"#,
+    );
+    let run_arg = run_dir.to_str().expect("utf-8 dir");
+    let plugin_arg = plugin.to_str().expect("utf-8 dir");
+
+    let output = run(
+        &[
+            "startup",
+            "emit-plan",
+            "--migration-dir",
+            run_arg,
+            "--plugin-root",
+            plugin_arg,
+        ],
+        &root,
+    );
+    assert_eq!(code(&output), 0, "{}", stderr(&output));
+    assert_eq!(
+        stdout(&output),
+        format!("PLAN_OK | path={run_arg}/plan.json | platform=HEROKU | scope=INFRA_ONLY\n")
+    );
+    assert_eq!(stderr(&output), "");
+    assert_eq!(
+        fs::read_to_string(run_dir.join("plan.json")).expect("plan.json"),
+        "{\n  \"schemaVersion\": 1,\n  \"sourcePlatform\": \"HEROKU\",\n  \"scope\": \"INFRA_ONLY\",\n  \"runId\": \"abcdef01-0000-4000-8000-000000000001\",\n  \"cost\": {\n    \"awsMonthly\": 42.5,\n    \"awsMonthlyBasis\": \"BALANCED\"\n  },\n  \"producerVersion\": \"9.8.7\"\n}\n"
+    );
+
+    // Fail-open: an unusable estimate is a skip with exit 0 and drops the plan.
+    write_file(
+        &run_dir,
+        "estimation-infra.json",
+        r#"{"projected_costs": {}}"#,
+    );
+    let output = run(&["startup", "emit-plan", "--migration-dir", run_arg], &root);
+    assert_eq!(code(&output), 0);
+    assert_eq!(
+        stdout(&output),
+        "PLAN_SKIP | reason=no usable projected_costs.aws_monthly_balanced\n"
+    );
+    assert!(!run_dir.join("plan.json").exists());
+
+    // Only a usage error is non-zero.
+    let output = run(&["startup", "emit-plan"], &root);
+    assert_eq!(code(&output), 2);
+    assert!(stderr(&output).contains("--migration-dir"));
+}
+
+#[test]
+fn startup_consent_audit_passes_on_the_real_plugin_and_fails_closed_through_the_binary() {
+    let plugin = real_startup_plugin();
+    let output = run(&["startup", "consent-audit"], &plugin);
+    assert_eq!(code(&output), 0, "stderr: {}", stderr(&output));
+    assert_eq!(stderr(&output), "");
+    assert_eq!(
+        stdout(&output),
+        "consent-disclosure audit: OK (6 discovery sub-file(s) checked)\n"
+    );
+
+    let root = temp_root("consent-audit");
+    write_file(
+        &root,
+        "skills/demo/references/phases/discover/discover-demo-api.md",
+        "This runs GET requests only.\n\n## Step 2: Capture\n\n| # | Endpoint | Purpose |\n| - | - | - |\n| 1 | `POST /x` | y |\n",
+    );
+    let root_arg = root.to_str().expect("utf-8 dir");
+    let output = run(
+        &["startup", "consent-audit", "--plugin-root", root_arg],
+        &root,
+    );
+    assert_eq!(code(&output), 1);
+    assert_eq!(stdout(&output), "");
+    assert!(
+        stderr(&output).starts_with("consent-disclosure audit: 1 problem(s)\n  - skills/demo/references/phases/discover/discover-demo-api.md:1: claims a GET-only restriction"),
+        "{}",
+        stderr(&output)
+    );
+
+    let output = run(
+        &[
+            "startup",
+            "consent-audit",
+            "--plugin-root",
+            "does-not-exist",
+        ],
+        &root,
+    );
+    assert_eq!(code(&output), 2);
+    assert!(stderr(&output).contains("Plugin directory not found: "));
+}

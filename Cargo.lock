@@ -608,6 +608,7 @@ dependencies = [
 name = "toolkit-cli"
 version = "0.1.0"
 dependencies = [
+ "fancy-regex",
  "jsonschema",
  "serde_json",
  "toolkit-core",

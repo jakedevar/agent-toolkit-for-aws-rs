@@ -29,6 +29,7 @@ pub mod dynamodb;
 pub mod manifests;
 mod msk;
 pub mod spec;
+pub mod startup;
 mod sync;
 
 /// Usage text printed by `help` (stdout) and after usage errors (stderr).
@@ -37,6 +38,19 @@ Usage:
   toolkit skills list [ROOT] [--json]
   toolkit manifests validate [ROOT] [--plugin NAME]
   toolkit spec validate [ROOT]
+  toolkit startup model-pricing [--plugin-root DIR]
+  toolkit startup program-artifacts --migration-dir DIR
+  toolkit startup model-id-lint [--plugin-root DIR]
+  toolkit startup artifacts (--self-check | --fixtures | --run-dir DIR --skill NAME)
+                            [--plugin-root DIR] [--manifest FILE] [--baseline FILE]
+                            [--no-baseline] [--json]
+  toolkit startup emit-plan --migration-dir DIR [--plugin-root DIR] [--plugin-json FILE]
+  toolkit startup consent-audit [--plugin-root DIR]
+  toolkit startup pricing-parity [--plugin-root DIR]
+  toolkit startup terraform-policy DIR [--json FILE]
+  toolkit startup migration-report REPORT [--estimation-infra FILE] [--estimation-ai FILE]
+                            [--aws-design FILE] [--migration-dir DIR] [--no-require-toc]
+                            [--no-readability] [--mode full|decision|ai_only]
   toolkit sync plugin-skills [--root DIR] [--plugin NAME] [--check]
   toolkit sync vendored [--plugin-root DIR] [--check]
   toolkit msk size [--emit-static-pricing] [--use-max-partitions]
@@ -92,6 +106,68 @@ Commands:
                 the schemas cannot express, and the SKILL.md frontmatter of
                 each plugin skill. Problems are reported as `  ERROR: ...`
                 lines on stderr and exit status 1.
+  startup model-pricing
+                Require a numeric Active price row in the gcp-to-aws and
+                azure-to-aws Bedrock pricing caches for every default
+                Anthropic candidate model of the aws-startup-advisor plugin
+                at --plugin-root DIR (default: the current directory).
+  startup program-artifacts
+                Check that STARTUP_PROGRAMS.md, ai-migration/STARTUP_PROGRAMS.md
+                and migration-report.html in the migration directory do not
+                imply a confirmed AWS Activate tier when preferences.json
+                records startup_program_status as unknown, and that they link
+                to the Activate application page when they mention it.
+  startup model-id-lint
+                Fail when a file of the plugin at --plugin-root DIR (default: the current
+                directory) names a Bedrock model the lifecycle registry has
+                retired, outside the catalog files that record it.
+  startup emit-plan
+                Copy the validated cost figures of a finished GCP or Heroku
+                migration run in --migration-dir DIR into plan.json for the
+                AWS Startups Migrate web import (producerVersion from
+                --plugin-json FILE, default: .claude-plugin/plugin.json of
+                --plugin-root DIR). Fail-open: any missing or unreadable input
+                prints `PLAN_SKIP | reason=...`, writes no file and exits 0;
+                success prints `PLAN_OK | path=... | platform=... | scope=...`.
+  startup consent-audit
+                Fail when a discover-*-api.md usage-API discovery sub-file of the
+                plugin at --plugin-root DIR (default: the current directory)
+                carries a blanket GET-only claim although its Capture Endpoint
+                Table calls another HTTP method and the claim does not name
+                that method in an exception sentence.
+  startup pricing-parity
+                Prove the Bedrock pricing-cache split of the plugin at --plugin-root
+                DIR (default: the current directory) preserved the data of the
+                pre-split commit (read with git show): sections, metadata,
+                embedding rows, lookup keys, representative estimates, byte-equal
+                vendored copies and neutral consumers. Prints a JSON report; the
+                Python-behaviour comparison of bedrock_pricing.py is not run.
+  startup terraform-policy
+                Static policy checks on the generated Terraform in DIR: ALB TLS
+                posture, public RDS, public database and admin ports in inline
+                security-group ingress, wildcard IAM, RDS and ElastiCache
+                encryption. --json FILE writes the verdict. Violations are
+                POLICY_FAIL lines on stderr and exit status 1.
+  startup migration-report
+                Validate a generated migration-report.html (or decision-report.html
+                with --mode decision, or an AI-only report with --mode ai_only):
+                required section ids, table-of-contents anchors, appendix depth,
+                readability, accessibility, the visual shell, the data-cost-key
+                figures against --estimation-infra, and the decision-core content.
+                --estimation-ai and --aws-design add the checks that need those
+                artifacts; --migration-dir enables fixture-bleed and what-if
+                scenario checks. Problems are `  - ...` lines on stderr after
+                REPORT_FAIL and exit status 1; a pass prints REPORT_OK.
+  startup artifacts
+                Validate migration artifacts against the contracts the skills
+                publish (JSON examples in the schema documents plus the JSON
+                Schemas) using the manifest scripts/artifact-contracts.json of
+                the plugin at --plugin-root DIR. --self-check parses every
+                contract document, --fixtures checks the fixture goldens with
+                the shipped baseline, --run-dir DIR --skill NAME checks one
+                run (--skill is gcp-to-aws, heroku-to-aws or azure-to-aws).
+                Findings and the PASS/FAIL summary go to stdout (--json for a
+                report object); exit status 1 when an error finding remains.
   sync plugin-skills
                 Make plugins/<plugin>/skills/<name> copies byte-identical to the
                 canonical skills/**/<name> (a directory holding SKILL.md). --root
@@ -135,8 +211,11 @@ Options:
                 ROOT/plugins/NAME. (sync plugin-skills) Sync only that plugin.
   --check       (sync) Report drift without writing; exit 1 when out of sync.
   --root DIR, --plugin-root DIR
-                (sync) Repository root and plugin root. A value may also be
+                (sync) Repository root and plugin root. (startup) --plugin-root
+                is the plugin directory (default: .). A value may also be
                 written --flag=VALUE.
+  --migration-dir DIR
+                (startup) Migration run directory holding preferences.json.
   -h, --help    Print this help.
   -V, --version Print the version.
   Value options take `--name value` or `--name=value`; the msk commands are
@@ -367,6 +446,90 @@ pub const COMMANDS: &[CommandSpec] = &[
         strict_values: false,
         max_positionals: 1,
         handler: spec::validate_command,
+    },
+    CommandSpec {
+        path: &["startup", "model-pricing"],
+        flags: &[],
+        value_flags: &["--plugin-root"],
+        strict_values: false,
+        max_positionals: 0,
+        handler: startup::pricing_command,
+    },
+    CommandSpec {
+        path: &["startup", "program-artifacts"],
+        flags: &[],
+        value_flags: &["--migration-dir"],
+        strict_values: false,
+        max_positionals: 0,
+        handler: startup::program_artifacts_command,
+    },
+    CommandSpec {
+        path: &["startup", "model-id-lint"],
+        flags: &[],
+        value_flags: &["--plugin-root"],
+        strict_values: false,
+        max_positionals: 0,
+        handler: startup::model_id_lint_command,
+    },
+    CommandSpec {
+        path: &["startup", "artifacts"],
+        flags: &["--self-check", "--fixtures", "--no-baseline", "--json"],
+        value_flags: &[
+            "--run-dir",
+            "--skill",
+            "--manifest",
+            "--baseline",
+            "--plugin-root",
+        ],
+        strict_values: false,
+        max_positionals: 0,
+        handler: startup::artifacts_command,
+    },
+    CommandSpec {
+        path: &["startup", "emit-plan"],
+        flags: &[],
+        value_flags: &["--migration-dir", "--plugin-root", "--plugin-json"],
+        strict_values: false,
+        max_positionals: 0,
+        handler: startup::emit_plan_command,
+    },
+    CommandSpec {
+        path: &["startup", "consent-audit"],
+        flags: &[],
+        value_flags: &["--plugin-root"],
+        strict_values: false,
+        max_positionals: 0,
+        handler: startup::consent_audit_command,
+    },
+    CommandSpec {
+        path: &["startup", "pricing-parity"],
+        flags: &[],
+        value_flags: &["--plugin-root"],
+        strict_values: false,
+        max_positionals: 0,
+        handler: startup::pricing_parity_command,
+    },
+    CommandSpec {
+        path: &["startup", "terraform-policy"],
+        flags: &[],
+        value_flags: &["--json"],
+        strict_values: false,
+        max_positionals: 1,
+        handler: startup::terraform_policy_command,
+    },
+    CommandSpec {
+        path: &["startup", "migration-report"],
+        flags: &["--no-require-toc", "--no-readability"],
+        value_flags: &[
+            "--estimation-infra",
+            "--estimation-ai",
+            "--aws-design",
+            "--migration-dir",
+            "--mode",
+        ],
+        strict_values: false,
+        max_positionals: 1,
+        handler: startup::migration_report_command,
     },
     CommandSpec {
         path: &["sync", "plugin-skills"],

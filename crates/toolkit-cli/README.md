@@ -308,6 +308,129 @@ runtime error (exit 1), never a pass. Dependencies are listed and justified in
   error(s).` on stderr (exit 1). An unusable root, `plugins/` directory or
   schema is a runtime error (exit 1); bad arguments are usage errors (exit 2).
 
+## startup validators (#4399)
+
+```
+toolkit startup model-pricing [--plugin-root DIR]
+toolkit startup program-artifacts --migration-dir DIR
+toolkit startup model-id-lint [--plugin-root DIR]
+```
+
+Replacements for `validate-model-pricing.py`,
+`validate-startup-program-artifacts.py` and `model-id-lint.py` of
+`plugins/aws-startup-advisor/scripts`; rule parity table, recorded differences
+and the list of slice files not yet ported are in
+`docs/migration/startup-validators.md`. All three are read-only and offline,
+add no dependency, and never follow symbolic links. `--plugin-root` defaults
+to the current directory.
+
+- Findings use the Python text on stderr (`program-artifacts`:
+  `STARTUP_FAIL | startup-program-artifacts` plus `  - <finding>` lines;
+  `model-id-lint`: `model-id lint: N problem(s)` plus `  - <finding>` lines;
+  `model-pricing`: one `<cloud>: candidate <id> has no numeric Active price
+  row.` line per finding) and a final `error: ...` summary line; exit 1.
+- Success lines on stdout: `Model pricing coverage: all Anthropic candidates
+  have numeric Active cache rows.`, `STARTUP_OK | startup_program_status aligned
+  with artifacts`, `model-id lint: OK (N retired IDs enforced from the
+  registry)`; exit 0.
+- An unreadable or malformed input is `error: <message>` (exit 1). A missing
+  `--migration-dir` is a usage error and a missing `--plugin-root` directory in
+  `model-id-lint` exits 2, like the Python scripts.
+
+### startup artifacts
+
+```
+toolkit startup artifacts (--self-check | --fixtures | --run-dir DIR --skill NAME)
+                          [--plugin-root DIR] [--manifest FILE] [--baseline FILE]
+                          [--no-baseline] [--json]
+```
+
+Replacement for `validate-artifacts.py` (and the migrated cases of
+`tests/test_validate_artifacts.py`). `--self-check` parses every contract
+document, `--fixtures` checks the fixture goldens with the shipped baseline
+(every baseline entry must still match something), `--run-dir DIR --skill NAME`
+(`gcp-to-aws`, `heroku-to-aws`, `azure-to-aws`) checks one run without a
+baseline unless `--baseline FILE` is given. The report (or, with `--json`, the
+report object) is stdout; a run with a non-baselined error finding exits 1 and
+adds `error: N artifact contract problem(s)` on stderr. Details and the recorded
+differences (items 12-20) are in `docs/migration/startup-validators.md`.
+
+### startup emit-plan
+
+```
+toolkit startup emit-plan --migration-dir DIR [--plugin-root DIR] [--plugin-json FILE]
+```
+
+Replacement for `emit-plan-json.py` and `tests/test_emit_plan_json.py`. Copies the
+validated cost figures of a finished GCP or Heroku run (`estimation-infra.json`,
+`estimation-billing.json`, `estimation-ai.json`) into `DIR/plan.json` for the AWS
+Startups Migrate web import. Fail-open: any missing or unreadable input prints
+`PLAN_SKIP | reason=...` on stdout, writes nothing and exits 0 (a deterministic skip
+also drops a stale `plan.json`; an unreadable input keeps it). Success prints
+`PLAN_OK | path=... | platform=... | scope=...`. Only a missing `--migration-dir` is a
+usage error (exit 2). `producerVersion` comes from `.claude-plugin/plugin.json` of
+`--plugin-root` (default `.`) unless `--plugin-json` names the file.
+
+### startup consent-audit
+
+```
+toolkit startup consent-audit [--plugin-root DIR]
+```
+
+Replacement for `consent-disclosure-audit.py` and `tests/test_consent_disclosure_audit.py`.
+Checks every `skills/*/references/phases/discover/discover-*-api.md` of the plugin
+(default: the current directory). When the Capture Endpoint Table of a file calls a
+non-`GET` method, each blanket GET-only claim in the file must name that method in an
+exception sentence; an unrecognised table shape, an unreadable file and a plugin with no
+such file all fail closed. Findings and setup problems go to stderr (`error: ...` summary,
+exit 1); success prints `consent-disclosure audit: OK (N discovery sub-file(s) checked)`.
+
+### startup pricing-parity
+
+```
+toolkit startup pricing-parity [--plugin-root DIR]
+```
+
+Replacement for `check-bedrock-pricing-parity.py`. Compares the canonical Bedrock pricing
+cache (as the split commit `7a638343ebb2` wrote it) and the remaining GCP/Azure caches with the pre-split commit `c34fbdfde677`
+(`git show`, so the history must contain both) and prints a JSON report with sorted keys on
+success. A failed assertion is `error: <message>` (exit 1). The step that executed the old
+and new `bedrock_pricing.py` is not ported (the report says `pricing_behavior: not
+checked`; the Bedrock pricing slice #4403 carries it). The proof is pinned to the
+pre-split and split commits, so the cache's later growth does not matter (item 36 of
+`docs/migration/startup-validators.md`).
+### startup terraform-policy
+
+```
+toolkit startup terraform-policy DIR [--json FILE]
+```
+
+Replacement for `validate-terraform-policy.py` and its test. Reads every `*.tf` file below
+DIR and checks the ALB TLS posture, public RDS, database and admin ports opened to
+`0.0.0.0/0` or `::/0` in inline security-group ingress, wildcard IAM `Allow` statements and
+RDS/ElastiCache encryption. Every rule is fail-open on ambiguity. `POLICY_OK | checks=...`
+on stdout (exit 0); `POLICY_FAIL | ...` lines on stderr (exit 1); a missing directory or an
+unwritable `--json` file is exit 2. `--json FILE` writes the verdict document.
+
+### startup migration-report
+
+```
+toolkit startup migration-report REPORT [--estimation-infra FILE] [--estimation-ai FILE]
+    [--aws-design FILE] [--migration-dir DIR] [--no-require-toc] [--no-readability]
+    [--mode full|decision|ai_only]
+```
+
+Replacement for `validate-migration-report.py` and its decision-core test. Checks a
+generated `migration-report.html` (or the `decision-report.html` of the Decision gate
+with `--mode decision`, or an AI-only report with `--mode ai_only`): required section ids,
+table-of-contents anchors, appendix depth, customer-facing readability and currency
+rules, accessibility, the visual shell, the `data-cost-key` figures against
+`--estimation-infra`, and the decision-core content. `--migration-dir` adds the
+fixture-bleed and what-if scenario checks. `REPORT_OK | ...` on stdout (exit 0);
+`REPORT_FAIL | migration-report.html` and `  - problem` lines on stderr plus an `error:`
+summary (exit 1); a missing REPORT argument or an unknown `--mode` is exit 2 (a report file that does not exist is exit 1). The patterns run
+on `fancy-regex`; `html.parser` and `html.unescape` are ported in `startup/report/html.rs`.
+
 ## sync (#4377)
 
 `toolkit sync plugin-skills` makes every `plugins/<plugin>/skills/<name>` copy
