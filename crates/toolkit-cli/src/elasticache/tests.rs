@@ -4285,6 +4285,192 @@ fn inspected_security_groups_keep_pass_and_warn() {
         .any(|(check, status, _)| check == "Security group sg-1" && *status == "WARN"));
 }
 
+/// The `IpPermissions` JSON of a one-rule group holding `ranges` under `family`.
+fn rule_with(family: &str, ranges: &str) -> String {
+    format!(r#"[{{"FromPort": 1, "ToPort": 2, "{family}": {ranges}}}]"#)
+}
+
+#[test]
+fn malformed_cidr_entries_are_never_passing_in_both_modes() {
+    let serverless = |fragment: &str| {
+        audit::audit_serverless(
+            &with_security_groups(SERVERLESS_DESCRIBE, fragment),
+            "cache1",
+        )
+    };
+    let replication = |fragment: &str| {
+        audit::audit_replication_group(&with_security_groups(REPLICATION_DESCRIBE, fragment), "rg1")
+    };
+    let v4: [&str; 15] = [
+        "[null]",
+        "[7]",
+        r#"["10.0.0.0/16"]"#,
+        "[[]]",
+        "[{}]",
+        r#"[{"CidrIp": null}]"#,
+        r#"[{"CidrIp": 7}]"#,
+        r#"[{"CidrIp": ["10.0.0.0/16"]}]"#,
+        r#"[{"CidrIpv6": "::/0"}]"#,
+        r#"[{"CidrIp": ""}]"#,
+        r#"[{"CidrIp": "garbage"}]"#,
+        r#"[{"CidrIp": "10.0.0.0"}]"#,
+        r#"[{"CidrIp": "10.0.0.0/33"}]"#,
+        r#"[{"CidrIp": "10.0.0.0/008"}]"#,
+        r#"[{"CidrIp": "::/0"}]"#,
+    ];
+    let v6: [&str; 12] = [
+        "[null]",
+        "[7]",
+        r#"["::/0"]"#,
+        "[{}]",
+        r#"[{"CidrIpv6": 7}]"#,
+        r#"[{"CidrIpv6": null}]"#,
+        r#"[{"CidrIp": "10.0.0.0/16"}]"#,
+        r#"[{"CidrIpv6": "garbage"}]"#,
+        r#"[{"CidrIpv6": "2001:db8::"}]"#,
+        r#"[{"CidrIpv6": "2001:db8::/129"}]"#,
+        r#"[{"CidrIpv6": "10.0.0.0/16"}]"#,
+        r#"[{"CidrIpv6": " ::/0"}]"#,
+    ];
+    let families: [(&str, &[&str]); 2] = [("IpRanges", &v4), ("Ipv6Ranges", &v6)];
+    for (family, bad_entries) in families {
+        for bad in bad_entries {
+            // The bad entry may come first, last, or beside valid entries.
+            let valid = if family == "IpRanges" {
+                r#"{"CidrIp": "10.0.0.0/16"}"#
+            } else {
+                r#"{"CidrIpv6": "2001:db8::/32"}"#
+            };
+            let inner = &bad[1..bad.len() - 1];
+            for ranges in [
+                format!("[{inner}]"),
+                format!("[{valid}, {inner}]"),
+                format!("[{inner}, {valid}]"),
+            ] {
+                let rules = rule_with(family, &ranges);
+                let what = format!("{family} {ranges}");
+                let one = format!(
+                    r#""security_groups": [{{"GroupId": "sg-1", "IpPermissions": {rules}}}],"#
+                );
+                assert_not_inspected(&serverless(&one), &format!("serverless, {what}"));
+                let two = format!(
+                    r#""security_groups": [{{"GroupId": "sg-a", "IpPermissions": []}}, {{"GroupId": "sg-b", "IpPermissions": {rules}}}],"#
+                );
+                let result = replication(&two);
+                assert_not_inspected(&result, &format!("replication, {what}"));
+                let findings = audit_findings(&result);
+                assert!(
+                    findings
+                        .iter()
+                        .any(|(check, status, text)| check == "Security group sg-b"
+                            && *status == "ERROR"
+                            && text.starts_with("Not inspected")),
+                    "replication, {what}: {findings:?}"
+                );
+                assert!(!findings.iter().any(|(check, _, _)| check.ends_with("sg-a")));
+            }
+        }
+    }
+
+    // The review's exact fixture: two malformed families in one rule.
+    let review = serverless(
+        r#""security_groups": [{"GroupId": "sg-1", "IpPermissions": [{"IpRanges": [null], "Ipv6Ranges": [{"CidrIpv6": 7}]}]}],"#,
+    );
+    assert_not_inspected(&review, "review fixture");
+
+    // A malformed entry in one group does not hide a broad rule in another.
+    let mixed = replication(
+        r#""security_groups": [{"GroupId": "sg-a", "IpPermissions": [{"IpRanges": [null]}]}, {"GroupId": "sg-b", "IpPermissions": [{"FromPort": 1, "ToPort": 2, "IpRanges": [{"CidrIp": "0.0.0.0/0"}]}]}],"#,
+    );
+    assert_not_inspected(&mixed, "replication, mixed");
+    let findings = audit_findings(&mixed);
+    assert!(findings
+        .iter()
+        .any(|(check, status, _)| check == "Security group sg-b" && *status == "WARN"));
+    assert!(findings
+        .iter()
+        .any(|(check, status, _)| check == "Security group sg-a" && *status == "ERROR"));
+}
+
+#[test]
+fn well_formed_cidr_entries_still_pass_and_warn() {
+    let serverless = |rules: &str| {
+        audit::audit_serverless(
+            &with_security_groups(
+                SERVERLESS_DESCRIBE,
+                &format!(
+                    r#""security_groups": [{{"GroupId": "sg-1", "IpPermissions": {rules}}}],"#
+                ),
+            ),
+            "cache1",
+        )
+    };
+    let status_of = |result: &Audit, check: &str| -> Vec<&'static str> {
+        audit_findings(result)
+            .iter()
+            .filter(|(name, _, _)| name == check)
+            .map(|(_, status, _)| *status)
+            .collect()
+    };
+
+    // Empty range lists, missing ranges, no ports, IPv4 and IPv6 narrow CIDRs.
+    for rules in [
+        "[]",
+        r#"[{}]"#,
+        r#"[{"IpRanges": [], "Ipv6Ranges": []}]"#,
+        r#"[{"IpProtocol": "-1", "IpRanges": [{"CidrIp": "10.0.0.0/16", "Description": "x"}]}]"#,
+        r#"[{"FromPort": 1, "ToPort": 2, "IpRanges": [{"CidrIp": "10.1.2.3/32"}, {"CidrIp": "192.168.0.0/24"}], "Ipv6Ranges": [{"CidrIpv6": "2001:db8::/32"}, {"CidrIpv6": "fd00::/8"}]}]"#,
+    ] {
+        let result = serverless(rules);
+        assert_eq!(status_of(&result, "Security groups"), ["PASS"], "{rules}");
+        assert!(
+            status_of(&result, "Security group sg-1").is_empty(),
+            "{rules}"
+        );
+    }
+
+    // Broad rules keep their WARN, including other spellings of ::/0.
+    for rules in [
+        r#"[{"IpRanges": [{"CidrIp": "0.0.0.0/0"}]}]"#,
+        r#"[{"IpRanges": [{"CidrIp": "10.0.0.0/8"}]}]"#,
+        r#"[{"Ipv6Ranges": [{"CidrIpv6": "::/0"}]}]"#,
+        r#"[{"Ipv6Ranges": [{"CidrIpv6": "0::/0"}]}]"#,
+        r#"[{"Ipv6Ranges": [{"CidrIpv6": "2001:db8::/0"}]}]"#,
+    ] {
+        let result = serverless(rules);
+        assert_eq!(
+            status_of(&result, "Security group sg-1"),
+            ["WARN"],
+            "{rules}"
+        );
+        assert!(status_of(&result, "Security groups").is_empty(), "{rules}");
+    }
+}
+
+#[test]
+fn audit_command_does_not_pass_malformed_cidr_entries() {
+    let dir = TempDir::new("audit-malformed-cidr");
+    let describe = dir.file(
+        "describe.json",
+        r#"{"serverless_caches":[{"ServerlessCacheName":"cache","SnapshotRetentionLimit":1,"UserGroupId":"users","SecurityGroupIds":["sg-1"]}],"security_groups":[{"GroupId":"sg-1","IpPermissions":[{"IpRanges":[null],"Ipv6Ranges":[{"CidrIpv6":7}]}]}]}"#,
+    );
+    for flags in [&["--json"][..], &[][..]] {
+        let mut args = vec![
+            "elasticache",
+            "audit",
+            "--serverless",
+            "cache",
+            "--describe",
+            &describe,
+        ];
+        args.extend_from_slice(flags);
+        let (status, stdout, stderr) = exec(&args);
+        assert_eq!((status, stderr.as_str()), (0, ""), "{flags:?}");
+        assert!(!stdout.contains("No overly permissive rules"), "{stdout}");
+        assert!(stdout.contains("Not inspected"), "{stdout}");
+    }
+}
+
 #[test]
 fn audit_command_does_not_pass_uninspected_security_groups() {
     let dir = TempDir::new("audit-uninspected");

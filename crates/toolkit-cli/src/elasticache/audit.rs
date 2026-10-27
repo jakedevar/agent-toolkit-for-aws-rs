@@ -23,6 +23,8 @@
 //! responses. Nothing is written and no value of the file other than the
 //! audited identifiers and the findings is echoed.
 
+use std::net::{Ipv4Addr, Ipv6Addr};
+
 use toolkit_core::Json;
 
 use crate::aurora::pyfmt::truthy;
@@ -157,16 +159,59 @@ fn audit_tags(findings: &mut Vec<Finding>, tags: &Json) {
     }
 }
 
-/// Whether a recorded security group carries a complete, correctly typed rule list.
+/// A canonical prefix length: decimal digits, no sign, no leading zero, at most `max`.
+fn prefix_length(text: &str, max: u8) -> Option<u8> {
+    let canonical = !text.is_empty()
+        && text.bytes().all(|b| b.is_ascii_digit())
+        && (text == "0" || !text.starts_with('0'));
+    canonical
+        .then(|| text.parse::<u8>().ok())
+        .flatten()
+        .filter(|n| *n <= max)
+}
+
+/// Whether `text` is a well-formed `address/prefix` CIDR of the given family.
+fn parsed_cidr(text: &str, ipv6: bool) -> Option<u8> {
+    let (address, prefix) = text.split_once('/')?;
+    if ipv6 {
+        address.parse::<Ipv6Addr>().ok()?;
+        prefix_length(prefix, 128)
+    } else {
+        address.parse::<Ipv4Addr>().ok()?;
+        prefix_length(prefix, 32)
+    }
+}
+
+/// Whether a range entry is an object whose required CIDR member is a well-formed string.
+fn range_inspectable(range: &Json, key: &str, ipv6: bool) -> bool {
+    matches!(range, Json::Object(_))
+        && range
+            .get(key)
+            .and_then(Json::as_str)
+            .is_some_and(|cidr| parsed_cidr(cidr, ipv6).is_some())
+}
+
+/// Whether every entry of a rule's range list (absent means none) is inspectable.
+fn ranges_inspectable(rule: &Json, list: &str, key: &str, ipv6: bool) -> bool {
+    match rule.get(list) {
+        None => true,
+        Some(Json::Array(ranges)) => ranges
+            .iter()
+            .all(|range| range_inspectable(range, key, ipv6)),
+        Some(_) => false,
+    }
+}
+
+/// Whether a recorded security group carries a complete, correctly typed rule list:
+/// every rule an object and every IPv4/IPv6 range entry an object with a well-formed CIDR.
 fn rules_inspectable(group: &Json) -> bool {
     let Some(Json::Array(rules)) = group.get("IpPermissions") else {
         return false;
     };
     rules.iter().all(|rule| {
         matches!(rule, Json::Object(_))
-            && ["IpRanges", "Ipv6Ranges"]
-                .iter()
-                .all(|key| matches!(rule.get(key), None | Some(Json::Array(_))))
+            && ranges_inspectable(rule, "IpRanges", "CidrIp", false)
+            && ranges_inspectable(rule, "Ipv6Ranges", "CidrIpv6", true)
     })
 }
 
@@ -249,11 +294,19 @@ fn audit_security_groups(describe: &Json, sg_ids: &[String]) -> Vec<Finding> {
                 }
             }
             for range in items(rule.get("Ipv6Ranges")) {
-                if str_of(range, "CidrIpv6", "") == "::/0" {
+                let cidr = str_of(range, "CidrIpv6", "");
+                if cidr == "::/0" {
                     findings.push(Finding::new(
                         format!("Security group {sg_id}"),
                         "WARN",
                         format!("Inbound rule allows ::/0 (IPv6) on ports {from_port}-{to_port} -- no public endpoint exists, but ::/0 violates least-privilege"),
+                    ));
+                } else if parsed_cidr(cidr, true) == Some(0) {
+                    // Another spelling of the whole IPv6 space (for example 0::/0).
+                    findings.push(Finding::new(
+                        format!("Security group {sg_id}"),
+                        "WARN",
+                        format!("Inbound rule allows {} (IPv6) on ports {from_port}-{to_port} -- covers the whole IPv6 space, like ::/0", show(cidr)),
                     ));
                 }
             }

@@ -185,6 +185,19 @@ output, missing/duplicate/unknown options and malformed files.
     `security_groups_error` path it leaves the exit status alone but is shown as
     `[ERR]`. `WARN` findings of inspected groups are kept, and records of groups
     that were not requested are ignored.
+16. **Malformed range entries are not inspected either (#4644).** A group is
+    also "not inspected" (the same `Security group <id>` `ERROR`, never a
+    `PASS`) when any `IpRanges` entry is not an object or lacks a string
+    `CidrIp`, when any `Ipv6Ranges` entry is not an object or lacks a string
+    `CidrIpv6`, or when such a string is not a well-formed CIDR of its family:
+    `address/prefix` with a parseable IPv4 or IPv6 address and a canonical
+    decimal prefix (no sign, no leading zero, at most 32 or 128). The earlier
+    scan read these members with an empty default, so null, scalar,
+    wrong-type or unparseable entries vanished and left a false `PASS`. Port
+    members (`FromPort`/`ToPort`) are only displayed, never decide a verdict,
+    so they stay optional (all-traffic rules carry none). In the same pass any
+    IPv6 CIDR with prefix `/0` (for example `0::/0`), not just the exact text
+    `::/0`, now gets the broad-rule `WARN`.
 
 ## Follow-ups
 
