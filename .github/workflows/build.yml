@@ -34,18 +34,33 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # Cold Rust build (fmt, clippy, tests share one locked dependency set) plus
+    # the validators; the previous Python-only job needed 10 minutes.
+    timeout-minutes: 30
     permissions:
       contents: read
+    env:
+      CARGO_TERM_COLOR: never
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - uses: jdx/mise-action@9b200bcecbfd6303e69a4a261b2e09e3757440a7 # v5.2.0
 
+      # Install exactly the toolchain pinned in rust-toolchain.toml (with the
+      # formatter and linter) from the runner's rustup; no Python is installed.
+      - name: Install Rust toolchain
+        run: rustup toolchain install --profile minimal --component rustfmt --component clippy
+
+      - name: Build toolkit (locked)
+        run: mise run build:toolkit
+
       - name: Lint markdown
         run: mise run lint:md
 
-      - name: Validate manifests, skills, and plugin parity
+      - name: Rust format and clippy
+        run: mise run lint:rust
+
+      - name: Validate manifests, spec, skill and vendored parity, and run Rust tests
         run: mise run validate
 
       - name: Security scan (gitleaks)

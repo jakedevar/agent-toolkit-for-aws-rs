@@ -1,39 +1,71 @@
+# Development recipes. The repository's own validators, parity checks and tests
+# are Rust (`toolkit` in crates/toolkit-cli); no Python is installed or run by
+# any task in this file. Every validator task depends on `build:toolkit`, which
+# compiles the workspace once with the locked dependency set; the checks then
+# run the already-built binary through `cargo run --locked`.
+#
+# The remaining Python helpers under plugins/aws-startup-advisor are owned by
+# other migration slices; the tools they need are declared in that plugin's
+# own mise.toml, not here (#4378, docs/migration/ci-gates.md).
+
 [tools]
 node = "24"
-python = "3.12"
 gitleaks = "latest"
-uv = "latest"
 
 [tools."npm:markdownlint-cli2"]
 version = "0.18"
 
 [tasks.lint]
 description = "Run all linters"
-depends = ["lint:md", "lint:manifests"]
+depends = ["lint:md", "lint:rust", "lint:manifests"]
 
 [tasks."lint:md"]
 description = "Lint markdown files"
 run = "npx markdownlint-cli2 '**/*.md' '#node_modules'"
 
+[tasks."build:toolkit"]
+description = "Build the toolkit CLI once (locked dependencies)"
+run = "cargo build --locked --package toolkit-cli --bin toolkit"
+
+[tasks."lint:rust"]
+description = "Rust formatting and clippy (warnings are errors)"
+depends = ["lint:rust-fmt", "lint:rust-clippy"]
+
+[tasks."lint:rust-fmt"]
+description = "Check Rust formatting"
+run = "make fmt"
+
+[tasks."lint:rust-clippy"]
+description = "Run clippy over the workspace with warnings denied"
+run = "make clippy"
+
 [tasks."lint:manifests"]
 description = "Validate all manifests and skill frontmatter"
-run = "python3 tools/validate.py"
+depends = ["build:toolkit"]
+run = "cargo run --locked --quiet --package toolkit-cli --bin toolkit -- manifests validate ."
 
 [tasks."lint:skill-parity"]
 description = "Check plugin skills are in sync with canonical sources"
-run = "python3 tools/sync-plugin-skills.py --check"
+depends = ["build:toolkit"]
+run = "cargo run --locked --quiet --package toolkit-cli --bin toolkit -- sync plugin-skills --check --root ."
+
+[tasks."lint:vendored-parity"]
+description = "Check each startup-advisor skill's vendored copies match skills/shared"
+depends = ["build:toolkit"]
+run = "cargo run --locked --quiet --package toolkit-cli --bin toolkit -- sync vendored --check --plugin-root plugins/aws-startup-advisor"
 
 [tasks."lint:spec"]
 description = "Validate Agent Plugins v1.0.0 conformance (plugins/)"
-run = "uv run --with jsonschema --with pyyaml python tools/validate_spec.py"
+depends = ["build:toolkit"]
+run = "cargo run --locked --quiet --package toolkit-cli --bin toolkit -- spec validate ."
 
-[tasks."test:tools"]
-description = "Run tests for the repo validation tools"
-run = "python3 -m unittest discover -s tools/tests -v"
+[tasks."test:rust"]
+description = "Run the Rust workspace tests (validators, sync and core contracts)"
+run = "make test"
 
 [tasks.validate]
 description = "Run all validation"
-depends = ["lint:manifests", "lint:skill-parity", "lint:spec", "test:tools"]
+depends = ["lint:manifests", "lint:skill-parity", "lint:vendored-parity", "lint:spec", "test:rust"]
 
 [tasks.security]
 description = "Run security scans"

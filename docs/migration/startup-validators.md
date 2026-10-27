@@ -400,3 +400,14 @@ adapter or `.rsi/*`. `manifests.rs` gained visibility changes only (`is_py_space
 `py_eq` are `pub(crate)`); `spec.rs` made its private `engine` module
 `pub(crate)` so the artifact validator reuses the bounded pattern engine.
 `startup/text.rs` gained `Tok::Either` and `Pattern::find_starts` for the consent audit.
+
+## Merge with #4378 (sync and CI gates)
+
+The `toolkit-cli` router and README were merged with the accepted #4378
+integration head `35640f12`. Both command sets are registered: the `startup`
+commands of this slice and `sync plugin-skills` / `sync vendored`. The
+canonical `CommandSpec` now carries `strict_values`; every `startup` command
+sets it to `false`, which keeps the behaviour this slice documented (a value
+flag takes the next word whatever it looks like). No helper was added beside the
+canonical `Invocation::value` / `positional` / `has_flag` API and `route`. The
+usage text and README list both sets of commands and options.

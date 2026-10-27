@@ -7,13 +7,16 @@ Python inventory (#4371) records legacy contracts separately.
 ## Binary
 
 The workspace builds one binary, `toolkit` (crate `toolkit-cli`), from the
-read-only shared library `toolkit-core`. The CLI performs no writes, no network
-access and no live cloud activity.
+read-only shared library `toolkit-core`. `toolkit skills list` performs no writes. `toolkit sync ...` (#4377) writes only in
+its non-`--check` modes and only inside the tree it was given. The CLI performs no
+network access and no live cloud activity.
 
 ## Commands
 
 ```
 toolkit skills list [ROOT] [--json]
+toolkit sync plugin-skills [--root DIR] [--plugin NAME] [--check]
+toolkit sync vendored [--plugin-root DIR] [--check]
 toolkit --version
 toolkit help
 ```
@@ -378,3 +381,21 @@ fixture-bleed and what-if scenario checks. `REPORT_OK | ...` on stdout (exit 0);
 `REPORT_FAIL | migration-report.html` and `  - problem` lines on stderr plus an `error:`
 summary (exit 1); a missing REPORT argument or an unknown `--mode` is exit 2 (a report file that does not exist is exit 1). The patterns run
 on `fancy-regex`; `html.parser` and `html.unescape` are ported in `startup/report/html.rs`.
+
+## sync (#4377)
+
+`toolkit sync plugin-skills` makes every `plugins/<plugin>/skills/<name>` copy
+byte-identical to the canonical `skills/**/<name>` directory; `toolkit sync
+vendored` does the same for each skill's `references/vendored` copies of
+`skills/shared` and checks their README tables. `--check` reports drift and
+writes nothing (exit 1 when out of sync); value flags accept `--flag VALUE` or
+`--flag=VALUE`. Symbolic links are never followed; writes are atomic. The full
+parity table against the Python tools, the deletion and symlink boundaries and
+the telemetry seam are in [docs/migration/sync-contracts.md](../../docs/migration/sync-contracts.md).
+
+Merge note (#4378): both slices extended the value-flag routing. The combined
+parser keeps #4375's `Invocation::set_value` (last value wins) and #4377's
+rule that sync value flags reject an empty value or one starting with `-`
+(`--plugin-root --check` is a usage error) through the per-command
+`CommandSpec::strict_values` switch: off for `manifests validate`, whose
+`--plugin` takes the next word whatever it looks like, on for `sync`.
