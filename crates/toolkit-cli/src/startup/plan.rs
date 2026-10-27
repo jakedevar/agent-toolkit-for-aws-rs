@@ -535,11 +535,10 @@ const KNOWN_OWNING_SKILLS: [&str; 4] = [
 /// type (#4639).
 fn owning_skill_shown(value: Option<&Json>) -> String {
     match value {
-        None => "None".to_string(),
+        None | Some(Json::Null) => "None".to_string(),
         Some(Json::String(text)) if KNOWN_OWNING_SKILLS.contains(&text.as_str()) => {
             py_repr_opt(value)
         }
-        Some(Json::Null) => "None".to_string(),
         Some(Json::String(_)) => "(unrecognised string)".to_string(),
         Some(Json::Array(_)) => "(a list)".to_string(),
         Some(Json::Object(_)) => "(a dict)".to_string(),

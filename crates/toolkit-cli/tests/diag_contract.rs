@@ -57,8 +57,13 @@ struct Scratch(PathBuf);
 
 impl Scratch {
     fn new() -> Self {
-        let path =
-            std::env::temp_dir().join(format!("toolkit-diag-contract-{}", std::process::id()));
+        // Unique per call: the tests of this file run in parallel in one process.
+        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let path = std::env::temp_dir().join(format!(
+            "toolkit-diag-contract-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
         let _ = fs::remove_dir_all(&path);
         fs::create_dir_all(&path).expect("create scratch");
         Self(path)
