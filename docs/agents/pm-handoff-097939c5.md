@@ -212,3 +212,4 @@ Friction: #4727, Rsi #4694, Rsi #4704
   Filed #4799 (P2): migrate relational onto toolkit_aws::recorded, behaviour byte-identical. Worker 36d6de30 (Opus) from 92781c67 (op 5037b4ef). Then review (security-flavoured), then round 13 = its head + fmt/clippy/ws-test + manager scoped.
   4/4 busy: 16f724e9 (#4381 r2), b4182810 (#4793), a7277981 (#4391), 36d6de30 (#4799).
 - 22:41Z: queue entry 5060cb2e still queued after 1h, no blocker visible. Filed harness Rsi #4800; reported up to GM (interim #4452 evidence). Not cancelling.
+- 22:45Z: GM 17446779: entry 5060cb2e is head-of-line blocked (hub-wide sequence admission; Rsi seq 2873 gating, 2874-2886 ahead). Expect hours. Do NOT cancel/re-enqueue. When round 13 head is verified (scoped + check ok), enqueue it with supersedes=5060cb2e-eafa-4224-88fd-c925f01d94ce to keep position (only while 5060cb2e is still `queued`; if admitted, enqueue normally). Fix recorded on Rsi #4800.
