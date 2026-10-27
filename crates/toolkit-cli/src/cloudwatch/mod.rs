@@ -28,6 +28,8 @@
 //! `toolkit cloudwatch ...` commands. The parity table and every intentional
 //! change are in `docs/migration/cw-domain.md`.
 #![allow(
+    clippy::case_sensitive_file_extension_comparisons,
+    clippy::format_push_string,
     clippy::cast_possible_truncation,
     clippy::cast_possible_wrap,
     clippy::cast_precision_loss,
