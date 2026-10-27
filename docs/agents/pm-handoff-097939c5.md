@@ -68,3 +68,6 @@ rust-migration-health (health_anomaly), pm-safety-net (hourly resume), terminal 
   -> in-flight slices adding COMMANDS rows need `repeatable_flags: &[]` after merge. Review #4696 worker 588af726 (asked to judge a non-breaking ..DEFAULT form).
 - 17:55Z: #4670 ACCEPT f440232a (#4696, 588af726). Nonblocking follow-up #4697 (diag_contract argv generator must cover repeatable_flags before a command opts in).
   Round 8 candidates: #4670 f440232a (merge LAST or note: rows added by #4380/#4402/#4403 need `repeatable_flags: &[]` — registration-only fix commit), #4403 (if #4682 accepts).
+- 17:50Z: round 7 head a41cfbb5f5dfbb9272fcb168d797ee4b2bcab961 (worker 80238d9c; merges bf135496 #4380, a41cfbb5 #4402; remerge-diff checked: registration + visibility-only pub(crate) widening in startup/scoring fixtures, passthrough:false added to cloudwatch specs).
+  Manager scoped 5f3914db pending. If ok + check ok: GATE = a41cfbb5, source_session_id 80238d9c.
+  Round 8 (continue_from 80238d9c): #4670 f440232a + #4403 (when #4682 accepts); add `repeatable_flags: &[]` to new rows.
