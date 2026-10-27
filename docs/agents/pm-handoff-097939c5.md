@@ -108,3 +108,6 @@ rust-migration-health (health_anomaly), pm-safety-net (hourly resume), terminal 
   Kaizen worker 257d2d14 on #4697 (diag_contract covers repeatable_flags) from dcd47147.
   Close-on-land additions: #4403 #4682 #4684 #4685 #4698 #4711 #4676(superseded).
 - 19:15Z: scoped c434776b on 550b629d OK (2284 tests), check ok. GATE = 550b629d / source_session_id f14baf2c-46e0-412c-8c18-46172eb22ecc. Noted on #4575. Still no GM mail.
+- 19:20Z: round 10 head a1db6c616f8792880f803b260094d9f01b6a8613 (worker 215a5c49; merge c09860b1 #4403 14c60071, registration-only conflicts + 4 repeatable_flags lines, verified via remerge-diff; a1db6c61 mod order). Own branch rsi/215a5c49.
+  Manager scoped 8ab77458 pending. If ok: GATE = a1db6c61 / source_session_id 215a5c49-13fb-46cb-bc56-0c4311d0c467.
+  New slice #4394 (RDS/DSQL/Timestream) worker a33d3291 from 550b629d.
