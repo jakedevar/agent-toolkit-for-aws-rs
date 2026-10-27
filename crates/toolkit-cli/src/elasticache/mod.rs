@@ -510,13 +510,24 @@ pub fn audit_command(invocation: &Invocation, out: &mut Output<'_>) -> Result<()
     Ok(())
 }
 
+/// A dashboard numeric option: a float that must be finite, because a
+/// CloudFormation template cannot hold `NaN` or `Infinity`.
+fn finite_float(invocation: &Invocation, flag: &str) -> Result<Option<f64>, ToolkitError> {
+    match float_value(invocation, flag)? {
+        Some(value) if !value.is_finite() => Err(usage(format!(
+            "argument {flag}: must be a finite number (NaN, infinity and values that overflow a float are not allowed)"
+        ))),
+        other => Ok(other),
+    }
+}
+
 /// A threshold option: absent stays `default`, a given value is a float.
 fn threshold(
     invocation: &Invocation,
     flag: &str,
     default: Option<Num>,
 ) -> Result<Option<Num>, ToolkitError> {
-    Ok(float_value(invocation, flag)?.map(Num::Float).or(default))
+    Ok(finite_float(invocation, flag)?.map(Num::Float).or(default))
 }
 
 /// Handler of `toolkit elasticache dashboard`.
@@ -546,7 +557,7 @@ pub fn dashboard_command(
         sns_topic: invocation.value("--sns-topic").map(str::to_string),
         include_dashboard: !invocation.has_flag("--no-dashboard"),
         include_alarms: !invocation.has_flag("--no-alarms"),
-        max_storage_gb: float_value(invocation, "--max-storage-gb")?,
+        max_storage_gb: finite_float(invocation, "--max-storage-gb")?,
         storage_alarm_pct: threshold(invocation, "--storage-alarm-pct", Some(Num::Int(80)))?
             .unwrap_or(Num::Int(80)),
         memory_threshold: threshold(invocation, "--memory-threshold", Some(Num::Int(80)))?,

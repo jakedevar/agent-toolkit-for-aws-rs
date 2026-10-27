@@ -164,6 +164,27 @@ output, missing/duplicate/unknown options and malformed files.
     reader is the Aurora one, so a short row leaves a column absent instead of
     `None` (a missing value is the default instead of a `TypeError`). A
     snapshot field of the wrong JSON type is treated as absent.
+14. **Dashboard numbers must be finite (#4636).** The script accepted `nan`,
+    `inf` and `1e999` for the threshold options and wrote `NaN`/`Infinity` into
+    the template, which strict JSON parsers and CloudFormation reject. Every
+    numeric option of `dashboard` (`--max-storage-gb`, `--storage-alarm-pct` and
+    all thresholds) now refuses a non-finite value (including an overflow to
+    infinity) with a usage error, exit 2, before anything is written to stdout
+    or `--output`. Finite values, defaults and `80` vs `80.0` rendering are
+    unchanged.
+15. **Security groups are never "passing" without a record (#4637).** The script
+    asked AWS for the groups and either got every answer or an error. A
+    recorded `--describe` file can omit them, so `audit` reports `PASS` only
+    when every requested group has a record with a valid `IpPermissions` array
+    (an explicitly empty array is a pass). A missing or wrong-type
+    `security_groups` list gives an `ERROR` finding `Security groups` ("Could not
+    inspect: no security group records were supplied for ..."); a requested group
+    with no record, or with a missing/wrong-type `IpPermissions` (or `IpRanges` /
+    `Ipv6Ranges`, or a non-object rule), gives an `ERROR` finding
+    `Security group <id>` ("Not inspected: ..."). `ERROR` is not `FAIL`: like the
+    `security_groups_error` path it leaves the exit status alone but is shown as
+    `[ERR]`. `WARN` findings of inspected groups are kept, and records of groups
+    that were not requested are ignored.
 
 ## Follow-ups
 

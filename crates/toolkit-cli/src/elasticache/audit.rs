@@ -157,6 +157,19 @@ fn audit_tags(findings: &mut Vec<Finding>, tags: &Json) {
     }
 }
 
+/// Whether a recorded security group carries a complete, correctly typed rule list.
+fn rules_inspectable(group: &Json) -> bool {
+    let Some(Json::Array(rules)) = group.get("IpPermissions") else {
+        return false;
+    };
+    rules.iter().all(|rule| {
+        matches!(rule, Json::Object(_))
+            && ["IpRanges", "Ipv6Ranges"]
+                .iter()
+                .all(|key| matches!(rule.get(key), None | Some(Json::Array(_))))
+    })
+}
+
 fn audit_security_groups(describe: &Json, sg_ids: &[String]) -> Vec<Finding> {
     let mut findings = Vec::new();
     if sg_ids.is_empty() {
@@ -175,9 +188,43 @@ fn audit_security_groups(describe: &Json, sg_ids: &[String]) -> Vec<Finding> {
         ));
         return findings;
     }
+    // A group nobody described was not inspected: never report it as safe.
+    let Some(Json::Array(records)) = describe.get("security_groups") else {
+        let shown: Vec<String> = sg_ids.iter().map(|id| show(id)).collect();
+        findings.push(Finding::new(
+            "Security groups",
+            "ERROR",
+            format!(
+                "Could not inspect: no security group records were supplied for {}",
+                shown.join(", ")
+            ),
+        ));
+        return findings;
+    };
 
-    for group in items(describe.get("security_groups")) {
-        if !sg_ids.iter().any(|id| id == str_of(group, "GroupId", "")) {
+    for id in sg_ids {
+        let matching: Vec<&Json> = records
+            .iter()
+            .filter(|group| str_of(group, "GroupId", "") == id.as_str())
+            .collect();
+        if matching.is_empty() {
+            findings.push(Finding::new(
+                format!("Security group {}", show(id)),
+                "ERROR",
+                "Not inspected: no record for this security group was supplied",
+            ));
+        } else if !matching.iter().all(|group| rules_inspectable(group)) {
+            findings.push(Finding::new(
+                format!("Security group {}", show(id)),
+                "ERROR",
+                "Not inspected: IpPermissions is missing or malformed",
+            ));
+        }
+    }
+
+    for group in records {
+        if !sg_ids.iter().any(|id| id == str_of(group, "GroupId", "")) || !rules_inspectable(group)
+        {
             continue;
         }
         let sg_id = show(str_of(group, "GroupId", ""));
@@ -213,10 +260,7 @@ fn audit_security_groups(describe: &Json, sg_ids: &[String]) -> Vec<Finding> {
         }
     }
 
-    if !findings
-        .iter()
-        .any(|finding| finding.check.starts_with("Security group"))
-    {
+    if findings.is_empty() {
         let shown: Vec<String> = sg_ids.iter().map(|id| show(id)).collect();
         findings.push(Finding::new(
             "Security groups",

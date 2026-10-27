@@ -4079,3 +4079,247 @@ fn elasticache_commands_are_routed_with_the_shared_router() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// repair round: #4636 non-finite dashboard numbers, #4637 uninspected groups
+// ---------------------------------------------------------------------------
+
+const DASHBOARD_NUMBER_FLAGS: [&str; 10] = [
+    "--max-storage-gb",
+    "--storage-alarm-pct",
+    "--memory-threshold",
+    "--engine-cpu-threshold",
+    "--replication-lag-threshold",
+    "--hit-rate-threshold",
+    "--throttle-threshold",
+    "--read-latency-threshold",
+    "--write-latency-threshold",
+    "--ecpu-threshold",
+];
+
+#[test]
+fn dashboard_rejects_non_finite_numbers_before_any_output() {
+    let dir = TempDir::new("dashboard-nonfinite");
+    let target = dir.at("stack.json");
+    for &flag in DASHBOARD_NUMBER_FLAGS
+        .iter()
+        .chain(["--evictions-threshold", "--new-connections-threshold"].iter())
+    {
+        for value in ["NaN", "nan", "inf", "Infinity", "-inf", "1e999", "-1e999"] {
+            for mode in [["--serverless", "c"], ["--replication-group", "rg"]] {
+                let (status, stdout, stderr) =
+                    exec(&["elasticache", "dashboard", mode[0], mode[1], flag, value]);
+                assert_eq!(status, 2, "{flag} {value}: {stderr}");
+                assert_eq!(stdout, "", "{flag} {value} wrote to stdout");
+
+                let (status, stdout, _) = exec(&[
+                    "elasticache",
+                    "dashboard",
+                    mode[0],
+                    mode[1],
+                    flag,
+                    value,
+                    "--output",
+                    &target,
+                ]);
+                assert_eq!(status, 2, "{flag} {value} with --output");
+                assert_eq!(stdout, "");
+                assert!(
+                    !std::path::Path::new(&target).exists(),
+                    "{flag} {value} created the output file"
+                );
+            }
+        }
+    }
+    // The message is actionable and does not echo the rejected text.
+    for value in ["NaN", "inf", "1e999"] {
+        let (status, _, stderr) = exec(&[
+            "elasticache",
+            "dashboard",
+            "--serverless",
+            "c",
+            "--hit-rate-threshold",
+            value,
+        ]);
+        assert_eq!(status, 2);
+        assert!(
+            stderr.contains("argument --hit-rate-threshold: must be a finite number"),
+            "{stderr}"
+        );
+    }
+}
+
+#[test]
+fn dashboard_finite_numbers_keep_working_and_stay_schema_valid() {
+    let dir = TempDir::new("dashboard-finite");
+    let target = dir.at("stack.json");
+    let (status, _, stderr) = exec(&[
+        "elasticache",
+        "dashboard",
+        "--serverless",
+        "c",
+        "--hit-rate-threshold",
+        "1e300",
+        "--throttle-threshold",
+        "-1",
+        "--max-storage-gb",
+        "2.5",
+        "--output",
+        &target,
+    ]);
+    assert_eq!((status, stderr.as_str()), (0, ""));
+    let written = fs::read_to_string(&target).expect("file written");
+    assert!(!written.contains("NaN") && !written.contains("Infinity"));
+    assert_schema_valid(&json(&written));
+}
+
+/// `base` with its `"security_groups"` member replaced by `fragment` (which
+/// must be empty or end with a comma).
+fn with_security_groups(base: &str, fragment: &str) -> Json {
+    let start = base.find("\"security_groups\":").expect("security_groups");
+    let end = base.find("\"tags\":").expect("tags");
+    json(&format!("{}{}{}", &base[..start], fragment, &base[end..]))
+}
+
+fn assert_not_inspected(result: &Audit, what: &str) {
+    let findings = audit_findings(result);
+    assert!(
+        !findings
+            .iter()
+            .any(|(check, status, _)| check == "Security groups" && *status == "PASS"),
+        "{what}: reported as passing: {findings:?}"
+    );
+    assert!(
+        findings
+            .iter()
+            .any(|(check, status, _)| check.starts_with("Security group") && *status == "ERROR"),
+        "{what}: no not-inspected finding: {findings:?}"
+    );
+    assert!(!result.failed(), "{what}: ERROR is not FAIL");
+}
+
+#[test]
+fn uninspected_security_groups_are_never_passing_in_both_modes() {
+    let serverless = |fragment: &str| {
+        audit::audit_serverless(
+            &with_security_groups(SERVERLESS_DESCRIBE, fragment),
+            "cache1",
+        )
+    };
+    let replication = |fragment: &str| {
+        audit::audit_replication_group(&with_security_groups(REPLICATION_DESCRIBE, fragment), "rg1")
+    };
+    let cases: [(&str, &str); 10] = [
+        ("missing list", ""),
+        ("null list", r#""security_groups": null,"#),
+        ("string list", r#""security_groups": "none","#),
+        ("object list", r#""security_groups": {},"#),
+        ("empty list", r#""security_groups": [],"#),
+        (
+            "unrelated groups",
+            r#""security_groups": [{"GroupId": "sg-other", "IpPermissions": []}],"#,
+        ),
+        (
+            "missing IpPermissions",
+            r#""security_groups": [{"GroupId": "sg-1"}, {"GroupId": "sg-a"}, {"GroupId": "sg-b"}],"#,
+        ),
+        (
+            "wrong-type IpPermissions",
+            r#""security_groups": [{"GroupId": "sg-1", "IpPermissions": "x"}, {"GroupId": "sg-a", "IpPermissions": {}}, {"GroupId": "sg-b", "IpPermissions": null}],"#,
+        ),
+        (
+            "malformed rule",
+            r#""security_groups": [{"GroupId": "sg-1", "IpPermissions": [7]}, {"GroupId": "sg-a", "IpPermissions": [7]}, {"GroupId": "sg-b", "IpPermissions": [7]}],"#,
+        ),
+        (
+            "wrong-type IpRanges",
+            r#""security_groups": [{"GroupId": "sg-1", "IpPermissions": [{"IpRanges": "x"}]}, {"GroupId": "sg-a", "IpPermissions": [{"Ipv6Ranges": 1}]}, {"GroupId": "sg-b", "IpPermissions": []}],"#,
+        ),
+    ];
+    for (what, fragment) in cases {
+        assert_not_inspected(&serverless(fragment), &format!("serverless, {what}"));
+        assert_not_inspected(&replication(fragment), &format!("replication, {what}"));
+    }
+
+    // A partial list: sg-b was requested but only sg-a was described.
+    let partial = replication(r#""security_groups": [{"GroupId": "sg-a", "IpPermissions": []}],"#);
+    assert_not_inspected(&partial, "replication, partial list");
+    let findings = audit_findings(&partial);
+    let missing = findings
+        .iter()
+        .find(|(check, _, _)| check == "Security group sg-b")
+        .expect("sg-b finding");
+    assert_eq!(missing.1, "ERROR");
+    assert!(missing.2.starts_with("Not inspected"));
+    assert!(!findings.iter().any(|(check, _, _)| check.ends_with("sg-a")));
+
+    // A malformed record for one group does not hide a broad rule in another.
+    let mixed = replication(
+        r#""security_groups": [{"GroupId": "sg-a", "IpPermissions": 3}, {"GroupId": "sg-b", "IpPermissions": [{"FromPort": 1, "ToPort": 2, "IpRanges": [{"CidrIp": "0.0.0.0/0"}]}]}],"#,
+    );
+    assert_not_inspected(&mixed, "replication, mixed");
+    assert!(audit_findings(&mixed)
+        .iter()
+        .any(|(check, status, _)| check == "Security group sg-b" && *status == "WARN"));
+}
+
+#[test]
+fn inspected_security_groups_keep_pass_and_warn() {
+    let empty = audit::audit_serverless(
+        &with_security_groups(
+            SERVERLESS_DESCRIBE,
+            r#""security_groups": [{"GroupId": "sg-1", "IpPermissions": []}, {"GroupId": "sg-extra"}],"#,
+        ),
+        "cache1",
+    );
+    let findings = audit_findings(&empty);
+    let sg = findings
+        .iter()
+        .find(|(check, _, _)| check == "Security groups")
+        .expect("security groups finding");
+    assert_eq!(
+        (sg.1, sg.2.as_str()),
+        ("PASS", "No overly permissive rules in sg-1")
+    );
+    let broad = audit::audit_serverless(&json(SERVERLESS_DESCRIBE), "cache1");
+    assert!(audit_findings(&broad)
+        .iter()
+        .any(|(check, status, _)| check == "Security group sg-1" && *status == "WARN"));
+}
+
+#[test]
+fn audit_command_does_not_pass_uninspected_security_groups() {
+    let dir = TempDir::new("audit-uninspected");
+    let describe = dir.file(
+        "describe.json",
+        r#"{"serverless_caches":[{"ServerlessCacheName":"cache","SnapshotRetentionLimit":1,"UserGroupId":"users","SecurityGroupIds":["sg-1"]}]}"#,
+    );
+    let (status, stdout, stderr) = exec(&[
+        "elasticache",
+        "audit",
+        "--serverless",
+        "cache",
+        "--describe",
+        &describe,
+        "--json",
+    ]);
+    assert_eq!((status, stderr.as_str()), (0, ""));
+    let value = json(&stdout);
+    let sg: Vec<&Json> = items(member(&value, "findings"))
+        .iter()
+        .filter(|finding| member(finding, "check") == &Json::string("Security groups"))
+        .collect();
+    assert_eq!(sg.len(), 1);
+    assert_eq!(member(sg[0], "status"), &Json::string("ERROR"));
+    assert!(!stdout.contains("No overly permissive rules"));
+    let (_, text, _) = exec(&[
+        "elasticache",
+        "audit",
+        "--serverless",
+        "cache",
+        "--describe",
+        &describe,
+    ]);
+    assert!(text.contains("[ERR]  Security groups"));
+    assert!(!text.contains("[OK]   Security groups"));
+}
