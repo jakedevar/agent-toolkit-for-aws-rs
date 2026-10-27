@@ -553,7 +553,7 @@ fn validate_messages(check: MessageCheck, messages: &[Json], line: usize, sink: 
                 check_text_message(message, index, "GPT-OSS format content", line, sink);
             }
             MessageCheck::Rlvr => {
-                check_text_message(message, index, "Nova RLVR content", line, sink)
+                check_text_message(message, index, "Nova RLVR content", line, sink);
             }
         }
     }

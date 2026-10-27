@@ -1280,7 +1280,7 @@ fn the_plan_names_the_script_and_its_directory() {
     let script = dir.file("transform.py", "x\n");
     let plan = build_plan(&request(Path::new(&script), "s3://b/k", "s3://o/p")).expect("plan");
     assert_eq!(plan.code, "transform.py");
-    assert_eq!(Path::new(&plan.source_dir), dir.deref());
+    assert_eq!(Path::new(&plan.source_dir), &*dir);
     // `..` is kept as written, so the directory is what the OS resolves.
     fs::create_dir_all(dir.join("sub")).expect("mkdir");
     let indirect = dir.join("sub").join("..").join("transform.py");
