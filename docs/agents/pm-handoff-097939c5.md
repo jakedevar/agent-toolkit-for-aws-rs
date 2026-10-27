@@ -61,3 +61,6 @@ rust-migration-health (health_anomaly), pm-safety-net (hourly resume), terminal 
 - 17:25Z: scoped 9047da8f on 9df52366 OK (1929 tests), AgentCheckLandingCandidate ok. GATE = 9df52366 / source_session_id 0c85ed62. Noted on #4575.
 - 17:35Z: #4403 repair be2fc335 (#4684/#4685 fixed; scoped 9aa04a2f ok). Re-review #4682 worker fa0ba246, pinned via explicit sandbox_source
   (review_of fell back to rolling because handoff said "final SHA:"; withdrew dd0f5cba; harness kaizen Rsi #4694). Rule: for re-reviews pass sandbox_source commit explicitly.
+- 17:45Z: ACCEPT #4380 ac3e7d44 (#4632, 524d5796; friction #4683 #4692) and #4402 c5f847e6 (#4674, 2b3ad766; friction #4693).
+  Round 7 worker 80238d9c (continue_from 0c85ed62) merging both onto 9df52366. Then scoped_test (worktree its sandbox, 180m) -> new gate.
+  Close-on-land additions: #4380 #4632 #4662 #4402 #4674 #4679.
