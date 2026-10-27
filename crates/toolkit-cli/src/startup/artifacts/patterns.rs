@@ -1,6 +1,9 @@
 //! Hand-written ports of the small regular expressions and `fnmatch` calls in
-//! `validate-artifacts.py`, with Python's Unicode `str` semantics.
-
+//! `validate-artifacts.py`, /// Port of `_JOINED_SET_RE.search(comment)`, ignoring case:
+///
+/// ```text
+/// ["'`]?\+["'`]?[\s-]*joined|joined\s+(?:by|with|on)\s+["'`]?\+
+/// ``` Python's Unicode `str` semantics.
 use std::collections::BTreeSet;
 
 use crate::manifests::{is_py_space, py_strip};

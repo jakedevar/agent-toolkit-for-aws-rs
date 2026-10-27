@@ -182,6 +182,8 @@ pub(crate) fn find_artifacts(run_dir: &Path) -> Result<Vec<PathBuf>, String> {
     Ok(found.into_iter().map(|(_, path)| path).collect())
 }
 
+// `rglob("*.json")` is case-sensitive on POSIX, like this comparison.
+#[allow(clippy::case_sensitive_file_extension_comparisons)]
 fn collect(
     dir: &Path,
     parts: &mut Vec<String>,

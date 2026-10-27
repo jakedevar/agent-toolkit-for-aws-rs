@@ -142,8 +142,8 @@ pub(crate) fn build_node(value: &Json, key_comments: &KeyComments, source: &str)
                     node.wildcard = true;
                     let nonempty = match member {
                         Json::Object(inner) => {
-                            !inner.is_empty()
-                                && !(inner.len() == 1 && inner.iter().any(|(k, _)| k == "..."))
+                            !(inner.is_empty()
+                                || (inner.len() == 1 && inner.iter().any(|(k, _)| k == "...")))
                         }
                         Json::Array(inner) => !inner.is_empty(),
                         _ => false,
@@ -360,6 +360,7 @@ fn kind_of(value: &Json) -> &'static str {
 }
 
 /// Checks `value` against the template, appending findings.
+#[allow(clippy::too_many_lines)]
 pub(crate) fn validate_shape(
     node: &Node,
     value: &Json,
