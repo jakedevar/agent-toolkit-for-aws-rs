@@ -14,7 +14,7 @@ use std::fs;
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::path::{Path, PathBuf};
 
-use toolkit_core::{Json, ToolkitError};
+use toolkit_core::{neutralize_line, Json, ToolkitError};
 
 use self::hcl::{
     attr_int, attr_list_inner, attr_string, default_action_type, extract_blocks, has_own_attr,
@@ -612,7 +612,7 @@ pub fn terraform_policy_command(
     if !dir.is_dir() {
         output.diagnostic(&format!(
             "POLICY_FAIL | path={} | reason=not_a_directory",
-            dir.display()
+            neutralize_line(&dir.display().to_string())
         ));
         return Err(ToolkitError::usage(
             "terraform_not_a_directory",

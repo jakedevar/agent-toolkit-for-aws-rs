@@ -33,6 +33,7 @@ use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::diag::{is_unsafe_char, neutralize_line};
 use crate::frontmatter::parse_frontmatter;
 use crate::json::Json;
 use crate::paths::{read_regular_file, PathError};
@@ -66,7 +67,8 @@ impl SkillEntry {
     }
 
     /// The plain-text listing line: `<name><TAB><description>` with control
-    /// characters flattened to spaces.
+    /// characters flattened to spaces and bidirectional or invisible formatting
+    /// characters written as `\uXXXX` escapes (#4639).
     #[must_use]
     pub fn plain_line(&self) -> String {
         format!(
@@ -77,17 +79,24 @@ impl SkillEntry {
     }
 }
 
+/// Control characters and line/paragraph separators become spaces; the other
+/// characters that can reorder or hide text (bidirectional marks and overrides
+/// such as U+202E, zero-width characters, the byte-order mark; see
+/// [`is_unsafe_char`]) are written as `\uXXXX` so they stay visible and cannot
+/// reorder the listing (#4639).
 fn flatten_controls(value: &str) -> String {
-    value
-        .chars()
-        .map(|c| {
-            if c.is_control() || c == '\u{2028}' || c == '\u{2029}' {
-                ' '
-            } else {
-                c
-            }
-        })
-        .collect()
+    let mut out = String::with_capacity(value.len());
+    for c in value.chars() {
+        if c.is_control() || c == '\u{2028}' || c == '\u{2029}' {
+            out.push(' ');
+        } else if is_unsafe_char(c) {
+            let mut buf = [0u8; 4];
+            out.push_str(&neutralize_line(c.encode_utf8(&mut buf)));
+        } else {
+            out.push(c);
+        }
+    }
+    out
 }
 
 /// Schema of the `--json` output of `toolkit skills list`.
@@ -435,6 +444,20 @@ mod tests {
         };
         assert_eq!(tabbed.plain_line(), "a b  c\tx y");
         assert!(tabbed.to_json().to_compact_string().contains("a\\tb\\r"));
+    }
+
+    #[test]
+    fn plain_line_escapes_bidi_and_invisible_characters() {
+        let entry = SkillEntry {
+            name: "safe\u{202e}gpj.exe".to_string(),
+            description: "a\u{200b}b\u{feff}c\u{2066}d".to_string(),
+            path: "p".to_string(),
+        };
+        let line = entry.plain_line();
+        assert_eq!(line, "safe\\u202Egpj.exe\ta\\u200Bb\\uFEFFc\\u2066d");
+        assert!(!line.chars().any(|c| c != '\t' && is_unsafe_char(c)));
+        // JSON output keeps the metadata unchanged.
+        assert!(entry.to_json().to_compact_string().contains('\u{202e}'));
     }
 
     #[test]

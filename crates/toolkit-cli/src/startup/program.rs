@@ -6,7 +6,7 @@
 
 use std::path::{Path, PathBuf};
 
-use toolkit_core::{parse_json, Json, ToolkitError};
+use toolkit_core::{neutralize_line, parse_json, Json, ToolkitError};
 
 use super::text::{Pattern, Tok};
 use super::{is_regular_file_under, read_text_under};
@@ -150,7 +150,7 @@ pub fn program_artifacts_command(
     if !dir.is_dir() {
         output.diagnostic(&format!(
             "STARTUP_FAIL | reason=not_a_directory | path={}",
-            dir.display()
+            neutralize_line(&dir.display().to_string())
         ));
         return Err(ToolkitError::runtime(
             "startup_not_a_directory",

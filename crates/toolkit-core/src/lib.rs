@@ -8,6 +8,8 @@
 //! - [`json`]: typed [`Json`] values, a strict parser and a deterministic writer.
 //! - [`yaml`]: a strict, documented YAML subset parsed into [`Json`].
 //! - [`schema`]: a small structural schema and path-addressed validation.
+//! - [`diag`]: [`quote_untrusted`], the one escaping helper for untrusted text in
+//!   diagnostics (#4639).
 //! - [`paths`]: relative-path normalization, symlink-refusing resolution and
 //!   bounded regular-file reads.
 //! - [`skills`] / [`frontmatter`]: `SKILL.md` discovery for `toolkit skills list`.
@@ -17,6 +19,7 @@
 //!   (`skills/shared` to per-skill vendored copies) on top.
 #![allow(clippy::module_name_repetitions)]
 
+pub mod diag;
 pub mod digest;
 pub mod error;
 pub mod frontmatter;
@@ -32,6 +35,10 @@ pub mod yaml;
 #[cfg(test)]
 mod testutil;
 
+pub use diag::{
+    escape_untrusted, is_unsafe_char, neutralize_line, neutralize_text, neutralize_text_knowing,
+    quote_untrusted, quote_untrusted_bounded,
+};
 pub use digest::sha256_hex;
 pub use error::{ErrorKind, ParseError, ToolkitError};
 pub use frontmatter::parse_frontmatter;

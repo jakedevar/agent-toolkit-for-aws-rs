@@ -20,7 +20,7 @@ use std::io::{self, Write as _};
 use std::path::{Component, Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
-use toolkit_core::{Json, ToolkitError};
+use toolkit_core::{neutralize_line, Json, ToolkitError};
 
 use super::artifacts::pyjson::{dumps, loads};
 use super::{is_regular_file, is_regular_file_under, read_text, read_text_under};
@@ -521,6 +521,31 @@ fn ai_route(data: &Json) -> Step<Json> {
     }
 }
 
+/// The telemetry ids a skill may legitimately carry; only these are echoed.
+const KNOWN_OWNING_SKILLS: [&str; 4] = [
+    "GCP_TO_AWS",
+    "HEROKU_TO_AWS",
+    "LLM_TO_BEDROCK",
+    "AZURE_TO_AWS",
+];
+
+/// How a skip reason names `owning_skill`. The status file is untrusted payload,
+/// so its value is never echoed: a recognised telemetry id appears as its
+/// Python-style repr, an absent key as `None`, anything else only by its JSON
+/// type (#4639).
+fn owning_skill_shown(value: Option<&Json>) -> String {
+    match value {
+        None | Some(Json::Null) => "None".to_string(),
+        Some(Json::String(text)) if KNOWN_OWNING_SKILLS.contains(&text.as_str()) => {
+            py_repr_opt(value)
+        }
+        Some(Json::String(_)) => "(unrecognised string)".to_string(),
+        Some(Json::Array(_)) => "(a list)".to_string(),
+        Some(Json::Object(_)) => "(a dict)".to_string(),
+        Some(_) => "(a number or boolean)".to_string(),
+    }
+}
+
 /// `run_id` and `sourcePlatform` of `.phase-status.json`.
 fn read_status(dir: &Path) -> Step<(String, &'static str)> {
     let path = dir.join(".phase-status.json");
@@ -536,7 +561,7 @@ fn read_status(dir: &Path) -> Step<(String, &'static str)> {
     let Some(platform) = owning_skill.and_then(Json::as_str).and_then(platform_for) else {
         return skip(format!(
             "owning_skill {} has no web handoff yet",
-            py_repr_opt(owning_skill)
+            owning_skill_shown(owning_skill)
         ));
     };
     // runId carries the attribution the handoff exists for; a numeric or blank
@@ -847,22 +872,38 @@ pub fn emit_plan_command(
         Err(Stop::Skip(reason)) => {
             // This run should have NO plan, so drop a stale one.
             let _ = fs::remove_file(&out_path);
-            output.line(&format!("PLAN_SKIP | reason={reason}"))
+            status_line(output, &format!("PLAN_SKIP | reason={reason}"))
         }
         Err(Stop::Fail(error)) => {
             // An unclassifiable fault: a previous plan may still be valid.
-            output.line(&format!("PLAN_SKIP | reason=unreadable input: {error}"))
+            status_line(
+                output,
+                &format!("PLAN_SKIP | reason=unreadable input: {error}"),
+            )
         }
         Ok((plan, platform, scope)) => match write_plan(&plan, &out_path) {
-            Ok(()) => output.line(&format!(
-                "PLAN_OK | path={} | platform={platform} | scope={scope}",
-                out_path.display()
-            )),
-            Err(error) => output.line(&format!(
-                "PLAN_SKIP | reason=could not write plan.json: {error}"
-            )),
+            Ok(()) => status_line(
+                output,
+                &format!(
+                    "PLAN_OK | path={} | platform={platform} | scope={scope}",
+                    out_path.display()
+                ),
+            ),
+            Err(error) => status_line(
+                output,
+                &format!("PLAN_SKIP | reason=could not write plan.json: {error}"),
+            ),
         },
     }
+}
+
+/// Writes one `PLAN_*` status line to stdout. The line carries the caller's
+/// directory path and OS error text, so it is escaped as ONE line: control
+/// characters (newline and carriage return included, so no argument can forge a
+/// second status line), bidirectional overrides and other invisible characters
+/// become `\n`, `\r`, `\t` or `\uXXXX` (#4639). Ordinary text is unchanged.
+fn status_line(output: &mut Output<'_>, line: &str) -> Result<(), ToolkitError> {
+    output.line(&neutralize_line(line))
 }
 
 #[cfg(test)]
