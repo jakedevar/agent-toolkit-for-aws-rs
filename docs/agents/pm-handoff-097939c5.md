@@ -208,3 +208,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
   Round 13 worker 1de8fe29 (continue_from e43420e5, op 82c52cb4): #4727 ec2740ed + #4743 37973da8 + #4408 e54d43ee onto f6fac27d; marker-only fallout allowed; real response reads -> stop and report.
   New slice #4391 (DynamoDB deploy/teardown plans) worker a7277981 (Sonnet) from f6fac27d (op 6aad89b7); security pre-review on its IAM output.
   4/4 busy: 16f724e9 (#4381 r2), b4182810 (#4793), 1de8fe29 (#4575 r13), a7277981 (#4391).
+- 22:41Z: round 13 head 92781c675aad41750925b7fce30288a019d4ca04 (1de8fe29; merges cc723717 #4727, af692157 #4743 clean; 92781c67 #4408 registration-only). STOPPED before jobs: recorded_contract fails 3/25 on relational (#4394): no shared import, members.rs helper copies, 18 shape reads (fail-closed).
+  Filed #4799 (P2): migrate relational onto toolkit_aws::recorded, behaviour byte-identical. Worker 36d6de30 (Opus) from 92781c67 (op 5037b4ef). Then review (security-flavoured), then round 13 = its head + fmt/clippy/ws-test + manager scoped.
+  4/4 busy: 16f724e9 (#4381 r2), b4182810 (#4793), a7277981 (#4391), 36d6de30 (#4799).
