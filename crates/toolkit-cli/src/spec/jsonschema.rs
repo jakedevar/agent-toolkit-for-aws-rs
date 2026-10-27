@@ -234,7 +234,6 @@ impl Evaluator<'_> {
         depth: usize,
     ) {
         let members = match schema {
-            Json::Bool(true) => return,
             Json::Bool(false) => {
                 push(
                     issues,
@@ -284,7 +283,7 @@ impl Evaluator<'_> {
                 }
             }
             "minLength" | "maxLength" | "pattern" => {
-                check_string(keyword, value, instance, path, issues)
+                check_string(keyword, value, instance, path, issues);
             }
             "properties" => self.properties(value, instance, path, issues, depth),
             "required" => check_required(value, instance, path, issues),
@@ -405,7 +404,7 @@ impl Evaluator<'_> {
         &self,
         value: &Json,
         instance: &Json,
-        path: &mut Vec<Segment>,
+        path: &[Segment],
         issues: &mut Vec<Issue>,
         depth: usize,
     ) {

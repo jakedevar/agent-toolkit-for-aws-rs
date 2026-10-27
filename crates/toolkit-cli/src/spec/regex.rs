@@ -295,13 +295,11 @@ impl Parser {
             let high = self.number();
             (low.unwrap_or(0), high.unwrap_or(UNBOUNDED))
         } else {
-            match low {
-                Some(n) => (n, n),
-                None => {
-                    self.pos = start;
-                    return None;
-                }
-            }
+            let Some(n) = low else {
+                self.pos = start;
+                return None;
+            };
+            (n, n)
         };
         if self.peek() == Some('}') {
             self.pos += 1;
@@ -354,7 +352,7 @@ impl Matcher<'_> {
         matched
     }
 
-    fn single(&self, node: &Node, c: char) -> bool {
+    fn single(node: &Node, c: char) -> bool {
         match node {
             Node::Char(expected) => *expected == c,
             Node::Any => c != '\n',
@@ -369,7 +367,7 @@ impl Matcher<'_> {
         };
         match node {
             Node::Char(_) | Node::Any | Node::Class(_) => {
-                self.text.get(pos).is_some_and(|&c| self.single(node, c))
+                self.text.get(pos).is_some_and(|&c| Self::single(node, c))
                     && self.sequence(rest, pos + 1, k)
             }
             Node::Start => pos == 0 && self.sequence(rest, pos, k),
@@ -411,7 +409,7 @@ impl Matcher<'_> {
             && self
                 .text
                 .get(pos + count)
-                .is_some_and(|&c| self.single(node, c))
+                .is_some_and(|&c| Self::single(node, c))
         {
             count += 1;
         }
