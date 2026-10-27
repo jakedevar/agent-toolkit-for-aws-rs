@@ -228,7 +228,9 @@ fn only_template_statements_for_valid_tenants_reach_the_inner_cursor() {
 
 // The cursor's input type cannot be made from text. These probes resolve at
 // compile time: the inherent constant exists only when the bound holds, so
-// the trait default (`false`) is used otherwise.
+// the trait default (`false`) is used otherwise. The assertions are const
+// blocks: if `TenantRead` ever gains a conversion from text, the tests stop
+// compiling.
 trait Fallback {
     const FROM_STRING: bool = false;
     const FROM_STR_REF: bool = false;
@@ -263,16 +265,16 @@ impl<T: Default> DefaultProbe<T> {
 #[test]
 fn a_tenant_read_cannot_be_made_from_text() {
     // The probes detect the conversions on a type that has them.
-    assert!(FromStringProbe::<String>::FROM_STRING);
-    assert!(FromStrRefProbe::<String>::FROM_STR_REF);
-    assert!(ParseProbe::<String>::PARSE);
-    assert!(DefaultProbe::<String>::DEFAULT);
+    const { assert!(FromStringProbe::<String>::FROM_STRING) };
+    const { assert!(FromStrRefProbe::<String>::FROM_STR_REF) };
+    const { assert!(ParseProbe::<String>::PARSE) };
+    const { assert!(DefaultProbe::<String>::DEFAULT) };
     // TenantRead has none of them; its field is private to `tenant.rs`, so
     // `TenantRead::for_tenant` is the only constructor.
-    assert!(!FromStringProbe::<TenantRead>::FROM_STRING);
-    assert!(!FromStrRefProbe::<TenantRead>::FROM_STR_REF);
-    assert!(!ParseProbe::<TenantRead>::PARSE);
-    assert!(!DefaultProbe::<TenantRead>::DEFAULT);
+    const { assert!(!FromStringProbe::<TenantRead>::FROM_STRING) };
+    const { assert!(!FromStrRefProbe::<TenantRead>::FROM_STR_REF) };
+    const { assert!(!ParseProbe::<TenantRead>::PARSE) };
+    const { assert!(!DefaultProbe::<TenantRead>::DEFAULT) };
 }
 
 #[test]
