@@ -2,6 +2,8 @@
 //! truthiness, `dict.get` chains and the `float()`, `int()` and `str()`
 //! conversions the validator applies to JSON values.
 
+use std::fmt::Write as _;
+
 use toolkit_core::Json;
 
 use crate::manifests::{is_falsy, py_float_repr, py_strip};
@@ -84,9 +86,67 @@ pub(super) fn py_str_or_empty(value: Option<&Json>) -> String {
     }
 }
 
+/// Longest untrusted value a diagnostic quotes, in characters.
+const MAX_SHOWN_CHARS: usize = 120;
+
+/// `text` made safe to quote in a diagnostic (#4602): control characters,
+/// line and paragraph separators and bidirectional or zero-width format
+/// characters are written as visible escapes, so a value read from an input
+/// cannot forge report lines or drive the terminal, and a long value is cut
+/// with an ellipsis marker. Ordinary text is returned unchanged.
+pub(super) fn untrusted(text: &str) -> String {
+    escape_bounded(text, Some(MAX_SHOWN_CHARS))
+}
+
+/// [`untrusted`] without the length bound, for a path or message whose tail
+/// (such as "symbolic links are not followed") must stay readable.
+pub(super) fn escaped(text: &str) -> String {
+    escape_bounded(text, None)
+}
+
+fn escape_bounded(text: &str, limit: Option<usize>) -> String {
+    let mut out = String::new();
+    for (count, c) in text.chars().enumerate() {
+        if limit == Some(count) {
+            out.push_str("...");
+            break;
+        }
+        match c {
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if c.is_control()
+                || matches!(
+                    c,
+                    '\u{200b}'..='\u{200f}'
+                        | '\u{2028}'..='\u{202e}'
+                        | '\u{2060}'..='\u{2064}'
+                        | '\u{2066}'..='\u{2069}'
+                        | '\u{feff}'
+                ) =>
+            {
+                let _ = write!(out, "\\u{{{:04x}}}", u32::from(c));
+            }
+            c => out.push(c),
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn untrusted_values_are_escaped_and_bounded() {
+        assert_eq!(untrusted("plain text"), "plain text");
+        assert_eq!(untrusted("a\nb\r\tc"), "a\\nb\\r\\tc");
+        assert_eq!(untrusted("x\u{1b}[2Jy"), "x\\u{001b}[2Jy");
+        assert_eq!(untrusted("a\u{202e}b\u{85}"), "a\\u{202e}b\\u{0085}");
+        let long = "z".repeat(500);
+        assert_eq!(untrusted(&long).chars().count(), MAX_SHOWN_CHARS + 3);
+        assert!(untrusted(&long).ends_with("..."));
+    }
 
     #[test]
     fn conversions_follow_python() {

@@ -111,7 +111,7 @@ pub(super) fn readability(html: &str) -> Vec<String> {
 const CENTS_MEANINGFUL_BELOW: u32 = 2;
 
 /// The position `count` characters after `from` (clamped to the text).
-fn chars_after(text: &str, from: usize, count: usize) -> usize {
+pub(super) fn chars_after(text: &str, from: usize, count: usize) -> usize {
     text[from..]
         .char_indices()
         .nth(count)
@@ -129,7 +129,7 @@ fn chars_before(text: &str, from: usize, count: usize) -> usize {
 
 /// Whether the whole-dollar digits (with separators) are at least the
 /// threshold that makes cents suspicious.
-fn whole_dollars_at_least_threshold(digits: &str) -> bool {
+pub(super) fn whole_dollars_at_least_threshold(digits: &str) -> bool {
     let cleaned: String = digits.chars().filter(|c| *c != ',').collect();
     let significant = cleaned.trim_start_matches('0');
     match significant.len() {
@@ -141,16 +141,27 @@ fn whole_dollars_at_least_threshold(digits: &str) -> bool {
     }
 }
 
+/// `CENTS_RE`: a dollar amount written with two decimals.
+pub(super) fn cents_pattern() -> &'static Rx {
+    rx!(r"\$([0-9][0-9,]*)\.([0-9]{2})\b")
+}
+
+/// `_RATE_SUFFIX_RE`: the per-unit suffix that makes cents legitimate (a bare
+/// "/mo" is deliberately not one).
+pub(super) fn rate_suffix_pattern() -> &'static Rx {
+    rx!(
+        r"(?i)^\s*(?:/|\(|\bper\b)?\s*(?:mo\b\s*(?:per\b\s*)?)?(?:hr|hour|hourly|vcpu|gb|gib|tb|image|unit|policy|1m|10k|[0-9]+-mo)\b"
+    )
+}
+
 /// Monthly cost figures must render as whole dollars (rule 2).
 pub(super) fn currency_formatting(html: &str) -> Vec<String> {
     let mut errors = Vec::new();
     let scope = readability_scope(html);
     let decoded = decoded_text(&scope);
     let text = decoded.text.as_str();
-    let cents = rx!(r"\$([0-9][0-9,]*)\.([0-9]{2})\b");
-    let rate_suffix = rx!(
-        r"(?i)^\s*(?:/|\(|\bper\b)?\s*(?:mo\b\s*(?:per\b\s*)?)?(?:hr|hour|hourly|vcpu|gb|gib|tb|image|unit|policy|1m|10k|[0-9]+-mo)\b"
-    );
+    let cents = cents_pattern();
+    let rate_suffix = rate_suffix_pattern();
     let operand_trailing = rx!(r"(?i)^\s*(?:×|times\b|x(?=\s|$|[$0-9]))");
     let operand_leading = rx!(r"(?i)(?:×|\btimes|(?<=[\s0-9])x)\s*$");
     let mut seen: HashSet<String> = HashSet::new();

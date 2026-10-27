@@ -55,6 +55,7 @@ Usage:
   toolkit startup migration-report REPORT [--estimation-infra FILE] [--estimation-ai FILE]
                             [--aws-design FILE] [--migration-dir DIR] [--no-require-toc]
                             [--no-readability] [--mode full|decision|ai_only]
+  toolkit startup heroku-report REPORT [--migration-dir DIR] [--mode full|decision]
   toolkit startup score ANSWERS [--plugin-root DIR] [--runtimes-dir DIR]
   toolkit startup score-units ANSWERS [--plugin-root DIR] [--runtimes-dir DIR]
   toolkit sync plugin-skills [--root DIR] [--plugin NAME] [--check]
@@ -176,6 +177,14 @@ Commands:
                 artifacts; --migration-dir enables fixture-bleed and what-if
                 scenario checks. Problems are `  - ...` lines on stderr after
                 REPORT_FAIL and exit status 1; a pass prints REPORT_OK.
+  startup heroku-report
+                Validate a heroku-to-aws migration-report.html (or decision-report.html
+                with --mode decision): required sections, the draft-for-review
+                footer, whole-dollar currency, the data-cost-key figure against
+                estimation-infra.json in --migration-dir, cost-optimization content,
+                the verdict headline and flip conditions, accessibility and the
+                decision-mode phase state. Problems are `  - ...` lines on stderr
+                after REPORT_FAIL and exit status 1; a pass prints REPORT_OK.
   startup artifacts
                 Validate migration artifacts against the contracts the skills
                 publish (JSON examples in the schema documents plus the JSON
@@ -614,6 +623,15 @@ pub const COMMANDS: &[CommandSpec] = &[
         max_positionals: 1,
         passthrough: false,
         handler: startup::migration_report_command,
+    },
+    CommandSpec {
+        path: &["startup", "heroku-report"],
+        flags: &[],
+        value_flags: &["--migration-dir", "--mode"],
+        strict_values: true,
+        max_positionals: 1,
+        passthrough: false,
+        handler: startup::heroku_report_command,
     },
     CommandSpec {
         path: &["startup", "score"],

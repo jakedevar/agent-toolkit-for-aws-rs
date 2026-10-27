@@ -22,6 +22,7 @@ mod rx;
 mod decision;
 mod entities;
 mod figures;
+mod heroku;
 mod html;
 mod optimize;
 mod structure;
@@ -31,6 +32,8 @@ mod walk;
 
 #[cfg(test)]
 mod tests;
+
+pub use heroku::heroku_report_command;
 
 use rx::rx;
 use structure::{

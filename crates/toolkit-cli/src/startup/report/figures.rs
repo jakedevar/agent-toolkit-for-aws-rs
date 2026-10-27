@@ -4,12 +4,15 @@
 use toolkit_core::Json;
 
 use super::rx::{group, rx};
-use super::values::{chain, py_float};
+use super::values::{chain, py_float, untrusted};
 use super::walk::{cost_anchor_matches, section_html};
 use crate::manifests::py_repr;
 
+/// A `data-cost-key` anchor and the estimate path whose figure it must equal.
+pub(super) type CostAnchor = (&'static str, [&'static str; 2]);
+
 /// Which estimate figure each `data-cost-key` anchor must equal.
-const COST_ANCHORS: [(&str, [&str; 2]); 4] = [
+const COST_ANCHORS: [CostAnchor; 4] = [
     (
         "aws_monthly_balanced",
         ["projected_costs", "aws_monthly_balanced"],
@@ -58,12 +61,37 @@ fn dig<'a>(value: &'a Json, path: &[&str]) -> Option<&'a Json> {
 
 /// The figures of the report against the estimate (P1-C).
 pub(super) fn cost_figures(html: &str, infra: Option<&Json>, require_anchors: bool) -> Vec<String> {
+    let exec_costs = if require_anchors {
+        section_html(html, "exec-costs")
+    } else {
+        None
+    };
+    check_cost_figures(
+        html,
+        infra,
+        &COST_ANCHORS,
+        &REQUIRED_COST_KEYS,
+        exec_costs.as_deref(),
+    )
+}
+
+/// [`cost_figures`] for any anchor table: every rendered anchor of `html`
+/// must equal its figure, and each `required` key with a figure in the estimate
+/// must be anchored inside `exec_costs` (the `exec-costs` section the caller
+/// found, `None` to skip that requirement).
+pub(super) fn check_cost_figures(
+    html: &str,
+    infra: Option<&Json>,
+    anchors: &[CostAnchor],
+    required: &[&str],
+    exec_costs: Option<&str>,
+) -> Vec<String> {
     let Some(infra) = infra.filter(|value| matches!(value, Json::Object(_))) else {
         return Vec::new();
     };
     let mut errors = Vec::new();
     for (key, text) in cost_anchor_matches(html) {
-        let Some((_, path)) = COST_ANCHORS.iter().find(|(name, _)| *name == key) else {
+        let Some((_, path)) = anchors.iter().find(|(name, _)| *name == key) else {
             continue;
         };
         let Some(expected) = dig(infra, path) else {
@@ -73,7 +101,7 @@ pub(super) fn cost_figures(html: &str, infra: Option<&Json>, require_anchors: bo
         let Some(expected_dollars) = py_float(expected).and_then(canonical_money) else {
             errors.push(format!(
                 "estimation-infra.json {dotted} is not a numeric dollar amount: {}",
-                py_repr(expected)
+                untrusted(&py_repr(expected))
             ));
             continue;
         };
@@ -91,19 +119,16 @@ pub(super) fn cost_figures(html: &str, infra: Option<&Json>, require_anchors: bo
             ));
         }
     }
-    if !require_anchors {
-        return errors;
-    }
     // Required figures are anchored inside <section id="exec-costs">.
-    let Some(exec_costs) = section_html(html, "exec-costs") else {
+    let Some(exec_costs) = exec_costs else {
         return errors;
     };
-    let anchored: Vec<String> = cost_anchor_matches(&exec_costs)
+    let anchored: Vec<String> = cost_anchor_matches(exec_costs)
         .into_iter()
         .map(|(key, _)| key)
         .collect();
-    for key in REQUIRED_COST_KEYS {
-        let Some((_, path)) = COST_ANCHORS.iter().find(|(name, _)| *name == key) else {
+    for key in required {
+        let Some((_, path)) = anchors.iter().find(|(name, _)| name == key) else {
             continue;
         };
         if dig(infra, path).is_none() || anchored.iter().any(|anchor| anchor == key) {

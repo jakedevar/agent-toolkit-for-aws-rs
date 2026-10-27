@@ -196,7 +196,12 @@ impl Handler for VisibleText {
 pub(super) fn plain_text(fragment: &str) -> String {
     let mut visible = VisibleText::default();
     parse(fragment, &mut visible);
-    let text = visible.parts.concat();
+    normalize_phrase(&visible.parts.concat())
+}
+
+/// `_normalize_phrase` of the Heroku validator and the tail of `_plain_text`:
+/// dashes folded, whitespace collapsed, stripped and lower-cased.
+pub(super) fn normalize_phrase(text: &str) -> String {
     let text = text.replace(['\u{2014}', '\u{2013}'], "-");
     let mut collapsed = String::with_capacity(text.len());
     let mut in_space = false;
@@ -480,6 +485,9 @@ pub(super) struct Rendered {
     li_depth: usize,
     heading_depth: usize,
     buffer: Vec<String>,
+    /// Normalize each run with [`normalize_phrase`] alone (the Heroku
+    /// validator) instead of re-parsing it as markup with [`plain_text`].
+    phrase_mode: bool,
 }
 
 impl Rendered {
@@ -497,7 +505,12 @@ impl Rendered {
     }
 
     fn flush(&mut self) {
-        let text = plain_text(&self.buffer.join(" "));
+        let joined = self.buffer.join(" ");
+        let text = if self.phrase_mode {
+            normalize_phrase(&joined)
+        } else {
+            plain_text(&joined)
+        };
         self.buffer.clear();
         if text.is_empty() {
             return;
@@ -600,6 +613,18 @@ impl Handler for Rendered {
 /// `_rendered_fragment`.
 pub(super) fn rendered_fragment(fragment: &str) -> Rendered {
     let mut rendered = Rendered::default();
+    parse(fragment, &mut rendered);
+    rendered.flush();
+    rendered
+}
+
+/// `_rendered_entries` of the Heroku validator: the rendered view of a
+/// fragment whose runs are normalized as phrases, not re-parsed as markup.
+pub(super) fn rendered_phrases(fragment: &str) -> Rendered {
+    let mut rendered = Rendered {
+        phrase_mode: true,
+        ..Rendered::default()
+    };
     parse(fragment, &mut rendered);
     rendered.flush();
     rendered
