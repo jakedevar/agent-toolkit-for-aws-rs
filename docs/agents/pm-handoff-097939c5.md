@@ -196,3 +196,4 @@ Friction: #4727, Rsi #4694, Rsi #4704
   Ruling: fail closed; router-level STDIO_DASH allowlist const (no CommandSpec schema change), shipped empty; restore `skills list -` test. Repair (Sonnet) 238d72f3 continue_from 293605ec (op 1568b639). Then re-review #4776 pinned.
 - 21:55Z: #4742 round 2 on 97ea8fac: 5 original fixed; new #4784 (missing query id dumps response into diagnostics), #4785 (malformed dataset listing drops conversion errors). FINAL repair (Opus) 16f724e9 continue_from 14bc584a (op f11b1176): audit all value echoes in cloudwatch.
   Queue entry 5060cb2e still `queued` (not admitted) at 21:55Z.
+- 22:08Z: safety net: queue entry 5060cb2e still queued (27 min, no admitted/gating entry visible in scope; daemon healthy 9a67b848, load 9, disk 119G). 4 repairs parked on jobs. Net re-armed 23:08Z with escalation check.
