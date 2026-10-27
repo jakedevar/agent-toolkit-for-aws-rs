@@ -809,7 +809,7 @@ fn py_eq_opt(left: Option<&Json>, right: Option<&Json>) -> bool {
 /// Python `==` on parsed JSON, recursively: objects compare as dicts (same
 /// keys, member order irrelevant; an absent nested key is not `None`), `True`
 /// and `False` equal `1` and `0`, and integers equal floats of the same value.
-fn py_eq(left: &Json, right: &Json) -> bool {
+pub(crate) fn py_eq(left: &Json, right: &Json) -> bool {
     match (left, right) {
         (Json::Null, Json::Null) => true,
         (Json::String(a), Json::String(b)) => a == b,

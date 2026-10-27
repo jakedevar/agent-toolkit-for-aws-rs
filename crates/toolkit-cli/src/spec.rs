@@ -37,7 +37,7 @@ use crate::{Invocation, Output};
 
 use unicode_normalization::UnicodeNormalization;
 
-mod engine;
+pub(crate) mod engine;
 #[cfg(test)]
 mod tests;
 

@@ -284,3 +284,21 @@ to the current directory.
 - An unreadable or malformed input is `error: <message>` (exit 1). A missing
   `--migration-dir` is a usage error and a missing `--plugin-root` directory in
   `model-id-lint` exits 2, like the Python scripts.
+
+### startup artifacts
+
+```
+toolkit startup artifacts (--self-check | --fixtures | --run-dir DIR --skill NAME)
+                          [--plugin-root DIR] [--manifest FILE] [--baseline FILE]
+                          [--no-baseline] [--json]
+```
+
+Replacement for `validate-artifacts.py` (and the migrated cases of
+`tests/test_validate_artifacts.py`). `--self-check` parses every contract
+document, `--fixtures` checks the fixture goldens with the shipped baseline
+(every baseline entry must still match something), `--run-dir DIR --skill NAME`
+(`gcp-to-aws`, `heroku-to-aws`, `azure-to-aws`) checks one run without a
+baseline unless `--baseline FILE` is given. The report (or, with `--json`, the
+report object) is stdout; a run with a non-baselined error finding exits 1 and
+adds `error: N artifact contract problem(s)` on stderr. Details and the recorded
+differences (items 12-20) are in `docs/migration/startup-validators.md`.

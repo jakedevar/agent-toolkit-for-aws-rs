@@ -1,12 +1,14 @@
-# Startup advisor validators (#4399, first delivery)
+# Startup advisor validators (#4399)
 
 Slice `startup-validators`, wave 2 of programme #4369. Base: the pinned stack
 `81cc6189` (#4376 spec validator on #4375 on #4374) plus the accepted #4374
 head `98957f87` (YAML depth/flow fixes and docs; merged cleanly, no conflict
 resolution needed). Nothing here has landed; landing waits on #4425.
 
-This delivery ports **three** of the eleven slice files and records the rest as
-an explicit remainder (see the end). Verification evidence lives in the
+The first delivery ported `validate-model-pricing.py`, `validate-startup-program-artifacts.py`
+and `model-id-lint.py`; the second ports `validate-artifacts.py` (**four** of the
+eleven slice files in total) and records the rest as an explicit remainder (see
+the end). Verification evidence lives in the
 Issue #4399 handoff, not in this file.
 
 ## Commands
@@ -16,6 +18,7 @@ Issue #4399 handoff, not in this file.
 | `toolkit startup model-pricing [--plugin-root DIR]` | `plugins/aws-startup-advisor/scripts/validate-model-pricing.py` | every default Anthropic candidate has a numeric Active price row in both vendored Bedrock pricing caches |
 | `toolkit startup program-artifacts --migration-dir DIR` | `.../scripts/validate-startup-program-artifacts.py` | artifacts do not imply a confirmed Activate tier when `startup_program_status` is `unknown`, and link to the Activate page when they mention it |
 | `toolkit startup model-id-lint [--plugin-root DIR]` | `.../scripts/model-id-lint.py` and its tests (`tests/test_model_id_lint.py`) | no retired or fabricated Bedrock model ID outside the catalog files |
+| `toolkit startup artifacts (--self-check \| --fixtures \| --run-dir DIR --skill NAME) [--plugin-root DIR] [--manifest FILE] [--baseline FILE] [--no-baseline] [--json]` | `.../scripts/validate-artifacts.py` (+ `scripts/artifact-contracts.json`, `artifact-contracts-baseline.json`, `scripts/contracts/*.schema.json`) and the migrated cases of `tests/test_validate_artifacts.py` | published artifact contracts (JSON examples in the schema documents plus two JSON Schemas) checked against run directories and the fixture goldens |
 
 `--plugin-root` defaults to the current directory (the Python scripts defaulted
 to the directory they lived in; `mise` tasks already run in the plugin
@@ -88,6 +91,46 @@ the source text of the Python script and has no Rust counterpart; the Rust
 lint resolves everything from `--plugin-root` and never from the repository
 root (`lint_registry_rows…`, `lint_never_follows_symbolic_links`).
 
+### artifacts
+
+Module `startup/artifacts/` (`pyjson`, `jsonc`, `patterns`, `shape`, `schema`,
+`contracts`, `mod`). Findings, codes, ordering, the text report, the `--json`
+report and the exit status (0 without a non-baselined error finding, else 1)
+follow the Python tool. The report (findings, `PASS`/`FAIL` summary or the
+`--json` object) is stdout data exactly as in Python; a failing run adds the
+shared `error: N artifact contract problem(s)` line on stderr.
+
+| Python behaviour | Rust | Tests |
+| --- | --- | --- |
+| `json.loads`: duplicate key keeps first position and last value; `NaN`/`Infinity`/`-Infinity`; error `msg` and `lineno` (`Expecting ',' delimiter`, `Unterminated string starting at`, BOM message, ...) | `pyjson::loads` (not the strict core parser, so contract examples and artifacts that Python accepts still load) | `loads_keeps_first_position_and_last_value_of_a_duplicate_key`, `loads_accepts_python_constants_and_rejects_the_rest`, `loads_reports_python_line_and_column` |
+| `json.dumps` (`ensure_ascii`, `", "`/`": "`, `indent=2`, `sort_keys`) for `--json` and the `uniqueItems` identity | `pyjson::dumps` | `dumps_matches_python_formatting` |
+| `strip_jsonc`: `//` outside strings, key attribution by nesting depth (inline value closed on the line / still open), whitespace before `:`, bare `...`, `true\|false`, trailing commas | `jsonc::strip_jsonc` and the three rewrites as exact matchers | `strip_jsonc_*`, `trailing_commas_are_removed_before_a_closing_bracket_only`, `a_lone_ellipsis_line_becomes_a_member` |
+| `parse_block` candidate order (lone `"..."`, as is, braces, braces + lone), own-line comment binds to the key that opened the object, `SCHEMA_PARSE` message with the block line | `contracts::parse_block` | `parse_block_reads_objects_arrays_and_fragments`, `a_comment_on_its_own_line_binds_to_the_key_that_opened_the_object` |
+| enum recognition: `a\|b` strings, comment enums (bare and quoted members, regex backtracking of `_COMMENT_ENUM_RE`), `"+"-joined set`, `// REQUIRED`/`ALWAYS present` and the negative qualifiers, `or null`/`nullable`, placeholder strings and keys | `patterns`, `shape::build_node` | `enums_come_from_pipe_strings_and_comments`, `comment_enums_cover_bare_and_quoted_members`, `joined_set_qualifier_is_recognised_in_both_spellings`, `required_comments_and_placeholders`, `nullable_comments_add_null`, `a_placeholder_key_makes_the_object_open_with_an_any_key_template` |
+| `Node.merge` (unspecified-`any` replacement, enum kept across a concrete example, copies not shared), `_walk_path`, `_unwrap_to_path`, `_merge_example_at`, `allowed_anywhere`, `open_paths` | `shape` | `an_empty_array_item_is_replaced_when_a_concrete_shape_arrives`, `a_declared_enum_survives_a_merge_with_a_concrete_example`, `merged_children_are_copies_so_a_named_refinement_does_not_leak`, `a_wrapped_array_example_merges_at_the_array_level`, `allowed_anywhere_vocabulary_is_accepted_at_every_level` |
+| `validate_shape`: `UNKNOWN_KEY`, `MISSING_REQUIRED`, `TYPE_MISMATCH` (null tolerated), `ENUM_VIOLATION` (joined sets), `_` keys ignored, wildcard/any-key objects | `shape::validate_shape` | `unknown_keys_are_reported_but_underscore_keys_are_not`, `missing_required_type_mismatch_and_enum_violation`, `messages_name_the_kinds_and_the_allowed_values`, `null_is_tolerated_and_open_objects_accept_anything`, `an_any_key_template_applies_to_named_children`, `a_joined_set_allows_plus_joined_members_but_not_unknown_ones` |
+| document scan (fence regex, headings), heading match/token, `(REQUIRED)` headings with table bodies, manifest `sections`/`@L<line>` anchors/`section_rules`/`ignore_headings`/`extra_shapes`/`required`/`open_paths` | `contracts::scan_doc`, `build_shape_contract`, `patterns::heading_*` | `documents_are_scanned_into_blocks_and_headings`, `heading_tokens_and_matches`, `a_required_heading_with_a_table_body_is_enforced`, `manifest_sections_rules_ignores_and_extras_refine_the_shape`, `a_manifest_anchor_that_misses_a_block_is_reported`, `shape_contract_failures_are_schema_parse_findings` |
+| draft-07 subset (`type` incl. `integer`, `enum`, `const`, `pattern`, length/size/number bounds, `required`, `additionalProperties`, `items`, `uniqueItems`, `allOf`/`anyOf`/`oneOf`/`not`, local `$ref`), Python message wording, any unlisted keyword → `SCHEMA_PARSE` at load | `schema::SubsetValidator`, `unsupported_keywords`; `pattern` runs on the spec validator's bounded `jsonschema`/`fancy-regex` adapter (`spec::engine`) | `the_json_schema_subset_reports_each_violation_with_python_wording`, `numeric_string_object_and_array_limits`, `refs_combinators_and_type_lists`, `schema_patterns_use_the_bounded_engine_and_refuse_invalid_ones`, `unsupported_keywords_are_listed_with_their_pointer`, `every_keyword_of_the_two_real_schemas_is_enforced_or_an_annotation` |
+| schema-declared properties admitted into the shape (`_node_from_schema`, `_admit_schema_properties`); fixture-only shared contracts; route shapes by `when_path`/`when_value` | `contracts` | `route_shapes_select_the_shape_by_the_artifact_marker`, `target_only_ai_contracts_do_not_validate_current_skill_outputs`, `a_neutral_run_skips_provider_artifacts_and_expected_snapshots` |
+| `fnmatch` semantics for manifest globs and baseline `artifact`/`path` globs (bracket classes such as `resources[[]*[]].id`), baseline matching, `STALE_BASELINE` for unmatched entries | `patterns::fnmatch`, `apply_baseline` | `fnmatch_follows_python_including_bracket_classes`, `the_baseline_marks_matches_and_reports_stale_entries`, `a_stale_baseline_entry_fails_the_gate` |
+| artifact discovery: `rglob("*.json")` sorted by path components, skipped directories (`live-capture`, `workspace-terraform`, `.terraform`, `node_modules`), `expected-*`/`clarify-answers*` skipped, `scenario-NNN` normalisation, `NO_CONTRACT` only with a skill | `find_artifacts`, `artifact_name` | `find_artifacts_sorts_by_path_components`, `artifact_names_normalise_scenario_numbers` |
+| modes: `--self-check`, `--fixtures` (shipped baseline applied by default), `--run-dir DIR --skill NAME` (no baseline unless `--baseline`), `--no-baseline`, `--json` | `artifacts_command` | `self_check_parses_every_contract_document_of_the_real_plugin`, `the_fixture_goldens_pass_with_the_shipped_baseline_and_no_stale_entry`, `the_unmodified_golden_run_passes_without_a_baseline`, `an_off_contract_key_in_a_copied_golden_fails_with_its_path`, `a_real_schema_violation_fails`, `empty_phases_fail_min_properties_and_a_valid_status_passes`, `text_output_lists_errors_infos_and_the_summary`, `usage_errors_exit_two`, binary test |
+
+Python unit tests migrated: the unit cases of `tests/test_validate_artifacts.py`
+(JSONC stripping, template inference, merging, shape validation, schema subset,
+baseline) and the CLI cases that need only the real plugin tree (self-check,
+fixtures, injected off-contract key, stale baseline, schema violation, empty
+`phases`, neutral/target-only artifacts, documented default run-dir command).
+**Not ported one by one:** the ~25 per-document cases that rebuild a mutated
+golden for one Heroku/GCP/Azure document (`test_heroku_*`, `test_gcp_*`,
+`test_azure_*`, `test_ai_workload_capability_*`, `test_workshop_snapshots_*`).
+Their engine behaviours (enum merge, route shapes, required inline arrays,
+joined sets, closed objects, scalar after an empty seed, allowed-anywhere keys)
+have unit tests above, and the real-tree `--self-check` and `--fixtures` runs
+check every contract document and every golden; the document-specific mutation
+cases stay in `tests/test_validate_artifacts.py` (not deleted) and are listed in
+the remainder below.
+
 ## Intentional changes (recorded)
 
 1. **Streams.** A failing run ends with an `error: <summary>` line on stderr in
@@ -130,20 +173,69 @@ root (`lint_registry_rows…`, `lint_never_follows_symbolic_links`).
 
 11. **Kept quirk.** Dual-ID rebuilding treats any later token that starts with `v` as a continuation of the previous revisioned ID (`startswith("v")`), so a full ID beginning with `v` listed after a revisioned one is mangled exactly as in Python; real provider prefixes (`amazon.`, `anthropic.`, `meta.` ...) are unaffected. Pinned by `lint_dual_ids_rebuild_against_the_preceding_full_id`.
 
+
+### Intentional changes of `startup artifacts`
+
+12. **Report streams.** The report (including the `--json` object) is stdout as
+    in Python; the failing exit adds one `error: N artifact contract
+    problem(s)` line on stderr. `--run-dir` without `--skill`, an invalid
+    `--skill`, a missing mode or two modes are usage errors (exit 2) with the
+    shared usage text instead of argparse's.
+13. **Where the plugin root comes from.** Python used the directory of the
+    script; `--plugin-root DIR` (default `.`) replaces it. Finding paths are
+    relative to it as before (`_rel`); `--manifest` still overrides the manifest.
+14. **Symbolic links** under a run directory, the fixture tree or any read
+    file are a runtime error (`symbolic links are not followed`); Python's
+    `rglob`/`read_text` followed them. Contract documents, schemas, the
+    manifest and artifacts are read with the 64 MiB bound and universal
+    newlines.
+15. **JSON edge cases of the Python-compatible reader.** An integer outside
+    the `i64` range is a float; a lone surrogate escape (`\ud800`) becomes
+    U+FFFD (Python kept a lone surrogate); nesting deeper than 500 is the
+    error `maximum recursion depth exceeded` (Python raised `RecursionError`);
+    OS error texts are Rust texts (`cannot read <path>: file does not exist`),
+    but `JSONDecodeError` messages, lines, columns and positions are
+    Python's.
+16. **Deterministic order.** `MISSING_REQUIRED` findings for one object (sorted
+    by key name) and unmatched manifest anchors (sorted by anchor) have a fixed
+    order; Python iterated hash sets, so their order varied between runs.
+17. **`SCHEMA_PARSE` for an unsupported keyword** names the Rust constants
+    (`ENFORCED`/`ANNOTATIONS` in `startup/artifacts/schema.rs`) instead of the
+    Python ones; everything else in the message is unchanged. A JSON `null`
+    contract block is reported as `the block is JSON null` (Python crashed with
+    `AttributeError`).
+18. **`pattern` keyword.** Evaluated by the spec validator's bounded
+    `fancy-regex` adapter (search semantics), not Python `re`: `$` does not
+    match before a trailing newline, a pattern the engine cannot compile or
+    finish is a runtime error (never a pass), and `\d` is the engine's Unicode
+    class. All eight patterns of the shipped schemas behave identically.
+19. **Unsupported schema values.** A manifest or schema value of an unexpected
+    type (a non-string `json_schema`, a non-list `route_shapes`, ...) is a
+    runtime error naming the field; Python raised `TypeError`/`KeyError`. An
+    unresolvable or non-local `$ref` is ignored as before; a `$ref` cycle is
+    refused (`schema nesting or $ref chain is too deep`) instead of
+    overflowing the stack.
+20. **`scenario-\d+\.`** in `artifact_name` and `\w` in headings follow the
+    same ASCII-digit and Unicode-word conventions as items 6 and 7.
+
 ## File membership (#4371 U-10)
 
 Of the eleven inventory rows with `slice == "startup-validators"`:
 
 - Ported here: `validate-model-pricing.py`, `validate-startup-program-artifacts.py`,
-  `model-id-lint.py` (belong: all three are plugin-health scripts in
-  `plugins/aws-startup-advisor/scripts`).
+  `model-id-lint.py`, `validate-artifacts.py` (belong: all four are plugin-health
+  scripts in `plugins/aws-startup-advisor/scripts`; `artifact-contracts.json`,
+  `artifact-contracts-baseline.json` and `scripts/contracts/*.schema.json` are
+  its data and stay in place, read by the Rust command).
 - Remainder, still read-only evidence, not deleted, callers untouched (#4378):
   - `validate-migration-report.py` (2434 lines) and
     `test_validate_migration_report_decision_core.py` (449) — the multi-thousand-line
     report validator (AC2). Needs its own session: the decision-core contract,
     the HTML report grammar and the fixtures under `plugins/aws-startup-advisor/fixtures`.
-  - `validate-artifacts.py` (1255) with `tests/test_validate_artifacts.py`
-    (1363) and `artifact-contracts*.json` — schema/identity contracts.
+  - `tests/test_validate_artifacts.py` (1363 lines): `validate-artifacts.py` itself is
+    ported (`toolkit startup artifacts`), but only the unit and real-tree cases are
+    migrated; the ~25 document-specific mutation cases listed under the
+    `artifacts` parity table remain read-only evidence for a follow-up.
   - `emit-plan-json.py` (658) with `tests/test_emit_plan_json.py` (158).
   - `consent-disclosure-audit.py` (460) with `tests/test_consent_disclosure_audit.py`
     (853): regex-offset heavy (sentence splitting, soft-wrap line mapping); a
@@ -166,5 +258,6 @@ Of the eleven inventory rows with `slice == "startup-validators"`:
 
 No Python deleted, no CI/`mise.toml` change (#4378), no change to
 `Cargo.toml`/`Cargo.lock` (no dependency added), no change to the foundation
-adapter or `.rsi/*`. `manifests.rs` gained two visibility changes
-(`is_py_space`, `py_splitlines` are `pub(crate)`) and no behaviour change.
+adapter or `.rsi/*`. `manifests.rs` gained visibility changes only (`is_py_space`, `py_splitlines`,
+`py_eq` are `pub(crate)`); `spec.rs` made its private `engine` module
+`pub(crate)` so the artifact validator reuses the bounded pattern engine.

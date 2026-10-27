@@ -927,3 +927,94 @@ fn startup_program_artifacts_exit_codes_and_streams() {
     assert!(stderr(&output)
         .starts_with("error: the following arguments are required: --migration-dir\n"));
 }
+
+#[test]
+fn startup_artifacts_self_check_and_fixtures_pass_on_the_real_plugin_through_the_binary() {
+    let plugin = real_startup_plugin();
+    let root = plugin.to_str().expect("utf-8 plugin path");
+
+    let output = run(
+        &[
+            "startup",
+            "artifacts",
+            "--self-check",
+            "--plugin-root",
+            root,
+        ],
+        &plugin,
+    );
+    assert_eq!(code(&output), 0, "stdout: {}", stdout(&output));
+    assert_eq!(stderr(&output), "");
+    assert!(
+        stdout(&output)
+            .ends_with("PASS — 0 artifact(s) checked, 0 error(s), 0 baselined, 0 info\n"),
+        "{}",
+        stdout(&output)
+    );
+
+    let output = run(&["startup", "artifacts", "--fixtures", "--json"], &plugin);
+    assert_eq!(code(&output), 0, "stdout: {}", stdout(&output));
+    assert_eq!(stderr(&output), "");
+    assert!(
+        stdout(&output).contains("\"errors\": []"),
+        "{}",
+        stdout(&output)
+    );
+    assert!(
+        stdout(&output).contains("\"stale_baseline_entries\": []"),
+        "{}",
+        stdout(&output)
+    );
+}
+
+#[test]
+fn startup_artifacts_failures_use_stdout_for_the_report_and_stderr_for_the_summary() {
+    let plugin = real_startup_plugin();
+    let root = plugin.to_str().expect("utf-8 plugin path");
+    let run_dir = temp_root("startup-artifacts");
+    write_file(
+        &run_dir,
+        ".phase-status.json",
+        r#"{"migration_id": "x", "last_updated": "2026-01-01T00:00:00Z", "phases": {}}"#,
+    );
+    let dir_arg = run_dir.to_str().expect("utf-8 dir");
+    let output = run(
+        &[
+            "startup",
+            "artifacts",
+            "--run-dir",
+            dir_arg,
+            "--skill",
+            "gcp-to-aws",
+            "--plugin-root",
+            root,
+        ],
+        &plugin,
+    );
+    assert_eq!(code(&output), 1);
+    assert!(
+        stdout(&output).contains("SCHEMA_VIOLATION"),
+        "{}",
+        stdout(&output)
+    );
+    assert!(
+        stdout(&output).contains("minProperties"),
+        "{}",
+        stdout(&output)
+    );
+    assert!(
+        stdout(&output).contains("\nFAIL — 1 artifact(s) checked, "),
+        "{}",
+        stdout(&output)
+    );
+    assert!(
+        stderr(&output).starts_with("error: "),
+        "{}",
+        stderr(&output)
+    );
+
+    let output = run(&["startup", "artifacts"], &plugin);
+    assert_eq!(code(&output), 2);
+    assert!(stderr(&output)
+        .starts_with("error: exactly one of --self-check, --fixtures or --run-dir is required"));
+}

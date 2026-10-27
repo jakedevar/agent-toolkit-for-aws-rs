@@ -25,11 +25,13 @@ use toolkit_core::read_regular_file;
 
 use crate::manifests::{read_failure, universal_newlines};
 
+mod artifacts;
 mod model_ids;
 mod pricing;
 mod program;
 mod text;
 
+pub use artifacts::artifacts_command;
 pub use model_ids::model_id_lint_command;
 pub use pricing::pricing_command;
 pub use program::program_artifacts_command;

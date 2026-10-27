@@ -37,6 +37,9 @@ Usage:
   toolkit startup model-pricing [--plugin-root DIR]
   toolkit startup program-artifacts --migration-dir DIR
   toolkit startup model-id-lint [--plugin-root DIR]
+  toolkit startup artifacts (--self-check | --fixtures | --run-dir DIR --skill NAME)
+                            [--plugin-root DIR] [--manifest FILE] [--baseline FILE]
+                            [--no-baseline] [--json]
   toolkit --version
   toolkit help
 
@@ -72,6 +75,16 @@ Commands:
                 Fail when a file of the plugin at --plugin-root DIR (default: the current
                 directory) names a Bedrock model the lifecycle registry has
                 retired, outside the catalog files that record it.
+  startup artifacts
+                Validate migration artifacts against the contracts the skills
+                publish (JSON examples in the schema documents plus the JSON
+                Schemas) using the manifest scripts/artifact-contracts.json of
+                the plugin at --plugin-root DIR. --self-check parses every
+                contract document, --fixtures checks the fixture goldens with
+                the shipped baseline, --run-dir DIR --skill NAME checks one
+                run (--skill is gcp-to-aws, heroku-to-aws or azure-to-aws).
+                Findings and the PASS/FAIL summary go to stdout (--json for a
+                report object); exit status 1 when an error finding remains.
 
 Options:
   --json        Emit a JSON array of {name, description, path} objects.
@@ -296,6 +309,19 @@ pub const COMMANDS: &[CommandSpec] = &[
         value_flags: &["--plugin-root"],
         max_positionals: 0,
         handler: startup::model_id_lint_command,
+    },
+    CommandSpec {
+        path: &["startup", "artifacts"],
+        flags: &["--self-check", "--fixtures", "--no-baseline", "--json"],
+        value_flags: &[
+            "--run-dir",
+            "--skill",
+            "--manifest",
+            "--baseline",
+            "--plugin-root",
+        ],
+        max_positionals: 0,
+        handler: startup::artifacts_command,
     },
 ];
 
