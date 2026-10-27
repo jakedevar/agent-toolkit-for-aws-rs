@@ -204,9 +204,9 @@ pub fn redact_text(input: &str) -> String {
     REDACTED.to_string()
 }
 
-/// Count of elementary scan steps, so tests can prove the work bound
-/// deterministically instead of timing it (#4536). Compiled out of non-test
-/// builds.
+// Count of elementary scan steps, so tests can prove the work bound
+// deterministically instead of timing it (#4536). Compiled out of non-test
+// builds.
 #[cfg(test)]
 thread_local! {
     static WORK: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -1786,6 +1786,17 @@ mod tests {
         work
     }
 
+    /// `token=<d backslashes>"a ` for each depth `d`.
+    fn quoted_at_depths(depths: impl Iterator<Item = usize>) -> String {
+        let mut out = String::new();
+        for depth in depths {
+            out.push_str("token=");
+            out.push_str(&"\\".repeat(depth));
+            out.push_str("\"a ");
+        }
+        out
+    }
+
     /// Smallest `m` with `m * m >= k`.
     fn ceil_sqrt(k: usize) -> usize {
         let mut m = 1;
@@ -1836,14 +1847,10 @@ mod tests {
                 "token=\"a\"'\"'\" ".repeat(k)
             }),
             fam("escape depths cycling past the cap", |k| {
-                (0..k / 10)
-                    .map(|i| format!("token={}\"a ", "\\".repeat(i % 40 + 1)))
-                    .collect()
+                quoted_at_depths((0..k / 10).map(|i| i % 40 + 1))
             }),
             fam("escape depths growing with the input", |k| {
-                (1..=ceil_sqrt(k))
-                    .map(|d| format!("token={}\"a ", "\\".repeat(d)))
-                    .collect()
+                quoted_at_depths(1..=ceil_sqrt(k))
             }),
             // Scheme credentials.
             fam("parameter schemes", |k| "AWS4-HMAC-SHA256 ".repeat(k)),
