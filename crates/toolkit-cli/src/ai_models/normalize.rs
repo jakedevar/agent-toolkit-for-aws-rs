@@ -5,10 +5,10 @@
 //! A model is a JSON object whose members keep the insertion order of the
 //! Python dict, so `json.dumps` of the result is byte-identical.
 
+use toolkit_aws::recorded::optional_string_list;
 use toolkit_core::{parse_json, Json};
 use toolkit_msk::pyfmt::py_float_parse;
 
-use super::members::optional_string_list;
 use super::timeutil::epoch_to_iso;
 use crate::dynamodb::pyfmt;
 use crate::manifests::py_strip;
@@ -115,7 +115,7 @@ const SCALAR_KEYWORDS: [(&str, &str); 5] = [
 ///
 /// A description when the member is not a list of strings.
 pub(super) fn keywords_of(record: &Json) -> Result<Vec<&str>, String> {
-    optional_string_list(record, "HubContentSearchKeywords")
+    optional_string_list(record, "HubContentSearchKeywords").map_err(String::from)
 }
 
 /// `_document_scalar`: one lower-cased string of a top-level field of the
@@ -243,6 +243,8 @@ pub(super) fn text_field<'a>(model: &'a Json, field: &str) -> Result<Option<&'a 
 pub(super) fn list_field<'a>(model: &'a Json, field: &str) -> Result<Option<Vec<&'a str>>, String> {
     match model.get(field) {
         None | Some(Json::Null) => Ok(None),
+        // recorded-shape: a normalized model member (`null` is its documented
+        // absent value), not a response.
         Some(Json::Array(items)) => items
             .iter()
             .map(|item| {

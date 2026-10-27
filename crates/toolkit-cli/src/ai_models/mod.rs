@@ -40,7 +40,6 @@ mod client;
 mod diagnostics;
 mod filter;
 mod hub;
-mod members;
 mod normalize;
 mod recorded;
 mod search;
@@ -398,6 +397,8 @@ pub fn search_command(
             let loaded = snapshot::load_catalog_snapshot(Path::new(path), Some(hub), region)
                 .map_err(snapshot_failure)?;
             let models = match loaded.get("catalog_models") {
+                // recorded-shape: a snapshot file already validated by
+                // `load_catalog_snapshot`, not a response.
                 Some(Json::Array(models)) => models.clone(),
                 _ => Vec::new(),
             };

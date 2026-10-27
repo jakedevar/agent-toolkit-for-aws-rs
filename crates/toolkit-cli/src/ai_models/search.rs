@@ -9,13 +9,13 @@
 
 use std::collections::HashMap;
 
+use toolkit_aws::recorded::optional_list;
 use toolkit_aws::{collect_pages, next_token_from, AwsError, Page, PageLimits};
 use toolkit_core::{quote_untrusted, Json};
 
 use super::client::{Operation, SageMakerClient};
 use super::filter::{filter_models, sort_models_newest_first, Constraints, VALID_KEYS};
 use super::hub::shown;
-use super::members::optional_list;
 use super::normalize::normalize_hub_content;
 
 /// The only Hub the Search adapter serves.
@@ -218,6 +218,7 @@ pub(super) fn parse_constraints(raw: &[&str]) -> Outcome<Constraints> {
 fn catalog_field_values<'a>(model: &'a Json, field: &str) -> Vec<&'a str> {
     match model.get(field) {
         Some(Json::String(text)) => vec![text.as_str()],
+        // recorded-shape: a normalized catalog model, not a response.
         Some(Json::Array(items)) => items.iter().filter_map(Json::as_str).collect(),
         _ => Vec::new(),
     }
@@ -489,14 +490,18 @@ pub(super) fn validate_search_expression(expression: &Json, path: &str) -> Outco
             ));
         }
     }
+    // recorded-shape: the Search request expression being validated, not a
+    // response; the three collections below were already type-checked above.
     if let Some(Json::Array(filters)) = expression.get("Filters") {
         check_filter_values(filters, &format!("{path}.Filters"))?;
     }
+    // recorded-shape: the Search request expression, as above.
     if let Some(Json::Array(subexpressions)) = expression.get("SubExpressions") {
         for (index, sub) in subexpressions.iter().enumerate() {
             validate_search_expression(sub, &format!("{path}.SubExpressions[{index}]"))?;
         }
     }
+    // recorded-shape: the Search request expression, as above.
     if let Some(Json::Array(nested)) = expression.get("NestedFilters") {
         for (index, filter) in nested.iter().enumerate() {
             let nested_path = format!("{path}.NestedFilters[{index}]");
@@ -711,10 +716,13 @@ pub(super) fn search_deployable_models(
         .map_err(|reason| SearchAdapterError::UnsupportedSdk(shown(&reason)))?;
     let records = collect_pages(&PageLimits::default(), |token| {
         let response = client.call(Operation::Search, &search_request(&expression, token))?;
-        let results = optional_list(&response, "Results").map_err(AwsError::invalid_response)?;
+        let results = optional_list(&response, "Results")
+            .map_err(|error| AwsError::invalid_response(error.to_string()))?;
         let mut contents = Vec::with_capacity(results.len());
         for (index, record) in results.iter().enumerate() {
             match record.get("HubContent") {
+                // recorded-shape: a required member; absent, `null` or any other
+                // type is an invalid response below, never skipped.
                 Some(content @ Json::Object(_)) => contents.push(content.clone()),
                 _ => {
                     return Err(AwsError::invalid_response(format!(

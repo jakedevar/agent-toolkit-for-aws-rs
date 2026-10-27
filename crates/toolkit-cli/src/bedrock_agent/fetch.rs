@@ -19,6 +19,7 @@
 //! when calling the <Operation> operation: <message>`, with the message already
 //! redacted and flattened to one line by `toolkit_aws::ServiceError`.
 
+use toolkit_aws::recorded::{optional_list, optional_text, MemberError};
 use toolkit_aws::{collect_pages, next_token_from, AwsError, Page, PageLimits, ServiceError};
 use toolkit_core::Json;
 use toolkit_msk::pyfmt::py_str;
@@ -121,41 +122,16 @@ fn client_error_text(operation: &str, error: &ServiceError) -> String {
     )
 }
 
-/// The one accessor of an *optional* member of a response: an absent member is
-/// `None`, a present member must satisfy `expect` (which returns `None` for a
-/// wrong type, an explicit `null` included) or the response is invalid.
-fn optional_member<'j, T>(
-    response: &'j Json,
-    key: &str,
-    expected: &str,
-    expect: impl FnOnce(&'j Json) -> Option<T>,
-) -> Result<Option<T>, AwsError> {
-    match response.get(key) {
-        None => Ok(None),
-        Some(member) => expect(member).map(Some).ok_or_else(|| {
-            AwsError::invalid_response(format!(
-                "the member `{key}` of a response is not {expected} (it is {})",
-                member.type_name()
-            ))
-        }),
-    }
-}
-
-/// The one helper of an *optional list member* (a listing, `PolicyNames`): an
-/// absent member and `[]` are an empty list; `null` and any other type are an
-/// `aws_invalid_response`. Every listing site goes through it.
-fn optional_list(response: &Json, key: &str) -> Result<Vec<Json>, AwsError> {
-    optional_member(response, key, "a list", |member| match member {
-        Json::Array(items) => Some(items.clone()),
-        _ => None,
-    })
-    .map(Option::unwrap_or_default)
-}
-
-/// An optional string member: absent is `None`; `null` and other types are an
-/// `aws_invalid_response`.
-fn optional_text<'j>(response: &'j Json, key: &str) -> Result<Option<&'j str>, AwsError> {
-    optional_member(response, key, "a string", Json::as_str)
+/// A wrong-typed optional member of a response (read through the shared
+/// `toolkit_aws::recorded` helpers: absent and `[]` are empty, `null` and any
+/// other type are refused) as an `aws_invalid_response`.
+fn invalid_member(error: &MemberError) -> AwsError {
+    AwsError::invalid_response(format!(
+        "the member `{}` of a response is not {} (it is {})",
+        error.key(),
+        error.expected(),
+        error.found()
+    ))
 }
 
 /// The string member `key` of a summary (`summary["actionGroupId"]`).
@@ -252,12 +228,13 @@ impl<'a> Fetcher<'a> {
                 request.push(("nextToken", Json::string(token)));
             }
             let response = self.invoke(service, operation, request)?;
-            let summaries = optional_list(&response, list_key)?;
-            for summary in &summaries {
+            let summaries =
+                optional_list(&response, list_key).map_err(|error| invalid_member(&error))?;
+            for summary in summaries {
                 handle(self, summary)?;
             }
             Ok(Page {
-                items: summaries,
+                items: summaries.to_vec(),
                 next_token: next_token_from(&response, "nextToken")?,
             })
         })
@@ -266,6 +243,8 @@ impl<'a> Fetcher<'a> {
 
     /// `_maybe_inline_s3_schema`.
     fn maybe_inline_s3_schema(&mut self, api_schema: &Json) -> Result<Json, AwsError> {
+        // recorded-shape: the #4383 port of `api_schema["s3"]`: an `s3` that is
+        // not an object (`null` included) leaves the schema as it is.
         let Some(s3_ref @ Json::Object(_)) = api_schema.get("s3") else {
             return Ok(api_schema.clone());
         };
@@ -527,7 +506,9 @@ impl<'a> Fetcher<'a> {
         let inline_names = self.safe(Service::Iam, "ListRolePolicies", role_request())?;
         let mut inline_policies: Vec<Json> = Vec::new();
         if inline_names.get("_error").is_none() {
-            for name in optional_list(&inline_names, "PolicyNames")? {
+            for name in optional_list(&inline_names, "PolicyNames")
+                .map_err(|error| invalid_member(&error))?
+            {
                 let Some(name) = name.as_str() else {
                     return Err(AwsError::invalid_response(
                         "a policy name in a response is not a string",
@@ -616,7 +597,9 @@ pub(crate) fn discover(client: &mut dyn AgentClient, params: &Params) -> Result<
     if !matches!(agent_doc, Json::Object(_)) {
         return Err(AwsError::invalid_response("the GetAgent response is not an object").into());
     }
-    let role_arn = optional_text(&agent_doc, "agentResourceRoleArn")?.map(str::to_string);
+    let role_arn = optional_text(&agent_doc, "agentResourceRoleArn")
+        .map_err(|error| invalid_member(&error))?
+        .map(str::to_string);
     let role_info = fetcher.iam_role(role_arn.as_deref())?;
     let aliases_and_versions = fetcher.aliases_and_versions(&params.agent_id)?;
 
@@ -634,6 +617,7 @@ pub(crate) fn discover(client: &mut dyn AgentClient, params: &Params) -> Result<
     let identity_member = |key: &str| identity.get(key).cloned().unwrap_or(Json::Null);
     let mut warnings: Vec<Json> = Vec::new();
     if params.agent_version == "DRAFT" {
+        // recorded-shape: our own `aliasesAndVersions` object, not a response.
         if let Some(Json::Array(aliases)) = aliases_and_versions.get("aliases") {
             if let Some(tag) = production_alias_tag(aliases) {
                 warnings.push(Json::string(format!(

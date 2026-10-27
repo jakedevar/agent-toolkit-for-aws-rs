@@ -16,6 +16,8 @@
 //!   command-line flags;
 //! - [`retry`]: bounded exponential backoff with injected sleep and jitter;
 //! - [`paginate`]: token pagination with page, item and loop guards;
+//! - [`recorded`]: replay of recorded calls (`--recorded FILE`) and the
+//!   optional-member rules for recorded input and replayed responses (#4727);
 //! - [`transport`] / [`client`]: prepared requests, the [`Transport`] and
 //!   [`Signer`] seams and the [`ApiClient`] pipeline that signs, sends,
 //!   classifies errors and retries;
@@ -32,6 +34,7 @@ pub mod endpoint;
 pub mod env;
 pub mod error;
 pub mod paginate;
+pub mod recorded;
 pub mod redact;
 pub mod retry;
 #[cfg(feature = "sdk")]

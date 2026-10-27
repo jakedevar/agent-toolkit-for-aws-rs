@@ -55,7 +55,8 @@ Optional recorded members (`request`, `unsupported`, `error.kind`, `error.code`,
 (a string, an object or an array). A present member of another type, `null`
 included, rejects the recording: exit 1, no success line, no manifest written
 or overwritten; the reason names the member and its expected type, never its
-value.
+value. The member rules, the request comparison and the response-list helpers
+are the shared `toolkit_aws::recorded` module (#4727).
 
 ## Acceptance criteria
 
