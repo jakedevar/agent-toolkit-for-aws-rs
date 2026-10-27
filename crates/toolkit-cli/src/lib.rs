@@ -66,6 +66,7 @@ Usage:
                             [--plugin-root DIR]
   toolkit startup build-diagram RESULT CONFIRM [DESIGN]
   toolkit startup verify-model-path RECOMMENDATION [--output FILE] [--workload ID[,ID...]]
+  toolkit startup check-expected KIND RUN_DIR [SEED_DIR] [--plugin-root DIR]
   toolkit sync plugin-skills [--root DIR] [--plugin NAME] [--check]
   toolkit sync vendored [--plugin-root DIR] [--check]
   toolkit msk size [--emit-static-pricing] [--use-max-partitions]
@@ -266,6 +267,18 @@ Commands:
                 RESULT=ok|failed WORKLOADS=<n>; exit 2 when a probe failed or
                 needs resolution. Probe errors are redacted. This build has no
                 live Bedrock client: a probe reports a RuntimeError.
+  startup check-expected KIND RUN_DIR [SEED_DIR]
+                Assert a migration run directory against the expectations of a
+                committed fixture set (the fixtures/**/check_expected_*.py
+                programs). KIND is one of heroku-decide, heroku-decide-retained,
+                gcp-decide, heroku-workshop, gcp-workshop, heroku-nonweb-scaling,
+                heroku-drift, heroku-estimate, gcp-drift, gcp-baseline,
+                azure-discover, azure-clarify, azure-clarify-complete,
+                azure-clarify-fast-path, azure-design or azure-estimate. The
+                expectation documents are read from
+                <plugin-root>/fixtures/<set> (default plugin root: the current
+                directory); SEED_DIR (workshop kinds only) defaults to the
+                fixture seed. Prints PASS, or a FAIL block and exit 1.
   sync plugin-skills
                 Make plugins/<plugin>/skills/<name> copies byte-identical to the
                 canonical skills/**/<name> (a directory holding SKILL.md). --root
@@ -833,6 +846,16 @@ pub const COMMANDS: &[CommandSpec] = &[
         max_positionals: 1,
         passthrough: false,
         handler: startup::verify_model_path_command,
+    },
+    CommandSpec {
+        path: &["startup", "check-expected"],
+        flags: &[],
+        value_flags: &["--plugin-root"],
+        strict_values: true,
+        repeatable_flags: &[],
+        max_positionals: 3,
+        passthrough: false,
+        handler: startup::check_expected_command,
     },
     CommandSpec {
         path: &["sync", "plugin-skills"],

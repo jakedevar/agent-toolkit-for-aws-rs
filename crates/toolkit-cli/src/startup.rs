@@ -19,6 +19,7 @@
 //! | `startup model-recommend` | `agent-advisor/scripts/model_recommendation.py` and its `anthropic_`/`openai_` engines (#4401) |
 //! | `startup build-diagram` | `agent-advisor/scripts/build_diagram.py` (#4402) |
 //! | `startup verify-model-path` | `agent-advisor/scripts/verify_model_path.py` (#4402) |
+//! | `startup check-expected` | the sixteen `fixtures/**/check_expected_*.py` fixture asserters (#4408) |
 //!
 //! Each prints the Python messages unchanged: findings go to stderr through
 //! [`Output::diagnostic`] and a failing run additionally ends with one
@@ -39,6 +40,7 @@ use crate::manifests::{read_failure, universal_newlines};
 mod artifacts;
 mod consent;
 mod diagram;
+mod fixtures;
 mod model_ids;
 mod model_path;
 mod models;
@@ -54,6 +56,7 @@ pub(crate) mod text;
 pub use artifacts::artifacts_command;
 pub use consent::consent_audit_command;
 pub use diagram::build_diagram_command;
+pub use fixtures::check_expected_command;
 pub use model_ids::model_id_lint_command;
 pub use model_path::verify_model_path_command;
 pub use models::model_recommend_command;

@@ -644,6 +644,33 @@ shape, is exit 1 with a one-line message that names the field and never echoes a
 parity table, every deliberate difference and the Python-to-Rust test mapping are in
 `docs/migration/startup-diagram.md`.
 
+### startup check-expected (#4408)
+
+```
+toolkit startup check-expected KIND RUN_DIR [SEED_DIR] [--plugin-root DIR]
+```
+
+Replacement for the sixteen `plugins/aws-startup-advisor/fixtures/**/check_expected_*.py`
+fixture asserters. They are executable checks, not fixture data: each one is run against a
+migration run directory (a committed `after-*` golden tree, or a fresh replay) and reports one line per
+failed assertion. `KIND` selects the program: `heroku-decide`, `heroku-decide-retained`,
+`gcp-decide`, `heroku-workshop`, `gcp-workshop`, `heroku-nonweb-scaling`, `heroku-drift`,
+`heroku-estimate`, `gcp-drift`, `gcp-baseline`, `azure-discover`, `azure-clarify`,
+`azure-clarify-complete`, `azure-clarify-fast-path`, `azure-design` or `azure-estimate`.
+The `expected-*.json` documents and golden trees stay where they are, as data; they are read
+from `<plugin-root>/fixtures/<set>/` (default plugin root `.`), and the workshop kinds take an
+optional `SEED_DIR` (default `<set>/seed`) for the frozen-discovery comparison. The decide kinds run
+the Rust `startup migration-report`, `startup heroku-report` and `startup emit-plan` in memory
+where the Python programs ran the validator and emitter scripts. Output is `PASS ...` on stdout,
+or `FAIL (n):` and one `  - message` line per failed assertion and exit 1 (`FAIL` / ` - message` for
+the decide kinds, `FAIL — n problem(s)` for `azure-estimate`, as the Python programs wrote them), with
+`note:` lines for the programs that noted facts. A missing or unknown `KIND`, a missing `RUN_DIR`
+or a `SEED_DIR` for a kind without one is exit 2. Reads refuse symbolic links at every component;
+an unreadable, invalid or wrongly shaped run document or expectation document fails the check
+instead of passing it; every echoed run value is a bounded, escaped single line. Offline and
+deterministic. The parity table, the deliberate differences and the Python-to-Rust test mapping are
+in `docs/migration/startup-fixtures.md`.
+
 ## sync (#4377)
 
 `toolkit sync plugin-skills` makes every `plugins/<plugin>/skills/<name>` copy
