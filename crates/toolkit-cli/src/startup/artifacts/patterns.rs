@@ -1,9 +1,6 @@
 //! Hand-written ports of the small regular expressions and `fnmatch` calls in
-//! `validate-artifacts.py`, /// Port of `_JOINED_SET_RE.search(comment)`, ignoring case:
-///
-/// ```text
-/// ["'`]?\+["'`]?[\s-]*joined|joined\s+(?:by|with|on)\s+["'`]?\+
-/// ``` Python's Unicode `str` semantics.
+//! `validate-artifacts.py`, with Python's Unicode `str` semantics.
+
 use std::collections::BTreeSet;
 
 use crate::manifests::{is_py_space, py_strip};
@@ -143,8 +140,11 @@ fn starts_with_ci(chars: &[char], at: usize, word: &str) -> Option<usize> {
         .then_some(at + len)
 }
 
-/// `_JOINED_SET_RE.search(comment)`:
-/// `["'`]?\+["'`]?[\s-]*joined|joined\s+(?:by|with|on)\s+["'`]?\+`, ignore case.
+/// Port of `_JOINED_SET_RE.search(comment)`, ignoring case:
+///
+/// ```text
+/// ["'`]?\+["'`]?[\s-]*joined|joined\s+(?:by|with|on)\s+["'`]?\+
+/// ```
 pub(crate) fn mentions_joined_set(comment: &str) -> bool {
     let chars: Vec<char> = comment.chars().collect();
     let quote = |c: Option<&char>| matches!(c, Some('"' | '\'' | '`'));
