@@ -808,13 +808,14 @@ fn imports_shared(file: &Parsed) -> bool {
     }
     // `toolkit_aws::{self as aws, ..}`.
     for (i, tok) in toks.iter().enumerate() {
-        if tok.is(SHARED_CRATE) && toks.get(i + 1).is_some_and(|t| t.is("::")) {
-            if toks.get(i + 2).is_some_and(|t| t.is("{")) {
-                let group = &toks[i + 2..=matching(toks, i + 2)];
-                for window in group.windows(3) {
-                    if window[0].is("self") && window[1].is("as") && window[2].is_ident() {
-                        crates.insert(&window[2].text);
-                    }
+        if tok.is(SHARED_CRATE)
+            && toks.get(i + 1).is_some_and(|t| t.is("::"))
+            && toks.get(i + 2).is_some_and(|t| t.is("{"))
+        {
+            let group = &toks[i + 2..=matching(toks, i + 2)];
+            for window in group.windows(3) {
+                if window[0].is("self") && window[1].is("as") && window[2].is_ident() {
+                    crates.insert(&window[2].text);
                 }
             }
         }
