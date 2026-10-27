@@ -29,9 +29,20 @@ use crate::manifests::{
 };
 use crate::{Invocation, Output};
 
-/// The pre-split comparison commit (upstream's 2026-10-05 pricing-cache
-/// refresh).
-pub(crate) const BASE_SHA: &str = "883270642209b06e1e76dcc4f944a1174abf0675";
+/// The pre-split comparison commit: the parent of the split commit, so the
+/// GPT-6 rows the split carried are part of the pre-split data (the Python
+/// script pinned `883270642209`, which predates them).
+pub(crate) const BASE_SHA: &str = "c34fbdfde6779593f651f2c85629a85d27231498";
+
+/// The split commit ("split Bedrock pricing cache"). The canonical cache is
+/// compared with the pre-split data as it was written there, because the live
+/// cache keeps growing after the split (Opus 5.5 rows and notes, a Sonnet 5.5
+/// note).
+pub(crate) const SPLIT_SHA: &str = "7a638343ebb2f12df7e952474c82c2bf86d665d2";
+
+/// Repository path of the canonical cache, read at [`SPLIT_SHA`].
+const SPLIT_CANONICAL: &str =
+    "plugins/aws-startup-advisor/skills/shared/ai/bedrock-pricing-cache.md";
 
 const OLD_CACHE: &str =
     "plugins/aws-startup-advisor/skills/gcp-to-aws/references/shared/pricing-cache.md";
@@ -306,30 +317,38 @@ fn read_text(path: &Path) -> Check<String> {
         .map_err(|error| format!("cannot read {}: {}", path.display(), read_failure(&error)))
 }
 
-/// `git show <BASE_SHA>:<path>` in `repo`.
+/// `git show <rev>:<path>` in `repo`; the canonical cache is read at
+/// [`SPLIT_SHA`], every other path at [`BASE_SHA`].
 fn git_show(repo: &Path, path: &str) -> Check<String> {
+    let rev = if path == SPLIT_CANONICAL {
+        SPLIT_SHA
+    } else {
+        BASE_SHA
+    };
     let output = Command::new("git")
         .arg("-C")
         .arg(repo)
         .arg("show")
-        .arg(format!("{BASE_SHA}:{path}"))
+        .arg(format!("{rev}:{path}"))
         .output()
         .map_err(|error| format!("cannot run git: {error}"))?;
     if !output.status.success() {
         return Err(format!(
-            "git show {BASE_SHA}:{path} failed: {}",
+            "git show {rev}:{path} failed: {}",
             String::from_utf8_lossy(&output.stderr).trim()
         ));
     }
     String::from_utf8(output.stdout)
         .map(|text| universal_newlines(&text))
-        .map_err(|_| format!("git show {BASE_SHA}:{path}: not valid UTF-8"))
+        .map_err(|_| format!("git show {rev}:{path}: not valid UTF-8"))
 }
 
 /// The pre-split and current texts the checks compare.
 struct Texts {
     old: String,
     canonical: String,
+    /// The canonical cache as the split commit wrote it.
+    split_canonical: String,
     remaining: String,
     azure_old: String,
     azure_cache: String,
@@ -338,7 +357,7 @@ struct Texts {
 /// Bedrock section, metadata and the non-Bedrock sections of the GCP cache.
 fn check_gcp_cache(texts: &Texts) -> Check<()> {
     let old_bedrock = section(&texts.old, "Bedrock Models (On-Demand)")?;
-    let new_bedrock = section(&texts.canonical, "Bedrock Models (On-Demand)")?;
+    let new_bedrock = section(&texts.split_canonical, "Bedrock Models (On-Demand)")?;
     // The reinstated embeddings subsection is the one reviewed addition.
     let without_embeddings = strip_embeddings(new_bedrock);
     ensure(
@@ -347,7 +366,9 @@ fn check_gcp_cache(texts: &Texts) -> Check<()> {
     )?;
     let old_metadata = metadata(&texts.old)?;
     let canonical_metadata = metadata(&texts.canonical)?;
-    for field in ["Last updated", "Region", "Currency"] {
+    // "Last updated" is not compared: the split commit kept the 2026-10-05
+    // date while the pre-split cache already said 2026-10-10 (GPT-6 rows).
+    for field in ["Region", "Currency"] {
         ensure(
             canonical_metadata[field] == old_metadata[field],
             &format!("Bedrock {field} metadata changed"),
@@ -534,7 +555,7 @@ fn check_embeddings_and_copies(plugin: &Path, texts: &Texts) -> Check<()> {
 /// output units): the keys and rates are unchanged, so the estimates are too.
 fn check_lookups(texts: &Texts) -> Check<(usize, Json)> {
     let old_rows = model_rows(&texts.old)?;
-    let new_rows = model_rows(&texts.canonical)?;
+    let new_rows = model_rows(&texts.split_canonical)?;
     ensure(
         new_rows == old_rows && !new_rows.is_empty(),
         "model lookup keys or quick-reference rates changed",
@@ -571,6 +592,7 @@ pub(crate) fn run_checks(plugin: &Path, show: &dyn Fn(&str) -> Check<String>) ->
     let texts = Texts {
         old: show(OLD_CACHE)?,
         canonical: read_text(&plugin.join(CANONICAL))?,
+        split_canonical: show(SPLIT_CANONICAL)?,
         remaining: read_text(&plugin.join(GCP_CACHE))?,
         azure_old: show(OLD_AZURE_CACHE)?,
         azure_cache: read_text(&plugin.join(AZURE_CACHE))?,

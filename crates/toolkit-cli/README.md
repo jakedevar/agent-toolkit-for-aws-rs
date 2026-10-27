@@ -340,8 +340,8 @@ toolkit startup pricing-parity [--plugin-root DIR]
 ```
 
 Replacement for `check-bedrock-pricing-parity.py`. Compares the canonical Bedrock pricing
-cache and the remaining GCP/Azure caches with the pre-split commit `883270642209`
-(`git show`, so the history must contain it) and prints a JSON report with sorted keys on
+cache (as the split commit `7a638343ebb2` wrote it) and the remaining GCP/Azure caches with the pre-split commit `c34fbdfde677`
+(`git show`, so the history must contain both) and prints a JSON report with sorted keys on
 success. A failed assertion is `error: <message>` (exit 1). The step that executed the old
 and new `bedrock_pricing.py` is not ported (the report says `pricing_behavior: not
 checked`). On the current tree the comparison fails at `Bedrock section changed during

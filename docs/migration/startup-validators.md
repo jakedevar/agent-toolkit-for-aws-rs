@@ -21,7 +21,7 @@ Issue #4399 handoff, not in this file.
 | `toolkit startup artifacts (--self-check \| --fixtures \| --run-dir DIR --skill NAME) [--plugin-root DIR] [--manifest FILE] [--baseline FILE] [--no-baseline] [--json]` | `.../scripts/validate-artifacts.py` (+ `scripts/artifact-contracts.json`, `artifact-contracts-baseline.json`, `scripts/contracts/*.schema.json`) and the migrated cases of `tests/test_validate_artifacts.py` | published artifact contracts (JSON examples in the schema documents plus two JSON Schemas) checked against run directories and the fixture goldens |
 | `toolkit startup emit-plan --migration-dir DIR [--plugin-root DIR] [--plugin-json FILE]` | `.../scripts/emit-plan-json.py` (and the byte-identical copy in `skills/heroku-to-aws/scripts`) and `tests/test_emit_plan_json.py` | copies validated cost figures of a finished GCP or Heroku run into `plan.json` for the web import; fail-open (`PLAN_OK` / `PLAN_SKIP`, exit 0) |
 | `toolkit startup consent-audit [--plugin-root DIR]` | `.../scripts/consent-disclosure-audit.py` and `tests/test_consent_disclosure_audit.py` | usage-API discovery sub-files (`skills/*/references/phases/discover/discover-*-api.md`) must not carry a blanket GET-only claim that omits a non-GET method their Capture Endpoint Table calls |
-| `toolkit startup pricing-parity [--plugin-root DIR]` | `.../scripts/check-bedrock-pricing-parity.py` | the Bedrock pricing split kept the data of the pre-split commit `883270642209` (read with `git show`); JSON report |
+| `toolkit startup pricing-parity [--plugin-root DIR]` | `.../scripts/check-bedrock-pricing-parity.py` | the Bedrock pricing split kept the data of the pre-split commit `c34fbdfde677` and the split commit `7a638343ebb2` (read with `git show`); JSON report |
 | `toolkit startup terraform-policy DIR [--json FILE]` | `skills/tf-best-practices/scripts/validate-terraform-policy.py` and `test_validate_terraform_policy.py` | static policy checks on generated Terraform (ALB TLS, public RDS, public DB/admin ports, wildcard IAM, RDS/ElastiCache encryption), `POLICY_OK` / `POLICY_FAIL` |
 
 `--plugin-root` defaults to the current directory (the Python scripts defaulted
@@ -280,16 +280,33 @@ the remainder below.
 32. **Matchers instead of `re`.** Heading, metadata (`\s*(.+)` backtracking included), data
     row, accuracy band and embeddings-strip rules are hand-written; `\d` is ASCII-only.
 
-36. **Finding: the pinned proof fails on the current tree.** Against the real files the
-    comparison fails at the first data check, `Bedrock section changed during extraction`:
-    the canonical Bedrock cache has grown since the comparison commit `883270642209`
-    (Opus 5.5 rows and notes, Sonnet 5.5 note, GPT-6 rows), which the script's own header
-    anticipates for legitimate upstream changes. The Python script behaves the same (it
-    needs the base SHA re-pinned past the growth), so this is recorded as a finding, not
-    hidden: the Rust test pins the failure, and the passing path is covered with
-    pre-split texts derived from the current files. Suggested follow-up for the manager:
-    re-pin `BASE_SHA` to a post-growth commit or retire the one-off proof with the
-    `llm-to-bedrock` conversion.
+36. **Re-pinned comparison commits (manager ruling, adjusted).** The Python script pinned
+    `883270642209`; against the current tree it fails at the first data check
+    (`Bedrock section changed during extraction`) because the canonical Bedrock cache has
+    grown (GPT-6 rows before the split, Opus 5.5 rows and notes and a Sonnet 5.5 note
+    after it). The ruling was to re-pin `BASE_SHA` to the migration baseline `86edead`
+    (`python-inventory.json` `baseline_commit`); that commit is *after* the split, so its
+    GCP cache has no `## Bedrock Models (On-Demand)` section and the proof would fail with
+    `missing section`. The pins are therefore two commits that make the one-off proof
+    hold on today's tree:
+    - `BASE_SHA` = `c34fbdfde677` (the parent of the split commit): the pre-split GCP
+      cache, Azure cache and GCP `SKILL.md`; this includes the GPT-6 rows that the pinned
+      `883270642209` predates.
+    - `SPLIT_SHA` = `7a638343ebb2` (the split commit, upstream "split Bedrock pricing
+      cache"): the canonical cache as the split wrote it, used for the Bedrock-section
+      equality and the lookup-key/rate comparison, so later legitimate growth does not
+      matter. Everything else (vendored copies byte-identical to the live canonical
+      cache, estimate documents, neutral consumers, Region/Currency/Accuracy, the
+      remaining GCP/Azure caches) is still read from the live tree.
+    - The `Last updated` equality is dropped for the canonical cache: the split commit kept
+      `2026-10-05` while the pre-split cache already said `2026-10-10` (upstream defect
+      in the data, not a regression). The Azure cache's `Last updated` is still compared.
+    The drift-failure test now uses a synthetic grown split section; a second test runs
+    the checks against the real tree and the pinned commits.
+37. **`pricing_behavior` is carried by the Bedrock pricing slice.** The step that executes
+    the old and new `bedrock_pricing.py` (item 30) is carried by #4403 (`bedrock-resolve`,
+    llm-to-bedrock `bedrock_pricing.py` and its tests) as a Rust test; the report keeps
+    `pricing_behavior: not checked`.
 
 ### Intentional changes of `startup terraform-policy`
 

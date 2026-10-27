@@ -13,7 +13,7 @@ use super::{
     accuracy_bands_in, git_show, is_decimal, markdown_data_rows, metadata_field, model_rows,
     pricing_accuracy_bands, run_checks, section, strip_embeddings, subsection, AZURE_CACHE,
     AZURE_ESTIMATE, AZURE_ESTIMATE_AI, AZURE_OPENAI, BASE_SHA, CANONICAL, GCP_CACHE, GCP_ESTIMATE,
-    GCP_ESTIMATE_AI, GCP_SKILL, NEUTRAL_CONSUMERS, VENDORED,
+    GCP_ESTIMATE_AI, GCP_SKILL, NEUTRAL_CONSUMERS, SPLIT_SHA, VENDORED,
 };
 use crate::run;
 
@@ -56,15 +56,17 @@ fn real_plugin() -> PathBuf {
     repo().join("plugins/aws-startup-advisor")
 }
 
-/// The pre-split commit may be missing from a shallow clone; the checks that
-/// need it are skipped there (they run wherever the full history exists).
+/// The pinned commits may be missing from a shallow clone; the checks that
+/// need them are skipped there (they run wherever the full history exists).
 fn base_available() -> bool {
-    Command::new("git")
-        .arg("-C")
-        .arg(repo())
-        .args(["cat-file", "-e", &format!("{BASE_SHA}^{{commit}}")])
-        .status()
-        .is_ok_and(|status| status.success())
+    [BASE_SHA, SPLIT_SHA].iter().all(|sha| {
+        Command::new("git")
+            .arg("-C")
+            .arg(repo())
+            .args(["cat-file", "-e", &format!("{sha}^{{commit}}")])
+            .status()
+            .is_ok_and(|status| status.success())
+    })
 }
 
 fn show(path: &str) -> Result<String, String> {
@@ -253,22 +255,24 @@ fn synthetic_show(path: &str) -> Result<String, String> {
             let embeddings = subsection(&canonical, "Embeddings — Bedrock")?;
             Ok(read(AZURE_CACHE)? + "\n## Pre-split embeddings\n" + embeddings)
         }
+        p if p == super::SPLIT_CANONICAL => Ok(canonical),
         p if p == super::OLD_SKILL => read(GCP_SKILL),
         other => Err(format!("unexpected pre-split path {other}")),
     }
 }
 
 #[test]
-fn the_real_tree_has_drifted_from_the_pre_split_commit() {
-    // The cache kept growing after the comparison commit (Opus 5.5 rows and
-    // notes), so the pinned proof fails on the real tree exactly as the Python
-    // script does; the failure is the Bedrock section comparison.
+fn the_real_tree_passes_against_the_pinned_commits() {
+    // The split proof reads the pre-split files at BASE_SHA and the canonical
+    // cache as the split commit wrote it, so the cache's later growth (Opus 5.5
+    // rows and notes) does not matter.
     if !base_available() {
         return;
     }
+    let report = run_checks(&real_plugin(), &show).expect("the split is intact");
     assert_eq!(
-        run_checks(&real_plugin(), &show).expect_err("the cache has grown since"),
-        "Bedrock section changed during extraction"
+        report.get("status").and_then(toolkit_core::Json::as_str),
+        Some("PASS")
     );
     let plugin = real_plugin();
     let (code, out, err) = exec(&[
@@ -277,9 +281,30 @@ fn the_real_tree_has_drifted_from_the_pre_split_commit() {
         "--plugin-root",
         plugin.to_str().expect("utf-8 path"),
     ]);
-    assert_eq!(code, 1);
-    assert_eq!(out, "");
-    assert_eq!(err, "error: Bedrock section changed during extraction\n");
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(err, "");
+    assert!(out.contains("\"status\": \"PASS\""), "{out}");
+}
+
+#[test]
+fn a_grown_split_section_is_reported_as_changed() {
+    // A synthetic section that grew a row: the extraction proof fails with the
+    // Python message, whatever the live cache says.
+    let grown = |path: &str| -> Result<String, String> {
+        let text = synthetic_show(path)?;
+        if path == super::SPLIT_CANONICAL {
+            return Ok(text.replacen(
+                "## Bedrock Models (On-Demand)\n",
+                "## Bedrock Models (On-Demand)\n\n| Synthetic | synthetic.model-v1 | X | 1.00 | 2.00 |\n",
+                1,
+            ));
+        }
+        Ok(text)
+    };
+    assert_eq!(
+        run_checks(&real_plugin(), &grown).expect_err("the section grew"),
+        "Bedrock section changed during extraction"
+    );
 }
 
 #[test]
@@ -290,7 +315,7 @@ fn a_faithful_tree_passes_and_the_report_is_sorted_json() {
         Some("PASS")
     );
     let text = super::dumps(&report, Some(2), true);
-    assert!(text.starts_with("{\n  \"baseline\": \"883270642209b06e1e76dcc4f944a1174abf0675\",\n  \"bedrock_model_lookup_keys\": "), "{text}");
+    assert!(text.starts_with("{\n  \"baseline\": \"c34fbdfde6779593f651f2c85629a85d27231498\",\n  \"bedrock_model_lookup_keys\": "), "{text}");
     assert!(text.contains("\n  \"pricing_accuracy_bands\": {\n    \"ai_models\": \"\\u00b115-25%\",\n    \"infrastructure\": \"\\u00b15-10%\"\n  },"), "{text}");
     assert!(text.contains("\n  \"pricing_behavior\": \"not checked: needs the Python bedrock_pricing.py modules\","), "{text}");
     assert!(
@@ -383,23 +408,12 @@ type Case = (
 
 #[test]
 fn mutated_copies_fail_with_the_python_messages() {
-    let cases: [Case; 5] = [
+    let cases: [Case; 4] = [
         (
             "vendored-byte",
             VENDORED[1],
             |text| text + " ",
             "vendored drift: ",
-        ),
-        (
-            "bedrock-heading",
-            CANONICAL,
-            |text| {
-                text.replace(
-                    "## Bedrock Models (On-Demand)",
-                    "## Bedrock Models (On-Demand) X",
-                )
-            },
-            "Bedrock section changed during extraction",
         ),
         (
             "neutral-consumer",
