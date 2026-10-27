@@ -364,19 +364,15 @@ impl<H: Handler> Parser<'_, H> {
     /// `'[^']*'|"[^"]*"|(?!['"])[^>\t\n\r\f ]*` at `index`: the end of the
     /// value, or `None` when a quote is never closed.
     fn value_at(&self, index: usize) -> Option<usize> {
-        match self.at(index) {
-            Some(quote @ ('\'' | '"')) => {
-                let close = self.find_char(quote, index + 1)?;
-                Some(close + 1)
-            }
-            _ => {
-                let mut end = index;
-                while self.at(end).is_some_and(|c| c != '>' && !is_space(c)) {
-                    end += 1;
-                }
-                Some(end)
-            }
+        if let Some(quote @ ('\'' | '"')) = self.at(index) {
+            let close = self.find_char(quote, index + 1)?;
+            return Some(close + 1);
         }
+        let mut end = index;
+        while self.at(end).is_some_and(|c| c != '>' && !is_space(c)) {
+            end += 1;
+        }
+        Some(end)
     }
 
     /// The optional `[\t\n\r\f ]*=[\t\n\r\f ]*(value)` group at `index`: the

@@ -344,10 +344,9 @@ cache (as the split commit `7a638343ebb2` wrote it) and the remaining GCP/Azure 
 (`git show`, so the history must contain both) and prints a JSON report with sorted keys on
 success. A failed assertion is `error: <message>` (exit 1). The step that executed the old
 and new `bedrock_pricing.py` is not ported (the report says `pricing_behavior: not
-checked`). On the current tree the comparison fails at `Bedrock section changed during
-extraction`: the cache has grown since the pinned commit (item 36 of
+checked`; the Bedrock pricing slice #4403 carries it). The proof is pinned to the
+pre-split and split commits, so the cache's later growth does not matter (item 36 of
 `docs/migration/startup-validators.md`).
-
 ### startup terraform-policy
 
 ```
@@ -360,3 +359,22 @@ DIR and checks the ALB TLS posture, public RDS, database and admin ports opened 
 RDS/ElastiCache encryption. Every rule is fail-open on ambiguity. `POLICY_OK | checks=...`
 on stdout (exit 0); `POLICY_FAIL | ...` lines on stderr (exit 1); a missing directory or an
 unwritable `--json` file is exit 2. `--json FILE` writes the verdict document.
+
+### startup migration-report
+
+```
+toolkit startup migration-report REPORT [--estimation-infra FILE] [--estimation-ai FILE]
+    [--aws-design FILE] [--migration-dir DIR] [--no-require-toc] [--no-readability]
+    [--mode full|decision|ai_only]
+```
+
+Replacement for `validate-migration-report.py` and its decision-core test. Checks a
+generated `migration-report.html` (or the `decision-report.html` of the Decision gate
+with `--mode decision`, or an AI-only report with `--mode ai_only`): required section ids,
+table-of-contents anchors, appendix depth, customer-facing readability and currency
+rules, accessibility, the visual shell, the `data-cost-key` figures against
+`--estimation-infra`, and the decision-core content. `--migration-dir` adds the
+fixture-bleed and what-if scenario checks. `REPORT_OK | ...` on stdout (exit 0);
+`REPORT_FAIL | migration-report.html` and `  - problem` lines on stderr plus an `error:`
+summary (exit 1); a missing REPORT argument or an unknown `--mode` is exit 2 (a report file that does not exist is exit 1). The patterns run
+on `fancy-regex`; `html.parser` and `html.unescape` are ported in `startup/report/html.rs`.

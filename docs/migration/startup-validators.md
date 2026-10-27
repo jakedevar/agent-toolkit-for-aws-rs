@@ -6,10 +6,11 @@ head `98957f87` (YAML depth/flow fixes and docs; merged cleanly, no conflict
 resolution needed). Nothing here has landed; landing waits on #4425.
 
 The first delivery ported `validate-model-pricing.py`, `validate-startup-program-artifacts.py`
-and `model-id-lint.py`; the second ports `validate-artifacts.py` (**four** of the
-eleven slice files in total) and records the rest as an explicit remainder (see
-the end). Verification evidence lives in the
-Issue #4399 handoff, not in this file.
+and `model-id-lint.py`; later deliveries ported `validate-artifacts.py`,
+`emit-plan-json.py`, `consent-disclosure-audit.py`, `check-bedrock-pricing-parity.py`,
+`validate-terraform-policy.py` and finally `validate-migration-report.py`, which
+completes **all eleven** files of the slice (see the end). Verification evidence lives
+in the Issue #4399 handoff, not in this file.
 
 ## Commands
 
@@ -23,16 +24,16 @@ Issue #4399 handoff, not in this file.
 | `toolkit startup consent-audit [--plugin-root DIR]` | `.../scripts/consent-disclosure-audit.py` and `tests/test_consent_disclosure_audit.py` | usage-API discovery sub-files (`skills/*/references/phases/discover/discover-*-api.md`) must not carry a blanket GET-only claim that omits a non-GET method their Capture Endpoint Table calls |
 | `toolkit startup pricing-parity [--plugin-root DIR]` | `.../scripts/check-bedrock-pricing-parity.py` | the Bedrock pricing split kept the data of the pre-split commit `c34fbdfde677` and the split commit `7a638343ebb2` (read with `git show`); JSON report |
 | `toolkit startup terraform-policy DIR [--json FILE]` | `skills/tf-best-practices/scripts/validate-terraform-policy.py` and `test_validate_terraform_policy.py` | static policy checks on generated Terraform (ALB TLS, public RDS, public DB/admin ports, wildcard IAM, RDS/ElastiCache encryption), `POLICY_OK` / `POLICY_FAIL` |
+| `toolkit startup migration-report REPORT [--estimation-infra FILE] [--estimation-ai FILE] [--aws-design FILE] [--migration-dir DIR] [--no-require-toc] [--no-readability] [--mode full\|decision\|ai_only]` | `.../scripts/validate-migration-report.py` and `scripts/test_validate_migration_report_decision_core.py` | generated `migration-report.html` / `decision-report.html` completeness: section ids, TOC, appendix depth, readability, accessibility, visual shell, `data-cost-key` figures against the estimate, decision-core content; `REPORT_OK` / `REPORT_FAIL` |
 
 `--plugin-root` defaults to the current directory (the Python scripts defaulted
 to the directory they lived in; `mise` tasks already run in the plugin
 directory, so the caller update in #4378 is `cd` plus the new command).
 Registered in `toolkit_cli::COMMANDS`; routing, `Output::diagnostic` and
-`Invocation::value` are the #4374/#4375 contracts, unchanged. No new
-dependency: the Python regular expressions are replaced by exact hand-written
-matchers (`startup/text.rs`, `startup/model_ids.rs`) pinned by tests, not by a
-second regex engine (the `fancy-regex` engine of #4376 stays private to the
-spec validator's schema adapter).
+`Invocation::value` are the #4374/#4375 contracts, unchanged. The other validators
+replace the Python regular expressions with exact hand-written matchers
+(`startup/text.rs`, `startup/model_ids.rs`) pinned by tests; `migration-report` is the
+exception and runs its ~80 patterns on `fancy-regex` (item 39).
 
 ## Parity table
 
@@ -325,6 +326,49 @@ the remainder below.
     test follows `ipaddress.ip_network(cidr, strict=False).prefixlen == 0` for IPv4/IPv6
     literals with `/0` (and `/0.0.0.0`), through the Rust address parsers.
 
+### Intentional changes of `startup migration-report`
+
+38. **Command shape.** `toolkit startup migration-report REPORT [flags]` with the Python
+    options (`--estimation-infra`, `--estimation-ai`, `--aws-design`, `--migration-dir`,
+    `--no-require-toc`, `--no-readability`, `--mode`). `REPORT_FAIL | migration-report.html`
+    and the `  - <problem>` lines go to stderr and a final `error: N report problem(s)` line
+    is added (exit 1); a missing report prints `REPORT_FAIL | file=... | reason=not_found`
+    plus the `error:` line; `REPORT_OK | ...` is unchanged. A missing REPORT or a bad
+    `--mode` is a usage error (exit 2). An optional artifact that is not a file is skipped
+    as in Python; one that is a symbolic link, unreadable, not JSON or not a JSON object is
+    a runtime error (Python raised a traceback or an `AttributeError`); a JSON `null` counts
+    as absent. `scenarios/index.json` that is a link or unreadable counts as absent.
+39. **Dependency.** `fancy-regex` 0.19 is a direct dependency of `toolkit-cli` (a
+    `Cargo.toml` line and one `Cargo.lock` dependency entry). It is the engine
+    `jsonschema` already builds, with the same features, so no crate is added to the
+    build. The ~80 Python `re` patterns of the validator (look-behind, look-ahead and a
+    back-reference) run on it unchanged. Differences from `re`: `\s` is Unicode
+    `White_Space`, which lacks U+001C–U+001F that Python adds; offsets are bytes, not
+    characters (the 25-character windows of the currency check count characters).
+40. **HTML tokenizer.** Python's `html.parser.HTMLParser` (`convert_charrefs=True`) and
+    `html.unescape` are ported by hand in `startup/report/html.rs` and the table of
+    2231 HTML5 named references is generated from the standard library module
+    (`entities.rs`). The reference is the `html.parser` of Python 3.14 read from the
+    system standard library (the repository pins 3.12): the two differ only on malformed
+    markup (comment closes, unterminated tags, raw-text end tags) and in the decoding of
+    named references inside attribute values (`&amp=`).
+41. **Python values.** `float()`, `int()`, `str()` and `repr()` of JSON values follow
+    Python for numbers, booleans and strings; a numeric string with underscores is not
+    accepted by `float()`. Python crashes (`AttributeError`, `OverflowError`) on a
+    non-object `recommendation`, a non-finite figure or a non-numeric
+    `security_baseline` component; the port reports the figure as not numeric or skips
+    the value instead. `round()` is halves-to-even as in Python.
+42. **Validation split.** `validate_report` lives in `startup/report/mod.rs` with the
+    same check order as Python; the five parser subclasses are handlers in `walk.rs`.
+    The decision-core test cases are migrated one for one (`report/tests.rs`) next to
+    unit tests for the tokenizer, every extractor and every validator, the shipped
+    reference, stub and decision fixtures, and the command.
+43. **Artifact tests.** The document-specific cases of `tests/test_validate_artifacts.py`
+    (heroku/gcp/azure contract regressions against the real documents and fixtures) are
+    migrated in `startup/artifacts/tests/documents.rs`. Not migrated:
+    `test_invalid_neutral_shared_artifacts_fail_their_schemas`, which calls the validator
+    without a `--skill` (the command requires one).
+
 ## File membership (#4371 U-10)
 
 Of the inventory rows with `slice == "startup-validators"` (manager rulings on the
@@ -339,21 +383,19 @@ ported; `validate-terraform-policy.py` and its test are assigned to this slice):
   `consent-disclosure-audit.py` (with its test),
   `check-bedrock-pricing-parity.py` (all data assertions; the Python-behaviour step is
   item 30) and `skills/tf-best-practices/scripts/validate-terraform-policy.py` (with
-  `test_validate_terraform_policy.py`).
-- Remainder, still read-only evidence, not deleted, callers untouched (#4378):
-  - `validate-migration-report.py` (2434 lines) and
-    `test_validate_migration_report_decision_core.py` (449) — the multi-thousand-line
-    report validator (AC2). Needs its own session: the decision-core contract,
-    the HTML report grammar and the fixtures under `plugins/aws-startup-advisor/fixtures`.
-  - `tests/test_validate_artifacts.py` (1363 lines): `validate-artifacts.py` itself is
-    ported (`toolkit startup artifacts`), but only the unit and real-tree cases are
-    migrated; the ~25 document-specific mutation cases listed under the
-    `artifacts` parity table remain read-only evidence for a follow-up.
+  `test_validate_terraform_policy.py`), `validate-migration-report.py` (with
+  `scripts/test_validate_migration_report_decision_core.py`; items 38-42).
+- All eleven files of the slice are ported. Remainder, still read-only evidence, not
+  deleted, callers untouched (#4378): `tests/test_validate_artifacts.py` keeps the
+  unit and real-tree cases in `startup/artifacts/tests.rs` and the document-specific
+  cases in `tests/documents.rs`; the one case without a Rust counterpart is listed in
+  item 43. The `pricing_behavior` comparison of the old and new `bedrock_pricing.py` is
+  carried by the Bedrock pricing slice #4403 (items 30 and 37).
 
 ## Not in scope
 
 No Python deleted, no CI/`mise.toml` change (#4378), no change to
-`Cargo.toml`/`Cargo.lock` (no dependency added), no change to the foundation
+`Cargo.toml`/`Cargo.lock` beyond the `fancy-regex` line (item 39), no change to the foundation
 adapter or `.rsi/*`. `manifests.rs` gained visibility changes only (`is_py_space`, `py_splitlines`,
 `py_eq` are `pub(crate)`); `spec.rs` made its private `engine` module
 `pub(crate)` so the artifact validator reuses the bounded pattern engine.

@@ -389,7 +389,7 @@ fn the_list_after_a_heading_is_found_in_three_shapes() {
     ]);
     assert_eq!(
         decision::rendered_list_after_heading(&inline, "what would flip"),
-        Some(vec!["first".to_string(), "second".to_string()])
+        Some(vec!["this: first".to_string(), "second".to_string()])
     );
     let empty = entries(&[(Kind::Heading, "what would flip"), (Kind::Heading, "next")]);
     assert_eq!(

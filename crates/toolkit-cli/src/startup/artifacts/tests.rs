@@ -1781,3 +1781,5 @@ fn find_artifacts_sorts_by_path_components() {
         .collect();
     assert_eq!(names, ["B.json", "a/b.json", "a/z.json", "a-b/c.json"]);
 }
+
+mod documents;
