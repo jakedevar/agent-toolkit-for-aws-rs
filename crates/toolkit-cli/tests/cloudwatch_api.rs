@@ -1070,7 +1070,7 @@ fn a_malformed_dataset_listing_keeps_the_conversion_errors() {
     assert!(
         stdout.contains(
             "list_datasets failed: the ListDatasets response is invalid: the member \
-             \\u0060datasets\\u0060 of the response is not a list of objects (it is null)"
+             `datasets` of the response is not a list of objects (it is null)"
         ),
         "{stdout}"
     );
