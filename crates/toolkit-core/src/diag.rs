@@ -92,7 +92,7 @@ pub fn quote_untrusted(text: &str) -> String {
     quote_untrusted_bounded(text, DEFAULT_MAX_CHARS)
 }
 
-/// Make `line` safe to write to stderr or a log as ONE line, changing nothing
+/// Make `line` safe to write to stderr or a log as ONE line (newlines too), changing nothing
 /// else: every [`is_unsafe_char`] character (newline, carriage return and tab
 /// included) becomes `\n`, `\r`, `\t` or `\uXXXX`, while backslashes, quotes and
 /// ordinary text stay as they are and nothing is truncated. Text that is
