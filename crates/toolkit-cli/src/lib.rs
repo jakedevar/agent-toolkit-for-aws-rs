@@ -59,6 +59,8 @@ Usage:
   toolkit startup heroku-report REPORT [--migration-dir DIR] [--mode full|decision]
   toolkit startup score ANSWERS [--plugin-root DIR] [--runtimes-dir DIR]
   toolkit startup score-units ANSWERS [--plugin-root DIR] [--runtimes-dir DIR]
+  toolkit startup model-recommend INPUT [--output FILE] [--catalog FILE] [--openai-catalog FILE]
+                            [--plugin-root DIR]
   toolkit sync plugin-skills [--root DIR] [--plugin NAME] [--check]
   toolkit sync vendored [--plugin-root DIR] [--check]
   toolkit msk size [--emit-static-pricing] [--use-max-partitions]
@@ -228,6 +230,17 @@ Commands:
                 score_units.py), use the run evidence
                 current-run-verifications.json beside it when present, and
                 print the {units, <primary unit mirror>} JSON document.
+  startup model-recommend INPUT
+                Recommend a Bedrock model and API path for every workload of
+                INPUT (agent-advisor model_recommendation.py), validating INPUT
+                and the result against the shipped schemas. Writes
+                model-recommendation.json beside INPUT (or --output FILE),
+                removes a stale model-verification.json beside it when the
+                invocation contract changed, and prints RESULT=ok WORKLOADS=n
+                SCHEMA_VALIDATED=yes. The dated catalogs are read from
+                skills/agent-advisor/references/models of --plugin-root
+                (default: the current directory) unless --catalog FILE
+                (Anthropic) or --openai-catalog FILE names them.
   sync plugin-skills
                 Make plugins/<plugin>/skills/<name> copies byte-identical to the
                 canonical skills/**/<name> (a directory holding SKILL.md). --root
@@ -323,6 +336,11 @@ Options:
                 (startup score, score-units) The runtime profile directory
                 (default: skills/agent-advisor/references/runtimes of
                 --plugin-root).
+  --output FILE, --catalog FILE, --openai-catalog FILE
+                (startup model-recommend) The result file (default:
+                model-recommendation.json beside INPUT) and the Anthropic and
+                OpenAI model catalogs (default: the dated files in
+                skills/agent-advisor/references/models of --plugin-root).
   --migration-dir DIR
                 (startup) Migration run directory holding preferences.json.
   -h, --help    Print this help.
@@ -685,6 +703,15 @@ pub const COMMANDS: &[CommandSpec] = &[
         max_positionals: 1,
         passthrough: false,
         handler: startup::score_units_command,
+    },
+    CommandSpec {
+        path: &["startup", "model-recommend"],
+        flags: &[],
+        value_flags: &["--output", "--catalog", "--openai-catalog", "--plugin-root"],
+        strict_values: false,
+        max_positionals: 1,
+        passthrough: false,
+        handler: startup::model_recommend_command,
     },
     CommandSpec {
         path: &["sync", "plugin-skills"],

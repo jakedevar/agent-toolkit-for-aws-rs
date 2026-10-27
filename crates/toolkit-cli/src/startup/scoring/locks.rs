@@ -797,3 +797,79 @@ fn drift_mechanism_fires_on_a_known_removed_model() {
         "expected Nova Sonic v1 in a Removed row: the Removed-section matcher needs updating"
     );
 }
+
+// ---- test_scoring.py: model-pool lifecycle drift (#4612) ---------------------------------------
+
+/// Each internal model id of the selection pool and the substring that
+/// identifies it in the lifecycle file's Legacy/EOL table (`_POOL_LIFECYCLE_KEYS`).
+const POOL_LIFECYCLE_KEYS: [(&str, &str); 15] = [
+    ("claude_opus_5_5", "claude-opus-5-5"),
+    ("claude_sonnet_5", "claude-sonnet-5"),
+    ("claude_haiku_4_5", "claude-haiku-4-5"),
+    ("openai_gpt_6_astra", "gpt-6-astra"),
+    ("openai_gpt_5_6_sol", "gpt-5.6-sol"),
+    ("openai_gpt_5_6_terra", "gpt-5.6-terra"),
+    ("openai_gpt_5_6_luna", "gpt-5.6-luna"),
+    ("openai_gpt_5_5", "gpt-5.5"),
+    ("openai_gpt_5_4", "gpt-5.4"),
+    ("openai_gpt_6_sol", "gpt-6-sol"),
+    ("openai_gpt_6_luna", "gpt-6-luna"),
+    ("openai_gpt_6_1_sol", "gpt-6.1-sol"),
+    ("anthropic_claude_sonnet_5", "claude-sonnet-5"),
+    ("anthropic_claude_opus_5_5", "claude-opus-5-5"),
+    ("anthropic_claude_haiku_4_5", "claude-haiku-4-5"),
+];
+
+/// The Model Recommend engine's selectable set: the priority ordering plus
+/// every model of the dated per-provider catalogs (`_pool_models`).
+fn pool_models() -> std::collections::BTreeSet<String> {
+    use crate::startup::models::{
+        load_anthropic_catalog, load_openai_catalog, DEFAULT_CATALOG, OPENAI_CATALOG,
+        PRIORITY_ORDER,
+    };
+
+    let models = real_skill().join("references").join("models");
+    let mut pool: std::collections::BTreeSet<String> = PRIORITY_ORDER
+        .iter()
+        .flat_map(|(_, order)| order.iter().map(ToString::to_string))
+        .collect();
+    for catalog in [
+        load_anthropic_catalog(&models.join(DEFAULT_CATALOG)).expect("the Anthropic catalog loads"),
+        load_openai_catalog(&models.join(OPENAI_CATALOG)).expect("the OpenAI catalog loads"),
+    ] {
+        pool.extend(catalog.models.iter().map(|(key, _)| key.clone()));
+    }
+    pool
+}
+
+#[test]
+fn pool_keys_cover_every_selectable_model() {
+    // If a new model enters the selection pool it must have a lifecycle key so
+    // the drift test below actually checks it.
+    let missing: Vec<String> = pool_models()
+        .into_iter()
+        .filter(|model| !POOL_LIFECYCLE_KEYS.iter().any(|(known, _)| known == model))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "models missing a lifecycle key: {missing:?}"
+    );
+}
+
+#[test]
+fn no_pool_model_is_legacy_or_excluded() {
+    let bad_rows = legacy_or_excluded_rows();
+    for model in pool_models() {
+        let (_, key) = POOL_LIFECYCLE_KEYS
+            .iter()
+            .find(|(known, _)| *known == model)
+            .unwrap_or_else(|| panic!("{model} has no lifecycle key"));
+        let offending: Vec<&String> = bad_rows.iter().filter(|row| row.contains(key)).collect();
+        assert!(
+            offending.is_empty(),
+            "model '{model}' (key '{key}') appears Legacy/excluded in the lifecycle file: \
+update the selection pool. Row: {}",
+            offending.first().map_or("", |row| row.trim())
+        );
+    }
+}

@@ -29,7 +29,7 @@ use serde_json::Value;
 use toolkit_core::Json;
 
 use crate::manifests::{py_repr, py_repr_str};
-use crate::safe_text::safe_quoted;
+use crate::safe_text::{safe_quoted, safe_text};
 
 /// Steps the backtracking regex VM may take for one match before the match is
 /// reported as unfinished. The vendored patterns need well under a thousand;
@@ -44,6 +44,26 @@ const MAX_SCHEMA_DEPTH: usize = 64;
 pub(crate) enum Segment {
     Index(usize),
     Key(String),
+}
+
+/// `$`, `$.key` and `$[0]` style path of a finding; keys are escaped with
+/// [`safe_text`] so a hostile property name cannot forge a report line.
+pub(crate) fn escaped_path(path: &[Segment]) -> String {
+    use std::fmt::Write as _;
+
+    let mut out = String::from("$");
+    for segment in path {
+        match segment {
+            Segment::Index(index) => {
+                let _ = write!(out, "[{index}]");
+            }
+            Segment::Key(key) => {
+                out.push('.');
+                out.push_str(&safe_text(key));
+            }
+        }
+    }
+    out
 }
 
 /// One schema violation.

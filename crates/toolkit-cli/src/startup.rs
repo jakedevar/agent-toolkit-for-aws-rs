@@ -16,6 +16,7 @@
 //! | `startup migration-report` | `validate-migration-report.py` |
 //! | `startup score` | `agent-advisor/scripts/scoring.py` (#4400) |
 //! | `startup score-units` | `agent-advisor/scripts/score_units.py` (#4400) |
+//! | `startup model-recommend` | `agent-advisor/scripts/model_recommendation.py` and its `anthropic_`/`openai_` engines (#4401) |
 //!
 //! Each prints the Python messages unchanged: findings go to stderr through
 //! [`Output::diagnostic`] and a failing run additionally ends with one
@@ -36,6 +37,7 @@ use crate::manifests::{read_failure, universal_newlines};
 mod artifacts;
 mod consent;
 mod model_ids;
+mod models;
 mod parity;
 mod plan;
 mod pricing;
@@ -48,6 +50,7 @@ pub(crate) mod text;
 pub use artifacts::artifacts_command;
 pub use consent::consent_audit_command;
 pub use model_ids::model_id_lint_command;
+pub use models::model_recommend_command;
 pub use parity::pricing_parity_command;
 pub use plan::emit_plan_command;
 pub use pricing::pricing_command;

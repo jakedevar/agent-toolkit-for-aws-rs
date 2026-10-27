@@ -9,7 +9,6 @@
 
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
-use std::fmt::Write as _;
 use std::path::Path;
 
 use toolkit_core::{parse_json, read_regular_file, Json, ToolkitError, MAX_TEXT_FILE_BYTES};
@@ -153,19 +152,7 @@ fn findings(schema: &Json, data: &Json) -> Result<Vec<Issue>, String> {
 
 /// `$`, `$.key` and `$[0]` style path of a finding; keys are escaped.
 fn path_text(path: &[Segment]) -> String {
-    let mut out = String::from("$");
-    for segment in path {
-        match segment {
-            Segment::Index(index) => {
-                let _ = write!(out, "[{index}]");
-            }
-            Segment::Key(key) => {
-                out.push('.');
-                out.push_str(&safe_text(key));
-            }
-        }
-    }
-    out
+    engine::escaped_path(path)
 }
 
 /// For `oneOf` schemas the findings are reported against the branch the user

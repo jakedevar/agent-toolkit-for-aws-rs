@@ -32,13 +32,15 @@ mod units;
 mod value;
 
 #[cfg(test)]
-mod fixtures;
+pub(crate) mod fixtures;
 #[cfg(test)]
 mod locks;
 #[cfg(test)]
 mod tests;
 
 pub use command::{score_command, score_units_command};
+
+pub(crate) use dumps::dumps_indent2;
 
 pub(crate) use engine::score;
 pub(crate) use profiles::load_profiles;
