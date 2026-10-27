@@ -418,17 +418,42 @@ has **any** of these signals:
   `toolkit_aws as aws` then `aws::recorded`), or in a nested module.
 
 A module with a flag or a type signal must import `toolkit_aws::recorded`. Every
-module in scope must not define its own `optional_*`, `nullable_text` or
-`same_json` helper, and must not **read a JSON shape**: any `Json::Array`,
-`Json::Object`, `Value::Array` or `Value::Object` in a pattern (`match`,
-`if let`, `let ... else`, `matches!`, behind `Some(..)` or a nested `match`,
-through an alias or a `use Json::{Array, Object}`), and any `as_array`,
-`as_object`, `as_array_mut` or `as_object_mut`. Building a value (`Json::Array(items)`
-as an expression) is not a read. When the value is not a response (a snapshot
-file, the command's own manifest, a request or entry it built), or the member
-is required and every other shape is rejected, or the code classifies every
-JSON type on purpose, put `// recorded-shape: <reason>` with a specific reason
-on the line, or above the `fn`, `impl`, `const` or other item it covers.
+module in scope must:
+
+- not define its own `optional_*`, `nullable_text` or `same_json` helper;
+- not **read a JSON shape**: any `Json::Array`, `Json::Object`, `Value::Array`
+  or `Value::Object` in a pattern (`match`, `if let`, `let ... else`,
+  `matches!`, a guard, behind `Some(..)` or a nested `match`, inside a
+  struct-field pattern; tuple form `Json::Array(v)` and brace form
+  `Json::Array { 0: v }` or `Json::Object { .. }` alike; through an alias or a
+  `use Json::{Array, Object}`), and any `as_array`, `as_object`,
+  `as_array_mut` or `as_object_mut`. Building a value (`Json::Array(items)` or
+  `Json::Array { 0: items }` as an expression) is not a read;
+- not **alias the JSON value type**: `type J = Json;`,
+  `type V = serde_json::Value;`, `use toolkit_core::Json as J`,
+  `use serde_json::Value as V`, a re-export (`pub use .. as`) or an alias of
+  an alias. A marked alias is allowed, but reads through it still count, and
+  an alias defined elsewhere in `src` is followed into the slice.
+
+When the value is not a response (a snapshot file, the command's own manifest,
+a request or entry it built), or the member is required and every other shape
+is rejected, or the code classifies every JSON type on purpose, put
+`// recorded-shape: <reason>` on the line, or directly above it. The reason
+must be specific: at least three distinct words, placeholders such as `todo`,
+`x` or `<reason>` not counted; a blank or placeholder reason is itself a
+failure and allows nothing. A marker on a line allows that line. A marker above
+code allows the next code line, or the whole of the single function, method or
+closure-binding `let` that starts there. It never covers a `mod`, an `impl` or
+`trait` block, any other item, or a file header (inner attribute) scope: mark
+each function inside instead.
+
+**The scanner is a tripwire, not a proof.** It checks exactly the list above
+(scope signals, module adoption, helper definitions, shape reads, JSON type
+aliases and marker reasons) on tokens, with no type inference, so a determined
+author can still hide a read. Review is the defense against deliberate
+evasion: code written to get past the scanner (a renamed type, an indirection
+that hides a shape read, a marker whose reason does not match the code) is a
+review blocker even when the test passes.
 
 ## Frontmatter additions (#4374)
 

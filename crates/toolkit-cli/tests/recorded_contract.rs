@@ -32,17 +32,33 @@
 //!
 //! 1. it defines none of the shared helpers (`optional_member`,
 //!    `optional_list`, `optional_object`, `optional_text`, `same_json`, ...);
-//! 2. it reads no JSON shape: any mention of `Json::Array`, `Json::Object`,
-//!    `Value::Array` or `Value::Object` (patterns in `match`, `if let`,
-//!    `let ... else`, `matches!`, and constructions alike; also through an
-//!    alias or a `use Json::{Array, Object}` import), and any call or path
-//!    `as_array`, `as_object`, `as_array_mut`, `as_object_mut`, is refused
-//!    unless the line, or the item directly under the comment, carries the
-//!    marker `// recorded-shape: <reason>`. A marker above an item (`fn`,
-//!    `impl`, `const`, ...) covers the whole item; above a statement it covers
-//!    that line. The reason says why the value is not a response member (a
-//!    snapshot file, the command's own manifest, a value the slice built) or
-//!    why the member is required and every other shape is rejected.
+//! 2. it reads no JSON shape: a `Json::Array`, `Json::Object`, `Value::Array`
+//!    or `Value::Object` in a pattern (`match`, `if let`, `let ... else`,
+//!    `matches!`, a guard, behind `Some(..)`, a struct-field pattern, tuple
+//!    form `Json::Array(v)` and brace form `Json::Array { 0: v }` or
+//!    `Json::Object { .. }` alike (#4774); also through an alias or a
+//!    `use Json::{Array, Object}` import), and any call or path `as_array`,
+//!    `as_object`, `as_array_mut`, `as_object_mut`, is refused unless a marker
+//!    `// recorded-shape: <reason>` allows it. Building a value is not a read;
+//! 3. it does not alias the JSON value type (#4775): `type J = Json;`,
+//!    `type V = serde_json::Value;`, `use ..::Json as J`, a re-export, an
+//!    alias of an alias. A marked alias is allowed but its reads still count,
+//!    and an alias defined anywhere in `src` is followed into the slice;
+//! 4. every marker has a specific reason (#4773): at least three distinct
+//!    words, placeholders (`todo`, `x`, `<reason>`) not counted. A refused
+//!    marker allows nothing. A marker allows its own line; above code (the
+//!    comment block in between continues the reason) it allows the next code
+//!    line, or the whole of a function, method or closure-binding `let` that
+//!    starts there. Never a `mod`, an `impl` or `trait` block, another item or
+//!    an inner-attribute (file header) scope. The reason says why the value is
+//!    not a response member (a snapshot file, the command's own manifest, a
+//!    value the slice built) or why the member is required and every other
+//!    shape is rejected.
+//!
+//! This is a tripwire for the documented rule, not a proof: it has no type
+//! inference and a determined author can still hide a read. Review remains
+//! the defense against deliberate evasion, and evading the scanner is a review
+//! blocker.
 //!
 //! Test code (`tests.rs`, `tests/`, `#[cfg(test)]` items) is out of scope. The
 //! README section "Slices without a live AWS client" is the guide for slice
@@ -80,20 +96,27 @@ const SHARED_HELPERS: [&str; 8] = [
 /// Words of an identifier that make it a recorded replay type or trait.
 const REPLAY_WORDS: [&str; 2] = ["Recorded", "Replay"];
 const REPLAY_PARTS: [&str; 4] = ["Client", "Step", "Queue", "Replay"];
-/// Keywords that start an item.
-const ITEM_KEYWORDS: [&str; 12] = [
-    "fn",
-    "impl",
-    "mod",
-    "trait",
-    "const",
-    "static",
-    "struct",
-    "enum",
-    "union",
-    "type",
-    "macro_rules",
-    "use",
+/// A marker reason needs at least this many distinct words (#4773).
+const MIN_REASON_WORDS: usize = 3;
+/// Words that never count towards a reason: a marker whose reason is only
+/// these (`todo`, `<reason>`, `fix later`) is refused.
+const PLACEHOLDER_WORDS: [&str; 16] = [
+    "todo",
+    "tbd",
+    "fixme",
+    "xxx",
+    "reason",
+    "placeholder",
+    "wip",
+    "later",
+    "none",
+    "na",
+    "ok",
+    "hack",
+    "temp",
+    "ignore",
+    "skip",
+    "allow",
 ];
 
 struct SourceFile {
@@ -448,21 +471,21 @@ fn item_end(toks: &[Tok], start: usize) -> usize {
     toks.len().saturating_sub(1)
 }
 
-/// Whether the tokens from `start` begin an item (after attributes and
-/// visibility), as opposed to a statement.
-fn starts_item(toks: &[Tok], start: usize) -> bool {
+/// Whether the tokens from `start` begin a leaf item a marker may cover whole
+/// (#4773): a function or method (after outer attributes, visibility and
+/// qualifiers), or a `let` statement that binds a closure. A `mod`, an `impl`
+/// or `trait` block, any other item and an inner attribute (`#![..]`, a file
+/// or module header) are not leaves: a marker there covers its line only.
+fn starts_leaf_item(toks: &[Tok], start: usize) -> bool {
     let mut i = start;
     loop {
         match toks.get(i) {
             Some(tok) if tok.is("#") => {
-                let mut open = i + 1;
-                if toks.get(open).is_some_and(|t| t.is("!")) {
-                    open += 1;
-                }
-                if !toks.get(open).is_some_and(|t| t.is("[")) {
+                if !toks.get(i + 1).is_some_and(|t| t.is("[")) {
+                    // `#![..]` is an inner attribute: it scopes a whole module.
                     return false;
                 }
-                i = matching(toks, open) + 1;
+                i = matching(toks, i + 1) + 1;
             }
             Some(tok) if tok.is("pub") => {
                 i += 1;
@@ -470,19 +493,44 @@ fn starts_item(toks: &[Tok], start: usize) -> bool {
                     i = matching(toks, i) + 1;
                 }
             }
-            Some(tok) if tok.is("unsafe") || tok.is("async") || tok.is("extern") => i += 1,
-            Some(tok) if tok.is("const") => {
-                let next = toks.get(i + 1);
-                if next.is_some_and(|t| t.is("fn") || t.is("unsafe") || t.is("async")) {
+            Some(tok) if tok.is("const") || tok.is("unsafe") || tok.is("async") => i += 1,
+            Some(tok) if tok.is("extern") => {
+                i += 1;
+                if toks.get(i).is_some_and(|t| t.is_str) {
                     i += 1;
-                } else {
-                    return true;
                 }
             }
-            Some(tok) => return ITEM_KEYWORDS.iter().any(|keyword| tok.is(keyword)),
-            None => return false,
+            Some(tok) if tok.is("fn") => return true,
+            Some(tok) if tok.is("let") => return binds_closure(toks, i),
+            _ => return false,
         }
     }
+}
+
+/// Whether the `let` at `start` binds a closure (`let f = |v| ..;`,
+/// `let f = move || ..;`).
+fn binds_closure(toks: &[Tok], start: usize) -> bool {
+    let mut depth = 0i32;
+    for (i, tok) in toks.iter().enumerate().skip(start + 1) {
+        if tok.is("(") || tok.is("[") || tok.is("{") {
+            depth += 1;
+        } else if tok.is(")") || tok.is("]") || tok.is("}") {
+            depth -= 1;
+        } else if tok.is(";") && depth <= 0 {
+            return false;
+        } else if tok.is("=") && depth == 0 {
+            let next = toks.get(i + 1);
+            if next.is_some_and(|t| t.is("=") || t.is(">")) {
+                return false;
+            }
+            let mut value = i + 1;
+            if toks.get(value).is_some_and(|t| t.is("move")) {
+                value += 1;
+            }
+            return toks.get(value).is_some_and(|t| t.is("|"));
+        }
+    }
+    false
 }
 
 /// Removes `#[cfg(test)]` items, which are not production code.
@@ -543,14 +591,42 @@ fn parse(file: &SourceFile) -> Parsed {
 
 // --------------------------------------------------------------- the rules
 
-/// The 0-based lines the markers of `file` allow.
-fn allowed_lines(file: &Parsed) -> BTreeSet<usize> {
-    let mut allowed = BTreeSet::new();
+/// Whether a marker reason is specific: at least [`MIN_REASON_WORDS`]
+/// distinct words of two or more letters, placeholders not counted (#4773).
+fn is_specific_reason(reason: &str) -> bool {
+    let words: BTreeSet<String> = reason
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|word| word.chars().filter(|c| c.is_alphabetic()).count() >= 2)
+        .map(str::to_lowercase)
+        .filter(|word| !PLACEHOLDER_WORDS.contains(&word.as_str()))
+        .collect();
+    words.len() >= MIN_REASON_WORDS
+}
+
+/// What the markers of a file allow.
+#[derive(Default)]
+struct Markers {
+    /// The 0-based lines they allow.
+    allowed: BTreeSet<usize>,
+    /// The 0-based lines of markers refused for a blank or placeholder reason;
+    /// they allow nothing.
+    refused: Vec<usize>,
+}
+
+/// The markers of `file`. A marker allows its own line, or, above it, the
+/// next code line (the comment block in between is part of the reason). When
+/// that line starts a leaf item (a function or method, or a `let` binding a
+/// closure; see [`starts_leaf_item`]) the marker above covers the whole item.
+/// Never a `mod`, an `impl` or `trait` block or an inner-attribute scope.
+fn markers(file: &Parsed) -> Markers {
+    let mut markers = Markers::default();
     for (marker_line, comment) in file.comments.iter().enumerate() {
-        if !comment.contains(MARKER) {
+        let Some(at) = comment.find(MARKER) else {
             continue;
-        }
-        let target = if file.code_lines.get(marker_line) == Some(&true) {
+        };
+        let mut reason = comment[at + MARKER.len()..].to_string();
+        let on_code = file.code_lines.get(marker_line) == Some(&true);
+        let target = if on_code {
             Some(marker_line)
         } else {
             // The comment block directly above a code line.
@@ -559,20 +635,31 @@ fn allowed_lines(file: &Parsed) -> BTreeSet<usize> {
                 && !file.code_lines[below]
                 && !file.comments[below].trim().is_empty()
             {
+                if !file.comments[below].contains(MARKER) {
+                    reason.push(' ');
+                    reason.push_str(&file.comments[below]);
+                }
                 below += 1;
             }
             (below < file.comments.len() && file.code_lines[below]).then_some(below)
         };
+        if !is_specific_reason(&reason) {
+            markers.refused.push(marker_line);
+            continue;
+        }
         let Some(target) = target else { continue };
-        allowed.insert(target);
+        markers.allowed.insert(target);
+        if on_code {
+            continue;
+        }
         if let Some(first) = file.toks.iter().position(|tok| tok.line >= target) {
-            if file.toks[first].line == target && starts_item(&file.toks, first) {
+            if file.toks[first].line == target && starts_leaf_item(&file.toks, first) {
                 let end = item_end(&file.toks, first);
-                allowed.extend(target..=file.toks[end].line);
+                markers.allowed.extend(target..=file.toks[end].line);
             }
         }
     }
-    allowed
+    markers
 }
 
 /// Which tokens sit inside a `use` item.
@@ -655,13 +742,26 @@ fn in_pattern_position(toks: &[Tok], start: usize, end: usize) -> bool {
     if after.is("if") {
         return true;
     }
-    if !(after.is(",") || after.is(")") || after.is("]")) {
+    if !(after.is(",") || after.is(")") || after.is("]") || after.is("}")) {
         return false;
     }
     let Some(open) = enclosing_open(toks, start) else {
         return false;
     };
     if toks[open].is("{") {
+        // A field of a struct pattern or of a brace-form variant (#4774):
+        // `Holder { body: Json::Array(v), .. }`, `Some { 0: Json::Array(v) }`.
+        // Any other `{` opens a block, whose value is not a pattern.
+        let is_field = start >= 3
+            && toks[start - 1].is(":")
+            && (toks[start - 3].is("{") || toks[start - 3].is(","))
+            && toks[start - 2].text.chars().all(is_ident_char)
+            && !toks[start - 2].is_str
+            && open >= 1
+            && toks[open - 1].is_ident();
+        return is_field && in_pattern_position(toks, call_start(toks, open), matching(toks, open));
+    }
+    if after.is("}") {
         return false;
     }
     if toks[open].is("(") && open >= 2 && toks[open - 1].is("!") && toks[open - 2].is("matches") {
@@ -688,7 +788,12 @@ fn is_pattern(toks: &[Tok], variant: usize) -> bool {
     if start > 0 && toks[start - 1].is("@") {
         return true;
     }
-    let end = if toks.get(variant + 1).is_some_and(|t| t.is("(")) {
+    // A tuple-form `Json::Array(v)` and a brace-form `Json::Array { 0: v }`
+    // or `Json::Object { .. }` payload alike (#4774).
+    let end = if toks
+        .get(variant + 1)
+        .is_some_and(|t| t.is("(") || t.is("{"))
+    {
         matching(toks, variant + 1)
     } else {
         variant
@@ -696,18 +801,93 @@ fn is_pattern(toks: &[Tok], variant: usize) -> bool {
     in_pattern_position(toks, start, end)
 }
 
-/// The 0-based lines that read a JSON shape, whether allowed or not.
-fn shape_reads(toks: &[Tok]) -> BTreeSet<usize> {
+/// The aliases of the JSON value type that `toks` defines, given the names
+/// already known for it: `(0-based line, alias)` for each `T as A` (a `use`,
+/// a re-export, a group member) and each `type A<..> = path::T;`. No type
+/// inference: only a path that ends in a known name counts.
+fn json_aliases(toks: &[Tok], types: &BTreeSet<String>) -> Vec<(usize, String)> {
+    let known = |tok: &Tok| tok.is_ident() && types.contains(&tok.text);
     let in_use = use_tokens(toks);
-    let mut types: BTreeSet<&str> = SHAPE_TYPES.into_iter().collect();
-    for window in toks.windows(3) {
-        if SHAPE_TYPES.iter().any(|name| window[0].is(name))
+    let mut found = Vec::new();
+    for (i, window) in toks.windows(3).enumerate() {
+        // In a `use` only: `<Json as Trait>::f` is not an alias.
+        if in_use[i]
+            && known(&window[0])
             && window[1].is("as")
             && window[2].is_ident()
+            && !window[2].is("_")
         {
-            types.insert(&window[2].text);
+            found.push((window[0].line, window[2].text.clone()));
         }
     }
+    for (i, tok) in toks.iter().enumerate() {
+        let Some(name) = toks.get(i + 1).filter(|t| tok.is("type") && t.is_ident()) else {
+            continue;
+        };
+        let mut eq = i + 2;
+        if toks.get(eq).is_some_and(|t| t.is("<")) {
+            let mut depth = 0i32;
+            while let Some(t) = toks.get(eq) {
+                if t.is("<") {
+                    depth += 1;
+                } else if t.is(">") {
+                    depth -= 1;
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                eq += 1;
+            }
+            eq += 1;
+        }
+        if !toks.get(eq).is_some_and(|t| t.is("=")) {
+            continue;
+        }
+        // `path::T;` with only identifiers and `::` in between.
+        let mut j = eq + 1;
+        let mut last = None;
+        while let Some(t) = toks.get(j) {
+            if t.is(";") {
+                break;
+            }
+            if !(t.is("::") || t.is_ident()) {
+                last = None;
+                break;
+            }
+            if t.is_ident() {
+                last = Some(t);
+            }
+            j += 1;
+        }
+        if last.is_some_and(|t| known(t)) && toks.get(j).is_some_and(|t| t.is(";")) {
+            found.push((tok.line, name.text.clone()));
+        }
+    }
+    found
+}
+
+/// Every name of the JSON value type in `files`: `Json`, `Value` and their
+/// aliases, followed to a fixed point (an alias of an alias, a re-export in
+/// another module).
+fn json_type_names(files: &[Parsed]) -> BTreeSet<String> {
+    let mut types: BTreeSet<String> = SHAPE_TYPES.iter().map(|name| name.to_string()).collect();
+    loop {
+        let before = types.len();
+        for file in files {
+            for (_, alias) in json_aliases(&file.toks, &types.clone()) {
+                types.insert(alias);
+            }
+        }
+        if types.len() == before {
+            return types;
+        }
+    }
+}
+
+/// The 0-based lines that read a JSON shape, whether allowed or not; `types`
+/// are the names of the JSON value type ([`json_type_names`]).
+fn shape_reads(toks: &[Tok], types: &BTreeSet<String>) -> BTreeSet<usize> {
+    let in_use = use_tokens(toks);
     let is_variant = |tok: &Tok| SHAPE_VARIANTS.iter().any(|variant| tok.is(variant));
     // Names the file brings into scope with `use Json::{Array, Object}`,
     // `use Json::*` or `use Json::Array as List`; they are shape reads too.
@@ -768,20 +948,45 @@ fn shape_reads(toks: &[Tok]) -> BTreeSet<usize> {
     lines
 }
 
-/// The shape reads of `file` that no marker allows: (1-based line, source line).
-fn unmarked_shape_reads(file: &Parsed) -> Vec<(usize, String)> {
-    let allowed = allowed_lines(file);
+/// What the read rules find in one file of a recorded slice, each entry
+/// `file:line: source` (1-based line).
+#[derive(Default)]
+struct FileFindings {
+    /// Shape reads no marker allows.
+    reads: Vec<String>,
+    /// Aliases of the JSON value type no marker allows (#4775).
+    aliases: Vec<String>,
+    /// Markers refused for a blank or placeholder reason (#4773).
+    markers: Vec<String>,
+}
+
+fn file_findings(file: &Parsed, types: &BTreeSet<String>) -> FileFindings {
+    let markers = markers(file);
     let source_lines: Vec<&str> = file.text.lines().collect();
-    shape_reads(&file.toks)
+    let entry = |line: usize| {
+        format!(
+            "{}:{}: {}",
+            file.relative,
+            line + 1,
+            source_lines.get(line).unwrap_or(&"").trim()
+        )
+    };
+    let unmarked = |lines: BTreeSet<usize>| -> Vec<String> {
+        lines
+            .into_iter()
+            .filter(|line| !markers.allowed.contains(line))
+            .map(entry)
+            .collect()
+    };
+    let alias_lines = json_aliases(&file.toks, types)
         .into_iter()
-        .filter(|line| !allowed.contains(line))
-        .map(|line| {
-            (
-                line + 1,
-                source_lines.get(line).unwrap_or(&"").trim().to_string(),
-            )
-        })
-        .collect()
+        .map(|(line, _)| line)
+        .collect();
+    FileFindings {
+        reads: unmarked(shape_reads(&file.toks, types)),
+        aliases: unmarked(alias_lines),
+        markers: markers.refused.iter().copied().map(entry).collect(),
+    }
 }
 
 /// The shared helpers `file` defines itself.
@@ -922,17 +1127,28 @@ struct Report {
     helpers: Vec<String>,
     /// `file:line: source` for an unmarked shape read in a recorded slice.
     reads: Vec<String>,
+    /// `file:line: source` for an unmarked alias of the JSON value type in a
+    /// recorded slice (#4775).
+    aliases: Vec<String>,
+    /// `file:line: source` for a marker with a blank or placeholder reason in
+    /// a recorded slice (#4773).
+    markers: Vec<String>,
 }
 
 impl Report {
     fn is_clean(&self) -> bool {
-        self.unadopted.is_empty() && self.helpers.is_empty() && self.reads.is_empty()
+        self.unadopted.is_empty()
+            && self.helpers.is_empty()
+            && self.reads.is_empty()
+            && self.aliases.is_empty()
+            && self.markers.is_empty()
     }
 }
 
 fn analyse(files: &[SourceFile]) -> Report {
     let parsed: Vec<Parsed> = files.iter().map(parse).collect();
     let constants = flag_constants(&parsed);
+    let types = json_type_names(&parsed);
     let mut report = Report::default();
     let mut add = |slice: &str, signal: &'static str| {
         report
@@ -969,11 +1185,10 @@ fn analyse(files: &[SourceFile]) -> Report {
                     .helpers
                     .push(format!("{}: fn {helper}", file.relative));
             }
-            for (line, text) in unmarked_shape_reads(file) {
-                report
-                    .reads
-                    .push(format!("{}:{line}: {text}", file.relative));
-            }
+            let findings = file_findings(file, &types);
+            report.reads.extend(findings.reads);
+            report.aliases.extend(findings.aliases);
+            report.markers.extend(findings.markers);
         }
     }
     report
@@ -1287,7 +1502,7 @@ fn f(response: &Json) {
     // recorded-shape: a comment block
     // that spans two lines.
     let Some(Json::Array(n)) = response.get(\"N\") else { return };
-    let Some(Json::Array(o)) = response.get(\"O\") else { return }; // recorded-shape: inline
+    let Some(Json::Array(o)) = response.get(\"O\") else { return }; // recorded-shape: inline, a required member
     // recorded-shape: only covers the next code line.
     let a = 1;
     let Some(Json::Object(p)) = response.get(\"P\") else { return };
@@ -1306,7 +1521,7 @@ fn manifest(value: &Json) -> usize {
     }
 }
 /// Docs first.
-// recorded-shape: a constant.
+// recorded-shape: a constant this module builds.
 pub const SHAPES: [fn(&Json) -> bool; 1] = [|j| matches!(j, Json::Array(_))];
 fn after(value: &Json) -> bool {
     matches!(value, Json::Array(_))
@@ -1436,4 +1651,326 @@ fn schema(api: &Json) {
     assert_eq!(report.helpers.len(), 8, "{:?}", report.helpers);
     assert_eq!(report.reads.len(), 2, "{:?}", report.reads);
     assert_eq!(report.unadopted, vec!["old_slice"]);
+}
+
+// ------------------------------------- review #4745 round 2 (#4773-#4775)
+
+#[test]
+fn recorded_slices_alias_no_json_type_and_give_every_marker_a_reason() {
+    let report = analyse(&sources());
+    assert!(
+        report.aliases.is_empty() && report.markers.is_empty(),
+        "recorded slices (#4727) must not alias the JSON value type (#4775):\n{}\n\
+         and every `// {MARKER} <reason>` needs a specific reason (#4773):\n{}",
+        report.aliases.join("\n"),
+        report.markers.join("\n")
+    );
+}
+
+/// The read every round-2 fixture hides: a `null` or wrong-typed `Items`
+/// defaults to an empty list.
+const ITEMS_READ: &str =
+    "fn items(r: &Json) -> &[Json] {\n    match r.get(\"Items\") { Some(Json::Array(v)) => v, _ => &[] }\n}";
+
+/// Every round-2 evasion: each passes the scanner of 44c513a5 and fails this
+/// one. `(label, files)`; the in-scope slice is `fresh`.
+fn second_review_evasions() -> Vec<(&'static str, Vec<SourceFile>)> {
+    let one = |text: String| vec![file("fresh/deep/recording.rs", &text)];
+    let use_line = "use toolkit_aws::recorded::Step;";
+    let marked = |marker: &str| one(format!("{use_line}\n{marker}\n{ITEMS_READ}"));
+    vec![
+        // #4773: blank or placeholder reasons.
+        (
+            "blank reason",
+            one(format!(
+                "{use_line}\nfn items(r: &Json) -> &[Json] {{\n    // recorded-shape:\n    match r.get(\"Items\") {{ Some(Json::Array(v)) => v, _ => &[] }}\n}}"
+            )),
+        ),
+        ("blank reason above the item", marked("// recorded-shape:")),
+        ("whitespace reason", marked("// recorded-shape:    \t")),
+        ("todo reason", marked("// recorded-shape: todo")),
+        ("x reason", marked("// recorded-shape: x")),
+        ("placeholder reason", marked("// recorded-shape: <reason>")),
+        ("todo fix later", marked("// recorded-shape: TODO fix later")),
+        // #4773: module-wide exemptions.
+        (
+            "marker above a mod",
+            one(format!(
+                "{use_line}\n// recorded-shape: module header for the snapshot readers\nmod nested {{\n    fn items(r: &Json) -> &[Json] {{\n        match r.get(\"Items\") {{ Some(Json::Array(v)) => v, _ => &[] }}\n    }}\n    fn objects(r: &Json) -> bool {{ matches!(r, Json::Object(_)) }}\n}}"
+            )),
+        ),
+        (
+            "marker above an impl block",
+            one(format!(
+                "{use_line}\nstruct Holder;\n// recorded-shape: the client this module builds for itself\nimpl Holder {{\n    fn items(&self, r: &Json) -> usize {{\n        match r.get(\"Items\") {{ Some(Json::Array(v)) => v.len(), _ => 0 }}\n    }}\n}}"
+            )),
+        ),
+        (
+            "marker above a trait block",
+            one(format!(
+                "{use_line}\n// recorded-shape: default methods over a snapshot file\ntrait Reads {{\n    fn items(&self, r: &Json) -> usize {{\n        match r.get(\"Items\") {{ Some(Json::Array(v)) => v.len(), _ => 0 }}\n    }}\n}}"
+            )),
+        ),
+        (
+            "file header above an inner attribute",
+            one(format!(
+                "// recorded-shape: every value in this file is a snapshot file\n#![allow(dead_code)]\n{ITEMS_READ}\n{use_line}"
+            )),
+        ),
+        (
+            "trailing marker on a function signature",
+            one(format!(
+                "{use_line}\nfn items(r: &Json) -> &[Json] {{ // recorded-shape: a required member of the snapshot\n    match r.get(\"Items\") {{ Some(Json::Array(v)) => v, _ => &[] }}\n}}"
+            )),
+        ),
+        // #4774: brace-form and struct-field patterns.
+        (
+            "brace-form tuple variant",
+            one(format!(
+                "{use_line}\nfn items(r: &Json) -> &[Json] {{\n    match r.get(\"Items\") {{ Some(Json::Array {{ 0: v }}) => v, _ => &[] }}\n}}"
+            )),
+        ),
+        (
+            "brace-form rest pattern",
+            one(format!(
+                "{use_line}\nfn kind(v: &Json) -> u8 {{ match v {{ Json::Object {{ .. }} => 1, _ => 0 }} }}"
+            )),
+        ),
+        (
+            "brace-form if let with a ref binding",
+            one(format!(
+                "{use_line}\nfn n(v: &Value) -> usize {{ if let Value::Array {{ 0: ref items }} = v {{ items.len() }} else {{ 0 }} }}"
+            )),
+        ),
+        (
+            "brace-form let else",
+            one(format!(
+                "{use_line}\nfn n(r: &Json) -> usize {{ let Some(Json::Object {{ 0: m }}) = r.get(\"M\") else {{ return 0 }}; m.len() }}"
+            )),
+        ),
+        (
+            "brace-form in matches!",
+            one(format!(
+                "{use_line}\nfn is_list(r: &Json) -> bool {{ matches!(r, Json::Array {{ .. }}) }}"
+            )),
+        ),
+        (
+            "brace-form or-pattern in matches!",
+            one(format!(
+                "{use_line}\nfn ok(r: &Json) -> bool {{ matches!(r.get(\"A\"), Some(Json::Object {{ .. }}) | None) }}"
+            )),
+        ),
+        (
+            "brace-form with a guard",
+            one(format!(
+                "{use_line}\nfn n(r: &Json) -> usize {{ match r.get(\"M\") {{ Some(Json::Object {{ 0: m }}) if !m.is_empty() => m.len(), _ => 0 }} }}"
+            )),
+        ),
+        (
+            "variant in a struct-field pattern",
+            one(format!(
+                "{use_line}\nstruct Holder<'a> {{ body: &'a Json }}\nfn n(h: Holder) -> usize {{ match h {{ Holder {{ body: Json::Array(v), .. }} => v.len(), _ => 0 }} }}"
+            )),
+        ),
+        (
+            "variant in a brace-form Some",
+            one(format!(
+                "{use_line}\nfn n(r: &Json) -> usize {{ match r.get(\"I\") {{ Some {{ 0: Json::Array(v) }} => v.len(), _ => 0 }} }}"
+            )),
+        ),
+        // #4775: aliases of the JSON value type.
+        (
+            "type alias",
+            one(format!(
+                "{use_line}\ntype J = Json;\nfn items(r: &J) -> &[J] {{\n    match r.get(\"Items\") {{ Some(J::Array(v)) => v, _ => &[] }}\n}}"
+            )),
+        ),
+        (
+            "qualified serde_json type alias",
+            one(format!(
+                "{use_line}\ntype V = serde_json::Value;\nfn n(r: &V) -> usize {{ if let Some(V::Object(m)) = r.get(\"M\") {{ m.len() }} else {{ 0 }} }}"
+            )),
+        ),
+        (
+            "public type alias with a leading ::",
+            one(format!("{use_line}\npub(crate) type Doc = ::toolkit_core::Json;")),
+        ),
+        (
+            "use as alias",
+            one(format!("{use_line}\nuse serde_json::Value as V;")),
+        ),
+        (
+            "grouped use as alias",
+            one(format!("{use_line}\nuse toolkit_core::{{Json as J, Other}};")),
+        ),
+        (
+            "re-export alias",
+            one(format!("{use_line}\npub use toolkit_core::Json as Doc;")),
+        ),
+        (
+            "alias of a marked alias",
+            one(format!(
+                "{use_line}\n// recorded-shape: the alias keeps the name of the Python port\ntype J = Json;\ntype K = J;\nfn n(r: &K) -> usize {{ match r.get(\"I\") {{ Some(K::Array(v)) => v.len(), _ => 0 }} }}"
+            )),
+        ),
+        (
+            "alias re-exported from another module",
+            vec![
+                file("util.rs", "pub use toolkit_core::Json as Doc;"),
+                file(
+                    "fresh/a.rs",
+                    &format!(
+                        "{use_line}\nuse crate::util::Doc;\nfn n(r: &Doc) -> usize {{ match r.get(\"I\") {{ Some(Doc::Array(v)) => v.len(), _ => 0 }} }}"
+                    ),
+                ),
+            ],
+        ),
+    ]
+}
+
+#[test]
+fn every_round_two_evasion_fails_the_whole_contract() {
+    for (label, files) in second_review_evasions() {
+        let report = analyse(&files);
+        assert!(
+            report.scope.contains_key("fresh"),
+            "{label}: {:?}",
+            report.scope
+        );
+        assert!(!report.is_clean(), "accepted: {label}\n{report:?}");
+    }
+}
+
+#[test]
+fn a_marker_needs_a_specific_reason() {
+    for (reason, specific) in [
+        ("", false),
+        ("   ", false),
+        ("todo", false),
+        ("x", false),
+        ("<reason>", false),
+        ("TODO fix later", false),
+        ("a b c d", false),
+        ("ok ok ok", false),
+        ("the manifest this command wrote", true),
+        ("a required member; every other shape is rejected", true),
+        ("the Search request expression, as above.", true),
+    ] {
+        assert_eq!(is_specific_reason(reason), specific, "{reason:?}");
+    }
+    let report = analyse(&second_review_evasions()[0].1);
+    assert_eq!(report.markers.len(), 1, "{report:?}");
+    assert_eq!(
+        report.reads.len(),
+        1,
+        "a refused marker allows nothing: {report:?}"
+    );
+    // A reason may continue on the comment lines under the marker.
+    let source = "use toolkit_aws::recorded::Step;
+fn f(r: &Json) -> usize {
+    // recorded-shape: a snapshot
+    // file the user supplied.
+    let Some(Json::Array(v)) = r.get(\"A\") else { return 0 };
+    v.len()
+}
+";
+    assert!(analyse_one("fresh/m.rs", source).is_clean());
+}
+
+#[test]
+fn a_marker_covers_a_function_method_or_closure_never_a_module_or_block() {
+    let source = "use toolkit_aws::recorded::Step;
+struct Holder;
+impl Holder {
+    // recorded-shape: the document object this command assembles itself.
+    fn method(&self, r: &Json) -> usize {
+        match r { Json::Array(v) => v.len(), Json::Object(m) => m.len(), _ => 0 }
+    }
+    fn unmarked(&self, r: &Json) -> bool { matches!(r, Json::Array(_)) }
+}
+fn g(r: &Json) -> usize {
+    // recorded-shape: a closure over the snapshot file the user supplied.
+    let size = |v: &Json| match v {
+        Json::Array(items) => items.len(),
+        _ => 0,
+    };
+    let next = matches!(r, Json::Object(_));
+    size(r) + usize::from(next)
+}
+// recorded-shape: a constant table built by this module, not a response.
+const KINDS: [fn(&Json) -> bool; 2] = [
+    |j| matches!(j, Json::Array(_)),
+    |j| matches!(j, Json::Object(_)),
+];
+";
+    let report = analyse_one("fresh/leaf.rs", source);
+    let lines: Vec<&str> = report
+        .reads
+        .iter()
+        .map(|read| read.split(':').nth(1).expect("line"))
+        .collect();
+    assert_eq!(lines, vec!["8", "16", "21", "22"], "{:?}", report.reads);
+    // Every module-wide fixture leaves each read it hides refused.
+    for (label, files) in &second_review_evasions()[7..12] {
+        let report = analyse(files);
+        assert!(!report.reads.is_empty(), "{label}: {report:?}");
+        assert!(report.markers.is_empty(), "{label}: {report:?}");
+    }
+}
+
+#[test]
+fn brace_form_and_struct_field_patterns_are_reads_but_constructions_are_not() {
+    for (label, files) in &second_review_evasions()[12..21] {
+        let report = analyse(files);
+        assert_eq!(report.reads.len(), 1, "{label}: {report:?}");
+    }
+    let source = "use toolkit_aws::recorded::Step;
+struct Holder { body: Json }
+fn f(list: Vec<Json>, n: bool) -> Holder {
+    let built = Json::Array { 0: list.clone() };
+    let held = Holder { body: Json::Array(list.clone()) };
+    let picked = match n { true => Holder { body: Json::Object(Vec::new()) }, false => held };
+    if n { Holder { body: built } } else { picked }
+}
+";
+    let report = analyse_one("fresh/build.rs", source);
+    assert!(report.is_clean(), "{report:?}");
+}
+
+#[test]
+fn an_alias_of_the_json_type_is_refused_and_its_reads_still_count() {
+    let cases = second_review_evasions();
+    let by_label = |label: &str| {
+        let (_, files) = cases
+            .iter()
+            .find(|(name, _)| *name == label)
+            .expect("fixture");
+        analyse(files)
+    };
+    for (label, aliases, reads) in [
+        ("type alias", 1, 1),
+        ("qualified serde_json type alias", 1, 1),
+        ("public type alias with a leading ::", 1, 0),
+        ("use as alias", 1, 0),
+        ("grouped use as alias", 1, 0),
+        ("re-export alias", 1, 0),
+        // The marked `type J` is allowed; `type K = J` and the read are not.
+        ("alias of a marked alias", 1, 1),
+        // The re-export lives outside the slice; the read through it counts.
+        ("alias re-exported from another module", 0, 1),
+    ] {
+        let report = by_label(label);
+        assert_eq!(report.aliases.len(), aliases, "{label}: {report:?}");
+        assert_eq!(report.reads.len(), reads, "{label}: {report:?}");
+    }
+    // Neither a type whose path merely contains `Json`, nor a cast, nor
+    // `<Json as Trait>` is an alias.
+    let source = "use toolkit_aws::recorded::Step;
+use std::fmt::Write as _;
+type Pairs = Vec<(String, Json)>;
+type Handle<'h> = &'h mut dyn FnMut(&Json) -> bool;
+fn f(v: &Json) -> String { <Json as ToString>::to_string(v) }
+";
+    let report = analyse_one("fresh/types.rs", source);
+    assert!(report.is_clean(), "{report:?}");
 }
