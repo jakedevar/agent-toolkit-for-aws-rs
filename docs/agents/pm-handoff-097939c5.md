@@ -187,3 +187,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
   4/4 busy: 14bc584a (#4381 repair), 6a6ca4e7 (#4745), e76fe901 (#4744), a624431d (#4776). Queue entry 5060cb2e pending.
 - 21:47Z: #4745 round 2 on 44c513a5: CHANGES_REQUESTED #4773 (blank/module-wide markers), #4774 (brace-form patterns), #4775 (type-alias reads).
   RULING (ends arms race): scanner = tripwire for documented rule, not proof; fix the 3 classes + README; round 3 re-review blocks only on runtime defects or trivial evasion of the documented rule. FINAL repair (Opus) 93a325d6 continue_from ecf77dbc (op 399dd002). If round 3 still fails on new evasion classes: accept with residual Issues, do not loop.
+- 21:49Z: #4381 repair 97ea8fac29ccdde90b8ee93ee2059c74bfb5dfae (14bc584a; merges #4727 8f429632 as 6b3e220c; temp+rename output; shared accessors; new additive KeyOrder::Contained in toolkit_aws::recorded; scoped a13fe04b ok base 8f429632, aws 181 + cli 2188). Friction #4765 (missing runner script), #4659 (stale cache).
+  Re-review round 2 #4742 worker edc41353 (Codex sol high, pinned, op 30334304).
+  Round 13 note: merge order #4727 final -> #4381 97ea8fac (KeyOrder::Contained may conflict with #4727 r2 if it touches KeyOrder); cloudwatch must pass the FINAL #4727 scanner (may need extra markers in the integration round, registration-or-marker-only).
