@@ -365,6 +365,96 @@ read) but only escaped. A new command is covered the moment it is added to
 `COMMANDS`; make it pass by not echoing payload contents and by quoting any
 value you do echo.
 
+## Slices without a live AWS client: recorded input and responses (contributor note, #4727)
+
+A slice whose build has no live AWS client sends nothing and replays a recorded
+document (`--recorded FILE`). Reviews of the first two such slices (#4383
+bedrock-agent, #4384 ai-models) found the same defects in each hand-written
+copy: a wrong-typed or `null` recorded member silently defaulted (#4712,
+#4724), a `null` response list read as an empty discovery (#4713, #4725), and a
+failure step whose expected request was never compared (#4726). The rules now
+live once in `toolkit_aws::recorded`; use it instead of writing your own.
+
+1. **Recorded steps.** Parse each step with `step_fields`: an optional
+   `request` (an object) and exactly one of `response` (an object) and `error`
+   (an object). Read every optional member of the step and of its `error` with
+   `optional_text`, `optional_object`, `optional_list` or `optional_member`:
+   **absent** takes the default; **present with another type, `null`
+   included,** rejects the whole recording before anything runs.
+2. **Replay.** Store every step as a `Step` (`Step::response` or
+   `Step::failure`) with its expected request, for error steps too. Replay
+   in order with a `StepQueue` (a call past the last step is
+   `ReplayError::Exhausted`; `unconsumed()` counts the steps never used), or
+   look steps up with `Step::matches` and replay them with `Step::outcome`.
+   The request is compared **before** the outcome, success or failure.
+   Compare with `KeyOrder::Ignored` (Python `dict` equality); `ai-models`
+   keeps `KeyOrder::Significant` because its recordings already pin it.
+3. **Responses.** Read an optional response member with `optional_list`,
+   `optional_object_list`, `optional_string_list`, `optional_object` or
+   `optional_text`: absent or `[]` is empty; `null` or another type is an
+   `aws_invalid_response`, never an empty listing. A legitimately nullable
+   scalar is an explicit opt-in: `nullable_text`, and `toolkit_aws::next_token_from`
+   for a pagination token (absent, `null` and `""` end paging).
+4. **Diagnostics.** A `MemberError` carries the member name, the expected
+   type and the type found, never a value; render it with its `Display`
+   (`<key> must be <expected> when present (it is <found>)`) or from its
+   accessors, prefixed by the position (`calls.Search[0].error`), never by a
+   recorded value.
+
+`tests/recorded_contract.rs` enforces this without keying on any spelling you
+choose (a type name, a helper name, a way of nesting `match`). It reads the
+token stream of every non-test file of `crates/toolkit-cli/src`, comments and
+string contents removed, and puts a top-level module of `src` in scope when it
+has **any** of these signals:
+
+- a recording flag: the string `"--recorded"` (also `"--recording"`,
+  `"--replay"`) in the module, or a `COMMANDS` row that names the flag, inline
+  or through a constant, and routes to it;
+- a recorded replay type or trait: an identifier that mentions `Recorded` or
+  `Replay` together with `Client`, `Step`, `Queue` or `Replay`
+  (`RecordedClient`, `RecordedAwsClient`, `ReplayClient`, ...);
+- an import of `toolkit_aws::recorded` in any form: plain, grouped
+  (`toolkit_aws::{recorded, ..}`), aliased (`recorded as r`,
+  `toolkit_aws as aws` then `aws::recorded`), or in a nested module.
+
+A module with a flag or a type signal must import `toolkit_aws::recorded`. Every
+module in scope must:
+
+- not define its own `optional_*`, `nullable_text` or `same_json` helper;
+- not **read a JSON shape**: any `Json::Array`, `Json::Object`, `Value::Array`
+  or `Value::Object` in a pattern (`match`, `if let`, `let ... else`,
+  `matches!`, a guard, behind `Some(..)` or a nested `match`, inside a
+  struct-field pattern; tuple form `Json::Array(v)` and brace form
+  `Json::Array { 0: v }` or `Json::Object { .. }` alike; through an alias or a
+  `use Json::{Array, Object}`), and any `as_array`, `as_object`,
+  `as_array_mut` or `as_object_mut`. Building a value (`Json::Array(items)` or
+  `Json::Array { 0: items }` as an expression) is not a read;
+- not **alias the JSON value type**: `type J = Json;`,
+  `type V = serde_json::Value;`, `use toolkit_core::Json as J`,
+  `use serde_json::Value as V`, a re-export (`pub use .. as`) or an alias of
+  an alias. A marked alias is allowed, but reads through it still count, and
+  an alias defined elsewhere in `src` is followed into the slice.
+
+When the value is not a response (a snapshot file, the command's own manifest,
+a request or entry it built), or the member is required and every other shape
+is rejected, or the code classifies every JSON type on purpose, put
+`// recorded-shape: <reason>` on the line, or directly above it. The reason
+must be specific: at least three distinct words, placeholders such as `todo`,
+`x` or `<reason>` not counted; a blank or placeholder reason is itself a
+failure and allows nothing. A marker on a line allows that line. A marker above
+code allows the next code line, or the whole of the single function, method or
+closure-binding `let` that starts there. It never covers a `mod`, an `impl` or
+`trait` block, any other item, or a file header (inner attribute) scope: mark
+each function inside instead.
+
+**The scanner is a tripwire, not a proof.** It checks exactly the list above
+(scope signals, module adoption, helper definitions, shape reads, JSON type
+aliases and marker reasons) on tokens, with no type inference, so a determined
+author can still hide a read. Review is the defense against deliberate
+evasion: code written to get past the scanner (a renamed type, an indirection
+that hides a shape read, a marker whose reason does not match the code) is a
+review blocker even when the test passes.
+
 ## Frontmatter additions (#4374)
 
 A leading UTF-8 byte-order mark is ignored. `name:` with no value or an empty

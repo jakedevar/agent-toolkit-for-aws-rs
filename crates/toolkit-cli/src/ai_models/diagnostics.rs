@@ -6,12 +6,12 @@
 //! step still runs; any other failure (no credentials, no connection, a
 //! malformed response) stops the run, where Python raised.
 
+use toolkit_aws::recorded::{optional_list, optional_object_list};
 use toolkit_aws::AwsError;
 use toolkit_core::Json;
 
 use super::client::{Operation, SageMakerClient};
 use super::hub::{validate_endpoint_name, ModelsError};
-use super::members::{optional_list, optional_object_list};
 use super::timeutil::{iso_utc, timestamp_text};
 use crate::cloudwatch::timefmt::UtcTime;
 use crate::dynamodb::pyfmt;

@@ -119,6 +119,7 @@ fn restrict_to_owner(_path: &Path) -> Result<(), String> {
 /// The `warnings` of a manifest's `discovery` object.
 fn manifest_warnings(manifest: &Json) -> Vec<String> {
     match manifest.get("discovery").and_then(|d| d.get("warnings")) {
+        // recorded-shape: the manifest this command wrote, not a response.
         Some(Json::Array(warnings)) => warnings
             .iter()
             .filter_map(|warning| warning.as_str().map(str::to_string))
