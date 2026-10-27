@@ -85,6 +85,22 @@ never write. Exit 0 = in sync (or synced), 1 = drift / refusal / runtime error,
   bundled copy and can be deleted by hand. Test:
   `replace_tree_keeps_the_new_tree_and_names_the_backup_when_cleanup_fails`
   (failure injected, so it needs no privileges).
+- Staging cleanup on every error path (review #4479 re-review, #4495). The
+  staging copy reproduces source directory modes, so a nonempty `0555` source
+  leaves a stage that plain `remove_dir_all` cannot empty. Every error path
+  after staging is created (populate failure, backup-name reservation failure,
+  move-aside failure, install failure) removes this call's own stage with the
+  same permission-aware, link-safe cleanup as the old copy (owner `rwx` added
+  to real directories inside the stage only, links never followed). The
+  original destination is untouched on these paths. If that cleanup itself
+  fails, the returned error keeps its original code and message and appends
+  `additionally could not remove the staging directory (<cause>); remove it
+  manually: <stage>`. Fixtures: `backup_exhaustion_after_staging_removes_a_read_only_stage`
+  (unprivileged, skipped with a message when running as root: nonempty `0555`
+  source, one successful staging suffix, then 1000 colliding backup suffixes;
+  the destination and the collision sibling survive and this call's stage is
+  gone) and `stage_cleanup_failure_names_the_leftover_stage_and_keeps_the_error`
+  (failure injected).
 - Symbolic links are never followed: a link as plugin, `skills/` or bundled
   skill is an error; a link inside a canonical source stops that skill (nothing
   is copied, everything else continues); a link inside a bundled copy or a

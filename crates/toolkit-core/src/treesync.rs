@@ -457,7 +457,9 @@ pub fn ensure_dir_chain(base: &Path, relative_dir: &str) -> Result<(), ToolkitEr
 /// # Errors
 ///
 /// Returns a runtime error on any refusal or I/O failure; on failure before
-/// the swap `dest` is untouched and the staging directory is removed. If only
+/// the swap `dest` is untouched and the staging directory is removed with the
+/// same permission-aware cleanup (if that fails too, the error also names the
+/// leftover staging path and keeps its original code). If only
 /// the final removal of the old copy fails, the new tree stays installed and
 /// the error (`cleanup_failed`) names the leftover backup path.
 pub fn replace_tree(
@@ -470,7 +472,7 @@ pub fn replace_tree(
         source_entries,
         dest,
         &mut unique_suffix,
-        &remove_old_tree,
+        &remove_owned_tree,
     )
 }
 
@@ -481,7 +483,7 @@ fn replace_tree_with(
     source_entries: &[TreeEntry],
     dest: &Path,
     next_suffix: &mut dyn FnMut() -> String,
-    remove_backup: &dyn Fn(&Path) -> io::Result<()>,
+    remove_tree: &dyn Fn(&Path) -> io::Result<()>,
 ) -> Result<(), ToolkitError> {
     if let Some(entry) = first_unsafe_entry(source_entries) {
         return Err(ToolkitError::runtime(
@@ -509,29 +511,31 @@ fn replace_tree_with(
     };
     let stage = reserve_sibling(parent, name, "new", next_suffix)?;
     if let Err(error) = populate_stage(source, source_entries, &stage) {
-        let _ = fs::remove_dir_all(&stage);
-        return Err(error);
+        return Err(discard_stage(&stage, error, remove_tree));
     }
     let backup = match reserve_sibling(parent, name, "old", next_suffix) {
         Ok(backup) => backup,
-        Err(error) => {
-            let _ = fs::remove_dir_all(&stage);
-            return Err(error);
-        }
+        Err(error) => return Err(discard_stage(&stage, error, remove_tree)),
     };
     // `backup` is an empty directory this call just created, so the rename
     // below replaces only that placeholder, never a pre-existing path.
     if let Err(error) = fs::rename(dest, &backup) {
-        let _ = fs::remove_dir_all(&stage);
         let _ = fs::remove_dir(&backup);
-        return Err(io_failure("move aside", dest, &error));
+        return Err(discard_stage(
+            &stage,
+            io_failure("move aside", dest, &error),
+            remove_tree,
+        ));
     }
     if let Err(error) = fs::rename(&stage, dest) {
         let _ = fs::rename(&backup, dest);
-        let _ = fs::remove_dir_all(&stage);
-        return Err(io_failure("install", dest, &error));
+        return Err(discard_stage(
+            &stage,
+            io_failure("install", dest, &error),
+            remove_tree,
+        ));
     }
-    remove_backup(&backup).map_err(|error| {
+    remove_tree(&backup).map_err(|error| {
         ToolkitError::runtime(
             "cleanup_failed",
             format!(
@@ -570,11 +574,37 @@ fn reserve_sibling(
     ))
 }
 
-/// Removes the moved-aside old tree: first restores owner access on the
-/// directories inside it (so a read-only tree can be emptied), then deletes it.
-fn remove_old_tree(backup: &Path) -> io::Result<()> {
-    make_dirs_owner_writable(backup)?;
-    fs::remove_dir_all(backup)
+/// Removes this call's own staging directory after `error` and returns `error`.
+///
+/// The stage may carry source directory modes (for example `0555`), so it is
+/// removed with the same permission-aware, link-safe cleanup as the old copy.
+/// If that cleanup fails, the returned error keeps `error`'s code and message
+/// and also names the leftover stage path.
+fn discard_stage(
+    stage: &Path,
+    error: ToolkitError,
+    remove_tree: &dyn Fn(&Path) -> io::Result<()>,
+) -> ToolkitError {
+    match remove_tree(stage) {
+        Ok(()) => error,
+        Err(cleanup) => ToolkitError::runtime(
+            error.code(),
+            format!(
+                "{}; additionally could not remove the staging directory ({cleanup}); \
+                 remove it manually: {}",
+                error.message(),
+                stage.display()
+            ),
+        ),
+    }
+}
+
+/// Removes a tree this call owns (the moved-aside old copy or its own stage):
+/// first restores owner access on the directories inside it (so a read-only
+/// tree can be emptied), then deletes it. Links are never followed.
+fn remove_owned_tree(tree: &Path) -> io::Result<()> {
+    make_dirs_owner_writable(tree)?;
+    fs::remove_dir_all(tree)
 }
 
 /// Adds owner read/write/search permission to `dir` and every directory below
@@ -981,7 +1011,7 @@ mod tests {
             &entries,
             &root.join("dest"),
             &mut || names.next().expect("suffix"),
-            &remove_old_tree,
+            &remove_owned_tree,
         )
         .expect("replace");
         assert_eq!(fs::read(root.join("dest/new")).expect("read"), b"new");
@@ -1017,7 +1047,7 @@ mod tests {
             &entries,
             &root.join("dest"),
             &mut || "x".to_string(),
-            &remove_old_tree,
+            &remove_owned_tree,
         )
         .expect_err("exhausted");
         assert_eq!(error.code(), "path_invalid");
@@ -1117,5 +1147,90 @@ mod tests {
             message.contains(&backups[0].display().to_string()),
             "error names the leftover path: {message}"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn backup_exhaustion_after_staging_removes_a_read_only_stage() {
+        use std::os::unix::fs::PermissionsExt;
+        if permissions_are_not_enforced() {
+            eprintln!("skipped: running with privileges that ignore directory modes");
+            return;
+        }
+        let root = TempDir::new("ts-replace-backup-exhaust");
+        write(&root, "src/sub/new", b"new");
+        write(&root, "src/top", b"top");
+        write(&root, "dest/old", b"old");
+        fs::create_dir(root.join(".dest.toolkit-sync-old-c")).expect("collision");
+        for dir in ["src/sub", "src"] {
+            fs::set_permissions(root.join(dir), fs::Permissions::from_mode(0o555)).expect("chmod");
+        }
+        let entries = list_tree(&root.join("src")).expect("list");
+        // First suffix stages successfully; every backup attempt then collides.
+        let mut calls = 0_u32;
+        let result = replace_tree_with(
+            &root.join("src"),
+            &entries,
+            &root.join("dest"),
+            &mut || {
+                calls += 1;
+                if calls == 1 { "s" } else { "c" }.to_string()
+            },
+            &remove_owned_tree,
+        );
+        for dir in ["src", "src/sub"] {
+            fs::set_permissions(root.join(dir), fs::Permissions::from_mode(0o755)).expect("chmod");
+        }
+        let error = result.expect_err("backup names exhausted");
+        assert_eq!(calls, 1001, "one staging suffix, then 1000 backup attempts");
+        assert_eq!(error.code(), "path_invalid");
+        assert!(
+            !error.message().contains("remove it manually"),
+            "cleanup succeeded, so no leftover is reported: {}",
+            error.message()
+        );
+        assert_eq!(fs::read(root.join("dest/old")).expect("read"), b"old");
+        assert!(root.join(".dest.toolkit-sync-old-c").is_dir());
+        assert!(
+            fs::symlink_metadata(root.join(".dest.toolkit-sync-new-s")).is_err(),
+            "this call's stage must be gone"
+        );
+        let mut names: Vec<String> = fs::read_dir(&*root)
+            .expect("dir")
+            .map(|e| e.expect("entry").file_name().into_string().expect("utf8"))
+            .collect();
+        names.sort();
+        assert_eq!(names, [".dest.toolkit-sync-old-c", "dest", "src"]);
+    }
+
+    #[test]
+    fn stage_cleanup_failure_names_the_leftover_stage_and_keeps_the_error() {
+        let root = TempDir::new("ts-replace-stage-leftover");
+        write(&root, "src/new", b"new");
+        write(&root, "dest/old", b"old");
+        fs::create_dir(root.join(".dest.toolkit-sync-old-c")).expect("collision");
+        let entries = list_tree(&root.join("src")).expect("list");
+        let mut calls = 0_u32;
+        let error = replace_tree_with(
+            &root.join("src"),
+            &entries,
+            &root.join("dest"),
+            &mut || {
+                calls += 1;
+                if calls == 1 { "s" } else { "c" }.to_string()
+            },
+            &|_| Err(io::Error::new(io::ErrorKind::PermissionDenied, "forced")),
+        )
+        .expect_err("backup names exhausted");
+        assert_eq!(error.code(), "path_invalid");
+        let stage = root.join(".dest.toolkit-sync-new-s");
+        assert!(
+            error.message().contains(&stage.display().to_string()),
+            "error names the leftover stage: {}",
+            error.message()
+        );
+        assert!(error.message().contains("forced"));
+        assert_eq!(fs::read(root.join("dest/old")).expect("read"), b"old");
+        assert_eq!(fs::read(stage.join("new")).expect("read"), b"new");
     }
 }
