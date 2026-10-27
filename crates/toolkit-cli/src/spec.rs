@@ -852,7 +852,7 @@ struct UrlParts {
 ///
 /// Like `urlsplit` it fails, with the same wording, on a bracket without its
 /// partner, on a bracketed host that is not an IPv6 literal (a name or an IPv4
-/// address in brackets, or a malformed `v...` IPvFuture), and on a netloc
+/// address in brackets, or a malformed `v...` `IPvFuture`), and on a netloc
 /// whose NFKC form would contain a URL delimiter (for example U+FF0F, the
 /// fullwidth solidus).
 fn split_url(url: &str) -> Result<UrlParts, String> {
@@ -930,7 +930,7 @@ fn lowercase_host(host: &str) -> Option<String> {
 }
 
 /// Python's `_check_bracketed_host`: the text between `[` and `]` must be an
-/// IPv6 literal (optionally with a `%zone`) or an IPvFuture address.
+/// IPv6 literal (optionally with a `%zone`) or an `IPvFuture` address.
 fn check_bracketed_host(host: &str) -> Result<(), String> {
     if let Some(future) = host.strip_prefix('v') {
         // re.match(r"\Av[a-fA-F0-9]+\..+\Z", hostname)

@@ -1702,7 +1702,7 @@ fn missing_non_schema_and_unsupported_references_are_rejected() {
     assert!(reason.contains("percent-encoding"), "{reason}");
     let reason = compile_error(r##"{"$dynamicRef":"#x"}"##);
     assert!(reason.contains("dynamic references"), "{reason}");
-    let reason = compile_error(r##"{"$defs":{"a":{"$id":"https://example.test/a"}}}"##);
+    let reason = compile_error(r#"{"$defs":{"a":{"$id":"https://example.test/a"}}}"#);
     assert!(reason.contains("nested '$id'"), "{reason}");
 }
 
@@ -1782,7 +1782,7 @@ fn catastrophic_patterns_stay_bounded() {
 #[test]
 fn backtracking_exhaustion_is_an_evaluation_failure_not_a_match() {
     let hostile = format!("\"{}!\"", "a".repeat(60));
-    let pattern = r#"^(a|a)*\\1b"#;
+    let pattern = r"^(a|a)*\\1b";
     let started = std::time::Instant::now();
     // The pattern alone.
     let schema = format!(r#"{{"type":"string","pattern":"{pattern}"}}"#);
@@ -1892,7 +1892,7 @@ fn exhaustion_while_validating_a_manifest_is_a_runtime_error() {
 
 #[test]
 fn schema_messages_keep_the_published_wording() {
-    let schema = r##"{
+    let schema = r#"{
         "type":"object",
         "properties":{
             "n":{"type":["string","null"]},
@@ -1906,7 +1906,7 @@ fn schema_messages_keep_the_published_wording() {
         },
         "required":["req"],
         "additionalProperties":false
-    }"##;
+    }"#;
     let outcome = evaluate(
         schema,
         r#"{"n":5,"c":{"a":[true],"b":2},"e":"z","s":"abcd","t":"","p":{"bad":1,"ok":2},"o":3,"f":1,"z2":1,"z1":2}"#,
