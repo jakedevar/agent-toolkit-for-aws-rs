@@ -10,7 +10,7 @@ use toolkit_core::Json;
 use super::capture::{capture_from_response, Capture, CaptureLimits, CodeCapture};
 use super::consts::SNAPSHOT_SIGNAL_TYPE;
 use super::location::{location_from_response, render_location_block, Location};
-use super::pytext::{get_array, get_text, get_truthy_text};
+use super::pytext::{get_array, get_text, get_truthy_text, safe_text};
 use super::timefmt::{format_timestamp, UtcTime};
 use crate::dynamodb::pyfmt;
 
@@ -440,9 +440,9 @@ pub fn format_batch_delete_response(
             output.push_str(&format!(
                 "- Item {}: ResourceArn={} | Code={} | Message={}\n",
                 index + 1,
-                get_text(item, "ResourceArn", "N/A"),
-                get_text(item, "Code", "N/A"),
-                get_text(item, "Message", "N/A"),
+                safe_text(&get_text(item, "ResourceArn", "N/A")),
+                safe_text(&get_text(item, "Code", "N/A")),
+                safe_text(&get_text(item, "Message", "N/A")),
             ));
         }
     }

@@ -365,3 +365,184 @@ fn region_value_from_the_environment_is_escaped() {
     assert_eq!(text(&output.stderr), "");
     assert_channels_safe(&output);
 }
+
+// ──── #4652 / #4653: caller context and caller prose stay on one line ────
+
+/// The reviewer's payload: a bare newline that would start a forged line.
+const FORGE_JSON: &str = r"REVIEW_SENTINEL\nFORGED_REPORT";
+const FORGE_ESCAPED: &str = "REVIEW_SENTINEL\\nFORGED_REPORT";
+
+/// A benign stand-in placed in every caller field of a renderer fixture.
+const TOKEN: &str = "CALLERTOKEN";
+
+/// Runs `cloudwatch render RENDERER` on `template` with every `CALLERTOKEN`
+/// replaced by `value` (JSON source text), asserting exit 0 and empty stderr.
+fn render_with(renderer: &str, template: &str, value: &str) -> String {
+    let json = template.replace(TOKEN, value);
+    let output = toolkit_with_secret(&["cloudwatch", "render", renderer, "--json", &json]);
+    assert_eq!(status(&output), 0, "{renderer}: {}", text(&output.stderr));
+    assert_eq!(text(&output.stderr), "", "{renderer}");
+    assert_channels_safe(&output);
+    text(&output.stdout)
+}
+
+/// The hostile run must print exactly the benign run with each token
+/// replaced by `shown`: every caller field is escaped onto its own line and
+/// nothing else in the report moves.
+fn assert_caller_fields_contained(renderer: &str, template: &str, shown: &str) {
+    let benign = render_with(renderer, template, TOKEN);
+    assert!(benign.contains(TOKEN), "{renderer} fixture prints no token");
+    let hostile = render_with(renderer, template, HOSTILE_JSON);
+    assert_eq!(hostile, benign.replace(TOKEN, shown), "{renderer}");
+    let forged = render_with(renderer, template, FORGE_JSON);
+    assert!(!forged.lines().any(|line| line.starts_with("FORGED_REPORT")));
+}
+
+#[test]
+fn list_render_reproduction_from_4652_is_byte_exact() {
+    let json = r#"{"data":{},"normalized_type":"BREAKPOINT","service":"REVIEW_SENTINEL\nFORGED_REPORT","environment":"prod"}"#;
+    let output = toolkit_with_secret(&["cloudwatch", "render", "list", "--json", json]);
+    assert_eq!(status(&output), 0, "{}", text(&output.stderr));
+    assert_eq!(text(&output.stderr), "");
+    assert_eq!(
+        text(&output.stdout),
+        format!(
+            "No active BREAKPOINT instrumentations found\n\nService: {FORGE_ESCAPED}\n\
+             Environment: prod\n\nTIP: Use create_instrumentation to add instrumentations.\n"
+        )
+    );
+    assert_channels_safe(&output);
+}
+
+#[test]
+fn text_renderers_keep_every_caller_scalar_on_one_line() {
+    let cases: &[(&str, &str)] = &[
+        (
+            "list",
+            r#"{"data":{},"normalized_type":"CALLERTOKEN","service":"CALLERTOKEN","environment":"CALLERTOKEN"}"#,
+        ),
+        (
+            "list",
+            r#"{"data":{"LatestConfigurations":[{"LocationHash":"0123456789abcdef"}]},"normalized_type":"CALLERTOKEN","service":"CALLERTOKEN","environment":"CALLERTOKEN"}"#,
+        ),
+        (
+            "get",
+            r#"{"config":{},"service":"CALLERTOKEN","environment":"CALLERTOKEN"}"#,
+        ),
+        (
+            "batch-delete",
+            r#"{"mode":"CALLERTOKEN","data":{},"instrumentation_type":"CALLERTOKEN","service":"CALLERTOKEN","environment":"CALLERTOKEN"}"#,
+        ),
+        (
+            "batch-delete",
+            r#"{"mode":"service","data":{"Errors":[{"ResourceArn":"CALLERTOKEN","Code":"CALLERTOKEN","Message":"CALLERTOKEN"}]},"instrumentation_type":"BREAKPOINT"}"#,
+        ),
+        (
+            "status-history",
+            r#"{"data":{"Events":[{"Time":"2025-02-03T10:05:00Z","ErrorCause":"CALLERTOKEN"}]},"normalized_type":"CALLERTOKEN","service":"CALLERTOKEN","environment":"CALLERTOKEN","requested_status":"CALLERTOKEN"}"#,
+        ),
+        (
+            "create-success",
+            r#"{"response":{},"location":{"CodeLocation":{"Language":"CALLERTOKEN","FilePath":"CALLERTOKEN","MethodName":"CALLERTOKEN"}},"normalized_type":"CALLERTOKEN","service":"CALLERTOKEN","environment":"CALLERTOKEN","capture_arguments":["CALLERTOKEN"],"capture_locals":["CALLERTOKEN"],"now":"2025-02-03T10:00:00Z"}"#,
+        ),
+        // ACTIVE confirmed: the subject block and the snapshot log-group tip.
+        (
+            "status-assessment",
+            r#"{"created_at":"2025-02-03T10:00:00Z","requested_start":"2025-02-03T09:00:00Z","query_end":"2025-02-03T11:00:00Z","location_hash":"CALLERTOKEN","service":"CALLERTOKEN","environment":"CALLERTOKEN","normalized_type":"CALLERTOKEN","checks":{"ACTIVE":{"events":[{"Time":"2025-02-03T10:30:00Z"}]}}}"#,
+        ),
+        // Nothing confirmed: the recorded check errors and the ERROR cause.
+        (
+            "status-assessment",
+            r#"{"created_at":"2025-02-03T10:00:00Z","requested_start":"2025-02-03T09:00:00Z","query_end":"2025-02-03T11:00:00Z","location_hash":"CALLERTOKEN","service":"CALLERTOKEN","environment":"CALLERTOKEN","normalized_type":"CALLERTOKEN","checks":{"ACTIVE":{"error":"CALLERTOKEN"},"READY":{"error":"CALLERTOKEN"},"ERROR":{"events":[{"Time":"2025-02-03T09:45:00Z","ErrorCause":"CALLERTOKEN"}]}}}"#,
+        ),
+    ];
+    for (renderer, template) in cases {
+        assert_caller_fields_contained(renderer, template, ESCAPED);
+    }
+}
+
+#[test]
+fn json_renderers_keep_caller_scalars_inside_json_strings() {
+    // These renderers print `json.dumps(..., indent=2)`: a caller value is a
+    // JSON string, so its newline and ESC appear as JSON escapes.
+    let cases: &[(&str, &str)] = &[
+        (
+            "snapshot-search",
+            r#"{"query_result":{"status":"Error","error":"CALLERTOKEN"},"service_name":"CALLERTOKEN","environment":"CALLERTOKEN","location_hash":"CALLERTOKEN","custom_filters":["CALLERTOKEN"],"start_time_utc":"CALLERTOKEN","end_time_utc":"CALLERTOKEN","start_epoch":1,"end_epoch":2,"query_string":"CALLERTOKEN"}"#,
+        ),
+        (
+            "snapshot-sample",
+            r#"{"query_result":{"status":"Error","error":"CALLERTOKEN"},"service_name":"CALLERTOKEN","environment":"CALLERTOKEN","location_hash":"CALLERTOKEN","start_time_utc":"CALLERTOKEN","end_time_utc":"CALLERTOKEN","query_string":"CALLERTOKEN"}"#,
+        ),
+    ];
+    for (renderer, template) in cases {
+        assert_caller_fields_contained(renderer, template, HOSTILE_JSON);
+    }
+}
+
+fn render_failure_stdout(json: &str) -> String {
+    let output = toolkit_with_secret(&["cloudwatch", "render", "failure", "--json", json]);
+    assert_eq!(status(&output), 0, "{}", text(&output.stderr));
+    assert_eq!(text(&output.stderr), "");
+    assert_channels_safe(&output);
+    text(&output.stdout)
+}
+
+#[test]
+fn caller_possible_causes_cannot_forge_a_line_4653() {
+    let json = r#"{"failure":{"kind":"client_error","message":"ordinary error"},"action":"read","possible_causes":["REVIEW_SENTINEL\nFORGED_REPORT"]}"#;
+    assert_eq!(
+        render_failure_stdout(json),
+        format!(
+            "Failed to read\n\nError: ClientError - ordinary error\n\n\
+             POSSIBLE CAUSES:\n1. {FORGE_ESCAPED}\n"
+        )
+    );
+}
+
+#[test]
+fn caller_troubleshooting_cannot_forge_a_line_4653() {
+    let json = r#"{"failure":{"kind":"client_error","message":"ordinary error"},"action":"read","troubleshooting":["REVIEW_SENTINEL\nFORGED_REPORT"]}"#;
+    assert_eq!(
+        render_failure_stdout(json),
+        format!(
+            "Failed to read\n\nError: ClientError - ordinary error\n\n\
+             TROUBLESHOOTING:\n1. {FORGE_ESCAPED}\n"
+        )
+    );
+}
+
+#[test]
+fn caller_attempted_label_cannot_forge_a_line_4653() {
+    let json = r#"{"failure":{"kind":"client_error","message":"ordinary error"},"action":"read","attempted":{"service":"svc"},"attempted_label":"REVIEW_SENTINEL\nFORGED_REPORT","possible_causes":["c"]}"#;
+    assert_eq!(
+        render_failure_stdout(json),
+        format!(
+            "Failed to read\n\nError: ClientError - ordinary error\n\n\
+             {FORGE_ESCAPED}\n- service: svc\n\nPOSSIBLE CAUSES:\n1. c\n"
+        )
+    );
+}
+
+#[test]
+fn caller_trailer_cannot_forge_a_line_4653() {
+    let json = r#"{"failure":{"kind":"client_error","message":"ordinary error"},"action":"read","trailer":"REVIEW_SENTINEL\nFORGED_REPORT"}"#;
+    assert_eq!(
+        render_failure_stdout(json),
+        format!("Failed to read\n\nError: ClientError - ordinary error\n\n{FORGE_ESCAPED}\n")
+    );
+}
+
+#[test]
+fn caller_prose_escapes_terminal_controls_too_4653() {
+    let json = format!(
+        r#"{{"failure":{{"kind":"client_error","message":"m"}},"action":"read","attempted":{{"k":"v"}},"attempted_label":"{HOSTILE_JSON}","possible_causes":["{HOSTILE_JSON}"],"troubleshooting":["{HOSTILE_JSON}"],"trailer":"{HOSTILE_JSON}"}}"#
+    );
+    assert_eq!(
+        render_failure_stdout(&json),
+        format!(
+            "Failed to read\n\nError: ClientError - m\n\n{ESCAPED}\n- k: v\n\n\
+             POSSIBLE CAUSES:\n1. {ESCAPED}\n\nTROUBLESHOOTING:\n1. {ESCAPED}\n\n{ESCAPED}\n"
+        )
+    );
+}

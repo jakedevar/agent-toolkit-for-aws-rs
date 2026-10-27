@@ -144,6 +144,24 @@ impl<'a> Args<'a> {
         }
     }
 
+    /// A required caller string for a text report, made single-line with
+    /// [`safe_text`] so it cannot add or forge a report line (#4652).
+    fn req_line(&self, key: &str) -> Result<String, ToolkitError> {
+        self.req_str(key).map(safe_text)
+    }
+
+    /// [`Args::req_line`] for an optional string.
+    fn opt_line(&self, key: &str) -> Result<Option<String>, ToolkitError> {
+        Ok(self.opt_str(key)?.map(safe_text))
+    }
+
+    /// [`Args::req_line`] for each item of an optional string array.
+    fn opt_lines(&self, key: &str) -> Result<Option<Vec<String>>, ToolkitError> {
+        Ok(self
+            .opt_strings(key)?
+            .map(|items| items.iter().map(|item| safe_text(item)).collect()))
+    }
+
     fn opt_i64(&self, key: &str) -> Result<Option<i64>, ToolkitError> {
         match self.present(key) {
             None => Ok(None),
@@ -323,7 +341,7 @@ fn status_check_from(
     Ok(StatusCheckResult {
         has_events,
         events,
-        error: args.opt_str("error")?.map(str::to_string),
+        error: args.opt_line("error")?,
     })
 }
 
@@ -382,17 +400,17 @@ fn render_text(op: &str, value: &Json) -> Result<String, ToolkitError> {
             )?;
             Ok(render_list_instrumentations_output(
                 json_or_empty(args.present("data")),
-                args.req_str("normalized_type")?,
-                args.req_str("service")?,
-                args.req_str("environment")?,
+                &args.req_line("normalized_type")?,
+                &args.req_line("service")?,
+                &args.req_line("environment")?,
             ))
         }
         "get" => {
             let args = Args::new(op, value, &["config", "service", "environment"])?;
             Ok(render_get_instrumentation_output(
                 json_or_empty(args.present("config")),
-                args.req_str("service")?,
-                args.req_str("environment")?,
+                &args.req_line("service")?,
+                &args.req_line("environment")?,
             ))
         }
         "batch-delete" => {
@@ -407,12 +425,16 @@ fn render_text(op: &str, value: &Json) -> Result<String, ToolkitError> {
                     "environment",
                 ],
             )?;
+            let mode = args.req_line("mode")?;
+            let instrumentation_type = args.req_line("instrumentation_type")?;
+            let service = args.opt_line("service")?;
+            let environment = args.opt_line("environment")?;
             Ok(format_batch_delete_response(
-                args.req_str("mode")?,
+                &mode,
                 json_or_empty(args.present("data")),
-                args.req_str("instrumentation_type")?,
-                args.opt_str("service")?,
-                args.opt_str("environment")?,
+                &instrumentation_type,
+                service.as_deref(),
+                environment.as_deref(),
             ))
         }
         "status-history" => {
@@ -429,10 +451,10 @@ fn render_text(op: &str, value: &Json) -> Result<String, ToolkitError> {
             )?;
             Ok(render_get_instrumentation_configuration_status_output(
                 json_or_empty(args.present("data")),
-                args.req_str("normalized_type")?,
-                args.req_str("service")?,
-                args.req_str("environment")?,
-                args.req_str("requested_status")?,
+                &args.req_line("normalized_type")?,
+                &args.req_line("service")?,
+                &args.req_line("environment")?,
+                &args.req_line("requested_status")?,
             ))
         }
         "snapshot-search" => render_snapshot_search(value),
@@ -471,13 +493,16 @@ fn render_create_success(value: &Json) -> Result<String, ToolkitError> {
         ],
     )?;
     let location = location_from_response(json_or_empty(args.present("location")));
-    let capture_arguments = args.opt_strings("capture_arguments")?;
-    let capture_locals = args.opt_strings("capture_locals")?;
+    let capture_arguments = args.opt_lines("capture_arguments")?;
+    let capture_locals = args.opt_lines("capture_locals")?;
     let limits = limits_from(&args)?;
+    let normalized_type = args.req_line("normalized_type")?;
+    let service = args.req_line("service")?;
+    let environment = args.req_line("environment")?;
     let summary = CreateSummary {
-        normalized_type: args.req_str("normalized_type")?,
-        service: args.req_str("service")?,
-        environment: args.req_str("environment")?,
+        normalized_type: &normalized_type,
+        service: &service,
+        environment: &environment,
         location: &location,
         ttl_hours: args.opt_i64("ttl_hours")?,
         capture_arguments: capture_arguments.as_deref(),
@@ -537,11 +562,15 @@ fn render_assessment(value: &Json) -> Result<OpResult, ToolkitError> {
     if let Some(error) = missing {
         return Err(error);
     }
+    let location_hash = args.req_line("location_hash")?;
+    let service = args.req_line("service")?;
+    let environment = args.req_line("environment")?;
+    let normalized_type = args.req_line("normalized_type")?;
     let subject = StatusSubject {
-        location_hash: args.req_str("location_hash")?,
-        service: args.req_str("service")?,
-        environment: args.req_str("environment")?,
-        normalized_type: args.req_str("normalized_type")?,
+        location_hash: &location_hash,
+        service: &service,
+        environment: &environment,
+        normalized_type: &normalized_type,
     };
     Ok(OpResult::success(render_status_assessment(
         &verdict, &subject, &window,
@@ -646,15 +675,19 @@ fn render_failure_text(value: &Json) -> Result<String, ToolkitError> {
         .iter()
         .map(|(key, value)| (key.as_str(), value.clone()))
         .collect();
-    let causes = args.opt_strings("possible_causes")?.unwrap_or_default();
+    // `Prose` is trusted multi-line text when the library builds it; here every
+    // field comes from caller JSON, so each one is made single-line (#4653).
+    let causes = args.opt_lines("possible_causes")?.unwrap_or_default();
     let cause_refs: Vec<&str> = causes.iter().map(String::as_str).collect();
-    let steps = args.opt_strings("troubleshooting")?.unwrap_or_default();
+    let steps = args.opt_lines("troubleshooting")?.unwrap_or_default();
     let step_refs: Vec<&str> = steps.iter().map(String::as_str).collect();
+    let attempted_label = args.opt_line("attempted_label")?;
+    let trailer = args.opt_line("trailer")?;
     let prose = Prose {
-        attempted_label: args.opt_str("attempted_label")?,
+        attempted_label: attempted_label.as_deref(),
         possible_causes: &cause_refs,
         troubleshooting: &step_refs,
-        trailer: args.opt_str("trailer")?,
+        trailer: trailer.as_deref(),
     };
     Ok(render_failure(
         &failure,

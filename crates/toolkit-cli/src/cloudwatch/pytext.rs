@@ -278,9 +278,11 @@ pub fn safe_text(text: &str) -> String {
     escape_unsafe(text, false)
 }
 
-/// Like [`safe_text`] but keeps newlines and tabs, for tool-authored multi-line prose
-/// (bullets, trailers) that a caller supplies whole: terminal controls are
-/// still escaped, so the block cannot clear or rewrite the terminal.
+/// Like [`safe_text`] but keeps newlines and tabs, for multi-line text the
+/// toolkit itself authors (bullets, trailers, whole reports): terminal
+/// controls are still escaped, so the block cannot clear or rewrite the
+/// terminal. Never use it for caller-supplied text: that goes through
+/// [`safe_text`], so it cannot add a line (#4652, #4653).
 #[must_use]
 pub fn safe_block(text: &str) -> String {
     escape_unsafe(text, true)

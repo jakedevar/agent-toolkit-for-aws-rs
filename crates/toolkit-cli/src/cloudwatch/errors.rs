@@ -78,6 +78,11 @@ fn client_error_body(code: Option<&str>, message: Option<&str>, display: &str) -
 }
 
 /// The tailored prose a call site supplies for a `ClientError`.
+///
+/// Prose is trusted, tool-authored text and may span lines (the location
+/// troubleshooting trailer does); only its terminal controls are escaped.
+/// Caller-supplied prose, such as the `cloudwatch render failure` JSON fields,
+/// must be made single-line with `safe_text` before it is put here (#4653).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Prose<'a> {
     /// Label of the attempted-values block (default `ATTEMPTED PARAMETERS:`).

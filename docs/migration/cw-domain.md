@@ -145,23 +145,70 @@ port escapes these, centrally, in `cloudwatch::pytext`:
   argument and JSON-parse errors), the failure action/code/message/display,
   attempted-parameter keys and values, the location detail lines (values, keys,
   hashes) and the region.
-- `safe_block` does the same but keeps newlines and tabs. It is applied to the
-  tool-authored multi-line prose a caller supplies whole (attempted label,
-  possible-cause and troubleshooting bullets, trailer) and to the complete
-  text printed by `cloudwatch render`, so no renderer can emit a raw control
-  other than the layout characters `\n` and `\t`.
+- `safe_block` does the same but keeps newlines and tabs. It is reserved for
+  multi-line text the toolkit itself authors: the library's `Prose` (attempted
+  label, possible-cause and troubleshooting bullets, and the trailer, such as
+  the location troubleshooting footer) and the complete text printed by
+  `cloudwatch render`. No renderer can therefore emit a raw control other
+  than the layout characters `\n` and `\t`. Caller-supplied text never goes
+  through `safe_block` (see "Caller text is single-line" below).
 
 Intentional differences: a real AWS message that contains a newline now shows
 `\n` on one line instead of breaking the `Error:` line, and a path or name that
-contains a tab shows `\t` inside a diagnostic line. Renderer output built from
-structured data (for example a service name inside a status table) is not
-reshaped line by line; only its terminal controls are escaped, because those
-renderers are multi-line reports by design. Streams and exit statuses are
+contains a tab shows `\t` inside a diagnostic line. Streams and exit statuses are
 unchanged: a failed check still prints on stdout and exits 1; unknown or
 mistyped arguments still print on stderr and exit 2. The regression tests are
 `tests_safety.rs` (unit) and the `#4634` section of
 `crates/toolkit-cli/tests/cloudwatch.rs` (binary, fake-secret sentinels in the
 environment, both channels inspected byte by byte).
+
+### Caller text is single-line (#4652, #4653)
+
+The rule: any text whose origin is the caller is rendered on one line with
+`safe_text`, so its newlines appear as `\n` and it cannot start a forged
+report line. Caller text here means argv values, JSON argument keys and
+values, caller-supplied context or prose, and AWS error messages.
+`cloudwatch::cli` applies the rule at the boundary, before any renderer runs:
+
+- Report context scalars of the text renderers: `list`, `get` and
+  `status-history` (`normalized_type`, `service`, `environment`,
+  `requested_status`); `batch-delete` (`mode`, `instrumentation_type`,
+  `service`, `environment`); `create-success` (`normalized_type`, `service`,
+  `environment`, every `capture_arguments` / `capture_locals` name);
+  `status-assessment` (`location_hash`, `service`, `environment`,
+  `normalized_type`, and each recorded check's `error`).
+- The `render failure` prose fields `attempted_label`, `possible_causes`,
+  `troubleshooting` and `trailer`. In the library, `Prose` is trusted,
+  tool-authored and may span lines (the location troubleshooting trailer of
+  `create_instrumentation` does). Through the CLI, every field comes from
+  caller JSON, so each one is made single-line before the `Prose` is built.
+  A caller that passes a multi-line trailer now sees it on one line with
+  `\n` escapes. No caller field is kept multi-line, so no continuation-line
+  marker is needed.
+- AWS error messages embedded in reports: the `batch-delete` `Errors[]`
+  `ResourceArn` / `Code` / `Message` and the status `ErrorCause`, in the
+  event lists, the ERROR check and the `OVERALL STATUS: ERROR (...)` line.
+  The earlier sections already covered the failure `Error:` line.
+
+`snapshot-search` and `snapshot-sample` print `json.dumps` text. A caller value
+there is a JSON string whose newline and controls are JSON escapes, so it is
+left unchanged: escaping it again would alter the JSON value.
+
+The residual limit: other AWS-structured report data (for example a
+`Description`, a location field returned by the service, or a `NextToken`) is
+not reshaped line by line. Only its terminal controls are escaped. Those
+fields come from the service response, not from the caller.
+
+Regression tests are in the `#4652 / #4653` section of
+`crates/toolkit-cli/tests/cloudwatch.rs`:
+
+- the reviewer's `list` reproduction and all four prose reproductions,
+  checked byte for byte;
+- a substitution test per text renderer. Every caller field holds a token.
+  The output for an ESC-plus-newline payload must equal the benign output
+  with each token replaced by its escaped form, and no `FORGED_REPORT` line
+  may appear.
+- the same check for the two JSON renderers, using the JSON-escaped form.
 
 ### Calendar construction (#4635)
 

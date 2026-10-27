@@ -8,7 +8,7 @@ use toolkit_core::Json;
 
 use super::consts::{resolve_snapshot_log_group, SNAPSHOT_SIGNAL_TYPE};
 use super::location::{location_from_response, render_location_block};
-use super::pytext::{get_array, get_text, get_truthy_text};
+use super::pytext::{get_array, get_text, get_truthy_text, safe_text};
 use super::status_assessment::{StatusCheckResult, TimeWindow, Verdict};
 use super::timefmt::format_timestamp;
 
@@ -76,7 +76,10 @@ pub fn render_get_instrumentation_configuration_status_output(
         for (index, event) in events.iter().enumerate() {
             let event_time = format_timestamp(event.get("Time"), "N/A");
             output.push_str(&format!("- Event {}: {event_time}", index + 1));
-            if let Some(cause) = get_truthy_text(event, "ErrorCause") {
+            if let Some(cause) = get_truthy_text(event, "ErrorCause")
+                .as_deref()
+                .map(safe_text)
+            {
                 output.push_str(&format!(" | ErrorCause: {cause}"));
             }
             output.push('\n');
@@ -125,7 +128,7 @@ fn render_status_section(
             if include_error_cause {
                 output.push_str(&format!(
                     " | ErrorCause: {}",
-                    get_text(event, "ErrorCause", "Unknown")
+                    safe_text(&get_text(event, "ErrorCause", "Unknown"))
                 ));
             }
             output.push('\n');
@@ -287,7 +290,7 @@ pub fn render_consolidated_error_or_pending_status_output(
     if error.has_events {
         let error_cause = error.events.first().map_or_else(
             || "Unknown".to_string(),
-            |event| get_text(event, "ErrorCause", "Unknown"),
+            |event| safe_text(&get_text(event, "ErrorCause", "Unknown")),
         );
         output.push_str(&format!("ERROR ({error_cause})\n"));
         output.push_str("\nTROUBLESHOOTING:\n");
