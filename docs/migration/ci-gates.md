@@ -54,8 +54,7 @@ The root `mise.toml` no longer installs `python` or `uv` and no task in it, or
 in `build.yml`, runs Python. `tests/ci_gates.rs::no_recipe_installs_or_invokes_python`
 enforces this. The plugin `mise.toml` now declares `python = "3.12"` and
 `uv = "latest"` itself because its remaining tasks still run Python helpers
-owned by other slices (`scripts/*.py`, `tools/check-skill-refs.py`,
-`tools/model-staleness.py`, `tests/`); mise merges the parent tools, so before
+owned by other slices (`scripts/*.py`, `tests/`); mise merges the parent tools, so before
 this change they came from the root. They go when those slices land.
 
 ## Retired Python (callers proven gone)
@@ -93,8 +92,9 @@ reachable from any recipe or workflow.
   canonical sources and checked byte-for-byte by `lint:skill-parity` and
   `lint:vendored-parity`; the write mode (`toolkit sync ... ` without
   `--check`) is the only way to refresh them.
-- `skill-refs-baseline.json` and `scripts/artifact-contracts-baseline.json`
-  belong to still-Python slices and are untouched.
+- `scripts/artifact-contracts-baseline.json` belongs to a still-Python slice and is
+  untouched; `tools/skill-refs-baseline.json` is read by `toolkit startup skill-refs`
+  (#4407).
 
 ## Merge resolutions (base stack)
 

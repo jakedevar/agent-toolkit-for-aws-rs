@@ -598,6 +598,55 @@ shape, is exit 1 with a one-line message that names the field and never echoes a
 parity table, every deliberate difference and the Python-to-Rust test mapping are in
 `docs/migration/startup-diagram.md`.
 
+## startup skill-refs and model-staleness (#4407)
+
+```
+toolkit startup skill-refs (--check | --list) [--plugin-root DIR] [--baseline FILE]
+                           [--no-baseline] [--json]
+toolkit startup model-staleness [--plugin-root DIR] [--strict]
+```
+
+Replacements for `plugins/aws-startup-advisor/tools/check-skill-refs.py` (and its
+tests) and `tools/model-staleness.py`, which are retired. Both are read-only,
+offline and never follow symbolic links (a link met while scanning, resolving or
+reading is an error). `--plugin-root` defaults to the current directory. Rule
+parity, every deliberate difference and the Python-to-Rust test mapping are in
+`docs/migration/startup-tools.md`.
+
+`skill-refs` checks that every file path the skills' and agents' Markdown
+mentions exists (`references/…`, `knowledge/…`, `scripts/…`, `$SKILL_BASE/…`,
+`./…`, and the other forms listed in the module documentation of
+`startup/skill_refs.rs`). Run-artifact paths, templated tokens and URLs are not
+references.
+
+- `--check`: one `ERROR  MISSING_REF  <file>:<line>  `<token>`` line per missing
+  reference, one `ERROR  STALE_BASELINE  ...` line per baseline entry that
+  matched nothing, a `baselined (...)` count and a final
+  `PASS|FAIL — N reference(s) checked, ...` line on stdout; exit 1 (plus an
+  `error: N skill reference problem(s)` line on stderr) on any missing reference
+  or stale entry. `--json` prints one JSON report instead (`references`,
+  `missing`, `baselined`, `stale_baseline_entries`).
+- `--list`: every reference as `<file>:<line>  <token>  ->  <target>|MISSING`;
+  exit 0.
+- `--baseline FILE` (default `tools/skill-refs-baseline.json` of `--plugin-root`;
+  a missing file is ignored) holds `ignore` rules (permanent) and `entries` (known
+  dead references, STALE when they stop matching). `--no-baseline` drops it. A
+  malformed baseline is `error: ...` (exit 1).
+- Neither `--check` nor `--list` is a usage error (exit 2).
+
+`model-staleness` reads `skills/shared/ai/ai-model-lifecycle.md` under
+`--plugin-root`: its `**Last updated:** YYYY-MM-DD` and `**Staleness window:** N days`
+lines, the required vendored copies (`gcp-to-aws`, `azure-to-aws`) and every
+`skills/*/references/vendored/ai/ai-model-lifecycle.md`, which must be
+byte-identical. A drifted or missing copy, a missing, malformed, impossible or
+future-dated contract, and a deleted canonical file whose copies survive fail
+always (stderr `  ERROR: <finding>`, then `error: model-staleness: N problem(s) —
+failing.`, exit 1). A snapshot older than its window is `  WARN: ...` and exit 0, and
+fails only with `--strict`. Success prints `  ok: ...` notes and
+`model-staleness: model registry fresh and in sync.` on stdout. The age is measured
+against the UTC date of the clock; the library entry point takes the date as a
+parameter, which is how the tests pin it.
+
 ## sync (#4377)
 
 `toolkit sync plugin-skills` makes every `plugins/<plugin>/skills/<name>` copy

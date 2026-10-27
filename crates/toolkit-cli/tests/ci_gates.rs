@@ -104,15 +104,21 @@ fn the_root_recipes_run_exactly_the_replacement_commands() {
 fn the_plugin_recipe_passes_its_own_directory_as_the_plugin_root() {
     let text = read("plugins/aws-startup-advisor/mise.toml");
     let commands = toolkit_commands(&text);
+    let words =
+        |line: &[&str]| -> Vec<String> { line.iter().map(|word| (*word).to_string()).collect() };
     assert_eq!(
         commands,
-        vec![vec![
-            "sync".to_string(),
-            "vendored".to_string(),
-            "--check".to_string(),
-            "--plugin-root".to_string(),
-            ".".to_string(),
-        ]]
+        vec![
+            words(&["sync", "vendored", "--check", "--plugin-root", "."]),
+            words(&["startup", "skill-refs", "--check", "--plugin-root", "."]),
+            words(&[
+                "startup",
+                "model-staleness",
+                "--strict",
+                "--plugin-root",
+                "."
+            ]),
+        ]
     );
     assert!(
         text.contains("--manifest-path ../../Cargo.toml"),
@@ -137,6 +143,11 @@ fn every_recipe_command_routes_and_passes_on_the_real_tree() {
                 Ok(Routed::Run(..)) => {}
                 other => panic!("{file}: `toolkit {args:?}` must route to a command: {other:?}"),
             }
+            // `model-staleness --strict` fails once the registry ages past its window,
+            // and this test cannot inject a date: run the same command without
+            // `--strict` (drift and a bad contract still fail). The strict path is
+            // covered with injected dates in `startup/model_staleness/tests.rs`.
+            let args: Vec<String> = args.into_iter().filter(|arg| arg != "--strict").collect();
             let (status, stdout, stderr) = execute(&resolve_paths(&args, &base));
             assert_eq!(
                 status, 0,
@@ -145,7 +156,7 @@ fn every_recipe_command_routes_and_passes_on_the_real_tree() {
             executed += 1;
         }
     }
-    assert_eq!(executed, 5);
+    assert_eq!(executed, 7);
 }
 
 #[test]
@@ -297,6 +308,9 @@ fn covered_python_is_retired_and_the_remaining_callers_are_listed() {
         "tools/tests/test_validate.py",
         "tools/validate_spec.py",
         "tools/sync-plugin-skills.py",
+        "plugins/aws-startup-advisor/tools/check-skill-refs.py",
+        "plugins/aws-startup-advisor/tools/test_check_skill_refs.py",
+        "plugins/aws-startup-advisor/tools/model-staleness.py",
     ] {
         assert!(!root.join(retired).exists(), "{retired} must be retired");
     }
