@@ -25,7 +25,7 @@ use super::evaluate::is_trace_id;
 use super::logs_query::Pacer;
 use super::omni_sql::{omni_query, EmptyPage, SPAN_ROW_LIMIT};
 use super::pytext::strip;
-use crate::bedrock_agent::fetch::optional_list;
+use super::aws_client::optional_list;
 use crate::dynamodb::pyfmt;
 
 const INPUT_KEYS: [&str; 2] = ["input.value", "gen_ai.input_value"];

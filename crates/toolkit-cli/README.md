@@ -365,6 +365,53 @@ read) but only escaped. A new command is covered the moment it is added to
 `COMMANDS`; make it pass by not echoing payload contents and by quoting any
 value you do echo.
 
+## Slices without a live AWS client: recorded input and responses (contributor note, #4727)
+
+A slice whose build has no live AWS client sends nothing and replays a recorded
+document (`--recorded FILE`). Reviews of the first two such slices (#4383
+bedrock-agent, #4384 ai-models) found the same defects in each hand-written
+copy: a wrong-typed or `null` recorded member silently defaulted (#4712,
+#4724), a `null` response list read as an empty discovery (#4713, #4725), and a
+failure step whose expected request was never compared (#4726). The rules now
+live once in `toolkit_aws::recorded`; use it instead of writing your own.
+
+1. **Recorded steps.** Parse each step with `step_fields`: an optional
+   `request` (an object) and exactly one of `response` (an object) and `error`
+   (an object). Read every optional member of the step and of its `error` with
+   `optional_text`, `optional_object`, `optional_list` or `optional_member`:
+   **absent** takes the default; **present with another type, `null`
+   included,** rejects the whole recording before anything runs.
+2. **Replay.** Store every step as a `Step` (`Step::response` or
+   `Step::failure`) with its expected request, for error steps too. Replay
+   in order with a `StepQueue` (a call past the last step is
+   `ReplayError::Exhausted`; `unconsumed()` counts the steps never used), or
+   look steps up with `Step::matches` and replay them with `Step::outcome`.
+   The request is compared **before** the outcome, success or failure.
+   Compare with `KeyOrder::Ignored` (Python `dict` equality); `ai-models`
+   keeps `KeyOrder::Significant` because its recordings already pin it.
+3. **Responses.** Read an optional response member with `optional_list`,
+   `optional_object_list`, `optional_string_list`, `optional_object` or
+   `optional_text`: absent or `[]` is empty; `null` or another type is an
+   `aws_invalid_response`, never an empty listing. A legitimately nullable
+   scalar is an explicit opt-in: `nullable_text`, and `toolkit_aws::next_token_from`
+   for a pagination token (absent, `null` and `""` end paging).
+4. **Diagnostics.** A `MemberError` carries the member name, the expected
+   type and the type found, never a value; render it with its `Display`
+   (`<key> must be <expected> when present (it is <found>)`) or from its
+   accessors, prefixed by the position (`calls.Search[0].error`), never by a
+   recorded value.
+
+`tests/recorded_contract.rs` enforces this for every top-level module of
+`src` whose non-test code defines a `RecordedClient` or uses
+`toolkit_aws::recorded`: such a slice must use the module, must not define
+its own `optional_*` or `same_json` helper, and must not read an array or
+object member ad hoc (`Some(Json::Array(..))`, `Some(Json::Object(..))`,
+`x @ Json::Array(..)`, `x @ Json::Object(..)`, `as_array`, `as_object`). When
+the value is not a response (a snapshot file, the command's own manifest, a
+request it built), or the member is required and every other shape is
+rejected, put `// recorded-shape: <reason>` on the line or in the comment
+block directly above it.
+
 ## Frontmatter additions (#4374)
 
 A leading UTF-8 byte-order mark is ignored. `name:` with no value or an empty
@@ -794,6 +841,59 @@ toolkit ai-data transform describe JOB_NAME [--region R]
 
 Parity table, the S3/SageMaker service seams, the remote-payload classification
 and every intentional change: [docs/migration/ai-data.md](../../docs/migration/ai-data.md).
+
+## ai-models (#4384)
+
+`toolkit ai-models` replaces `get_deployable_models.py`, `filter_deployable_models.py`,
+`search_deployable_models.py`, `get_model_names.py`, `get_recipes.py` and
+`collect_diagnostics.py` of the `aws-ai-ml` skill. Value flags are `--name VALUE`
+or `--name=VALUE` (not empty, not starting with `-`); no flag repeats.
+
+```
+toolkit ai-models list-models HUB [REGION] [--list-values] [--create-snapshot]
+    [--snapshot-file FILE] [--recorded FILE]
+toolkit ai-models filter MODELS_JSON [KEY:VALUE...]
+toolkit ai-models search SageMakerPublicHub [KEY:VALUE...] [--region R]
+    [--snapshot-file FILE] [--recorded FILE]
+toolkit ai-models model-names HUB [REGION] [--recorded FILE]
+toolkit ai-models recipes MODEL HUB [--recorded FILE]
+toolkit ai-models endpoint-diagnostics ENDPOINT REGION [--minutes N | --start TS [--end TS]]
+    [--now TS] [--recorded FILE]
+```
+
+- Output is `json.dumps` of the Python value (default separators, ASCII only):
+  every control or bidirectional character of a Hub or log value leaves the
+  program as a `\uXXXX` escape. Diagnostics are built from fixed wording and
+  escaped, quoted text; a rejected identifier is never echoed.
+- `list-models` lists the Hub's models (`ListHubContents`, 100 per page,
+  following `NextToken`) in the normalized shape, the distinct values per field
+  (`--list-values`) or a private (mode 0600, symlink-refusing) catalog snapshot
+  (`--snapshot-file FILE`, or a new `sherpa-model-catalog.*` file with
+  `--create-snapshot --list-values`). A snapshot needs a region: REGION or
+  `AWS_REGION` / `AWS_DEFAULT_REGION`.
+- `filter` applies `KEY:VALUE` words (13 keys; values of one key OR, keys AND;
+  a model without the filtered metadata is excluded) to a JSON list of models
+  and prints the summary with the matches, newest first. A `bedrock` or
+  `customization` value other than `true` / `false` is an error.
+- `search` resolves the words against the snapshot (`--snapshot-file`, else a
+  live listing) and queries SageMaker `Search` (`SageMakerPublicHub` only). A
+  failed, unsupported or malformed Search uses the complete local filter and
+  says so in `retrieval_backend` and `fallback_reason`; a bad constraint never
+  falls back.
+- `model-names` prints the sorted names of the fine-tunable models, `recipes`
+  the supported techniques (`sft`, `dpo`, `rlvr`, `rlaif`) of one model (an
+  unknown model is an error), `endpoint-diagnostics` the endpoint status, the
+  last `--minutes` (default 5) or `--start`/`--end` window of metrics and up to
+  100 log events of the trailing 15 minutes. `--now` pins the clock.
+- **No live AWS client is bound.** Without `--recorded FILE` every call fails
+  with exit 1 (`invalid client: this build has no live AWS client and sent
+  nothing`); `--recorded` replays recorded responses (`{"calls": {"Operation":
+  [{"request": {...}, "response": {...}} | {"error": {...}}]}}`), checking each
+  recorded request.
+
+Parity table, the client seam, the AWS documentation checked for the Rust
+SDK/HTTP surface and every intentional change:
+[docs/migration/ai-models.md](../../docs/migration/ai-models.md).
 
 ## bedrock-report (#4405)
 

@@ -14,7 +14,7 @@ use toolkit_core::Json;
 
 use super::aws_client::{failure_of, failure_text, AwsCalls, Service};
 use super::logs_query::Pacer;
-use crate::bedrock_agent::fetch::optional_list;
+use super::aws_client::optional_list;
 
 /// Fetch `LIMIT + 1` rows so an exactly-full result is detectable as truncated.
 pub const SPAN_ROW_LIMIT: usize = 1000;

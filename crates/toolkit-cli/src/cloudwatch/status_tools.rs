@@ -19,7 +19,7 @@ use super::timefmt::{parse_iso_timestamp, time_from_json, UtcTime};
 use super::validation::{
     is_valid_location_hash, normalize_instrumentation_type, validate_snapshot_signal,
 };
-use crate::bedrock_agent::fetch::optional_list;
+use super::aws_client::optional_list;
 
 const STATUS_IDENTIFIER_HELP: &str = "ERROR: Must provide one of:\n\
 - location_hash\n\

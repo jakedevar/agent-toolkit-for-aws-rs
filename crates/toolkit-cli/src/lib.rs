@@ -27,6 +27,7 @@ use toolkit_core::{
 };
 
 mod ai_data;
+mod ai_models;
 pub mod asm_exec;
 mod aurora;
 mod bedrock_agent;
@@ -113,6 +114,15 @@ Usage:
       [--base-job-name N] [--image-uri URI]
   toolkit ai-data transform submit (same options as plan)
   toolkit ai-data transform describe JOB_NAME [--region R]
+  toolkit ai-models list-models HUB [REGION] [--list-values] [--create-snapshot]
+      [--snapshot-file FILE] [--recorded FILE]
+  toolkit ai-models filter MODELS_JSON [KEY:VALUE...]
+  toolkit ai-models search SageMakerPublicHub [KEY:VALUE...] [--region R]
+      [--snapshot-file FILE] [--recorded FILE]
+  toolkit ai-models model-names HUB [REGION] [--recorded FILE]
+  toolkit ai-models recipes MODEL HUB [--recorded FILE]
+  toolkit ai-models endpoint-diagnostics ENDPOINT REGION [--minutes N | --start TS [--end TS]]
+      [--now TS] [--recorded FILE]
   toolkit bedrock-agent fetch --agent-id ID --out FILE [--agent-version VERSION]
       [--agent-alias-id ID] [--region REGION] [--profile PROFILE]
       [--inline-s3-schemas] [--recorded FILE]
@@ -360,6 +370,17 @@ Commands:
                 job; this build has no SageMaker or S3 client, so submit and
                 describe exit 1 and s3:// inputs are refused. See
                 docs/migration/ai-data.md.
+  ai-models     Model discovery and endpoint diagnostics of the AWS AI/ML skill
+                (#4384). list-models lists a SageMaker Hub's models (or their
+                distinct values, or a catalog snapshot), filter applies
+                KEY:VALUE constraints to a models file, search resolves them
+                against a snapshot and queries SageMaker Search (SageMakerPublicHub
+                only) with a visible ListHubContents fallback, model-names lists
+                the fine-tunable models, recipes the fine-tuning techniques of
+                one model, endpoint-diagnostics the status, metrics and recent
+                logs of an endpoint. This build has no live AWS client and sends
+                nothing: --recorded FILE replays recorded responses. See
+                docs/migration/ai-models.md.
   bedrock-agent fetch
                 Bedrock Agent discovery (#4383): fetch the agent, its action
                 groups, knowledge bases and data sources, collaborators,
@@ -1175,6 +1196,66 @@ pub const COMMANDS: &[CommandSpec] = &[
         max_positionals: 1,
         passthrough: false,
         handler: ai_data::transform_describe_command,
+    },
+    CommandSpec {
+        path: &["ai-models", "list-models"],
+        flags: ai_models::LIST_MODELS_FLAGS,
+        value_flags: ai_models::LIST_MODELS_VALUE_FLAGS,
+        strict_values: true,
+        repeatable_flags: &[],
+        max_positionals: 2,
+        passthrough: false,
+        handler: ai_models::list_models_command,
+    },
+    CommandSpec {
+        path: &["ai-models", "filter"],
+        flags: &[],
+        value_flags: &[],
+        strict_values: true,
+        repeatable_flags: &[],
+        max_positionals: ai_models::MAX_CONSTRAINT_POSITIONALS,
+        passthrough: false,
+        handler: ai_models::filter_command,
+    },
+    CommandSpec {
+        path: &["ai-models", "search"],
+        flags: &[],
+        value_flags: ai_models::SEARCH_VALUE_FLAGS,
+        strict_values: true,
+        repeatable_flags: &[],
+        max_positionals: ai_models::MAX_CONSTRAINT_POSITIONALS,
+        passthrough: false,
+        handler: ai_models::search_command,
+    },
+    CommandSpec {
+        path: &["ai-models", "model-names"],
+        flags: &[],
+        value_flags: ai_models::RECORDED_VALUE_FLAGS,
+        strict_values: true,
+        repeatable_flags: &[],
+        max_positionals: 2,
+        passthrough: false,
+        handler: ai_models::model_names_command,
+    },
+    CommandSpec {
+        path: &["ai-models", "recipes"],
+        flags: &[],
+        value_flags: ai_models::RECORDED_VALUE_FLAGS,
+        strict_values: true,
+        repeatable_flags: &[],
+        max_positionals: 2,
+        passthrough: false,
+        handler: ai_models::recipes_command,
+    },
+    CommandSpec {
+        path: &["ai-models", "endpoint-diagnostics"],
+        flags: &[],
+        value_flags: ai_models::DIAGNOSTICS_VALUE_FLAGS,
+        strict_values: true,
+        repeatable_flags: &[],
+        max_positionals: 2,
+        passthrough: false,
+        handler: ai_models::endpoint_diagnostics_command,
     },
     CommandSpec {
         path: &["bedrock-agent", "fetch"],

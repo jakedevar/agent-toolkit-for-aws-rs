@@ -38,7 +38,25 @@ use toolkit_aws::{AwsError, ServiceError};
 use toolkit_core::Json;
 
 use super::aws_client::{AwsCalls, Service};
-use crate::bedrock_agent::recorded::{optional_object, optional_string, same_json};
+use toolkit_aws::recorded::{same_json, MemberError};
+
+/// `"<key>" must be <expected> when present (it is <found>)`.
+fn quoted(error: &MemberError) -> String {
+    format!(
+        "\"{}\" must be {} when present (it is {})",
+        error.key(),
+        error.expected(),
+        error.found()
+    )
+}
+
+fn optional_string<'j>(object: &'j Json, key: &str) -> Result<Option<&'j str>, String> {
+    toolkit_aws::recorded::optional_text(object, key).map_err(|error| quoted(&error))
+}
+
+fn optional_object<'j>(object: &'j Json, key: &str) -> Result<Option<&'j Json>, String> {
+    toolkit_aws::recorded::optional_object(object, key).map_err(|error| quoted(&error))
+}
 
 /// True when every member of the recorded `expected` is in `actual` with an
 /// equal value (recursively for objects; arrays and scalars compare equal).
