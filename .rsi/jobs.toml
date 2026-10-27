@@ -1,8 +1,9 @@
 # Public daemon recipe manifest (AgentSubmitJob kind=test {recipe}).
 # Recipes run `make <target>` in the worktree; the Makefile relies on the
 # daemon-stamped build environment (CARGO_TARGET_DIR, RUSTC_WRAPPER/sccache)
-# and never overrides it. These recipes cover fmt, clippy and the workspace
-# test suite; candidate verification itself remains the daemon scoped_test
+# and never overrides it. These recipes cover fmt, clippy, the workspace
+# test suite and the toolkit-aws `sdk` feature (clippy-sdk, test-sdk);
+# candidate verification itself remains the daemon scoped_test
 # path (Issue #4373 AC4).
 version = 1
 
@@ -22,4 +23,18 @@ cpu_quota_percent = 200
 runner = "make"
 target = "test"
 timeout_minutes = 10
+cpu_quota_percent = 200
+
+# The toolkit-aws `sdk` feature (#4463) builds the AWS SDK dependency tree
+# (aws-lc-sys, hyper, rustls), so it has its own recipes and a longer timeout.
+[recipes.clippy-sdk]
+runner = "make"
+target = "clippy-sdk"
+timeout_minutes = 20
+cpu_quota_percent = 200
+
+[recipes.test-sdk]
+runner = "make"
+target = "test-sdk"
+timeout_minutes = 20
 cpu_quota_percent = 200

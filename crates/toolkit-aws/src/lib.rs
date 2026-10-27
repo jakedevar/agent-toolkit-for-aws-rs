@@ -2,8 +2,10 @@
 //!
 //! Everything a domain slice needs to talk to an AWS or AWS-style API *safely*,
 //! with no network, no credential access and no third-party dependency of its
-//! own (the AWS SDK binding is a separate, feature-gated adapter; see
-//! `docs/migration/aws-core-contracts.md`):
+//! own in the default build. The AWS SDK binding is the non-default cargo
+//! feature `sdk` (module `sdk`, #4463); its SDK-independent decisions live in
+//! [`binding`] and are tested in the default build. See
+//! `docs/migration/aws-core-contracts.md`:
 //!
 //! - [`config`]: region, profile and endpoint resolution into a [`ClientConfig`]
 //!   with the Python precedence rules;
@@ -22,6 +24,7 @@
 //! - [`testing`]: offline doubles for all of the above.
 #![allow(clippy::module_name_repetitions)]
 
+pub mod binding;
 pub mod client;
 pub mod config;
 pub mod credentials;
@@ -31,6 +34,8 @@ pub mod error;
 pub mod paginate;
 pub mod redact;
 pub mod retry;
+#[cfg(feature = "sdk")]
+pub mod sdk;
 pub mod testing;
 pub mod transport;
 

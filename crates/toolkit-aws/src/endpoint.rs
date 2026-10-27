@@ -289,7 +289,7 @@ pub fn validate_endpoint(
         return Err(reject("malformed path".to_string()));
     }
     if policy.check_dns {
-        check_resolution(&host, resolver).map_err(reject)?;
+        public_addresses(&host, resolver).map_err(reject)?;
     }
     Ok(Endpoint {
         host,
@@ -298,7 +298,16 @@ pub fn validate_endpoint(
     })
 }
 
-fn check_resolution(host: &str, resolver: &dyn HostResolver) -> Result<(), String> {
+/// Resolve `host` and return its addresses only if every answer is public
+/// ([`is_non_public`]). This is the check [`validate_endpoint`] applies, and
+/// the one the SDK transport applies again at connect time, so the addresses
+/// it connects to are exactly the addresses that passed (no rebinding window).
+///
+/// # Errors
+/// A failure description naming the host (and, for a non-public answer, the
+/// address and its block) when the lookup fails, returns nothing, or returns
+/// any non-public address.
+pub fn public_addresses(host: &str, resolver: &dyn HostResolver) -> Result<Vec<IpAddr>, String> {
     let addresses = resolver.resolve(host).map_err(|error| {
         format!(
             "DNS resolution failed for {host}: {}. Refusing to proceed with an unresolvable host",
@@ -310,16 +319,14 @@ fn check_resolution(host: &str, resolver: &dyn HostResolver) -> Result<(), Strin
             "DNS resolution returned no addresses for {host}. Refusing to proceed with an unresolvable host"
         ));
     }
-    for address in addresses {
-        if is_non_public(address) {
-            return Err(format!(
-                "host {host} resolves to the non-public address {address} ({}). \
-                 Refusing to send credentials to a non-public address",
-                non_public_reason(address)
-            ));
-        }
+    if let Some(&address) = addresses.iter().find(|&&address| is_non_public(address)) {
+        return Err(format!(
+            "host {host} resolves to the non-public address {address} ({}). \
+             Refusing to send credentials to a non-public address",
+            non_public_reason(address)
+        ));
     }
-    Ok(())
+    Ok(addresses)
 }
 
 /// Special-purpose IPv4 blocks that are never a public AWS endpoint
@@ -435,7 +442,7 @@ fn is_non_public_v6(address: Ipv6Addr) -> bool {
 }
 
 /// Name of the first non-public block containing `address`, for messages.
-fn non_public_reason(address: IpAddr) -> &'static str {
+pub(crate) fn non_public_reason(address: IpAddr) -> &'static str {
     match address {
         IpAddr::V4(v4) => v4_reason(v4),
         IpAddr::V6(v6) => {
