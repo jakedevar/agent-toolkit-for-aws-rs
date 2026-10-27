@@ -21,6 +21,7 @@
 //! | `startup verify-model-path` | `agent-advisor/scripts/verify_model_path.py` (#4402) |
 //! | `startup skill-refs` | `tools/check-skill-refs.py` (#4407) |
 //! | `startup model-staleness` | `tools/model-staleness.py` (#4407) |
+//! | `startup check-expected` | the sixteen `fixtures/**/check_expected_*.py` fixture asserters (#4408) |
 //!
 //! Each prints the Python messages unchanged: findings go to stderr through
 //! [`Output::diagnostic`] and a failing run additionally ends with one
@@ -41,6 +42,7 @@ use crate::manifests::{read_failure, universal_newlines};
 pub(crate) mod artifacts;
 mod consent;
 mod diagram;
+mod fixtures;
 mod model_ids;
 mod model_path;
 mod model_staleness;
@@ -58,6 +60,7 @@ pub(crate) mod text;
 pub use artifacts::artifacts_command;
 pub use consent::consent_audit_command;
 pub use diagram::build_diagram_command;
+pub use fixtures::check_expected_command;
 pub use model_ids::model_id_lint_command;
 pub use model_path::verify_model_path_command;
 pub use model_staleness::model_staleness_command;
