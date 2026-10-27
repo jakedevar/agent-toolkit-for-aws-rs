@@ -859,7 +859,7 @@ fn json_aliases(toks: &[Tok], types: &BTreeSet<String>) -> Vec<(usize, String)> 
             }
             j += 1;
         }
-        if last.is_some_and(|t| known(t)) && toks.get(j).is_some_and(|t| t.is(";")) {
+        if last.is_some_and(known) && toks.get(j).is_some_and(|t| t.is(";")) {
             found.push((tok.line, name.text.clone()));
         }
     }
@@ -870,7 +870,7 @@ fn json_aliases(toks: &[Tok], types: &BTreeSet<String>) -> Vec<(usize, String)> 
 /// aliases, followed to a fixed point (an alias of an alias, a re-export in
 /// another module).
 fn json_type_names(files: &[Parsed]) -> BTreeSet<String> {
-    let mut types: BTreeSet<String> = SHAPE_TYPES.iter().map(|name| name.to_string()).collect();
+    let mut types: BTreeSet<String> = SHAPE_TYPES.iter().map(ToString::to_string).collect();
     loop {
         let before = types.len();
         for file in files {
@@ -1673,8 +1673,17 @@ const ITEMS_READ: &str =
     "fn items(r: &Json) -> &[Json] {\n    match r.get(\"Items\") { Some(Json::Array(v)) => v, _ => &[] }\n}";
 
 /// Every round-2 evasion: each passes the scanner of 44c513a5 and fails this
-/// one. `(label, files)`; the in-scope slice is `fresh`.
+/// one. `(label, files)`; the in-scope slice is `fresh`. In order: markers
+/// (#4773, 0..12), patterns (#4774, 12..21), aliases (#4775, 21..).
 fn second_review_evasions() -> Vec<(&'static str, Vec<SourceFile>)> {
+    let mut cases = marker_evasions();
+    cases.extend(pattern_evasions());
+    cases.extend(alias_evasions());
+    cases
+}
+
+/// #4773: blank or placeholder reasons and module-wide exemptions.
+fn marker_evasions() -> Vec<(&'static str, Vec<SourceFile>)> {
     let one = |text: String| vec![file("fresh/deep/recording.rs", &text)];
     let use_line = "use toolkit_aws::recorded::Step;";
     let marked = |marker: &str| one(format!("{use_line}\n{marker}\n{ITEMS_READ}"));
@@ -1723,7 +1732,14 @@ fn second_review_evasions() -> Vec<(&'static str, Vec<SourceFile>)> {
                 "{use_line}\nfn items(r: &Json) -> &[Json] {{ // recorded-shape: a required member of the snapshot\n    match r.get(\"Items\") {{ Some(Json::Array(v)) => v, _ => &[] }}\n}}"
             )),
         ),
-        // #4774: brace-form and struct-field patterns.
+    ]
+}
+
+/// #4774: brace-form and struct-field patterns.
+fn pattern_evasions() -> Vec<(&'static str, Vec<SourceFile>)> {
+    let one = |text: String| vec![file("fresh/deep/recording.rs", &text)];
+    let use_line = "use toolkit_aws::recorded::Step;";
+    vec![
         (
             "brace-form tuple variant",
             one(format!(
@@ -1778,7 +1794,14 @@ fn second_review_evasions() -> Vec<(&'static str, Vec<SourceFile>)> {
                 "{use_line}\nfn n(r: &Json) -> usize {{ match r.get(\"I\") {{ Some {{ 0: Json::Array(v) }} => v.len(), _ => 0 }} }}"
             )),
         ),
-        // #4775: aliases of the JSON value type.
+    ]
+}
+
+/// #4775: aliases of the JSON value type.
+fn alias_evasions() -> Vec<(&'static str, Vec<SourceFile>)> {
+    let one = |text: String| vec![file("fresh/deep/recording.rs", &text)];
+    let use_line = "use toolkit_aws::recorded::Step;";
+    vec![
         (
             "type alias",
             one(format!(
