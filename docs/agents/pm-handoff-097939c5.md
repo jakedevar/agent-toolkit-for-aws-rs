@@ -177,3 +177,7 @@ Friction: #4727, Rsi #4694, Rsi #4704
   Round 13 candidates: #4727 (after #4745 re-review), #4381 (after #4742 re-review; contains 8f429632), #4408 (after #4744), #4743.
 - 21:40Z: #4727 repair 44c513a51fe7f3e76368d6a68c35fdeb1d7e7d9f (ecf77dbc; scope by flag/type/import, ban shape reads unless marked; 24 markers in ai_models/bedrock_agent; scoped 13a692cd ok base c464befb). Ruling: output construction not flagged = OK.
   Re-review round 2 #4745 worker 6a6ca4e7 (Codex sol high, pinned, op 345a6e58). NB #4381 repair merged 8f429632 (pre-repair); round 13 must merge 44c513a5 too and the repaired scanner must pass on cloudwatch.
+- 21:40Z: GM 17446779 mail: Rsi #4452 queue side deployed on hub (9a67b848, deploy 51a3df17). BLOCK LIFTED.
+  ENQUEUED #4575 round-12 f6fac27de0ae4ff0c737c319a1c270635ddb2217 (check ok), queue entry 5060cb2e-eafa-4224-88fd-c925f01d94ce seq 2887, generic_cargo, derive_filters. Reported up. Queue wakes me once with outcome; NO sha_on_rolling wake.
+  On landing: verify ancestry on origin/rolling, confirm publication closed #4575 + COVERS; close by hand per close-on-land lists (#4575 notes seq 21/23/25/27/29 + this file) only what publication left open. Report outcome up (GM wants it as #4452 acceptance evidence).
+  After landing, integration rounds base on new origin/rolling; next gate = round 13.
