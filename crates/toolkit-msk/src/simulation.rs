@@ -1218,7 +1218,11 @@ mod tests {
             ]
         );
         // The neighbours of the boundary reject the same way, never wrap.
-        for duration in ["-9223372036854775807", "-9223372036854775806", "-9223372036854775805"] {
+        for duration in [
+            "-9223372036854775807",
+            "-9223372036854775806",
+            "-9223372036854775805",
+        ] {
             let result = restart("1", duration, "2", "1");
             assert_eq!(result.decision(), "REJECT", "{duration}");
             assert_eq!(result.errors.len(), 2, "{duration}");
@@ -1279,7 +1283,9 @@ mod tests {
         }
         // The fleet bound is exactly the largest count whose MB/s fits an i64.
         assert_eq!(MAX_FLEET_PRODUCERS, 23_058_430_092_136_939);
-        assert!(MAX_FLEET_PRODUCERS.checked_mul(FLEET_NODE_THROUGHPUT_MBPS).is_some());
+        assert!(MAX_FLEET_PRODUCERS
+            .checked_mul(FLEET_NODE_THROUGHPUT_MBPS)
+            .is_some());
         assert!((MAX_FLEET_PRODUCERS + 1)
             .checked_mul(FLEET_NODE_THROUGHPUT_MBPS)
             .is_none());

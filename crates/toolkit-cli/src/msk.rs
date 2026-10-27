@@ -1397,7 +1397,10 @@ mod tests {
 
         let through = |raw: &str| resolve_output_path(raw).expect("resolves");
         let spelled = |tail: &str| format!("{}/{tail}", base.display());
-        assert_eq!(through(&spelled("link/../x.yaml")), base.join("real/x.yaml"));
+        assert_eq!(
+            through(&spelled("link/../x.yaml")),
+            base.join("real/x.yaml")
+        );
         assert_eq!(
             through(&spelled("link/missing/../y.yaml")),
             base.join("real/sub/y.yaml")

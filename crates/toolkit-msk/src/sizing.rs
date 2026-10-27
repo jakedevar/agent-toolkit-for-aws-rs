@@ -870,7 +870,9 @@ mod tests {
         inputs.primary_retention_hours = i64::MIN;
         let results = calculate_standard_sizing(&inputs, &pricing(), 0.0).expect("sizing");
         assert_eq!(results.len(), 15);
-        assert!(results.iter().all(|result| result.monthly_ts_cost.is_finite()));
+        assert!(results
+            .iter()
+            .all(|result| result.monthly_ts_cost.is_finite()));
     }
 
     #[test]
