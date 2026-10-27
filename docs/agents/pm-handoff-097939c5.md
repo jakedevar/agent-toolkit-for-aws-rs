@@ -203,3 +203,8 @@ Friction: #4727, Rsi #4694, Rsi #4704
   MANAGER ACCEPT #4727 at ec2740ed0f6b68eb4d6e59fb6681d2aea200c4bf (loop ended per ruling; recorded on #4727 handoff seq 4). Close-on-land: #4727 #4745 #4751 #4752 #4773 #4774 #4775.
   Follow-up #4793 worker b4182810 (Sonnet) from ec2740ed (op 9b776959); round 13 includes it if accepted in time.
 - 22:34Z: #4408 final repair e54d43ee2fc4ad1d61a9ab580f5720a0ea8a93c5 (3832ac18; provenance trust, shared design check; parent-proof 7e7beca4: 11 regressions fail on b848f1d8+tests; scoped ok 1839). Friction harness #4792 (at_commit lane: scripts/at-commit-test.sh missing). Round-3 FINAL re-review #4744 worker 66bcf33a (op 255826be), blocking limited.
+- 22:38Z: #4408 ACCEPT e54d43ee (#4744 r3, 66bcf33a; follow-ups #4795 #4796). #4743 ACCEPT 37973da8 (#4776 r2, d1bc7e93). Acceptances noted on Issues.
+  Close-on-land additions: #4408 #4744 #4746 #4747 #4748 #4753 #4754 #4759 #4777 #4778 #4779; #4743 #4764 #4776 #4780.
+  Round 13 worker 1de8fe29 (continue_from e43420e5, op 82c52cb4): #4727 ec2740ed + #4743 37973da8 + #4408 e54d43ee onto f6fac27d; marker-only fallout allowed; real response reads -> stop and report.
+  New slice #4391 (DynamoDB deploy/teardown plans) worker a7277981 (Sonnet) from f6fac27d (op 6aad89b7); security pre-review on its IAM output.
+  4/4 busy: 16f724e9 (#4381 r2), b4182810 (#4793), 1de8fe29 (#4575 r13), a7277981 (#4391).
