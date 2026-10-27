@@ -1,7 +1,8 @@
-# Python tooling for the helpers other migration slices still own (scripts/, tests/,
-# tools/check-skill-refs.py, tools/model-staleness.py). It was declared in the root
-# mise.toml until #4378 moved the repository validators to Rust; it stays scoped
-# to this plugin until those slices land.
+# Python tooling for the helpers other migration slices still own (scripts/, tests/).
+# It was declared in the root mise.toml until #4378 moved the repository validators
+# to Rust; it stays scoped to this plugin until those slices land. The reference
+# lint and the model-registry freshness gate are Rust (#4407).
+
 [tools]
 python = "3.12"
 uv = "latest"
@@ -16,7 +17,7 @@ run = "cargo run --locked --quiet --manifest-path ../../Cargo.toml --package too
 
 [tasks."lint:skill-refs"]
 description = "Check every file path the aws-startup-advisor skills reference exists"
-run = "python3 tools/check-skill-refs.py --check"
+run = "cargo run --locked --quiet --manifest-path ../../Cargo.toml --package toolkit-cli --bin toolkit -- startup skill-refs --check --plugin-root ."
 
 [tasks."lint:consent-disclosure"]
 description = "Usage-API discovery consent text must not contradict its own Capture Endpoint Table"
@@ -32,7 +33,7 @@ run = "markdownlint-cli2 --config ../../.markdownlint-cli2.yaml '**/*.md' '#node
 
 [tasks."lint:model-staleness"]
 description = "Check Bedrock model-lifecycle registry freshness"
-run = "python3 tools/model-staleness.py --strict"
+run = "cargo run --locked --quiet --manifest-path ../../Cargo.toml --package toolkit-cli --bin toolkit -- startup model-staleness --strict --plugin-root ."
 
 [tasks."lint:model-id"]
 description = "Check model references against the lifecycle registry"

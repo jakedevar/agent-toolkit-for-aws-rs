@@ -67,6 +67,9 @@ Usage:
                             [--plugin-root DIR]
   toolkit startup build-diagram RESULT CONFIRM [DESIGN]
   toolkit startup verify-model-path RECOMMENDATION [--output FILE] [--workload ID[,ID...]]
+  toolkit startup skill-refs (--check | --list) [--plugin-root DIR] [--baseline FILE]
+                            [--no-baseline] [--json]
+  toolkit startup model-staleness [--plugin-root DIR] [--strict]
   toolkit sync plugin-skills [--root DIR] [--plugin NAME] [--check]
   toolkit sync vendored [--plugin-root DIR] [--check]
   toolkit msk size [--emit-static-pricing] [--use-max-partitions]
@@ -270,6 +273,26 @@ Commands:
                 RESULT=ok|failed WORKLOADS=<n>; exit 2 when a probe failed or
                 needs resolution. Probe errors are redacted. This build has no
                 live Bedrock client: a probe reports a RuntimeError.
+  startup skill-refs (--check | --list)
+                Check that every file path the aws-startup-advisor skills and
+                agents mention exists (check-skill-refs.py). --check lists each
+                missing reference as `ERROR  MISSING_REF  file:line  `token``,
+                each baseline entry that matched nothing as STALE_BASELINE and a
+                final PASS or FAIL count line; exit 1 on any problem. --list
+                prints every reference and where it resolved. --baseline FILE
+                (default tools/skill-refs-baseline.json of --plugin-root; a
+                missing file is ignored) holds `ignore` rules and known dead
+                `entries`; --no-baseline drops it; --json prints one JSON report.
+                Symbolic links are refused. --plugin-root defaults to the current
+                directory.
+  startup model-staleness
+                Check the Bedrock model-lifecycle registry
+                skills/shared/ai/ai-model-lifecycle.md of --plugin-root: its
+                `**Last updated:**` and `**Staleness window:**` contract, the
+                required vendored copies and byte-identical vendored copies
+                (model-staleness.py). A drifted or missing copy, or a missing,
+                malformed or future-dated contract, fails always; a snapshot
+                older than its window warns, and fails (exit 1) with --strict.
   sync plugin-skills
                 Make plugins/<plugin>/skills/<name> copies byte-identical to the
                 canonical skills/**/<name> (a directory holding SKILL.md). --root
@@ -846,6 +869,24 @@ pub const COMMANDS: &[CommandSpec] = &[
         max_positionals: 1,
         passthrough: false,
         handler: startup::verify_model_path_command,
+    },
+    CommandSpec {
+        path: &["startup", "skill-refs"],
+        flags: &["--check", "--list", "--json", "--no-baseline"],
+        value_flags: &["--plugin-root", "--baseline"],
+        strict_values: true,
+        max_positionals: 0,
+        passthrough: false,
+        handler: startup::skill_refs_command,
+    },
+    CommandSpec {
+        path: &["startup", "model-staleness"],
+        flags: &["--strict"],
+        value_flags: &["--plugin-root"],
+        strict_values: true,
+        max_positionals: 0,
+        passthrough: false,
+        handler: startup::model_staleness_command,
     },
     CommandSpec {
         path: &["sync", "plugin-skills"],

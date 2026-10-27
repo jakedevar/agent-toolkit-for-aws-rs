@@ -19,6 +19,8 @@
 //! | `startup model-recommend` | `agent-advisor/scripts/model_recommendation.py` and its `anthropic_`/`openai_` engines (#4401) |
 //! | `startup build-diagram` | `agent-advisor/scripts/build_diagram.py` (#4402) |
 //! | `startup verify-model-path` | `agent-advisor/scripts/verify_model_path.py` (#4402) |
+//! | `startup skill-refs` | `tools/check-skill-refs.py` (#4407) |
+//! | `startup model-staleness` | `tools/model-staleness.py` (#4407) |
 //!
 //! Each prints the Python messages unchanged: findings go to stderr through
 //! [`Output::diagnostic`] and a failing run additionally ends with one
@@ -41,6 +43,7 @@ mod consent;
 mod diagram;
 mod model_ids;
 mod model_path;
+mod model_staleness;
 mod models;
 mod parity;
 mod plan;
@@ -48,6 +51,7 @@ mod pricing;
 mod program;
 mod report;
 mod scoring;
+mod skill_refs;
 mod terraform;
 pub(crate) mod text;
 
@@ -56,6 +60,7 @@ pub use consent::consent_audit_command;
 pub use diagram::build_diagram_command;
 pub use model_ids::model_id_lint_command;
 pub use model_path::verify_model_path_command;
+pub use model_staleness::model_staleness_command;
 pub use models::model_recommend_command;
 pub use parity::pricing_parity_command;
 pub use plan::emit_plan_command;
@@ -63,6 +68,7 @@ pub use pricing::pricing_command;
 pub use program::program_artifacts_command;
 pub use report::{heroku_report_command, migration_report_command};
 pub use scoring::{score_command, score_units_command};
+pub use skill_refs::skill_refs_command;
 pub use terraform::terraform_policy_command;
 
 /// Largest artifact or plugin file the validators read (64 MiB).
