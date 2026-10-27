@@ -168,3 +168,4 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 21:00Z: #4394 ACCEPT 72c730b2 (#4736 round 2, e70d7b66; quick but targeted read of tenant.rs/sql.rs + forge-path greps; friction #4760). Close-on-land additions: #4394 #4736 #4738.
   Round 12 worker e43420e5 (continue_from 5ed0647c, op 4479d1dd): #4394 72c730b2 onto c464befb. Then manager scoped (base origin/rolling, timeout 180) -> new gate.
   4/4 busy: ecf77dbc (#4727), 14bc584a (#4381), fa5c7051 (#4408), e43420e5 (#4575 r12).
+- 21:06Z: safety net: no GM mail; 4 workers healthy (14bc584a running; ecf77dbc, fa5c7051, e43420e5 parked on jobs). pm-safety-net re-armed 22:06Z (96891d73); rust-migration-health armed.
