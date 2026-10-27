@@ -794,6 +794,42 @@ Usage errors (both or neither input, a missing companion option, an unknown
 seams and every intentional change:
 [docs/migration/bedrock-report.md](../../docs/migration/bedrock-report.md).
 
+## bedrock-agent (#4383)
+
+`toolkit bedrock-agent fetch` replaces `fetch_bedrock_agent.py` of the
+`amazon-bedrock` skill: it gathers an agent, its action groups, knowledge bases
+and data sources, collaborators, aliases, versions and execution role (with its
+attached and inline policies) into one manifest JSON file.
+
+```
+toolkit bedrock-agent fetch --agent-id ID --out FILE [--agent-version VERSION]
+    [--agent-alias-id ID] [--region REGION] [--profile PROFILE]
+    [--inline-s3-schemas] [--recorded FILE]
+```
+
+- `--agent-version` defaults to `DRAFT`; a `DRAFT` fetch warns when non-test
+  aliases exist (`Fetched DRAFT but non-DRAFT aliases exist (prod->v3). ...`).
+  `--inline-s3-schemas` adds `_inlinedPayload` and `_inlinedSource` (or
+  `_inlineError`) to S3 `apiSchema` references.
+- This build has **no live AWS client**: `--recorded FILE` replays recorded
+  responses (service, operation, request and response or error per call; paged
+  requests carry their `nextToken`) and without it the first call fails with
+  `error: ...` and exit 1. `--profile` is accepted for compatibility and selects
+  nothing offline. The recorded format and the live-client follow-up are in
+  [docs/migration/bedrock-fetch.md](../../docs/migration/bedrock-fetch.md).
+- The region is `--region`, else `AWS_REGION`, else `AWS_DEFAULT_REGION`; with
+  none the script's `ERROR: no region resolved ...` line is printed and the exit
+  status is 2. A `get_agent` service error prints `ERROR: failed to fetch agent
+  "ID": ...` and exits 1 without writing a manifest. Other service errors on a
+  detail call are recorded in the manifest as `_error`/`_message` when they are
+  `AccessDeniedException`, `ResourceNotFoundException` or `ValidationException`
+  and end the run otherwise.
+- The manifest is written like `json.dump(indent=2)` (ASCII, no trailing
+  newline), mode `0600` on Unix; a symbolic link at `--out` is refused. On
+  success stdout is `Wrote FILE` plus `  WARNING: ...` lines. Text from AWS or the
+  command line is escaped on one line (`quote_untrusted`, `neutralize_line`)
+  before it reaches stdout or stderr.
+
 ## asm exec (#4451)
 
 `toolkit asm exec [--] COMMAND [ARG...]` is the Rust port of the
