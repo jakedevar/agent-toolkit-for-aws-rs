@@ -97,3 +97,5 @@ rust-migration-health (health_anomaly), pm-safety-net (hourly resume), terminal 
   Reported up to GM (msg 7161c110): gate dcd47147 ready + restart loop.
 - 18:46Z: #4383 repair 58e314de (8693bedd; #4712 optional_member accessor, #4713 optional_list at all sites). Re-review #4709 worker 055ac3ad (pinned).
 - 18:48Z: #4407 repair 9d0e54c8 (79398972; LineIndex linear scan + PythonScan oracle). Re-review #4708 worker e79425fe (pinned).
+- 18:55Z: #4383 ACCEPT 58e314de (#4709, 055ac3ad). #4403 repair3 14c60071 (dd4c1327; geo-independent is_respelling; scoped 57b628af ok) -> re-review round 4 #4682 worker 93154385 (pinned).
+  Round 9 (continue_from 2c1dd570, base dcd47147): #4383 58e314de + #4407 (if #4708 accepts 9d0e54c8) + #4403 (if #4682 accepts 14c60071); new rows need `repeatable_flags: &[]`.
