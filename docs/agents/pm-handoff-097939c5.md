@@ -118,3 +118,23 @@ rust-migration-health (health_anomaly), pm-safety-net (hourly resume), terminal 
 - 19:42Z: New slice #4381 (CloudWatch clients/CRUD/instrumentation) worker ad948f84 from a1db6c61.
 - 19:45Z: #4721 review of #4384 a611fb03: CHANGES_REQUESTED -> #4724 #4725 #4726 (same null-defaulting class as #4712/#4713). Repair worker fc047609 (continue_from e8a85e85).
   Kaizen filed #4727 (P2): shared recorded-input/response validator in toolkit-aws; dispatch after #4384 repair accepted (migrate bedrock_agent + ai-models).
+
+## STATE SNAPSHOT for successor (seat f9df4bb0, 19:05Z, context 37.5% of 40% cap)
+Playbook: /home/jakedevar/rsi/.claude/skills/rsi-project-manager/SKILL.md
+GATE (single, verified, NOT enqueued): #4575 round-10 head a1db6c616f8792880f803b260094d9f01b6a8613
+  source_session_id 215a5c49-13fb-46cb-bc56-0c4311d0c467, derive_filters true, issue 4575 (scoped 8ab77458 ok, 2365 tests; check ok).
+  Held ONLY for GM mail key gm-1b353269-4452-live-1 (Rsi #4452 live on hub; GM ETA 22-24Z). Reported up 18:33Z (msg 7161c110). Do not poll.
+  Close-on-land list: see #4575 manager notes (handoff seq 21, 23, 25) + predecessor list in this file.
+Integration: next round 11 continue_from 215a5c49 (base a1db6c61). Accepted & waiting: #4697 ffc0c74e (test-only). Add #4384 when its re-review accepts.
+  Each round: verify remerge-diff, scoped_test worktree=<round worker sandbox>, base origin/rolling, timeout 180, then AgentCheckLandingCandidate, note on #4575.
+  Slices predating #4670 need `repeatable_flags: &[]` on new COMMANDS rows.
+Live workers: #4384 repair fc047609 (#4724-#4726) -> then re-review on #4721 pinned to its commit;
+  #4408 c65e27aa (fixture assertions, base dcd47147); #4394 a33d3291 (RDS/DSQL/Timestream, base 550b629d); #4381 ad948f84 (CloudWatch clients/CRUD, base a1db6c61).
+  New implementations need a review Issue ("Review #N ... at <sha>") + Codex gpt-6.1-sol high reviewer with review_of + EXPLICIT sandbox_source commit (Rsi #4694).
+Rulings: AC2 fail-closed beats Python parity; recorded input: absent->default, present wrong-type/null->reject; no live AWS client in slices (follow-ups); 
+  repairs: Sonnet first round, Opus for repeats/security; max 4 workers; hub restarts mark workers Failed -> AgentContinueChild with AgentGetProgress cursor (Rsi #4704).
+Kaizen: filed this seat #4727 (P2 shared recorded validator; dispatch after #4384 accepted), harness Rsi #4694, Rsi #4704. Fixed this seat: #4670, #4697 (accepted, in/near integration), #4639 integrated.
+  Open: #4486 #4497 #4500 #4533 #4568 #4571 #4573 #4576 #4609 #4648 #4659 #4707(TIME-BOUND 2026-11-06 registry refresh).
+Hub: rsid restart loop 18:04/18:26/18:29 (health keys accepted in rust-migration-health ignore list).
+Wakes: rust-migration-health (health_anomaly), pm-safety-net (resume, 20:04Z), per-worker terminal watches.
+Friction: #4727, Rsi #4694, Rsi #4704
