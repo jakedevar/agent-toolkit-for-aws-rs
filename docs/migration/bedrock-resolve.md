@@ -45,13 +45,13 @@ matches) is new in Rust and reachable through `identity --mappings`.
 | Missing bytes, bad detail | `ValueError`, bytes checked before the extension, detail before bytes | same order | `an_image_path_without_bytes_is_an_error`, `every_sdk_detail_level_is_accepted_and_others_are_refused` |
 | Rate table | `STATIC_FALLBACK`, 44 rows, order significant | same rows, same order | `the_rate_table_matches_the_python_source` |
 | Lookup order | profile ARN, Opus 5.5 rule, static table, GPT short-circuit, Pricing API | same, with the recorded answer as the last step | `opus_5_5_pricing_is_region_and_profile_aware`, `table_models_are_served_without_a_price_list`, `an_unpriced_gpt_says_unavailable_not_nonexistent` |
-| Partial matches | bidirectional family match, date stamp strip, proprietary GPT ids exact only | same | `opus_4_8_is_priced_in_every_id_shape`, `unknown_astra_ids_never_inherit_another_rate`, `cris_forms_never_partial_match` |
+| Partial matches | bidirectional family match, date stamp strip, proprietary GPT ids exact only | exact, or the unique row sharing the date/revision-normalized form (item 10; prefixes and ambiguous bases are unavailable); GPT exact only | `opus_4_8_is_priced_in_every_id_shape`, `unknown_astra_ids_never_inherit_another_rate`, `cris_forms_never_partial_match`, `truncated_empty_or_partial_ids_are_never_priced` |
 | Inference options | Geo is 1.10x, Global is standard | same | `gpt_rates_follow_the_inference_option`, `global_and_eu_anthropic_prefixes_price_their_inference_option` |
 | Price parser | base input/output token dimensions only; cache, read, write, batch skipped | same | `price_dimensions_are_the_base_input_and_output_rates` |
 | Display name | `us.anthropic.claude-haiku-4-5-20251001-v1:0` is `Claude Haiku 4.5` | same | `display_names_are_derived_from_model_ids` |
 | Unavailable | `{"available": false, ...}`, never an exception | same, key order kept per source | `unavailable_is_a_banner_not_an_exception` |
 | `pricing` output | `json.dumps(indent=2)`, ids stripped, duplicates collapsed in first position | same | `the_pricing_command_prints_the_scripts_json` |
-| Source resolution | exact, shortest date/version pin, alphabetic suffix is `not_found` + `ambiguous_prefix`, otherwise five by longest common prefix | same | the ported `an_exact_match_wins` ... `no_match_ranks_by_the_longest_common_prefix` |
+| Source resolution | exact, shortest date/version pin, alphabetic suffix is `not_found` + `ambiguous_prefix`, otherwise five by longest common prefix | same, plus a tie of equally short pins is `not_found` + `ambiguous_prefix` (item 11) | the ported `an_exact_match_wins` ... `no_match_ranks_by_the_longest_common_prefix` |
 | Provider choice | the env file (never the ambient environment) decides; `SOURCE_PROVIDER` is authoritative | same (`--source-provider` or `SOURCE_PROVIDER`) | `the_env_file_is_authoritative_for_the_provider` |
 | Pagination | Anthropic `has_more`/`last_id`, Gemini `nextPageToken` | same over recorded pages | `the_anthropic_pagination_follows_has_more`, `the_gemini_pagination_follows_the_next_page_token` |
 | Statuses | `no_key` exit 2, `error` exit 3, otherwise 0 | same | `a_missing_key_exits_2_before_any_catalog_is_read`, `an_unusable_catalog_is_a_redacted_error_answer_with_exit_3` |
@@ -141,16 +141,40 @@ Rust tests, command output re-deferred**.
    superscript/subscript/enclosed digits); the name is only matched against
    recorded entries, so the difference cannot price a model.
 
-## Known parity quirks (kept, follow-up #4676)
+10. **Fail-closed price matching (#4684, intentional change).** Python's
+    forward rule (`key.startswith(base)`) priced any truncated, empty or
+    ambiguous id as the first table row that began with it, so `-v1`, `anthropic`
+    or `anthropic.claude` came back as Haiku 4.5. The Rust table lookup prices an
+    id only when, after removing a strict `-v<N>[:<M>]` revision and then a
+    `-YYYYMMDD` date stamp, it equals the same normal form of exactly one table
+    row. Prefixes (`anthropic`, `openai.gpt-`, `amazon.nova`), the empty id,
+    `-v1`, ids with an extra suffix after a separator
+    (`...opus-4-8-foo`) and bases shared by more than one row are
+    `available: false` with the fixed `Pricing unavailable` note and no rate. The
+    documented normalization still prices ids that resolve to one recognized row
+    (`anthropic.claude-haiku-4-5`, `us.anthropic.claude-sonnet-4-6-20250514-v1:0`,
+    `amazon.nova-pro`). Tests: `truncated_empty_or_partial_ids_are_never_priced`,
+    `a_base_shared_by_several_rows_is_ambiguous`,
+    `every_supported_normalized_id_still_prices_exactly_one_row`.
+11. **Ambiguous snapshots are not resolved (#4685, intentional change).** The
+    script took the first of two equally long safe snapshots in catalog order.
+    The Rust resolver removes duplicate catalog ids first (one model listed twice
+    is one candidate), and if distinct safe candidates tie for the shortest
+    length (`gpt-5.4-2026-03-05` and `gpt-5.4-2026-04-01` for plan `gpt-5.4`) it
+    answers `status: not_found` with `ambiguous_prefix: true`, no `resolved_id`,
+    the tied ids as `candidates`, and every safe hit in `all_hits`. The answer is
+    the same in either catalog order. Tests:
+    `tied_snapshots_are_ambiguous_in_either_catalog_order`,
+    `a_duplicated_catalog_id_is_one_candidate_not_a_tie`.
 
-- The `pricing` forward prefix rule (`key.startswith(base)`) matches the first
-  row for a very short or empty base, so `-v1` or `anthropic` is priced as
-  Haiku 4.5. Python behaviour, kept so the fixtures and the `pricing_behavior`
-  probes stay equal.
-- Two safe snapshots of equal length resolve to the first in catalog order
-  (`all_hits` lists both).
+## Superseded parity quirks (#4676)
 
-Neither is a paid probe: the commands never call a model.
+#4676 tracked two Python quirks that did not fail closed (the forward prefix
+price match and the first-of-equal-length snapshot). Both were landing blockers
+under AC2 and are replaced by items 10 and 11 above (#4684, #4685); #4676 is
+superseded by them.
+
+Nothing here is a paid probe: the commands never call a model.
 
 ## Callers (not changed in this slice)
 

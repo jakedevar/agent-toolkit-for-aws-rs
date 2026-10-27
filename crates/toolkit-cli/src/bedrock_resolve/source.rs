@@ -175,6 +175,15 @@ pub(crate) fn resolve(catalog: &[String], plan_id: &str) -> Json {
                 .collect(),
         )
     };
+    // A catalog that lists an id twice names one model, not two candidates
+    // (#4685); the first occurrence wins, so the order is otherwise kept.
+    let mut seen = std::collections::HashSet::new();
+    let unique: Vec<String> = catalog
+        .iter()
+        .filter(|id| seen.insert(id.as_str()))
+        .cloned()
+        .collect();
+    let catalog = unique.as_slice();
     if catalog.iter().any(|id| id == plan_id) {
         return Json::object(vec![
             ("status", Json::string("exact")),
@@ -194,7 +203,30 @@ pub(crate) fn resolve(catalog: &[String], plan_id: &str) -> Json {
         .copied()
         .filter(|id| safe_variant(id, plan_id))
         .collect();
-    safe_hits.sort_by_key(|id| id.chars().count());
+    // Shortest first; equal lengths in id order, so the answer does not
+    // depend on the order the catalog listed them in.
+    safe_hits.sort_by(|a, b| {
+        a.chars()
+            .count()
+            .cmp(&b.chars().count())
+            .then_with(|| a.cmp(b))
+    });
+    // Distinct candidates tied under the supported rule (two dated snapshots
+    // of the same length): no deterministic pick exists, so none is made
+    // (#4685). `all_hits` keeps the tie visible.
+    if let [first, second, ..] = safe_hits.as_slice() {
+        if first.chars().count() == second.chars().count() {
+            return Json::object(vec![
+                ("status", Json::string("not_found")),
+                (
+                    "candidates",
+                    text_list(&safe_hits[..safe_hits.len().min(5)]),
+                ),
+                ("ambiguous_prefix", Json::Bool(true)),
+                ("all_hits", text_list(&safe_hits)),
+            ]);
+        }
+    }
     if let Some(first) = safe_hits.first() {
         return Json::object(vec![
             ("status", Json::string("prefix")),

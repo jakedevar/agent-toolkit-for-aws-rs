@@ -945,6 +945,133 @@ fn opus_4_8_is_priced_in_every_id_shape() {
 }
 
 #[test]
+fn truncated_empty_or_partial_ids_are_never_priced() {
+    // #4684: the old forward `starts_with` rule priced these as the first
+    // table row (Haiku 4.5). They fail closed: unavailable, no rate.
+    for id in [
+        "anthropic",
+        "anthropic.claude",
+        "anthropic.claude-sonnet",
+        "anthropic.claude-haiku-4",
+        "us.anthropic.claude",
+        "openai.gpt-",
+        "openai",
+        "amazon",
+        "amazon.nova",
+        "us.",
+        "-v1",
+        "-v1:0",
+        "",
+        "-",
+        // A separator boundary alone is not enough.
+        "anthropic.claude-opus-4-8-foo",
+        "anthropic.claude-opus-4-8-",
+        "us.anthropic.claude-sonnet-5-preview",
+        "anthropic.claude-opus-4-85-v1:0",
+        "anthropic.claude-opus-4-8-v",
+        "anthropic.claude-opus-4-8-vx1",
+        "anthropic.claude-opus-4-8-v1:",
+        "anthropic.claude-opus-4-8-2025061",
+        "anthropic.claude-opus-4-8-20250610-extra",
+    ] {
+        assert_eq!(pricing::static_fallback(id).map(|p| p.note), None, "{id:?}");
+        let price = lookup("us-east-1", id);
+        assert!(!price.available, "{id:?}");
+        assert_eq!(rates(&price), (None, None), "{id:?}");
+        assert!(price.note.starts_with("Pricing unavailable"), "{id:?}");
+    }
+}
+
+#[test]
+fn a_base_shared_by_several_rows_is_ambiguous() {
+    // Synthetic table: both rows normalize to `x.model`. The base alone, and
+    // either dated spelling, must not pick one of them.
+    let table: [(&str, f64, f64); 3] = [
+        ("x.model-20250101-v1:0", 1.0, 2.0),
+        ("x.model-20260101-v1:0", 3.0, 4.0),
+        ("x.other-v1:0", 5.0, 6.0),
+    ];
+    for id in [
+        "x.model",
+        "x.model-20250101-v1:0",
+        "x.model-20990101",
+        "x.model-v2:0",
+    ] {
+        assert!(pricing::unique_normalized_row(&table, id).is_none(), "{id}");
+    }
+    assert_eq!(
+        pricing::unique_normalized_row(&table, "x.other-20260301-v1:0").map(|row| row.0),
+        Some("x.other-v1:0")
+    );
+    // The real table keeps one row per normal form, so nothing in it is
+    // ambiguous (a new row that breaks this makes its family unpriced).
+    for (key, _, _) in STATIC_FALLBACK {
+        assert!(
+            pricing::unique_normalized_row(STATIC_FALLBACK, key).is_some(),
+            "{key}"
+        );
+    }
+}
+
+#[test]
+fn every_supported_normalized_id_still_prices_exactly_one_row() {
+    // The documented normalization: a date stamp and/or `-v<N>[:<M>]`
+    // revision, on ids that resolve to exactly one recognized row.
+    for (id, key, input) in [
+        (
+            "anthropic.claude-haiku-4-5",
+            "anthropic.claude-haiku-4-5-20251001-v1:0",
+            0.001,
+        ),
+        (
+            "us.anthropic.claude-haiku-4-5-20251001",
+            "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+            0.0011,
+        ),
+        (
+            "eu.anthropic.claude-haiku-4-5-20260101-v2:0",
+            "eu.anthropic.claude-haiku-4-5-20251001-v1:0",
+            0.0011,
+        ),
+        (
+            "global.anthropic.claude-haiku-4-5-v1:0",
+            "global.anthropic.claude-haiku-4-5-20251001-v1:0",
+            0.001,
+        ),
+        (
+            "anthropic.claude-sonnet-5-v1:0",
+            "anthropic.claude-sonnet-5",
+            0.002,
+        ),
+        (
+            "us.anthropic.claude-sonnet-5-20260101-v1:0",
+            "us.anthropic.claude-sonnet-5",
+            0.0022,
+        ),
+        (
+            "us.anthropic.claude-sonnet-4-6-20250514-v1:0",
+            "us.anthropic.claude-sonnet-4-6",
+            0.0033,
+        ),
+        (
+            "global.anthropic.claude-opus-4-8-20250610",
+            "global.anthropic.claude-opus-4-8",
+            0.005,
+        ),
+        ("amazon.nova-pro", "amazon.nova-pro-v1:0", 0.0008),
+        ("amazon.nova-lite-v2:0", "amazon.nova-lite-v1:0", 0.00006),
+    ] {
+        let price = pricing::static_fallback(id).unwrap_or_else(|| panic!("{id}"));
+        assert_eq!(price.input_per_1k_usd, Some(input), "{id}");
+        assert_eq!(
+            price.note,
+            format!("static fallback (matched {key})"),
+            "{id}"
+        );
+    }
+}
+
+#[test]
 fn global_and_eu_anthropic_prefixes_price_their_inference_option() {
     for (id, input, output) in [
         ("global.anthropic.claude-sonnet-4-6", 0.003, 0.015),
@@ -1501,6 +1628,62 @@ fn the_shortest_safe_variant_is_picked() {
     assert_eq!(
         out.get("resolved_id").and_then(Json::as_str),
         Some("gpt-5.4-2026-03-05")
+    );
+    assert_eq!(
+        out.to_compact_string(),
+        r#"{"status":"prefix","resolved_id":"gpt-5.4-2026-03-05","all_hits":["gpt-5.4-2026-03-05"]}"#
+    );
+}
+
+#[test]
+fn tied_snapshots_are_ambiguous_in_either_catalog_order() {
+    // #4685: two distinct dated snapshots of the same length have no
+    // deterministic winner. Never a resolved_id; both stay in all_hits.
+    let expected = r#"{"status":"not_found","candidates":["gpt-5.4-2026-03-05","gpt-5.4-2026-04-01"],"ambiguous_prefix":true,"all_hits":["gpt-5.4-2026-03-05","gpt-5.4-2026-04-01"]}"#;
+    for catalog in [
+        ["gpt-5.4-2026-03-05", "gpt-5.4-2026-04-01"],
+        ["gpt-5.4-2026-04-01", "gpt-5.4-2026-03-05"],
+    ] {
+        let out = resolved(&catalog, "gpt-5.4");
+        assert_eq!(status(&out), "not_found", "{catalog:?}");
+        assert_eq!(out.get("resolved_id"), None, "{catalog:?}");
+        assert_eq!(
+            out.get("ambiguous_prefix"),
+            Some(&Json::Bool(true)),
+            "{catalog:?}"
+        );
+        let hits = out.get("all_hits").expect("all_hits");
+        assert_eq!(
+            hits.to_compact_string(),
+            r#"["gpt-5.4-2026-03-05","gpt-5.4-2026-04-01"]"#
+        );
+        assert_eq!(out.to_compact_string(), expected, "{catalog:?}");
+    }
+    // Two versions of equal length tie as well; a shorter one still wins.
+    assert_eq!(
+        status(&resolved(
+            &["gpt-5.4-3", "gpt-5.4-4", "gpt-5.4-3.1"],
+            "gpt-5.4"
+        )),
+        "not_found"
+    );
+    assert_eq!(
+        resolved(&["gpt-5.4-3.1", "gpt-5.4-3", "gpt-5.4-3.2"], "gpt-5.4")
+            .get("resolved_id")
+            .and_then(Json::as_str),
+        Some("gpt-5.4-3")
+    );
+}
+
+#[test]
+fn a_duplicated_catalog_id_is_one_candidate_not_a_tie() {
+    let out = resolved(
+        &[
+            "gpt-5.4-2026-03-05",
+            "gpt-5.4-2026-03-05",
+            "gpt-5.4-2026-03-05-1234",
+        ],
+        "gpt-5.4",
     );
     assert_eq!(
         out.to_compact_string(),

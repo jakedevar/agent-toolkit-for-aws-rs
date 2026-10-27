@@ -340,7 +340,7 @@ fn without_v_revision(text: &str) -> String {
     }
 }
 
-/// The static table and its partial-match rules. `None` when the id is not
+/// The static table: exact rows, then date/revision-normalized unique rows. `None` when the id is not
 /// priced there (Opus 5.5 always is, region-aware, elsewhere).
 pub(crate) fn static_fallback(model_id: &str) -> Option<Price> {
     if model_id.contains("claude-opus-5") {
@@ -359,36 +359,60 @@ pub(crate) fn static_fallback(model_id: &str) -> Option<Price> {
     if is_mantle_gpt(model_id) || is_geo_gpt_profile(model_id) {
         return None;
     }
-    // Strip the version suffix for a partial match. Bidirectional: a dateless
-    // query matches a dated key and a date-pinned query a dateless family key
-    // (the separator guard keeps ...opus-4-85 from matching ...opus-4-8).
-    let base = model_id
+    // Fail closed (#4684): see `unique_normalized_row`.
+    let (key, input, output) = unique_normalized_row(STATIC_FALLBACK, model_id)?;
+    Some(table_price(
+        *input,
+        *output,
+        format!("static fallback (matched {key})"),
+    ))
+}
+
+/// The one row of `table` whose date/revision normal form equals that of
+/// `model_id`. A prefix of a row ("anthropic", "openai.gpt-", "-v1"), a
+/// separator boundary alone ("...opus-4-8-foo") or a base shared by several
+/// rows is not a match: another model's rate would be a wrong answer.
+pub(super) fn unique_normalized_row<'a>(
+    table: &'a [(&'a str, f64, f64)],
+    model_id: &str,
+) -> Option<&'a (&'a str, f64, f64)> {
+    let wanted = normalized_id(model_id);
+    if wanted.is_empty() {
+        return None;
+    }
+    let mut hits = table
+        .iter()
+        .filter(|(key, _, _)| normalized_id(key) == wanted);
+    let row = hits.next()?;
+    if hits.next().is_some() {
+        return None; // Ambiguous: more than one row shares the base.
+    }
+    Some(row)
+}
+
+/// A Bedrock model id without its `-v<N>[:<M>]` revision and then its
+/// `-YYYYMMDD` date stamp (both strict: ASCII digits, nothing after them).
+fn normalized_id(model_id: &str) -> &str {
+    let without_revision = model_id
         .rfind("-v")
+        .filter(|&index| is_revision_tail(&model_id[index + 2..]))
         .map_or(model_id, |index| &model_id[..index]);
-    let matched = |key: &str, input: f64, output: f64| {
-        table_price(input, output, format!("static fallback (matched {key})"))
-    };
-    for (key, input, output) in STATIC_FALLBACK {
-        if key.starts_with(base)
-            || base == *key
-            || base
-                .strip_prefix(key)
-                .is_some_and(|rest| rest.starts_with('-'))
-        {
-            return Some(matched(key, *input, *output));
-        }
+    let bytes = without_revision.as_bytes();
+    let len = bytes.len();
+    if len >= 9 && bytes[len - 9] == b'-' && bytes[len - 8..].iter().all(u8::is_ascii_digit) {
+        &without_revision[..len - 9]
+    } else {
+        without_revision
     }
-    // A trailing date stamp is stripped so a dated ID still matches the
-    // undated table keys.
-    let dateless = without_date_stamp(base);
-    if dateless != base {
-        for (key, input, output) in STATIC_FALLBACK {
-            if key.starts_with(dateless.as_str()) {
-                return Some(matched(key, *input, *output));
-            }
-        }
-    }
-    None
+}
+
+/// `<digits>` or `<digits>:<digits>`.
+fn is_revision_tail(tail: &str) -> bool {
+    let all_digits = |part: &str| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit());
+    let mut parts = tail.split(':');
+    let first = parts.next().is_some_and(all_digits);
+    let second = parts.next().is_none_or(all_digits);
+    first && second && parts.next().is_none()
 }
 
 /// Python `str.isdigit()`: decimal digits plus the superscript, subscript and
