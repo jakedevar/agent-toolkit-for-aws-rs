@@ -424,12 +424,38 @@ pub struct SizingResult {
 
 /// Minimum broker count to serve `demand`, rounded up to a multiple of
 /// [`NUM_AZS`].
-#[must_use]
-pub fn brokers_for(demand: f64, per_broker_capacity: f64) -> i64 {
+///
+/// Python's integers never overflow; `i64` does. A demand that needs more
+/// brokers than an `i64` holds (or a non-finite quotient, such as a zero
+/// capacity) is reported as an error instead of saturating the cast or
+/// wrapping the multiplication (#4541).
+///
+/// # Errors
+///
+/// Returns a message naming the demand and capacity when the broker count is
+/// not representable.
+pub fn brokers_for(demand: f64, per_broker_capacity: f64) -> Result<i64, String> {
+    let too_large = || {
+        format!(
+            "the broker count for a demand of {} per broker capacity {} is not representable \
+             (it exceeds {} brokers or is not finite)",
+            py_float_repr(demand),
+            py_float_repr(per_broker_capacity),
+            i64::MAX
+        )
+    };
     let raw = (demand / per_broker_capacity).ceil();
     let groups = (raw / 3.0).ceil();
-    groups as i64 * NUM_AZS
+    if groups.is_nan() || groups.abs() > MAX_BROKER_GROUPS as f64 {
+        return Err(too_large());
+    }
+    // In range, so the cast is exact; the checked product guards the rounding
+    // of the bound itself.
+    (groups as i64).checked_mul(NUM_AZS).ok_or_else(too_large)
 }
+
+/// Largest number of 3-broker groups whose broker count fits an `i64`.
+const MAX_BROKER_GROUPS: i64 = i64::MAX / NUM_AZS;
 
 fn partition_limit(spec: &InstanceSpec, use_max: bool) -> i64 {
     if use_max {
@@ -495,11 +521,12 @@ pub fn calculate_standard_sizing(
         };
     let network_base = NETWORK_IO_BASE + if ts_in_use { NETWORK_IO_TS_ADD } else { 0.0 };
 
+    // Widened first: `retention - primary` can leave the i64 range for the
+    // unbounded Python ints (#4541).
+    let tiered_hours =
+        i128::from(inputs.retention_hours) - i128::from(inputs.primary_retention_hours);
     let ts_gb = if ts_in_use {
-        inputs.avg_data_in_mbs
-            * (inputs.retention_hours - inputs.primary_retention_hours) as f64
-            * 3600.0
-            / 1024.0
+        inputs.avg_data_in_mbs * tiered_hours as f64 * 3600.0 / 1024.0
     } else {
         0.0
     };
@@ -539,28 +566,28 @@ pub fn calculate_standard_sizing(
         let mut details = vec![
             BottleneckDetail {
                 name: "ingress",
-                brokers_needed: brokers_for(inputs.peak_data_in_mbs, ingress_capacity_per_broker),
+                brokers_needed: brokers_for(inputs.peak_data_in_mbs, ingress_capacity_per_broker)?,
                 demand: inputs.peak_data_in_mbs,
                 per_broker_capacity: ingress_capacity_per_broker,
                 unit: "MiB/s peak ingress (after util)".to_string(),
             },
             BottleneckDetail {
                 name: "egress",
-                brokers_needed: brokers_for(inputs.peak_data_out_mbs, egress_capacity_per_broker),
+                brokers_needed: brokers_for(inputs.peak_data_out_mbs, egress_capacity_per_broker)?,
                 demand: inputs.peak_data_out_mbs,
                 per_broker_capacity: egress_capacity_per_broker,
                 unit: "MiB/s peak egress (after util, fan-out)".to_string(),
             },
             BottleneckDetail {
                 name: "partitions",
-                brokers_needed: brokers_for(inputs.num_partitions as f64, limit as f64),
+                brokers_needed: brokers_for(inputs.num_partitions as f64, limit as f64)?,
                 demand: inputs.num_partitions as f64,
                 per_broker_capacity: limit as f64,
                 unit: partition_unit(inputs.use_max_partitions),
             },
             BottleneckDetail {
                 name: "storage",
-                brokers_needed: brokers_for(ebs_gb, MAX_EBS_GB_PER_BROKER),
+                brokers_needed: brokers_for(ebs_gb, MAX_EBS_GB_PER_BROKER)?,
                 demand: ebs_gb,
                 per_broker_capacity: MAX_EBS_GB_PER_BROKER,
                 unit: "GiB EBS primary".to_string(),
@@ -572,7 +599,7 @@ pub fn calculate_standard_sizing(
                 let effective_pst = requested.min(ebs_throughput_mbs);
                 details.push(BottleneckDetail {
                     name: "pst",
-                    brokers_needed: brokers_for(inputs.avg_data_out_mbs, effective_pst),
+                    brokers_needed: brokers_for(inputs.avg_data_out_mbs, effective_pst)?,
                     demand: inputs.avg_data_out_mbs,
                     per_broker_capacity: effective_pst,
                     unit: "MiB/s avg egress (capacity = PST cap, clamped to instance EBS max)"
@@ -655,21 +682,21 @@ pub fn calculate_express_sizing(
         let details = vec![
             BottleneckDetail {
                 name: "ingress",
-                brokers_needed: brokers_for(inputs.peak_data_in_mbs, ingress_capacity_per_broker),
+                brokers_needed: brokers_for(inputs.peak_data_in_mbs, ingress_capacity_per_broker)?,
                 demand: inputs.peak_data_in_mbs,
                 per_broker_capacity: ingress_capacity_per_broker,
                 unit: "MiB/s peak ingress (after util)".to_string(),
             },
             BottleneckDetail {
                 name: "egress",
-                brokers_needed: brokers_for(inputs.peak_data_out_mbs, egress_capacity_per_broker),
+                brokers_needed: brokers_for(inputs.peak_data_out_mbs, egress_capacity_per_broker)?,
                 demand: inputs.peak_data_out_mbs,
                 per_broker_capacity: egress_capacity_per_broker,
                 unit: "MiB/s peak egress".to_string(),
             },
             BottleneckDetail {
                 name: "partitions",
-                brokers_needed: brokers_for(inputs.num_partitions as f64, limit as f64),
+                brokers_needed: brokers_for(inputs.num_partitions as f64, limit as f64)?,
                 demand: inputs.num_partitions as f64,
                 per_broker_capacity: limit as f64,
                 unit: partition_unit(inputs.use_max_partitions),
@@ -781,13 +808,69 @@ mod tests {
 
     #[test]
     fn brokers_are_rounded_up_to_a_multiple_of_three_azs() {
-        assert_eq!(brokers_for(10.0, 5.0), 3);
-        assert_eq!(brokers_for(15.0, 5.0), 3);
-        assert_eq!(brokers_for(16.0, 5.0), 6);
-        assert_eq!(brokers_for(20.0, 5.0), 6);
-        assert_eq!(brokers_for(31.0, 5.0), 9);
-        assert_eq!(brokers_for(1.0, 1000.0), 3);
-        assert_eq!(brokers_for(0.0, 5.0), 0);
+        assert_eq!(brokers_for(10.0, 5.0), Ok(3));
+        assert_eq!(brokers_for(15.0, 5.0), Ok(3));
+        assert_eq!(brokers_for(16.0, 5.0), Ok(6));
+        assert_eq!(brokers_for(20.0, 5.0), Ok(6));
+        assert_eq!(brokers_for(31.0, 5.0), Ok(9));
+        assert_eq!(brokers_for(1.0, 1000.0), Ok(3));
+        assert_eq!(brokers_for(0.0, 5.0), Ok(0));
+    }
+
+    #[test]
+    fn broker_counts_stop_at_the_i64_boundary_with_an_error() {
+        // 3e18 groups of three brokers is exactly representable and fits.
+        assert_eq!(brokers_for(9.0e18, 1.0), Ok(9_000_000_000_000_000_000));
+        assert_eq!(MAX_BROKER_GROUPS, 3_074_457_345_618_258_602);
+        assert!(MAX_BROKER_GROUPS.checked_mul(NUM_AZS).is_some());
+        assert!((MAX_BROKER_GROUPS + 1).checked_mul(NUM_AZS).is_none());
+        // One group above the bound, a finite 1e30 and non-finite quotients are
+        // refused rather than saturated or wrapped (#4541).
+        for (demand, capacity) in [
+            (1.0e19, 1.0),
+            (1.0e30, 1.0),
+            (-1.0e30, 1.0),
+            (f64::MAX, 1.0),
+            (1.0, 0.0),
+            (0.0, 0.0),
+            (1.0, f64::MIN_POSITIVE),
+        ] {
+            let Err(message) = brokers_for(demand, capacity) else {
+                panic!("{demand} / {capacity} must be refused");
+            };
+            assert!(message.contains("is not representable"), "{message}");
+        }
+    }
+
+    #[test]
+    fn huge_but_finite_workloads_are_a_clean_error_for_both_classes() {
+        let mut inputs = workload();
+        inputs.avg_data_in_mbs = 1.0e30;
+        inputs.peak_data_in_mbs = 1.0e30;
+        inputs.avg_data_out_mbs = 1.0e30;
+        inputs.peak_data_out_mbs = 1.0e30;
+        assert_eq!(inputs.validate(), Ok(()));
+        for result in [
+            calculate_standard_sizing(&inputs, &pricing(), 0.0),
+            calculate_express_sizing(&inputs, &pricing(), 0.0),
+        ] {
+            let Err(message) = result else {
+                panic!("an unrepresentable broker count must be an error");
+            };
+            assert!(message.contains("is not representable"), "{message}");
+        }
+    }
+
+    #[test]
+    fn retention_difference_does_not_overflow() {
+        // retention - primary leaves the i64 range; the widened difference is
+        // still a number, so the sizing succeeds like Python's.
+        let mut inputs = workload();
+        inputs.retention_hours = i64::MAX;
+        inputs.primary_retention_hours = i64::MIN;
+        let results = calculate_standard_sizing(&inputs, &pricing(), 0.0).expect("sizing");
+        assert_eq!(results.len(), 15);
+        assert!(results.iter().all(|result| result.monthly_ts_cost.is_finite()));
     }
 
     #[test]

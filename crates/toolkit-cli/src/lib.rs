@@ -24,12 +24,19 @@ use std::path::PathBuf;
 
 use toolkit_core::{discover_skills, skills_to_json, ErrorKind, ToolkitError};
 
+pub mod manifests;
 mod msk;
+pub mod spec;
+mod sync;
 
 /// Usage text printed by `help` (stdout) and after usage errors (stderr).
 pub const USAGE: &str = "\
 Usage:
   toolkit skills list [ROOT] [--json]
+  toolkit manifests validate [ROOT] [--plugin NAME]
+  toolkit spec validate [ROOT]
+  toolkit sync plugin-skills [--root DIR] [--plugin NAME] [--check]
+  toolkit sync vendored [--plugin-root DIR] [--check]
   toolkit msk size [--emit-static-pricing] [--use-max-partitions]
                    [--no-rack-affined-consumers] [--region REGION]
                    [--pricing-source auto|api|static]
@@ -55,6 +62,28 @@ Commands:
   skills list   List skill directories (directories containing SKILL.md) under
                 ROOT, sorted by name then relative path. ROOT defaults to
                 `skills` in the current directory.
+  manifests validate
+                Validate the marketplace manifests, plugin manifests, MCP
+                configs and SKILL.md frontmatter of the repository at ROOT
+                (default: the current directory). With --plugin NAME only
+                that plugin under ROOT/plugins is validated. Problems are
+                reported as `  ERROR: ...` lines on stderr and exit status 1.
+  spec validate
+                Validate every plugin under ROOT/plugins (default ROOT: the
+                current directory) against the Agent Plugins v1.0.0 schemas in
+                ROOT/tools/schemas/1.0.0, the path, placeholder and MCP rules
+                the schemas cannot express, and the SKILL.md frontmatter of
+                each plugin skill. Problems are reported as `  ERROR: ...`
+                lines on stderr and exit status 1.
+  sync plugin-skills
+                Make plugins/<plugin>/skills/<name> copies byte-identical to the
+                canonical skills/**/<name> (a directory holding SKILL.md). --root
+                defaults to the current directory. --check reports drift, exits
+                1 and writes nothing.
+  sync vendored Make each skills/<skill>/references/vendored copy in the plugin
+                at --plugin-root (default plugins/aws-startup-advisor)
+                byte-identical to skills/shared and its README table. --check
+                reports drift, exits 1 and writes nothing.
   msk size      MSK broker sizing and monthly cost report (MiB/s, GiB, USD).
                 The workload options are required unless
                 --emit-static-pricing is given. Only --pricing-source static
@@ -72,6 +101,12 @@ Commands:
 
 Options:
   --json        Emit a JSON array of {name, description, path} objects.
+  --plugin NAME (manifests validate) Validate only the plugin directory
+                ROOT/plugins/NAME. (sync plugin-skills) Sync only that plugin.
+  --check       (sync) Report drift without writing; exit 1 when out of sync.
+  --root DIR, --plugin-root DIR
+                (sync) Repository root and plugin root. A value may also be
+                written --flag=VALUE.
   -h, --help    Print this help.
   -V, --version Print the version.
   Value options take `--name value` or `--name=value`; the msk commands are
@@ -80,17 +115,18 @@ Options:
 Exit codes:
   0  success (including help, version and an empty result)
   1  runtime error (missing root, root not a directory, unreadable files,
-     stdout write failure); msk size: pricing or workload error;
-     msk sim validate: decision REJECT
+     stdout write failure, unknown plugin, failed manifest or spec
+     validation, or drift found by a sync --check; msk size: pricing or
+     workload error; msk sim validate: decision REJECT)
   2  usage error (unknown command, missing or unknown arguments,
-     or a non-UTF-8 argument); msk sim: invalid sizing, config or output
-     (JSON {\"error\": ...} on stderr)";
+     or a non-UTF-8 argument; msk sim: invalid sizing, config or output,
+     reported as a JSON {\"error\": ...} object on stderr)";
 
 /// Buffered stdout lines with the closed-pipe and write-error contract.
 pub struct Output<'a> {
     sink: &'a mut dyn Write,
+    diagnostics: Option<&'a mut dyn Write>,
     closed: bool,
-    diagnostics: Vec<String>,
     status: u8,
 }
 
@@ -99,23 +135,38 @@ impl<'a> Output<'a> {
     pub fn new(sink: &'a mut dyn Write) -> Self {
         Self {
             sink,
+            diagnostics: None,
             closed: false,
-            diagnostics: Vec::new(),
             status: 0,
         }
     }
 
-    /// Queues a line for stderr. Diagnostics are written by [`run`] after the
-    /// handler returns, whatever its outcome, so commands that print a
-    /// published stderr format (warnings, a JSON error object) keep stdout
-    /// and stderr separate.
-    pub fn diagnostic(&mut self, text: impl Into<String>) {
-        self.diagnostics.push(text.into());
+    /// Wraps a stdout writer plus a diagnostics (stderr) writer for commands
+    /// that report findings line by line (#4375).
+    pub fn with_diagnostics(sink: &'a mut dyn Write, diagnostics: &'a mut dyn Write) -> Self {
+        Self {
+            sink,
+            diagnostics: Some(diagnostics),
+            closed: false,
+            status: 0,
+        }
+    }
+
+    /// Writes `text` and a newline to the diagnostics writer, if there is one.
+    ///
+    /// Failures are ignored: when stderr itself is gone there is nowhere left
+    /// to report that, which is also the rule for the final error report.
+    pub fn diagnostic(&mut self, text: &str) {
+        if let Some(writer) = self.diagnostics.as_mut() {
+            let _ = writer
+                .write_all(text.as_bytes())
+                .and_then(|()| writer.write_all(b"\n"));
+        }
     }
 
     /// Sets the exit status [`run`] returns when the handler itself succeeds.
     /// Commands whose published contract uses a non-zero status together with
-    /// regular output (a REJECT verdict, a legacy error code) set it here.
+    /// regular output (a REJECT verdict, a legacy error code) set it here (#4387).
     pub fn set_exit_status(&mut self, status: u8) {
         self.status = status;
     }
@@ -124,11 +175,6 @@ impl<'a> Output<'a> {
     #[must_use]
     pub fn exit_status(&self) -> u8 {
         self.status
-    }
-
-    /// Takes the queued stderr lines.
-    pub fn take_diagnostics(&mut self) -> Vec<String> {
-        std::mem::take(&mut self.diagnostics)
     }
 
     /// True once the reader went away; handlers should stop producing output.
@@ -192,9 +238,8 @@ pub struct Invocation {
     pub positionals: Vec<String>,
     /// Flags that were present (each at most once).
     pub flags: Vec<String>,
-    /// Value options as `(name, value)`; a repeated option keeps its last
-    /// value, like the legacy argument parsers.
-    pub options: Vec<(String, String)>,
+    /// Value flags that were present with their value (the last one wins).
+    pub values: Vec<(String, String)>,
 }
 
 impl Invocation {
@@ -204,26 +249,29 @@ impl Invocation {
         self.flags.iter().any(|flag| flag == name)
     }
 
-    /// The value of option `name` (for example `--region`), if given.
+    /// The value of the value flag `name` (for example `--plugin`; the last one
+    /// when repeated).
     #[must_use]
-    pub fn option(&self, name: &str) -> Option<&str> {
-        self.options
+    pub fn value(&self, name: &str) -> Option<&str> {
+        self.values
             .iter()
-            .find(|(key, _)| key == name)
+            .rev()
+            .find(|(flag, _)| flag == name)
             .map(|(_, value)| value.as_str())
-    }
-
-    fn set_option(&mut self, name: &str, value: &str) {
-        match self.options.iter_mut().find(|(key, _)| key == name) {
-            Some(entry) => entry.1 = value.to_string(),
-            None => self.options.push((name.to_string(), value.to_string())),
-        }
     }
 
     /// The positional argument at `index`, if any.
     #[must_use]
     pub fn positional(&self, index: usize) -> Option<&str> {
         self.positionals.get(index).map(String::as_str)
+    }
+
+    fn set_value(&mut self, name: &str, value: &str) {
+        if let Some(slot) = self.values.iter_mut().find(|(flag, _)| flag == name) {
+            slot.1 = value.to_string();
+        } else {
+            self.values.push((name.to_string(), value.to_string()));
+        }
     }
 }
 
@@ -237,9 +285,14 @@ pub struct CommandSpec {
     pub path: &'static [&'static str],
     /// Long flags the command accepts, for example `["--json"]`.
     pub flags: &'static [&'static str],
-    /// Long options that take a value (`--name value` or `--name=value`),
-    /// for example `["--region"]`.
+    /// Long flags that take one value, written `--name VALUE` or
+    /// `--name=VALUE`. A missing value is a usage error; see `strict_values`.
     pub value_flags: &'static [&'static str],
+    /// Whether a value flag rejects an empty value and one starting with `-`
+    /// (so `--plugin-root --check` is a usage error). Off for
+    /// `manifests validate`, whose `--plugin` takes the next word whatever it
+    /// looks like (#4375); on for `sync` (#4377).
+    pub strict_values: bool,
     /// Maximum number of positional arguments.
     pub max_positionals: usize,
     /// The implementation.
@@ -251,6 +304,7 @@ impl fmt::Debug for CommandSpec {
         f.debug_struct("CommandSpec")
             .field("path", &self.path)
             .field("flags", &self.flags)
+            .field("value_flags", &self.value_flags)
             .finish_non_exhaustive()
     }
 }
@@ -261,13 +315,47 @@ pub const COMMANDS: &[CommandSpec] = &[
         path: &["skills", "list"],
         flags: &["--json"],
         value_flags: &[],
+        strict_values: false,
         max_positionals: 1,
         handler: skills_list,
+    },
+    CommandSpec {
+        path: &["manifests", "validate"],
+        flags: &[],
+        value_flags: &["--plugin"],
+        strict_values: false,
+        max_positionals: 1,
+        handler: manifests::validate_command,
+    },
+    CommandSpec {
+        path: &["spec", "validate"],
+        flags: &[],
+        value_flags: &[],
+        strict_values: false,
+        max_positionals: 1,
+        handler: spec::validate_command,
+    },
+    CommandSpec {
+        path: &["sync", "plugin-skills"],
+        flags: &["--check"],
+        value_flags: &["--root", "--plugin"],
+        strict_values: true,
+        max_positionals: 0,
+        handler: sync::plugin_skills,
+    },
+    CommandSpec {
+        path: &["sync", "vendored"],
+        flags: &["--check"],
+        value_flags: &["--plugin-root"],
+        strict_values: true,
+        max_positionals: 0,
+        handler: sync::vendored,
     },
     CommandSpec {
         path: &["msk", "size"],
         flags: msk::SIZE_FLAGS,
         value_flags: msk::SIZE_VALUE_FLAGS,
+        strict_values: false,
         max_positionals: 0,
         handler: msk::size,
     },
@@ -275,6 +363,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         path: &["msk", "compat"],
         flags: &[],
         value_flags: msk::COMPAT_VALUE_FLAGS,
+        strict_values: false,
         max_positionals: 1,
         handler: msk::compat,
     },
@@ -282,6 +371,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         path: &["msk", "sim", "compute"],
         flags: &[],
         value_flags: msk::SIM_COMPUTE_VALUE_FLAGS,
+        strict_values: false,
         max_positionals: 0,
         handler: msk::sim_compute,
     },
@@ -289,6 +379,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         path: &["msk", "sim", "render"],
         flags: &[],
         value_flags: msk::SIM_RENDER_VALUE_FLAGS,
+        strict_values: false,
         max_positionals: 0,
         handler: msk::sim_render,
     },
@@ -296,6 +387,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         path: &["msk", "sim", "validate"],
         flags: &[],
         value_flags: msk::SIM_VALIDATE_VALUE_FLAGS,
+        strict_values: false,
         max_positionals: 0,
         handler: msk::sim_validate,
     },
@@ -316,12 +408,21 @@ fn usage_error() -> ToolkitError {
     ToolkitError::usage("invalid_arguments", "invalid arguments")
 }
 
+/// Whether `value` may follow a value flag of `spec` (see
+/// [`CommandSpec::strict_values`]).
+fn value_allowed(spec: &CommandSpec, value: &str) -> bool {
+    !spec.strict_values || !(value.is_empty() || value.starts_with('-'))
+}
+
 /// Routes already-decoded arguments (without the program name).
 ///
 /// `help`/`-h`/`--help` and `version`/`-V`/`--version` as the first argument
 /// win over everything after them. Inside a command, `-h`/`--help` selects
-/// help, any other `-`-prefixed word must be one of the command's flags and
-/// there may be at most `max_positionals` other words.
+/// help, any other `-`-prefixed word must be one of the command's flags or
+/// value flags and there may be at most `max_positionals` other words. A value
+/// flag takes the next word (or the text after `=`) as its value; repeating it
+/// keeps the last value, and a value flag at the end of the arguments with no
+/// value is a usage error.
 ///
 /// # Errors
 ///
@@ -354,28 +455,27 @@ pub fn route<'a>(specs: &'a [CommandSpec], args: &[String]) -> Result<Routed<'a>
         if word == "-h" || word == "--help" {
             return Ok(Routed::Help);
         }
-        if let Some((name, value)) = word
-            .split_once('=')
-            .filter(|(name, _)| spec.value_flags.contains(name))
-        {
-            invocation.set_option(name, value);
-            continue;
-        }
-        if spec.value_flags.contains(&word) {
-            let Some(value) = rest.next() else {
-                return Err(ToolkitError::usage(
-                    "invalid_arguments",
-                    format!("invalid arguments: option {word} requires a value"),
-                ));
-            };
-            invocation.set_option(word, value);
-            continue;
-        }
         if word.starts_with('-') {
-            if !spec.flags.contains(&word) {
+            if spec.value_flags.contains(&word) {
+                // `--name value`: the next word is the value.
+                let Some(value) = rest.next() else {
+                    return Err(usage_error());
+                };
+                if !value_allowed(spec, value) {
+                    return Err(usage_error());
+                }
+                invocation.set_value(word, value);
+            } else if let Some((name, value)) = word
+                .split_once('=')
+                .filter(|(name, _)| spec.value_flags.contains(name))
+            {
+                if !value_allowed(spec, value) {
+                    return Err(usage_error());
+                }
+                invocation.set_value(name, value);
+            } else if !spec.flags.contains(&word) {
                 return Err(usage_error());
-            }
-            if !invocation.has_flag(word) {
+            } else if !invocation.has_flag(word) {
                 invocation.flags.push(arg.clone());
             }
         } else {
@@ -445,16 +545,10 @@ pub fn run(args: &[OsString], out: &mut dyn Write, err: &mut dyn Write) -> u8 {
             print_static(out, err, &format!("toolkit {}", env!("CARGO_PKG_VERSION")))
         }
         Ok(Routed::Run(spec, invocation)) => {
-            let mut output = Output::new(out);
+            let mut output = Output::with_diagnostics(out, err);
             let result = (spec.handler)(&invocation, &mut output).and_then(|()| output.finish());
-            let status = output.exit_status();
-            for line in output.take_diagnostics() {
-                // stderr may be closed too; there is nowhere left to report that.
-                let _ = err.write_all(line.as_bytes());
-                let _ = err.write_all(b"\n");
-            }
             match result {
-                Ok(()) => status,
+                Ok(()) => output.exit_status(),
                 Err(error) => report(err, &error),
             }
         }
@@ -565,6 +659,65 @@ mod tests {
     }
 
     #[test]
+    fn value_flags_take_one_value_in_either_spelling() {
+        for values in [
+            vec![
+                "sync",
+                "plugin-skills",
+                "--root",
+                "r",
+                "--plugin",
+                "p",
+                "--check",
+            ],
+            vec!["sync", "plugin-skills", "--check", "--plugin=p", "--root=r"],
+        ] {
+            let Ok(Routed::Run(spec, invocation)) = route_words(&values) else {
+                panic!("expected a runnable route for {values:?}");
+            };
+            assert_eq!(spec.path, &["sync", "plugin-skills"]);
+            assert_eq!(invocation.value("--root"), Some("r"));
+            assert_eq!(invocation.value("--plugin"), Some("p"));
+            assert!(invocation.has_flag("--check"));
+            assert!(invocation.positionals.is_empty());
+        }
+        let Ok(Routed::Run(_, invocation)) =
+            route_words(&["sync", "vendored", "--plugin-root", "a", "--plugin-root=b"])
+        else {
+            panic!("expected a runnable route");
+        };
+        assert_eq!(
+            invocation.value("--plugin-root"),
+            Some("b"),
+            "last one wins"
+        );
+        assert_eq!(invocation.value("--root"), None);
+    }
+
+    #[test]
+    fn value_flag_misuse_is_a_usage_error() {
+        for values in [
+            vec!["sync", "vendored", "--plugin-root"],
+            vec!["sync", "vendored", "--plugin-root", "--check"],
+            vec!["sync", "vendored", "--plugin-root", ""],
+            vec!["sync", "vendored", "--plugin-root="],
+            vec!["sync", "vendored", "--plugin-root=-x"],
+            vec!["sync", "vendored", "--check=1"],
+            vec!["sync", "vendored", "--root", "x"],
+            vec!["sync", "vendored", "positional"],
+            vec!["sync", "plugin-skills", "--json"],
+            vec!["skills", "list", "--root", "x"],
+            vec!["sync"],
+        ] {
+            let Err(error) = route_words(&values) else {
+                panic!("{values:?} must be a usage error");
+            };
+            assert_eq!(error.kind(), ErrorKind::Usage, "{values:?}");
+            assert_eq!(error.exit_code(), 2);
+        }
+    }
+
+    #[test]
     fn help_and_version_short_circuit() {
         for values in [
             vec!["--help"],
@@ -615,6 +768,9 @@ mod tests {
             let joined = spec.path.join(" ");
             assert!(USAGE.contains(&joined), "usage lacks '{joined}'");
             for flag in spec.flags.iter().chain(spec.value_flags) {
+                assert!(USAGE.contains(flag), "usage lacks '{flag}'");
+            }
+            for flag in spec.value_flags {
                 assert!(USAGE.contains(flag), "usage lacks '{flag}'");
             }
         }
@@ -750,7 +906,7 @@ mod tests {
     }
 
     #[test]
-    fn value_options_accept_both_spellings_and_the_last_value_wins() {
+    fn msk_commands_route_with_value_options_in_both_spellings() {
         let Ok(Routed::Run(spec, invocation)) = route_words(&[
             "msk",
             "sim",
@@ -764,15 +920,17 @@ mod tests {
             panic!("expected a runnable route");
         };
         assert_eq!(spec.path, &["msk", "sim", "compute"]);
-        assert_eq!(invocation.option("--instance-type"), Some("b"));
-        assert_eq!(invocation.option("--broker-count"), Some("9"));
-        assert_eq!(invocation.option("--kafka-version"), None);
-        assert_eq!(invocation.options.len(), 2);
+        assert_eq!(invocation.value("--instance-type"), Some("b"));
+        assert_eq!(invocation.value("--broker-count"), Some("9"));
+        assert_eq!(invocation.value("--kafka-version"), None);
+        assert_eq!(invocation.values.len(), 2);
     }
 
     #[test]
-    fn value_options_consume_the_next_word_even_when_it_looks_like_a_flag() {
-        let Ok(Routed::Run(_, invocation)) = route_words(&[
+    fn msk_value_options_consume_the_next_word_even_when_it_looks_like_a_flag() {
+        // argparse semantics: a negative number is a value (the legacy script
+        // then rejects it), so msk uses the lenient value rule.
+        let Ok(Routed::Run(spec, invocation)) = route_words(&[
             "msk",
             "size",
             "--avg-data-in-mbs",
@@ -781,13 +939,14 @@ mod tests {
         ]) else {
             panic!("expected a runnable route");
         };
-        assert_eq!(invocation.option("--avg-data-in-mbs"), Some("-5"));
+        assert!(!spec.strict_values);
+        assert_eq!(invocation.value("--avg-data-in-mbs"), Some("-5"));
         assert!(invocation.has_flag("--use-max-partitions"));
         assert!(invocation.positionals.is_empty());
     }
 
     #[test]
-    fn value_option_errors_are_usage_errors() {
+    fn msk_argument_errors_are_usage_errors() {
         for values in [
             vec!["msk", "sim", "compute", "--broker-count"],
             vec!["msk", "sim", "compute", "--wat", "1"],
@@ -804,21 +963,14 @@ mod tests {
             assert_eq!(error.kind(), ErrorKind::Usage, "{values:?}");
             assert_eq!(error.exit_code(), 2);
         }
-        let Err(error) = route_words(&["msk", "sim", "compute", "--broker-count"]) else {
-            panic!("missing value must fail");
-        };
-        assert_eq!(
-            error.message(),
-            "invalid arguments: option --broker-count requires a value"
-        );
     }
 
     #[test]
-    fn handlers_can_queue_stderr_lines_and_set_the_exit_status() {
+    fn handlers_can_write_stderr_lines_and_set_the_exit_status() {
         fn handler(_: &Invocation, output: &mut Output<'_>) -> Result<(), ToolkitError> {
             output.line("data")?;
             output.diagnostic("warning one");
-            output.diagnostic(String::from("warning two"));
+            output.diagnostic("warning two");
             output.set_exit_status(7);
             Ok(())
         }
@@ -826,6 +978,7 @@ mod tests {
             path: &["demo"],
             flags: &[],
             value_flags: &[],
+            strict_values: false,
             max_positionals: 0,
             handler,
         };
@@ -835,15 +988,31 @@ mod tests {
             panic!("expected a runnable route");
         };
         let mut out = Vec::new();
-        let mut output = Output::new(&mut out);
+        let mut err = Vec::new();
+        let mut output = Output::with_diagnostics(&mut out, &mut err);
         (spec.handler)(&invocation, &mut output).expect("handler succeeds");
         assert_eq!(output.exit_status(), 7);
-        assert_eq!(
-            output.take_diagnostics(),
-            vec!["warning one".to_string(), "warning two".to_string()]
-        );
-        assert!(output.take_diagnostics().is_empty());
         drop(output);
         assert_eq!(out, b"data\n");
+        assert_eq!(err, b"warning one\nwarning two\n");
+    }
+
+    #[test]
+    fn existing_command_families_still_route_next_to_msk() {
+        for values in [
+            vec!["manifests", "validate", "--plugin", "p"],
+            vec!["spec", "validate"],
+            vec!["sync", "plugin-skills", "--check", "--root", "r"],
+            vec!["sync", "vendored", "--plugin-root=x"],
+        ] {
+            assert!(
+                matches!(route_words(&values), Ok(Routed::Run(..))),
+                "{values:?}"
+            );
+        }
+        let Err(error) = route_words(&["sync", "vendored", "--plugin-root", "--check"]) else {
+            panic!("strict sync values must stay strict");
+        };
+        assert_eq!(error.exit_code(), 2);
     }
 }

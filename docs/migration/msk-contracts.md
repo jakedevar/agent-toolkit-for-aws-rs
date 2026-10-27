@@ -15,22 +15,26 @@ pretty writer). `crates/toolkit-cli/src/msk.rs` does argument parsing, file
 access (through `toolkit-core` path and bounded-read contracts) and
 exit-status mapping. The Python files are untouched (retirement is #4378).
 
-## CLI contract extensions (shared, additive)
+## Shared CLI router (canonical, one additive remainder)
 
-The foundation router had boolean flags and positionals only. Three additive
-extensions serve every later slice and keep `skills list` unchanged:
+The msk commands use the canonical router of #4375/#4376/#4377 as integrated in
+the #4378 head `35640f12`: `CommandSpec.value_flags` (`--name value` or
+`--name=value`), `Invocation::value`, `Output::with_diagnostics` and
+`Output::diagnostic(&str)` (stderr lines written as they are produced). Every
+msk `CommandSpec` sets `strict_values: false`: the value is always the next
+word, as in `argparse`, so `--avg-data-in-mbs -5` reaches the legacy range
+check instead of being an unknown flag; a repeated option keeps its last value;
+a missing value is a usage error (exit 2).
 
-- `CommandSpec.value_flags` and `Invocation::option(name)`: options that take a
-  value, as `--name value` or `--name=value`. The value is always the next
-  word (so `--avg-data-in-mbs -5` reports an invalid value instead of an
-  unknown flag); a repeated option keeps its last value, like `argparse`; a
-  missing value is a usage error (exit 2).
-- `Output::diagnostic(text)`: queues a line for stderr. `run` writes queued
-  lines after the handler returns, whatever the outcome.
-- `Output::set_exit_status(n)`: the status `run` returns when the handler
-  itself succeeds. Needed because two legacy contracts print regular output and
-  exit non-zero (`validate` REJECT exits 1; `msk size` prints `ERROR:` and
-  exits 1; `msk sim` errors exit 2 with a JSON error object).
+This slice's earlier parallel versions (`Invocation::option`, a `value_flags`
+field without `strict_values`, a buffered `diagnostic`/`take_diagnostics`) were
+dropped as duplicates (#4539). The only remainder, strictly additive, is
+`Output::set_exit_status(n)` / `exit_status()`: the status `run` returns when
+the handler itself succeeds. The canonical router has no way to print regular
+output and exit non-zero, which two legacy contracts need (`validate` REJECT
+exits 1; `msk size` prints `ERROR:` and exits 1; `msk sim` errors exit 2 with a
+JSON error object on stderr; an `Err` would instead print `error: ...` and add
+usage text for exit 2).
 
 ## Command contracts
 
@@ -126,6 +130,17 @@ Hand-computed from the legacy formulas; each row is pinned by a Rust test.
 3. **Hardening where the script crashed or produced garbage.** Non-finite
    throughput values and a non-positive utilization are rejected with a
    message (the script raised `ZeroDivisionError` or computed with `nan`).
+   Python integers never overflow; `i64` does, so a demand that needs more than
+   `i64::MAX` brokers (for example 1e30 MiB/s on every throughput option), a zero
+   or non-finite capacity, and a `sim` broker count whose producer fleet exceeds
+   `i64::MAX / 400` nodes (or whose MB/s would overflow) are clean errors
+   (`ERROR: ... is not representable` for `size`; the JSON error object, exit 2,
+   for `sim compute|render|validate`) instead of saturating or wrapping (#4541).
+   `sim validate` computes `duration_minutes - 2` and compares integers
+   exactly in 128 bits, so `duration_minutes` at the signed minimum is a normal
+   REJECT with the exact bound in the message (`[2, -9223372036854775810]`),
+   like Python (#4540). `retention_hours - primary_retention_hours` is widened
+   the same way.
 4. **Stricter JSON input.** Inputs use the shared strict parser: duplicate
    object keys, trailing commas, `NaN`/`Infinity` and a byte-order mark are
    rejected (Python's `json.loads` accepted them). Integers beyond `i64` are
@@ -137,6 +152,14 @@ Hand-computed from the legacy formulas; each row is pinned by a Rust test.
    scripts followed links. A `cluster_name` containing a path separator, NUL,
    control character or only dots is refused (the script interpolated it into
    the output file name, so `../x` wrote outside `--out-dir`).
+   `msk sim render` resolves `--output` in filesystem order like Python's
+   `Path.resolve()`: each parent symbolic link is followed before a following
+   `..` is applied (`link/../x.yaml` names the parent of the link's *target*);
+   it never normalises `..` lexically (#4542). Only the final component is not
+   followed (and is refused if it is a link). Residual: `toolkit-core` has no
+   handle-anchored directory walker, so a directory swapped between the
+   resolution and the write is outside the model (same threat model as the core
+   path contracts).
 6. **Skill-package rail.** The script refused output inside the directory that
    held the script. The binary has no skill directory (the template is
    embedded), so the rail refuses output inside any directory that contains

@@ -94,7 +94,7 @@ fn unix_seconds() -> i64 {
 
 fn float_option(invocation: &Invocation, name: &str) -> Result<Option<f64>, ToolkitError> {
     invocation
-        .option(name)
+        .value(name)
         .map(|text| {
             py_float_parse(text).ok_or_else(|| {
                 arg_error(format!(
@@ -108,7 +108,7 @@ fn float_option(invocation: &Invocation, name: &str) -> Result<Option<f64>, Tool
 
 fn int_option(invocation: &Invocation, name: &str) -> Result<Option<i64>, ToolkitError> {
     invocation
-        .option(name)
+        .value(name)
         .map(|text| {
             py_int_parse(text)
                 .and_then(|number| i64::try_from(number).ok())
@@ -126,7 +126,7 @@ fn require_options(invocation: &Invocation, names: &[&str]) -> Result<(), Toolki
     let missing: Vec<&str> = names
         .iter()
         .copied()
-        .filter(|name| invocation.option(name).is_none())
+        .filter(|name| invocation.value(name).is_none())
         .collect();
     if missing.is_empty() {
         Ok(())
@@ -144,7 +144,7 @@ fn require_options(invocation: &Invocation, names: &[&str]) -> Result<(), Toolki
 
 fn size_options(invocation: &Invocation) -> Result<SizeOptions, ToolkitError> {
     let emit = invocation.has_flag("--emit-static-pricing");
-    let pricing_source = invocation.option("--pricing-source").unwrap_or("auto");
+    let pricing_source = invocation.value("--pricing-source").unwrap_or("auto");
     if !PRICING_SOURCES.contains(&pricing_source) {
         let choices: Vec<String> = PRICING_SOURCES
             .iter()
@@ -169,7 +169,7 @@ fn size_options(invocation: &Invocation) -> Result<SizeOptions, ToolkitError> {
     let utilization_express = float_option(invocation, "--utilization-express")?.unwrap_or(0.75);
     let pst = float_option(invocation, "--pst-per-broker-mbs")?;
     let discount_pct = invocation
-        .option("--discount-pct")
+        .value("--discount-pct")
         .map(|text| {
             parse_discount_pct(text)
                 .map_err(|message| arg_error(format!("argument --discount-pct: {message}")))
@@ -178,7 +178,7 @@ fn size_options(invocation: &Invocation) -> Result<SizeOptions, ToolkitError> {
         .unwrap_or(0.0);
     let broker_classes = parse_broker_classes(
         invocation
-            .option("--broker-classes")
+            .value("--broker-classes")
             .unwrap_or("standard,express"),
     )
     .map_err(|message| arg_error(format!("argument --broker-classes: {message}")))?;
@@ -228,7 +228,7 @@ fn size_options(invocation: &Invocation) -> Result<SizeOptions, ToolkitError> {
 
     Ok(SizeOptions {
         region: invocation
-            .option("--region")
+            .value("--region")
             .unwrap_or("us-east-1")
             .to_string(),
         pricing_source: pricing_source.to_string(),
@@ -246,10 +246,10 @@ pub(crate) fn size(invocation: &Invocation, output: &mut Output<'_>) -> Result<(
     let today = format_utc_date(unix_seconds());
     let run = run_size(&options, &UnlinkedPricingApi, &today);
     for warning in &run.warnings {
-        output.diagnostic(format!("WARNING: {warning}"));
+        output.diagnostic(&format!("WARNING: {warning}"));
     }
     if let Some(message) = &run.error {
-        output.diagnostic(format!("ERROR: {message}"));
+        output.diagnostic(&format!("ERROR: {message}"));
         output.set_exit_status(1);
         return Ok(());
     }
@@ -301,7 +301,7 @@ pub(crate) fn compat(invocation: &Invocation, output: &mut Output<'_>) -> Result
     let cluster_name = doc.get("cluster_name").cloned().unwrap_or(Json::Null);
     let file_name = output_file_name(&cluster_name)
         .map_err(|message| ToolkitError::runtime("invalid_cluster_name", message))?;
-    let out_dir = match invocation.option("--out-dir") {
+    let out_dir = match invocation.value("--out-dir") {
         Some(dir) => PathBuf::from(dir),
         None => std::env::current_dir().map_err(|error| {
             ToolkitError::runtime(
@@ -312,8 +312,8 @@ pub(crate) fn compat(invocation: &Invocation, output: &mut Output<'_>) -> Result
     };
     let out_path = out_dir.join(file_name);
     write_text_file(&out_path, &format!("{}\n", json_dumps(&doc)))?;
-    output.diagnostic(out_path.display().to_string());
-    output.diagnostic(format!(
+    output.diagnostic(&out_path.display().to_string());
+    output.diagnostic(&format!(
         "overall: {}",
         doc.get("overall").and_then(Json::as_str).unwrap_or("")
     ));
@@ -329,7 +329,7 @@ pub(crate) fn compat(invocation: &Invocation, output: &mut Output<'_>) -> Result
 // Always `Ok`: the handler signature lets call sites tail-return it.
 #[allow(clippy::unnecessary_wraps)]
 fn sim_error(output: &mut Output<'_>, message: &str) -> Result<(), ToolkitError> {
-    output.diagnostic(error_json(message));
+    output.diagnostic(&error_json(message));
     output.set_exit_status(2);
     Ok(())
 }
@@ -337,7 +337,7 @@ fn sim_error(output: &mut Output<'_>, message: &str) -> Result<(), ToolkitError>
 fn sim_instance_and_count(invocation: &Invocation) -> Result<(String, i64), ToolkitError> {
     Ok((
         invocation
-            .option("--instance-type")
+            .value("--instance-type")
             .unwrap_or(DEFAULT_INSTANCE_TYPE)
             .to_string(),
         int_option(invocation, "--broker-count")?.unwrap_or(DEFAULT_BROKER_COUNT),
@@ -353,17 +353,27 @@ pub(crate) fn sim_compute(
     match compute(
         &instance_type,
         broker_count,
-        invocation.option("--kafka-version"),
+        invocation.value("--kafka-version"),
     ) {
         Ok(caps) => output.line(&json_dumps(&caps.to_json())),
         Err(message) => sim_error(output, &message),
     }
 }
 
-/// Makes `raw` absolute (home expansion, current directory, lexical `.`/`..`
-/// removal) and resolves symbolic links in the longest existing prefix of its
-/// parent directory, like Python's `Path(raw).expanduser().resolve()` except
-/// that a symbolic link as the final component is kept (and later refused).
+/// Makes `raw` absolute (home expansion, current directory) and resolves it in
+/// filesystem order like Python's `Path(raw).expanduser().resolve()`: every
+/// symbolic link below the final component is followed *before* a following
+/// `..` is applied, so `link/../x` names the parent of the link's target, not
+/// the parent of the link. Components that do not exist yet are kept as written
+/// (a `..` after one removes it). The one difference from Python is the final
+/// component: a symbolic link there is kept unresolved so that
+/// [`write_text_file`] refuses it instead of writing through it.
+///
+/// No path is ever normalised lexically: `..` is applied only to a path whose
+/// every component has already been resolved on disk (#4542). The check-then-use
+/// window between this resolution and the write is the one the core path
+/// contracts document (no handle-anchored directory walker exists in
+/// `toolkit-core`).
 fn resolve_output_path(raw: &str) -> Result<PathBuf, String> {
     let expanded = if raw == "~" || raw.starts_with("~/") {
         match std::env::var_os("HOME") {
@@ -382,41 +392,50 @@ fn resolve_output_path(raw: &str) -> Result<PathBuf, String> {
             .map_err(|error| format!("cannot determine the current directory: {error}"))?
             .join(expanded)
     };
-    let mut normalized = PathBuf::new();
-    for component in absolute.components() {
+    let components: Vec<Component<'_>> = absolute.components().collect();
+    // `resolved` is always a fully resolved (canonical) existing directory
+    // path, so popping it for `..` is the physical parent; `tail` holds the
+    // components that do not exist yet.
+    let mut resolved = PathBuf::new();
+    let mut tail: Vec<std::ffi::OsString> = Vec::new();
+    for (index, component) in components.iter().enumerate() {
         match component {
-            Component::ParentDir => {
-                normalized.pop();
-            }
+            Component::Prefix(_) | Component::RootDir => resolved.push(component.as_os_str()),
             Component::CurDir => {}
-            other => normalized.push(other.as_os_str()),
+            Component::ParentDir => {
+                if tail.pop().is_none() {
+                    resolved.pop();
+                }
+            }
+            Component::Normal(name) => {
+                if !tail.is_empty() || index + 1 == components.len() {
+                    // Either below a missing directory, or the final component,
+                    // which is deliberately not resolved: a link there is
+                    // refused when the file is written.
+                    tail.push(name.to_os_string());
+                    continue;
+                }
+                let candidate = resolved.join(name);
+                match fs::symlink_metadata(&candidate) {
+                    Ok(_) => {
+                        resolved = fs::canonicalize(&candidate).map_err(|error| {
+                            format!("cannot resolve {}: {error}", candidate.display())
+                        })?;
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                        tail.push(name.to_os_string());
+                    }
+                    Err(error) => {
+                        return Err(format!("cannot resolve {}: {error}", candidate.display()));
+                    }
+                }
+            }
         }
     }
-    // The final component is deliberately not resolved: a symbolic link there
-    // is refused when the file is written instead of being followed.
-    let (Some(parent), Some(file_name)) = (
-        normalized.parent().map(Path::to_path_buf),
-        normalized.file_name().map(std::ffi::OsStr::to_os_string),
-    ) else {
-        return Err(format!("{} is not a file path", normalized.display()));
-    };
-    let mut existing = parent;
-    let mut tail = Vec::new();
-    while fs::symlink_metadata(&existing).is_err() {
-        match existing.file_name().map(std::ffi::OsStr::to_os_string) {
-            Some(name) => tail.push(name),
-            None => break,
-        }
-        if !existing.pop() {
-            break;
-        }
+    resolved.extend(tail);
+    if resolved.file_name().is_none() {
+        return Err(format!("{} is not a file path", resolved.display()));
     }
-    let mut resolved = fs::canonicalize(&existing)
-        .map_err(|error| format!("cannot resolve {}: {error}", existing.display()))?;
-    for name in tail.into_iter().rev() {
-        resolved.push(name);
-    }
-    resolved.push(file_name);
     Ok(resolved)
 }
 
@@ -447,10 +466,10 @@ pub(crate) fn sim_render(
         ],
     )?;
     let (Some(instance_type), Some(broker_count), Some(kafka_version), Some(raw_output)) = (
-        invocation.option("--instance-type"),
+        invocation.value("--instance-type"),
         broker_count,
-        invocation.option("--kafka-version"),
-        invocation.option("--output"),
+        invocation.value("--kafka-version"),
+        invocation.value("--output"),
     ) else {
         return Err(arg_error("missing required arguments"));
     };
@@ -502,7 +521,7 @@ pub(crate) fn sim_validate(
     let (instance_type, broker_count) = sim_instance_and_count(invocation)?;
     require_options(invocation, &["--test", "--config"])?;
     let (Some(test), Some(config_text)) =
-        (invocation.option("--test"), invocation.option("--config"))
+        (invocation.value("--test"), invocation.value("--config"))
     else {
         return Err(arg_error("missing required arguments"));
     };
@@ -807,6 +826,117 @@ mod tests {
             stderr,
             "ERROR: peak_data_in_mbs (5.0) must be >= avg_data_in_mbs (10.0)\n"
         );
+    }
+
+    #[test]
+    fn size_with_huge_finite_throughput_is_a_clean_error() {
+        // 1e30 MiB/s needs more brokers than an i64 can count (#4541).
+        let (status, stdout, stderr) = exec(&[
+            "msk",
+            "size",
+            "--pricing-source",
+            "static",
+            "--avg-data-in-mbs",
+            "1e30",
+            "--peak-data-in-mbs",
+            "1e30",
+            "--avg-data-out-mbs",
+            "1e30",
+            "--peak-data-out-mbs",
+            "1e30",
+            "--num-partitions",
+            "3000",
+            "--retention-hours",
+            "168",
+            "--primary-retention-hours",
+            "24",
+        ]);
+        assert_eq!((status, stdout.as_str()), (1, ""));
+        assert!(stderr.starts_with("ERROR: "), "{stderr}");
+        assert!(stderr.contains("is not representable"), "{stderr}");
+        assert_eq!(stderr.lines().count(), 1, "{stderr}");
+    }
+
+    #[test]
+    fn sim_compute_and_render_refuse_a_fleet_that_overflows() {
+        // The largest multiple of three below i64::MAX.
+        let huge = "9223372036854775806";
+        let (status, stdout, stderr) = exec(&[
+            "msk",
+            "sim",
+            "compute",
+            "--instance-type",
+            "express.m7g.16xlarge",
+            "--broker-count",
+            huge,
+        ]);
+        assert_eq!((status, stdout.as_str()), (2, ""));
+        assert!(
+            stderr.starts_with(
+                "{\"error\": \"broker_count 9223372036854775806 is too large: the producer fleet"
+            ),
+            "{stderr}"
+        );
+        let dir = TempDir::new("render-overflow");
+        let target = dir.path().join("stack.yaml");
+        let (status, stdout, stderr) = exec(&[
+            "msk",
+            "sim",
+            "render",
+            "--instance-type",
+            "express.m7g.16xlarge",
+            "--broker-count",
+            huge,
+            "--kafka-version",
+            "3.9.x.kraft",
+            "--output",
+            target.to_str().expect("utf-8"),
+        ]);
+        assert_eq!((status, stdout.as_str()), (2, ""));
+        assert!(stderr.contains("is too large"), "{stderr}");
+        assert!(!target.exists());
+        // validate computes the same caps first.
+        let (status, _, stderr) = exec(&[
+            "msk",
+            "sim",
+            "validate",
+            "--instance-type",
+            "express.m7g.16xlarge",
+            "--broker-count",
+            huge,
+            "--test",
+            "e2e_latency",
+            "--config",
+            "{}",
+        ]);
+        assert_eq!(status, 2);
+        assert!(stderr.contains("is too large"), "{stderr}");
+    }
+
+    #[test]
+    fn sim_validate_rejects_the_signed_integer_minimum_duration() {
+        // Used to panic (overflow checks) or wrap (release) on `duration - 2`.
+        let config = r#"{"target_throughput_mbps":1,"duration_minutes":-9223372036854775808,"reboot_at_minute":2,"num_producers":1}"#;
+        let (status, stdout, stderr) = exec(&[
+            "msk",
+            "sim",
+            "validate",
+            "--test",
+            "broker_restart",
+            "--config",
+            config,
+        ]);
+        assert_eq!((status, stderr.as_str()), (1, ""));
+        let result = parse_json(&stdout).expect("valid JSON");
+        assert_eq!(
+            result.get("decision").and_then(Json::as_str),
+            Some("REJECT")
+        );
+        assert!(stdout.contains(
+            "duration_minutes=-9223372036854775808 is outside the allowed range [10, 120]"
+        ));
+        assert!(stdout
+            .contains("reboot_at_minute=2 is outside the allowed range [2, -9223372036854775810]"));
     }
 
     const COMPAT_CONFIG: &str = r#"{
@@ -1241,11 +1371,90 @@ mod tests {
     }
 
     #[test]
-    fn output_path_resolution_is_absolute_and_lexically_clean() {
+    fn output_path_resolution_is_absolute_and_removes_missing_components() {
         let cwd = std::env::current_dir().expect("cwd");
         let resolved = resolve_output_path("a/./b/../c.yaml").expect("resolves");
         assert!(resolved.is_absolute());
         assert!(resolved.ends_with("a/c.yaml"));
         assert!(resolved.starts_with(fs::canonicalize(&cwd).expect("canonical cwd")));
+        // A `..` above the root stays at the root; the root is not a file.
+        assert_eq!(
+            resolve_output_path("/../../x.yaml").expect("resolves"),
+            PathBuf::from("/x.yaml")
+        );
+        assert!(resolve_output_path("/").is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn parent_traversal_is_applied_after_symbolic_links_are_resolved() {
+        use std::os::unix::fs::symlink;
+        let dir = TempDir::new("render-dotdot");
+        let base = fs::canonicalize(dir.path()).expect("canonical temp dir");
+        fs::create_dir_all(base.join("real").join("sub")).expect("dirs");
+        // link -> real/sub, so `link/..` is `real`, not the directory of `link`.
+        symlink(base.join("real").join("sub"), base.join("link")).expect("symlink");
+
+        let through = |raw: &str| resolve_output_path(raw).expect("resolves");
+        let spelled = |tail: &str| format!("{}/{tail}", base.display());
+        assert_eq!(through(&spelled("link/../x.yaml")), base.join("real/x.yaml"));
+        assert_eq!(
+            through(&spelled("link/missing/../y.yaml")),
+            base.join("real/sub/y.yaml")
+        );
+        assert_eq!(
+            through(&spelled("missing/../link/../z.yaml")),
+            base.join("real/z.yaml")
+        );
+        // Two links deep: both are followed before the `..`s are applied.
+        symlink(base.join("link"), base.join("link2")).expect("symlink");
+        assert_eq!(
+            through(&spelled("link2/../../w.yaml")),
+            base.join("w.yaml"),
+            "link2 -> link -> real/sub, so `..` is real and `../..` is the base"
+        );
+        // The final component is never followed.
+        symlink(base.join("real"), base.join("final")).expect("symlink");
+        assert_eq!(through(&spelled("final")), base.join("final"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sim_render_writes_where_the_resolved_parent_is_not_the_lexical_one() {
+        use std::os::unix::fs::symlink;
+        let dir = TempDir::new("render-link-dotdot");
+        let base = fs::canonicalize(dir.path()).expect("canonical temp dir");
+        fs::create_dir_all(base.join("customer").join("subdir")).expect("dirs");
+        symlink(base.join("customer").join("subdir"), base.join("link")).expect("symlink");
+        // Lexically `link/../stack.yaml` is `<base>/stack.yaml`; on disk it is
+        // `<base>/customer/stack.yaml`. An unrelated file at the lexical
+        // location must stay untouched (#4542).
+        let unrelated = base.join("stack.yaml");
+        fs::write(&unrelated, "keep").expect("write");
+        let requested = format!("{}/link/../stack.yaml", base.display());
+        let (status, stdout, stderr) = exec(&[
+            "msk",
+            "sim",
+            "render",
+            "--instance-type",
+            "express.m7g.4xlarge",
+            "--broker-count",
+            "12",
+            "--kafka-version",
+            "3.9.x.kraft",
+            "--output",
+            &requested,
+        ]);
+        assert_eq!((status, stderr.as_str()), (0, ""), "{stderr}");
+        let expected = base.join("customer").join("stack.yaml");
+        assert_eq!(fs::read_to_string(&unrelated).expect("read"), "keep");
+        assert!(fs::read_to_string(&expected)
+            .expect("template written at the resolved path")
+            .contains("ProducerCount"));
+        let result = parse_json(&stdout).expect("valid JSON");
+        assert_eq!(
+            result.get("output_path").and_then(Json::as_str),
+            expected.to_str()
+        );
     }
 }

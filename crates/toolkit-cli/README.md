@@ -7,13 +7,16 @@ Python inventory (#4371) records legacy contracts separately.
 ## Binary
 
 The workspace builds one binary, `toolkit` (crate `toolkit-cli`), from the
-read-only shared library `toolkit-core`. The CLI performs no writes, no network
-access and no live cloud activity.
+read-only shared library `toolkit-core`. `toolkit skills list` performs no writes. `toolkit sync ...` (#4377) writes only in
+its non-`--check` modes and only inside the tree it was given. The CLI performs no
+network access and no live cloud activity.
 
 ## Commands
 
 ```
 toolkit skills list [ROOT] [--json]
+toolkit sync plugin-skills [--root DIR] [--plugin NAME] [--check]
+toolkit sync vendored [--plugin-root DIR] [--check]
 toolkit msk size [options]
 toolkit msk compat CLUSTER_CONFIG [--out-dir DIR]
 toolkit msk sim compute|render|validate [options]
@@ -204,6 +207,79 @@ A leading UTF-8 byte-order mark is ignored. `name:` with no value or an empty
 quoted value is reported by the parser as an empty string; skill discovery
 treats an empty or whitespace-only `name` as absent and uses the directory name.
 
+## manifests validate (#4375)
+
+```
+toolkit manifests validate [ROOT] [--plugin NAME]
+```
+
+Replacement for `python3 tools/validate.py [--plugin X]`; full rule parity table
+and the recorded differences are in `docs/migration/manifests-validator.md`.
+`ROOT` defaults to the current directory. The command is read-only and offline.
+
+- Without `--plugin` it validates the Claude Code, Codex and Cursor marketplace
+  manifests, every directory under `ROOT/plugins` (Claude, Codex, optional
+  Cursor and Devin manifests, optional `.mcp.json`, the `SKILL.md` frontmatter
+  of each direct child of `skills/`) and every `SKILL.md` below `ROOT/skills`.
+  With `--plugin NAME` (or `--plugin=NAME`) only `ROOT/plugins/NAME` is checked.
+- `Validating ...` progress lines go to stdout, in order. Each finding is a
+  `  ERROR: <message>` line on stderr and the run continues.
+- Success prints a blank line and `All validations passed.` (exit 0). Any finding
+  ends with `error: Validation failed with N error(s).` on stderr (exit 1). An
+  unknown or unsafe plugin name (`error: Plugin not found: NAME`) and an unusable
+  root are runtime errors (exit 1); bad arguments are usage errors (exit 2).
+
+The routing table gained value flags (`--name value` / `--name=value`,
+`Invocation::value`, last value wins, missing value is a usage error) and
+`Output::with_diagnostics` / `Output::diagnostic` for stderr lines (#4375).
+
+## spec validate (#4376)
+
+```
+toolkit spec validate [ROOT]
+```
+
+Replacement for `python3 tools/validate_spec.py`; full rule parity table and
+the recorded differences are in `docs/migration/spec-validator.md`. `ROOT`
+defaults to the current directory. The command is read-only and offline; it has
+no Python, PyYAML or Python `jsonschema` dependency. Schemas are evaluated by
+the Rust `jsonschema` crate (local references only, no resolvers) with
+`fancy-regex` under a backtracking limit; names are compared under exact NFKC
+(`unicode-normalization`). A schema that cannot be compiled or evaluated is a
+runtime error (exit 1), never a pass. Dependencies are listed and justified in
+`docs/migration/spec-validator.md`.
+
+- Checks every directory under `ROOT/plugins`: no symbolic links, `plugin.json`
+  and `mcp.json` against the vendored schemas in `ROOT/tools/schemas/1.0.0`,
+  the rules the schemas cannot express (path containment, placeholders, MCP URL
+  and header rules) and the frontmatter, length and naming rules of every
+  `plugins/*/skills/*/SKILL.md`.
+- `Validating plugin: plugins/NAME` and `Validating skills` progress lines go to
+  stdout. Each finding is a `  ERROR: <label>: <message> (at <path>)` or
+  `  ERROR: <message>` line on stderr and the run continues.
+- Success prints a blank line and `All Agent Plugins v1.0.0 checks passed.`
+  (exit 0). Any finding ends with `error: Spec validation failed with N
+  error(s).` on stderr (exit 1). An unusable root, `plugins/` directory or
+  schema is a runtime error (exit 1); bad arguments are usage errors (exit 2).
+
+## sync (#4377)
+
+`toolkit sync plugin-skills` makes every `plugins/<plugin>/skills/<name>` copy
+byte-identical to the canonical `skills/**/<name>` directory; `toolkit sync
+vendored` does the same for each skill's `references/vendored` copies of
+`skills/shared` and checks their README tables. `--check` reports drift and
+writes nothing (exit 1 when out of sync); value flags accept `--flag VALUE` or
+`--flag=VALUE`. Symbolic links are never followed; writes are atomic. The full
+parity table against the Python tools, the deletion and symlink boundaries and
+the telemetry seam are in [docs/migration/sync-contracts.md](../../docs/migration/sync-contracts.md).
+
+Merge note (#4378): both slices extended the value-flag routing. The combined
+parser keeps #4375's `Invocation::set_value` (last value wins) and #4377's
+rule that sync value flags reject an empty value or one starting with `-`
+(`--plugin-root --check` is a usage error) through the per-command
+`CommandSpec::strict_values` switch: off for `manifests validate`, whose
+`--plugin` takes the next word whatever it looks like, on for `sync`.
+
 ## msk commands (slice #4387)
 
 `toolkit msk size`, `toolkit msk compat` and `toolkit msk sim compute|render|validate`
@@ -211,13 +287,11 @@ replace the three legacy MSK Python scripts. Their options, output formats,
 exit statuses, parity evidence and intentional changes are documented in
 `docs/migration/msk-contracts.md`.
 
-Router extensions they rely on (additive; `skills list` is unchanged):
-
-- Value options: a command lists them in `CommandSpec.value_flags`; they are
-  written `--name value` or `--name=value`, the value is always the next word,
-  a repeated option keeps its last value and a missing value is a usage error
-  (exit 2). Handlers read them with `Invocation::option`.
-- `Output::diagnostic` queues lines for stderr and `Output::set_exit_status`
-  sets the status returned when the handler succeeds, for commands whose
-  published contract prints regular output together with a non-zero status or
-  a specific stderr format.
+Router: they use the canonical value-option router (`CommandSpec::value_flags`,
+`Invocation::value`, #4376/#4378) with `strict_values: false` (the next word is
+the value, as argparse does, so `--avg-data-in-mbs -5` reaches the range check),
+and `Output::diagnostic` for stderr lines. The only router addition of this
+slice is `Output::set_exit_status`/`exit_status`: a command whose published
+contract prints regular output together with a non-zero status (`sim validate`
+REJECT, `sim` JSON errors exit 2) cannot express that through `Err`, which
+always reports on stderr as `error: ...`.

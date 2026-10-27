@@ -12,6 +12,9 @@ path = "src/main.rs"
 
 [dependencies]
 toolkit-core = { path = "../toolkit-core" }
+jsonschema = { version = "0.60", default-features = false }
+unicode-normalization = { version = "0.1", default-features = false, features = ["std"] }
+serde_json = { version = "1", default-features = false, features = ["std"] }
 toolkit-msk = { path = "../toolkit-msk" }
 
 [lints]

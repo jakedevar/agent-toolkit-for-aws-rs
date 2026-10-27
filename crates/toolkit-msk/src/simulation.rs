@@ -46,6 +46,10 @@ pub const FLEET_INSTANCE_TYPE: &str = "c5.2xlarge";
 /// Conservative per-node producer throughput target, MB/s.
 pub const FLEET_NODE_THROUGHPUT_MBPS: i64 = 400;
 
+/// Largest producer fleet [`compute`] accepts: the biggest count whose
+/// throughput (count x [`FLEET_NODE_THROUGHPUT_MBPS`]) still fits an `i64`.
+pub const MAX_FLEET_PRODUCERS: i64 = i64::MAX / FLEET_NODE_THROUGHPUT_MBPS;
+
 /// Default instance type of the `compute` and `validate` actions.
 pub const DEFAULT_INSTANCE_TYPE: &str = "express.m7g.4xlarge";
 /// Default broker count of the `compute` and `validate` actions.
@@ -82,8 +86,11 @@ fn round_half_even(value: f64) -> i64 {
 /// # Errors
 ///
 /// Returns the legacy message for an unknown instance type, a broker count
-/// that is not a multiple of 3 (or below 3), or an unsupported `kafka_version`
-/// (only checked when supplied; 3.9 is `KRaft`-only on Express).
+/// that is not a multiple of 3 (or below 3), an unsupported `kafka_version`
+/// (only checked when supplied; 3.9 is `KRaft`-only on Express) or a broker
+/// count so large that the fleet size or its throughput does not fit an `i64`
+/// (Python's unbounded integers have no such limit; this is an intentional
+/// change recorded in `docs/migration/msk-contracts.md`).
 pub fn compute(
     instance_type: &str,
     broker_count: i64,
@@ -133,10 +140,22 @@ pub fn compute(
     // Provision 1.5x the cluster's MAXIMUM ingress quota so the fleet can drive
     // the cluster to its throttle ceiling with headroom and never be the
     // bottleneck, even when deliberately probing past the limit.
-    let fleet_producer_count = std::cmp::max(
-        2,
-        (cluster_max_ingress * 1.5 / FLEET_NODE_THROUGHPUT_MBPS as f64).ceil() as i64,
-    );
+    // Python ints do not overflow; i64 does. Refuse a broker count whose fleet
+    // (and the MB/s it drives) is not representable instead of saturating the
+    // float-to-integer cast or wrapping the product (#4541).
+    let fleet_float = (cluster_max_ingress * 1.5 / FLEET_NODE_THROUGHPUT_MBPS as f64).ceil();
+    if fleet_float.is_nan() || fleet_float > MAX_FLEET_PRODUCERS as f64 {
+        return Err(format!(
+            "broker_count {broker_count} is too large: the producer fleet would exceed \
+             {MAX_FLEET_PRODUCERS} nodes"
+        ));
+    }
+    let fleet_producer_count = std::cmp::max(2, fleet_float as i64);
+    let Some(fleet_max_mbps) = fleet_producer_count.checked_mul(FLEET_NODE_THROUGHPUT_MBPS) else {
+        return Err(format!(
+            "broker_count {broker_count} is too large: the fleet throughput is not representable"
+        ));
+    };
     Ok(Caps {
         instance_type: instance_type.to_string(),
         broker_count,
@@ -144,7 +163,7 @@ pub fn compute(
         cluster_max_ingress_mbps: cluster_max_ingress,
         fleet_producer_count,
         fleet_consumer_count: fleet_producer_count,
-        fleet_max_mbps: fleet_producer_count * FLEET_NODE_THROUGHPUT_MBPS,
+        fleet_max_mbps,
         default_target_throughput_mbps: round_half_even(cluster_sustained_ingress * 0.8),
     })
 }
@@ -377,6 +396,9 @@ pub fn render_result_json(rendered: &Rendered, output_path: &str) -> Json {
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Num {
     Int(i64),
+    /// An integer result that left the `i64` range (Python ints are unbounded),
+    /// for example `duration_minutes - 2` at the signed minimum (#4540).
+    Wide(i128),
     Float(f64),
 }
 
@@ -384,20 +406,42 @@ impl Num {
     fn as_f64(self) -> f64 {
         match self {
             Self::Int(number) => number as f64,
+            Self::Wide(number) => number as f64,
             Self::Float(number) => number,
+        }
+    }
+
+    /// The exact value of an integer, so integer comparisons never round.
+    fn as_i128(self) -> Option<i128> {
+        match self {
+            Self::Int(number) => Some(i128::from(number)),
+            Self::Wide(number) => Some(number),
+            Self::Float(_) => None,
+        }
+    }
+
+    /// `self > other` like Python: exact between integers, `f64` otherwise.
+    fn greater_than(self, other: Self) -> bool {
+        match (self.as_i128(), other.as_i128()) {
+            (Some(left), Some(right)) => left > right,
+            _ => self.as_f64() > other.as_f64(),
         }
     }
 
     fn text(self) -> String {
         match self {
             Self::Int(number) => number.to_string(),
+            Self::Wide(number) => number.to_string(),
             Self::Float(number) => py_float_repr(number),
         }
     }
 
+    /// `self - amount` without overflow: an `i64` difference that does not fit
+    /// widens to `i128` (an `i64` minus a small `amount` always fits there).
     fn minus_int(self, amount: i64) -> Self {
         match self {
-            Self::Int(number) => Self::Int(number - amount),
+            Self::Int(number) => Self::Wide(i128::from(number) - i128::from(amount)),
+            Self::Wide(number) => Self::Wide(number - i128::from(amount)),
             Self::Float(number) => Self::Float(number - amount as f64),
         }
     }
@@ -413,8 +457,8 @@ fn config_number(config: &Json, key: &str) -> Result<Num, String> {
 }
 
 fn check_range(name: &str, value: Num, lo: i64, hi: Option<Num>, errors: &mut Vec<String>) {
-    let below = value.as_f64() < lo as f64;
-    let above = hi.is_some_and(|bound| value.as_f64() > bound.as_f64());
+    let below = Num::Int(lo).greater_than(value);
+    let above = hi.is_some_and(|bound| value.greater_than(bound));
     if below || above {
         errors.push(format!(
             "{name}={} is outside the allowed range [{lo}, {}]",
@@ -1158,6 +1202,89 @@ mod tests {
             ["reboot_at_minute=13.6 is outside the allowed range [2, 13.5]"]
         );
         assert!(restart("100", "15.5", "13.5", "1").errors.is_empty());
+    }
+
+    #[test]
+    fn broker_restart_window_survives_the_signed_integer_boundaries() {
+        // `duration - 2` leaves the i64 range at the minimum; Python's unbounded
+        // ints print the exact result and the reboot is still out of range (#4540).
+        let result = restart("1", "-9223372036854775808", "2", "1");
+        assert_eq!(result.decision(), "REJECT");
+        assert_eq!(
+            result.errors,
+            [
+                "duration_minutes=-9223372036854775808 is outside the allowed range [10, 120]",
+                "reboot_at_minute=2 is outside the allowed range [2, -9223372036854775810]",
+            ]
+        );
+        // The neighbours of the boundary reject the same way, never wrap.
+        for duration in ["-9223372036854775807", "-9223372036854775806", "-9223372036854775805"] {
+            let result = restart("1", duration, "2", "1");
+            assert_eq!(result.decision(), "REJECT", "{duration}");
+            assert_eq!(result.errors.len(), 2, "{duration}");
+        }
+        // The maximum has no overflow (max - 2) and an equal reboot is rejected
+        // by the exact integer comparison, not by float rounding.
+        let result = restart("1", "9223372036854775807", "9223372036854775807", "1");
+        assert_eq!(
+            result.errors,
+            [
+                "duration_minutes=9223372036854775807 is outside the allowed range [10, 120]",
+                "reboot_at_minute=9223372036854775807 is outside the allowed range \
+                 [2, 9223372036854775805]",
+            ]
+        );
+        // A reboot exactly at the exact integer limit passes that range check.
+        let result = restart("1", "9223372036854775807", "9223372036854775805", "1");
+        assert_eq!(
+            result.errors,
+            ["duration_minutes=9223372036854775807 is outside the allowed range [10, 120]"]
+        );
+    }
+
+    #[test]
+    fn integer_range_checks_do_not_round_through_floats() {
+        // 2^53 + 1 is not representable as f64; the exact comparison still sees
+        // it above the 120 minute ceiling and the throughput ceiling.
+        let result = e2e("9007199254740993", "9007199254740993", "1", "1");
+        assert_eq!(
+            result.errors,
+            [
+                "throughput_mbps=9007199254740993 is outside the allowed range [1, 3600]",
+                "duration_minutes=9007199254740993 is outside the allowed range [5, 120]",
+            ]
+        );
+    }
+
+    #[test]
+    fn compute_refuses_a_fleet_that_does_not_fit_an_i64() {
+        let name = "express.m7g.16xlarge";
+        // 750 MB/s per broker x 1.5 / 400 = 2.8125 producers per broker.
+        let ok = compute(name, 7_999_999_999_999_998, None).expect("fits");
+        assert!(ok.fleet_producer_count > 22_000_000_000_000_000);
+        assert!(ok.fleet_producer_count <= MAX_FLEET_PRODUCERS);
+        assert_eq!(ok.fleet_max_mbps, ok.fleet_producer_count * 400);
+        assert_eq!(ok.fleet_consumer_count, ok.fleet_producer_count);
+        for count in [8_400_000_000_000_000, 9_223_372_036_854_775_806] {
+            let Err(message) = compute(name, count, None) else {
+                panic!("{count} must be refused");
+            };
+            assert_eq!(
+                message,
+                format!(
+                    "broker_count {count} is too large: the producer fleet would exceed \
+                     {MAX_FLEET_PRODUCERS} nodes"
+                )
+            );
+        }
+        // The fleet bound is exactly the largest count whose MB/s fits an i64.
+        assert_eq!(MAX_FLEET_PRODUCERS, 23_058_430_092_136_939);
+        assert!(MAX_FLEET_PRODUCERS.checked_mul(FLEET_NODE_THROUGHPUT_MBPS).is_some());
+        assert!((MAX_FLEET_PRODUCERS + 1)
+            .checked_mul(FLEET_NODE_THROUGHPUT_MBPS)
+            .is_none());
+        // Rendering goes through compute, so it refuses too.
+        assert!(render_template("", name, 9_223_372_036_854_775_806, "3.8.x").is_err());
     }
 
     #[test]
