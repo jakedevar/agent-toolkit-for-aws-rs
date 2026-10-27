@@ -10,8 +10,8 @@ then bring every vendored copy back in sync:
 
 ```sh
 # from the repository root
-python3 plugins/aws-startup-advisor/tools/sync-vendored.py          # copies skills/shared/<path> over every vendored copy
-python3 plugins/aws-startup-advisor/tools/sync-vendored.py --check  # what CI runs (mise run lint:vendored-parity)
+cargo run --locked -p toolkit-cli --bin toolkit -- sync vendored --plugin-root plugins/aws-startup-advisor          # copies skills/shared/<path> over every vendored copy
+cargo run --locked -p toolkit-cli --bin toolkit -- sync vendored --plugin-root plugins/aws-startup-advisor --check  # what CI runs (mise run lint:vendored-parity)
 ```
 
 CI fails when a vendored copy differs from its canonical source, has no canonical source,

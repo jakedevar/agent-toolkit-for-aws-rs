@@ -7,13 +7,16 @@ Python inventory (#4371) records legacy contracts separately.
 ## Binary
 
 The workspace builds one binary, `toolkit` (crate `toolkit-cli`), from the
-read-only shared library `toolkit-core`. The CLI performs no writes, no network
-access and no live cloud activity.
+read-only shared library `toolkit-core`. `toolkit skills list` performs no writes. `toolkit sync ...` (#4377) writes only in
+its non-`--check` modes and only inside the tree it was given. The CLI performs no
+network access and no live cloud activity.
 
 ## Commands
 
 ```
 toolkit skills list [ROOT] [--json]
+toolkit sync plugin-skills [--root DIR] [--plugin NAME] [--check]
+toolkit sync vendored [--plugin-root DIR] [--check]
 toolkit --version
 toolkit help
 ```
@@ -28,9 +31,10 @@ the current directory) and defaults to `skills` in the current directory.
 
 Discovery rules:
 
-- The walk stays strictly inside ROOT. Symlinked directories are never
-  followed, and a `SKILL.md` that is itself a symlink is skipped (never read),
-  whatever it points to.
+- Static symlinks are always refused: a symlinked directory is never followed
+  and a `SKILL.md` that is itself a symlink is skipped (never read), whatever
+  it points to. The walk does not defend against concurrent mutation of the
+  tree during a run (see the last bullet of this list).
 - Hidden directories (leading `.`) and the directories `node_modules` and
   `target` are skipped entirely, as entries and as descent targets. Directory
   names that are not valid UTF-8 are skipped silently.
@@ -46,10 +50,18 @@ Discovery rules:
   a `SKILL.md` directly in ROOT is ignored (point ROOT at the parent to list a
   single skill). Decision recorded for #4374; pinned by tests.
 - The `SKILL.md` read re-checks the opened file against the pre-open `lstat`
-  (device and inode on Unix), so a file swapped for a symlink between the
-  directory scan and the read is skipped or refused, never followed. A file
-  replaced by a symlink or non-file in that window is skipped like any link.
+  (device and inode on Unix), so the *final* file swapped for a symlink or
+  non-file between the directory scan and the read is skipped or refused.
   Other platforms keep the `lstat` check only.
+- Concurrent mutation is out of the tool's model. Walking is pathname-based,
+  so if an *ancestor* directory is renamed away and replaced with a symlink to
+  an outside directory after it was listed but before it is opened, the
+  `lstat`, open and listing all resolve through the swapped path and outside
+  content could be reported. Do not run the tool against a tree that is being
+  rewritten by an untrusted party. The public API (`discover_skills`,
+  `resolve_within`, `read_regular_file`) is shaped so a handle-anchored walker
+  can replace the implementation later if a slice needs adversarial
+  containment.
 - `SKILL.md` larger than 1 MiB, or not valid UTF-8, is a runtime error (exit 1)
   naming the file.
 
@@ -169,7 +181,11 @@ crate (use optional domain crates or features).
   same `Json` type. Everything else (tabs, anchors/aliases/tags, complex keys,
   duplicate keys, multiple documents, multi-line plain or quoted scalars,
   `|+`/indentation indicators, nesting deeper than 64) is a line-numbered
-  error. YAML 1.1 booleans (`yes`/`no`/`on`/`off`), leading-zero numbers, `+5`,
+  error. The 64-level nesting budget is one budget for the whole document:
+  block mappings, block sequences (including same-indent sequences) and flow
+  collections all count. The anchor/alias/tag and reserved-indicator rules
+  apply to flow keys and flow plain scalars too (`{&a k: v}`, `[]` are
+  errors); quote the text to use it literally (`{"&a k": v}`). YAML 1.1 booleans (`yes`/`no`/`on`/`off`), leading-zero numbers, `+5`,
   hex/octal and `.inf`/`.nan` stay strings. See the module documentation.
 - **Schema** (`schema`): a small structural check (scalar types, arrays,
   objects with required/optional members, unknown members rejected unless
@@ -177,8 +193,9 @@ crate (use optional domain crates or features).
   of `skills list` has a published schema (`skills_output_schema`) that the
   tests validate real output against.
 - **Paths** (`paths`): `normalize_relative` (rejects empty, absolute,
-  drive-prefixed, `..`, backslash and NUL), `resolve_within` (refuses a symlink
-  at any component below the root) and `read_regular_file` (no symlinks, only
+  drive-prefixed, `..`, backslash and NUL), `resolve_within` (refuses a static symlink
+  at any component below the root; not a defence against concurrent mutation,
+  see the discovery rules) and `read_regular_file` (no symlinks, only
   regular files, size-bounded, UTF-8, identity re-check after open).
 
 ## Frontmatter additions (#4374)
@@ -186,3 +203,76 @@ crate (use optional domain crates or features).
 A leading UTF-8 byte-order mark is ignored. `name:` with no value or an empty
 quoted value is reported by the parser as an empty string; skill discovery
 treats an empty or whitespace-only `name` as absent and uses the directory name.
+
+## manifests validate (#4375)
+
+```
+toolkit manifests validate [ROOT] [--plugin NAME]
+```
+
+Replacement for `python3 tools/validate.py [--plugin X]`; full rule parity table
+and the recorded differences are in `docs/migration/manifests-validator.md`.
+`ROOT` defaults to the current directory. The command is read-only and offline.
+
+- Without `--plugin` it validates the Claude Code, Codex and Cursor marketplace
+  manifests, every directory under `ROOT/plugins` (Claude, Codex, optional
+  Cursor and Devin manifests, optional `.mcp.json`, the `SKILL.md` frontmatter
+  of each direct child of `skills/`) and every `SKILL.md` below `ROOT/skills`.
+  With `--plugin NAME` (or `--plugin=NAME`) only `ROOT/plugins/NAME` is checked.
+- `Validating ...` progress lines go to stdout, in order. Each finding is a
+  `  ERROR: <message>` line on stderr and the run continues.
+- Success prints a blank line and `All validations passed.` (exit 0). Any finding
+  ends with `error: Validation failed with N error(s).` on stderr (exit 1). An
+  unknown or unsafe plugin name (`error: Plugin not found: NAME`) and an unusable
+  root are runtime errors (exit 1); bad arguments are usage errors (exit 2).
+
+The routing table gained value flags (`--name value` / `--name=value`,
+`Invocation::value`, last value wins, missing value is a usage error) and
+`Output::with_diagnostics` / `Output::diagnostic` for stderr lines (#4375).
+
+## spec validate (#4376)
+
+```
+toolkit spec validate [ROOT]
+```
+
+Replacement for `python3 tools/validate_spec.py`; full rule parity table and
+the recorded differences are in `docs/migration/spec-validator.md`. `ROOT`
+defaults to the current directory. The command is read-only and offline; it has
+no Python, PyYAML or Python `jsonschema` dependency. Schemas are evaluated by
+the Rust `jsonschema` crate (local references only, no resolvers) with
+`fancy-regex` under a backtracking limit; names are compared under exact NFKC
+(`unicode-normalization`). A schema that cannot be compiled or evaluated is a
+runtime error (exit 1), never a pass. Dependencies are listed and justified in
+`docs/migration/spec-validator.md`.
+
+- Checks every directory under `ROOT/plugins`: no symbolic links, `plugin.json`
+  and `mcp.json` against the vendored schemas in `ROOT/tools/schemas/1.0.0`,
+  the rules the schemas cannot express (path containment, placeholders, MCP URL
+  and header rules) and the frontmatter, length and naming rules of every
+  `plugins/*/skills/*/SKILL.md`.
+- `Validating plugin: plugins/NAME` and `Validating skills` progress lines go to
+  stdout. Each finding is a `  ERROR: <label>: <message> (at <path>)` or
+  `  ERROR: <message>` line on stderr and the run continues.
+- Success prints a blank line and `All Agent Plugins v1.0.0 checks passed.`
+  (exit 0). Any finding ends with `error: Spec validation failed with N
+  error(s).` on stderr (exit 1). An unusable root, `plugins/` directory or
+  schema is a runtime error (exit 1); bad arguments are usage errors (exit 2).
+
+## sync (#4377)
+
+`toolkit sync plugin-skills` makes every `plugins/<plugin>/skills/<name>` copy
+byte-identical to the canonical `skills/**/<name>` directory; `toolkit sync
+vendored` does the same for each skill's `references/vendored` copies of
+`skills/shared` and checks their README tables. `--check` reports drift and
+writes nothing (exit 1 when out of sync); value flags accept `--flag VALUE` or
+`--flag=VALUE`. Symbolic links are never followed; writes are atomic. The full
+parity table against the Python tools, the deletion and symlink boundaries and
+the telemetry seam are in [docs/migration/sync-contracts.md](../../docs/migration/sync-contracts.md).
+
+Merge note (#4378): both slices extended the value-flag routing. The combined
+parser keeps #4375's `Invocation::set_value` (last value wins) and #4377's
+rule that sync value flags reject an empty value or one starting with `-`
+(`--plugin-root --check` is a usage error) through the per-command
+`CommandSpec::strict_values` switch: off for `manifests validate`, whose
+`--plugin` takes the next word whatever it looks like, on for `sync`.

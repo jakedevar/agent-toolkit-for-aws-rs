@@ -2,11 +2,18 @@
 //!
 //! A *skill* is a directory that directly contains a `SKILL.md` file. Discovery
 //! walks the supplied root recursively, skips hidden directories, `node_modules`
-//! and `target`, never follows symlinks, and keeps every result path inside
-//! the supplied root. That includes `SKILL.md` itself: a symlinked `SKILL.md`
-//! (to a file anywhere, including outside ROOT) is skipped, not read, and the
-//! read re-checks file identity after opening (see
+//! and `target`, never follows static symlinks (directories or `SKILL.md`,
+//! to anywhere including outside ROOT: they are skipped, not read) and
+//! reports every result path relative to the supplied root. The read
+//! re-checks the final file's identity after opening (see
 //! [`crate::paths::read_regular_file`]).
+//!
+//! The walk is pathname-based and does not defend against concurrent mutation
+//! of the tree during a run: an ancestor directory swapped for a symlink
+//! between being listed and being opened is not detected (see the threat
+//! model in [`crate::paths`]). Discovery is a single entry point
+//! ([`discover_skills`]) so a handle-anchored walker can replace this one
+//! later without an API change.
 //!
 //! Decisions recorded for the carry-forward review notes of #4426:
 //!
@@ -132,9 +139,15 @@ fn is_skipped(name: &str) -> bool {
 }
 
 /// Enumerates skills under `root`, sorted by frontmatter name (directory name
-/// when the frontmatter has none), then by relative path. Every result stays
-/// inside `root`; symlinked directories are never followed and a symlinked
-/// `SKILL.md` is skipped instead of read.
+/// when the frontmatter has none), then by relative path. Reported paths are
+/// relative to `root`. Symlinks present in the tree are refused at any
+/// component: a symlinked directory is not followed and a symlinked `SKILL.md`
+/// is skipped instead of read.
+///
+/// This holds for a tree that is not being modified during the call. The walk
+/// does not defend against concurrent mutation (for example a listed directory
+/// swapped for a symlink to an outside directory mid-run); see the threat
+/// model in [`crate::paths`].
 ///
 /// # Errors
 ///

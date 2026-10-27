@@ -1,10 +1,18 @@
+# Python tooling for the helpers other migration slices still own (scripts/, tests/,
+# tools/check-skill-refs.py, tools/model-staleness.py). It was declared in the root
+# mise.toml until #4378 moved the repository validators to Rust; it stays scoped
+# to this plugin until those slices land.
+[tools]
+python = "3.12"
+uv = "latest"
+
 [tasks."lint:artifacts"]
 description = "Validate aws-startup-advisor fixture artifacts against their published schema contracts"
 run = "python3 scripts/validate-artifacts.py --fixtures"
 
 [tasks."lint:vendored-parity"]
 description = "Check each skill's references/vendored/ copies are byte-identical to skills/shared/"
-run = "python3 tools/sync-vendored.py --check"
+run = "cargo run --locked --quiet --manifest-path ../../Cargo.toml --package toolkit-cli --bin toolkit -- sync vendored --check --plugin-root ."
 
 [tasks."lint:skill-refs"]
 description = "Check every file path the aws-startup-advisor skills reference exists"

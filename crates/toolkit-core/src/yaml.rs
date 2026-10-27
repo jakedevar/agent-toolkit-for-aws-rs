@@ -21,13 +21,21 @@
 //!   space and a blank line becomes a newline; more-indented lines are
 //!   folded like any other line.
 //! - Flow collections on one line: `[a, "b", 1]`, `{k: v}` (nested allowed),
-//!   with an optional trailing comma.
+//!   with an optional trailing comma. Flow keys and flow plain scalars follow
+//!   the same start rules as block ones (see below); quoted forms are always
+//!   accepted as literal text.
 //!
 //! Rejected with an error: tab indentation, anchors/aliases/tags (`&`, `*`,
 //! `!`), directives, complex keys (`? `), duplicate keys, multiple documents,
 //! multi-line plain or quoted scalars, block-scalar indentation/`+` chomping
 //! indicators, `key: - item` on one line and nesting deeper than
-//! [`MAX_YAML_DEPTH`]. YAML 1.1 booleans (`yes`/`no`/`on`/`off`), numbers with
+//! [`MAX_YAML_DEPTH`]. The anchor/alias/tag rule and the reserved-indicator
+//! rule (`%`, `@`, `` ` ``) also apply to plain keys and plain scalars inside
+//! flow collections (`{&a k: v}`, `{*a: v}`, `{!t k: v}`, `[]` are errors;
+//! `{"&a k": v}` is the literal key `&a k`). The depth budget is a single
+//! one for the whole document: block mappings, block sequences (including
+//! same-indent sequences) and flow collections all count towards at most
+//! [`MAX_YAML_DEPTH`] container levels. YAML 1.1 booleans (`yes`/`no`/`on`/`off`), numbers with
 //! leading zeros, `+` signs, hex/octal and `.inf`/`.nan` stay strings.
 
 use crate::error::ParseError;
@@ -142,14 +150,25 @@ impl<'a> Parser<'a> {
         (self.index..self.lines.len()).find(|&position| self.lines[position].is_significant())
     }
 
+    /// Enforces the single document-wide nesting budget: `depth` is the
+    /// zero-based level of the container about to be parsed, counting block
+    /// and flow containers (and same-indent sequences) alike, so at most
+    /// [`MAX_YAML_DEPTH`] container levels are accepted.
+    fn check_depth(&self, depth: usize) -> Result<(), ParseError> {
+        if depth >= MAX_YAML_DEPTH {
+            let number = self
+                .next_significant()
+                .map_or(0, |position| self.lines[position].number);
+            return Err(error(number, "nesting is too deep"));
+        }
+        Ok(())
+    }
+
     fn parse_block(&mut self, indent: usize, depth: usize) -> Result<Json, ParseError> {
         let Some(position) = self.next_significant() else {
             return Ok(Json::Null);
         };
         let number = self.lines[position].number;
-        if depth > MAX_YAML_DEPTH {
-            return Err(error(number, "nesting is too deep"));
-        }
         let text = self.lines[position].text;
         if is_sequence_item(text) {
             return self.parse_sequence(indent, depth);
@@ -158,10 +177,11 @@ impl<'a> Parser<'a> {
             return self.parse_mapping(indent, depth);
         }
         self.index = position + 1;
-        self.scalar_value(text, indent, number)
+        self.scalar_value(text, indent, number, depth)
     }
 
     fn parse_sequence(&mut self, indent: usize, depth: usize) -> Result<Json, ParseError> {
+        self.check_depth(depth)?;
         let mut items = Vec::new();
         while let Some(position) = self.next_significant() {
             let number = self.lines[position].number;
@@ -192,13 +212,14 @@ impl<'a> Parser<'a> {
                 items.push(self.parse_block(indent + offset, depth + 1)?);
             } else {
                 self.index = position + 1;
-                items.push(self.scalar_value(after, indent, number)?);
+                items.push(self.scalar_value(after, indent, number, depth + 1)?);
             }
         }
         Ok(Json::Array(items))
     }
 
     fn parse_mapping(&mut self, indent: usize, depth: usize) -> Result<Json, ParseError> {
+        self.check_depth(depth)?;
         let mut pairs: Vec<(String, Json)> = Vec::new();
         while let Some(position) = self.next_significant() {
             let number = self.lines[position].number;
@@ -227,7 +248,7 @@ impl<'a> Parser<'a> {
             let value = if rest.is_empty() {
                 self.nested_value(indent, true, depth)?
             } else {
-                self.scalar_value(rest, indent, number)?
+                self.scalar_value(rest, indent, number, depth + 1)?
             };
             pairs.push((key, value));
         }
@@ -258,11 +279,15 @@ impl<'a> Parser<'a> {
         Ok(Json::Null)
     }
 
+    /// Parses the scalar or flow collection at the start of `text`.
+    /// `container_depth` is the level a flow collection starting here would
+    /// occupy in the document-wide nesting budget.
     fn scalar_value(
         &mut self,
         text: &str,
         parent_indent: usize,
         number: usize,
+        container_depth: usize,
     ) -> Result<Json, ParseError> {
         let Some(first) = text.chars().next() else {
             return Ok(Json::Null);
@@ -280,16 +305,14 @@ impl<'a> Parser<'a> {
                     pos: 0,
                     number,
                 };
-                let value = flow.value(0)?;
+                let value = flow.value(container_depth)?;
                 flow.finish()?;
                 Ok(value)
             }
-            '&' | '*' | '!' => Err(error(number, "anchors, aliases and tags are not supported")),
-            '%' | '@' | '`' => Err(error(
-                number,
-                "a scalar cannot start with a reserved indicator",
-            )),
-            _ => plain_scalar(text, number),
+            _ => {
+                reject_indicator(first, number)?;
+                plain_scalar(text, number)
+            }
         }
     }
 
@@ -423,6 +446,20 @@ fn split_entry(text: &str, number: usize) -> Result<Option<(String, &str)>, Pars
             }
             Ok(None)
         }
+    }
+}
+
+/// The one rule for how a plain scalar or plain key may begin, shared by block
+/// and flow contexts: anchors, aliases, tags and reserved indicators are
+/// errors (quote the text to use it literally).
+fn reject_indicator(first: char, number: usize) -> Result<(), ParseError> {
+    match first {
+        '&' | '*' | '!' => Err(error(number, "anchors, aliases and tags are not supported")),
+        '%' | '@' | '`' => Err(error(
+            number,
+            "a scalar cannot start with a reserved indicator",
+        )),
+        _ => Ok(()),
     }
 }
 
@@ -568,20 +605,17 @@ impl Flow {
     }
 
     fn value(&mut self, depth: usize) -> Result<Json, ParseError> {
-        if depth > MAX_YAML_DEPTH {
-            return Err(self.fail("nesting is too deep"));
-        }
         self.skip_spaces();
         match self.peek() {
             Some('[') => self.sequence(depth),
             Some('{') => self.mapping(depth),
             Some('"' | '\'') => self.quoted().map(Json::String),
-            Some('&' | '*' | '!') => Err(self.fail("anchors, aliases and tags are not supported")),
             Some(_) => {
                 let text = self.plain(false);
                 if text.is_empty() {
                     return Err(self.fail("empty flow entry"));
                 }
+                self.check_plain_start(&text)?;
                 if text.contains(": ") {
                     return Err(self.fail("a mapping value is not allowed inside a plain scalar"));
                 }
@@ -614,7 +648,28 @@ impl Flow {
             .to_string()
     }
 
+    fn check_depth(&self, depth: usize) -> Result<(), ParseError> {
+        if depth >= MAX_YAML_DEPTH {
+            return Err(self.fail("nesting is too deep"));
+        }
+        Ok(())
+    }
+
+    /// Applies the block-context rules for how a plain scalar or key may begin.
+    fn check_plain_start(&self, text: &str) -> Result<(), ParseError> {
+        let first = text.chars().next().unwrap_or(' ');
+        reject_indicator(first, self.number)?;
+        if matches!(first, '|' | '>') {
+            return Err(self.fail("block scalars are not allowed inside a flow collection"));
+        }
+        if text == "?" || text.starts_with("? ") {
+            return Err(self.fail("complex mapping keys are not supported"));
+        }
+        Ok(())
+    }
+
     fn sequence(&mut self, depth: usize) -> Result<Json, ParseError> {
+        self.check_depth(depth)?;
         self.pos += 1;
         let mut items = Vec::new();
         loop {
@@ -637,6 +692,7 @@ impl Flow {
     }
 
     fn mapping(&mut self, depth: usize) -> Result<Json, ParseError> {
+        self.check_depth(depth)?;
         self.pos += 1;
         let mut pairs: Vec<(String, Json)> = Vec::new();
         loop {
@@ -645,13 +701,17 @@ impl Flow {
                 self.pos += 1;
                 return Ok(Json::Object(pairs));
             }
-            let key = if matches!(self.peek(), Some('"' | '\'')) {
+            let quoted_key = matches!(self.peek(), Some('"' | '\''));
+            let key = if quoted_key {
                 self.quoted()?
             } else {
                 self.plain(true)
             };
             if key.is_empty() {
                 return Err(self.fail("empty key in a flow mapping"));
+            }
+            if !quoted_key {
+                self.check_plain_start(&key)?;
             }
             if pairs.iter().any(|(existing, _)| *existing == key) {
                 return Err(self.fail(&format!("duplicate mapping key '{key}'")));
@@ -953,6 +1013,185 @@ after: 1
             "]".repeat(MAX_YAML_DEPTH + 2)
         );
         assert_eq!(rejected(&flow).message, "nesting is too deep");
+    }
+
+    /// `block` nested block mappings (`k:` lines) followed by `flow` nested
+    /// flow arrays holding `0`; the document-wide level count is the sum.
+    fn mixed_depth_fixture(block: usize, flow: usize) -> String {
+        let mut text = String::new();
+        for level in 0..block {
+            text.push_str(&" ".repeat(level));
+            text.push_str("k:\n");
+        }
+        text.push_str(&" ".repeat(block));
+        text.push_str(&"[".repeat(flow));
+        text.push('0');
+        text.push_str(&"]".repeat(flow));
+        text.push('\n');
+        text
+    }
+
+    /// `levels` sequence-of-mapping pairs joined by same-indent sequences
+    /// (two containers per level). `tail` appends one more same-indent
+    /// sequence item under the last key when true, otherwise the last key
+    /// holds a scalar.
+    fn same_indent_fixture(levels: usize, tail: bool) -> String {
+        let mut text = String::new();
+        for level in 0..levels {
+            text.push_str(&" ".repeat(2 * level));
+            if level + 1 == levels && !tail {
+                text.push_str("- k: 1\n");
+            } else {
+                text.push_str("- k:\n");
+            }
+        }
+        if tail {
+            text.push_str(&" ".repeat(2 * levels));
+            text.push_str("- 1\n");
+        }
+        text
+    }
+
+    fn container_depth(value: &Json) -> usize {
+        match value {
+            Json::Array(items) => 1 + items.iter().map(container_depth).max().unwrap_or(0),
+            Json::Object(pairs) => {
+                1 + pairs
+                    .iter()
+                    .map(|(_, v)| container_depth(v))
+                    .max()
+                    .unwrap_or(0)
+            }
+            _ => 0,
+        }
+    }
+
+    #[test]
+    fn one_depth_budget_spans_block_and_flow_containers() {
+        // The reviewer's fixture: 40 block levels + 40 flow levels = 80 > 64.
+        let error = rejected(&mixed_depth_fixture(40, 40));
+        assert_eq!(error.message, "nesting is too deep");
+        // Exactly the limit is accepted; one more level is rejected.
+        let at_limit = yaml(&mixed_depth_fixture(40, MAX_YAML_DEPTH - 40));
+        assert_eq!(container_depth(&at_limit), MAX_YAML_DEPTH);
+        let over = rejected(&mixed_depth_fixture(40, MAX_YAML_DEPTH - 40 + 1));
+        assert_eq!(over.message, "nesting is too deep");
+        assert_eq!(over.line, 41);
+        // Pure block and pure flow documents use the same limit.
+        let block_only = yaml(&mixed_depth_fixture(MAX_YAML_DEPTH, 0));
+        assert_eq!(container_depth(&block_only), MAX_YAML_DEPTH);
+        assert_eq!(
+            rejected(&mixed_depth_fixture(MAX_YAML_DEPTH + 1, 0)).message,
+            "nesting is too deep"
+        );
+        let flow_only = format!(
+            "a: {}0{}\n",
+            "[".repeat(MAX_YAML_DEPTH - 1),
+            "]".repeat(MAX_YAML_DEPTH - 1)
+        );
+        assert_eq!(container_depth(&yaml(&flow_only)), MAX_YAML_DEPTH);
+        let flow_over = format!(
+            "a: {}0{}\n",
+            "[".repeat(MAX_YAML_DEPTH),
+            "]".repeat(MAX_YAML_DEPTH)
+        );
+        assert_eq!(rejected(&flow_over).message, "nesting is too deep");
+    }
+
+    #[test]
+    fn flow_collections_in_sequence_items_and_roots_count_toward_the_budget() {
+        let nested = |blocks: usize, flow: usize| {
+            let mut text = String::new();
+            for level in 0..blocks {
+                text.push_str(&" ".repeat(2 * level));
+                text.push_str("-\n");
+            }
+            text.push_str(&" ".repeat(2 * blocks));
+            text.push_str("- ");
+            text.push_str(&"[".repeat(flow));
+            text.push('0');
+            text.push_str(&"]".repeat(flow));
+            text.push('\n');
+            text
+        };
+        // `blocks` outer sequences + the sequence holding the flow item + flow.
+        let ok = yaml(&nested(30, MAX_YAML_DEPTH - 31));
+        assert_eq!(container_depth(&ok), MAX_YAML_DEPTH);
+        assert_eq!(
+            rejected(&nested(30, MAX_YAML_DEPTH - 30)).message,
+            "nesting is too deep"
+        );
+        // A bare root flow collection starts at level one.
+        let root = format!(
+            "{}0{}\n",
+            "[".repeat(MAX_YAML_DEPTH),
+            "]".repeat(MAX_YAML_DEPTH)
+        );
+        assert_eq!(container_depth(&yaml(&root)), MAX_YAML_DEPTH);
+        let root_over = format!(
+            "{}0{}\n",
+            "[".repeat(MAX_YAML_DEPTH + 1),
+            "]".repeat(MAX_YAML_DEPTH + 1)
+        );
+        assert_eq!(rejected(&root_over).message, "nesting is too deep");
+    }
+
+    #[test]
+    fn same_indent_sequences_count_toward_the_budget() {
+        let at_limit = yaml(&same_indent_fixture(MAX_YAML_DEPTH / 2, false));
+        assert_eq!(container_depth(&at_limit), MAX_YAML_DEPTH);
+        let over = rejected(&same_indent_fixture(MAX_YAML_DEPTH / 2, true));
+        assert_eq!(over.message, "nesting is too deep");
+        assert_eq!(over.line, MAX_YAML_DEPTH / 2 + 1);
+        assert_eq!(
+            rejected(&same_indent_fixture(MAX_YAML_DEPTH / 2 + 1, false)).message,
+            "nesting is too deep"
+        );
+    }
+
+    #[test]
+    fn unsupported_syntax_in_flow_keys_and_scalars_is_rejected() {
+        let cases: [(&str, usize, &str); 12] = [
+            ("ok: 1\nx: {&a name: value}\n", 2, "anchors"),
+            ("ok: 1\nx: {*alias: value}\n", 2, "anchors"),
+            ("ok: 1\nx: {!tag name: value}\n", 2, "anchors"),
+            ("ok: 1\nx: {a: 1, &b k: 2}\n", 2, "anchors"),
+            ("ok: 1\nx: [@bad]\n", 2, "reserved"),
+            ("ok: 1\nx: [%bad]\n", 2, "reserved"),
+            ("ok: 1\nx: [a, `bad]\n", 2, "reserved"),
+            ("ok: 1\nx: {@k: v}\n", 2, "reserved"),
+            ("ok: 1\nx: {k: &a v}\n", 2, "anchors"),
+            ("ok: 1\nx: [|]\n", 2, "block scalars"),
+            ("ok: 1\nx: {? a: b}\n", 2, "complex"),
+            ("- [1, *a]\n", 1, "anchors"),
+        ];
+        for (text, line, needle) in cases {
+            let error = rejected(text);
+            assert_eq!(error.line, line, "input {text:?}: {error}");
+            assert!(error.message.contains(needle), "input {text:?}: {error}");
+        }
+    }
+
+    #[test]
+    fn quoted_flow_keys_and_scalars_may_hold_indicator_text() {
+        let value = yaml(
+            "x: {\"&a name\": 1, '*alias': 2, \"!tag\": 3, \"@k\": 4}\ny: [\"@bad\", '%x', \"`t\", '|', \"&a\"]\n",
+        );
+        assert_eq!(
+            value.get("x"),
+            Some(&json("{\"&a name\":1,\"*alias\":2,\"!tag\":3,\"@k\":4}"))
+        );
+        assert_eq!(
+            value.get("y"),
+            Some(&json("[\"@bad\",\"%x\",\"`t\",\"|\",\"&a\"]"))
+        );
+        // Indicator characters inside (not at the start of) plain text are fine.
+        let inner = yaml("z: [a&b, c*d, e!f, g@h]\nw: {k&1: v*2}\n");
+        assert_eq!(
+            inner.get("z"),
+            Some(&json("[\"a&b\",\"c*d\",\"e!f\",\"g@h\"]"))
+        );
+        assert_eq!(inner.get("w"), Some(&json("{\"k&1\":\"v*2\"}")));
     }
 
     #[test]
