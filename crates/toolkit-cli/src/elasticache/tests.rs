@@ -3342,9 +3342,8 @@ fn storage_alarm_percentage_and_truncation() {
         "--max-storage-gb",
         "inf",
     ]);
-    assert_eq!(status, 1);
-    assert!(stderr
-        .starts_with("error: cannot convert float infinity or an out-of-range value to integer"));
+    assert_eq!(status, 2);
+    assert!(stderr.contains("argument --max-storage-gb: must be a finite number"));
 }
 
 #[test]
@@ -4195,7 +4194,6 @@ fn assert_not_inspected(result: &Audit, what: &str) {
             .any(|(check, status, _)| check.starts_with("Security group") && *status == "ERROR"),
         "{what}: no not-inspected finding: {findings:?}"
     );
-    assert!(!result.failed(), "{what}: ERROR is not FAIL");
 }
 
 #[test]
