@@ -79,3 +79,6 @@ rust-migration-health (health_anomaly), pm-safety-net (hourly resume), terminal 
 - 18:15Z: round 8 head dcd4714791aac1d77286b3a4f3a7d3e95c298f5c (worker 2c1dd570; merge b550f20c #4670 conflict-free + dcd47147 five `repeatable_flags: &[]` lines, verified).
   Pushed to branch rsi/80238d9c… (fast-forward of a41cfbb5); sandbox 2c1dd570 HEAD = dcd47147. Manager scoped b4cf6561 pending.
   If ok: GATE = dcd47147 with source_session_id 2c1dd570-280b-4289-a803-36b6b2a9f66d (sandbox holds HEAD; check AgentCheckLandingCandidate first). Else a41cfbb5 / 80238d9c.
+- 18:10Z: hub rsid restarted 18:04:49 (same build). Workers 0e783946 (#4407) and 9a7fd936 (#4383) marked Failed with uncommitted work -> AgentContinueChild both (calls timed out but took effect; running). Harness kaizen Rsi #4704.
+  scoped b4cf6561 on dcd47147 OK (2163 tests), check ok. GATE = dcd47147 / source_session_id 2c1dd570. Noted on #4575 with full close-on-land additions.
+  #4403 repair2 6ea6a0d7 alive at f7d80466 (fixing clippy dead-code), handoff pending.
