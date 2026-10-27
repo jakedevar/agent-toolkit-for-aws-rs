@@ -611,6 +611,7 @@ dependencies = [
  "fancy-regex",
  "jsonschema",
  "serde_json",
+ "toolkit-aws",
  "toolkit-core",
  "toolkit-msk",
  "unicode-normalization",

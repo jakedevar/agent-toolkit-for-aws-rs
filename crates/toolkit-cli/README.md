@@ -9,8 +9,9 @@ Python inventory (#4371) records legacy contracts separately.
 The workspace builds one binary, `toolkit` (crate `toolkit-cli`), from the
 shared library `toolkit-core`. `toolkit skills list` is read-only; `toolkit sync ...` (#4377)
 writes only in its non-`--check` modes and only inside the tree it was given; the
-`toolkit dynamodb` commands write only the files named in their section below. The
-CLI performs no network access and no live cloud activity.
+`toolkit dynamodb` commands write only the files named in their section below. Apart
+from `toolkit asm exec` (#4451: a loopback-only agent request and a command it
+runs), the CLI performs no network access and no live cloud activity.
 
 ## Commands
 
@@ -23,6 +24,7 @@ toolkit msk compat CLUSTER_CONFIG [--out-dir DIR]
 toolkit msk sim compute|render|validate [options]
 toolkit dynamodb calculate-costs --model FILE [--requirements FILE] [--output FILE]
 toolkit dynamodb iterate-design --model FILE --config FILE --loop-state FILE [options]
+toolkit asm exec [--] COMMAND [ARG...]
 toolkit --version
 toolkit help
 ```
@@ -492,3 +494,24 @@ reasons are in `pricing_source`), and the live `--cluster` / `--all` modes exit 
 with "AWS SDK access is not available in this build; use the 'offline'
 subcommand." Parity table, mock-transport design and intentional changes:
 [docs/migration/aurora.md](../../docs/migration/aurora.md).
+
+## asm exec (#4451)
+
+`toolkit asm exec [--] COMMAND [ARG...]` is the Rust port of the
+`aws-secrets-manager` skill's `asm-exec` helper. It replaces every
+`{{resolve:secretsmanager:ID[:SecretString[:KEY[:STAGE]]]}}` reference in
+`COMMAND`, its arguments and the exported environment with the secret value,
+runs `COMMAND` with the result and exits with its status (a command ended by
+signal N exits 256-N). The routing entry sets `CommandSpec::passthrough`, so
+every word after `exec`, dash-prefixed ones included, belongs to `COMMAND`
+(only one leading `--` is dropped). The handler asks for its exit status with
+`Output::set_exit_status`; it prints its own `asm-exec: ...` diagnostics on
+stderr (all scrubbed by `toolkit_aws::redact_text`) and nothing on stdout.
+A missing command is `Usage: asm-exec <command> [args...]` with exit 1.
+
+Secrets reach only the child's arguments and environment. The Secrets Manager
+Agent (`AWS_SECRETS_MANAGER_AGENT_ENDPOINT`, default `http://localhost:2773`,
+loopback only) is the working backend; the signed MCP fallback is ported behind
+the `toolkit-aws` seams but fails closed in this build (follow-up #4582). The
+parity table, the intentional differences and the secret-handling rules are in
+[docs/migration/asm-exec.md](../../docs/migration/asm-exec.md).

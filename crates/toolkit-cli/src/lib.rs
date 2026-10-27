@@ -24,6 +24,7 @@ use std::path::PathBuf;
 
 use toolkit_core::{discover_skills, skills_to_json, ErrorKind, ToolkitError};
 
+pub mod asm_exec;
 mod aurora;
 pub mod dynamodb;
 pub mod manifests;
@@ -86,6 +87,7 @@ Usage:
   toolkit aurora io [offline] --engine ENGINE [--region R] [--format json|table] [--days N]
       [--cluster ID | --all] [--instance TYPE] [--num-instances N]
       [--storage-gib GIB] [--monthly-io-millions N]
+  toolkit asm exec [--] COMMAND [ARG...]
   toolkit --version
   toolkit help
 
@@ -204,6 +206,14 @@ Commands:
                 which this build cannot do (exit 2), except `acu`, which falls
                 back to the built-in us-east-1 prices. Output is JSON unless
                 --format table. See docs/migration/aurora.md.
+  asm exec      Replace every {{resolve:secretsmanager:ID[:SecretString[:KEY
+                [:STAGE]]]}} reference in COMMAND, its arguments and the
+                environment with the secret value, then run COMMAND with the
+                result. One optional leading `--` is dropped; every other word,
+                dash-prefixed ones included, belongs to COMMAND. Exits with
+                COMMAND's status; 1 when a reference cannot be resolved or
+                COMMAND cannot be started (nothing is run then). See
+                docs/migration/asm-exec.md.
 
 Options:
   --json        Emit a JSON array of {name, description, path} objects.
@@ -232,7 +242,9 @@ Exit codes:
      reported as a JSON {\"error\": ...} object on stderr)
   Some commands keep a published status instead (iterate-design: 2 for a
   missing input file or refused change, 4 for a deploy without --yes-deploy,
-  or the failed step's own status); see crates/toolkit-cli/README.md.";
+  or the failed step's own status); see crates/toolkit-cli/README.md.
+  asm exec exits with the status of COMMAND (a command ended by signal N
+  exits 256-N); its own failures exit 1, including a missing COMMAND.";
 
 /// Buffered stdout lines with the closed-pipe and write-error contract.
 pub struct Output<'a> {
@@ -407,6 +419,11 @@ pub struct CommandSpec {
     pub strict_values: bool,
     /// Maximum number of positional arguments.
     pub max_positionals: usize,
+    /// Whether every word after the command path is a positional argument,
+    /// verbatim: dash-prefixed words, `--` and `-h`/`--help` are not
+    /// interpreted and `max_positionals` is ignored. For commands that run
+    /// another program (`asm exec`, #4451) whose own flags must reach it.
+    pub passthrough: bool,
     /// The implementation.
     pub handler: Handler,
 }
@@ -429,6 +446,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         value_flags: &[],
         strict_values: false,
         max_positionals: 1,
+        passthrough: false,
         handler: skills_list,
     },
     CommandSpec {
@@ -437,6 +455,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         value_flags: &["--plugin"],
         strict_values: false,
         max_positionals: 1,
+        passthrough: false,
         handler: manifests::validate_command,
     },
     CommandSpec {
@@ -445,6 +464,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         value_flags: &[],
         strict_values: false,
         max_positionals: 1,
+        passthrough: false,
         handler: spec::validate_command,
     },
     CommandSpec {
@@ -453,6 +473,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         value_flags: &["--plugin-root"],
         strict_values: false,
         max_positionals: 0,
+        passthrough: false,
         handler: startup::pricing_command,
     },
     CommandSpec {
@@ -461,6 +482,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         value_flags: &["--migration-dir"],
         strict_values: false,
         max_positionals: 0,
+        passthrough: false,
         handler: startup::program_artifacts_command,
     },
     CommandSpec {
@@ -469,6 +491,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         value_flags: &["--plugin-root"],
         strict_values: false,
         max_positionals: 0,
+        passthrough: false,
         handler: startup::model_id_lint_command,
     },
     CommandSpec {
@@ -483,6 +506,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         ],
         strict_values: false,
         max_positionals: 0,
+        passthrough: false,
         handler: startup::artifacts_command,
     },
     CommandSpec {
@@ -491,6 +515,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         value_flags: &["--migration-dir", "--plugin-root", "--plugin-json"],
         strict_values: false,
         max_positionals: 0,
+        passthrough: false,
         handler: startup::emit_plan_command,
     },
     CommandSpec {
@@ -499,6 +524,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         value_flags: &["--plugin-root"],
         strict_values: false,
         max_positionals: 0,
+        passthrough: false,
         handler: startup::consent_audit_command,
     },
     CommandSpec {
@@ -507,6 +533,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         value_flags: &["--plugin-root"],
         strict_values: false,
         max_positionals: 0,
+        passthrough: false,
         handler: startup::pricing_parity_command,
     },
     CommandSpec {
@@ -515,6 +542,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         value_flags: &["--json"],
         strict_values: false,
         max_positionals: 1,
+        passthrough: false,
         handler: startup::terraform_policy_command,
     },
     CommandSpec {
@@ -529,6 +557,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         ],
         strict_values: false,
         max_positionals: 1,
+        passthrough: false,
         handler: startup::migration_report_command,
     },
     CommandSpec {
@@ -537,6 +566,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         value_flags: &["--root", "--plugin"],
         strict_values: true,
         max_positionals: 0,
+        passthrough: false,
         handler: sync::plugin_skills,
     },
     CommandSpec {
@@ -545,6 +575,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         value_flags: &["--plugin-root"],
         strict_values: true,
         max_positionals: 0,
+        passthrough: false,
         handler: sync::vendored,
     },
     CommandSpec {
@@ -553,6 +584,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         value_flags: msk::SIZE_VALUE_FLAGS,
         strict_values: false,
         max_positionals: 0,
+        passthrough: false,
         handler: msk::size,
     },
     CommandSpec {
@@ -561,6 +593,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         value_flags: msk::COMPAT_VALUE_FLAGS,
         strict_values: false,
         max_positionals: 1,
+        passthrough: false,
         handler: msk::compat,
     },
     CommandSpec {
@@ -569,6 +602,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         value_flags: msk::SIM_COMPUTE_VALUE_FLAGS,
         strict_values: false,
         max_positionals: 0,
+        passthrough: false,
         handler: msk::sim_compute,
     },
     CommandSpec {
@@ -577,6 +611,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         value_flags: msk::SIM_RENDER_VALUE_FLAGS,
         strict_values: false,
         max_positionals: 0,
+        passthrough: false,
         handler: msk::sim_render,
     },
     CommandSpec {
@@ -585,6 +620,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         value_flags: msk::SIM_VALIDATE_VALUE_FLAGS,
         strict_values: false,
         max_positionals: 0,
+        passthrough: false,
         handler: msk::sim_validate,
     },
     CommandSpec {
@@ -593,6 +629,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         value_flags: dynamodb::CALCULATE_COSTS_VALUE_FLAGS,
         strict_values: true,
         max_positionals: 0,
+        passthrough: false,
         handler: dynamodb::calculate_costs_command,
     },
     CommandSpec {
@@ -601,6 +638,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         value_flags: dynamodb::ITERATE_DESIGN_VALUE_FLAGS,
         strict_values: true,
         max_positionals: 0,
+        passthrough: false,
         handler: dynamodb::iterate_design_command,
     },
     CommandSpec {
@@ -621,6 +659,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         ],
         strict_values: false,
         max_positionals: 0,
+        passthrough: false,
         handler: aurora::acu_estimate_command,
     },
     CommandSpec {
@@ -629,6 +668,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         value_flags: &["--engine", "--region"],
         strict_values: false,
         max_positionals: 0,
+        passthrough: false,
         handler: aurora::acu_list_instances_command,
     },
     CommandSpec {
@@ -637,6 +677,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         value_flags: &["--engine", "--region"],
         strict_values: false,
         max_positionals: 0,
+        passthrough: false,
         handler: aurora::acu_pricing_source_command,
     },
     // `aurora acu` alone prints the help; it must follow the longer `acu` paths.
@@ -646,6 +687,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         value_flags: &["--engine", "--region"],
         strict_values: false,
         max_positionals: 0,
+        passthrough: false,
         handler: aurora::acu_help_command,
     },
     CommandSpec {
@@ -662,6 +704,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         ],
         strict_values: false,
         max_positionals: 1,
+        passthrough: false,
         handler: aurora::commitment_command,
     },
     CommandSpec {
@@ -680,7 +723,17 @@ pub const COMMANDS: &[CommandSpec] = &[
         ],
         strict_values: false,
         max_positionals: 1,
+        passthrough: false,
         handler: aurora::io_command,
+    },
+    CommandSpec {
+        path: &["asm", "exec"],
+        flags: &[],
+        value_flags: &[],
+        strict_values: false,
+        max_positionals: usize::MAX,
+        passthrough: true,
+        handler: asm_exec::exec_command,
     },
 ];
 
@@ -740,6 +793,10 @@ pub fn route<'a>(specs: &'a [CommandSpec], args: &[String]) -> Result<Routed<'a>
     };
 
     let mut invocation = Invocation::default();
+    if spec.passthrough {
+        invocation.positionals = args[spec.path.len()..].to_vec();
+        return Ok(Routed::Run(spec, invocation));
+    }
     let mut rest = args[spec.path.len()..].iter();
     while let Some(arg) = rest.next() {
         let word = arg.as_str();
@@ -1069,6 +1126,41 @@ mod tests {
     }
 
     #[test]
+    fn passthrough_commands_take_every_word_verbatim() {
+        let routed = route_words(&["asm", "exec", "--", "ls", "-la", "--help", "-h", "x=1"]);
+        let Ok(Routed::Run(spec, invocation)) = routed else {
+            panic!("asm exec must route to its handler");
+        };
+        assert_eq!(spec.path, ["asm", "exec"]);
+        assert_eq!(
+            invocation.positionals,
+            words(&["--", "ls", "-la", "--help", "-h", "x=1"])
+        );
+        assert!(invocation.flags.is_empty() && invocation.values.is_empty());
+        // No words at all still routes (the handler prints the usage line).
+        assert!(matches!(
+            route_words(&["asm", "exec"]),
+            Ok(Routed::Run(_, invocation)) if invocation.positionals.is_empty()
+        ));
+        // Other commands still reject unknown flags.
+        assert!(route_words(&["skills", "list", "--bogus"]).is_err());
+    }
+
+    #[test]
+    fn a_handler_can_return_a_status_without_an_error_report() {
+        let (status, stdout, stderr) = exec(&["asm", "exec"]);
+        assert_eq!(
+            (status, stdout.as_str(), stderr.as_str()),
+            (1, "", "Usage: asm-exec <command> [args...]\n")
+        );
+        #[cfg(unix)]
+        {
+            let (status, stdout, stderr) = exec(&["asm", "exec", "/bin/sh", "-c", "exit 3"]);
+            assert_eq!((status, stdout.as_str(), stderr.as_str()), (3, "", ""));
+        }
+    }
+
+    #[test]
     fn help_and_version_write_to_stdout_only() {
         let (status, stdout, stderr) = exec(&["--help"]);
         assert_eq!((status, stderr.as_str()), (0, ""));
@@ -1351,6 +1443,7 @@ mod tests {
             value_flags: &[],
             strict_values: false,
             max_positionals: 0,
+            passthrough: false,
             handler,
         };
         let Ok(Routed::Run(spec, invocation)) =
