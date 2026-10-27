@@ -11,6 +11,7 @@ use toolkit_core::Json;
 
 use super::client::{Operation, SageMakerClient};
 use super::hub::{validate_endpoint_name, ModelsError};
+use super::members::{optional_list, optional_object_list};
 use super::timeutil::{iso_utc, timestamp_text};
 use crate::cloudwatch::timefmt::UtcTime;
 use crate::dynamodb::pyfmt;
@@ -118,17 +119,7 @@ fn describe_endpoint(
         }
     };
     let get = |key: &str| response.get(key).cloned().unwrap_or(Json::Null);
-    let raw_variants = match response.get("ProductionVariants") {
-        None | Some(Json::Null) => Vec::new(),
-        Some(Json::Array(items)) if items.iter().all(|item| matches!(item, Json::Object(_))) => {
-            items.clone()
-        }
-        Some(_) => {
-            return Err(ModelsError::Data(
-                "ProductionVariants must be a list of objects".to_string(),
-            ))
-        }
-    };
+    let raw_variants = optional_object_list(&response, "ProductionVariants")?;
     let variants: Vec<Json> = raw_variants
         .iter()
         .map(|variant| {
@@ -266,25 +257,14 @@ fn collect_metrics(
     let mut metrics: Vec<(String, Json)> = Vec::new();
     match client.call(Operation::GetMetricData, &request) {
         Ok(response) => {
-            let results = match response.get("MetricDataResults") {
-                None | Some(Json::Null) => Vec::new(),
-                Some(Json::Array(items)) => items.clone(),
-                Some(_) => {
-                    return Err(ModelsError::Data(
-                        "MetricDataResults must be a list".to_string(),
-                    ))
-                }
-            };
-            for result in &results {
+            let results = optional_object_list(&response, "MetricDataResults")?;
+            for result in results {
                 let Some(id) = result.get("Id").and_then(Json::as_str) else {
                     return Err(ModelsError::Data(
                         "a metric result has no string Id".to_string(),
                     ));
                 };
-                let values = result
-                    .get("Values")
-                    .cloned()
-                    .unwrap_or_else(|| Json::Array(Vec::new()));
+                let values = Json::Array(optional_list(result, "Values")?.to_vec());
                 // A repeated id keeps its first position and the last value.
                 if let Some(slot) = metrics.iter_mut().find(|(name, _)| name == id) {
                     slot.1 = values;
@@ -327,19 +307,7 @@ fn collect_logs(
     ]);
     match client.call(Operation::FilterLogEvents, &request) {
         Ok(response) => {
-            let events = match response.get("events") {
-                None | Some(Json::Null) => Vec::new(),
-                Some(Json::Array(events))
-                    if events.iter().all(|e| matches!(e, Json::Object(_))) =>
-                {
-                    events.clone()
-                }
-                Some(_) => {
-                    return Err(ModelsError::Data(
-                        "events must be a list of objects".to_string(),
-                    ))
-                }
-            };
+            let events = optional_object_list(&response, "events")?;
             events
                 .iter()
                 .map(|event| {

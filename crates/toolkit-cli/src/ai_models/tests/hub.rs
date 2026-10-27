@@ -154,7 +154,7 @@ fn a_record_with_bad_keywords_names_its_position() {
         Err(ModelsError::Data(message)) => {
             assert_eq!(
                 message,
-                "model 1: HubContentSearchKeywords must be a list of strings"
+                "model 1: HubContentSearchKeywords must be a list of strings when present (it is integer)"
             );
         }
         other => panic!("{other:?}"),

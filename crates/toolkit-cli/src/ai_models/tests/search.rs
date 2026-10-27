@@ -472,7 +472,7 @@ fn a_malformed_response_falls_back_as_a_response_error() {
     for (response, needle) in [
         (
             r#"{"Results": "x"}"#,
-            "Search response Results must be a list",
+            "Results must be a list when present (it is string)",
         ),
         (
             r#"{"Results": [{"Other": 1}]}"#,

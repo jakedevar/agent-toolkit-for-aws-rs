@@ -8,6 +8,7 @@
 use toolkit_core::{parse_json, Json};
 use toolkit_msk::pyfmt::py_float_parse;
 
+use super::members::optional_string_list;
 use super::timeutil::epoch_to_iso;
 use crate::dynamodb::pyfmt;
 use crate::manifests::py_strip;
@@ -107,23 +108,14 @@ const SCALAR_KEYWORDS: [(&str, &str); 5] = [
     ("@provider:", "provider"),
 ];
 
-/// `HubContentSearchKeywords` of a Hub record: absent or null is empty.
+/// `HubContentSearchKeywords` of a Hub record: absent is empty; a present one
+/// must be a list of strings (`null` is rejected).
 ///
 /// # Errors
 ///
 /// A description when the member is not a list of strings.
 pub(super) fn keywords_of(record: &Json) -> Result<Vec<&str>, String> {
-    match record.get("HubContentSearchKeywords") {
-        None | Some(Json::Null) => Ok(Vec::new()),
-        Some(Json::Array(items)) => items
-            .iter()
-            .map(|item| {
-                item.as_str()
-                    .ok_or_else(|| "HubContentSearchKeywords must be a list of strings".to_string())
-            })
-            .collect(),
-        Some(_) => Err("HubContentSearchKeywords must be a list of strings".to_string()),
-    }
+    optional_string_list(record, "HubContentSearchKeywords")
 }
 
 /// `_document_scalar`: one lower-cased string of a top-level field of the

@@ -15,7 +15,7 @@
 //!
 //! - [`client`]: the AWS seam. This build binds no live client: the default is
 //!   [`client::NoLiveClient`], which sends nothing; `--recorded FILE` replays
-//!   recorded responses deterministically ([`client::RecordedClient`]).
+//!   recorded responses deterministically ([`recorded::RecordedClient`]).
 //! - [`normalize`], [`filter`], [`snapshot`], [`search`], [`hub`],
 //!   [`diagnostics`]: the ported logic, one module per concern.
 //!
@@ -40,7 +40,9 @@ mod client;
 mod diagnostics;
 mod filter;
 mod hub;
+mod members;
 mod normalize;
+mod recorded;
 mod search;
 mod snapshot;
 mod timeutil;
@@ -48,10 +50,11 @@ mod timeutil;
 #[cfg(test)]
 mod tests;
 
-use client::{NoLiveClient, RecordedClient, SageMakerClient};
+use client::{NoLiveClient, SageMakerClient};
 use diagnostics::TimeRange;
 use filter::{add_constraint, constraints_json, filter_models, Constraints, VALID_KEYS};
 use hub::{shown, validate_content_name, validate_hub_name, ModelsError};
+use recorded::RecordedClient;
 use search::{SearchAdapterError, PUBLIC_HUB_NAME};
 use snapshot::SnapshotError;
 

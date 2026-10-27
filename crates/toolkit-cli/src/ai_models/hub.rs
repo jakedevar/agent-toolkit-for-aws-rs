@@ -6,6 +6,7 @@ use toolkit_aws::{collect_pages, next_token_from, AwsError, Page, PageLimits};
 use toolkit_core::{escape_untrusted, Json};
 
 use super::client::{Operation, SageMakerClient};
+use super::members::optional_object_list;
 use super::normalize::{keywords_of, normalize_hub_content, CUSTOMIZATION_KEYWORD};
 
 /// `MaxResults` of every `ListHubContents` request.
@@ -152,21 +153,10 @@ pub(super) fn list_hub_contents(
 ) -> Result<Vec<Json>, AwsError> {
     collect_pages(&PageLimits::default(), |token| {
         let response = client.call(Operation::ListHubContents, &list_request(hub, token))?;
-        let items = match response.get("HubContentSummaries") {
-            None | Some(Json::Null) => Vec::new(),
-            Some(Json::Array(items))
-                if items.iter().all(|item| matches!(item, Json::Object(_))) =>
-            {
-                items.clone()
-            }
-            Some(_) => {
-                return Err(AwsError::invalid_response(
-                    "HubContentSummaries must be a list of objects",
-                ))
-            }
-        };
+        let items = optional_object_list(&response, "HubContentSummaries")
+            .map_err(AwsError::invalid_response)?;
         Ok(Page {
-            items,
+            items: items.to_vec(),
             next_token: next_token_from(&response, "NextToken")?,
         })
     })

@@ -15,6 +15,7 @@ use toolkit_core::{quote_untrusted, Json};
 use super::client::{Operation, SageMakerClient};
 use super::filter::{filter_models, sort_models_newest_first, Constraints, VALID_KEYS};
 use super::hub::shown;
+use super::members::optional_list;
 use super::normalize::normalize_hub_content;
 
 /// The only Hub the Search adapter serves.
@@ -710,15 +711,7 @@ pub(super) fn search_deployable_models(
         .map_err(|reason| SearchAdapterError::UnsupportedSdk(shown(&reason)))?;
     let records = collect_pages(&PageLimits::default(), |token| {
         let response = client.call(Operation::Search, &search_request(&expression, token))?;
-        let results = match response.get("Results") {
-            None | Some(Json::Null) => Vec::new(),
-            Some(Json::Array(results)) => results.clone(),
-            Some(_) => {
-                return Err(AwsError::invalid_response(
-                    "Search response Results must be a list",
-                ))
-            }
-        };
+        let results = optional_list(&response, "Results").map_err(AwsError::invalid_response)?;
         let mut contents = Vec::with_capacity(results.len());
         for (index, record) in results.iter().enumerate() {
             match record.get("HubContent") {

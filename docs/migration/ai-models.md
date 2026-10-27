@@ -30,13 +30,31 @@ with the request the Python code passed as keyword arguments.
 - `NoLiveClient` (the build's client) sends nothing and reads no credential;
   every call fails with `invalid client: this build has no live AWS client and
   sent nothing; replay recorded responses with --recorded FILE` (exit 1).
-- `RecordedClient` (`--recorded FILE`) replays
+- `RecordedClient` (`--recorded FILE`, module `recorded.rs`) replays
   `{"calls": {"<Operation>": [{"request": {...}?, "response": {...}} |
-  {"error": {"kind": "service"|"no_credentials"|"connect", "code", "message",
-  "status"}}]}}` in order per operation. A step's `request`, when present, must
-  equal the request made; a recording that runs out, an unknown key or a
-  malformed step is an error naming the position (`calls.Search[0]`), never a
-  value. The file is read with the symlink-refusing, size-bounded reader.
+  {"request": {...}?, "error": {"kind": "service"|"no_credentials"|"connect",
+  "code", "message", "status"}}]}}` in order per operation. A step's `request`,
+  when present, must equal the request made, and that check runs **before
+  either outcome is replayed**: a mismatching error step is the same runtime
+  data error (exit 1) as a mismatching response step, never the recorded
+  service error. Every optional member (`request`, `error.kind`, `error.code`,
+  `error.message`, `error.status`) is validated for every step and error kind
+  at load: absent takes its default, a present one of another type, `null`
+  included, rejects the whole recording (exit 1, no success output). A
+  recording that runs out, an unknown key or a malformed step is an error
+  naming the position (`calls.Search[0].error.code`) and the rule, never a
+  value. The file is read with the symlink-refusing, size-bounded reader. The
+  accessors live in `members.rs` and are shared with the response sites.
+- AWS response members follow the same rule through the same accessors
+  (`optional_list`, `optional_object_list`, `optional_string_list`):
+  `HubContentSummaries`, `Results`, `HubContentSearchKeywords`,
+  `ProductionVariants`, `MetricDataResults` (and each result's `Values`) and
+  `events` are absent (default empty) or of their type; `null` or any other
+  type is a malformed response. `Search` then falls back visibly to the
+  complete catalog (`SearchResponseError`); the listing and diagnostics
+  commands fail with exit 1 and no success output, also on a later page.
+  Nullable scalars (`FailureReason`, `OriginalCreationTime`) and a null or
+  empty terminal `NextToken` stay accepted.
 - Pagination reuses `toolkit_aws::collect_pages` / `next_token_from` (page and
   item caps, repeated-token detection, tokens never echoed); errors are
   `toolkit_aws::AwsError`, with `ServiceError` carrying the redacted code and

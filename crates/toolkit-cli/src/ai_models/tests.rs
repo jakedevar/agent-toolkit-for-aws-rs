@@ -4,7 +4,8 @@
 use toolkit_aws::AwsError;
 use toolkit_core::{parse_json, Json};
 
-use super::client::{Operation, RecordedClient, SageMakerClient};
+use super::client::{Operation, SageMakerClient};
+use super::recorded::RecordedClient;
 use crate::dynamodb::pyfmt;
 
 mod cli;
@@ -14,6 +15,7 @@ mod hub;
 mod normalize;
 mod recorded;
 mod search;
+mod shape;
 mod snapshot;
 
 /// Parses fixture JSON.

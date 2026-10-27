@@ -2,7 +2,8 @@ use toolkit_aws::AwsError;
 use toolkit_core::Json;
 
 use super::{j, recorded};
-use crate::ai_models::client::{NoLiveClient, Operation, RecordedClient, SageMakerClient};
+use crate::ai_models::client::{NoLiveClient, Operation, SageMakerClient};
+use crate::ai_models::recorded::RecordedClient;
 
 fn rejected(text: &str) -> String {
     match RecordedClient::from_json(&j(text)) {
@@ -127,11 +128,11 @@ fn malformed_recordings_are_refused_by_position_without_echoing_values() {
     );
     assert_eq!(
         rejected(r#"{"calls": {"Search": [{"error": {"status": 99}}]}}"#),
-        "calls.Search[0].error.status must be an HTTP status code"
+        "calls.Search[0].error.status must be an HTTP status code when present (it is integer)"
     );
     assert_eq!(
         rejected(r#"{"calls": {"Search": [{"error": {"code": 5}}]}}"#),
-        "calls.Search[0].error.code must be a string"
+        "calls.Search[0].error.code must be a string when present (it is integer)"
     );
 }
 
