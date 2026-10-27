@@ -64,6 +64,8 @@ Usage:
   toolkit startup score-units ANSWERS [--plugin-root DIR] [--runtimes-dir DIR]
   toolkit startup model-recommend INPUT [--output FILE] [--catalog FILE] [--openai-catalog FILE]
                             [--plugin-root DIR]
+  toolkit startup build-diagram RESULT CONFIRM [DESIGN]
+  toolkit startup verify-model-path RECOMMENDATION [--output FILE] [--workload ID[,ID...]]
   toolkit sync plugin-skills [--root DIR] [--plugin NAME] [--check]
   toolkit sync vendored [--plugin-root DIR] [--check]
   toolkit msk size [--emit-static-pricing] [--use-max-partitions]
@@ -247,6 +249,23 @@ Commands:
                 skills/agent-advisor/references/models of --plugin-root
                 (default: the current directory) unless --catalog FILE
                 (Anthropic) or --openai-catalog FILE names them.
+  startup build-diagram RESULT CONFIRM [DESIGN]
+                Compose the architecture diagram of the scoring result RESULT
+                (agent-advisor build_diagram.py): the runtime, model and
+                AgentCore services, or the multi-unit topology of the design
+                DESIGN when it has several units. CONFIRM and DESIGN are
+                treated as absent when the file does not exist. Writes
+                diagram.md (a Mermaid block plus an ASCII fallback) beside
+                RESULT and prints RESULT=ok RUNTIME=<runtime>. Text from the
+                documents is escaped; no renderer is run.
+  startup verify-model-path RECOMMENDATION
+                Probe the model paths of a model-recommendation.json
+                (agent-advisor verify_model_path.py) and write
+                model-verification.json beside it (--output FILE overrides).
+                --workload ID[,ID...] probes only those workloads. Prints
+                RESULT=ok|failed WORKLOADS=<n>; exit 2 when a probe failed or
+                needs resolution. Probe errors are redacted. This build has no
+                live Bedrock client: a probe reports a RuntimeError.
   sync plugin-skills
                 Make plugins/<plugin>/skills/<name> copies byte-identical to the
                 canonical skills/**/<name> (a directory holding SKILL.md). --root
@@ -751,6 +770,24 @@ pub const COMMANDS: &[CommandSpec] = &[
         max_positionals: 1,
         passthrough: false,
         handler: startup::model_recommend_command,
+    },
+    CommandSpec {
+        path: &["startup", "build-diagram"],
+        flags: &[],
+        value_flags: &[],
+        strict_values: false,
+        max_positionals: 3,
+        passthrough: false,
+        handler: startup::build_diagram_command,
+    },
+    CommandSpec {
+        path: &["startup", "verify-model-path"],
+        flags: &[],
+        value_flags: &["--output", "--workload"],
+        strict_values: false,
+        max_positionals: 1,
+        passthrough: false,
+        handler: startup::verify_model_path_command,
     },
     CommandSpec {
         path: &["sync", "plugin-skills"],
