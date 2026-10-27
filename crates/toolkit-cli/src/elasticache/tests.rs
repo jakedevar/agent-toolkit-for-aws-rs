@@ -4416,7 +4416,7 @@ fn well_formed_cidr_entries_still_pass_and_warn() {
     // Empty range lists, missing ranges, no ports, IPv4 and IPv6 narrow CIDRs.
     for rules in [
         "[]",
-        r#"[{}]"#,
+        "[{}]",
         r#"[{"IpRanges": [], "Ipv6Ranges": []}]"#,
         r#"[{"IpProtocol": "-1", "IpRanges": [{"CidrIp": "10.0.0.0/16", "Description": "x"}]}]"#,
         r#"[{"FromPort": 1, "ToPort": 2, "IpRanges": [{"CidrIp": "10.1.2.3/32"}, {"CidrIp": "192.168.0.0/24"}], "Ipv6Ranges": [{"CidrIpv6": "2001:db8::/32"}, {"CidrIpv6": "fd00::/8"}]}]"#,
