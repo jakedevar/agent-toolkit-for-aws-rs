@@ -203,8 +203,9 @@ re-parse `argv`.
 
 - `help`, `-h`, `--help` and `version`, `-V`, `--version` as the first word win
   over everything after them. Inside a command, `-h`/`--help` selects help; any
-  other `-`-prefixed word (including a bare `-`) must be one of the command's
-  flags or it is a usage error; a flag repeated is accepted once.
+  other `-`-prefixed word must be one of the command's flags or it is a usage
+  error; a flag repeated is accepted once. The exact word `-` is the one
+  exception: it is a positional (see "The bare `-` stdin marker").
 - Handlers return `Result<(), ToolkitError>`. `ToolkitError` has a class (usage
   = exit 2, runtime = exit 1), a stable machine code (for example
   `root_not_found`, `invalid_arguments`, `stdout_write`, `parse_error`,
@@ -262,6 +263,23 @@ let workloads: Vec<&str> = invocation.values_of("--workload").collect();
 - Values are caller text. Escape them with the `toolkit_core` diagnostic helpers
   (or `Output::diagnostic`) before they reach a message, as for any other value flag
   (see "Untrusted text in diagnostics").
+
+### The bare `-` stdin marker (#4743)
+
+argparse treats a lone `-` as an ordinary value, and many scripts use it to mean
+"read standard input" (`--json -`). The router matches that:
+
+- The exact token `-` is accepted as the value of any value flag (plain or
+  repeatable), spaced (`--json -`) or attached (`--json=-`), even on a
+  `strict_values` command. Every other `-`-prefixed value (`-x`, `--foo`, `--`)
+  is still refused there, and the empty value still is.
+- A lone `-` is a positional where the command accepts positionals (it counts
+  against `max_positionals`); it is no longer an unknown flag.
+- The router only routes it. It does not read stdin: a slice may now accept `-` as
+  a stdin marker, and must implement the read itself (bounded, UTF-8 checked and
+  with any diagnostic escaping its other inputs get). A slice that does not
+  handle `-` receives the literal string `"-"` like any other value, so it should
+  treat that as an unreadable path or invalid value, never as stdin by accident.
 
 ## Shared library contracts (`toolkit-core`)
 

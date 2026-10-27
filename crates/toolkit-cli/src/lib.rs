@@ -479,7 +479,7 @@ Commands:
                 table with its sizing recommendation. See
                 docs/migration/relational.md.
 
-Options:)
+Options:
   --json        Emit a JSON array of {name, description, path} objects.
   --plugin NAME (manifests validate) Validate only the plugin directory
                 ROOT/plugins/NAME. (sync plugin-skills) Sync only that plugin.
@@ -1531,9 +1531,10 @@ fn usage_error() -> ToolkitError {
 }
 
 /// Whether `value` may follow a value flag of `spec` (see
-/// [`CommandSpec::strict_values`]).
+/// [`CommandSpec::strict_values`]). The exact token `-` is always allowed: it
+/// is the argparse stdin marker (`--json -`, #4743), not a flag.
 fn value_allowed(spec: &CommandSpec, value: &str) -> bool {
-    !spec.strict_values || !(value.is_empty() || value.starts_with('-'))
+    !spec.strict_values || value == "-" || !(value.is_empty() || value.starts_with('-'))
 }
 
 /// Whether `name` is a value flag of `spec`, plain or repeatable.
@@ -1587,7 +1588,8 @@ pub fn route<'a>(specs: &'a [CommandSpec], args: &[String]) -> Result<Routed<'a>
         if word == "-h" || word == "--help" {
             return Ok(Routed::Help);
         }
-        if word.starts_with('-') {
+        // A bare `-` is a positional (argparse's stdin marker), not a flag.
+        if word.starts_with('-') && word != "-" {
             if is_value_flag(spec, word) {
                 // `--name value`: the next word is the value.
                 let Some(value) = rest.next() else {
@@ -1988,6 +1990,75 @@ mod tests {
     }
 
     #[test]
+    fn a_bare_dash_is_a_value_for_every_kind_of_value_flag_even_when_strict() {
+        // argparse parity (#4743): `--json -` means stdin.
+        for command in ["strict", "loose"] {
+            let invocation = route_repeatable(&[command, "--mode", "-"]).expect("routes");
+            assert_eq!(invocation.value("--mode"), Some("-"));
+            let invocation = route_repeatable(&[command, "--mode=-"]).expect("routes");
+            assert_eq!(invocation.value("--mode"), Some("-"));
+            let invocation = route_repeatable(&[
+                command,
+                "--workload",
+                "-",
+                "--workload=-",
+                "--workload",
+                "a",
+            ])
+            .expect("routes");
+            assert_eq!(
+                invocation.values_of("--workload").collect::<Vec<_>>(),
+                ["-", "-", "a"]
+            );
+        }
+    }
+
+    #[test]
+    fn other_dash_prefixed_values_are_still_refused_when_strict() {
+        for bad in ["-x", "--foo", "--", "-=", "-- ", "-\u{0}", "--json"] {
+            for flag in ["--mode", "--workload"] {
+                assert!(
+                    route_repeatable(&["strict", flag, bad]).is_err(),
+                    "{flag} {bad:?}"
+                );
+                let attached = format!("{flag}={bad}");
+                assert!(
+                    route_repeatable(&["strict", &attached]).is_err(),
+                    "{attached:?}"
+                );
+            }
+        }
+        // `--mode -` does not swallow the next flag as a value either.
+        assert!(route_repeatable(&["strict", "--mode", "-", "--bogus"]).is_err());
+    }
+
+    #[test]
+    fn a_bare_dash_is_a_positional_where_positionals_are_accepted() {
+        let invocation = route_repeatable(&["strict", "-"]).expect("routes");
+        assert_eq!(invocation.positionals, ["-"]);
+        // Beside a switch and a value flag, in any order.
+        let invocation =
+            route_repeatable(&["strict", "--json", "--mode", "m", "-"]).expect("routes");
+        assert_eq!(invocation.positionals, ["-"]);
+        assert!(invocation.has_flag("--json"));
+        assert_eq!(invocation.value("--mode"), Some("m"));
+        // It counts against `max_positionals`.
+        assert!(route_repeatable(&["strict", "-", "-"]).is_err());
+        // A command that takes no positionals refuses it.
+        let none = &[CommandSpec {
+            path: &["none"],
+            flags: &[],
+            value_flags: &[],
+            strict_values: true,
+            repeatable_flags: &[],
+            max_positionals: 0,
+            passthrough: false,
+            handler: skills_list,
+        }];
+        assert!(route(none, &words(&["none", "-"])).is_err());
+    }
+
+    #[test]
     fn strict_values_refuse_each_repeated_value_that_is_empty_or_dashed() {
         for bad in [
             ["--workload", ""].as_slice(),
@@ -2103,7 +2174,9 @@ mod tests {
             vec!["skills"],
             vec!["skills", "export"],
             vec!["skills", "list", "--wat"],
-            vec!["skills", "list", "-"],
+            // A bare `-` is a positional now (#4743), so it only fails when it
+            // is one too many.
+            vec!["skills", "list", "a", "-"],
             vec!["skills", "list", "a", "b"],
             vec!["list"],
             vec!["--json"],

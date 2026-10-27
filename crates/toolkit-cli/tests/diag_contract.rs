@@ -314,6 +314,22 @@ fn usage_variants(spec: &CommandSpec) -> Vec<Vec<String>> {
         }
         variants.push(extra);
     }
+    // The bare `-` stdin marker (#4743) as a value of every value flag, in both
+    // spellings, and as a positional: the router accepts it, so the command
+    // behind it must still keep its output safe (stdin is closed here).
+    for flag in all_value_flags(spec) {
+        let mut spaced = base.clone();
+        spaced.extend([flag.to_string(), "-".to_string()]);
+        variants.push(spaced);
+        let mut attached = base.clone();
+        attached.push(format!("{flag}=-"));
+        variants.push(attached);
+    }
+    if !spec.passthrough && spec.max_positionals > 0 {
+        let mut dash = base.clone();
+        dash.push("-".to_string());
+        variants.push(dash);
+    }
     if let Some(flag) = all_value_flags(spec).first() {
         // A value flag at the end of the arguments has no value.
         let mut dangling = base;
