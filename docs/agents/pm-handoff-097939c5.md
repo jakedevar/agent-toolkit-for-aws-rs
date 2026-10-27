@@ -116,3 +116,5 @@ rust-migration-health (health_anomaly), pm-safety-net (hourly resume), terminal 
 - 19:35Z: #4697 impl ffc0c74e (257d2d14; diag_contract only; scoped 3ec39246 ok). Review #4722 worker dd39b3e5 (pinned).
 - 19:40Z: #4697 ACCEPT ffc0c74e (#4722, dd39b3e5; friction #4723). Round 11 candidate (test-only).
 - 19:42Z: New slice #4381 (CloudWatch clients/CRUD/instrumentation) worker ad948f84 from a1db6c61.
+- 19:45Z: #4721 review of #4384 a611fb03: CHANGES_REQUESTED -> #4724 #4725 #4726 (same null-defaulting class as #4712/#4713). Repair worker fc047609 (continue_from e8a85e85).
+  Kaizen filed #4727 (P2): shared recorded-input/response validator in toolkit-aws; dispatch after #4384 repair accepted (migrate bedrock_agent + ai-models).
