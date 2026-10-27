@@ -1,7 +1,7 @@
 //! SHA-256, implemented from FIPS 180-4 so the workspace stays free of
 //! third-party dependencies.
 //!
-//! Used for stable content fingerprints (for example the DynamoDB design
+//! Used for stable content fingerprints (for example the `DynamoDB` design
 //! schema fingerprint). It is a plain, non-constant-time digest and must not be
 //! used to compare secrets.
 
@@ -85,6 +85,7 @@ const INITIAL_STATE: [u32; 8] = [
     0x5be0_cd19,
 ];
 
+#[allow(clippy::many_single_char_names)]
 fn compress(state: &mut [u32; 8], block: &[u8]) {
     let mut schedule = [0_u32; 64];
     for (index, word) in block.chunks_exact(4).enumerate() {

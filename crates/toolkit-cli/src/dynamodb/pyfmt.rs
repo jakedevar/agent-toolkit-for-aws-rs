@@ -7,7 +7,7 @@
 //! space. Nothing here is a general Python emulation.
 
 use std::fmt::Write as _;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use toolkit_core::Json;
 
@@ -197,7 +197,13 @@ pub fn int_commas(value: f64) -> String {
 /// A path as Python's `str(Path(...))` shows it: no `.` components, no
 /// repeated separators, no trailing separator.
 pub fn normalized_path(path: &Path) -> String {
-    let rebuilt: PathBuf = path.components().collect();
+    let rebuilt: PathBuf = path
+        .components()
+        .filter(|component| !matches!(component, Component::CurDir))
+        .collect();
+    if rebuilt.as_os_str().is_empty() && !path.as_os_str().is_empty() {
+        return ".".to_string();
+    }
     rebuilt.display().to_string()
 }
 
@@ -386,6 +392,8 @@ mod tests {
         assert_eq!(normalized_path(Path::new("x.json")), "x.json");
         assert_eq!(normalized_path(Path::new("/a/./b")), "/a/b");
         assert_eq!(normalized_path(Path::new("")), "");
+        assert_eq!(normalized_path(Path::new(".")), ".");
+        assert_eq!(normalized_path(Path::new("././x")), "x");
     }
 
     #[test]
