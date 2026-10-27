@@ -318,3 +318,17 @@ also drops a stale `plan.json`; an unreadable input keeps it). Success prints
 `PLAN_OK | path=... | platform=... | scope=...`. Only a missing `--migration-dir` is a
 usage error (exit 2). `producerVersion` comes from `.claude-plugin/plugin.json` of
 `--plugin-root` (default `.`) unless `--plugin-json` names the file.
+
+### startup consent-audit
+
+```
+toolkit startup consent-audit [--plugin-root DIR]
+```
+
+Replacement for `consent-disclosure-audit.py` and `tests/test_consent_disclosure_audit.py`.
+Checks every `skills/*/references/phases/discover/discover-*-api.md` of the plugin
+(default: the current directory). When the Capture Endpoint Table of a file calls a
+non-`GET` method, each blanket GET-only claim in the file must name that method in an
+exception sentence; an unrecognised table shape, an unreadable file and a plugin with no
+such file all fail closed. Findings and setup problems go to stderr (`error: ...` summary,
+exit 1); success prints `consent-disclosure audit: OK (N discovery sub-file(s) checked)`.

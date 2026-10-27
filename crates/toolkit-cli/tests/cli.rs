@@ -1083,3 +1083,46 @@ fn startup_emit_plan_writes_the_plan_and_fails_open_through_the_binary() {
     assert_eq!(code(&output), 2);
     assert!(stderr(&output).contains("--migration-dir"));
 }
+
+#[test]
+fn startup_consent_audit_passes_on_the_real_plugin_and_fails_closed_through_the_binary() {
+    let plugin = real_startup_plugin();
+    let output = run(&["startup", "consent-audit"], &plugin);
+    assert_eq!(code(&output), 0, "stderr: {}", stderr(&output));
+    assert_eq!(stderr(&output), "");
+    assert_eq!(
+        stdout(&output),
+        "consent-disclosure audit: OK (6 discovery sub-file(s) checked)\n"
+    );
+
+    let root = temp_root("consent-audit");
+    write_file(
+        &root,
+        "skills/demo/references/phases/discover/discover-demo-api.md",
+        "This runs GET requests only.\n\n## Step 2: Capture\n\n| # | Endpoint | Purpose |\n| - | - | - |\n| 1 | `POST /x` | y |\n",
+    );
+    let root_arg = root.to_str().expect("utf-8 dir");
+    let output = run(
+        &["startup", "consent-audit", "--plugin-root", root_arg],
+        &root,
+    );
+    assert_eq!(code(&output), 1);
+    assert_eq!(stdout(&output), "");
+    assert!(
+        stderr(&output).starts_with("consent-disclosure audit: 1 problem(s)\n  - skills/demo/references/phases/discover/discover-demo-api.md:1: claims a GET-only restriction"),
+        "{}",
+        stderr(&output)
+    );
+
+    let output = run(
+        &[
+            "startup",
+            "consent-audit",
+            "--plugin-root",
+            "does-not-exist",
+        ],
+        &root,
+    );
+    assert_eq!(code(&output), 2);
+    assert!(stderr(&output).contains("Plugin directory not found: "));
+}

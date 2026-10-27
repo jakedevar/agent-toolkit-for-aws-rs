@@ -20,6 +20,7 @@ Issue #4399 handoff, not in this file.
 | `toolkit startup model-id-lint [--plugin-root DIR]` | `.../scripts/model-id-lint.py` and its tests (`tests/test_model_id_lint.py`) | no retired or fabricated Bedrock model ID outside the catalog files |
 | `toolkit startup artifacts (--self-check \| --fixtures \| --run-dir DIR --skill NAME) [--plugin-root DIR] [--manifest FILE] [--baseline FILE] [--no-baseline] [--json]` | `.../scripts/validate-artifacts.py` (+ `scripts/artifact-contracts.json`, `artifact-contracts-baseline.json`, `scripts/contracts/*.schema.json`) and the migrated cases of `tests/test_validate_artifacts.py` | published artifact contracts (JSON examples in the schema documents plus two JSON Schemas) checked against run directories and the fixture goldens |
 | `toolkit startup emit-plan --migration-dir DIR [--plugin-root DIR] [--plugin-json FILE]` | `.../scripts/emit-plan-json.py` (and the byte-identical copy in `skills/heroku-to-aws/scripts`) and `tests/test_emit_plan_json.py` | copies validated cost figures of a finished GCP or Heroku run into `plan.json` for the web import; fail-open (`PLAN_OK` / `PLAN_SKIP`, exit 0) |
+| `toolkit startup consent-audit [--plugin-root DIR]` | `.../scripts/consent-disclosure-audit.py` and `tests/test_consent_disclosure_audit.py` | usage-API discovery sub-files (`skills/*/references/phases/discover/discover-*-api.md`) must not carry a blanket GET-only claim that omits a non-GET method their Capture Endpoint Table calls |
 
 `--plugin-root` defaults to the current directory (the Python scripts defaulted
 to the directory they lived in; `mise` tasks already run in the plugin
@@ -243,6 +244,23 @@ the remainder below.
     following links.
 25. **Displayed path** is normalised the way `pathlib` does (no `.`
     components, no repeated or trailing separators).
+
+### Intentional changes of `startup consent-audit`
+
+26. **Matchers instead of `re`.** The Python regular expressions are exact hand-written
+    matchers (the shared phrase matcher of `startup/text.rs`, now with a
+    `finditer`-style `find_starts` and literal alternatives, plus small functions for
+    the table, heading, list-item and sentence rules). `\d` in a list item marker is
+    ASCII-only; `IGNORECASE` is the simple case folding of the other startup
+    validators.
+27. **Streams and exit codes.** Findings go to stderr as before; a failing run adds one
+    `error: ...` summary line (exit 1, like `model-id-lint`). A missing plugin
+    directory is exit 2 with `Plugin directory not found: <resolved path>`.
+28. **Unreadable files.** Still a failure per file, never a skip, but the reason is the
+    Rust text (`not valid UTF-8`, `not a regular file`, `symbolic links are not
+    followed`) instead of the Python exception text.
+29. **`--plugin-root`** defaults to the current directory (the Python default was the
+    plugin the script lived in).
 
 ## File membership (#4371 U-10)
 

@@ -22,6 +22,9 @@ pub(crate) enum Tok {
     OneOf(&'static str),
     /// An optional single character such as `s?` (case-insensitive).
     Opt(char),
+    /// A group of literal alternatives such as `(?:method|request)`, tried in
+    /// order (case-insensitive); an empty alternative makes the group optional.
+    Either(&'static [&'static str]),
 }
 
 /// A compiled phrase pattern plus the Python source it stands for (the
@@ -45,7 +48,24 @@ impl Pattern {
     /// `re.search`: whether the pattern matches anywhere in `text`.
     pub(crate) fn is_match(&self, text: &str) -> bool {
         let chars: Vec<char> = text.chars().collect();
-        (0..=chars.len()).any(|start| matches_at(self.toks, &chars, start))
+        (0..=chars.len()).any(|start| end_at(self.toks, &chars, start).is_some())
+    }
+
+    /// `re.finditer`: the start offsets (in characters) of the non-overlapping
+    /// matches, scanning left to right.
+    pub(crate) fn find_starts(&self, text: &str) -> Vec<usize> {
+        let chars: Vec<char> = text.chars().collect();
+        let mut starts = Vec::new();
+        let mut pos = 0;
+        while pos <= chars.len() {
+            if let Some(end) = end_at(self.toks, &chars, pos) {
+                starts.push(pos);
+                pos = end.max(pos + 1);
+            } else {
+                pos += 1;
+            }
+        }
+        starts
     }
 }
 
@@ -76,40 +96,57 @@ pub(crate) fn fold(c: char) -> char {
     }
 }
 
-fn matches_at(toks: &[Tok], chars: &[char], pos: usize) -> bool {
+/// Where the first successful (backtracking) match of `toks` at `pos` ends.
+fn end_at(toks: &[Tok], chars: &[char], pos: usize) -> Option<usize> {
     let Some((tok, rest)) = toks.split_first() else {
-        return true;
+        return Some(pos);
     };
     match *tok {
-        Tok::Lit(text) => {
-            let mut at = pos;
-            for expected in text.chars() {
-                match chars.get(at) {
-                    Some(&actual) if fold(actual) == fold(expected) => at += 1,
-                    _ => return false,
-                }
-            }
-            matches_at(rest, chars, at)
-        }
+        Tok::Lit(text) => literal_end(text, chars, pos).and_then(|at| end_at(rest, chars, at)),
         Tok::Space1 | Tok::Space0 => {
             let minimum = usize::from(matches!(tok, Tok::Space1));
             let run = chars[pos..].iter().take_while(|c| is_space(**c)).count();
             (minimum..=run)
                 .rev()
-                .any(|taken| matches_at(rest, chars, pos + taken))
+                .find_map(|taken| end_at(rest, chars, pos + taken))
         }
         Tok::Boundary => {
             let before = pos > 0 && is_word(chars[pos - 1]);
             let after = chars.get(pos).is_some_and(|c| is_word(*c));
-            before != after && matches_at(rest, chars, pos)
+            if before == after {
+                None
+            } else {
+                end_at(rest, chars, pos)
+            }
         }
         Tok::OneOf(set) => {
-            chars.get(pos).is_some_and(|c| set.contains(*c)) && matches_at(rest, chars, pos + 1)
+            if chars.get(pos).is_some_and(|c| set.contains(*c)) {
+                end_at(rest, chars, pos + 1)
+            } else {
+                None
+            }
         }
         Tok::Opt(optional) => {
-            (chars.get(pos).is_some_and(|c| fold(*c) == fold(optional))
-                && matches_at(rest, chars, pos + 1))
-                || matches_at(rest, chars, pos)
+            let taken = chars.get(pos).is_some_and(|c| fold(*c) == fold(optional));
+            taken
+                .then(|| end_at(rest, chars, pos + 1))
+                .flatten()
+                .or_else(|| end_at(rest, chars, pos))
+        }
+        Tok::Either(alternatives) => alternatives.iter().find_map(|alternative| {
+            literal_end(alternative, chars, pos).and_then(|at| end_at(rest, chars, at))
+        }),
+    }
+}
+
+/// The position after case-insensitive `text` at `pos`, if it is there.
+fn literal_end(text: &str, chars: &[char], pos: usize) -> Option<usize> {
+    let mut at = pos;
+    for expected in text.chars() {
+        match chars.get(at) {
+            Some(&actual) if fold(actual) == fold(expected) => at += 1,
+            _ => return None,
         }
     }
+    Some(at)
 }

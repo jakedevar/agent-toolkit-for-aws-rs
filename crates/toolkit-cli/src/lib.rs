@@ -41,6 +41,7 @@ Usage:
                             [--plugin-root DIR] [--manifest FILE] [--baseline FILE]
                             [--no-baseline] [--json]
   toolkit startup emit-plan --migration-dir DIR [--plugin-root DIR] [--plugin-json FILE]
+  toolkit startup consent-audit [--plugin-root DIR]
   toolkit --version
   toolkit help
 
@@ -84,6 +85,12 @@ Commands:
                 --plugin-root DIR). Fail-open: any missing or unreadable input
                 prints `PLAN_SKIP | reason=...`, writes no file and exits 0;
                 success prints `PLAN_OK | path=... | platform=... | scope=...`.
+  startup consent-audit
+                Fail when a discover-*-api.md usage-API discovery sub-file of the
+                plugin at --plugin-root DIR (default: the current directory)
+                carries a blanket GET-only claim although its Capture Endpoint
+                Table calls another HTTP method and the claim does not name
+                that method in an exception sentence.
   startup artifacts
                 Validate migration artifacts against the contracts the skills
                 publish (JSON examples in the schema documents plus the JSON
@@ -338,6 +345,13 @@ pub const COMMANDS: &[CommandSpec] = &[
         value_flags: &["--migration-dir", "--plugin-root", "--plugin-json"],
         max_positionals: 0,
         handler: startup::emit_plan_command,
+    },
+    CommandSpec {
+        path: &["startup", "consent-audit"],
+        flags: &[],
+        value_flags: &["--plugin-root"],
+        max_positionals: 0,
+        handler: startup::consent_audit_command,
     },
 ];
 

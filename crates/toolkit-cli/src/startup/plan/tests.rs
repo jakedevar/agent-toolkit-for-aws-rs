@@ -223,17 +223,16 @@ fn azure_composition_share_is_not_exported_as_accuracy() {
 
 fn band(text: &str) -> Option<(i64, i64)> {
     let data = Json::object(vec![("accuracy_confidence", Json::string(text))]);
-    match accuracy(&data) {
-        Ok(Some(value)) => {
-            let get = |key| match value.get(key) {
-                Some(Json::Int(number)) => *number,
-                other => panic!("unexpected {key}: {other:?}"),
-            };
-            Some((get("minPercent"), get("maxPercent")))
-        }
-        Ok(None) => None,
-        Err(_) => panic!("unexpected failure for {text:?}"),
-    }
+    let Ok(result) = accuracy(&data) else {
+        panic!("unexpected failure for {text:?}");
+    };
+    result.map(|value| {
+        let get = |key| match value.get(key) {
+            Some(Json::Int(number)) => *number,
+            other => panic!("unexpected {key}: {other:?}"),
+        };
+        (get("minPercent"), get("maxPercent"))
+    })
 }
 
 #[test]
