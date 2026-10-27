@@ -795,6 +795,59 @@ toolkit ai-data transform describe JOB_NAME [--region R]
 Parity table, the S3/SageMaker service seams, the remote-payload classification
 and every intentional change: [docs/migration/ai-data.md](../../docs/migration/ai-data.md).
 
+## ai-models (#4384)
+
+`toolkit ai-models` replaces `get_deployable_models.py`, `filter_deployable_models.py`,
+`search_deployable_models.py`, `get_model_names.py`, `get_recipes.py` and
+`collect_diagnostics.py` of the `aws-ai-ml` skill. Value flags are `--name VALUE`
+or `--name=VALUE` (not empty, not starting with `-`); no flag repeats.
+
+```
+toolkit ai-models list-models HUB [REGION] [--list-values] [--create-snapshot]
+    [--snapshot-file FILE] [--recorded FILE]
+toolkit ai-models filter MODELS_JSON [KEY:VALUE...]
+toolkit ai-models search SageMakerPublicHub [KEY:VALUE...] [--region R]
+    [--snapshot-file FILE] [--recorded FILE]
+toolkit ai-models model-names HUB [REGION] [--recorded FILE]
+toolkit ai-models recipes MODEL HUB [--recorded FILE]
+toolkit ai-models endpoint-diagnostics ENDPOINT REGION [--minutes N | --start TS [--end TS]]
+    [--now TS] [--recorded FILE]
+```
+
+- Output is `json.dumps` of the Python value (default separators, ASCII only):
+  every control or bidirectional character of a Hub or log value leaves the
+  program as a `\uXXXX` escape. Diagnostics are built from fixed wording and
+  escaped, quoted text; a rejected identifier is never echoed.
+- `list-models` lists the Hub's models (`ListHubContents`, 100 per page,
+  following `NextToken`) in the normalized shape, the distinct values per field
+  (`--list-values`) or a private (mode 0600, symlink-refusing) catalog snapshot
+  (`--snapshot-file FILE`, or a new `sherpa-model-catalog.*` file with
+  `--create-snapshot --list-values`). A snapshot needs a region: REGION or
+  `AWS_REGION` / `AWS_DEFAULT_REGION`.
+- `filter` applies `KEY:VALUE` words (13 keys; values of one key OR, keys AND;
+  a model without the filtered metadata is excluded) to a JSON list of models
+  and prints the summary with the matches, newest first. A `bedrock` or
+  `customization` value other than `true` / `false` is an error.
+- `search` resolves the words against the snapshot (`--snapshot-file`, else a
+  live listing) and queries SageMaker `Search` (`SageMakerPublicHub` only). A
+  failed, unsupported or malformed Search uses the complete local filter and
+  says so in `retrieval_backend` and `fallback_reason`; a bad constraint never
+  falls back.
+- `model-names` prints the sorted names of the fine-tunable models, `recipes`
+  the supported techniques (`sft`, `dpo`, `rlvr`, `rlaif`) of one model (an
+  unknown model is an error), `endpoint-diagnostics` the endpoint status, the
+  last `--minutes` (default 5) or `--start`/`--end` window of metrics and up to
+  100 log events of the trailing 15 minutes. `--now` pins the clock.
+- **No live AWS client is bound.** Without `--recorded FILE` every call fails
+  with exit 1 (`invalid client: this build has no live AWS client and sent
+  nothing`); `--recorded` replays recorded responses (`{"calls": {"Operation":
+  [{"request": {...}, "response": {...}} | {"error": {...}}]}}`), checking each
+  recorded request.
+
+Parity table, the client seam, the AWS documentation checked for the Rust
+SDK/HTTP surface and every intentional change:
+[docs/migration/ai-models.md](../../docs/migration/ai-models.md).
+
 ## bedrock-report (#4405)
 
 `toolkit bedrock-report` replaces `render_report.py` and `validate_result.py` of
