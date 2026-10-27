@@ -185,3 +185,5 @@ Friction: #4727, Rsi #4694, Rsi #4704
   Re-review round 2 #4744 worker e76fe901 (Codex sol high, pinned, op d1362ea8).
 - 21:45Z: #4743 impl fee052ebc370d7cf7799f403bd0605eaeff980ef (293605ec; router `-` value+positional; COVERS #4764 help fix; scoped 4509b305 ok base f6fac27d, 2150). Review #4776 worker a624431d (Codex sol high, pinned, op f64c80c2): audit path-valued slices now receiving `-`.
   4/4 busy: 14bc584a (#4381 repair), 6a6ca4e7 (#4745), e76fe901 (#4744), a624431d (#4776). Queue entry 5060cb2e pending.
+- 21:47Z: #4745 round 2 on 44c513a5: CHANGES_REQUESTED #4773 (blank/module-wide markers), #4774 (brace-form patterns), #4775 (type-alias reads).
+  RULING (ends arms race): scanner = tripwire for documented rule, not proof; fix the 3 classes + README; round 3 re-review blocks only on runtime defects or trivial evasion of the documented rule. FINAL repair (Opus) 93a325d6 continue_from ecf77dbc (op 399dd002). If round 3 still fails on new evasion classes: accept with residual Issues, do not loop.
