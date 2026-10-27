@@ -2528,14 +2528,13 @@ const REPLICATION_DESCRIBE: &str = r#"{
   "replication_groups": [{
     "ReplicationGroupId": "rg1", "Status": "available", "ARN": "arn:rg1", "ClusterEnabled": false,
     "MemberClusters": ["rg1-001", "rg1-002"],
-    "NodeGroups": [{"NodeGroupMembers": [{"CacheClusterId": "rg1-001"}, {"CacheClusterId": "rg1-002"}, {"CacheClusterId": "rg1-gone"}, {}]}],
+    "NodeGroups": [{"NodeGroupMembers": [{"CacheClusterId": "rg1-001"}, {"CacheClusterId": "rg1-002"}]}],
     "TransitEncryptionEnabled": false, "AtRestEncryptionEnabled": false, "AuthTokenEnabled": false,
     "MultiAZ": "disabled", "AutomaticFailover": "disabled", "SnapshotRetentionLimit": 0}],
   "cache_clusters": {
     "rg1-001": {"Engine": "redis", "EngineVersion": "6.2", "CacheNodeType": "cache.r6g.large",
                 "SecurityGroups": [{"SecurityGroupId": "sg-b"}, {"SecurityGroupId": "sg-a"}]},
-    "rg1-002": {"SecurityGroups": [{"SecurityGroupId": "sg-a"}]},
-    "rg1-gone": {"error": "CacheClusterNotFound"}},
+    "rg1-002": {"SecurityGroups": [{"SecurityGroupId": "sg-a"}]}},
   "security_groups": [{"GroupId": "sg-a", "IpPermissions": []}, {"GroupId": "sg-b", "IpPermissions": []}],
   "tags": []
 }"#;
@@ -2625,7 +2624,7 @@ fn serverless_audit_findings() {
 #[test]
 fn serverless_audit_without_protections() {
     let describe = json(
-        r#"{"serverless_caches": [{"Status": "creating", "SnapshotRetentionLimit": 0}], "tags": []}"#,
+        r#"{"serverless_caches": [{"ServerlessCacheName": "bare", "Status": "creating", "SnapshotRetentionLimit": 0}], "tags": []}"#,
     );
     let result = audit::audit_serverless(&describe, "bare");
     assert!(result.failed());
@@ -2866,7 +2865,7 @@ fn security_group_inspection_failures_are_errors_not_failures() {
 #[test]
 fn audit_text_is_escaped() {
     let describe = json(
-        r#"{"serverless_caches": [{"Engine": "v\u001b[2J", "UserGroupId": "ug\u001b[2J", "KmsKeyId": "k\u001b[2J",
+        r#"{"serverless_caches": [{"ServerlessCacheName": "x", "Engine": "v\u001b[2J", "UserGroupId": "ug\u001b[2J", "KmsKeyId": "k\u001b[2J",
             "SecurityGroupIds": ["sg\u001b[2J"], "SnapshotRetentionLimit": 3, "DailySnapshotTime": "t\u001b[2J"}],
             "security_groups": [{"GroupId": "sg\u001b[2J", "IpPermissions": [{"IpRanges": [{"CidrIp": "1.1.1.1/0\u001b[2J"}]}]}]}"#,
     );
@@ -4506,4 +4505,641 @@ fn audit_command_does_not_pass_uninspected_security_groups() {
     ]);
     assert!(text.contains("[ERR]  Security groups"));
     assert!(!text.contains("[OK]   Security groups"));
+}
+
+// ---------------------------------------------------------------------------
+// audit: every PASS needs positive evidence (#4655, #4656, fail-closed pass)
+// ---------------------------------------------------------------------------
+
+/// The statuses of the findings named `check`, in order.
+fn statuses_of(result: &Audit, check: &str) -> Vec<&'static str> {
+    audit_findings(result)
+        .iter()
+        .filter(|(name, _, _)| name == check)
+        .map(|(_, status, _)| *status)
+        .collect()
+}
+
+/// A serverless audit of cache `c`; `cache` adds members (", ..." or empty)
+/// and `rest` adds top-level members (", ..." or empty).
+fn serverless_audit(cache: &str, rest: &str) -> Audit {
+    let text = format!(r#"{{"serverless_caches": [{{"ServerlessCacheName": "c"{cache}}}]{rest}}}"#);
+    audit::audit_serverless(&json(&text), "c")
+}
+
+/// A replication-group audit of group `g`, like [`serverless_audit`].
+fn replication_audit(group: &str, rest: &str) -> Audit {
+    let text = format!(r#"{{"replication_groups": [{{"ReplicationGroupId": "g"{group}}}]{rest}}}"#);
+    audit::audit_replication_group(&json(&text), "g")
+}
+
+/// Members `a` and `b` (both in `MemberClusters` and in the node group).
+const TWO_MEMBERS: &str = r#", "MemberClusters": ["a", "b"], "NodeGroups": [{"NodeGroupMembers": [{"CacheClusterId": "a"}, {"CacheClusterId": "b"}]}]"#;
+
+/// Member `a` uses `sg-a`; `b_record` is `, "b": <record>` or empty; `groups`
+/// is the `security_groups` list.
+fn two_member_rest(b_record: &str, groups: &str) -> String {
+    format!(
+        r#", "cache_clusters": {{"a": {{"SecurityGroups": [{{"SecurityGroupId": "sg-a"}}]}}{b_record}}}, "security_groups": {groups}"#
+    )
+}
+
+const NARROW_A_B: &str =
+    r#"[{"GroupId": "sg-a", "IpPermissions": []}, {"GroupId": "sg-b", "IpPermissions": []}]"#;
+
+#[test]
+fn empty_or_unusable_group_ids_never_match_in_both_modes() {
+    // #4655, the review's exact serverless fixture.
+    let review = json(
+        r#"{"serverless_caches":[{"ServerlessCacheName":"cache","SnapshotRetentionLimit":1,"UserGroupId":"users","SecurityGroupIds":[""]}],"security_groups":[{"IpPermissions":[]}]}"#,
+    );
+    let result = audit::audit_serverless(&review, "cache");
+    assert_not_inspected(&result, "review serverless fixture");
+    assert_eq!(
+        audit_findings(&result)
+            .into_iter()
+            .filter(|(check, _, _)| check == "Security groups")
+            .collect::<Vec<_>>(),
+        [(
+            "Security groups".to_string(),
+            "ERROR",
+            "Not inspected: SecurityGroupIds entry 1 is not a non-empty string".to_string()
+        )]
+    );
+    assert_eq!(member(&audit_info(&result), "security_groups"), &json("[]"));
+
+    // Every unusable reference, against records whose GroupId is unusable too.
+    let records = r#"[{"IpPermissions": []}, {"GroupId": null, "IpPermissions": []}, {"GroupId": "", "IpPermissions": []}, {"GroupId": 7, "IpPermissions": []}, {"GroupId": ["sg-1"], "IpPermissions": []}, {"GroupId": " ", "IpPermissions": []}]"#;
+    for reference in [r#""""#, r#"" ""#, "null", "7", "{}", "[]", r#"["sg-1"]"#] {
+        let serverless = serverless_audit(
+            &format!(r#", "SecurityGroupIds": [{reference}]"#),
+            &format!(r#", "security_groups": {records}"#),
+        );
+        assert_not_inspected(&serverless, &format!("serverless reference {reference}"));
+        assert_eq!(statuses_of(&serverless, "Security groups"), ["ERROR"]);
+        let replication = replication_audit(
+            r#", "MemberClusters": ["m"]"#,
+            &format!(
+                r#", "cache_clusters": {{"m": {{"SecurityGroups": [{{"SecurityGroupId": {reference}}}]}}}}, "security_groups": {records}"#
+            ),
+        );
+        assert_not_inspected(&replication, &format!("replication reference {reference}"));
+        assert_eq!(
+            statuses_of(&replication, "Security groups of cluster m"),
+            ["ERROR"],
+            "{reference}"
+        );
+    }
+    // A reference list that is not a list, and malformed reference objects.
+    let not_list = serverless_audit(r#", "SecurityGroupIds": "sg-1""#, "");
+    assert_eq!(statuses_of(&not_list, "Security groups"), ["ERROR"]);
+    for entry in ["{}", "null", r#""sg-a""#, "7", r#"{"GroupId": "sg-a"}"#] {
+        let result = replication_audit(
+            r#", "MemberClusters": ["m"]"#,
+            &format!(
+                r#", "cache_clusters": {{"m": {{"SecurityGroups": [{entry}]}}}}, "security_groups": [{{"GroupId": "sg-a", "IpPermissions": []}}]"#
+            ),
+        );
+        assert_not_inspected(&result, &format!("replication entry {entry}"));
+    }
+
+    // #4655, the review's replication fixture.
+    let review = replication_audit(
+        r#", "MemberClusters": ["m"]"#,
+        r#", "cache_clusters": {"m": {"SecurityGroups": [{"SecurityGroupId": ""}]}}, "security_groups": [{"GroupId": null, "IpPermissions": []}]"#,
+    );
+    assert_not_inspected(&review, "review replication fixture");
+
+    // A usable reference is never matched by an unusable record id.
+    let unmatched = serverless_audit(
+        r#", "SecurityGroupIds": ["sg-1"]"#,
+        &format!(r#", "security_groups": {records}"#),
+    );
+    assert_eq!(statuses_of(&unmatched, "Security group sg-1"), ["ERROR"]);
+    assert!(statuses_of(&unmatched, "Security groups").is_empty());
+
+    // Valid ids still pass, and an unusable reference keeps another group's WARN.
+    let valid = serverless_audit(
+        r#", "SecurityGroupIds": ["sg-1", "sg-2"]"#,
+        r#", "security_groups": [{"GroupId": "sg-1", "IpPermissions": []}, {"GroupId": "sg-2", "IpPermissions": []}]"#,
+    );
+    assert_eq!(statuses_of(&valid, "Security groups"), ["PASS"]);
+    let mixed = serverless_audit(
+        r#", "SecurityGroupIds": ["", "sg-1"]"#,
+        r#", "security_groups": [{"GroupId": "sg-1", "IpPermissions": [{"IpRanges": [{"CidrIp": "0.0.0.0/0"}]}]}]"#,
+    );
+    assert_eq!(statuses_of(&mixed, "Security groups"), ["ERROR"]);
+    assert_eq!(statuses_of(&mixed, "Security group sg-1"), ["WARN"]);
+    assert_eq!(
+        member(&audit_info(&mixed), "security_groups"),
+        &json(r#"["sg-1"]"#)
+    );
+}
+
+#[test]
+fn uninspected_member_clusters_never_give_a_passing_aggregate() {
+    // #4656, the review's exact fixture.
+    let review = json(
+        r#"{"replication_groups":[{"ReplicationGroupId":"rg","TransitEncryptionEnabled":true,"AtRestEncryptionEnabled":true,"UserGroupIds":["users"],"SnapshotRetentionLimit":1,"MemberClusters":["a","b"],"NodeGroups":[{"NodeGroupMembers":[{"CacheClusterId":"a"},{"CacheClusterId":"b"}]}]}],"cache_clusters":{"a":{"SecurityGroups":[{"SecurityGroupId":"sg-a"}]},"b":{"error":"not inspected"}},"security_groups":[{"GroupId":"sg-a","IpPermissions":[]}]}"#,
+    );
+    let result = audit::audit_replication_group(&review, "rg");
+    assert_not_inspected(&result, "review fixture");
+    assert_eq!(
+        audit_findings(&result)
+            .into_iter()
+            .filter(|(check, _, _)| check.starts_with("Security group"))
+            .collect::<Vec<_>>(),
+        [(
+            "Security groups of cluster b".to_string(),
+            "ERROR",
+            "Not inspected: describe_cache_clusters failed: not inspected".to_string()
+        )]
+    );
+
+    // Every unreadable record of member b.
+    for b_record in [
+        "",
+        r#", "b": {"error": "CacheClusterNotFound"}"#,
+        r#", "b": {"error": null}"#,
+        r#", "b": {"error": {}}"#,
+        r#", "b": null"#,
+        r#", "b": "sg-b""#,
+        r#", "b": []"#,
+        r#", "b": {}"#,
+        r#", "b": {"SecurityGroups": null}"#,
+        r#", "b": {"SecurityGroups": "sg-b"}"#,
+        r#", "b": {"SecurityGroups": {"SecurityGroupId": "sg-b"}}"#,
+        r#", "b": {"SecurityGroups": [{}]}"#,
+        r#", "b": {"SecurityGroups": [null]}"#,
+        r#", "b": {"SecurityGroups": [{"SecurityGroupId": 7}]}"#,
+        r#", "b": {"SecurityGroups": [{"SecurityGroupId": "sg-b"}, {"SecurityGroupId": ""}]}"#,
+    ] {
+        let result = replication_audit(TWO_MEMBERS, &two_member_rest(b_record, NARROW_A_B));
+        assert_not_inspected(&result, b_record);
+        assert_eq!(
+            statuses_of(&result, "Security groups of cluster b"),
+            ["ERROR"],
+            "{b_record}"
+        );
+        assert!(statuses_of(&result, "Security groups of cluster a").is_empty());
+        assert!(
+            statuses_of(&result, "Security groups").is_empty(),
+            "{b_record}"
+        );
+    }
+
+    // No cluster records at all, or a cache_clusters member that is not an object.
+    for clusters in [
+        "",
+        r#", "cache_clusters": []"#,
+        r#", "cache_clusters": "x""#,
+    ] {
+        let result = replication_audit(
+            TWO_MEMBERS,
+            &format!(r#"{clusters}, "security_groups": {NARROW_A_B}"#),
+        );
+        assert_eq!(
+            statuses_of(&result, "Security groups of cluster a"),
+            ["ERROR"]
+        );
+        assert_eq!(
+            statuses_of(&result, "Security groups of cluster b"),
+            ["ERROR"]
+        );
+        // Nothing was discovered, yet this is not the "no security groups" warning.
+        assert!(
+            statuses_of(&result, "Security groups").is_empty(),
+            "{clusters}"
+        );
+    }
+
+    // Malformed member lists.
+    let complete_b = r#", "b": {"SecurityGroups": [{"SecurityGroupId": "sg-b"}]}"#;
+    for group in [
+        r#", "MemberClusters": ["a", 7]"#,
+        r#", "MemberClusters": ["a", ""]"#,
+        r#", "MemberClusters": ["a", {"CacheClusterId": "b"}]"#,
+        r#", "MemberClusters": "a""#,
+        r#", "MemberClusters": ["a"], "NodeGroups": "x""#,
+        r#", "MemberClusters": ["a"], "NodeGroups": [7]"#,
+        r#", "MemberClusters": ["a"], "NodeGroups": [{"NodeGroupMembers": "a"}]"#,
+        r#", "MemberClusters": ["a"], "NodeGroups": [{"NodeGroupMembers": [{}]}]"#,
+        r#", "MemberClusters": ["a"], "NodeGroups": [{"NodeGroupMembers": [{"CacheClusterId": ""}]}]"#,
+        r#", "MemberClusters": ["a"], "NodeGroups": [{"NodeGroupMembers": [{"CacheClusterId": null}]}]"#,
+        r#", "MemberClusters": ["a"], "NodeGroups": [{"NodeGroupMembers": ["b"]}]"#,
+    ] {
+        let result = replication_audit(group, &two_member_rest(complete_b, NARROW_A_B));
+        assert_eq!(
+            statuses_of(&result, "Security groups"),
+            ["ERROR"],
+            "{group}"
+        );
+    }
+    // A member named only by MemberClusters, or only by a node group, is inspected too.
+    for group in [
+        r#", "MemberClusters": ["a", "b"]"#,
+        r#", "NodeGroups": [{"NodeGroupMembers": [{"CacheClusterId": "a"}]}, {"NodeGroupMembers": [{"CacheClusterId": "b"}]}]"#,
+        r#", "MemberClusters": ["a"], "NodeGroups": [{"NodeGroupMembers": [{"CacheClusterId": "b"}]}]"#,
+    ] {
+        let missing_b = replication_audit(group, &two_member_rest("", NARROW_A_B));
+        assert_eq!(
+            statuses_of(&missing_b, "Security groups of cluster b"),
+            ["ERROR"],
+            "{group}"
+        );
+        let complete = replication_audit(group, &two_member_rest(complete_b, NARROW_A_B));
+        assert_eq!(
+            statuses_of(&complete, "Security groups"),
+            ["PASS"],
+            "{group}"
+        );
+    }
+
+    // Complete multi-member input passes, naming every group.
+    let complete = replication_audit(TWO_MEMBERS, &two_member_rest(complete_b, NARROW_A_B));
+    assert_eq!(
+        audit_findings(&complete)
+            .into_iter()
+            .filter(|(check, _, _)| check.starts_with("Security group"))
+            .collect::<Vec<_>>(),
+        [(
+            "Security groups".to_string(),
+            "PASS",
+            "No overly permissive rules in sg-a, sg-b".to_string()
+        )]
+    );
+    let shared = replication_audit(
+        TWO_MEMBERS,
+        &two_member_rest(
+            r#", "b": {"SecurityGroups": [{"SecurityGroupId": "sg-a"}], "Engine": "redis"}"#,
+            NARROW_A_B,
+        ),
+    );
+    assert_eq!(statuses_of(&shared, "Security groups"), ["PASS"]);
+    // An empty SecurityGroups list is a read list of no groups.
+    let no_groups = replication_audit(
+        r#", "MemberClusters": ["a"]"#,
+        r#", "cache_clusters": {"a": {"SecurityGroups": []}}"#,
+    );
+    assert_eq!(statuses_of(&no_groups, "Security groups"), ["WARN"]);
+    // A group without members discovers nothing: the unchanged warning.
+    let memberless = replication_audit("", "");
+    assert_eq!(
+        audit_findings(&memberless)
+            .into_iter()
+            .filter(|(check, _, _)| check == "Security groups")
+            .collect::<Vec<_>>(),
+        [(
+            "Security groups".to_string(),
+            "WARN",
+            "No security groups found".to_string()
+        )]
+    );
+
+    // ERROR for member b keeps member a's broad-rule WARN, and is never PASS.
+    let broad = replication_audit(
+        TWO_MEMBERS,
+        &two_member_rest(
+            r#", "b": {"error": "AccessDenied"}"#,
+            r#"[{"GroupId": "sg-a", "IpPermissions": [{"FromPort": 6379, "ToPort": 6379, "IpRanges": [{"CidrIp": "0.0.0.0/0"}]}]}]"#,
+        ),
+    );
+    assert_eq!(
+        statuses_of(&broad, "Security groups of cluster b"),
+        ["ERROR"]
+    );
+    assert_eq!(statuses_of(&broad, "Security group sg-a"), ["WARN"]);
+    assert!(statuses_of(&broad, "Security groups").is_empty());
+}
+
+#[test]
+fn audited_resource_record_must_be_named_exactly_once() {
+    let serverless = |text: &str, name: &str| audit::audit_serverless(&json(text), name);
+    let not_found = |name: &str| Audit::NotFound(format!("Serverless cache '{name}' not found"));
+    for record in [
+        "{}",
+        r#"{"ServerlessCacheName": null}"#,
+        r#"{"ServerlessCacheName": 7}"#,
+        r#"{"ServerlessCacheName": ["c"]}"#,
+        r#"{"ServerlessCacheName": ""}"#,
+        r#"{"ServerlessCacheName": "other"}"#,
+        r#"{"ServerlessCacheName": "c "}"#,
+        "7",
+    ] {
+        let text = format!(r#"{{"serverless_caches": [{record}]}}"#);
+        assert_eq!(serverless(&text, "c"), not_found("c"), "{record}");
+    }
+    for name in ["", " "] {
+        let text = format!(r#"{{"serverless_caches": [{{"ServerlessCacheName": "{name}"}}]}}"#);
+        assert_eq!(serverless(&text, name), not_found(name), "{name:?}");
+    }
+    assert_eq!(
+        serverless(
+            r#"{"serverless_caches": [{"ServerlessCacheName": "c"}, {"ServerlessCacheName": "c"}]}"#,
+            "c"
+        ),
+        Audit::NotFound("Serverless cache 'c' is recorded more than once".to_string())
+    );
+    let second = serverless(
+        r#"{"serverless_caches": [{"ServerlessCacheName": "other", "SnapshotRetentionLimit": 1}, {"ServerlessCacheName": "c", "SnapshotRetentionLimit": 2}]}"#,
+        "c",
+    );
+    assert_eq!(
+        member(&audit_info(&second), "snapshot_retention_days"),
+        &Json::Int(2)
+    );
+
+    let replication = |text: &str| audit::audit_replication_group(&json(text), "g");
+    for record in [
+        "{}",
+        r#"{"ReplicationGroupId": null}"#,
+        r#"{"ReplicationGroupId": 7}"#,
+        r#"{"ReplicationGroupId": ""}"#,
+    ] {
+        let text = format!(r#"{{"replication_groups": [{record}]}}"#);
+        assert_eq!(
+            replication(&text),
+            Audit::NotFound("Replication group 'g' not found".to_string()),
+            "{record}"
+        );
+    }
+    assert_eq!(
+        replication(
+            r#"{"replication_groups": [{"ReplicationGroupId": "g"}, {"ReplicationGroupId": "g"}]}"#
+        ),
+        Audit::NotFound("Replication group 'g' is recorded more than once".to_string())
+    );
+    assert!(replication(r#"{"replication_groups": [{"ReplicationGroupId": "g"}]}"#).failed());
+}
+
+#[test]
+fn malformed_serverless_posture_values_never_pass() {
+    let auth = |value: &str| {
+        statuses_of(
+            &serverless_audit(&format!(r#", "UserGroupId": {value}"#), ""),
+            "Authentication",
+        )
+    };
+    for value in ["7", "true", r#"{"Id": "ug"}"#, r#"["ug"]"#, r#"" ""#] {
+        assert_eq!(auth(value), ["ERROR"], "{value}");
+    }
+    for value in ["null", r#""""#, "false", "0", "[]"] {
+        assert_eq!(auth(value), ["WARN"], "{value}");
+    }
+    assert_eq!(auth(r#""ug-1""#), ["PASS"]);
+
+    let at_rest = |value: &str| {
+        audit_findings(&serverless_audit(&format!(r#", "KmsKeyId": {value}"#), ""))
+            .into_iter()
+            .filter(|(check, _, _)| check == "Encryption at rest")
+            .map(|(_, status, detail)| (status, detail))
+            .collect::<Vec<_>>()
+    };
+    for value in ["7", "true", r#"{"Arn": "k"}"#, r#"" ""#] {
+        assert_eq!(at_rest(value)[0].0, "ERROR", "{value}");
+    }
+    assert_eq!(at_rest(r#""k-1""#), [("PASS", "KMS key: k-1".to_string())]);
+    for value in ["null", r#""""#] {
+        assert_eq!(
+            at_rest(value),
+            [(
+                "PASS",
+                "Always enabled on serverless (using AWS-managed key)".to_string()
+            )]
+        );
+    }
+
+    let backups = |value: &str| {
+        statuses_of(
+            &serverless_audit(&format!(r#", "SnapshotRetentionLimit": {value}"#), ""),
+            "Automatic backups",
+        )
+    };
+    for value in ["1.5", "7.0", "1e3", "0.1"] {
+        assert_eq!(backups(value), ["ERROR"], "{value}");
+    }
+    for value in ["0", "-1", "-0.5", "null", r#""7""#, "true", "[7]"] {
+        assert_eq!(backups(value), ["FAIL"], "{value}");
+    }
+    assert_eq!(backups("1"), ["PASS"]);
+
+    for (limit, check) in [
+        ("DataStorage", "Data storage limit"),
+        ("ECPUPerSecond", "ECPU limit"),
+    ] {
+        let status = |value: &str| {
+            statuses_of(
+                &serverless_audit(
+                    &format!(r#", "CacheUsageLimits": {{"{limit}": {{"Maximum": {value}}}}}"#),
+                    "",
+                ),
+                check,
+            )
+        };
+        for value in [r#""10""#, "-5", "-0.5", "true", r#"{"v": 1}"#, "[1]"] {
+            assert_eq!(status(value), ["ERROR"], "{limit} {value}");
+        }
+        for value in ["0", "null", r#""""#, "false"] {
+            assert_eq!(status(value), ["WARN"], "{limit} {value}");
+        }
+        for value in ["10", "0.5"] {
+            assert_eq!(status(value), ["PASS"], "{limit} {value}");
+        }
+    }
+}
+
+#[test]
+fn malformed_replication_posture_values_never_pass() {
+    for (key, check) in [
+        ("TransitEncryptionEnabled", "TLS in-transit encryption"),
+        ("AtRestEncryptionEnabled", "Encryption at rest"),
+    ] {
+        let status = |value: &str| {
+            statuses_of(
+                &replication_audit(&format!(r#", "{key}": {value}"#), ""),
+                check,
+            )
+        };
+        for value in [
+            "1",
+            r#""true""#,
+            r#""yes""#,
+            r#"{"on": true}"#,
+            "[true]",
+            "0.5",
+        ] {
+            assert_eq!(status(value), ["ERROR"], "{key} {value}");
+        }
+        for value in ["false", "null", "0", r#""""#, "[]"] {
+            assert_eq!(status(value), ["FAIL"], "{key} {value}");
+        }
+        assert_eq!(status("true"), ["PASS"], "{key}");
+    }
+    let tls_info = audit_info(&replication_audit(r#", "TransitEncryptionEnabled": 1"#, ""));
+    assert_eq!(member(&tls_info, "tls_enabled"), &Json::Bool(false));
+
+    let key = |value: &str| {
+        audit_findings(&replication_audit(
+            &format!(r#", "AtRestEncryptionEnabled": true, "KmsKeyId": {value}"#),
+            "",
+        ))
+        .into_iter()
+        .filter(|(check, _, _)| check == "Encryption at rest")
+        .map(|(_, status, detail)| (status, detail))
+        .collect::<Vec<_>>()
+    };
+    for value in ["7", r#""""#, r#"" ""#, "false", r#"{"Arn": "k"}"#] {
+        assert_eq!(key(value)[0].0, "ERROR", "{value}");
+    }
+    assert_eq!(
+        key("null"),
+        [("PASS", "Enabled (key: AWS-managed)".to_string())]
+    );
+    assert_eq!(
+        key(r#""k-1""#),
+        [("PASS", "Enabled (key: k-1)".to_string())]
+    );
+
+    let auth = |group: &str| statuses_of(&replication_audit(group, ""), "Authentication");
+    for group in [
+        r#", "UserGroupIds": [""]"#,
+        r#", "UserGroupIds": [7]"#,
+        r#", "UserGroupIds": ["ug", null]"#,
+        r#", "UserGroupIds": [{"UserGroupId": "ug"}]"#,
+        r#", "UserGroupIds": "ug""#,
+        r#", "UserGroupIds": {"ug": 1}"#,
+        r#", "UserGroupIds": [" "], "AuthTokenEnabled": true"#,
+    ] {
+        assert_eq!(auth(group), ["ERROR"], "{group}");
+    }
+    assert_eq!(auth(r#", "UserGroupIds": ["ug-1"]"#), ["PASS"]);
+    assert_eq!(
+        auth(r#", "UserGroupIds": [], "AuthTokenEnabled": true"#),
+        ["WARN"]
+    );
+    for group in [
+        r#", "UserGroupIds": []"#,
+        r#", "UserGroupIds": null"#,
+        r#", "UserGroupIds": """#,
+    ] {
+        assert_eq!(auth(group), ["FAIL"], "{group}");
+    }
+
+    for (key, check) in [
+        ("MultiAZ", "Multi-AZ"),
+        ("AutomaticFailover", "Automatic failover"),
+    ] {
+        for value in [r#""Enabled""#, r#""enabled ""#, "true", r#""enabling""#] {
+            let result = replication_audit(&format!(r#", "{key}": {value}"#), "");
+            assert_eq!(statuses_of(&result, check), ["WARN"], "{key} {value}");
+        }
+    }
+
+    let backups = |value: &str| {
+        statuses_of(
+            &replication_audit(&format!(r#", "SnapshotRetentionLimit": {value}"#), ""),
+            "Automatic backups",
+        )
+    };
+    assert_eq!(backups("2.5"), ["ERROR"]);
+    assert_eq!(backups(r#""5""#), ["FAIL"]);
+    assert_eq!(backups("5"), ["PASS"]);
+}
+
+#[test]
+fn security_group_error_and_tags_need_well_formed_records() {
+    let complete = r#", "SecurityGroupIds": ["sg-1"]"#;
+    let records = r#""security_groups": [{"GroupId": "sg-1", "IpPermissions": []}]"#;
+    for error in [
+        "true",
+        "7",
+        r#"{"Code": "AccessDenied"}"#,
+        r#"["x"]"#,
+        r#""""#,
+    ] {
+        let result = serverless_audit(
+            complete,
+            &format!(r#", {records}, "security_groups_error": {error}"#),
+        );
+        assert_eq!(
+            statuses_of(&result, "Security groups"),
+            ["ERROR"],
+            "{error}"
+        );
+    }
+    let null_error = serverless_audit(
+        complete,
+        &format!(r#", {records}, "security_groups_error": null"#),
+    );
+    assert_eq!(statuses_of(&null_error, "Security groups"), ["PASS"]);
+
+    let all = |owner: &str| {
+        format!(
+            r#"[{{"Key": "Environment", "Value": "prod"}}, {{"Key": "managed_by", "Value": "tf"}}, {{"Key": "Application", "Value": "app"}}, {{"Key": "Owner", "Value": {owner}}}]"#
+        )
+    };
+    let tags = |list: &str| {
+        let result = serverless_audit("", &format!(r#", "tags": {list}"#));
+        audit_findings(&result)
+            .into_iter()
+            .filter(|(check, _, _)| check == "Resource tags")
+            .map(|(_, status, detail)| (status, detail))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        tags(&all(r#""me""#)),
+        [("PASS", "All recommended tags present".to_string())]
+    );
+    for owner in [r#""""#, r#"" ""#] {
+        assert_eq!(
+            tags(&all(owner)),
+            [("WARN", "Missing recommended tags: Owner".to_string())],
+            "{owner}"
+        );
+    }
+    for list in [
+        r#""Owner""#,
+        r#"{"Owner": "me"}"#,
+        "7",
+        "[7]",
+        r#"[{"Key": "Owner"}]"#,
+        r#"[{"Value": "me"}]"#,
+        r#"[{"Key": 1, "Value": "me"}]"#,
+        &all("null"),
+        &all("7"),
+    ] {
+        assert_eq!(tags(list)[0].0, "ERROR", "{list}");
+    }
+    for list in ["null", "[]"] {
+        assert_eq!(tags(list)[0].0, "WARN", "{list}");
+    }
+    let replication = replication_audit("", r#", "tags": {"Owner": "me"}"#);
+    assert_eq!(statuses_of(&replication, "Resource tags"), ["ERROR"]);
+    assert_eq!(member(&audit_info(&replication), "tags"), &json("{}"));
+}
+
+#[test]
+fn audit_command_does_not_pass_unidentified_or_partial_discovery() {
+    let dir = TempDir::new("audit-identity");
+    let serverless = dir.file(
+        "serverless.json",
+        r#"{"serverless_caches":[{"ServerlessCacheName":"cache","SnapshotRetentionLimit":1,"UserGroupId":"users","SecurityGroupIds":[""]}],"security_groups":[{"IpPermissions":[]}]}"#,
+    );
+    let replication = dir.file(
+        "replication.json",
+        r#"{"replication_groups":[{"ReplicationGroupId":"rg","TransitEncryptionEnabled":true,"AtRestEncryptionEnabled":true,"UserGroupIds":["users"],"SnapshotRetentionLimit":1,"MemberClusters":["a","b"],"NodeGroups":[{"NodeGroupMembers":[{"CacheClusterId":"a"},{"CacheClusterId":"b"}]}]}],"cache_clusters":{"a":{"SecurityGroups":[{"SecurityGroupId":"sg-a"}]},"b":{"error":"not inspected"}},"security_groups":[{"GroupId":"sg-a","IpPermissions":[]}]}"#,
+    );
+    for (mode, name, path) in [
+        ("--serverless", "cache", &serverless),
+        ("--replication-group", "rg", &replication),
+    ] {
+        for flags in [&["--json"][..], &[][..]] {
+            let mut args = vec!["elasticache", "audit", mode, name, "--describe", path];
+            args.extend_from_slice(flags);
+            let (status, stdout, stderr) = exec(&args);
+            assert_eq!((status, stderr.as_str()), (0, ""), "{mode} {flags:?}");
+            assert!(!stdout.contains("No overly permissive rules"), "{stdout}");
+            assert!(stdout.contains("Not inspected"), "{stdout}");
+        }
+    }
 }

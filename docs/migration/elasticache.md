@@ -198,6 +198,64 @@ output, missing/duplicate/unknown options and malformed files.
     so they stay optional (all-traffic rules carry none). In the same pass any
     IPv6 CIDR with prefix `/0` (for example `0::/0`), not just the exact text
     `::/0`, now gets the broad-rule `WARN`.
+17. **Every audit `PASS` needs positive evidence (#4655, #4656).** Two more
+    false passes were found after #4644, so the whole `audit` command was
+    reviewed fail-closed. A usable identifier is a string holding at least one
+    non-whitespace character. A missing, `null`, empty, blank or wrong-type
+    identifier matches nothing, so an empty reference can no longer match a
+    record that has no `GroupId`. Replication-group security groups are
+    discovered from every member cluster: the union of `MemberClusters` and
+    every node group's `NodeGroupMembers`, not only the node groups. Each
+    member must have a readable recorded cluster. The script skipped a member
+    whose `describe_cache_clusters` call failed, and a resource could then pass
+    on the groups of its other members. A value the script treated as "on" but
+    that is malformed (`TransitEncryptionEnabled: 1`, `UserGroupId: 7`,
+    `SnapshotRetentionLimit: 1.5`) becomes the not-inspected `ERROR`. A value
+    the script treated as "off" keeps its `FAIL`/`WARN`, so no malformed input
+    lowers the exit status. As in item 15, `ERROR` is not `FAIL`: it is shown
+    as `[ERR]` and leaves the exit status alone. Other changes:
+    - the describe file must hold exactly one record whose
+      `ServerlessCacheName` / `ReplicationGroupId` is the requested name. A
+      record without a name used to be audited as the requested resource. Now
+      it is "not found" (exit 1), and two matching records are "is recorded
+      more than once" (exit 1). A matching record no longer has to come first;
+    - a `null` replication-group `KmsKeyId` reads as `AWS-managed` (the script
+      printed `None`);
+    - a recommended tag counts as present only when its value is a non-blank
+      string. A tag list that is not a list, or a tag entry without a string
+      `Key` and a string `Value`, is an `ERROR` (the script crashed on such
+      entries);
+    - a `security_groups_error` that is present, not `null` and not a string is
+      still an inspection error.
+
+### Audit `PASS` paths and the evidence each one needs
+
+Every `PASS` the `audit` command can emit is listed here. Any other input
+gives the `WARN`/`FAIL` the script gave, or the not-inspected `ERROR`. No
+`PASS` exists outside this table.
+
+| Mode | Check | `PASS` requires | Missing / off | Malformed but "on" |
+| --- | --- | --- | --- | --- |
+| both | (resource record) | exactly one record in `serverless_caches` / `replication_groups` whose name string equals the requested non-blank name | not found, exit 1 | not found / "recorded more than once", exit 1 |
+| serverless | TLS in-transit encryption | the identified record (a property of the service) | - | - |
+| serverless | Multi-AZ | the identified record (a property of the service) | - | - |
+| serverless | Authentication | `UserGroupId` a usable identifier | `WARN` (absent, `null`, falsy) | `ERROR` (other truthy value) |
+| serverless | Encryption at rest | `KmsKeyId` a usable identifier, or absent/`null`/falsy (always encrypted, AWS-managed key) | - | `ERROR` (other truthy value) |
+| serverless | Automatic backups | `SnapshotRetentionLimit` a JSON integer >= 1 | `FAIL` (absent, `null`, <= 0, non-number) | `ERROR` (positive non-integer, including `7.0`) |
+| serverless | Data storage limit / ECPU limit | `CacheUsageLimits.<limit>.Maximum` a finite number > 0 | `WARN` (absent, `null`, falsy) | `ERROR` (other truthy value, negative included) |
+| node-based | TLS in-transit encryption | `TransitEncryptionEnabled` is the boolean `true` | `FAIL` (absent, falsy) | `ERROR` (other truthy value) |
+| node-based | Encryption at rest | `AtRestEncryptionEnabled` is `true` and `KmsKeyId` absent/`null` or a usable identifier | `FAIL` (absent, falsy) | `ERROR` (other truthy value, or a malformed `KmsKeyId`) |
+| node-based | Authentication | `UserGroupIds` a non-empty list of usable identifiers | `WARN` (AUTH token) or `FAIL` (empty, absent, falsy) | `ERROR` (any bad entry, or a truthy non-list) |
+| node-based | Multi-AZ / Automatic failover | the exact string `"enabled"` | `WARN` | `WARN` |
+| node-based | Automatic backups | as serverless | `FAIL` | `ERROR` |
+| both | Security groups | every reference read (below), at least one group, no `security_groups_error` (absent or `null`), a `security_groups` list, and for each referenced id at least one record whose `GroupId` equals it, every such record inspectable (item 16), and no broad-rule `WARN` | `WARN` "No security groups found" only when every reference was read and none exist | `ERROR` per unread reference, member or group. Inspected groups keep their `WARN`s |
+| serverless | (security group references) | `SecurityGroupIds` absent/`null` or a list of usable identifiers | - | `ERROR` `Security groups` per bad entry, or a non-list |
+| node-based | (security group references) | `MemberClusters` and each `NodeGroupMembers` absent/`null` or lists of usable cluster ids (`CacheClusterId` objects for node groups), each node group an object. For every member, `cache_clusters.<id>` is an object with no `error` member and a `SecurityGroups` list whose entries are objects with a usable `SecurityGroupId` (an empty list is read) | - | `ERROR` `Security groups` (bad list or entry) or `Security groups of cluster <id>` (no record, failed call, non-object, missing/`null`/non-list `SecurityGroups`, bad entry) |
+| both | Resource tags | `tags` absent/`null` (no tags) or a list of objects with a string `Key` and a string `Value`, and each of `Environment`, `managed_by`, `Application` and `Owner` with a non-blank value | `WARN` (missing or blank recommended tag) | `ERROR` (non-list, or a bad entry) |
+
+`FromPort`/`ToPort`, `DailySnapshotTime`, `Unit`, `Engine`, `EngineVersion`,
+`CacheNodeType`, `Status`, `ARN` and `ClusterEnabled` are only displayed. They
+never decide a verdict.
 
 ## Follow-ups
 

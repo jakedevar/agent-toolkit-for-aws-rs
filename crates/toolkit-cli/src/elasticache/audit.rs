@@ -22,6 +22,12 @@
 //! `CacheClusters` (by cluster id), `SecurityGroups` and `TagList` of the API
 //! responses. Nothing is written and no value of the file other than the
 //! audited identifiers and the findings is echoed.
+//!
+//! The audit is fail-closed: a `PASS` needs positive evidence (an exactly
+//! matching record, usable identifiers, every member cluster and security
+//! group read). Anything missing, malformed or unmatched is a not-inspected
+//! `ERROR` finding instead; the table of `PASS` paths is in
+//! `docs/migration/elasticache.md`.
 
 use std::net::{Ipv4Addr, Ipv6Addr};
 
@@ -115,34 +121,94 @@ fn value_or(value: &Json, key: &str, default: Json) -> Json {
     value.get(key).cloned().unwrap_or(default)
 }
 
-fn number_of(value: Option<&Json>) -> f64 {
-    match value {
-        Some(Json::Int(n)) => *n as f64,
-        Some(Json::Float(n)) => *n,
-        _ => 0.0,
-    }
-}
-
 fn describe_text(value: Option<&Json>, default: &str) -> String {
     value.map_or_else(|| default.to_string(), |item| show(&py_str(item)))
 }
 
-fn tags_of(describe: &Json) -> Json {
-    let mut tags: Vec<(String, Json)> = Vec::new();
-    for tag in items(describe.get("tags")) {
-        if let (Some(key), Some(value)) = (tag.get("Key"), tag.get("Value")) {
-            set_member(&mut tags, &py_str(key), value.clone());
-        }
-    }
-    Json::Object(tags)
+/// The member `key` unless it is absent or `null`.
+fn present<'a>(value: &'a Json, key: &str) -> Option<&'a Json> {
+    value
+        .get(key)
+        .filter(|member| !matches!(member, Json::Null))
 }
 
-fn audit_tags(findings: &mut Vec<Finding>, tags: &Json) {
+/// A usable identifier: a string holding at least one non-whitespace character.
+/// Anything else (absent, `null`, empty, blank, another type) identifies nothing.
+fn identifier(value: &Json) -> Option<&str> {
+    value.as_str().filter(|text| !text.trim().is_empty())
+}
+
+/// The `ERROR` finding for something the audit could not inspect.
+fn not_inspected(check: impl Into<String>, why: &str) -> Finding {
+    Finding::new(check, "ERROR", format!("Not inspected: {why}"))
+}
+
+/// Whether a value is a finite number greater than zero.
+fn positive_number(value: &Json) -> bool {
+    match value {
+        Json::Int(n) => *n > 0,
+        Json::Float(n) => n.is_finite() && *n > 0.0,
+        _ => false,
+    }
+}
+
+/// How a `SnapshotRetentionLimit` reads.
+enum Retention {
+    /// A whole number of days, at least one.
+    Days,
+    /// Absent, `null`, zero, negative or not a number: no backups (the
+    /// script's `0 or not set`).
+    Off,
+    /// A positive number that is not a whole number of days.
+    Malformed,
+}
+
+fn retention_of(value: &Json) -> Retention {
+    match value {
+        Json::Int(n) if *n > 0 => Retention::Days,
+        Json::Float(n) if *n > 0.0 => Retention::Malformed,
+        _ => Retention::Off,
+    }
+}
+
+/// The recorded tags, or why the tag list could not be read. An absent or
+/// `null` list is no tags (the script's answer to a failed tag call).
+fn tags_of(describe: &Json) -> Result<Json, &'static str> {
+    let list = match present(describe, "tags") {
+        None => return Ok(Json::Object(Vec::new())),
+        Some(Json::Array(list)) => list,
+        Some(_) => return Err("the tag list is not a list"),
+    };
+    let mut tags: Vec<(String, Json)> = Vec::new();
+    for tag in list {
+        match (
+            tag.get("Key").and_then(Json::as_str),
+            tag.get("Value")
+                .filter(|value| matches!(value, Json::String(_))),
+        ) {
+            (Some(key), Some(value)) => set_member(&mut tags, key, value.clone()),
+            _ => return Err("a tag entry is not an object with a string Key and a string Value"),
+        }
+    }
+    Ok(Json::Object(tags))
+}
+
+/// Adds the tag check and the `tags` info member. A recommended tag counts as
+/// present only with a non-blank value.
+fn audit_tags(findings: &mut Vec<Finding>, info: &mut Vec<(String, Json)>, describe: &Json) {
+    let tags = match tags_of(describe) {
+        Ok(tags) => tags,
+        Err(why) => {
+            findings.push(not_inspected("Resource tags", why));
+            info.push(kv("tags", Json::Object(Vec::new())));
+            return;
+        }
+    };
     let recommended = ["Environment", "managed_by", "Application", "Owner"];
     let missing: Vec<&str> = recommended
         .iter()
         .copied()
-        .filter(|name| tags.get(name).is_none())
+        .filter(|name| tags.get(name).and_then(identifier).is_none())
         .collect();
     if missing.is_empty() {
         findings.push(Finding::new(
@@ -157,6 +223,7 @@ fn audit_tags(findings: &mut Vec<Finding>, tags: &Json) {
             format!("Missing recommended tags: {}", missing.join(", ")),
         ));
     }
+    info.push(kv("tags", tags));
 }
 
 /// A canonical prefix length: decimal digits, no sign, no leading zero, at most `max`.
@@ -215,23 +282,65 @@ fn rules_inspectable(group: &Json) -> bool {
     })
 }
 
-fn audit_security_groups(describe: &Json, sg_ids: &[String]) -> Vec<Finding> {
-    let mut findings = Vec::new();
+/// The `GroupId` of a recorded security group, when it is a usable identifier
+/// (a missing, `null`, empty or non-string id matches no reference).
+fn group_id(group: &Json) -> Option<&str> {
+    group.get("GroupId").and_then(identifier)
+}
+
+/// The security groups a resource references, and an `ERROR` finding for every
+/// reference (or member cluster) that could not be read.
+#[derive(Default)]
+struct GroupRefs {
+    /// Usable group ids, without duplicates.
+    ids: Vec<String>,
+    /// Not-inspected findings of the discovery.
+    errors: Vec<Finding>,
+}
+
+impl GroupRefs {
+    fn add(&mut self, id: &str) {
+        if !self.ids.iter().any(|known| known == id) {
+            self.ids.push(id.to_string());
+        }
+    }
+
+    fn fail(&mut self, check: impl Into<String>, why: &str) {
+        self.errors.push(not_inspected(check, why));
+    }
+}
+
+fn audit_security_groups(describe: &Json, refs: GroupRefs) -> Vec<Finding> {
+    let GroupRefs {
+        ids: sg_ids,
+        errors,
+    } = refs;
+    let mut findings = errors;
     if sg_ids.is_empty() {
-        findings.push(Finding::new(
-            "Security groups",
-            "WARN",
-            "No security groups found",
-        ));
+        // Nothing referenced is a warning only when every reference was read.
+        if findings.is_empty() {
+            findings.push(Finding::new(
+                "Security groups",
+                "WARN",
+                "No security groups found",
+            ));
+        }
         return findings;
     }
-    if let Some(message) = describe.get("security_groups_error").and_then(Json::as_str) {
-        findings.push(Finding::new(
-            "Security groups",
-            "ERROR",
-            format!("Could not inspect: {}", show(message)),
-        ));
-        return findings;
+    match describe.get("security_groups_error") {
+        None | Some(Json::Null) => {}
+        Some(error) => {
+            let detail = error.as_str().map_or_else(
+                || "the recorded security group error is not a string".to_string(),
+                show,
+            );
+            findings.push(Finding::new(
+                "Security groups",
+                "ERROR",
+                format!("Could not inspect: {detail}"),
+            ));
+            return findings;
+        }
     }
     // A group nobody described was not inspected: never report it as safe.
     let Some(Json::Array(records)) = describe.get("security_groups") else {
@@ -247,32 +356,32 @@ fn audit_security_groups(describe: &Json, sg_ids: &[String]) -> Vec<Finding> {
         return findings;
     };
 
-    for id in sg_ids {
+    for id in &sg_ids {
         let matching: Vec<&Json> = records
             .iter()
-            .filter(|group| str_of(group, "GroupId", "") == id.as_str())
+            .filter(|group| group_id(group) == Some(id.as_str()))
             .collect();
         if matching.is_empty() {
-            findings.push(Finding::new(
+            findings.push(not_inspected(
                 format!("Security group {}", show(id)),
-                "ERROR",
-                "Not inspected: no record for this security group was supplied",
+                "no record for this security group was supplied",
             ));
         } else if !matching.iter().all(|group| rules_inspectable(group)) {
-            findings.push(Finding::new(
+            findings.push(not_inspected(
                 format!("Security group {}", show(id)),
-                "ERROR",
-                "Not inspected: IpPermissions is missing or malformed",
+                "IpPermissions is missing or malformed",
             ));
         }
     }
 
     for group in records {
-        if !sg_ids.iter().any(|id| id == str_of(group, "GroupId", "")) || !rules_inspectable(group)
-        {
+        let Some(id) = group_id(group) else {
+            continue;
+        };
+        if !sg_ids.iter().any(|wanted| wanted == id) || !rules_inspectable(group) {
             continue;
         }
-        let sg_id = show(str_of(group, "GroupId", ""));
+        let sg_id = show(id);
         for rule in items(group.get("IpPermissions")) {
             let from_port = describe_text(rule.get("FromPort"), "0");
             let to_port = describe_text(rule.get("ToPort"), "0");
@@ -313,6 +422,7 @@ fn audit_security_groups(describe: &Json, sg_ids: &[String]) -> Vec<Finding> {
         }
     }
 
+    // PASS only when every reference was read, every group inspected and nothing flagged.
     if findings.is_empty() {
         let shown: Vec<String> = sg_ids.iter().map(|id| show(id)).collect();
         findings.push(Finding::new(
@@ -324,19 +434,67 @@ fn audit_security_groups(describe: &Json, sg_ids: &[String]) -> Vec<Finding> {
     findings
 }
 
+/// The one recorded resource whose `key` is exactly `id`, or why there is none:
+/// no record, a record without that identifier, or more than one record.
+fn resource_record<'a>(
+    describe: &'a Json,
+    list: &str,
+    key: &str,
+    id: &str,
+) -> Result<&'a Json, &'static str> {
+    if id.trim().is_empty() {
+        return Err("not found");
+    }
+    let mut matching = items(describe.get(list))
+        .iter()
+        .filter(|record| record.get(key).and_then(identifier) == Some(id));
+    let Some(record) = matching.next() else {
+        return Err("not found");
+    };
+    if matching.next().is_some() {
+        return Err("is recorded more than once");
+    }
+    Ok(record)
+}
+
+/// The security groups a serverless cache references.
+fn serverless_group_refs(cache: &Json) -> GroupRefs {
+    let mut refs = GroupRefs::default();
+    match present(cache, "SecurityGroupIds") {
+        None => {}
+        Some(Json::Array(list)) => {
+            for (index, entry) in list.iter().enumerate() {
+                match identifier(entry) {
+                    Some(id) => refs.add(id),
+                    None => refs.fail(
+                        "Security groups",
+                        &format!(
+                            "SecurityGroupIds entry {} is not a non-empty string",
+                            index + 1
+                        ),
+                    ),
+                }
+            }
+        }
+        Some(_) => refs.fail("Security groups", "SecurityGroupIds is not a list"),
+    }
+    refs
+}
+
 /// Audits a serverless cache.
 #[must_use]
 pub fn audit_serverless(describe: &Json, cache_name: &str) -> Audit {
-    let not_found =
-        || Audit::NotFound(format!("Serverless cache '{}' not found", show(cache_name)));
-    let Some(cache) = items(describe.get("serverless_caches")).first() else {
-        return not_found();
-    };
-    if let Some(name) = cache.get("ServerlessCacheName").and_then(Json::as_str) {
-        if name != cache_name {
-            return not_found();
+    let cache = match resource_record(
+        describe,
+        "serverless_caches",
+        "ServerlessCacheName",
+        cache_name,
+    ) {
+        Ok(cache) => cache,
+        Err(why) => {
+            return Audit::NotFound(format!("Serverless cache '{}' {why}", show(cache_name)));
         }
-    }
+    };
 
     let mut findings = Vec::new();
     let mut info = vec![
@@ -360,39 +518,57 @@ pub fn audit_serverless(describe: &Json, cache_name: &str) -> Audit {
     ));
 
     // Serverless requires RBAC.
-    if let Some(group) = cache.get("UserGroupId").filter(|g| truthy(Some(*g))) {
-        findings.push(Finding::new(
-            "Authentication",
-            "PASS",
-            format!("RBAC user group: {}", show(&py_str(group))),
-        ));
-        info.push(kv("auth_mode", js("RBAC")));
-        info.push(kv("user_group", group.clone()));
-    } else {
-        findings.push(Finding::new(
-            "Authentication",
-            "WARN",
-            "No user group attached — using default user only",
-        ));
-        info.push(kv("auth_mode", js("default-user-only")));
+    match cache.get("UserGroupId") {
+        Some(group) if identifier(group).is_some() => {
+            findings.push(Finding::new(
+                "Authentication",
+                "PASS",
+                format!("RBAC user group: {}", show(&py_str(group))),
+            ));
+            info.push(kv("auth_mode", js("RBAC")));
+            info.push(kv("user_group", group.clone()));
+        }
+        Some(group) if truthy(Some(group)) => {
+            findings.push(not_inspected(
+                "Authentication",
+                "UserGroupId is not a non-empty string",
+            ));
+            info.push(kv("auth_mode", js("unknown")));
+        }
+        _ => {
+            findings.push(Finding::new(
+                "Authentication",
+                "WARN",
+                "No user group attached — using default user only",
+            ));
+            info.push(kv("auth_mode", js("default-user-only")));
+        }
     }
 
-    // Encryption at rest.
-    if let Some(key) = cache.get("KmsKeyId").filter(|k| truthy(Some(*k))) {
-        findings.push(Finding::new(
-            "Encryption at rest",
-            "PASS",
-            format!("KMS key: {}", show(&py_str(key))),
-        ));
-        info.push(kv("encryption_at_rest", Json::Bool(true)));
-        info.push(kv("kms_key", key.clone()));
-    } else {
-        findings.push(Finding::new(
-            "Encryption at rest",
-            "PASS",
-            "Always enabled on serverless (using AWS-managed key)",
-        ));
-        info.push(kv("encryption_at_rest", Json::Bool(true)));
+    // Encryption at rest (always on; a named key must be a usable id).
+    info.push(kv("encryption_at_rest", Json::Bool(true)));
+    match cache.get("KmsKeyId") {
+        Some(key) if identifier(key).is_some() => {
+            findings.push(Finding::new(
+                "Encryption at rest",
+                "PASS",
+                format!("KMS key: {}", show(&py_str(key))),
+            ));
+            info.push(kv("kms_key", key.clone()));
+        }
+        Some(key) if truthy(Some(key)) => {
+            findings.push(not_inspected(
+                "Encryption at rest",
+                "KmsKeyId is not a non-empty string",
+            ));
+        }
+        _ => {
+            findings.push(Finding::new(
+                "Encryption at rest",
+                "PASS",
+                "Always enabled on serverless (using AWS-managed key)",
+            ));
+        }
     }
 
     // Multi-AZ is always on.
@@ -406,24 +582,34 @@ pub fn audit_serverless(describe: &Json, cache_name: &str) -> Audit {
     // Backups.
     let retention = value_or(cache, "SnapshotRetentionLimit", Json::Int(0));
     info.push(kv("snapshot_retention_days", retention.clone()));
-    if number_of(Some(&retention)) > 0.0 {
-        let snapshot_time = describe_text(cache.get("DailySnapshotTime"), "not set");
-        info.push(kv("daily_backups", Json::Bool(true)));
-        findings.push(Finding::new(
-            "Automatic backups",
-            "PASS",
-            format!(
-                "Retention: {} days, daily snapshot time: {snapshot_time}",
-                show(&py_str(&retention))
-            ),
-        ));
-    } else {
-        info.push(kv("daily_backups", Json::Bool(false)));
-        findings.push(Finding::new(
-            "Automatic backups",
-            "FAIL",
-            "No automatic backups configured, SnapshotRetentionLimit is 0 or not set",
-        ));
+    match retention_of(&retention) {
+        Retention::Days => {
+            let snapshot_time = describe_text(cache.get("DailySnapshotTime"), "not set");
+            info.push(kv("daily_backups", Json::Bool(true)));
+            findings.push(Finding::new(
+                "Automatic backups",
+                "PASS",
+                format!(
+                    "Retention: {} days, daily snapshot time: {snapshot_time}",
+                    show(&py_str(&retention))
+                ),
+            ));
+        }
+        Retention::Malformed => {
+            info.push(kv("daily_backups", Json::Bool(false)));
+            findings.push(not_inspected(
+                "Automatic backups",
+                "SnapshotRetentionLimit is not a whole number of days",
+            ));
+        }
+        Retention::Off => {
+            info.push(kv("daily_backups", Json::Bool(false)));
+            findings.push(Finding::new(
+                "Automatic backups",
+                "FAIL",
+                "No automatic backups configured, SnapshotRetentionLimit is 0 or not set",
+            ));
+        }
     }
 
     // Usage limits (cost control).
@@ -431,60 +617,66 @@ pub fn audit_serverless(describe: &Json, cache_name: &str) -> Audit {
     let limits = cache.get("CacheUsageLimits").unwrap_or(&empty);
     let data_limit = limits.get("DataStorage").unwrap_or(&empty);
     let ecpu_limit = limits.get("ECPUPerSecond").unwrap_or(&empty);
-    if let Some(maximum) = data_limit.get("Maximum").filter(|m| truthy(Some(*m))) {
-        info.push(kv("max_data_gb", maximum.clone()));
-        findings.push(Finding::new(
+    match data_limit.get("Maximum") {
+        Some(maximum) if positive_number(maximum) => {
+            info.push(kv("max_data_gb", maximum.clone()));
+            findings.push(Finding::new(
+                "Data storage limit",
+                "PASS",
+                format!(
+                    "{} {} max",
+                    show(&py_str(maximum)),
+                    describe_text(data_limit.get("Unit"), "GB")
+                ),
+            ));
+        }
+        Some(maximum) if truthy(Some(maximum)) => findings.push(not_inspected(
             "Data storage limit",
-            "PASS",
-            format!(
-                "{} {} max",
-                show(&py_str(maximum)),
-                describe_text(data_limit.get("Unit"), "GB")
-            ),
-        ));
-    } else {
-        findings.push(Finding::new(
+            "CacheUsageLimits.DataStorage.Maximum is not a positive number",
+        )),
+        _ => findings.push(Finding::new(
             "Data storage limit",
             "WARN",
             "No data storage limit set — costs could grow unbounded",
-        ));
+        )),
     }
-    if let Some(maximum) = ecpu_limit.get("Maximum").filter(|m| truthy(Some(*m))) {
-        info.push(kv("max_ecpu_per_sec", maximum.clone()));
-        findings.push(Finding::new(
+    match ecpu_limit.get("Maximum") {
+        Some(maximum) if positive_number(maximum) => {
+            info.push(kv("max_ecpu_per_sec", maximum.clone()));
+            findings.push(Finding::new(
+                "ECPU limit",
+                "PASS",
+                format!("{} ECPUs/sec max", show(&py_str(maximum))),
+            ));
+        }
+        Some(maximum) if truthy(Some(maximum)) => findings.push(not_inspected(
             "ECPU limit",
-            "PASS",
-            format!("{} ECPUs/sec max", show(&py_str(maximum))),
-        ));
-    } else {
-        findings.push(Finding::new(
+            "CacheUsageLimits.ECPUPerSecond.Maximum is not a positive number",
+        )),
+        _ => findings.push(Finding::new(
             "ECPU limit",
             "WARN",
             "No ECPU limit set — costs could grow unbounded",
-        ));
+        )),
     }
 
     // Security groups.
-    let sg_ids: Vec<String> = items(cache.get("SecurityGroupIds"))
-        .iter()
-        .map(py_str)
-        .collect();
-    findings.extend(audit_security_groups(describe, &sg_ids));
+    let refs = serverless_group_refs(cache);
+    let sg_ids = refs.ids.clone();
+    findings.extend(audit_security_groups(describe, refs));
     info.push(kv(
         "security_groups",
         Json::Array(sg_ids.iter().map(|id| js(id)).collect()),
     ));
 
     // Tags.
-    let tags = tags_of(describe);
-    audit_tags(&mut findings, &tags);
-    info.push(kv("tags", tags));
+    audit_tags(&mut findings, &mut info, describe);
 
     Audit::Report { info, findings }
 }
 
 /// The recorded `describe_cache_clusters` answer for `id` (an entry holding an
-/// `error` stands for a failed call).
+/// `error` stands for a failed call). Only the engine details read this.
 fn cluster_of<'a>(describe: &'a Json, id: &str) -> Option<&'a Json> {
     describe
         .get("cache_clusters")
@@ -492,18 +684,133 @@ fn cluster_of<'a>(describe: &'a Json, id: &str) -> Option<&'a Json> {
         .filter(|cluster| cluster.get("error").is_none())
 }
 
+/// Adds the member-cluster ids of `list` (absent or `null` is none) to
+/// `members`: plain strings, or objects carrying the id under `key`. An entry
+/// naming no usable id, or a `list` that is not a list, is recorded in `refs`.
+fn add_member_ids(
+    members: &mut Vec<String>,
+    refs: &mut GroupRefs,
+    list: Option<&Json>,
+    key: Option<&str>,
+    what: &str,
+) {
+    match list {
+        None | Some(Json::Null) => {}
+        Some(Json::Array(entries)) => {
+            for (index, entry) in entries.iter().enumerate() {
+                let id = match key {
+                    None => identifier(entry),
+                    Some(key) => entry.get(key).and_then(identifier),
+                };
+                match id {
+                    Some(id) => {
+                        if !members.iter().any(|known| known == id) {
+                            members.push(id.to_string());
+                        }
+                    }
+                    None => refs.fail(
+                        "Security groups",
+                        &format!("{what} entry {} names no member cluster", index + 1),
+                    ),
+                }
+            }
+        }
+        Some(_) => refs.fail("Security groups", &format!("{what} is not a list")),
+    }
+}
+
+/// The security groups of every member cluster of a replication group. The
+/// members are the union of `MemberClusters` and the `NodeGroupMembers` of
+/// every node group; each must have a readable recorded cluster with a
+/// `SecurityGroups` list, or the discovery records why not.
+fn replication_group_refs(describe: &Json, group: &Json) -> GroupRefs {
+    let mut refs = GroupRefs::default();
+    let mut members: Vec<String> = Vec::new();
+    add_member_ids(
+        &mut members,
+        &mut refs,
+        group.get("MemberClusters"),
+        None,
+        "MemberClusters",
+    );
+    match present(group, "NodeGroups") {
+        None => {}
+        Some(Json::Array(node_groups)) => {
+            for (index, node_group) in node_groups.iter().enumerate() {
+                let what = format!("NodeGroups entry {}", index + 1);
+                if matches!(node_group, Json::Object(_)) {
+                    add_member_ids(
+                        &mut members,
+                        &mut refs,
+                        node_group.get("NodeGroupMembers"),
+                        Some("CacheClusterId"),
+                        &format!("{what} NodeGroupMembers"),
+                    );
+                } else {
+                    refs.fail("Security groups", &format!("{what} is not an object"));
+                }
+            }
+        }
+        Some(_) => refs.fail("Security groups", "NodeGroups is not a list"),
+    }
+    members.sort();
+
+    let clusters = describe.get("cache_clusters");
+    for id in &members {
+        let check = format!("Security groups of cluster {}", show(id));
+        let Some(cluster) = clusters.and_then(|all| all.get(id)) else {
+            refs.fail(
+                check,
+                "no describe_cache_clusters record for this member was supplied",
+            );
+            continue;
+        };
+        if !matches!(cluster, Json::Object(_)) {
+            refs.fail(check, "the recorded cluster is not an object");
+            continue;
+        }
+        if let Some(error) = cluster.get("error") {
+            refs.fail(
+                check,
+                &format!(
+                    "describe_cache_clusters failed: {}",
+                    describe_text(Some(error), "")
+                ),
+            );
+            continue;
+        }
+        match cluster.get("SecurityGroups") {
+            Some(Json::Array(list)) => {
+                for (index, entry) in list.iter().enumerate() {
+                    match entry.get("SecurityGroupId").and_then(identifier) {
+                        Some(sg) => refs.add(sg),
+                        None => refs.fail(
+                            check.clone(),
+                            &format!(
+                                "SecurityGroups entry {} has no non-empty string SecurityGroupId",
+                                index + 1
+                            ),
+                        ),
+                    }
+                }
+            }
+            None | Some(Json::Null) => {
+                refs.fail(check, "the recorded cluster has no SecurityGroups list");
+            }
+            Some(_) => refs.fail(check, "SecurityGroups is not a list"),
+        }
+    }
+    refs.ids.sort();
+    refs
+}
+
 /// Audits a node-based replication group.
 #[must_use]
 pub fn audit_replication_group(describe: &Json, rg_id: &str) -> Audit {
-    let not_found = || Audit::NotFound(format!("Replication group '{}' not found", show(rg_id)));
-    let Some(group) = items(describe.get("replication_groups")).first() else {
-        return not_found();
+    let group = match resource_record(describe, "replication_groups", "ReplicationGroupId", rg_id) {
+        Ok(group) => group,
+        Err(why) => return Audit::NotFound(format!("Replication group '{}' {why}", show(rg_id))),
     };
-    if let Some(name) = group.get("ReplicationGroupId").and_then(Json::as_str) {
-        if name != rg_id {
-            return not_found();
-        }
-    }
 
     let mut findings = Vec::new();
     let node_groups = items(group.get("NodeGroups"));
@@ -523,7 +830,7 @@ pub fn audit_replication_group(describe: &Json, rg_id: &str) -> Audit {
         ),
     ];
 
-    // Engine version from the first member cluster.
+    // Engine version from the first member cluster (display only).
     if let Some(first) = items(group.get("MemberClusters")).first() {
         match cluster_of(describe, &py_str(first)) {
             Some(cluster) => {
@@ -548,11 +855,17 @@ pub fn audit_replication_group(describe: &Json, rg_id: &str) -> Audit {
         }
     }
 
-    // TLS.
-    let tls = truthy(group.get("TransitEncryptionEnabled"));
+    // TLS: only the boolean `true` passes; another truthy value is unreadable.
+    let tls_value = group.get("TransitEncryptionEnabled");
+    let tls = matches!(tls_value, Some(Json::Bool(true)));
     info.push(kv("tls_enabled", Json::Bool(tls)));
     findings.push(if tls {
         Finding::new("TLS in-transit encryption", "PASS", "Enabled")
+    } else if truthy(tls_value) {
+        not_inspected(
+            "TLS in-transit encryption",
+            "TransitEncryptionEnabled is not a boolean",
+        )
     } else {
         Finding::new(
             "TLS in-transit encryption",
@@ -562,18 +875,38 @@ pub fn audit_replication_group(describe: &Json, rg_id: &str) -> Audit {
     });
 
     // Encryption at rest.
-    let at_rest = truthy(group.get("AtRestEncryptionEnabled"));
+    let at_rest_value = group.get("AtRestEncryptionEnabled");
+    let at_rest = matches!(at_rest_value, Some(Json::Bool(true)));
     info.push(kv("encryption_at_rest", Json::Bool(at_rest)));
     if at_rest {
-        let kms = describe_text(group.get("KmsKeyId"), "AWS-managed");
-        findings.push(Finding::new(
+        match present(group, "KmsKeyId") {
+            None => {
+                findings.push(Finding::new(
+                    "Encryption at rest",
+                    "PASS",
+                    "Enabled (key: AWS-managed)",
+                ));
+                info.push(kv("kms_key", js("AWS-managed")));
+            }
+            Some(key) => match identifier(key) {
+                Some(name) => {
+                    findings.push(Finding::new(
+                        "Encryption at rest",
+                        "PASS",
+                        format!("Enabled (key: {})", show(name)),
+                    ));
+                    info.push(kv("kms_key", key.clone()));
+                }
+                None => findings.push(not_inspected(
+                    "Encryption at rest",
+                    "KmsKeyId is not a non-empty string",
+                )),
+            },
+        }
+    } else if truthy(at_rest_value) {
+        findings.push(not_inspected(
             "Encryption at rest",
-            "PASS",
-            format!("Enabled (key: {kms})"),
-        ));
-        info.push(kv(
-            "kms_key",
-            value_or(group, "KmsKeyId", js("AWS-managed")),
+            "AtRestEncryptionEnabled is not a boolean",
         ));
     } else {
         findings.push(Finding::new(
@@ -584,35 +917,55 @@ pub fn audit_replication_group(describe: &Json, rg_id: &str) -> Audit {
     }
 
     // Authentication.
-    let user_groups: Vec<Json> = items(group.get("UserGroupIds")).to_vec();
-    if user_groups.is_empty() {
-        if truthy(group.get("AuthTokenEnabled")) {
-            info.push(kv("auth_mode", js("AUTH-token")));
-            findings.push(Finding::new(
+    match group.get("UserGroupIds") {
+        Some(Json::Array(user_groups)) if !user_groups.is_empty() => {
+            let names: Option<Vec<String>> = user_groups
+                .iter()
+                .map(|g| identifier(g).map(show))
+                .collect();
+            if let Some(names) = names {
+                info.push(kv("auth_mode", js("RBAC")));
+                info.push(kv("user_groups", Json::Array(user_groups.clone())));
+                findings.push(Finding::new(
+                    "Authentication",
+                    "PASS",
+                    format!("RBAC user groups: {}", names.join(", ")),
+                ));
+            } else {
+                info.push(kv("auth_mode", js("unknown")));
+                findings.push(not_inspected(
+                    "Authentication",
+                    "UserGroupIds holds an entry that is not a non-empty string",
+                ));
+            }
+        }
+        Some(value) if !matches!(value, Json::Array(_)) && truthy(Some(value)) => {
+            info.push(kv("auth_mode", js("unknown")));
+            findings.push(not_inspected(
                 "Authentication",
-                "WARN",
-                "Using legacy AUTH token — consider migrating to RBAC",
-            ));
-        } else {
-            info.push(kv("auth_mode", js("none")));
-            findings.push(Finding::new(
-                "Authentication",
-                "FAIL",
-                "No authentication configured — any VPC client can access data",
+                "UserGroupIds is not a list",
             ));
         }
-    } else {
-        let names: Vec<String> = user_groups.iter().map(|g| show(&py_str(g))).collect();
-        info.push(kv("auth_mode", js("RBAC")));
-        info.push(kv("user_groups", Json::Array(user_groups)));
-        findings.push(Finding::new(
-            "Authentication",
-            "PASS",
-            format!("RBAC user groups: {}", names.join(", ")),
-        ));
+        _ => {
+            if truthy(group.get("AuthTokenEnabled")) {
+                info.push(kv("auth_mode", js("AUTH-token")));
+                findings.push(Finding::new(
+                    "Authentication",
+                    "WARN",
+                    "Using legacy AUTH token — consider migrating to RBAC",
+                ));
+            } else {
+                info.push(kv("auth_mode", js("none")));
+                findings.push(Finding::new(
+                    "Authentication",
+                    "FAIL",
+                    "No authentication configured — any VPC client can access data",
+                ));
+            }
+        }
     }
 
-    // Multi-AZ and automatic failover.
+    // Multi-AZ and automatic failover: only the exact string "enabled" passes.
     let multi_az = str_of(group, "MultiAZ", "disabled") == "enabled";
     info.push(kv("multi_az", Json::Bool(multi_az)));
     findings.push(if multi_az {
@@ -635,51 +988,34 @@ pub fn audit_replication_group(describe: &Json, rg_id: &str) -> Audit {
     // Backups.
     let retention = value_or(group, "SnapshotRetentionLimit", Json::Int(0));
     info.push(kv("snapshot_retention_days", retention.clone()));
-    if number_of(Some(&retention)) > 0.0 {
-        findings.push(Finding::new(
+    findings.push(match retention_of(&retention) {
+        Retention::Days => Finding::new(
             "Automatic backups",
             "PASS",
             format!("Retention: {} days", show(&py_str(&retention))),
-        ));
-    } else {
-        findings.push(Finding::new(
+        ),
+        Retention::Malformed => not_inspected(
+            "Automatic backups",
+            "SnapshotRetentionLimit is not a whole number of days",
+        ),
+        Retention::Off => Finding::new(
             "Automatic backups",
             "FAIL",
             "No automatic backups — data loss risk on failure",
-        ));
-    }
+        ),
+    });
 
-    // Security groups of the member clusters (sorted, deduplicated).
-    let mut sg_ids: Vec<String> = Vec::new();
-    for node_group in node_groups {
-        for member in items(node_group.get("NodeGroupMembers")) {
-            let Some(id) = member.get("CacheClusterId") else {
-                continue;
-            };
-            let Some(cluster) = cluster_of(describe, &py_str(id)) else {
-                continue;
-            };
-            for group_ref in items(cluster.get("SecurityGroups")) {
-                if let Some(sg) = group_ref.get("SecurityGroupId") {
-                    let sg = py_str(sg);
-                    if !sg_ids.contains(&sg) {
-                        sg_ids.push(sg);
-                    }
-                }
-            }
-        }
-    }
-    sg_ids.sort();
-    findings.extend(audit_security_groups(describe, &sg_ids));
+    // Security groups of every member cluster (sorted, deduplicated).
+    let refs = replication_group_refs(describe, group);
+    let sg_ids = refs.ids.clone();
+    findings.extend(audit_security_groups(describe, refs));
     info.push(kv(
         "security_groups",
         Json::Array(sg_ids.iter().map(|id| js(id)).collect()),
     ));
 
     // Tags.
-    let tags = tags_of(describe);
-    audit_tags(&mut findings, &tags);
-    info.push(kv("tags", tags));
+    audit_tags(&mut findings, &mut info, describe);
 
     Audit::Report { info, findings }
 }
