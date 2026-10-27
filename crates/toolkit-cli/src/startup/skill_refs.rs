@@ -299,47 +299,129 @@ fn strip_urls(chars: &[char]) -> Vec<char> {
     out
 }
 
-/// The run of characters directly before `start` that are neither whitespace
-/// nor a backtick (the regular expression `[^\s\x60]*$`).
-fn token_context(chars: &[char], start: usize) -> &[char] {
-    let mut from = start;
-    while from > 0 && !is_py_space(chars[from - 1]) && chars[from - 1] != '`' {
-        from -= 1;
+/// The smallest end of a skip-prefix match that starts at `at` in `text`
+/// (`_SKIP_PREFIX_RE`): a run-artifact variable, placeholder or
+/// generated-output directory. Constant work: the alternatives are fixed.
+fn skip_match_end(text: &[char], at: usize) -> Option<usize> {
+    fn note(best: &mut Option<usize>, end: usize) {
+        *best = Some(best.map_or(end, |b| b.min(end)));
     }
-    &chars[from..start]
-}
-
-/// `_SKIP_PREFIX_RE.search(text)`: a run-artifact variable, placeholder or
-/// generated-output directory anywhere in `text`.
-fn has_skip_prefix(text: &[char]) -> bool {
-    (0..text.len()).any(|at| {
-        let variable = text[at] == '$' && {
+    let mut best = None;
+    match text[at] {
+        '$' => {
             let mut cursor = at + 1;
             if text.get(cursor) == Some(&'{') {
                 cursor += 1;
             }
-            SKIP_VARIABLES.iter().any(|name| {
-                starts_with_at(text, cursor, name) && {
+            for name in SKIP_VARIABLES {
+                if starts_with_at(text, cursor, name) {
                     let mut end = cursor + name.len();
                     if text.get(end) == Some(&'}') {
                         end += 1;
                     }
-                    text.get(end) == Some(&'/')
+                    if text.get(end) == Some(&'/') {
+                        note(&mut best, end + 1);
+                    }
                 }
-            })
-        };
-        let placeholder = text[at] == '<'
-            && SKIP_PLACEHOLDERS.iter().any(|name| {
-                starts_with_at(text, at + 1, name)
+            }
+        }
+        '<' => {
+            for name in SKIP_PLACEHOLDERS {
+                if starts_with_at(text, at + 1, name)
                     && text.get(at + 1 + name.len()) == Some(&'>')
                     && text.get(at + 2 + name.len()) == Some(&'/')
+                {
+                    note(&mut best, at + 3 + name.len());
+                }
+            }
+        }
+        _ => {}
+    }
+    for literal in SKIP_LITERALS {
+        if starts_with_at(text, at, literal) {
+            note(&mut best, at + literal.len());
+        }
+    }
+    best
+}
+
+/// The line-wide tables that turn each token's context question into a
+/// constant-time lookup, so a line is scanned in one forward pass however
+/// many tokens share one run of non-space characters.
+struct LineIndex {
+    /// `run_start[i]`: where the run of characters that are neither whitespace
+    /// nor a backtick (the regular expression `[^\s\x60]*`) that ends just
+    /// before position `i` begins: the start of the context of a token at `i`.
+    run_start: Vec<usize>,
+    /// `skip_end[i]`: the smallest end of a skip-prefix match that starts at
+    /// or after `i` (`usize::MAX` when there is none).
+    skip_end: Vec<usize>,
+}
+
+impl LineIndex {
+    fn new(chars: &[char], work: &mut u64) -> Self {
+        let n = chars.len();
+        let mut run_start = Vec::with_capacity(n + 1);
+        run_start.push(0);
+        for (at, c) in chars.iter().enumerate() {
+            run_start.push(if is_py_space(*c) || *c == '`' {
+                at + 1
+            } else {
+                run_start[at]
             });
-        variable
-            || placeholder
-            || SKIP_LITERALS
-                .iter()
-                .any(|literal| starts_with_at(text, at, literal))
-    })
+        }
+        let mut skip_end = vec![usize::MAX; n + 1];
+        for at in (0..n).rev() {
+            skip_end[at] =
+                skip_match_end(chars, at).map_or(skip_end[at + 1], |end| end.min(skip_end[at + 1]));
+        }
+        // One step per position for each table; the skip test at a position
+        // looks at a fixed number of names.
+        *work += 2 * (n as u64 + 1);
+        Self {
+            run_start,
+            skip_end,
+        }
+    }
+
+    /// `_SKIP_PREFIX_RE.search(context + prefix)` for the token at `start`
+    /// whose prefix ends at `prefix_end`. The context and the prefix are the
+    /// adjacent characters `chars[run_start[start]..prefix_end]`, and a match
+    /// inside that window is a match of the line that ends by `prefix_end`.
+    fn skipped(&self, start: usize, prefix_end: usize) -> bool {
+        self.skip_end[self.run_start[start]] <= prefix_end
+    }
+}
+
+/// The tokens of one line that survive every filter that depends on the line
+/// alone, in order. `work` counts the steps taken: a pass over the line and,
+/// per token, its own length, never the text before it.
+fn line_candidates(chars: &[char], work: &mut u64) -> Vec<Token> {
+    let mut tokens = find_tokens(chars);
+    *work += chars.len() as u64;
+    if tokens.is_empty() {
+        return tokens;
+    }
+    let index = LineIndex::new(chars, work);
+    tokens.retain(|token| {
+        let prefix = &chars[token.start..token.prefix_end];
+        let full = &chars[token.start..token.end];
+        *work += full.len() as u64 + 1;
+        if index.skipped(token.start, token.prefix_end) || is_templated(full) {
+            return false;
+        }
+        let path: String = chars[token.prefix_end..token.end].iter().collect();
+        if prefix.is_empty() && !starts_with_root(&path) {
+            return false;
+        }
+        // `./x.sh`, `../plan.md`: a relative token with no known root
+        // directory in it is an output or working-tree path.
+        if is_relative_only(prefix) && !has_root_segment(&path) {
+            return false;
+        }
+        !(token.start > 0 && glues(chars[token.start - 1]))
+    });
+    tokens
 }
 
 /// `_is_templated`: after stripping leading `<VAR>/` and `$VAR/` items, the
@@ -434,6 +516,8 @@ pub(super) struct Tree {
     repo: PathBuf,
     skill_dirs: Option<Vec<PathBuf>>,
     files_below: HashMap<PathBuf, Vec<PathBuf>>,
+    /// Steps taken scanning lines (see `line_candidates`); the tests bound it.
+    work: u64,
 }
 
 fn link_error(path: &Path) -> String {
@@ -471,6 +555,7 @@ impl Tree {
             repo,
             skill_dirs: None,
             files_below: HashMap::new(),
+            work: 0,
         }
     }
 
@@ -683,32 +768,14 @@ impl Tree {
         let mut references = Vec::new();
         for (index, line) in py_splitlines(&text).into_iter().enumerate() {
             let chars = strip_urls(&line.chars().collect::<Vec<_>>());
-            for token in find_tokens(&chars) {
-                let prefix = &chars[token.start..token.prefix_end];
-                let full = &chars[token.start..token.end];
+            for token in line_candidates(&chars, &mut self.work) {
+                let prefix: String = chars[token.start..token.prefix_end].iter().collect();
                 let path: String = chars[token.prefix_end..token.end].iter().collect();
-                let mut context = token_context(&chars, token.start).to_vec();
-                context.extend_from_slice(prefix);
-                if has_skip_prefix(&context) || is_templated(full) {
-                    continue;
-                }
-                if prefix.is_empty() && !starts_with_root(&path) {
-                    continue;
-                }
-                // `./x.sh`, `../plan.md`: a relative token with no known root
-                // directory in it is an output or working-tree path.
-                if is_relative_only(prefix) && !has_root_segment(&path) {
-                    continue;
-                }
-                if token.start > 0 && glues(chars[token.start - 1]) {
-                    continue;
-                }
-                let prefix_text: String = prefix.iter().collect();
-                let resolved = self.resolve(&prefix_text, &path, source, source_relative)?;
+                let resolved = self.resolve(&prefix, &path, source, source_relative)?;
                 references.push(Reference {
                     source: source_relative.to_string(),
                     line: index + 1,
-                    raw: full.iter().collect(),
+                    raw: chars[token.start..token.end].iter().collect(),
                     resolved,
                 });
             }

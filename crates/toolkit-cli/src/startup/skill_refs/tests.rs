@@ -602,6 +602,333 @@ fn the_scanner_agrees_with_the_python_pattern_on_the_real_skill_text() {
     assert!(skipped < 20, "{skipped} lines exhausted the oracle");
 }
 
+/// `_SKIP_PREFIX_RE`, verbatim.
+const SKIP_ORACLE: &str = r"(\$\{?(MIGRATION_DIR|RUN_DIR|BEDROCK_RUN_DIR|REPO|PHASE_DIR|PLAN_DIR|OUT|TARGET|APP|WORKSPACE|TMP)\}?/|<(PLAN_DIR|MIGRATION_DIR|RUN_DIR|REPO|run_dir|migration_dir|path|repo)>/|\.migration/|\.saws-migrate/|terraform/|ai-migration/|poc/|scaffold/|\.github/)";
+const ROOTS_ORACLE: &str =
+    "(?:references|knowledge|scripts|skills|agents|data|phases|shared|design-refs|fixtures|tools)";
+
+/// The Python `scan_file` loop run on one line, written the way the Python
+/// wrote it (the context is re-derived and rescanned for every token, which is
+/// the quadratic cost the Rust scanner removes). Returns the raw tokens kept.
+struct PythonScan {
+    token: fancy_regex::Regex,
+    url: fancy_regex::Regex,
+    before: fancy_regex::Regex,
+    skip: fancy_regex::Regex,
+    leading: fancy_regex::Regex,
+    roots_start: fancy_regex::Regex,
+    roots_inside: fancy_regex::Regex,
+    relative: fancy_regex::Regex,
+}
+
+impl PythonScan {
+    fn new() -> Self {
+        let regex = |pattern: &str| fancy_regex::Regex::new(pattern).expect("a valid pattern");
+        Self {
+            token: regex(ORACLE),
+            url: regex(r"https?://\S*"),
+            before: regex(r"[^\s`]*$"),
+            skip: regex(SKIP_ORACLE),
+            leading: regex(r"^(?:<[A-Z_]+>/|\$\{?[A-Z_]+\}?/)+"),
+            roots_start: regex(&format!("^{ROOTS_ORACLE}/")),
+            roots_inside: regex(&format!("(^|/){ROOTS_ORACLE}/")),
+            relative: regex(r"\A(?:\./|\.\./)+\z"),
+        }
+    }
+
+    /// `None` when the oracle's own backtracking budget runs out.
+    fn raws(&self, line: &str) -> Option<Vec<String>> {
+        let text = self.url.replace_all(line, "").into_owned();
+        let mut kept = Vec::new();
+        for captures in self.token.captures_iter(text.as_str()) {
+            let captures = captures.ok()?;
+            let whole = captures.get(0).expect("the whole match");
+            let prefix = captures.name("prefix").map_or("", |m| m.as_str());
+            let path = captures.name("path").expect("the path group").as_str();
+            let full = whole.as_str();
+            let start = whole.start();
+            let before = self.before.find(&text[..start]).ok()??.as_str().to_string();
+            if self
+                .skip
+                .is_match(&format!("{before}{}", &full[..prefix.len()]))
+                .ok()?
+            {
+                continue;
+            }
+            let body = self.leading.replace(full, "");
+            if body.chars().any(|c| "<>{}*[]".contains(c))
+                || body.contains("NNN")
+                || body.contains("/…")
+            {
+                continue;
+            }
+            if prefix.is_empty() && !self.roots_start.is_match(path).ok()? {
+                continue;
+            }
+            if !prefix.is_empty()
+                && self.relative.is_match(prefix).ok()?
+                && !self.roots_inside.is_match(path).ok()?
+            {
+                continue;
+            }
+            if text[..start]
+                .chars()
+                .next_back()
+                .is_some_and(|c| c.is_alphanumeric() || "_-/".contains(c))
+            {
+                continue;
+            }
+            kept.push(full.to_string());
+        }
+        Some(kept)
+    }
+}
+
+/// `(line number, raw token)` of every reference `scan_file` reports.
+fn scanned(plugin: &Path, relative: &str) -> Vec<(usize, String)> {
+    scan_rel(plugin, relative)
+        .into_iter()
+        .map(|r| (r.line, r.raw))
+        .collect()
+}
+
+#[test]
+fn scan_file_agrees_with_the_python_loop_on_hard_lines() {
+    let tmp = TempDir::new("refs");
+    let plugin = plugin(&tmp);
+    let lines = [
+        "write `$MIGRATION_DIR/` per `references/shared/schema.md`",
+        "terraform/:references/phases/design.md:scripts/tool.py",
+        "terraform/ references/phases/design.md",
+        "`.migration/x`references/phases/design.md references/phases/design.md",
+        "<path>/references/a.md <repo>/scripts/b.sh <other>/scripts/c.sh",
+        "$REPO}/scripts/tool.py ${TMP}/scripts/tool.py $TMPX/scripts/tool.py",
+        "$RUN_DIR/ ./references/a.md ../scripts/tool.py ./notes.md ../../plan.md",
+        "x:references/a.md y.references/a.md z-scripts/tool.py w/skills/a/SKILL.md",
+        "see https://e.com/references/a.md and references/phases/design.md",
+        "<SKILL_BASE>/scripts/tool.py  $X/y.md  scripts/a*.md  scripts/NNN.md  scripts/…/x.md",
+        "scripts/tool.py:scripts/tool.py:scripts/tool.py,agents/worker.md",
+        "$SKILL_BASE/.github/references/a.md ai-migration/scripts/tool.py poc/ scripts/tool.py",
+    ];
+    let oracle = PythonScan::new();
+    write(&plugin, "skills/alpha/HARD.md", &lines.join("\n"));
+    let expected: Vec<(usize, String)> = lines
+        .iter()
+        .enumerate()
+        .flat_map(|(index, line)| {
+            oracle
+                .raws(line)
+                .expect("the oracle finishes")
+                .into_iter()
+                .map(move |raw| (index + 1, raw))
+        })
+        .collect();
+    assert!(expected.len() > 8, "{expected:?}");
+    assert_eq!(scanned(&plugin, "skills/alpha/HARD.md"), expected);
+}
+
+#[test]
+fn scan_file_agrees_with_the_python_loop_on_generated_lines() {
+    let tmp = TempDir::new("refs");
+    let plugin = plugin(&tmp);
+    let oracle = PythonScan::new();
+    let pieces = [
+        "references/",
+        "scripts/",
+        "phases/",
+        "a",
+        "tool",
+        ".md",
+        ".py",
+        "/",
+        "./",
+        "../",
+        "$RUN_DIR/",
+        "${OUT}/",
+        "$REPO",
+        "$X/",
+        "}",
+        "{",
+        "<path>/",
+        "<PLAN_DIR>/",
+        "<X>/",
+        ".migration/",
+        "terraform/",
+        "poc/",
+        " ",
+        "`",
+        ":",
+        "NNN",
+        "*",
+        "-",
+        "_",
+        "http://h/",
+        "design",
+        "references/phases/design.md",
+        "scripts/tool.py",
+        "agents/worker.md",
+        " ",
+        " ",
+        ", ",
+    ];
+    let mut seed: u64 = 0x2545_f491_4f6c_dd1d;
+    let (mut expected_total, mut kept_total) = (0, 0);
+    for file in 0..8 {
+        let mut lines = Vec::new();
+        for _ in 0..1500 {
+            let mut line = String::new();
+            seed = seed
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            let length = 1 + (seed >> 33) % 16;
+            for _ in 0..length {
+                seed = seed
+                    .wrapping_mul(6_364_136_223_846_793_005)
+                    .wrapping_add(1_442_695_040_888_963_407);
+                line.push_str(
+                    pieces[usize::try_from((seed >> 33) % pieces.len() as u64).expect("index")],
+                );
+            }
+            lines.push(line);
+        }
+        let relative = format!("skills/alpha/GEN{file}.md");
+        write(&plugin, &relative, &lines.join("\n"));
+        let expected: Vec<(usize, String)> = lines
+            .iter()
+            .enumerate()
+            .flat_map(|(index, line)| {
+                oracle
+                    .raws(line)
+                    .expect("the oracle finishes")
+                    .into_iter()
+                    .map(move |raw| (index + 1, raw))
+            })
+            .collect();
+        expected_total += lines.iter().map(|line| tokens(line).len()).sum::<usize>();
+        kept_total += expected.len();
+        assert_eq!(scanned(&plugin, &relative), expected, "{relative}");
+    }
+    // Both outcomes are common, so neither filter is vacuous.
+    assert!(kept_total > 800, "{kept_total}");
+    assert!(
+        expected_total > kept_total + 1000,
+        "{expected_total} {kept_total}"
+    );
+}
+
+#[test]
+fn scan_file_agrees_with_the_python_loop_on_the_real_skill_text() {
+    let oracle = PythonScan::new();
+    let plugin = real_skill().join("../..");
+    let mut files = Vec::new();
+    for sub in ["skills", "agents"] {
+        walk(
+            &plugin.join(sub),
+            &mut |path| {
+                if path.extension().is_some_and(|e| e == "md") {
+                    files.push(path.to_path_buf());
+                }
+            },
+            &SKIPPED_DIRS,
+        )
+        .expect("walk the real tree");
+    }
+    files.sort();
+    assert!(files.len() > 500, "{}", files.len());
+    let mut tree = Tree::new(&plugin);
+    let (mut compared, mut skipped) = (0, 0);
+    for file in files {
+        let relative = file
+            .strip_prefix(&plugin)
+            .expect("inside the plugin")
+            .to_string_lossy()
+            .into_owned();
+        let found = tree.scan_file(&file, &relative).expect("the file scans");
+        let text = universal_newlines(&fs::read_to_string(&file).expect("utf-8 skill file"));
+        let mut expected = Vec::new();
+        let mut skipped_lines = std::collections::BTreeSet::new();
+        for (index, line) in py_splitlines(&text).into_iter().enumerate() {
+            // Compare only the lines the oracle can finish: it is quadratic.
+            if let Some(raws) = oracle.raws(line) {
+                expected.extend(raws.into_iter().map(|raw| (index + 1, raw)));
+            } else {
+                skipped += 1;
+                skipped_lines.insert(index + 1);
+            }
+        }
+        let got: Vec<(usize, String)> = found
+            .into_iter()
+            .filter(|r| !skipped_lines.contains(&r.line))
+            .map(|r| (r.line, r.raw))
+            .collect();
+        compared += expected.len();
+        assert_eq!(got, expected, "{relative}");
+    }
+    assert!(compared > 500, "{compared}");
+    assert!(skipped < 20, "{skipped} lines exhausted the oracle");
+}
+
+#[test]
+fn a_long_line_of_repeated_tokens_costs_work_linear_in_its_length() {
+    let tmp = TempDir::new("refs");
+    let plugin = plugin(&tmp);
+    let tokens = 100_000;
+    let kept = ":references/phases/design.md";
+    // (the line, how many references it holds)
+    let cases = [
+        (":x.md".repeat(tokens), 0),
+        (kept.repeat(tokens), tokens),
+        // One skip prefix earlier in the same run hides every later token.
+        (format!("terraform/{}", kept.repeat(tokens)), 0),
+        (format!("{}$RUN_DIR/", kept.repeat(tokens)), tokens),
+        (format!("<path>/{}", ":x.md".repeat(tokens)), 0),
+        // A space ends the run: only the tokens after it count.
+        (format!("terraform/ {}", kept.repeat(tokens)), tokens),
+    ];
+    for (index, (line, count)) in cases.iter().enumerate() {
+        let relative = format!("skills/alpha/LONG{index}.md");
+        write(&plugin, &relative, line);
+        let mut tree = Tree::new(&plugin);
+        let found = tree
+            .scan_file(&plugin.join(&relative), &relative)
+            .expect("the file scans");
+        // Whatever the content, each character is stepped over a fixed number
+        // of times: a pass to find tokens, two index tables, and the length of
+        // each token it filters.
+        let length = line.chars().count() as u64;
+        assert!(tree.work > 0, "case {index}");
+        assert!(
+            tree.work <= 5 * length,
+            "case {index}: {} steps for {length} characters",
+            tree.work
+        );
+        assert_eq!(found.len(), *count, "case {index}");
+        assert!(found.iter().all(|r| r.line == 1 && r.resolved.is_some()));
+    }
+}
+
+#[test]
+fn work_per_character_does_not_grow_with_the_line() {
+    let tmp = TempDir::new("refs");
+    let plugin = plugin(&tmp);
+    let token = ":references/phases/design.md";
+    let mut per_character = Vec::new();
+    for count in [1_000_usize, 4_000, 16_000] {
+        let line = token.repeat(count);
+        let relative = format!("skills/alpha/SCALE{count}.md");
+        write(&plugin, &relative, &line);
+        let mut tree = Tree::new(&plugin);
+        tree.scan_file(&plugin.join(&relative), &relative)
+            .expect("the file scans");
+        per_character.push(tree.work * 1000 / line.chars().count() as u64);
+    }
+    // Steps per 1000 characters; a quadratic scan would multiply it by 4 at each step.
+    assert!(
+        per_character[2] * 100 <= per_character[0] * 105,
+        "{per_character:?}"
+    );
+}
+
 #[test]
 fn urls_are_removed_up_to_the_next_space() {
     let chars: Vec<char> = "see https://e.com/a.md and http://x/b.md\tok xhttp://y z"
