@@ -67,7 +67,9 @@ fn assign(
     items: &[String],
 ) -> bool {
     for (item_index, item) in items.iter().enumerate() {
-        if seen_items.contains(&item_index) || !phrase_rendered_by(normalize, &phrases[phrase_index], item) {
+        if seen_items.contains(&item_index)
+            || !phrase_rendered_by(normalize, &phrases[phrase_index], item)
+        {
             continue;
         }
         seen_items.insert(item_index);

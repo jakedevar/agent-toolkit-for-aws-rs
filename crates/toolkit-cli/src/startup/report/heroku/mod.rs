@@ -194,7 +194,11 @@ fn currency_formatting(html: &str) -> Vec<String> {
         }
         // The suffix window stops at the next block-level boundary.
         let mut cutoff = chars_after(&text, end, 25);
-        if let Some(boundary) = decoded.boundaries().iter().find(|boundary| **boundary >= end) {
+        if let Some(boundary) = decoded
+            .boundaries()
+            .iter()
+            .find(|boundary| **boundary >= end)
+        {
             cutoff = cutoff.min(*boundary);
         }
         if rate_suffix_pattern().is_match(&text[end..cutoff]) {
@@ -259,7 +263,10 @@ fn verdict(sections: &Sections, estimate: Option<&Json>) -> Vec<String> {
         return errors;
     };
     let classes = class_tokens(summary);
-    if classes.iter().any(|token| token.starts_with("badge-verdict-")) {
+    if classes
+        .iter()
+        .any(|token| token.starts_with("badge-verdict-"))
+    {
         errors.push(
             "decision-summary must use a typography-first verdict-headline, not badge-verdict-* \
              pills (meaning must not depend on color alone)"
@@ -330,7 +337,9 @@ fn accessibility(html: &str) -> Vec<String> {
     }
     for (index, has_aria_label, has_figcaption) in figures {
         if !has_aria_label {
-            errors.push(format!("accessibility: figure {index} must have an aria-label"));
+            errors.push(format!(
+                "accessibility: figure {index} must have an aria-label"
+            ));
         }
         if !has_figcaption {
             errors.push(format!(
@@ -355,10 +364,7 @@ fn what_if_column_errors(section: &str) -> Vec<String> {
         .to_lowercase();
     let missing: Vec<&str> = [
         ("Region", text.contains("region")),
-        (
-            "HA",
-            text.contains("ha") || text.contains("availability"),
-        ),
+        ("HA", text.contains("ha") || text.contains("availability")),
         ("Compute", text.contains("compute")),
         ("Arch", rx!(r"\barch\b").is_match(&text)),
         ("Complexity", text.contains("complexity")),
@@ -578,4 +584,3 @@ pub fn heroku_report_command(
     }
     output.line(&success_line(&html, mode))
 }
-

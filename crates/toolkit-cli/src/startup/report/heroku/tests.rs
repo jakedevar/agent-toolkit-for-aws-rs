@@ -114,7 +114,11 @@ const FLIPS: [&str; 2] = [
 ];
 
 fn flip_items() -> String {
-    FLIPS.iter().map(|flip| format!("<li>{flip}</li>")).collect::<Vec<_>>().concat()
+    FLIPS
+        .iter()
+        .map(|flip| format!("<li>{flip}</li>"))
+        .collect::<Vec<_>>()
+        .concat()
 }
 
 fn recommendation_dir(outcome: bool) -> TempDir {
@@ -160,7 +164,11 @@ fn assert_ok(result: &(u8, String)) {
 
 fn assert_fails_with(result: &(u8, String), needle: &str) {
     assert_eq!(result.0, 1, "{}", result.1);
-    assert!(result.1.contains(needle), "missing {needle:?} in {}", result.1);
+    assert!(
+        result.1.contains(needle),
+        "missing {needle:?} in {}",
+        result.1
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -171,10 +179,7 @@ fn assert_fails_with(result: &(u8, String), needle: &str) {
 fn good_report_passes() {
     let result = run_report(GOOD, None, None);
     assert_ok(&result);
-    assert_eq!(
-        result.1,
-        "REPORT_OK | structure=complete | sections=4/4\n"
-    );
+    assert_eq!(result.1, "REPORT_OK | structure=complete | sections=4/4\n");
 }
 
 #[test]
@@ -185,7 +190,10 @@ fn missing_cost_optimization_fails() {
 
 #[test]
 fn missing_draft_footer_fails() {
-    let html = GOOD.replace("draft for review; verify figures before executive sign-off.", "");
+    let html = GOOD.replace(
+        "draft for review; verify figures before executive sign-off.",
+        "",
+    );
     let result = run_report(&html, None, None);
     assert_eq!(result.0, 1, "{}", result.1);
     assert!(result.1.to_lowercase().contains("draft for review"));
@@ -259,7 +267,10 @@ fn would_flip_heading_in_comment_or_template_fails() {
         "<!-- What would flip this -->",
         "<template><h3>What would flip this</h3></template>",
     ] {
-        let html = GOOD.replace(VERDICT, &format!("{VERDICT}{inert}<ul>{}</ul>", flip_items()));
+        let html = GOOD.replace(
+            VERDICT,
+            &format!("{VERDICT}{inert}<ul>{}</ul>", flip_items()),
+        );
         let result = run_with_flips(&html);
         assert_fails_with(&result, "would_flip");
     }
@@ -332,7 +343,10 @@ fn would_flip_shared_suffix_complete_items_pass() {
 fn would_flip_complete_list_passes() {
     let html = GOOD.replace(
         VERDICT,
-        &format!("{VERDICT}<h3>What would flip this</h3><ul>{}</ul>", flip_items()),
+        &format!(
+            "{VERDICT}<h3>What would flip this</h3><ul>{}</ul>",
+            flip_items()
+        ),
     );
     assert_ok(&run_with_flips(&html));
 }
@@ -378,7 +392,10 @@ fn would_flip_inline_label_item_passes() {
 fn would_flip_inline_label_partial_list_fails() {
     let html = GOOD.replace(
         VERDICT,
-        &format!("{VERDICT}<ul><li>What would flip this: {}</li></ul>", FLIPS[0]),
+        &format!(
+            "{VERDICT}<ul><li>What would flip this: {}</li></ul>",
+            FLIPS[0]
+        ),
     );
     let result = run_with_flips(&html);
     assert_fails_with(&result, "1 of 2");
@@ -448,7 +465,8 @@ fn what_if_columns_required_when_section_present() {
     let good = run_report(&full, Some(&dir), None);
     assert_eq!(good.0, 0, "{}", good.1);
     assert!(
-        good.1.ends_with("sections=4/4 | optional=what-if-scenarios\n"),
+        good.1
+            .ends_with("sections=4/4 | optional=what-if-scenarios\n"),
         "{}",
         good.1
     );
@@ -557,7 +575,11 @@ fn heading_only_or_header_only_cost_optimization_fails() {
         ));
         let result = run_report(&html, None, None);
         assert_eq!(result.0, 1, "{body}: {}", result.1);
-        assert!(result.1.contains("cost-optimization"), "{body}: {}", result.1);
+        assert!(
+            result.1.contains("cost-optimization"),
+            "{body}: {}",
+            result.1
+        );
     }
 }
 
@@ -580,11 +602,17 @@ fn populated_opportunity_rows_pass_in_every_valid_spelling() {
 #[test]
 fn equivalent_attribute_spellings_pass() {
     let cases = [
-        GOOD.replace("<th scope=\"col\">Tier</th>", "<th scope = \"col\">Tier</th>"),
+        GOOD.replace(
+            "<th scope=\"col\">Tier</th>",
+            "<th scope = \"col\">Tier</th>",
+        ),
         GOOD.replace("<th scope=\"col\">Tier</th>", "<th scope=col>Tier</th>"),
         GOOD.replace("<th scope=\"col\">Tier</th>", "<th scope='col'>Tier</th>"),
         GOOD.replace("<html lang=\"en\">", "<html lang = \"en\">"),
-        GOOD.replace("</div>", "<figure aria-label=Costs><figcaption>Costs</figcaption></figure></div>"),
+        GOOD.replace(
+            "</div>",
+            "<figure aria-label=Costs><figcaption>Costs</figcaption></figure></div>",
+        ),
         GOOD.replace(
             "</div>",
             "<figure aria-label=\"Cost breakdown\"><figcaption>Costs</figcaption></figure></div>",
@@ -598,22 +626,36 @@ fn equivalent_attribute_spellings_pass() {
         "<p class = \"verdict-headline\">Go, with conditions</p>",
         "<p class=verdict-headline>Go, with conditions</p>",
     ] {
-        assert_ok(&run_report(&GOOD.replace(VERDICT, headline), Some(&dir), None));
+        assert_ok(&run_report(
+            &GOOD.replace(VERDICT, headline),
+            Some(&dir),
+            None,
+        ));
     }
 }
 
 #[test]
 fn figures_need_an_aria_label_and_a_figcaption() {
-    let html = GOOD.replace("</div>", "<figure><figcaption>Costs</figcaption></figure></div>");
+    let html = GOOD.replace(
+        "</div>",
+        "<figure><figcaption>Costs</figcaption></figure></div>",
+    );
     let result = run_report(&html, None, None);
     assert_eq!(result.0, 1, "{}", result.1);
     assert!(result.1.to_lowercase().contains("aria-label"));
-    assert!(result.1.contains("accessibility: figure 1 must have an aria-label"));
+    assert!(result
+        .1
+        .contains("accessibility: figure 1 must have an aria-label"));
 
-    let html = GOOD.replace("</div>", "<figure aria-label=\"Costs\">chart</figure></div>");
+    let html = GOOD.replace(
+        "</div>",
+        "<figure aria-label=\"Costs\">chart</figure></div>",
+    );
     let result = run_report(&html, None, None);
     assert_eq!(result.0, 1, "{}", result.1);
-    assert!(result.1.contains("accessibility: figure 1 must include a <figcaption>"));
+    assert!(result
+        .1
+        .contains("accessibility: figure 1 must include a <figcaption>"));
 }
 
 #[test]
@@ -635,7 +677,9 @@ fn the_skill_scripts_directory_still_holds_the_python_validator() {
         .join("skills")
         .join("heroku-to-aws")
         .join("scripts");
-    assert!(scripts.join("validate-heroku-migration-report.py").is_file());
+    assert!(scripts
+        .join("validate-heroku-migration-report.py")
+        .is_file());
 }
 
 #[test]
@@ -649,10 +693,17 @@ fn inert_and_hidden_content_does_not_satisfy_checks() {
         let html = GOOD.replace(VERDICT, replacement);
         let result = run_report(&html, Some(&dir), None);
         assert_eq!(result.0, 1, "{replacement}: {}", result.1);
-        assert!(result.1.to_lowercase().contains("verdict-headline"), "{}", result.1);
+        assert!(
+            result.1.to_lowercase().contains("verdict-headline"),
+            "{}",
+            result.1
+        );
     }
     for replacement in [
-        format!("<h3>What would flip this</h3><ul hidden>{}</ul>", flip_items()),
+        format!(
+            "<h3>What would flip this</h3><ul hidden>{}</ul>",
+            flip_items()
+        ),
         format!(
             "<div hidden><h3>What would flip this</h3><ul>{}</ul></div>",
             flip_items()
@@ -675,10 +726,7 @@ fn th_inside_template_is_not_audited_for_scope() {
 
 #[test]
 fn section_identity_comes_from_rendered_structure() {
-    let wrapped = GOOD.replace(
-        NO_ELIGIBLE,
-        &format!("<template>{NO_ELIGIBLE}</template>"),
-    );
+    let wrapped = GOOD.replace(NO_ELIGIBLE, &format!("<template>{NO_ELIGIBLE}</template>"));
     assert_fails_with(&run_report(&wrapped, None, None), "cost-optimization");
 
     let next = "<section id=\"next-steps\"><ol><li>See MIGRATION_GUIDE.md</li></ol></section>";
@@ -688,7 +736,10 @@ fn section_identity_comes_from_rendered_structure() {
     );
     assert_fails_with(&run_report(&commented, None, None), "next-steps");
 
-    let data_id = GOOD.replace(next, "<section data-id=\"next-steps\"><ol><li>x</li></ol></section>");
+    let data_id = GOOD.replace(
+        next,
+        "<section data-id=\"next-steps\"><ol><li>x</li></ol></section>",
+    );
     assert_fails_with(&run_report(&data_id, None, None), "next-steps");
 
     let spaced = GOOD.replace("<section id=\"next-steps\">", "<section id = next-steps>");
@@ -765,7 +816,10 @@ fn full_mode_must_not_carry_decision_cta() {
 
 #[test]
 fn decision_mode_does_not_require_cost_optimization() {
-    let html = DECISION_GOOD.replace("<footer>", "<section id=\"cost-optimization\"></section><footer>");
+    let html = DECISION_GOOD.replace(
+        "<footer>",
+        "<section id=\"cost-optimization\"></section><footer>",
+    );
     assert_ok(&run_report(&html, None, Some("decision")));
 }
 
@@ -935,7 +989,11 @@ fn decision_report_checks_cost_figures() {
     let dir = estimate_dir("112");
     let ok = run_report(&html, Some(&dir), Some("decision"));
     assert_eq!(ok.0, 0, "{}", ok.1);
-    let bad = run_report(&html.replace("$112/mo", "$999/mo"), Some(&dir), Some("decision"));
+    let bad = run_report(
+        &html.replace("$112/mo", "$999/mo"),
+        Some(&dir),
+        Some("decision"),
+    );
     assert_fails_with(&bad, "cost figure mismatch");
 }
 
@@ -968,10 +1026,22 @@ fn missing_required_anchor_fails() {
 fn nested_markup_is_read_through_the_anchors_own_close_tag() {
     let dir = estimate_dir("112");
     for (anchor, ok) in [
-        ("<span data-cost-key=\"aws_monthly_balanced\"><strong>$112/mo</strong></span>", true),
-        ("<span data-cost-key=\"aws_monthly_balanced\"><span>$</span>112/mo</span>", true),
-        ("<section data-cost-key=\"aws_monthly_balanced\">$112/mo</section>", true),
-        ("<span data-cost-key=\"aws_monthly_balanced\"><strong>$112</strong>0/mo</span>", false),
+        (
+            "<span data-cost-key=\"aws_monthly_balanced\"><strong>$112/mo</strong></span>",
+            true,
+        ),
+        (
+            "<span data-cost-key=\"aws_monthly_balanced\"><span>$</span>112/mo</span>",
+            true,
+        ),
+        (
+            "<section data-cost-key=\"aws_monthly_balanced\">$112/mo</section>",
+            true,
+        ),
+        (
+            "<span data-cost-key=\"aws_monthly_balanced\"><strong>$112</strong>0/mo</span>",
+            false,
+        ),
     ] {
         let result = cost_run(&COST.replace(ANCHOR, anchor), &dir);
         assert_eq!(result.0, u8::from(!ok), "{anchor}: {}", result.1);
@@ -980,7 +1050,10 @@ fn nested_markup_is_read_through_the_anchors_own_close_tag() {
             assert!(result.1.contains("\"$1120\""), "{}", result.1);
         }
     }
-    let html = COST.replace(ANCHOR, "<section data-cost-key=\"aws_monthly_balanced\">$112/mo</section>");
+    let html = COST.replace(
+        ANCHOR,
+        "<section data-cost-key=\"aws_monthly_balanced\">$112/mo</section>",
+    );
     let html = html.replace("id=\"next-steps\"", "id=\"decision-cta\"");
     let result = run_report(&html, Some(&dir), Some("decision"));
     assert_eq!(result.0, 0, "{}", result.1);
@@ -1018,7 +1091,10 @@ fn anchor_outside_exec_costs_does_not_satisfy_the_requirement() {
         &format!("<p class=\"verdict-headline\">Go</p><p>{ANCHOR}</p>"),
     );
     let result = cost_run(&html, &dir);
-    assert_fails_with(&result, "missing data-cost-key=\"aws_monthly_balanced\" anchor inside");
+    assert_fails_with(
+        &result,
+        "missing data-cost-key=\"aws_monthly_balanced\" anchor inside",
+    );
     assert!(result.1.contains("exec-costs"));
 }
 
@@ -1072,10 +1148,16 @@ fn nested_inner_anchor_is_collected_not_dropped() {
 #[test]
 fn display_precision_rounds_instead_of_truncating() {
     let dir = estimate_dir("112.90");
-    let html = COST.replace(ANCHOR, "<span data-cost-key=\"aws_monthly_balanced\">$113/mo</span>");
+    let html = COST.replace(
+        ANCHOR,
+        "<span data-cost-key=\"aws_monthly_balanced\">$113/mo</span>",
+    );
     assert_ok(&cost_run(&html, &dir));
     let dir = estimate_dir("1.999");
-    let html = COST.replace(ANCHOR, "<span data-cost-key=\"aws_monthly_balanced\">$2/mo</span>");
+    let html = COST.replace(
+        ANCHOR,
+        "<span data-cost-key=\"aws_monthly_balanced\">$2/mo</span>",
+    );
     assert_ok(&cost_run(&html, &dir));
 }
 
@@ -1117,11 +1199,17 @@ fn a_missing_report_is_not_found() {
 
 #[test]
 fn a_failing_report_lists_each_problem_and_a_summary() {
-    let html = GOOD.replace(NO_ELIGIBLE, "").replace("<html lang=\"en\">", "<html>");
+    let html = GOOD
+        .replace(NO_ELIGIBLE, "")
+        .replace("<html lang=\"en\">", "<html>");
     let result = run_report(&html, None, None);
     assert_eq!(result.0, 1);
     assert!(result.1.contains(" | errors=2\n  - missing required <section id=\"cost-optimization\">\n  - accessibility: <html> must declare a valid lang attribute\n"), "{}", result.1);
-    assert!(result.1.contains("error: 2 report problem(s)"), "{}", result.1);
+    assert!(
+        result.1.contains("error: 2 report problem(s)"),
+        "{}",
+        result.1
+    );
 }
 
 #[cfg(unix)]
@@ -1157,7 +1245,11 @@ mod links {
         .expect("symlink");
         let result = run_report(COST, Some(&dir), None);
         assert_eq!(result.0, 1, "{}", result.1);
-        assert!(result.1.contains("symbolic links are not followed"), "{}", result.1);
+        assert!(
+            result.1.contains("symbolic links are not followed"),
+            "{}",
+            result.1
+        );
         // The linked 999 was never read, so no figure mismatch is reported.
         assert!(!result.1.contains("cost figure mismatch"), "{}", result.1);
     }
@@ -1170,7 +1262,11 @@ mod links {
         symlink(&*outside, dir.join("scenarios")).expect("symlink");
         let result = run_report(GOOD, Some(&dir), None);
         assert_eq!(result.0, 1, "{}", result.1);
-        assert!(result.1.contains("symbolic links are not followed"), "{}", result.1);
+        assert!(
+            result.1.contains("symbolic links are not followed"),
+            "{}",
+            result.1
+        );
         assert!(!result.1.contains("what-if-scenarios"), "{}", result.1);
     }
 
@@ -1178,12 +1274,22 @@ mod links {
     fn a_symlinked_phase_status_is_reported_in_decision_mode() {
         let dir = TempDir::new("link-phase");
         let outside = TempDir::new("outside-phase");
-        outside.write(".phase-status.json", r#"{"phases": {"generate": "completed"}}"#);
-        symlink(outside.join(".phase-status.json"), dir.join(".phase-status.json"))
-            .expect("symlink");
+        outside.write(
+            ".phase-status.json",
+            r#"{"phases": {"generate": "completed"}}"#,
+        );
+        symlink(
+            outside.join(".phase-status.json"),
+            dir.join(".phase-status.json"),
+        )
+        .expect("symlink");
         let result = run_report(super::DECISION_GOOD, Some(&dir), Some("decision"));
         assert_eq!(result.0, 1, "{}", result.1);
-        assert!(result.1.contains("symbolic links are not followed"), "{}", result.1);
+        assert!(
+            result.1.contains("symbolic links are not followed"),
+            "{}",
+            result.1
+        );
         assert!(!result.1.contains("already went through"), "{}", result.1);
     }
 }
@@ -1201,7 +1307,11 @@ fn untrusted_values_are_escaped_in_diagnostics() {
     assert_eq!(result.0, 1, "{}", result.1);
     assert!(!result.1.contains('\u{1b}'), "{:?}", result.1);
     assert!(!result.1.contains("\nREPORT_OK"), "{:?}", result.1);
-    assert!(result.1.contains("bad\\u{001b}[2J\\nREPORT_OK | forged"), "{:?}", result.1);
+    assert!(
+        result.1.contains("bad\\u{001b}[2J\\nREPORT_OK | forged"),
+        "{:?}",
+        result.1
+    );
 
     let dir = estimate_dir("\"\\u001b[31mred\\nREPORT_OK\"");
     let result = cost_run(COST, &dir);
@@ -1215,7 +1325,13 @@ fn untrusted_values_are_escaped_in_diagnostics() {
     assert!(!result.1.contains(&long), "{}", result.1);
     assert!(result.1.contains("..."), "{}", result.1);
 
-    let (code, _, err) = exec(&["startup", "heroku-report", "r.html", "--mode", "x\u{1b}[2Jy"]);
+    let (code, _, err) = exec(&[
+        "startup",
+        "heroku-report",
+        "r.html",
+        "--mode",
+        "x\u{1b}[2Jy",
+    ]);
     assert_eq!(code, 2);
     assert!(!err.contains('\u{1b}'), "{err:?}");
 
@@ -1228,7 +1344,10 @@ fn untrusted_values_are_escaped_in_diagnostics() {
 #[test]
 fn decision_mode_reads_the_phase_status() {
     let pending = TempDir::new("phase-pending");
-    pending.write(".phase-status.json", r#"{"phases": {"generate": "pending"}}"#);
+    pending.write(
+        ".phase-status.json",
+        r#"{"phases": {"generate": "pending"}}"#,
+    );
     assert_ok(&run_report(DECISION_GOOD, Some(&pending), Some("decision")));
 
     let absent = TempDir::new("phase-absent");
@@ -1236,7 +1355,11 @@ fn decision_mode_reads_the_phase_status() {
 
     let object_free = TempDir::new("phase-array");
     object_free.write(".phase-status.json", "[1, 2]");
-    assert_ok(&run_report(DECISION_GOOD, Some(&object_free), Some("decision")));
+    assert_ok(&run_report(
+        DECISION_GOOD,
+        Some(&object_free),
+        Some("decision"),
+    ));
 
     for status in ["completed", "in_progress"] {
         let dir = TempDir::new("phase-generate");
@@ -1253,7 +1376,10 @@ fn decision_mode_reads_the_phase_status() {
 
     // The status only matters in decision mode.
     let dir = TempDir::new("phase-full");
-    dir.write(".phase-status.json", r#"{"phases": {"generate": "completed"}}"#);
+    dir.write(
+        ".phase-status.json",
+        r#"{"phases": {"generate": "completed"}}"#,
+    );
     assert_ok(&run_report(GOOD, Some(&dir), None));
 
     for corrupt in ["", "   \n", "{oops"] {

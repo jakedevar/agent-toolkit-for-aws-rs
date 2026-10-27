@@ -596,8 +596,11 @@ impl Handler for Accessibility {
             }
         } else if tag == "figure" {
             if let Some(figure) = self.figures.pop() {
-                self.figure_issues
-                    .push((figure.index, figure.has_aria_label, figure.has_figcaption));
+                self.figure_issues.push((
+                    figure.index,
+                    figure.has_aria_label,
+                    figure.has_figcaption,
+                ));
             }
         }
     }
