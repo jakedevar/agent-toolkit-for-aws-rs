@@ -99,6 +99,10 @@ fail-closed behaviour; binary build and staging is a release dependency (see han
    characters, so a following non-ASCII letter also denies.
 8. Case-insensitive matching folds `ſ`, `İ`, `ı` and `K` like Python's
    `re.I`.
+9. R8 accepts a flag cluster whose last letter is `c` **or `e`** (legacy `-[a-zA-Z]*c`
+   or exactly `-e`), so `perl -ne`, `node -pe` and `ruby -ne` are inline execution too.
+   Found while hand-checking fixtures after this note was first committed; it is
+   stricter, so it is recorded here rather than in the original note.
 
 Nothing is looser. The deny message, protocol bytes and exit codes are unchanged.
 
@@ -126,3 +130,46 @@ with `sh` for: binary missing, binary exits non-zero, binary killed by signal, u
 root (all deny), empty output (allow), pass-through of the binary's deny, and the real
 binary end to end. No cargo runs in the authoring turn; verification is by daemon recipe
 jobs on the exact commit.
+
+## 9. Implementation record
+
+Crate `crates/secret-safety-hook` (library `secret_safety_hook`, binary `secret-safety`;
+the only dependency is `toolkit-core` for its strict JSON parser). No regex crate: the
+patterns are hand written scanners in `src/matchers.rs`.
+
+### 9.1 Rule parity
+
+| Rule | Rust function | Tests (positive and negative) |
+| --- | --- | --- |
+| R1 structured | `policy::is_structured_secret_fetch` | `r1_structured_operation_spellings_are_denied`, `r1_other_operations_and_services_are_allowed`, `r1_checks_every_spelling_and_ignores_non_strings` |
+| R2 SDK call and mention | `policy::check_structured_tool`, `matchers::matches_sdk_call`, `contains_folded` | `r2_sdk_call_with_secretsmanager_is_denied`, `r2_needs_both_the_call_and_the_mention`, `sdk_shape_*` |
+| R3 CLI in structured tools | `matchers::matches_cli_get_secret_value` | `r3_*`, `cli_shape_*`, `cli_flag_groups_are_capped_at_twelve`, `cli_value_token_is_tried_both_ways` |
+| R4 `run_script` | `policy::check_run_script` | `r4_*`, `unguarded_tools_are_never_inspected` |
+| R5 Bash CLI | `policy::check_bash` | `r5_*` |
+| R6 agent URL | `matchers::matches_agent_url` | `r6_secrets_manager_agent_urls_are_denied`, `agent_url_hosts` |
+| R7 read-only exemption | `matchers::is_read_only_command`, `has_compound_operator` | `r7_*`, `read_only_prefixes`, `compound_operators` |
+| R8 inline interpreter | `matchers::has_inline_interpreter` | `r8_*`, `inline_interpreters` |
+| R9 heredoc/pipe | `policy::check_bash` | `r9_*` |
+| protocol | `Decision::render`, `main` | `secret_fetch_deny_is_byte_identical_to_the_legacy_hook`, `tests/protocol.rs` |
+| fail closed (input, size, time) | `policy::evaluate`, `runtime::decide_with_deadline` | `malformed_input_is_denied`, `oversized_*`, `slow_work_is_denied_at_the_deadline`, `panicking_work_is_denied`, `a_stdin_that_never_closes_is_denied`, `very_deep_nesting_*` |
+| fail closed (launcher) | `hooks.json` command | `tests/launcher.rs`: `missing_binary_denies`, `unset_plugin_root_denies`, `failing_binary_denies`, `a_directory_at_the_binary_path_denies`, `real_binary_through_the_launcher_allows_and_denies` |
+
+### 9.2 Verification limits
+
+No Python was executed, so there is no differential run against `secret-safety.py`;
+expected values in the fixtures were derived by hand from the legacy regexes and that
+derivation is what independent review should re-check. The repository-wide verification
+gate (`scoped_test`) is blocked on #4425; the recipe jobs (fmt, clippy, workspace-test) on
+the exact commit are diagnostic evidence only.
+
+### 9.3 Python file status
+
+`hooks.json` no longer launches `secret-safety.py`, so the Python file is dead. It stays
+in place as read-only evidence until retirement (#4415).
+
+### 9.4 Release dependency
+
+The binary is not committed. Until a platform build is staged at
+`com.anthropic.claude-code/hooks/secret-safety` in the shipped plugin, every guarded call
+is denied by the launcher (the required fail-closed behaviour). Cross-platform build and
+staging of this binary needs an owner before this lands in a release.

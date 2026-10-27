@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/toolkit-core", "crates/toolkit-cli"]
+members = ["crates/toolkit-core", "crates/toolkit-cli", "crates/secret-safety-hook"]
 
 [workspace.package]
 version = "0.1.0"
