@@ -153,3 +153,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
   Review #4742 worker c53fe35c (Codex sol high, pinned 036c0b66, op 9e95b2ef). Ruling: evaluate-traces writeback default stays (nothing sent); #4734 decides live default, leaning fail-closed opt-in.
   Kaizen filed #4743 (router rejects bare `-` value; `--json -` stdin lost).
 - 20:39Z: #4408 impl 3bf3a8db89d375340463063283e25b1ced5286cc (c65e27aa; 16 check_expected programs -> `toolkit startup check-expected`; scoped 85da6f1e ok base dcd47147, 1802). Review #4744 worker b22a9bdd (Codex sol high, pinned, op d2ce75c6). 4/4 workers busy.
+- 20:41Z: kaizen #4727 impl 8f4296325fb29707ac736e84912727a8364435fe (2205a1f9; toolkit_aws::recorded + recorded_contract.rs; bedrock_agent + ai_models migrated; scoped aa5c9ea5 ok base c464befb, aws 180 + cli 2065). Friction Rsi #4740 (disk-floor hold timed out a scoped_test).
+  Review #4745 worker 41a28fe9 (Codex sol high, pinned, op 83ff19cb). Rulings: ai-models keeps key-order-sensitive compare; unused-steps check = reviewer to advise follow-up.
+  4/4 busy: e1952dc1 (#4394 repair), c53fe35c (#4742), b22a9bdd (#4744), 41a28fe9 (#4745).
