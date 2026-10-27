@@ -29,6 +29,7 @@ use serde_json::Value;
 use toolkit_core::Json;
 
 use crate::manifests::{py_repr, py_repr_str};
+use crate::safe_text::safe_quoted;
 
 /// Steps the backtracking regex VM may take for one match before the match is
 /// reported as unfinished. The vendored patterns need well under a thousand;
@@ -105,6 +106,23 @@ impl Schema {
     /// cannot be followed at run time. Such a failure is never reported as a
     /// violation and never as a pass.
     pub(crate) fn validate(&self, instance: &Json) -> Result<Vec<Issue>, String> {
+        self.evaluate(instance, false)
+    }
+
+    /// [`Schema::validate`] with the same paths and order, but no finding
+    /// repeats a value of the instance: a finding names the JSON type of the
+    /// offending value instead (`a string value is not one of [...]`) and
+    /// property names are printed through `safe_quoted`. For diagnostics about
+    /// untrusted documents (#4602).
+    ///
+    /// # Errors
+    ///
+    /// Same as [`Schema::validate`].
+    pub(crate) fn validate_redacted(&self, instance: &Json) -> Result<Vec<Issue>, String> {
+        self.evaluate(instance, true)
+    }
+
+    fn evaluate(&self, instance: &Json, redact: bool) -> Result<Vec<Issue>, String> {
         let value = to_value(instance)?;
         let mut found: Vec<(Vec<Segment>, Vec<usize>, String)> = Vec::new();
         for error in self.validator.iter_errors(&value) {
@@ -115,7 +133,7 @@ impl Schema {
             found.push((
                 classify(instance, &tokens),
                 self.schema_order(error.schema_path().as_str()),
-                self.message(&error, instance, None),
+                self.message(&error, instance, None, redact),
             ));
         }
         found.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
@@ -176,6 +194,7 @@ impl Schema {
         error: &ValidationError<'_>,
         document: &Json,
         shown: Option<&Json>,
+        redact: bool,
     ) -> String {
         let fallback;
         let instance: &Json = if let Some(instance) = shown {
@@ -188,7 +207,11 @@ impl Schema {
             fallback = to_json(error.instance());
             &fallback
         };
-        let shown = py_repr(instance);
+        let shown = if redact {
+            redacted_label(instance)
+        } else {
+            py_repr(instance)
+        };
         match error.kind() {
             ValidationErrorKind::Type { kind } => {
                 format!("{shown} is not of type {}", self.type_names(error, kind))
@@ -217,7 +240,7 @@ impl Schema {
                 format!("{} is a required property", py_repr(&to_json(property)))
             }
             ValidationErrorKind::AdditionalProperties { unexpected } => {
-                additional_properties_message(unexpected)
+                additional_properties_message(unexpected, redact)
             }
             ValidationErrorKind::Not { schema } => {
                 let schema = self
@@ -234,14 +257,29 @@ impl Schema {
             ValidationErrorKind::FalseSchema => format!("False schema does not allow {shown}"),
             ValidationErrorKind::PropertyNames { error: inner } => {
                 let name = to_json(inner.instance());
-                self.message(inner, document, Some(&name))
+                self.message(inner, document, Some(&name), redact)
             }
+            _ if redact => self.redacted_fallback(error, &shown),
             _ => error.to_string(),
         }
     }
 }
 
 impl Schema {
+    /// The wording of a redacted finding for a keyword without its own arm:
+    /// numeric bounds name their limit, everything else names the keyword.
+    fn redacted_fallback(&self, error: &ValidationError<'_>, shown: &str) -> String {
+        if let Some(limit) = self.keyword_value(error, "minimum") {
+            return format!("{shown} is less than the minimum of {}", py_repr(limit));
+        }
+        if let Some(limit) = self.keyword_value(error, "maximum") {
+            return format!("{shown} is greater than the maximum of {}", py_repr(limit));
+        }
+        let tokens = pointer_tokens(error.schema_path().as_str());
+        let keyword = tokens.last().map_or("schema", String::as_str);
+        format!("{shown} violates the schema keyword '{keyword}'")
+    }
+
     /// `'string'` or `'string', 'null'`: the Python reprs of the expected
     /// types, in the order the schema lists them (the crate's type set does
     /// not keep it).
@@ -262,11 +300,31 @@ impl Schema {
     }
 }
 
-fn additional_properties_message(unexpected: &[String]) -> String {
+/// `a string value`: how a redacted finding refers to the offending value.
+fn redacted_label(instance: &Json) -> String {
+    let kind = instance.type_name();
+    let article = if matches!(kind, "array" | "integer" | "object") {
+        "an"
+    } else {
+        "a"
+    };
+    format!("{article} {kind} value")
+}
+
+fn additional_properties_message(unexpected: &[String], redact: bool) -> String {
     let mut names: Vec<&String> = unexpected.iter().collect();
     names.sort();
     let verb = if names.len() == 1 { "was" } else { "were" };
-    let listed: Vec<String> = names.into_iter().map(|name| py_repr_str(name)).collect();
+    let listed: Vec<String> = names
+        .into_iter()
+        .map(|name| {
+            if redact {
+                safe_quoted(name)
+            } else {
+                py_repr_str(name)
+            }
+        })
+        .collect();
     format!(
         "Additional properties are not allowed ({} {verb} unexpected)",
         listed.join(", ")

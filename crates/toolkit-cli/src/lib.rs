@@ -27,9 +27,11 @@ use toolkit_core::{discover_skills, skills_to_json, ErrorKind, ToolkitError};
 mod ai_data;
 pub mod asm_exec;
 mod aurora;
+mod bedrock_report;
 pub mod dynamodb;
 pub mod manifests;
 mod msk;
+mod safe_text;
 pub mod spec;
 pub mod startup;
 mod sync;
@@ -95,6 +97,10 @@ Usage:
       [--base-job-name N] [--image-uri URI]
   toolkit ai-data transform submit (same options as plan)
   toolkit ai-data transform describe JOB_NAME [--region R]
+  toolkit bedrock-report render [PAYLOAD_JSON] [--phase-results DIR --repo DIR]
+      [--date-suffix YYYY-MM-DD] [--results-dir DIR]
+  toolkit bedrock-report validate (--schema analysis|ingestion|eval|rewrite|delta-decisions FILE
+      | --check-run-context SAVED_JSON --current CURRENT_JSON)
   toolkit asm exec [--] COMMAND [ARG...]
   toolkit --version
   toolkit help
@@ -224,6 +230,20 @@ Commands:
                 job; this build has no SageMaker or S3 client, so submit and
                 describe exit 1 and s3:// inputs are refused. See
                 docs/migration/ai-data.md.
+  bedrock-report
+                Reports of the llm-to-bedrock skill (#4405). render prints the
+                in-chat summary of a finished run from the phase-result files
+                in --phase-results DIR (with --repo) or from one legacy
+                PAYLOAD_JSON, and copies the repository's newest
+                MIGRATION_REPORT_*.md to --results-dir (default
+                ~/saws-migrate-results). validate checks one phase-result
+                file against the schema analysis, ingestion, eval, rewrite or
+                delta-decisions (RESULT=valid CONTROL=ok|blocked|partial,
+                or RESULT=invalid and one line per finding, exit 1; exit 2
+                for an unreadable file) or compares a saved and a current
+                run context (RUN_CONTEXT=match, or mismatch and MISMATCH
+                lines, exit 1). Findings never print values of the checked
+                file. See docs/migration/bedrock-report.md.
   asm exec      Replace every {{resolve:secretsmanager:ID[:SecretString[:KEY
                 [:STAGE]]]}} reference in COMMAND, its arguments and the
                 environment with the secret value, then run COMMAND with the
@@ -788,6 +808,24 @@ pub const COMMANDS: &[CommandSpec] = &[
         max_positionals: 1,
         passthrough: false,
         handler: ai_data::transform_describe_command,
+    },
+    CommandSpec {
+        path: &["bedrock-report", "render"],
+        flags: &[],
+        value_flags: bedrock_report::RENDER_VALUE_FLAGS,
+        strict_values: true,
+        max_positionals: 1,
+        passthrough: false,
+        handler: bedrock_report::render_command,
+    },
+    CommandSpec {
+        path: &["bedrock-report", "validate"],
+        flags: &[],
+        value_flags: bedrock_report::VALIDATE_VALUE_FLAGS,
+        strict_values: true,
+        max_positionals: 1,
+        passthrough: false,
+        handler: bedrock_report::validate_command,
     },
     CommandSpec {
         path: &["asm", "exec"],
