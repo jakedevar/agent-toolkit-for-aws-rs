@@ -55,6 +55,8 @@ Usage:
   toolkit startup migration-report REPORT [--estimation-infra FILE] [--estimation-ai FILE]
                             [--aws-design FILE] [--migration-dir DIR] [--no-require-toc]
                             [--no-readability] [--mode full|decision|ai_only]
+  toolkit startup score ANSWERS [--plugin-root DIR] [--runtimes-dir DIR]
+  toolkit startup score-units ANSWERS [--plugin-root DIR] [--runtimes-dir DIR]
   toolkit sync plugin-skills [--root DIR] [--plugin NAME] [--check]
   toolkit sync vendored [--plugin-root DIR] [--check]
   toolkit msk size [--emit-static-pricing] [--use-max-partitions]
@@ -184,6 +186,17 @@ Commands:
                 run (--skill is gcp-to-aws, heroku-to-aws or azure-to-aws).
                 Findings and the PASS/FAIL summary go to stdout (--json for a
                 report object); exit status 1 when an error finding remains.
+  startup score ANSWERS
+                Score the answers document ANSWERS (agent-advisor scoring.py)
+                against the runtime registry of the plugin at --plugin-root DIR
+                (default: the current directory; --runtimes-dir DIR names the
+                registry directly), write scoring-result.json beside ANSWERS and
+                print RESULT=ok VERDICT=<verdict>.
+  startup score-units ANSWERS
+                Score every agent_session unit of ANSWERS (agent-advisor
+                score_units.py), use the run evidence
+                current-run-verifications.json beside it when present, and
+                print the {units, <primary unit mirror>} JSON document.
   sync plugin-skills
                 Make plugins/<plugin>/skills/<name> copies byte-identical to the
                 canonical skills/**/<name> (a directory holding SKILL.md). --root
@@ -262,6 +275,10 @@ Options:
                 (sync) Repository root and plugin root. (startup) --plugin-root
                 is the plugin directory (default: .). A value may also be
                 written --flag=VALUE.
+  --runtimes-dir DIR
+                (startup score, score-units) The runtime profile directory
+                (default: skills/agent-advisor/references/runtimes of
+                --plugin-root).
   --migration-dir DIR
                 (startup) Migration run directory holding preferences.json.
   -h, --help    Print this help.
@@ -597,6 +614,24 @@ pub const COMMANDS: &[CommandSpec] = &[
         max_positionals: 1,
         passthrough: false,
         handler: startup::migration_report_command,
+    },
+    CommandSpec {
+        path: &["startup", "score"],
+        flags: &[],
+        value_flags: &["--plugin-root", "--runtimes-dir"],
+        strict_values: false,
+        max_positionals: 1,
+        passthrough: false,
+        handler: startup::score_command,
+    },
+    CommandSpec {
+        path: &["startup", "score-units"],
+        flags: &[],
+        value_flags: &["--plugin-root", "--runtimes-dir"],
+        strict_values: false,
+        max_positionals: 1,
+        passthrough: false,
+        handler: startup::score_units_command,
     },
     CommandSpec {
         path: &["sync", "plugin-skills"],

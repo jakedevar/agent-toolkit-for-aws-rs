@@ -433,6 +433,27 @@ fixture-bleed and what-if scenario checks. `REPORT_OK | ...` on stdout (exit 0);
 summary (exit 1); a missing REPORT argument or an unknown `--mode` is exit 2 (a report file that does not exist is exit 1). The patterns run
 on `fancy-regex`; `html.parser` and `html.unescape` are ported in `startup/report/html.rs`.
 
+### startup score and score-units (#4400)
+
+```
+toolkit startup score ANSWERS [--plugin-root DIR] [--runtimes-dir DIR]
+toolkit startup score-units ANSWERS [--plugin-root DIR] [--runtimes-dir DIR]
+```
+
+Replacements for the agent-advisor `scripts/scoring.py` and `scripts/score_units.py` and
+their tests. `score` reads an answers document (`{"entry_point": ..., "answers": {...}}`),
+scores it against the runtime profiles in `skills/agent-advisor/references/runtimes` of
+`--plugin-root` (default `.`; `--runtimes-dir` names the registry directly), writes
+`scoring-result.json` beside ANSWERS and prints `RESULT=ok VERDICT=<verdict>`. `score-units`
+scores every `agent_session` unit of an `answers.json`, loads `current-run-verifications.json`
+beside it when present (an invalid artifact, or one whose `run_id` is not the run directory's
+name, is an error) and prints the `{"units": {...}, <primary unit's result>}` document as
+`json.dumps(indent=2)` does. Deterministic and offline. A missing ANSWERS is exit 2; an
+unreadable registry, answers or evidence file, malformed data, a linked file or no
+`agent_session` unit is exit 1 with a one-line message that names the field and never echoes a
+value. The parity table, every deliberate difference and the Python-to-Rust test mapping are in
+`docs/migration/startup-scoring.md`.
+
 ## sync (#4377)
 
 `toolkit sync plugin-skills` makes every `plugins/<plugin>/skills/<name>` copy

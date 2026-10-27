@@ -14,6 +14,8 @@
 //! | `startup pricing-parity` | `check-bedrock-pricing-parity.py` |
 //! | `startup terraform-policy` | `validate-terraform-policy.py` (tf-best-practices) |
 //! | `startup migration-report` | `validate-migration-report.py` |
+//! | `startup score` | `agent-advisor/scripts/scoring.py` (#4400) |
+//! | `startup score-units` | `agent-advisor/scripts/score_units.py` (#4400) |
 //!
 //! Each prints the Python messages unchanged: findings go to stderr through
 //! [`Output::diagnostic`] and a failing run additionally ends with one
@@ -39,6 +41,7 @@ mod plan;
 mod pricing;
 mod program;
 mod report;
+mod scoring;
 mod terraform;
 pub(crate) mod text;
 
@@ -50,6 +53,7 @@ pub use plan::emit_plan_command;
 pub use pricing::pricing_command;
 pub use program::program_artifacts_command;
 pub use report::migration_report_command;
+pub use scoring::{score_command, score_units_command};
 pub use terraform::terraform_policy_command;
 
 /// Largest artifact or plugin file the validators read (64 MiB).
