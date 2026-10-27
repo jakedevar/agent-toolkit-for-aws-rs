@@ -91,3 +91,7 @@ rust-migration-health (health_anomaly), pm-safety-net (hourly resume), terminal 
 - 18:35Z: #4682 round 3 on e201e143: CHANGES_REQUESTED -> #4711 (respelling check bypassed via unlisted geo, e.g. apac.anthropic.claude-opus-4.8). Reviewer ACCEPTED WellFormedUnknown for bare ids.
   Repair 3 (FINAL round, Opus) worker dd4c1327, continue_from 6ea6a0d7: geo-independent respelling rule. If it fails again: consult Fable/Astra on the design or narrow scope (do not loop).
 - 18:45Z: #4709 review of #4383 1e7e237e: CHANGES_REQUESTED -> #4712 (wrong-typed recorded optional fields defaulted), #4713 (null/wrong-type listing members -> empty). Repair worker 8693bedd (continue_from 9a7fd936).
+- 18:35Z: HUB rsid RESTART LOOP (stops 18:04:48, 18:26:16, 18:29:39; same build; restart budget 3/3, deploys refused till ~19:04Z). Health conditions accepted via ignore keys (rust-migration-health re-armed).
+  Each stop marks running workers Failed -> recover with AgentContinueChild (AgentGetProgress cursors). Recovered e8a85e85 (#4384), dd4c1327 (#4403 repair3), 8693bedd (#4383 repair).
+  #4708 review of #4407: CHANGES_REQUESTED #4714 (quadratic scan_file) -> repair worker 79398972 (continue_from 0e783946).
+  Reported up to GM (msg 7161c110): gate dcd47147 ready + restart loop.
