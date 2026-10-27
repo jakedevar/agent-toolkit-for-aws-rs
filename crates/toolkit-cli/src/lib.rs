@@ -25,6 +25,7 @@ use std::path::PathBuf;
 use toolkit_core::{discover_skills, skills_to_json, ErrorKind, ToolkitError};
 
 mod aurora;
+pub mod cloudwatch;
 pub mod dynamodb;
 pub mod manifests;
 mod msk;
@@ -72,6 +73,9 @@ Usage:
   toolkit aurora io [offline] --engine ENGINE [--region R] [--format json|table] [--days N]
       [--cluster ID | --all] [--instance TYPE] [--num-instances N]
       [--storage-gib GIB] [--monthly-io-millions N]
+  toolkit cloudwatch render RENDERER (--json TEXT | --json-file FILE)
+  toolkit cloudwatch validate CHECK (--json TEXT | --json-file FILE)
+  toolkit cloudwatch region [--region REGION]
   toolkit --version
   toolkit help
 
@@ -128,6 +132,19 @@ Commands:
                 which this build cannot do (exit 2), except `acu`, which falls
                 back to the built-in us-east-1 prices. Output is JSON unless
                 --format table. See docs/migration/aurora.md.
+  cloudwatch render | validate | region
+                Offline CloudWatch dynamic-instrumentation logic (#4380): render
+                a response or status report, check an input, or resolve the
+                region. render RENDERER is one of location, create-success,
+                list, get, batch-delete, status-history, status-assessment,
+                snapshot-search, snapshot-sample, snapshot-fields, failure;
+                validate CHECK is one of instrumentation-type, location-inputs,
+                capture-names, probe, location-hash, snapshot-signal. The
+                arguments are one JSON object (legacy parameter names) given
+                inline with --json or from a file with --json-file. A failed
+                check prints the legacy ERROR text on stdout and exits 1; an
+                unknown or mistyped argument exits 2. Nothing contacts AWS.
+                See docs/migration/cw-domain.md.
 
 Options:
   --json        Emit a JSON array of {name, description, path} objects.
@@ -518,6 +535,30 @@ pub const COMMANDS: &[CommandSpec] = &[
         strict_values: false,
         max_positionals: 1,
         handler: aurora::io_command,
+    },
+    CommandSpec {
+        path: &["cloudwatch", "render"],
+        flags: &[],
+        value_flags: cloudwatch::ARGUMENT_VALUE_FLAGS,
+        strict_values: true,
+        max_positionals: 1,
+        handler: cloudwatch::render_command,
+    },
+    CommandSpec {
+        path: &["cloudwatch", "validate"],
+        flags: &[],
+        value_flags: cloudwatch::ARGUMENT_VALUE_FLAGS,
+        strict_values: true,
+        max_positionals: 1,
+        handler: cloudwatch::validate_command,
+    },
+    CommandSpec {
+        path: &["cloudwatch", "region"],
+        flags: &[],
+        value_flags: cloudwatch::REGION_VALUE_FLAGS,
+        strict_values: true,
+        max_positionals: 0,
+        handler: cloudwatch::region_command,
     },
 ];
 
