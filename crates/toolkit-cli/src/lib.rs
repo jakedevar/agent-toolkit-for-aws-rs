@@ -22,7 +22,7 @@ use std::fmt;
 use std::io::{self, Write};
 use std::path::PathBuf;
 
-use toolkit_core::{discover_skills, skills_to_json, ErrorKind, ToolkitError};
+use toolkit_core::{discover_skills, neutralize_line, skills_to_json, ErrorKind, ToolkitError};
 
 mod ai_data;
 pub mod asm_exec;
@@ -298,10 +298,15 @@ impl<'a> Output<'a> {
     ///
     /// Failures are ignored: when stderr itself is gone there is nowhere left
     /// to report that, which is also the rule for the final error report.
+    ///
+    /// A diagnostic is one line: control characters (including embedded
+    /// newlines, ESC, BEL), bidirectional overrides and the like are escaped by
+    /// [`neutralize_line`] so echoed caller text cannot forge lines or drive the
+    /// terminal (#4639). Safe text is written unchanged.
     pub fn diagnostic(&mut self, text: &str) {
         if let Some(writer) = self.diagnostics.as_mut() {
             let _ = writer
-                .write_all(text.as_bytes())
+                .write_all(neutralize_line(text).as_bytes())
                 .and_then(|()| writer.write_all(b"\n"));
         }
     }
@@ -916,9 +921,10 @@ fn skills_list(invocation: &Invocation, output: &mut Output<'_>) -> Result<(), T
 
 /// Writes the error report and returns the exit status.
 fn report(err: &mut dyn Write, error: &ToolkitError) -> u8 {
+    let message = neutralize_line(error.message());
     let text = match error.kind() {
-        ErrorKind::Usage => format!("error: {}\n\n{USAGE}\n", error.message()),
-        ErrorKind::Runtime => format!("error: {}\n", error.message()),
+        ErrorKind::Usage => format!("error: {message}\n\n{USAGE}\n"),
+        ErrorKind::Runtime => format!("error: {message}\n"),
     };
     // stderr may be closed too; there is nowhere left to report that.
     let _ = err.write_all(text.as_bytes());

@@ -248,6 +248,67 @@ crate (use optional domain crates or features).
   at any component below the root; not a defence against concurrent mutation,
   see the discovery rules) and `read_regular_file` (no symlinks, only
   regular files, size-bounded, UTF-8, identity re-check after open).
+- **Diagnostic escaping** (`diag`, #4639): see the next section.
+
+## Untrusted text in diagnostics (contributor note, #4639)
+
+Argument values, file names and payload fields are attacker-controlled. Echoing
+them raw into stdout/stderr forges report lines (CR/LF), drives the terminal
+(ESC, BEL and other controls), reorders what a reader sees (bidirectional
+overrides such as U+202E) or discloses payload contents. Slices #4602, #4625
+and #4634 each failed review on exactly this and each repair invented its own
+escaping, so there is now one helper and one contract test.
+
+1. **Prefer not echoing.** Report the field, location and type (for example
+   `role: expected string, got object at line 3`), as the #4602 repair does.
+2. **If a value must appear, quote it** with `toolkit_core::quote_untrusted`
+   (re-exported from `toolkit_core::diag`):
+
+   ```rust
+   use toolkit_core::quote_untrusted;
+   let message = format!("cannot read {}", quote_untrusted(&path_from_argv));
+   ```
+
+   The result is double-quoted text: `\\`, `\"`, `\n`, `\r`, `\t`
+   and `\uXXXX` (valid inside a JSON string too) for every other control character, line or paragraph
+   separator, bidirectional or zero-width formatting character and BOM; it
+   keeps only the first 120 characters and ends with `...[N more chars]` when it
+   cut something. `quote_untrusted_bounded` takes your own limit and
+   `escape_untrusted` omits the quotes.
+3. **Escaping is not redaction.** The helper never recognises secrets. Payload
+   contents that may hold credentials must be left out of the diagnostic or
+   redacted first (`toolkit_aws::redact`); do not quote them.
+4. **Do not flatten or hand-roll.** Replacing controls with spaces (as
+   `skills list` and `asm exec` do for their pinned output) hides the damage
+   instead of showing it and each copy drifts; new code uses the helper. Those
+   two call sites keep their pinned output and are not migrated: `skills list`
+   flattens into a tab-separated line and `asm exec` flattens after redaction,
+   so the helper would change bytes tests already pin.
+5. **Safety net at the sinks.** `Output::diagnostic` and the final `error:`
+   report pass their text through `toolkit_core::neutralize_line`, which writes
+   every control character (newline and tab included), bidirectional override
+   and similar invisible character as `\n`, `\r`, `\t` or `\uXXXX` and changes
+   nothing else. It exists so an echo a slice forgot to quote still cannot forge
+   a line or drive the terminal (this closed a real hole: every command echoed a
+   path or flag argument raw in its error text). Safe text is unchanged. It does
+   not quote, so call sites should still use `quote_untrusted`. Stdout lines are
+   not rewritten: a handler that prints untrusted text on stdout must escape it
+   itself.
+
+`tests/diag_contract.rs` runs every entry of `COMMANDS` through the real binary
+with hostile argv (ESC, BEL, CR, LF, U+202E and a marker in every value flag
+and positional, as plain, path-like and `--flag=value` forms, plus unknown
+flags, extra words and a missing value) and with invalid file and directory
+payloads that carry the same characters and a fake secret. Each spawn has an
+empty environment, no stdin and a scratch working directory, so it is offline;
+commands that need the network or credentials must fail closed. The test fails
+on any control character other than newline (a tab is allowed on `skills list`
+stdout only, its column separator), any bidirectional/invisible character, a
+fake payload secret in stdout or stderr, and a line forged by a newline inside
+an argument. An argument may be echoed (an error naming the path it could not
+read) but only escaped. A new command is covered the moment it is added to
+`COMMANDS`; make it pass by not echoing payload contents and by quoting any
+value you do echo.
 
 ## Frontmatter additions (#4374)
 
