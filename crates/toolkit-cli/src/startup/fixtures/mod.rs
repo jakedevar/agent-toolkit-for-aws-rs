@@ -248,8 +248,8 @@ impl Context<'_> {
     /// toolkit derives below `--plugin-root` (the fixtures directory, a fixture
     /// set, a golden tree, a table directory, the shipped skills) is checked
     /// from the plugin root, so a link in any derived component is refused;
-    /// `root` itself is never examined (#4759). The caller-chosen RUN_DIR and
-    /// SEED_DIR keep their own explicit-root semantics.
+    /// `root` itself is never examined (#4759). The caller-chosen `RUN_DIR` and
+    /// `SEED_DIR` keep their own explicit-root semantics.
     fn anchor<'p>(&'p self, root: &'p Path, path: &Path) -> &'p Path {
         let caller = path.starts_with(&self.run)
             || self

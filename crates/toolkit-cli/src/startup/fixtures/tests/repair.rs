@@ -262,12 +262,12 @@ fn a_boolean_cost_difference_is_never_a_number() {
     // Numeric controls with the same magnitudes pass.
     let run = heroku_estimate_run();
     run.edit("estimation-infra.json", |doc| {
-        let design_total = 10.0
-            * super::super::ledger::members(super::super::ledger::path(
-                doc,
-                &["projected_costs", "breakdown"],
-            ))
-            .len() as f64;
+        let lines = super::super::ledger::members(super::super::ledger::path(
+            doc,
+            &["projected_costs", "breakdown"],
+        ))
+        .len();
+        let design_total = 10.0 * f64::from(u32::try_from(lines).expect("few lines"));
         let diff = design_total - 352.0;
         set(
             doc,
