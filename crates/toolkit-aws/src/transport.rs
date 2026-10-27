@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use crate::endpoint::Endpoint;
 use crate::error::AwsError;
-use crate::redact::{hides_header_value, redact_url, Scrubbed, REDACTED};
+use crate::redact::{hides_header_value, redact_url, write_scrubbed_debug, Scrubbed, REDACTED};
 
 /// Longest connect or read timeout accepted.
 pub const MAX_TIMEOUT: Duration = Duration::from_secs(3600);
@@ -174,15 +174,17 @@ impl Headers {
 
 impl fmt::Debug for Headers {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut map = f.debug_map();
-        for (name, value) in self.entries() {
-            if hides_header_value(name) {
-                map.entry(&Scrubbed(name), &REDACTED);
-            } else {
-                map.entry(&Scrubbed(name), &Scrubbed(value));
+        write_scrubbed_debug(f, |f| {
+            let mut map = f.debug_map();
+            for (name, value) in self.entries() {
+                if hides_header_value(name) {
+                    map.entry(&Scrubbed(name), &REDACTED);
+                } else {
+                    map.entry(&Scrubbed(name), &Scrubbed(value));
+                }
             }
-        }
-        map.finish()
+            map.finish()
+        })
     }
 }
 
@@ -232,13 +234,15 @@ impl ApiRequest {
 
 impl fmt::Debug for ApiRequest {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ApiRequest")
-            .field("method", &self.method.as_str())
-            .field("path", &redact_url(&self.path))
-            .field("query_params", &self.query.len())
-            .field("headers", &self.headers)
-            .field("body_len", &self.body.len())
-            .finish()
+        write_scrubbed_debug(f, |f| {
+            f.debug_struct("ApiRequest")
+                .field("method", &self.method.as_str())
+                .field("path", &redact_url(&self.path))
+                .field("query_params", &self.query.len())
+                .field("headers", &self.headers)
+                .field("body_len", &self.body.len())
+                .finish()
+        })
     }
 }
 
@@ -259,13 +263,15 @@ pub struct HttpRequest {
 
 impl fmt::Debug for HttpRequest {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("HttpRequest")
-            .field("method", &self.method.as_str())
-            .field("url", &redact_url(&self.url))
-            .field("headers", &self.headers)
-            .field("body_len", &self.body.len())
-            .field("timeouts", &self.timeouts)
-            .finish()
+        write_scrubbed_debug(f, |f| {
+            f.debug_struct("HttpRequest")
+                .field("method", &self.method.as_str())
+                .field("url", &redact_url(&self.url))
+                .field("headers", &self.headers)
+                .field("body_len", &self.body.len())
+                .field("timeouts", &self.timeouts)
+                .finish()
+        })
     }
 }
 
@@ -300,21 +306,35 @@ impl HttpResponse {
 
 impl fmt::Debug for HttpResponse {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("HttpResponse")
-            .field("status", &self.status)
-            .field("headers", &self.headers)
-            .field("body_len", &self.body.len())
-            .finish()
+        write_scrubbed_debug(f, |f| {
+            f.debug_struct("HttpResponse")
+                .field("status", &self.status)
+                .field("headers", &self.headers)
+                .field("body_len", &self.body.len())
+                .finish()
+        })
     }
 }
 
-/// Region and service a request is signed for.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Region and service a request is signed for. `Debug` scrubs both fields
+/// (they are public and may be built by hand).
+#[derive(Clone, PartialEq, Eq)]
 pub struct SigningScope {
     /// Signing region.
     pub region: String,
     /// Signing service name.
     pub service: String,
+}
+
+impl fmt::Debug for SigningScope {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write_scrubbed_debug(f, |f| {
+            f.debug_struct("SigningScope")
+                .field("region", &Scrubbed(&self.region))
+                .field("service", &Scrubbed(&self.service))
+                .finish()
+        })
+    }
 }
 
 /// Sends one prepared request.
@@ -406,6 +426,7 @@ pub fn build_url(
 mod tests {
     use super::*;
     use crate::endpoint::{validate_endpoint, EndpointPolicy};
+    use crate::redact::{redact_text, ADVERSARIAL};
     use crate::testing::FixedResolver;
 
     fn endpoint(url: &str) -> Endpoint {
@@ -679,5 +700,80 @@ mod tests {
         };
         NoSigner.sign(&mut request, &scope).unwrap();
         assert_eq!(request, before);
+    }
+
+    #[test]
+    fn reviewer_header_values_with_several_spaces_are_scrubbed() {
+        let mut headers = Headers::new();
+        headers
+            .insert("x-extra", "Bearer  FAKE-TWO-SPACE-BEARER")
+            .unwrap();
+        headers
+            .insert("x-other", "Basic \t RkFLRTpNVUxUSVNQQUNF")
+            .unwrap();
+        headers
+            .insert("x-origin", "https://u:FAKE'PW@logs.amazonaws.com/")
+            .unwrap();
+        let shown = format!("{headers:?}");
+        assert_eq!(
+            shown,
+            "{\"x-extra\": \"Bearer  [REDACTED]\", \"x-other\": \"Basic \\t [REDACTED]\", \
+             \"x-origin\": \"https://[REDACTED]@logs.amazonaws.com/\"}"
+        );
+    }
+
+    #[test]
+    fn adversarial_values_never_leak_through_headers_requests_or_responses() {
+        let mut inserted = 0;
+        for &(text, _, leaks) in ADVERSARIAL {
+            let mut headers = Headers::new();
+            // Values with control characters other than tab are refused.
+            if headers.insert("x-extra", text).is_err() {
+                continue;
+            }
+            inserted += 1;
+            let api = ApiRequest {
+                method: Method::Get,
+                path: text.to_string(),
+                query: vec![("q".to_string(), text.to_string())],
+                headers: headers.clone(),
+                body: text.as_bytes().to_vec(),
+            };
+            let request = HttpRequest {
+                method: Method::Post,
+                url: text.to_string(),
+                headers: headers.clone(),
+                body: Vec::new(),
+                timeouts: Timeouts::default(),
+            };
+            let mut response = HttpResponse::new(500, text.as_bytes());
+            response.headers = headers.clone();
+            let scope = SigningScope {
+                region: text.to_string(),
+                service: text.to_string(),
+            };
+            let shown = [
+                format!("{headers:?}"),
+                format!("{headers:#?}"),
+                format!("{api:?}"),
+                format!("{api:#?}"),
+                format!("{request:?}"),
+                format!("{request:#?}"),
+                format!("{response:?}"),
+                format!("{response:#?}"),
+                format!("{scope:?}"),
+                format!("{scope:#?}"),
+            ];
+            for out in &shown {
+                for leak in leaks {
+                    assert!(!out.contains(leak), "{leak:?} leaked from {text:?}: {out}");
+                }
+                assert_eq!(&redact_text(out), out, "second pass changed {text:?}");
+            }
+        }
+        assert!(
+            inserted >= 30,
+            "only {inserted} adversarial values were insertable"
+        );
     }
 }

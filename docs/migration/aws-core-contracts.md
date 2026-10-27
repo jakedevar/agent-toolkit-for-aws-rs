@@ -78,40 +78,69 @@ The policy deliberately rejects *more* than Python's `ipaddress` predicates
 The DNS-rebinding residual between the check and the SDK connection is
 unchanged.
 
-## Error redaction contract (#4468, #4469)
+## Error redaction contract (#4468, #4469, #4494)
 
 One scrubber, `redact::redact_text`, backs every error path: `AwsError`
 `Display` and `Debug`, the `From<AwsError> for ToolkitError` conversion,
-`ServiceError` (message snippet, one-line `Display`, `Debug`),
-`render_failure` (action, error text, attempted parameters, guidance lines) and
-every request/response/env/provider `Debug`. It
+`ServiceError` (fields at construction, one-line `Display`, `Debug`),
+`render_failure` and every request/response/header/env/provider/settings
+`Debug`. It is conservative by construction: wherever it cannot be sure where
+a secret ends, it hides more.
 
-- strips `user:password@` from every `scheme://` URL embedded anywhere in the
-  text (also in the JSON-escaped `:\/\/` form);
-- redacts labelled values (`password`, `token`, `secret`, `authorization`,
-  `x-amz-*`, ...) in plain `key=value`, `key: value`, `key => value`, JSON and
-  JSON-embedded-in-a-string syntax, with any whitespace (newlines included) or
-  `\n`/`\t` escapes around the separator, and with escaped quotes inside
-  strings honoured (`"aa\"tail"` is one value);
-- when the end of a value is uncertain (unterminated string, stray text glued to
-  the closing quote) redacts to the end of the input - hiding too much is the
-  safe error;
-- is idempotent, so scrubbing at construction and again at display is stable.
+- **Union of spans.** One pass runs every recognizer on the *same* input (URL
+  userinfo, labelled values, scheme credentials, access-key IDs, STS session
+  tokens) and replaces the union of their spans, so one recognizer can never
+  remove the context another needs. Passes repeat until the text stops
+  changing (a still-changing text after eight passes becomes `[REDACTED]`), so
+  `redact_text` is idempotent by construction.
+- **URL userinfo.** For every `scheme://` (also `:\/\/` and further escaped
+  forms), the authority runs to the first `/`, `?`, `#` or whitespace and
+  everything before its *last* `@` is userinfo, whatever it contains (quotes,
+  apostrophes, backslashes, more `@`). An `@` in the path, query or fragment
+  is kept. Without a `/` the authority can reach a later `@` in unrelated text;
+  that over-redaction is accepted.
+- **Labelled values.** A key containing a secret label (`password`, `token`,
+  `secret`, `credential`, `signature`, `api_key`, `x-amz-*`, ...; matched
+  anywhere in the key, so `nextToken` and `my_token` count) followed by `=`,
+  `:` or `=>` (any whitespace, newlines and `\n`/`\t`/`\u…` escapes around it).
+  A quoted value follows JSON escape rules at any escape depth. It is trusted
+  only when its closing quote is followed, after optional whitespace, by `,`,
+  `}`, `]`, `;`, `)` or the end (possibly after the quotes that close
+  enclosing strings); otherwise, or when unterminated, the value is hidden to
+  the end of the input. An unquoted value ends at whitespace, `&`, `,`, `;`,
+  `)`, `}` or `]`; if a quote cuts it short, the same clean-close rule applies.
+  Header-line keys (`authorization`, `cookie`, ...) hide to the end of the
+  line.
+- **Authentication schemes.** `Bearer`, `Basic`, `NTLM`, `DPoP`, `GNAP`,
+  `Negotiate`, `token` (token credentials, up to the next delimiter) and
+  `AWS4-HMAC-SHA256`, `AWS4-ECDSA-P256-SHA256`, `PrivateToken`, `SCRAM-SHA-*`,
+  `vapid`, `HOBA`, `Digest`, `OAuth` (parameter lists, to the end of the line),
+  case-insensitive. Any run of whitespace (Unicode, newlines, escaped forms)
+  separates scheme and credential. For the English words `token`, `digest`,
+  `negotiate` and `oauth`, a following short all-lowercase word is prose
+  (`token included`, `digest mismatch`) and is kept.
+- **Whole-output pass.** Every hand-written `Display`/`Debug` scrubs each field
+  and then scrubs the whole printed text again (`write_scrubbed_debug`/
+  `write_scrubbed_display`); `render_failure` scrubs the assembled block. Rust's
+  escaping in `Debug` therefore cannot turn a scrubbed field into a leak.
+  `ServiceError` scrubs the path *before* `<id>` rewriting and the method
+  *before* upper-casing, since both transformations can remove the context a
+  recognizer needs. `snippet` scrubs, flattens and truncates, then scrubs its
+  own output.
 
-`snippet` scrubs *before* it flattens control characters (whitespace controls
-become a space, other controls `?`) and truncates, so flattening cannot create
-or hide a match.
+`Debug` is enforced at formatting time, independent of how a value was built:
+`AwsError`, `ServiceError`, `Guidance`, `ClientSettings`, `SigningScope`,
+`Headers`, `ApiRequest`/`HttpRequest`/`HttpResponse`, `MapEnv`,
+`ProviderChain` and `FakeProvider` all scrub; `Headers` also hides the value of
+any secret-bearing header name (`hides_header_value`), request/response bodies
+print lengths only and `Page` prints counts only. `ClientConfig`, `Endpoint`
+and `ResolvedRegion` print only validated values.
 
-`Debug` is enforced at formatting time, independent of how a value was built.
-`AwsError` and `ServiceError` have hand-written `Debug` that scrubs every string
-field (so `RetryFailure`, `Attempted` and any struct holding them are covered).
-`Headers` `Debug` hides the value of any header whose name is secret-bearing
-(`hides_header_value`: the exact sensitive set, any `secret/token/password/
-signature/authorization/cookie/credential/api_key` marker, and `key`, `auth`,
-`session`, `pass`, `bearer`, `private`, `cred`) and scrubs every other value.
-`ApiRequest`/`HttpRequest`/`HttpResponse` print scrubbed URLs and headers and
-body *lengths* only; `Page` prints counts only; `MapEnv` hides secret-named
-values and scrubs the rest; `FakeProvider` never prints its fixture keys.
+Accepted over-redaction: ordinary words after a scheme name (`a basic check
+failed` becomes `a basic [REDACTED] failed`), and a value with glued text
+after its closing quote hides the rest of the input. The adversarial fixture table
+`redact::ADVERSARIAL` runs every case through all of these paths and asserts
+that no synthetic secret survives and that a second pass changes nothing.
 
 Known limit, unchanged: a bare 40-character secret with no label cannot be told
 from an identifier and is not recognized, which is why the crate never formats a

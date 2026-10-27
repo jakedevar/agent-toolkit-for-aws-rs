@@ -12,7 +12,10 @@ use std::fmt;
 
 use toolkit_core::ToolkitError;
 
-use crate::redact::{is_secret_name, redact_text, sanitize_path, snippet, Scrubbed, REDACTED};
+use crate::redact::{
+    is_secret_name, redact_text, sanitize_path, snippet, write_scrubbed_debug,
+    write_scrubbed_display, Scrubbed, REDACTED,
+};
 
 /// Longest response message kept in a [`ServiceError`].
 pub const MAX_MESSAGE_CHARS: usize = 1024;
@@ -90,8 +93,11 @@ impl ServiceError {
         request_id: Option<&str>,
     ) -> Self {
         Self {
-            method: snippet(&method.to_ascii_uppercase(), 16),
-            path: sanitize_path(path),
+            // Scrub before upper-casing too: some recognizers are case-sensitive.
+            method: snippet(&redact_text(method).to_ascii_uppercase(), 16),
+            // Scrub first: `<id>` rewriting can remove a long label (such as
+            // `x-amz-security-token`) and would leave its value behind.
+            path: sanitize_path(&redact_text(path)),
             status,
             code: code.filter(|c| !c.is_empty()).map(|c| snippet(c, 128)),
             message: snippet(message, MAX_MESSAGE_CHARS),
@@ -158,30 +164,34 @@ impl fmt::Display for ServiceError {
     /// `<METHOD> <sanitized path> failed (<status>)[: <code>]`; like the Python
     /// `ApiError`, the message is not part of the one-line form.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{} {} failed ({})",
-            Scrubbed(&self.method),
-            Scrubbed(&sanitize_path(&self.path)),
-            self.status
-        )?;
-        if let Some(code) = &self.code {
-            write!(f, ": {}", Scrubbed(code))?;
-        }
-        Ok(())
+        write_scrubbed_display(f, |f| {
+            write!(
+                f,
+                "{} {} failed ({})",
+                Scrubbed(&self.method),
+                Scrubbed(&sanitize_path(&self.path)),
+                self.status
+            )?;
+            if let Some(code) = &self.code {
+                write!(f, ": {}", Scrubbed(code))?;
+            }
+            Ok(())
+        })
     }
 }
 
 impl fmt::Debug for ServiceError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ServiceError")
-            .field("method", &Scrubbed(&self.method))
-            .field("path", &Scrubbed(&sanitize_path(&self.path)))
-            .field("status", &self.status)
-            .field("code", &self.code.as_deref().map(Scrubbed))
-            .field("message", &Scrubbed(&self.message))
-            .field("request_id", &self.request_id.as_deref().map(Scrubbed))
-            .finish()
+        write_scrubbed_debug(f, |f| {
+            f.debug_struct("ServiceError")
+                .field("method", &Scrubbed(&self.method))
+                .field("path", &Scrubbed(&sanitize_path(&self.path)))
+                .field("status", &self.status)
+                .field("code", &self.code.as_deref().map(Scrubbed))
+                .field("message", &Scrubbed(&self.message))
+                .field("request_id", &self.request_id.as_deref().map(Scrubbed))
+                .finish()
+        })
     }
 }
 
@@ -343,7 +353,21 @@ impl AwsError {
 }
 
 impl fmt::Display for AwsError {
+    /// Each field is scrubbed, then the whole line is scrubbed again.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write_scrubbed_display(f, |f| self.display_body(f))
+    }
+}
+
+impl fmt::Debug for AwsError {
+    /// Same redaction contract as `Display`, whatever constructor was used.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write_scrubbed_debug(f, |f| self.debug_body(f))
+    }
+}
+
+impl AwsError {
+    fn display_body(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidConfig { field, reason } => {
                 write!(f, "invalid {}: {}", Scrubbed(field), Scrubbed(reason))
@@ -389,11 +413,8 @@ impl fmt::Display for AwsError {
             }
         }
     }
-}
 
-impl fmt::Debug for AwsError {
-    /// Same redaction contract as `Display`, whatever constructor was used.
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn debug_body(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidConfig { field, reason } => f
                 .debug_struct("InvalidConfig")
@@ -453,12 +474,34 @@ impl From<AwsError> for ToolkitError {
 }
 
 /// Tool-specific wording for [`render_failure_with`].
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct Guidance<'a> {
     /// Numbered `POSSIBLE CAUSES:` entries.
     pub possible_causes: &'a [&'a str],
     /// Numbered `TROUBLESHOOTING:` entries.
     pub troubleshooting: &'a [&'a str],
+}
+
+impl fmt::Debug for Guidance<'_> {
+    /// Every entry is scrubbed, like the rendered block.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write_scrubbed_debug(f, |f| {
+            let causes: Vec<Scrubbed<'_>> = self
+                .possible_causes
+                .iter()
+                .map(|item| Scrubbed(*item))
+                .collect();
+            let steps: Vec<Scrubbed<'_>> = self
+                .troubleshooting
+                .iter()
+                .map(|item| Scrubbed(*item))
+                .collect();
+            f.debug_struct("Guidance")
+                .field("possible_causes", &causes)
+                .field("troubleshooting", &steps)
+                .finish()
+        })
+    }
 }
 
 const DEFAULT_CAUSES: &[&str] = &[
@@ -495,7 +538,7 @@ pub fn render_failure_with(
 ) -> String {
     let attempted = attempted_block(attempted);
     let head = format!("Failed to {}\n\n", redact_text(action));
-    match error {
+    let block = match error {
         AwsError::Service(service) => {
             let code = redact_text(service.code().unwrap_or("ClientError"));
             let message = if service.message().is_empty() {
@@ -552,7 +595,11 @@ pub fn render_failure_with(
             )
         }
         _ => format!("{head}Unexpected error: {error}\n{attempted}"),
-    }
+    };
+    // Every piece is already scrubbed; scrubbing the assembled block makes the
+    // whole output stable under a second pass and hides anything a piece
+    // boundary might have split.
+    redact_text(&block)
 }
 
 fn attempted_block(attempted: &[(&str, &str)]) -> String {
@@ -590,6 +637,7 @@ fn numbered(label: &str, items: &[&str]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::redact::ADVERSARIAL;
     use toolkit_core::ErrorKind;
 
     fn service(status: u16, code: Option<&str>) -> AwsError {
@@ -1019,5 +1067,128 @@ TROUBLESHOOTING:
             "Failed to paginate\n\nUnexpected error: pagination failed: repeated token=[REDACTED]\n\
              \nATTEMPTED PARAMETERS:\n- password: [REDACTED]\n"
         );
+    }
+
+    /// Every error built from `text`: hand-built variants, constructors and a
+    /// service error carrying `text` in every string field.
+    fn every_error(text: &str) -> Vec<AwsError> {
+        let mut errors = hand_built(text);
+        errors.extend([
+            AwsError::connect(text),
+            AwsError::provider("env", text),
+            AwsError::timeout(TimeoutPhase::Read, text),
+            AwsError::invalid_config("endpoint", text),
+            AwsError::pagination(text),
+            AwsError::invalid_response(text),
+            AwsError::service(ServiceError::new(
+                text,
+                text,
+                500,
+                Some(text),
+                text,
+                Some(text),
+            )),
+        ]);
+        errors
+    }
+
+    #[test]
+    fn adversarial_inputs_never_leak_through_any_error_path() {
+        for &(text, _, leaks) in ADVERSARIAL {
+            let causes = [text];
+            let guidance = Guidance {
+                possible_causes: &causes,
+                troubleshooting: &causes,
+            };
+            for error in every_error(text) {
+                let converted: ToolkitError = error.clone().into();
+                let shown = [
+                    error.to_string(),
+                    format!("{error:?}"),
+                    format!("{error:#?}"),
+                    converted.message().to_string(),
+                    render_failure(text, &error, &[("p", text), ("token", text)]),
+                    render_failure_with(text, &error, &[("p", text)], Some(&guidance)),
+                ];
+                for out in &shown {
+                    for leak in leaks {
+                        assert!(!out.contains(leak), "{leak:?} leaked from {text:?}: {out}");
+                    }
+                    assert_eq!(&redact_text(out), out, "second pass changed {text:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn adversarial_service_error_fields_are_scrubbed_at_construction() {
+        for &(text, _, leaks) in ADVERSARIAL {
+            let service = ServiceError::new("GET", "/x", 400, Some(text), text, Some(text));
+            for field in [
+                service.message(),
+                service.code().unwrap_or_default(),
+                service.request_id().unwrap_or_default(),
+            ] {
+                for leak in leaks {
+                    assert!(
+                        !field.contains(leak),
+                        "{leak:?} leaked from {text:?}: {field}"
+                    );
+                }
+                assert_eq!(redact_text(field), field, "unstable field for {text:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn reviewer_inputs_have_exact_display_text() {
+        let error = AwsError::connect("dial https://u:FAKE'PW@logs.amazonaws.com/ failed");
+        assert_eq!(
+            error.to_string(),
+            "could not connect to the endpoint: dial https://[REDACTED]@logs.amazonaws.com/ failed"
+        );
+        let error = AwsError::Pagination {
+            reason: r#"{"password":"aa"tail" LEAK-REST"}"#.to_string(),
+        };
+        assert_eq!(
+            error.to_string(),
+            r#"pagination failed: {"password":"[REDACTED]"#
+        );
+        for (raw, shown) in [
+            ("Bearer  FAKE-TWO-SPACE-TOKEN", "Bearer  [REDACTED]"),
+            ("Basic  RkFLRTpNVUxUSVNQQUNF", "Basic  [REDACTED]"),
+        ] {
+            let error = AwsError::Connect {
+                message: raw.to_string(),
+            };
+            assert_eq!(
+                error.to_string(),
+                format!("could not connect to the endpoint: {shown}")
+            );
+            assert_eq!(
+                format!("{error:?}"),
+                format!("Connect {{ message: \"{shown}\" }}")
+            );
+        }
+    }
+
+    #[test]
+    fn guidance_debug_is_scrubbed() {
+        let guidance = Guidance {
+            possible_causes: &[
+                "token=FAKE-CAUSE-VALUE",
+                "see https://FAKEU:FAKEP@h.example/",
+            ],
+            troubleshooting: &["Bearer \t FAKE-STEP-BEARER"],
+        };
+        for shown in [format!("{guidance:?}"), format!("{guidance:#?}")] {
+            assert!(!shown.contains("FAKE-"), "{shown}");
+            assert!(
+                !shown.contains("FAKEU") && !shown.contains("FAKEP"),
+                "{shown}"
+            );
+            assert!(shown.contains("possible_causes"), "{shown}");
+            assert_eq!(redact_text(&shown), shown);
+        }
     }
 }

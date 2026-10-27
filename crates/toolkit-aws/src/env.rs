@@ -8,7 +8,7 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
-use crate::redact::{is_secret_name, Scrubbed, REDACTED};
+use crate::redact::{is_secret_name, write_scrubbed_debug, Scrubbed, REDACTED};
 
 /// Source of environment variables.
 pub trait Env {
@@ -34,15 +34,17 @@ pub struct MapEnv(BTreeMap<String, String>);
 
 impl fmt::Debug for MapEnv {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut map = f.debug_map();
-        for (name, value) in &self.0 {
-            if is_secret_name(name) {
-                map.entry(&Scrubbed(name), &REDACTED);
-            } else {
-                map.entry(&Scrubbed(name), &Scrubbed(value));
+        write_scrubbed_debug(f, |f| {
+            let mut map = f.debug_map();
+            for (name, value) in &self.0 {
+                if is_secret_name(name) {
+                    map.entry(&Scrubbed(name), &REDACTED);
+                } else {
+                    map.entry(&Scrubbed(name), &Scrubbed(value));
+                }
             }
-        }
-        map.finish()
+            map.finish()
+        })
     }
 }
 

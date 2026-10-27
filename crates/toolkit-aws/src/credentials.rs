@@ -16,7 +16,7 @@ use std::fmt;
 use std::time::SystemTime;
 
 use crate::error::AwsError;
-use crate::redact::Secret;
+use crate::redact::{write_scrubbed_debug, Scrubbed, Secret};
 
 /// Provider names the SDK binding must report, in the standard chain order.
 /// `profile` covers shared-config static keys, SSO, web identity, assume-role
@@ -160,10 +160,14 @@ impl ProviderChain {
 }
 
 impl fmt::Debug for ProviderChain {
+    /// Provider names only, each scrubbed (a custom provider chooses its name).
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ProviderChain")
-            .field("providers", &self.names())
-            .finish()
+        write_scrubbed_debug(f, |f| {
+            let names: Vec<Scrubbed<'_>> = self.names().into_iter().map(Scrubbed).collect();
+            f.debug_struct("ProviderChain")
+                .field("providers", &names)
+                .finish()
+        })
     }
 }
 
@@ -382,5 +386,18 @@ mod tests {
         .is_ok());
         assert!(reject_credential_arguments(&[]).is_ok());
         assert!(reject_credential_arguments(&args(&["--session-tokens"])).is_ok());
+    }
+
+    #[test]
+    fn chain_debug_scrubs_provider_names() {
+        let chain = ProviderChain::new()
+            .with(Box::new(FakeProvider::missing("password=FAKE-CHAIN-NAME")))
+            .with(Box::new(FakeProvider::missing("env")));
+        for shown in [format!("{chain:?}"), format!("{chain:#?}")] {
+            assert!(!shown.contains("FAKE-CHAIN-NAME"), "{shown}");
+            assert!(shown.contains("\"env\""), "{shown}");
+        }
+        // The accessor still reports the names a caller chose.
+        assert_eq!(chain.names(), vec!["password=FAKE-CHAIN-NAME", "env"]);
     }
 }

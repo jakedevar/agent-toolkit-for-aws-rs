@@ -72,3 +72,19 @@ policy"):
   validate redirects and must connect to the already-validated address (or
   re-run the same policy on the connected peer); the current client has no
   production transport.
+
+## Addendum after re-review #4467 of `b897cd82`
+
+The re-review found that the first repair still lost to edge cases: userinfo
+with an apostrophe, a glued closing quote followed by whitespace, several
+spaces after `Bearer`/`Basic` (#4494), and raw `Debug` fields outside the
+error types. The scrubber was rewritten to be conservative by construction
+rather than patched per case (manager ruling); the contract is in
+`aws-core-contracts.md` ("Error redaction contract"). In short: every
+recognizer runs on the same input and the union of their spans is hidden;
+URL userinfo runs to the authority's last `@` whatever it contains; a
+labelled value that is not cleanly terminated is hidden to the end of the
+input; any whitespace run separates an authentication scheme from its
+credential; and every `Display`/`Debug`/rendered block is scrubbed again on
+its fully printed text, which makes the output idempotent. Over-redaction of
+some ordinary words (`a basic check`, `negotiate TLS`) is the accepted cost.

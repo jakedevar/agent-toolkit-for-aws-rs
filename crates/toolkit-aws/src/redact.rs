@@ -1,15 +1,19 @@
 //! Secret redaction used by every error, `Debug` and diagnostic in this crate.
 //!
-//! Redaction is deliberately over-eager: a false positive hides a harmless
-//! word, a false negative leaks a credential. [`redact_text`] recognizes
+//! Redaction is conservative by construction: whenever the scrubber cannot be
+//! sure where a secret ends it hides more, never less. A false positive hides
+//! a harmless word; a false negative leaks a credential. [`redact_text`]
+//! recognizes
 //!
 //! - AWS access-key IDs (`AKIA...`, `ASIA...` and the other 20-character IAM
 //!   prefixes) and long base64 session tokens (`IQoJ...`, `FwoG...`);
-//! - `key = value` / `key: value` / JSON `"key": "value"` pairs whose key names a
-//!   secret (`aws_secret_access_key`, `session_token`, `authorization`,
-//!   `x-amz-signature`, `password`, ...), unquoted, single or double quoted;
-//! - `Bearer <token>` and `Basic <token>` credentials;
-//! - userinfo in URLs (see [`redact_url`]).
+//! - `key = value` / `key: value` / JSON `"key": "value"` pairs whose key
+//!   contains a secret label (`aws_secret_access_key`, `session_token`,
+//!   `authorization`, `x-amz-signature`, `password`, ...), unquoted, single or
+//!   double quoted, plain or JSON-escaped;
+//! - credentials after an authentication scheme (`Bearer`, `Basic`, `Digest`,
+//!   `AWS4-HMAC-SHA256`, `token`, ...) whatever whitespace separates them;
+//! - userinfo in every embedded `scheme://` URL.
 //!
 //! A bare 40-character secret key with no label cannot be told apart from an
 //! identifier and is *not* recognized; the crate therefore never formats a
@@ -53,7 +57,9 @@ impl fmt::Debug for Secret {
     }
 }
 
-/// Keys (lowercase) whose value is a secret and ends at a delimiter.
+/// Labels (lowercase) whose value is a secret. A label matches anywhere in a
+/// key (`my_token=`, `nextToken:`, `x-amz-security-token:` all count) as long
+/// as a `=`, `:` or `=>` separator follows it.
 const SECRET_KEYS: &[&str] = &[
     "aws_secret_access_key",
     "aws_session_token",
@@ -72,22 +78,66 @@ const SECRET_KEYS: &[&str] = &[
     "id_token",
     "client_secret",
     "clientsecret",
+    "private_key",
+    "privatekey",
+    "passphrase",
     "password",
     "passwd",
+    "pwd",
     "secret",
     "token",
     "api_key",
     "apikey",
     "x-api-key",
+    "credential",
     "signature",
 ];
 
-/// Keys (lowercase) whose value is a whole header line (may contain spaces).
+/// Labels (lowercase) whose value is a whole header line (may contain spaces).
 const LINE_KEYS: &[&str] = &[
     "proxy-authorization",
     "authorization",
     "set-cookie",
     "cookie",
+];
+
+/// An authentication scheme whose credential follows after whitespace.
+struct AuthScheme {
+    /// Lowercase scheme name, matched case-insensitively as a whole word.
+    name: &'static str,
+    /// The credential is a parameter list (`k="v", ...`): hide to end of line.
+    params: bool,
+    /// The name is also an English word: a following short lowercase word
+    /// (`token included`, `digest mismatch`) is prose, not a credential.
+    prose_word: bool,
+}
+
+const fn scheme(name: &'static str, params: bool, prose_word: bool) -> AuthScheme {
+    AuthScheme {
+        name,
+        params,
+        prose_word,
+    }
+}
+
+/// Authentication schemes (RFC 9110 registry plus AWS and common token forms).
+const AUTH_SCHEMES: &[AuthScheme] = &[
+    scheme("bearer", false, false),
+    scheme("basic", false, false),
+    scheme("ntlm", false, false),
+    scheme("dpop", false, false),
+    scheme("gnap", false, false),
+    scheme("negotiate", false, true),
+    scheme("token", false, true),
+    scheme("aws4-hmac-sha256", true, false),
+    scheme("aws4-ecdsa-p256-sha256", true, false),
+    scheme("privatetoken", true, false),
+    scheme("scram-sha-256", true, false),
+    scheme("scram-sha-1", true, false),
+    scheme("vapid", true, false),
+    scheme("hoba", true, false),
+    scheme("digest", true, true),
+    scheme("oauth", true, true),
 ];
 
 /// Four-character prefixes of 20-character IAM access-key and unique IDs.
@@ -101,85 +151,117 @@ const TOKEN_PREFIXES: &[&str] = &["IQoJ", "FwoG"];
 /// Minimum length of a run recognized as an STS session token.
 const MIN_SESSION_TOKEN_LEN: usize = 100;
 
+/// Passes after which a still-changing input is hidden entirely.
+const MAX_PASSES: usize = 8;
+
 /// The one diagnostic scrubber: replace credential-looking content in `input`
 /// with [`REDACTED`].
 ///
 /// Every error `Display`, `Debug`, conversion and rendered failure in this
-/// crate goes through this function. It first strips URL userinfo wherever a
-/// URL is embedded in the text, then redacts labelled values. Values follow
-/// JSON rules (any whitespace, including newlines, around separators; escaped
-/// quotes inside strings; embedded, escaped JSON); when the end of a value is
-/// uncertain the redaction extends to the end of the input. The result is
-/// idempotent: `redact_text(&redact_text(x)) == redact_text(x)`.
+/// crate goes through this function. One pass collects every span that any
+/// recognizer wants hidden (URL userinfo, labelled values, scheme credentials,
+/// key IDs and session tokens), all on the same input, and replaces their
+/// union. Passes repeat until the text no longer changes, so the result is
+/// idempotent by construction: `redact_text(&redact_text(x)) == redact_text(x)`.
+/// When the end of a value is uncertain the redaction extends to the end of
+/// the input.
 #[must_use]
 pub fn redact_text(input: &str) -> String {
-    scrub_labelled(&strip_url_userinfo(input))
-}
-
-/// Strip `user:password@` from every `scheme://...` URL embedded in `input`.
-///
-/// The authority ends at the first `/`, `?` or `#` (and at a backslash in the
-/// JSON-escaped `:\/\/` form); the URL token ends at whitespace, a quote or an
-/// angle bracket. Everything before the last `@` of the authority is userinfo.
-fn strip_url_userinfo(input: &str) -> String {
-    const PLAIN: &str = "://";
-    const ESCAPED: &str = ":\\/\\/";
-    let mut out = String::with_capacity(input.len());
-    let mut rest = input;
-    loop {
-        let plain = rest.find(PLAIN);
-        let escaped = rest.find(ESCAPED);
-        let (pos, sep_len, is_escaped) = match (plain, escaped) {
-            (Some(p), Some(e)) if e < p => (e, ESCAPED.len(), true),
-            (Some(p), _) => (p, PLAIN.len(), false),
-            (None, Some(e)) => (e, ESCAPED.len(), true),
-            (None, None) => break,
-        };
-        let authority_start = pos + sep_len;
-        out.push_str(&rest[..authority_start]);
-        let tail = &rest[authority_start..];
-        let token_end = tail
-            .find(|c: char| c.is_whitespace() || matches!(c, '"' | '\'' | '<' | '>' | '`'))
-            .unwrap_or(tail.len());
-        let token = &tail[..token_end];
-        let authority_len = if is_escaped {
-            token.find(['/', '?', '#', '\\'])
-        } else {
-            token.find(['/', '?', '#'])
+    let mut current = scrub_once(input);
+    for _ in 0..MAX_PASSES {
+        let next = scrub_once(&current);
+        if next == current {
+            return current;
         }
-        .unwrap_or(token.len());
-        if let Some(at) = token[..authority_len].rfind('@') {
-            out.push_str(REDACTED);
-            out.push('@');
-            rest = &tail[at + 1..];
-        } else {
-            rest = tail;
-        }
+        current = next;
     }
-    out.push_str(rest);
-    out
+    REDACTED.to_string()
 }
 
-/// Redact labelled values, access-key IDs, session tokens and bearer tokens.
-fn scrub_labelled(input: &str) -> String {
-    let bytes = input.as_bytes();
-    let lower = input.to_ascii_lowercase();
-    let lower = lower.as_bytes();
+/// One pass: hide the union of every recognizer's spans.
+fn scrub_once(input: &str) -> String {
+    let mut spans = url_userinfo_spans(input);
+    spans.extend(labelled_spans(input));
+    spans.sort_unstable();
     let mut out = String::with_capacity(input.len());
     let mut copied = 0;
-    let mut i = 0;
-    while i < bytes.len() {
-        if let Some((from, to)) = find_span(bytes, lower, i) {
+    let mut index = 0;
+    while index < spans.len() {
+        let (from, mut to) = spans[index];
+        index += 1;
+        // Merge overlapping and touching spans into one marker.
+        while index < spans.len() && spans[index].0 <= to {
+            to = to.max(spans[index].1);
+            index += 1;
+        }
+        let from = from.max(copied);
+        if to > from {
             out.push_str(&input[copied..from]);
             out.push_str(REDACTED);
             copied = to;
-            i = to.max(i + 1);
-        } else {
-            i += 1;
         }
     }
     out.push_str(&input[copied..]);
     out
+}
+
+/// Userinfo spans of every `scheme://` URL in `input`, plain or with escaped
+/// slashes at any depth (`:\/\/` in JSON, `:\\/\\/` once more escaped).
+///
+/// The authority runs to the first `/`, `?`, `#` or whitespace. Everything
+/// before its *last* `@` is userinfo, whatever it contains (quotes,
+/// apostrophes, backslashes, more `@`). An `@` in the path, query or fragment
+/// is not userinfo.
+fn url_userinfo_spans(input: &str) -> Vec<(usize, usize)> {
+    let bytes = input.as_bytes();
+    let mut spans = Vec::new();
+    for (colon, _) in input.match_indices(':') {
+        let Some(authority) = after_double_slash(bytes, colon + 1) else {
+            continue;
+        };
+        let tail = &input[authority..];
+        let authority_len = tail
+            .find(|c: char| c.is_whitespace() || matches!(c, '/' | '?' | '#'))
+            .unwrap_or(tail.len());
+        if let Some(at) = tail[..authority_len].rfind('@') {
+            if at > 0 {
+                spans.push((authority, authority + at));
+            }
+        }
+    }
+    spans
+}
+
+/// Index after `//` at `p`, each slash optionally preceded by escaping
+/// backslashes.
+fn after_double_slash(bytes: &[u8], mut p: usize) -> Option<usize> {
+    for _ in 0..2 {
+        let (_, after) = skip_backslashes(bytes, p);
+        if bytes.get(after) != Some(&b'/') {
+            return None;
+        }
+        p = after + 1;
+    }
+    Some(p)
+}
+
+/// Spans of labelled values, scheme credentials, key IDs and session tokens.
+fn labelled_spans(input: &str) -> Vec<(usize, usize)> {
+    let bytes = input.as_bytes();
+    let lower = input.to_ascii_lowercase();
+    let lower = lower.as_bytes();
+    let mut spans = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        match find_span(input, lower, i) {
+            Some((from, to)) => {
+                spans.push((from, to));
+                i = to.max(i + 1);
+            }
+            None => i += 1,
+        }
+    }
+    spans
 }
 
 /// Redact a URL. Kept for readability at URL call sites; it is exactly
@@ -191,6 +273,10 @@ pub fn redact_url(url: &str) -> String {
 
 /// Redact, flatten control characters and truncate to `max_chars` characters.
 /// Used for echoing untrusted values (a bad region, a response body) in errors.
+///
+/// The value is scrubbed before it is flattened and truncated, and the result
+/// is scrubbed again, so neither step can expose or half-cut a secret and the
+/// output is stable under [`redact_text`].
 #[must_use]
 pub fn snippet(value: &str, max_chars: usize) -> String {
     let redacted = redact_text(value);
@@ -198,8 +284,6 @@ pub fn snippet(value: &str, max_chars: usize) -> String {
         .chars()
         .take(max_chars)
         .map(|c| match c {
-            // Whitespace controls become a space so the flattened text scrubs
-            // to the same result as the original (idempotence).
             '\t' | '\n' | '\r' | '\u{b}' | '\u{c}' => ' ',
             c if c.is_control() => '?',
             c => c,
@@ -208,7 +292,7 @@ pub fn snippet(value: &str, max_chars: usize) -> String {
     if redacted.chars().count() > max_chars {
         out.push('…');
     }
-    out
+    redact_text(&out)
 }
 
 /// Replace id-like path segments so a request path is safe to show: strips the
@@ -314,60 +398,150 @@ impl fmt::Display for Scrubbed<'_> {
     }
 }
 
+/// Adapts a formatting closure to `Display` and `Debug`.
+struct FmtFn<F>(F);
+
+impl<F: Fn(&mut fmt::Formatter<'_>) -> fmt::Result> fmt::Display for FmtFn<F> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        (self.0)(f)
+    }
+}
+
+impl<F: Fn(&mut fmt::Formatter<'_>) -> fmt::Result> fmt::Debug for FmtFn<F> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        (self.0)(f)
+    }
+}
+
+/// Render a `Debug` body (honouring `{:#?}`) and write the *whole* printed
+/// text through [`redact_text`]. Field-level scrubbing happens before Rust's
+/// escaping; this second layer scrubs what is actually printed, so escaping
+/// cannot turn a scrubbed field into a leak and the output is idempotent.
+pub(crate) fn write_scrubbed_debug(
+    f: &mut fmt::Formatter<'_>,
+    body: impl Fn(&mut fmt::Formatter<'_>) -> fmt::Result,
+) -> fmt::Result {
+    let body = FmtFn(body);
+    let text = if f.alternate() {
+        format!("{body:#?}")
+    } else {
+        format!("{body:?}")
+    };
+    f.write_str(&redact_text(&text))
+}
+
+/// Render a `Display` body and write the whole text through [`redact_text`].
+pub(crate) fn write_scrubbed_display(
+    f: &mut fmt::Formatter<'_>,
+    body: impl Fn(&mut fmt::Formatter<'_>) -> fmt::Result,
+) -> fmt::Result {
+    f.write_str(&redact_text(&FmtFn(body).to_string()))
+}
+
 fn is_word_boundary(bytes: &[u8], i: usize) -> bool {
     if i == 0 {
         return true;
     }
-    // A JSON escape such as `\n` directly before the key ends the previous word.
+    // A JSON escape such as `\n` directly before the word ends the previous word.
     if i >= 2 && bytes[i - 2] == b'\\' && matches!(bytes[i - 1], b'n' | b'r' | b't') {
         return true;
     }
     !(bytes[i - 1].is_ascii_alphanumeric() || bytes[i - 1] == b'_' || bytes[i - 1] == b'-')
 }
 
+/// Bytes that end an unquoted labelled value or a scheme credential.
 fn is_value_end(byte: u8) -> bool {
-    byte.is_ascii_whitespace() || matches!(byte, b'&' | b',' | b';' | b'"' | b'\'' | b')' | b'}')
+    byte.is_ascii_whitespace()
+        || matches!(byte, b'&' | b',' | b';' | b'"' | b'\'' | b')' | b'}' | b']')
+}
+
+/// Bytes that may begin a scheme credential (token68 and common token forms).
+fn is_credential_start(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~' | b'+' | b'/')
 }
 
 fn is_base64(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || matches!(byte, b'/' | b'+' | b'=')
 }
 
-/// Span `[from, to)` of `bytes` to redact when a secret starts at `i`.
-fn find_span(bytes: &[u8], lower: &[u8], i: usize) -> Option<(usize, usize)> {
+/// Span `[from, to)` of `input` to redact when a secret starts at `i`.
+fn find_span(input: &str, lower: &[u8], i: usize) -> Option<(usize, usize)> {
+    let bytes = input.as_bytes();
     if !bytes[i].is_ascii_alphanumeric() {
         return None;
     }
     if let Some(span) = identifier_span(bytes, i) {
         return Some(span);
     }
-    if !is_word_boundary(bytes, i) {
-        return None;
-    }
     for key in LINE_KEYS {
         if lower[i..].starts_with(key.as_bytes()) {
-            if let Some(span) = value_span(bytes, i + key.len(), true) {
+            if let Some(span) = value_span(input, i + key.len(), true) {
                 return Some(span);
             }
         }
     }
     for key in SECRET_KEYS {
         if lower[i..].starts_with(key.as_bytes()) {
-            if let Some(span) = value_span(bytes, i + key.len(), false) {
+            if let Some(span) = value_span(input, i + key.len(), false) {
                 return Some(span);
             }
         }
     }
-    for scheme in ["bearer ", "basic "] {
-        if lower[i..].starts_with(scheme.as_bytes()) {
-            let start = i + scheme.len();
-            let end = scan_until(bytes, start, is_value_end);
-            if end > start {
-                return Some((start, end));
-            }
+    scheme_span(input, lower, i)
+}
+
+/// Credential after an authentication scheme starting at `i`.
+///
+/// Any run of whitespace (Unicode, newlines and `\n`/`\t` escapes included)
+/// separates the scheme from its credential. A token credential runs to the
+/// next delimiter; a parameter-list credential runs to the end of the line; a
+/// quoted credential follows the quoted-value rules.
+fn scheme_span(input: &str, lower: &[u8], i: usize) -> Option<(usize, usize)> {
+    let bytes = input.as_bytes();
+    if !is_word_boundary(bytes, i) {
+        return None;
+    }
+    for auth in AUTH_SCHEMES {
+        if !lower[i..].starts_with(auth.name.as_bytes()) {
+            continue;
         }
+        let after = i + auth.name.len();
+        let start = skip_ws(input, after);
+        if start == after || start >= bytes.len() {
+            continue;
+        }
+        if let Some((depth, open)) = quote_at(bytes, start) {
+            let from = open + 1;
+            let end = quoted_value_end(input, from, bytes[open], depth);
+            if end > from {
+                return Some((from, end));
+            }
+            continue;
+        }
+        if !is_credential_start(bytes[start]) {
+            continue;
+        }
+        if auth.prose_word && is_prose_word(bytes, start) {
+            continue;
+        }
+        let end = if auth.params {
+            scan_until(bytes, start, |b| b == b'\n' || b == b'\r')
+        } else {
+            scan_until(bytes, start, is_value_end)
+        };
+        return Some((start, end));
     }
     None
+}
+
+/// A short all-lowercase word followed by whitespace, punctuation or the end.
+fn is_prose_word(bytes: &[u8], start: usize) -> bool {
+    let end = scan_until(bytes, start, |b| !b.is_ascii_lowercase());
+    end > start
+        && end - start < 16
+        && (end == bytes.len()
+            || bytes[end].is_ascii_whitespace()
+            || matches!(bytes[end], b'.' | b',' | b')' | b'!' | b'?'))
 }
 
 /// Access-key IDs and STS session tokens, recognized by shape alone.
@@ -399,20 +573,52 @@ fn identifier_span(bytes: &[u8], i: usize) -> Option<(usize, usize)> {
     None
 }
 
-/// Skip ASCII whitespace (newlines included) and the JSON escapes `\n`, `\r`
-/// and `\t` written as two characters.
-fn skip_ws(bytes: &[u8], mut p: usize) -> usize {
+/// Skip whitespace (Unicode, newlines included) and escaped whitespace at any
+/// escape depth: `\n`, `\r`, `\t`, JSON ` ` and Rust `\u{2003}` forms,
+/// also with doubled backslashes (`\\t`). `p` must be a char boundary.
+fn skip_ws(input: &str, mut p: usize) -> usize {
+    let bytes = input.as_bytes();
     loop {
-        if p < bytes.len() && bytes[p].is_ascii_whitespace() {
-            p += 1;
-        } else if p + 1 < bytes.len()
-            && bytes[p] == b'\\'
-            && matches!(bytes[p + 1], b'n' | b'r' | b't')
-        {
-            p += 2;
-        } else {
-            return p;
+        if bytes.get(p) == Some(&b'\\') {
+            let (_, after) = skip_backslashes(bytes, p);
+            let Some(next) = escaped_whitespace_end(input, after) else {
+                return p;
+            };
+            p = next;
+            continue;
         }
+        match input[p..].chars().next() {
+            Some(c) if c.is_whitespace() => p += c.len_utf8(),
+            _ => return p,
+        }
+    }
+}
+
+/// End of an escape body at `p` (just after its backslashes) that encodes
+/// whitespace: `n`, `r`, `t`, `uXXXX` or `u{X..}` naming a whitespace char.
+fn escaped_whitespace_end(input: &str, p: usize) -> Option<usize> {
+    let bytes = input.as_bytes();
+    match *bytes.get(p)? {
+        b'n' | b'r' | b't' => Some(p + 1),
+        b'u' => {
+            let (digits, end) = if bytes.get(p + 1) == Some(&b'{') {
+                let close = p + 2 + input.get(p + 2..)?.find('}')?;
+                (input.get(p + 2..close)?, close + 1)
+            } else {
+                (input.get(p + 1..p + 5)?, p + 5)
+            };
+            if digits.is_empty()
+                || digits.len() > 6
+                || !digits.bytes().all(|b| b.is_ascii_hexdigit())
+            {
+                return None;
+            }
+            let code = u32::from_str_radix(digits, 16).ok()?;
+            char::from_u32(code)
+                .filter(|c| c.is_whitespace())
+                .map(|_| end)
+        }
+        _ => None,
     }
 }
 
@@ -440,11 +646,14 @@ fn quote_at(bytes: &[u8], at: usize) -> Option<(usize, usize)> {
 ///
 /// Accepts `key=value`, `key: value`, `"key": "value"`, `key => value` and the
 /// same inside escaped JSON (`\"key\":\"value\"`), with any whitespace
-/// (including newlines) around the separator.
-fn value_span(bytes: &[u8], after_key: usize, whole_line: bool) -> Option<(usize, usize)> {
-    let mut pos = skip_ws(bytes, after_key);
+/// (including newlines) around the separator. Once a label and separator are
+/// found, a value that is not cleanly terminated is hidden to the end of the
+/// input.
+fn value_span(input: &str, after_key: usize, whole_line: bool) -> Option<(usize, usize)> {
+    let bytes = input.as_bytes();
+    let mut pos = skip_ws(input, after_key);
     if let Some((_, key_quote)) = quote_at(bytes, pos) {
-        pos = skip_ws(bytes, key_quote + 1);
+        pos = skip_ws(input, key_quote + 1);
     }
     if pos >= bytes.len() || !matches!(bytes[pos], b'=' | b':') {
         return None;
@@ -453,7 +662,7 @@ fn value_span(bytes: &[u8], after_key: usize, whole_line: bool) -> Option<(usize
     if bytes.get(pos) == Some(&b'>') {
         pos += 1;
     }
-    let mut value_at = skip_ws(bytes, pos);
+    let mut value_at = skip_ws(input, pos);
     if whole_line && quote_at(bytes, value_at).is_none() {
         // An empty header value must not swallow the next header line; only a
         // quoted value may start on a later line.
@@ -468,18 +677,42 @@ fn value_span(bytes: &[u8], after_key: usize, whole_line: bool) -> Option<(usize
     if value_at >= bytes.len() {
         return None;
     }
-    let (start, end) = if let Some((depth, open)) = quote_at(bytes, value_at) {
+    if let Some((depth, open)) = quote_at(bytes, value_at) {
         let start = open + 1;
-        (start, quoted_value_end(bytes, start, bytes[open], depth))
-    } else if whole_line {
-        (
-            value_at,
-            scan_until(bytes, value_at, |b| b == b'\n' || b == b'\r'),
-        )
-    } else {
-        (value_at, scan_until(bytes, value_at, is_value_end))
-    };
-    (end > start).then_some((start, end))
+        let end = quoted_value_end(input, start, bytes[open], depth);
+        return (end > start).then_some((start, end));
+    }
+    if whole_line {
+        let end = scan_until(bytes, value_at, |b| b == b'\n' || b == b'\r');
+        return (end > value_at).then_some((value_at, end));
+    }
+    unquoted_value_span(input, value_at)
+}
+
+/// An unquoted value: a token ending at whitespace, `&`, `,`, `;`, `)`, `}`,
+/// `]` or the end. A value cut short by a quote (plain or escaped) is trusted
+/// only when that quote closes cleanly; otherwise it is hidden to the end.
+fn unquoted_value_span(input: &str, start: usize) -> Option<(usize, usize)> {
+    let bytes = input.as_bytes();
+    let mut end = start;
+    while end < bytes.len() {
+        if is_value_end(bytes[end]) {
+            break;
+        }
+        if bytes[end] == b'\\' && quote_at(bytes, end).is_some() {
+            break;
+        }
+        end += 1;
+    }
+    if end == start {
+        return None;
+    }
+    if let Some((depth, quote_index)) = quote_at(bytes, end) {
+        if !closes_cleanly(input, quote_index + 1, bytes[quote_index], depth) {
+            return Some((start, bytes.len()));
+        }
+    }
+    Some((start, end))
 }
 
 /// End (exclusive) of a quoted value that starts at `start`.
@@ -488,10 +721,11 @@ fn value_span(bytes: &[u8], after_key: usize, whole_line: bool) -> Option<(usize
 /// plain JSON, 1 for JSON embedded in a string (`\"`), and so on. In plain
 /// text a quote preceded by an odd number of backslashes is escaped; in an
 /// escaped context only a quote preceded by exactly `escape_depth` backslashes
-/// closes the value. An unterminated value, or text glued to the closing
-/// quote, makes the end uncertain, so the span then runs to the end of the
-/// input (hiding too much is the safe error).
-fn quoted_value_end(bytes: &[u8], start: usize, quote: u8, escape_depth: usize) -> usize {
+/// closes the value. An unterminated value, or a closing quote that is not
+/// followed by a structural delimiter ([`closes_cleanly`]), makes the end
+/// uncertain, so the span then runs to the end of the input.
+fn quoted_value_end(input: &str, start: usize, quote: u8, escape_depth: usize) -> usize {
+    let bytes = input.as_bytes();
     let mut p = start;
     while p < bytes.len() {
         if bytes[p] == b'\\' {
@@ -506,12 +740,20 @@ fn quoted_value_end(bytes: &[u8], start: usize, quote: u8, escape_depth: usize) 
                 };
                 if closes {
                     let end = if escape_depth == 0 { p } else { run_start };
-                    return end_after_close(bytes, end, p, quote, escape_depth);
+                    return if closes_cleanly(input, p + 1, quote, escape_depth) {
+                        end
+                    } else {
+                        bytes.len()
+                    };
                 }
                 p += 1;
             }
         } else if bytes[p] == quote && escape_depth == 0 {
-            return end_after_close(bytes, p, p, quote, escape_depth);
+            return if closes_cleanly(input, p + 1, quote, 0) {
+                p
+            } else {
+                bytes.len()
+            };
         } else {
             p += 1;
         }
@@ -519,44 +761,37 @@ fn quoted_value_end(bytes: &[u8], start: usize, quote: u8, escape_depth: usize) 
     bytes.len()
 }
 
-/// Validate what follows a closing quote at `quote_index`; `end` is the span end
-/// if the value really closes there.
-fn end_after_close(bytes: &[u8], end: usize, quote_index: usize, quote: u8, depth: usize) -> usize {
-    let after = quote_index + 1;
-    if after >= bytes.len() || is_close_delimiter(bytes[after], quote) {
-        return end;
-    }
-    if depth == 0 {
-        // `"abc"def"`: stray text glued to the quote. Take everything up to the
-        // next delimiter, keeping a final quote so the output is stable.
-        let stop = scan_until(bytes, after, |b| {
-            b.is_ascii_whitespace() || matches!(b, b',' | b'}' | b']' | b';' | b'&' | b')')
-        });
-        if stop > after && bytes[stop - 1] == quote {
-            return stop - 1;
+/// Whether a value whose closing `quote` (at `escape_depth`) ends just before
+/// `p` is cleanly terminated: after optional whitespace comes `,`, `}`, `]`,
+/// `;`, `)` (as in a `Debug` `Some("...")`) or the end of the input, possibly
+/// after the quotes that close enclosing strings (an escaped quote of lower
+/// depth, or at depth 0 a quote of the other kind). Anything else is glued
+/// text and makes the end uncertain.
+fn closes_cleanly(input: &str, mut p: usize, quote: u8, escape_depth: usize) -> bool {
+    let bytes = input.as_bytes();
+    let mut depth = escape_depth;
+    let mut quote = quote;
+    loop {
+        p = skip_ws(input, p);
+        if p >= bytes.len() || matches!(bytes[p], b',' | b'}' | b']' | b';' | b')') {
+            return true;
         }
+        let (run, after) = skip_backslashes(bytes, p);
+        if after < bytes.len() && is_quote(bytes[after]) {
+            let encloses = if depth > 0 {
+                run < depth
+            } else {
+                run == 0 && bytes[after] != quote
+            };
+            if encloses {
+                depth = run;
+                quote = bytes[after];
+                p = after + 1;
+                continue;
+            }
+        }
+        return false;
     }
-    bytes.len()
-}
-
-fn is_close_delimiter(byte: u8, quote: u8) -> bool {
-    byte != quote
-        && (byte.is_ascii_whitespace()
-            || matches!(
-                byte,
-                b',' | b'}'
-                    | b']'
-                    | b';'
-                    | b'&'
-                    | b')'
-                    | b':'
-                    | b'\\'
-                    | b'<'
-                    | b'>'
-                    | b'|'
-                    | b'"'
-                    | b'\''
-            ))
 }
 
 fn scan_until(bytes: &[u8], start: usize, stop: impl Fn(u8) -> bool) -> usize {
@@ -567,9 +802,200 @@ fn scan_until(bytes: &[u8], start: usize, stop: impl Fn(u8) -> bool) -> usize {
     p
 }
 
+/// Adversarial diagnostics shared by the wrapper tests of every module (all
+/// secrets synthetic): `(input, exact redact_text output, substrings that
+/// must never survive any diagnostic path)`.
+#[cfg(test)]
+pub(crate) const ADVERSARIAL: &[(&str, &str, &[&str])] = &[
+    // Review #4467 finding 1: an apostrophe in URL userinfo, plain and in
+    // the JSON-escaped `:\/\/` form.
+    (
+        "dial https://FAKEUSR1:pa'FAKEPW1@logs.amazonaws.com/ failed",
+        "dial https://[REDACTED]@logs.amazonaws.com/ failed",
+        &["FAKEUSR1", "FAKEPW1"],
+    ),
+    (
+        r#"{"url":"https:\/\/FAKEUSR2:pa'FAKEPW2@logs.amazonaws.com\/x"}"#,
+        r#"{"url":"https:\/\/[REDACTED]@logs.amazonaws.com\/x"}"#,
+        &["FAKEUSR2", "FAKEPW2"],
+    ),
+    // Finding 2: glued text after the closing quote, then a whitespace
+    // continuation.
+    (
+        r#"{"password":"aa"tail" LEAK-REST"}"#,
+        r#"{"password":"[REDACTED]"#,
+        &["\"tail", "LEAK-REST"],
+    ),
+    // Finding 3 (#4494): several spaces after Bearer and Basic.
+    (
+        "Bearer  FAKE-BEARER-TWO-SPACES",
+        "Bearer  [REDACTED]",
+        &["FAKE-BEARER-TWO-SPACES"],
+    ),
+    (
+        "Basic  RkFLRTpNVUxUSVNQQUNF",
+        "Basic  [REDACTED]",
+        &["RkFLRTpNVUxUSVNQQUNF"],
+    ),
+    // Quotes, backslashes and several `@` in userinfo.
+    (
+        r#"https://FAKEUSR5:"FAKEPW5"@h.example/p"#,
+        "https://[REDACTED]@h.example/p",
+        &["FAKEUSR5", "FAKEPW5"],
+    ),
+    (
+        r#"https://FAKEUSR6:a\b\"FAKEPW6@h.example"#,
+        "https://[REDACTED]@h.example",
+        &["FAKEUSR6", "FAKEPW6"],
+    ),
+    (
+        "ftp://FAKEUSR7@mid:FAKEPW7@h.example:21/",
+        "ftp://[REDACTED]@h.example:21/",
+        &["FAKEUSR7", "FAKEPW7"],
+    ),
+    (
+        "see 'https://FAKEUSR8:FAKEPW8@h.example' now",
+        "see 'https://[REDACTED]@h.example' now",
+        &["FAKEUSR8", "FAKEPW8"],
+    ),
+    // No `/` ends the authority, so everything up to the last `@` goes.
+    (
+        r#"{"u":"https://h.example","mail":"a@b.example"}"#,
+        r#"{"u":"https://[REDACTED]@b.example"}"#,
+        &[],
+    ),
+    // Schemes: any case, tabs, mixed runs, newlines, `\t` escapes, Unicode
+    // spaces and quoted credentials.
+    (
+        "sent bearer\t\tFAKEBEAR9, done",
+        "sent bearer\t\t[REDACTED], done",
+        &["FAKEBEAR9"],
+    ),
+    (
+        "BASIC   FAKEBASIC10",
+        "BASIC   [REDACTED]",
+        &["FAKEBASIC10"],
+    ),
+    (
+        "Bearer \t  FAKEBEAR35",
+        "Bearer \t  [REDACTED]",
+        &["FAKEBEAR35"],
+    ),
+    (
+        "Bearer\n  FAKEBEAR14",
+        "Bearer\n  [REDACTED]",
+        &["FAKEBEAR14"],
+    ),
+    (
+        r"Bearer\tFAKEBEAR15",
+        r"Bearer\t[REDACTED]",
+        &["FAKEBEAR15"],
+    ),
+    (
+        "Bearer \"FAKEBEAR16\"",
+        "Bearer \"[REDACTED]\"",
+        &["FAKEBEAR16"],
+    ),
+    (
+        "Token \u{2003}ghp_FAKETOKEN13 used",
+        "Token \u{2003}[REDACTED] used",
+        &["FAKETOKEN13"],
+    ),
+    (
+        "Digest username=\"bob\", response=\"FAKEDIGEST11\"\nnext: 1",
+        "Digest [REDACTED]\nnext: 1",
+        &["FAKEDIGEST11"],
+    ),
+    (
+        "AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/20260101/us-east-1/s3/aws4_request, \
+         SignedHeaders=host, Signature=FAKESIG12",
+        "AWS4-HMAC-SHA256 [REDACTED]",
+        &["AKIAIOSFODNN7EXAMPLE", "FAKESIG12"],
+    ),
+    (
+        r#"{"msg":"auth failed: Basic  RkFLRTpGQUtFMzY="}"#,
+        r#"{"msg":"auth failed: Basic  [REDACTED]"}"#,
+        &["RkFLRTpGQUtFMzY="],
+    ),
+    // Glued tails with comma, semicolon, whitespace and newline continuations.
+    (
+        r#"{"password":"aa"FAKEG17 , FAKEG17B"}"#,
+        r#"{"password":"[REDACTED]"#,
+        &["FAKEG17"],
+    ),
+    (
+        r#"{"password":"aa"FAKEG28; FAKEG28B"}"#,
+        r#"{"password":"[REDACTED]"#,
+        &["FAKEG28"],
+    ),
+    (
+        r#"password="aa" FAKEG18; rest"#,
+        r#"password="[REDACTED]"#,
+        &["FAKEG18"],
+    ),
+    (
+        "{\"password\":\"aa\"\nFAKEG25\"}",
+        "{\"password\":\"[REDACTED]",
+        &["FAKEG25"],
+    ),
+    (
+        r#"token=abc"FAKEG21 tail"#,
+        "token=[REDACTED]",
+        &["FAKEG21"],
+    ),
+    ("token=abc'FAKEG22", "token=[REDACTED]", &["FAKEG22"]),
+    (
+        r#"{\"password\":\"aa\"FAKEG23\"}"#,
+        r#"{\"password\":\"[REDACTED]"#,
+        &["FAKEG23"],
+    ),
+    (
+        r#"{\"token\":\"aa\" FAKEG24\"}"#,
+        r#"{\"token\":\"[REDACTED]"#,
+        &["FAKEG24"],
+    ),
+    (
+        "password: it's FAKEAPOS29",
+        "password: [REDACTED]",
+        &["FAKEAPOS29"],
+    ),
+    // Cleanly terminated values keep the text around them.
+    (
+        "{\"password\": \"FAKEV26\" ,\n \"user\": \"bob\"}",
+        "{\"password\": \"[REDACTED]\" ,\n \"user\": \"bob\"}",
+        &["FAKEV26"],
+    ),
+    (
+        "token='FAKEV33',next=1",
+        "token='[REDACTED]',next=1",
+        &["FAKEV33"],
+    ),
+    (
+        "token=FAKEM31&password=FAKEM32",
+        "token=[REDACTED]&password=[REDACTED]",
+        &["FAKEM31", "FAKEM32"],
+    ),
+    (
+        r"password=FAKEBS30\\x rest",
+        "password=[REDACTED] rest",
+        &["FAKEBS30"],
+    ),
+    (
+        "x-amz-security-token:\tFAKESTS34",
+        "x-amz-security-token:\t[REDACTED]",
+        &["FAKESTS34"],
+    ),
+    (
+        "retry nextToken=FAKENEXT36 later",
+        "retry nextToken=[REDACTED] later",
+        &["FAKENEXT36"],
+    ),
+];
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fmt;
 
     const KEY_ID: &str = "AKIAIOSFODNN7EXAMPLE";
     const SECRET: &str = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY";
@@ -621,7 +1047,7 @@ mod tests {
             ),
             (
                 "session_token='abc123def' done".to_string(),
-                "session_token='[REDACTED]' done",
+                "session_token='[REDACTED]",
             ),
             (
                 "https://h/p?X-Amz-Signature=deadbeef&X-Amz-Expires=60".to_string(),
@@ -802,11 +1228,11 @@ mod tests {
                 "never-closed",
                 r#"{"password":"[REDACTED]"#,
             ),
-            // Text glued to the closing quote.
+            // Text glued to the closing quote: the end is uncertain, hide to the end.
             (
                 r#"{"password":"aa"tail-leak"}"#,
                 "tail-leak",
-                r#"{"password":"[REDACTED]"}"#,
+                r#"{"password":"[REDACTED]"#,
             ),
             // `=>` separator and a header on a later line.
             (
@@ -936,6 +1362,125 @@ mod tests {
         }
         for name in ["content-type", "host", "x-amz-request-id", "content-length"] {
             assert!(!hides_header_value(name), "{name}");
+        }
+    }
+
+    #[test]
+    fn adversarial_inputs_redact_exactly_and_stably() {
+        for &(input, expected, leaks) in ADVERSARIAL {
+            let out = redact_text(input);
+            assert_eq!(out, expected, "{input:?}");
+            let stable = [out, snippet(input, 400), Scrubbed(input).to_string()];
+            for shown in &stable {
+                for leak in leaks {
+                    assert!(
+                        !shown.contains(leak),
+                        "{input:?} leaked {leak:?}: {shown:?}"
+                    );
+                }
+                assert_eq!(&redact_text(shown), shown, "not idempotent: {input:?}");
+            }
+            let debug = format!("{:?}", Scrubbed(input));
+            for leak in leaks {
+                assert!(!debug.contains(leak), "{input:?} leaked {leak:?}: {debug}");
+            }
+        }
+    }
+
+    #[test]
+    fn scheme_credentials_need_a_credential_after_the_whitespace() {
+        for text in [
+            "Bearer",
+            "Bearer   ",
+            "Bearer ,next",
+            "Bearer <token>",
+            "basic\t",
+            "Bearer [REDACTED]",
+            "Digest [REDACTED]",
+        ] {
+            assert_eq!(redact_text(text), text, "{text:?}");
+        }
+        // Any case, any whitespace run, one redaction per credential.
+        for name in [
+            "Bearer",
+            "bearer",
+            "BEARER",
+            "Basic",
+            "bAsIc",
+            "NTLM",
+            "Negotiate",
+        ] {
+            for gap in [" ", "  ", "\t", " \t ", "\n", "\u{a0}"] {
+                let text = format!("{name}{gap}RkFLRS1DUkVE more");
+                let out = redact_text(&text);
+                assert_eq!(out, format!("{name}{gap}{REDACTED} more"), "{text:?}");
+                assert_eq!(redact_text(&out), out);
+            }
+        }
+    }
+
+    #[test]
+    fn prose_and_harmless_text_is_kept() {
+        for text in [
+            "The security token included in the request is invalid",
+            "the service returned a pagination token it had already returned",
+            "pagination failed: nextToken must be a string, got integer",
+            "Verify AWS credentials: aws configure list",
+            "userinfo (credentials) in the URL is not allowed",
+            "https://host.example/?mail=a@b",
+            "message digest mismatch",
+        ] {
+            assert_eq!(redact_text(text), text, "{text:?}");
+        }
+    }
+
+    #[test]
+    fn ambiguous_text_is_over_redacted_rather_than_leaked() {
+        for (input, expected) in [
+            ("a basic check failed", "a basic [REDACTED] failed"),
+            ("failed to negotiate TLS", "failed to negotiate [REDACTED]"),
+            (
+                "session_token='abc123def' done",
+                "session_token='[REDACTED]",
+            ),
+            ("password: it's", "password: [REDACTED]"),
+            ("x mytoken=abc y", "x mytoken=[REDACTED] y"),
+        ] {
+            let out = redact_text(input);
+            assert_eq!(out, expected, "{input:?}");
+            assert_eq!(redact_text(&out), out);
+        }
+    }
+
+    #[test]
+    fn whole_output_scrubbing_wrappers_are_stable() {
+        struct Leaky<'a>(&'a str);
+        impl fmt::Debug for Leaky<'_> {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                write_scrubbed_debug(f, |f| {
+                    f.debug_struct("Leaky").field("raw", &self.0).finish()
+                })
+            }
+        }
+        impl fmt::Display for Leaky<'_> {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                write_scrubbed_display(f, |f| f.write_str(self.0))
+            }
+        }
+        for &(input, _, leaks) in ADVERSARIAL {
+            // The raw field is formatted unscrubbed: only the whole-output
+            // pass stands between it and the printed text.
+            let leaky = Leaky(input);
+            for shown in [
+                format!("{leaky:?}"),
+                format!("{leaky:#?}"),
+                leaky.to_string(),
+            ] {
+                for leak in leaks {
+                    assert!(!shown.contains(leak), "{input:?} leaked {leak:?}: {shown}");
+                }
+                assert_eq!(redact_text(&shown), shown, "not idempotent: {input:?}");
+            }
         }
     }
 }

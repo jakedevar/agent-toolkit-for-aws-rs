@@ -21,7 +21,7 @@ use crate::endpoint::{
 };
 use crate::env::{non_empty, Env};
 use crate::error::AwsError;
-use crate::redact::snippet;
+use crate::redact::{snippet, write_scrubbed_debug, Scrubbed};
 use crate::retry::RetryPolicy;
 use crate::transport::{SigningScope, Timeouts};
 
@@ -173,7 +173,10 @@ pub fn resolve_endpoint(
 }
 
 /// Caller-controlled inputs to [`ClientConfig::resolve`].
-#[derive(Debug, Clone, Copy, Default)]
+///
+/// The strings are unvalidated, so `Debug` scrubs them (an endpoint flag may
+/// carry URL userinfo).
+#[derive(Clone, Copy, Default)]
 pub struct ClientSettings<'a> {
     /// Region from a flag, if any.
     pub region: Option<&'a str>,
@@ -183,6 +186,19 @@ pub struct ClientSettings<'a> {
     pub retry: RetryPolicy,
     /// Connect and read timeouts.
     pub timeouts: Timeouts,
+}
+
+impl fmt::Debug for ClientSettings<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write_scrubbed_debug(f, |f| {
+            f.debug_struct("ClientSettings")
+                .field("region", &self.region.map(Scrubbed))
+                .field("endpoint", &self.endpoint.map(Scrubbed))
+                .field("retry", &self.retry)
+                .field("timeouts", &self.timeouts)
+                .finish()
+        })
+    }
 }
 
 /// Everything needed to address, authenticate and pace requests to one service.
@@ -526,5 +542,33 @@ mod tests {
             ..defaults
         };
         assert!(resolve("logs", &bad_endpoint, &MapEnv::new()).is_err());
+    }
+
+    #[test]
+    fn client_settings_debug_scrubs_unvalidated_strings() {
+        let settings = ClientSettings {
+            region: Some("token=FAKE-REGION-TOKEN"),
+            endpoint: Some("https://FAKEUSR:pa'FAKEPW@logs.amazonaws.com/"),
+            ..ClientSettings::default()
+        };
+        for shown in [format!("{settings:?}"), format!("{settings:#?}")] {
+            for leak in ["FAKE-REGION-TOKEN", "FAKEUSR", "FAKEPW"] {
+                assert!(!shown.contains(leak), "{leak} leaked: {shown}");
+            }
+            assert!(
+                shown.contains("https://[REDACTED]@logs.amazonaws.com/"),
+                "{shown}"
+            );
+            assert!(
+                shown.contains("retry") && shown.contains("timeouts"),
+                "{shown}"
+            );
+            assert_eq!(crate::redact::redact_text(&shown), shown);
+        }
+        let empty = format!("{:?}", ClientSettings::default());
+        assert!(
+            empty.contains("region: None") && empty.contains("endpoint: None"),
+            "{empty}"
+        );
     }
 }

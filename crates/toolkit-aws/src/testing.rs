@@ -14,6 +14,7 @@ use std::time::Duration;
 use crate::credentials::{Credentials, CredentialsProvider};
 use crate::endpoint::HostResolver;
 use crate::error::AwsError;
+use crate::redact::{write_scrubbed_debug, Scrubbed};
 use crate::retry::Sleeper;
 use crate::transport::{HttpRequest, HttpResponse, Signer, SigningScope, Transport};
 
@@ -118,15 +119,17 @@ pub struct FakeProvider {
 
 impl fmt::Debug for FakeProvider {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let outcome = match &self.outcome {
-            Ok(_) => "Ok([REDACTED])".to_string(),
-            Err(error) => format!("Err({error:?})"),
-        };
-        f.debug_struct("FakeProvider")
-            .field("name", &self.name)
-            .field("outcome", &format_args!("{outcome}"))
-            .field("calls", &self.calls.get())
-            .finish()
+        write_scrubbed_debug(f, |f| {
+            let outcome = match &self.outcome {
+                Ok(_) => "Ok([REDACTED])".to_string(),
+                Err(error) => format!("Err({error:?})"),
+            };
+            f.debug_struct("FakeProvider")
+                .field("name", &Scrubbed(self.name))
+                .field("outcome", &format_args!("{outcome}"))
+                .field("calls", &self.calls.get())
+                .finish()
+        })
     }
 }
 
@@ -414,5 +417,14 @@ mod tests {
             FakeProvider::missing("m").load().unwrap_err(),
             AwsError::NoCredentials
         );
+    }
+
+    #[test]
+    fn fake_provider_debug_scrubs_its_name() {
+        let provider = FakeProvider::missing("token=FAKE-PROVIDER-NAME");
+        for shown in [format!("{provider:?}"), format!("{provider:#?}")] {
+            assert!(!shown.contains("FAKE-PROVIDER-NAME"), "{shown}");
+            assert!(shown.contains("FakeProvider"), "{shown}");
+        }
     }
 }
