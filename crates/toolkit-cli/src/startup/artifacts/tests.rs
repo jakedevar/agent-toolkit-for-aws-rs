@@ -186,7 +186,7 @@ fn loads_reports_python_line_and_column() {
 
 #[test]
 fn loads_decodes_surrogate_pairs_and_replaces_a_lone_surrogate() {
-    assert_eq!(json(r#""😀""#), Json::string("\u{1f600}"));
+    assert_eq!(json(r#""\ud83d\ude00""#), Json::string("\u{1f600}"));
     assert_eq!(json(r#""\ud800x""#), Json::string("\u{fffd}x"));
 }
 
@@ -204,17 +204,20 @@ fn dumps_matches_python_formatting() {
     let value = json(r#"{"b": [1, 2.0, "é\n"], "a": {}, "c": []}"#);
     assert_eq!(
         dumps(&value, None, false),
-        r#"{"b": [1, 2.0, "é\n"], "a": {}, "c": []}"#
+        r#"{"b": [1, 2.0, "\u00e9\n"], "a": {}, "c": []}"#
     );
     assert_eq!(
         dumps(&value, None, true),
-        r#"{"a": {}, "b": [1, 2.0, "é\n"], "c": []}"#
+        r#"{"a": {}, "b": [1, 2.0, "\u00e9\n"], "c": []}"#
     );
     assert_eq!(
         dumps(&json(r#"{"a": [1, {"b": null}]}"#), Some(2), false),
         "{\n  \"a\": [\n    1,\n    {\n      \"b\": null\n    }\n  ]\n}"
     );
-    assert_eq!(dumps(&Json::string("\u{1f600}"), None, false), r#""😀""#);
+    assert_eq!(
+        dumps(&Json::string("\u{1f600}"), None, false),
+        r#""\ud83d\ude00""#
+    );
 }
 
 // ---- JSONC stripping ----------------------------------------------------------
