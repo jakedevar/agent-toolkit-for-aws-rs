@@ -22,9 +22,9 @@ use super::result::OpResult;
 const TOKEN: &str = "CALLERTOKEN";
 const HOSTILE: &str = "REVIEW_SENTINEL\u{1b}[2J\r\n\u{202e}FORGED_REPORT";
 /// [`HOSTILE`] as a text report shows it (`safe_text`).
-const SHOWN: &str = r"REVIEW_SENTINEL\x1b[2J\r\n‮FORGED_REPORT";
+const SHOWN: &str = "REVIEW_SENTINEL\\x1b[2J\\r\\n\x5cu202eFORGED_REPORT";
 /// [`HOSTILE`] as a `json.dumps` report shows it (`ensure_ascii`).
-const SHOWN_JSON: &str = r"REVIEW_SENTINEL\u001b[2J\r\n‮FORGED_REPORT";
+const SHOWN_JSON: &str = "REVIEW_SENTINEL\\u001b[2J\\r\\n\x5cu202eFORGED_REPORT";
 /// [`SHOWN`] inside a Python `repr` (a caller string nested in a list or
 /// dict that the legacy text prints with `str()`), which doubles backslashes.
 const SHOWN_REPR: &str = r"REVIEW_SENTINEL\\x1b[2J\\r\\n\\u202eFORGED_REPORT";
@@ -107,19 +107,21 @@ enum Step {
     Key(String),
 }
 
+/// A caller leaf: its path and the escaping it is owed.
+type Leaf = (Vec<Step>, Kind);
+
 fn spec_of(op: &str) -> ArgSpec {
     RENDERER_ARGUMENTS
         .iter()
         .find(|(name, _)| *name == op)
-        .map(|(_, spec)| *spec)
-        .unwrap_or_else(|| panic!("renderer {op} has no ArgSpec"))
+        .map_or_else(|| panic!("renderer {op} has no ArgSpec"), |(_, spec)| *spec)
 }
 
 fn origin_of(spec: ArgSpec, key: &str) -> Origin {
-    spec.iter()
-        .find(|(name, _)| *name == key)
-        .map(|(_, origin)| *origin)
-        .unwrap_or_else(|| panic!("fixture key {key} is not in its ArgSpec"))
+    spec.iter().find(|(name, _)| *name == key).map_or_else(
+        || panic!("fixture key {key} is not in its ArgSpec"),
+        |(_, origin)| *origin,
+    )
 }
 
 fn with_step(path: &[Step], step: Step) -> Vec<Step> {
@@ -128,7 +130,7 @@ fn with_step(path: &[Step], step: Step) -> Vec<Step> {
     next
 }
 
-fn collect_leaves(value: &Json, kind: Kind, path: &[Step], out: &mut Vec<(Vec<Step>, Kind)>) {
+fn collect_leaves(value: &Json, kind: Kind, path: &[Step], out: &mut Vec<Leaf>) {
     match value {
         Json::Null => {}
         Json::String(_) | Json::Int(_) | Json::Float(_) | Json::Bool(_) => {
@@ -149,7 +151,7 @@ fn collect_leaves(value: &Json, kind: Kind, path: &[Step], out: &mut Vec<(Vec<St
 }
 
 /// Every caller leaf of an arguments object, by the spec's origins.
-fn collect_arguments(value: &Json, spec: ArgSpec, path: &[Step], out: &mut Vec<(Vec<Step>, Kind)>) {
+fn collect_arguments(value: &Json, spec: ArgSpec, path: &[Step], out: &mut Vec<Leaf>) {
     let Json::Object(pairs) = value else {
         panic!("arguments must be an object");
     };
@@ -240,7 +242,7 @@ fn describe(path: &[Step]) -> String {
 
 /// Every (renderer, fixture) pair with its caller leaves, after checking that
 /// the fixtures cover every renderer and every listed argument.
-fn fixture_leaves() -> Vec<(&'static str, Json, Vec<(Vec<Step>, Kind)>)> {
+fn fixture_leaves() -> Vec<(&'static str, Json, Vec<Leaf>)> {
     for renderer in RENDERERS {
         assert!(
             FIXTURES.iter().any(|(op, _)| op == renderer),
