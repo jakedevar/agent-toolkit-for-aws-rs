@@ -786,7 +786,7 @@ pub(crate) fn summary_lines(results: &[ClusterResult]) -> Vec<String> {
             diff
         }
     };
-    ordered.sort_by(|a, b| sort_key(*a).total_cmp(&sort_key(*b)));
+    ordered.sort_by(|a, b| sort_key(a).total_cmp(&sort_key(b)));
     for result in ordered {
         let safe_name = show(&result.cluster_name);
         let name: String = safe_name.chars().take(30).collect();

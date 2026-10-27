@@ -1,6 +1,8 @@
 //! Offline tests of the ElastiCache commands: fixtures only, no network, no
 //! AWS client, no wall clock.
 
+#![allow(clippy::items_after_statements)]
+
 use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};

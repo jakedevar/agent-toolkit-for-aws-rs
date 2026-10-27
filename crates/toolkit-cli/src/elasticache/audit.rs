@@ -622,11 +622,12 @@ pub fn format_report(result: &Audit) -> String {
         Audit::NotFound(message) => return format!("ERROR: {message}"),
         Audit::Report { info, findings } => (info, findings),
     };
-    let mut lines: Vec<String> = Vec::new();
-    lines.push("=".repeat(72));
-    lines.push("ElastiCache Security Audit Report".to_string());
-    lines.push("=".repeat(72));
-    lines.push(String::new());
+    let mut lines: Vec<String> = vec![
+        "=".repeat(72),
+        "ElastiCache Security Audit Report".to_string(),
+        "=".repeat(72),
+        String::new(),
+    ];
 
     let cache_type = info_text(info, "cache_type", "?");
     lines.push(format!("  Cache type:      {cache_type}"));
