@@ -8,9 +8,28 @@
 //! - [`read_regular_file`] reads a bounded UTF-8 text file only when the path
 //!   is a regular file and not a symbolic link. On Unix the opened handle's
 //!   device and inode must match the pre-open `lstat`, which closes the
-//!   check-then-open window: a file swapped for a link in between is refused
-//!   with [`PathError::Changed`] instead of being followed. Other platforms
-//!   keep the `lstat` check only.
+//!   check-then-open window **for the final path component**: a file swapped
+//!   for a link in between is refused with [`PathError::Changed`] instead of
+//!   being followed. Other platforms keep the `lstat` check only.
+//!
+//! # Threat model
+//!
+//! Static symbolic links are always refused, at any component below the
+//! root. These functions do **not** defend against concurrent mutation of
+//! the tree during a run. In particular the identity check covers only the
+//! final component: if an *ancestor* directory is renamed away and replaced
+//! with a symlink to an outside directory after a walk has listed it but
+//! before it is opened, the pathname-based `lstat`, open and `read_dir` all
+//! resolve through the swapped ancestor, the opened handle matches the
+//! `lstat` taken through the same swapped path, and outside content can be
+//! read. Defending against that requires a traversal anchored to verified
+//! directory handles (`openat`-style, no-follow per component), which needs a
+//! non-`std` dependency or `unsafe`; the toolkit does not take that on
+//! because renaming directories inside the user's own checkout while the tool
+//! runs is outside its model. Callers use only the public signatures here
+//! (`resolve_within`, `read_regular_file`) and the discovery entry point, so a
+//! later slice that needs adversarial containment can replace the
+//! implementation with a handle-anchored walker without an API change.
 
 use std::fmt;
 use std::fs;
@@ -140,23 +159,21 @@ pub fn resolve_within(root: &Path, relative: &str) -> Result<PathBuf, PathError>
     Ok(current)
 }
 
-/// Reads a UTF-8 text file of at most `max_bytes` bytes, refusing symbolic
-/// links and non-regular files.
+/// Opens a regular file for reading, refusing symbolic links and non-regular
+/// files, and returns the handle with its metadata.
+///
+/// This is the shared open step behind [`read_regular_file`] and the byte-exact
+/// synchronization commands (#4377), which must not impose a text size limit.
+/// On Unix the opened handle's device and inode must match the pre-open
+/// `lstat` (final component only; see the module threat model).
 ///
 /// # Errors
 ///
 /// Returns [`PathError::NotFound`], [`PathError::Symlink`],
-/// [`PathError::NotRegularFile`], [`PathError::Changed`] (identity mismatch
-/// after open, Unix), [`PathError::TooLarge`], [`PathError::NotUtf8`] or
+/// [`PathError::NotRegularFile`], [`PathError::Changed`] or
 /// [`PathError::Io`].
-pub fn read_regular_file(path: &Path, max_bytes: u64) -> Result<String, PathError> {
-    let to_error = |error: io::Error| {
-        if error.kind() == io::ErrorKind::NotFound {
-            PathError::NotFound(path.to_path_buf())
-        } else {
-            PathError::Io(error, path.to_path_buf())
-        }
-    };
+pub fn open_regular_file(path: &Path) -> Result<(fs::File, fs::Metadata), PathError> {
+    let to_error = |error: io::Error| io_error(path, error);
     let before = fs::symlink_metadata(path).map_err(to_error)?;
     if before.file_type().is_symlink() {
         return Err(PathError::Symlink(path.to_path_buf()));
@@ -169,6 +186,21 @@ pub fn read_regular_file(path: &Path, max_bytes: u64) -> Result<String, PathErro
     if !opened.is_file() || !same_file(&before, &opened) {
         return Err(PathError::Changed(path.to_path_buf()));
     }
+    Ok((file, opened))
+}
+
+/// Reads a UTF-8 text file of at most `max_bytes` bytes, refusing symbolic
+/// links and non-regular files.
+///
+/// # Errors
+///
+/// Returns [`PathError::NotFound`], [`PathError::Symlink`],
+/// [`PathError::NotRegularFile`], [`PathError::Changed`] (identity mismatch
+/// after open, Unix), [`PathError::TooLarge`], [`PathError::NotUtf8`] or
+/// [`PathError::Io`].
+pub fn read_regular_file(path: &Path, max_bytes: u64) -> Result<String, PathError> {
+    let (file, opened) = open_regular_file(path)?;
+    let to_error = |error: io::Error| io_error(path, error);
     if opened.len() > max_bytes {
         return Err(PathError::TooLarge {
             path: path.to_path_buf(),
@@ -186,6 +218,14 @@ pub fn read_regular_file(path: &Path, max_bytes: u64) -> Result<String, PathErro
         });
     }
     String::from_utf8(bytes).map_err(|_| PathError::NotUtf8(path.to_path_buf()))
+}
+
+fn io_error(path: &Path, error: io::Error) -> PathError {
+    if error.kind() == io::ErrorKind::NotFound {
+        PathError::NotFound(path.to_path_buf())
+    } else {
+        PathError::Io(error, path.to_path_buf())
+    }
 }
 
 #[cfg(unix)]

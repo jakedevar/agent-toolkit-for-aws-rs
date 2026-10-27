@@ -529,3 +529,298 @@ fn unreadable_skill_md_is_a_runtime_error_naming_the_file() {
     assert!(stderr(&output).contains("SKILL.md"));
     assert!(stderr(&output).contains("not valid UTF-8"));
 }
+
+// ---- manifests validate (#4375) ------------------------------------------
+
+fn write_file(root: &Path, relative: &str, content: &str) {
+    let path = root.join(relative);
+    fs::create_dir_all(path.parent().expect("fixture has a parent")).expect("create fixture dir");
+    fs::write(path, content).expect("write fixture");
+}
+
+/// A minimal valid repository: one plugin named `demo`, three marketplaces,
+/// one top-level skill.
+fn write_manifest_repo(root: &Path) {
+    let market = r#"{"name":"m","plugins":[{"name":"demo","source":"./plugins/demo"}]}"#;
+    write_file(root, ".claude-plugin/marketplace.json", market);
+    write_file(root, ".agents/plugins/marketplace.json", market);
+    write_file(root, ".cursor-plugin/marketplace.json", market);
+    let meta = r#"{"name":"demo","version":"1.0.0","description":"Demo."}"#;
+    write_file(root, "plugins/demo/.claude-plugin/plugin.json", meta);
+    write_file(
+        root,
+        "plugins/demo/.codex-plugin/plugin.json",
+        r#"{"name":"demo","version":"1.0.0","description":"Demo.","author":{},"interface":{}}"#,
+    );
+    write_file(
+        root,
+        "plugins/demo/.mcp.json",
+        r#"{"mcpServers":{"a":{"command":"tool"}}}"#,
+    );
+    let skill = "---\nname: demo-skill\ndescription: A description that is long enough.\n---\n";
+    write_file(root, "plugins/demo/skills/demo-skill/SKILL.md", skill);
+    write_file(
+        root,
+        "skills/group/top-skill/SKILL.md",
+        &skill.replace("demo-skill", "top-skill"),
+    );
+}
+
+#[test]
+fn manifests_validate_passes_on_a_valid_repository() {
+    let root = temp_root("manifests-ok");
+    write_manifest_repo(&root);
+    let output = run(&["manifests", "validate"], &root);
+    assert_eq!(code(&output), 0, "stderr: {}", stderr(&output));
+    assert_eq!(stderr(&output), "");
+    assert_eq!(
+        stdout(&output),
+        "Validating Claude Code marketplace: .claude-plugin/marketplace.json\n\
+         Validating Codex marketplace: .agents/plugins/marketplace.json\n\
+         Validating Cursor marketplace: .cursor-plugin/marketplace.json\n\
+         Validating plugin: demo\n\
+         Validating skill: skills/group/top-skill\n\
+         \n\
+         All validations passed.\n",
+        "ROOT defaults to the current directory"
+    );
+}
+
+#[test]
+fn manifests_validate_reports_errors_on_stderr_and_exits_one() {
+    let root = temp_root("manifests-fail");
+    write_manifest_repo(&root);
+    write_file(
+        &root,
+        "plugins/demo/.mcp.json",
+        r#"{"mcpServers":{"a":{}}}"#,
+    );
+    write_file(&root, "skills/group/top-skill/SKILL.md", "no frontmatter\n");
+
+    let output = run(
+        &["manifests", "validate", root.to_str().expect("utf-8 root")],
+        Path::new("/"),
+    );
+    assert_eq!(code(&output), 1);
+    assert!(stdout(&output).starts_with("Validating Claude Code marketplace: "));
+    assert!(!stdout(&output).contains("All validations passed."));
+    assert_eq!(
+        stderr(&output),
+        "  ERROR: MCP server 'a' is stdio but missing 'command'\n\
+         \x20 ERROR: Missing YAML frontmatter in skills/group/top-skill/SKILL.md\n\
+         error: Validation failed with 2 error(s).\n"
+    );
+}
+
+#[test]
+fn manifests_validate_plugin_selection_and_usage_errors() {
+    let root = temp_root("manifests-plugin");
+    write_manifest_repo(&root);
+    write_file(&root, ".claude-plugin/marketplace.json", "broken");
+    let root_arg = root.to_str().expect("utf-8 root");
+
+    let output = run(
+        &["manifests", "validate", root_arg, "--plugin", "demo"],
+        &root,
+    );
+    assert_eq!(code(&output), 0, "stderr: {}", stderr(&output));
+    assert_eq!(
+        stdout(&output),
+        "Validating plugin: demo\n\nAll validations passed.\n"
+    );
+
+    let output = run(
+        &["manifests", "validate", root_arg, "--plugin", "ghost"],
+        &root,
+    );
+    assert_eq!(code(&output), 1);
+    assert_eq!(stdout(&output), "");
+    assert_eq!(stderr(&output), "error: Plugin not found: ghost\n");
+
+    for args in [
+        vec!["manifests", "validate", "--plugin"],
+        vec!["manifests", "validate", "--json"],
+        vec!["manifests", "validate", "a", "b"],
+        vec!["manifests"],
+    ] {
+        let output = run(&args, &root);
+        assert_eq!(code(&output), 2, "{args:?}");
+        assert_eq!(stdout(&output), "");
+        assert!(
+            stderr(&output).starts_with("error: invalid arguments\n\nUsage:"),
+            "{args:?}"
+        );
+    }
+}
+
+#[test]
+fn manifests_validate_passes_on_the_real_repository_tree() {
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let output = run(
+        &[
+            "manifests",
+            "validate",
+            repo.to_str().expect("utf-8 repo path"),
+        ],
+        &repo,
+    );
+    assert_eq!(code(&output), 0, "stderr: {}", stderr(&output));
+    assert_eq!(stderr(&output), "");
+    let text = stdout(&output);
+    assert!(text.ends_with("\nAll validations passed.\n"), "{text}");
+    assert!(text.contains("Validating plugin: aws-core\n"));
+}
+
+#[cfg(unix)]
+#[test]
+fn manifests_validate_never_follows_symlinked_skill_files() {
+    use std::os::unix::fs::symlink;
+    let root = temp_root("manifests-link");
+    write_manifest_repo(&root);
+    let outside = temp_root("manifests-link-outside");
+    write_file(
+        &outside,
+        "SKILL.md",
+        "---\nname: linked-skill\ndescription: A description that is long enough.\n---\n",
+    );
+    fs::create_dir_all(root.join("skills/linked-skill")).expect("create dir");
+    symlink(
+        outside.join("SKILL.md"),
+        root.join("skills/linked-skill/SKILL.md"),
+    )
+    .expect("create symlink");
+    let output = run(&["manifests", "validate"], &root);
+    assert_eq!(code(&output), 1);
+    assert!(stderr(&output).contains(
+        "  ERROR: Cannot read skills/linked-skill/SKILL.md: symbolic links are not followed\n"
+    ));
+}
+
+// ---- spec validate (#4376) -------------------------------------------------
+
+const SPEC_PLUGIN_ID: &str = "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json";
+
+/// A minimal valid repository for `spec validate`: the vendored schemas plus
+/// one plugin `demo` with one skill.
+fn write_spec_repo(root: &Path) {
+    for name in ["plugin.schema.json", "mcp.schema.json"] {
+        let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tools/schemas/1.0.0")
+            .join(name);
+        let text = fs::read_to_string(source).expect("read vendored schema");
+        write_file(root, &format!("tools/schemas/1.0.0/{name}"), &text);
+    }
+    write_file(
+        root,
+        "plugins/demo/plugin.json",
+        &format!(r#"{{"$schema":"{SPEC_PLUGIN_ID}","name":"demo","version":"1.0.0"}}"#),
+    );
+    write_file(
+        root,
+        "plugins/demo/skills/demo-skill/SKILL.md",
+        "---\nname: demo-skill\ndescription: A description that is long enough.\n---\nBody\n",
+    );
+}
+
+#[test]
+fn spec_validate_passes_on_a_valid_repository() {
+    let root = temp_root("spec-ok");
+    write_spec_repo(&root);
+    let output = run(&["spec", "validate"], &root);
+    assert_eq!(code(&output), 0, "stderr: {}", stderr(&output));
+    assert_eq!(stderr(&output), "");
+    assert_eq!(
+        stdout(&output),
+        "Validating plugin: plugins/demo\n\
+         Validating skills\n\
+         \n\
+         All Agent Plugins v1.0.0 checks passed.\n",
+        "ROOT defaults to the current directory"
+    );
+}
+
+#[test]
+fn spec_validate_reports_findings_on_stderr_and_exits_one() {
+    let root = temp_root("spec-fail");
+    write_spec_repo(&root);
+    write_file(
+        &root,
+        "plugins/demo/plugin.json",
+        &format!(r#"{{"$schema":"{SPEC_PLUGIN_ID}","name":"demo","version":1}}"#),
+    );
+    write_file(&root, "plugins/demo/skills/demo-skill/SKILL.md", "plain\n");
+    let output = run(
+        &["spec", "validate", root.to_str().expect("utf-8 root")],
+        Path::new("/"),
+    );
+    assert_eq!(code(&output), 1);
+    assert_eq!(
+        stdout(&output),
+        "Validating plugin: plugins/demo\nValidating skills\n"
+    );
+    assert_eq!(
+        stderr(&output),
+        "  ERROR: plugins/demo/plugin.json: 1 is not of type 'string' (at version)\n\
+         \x20 ERROR: plugins/demo/skills/demo-skill/SKILL.md: missing or unterminated YAML frontmatter\n\
+         error: Spec validation failed with 2 error(s).\n"
+    );
+}
+
+#[test]
+fn spec_validate_missing_schemas_and_bad_arguments() {
+    let root = temp_root("spec-noschema");
+    fs::create_dir_all(root.join("plugins")).expect("create plugins");
+    let output = run(&["spec", "validate"], &root);
+    assert_eq!(code(&output), 1);
+    assert_eq!(stdout(&output), "");
+    assert!(
+        stderr(&output)
+            .starts_with("error: cannot read schema tools/schemas/1.0.0/plugin.schema.json: "),
+        "{}",
+        stderr(&output)
+    );
+
+    for args in [
+        vec!["spec", "validate", "a", "b"],
+        vec!["spec", "validate", "--plugin", "demo"],
+        vec!["spec"],
+    ] {
+        let output = run(&args, &root);
+        assert_eq!(code(&output), 2, "{args:?}");
+        assert_eq!(stdout(&output), "");
+        assert!(stderr(&output).starts_with("error: invalid arguments\n\nUsage:"));
+    }
+}
+
+#[test]
+fn spec_validate_passes_on_the_real_repository_tree() {
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let output = run(
+        &["spec", "validate", repo.to_str().expect("utf-8 repo path")],
+        &repo,
+    );
+    assert_eq!(code(&output), 0, "stderr: {}", stderr(&output));
+    assert_eq!(stderr(&output), "");
+    let text = stdout(&output);
+    assert!(
+        text.ends_with("\nAll Agent Plugins v1.0.0 checks passed.\n"),
+        "{text}"
+    );
+    assert!(text.contains("Validating plugin: plugins/aws-core\n"));
+}
+
+#[cfg(unix)]
+#[test]
+fn spec_validate_rejects_symlinks_under_plugins() {
+    use std::os::unix::fs::symlink;
+    let root = temp_root("spec-link");
+    write_spec_repo(&root);
+    symlink("plugin.json", root.join("plugins/demo/link.json")).expect("create symlink");
+    let output = run(&["spec", "validate"], &root);
+    assert_eq!(code(&output), 1);
+    assert_eq!(
+        stderr(&output),
+        "  ERROR: plugins/demo/link.json: symlinks are not allowed under plugins/\n\
+         error: Spec validation failed with 1 error(s).\n"
+    );
+}
