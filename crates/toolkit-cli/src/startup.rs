@@ -11,6 +11,8 @@
 //! | `startup artifacts` | `validate-artifacts.py` |
 //! | `startup emit-plan` | `emit-plan-json.py` |
 //! | `startup consent-audit` | `consent-disclosure-audit.py` |
+//! | `startup pricing-parity` | `check-bedrock-pricing-parity.py` |
+//! | `startup terraform-policy` | `validate-terraform-policy.py` (tf-best-practices) |
 //!
 //! Each prints the Python messages unchanged: findings go to stderr through
 //! [`Output::diagnostic`] and a failing run additionally ends with one
@@ -31,17 +33,21 @@ use crate::manifests::{read_failure, universal_newlines};
 mod artifacts;
 mod consent;
 mod model_ids;
+mod parity;
 mod plan;
 mod pricing;
 mod program;
+mod terraform;
 mod text;
 
 pub use artifacts::artifacts_command;
 pub use consent::consent_audit_command;
 pub use model_ids::model_id_lint_command;
+pub use parity::pricing_parity_command;
 pub use plan::emit_plan_command;
 pub use pricing::pricing_command;
 pub use program::program_artifacts_command;
+pub use terraform::terraform_policy_command;
 
 /// Largest artifact or plugin file the validators read (64 MiB).
 pub(crate) const MAX_ARTIFACT_BYTES: u64 = 64 * 1024 * 1024;

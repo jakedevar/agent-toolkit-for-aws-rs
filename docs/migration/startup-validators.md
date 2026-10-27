@@ -21,6 +21,8 @@ Issue #4399 handoff, not in this file.
 | `toolkit startup artifacts (--self-check \| --fixtures \| --run-dir DIR --skill NAME) [--plugin-root DIR] [--manifest FILE] [--baseline FILE] [--no-baseline] [--json]` | `.../scripts/validate-artifacts.py` (+ `scripts/artifact-contracts.json`, `artifact-contracts-baseline.json`, `scripts/contracts/*.schema.json`) and the migrated cases of `tests/test_validate_artifacts.py` | published artifact contracts (JSON examples in the schema documents plus two JSON Schemas) checked against run directories and the fixture goldens |
 | `toolkit startup emit-plan --migration-dir DIR [--plugin-root DIR] [--plugin-json FILE]` | `.../scripts/emit-plan-json.py` (and the byte-identical copy in `skills/heroku-to-aws/scripts`) and `tests/test_emit_plan_json.py` | copies validated cost figures of a finished GCP or Heroku run into `plan.json` for the web import; fail-open (`PLAN_OK` / `PLAN_SKIP`, exit 0) |
 | `toolkit startup consent-audit [--plugin-root DIR]` | `.../scripts/consent-disclosure-audit.py` and `tests/test_consent_disclosure_audit.py` | usage-API discovery sub-files (`skills/*/references/phases/discover/discover-*-api.md`) must not carry a blanket GET-only claim that omits a non-GET method their Capture Endpoint Table calls |
+| `toolkit startup pricing-parity [--plugin-root DIR]` | `.../scripts/check-bedrock-pricing-parity.py` | the Bedrock pricing split kept the data of the pre-split commit `883270642209` (read with `git show`); JSON report |
+| `toolkit startup terraform-policy DIR [--json FILE]` | `skills/tf-best-practices/scripts/validate-terraform-policy.py` and `test_validate_terraform_policy.py` | static policy checks on generated Terraform (ALB TLS, public RDS, public DB/admin ports, wildcard IAM, RDS/ElastiCache encryption), `POLICY_OK` / `POLICY_FAIL` |
 
 `--plugin-root` defaults to the current directory (the Python scripts defaulted
 to the directory they lived in; `mise` tasks already run in the plugin
@@ -262,15 +264,54 @@ the remainder below.
 29. **`--plugin-root`** defaults to the current directory (the Python default was the
     plugin the script lived in).
 
+### Intentional changes of `startup pricing-parity`
+
+30. **The Python-behaviour step is not ported.** The script `exec`d the pre-split and the
+    current `bedrock_pricing.py` and compared their parser, fallback table and lookup
+    functions. That needs a Python runtime, so the report carries
+    `"pricing_behavior": "not checked: needs the Python bedrock_pricing.py modules"` and
+    `static_fallback_keys` is dropped. The `llm-to-bedrock` slice that converts the module
+    carries that comparison as a Rust test; until then this one step has no replacement
+    (recorded in the handoff, nothing is deleted).
+31. **Failure reporting.** A failed assertion is `error: <message>` (exit 1) with the Python
+    message; assertions that had none say `assertion failed: <what>`. Pre-split files are
+    read with `git show` (needs `git` and the pre-split commit in the history); a missing
+    commit is an error naming it. `--plugin-root` defaults to the current directory.
+32. **Matchers instead of `re`.** Heading, metadata (`\s*(.+)` backtracking included), data
+    row, accuracy band and embeddings-strip rules are hand-written; `\d` is ASCII-only.
+
+### Intentional changes of `startup terraform-policy`
+
+33. **Command shape.** `toolkit startup terraform-policy DIR [--json FILE]`. A missing
+    directory or an unwritable `--json` path is exit 2 with the `POLICY_FAIL` line; a failing
+    verdict keeps the Python stderr lines (`POLICY_FAIL \| checks=...`, one line per
+    violation) and adds `error: N policy violation(s)`.
+34. **File discovery.** `.tf` files are found by a directory walk that does not follow
+    links; a linked `.tf` file is a runtime error and a non-UTF-8 file is `cannot read`
+    (Python raised a traceback). Order and relative paths are Python's (sorted by path
+    components).
+35. **Matchers instead of `re`.** The HCL lexer is a direct port; every pattern
+    (`resource` headers, attribute reads, list reads, the IAM wildcard forms and the
+    approved-statement removal) is an exact hand-written matcher. `\d` in a port is
+    ASCII-only; an integer too large for `i128` compares as the maximum. The whole-internet
+    test follows `ipaddress.ip_network(cidr, strict=False).prefixlen == 0` for IPv4/IPv6
+    literals with `/0` (and `/0.0.0.0`), through the Rust address parsers.
+
 ## File membership (#4371 U-10)
 
-Of the eleven inventory rows with `slice == "startup-validators"`:
+Of the inventory rows with `slice == "startup-validators"` (manager rulings on the
+earlier open questions: `check-bedrock-pricing-parity.py` stays in this slice and is
+ported; `validate-terraform-policy.py` and its test are assigned to this slice):
 
-- Ported here: `validate-model-pricing.py`, `validate-startup-program-artifacts.py`,
-  `model-id-lint.py`, `validate-artifacts.py` (belong: all four are plugin-health
-  scripts in `plugins/aws-startup-advisor/scripts`; `artifact-contracts.json`,
-  `artifact-contracts-baseline.json` and `scripts/contracts/*.schema.json` are
-  its data and stay in place, read by the Rust command).
+- Ported: `validate-model-pricing.py`, `validate-startup-program-artifacts.py`,
+  `model-id-lint.py`, `validate-artifacts.py` (`artifact-contracts.json`,
+  `artifact-contracts-baseline.json` and `scripts/contracts/*.schema.json` are its
+  data and stay in place), `emit-plan-json.py` (with `tests/test_emit_plan_json.py`;
+  the byte-identical copy under `skills/heroku-to-aws/scripts` is the same command),
+  `consent-disclosure-audit.py` (with its test),
+  `check-bedrock-pricing-parity.py` (all data assertions; the Python-behaviour step is
+  item 30) and `skills/tf-best-practices/scripts/validate-terraform-policy.py` (with
+  `test_validate_terraform_policy.py`).
 - Remainder, still read-only evidence, not deleted, callers untouched (#4378):
   - `validate-migration-report.py` (2434 lines) and
     `test_validate_migration_report_decision_core.py` (449) — the multi-thousand-line
@@ -280,23 +321,6 @@ Of the eleven inventory rows with `slice == "startup-validators"`:
     ported (`toolkit startup artifacts`), but only the unit and real-tree cases are
     migrated; the ~25 document-specific mutation cases listed under the
     `artifacts` parity table remain read-only evidence for a follow-up.
-  - `emit-plan-json.py` (658) with `tests/test_emit_plan_json.py` (158).
-  - `consent-disclosure-audit.py` (460) with `tests/test_consent_disclosure_audit.py`
-    (853): regex-offset heavy (sentence splitting, soft-wrap line mapping); a
-    faithful port needs the same matcher approach as above plus careful
-    offset tests, so it was left whole rather than ported partially.
-  - `check-bedrock-pricing-parity.py` (305): **does not belong as a port.** It is
-    a one-off proof for the pre-split commit `883270642209` — it runs `git show`
-    against that SHA and *executes* `bedrock_pricing.py` (old and new) through
-    `exec`, i.e. it needs a Python runtime and Python module behaviour. Proposed
-    disposition for the manager: retire it with `bedrock_pricing.py`'s own
-    conversion (the `llm-to-bedrock` slice) and keep its data-only assertions
-    (cache sections, vendored byte parity) as a Rust test there.
-  - `skills/tf-best-practices/scripts/validate-terraform-policy.py` (1029) and
-    `test_validate_terraform_policy.py` (844): **questionable membership.** The
-    Issue scope is `plugins/aws-startup-advisor/scripts/*.py`; these two live
-    under the `tf-best-practices` skill. Left for the manager's U-10 ruling
-    (they may belong with a Terraform/skills slice).
 
 ## Not in scope
 
@@ -305,3 +329,4 @@ No Python deleted, no CI/`mise.toml` change (#4378), no change to
 adapter or `.rsi/*`. `manifests.rs` gained visibility changes only (`is_py_space`, `py_splitlines`,
 `py_eq` are `pub(crate)`); `spec.rs` made its private `engine` module
 `pub(crate)` so the artifact validator reuses the bounded pattern engine.
+`startup/text.rs` gained `Tok::Either` and `Pattern::find_starts` for the consent audit.

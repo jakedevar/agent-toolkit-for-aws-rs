@@ -42,6 +42,8 @@ Usage:
                             [--no-baseline] [--json]
   toolkit startup emit-plan --migration-dir DIR [--plugin-root DIR] [--plugin-json FILE]
   toolkit startup consent-audit [--plugin-root DIR]
+  toolkit startup pricing-parity [--plugin-root DIR]
+  toolkit startup terraform-policy DIR [--json FILE]
   toolkit --version
   toolkit help
 
@@ -91,6 +93,19 @@ Commands:
                 carries a blanket GET-only claim although its Capture Endpoint
                 Table calls another HTTP method and the claim does not name
                 that method in an exception sentence.
+  startup pricing-parity
+                Prove the Bedrock pricing-cache split of the plugin at --plugin-root
+                DIR (default: the current directory) preserved the data of the
+                pre-split commit (read with git show): sections, metadata,
+                embedding rows, lookup keys, representative estimates, byte-equal
+                vendored copies and neutral consumers. Prints a JSON report; the
+                Python-behaviour comparison of bedrock_pricing.py is not run.
+  startup terraform-policy
+                Static policy checks on the generated Terraform in DIR: ALB TLS
+                posture, public RDS, public database and admin ports in inline
+                security-group ingress, wildcard IAM, RDS and ElastiCache
+                encryption. --json FILE writes the verdict. Violations are
+                POLICY_FAIL lines on stderr and exit status 1.
   startup artifacts
                 Validate migration artifacts against the contracts the skills
                 publish (JSON examples in the schema documents plus the JSON
@@ -352,6 +367,20 @@ pub const COMMANDS: &[CommandSpec] = &[
         value_flags: &["--plugin-root"],
         max_positionals: 0,
         handler: startup::consent_audit_command,
+    },
+    CommandSpec {
+        path: &["startup", "pricing-parity"],
+        flags: &[],
+        value_flags: &["--plugin-root"],
+        max_positionals: 0,
+        handler: startup::pricing_parity_command,
+    },
+    CommandSpec {
+        path: &["startup", "terraform-policy"],
+        flags: &[],
+        value_flags: &["--json"],
+        max_positionals: 1,
+        handler: startup::terraform_policy_command,
     },
 ];
 

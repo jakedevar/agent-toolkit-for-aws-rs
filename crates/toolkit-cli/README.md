@@ -332,3 +332,29 @@ non-`GET` method, each blanket GET-only claim in the file must name that method 
 exception sentence; an unrecognised table shape, an unreadable file and a plugin with no
 such file all fail closed. Findings and setup problems go to stderr (`error: ...` summary,
 exit 1); success prints `consent-disclosure audit: OK (N discovery sub-file(s) checked)`.
+
+### startup pricing-parity
+
+```
+toolkit startup pricing-parity [--plugin-root DIR]
+```
+
+Replacement for `check-bedrock-pricing-parity.py`. Compares the canonical Bedrock pricing
+cache and the remaining GCP/Azure caches with the pre-split commit `883270642209`
+(`git show`, so the history must contain it) and prints a JSON report with sorted keys on
+success. A failed assertion is `error: <message>` (exit 1). The step that executed the old
+and new `bedrock_pricing.py` is not ported (the report says `pricing_behavior: not
+checked`).
+
+### startup terraform-policy
+
+```
+toolkit startup terraform-policy DIR [--json FILE]
+```
+
+Replacement for `validate-terraform-policy.py` and its test. Reads every `*.tf` file below
+DIR and checks the ALB TLS posture, public RDS, database and admin ports opened to
+`0.0.0.0/0` or `::/0` in inline security-group ingress, wildcard IAM `Allow` statements and
+RDS/ElastiCache encryption. Every rule is fail-open on ambiguity. `POLICY_OK | checks=...`
+on stdout (exit 0); `POLICY_FAIL | ...` lines on stderr (exit 1); a missing directory or an
+unwritable `--json` file is exit 2. `--json FILE` writes the verdict document.
