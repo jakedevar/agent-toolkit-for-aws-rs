@@ -59,3 +59,5 @@ rust-migration-health (health_anomaly), pm-safety-net (hourly resume), terminal 
 - Kaizen: #4577 satisfied by e7200c3 (in integration head; close on land). Worker 30281162 on #4670 (repeatable value flags) from 9df52366.
 - Round 7 candidates: #4380, #4402, #4403 (after accept), #4670.
 - 17:25Z: scoped 9047da8f on 9df52366 OK (1929 tests), AgentCheckLandingCandidate ok. GATE = 9df52366 / source_session_id 0c85ed62. Noted on #4575.
+- 17:35Z: #4403 repair be2fc335 (#4684/#4685 fixed; scoped 9aa04a2f ok). Re-review #4682 worker fa0ba246, pinned via explicit sandbox_source
+  (review_of fell back to rolling because handoff said "final SHA:"; withdrew dd0f5cba; harness kaizen Rsi #4694). Rule: for re-reviews pass sandbox_source commit explicitly.
