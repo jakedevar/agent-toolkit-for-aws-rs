@@ -181,3 +181,5 @@ Friction: #4727, Rsi #4694, Rsi #4704
   ENQUEUED #4575 round-12 f6fac27de0ae4ff0c737c319a1c270635ddb2217 (check ok), queue entry 5060cb2e-eafa-4224-88fd-c925f01d94ce seq 2887, generic_cargo, derive_filters. Reported up. Queue wakes me once with outcome; NO sha_on_rolling wake.
   On landing: verify ancestry on origin/rolling, confirm publication closed #4575 + COVERS; close by hand per close-on-land lists (#4575 notes seq 21/23/25/27/29 + this file) only what publication left open. Report outcome up (GM wants it as #4452 acceptance evidence).
   After landing, integration rounds base on new origin/rolling; next gate = round 13.
+- 21:43Z: #4408 repair b848f1d81b02fdcf31902e50d29ceffc7724ede7 (fa5c7051; 6 findings fixed, tests/repair.rs, 64MiB scratch bound; scoped 1d1ef937 ok base dcd47147, 1822). New tests not run vs parent -> reviewer to prove non-vacuity.
+  Re-review round 2 #4744 worker e76fe901 (Codex sol high, pinned, op d1362ea8).
