@@ -83,3 +83,8 @@ rust-migration-health (health_anomaly), pm-safety-net (hourly resume), terminal 
   scoped b4cf6561 on dcd47147 OK (2163 tests), check ok. GATE = dcd47147 / source_session_id 2c1dd570. Noted on #4575 with full close-on-land additions.
   #4403 repair2 6ea6a0d7 alive at f7d80466 (fixing clippy dead-code), handoff pending.
 - 18:20Z: #4403 repair2 e201e143 (classify Rejected/KnownRow/WellFormedUnknown before any price source; scoped d57d9204 ok). Re-review round 3 on #4682 worker ca7b456a (pinned).
+- 18:25Z: #4407 impl a4f27c60 (0e783946; scoped acbf2d92 ok) -> review #4708 worker 5d1b11b4. #4383 impl 1e7e237e (9a7fd936; scoped e5997be7 ok) -> review #4709 worker 8617f4c3.
+  Rulings: #4383 no live client (NoLiveClient) OK; fetch_bedrock_agent.py retired only after live binding #4706, then #4415.
+  TIME-BOUND: #4707 lifecycle registry 45-day window ends 2026-11-05; `lint:model-staleness --strict` fails from 2026-11-06 until refreshed (needs live AWS docs research).
+  New slice #4384 (deployable-model discovery) worker e8a85e85 from dcd47147.
+  Round 9 candidates: #4403 (if #4682 accepts e201e143), #4407 a4f27c60, #4383 1e7e237e (both need `repeatable_flags: &[]` on their rows).
