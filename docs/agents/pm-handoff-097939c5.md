@@ -99,3 +99,6 @@ rust-migration-health (health_anomaly), pm-safety-net (hourly resume), terminal 
 - 18:48Z: #4407 repair 9d0e54c8 (79398972; LineIndex linear scan + PythonScan oracle). Re-review #4708 worker e79425fe (pinned).
 - 18:55Z: #4383 ACCEPT 58e314de (#4709, 055ac3ad). #4403 repair3 14c60071 (dd4c1327; geo-independent is_respelling; scoped 57b628af ok) -> re-review round 4 #4682 worker 93154385 (pinned).
   Round 9 (continue_from 2c1dd570, base dcd47147): #4383 58e314de + #4407 (if #4708 accepts 9d0e54c8) + #4403 (if #4682 accepts 14c60071); new rows need `repeatable_flags: &[]`.
+- 19:00Z: #4407 ACCEPT 9d0e54c8 (#4708, e79425fe). Round 9 worker f14baf2c (continue_from 2c1dd570): #4383 58e314de + #4407 9d0e54c8 onto dcd47147 + repeatable_flags on their rows. #4403 -> round 10 if #4682 accepts.
+  New slice #4408 (fixture assertion programs) worker c65e27aa from dcd47147.
+  Close-on-land additions: #4383 #4709 #4712 #4713 #4407 #4708 #4714.
