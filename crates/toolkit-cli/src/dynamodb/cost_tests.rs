@@ -958,7 +958,7 @@ fn invalid_vector_indexes_are_each_reported_with_the_python_message() {
         one(&two_dims, ""),
         vec!["T: indexes on attribute 'Emb' declare differing dimensions [256, 1024] — DynamoDB rejects this ('Attributes cannot be redefined')"]
     );
-    let six = vec![
+    let six = [
         r#"{"index_name":"I","vector_attribute":"E","dimensions":8,"distance_function":"COSINE"}"#;
         6
     ]

@@ -182,7 +182,7 @@ fn mode_presets_fill_only_missing_values() {
     // standard, a missing/null mode and an unknown mode are left alone.
     for source in [
         r#"{"mode":"standard"}"#,
-        r#"{}"#,
+        r"{}",
         r#"{"mode":null}"#,
         r#"{"mode":"quik"}"#,
         r#"{"mode":7}"#,
@@ -263,7 +263,7 @@ fn refused_changes_keep_the_published_exit_status() {
     // `_die` paths exit 2.
     for (change, expected) in [
         (r#"{"foo":1,"bar":2}"#, "Got keys: foo, bar. In the --apply-change file, each entry in \"ops\" needs"),
-        (r#"{}"#, "Got keys: <none>. "),
+        (r"{}", "Got keys: <none>. "),
         (
             r#"{"ops":[{"op":"replace","path":"","value":1}]}"#,
             "--apply-change op is missing a non-empty \"path\": {'op': 'replace', 'path': '', 'value': 1}. ",
@@ -301,7 +301,7 @@ fn refused_changes_keep_the_published_exit_status() {
         r#"{"ops":["not-an-object"]}"#,
         r#"{"ops":[{"op":"add","path":7,"value":1}]}"#,
         r#"{"ops":"nope"}"#,
-        r#"[1,2]"#,
+        r"[1,2]",
     ] {
         let error = ops(r#"{"l":[1],"o":{}}"#, change).expect_err(change);
         assert_eq!(error.exit_code(), 1, "{change}");
@@ -369,7 +369,7 @@ fn fingerprint_defaults_and_table_order() {
         bare,
         sha256_hex(br#"[["T", null, null, [], false, null]]"#)[..12]
     );
-    let empty = schema_fingerprint(&json(r#"{}"#)).expect("fingerprint");
+    let empty = schema_fingerprint(&json(r"{}")).expect("fingerprint");
     assert_eq!(empty, sha256_hex(b"[]")[..12]);
     // Tables are sorted by name, so declaration order is irrelevant.
     let one = schema_fingerprint(&json(
@@ -438,7 +438,7 @@ fn deltas_compare_headlines_with_sorted_keys() {
             r#"{"extrapolated_monthly_usd":5}"#,
             r#"{"extrapolated_monthly_usd":null}"#,
         ),
-        (r#"{"extrapolated_monthly_usd":5}"#, r#"{}"#),
+        (r#"{"extrapolated_monthly_usd":5}"#, r"{}"),
     ] {
         let deltas = compute_deltas(&json(now), Some(&json(before))).expect("deltas");
         assert_eq!(
