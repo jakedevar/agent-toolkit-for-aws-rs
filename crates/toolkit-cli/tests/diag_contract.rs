@@ -436,3 +436,160 @@ fn every_command_has_hostile_variants() {
         assert!(count > 0, "{:?}", spec.path);
     }
 }
+
+/// The hostile directory name used by the stdout-report fixtures below: every
+/// control and bidi class in the name, and a newline that would forge a line.
+const HOSTILE_DIR_NAME: &str = "d\u{1b}[31m\u{7}\r\u{202e}gpj\nerror: injected line";
+
+fn run_ok(args: &[String], cwd: &Path) -> (Run, BTreeSet<String>) {
+    let run = spawn_toolkit(args, cwd);
+    let mut found = BTreeSet::new();
+    for (label, bytes) in [("stdout", &run.stdout), ("stderr", &run.stderr)] {
+        violations(
+            std::str::from_utf8(bytes).expect("UTF-8 output"),
+            label,
+            args,
+            &mut found,
+        );
+    }
+    (run, found)
+}
+
+fn emit_plan_args(dir: &Path) -> Vec<String> {
+    vec![
+        "startup".to_string(),
+        "emit-plan".to_string(),
+        "--migration-dir".to_string(),
+        dir.display().to_string(),
+    ]
+}
+
+/// The generic spawn loop writes only invalid payloads, so a command that
+/// reaches its success or status report only for VALID state never printed
+/// anything hostile there (#4665, #4666). These fixtures are minimally valid
+/// per command and carry hostile text where the command reads or echoes it.
+/// Each also asserts the command reached the branch under test, so a fixture
+/// that stops matching cannot turn the test into a vacuous pass.
+#[test]
+fn emit_plan_status_lines_escape_paths_and_omit_payload_values() {
+    let scratch = Scratch::new();
+
+    // PLAN_SKIP branch: the status file's `owning_skill` is payload text. The
+    // JSON escapes decode to a fake secret followed by U+202E (or controls).
+    let skip_dir = scratch.0.join("skip");
+    fs::create_dir_all(&skip_dir).expect("create skip dir");
+    for owning in [
+        format!("{SECRET}\\u202egpj.exe"),
+        format!("{SECRET}\\u001b\\u0007\\r\\nerror: injected line"),
+    ] {
+        let status = format!("{{\"owning_skill\": \"{owning}\", \"run_id\": \"test\"}}");
+        fs::write(skip_dir.join(".phase-status.json"), status).expect("write status");
+        let (run, found) = run_ok(&emit_plan_args(&skip_dir), &scratch.0);
+        let stdout = String::from_utf8_lossy(&run.stdout);
+        assert_eq!(run.status, Some(0), "{stdout}");
+        assert!(
+            stdout.starts_with("PLAN_SKIP | reason=owning_skill"),
+            "fixture must reach the PLAN_SKIP branch: {stdout:?}"
+        );
+        assert!(found.is_empty(), "{found:?}");
+    }
+    // An ordinary known skill id is still named, exactly as before.
+    fs::write(
+        skip_dir.join(".phase-status.json"),
+        r#"{"owning_skill": "AZURE_TO_AWS", "run_id": "test"}"#,
+    )
+    .expect("write status");
+    let (run, found) = run_ok(&emit_plan_args(&skip_dir), &scratch.0);
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        "PLAN_SKIP | reason=owning_skill 'AZURE_TO_AWS' has no web handoff yet\n"
+    );
+    assert!(found.is_empty(), "{found:?}");
+
+    // PLAN_OK branch: the migration directory's own name is caller text.
+    let ok_dir = scratch.0.join(HOSTILE_DIR_NAME);
+    fs::create_dir_all(&ok_dir).expect("create hostile dir");
+    fs::write(
+        ok_dir.join(".phase-status.json"),
+        r#"{"owning_skill": "GCP_TO_AWS", "run_id": "test"}"#,
+    )
+    .expect("write status");
+    fs::write(
+        ok_dir.join("estimation-infra.json"),
+        r#"{"projected_costs": {"aws_monthly_balanced": 100}}"#,
+    )
+    .expect("write estimate");
+    let (run, found) = run_ok(&emit_plan_args(&ok_dir), &scratch.0);
+    let stdout = String::from_utf8_lossy(&run.stdout);
+    assert_eq!(run.status, Some(0), "{stdout}");
+    assert!(
+        stdout.starts_with("PLAN_OK | path="),
+        "fixture must reach the PLAN_OK branch: {stdout:?}"
+    );
+    assert_eq!(stdout.lines().count(), 1, "one status line: {stdout:?}");
+    assert!(stdout.contains("\\u202E"), "{stdout:?}");
+    assert!(stdout.contains("\\nerror: injected line"), "{stdout:?}");
+    assert!(found.is_empty(), "{found:?}");
+    assert!(
+        ok_dir.join("plan.json").is_file(),
+        "the plan is still written"
+    );
+}
+
+/// `skills list` prints valid frontmatter (name and description) as listing
+/// data; bidi and invisible characters in it must be escaped, and a skill
+/// discovered only by its directory name (no usable frontmatter) is covered too.
+#[test]
+fn skills_list_escapes_bidi_in_valid_frontmatter_and_directory_names() {
+    let scratch = Scratch::new();
+    let root = scratch.0.join("skills-root");
+    let good = root.join("demo");
+    fs::create_dir_all(&good).expect("create skill dir");
+    fs::write(
+        good.join("SKILL.md"),
+        "---\nname: safe\u{202e}gpj.exe\ndescription: ordinary\u{200b}\u{feff}text\n---\nbody\n",
+    )
+    .expect("write skill");
+    let fallback = root.join("fall\u{202e}back\u{200b}dir");
+    fs::create_dir_all(&fallback).expect("create fallback dir");
+    fs::write(fallback.join("SKILL.md"), "no frontmatter at all\n").expect("write skill");
+
+    let args = vec![
+        "skills".to_string(),
+        "list".to_string(),
+        root.display().to_string(),
+    ];
+    let (run, found) = run_ok(&args, &scratch.0);
+    let stdout = String::from_utf8_lossy(&run.stdout);
+    assert_eq!(run.status, Some(0), "{stdout}");
+    assert!(
+        stdout.contains("safe\\u202Egpj.exe\tordinary\\u200B\\uFEFFtext\n"),
+        "valid frontmatter must be listed, escaped: {stdout:?}"
+    );
+    assert!(stdout.contains("fall\\u202Eback\\u200Bdir"), "{stdout:?}");
+    assert!(found.is_empty(), "{found:?}");
+}
+
+/// The new fixtures must be able to fail: the unescaped forms are flagged.
+#[test]
+fn the_stdout_fixtures_would_flag_the_unfixed_output() {
+    let args = vec!["startup".to_string(), "emit-plan".to_string()];
+    for text in [
+        "PLAN_SKIP | reason=owning_skill 'FAKE-SECRET-4639-AKIAZZZZZZZZZZZZZZZZ' has no web handoff yet\n",
+        "PLAN_OK | path=d\u{1b}[31m/plan.json | platform=GCP | scope=INFRA\n",
+        "PLAN_OK | path=d\nerror: injected line/plan.json\n",
+    ] {
+        let mut found = BTreeSet::new();
+        violations(text, "stdout", &args, &mut found);
+        assert!(!found.is_empty(), "{text:?}");
+    }
+    let skills = vec!["skills".to_string(), "list".to_string()];
+    let mut found = BTreeSet::new();
+    violations(
+        "safe\u{202e}gpj.exe\tordinary\n",
+        "stdout",
+        &skills,
+        &mut found,
+    );
+    assert!(!found.is_empty());
+}

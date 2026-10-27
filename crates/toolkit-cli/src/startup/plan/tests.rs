@@ -706,7 +706,16 @@ fn deterministic_skips_name_their_reason_and_drop_a_stale_plan() {
     write(&dir, ".phase-status.json", r#"{"owning_skill": ["x"]}"#);
     assert_eq!(
         skip_reason(&dir),
-        "owning_skill ['x'] has no web handoff yet"
+        "owning_skill (a list) has no web handoff yet"
+    );
+    write(
+        &dir,
+        ".phase-status.json",
+        r#"{"owning_skill": "SECRET-VALUE"}"#,
+    );
+    assert_eq!(
+        skip_reason(&dir),
+        "owning_skill (unrecognised string) has no web handoff yet"
     );
     write(
         &dir,
