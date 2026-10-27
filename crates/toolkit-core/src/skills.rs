@@ -139,9 +139,15 @@ fn is_skipped(name: &str) -> bool {
 }
 
 /// Enumerates skills under `root`, sorted by frontmatter name (directory name
-/// when the frontmatter has none), then by relative path. Every result stays
-/// inside `root`; symlinked directories are never followed and a symlinked
-/// `SKILL.md` is skipped instead of read.
+/// when the frontmatter has none), then by relative path. Reported paths are
+/// relative to `root`. Symlinks present in the tree are refused at any
+/// component: a symlinked directory is not followed and a symlinked `SKILL.md`
+/// is skipped instead of read.
+///
+/// This holds for a tree that is not being modified during the call. The walk
+/// does not defend against concurrent mutation (for example a listed directory
+/// swapped for a symlink to an outside directory mid-run); see the threat
+/// model in [`crate::paths`].
 ///
 /// # Errors
 ///
