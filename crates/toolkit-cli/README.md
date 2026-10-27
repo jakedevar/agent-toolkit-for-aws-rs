@@ -647,3 +647,46 @@ loopback only) is the working backend; the signed MCP fallback is ported behind
 the `toolkit-aws` seams but fails closed in this build (follow-up #4582). The
 parity table, the intentional differences and the secret-handling rules are in
 [docs/migration/asm-exec.md](../../docs/migration/asm-exec.md).
+
+## elasticache (#4392)
+
+`toolkit elasticache price | estimate-serverless | validate-input |
+validate-references | preflight | audit | dashboard` replace the nine
+ElastiCache skill scripts (`price_calculator.py`, `pricing.py`,
+`serverless_estimator.py`, `command_classifier.py`, `input_validator.py`,
+`validate_references.py`, `migration_preflight.py`, `security_audit.py`,
+`generate_dashboards.py`) with one Rust module. Value options accept
+`--flag VALUE` or `--flag=VALUE`; short options are not supported.
+
+- `price [--engine valkey|redis|memcached] [--mode serverless|node]
+  [--region R] [--data-gb N] [--ecpu-millions N | --ops-per-sec N]
+  [--avg-payload-kb N] [--node-type T] [--nodes N] [--ri-term TERM]
+  [--show-ri-options] [--extended-support]`: JSON estimate (or the reserved /
+  Extended Support text report). The region defaults to `AWS_REGION`,
+  `AWS_DEFAULT_REGION`, then `us-east-1`.
+- `estimate-serverless --input CLUSTERS.csv [--commandstats STATS.csv]
+  [--output FILE] [--json]`: serverless cost of provisioned clusters; writes the
+  CSV (and `.json` beside it), prints the summary.
+- `validate-input KEY=VALUE...`: checks `cache_name`, `replication_group_id`,
+  `subnet_id`, `security_group_id`, `region`, `engine_version`, `vpc_id`,
+  `kms_key_id` and `snapshot_name`; exit 1 with the problems listed, never the
+  rejected values.
+- `validate-references [--skill-dir DIR] [--verbose] [--quiet]`: reference-file
+  and script conventions of the skill directory (default `.`); exit 1 on a FAIL.
+- `preflight --host H [--port N] [--snapshot FILE] [--json]` and
+  `audit (--serverless NAME | --replication-group ID) [--describe FILE]
+  [--json]`: migration readiness and security posture, over a recorded snapshot
+  or describe file (exit 1 on a blocker or FAIL).
+- `dashboard (--serverless NAME | --replication-group ID) [--node-ids A,B]
+  [--no-dashboard] [--no-alarms] [--output FILE]` and the threshold options:
+  CloudFormation template with a CloudWatch dashboard and alarms.
+
+Prices come from `--pricing-csv FILE` / `--pricing FILE` (a pricing CSV) or
+`--pricing-json FILE` (the AWS bulk pricing JSON or the old compact cache): this
+build has no network, AWS or Redis client, so those inputs replace the live
+fetch, the `boto3` calls and the server connection, and a command that needs
+one without it is a usage error (exit 2) or, for `preflight` and `audit`, the
+scripts' own connection-failure result (exit 1). Text taken from inputs is
+escaped before it is printed (#4602). The parity table, the snapshot and
+describe formats, the intentional changes and the follow-ups are in
+[docs/migration/elasticache.md](../../docs/migration/elasticache.md).

@@ -31,11 +31,11 @@ use toolkit_core::ToolkitError;
 use crate::{Invocation, Output};
 
 mod acu;
-mod api;
-mod args;
+pub(crate) mod api;
+pub(crate) mod args;
 mod commitment;
 mod io;
-mod pyfmt;
+pub(crate) mod pyfmt;
 
 #[cfg(test)]
 mod tests;

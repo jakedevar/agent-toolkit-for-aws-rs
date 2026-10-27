@@ -29,6 +29,7 @@ pub mod asm_exec;
 mod aurora;
 mod bedrock_report;
 pub mod dynamodb;
+pub mod elasticache;
 pub mod manifests;
 mod msk;
 mod safe_text;
@@ -104,6 +105,27 @@ Usage:
       [--date-suffix YYYY-MM-DD] [--results-dir DIR]
   toolkit bedrock-report validate (--schema analysis|ingestion|eval|rewrite|delta-decisions FILE
       | --check-run-context SAVED_JSON --current CURRENT_JSON)
+  toolkit elasticache price [--engine valkey|redis|memcached] [--mode serverless|node]
+      [--region R] [--data-gb N] [--ecpu-millions N] [--ops-per-sec N]
+      [--node-type T] [--nodes N] [--ri-term TERM] [--avg-payload-kb N]
+      [--show-ri-options] [--extended-support] [--interactive]
+      (--pricing-csv FILE | --pricing-json FILE)
+  toolkit elasticache estimate-serverless --input FILE [--commandstats FILE]
+      [--output FILE] [--json] [--endpoint HOST]
+      (--pricing FILE | --pricing-json FILE)
+  toolkit elasticache validate-input [KEY=VALUE...]
+  toolkit elasticache validate-references [--skill-dir DIR] [--verbose] [--quiet]
+  toolkit elasticache preflight --host HOST [--port N] [--snapshot FILE] [--json]
+  toolkit elasticache audit (--serverless NAME | --replication-group ID)
+      [--describe FILE] [--json]
+  toolkit elasticache dashboard (--serverless NAME | --replication-group ID)
+      [--node-ids A,B] [--region R] [--sns-topic ARN] [--no-dashboard] [--no-alarms]
+      [--max-storage-gb N] [--storage-alarm-pct N] [--memory-threshold N]
+      [--engine-cpu-threshold N] [--replication-lag-threshold N]
+      [--hit-rate-threshold N] [--throttle-threshold N]
+      [--read-latency-threshold N] [--write-latency-threshold N]
+      [--ecpu-threshold N] [--evictions-threshold N]
+      [--new-connections-threshold N] [--output FILE]
   toolkit asm exec [--] COMMAND [ARG...]
   toolkit --version
   toolkit help
@@ -266,6 +288,19 @@ Commands:
                 run context (RUN_CONTEXT=match, or mismatch and MISMATCH
                 lines, exit 1). Findings never print values of the checked
                 file. See docs/migration/bedrock-report.md.
+  elasticache   ElastiCache cost, validation, audit and dashboard tools
+                (#4392). `price` estimates serverless and node-based cost,
+                reserved options and Extended Support surcharges;
+                `estimate-serverless` prices provisioned clusters from a
+                cluster CSV (optionally per-command stats); `validate-input`
+                checks identifiers before they reach a CLI command;
+                `validate-references` checks the skill's reference files;
+                `preflight` checks a Redis/Valkey source snapshot and `audit`
+                recorded describe responses; `dashboard` writes a
+                CloudFormation observability template. Prices are read from
+                --pricing-csv / --pricing-json (the AWS bulk pricing file):
+                this build has no AWS or Redis client. See
+                docs/migration/elasticache.md.
   asm exec      Replace every {{resolve:secretsmanager:ID[:SecretString[:KEY
                 [:STAGE]]]}} reference in COMMAND, its arguments and the
                 environment with the secret value, then run COMMAND with the
@@ -879,6 +914,69 @@ pub const COMMANDS: &[CommandSpec] = &[
         max_positionals: 1,
         passthrough: false,
         handler: bedrock_report::validate_command,
+    },
+    CommandSpec {
+        path: &["elasticache", "price"],
+        flags: elasticache::PRICE_FLAGS,
+        value_flags: elasticache::PRICE_VALUE_FLAGS,
+        strict_values: false,
+        max_positionals: 0,
+        passthrough: false,
+        handler: elasticache::price_command,
+    },
+    CommandSpec {
+        path: &["elasticache", "estimate-serverless"],
+        flags: elasticache::ESTIMATE_FLAGS,
+        value_flags: elasticache::ESTIMATE_VALUE_FLAGS,
+        strict_values: false,
+        max_positionals: 0,
+        passthrough: false,
+        handler: elasticache::estimate_serverless_command,
+    },
+    CommandSpec {
+        path: &["elasticache", "validate-input"],
+        flags: &[],
+        value_flags: &[],
+        strict_values: false,
+        max_positionals: usize::MAX,
+        passthrough: false,
+        handler: elasticache::validate_input_command,
+    },
+    CommandSpec {
+        path: &["elasticache", "validate-references"],
+        flags: elasticache::REFERENCES_FLAGS,
+        value_flags: elasticache::REFERENCES_VALUE_FLAGS,
+        strict_values: true,
+        max_positionals: 0,
+        passthrough: false,
+        handler: elasticache::validate_references_command,
+    },
+    CommandSpec {
+        path: &["elasticache", "preflight"],
+        flags: elasticache::PREFLIGHT_FLAGS,
+        value_flags: elasticache::PREFLIGHT_VALUE_FLAGS,
+        strict_values: false,
+        max_positionals: 0,
+        passthrough: false,
+        handler: elasticache::preflight_command,
+    },
+    CommandSpec {
+        path: &["elasticache", "audit"],
+        flags: elasticache::AUDIT_FLAGS,
+        value_flags: elasticache::AUDIT_VALUE_FLAGS,
+        strict_values: false,
+        max_positionals: 0,
+        passthrough: false,
+        handler: elasticache::audit_command,
+    },
+    CommandSpec {
+        path: &["elasticache", "dashboard"],
+        flags: elasticache::DASHBOARD_FLAGS,
+        value_flags: elasticache::DASHBOARD_VALUE_FLAGS,
+        strict_values: false,
+        max_positionals: 0,
+        passthrough: false,
+        handler: elasticache::dashboard_command,
     },
     CommandSpec {
         path: &["asm", "exec"],
