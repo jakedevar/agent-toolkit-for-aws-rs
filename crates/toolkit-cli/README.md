@@ -217,6 +217,52 @@ re-parse `argv`.
   other write or flush failure is `error: cannot write to stdout: <cause>` with
   exit 1 (previously such a failure exited 1 without a message).
 
+### Repeatable value flags (#4670)
+
+A plain value flag (`CommandSpec::value_flags`) keeps only the last value when it
+is repeated, so `--workload a --workload b` reads as `b`. That is not what a
+Python `argparse` option declared `action="append"` does. Declare such a flag in
+`CommandSpec::repeatable_flags` instead and read it with
+`Invocation::values_of("--name")`:
+
+```rust
+CommandSpec {
+    path: &["startup", "verify-model-path"],
+    flags: &[],
+    value_flags: &["--output"],
+    strict_values: true,
+    repeatable_flags: &["--workload"],
+    max_positionals: 1,
+    passthrough: false,
+    handler: verify_model_path,
+},
+// in the handler:
+let workloads: Vec<&str> = invocation.values_of("--workload").collect();
+```
+
+- Every row of `COMMANDS` carries the field; write `repeatable_flags: &[]` unless
+  the command has an `append` option. Nothing changes for a command that leaves it
+  empty: a repeated plain value flag still keeps its last value.
+- A repeatable flag is a value flag: `--name VALUE` and `--name=VALUE`, the same
+  usage error for a missing value, and with `strict_values: true` an empty value or
+  one starting with `-` is refused for each occurrence, not only the first. It need
+  not also appear in `value_flags` (listing it in both is allowed and still means
+  repeatable).
+- `values_of` returns every value in command-line order, duplicates kept (argparse
+  appends `--w a --w a` as `["a", "a"]`). It is empty when the flag is absent and
+  has one item for a single occurrence; for a plain value flag it has at most one
+  item, the last. `Invocation::value` still returns the last value of either kind.
+- The order is relative to the other occurrences of the same flag. Interleaved
+  switches, plain value flags and positionals do not move it (`Invocation::values`
+  holds one `(name, value)` entry per occurrence of a repeatable flag, in the order
+  they appeared).
+- Do not split one value on commas to emulate repetition: that changes the command
+  line (`--workload a,b`) and the empty-element behaviour. Where the Python option
+  also accepted a comma list, split each value yourself after `values_of`.
+- Values are caller text. Escape them with the `toolkit_core` diagnostic helpers
+  (or `Output::diagnostic`) before they reach a message, as for any other value flag
+  (see "Untrusted text in diagnostics").
+
 ## Shared library contracts (`toolkit-core`)
 
 All dependency-free; AWS or other service SDKs must never be added to this
