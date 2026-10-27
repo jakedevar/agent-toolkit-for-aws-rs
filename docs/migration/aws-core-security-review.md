@@ -160,3 +160,49 @@ steps per byte, and its work may grow at most fivefold when its input grows
 fourfold. The reported 100,002-byte input must stay under 400 steps per byte
 and produce its exact output. Separate tests cover the size cap and the depth
 cap. All existing exact-output, leak and idempotence tables are unchanged.
+
+## Addendum: SDK binding (#4463)
+
+The "SDK binding" decision above is now implemented as the non-default cargo
+feature `sdk` (`toolkit_aws::sdk`). The authoritative description, the
+dependency justifications and the test list are in `aws-core-contracts.md`
+("SDK adapter (feature `sdk`, #4463)"). Security-relevant points, per threat:
+
+- **T1 credentials**: credentials still enter only through the standard chain
+  (`aws-config` default chain), selected at most by the validated
+  `AWS_PROFILE`. The adapters hold credentials only as `Credentials`/`Secret`.
+  `SdkCredentialsProvider`, `SigV4Signer`, `SdkTransport` and `SdkRuntime`
+  print fixed, value-free `Debug`; no SDK value is formatted with `Debug`.
+  `credential_process` and SSO profiles are honoured, as boto3 does.
+  Running the configured process is standard chain behavior, not a new input.
+- **T2 logs and errors**: every SDK error (credential, signing, connector,
+  body read) is rendered through its `Display` chain (`DisplayErrorContext`)
+  into the redacting `AwsError` constructors and truncated. Tests feed
+  secret-bearing SDK messages and assert that nothing survives in `Display` or
+  `Debug`. `aws-sigv4` traces its inputs at `trace` level; the SDK's own
+  `Debug` for credentials redacts the secret, and this crate installs no
+  `tracing` subscriber.
+- **T3 endpoint / rebinding**: the residual from the #4467 addendum is
+  addressed for the SDK transport. Redirects are never followed (hyper; a 3xx
+  is returned to the client as a response). No proxy is configured. Only
+  `https://` URLs without userinfo are sent. Hosts resolve through a
+  connect-time guard that applies the same public-address policy
+  (`endpoint::public_addresses`, factored out of `validate_endpoint`
+  unchanged) to the very addresses the socket uses. A refusal is
+  non-retryable `InvalidConfig`. The credential chain's own IMDS/container/STS
+  traffic uses aws-config's client by design (it must reach link-local
+  metadata endpoints).
+- **T6 retries**: unchanged. The transport sends one request per call;
+  `ApiClient` keeps the only retry loop.
+- **T9 dependencies**: the default build still depends only on `toolkit-core`
+  and `std`. With `--features sdk` the tree adds 157 locked packages: rustls
+  with the aws-lc provider, no OpenSSL or native-tls, and `ring` never
+  compiled. Direct dependencies are pinned with `=` and justified one by one.
+- **T10 tests**: no test builds the real default chain (it would read the real
+  environment and files), opens a socket or resolves DNS. Fakes implement the
+  SDK `ProvideCredentials` and `HttpConnector` traits and the existing
+  `HostResolver`.
+
+Open verification point: no daemon recipe compiles `--features sdk` today, so
+the feature build's compile, clippy and test evidence is outstanding (see the
+#4463 handoff).

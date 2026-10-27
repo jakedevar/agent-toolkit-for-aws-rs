@@ -32,8 +32,9 @@ No `toolkit` subcommand is added: this is a library for the domain slices.
 - **AC1** standard credential chain, region/endpoint, retries/timeouts/pagination,
   redacted errors: `credentials`, `config`+`endpoint`, `retry`+`transport`,
   `paginate`, `error`+`redact`. The *chain semantics* and the seam are
-  implemented and tested; the *production binding to the AWS SDK's default
-  provider chain* is the residual below.
+  implemented and tested. The *production binding to the AWS SDK's default
+  provider chain* is the `sdk` feature (#4463), described in "SDK adapter"
+  below.
 - **AC2** mocks prove behavior without live spending: every test uses the
   `testing` doubles; no test opens a socket, resolves DNS, sleeps, reads a
   credential variable or file, or reads the real environment (one test asks
@@ -184,13 +185,116 @@ Known limit, unchanged: a bare 40-character secret with no label cannot be told
 from an identifier and is not recognized, which is why the crate never formats a
 secret value in the first place (`Secret`/`Credentials` print a fixed marker).
 
-## Residual: SDK binding (needs a follow-up)
+## SDK adapter (feature `sdk`, #4463)
 
-The AWS SDK for Rust must arrive as optional cargo features of a feature-gated
-adapter (`toolkit-aws` feature `sdk`, implementing `CredentialsProvider`,
-`Transport` and `Signer`). The workspace verifies with `--locked`; the SDK tree
-needs a regenerated `Cargo.lock`, which this session could not produce (no
-cargo, no sanctioned lock-generation recipe). Adding unlocked optional
-dependencies would break every `--locked` job. The seams above are the exact
-adapter points, so the follow-up is additive. DNS rebinding between the
-endpoint check and the SDK connection also remains (same residual as Python).
+This replaces the former "Residual: SDK binding" section. The AWS SDK for Rust
+now binds the three seams behind the **non-default** cargo feature `sdk`. The
+default build (every recipe: `make fmt`, `make clippy`, `make test`) compiles
+no SDK crate: `cargo tree -p toolkit-aws` still shows only `toolkit-core`.
+
+Lock generation follows the manager ruling on #4463: the worker ran
+`cargo tree` / `cargo fetch` in its own turn (metadata and downloads only), and
+the regenerated `Cargo.lock` is committed. It adds 157 packages for the
+optional tree. No existing locked version changed. The workspace stays valid
+under `--locked`.
+
+### What binds what
+
+| Seam | Adapter (`toolkit_aws::sdk`, feature `sdk`) | Behavior |
+| --- | --- | --- |
+| `CredentialsProvider` | `SdkCredentialsProvider::default_chain(&runtime, &config)` | The SDK default chain: environment, then shared config/credentials profile (static keys, SSO, assume-role, `credential_process`), then web identity, then ECS/EKS container role, then EC2 instance metadata. `AWS_PROFILE` (validated by `ClientConfig`) selects the profile **for credentials only**. The chain gets the boundary's resolved region for its STS/SSO calls, so a profile region never selects the target region. Reports the name `sdk-default-chain`. `from_sdk` wraps any other SDK provider. |
+| `Signer` | `SigV4Signer::new(provider)` | `aws-sigv4` header signing (`authorization`, `x-amz-date`, `x-amz-security-token` for temporary credentials, signed payload hash). Credentials are loaded from any `CredentialsProvider` on every attempt; credentials expired at signing time are refused. |
+| `Transport` | `SdkTransport::new(&runtime)` | smithy hyper client, rustls with the aws-lc provider (one crypto provider, the same one aws-config's own client uses). Connect and read timeouts come from `Timeouts`, and the read timeout also bounds reading the body. The transport never follows redirects (hyper does not; a 3xx is returned as a response), configures no proxy, sends only `https://` URLs without userinfo, and resolves hosts through the **connect-time DNS guard**. |
+
+`SdkRuntime` is a current-thread tokio runtime the synchronous adapters drive
+SDK futures on. The adapters must not be called from inside another tokio
+runtime.
+
+### SDK-independent half, tested in the default build (`binding`)
+
+Every adapter decision that needs no SDK type lives in `toolkit_aws::binding`,
+so the default `make test` covers it:
+
+- `credential_error`: an SDK `CredentialsNotLoaded` becomes `NoCredentials`, so
+  a `ProviderChain` moves on. Timeout, invalid configuration, provider and
+  unhandled failures become `CredentialProvider` errors and stop the chain
+  (botocore rules). The detail is redacted and truncated to 512 characters.
+- `adopt_credentials`: an empty key id or secret is refused
+  (`PartialCredentials`); expired credentials are refused
+  (`CredentialsExpired`).
+- `connector_error` / `timeout_phase`: timeouts map to `Timeout` (connect or
+  read, from the connector's `HTTP connect` / `HTTP read` wording); I/O and
+  unknown failures map to `Connect` (retryable); a request the client refused
+  as built maps to non-retryable `InvalidConfig`.
+- `guarded_addresses` / `GuardRejection` / `find_guard_rejection`: the
+  connect-time DNS guard. It applies `endpoint::public_addresses`, the exact
+  policy `validate_endpoint` uses (refactored out of it, unchanged), to the
+  addresses the socket will connect to. A rejection is carried through the
+  SDK error chain and surfaces as non-retryable `InvalidConfig` (field
+  `endpoint`).
+- `require_https`, `response_headers` (wire headers that `Headers::insert`
+  refuses are dropped rather than failing the response).
+
+### Tests (all offline)
+
+- Default build: `binding` tests cover every mapping above, including redaction
+  of secret-bearing SDK messages, guard acceptance and rejection, chain
+  search through `source()` and `io::Error` payloads, and the https gate.
+- `--features sdk` (`sdk::tests`): fake SDK `ProvideCredentials`
+  implementations exercise adoption, expiry, not-loaded fall-through, the
+  stopping kinds with redaction, and participation in a `ProviderChain`.
+  SigV4 is checked against the AWS signing test-suite vector `get-vanilla`
+  (exact `authorization` value), plus session-token, expiry and
+  credential-error cases. A fake smithy `HttpConnector` checks request and
+  response conversion, the https gate, connect and read timeouts, I/O
+  redaction and guard refusal. The guarded SDK resolver is tested with a fixed
+  answer, and the production connector is built without connecting. An
+  end-to-end `ApiClient` run uses `SigV4Signer` + `SdkTransport` over the fake
+  connector: 503 then 200, with two fresh signatures for the right
+  region/service. No test calls `default_chain` (which would read the real
+  environment and files), opens a socket or resolves DNS.
+
+### Dependencies (feature `sdk` only; pinned with `=`)
+
+| Crate | Version | Why it is needed | Features |
+| --- | --- | --- | --- |
+| `aws-config` | 1.13.0 | The only supported implementation of the standard credential chain (profile files, SSO, assume-role, web identity, container and IMDS providers) | `default-features = false`; `rustls` (aws-config's own HTTPS client for IMDS/ECS/STS/SSO; pulls rustls with aws-lc, never native-tls), `rt-tokio`, `sso` (SSO profiles, used by the Python via boto3), `credential-process` (`credential_process` profiles, as boto3) |
+| `aws-credential-types` | 1.3.1 | `ProvideCredentials`, `SharedCredentialsProvider`, `Credentials`, `CredentialsError`: the types the chain returns and the signer consumes | default (none heavy) |
+| `aws-sigv4` | 1.6.3 | SigV4 signing; hand-rolling HMAC canonicalisation would be riskier than the reference implementation | `default-features = false`, `sign-http` only (no `http` 0.2/1.x request integration needed) |
+| `aws-smithy-http-client` | 1.5.1 | The SDK's hyper 1.x client with connect/read timeouts and a pluggable DNS resolver (needed for the connect-time guard) | `default-features = false`, `rustls-aws-lc` (same crypto provider as aws-config, so `ring` is never compiled) |
+| `aws-smithy-runtime-api` | 1.19.1 | `HttpConnector`, `ResolveDns`, `Identity`, `ConnectorError` and the request/response types the client speaks | `client` |
+| `aws-smithy-types` | 1.9.0 | `SdkBody`, `ByteStream` (body collection) and `DisplayErrorContext` (rendering SDK error chains through `Display` for redaction, never `Debug`) | default |
+| `aws-smithy-async` | 1.3.1 | `TokioSleep`, the sleep implementation the client's timeouts need | `rt-tokio` |
+| `tokio` | 1.54.1 | The runtime the synchronous adapters block on; `time` for the body read timeout, `net` for the client's sockets | `default-features = false`; `rt`, `time`, `net` |
+
+Transitively the tree includes `aws-lc-rs`/`aws-lc-sys` (C/assembly crypto,
+built by `cc`; the cost of rustls with the SDK's default provider), hyper 1.x,
+h2, rustls 0.23 with native roots, and the generated `aws-sdk-sts`,
+`aws-sdk-sso` and `aws-sdk-ssooidc` clients that aws-config uses for
+assume-role and SSO. `ring` appears in `Cargo.lock` only as an optional entry
+under `rustls-webpki` and is never compiled. No `openssl` or `native-tls`.
+
+### Decisions and residuals
+
+- **Retries stay with the boundary.** `ApiClient` + `RetryPolicy` remain the
+  one retry loop. The transport sends exactly one request per call. The SDK's
+  client-side rate limiter (adaptive mode) runs only inside the SDK
+  orchestrator for generated service clients, which this adapter does not use.
+  So `Adaptive` stays a label, as recorded above. Wiring a token-bucket rate
+  limiter into `run_with_retry` is a separate, behavior-changing follow-up.
+- **`AWS_PROFILE` stays strict** (#4473): `default_chain` passes only the
+  validated name. Relaxing it is backward compatible and left for a real need.
+- **IMDS, container and STS/SSO traffic** of the credential chain uses
+  aws-config's own HTTPS client, not the guarded transport, by design: the
+  chain must reach `169.254.169.254` and container endpoints, which the
+  public-address policy refuses.
+- **SDK tracing**: `aws-sigv4` emits `trace`-level events of its inputs. The
+  SDK's own `Debug` for credentials redacts the secret. This crate installs no
+  `tracing` subscriber, so nothing is emitted.
+- **Verification gap**: the fmt, clippy and workspace-test recipes build only
+  the default feature set. The `sdk` module is formatted by `make fmt`, but is
+  compiled, linted and tested only by a `--features sdk` build, which no
+  recipe runs today. A `clippy-sdk`/`test-sdk` recipe was ruled for #4463 but
+  deliberately not added in this slice (manager brief); the handoff records it.
+- The DNS-rebinding residual recorded in T3 is **closed for the SDK
+  transport**: the guard checks the addresses the socket connects to.

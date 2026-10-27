@@ -6,8 +6,33 @@ license.workspace = true
 repository.workspace = true
 description = "Shared AWS/API client boundaries for the Agent Toolkit Rust CLI (aws-core slice #4379)."
 
+[features]
+# The default build is SDK-free and offline: no AWS SDK crate is compiled.
+default = []
+# AWS SDK for Rust binding of CredentialsProvider, Signer and Transport (#4463).
+# Every crate below is justified in docs/migration/aws-core-contracts.md
+# ("SDK adapter (feature `sdk`)"); versions are pinned exactly.
+sdk = [
+    "dep:aws-config",
+    "dep:aws-credential-types",
+    "dep:aws-sigv4",
+    "dep:aws-smithy-async",
+    "dep:aws-smithy-http-client",
+    "dep:aws-smithy-runtime-api",
+    "dep:aws-smithy-types",
+    "dep:tokio",
+]
+
 [dependencies]
 toolkit-core = { path = "../toolkit-core" }
+aws-config = { version = "=1.13.0", optional = true, default-features = false, features = ["rustls", "rt-tokio", "sso", "credentials-process"] }
+aws-credential-types = { version = "=1.3.1", optional = true }
+aws-sigv4 = { version = "=1.6.3", optional = true, default-features = false, features = ["sign-http"] }
+aws-smithy-async = { version = "=1.3.1", optional = true, features = ["rt-tokio"] }
+aws-smithy-http-client = { version = "=1.5.1", optional = true, default-features = false, features = ["rustls-aws-lc"] }
+aws-smithy-runtime-api = { version = "=1.19.1", optional = true, features = ["client"] }
+aws-smithy-types = { version = "=1.9.0", optional = true }
+tokio = { version = "=1.54.1", optional = true, default-features = false, features = ["rt", "time", "net"] }
 
 [lints]
 workspace = true
