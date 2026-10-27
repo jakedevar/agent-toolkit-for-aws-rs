@@ -183,3 +183,5 @@ Friction: #4727, Rsi #4694, Rsi #4704
   After landing, integration rounds base on new origin/rolling; next gate = round 13.
 - 21:43Z: #4408 repair b848f1d81b02fdcf31902e50d29ceffc7724ede7 (fa5c7051; 6 findings fixed, tests/repair.rs, 64MiB scratch bound; scoped 1d1ef937 ok base dcd47147, 1822). New tests not run vs parent -> reviewer to prove non-vacuity.
   Re-review round 2 #4744 worker e76fe901 (Codex sol high, pinned, op d1362ea8).
+- 21:45Z: #4743 impl fee052ebc370d7cf7799f403bd0605eaeff980ef (293605ec; router `-` value+positional; COVERS #4764 help fix; scoped 4509b305 ok base f6fac27d, 2150). Review #4776 worker a624431d (Codex sol high, pinned, op f64c80c2): audit path-valued slices now receiving `-`.
+  4/4 busy: 14bc584a (#4381 repair), 6a6ca4e7 (#4745), e76fe901 (#4744), a624431d (#4776). Queue entry 5060cb2e pending.
