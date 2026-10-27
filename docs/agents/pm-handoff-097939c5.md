@@ -139,3 +139,5 @@ Hub: rsid restart loop 18:04/18:26/18:29 (health keys accepted in rust-migration
 Wakes: rust-migration-health (health_anomaly), pm-safety-net (resume, 20:04Z), per-worker terminal watches.
 Friction: #4727, Rsi #4694, Rsi #4704
 - 19:10Z: #4384 repair 8d914f2b (fc047609; recorded.rs + shared shape helpers; scoped adf75143 ok, 1856). Re-review #4721 worker 61635e9e (pinned). If ACCEPT: round 11 = #4697 ffc0c74e + #4384 8d914f2b (continue_from 215a5c49), then kaizen #4727.
+- 19:15Z: #4384 ACCEPT 8d914f2b (#4721, 61635e9e; friction #4732). Round 11 worker 5ed0647c (continue_from 215a5c49): #4697 ffc0c74e + #4384 8d914f2b onto a1db6c61.
+  Kaizen #4727 (shared recorded validator; migrate bedrock_agent + ai-models) ready to dispatch when a worker slot frees (4/4 busy). Close-on-land additions: #4384 #4721 #4724 #4725 #4726 #4697 #4722.
