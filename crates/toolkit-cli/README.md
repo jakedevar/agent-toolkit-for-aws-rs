@@ -635,7 +635,9 @@ toolkit bedrock-resolve source-model ENV_FILE --catalog FILE
   read; image files of at most 20 MiB.
 - `pricing` prints `{model_id: {input_per_1k_usd, output_per_1k_usd, available,
   note}}` (indent 2). The built-in table (44 rows) and the region-aware Opus 5.5
-  rule answer first; an id is priced from the table only when its date/revision-normalized form equals exactly one row (prefixes, the empty id and ambiguous bases are unavailable); proprietary GPT ids need an exact row; anything else is
+  rule answer first; an id is priced from the table only when its date/revision-normalized
+  form equals exactly one row (prefixes, the empty id and ambiguous bases are
+  unavailable); proprietary GPT ids need an exact row; anything else is
   `available: false` unless `--price-list FILE` (`[{region, model: display name,
   price_list: [item JSON text]}]`) holds a recorded answer. Always exit 0.
 - `source-model` resolves `PLAN_MODEL_ID` (or `--plan-model-id`) against the
@@ -643,8 +645,9 @@ toolkit bedrock-resolve source-model ENV_FILE --catalog FILE
   `--source-provider` is authoritative; the ambient environment never chooses).
   `--catalog` is a JSON list of ids or the provider's response pages. Prints
   `{"status": "exact"|"prefix", "resolved_id", ...}` (a date or pure version suffix
-  only; `mini`, `pro`, `latest` ... are never picked) or `{"status": "not_found",
-  "candidates": [...], "ambiguous_prefix"?: true, "all_hits"?: [...]}` (exit 0), `{"status": "no_key"}` (exit 2) or `{"status":
+  only; `mini`, `pro`, `latest` ... are never picked; two equally short pins are not picked either) or `{"status": "not_found",
+  "candidates": [...], "ambiguous_prefix"?: true, "all_hits"?: [...]}` (exit 0),
+  `{"status": "no_key"}` (exit 2) or `{"status":
   "error", "detail": ...}` (exit 3: no or incomplete catalog, or a resolved id
   that cannot be shown safely).
 
