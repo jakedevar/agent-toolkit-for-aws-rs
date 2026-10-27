@@ -152,7 +152,6 @@ impl Headers {
     }
 
     /// Headers in insertion order.
-    #[must_use]
     pub fn entries(&self) -> impl Iterator<Item = (&str, &str)> {
         self.0
             .iter()
@@ -348,6 +347,11 @@ impl Signer for NoSigner {
     }
 }
 
+/// Upper-case hexadecimal digits for percent-encoding.
+const HEX_DIGITS: [char; 16] = [
+    '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'B', 'C', 'D', 'E', 'F',
+];
+
 /// Percent-encode `value` for a URL component (RFC 3986 unreserved characters
 /// are kept).
 #[must_use]
@@ -357,7 +361,9 @@ pub fn percent_encode(value: &str) -> String {
         if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~') {
             out.push(char::from(byte));
         } else {
-            out.push_str(&format!("%{byte:02X}"));
+            out.push('%');
+            out.push(HEX_DIGITS[usize::from(byte >> 4)]);
+            out.push(HEX_DIGITS[usize::from(byte & 0x0f)]);
         }
     }
     out

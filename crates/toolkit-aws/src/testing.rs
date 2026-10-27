@@ -354,10 +354,10 @@ mod tests {
             region: "eu-west-1".to_string(),
             service: "logs".to_string(),
         };
-        let mut signed = request();
-        signer.sign(&mut signed, &scope).unwrap();
+        let mut stamped = request();
+        signer.sign(&mut stamped, &scope).unwrap();
         assert_eq!(
-            signed.headers.get("authorization"),
+            stamped.headers.get("authorization"),
             Some("FAKE-SIGNED eu-west-1/logs")
         );
         assert_eq!(signer.signed(), 1);
