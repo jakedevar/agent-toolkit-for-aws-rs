@@ -8,8 +8,7 @@
 
 use toolkit_core::Json;
 
-use super::pytext::rstrip;
-use crate::dynamodb::pyfmt;
+use super::pytext::{rstrip, safe_block, safe_json, safe_text};
 
 /// The exception classes the legacy translator told apart.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -50,12 +49,12 @@ fn format_block(label: &str, context: Context<'_>) -> String {
     let lines: Vec<String> = context
         .iter()
         .filter(|(_, value)| !is_blank(value))
-        .map(|(key, value)| format!("- {key}: {}", pyfmt::text(value)))
+        .map(|(key, value)| format!("- {}: {}", safe_text(key), safe_json(value)))
         .collect();
     if lines.is_empty() {
         return String::new();
     }
-    format!("\n{label}\n{}\n", lines.join("\n"))
+    format!("\n{}\n{}\n", safe_block(label), lines.join("\n"))
 }
 
 fn format_numbered_section(label: &str, items: &[&str]) -> String {
@@ -65,9 +64,9 @@ fn format_numbered_section(label: &str, items: &[&str]) -> String {
     let body: Vec<String> = items
         .iter()
         .enumerate()
-        .map(|(index, item)| format!("{}. {item}", index + 1))
+        .map(|(index, item)| format!("{}. {}", index + 1, safe_block(item)))
         .collect();
-    format!("\n{label}\n{}\n", body.join("\n"))
+    format!("\n{}\n{}\n", safe_block(label), body.join("\n"))
 }
 
 fn client_error_body(code: Option<&str>, message: Option<&str>, display: &str) -> (String, String) {
@@ -75,7 +74,7 @@ fn client_error_body(code: Option<&str>, message: Option<&str>, display: &str) -
         .filter(|text| !text.is_empty())
         .unwrap_or("ClientError");
     let message = message.filter(|text| !text.is_empty()).unwrap_or(display);
-    (code.to_string(), message.to_string())
+    (safe_text(code), safe_text(message))
 }
 
 /// The tailored prose a call site supplies for a `ClientError`.
@@ -120,6 +119,7 @@ pub fn render_client_error(
         return translate_aws_error(failure, action, attempted);
     };
     let (code, message) = client_error_body(code.as_deref(), message.as_deref(), display);
+    let action = safe_text(action);
     let label = prose.attempted_label.unwrap_or("ATTEMPTED PARAMETERS:");
     let sections = [
         format!("Failed to {action}\n"),
@@ -131,7 +131,7 @@ pub fn render_client_error(
     let joined = sections.concat();
     let body = rstrip(&joined);
     match prose.trailer.filter(|trailer| !trailer.is_empty()) {
-        Some(trailer) => format!("{body}\n\n{trailer}"),
+        Some(trailer) => format!("{body}\n\n{}", safe_block(trailer)),
         None => body.to_string(),
     }
 }
@@ -143,6 +143,7 @@ pub fn render_client_error(
 /// `POSSIBLE CAUSES` / `TROUBLESHOOTING` sections tuned to the failure type.
 #[must_use]
 pub fn translate_aws_error(failure: &AwsFailure, action: &str, context: Context<'_>) -> String {
+    let action = safe_text(action);
     let attempted = format_block("ATTEMPTED PARAMETERS:", context);
     match failure {
         AwsFailure::Client {
@@ -168,29 +169,34 @@ pub fn translate_aws_error(failure: &AwsFailure, action: &str, context: Context<
         }
         AwsFailure::EndpointConnection(text) => format!(
             "Failed to {action}\n\n\
-             Error: EndpointConnectionError - {text}\n\
+             Error: EndpointConnectionError - {}\n\
              {attempted}\
              \nTROUBLESHOOTING:\n\
              1. Check network connectivity to the AWS endpoint\n\
-             2. Verify AWS region resolution (AWS_REGION env var or profile)\n"
+             2. Verify AWS region resolution (AWS_REGION env var or profile)\n",
+            safe_text(text)
         ),
         AwsFailure::Timeout(text) => format!(
             "Failed to {action}\n\n\
-             Error: TimeoutError - {text}\n\
+             Error: TimeoutError - {}\n\
              {attempted}\
              \nTROUBLESHOOTING:\n\
              1. Retry the request \u{2014} the AWS endpoint did not respond within the socket timeout\n\
-             2. Check network connectivity\n"
+             2. Check network connectivity\n",
+            safe_text(text)
         ),
         AwsFailure::Credentials { type_name, message } => format!(
             "Failed to {action}\n\n\
-             Error: {type_name} - {message}\n\
+             Error: {} - {}\n\
              {attempted}\
              \nTROUBLESHOOTING:\n\
              1. Verify AWS credentials: aws configure list\n\
-             2. Set AWS_PROFILE or supply credentials via env vars\n"
+             2. Set AWS_PROFILE or supply credentials via env vars\n",
+            safe_text(type_name),
+            safe_text(message)
         ),
         AwsFailure::Other(text) => {
+            let text = safe_text(text);
             format!("Failed to {action}\n\nUnexpected error: {text}\n{attempted}")
         }
     }

@@ -134,6 +134,9 @@ impl UtcTime {
         if !(0..=59).contains(&fields.second) {
             return Err("second must be in 0..59".to_string());
         }
+        if !(0..=999_999).contains(&fields.micro) {
+            return Err("microsecond must be in 0..999999".to_string());
+        }
         let days = days_from_civil(fields.year, fields.month, fields.day);
         let seconds =
             days * SECONDS_PER_DAY + fields.hour * 3_600 + fields.minute * 60 + fields.second;

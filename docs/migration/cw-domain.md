@@ -124,6 +124,54 @@ Parity details worth knowing:
 8. **Errors are values.** `AwsFailure` replaces the botocore exception classes;
    `GatewayError` and the SDK mapping are #4381's.
 
+### Diagnostic text safety (#4634)
+
+The Python code interpolated caller-derived strings into its messages
+verbatim. A caller-supplied value (an `instrumentation_type`, a JSON key, an
+unknown renderer/check/mode choice, a language, a file path, an AWS message, an
+attempted-parameter name or value, a location response field, the region from
+the environment) containing a newline, carriage return, ESC or another control
+could therefore clear a terminal or forge an apparent report line. The Rust
+port escapes these, centrally, in `cloudwatch::pytext`:
+
+- `safe_text` replaces every control character (C0, DEL, C1, including `\n`,
+  `\r`, `\t`, ESC), the Unicode line/paragraph separators, the bidirectional
+  controls and the BOM with a visible Python-style escape (`\n`, `\x1b`,
+  `‮`). Ordinary text, including non-ASCII letters, joiners, and the
+  backslash, is unchanged. It is applied to every caller-derived scalar that
+  lands inside a diagnostic line: the `received:` values and `LOCATION INPUTS
+  RECEIVED` block, the Java class-name suggestion, the capture field name, the
+  `invalid arguments for op '...'` detail (unknown keys, mode/kind/op choices,
+  argument and JSON-parse errors), the failure action/code/message/display,
+  attempted-parameter keys and values, the location detail lines (values, keys,
+  hashes) and the region.
+- `safe_block` does the same but keeps newlines and tabs. It is applied to the
+  tool-authored multi-line prose a caller supplies whole (attempted label,
+  possible-cause and troubleshooting bullets, trailer) and to the complete
+  text printed by `cloudwatch render`, so no renderer can emit a raw control
+  other than the layout characters `\n` and `\t`.
+
+Intentional differences: a real AWS message that contains a newline now shows
+`\n` on one line instead of breaking the `Error:` line, and a path or name that
+contains a tab shows `\t` inside a diagnostic line. Renderer output built from
+structured data (for example a service name inside a status table) is not
+reshaped line by line; only its terminal controls are escaped, because those
+renderers are multi-line reports by design. Streams and exit statuses are
+unchanged: a failed check still prints on stdout and exits 1; unknown or
+mistyped arguments still print on stderr and exit 2. The regression tests are
+`tests_safety.rs` (unit) and the `#4634` section of
+`crates/toolkit-cli/tests/cloudwatch.rs` (binary, fake-secret sentinels in the
+environment, both channels inspected byte by byte).
+
+### Calendar construction (#4635)
+
+`UtcTime::from_civil` now rejects a microsecond outside `0..=999999` with
+Python's `datetime` text `microsecond must be in 0..999999` (checked after the
+other fields, in `datetime`'s order). Previously the unchecked sum could carry
+into the next second, or past year 9999, or overflow. No current command reaches
+it with such a value; the boundary tests cover -1, 0, 999999, 1000000 and the
+`i64` extremes at both calendar endpoints.
+
 ## New command surface
 
 `toolkit cloudwatch render|validate|region` (documented in
@@ -142,7 +190,8 @@ No AWS call, credential, profile or token is read or printed by any code in
 this slice; the region command reads only `AWS_REGION` / `AWS_DEFAULT_REGION`.
 The Logs Insights escapers and the 16-hex hash check are ported with their
 injection-guard tests (`"` and `\` cannot break out of a string literal; a hash
-containing a quote is rejected). Real captured snapshots are never fixtures.
+containing a quote is rejected). Caller text in diagnostics is escaped (see
+"Diagnostic text safety" above). Real captured snapshots are never fixtures.
 
 ## Verification
 

@@ -75,3 +75,5 @@ pub const REGION_VALUE_FLAGS: &[&str] = &["--region"];
 mod tests_core;
 #[cfg(test)]
 mod tests_render;
+#[cfg(test)]
+mod tests_safety;

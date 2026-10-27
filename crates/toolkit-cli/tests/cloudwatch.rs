@@ -189,3 +189,170 @@ fn help_lists_the_cloudwatch_commands() {
     assert!(stdout.contains("toolkit cloudwatch validate CHECK (--json TEXT | --json-file FILE)"));
     assert!(stdout.contains("toolkit cloudwatch region [--region REGION]"));
 }
+
+// ───────────── #4634: caller text never injects controls or forged lines ─────────────
+
+/// ESC `[2J` clears a terminal; the newline forges a report line.
+const HOSTILE: &str = "REVIEW_SENTINEL\u{1b}[2J\nFORGED_REPORT";
+const ESCAPED: &str = "REVIEW_SENTINEL\\x1b[2J\\nFORGED_REPORT";
+const FAKE_SECRET: &str = "AKIAFAKESECRETSENTINEL0000";
+
+/// JSON source whose string value (or key) is [`HOSTILE`], written with JSON
+/// escapes so the argv itself stays printable.
+const HOSTILE_JSON: &str = r"REVIEW_SENTINEL\u001b[2J\nFORGED_REPORT";
+
+fn toolkit_with_secret(args: &[&str]) -> Output {
+    Command::new(BIN)
+        .args(args)
+        .stdin(Stdio::null())
+        .env_remove("AWS_REGION")
+        .env_remove("AWS_DEFAULT_REGION")
+        .env("AWS_SECRET_ACCESS_KEY", FAKE_SECRET)
+        .env("AWS_SESSION_TOKEN", FAKE_SECRET)
+        .output()
+        .expect("spawn toolkit")
+}
+
+/// Neither channel carries a raw control other than the newline, a forged
+/// line, or the environment secret.
+fn assert_channels_safe(output: &Output) {
+    for stream in [text(&output.stdout), text(&output.stderr)] {
+        for c in stream.chars() {
+            assert!(
+                c == '\n' || !c.is_control(),
+                "raw control {c:?} in {stream:?}"
+            );
+        }
+        assert!(!stream.contains(FAKE_SECRET));
+        assert!(
+            stream
+                .lines()
+                .all(|line| !line.starts_with("FORGED_REPORT")),
+            "forged line in {stream:?}"
+        );
+    }
+}
+
+#[test]
+fn validate_failure_escapes_the_received_value_and_keeps_stdout_exit_one() {
+    let json = format!(r#"{{"instrumentation_type":"{HOSTILE_JSON}"}}"#);
+    let output = toolkit_with_secret(&[
+        "cloudwatch",
+        "validate",
+        "instrumentation-type",
+        "--json",
+        &json,
+    ]);
+    assert_eq!(status(&output), 1);
+    assert_eq!(text(&output.stderr), "");
+    assert_eq!(
+        text(&output.stdout),
+        format!(
+            "ERROR: instrumentation_type must be one of BREAKPOINT, PROBE (received: {ESCAPED})\n"
+        )
+    );
+    assert_channels_safe(&output);
+}
+
+#[test]
+fn unknown_argument_key_is_escaped_on_stderr_with_exit_two() {
+    let json = format!(r#"{{"{HOSTILE_JSON}":true}}"#);
+    let output = toolkit_with_secret(&["cloudwatch", "validate", "location-hash", "--json", &json]);
+    assert_eq!(status(&output), 2);
+    assert_eq!(text(&output.stdout), "");
+    assert_eq!(
+        text(&output.stderr),
+        format!(
+            "error: invalid arguments for op 'location-hash': got an unexpected argument '{ESCAPED}'\n"
+        )
+    );
+    assert_channels_safe(&output);
+}
+
+#[test]
+fn unknown_op_and_unknown_choices_are_escaped_with_exit_two() {
+    let unknown_op = toolkit_with_secret(&["cloudwatch", "render", HOSTILE, "--json", "{}"]);
+    assert_eq!(status(&unknown_op), 2);
+    assert_eq!(text(&unknown_op.stdout), "");
+    assert!(text(&unknown_op.stderr).contains(&format!("invalid choice: '{ESCAPED}'")));
+    assert_eq!(text(&unknown_op.stderr).lines().count(), 1);
+    assert_channels_safe(&unknown_op);
+
+    let mode = format!(r#"{{"mode":"{HOSTILE_JSON}"}}"#);
+    let bad_mode =
+        toolkit_with_secret(&["cloudwatch", "validate", "location-inputs", "--json", &mode]);
+    assert_eq!(status(&bad_mode), 2);
+    assert_eq!(text(&bad_mode.stdout), "");
+    assert!(text(&bad_mode.stderr).contains(&format!("(got '{ESCAPED}')")));
+    assert_eq!(text(&bad_mode.stderr).lines().count(), 1);
+    assert_channels_safe(&bad_mode);
+
+    let failure = format!(r#"{{"action":"x","failure":{{"kind":"{HOSTILE_JSON}"}}}}"#);
+    let bad_kind = toolkit_with_secret(&["cloudwatch", "render", "failure", "--json", &failure]);
+    assert_eq!(status(&bad_kind), 2);
+    assert_eq!(text(&bad_kind.stdout), "");
+    assert!(text(&bad_kind.stderr).contains(&format!("(got '{ESCAPED}')")));
+    assert_eq!(text(&bad_kind.stderr).lines().count(), 1);
+    assert_channels_safe(&bad_kind);
+}
+
+#[test]
+fn location_input_failures_escape_every_received_field_on_stdout() {
+    let json = format!(
+        r#"{{"mode":"create","language":"{HOSTILE_JSON}","file_path":"{HOSTILE_JSON}","code_unit":"{HOSTILE_JSON}","class_name":"{HOSTILE_JSON}","method_name":"{HOSTILE_JSON}","line_number":0}}"#
+    );
+    let output =
+        toolkit_with_secret(&["cloudwatch", "validate", "location-inputs", "--json", &json]);
+    assert_eq!(status(&output), 1);
+    assert_eq!(text(&output.stderr), "");
+    let stdout = text(&output.stdout);
+    assert!(stdout.contains(&format!("- language={ESCAPED}\n")));
+    assert!(stdout.contains(&format!("- file_path={ESCAPED}\n")));
+    assert!(stdout.contains(&format!("(received: {ESCAPED}).")));
+    assert_channels_safe(&output);
+}
+
+#[test]
+fn failure_rendering_escapes_message_action_and_context() {
+    let json = format!(
+        r#"{{"action":"{HOSTILE_JSON}","failure":{{"kind":"client_error","code":"{HOSTILE_JSON}","message":"{HOSTILE_JSON}"}},"attempted":{{"{HOSTILE_JSON}":"{HOSTILE_JSON}"}}}}"#
+    );
+    let output = toolkit_with_secret(&["cloudwatch", "render", "failure", "--json", &json]);
+    assert_eq!(status(&output), 0, "{}", text(&output.stderr));
+    assert_eq!(text(&output.stderr), "");
+    let stdout = text(&output.stdout);
+    assert!(stdout.starts_with(&format!("Failed to {ESCAPED}\n")));
+    assert!(stdout.contains(&format!("Error: {ESCAPED} - {ESCAPED}\n")));
+    assert!(stdout.contains(&format!("- {ESCAPED}: {ESCAPED}\n")));
+    assert_channels_safe(&output);
+}
+
+#[test]
+fn location_rendering_escapes_response_values_and_keys() {
+    let json = format!(
+        r#"{{"location":{{"CodeLocation":{{"Language":"{HOSTILE_JSON}","FilePath":"/a.py","{HOSTILE_JSON}":"{HOSTILE_JSON}"}}}},"location_hash":"{HOSTILE_JSON}"}}"#
+    );
+    let output = toolkit_with_secret(&["cloudwatch", "render", "location", "--json", &json]);
+    assert_eq!(status(&output), 0, "{}", text(&output.stderr));
+    let stdout = text(&output.stdout);
+    assert!(stdout.contains(&format!("- LocationHash: {ESCAPED}\n")));
+    assert!(stdout.contains(&format!("- Language: {ESCAPED}\n")));
+    assert!(stdout.contains(&format!("- {ESCAPED}: {ESCAPED}\n")));
+    assert_channels_safe(&output);
+}
+
+#[test]
+fn region_value_from_the_environment_is_escaped() {
+    let output = Command::new(BIN)
+        .args(["cloudwatch", "region"])
+        .stdin(Stdio::null())
+        .env_remove("AWS_DEFAULT_REGION")
+        .env("AWS_REGION", HOSTILE)
+        .env("AWS_SECRET_ACCESS_KEY", FAKE_SECRET)
+        .output()
+        .expect("spawn toolkit");
+    assert_eq!(status(&output), 0);
+    assert_eq!(text(&output.stdout), format!("{ESCAPED}\n"));
+    assert_eq!(text(&output.stderr), "");
+    assert_channels_safe(&output);
+}

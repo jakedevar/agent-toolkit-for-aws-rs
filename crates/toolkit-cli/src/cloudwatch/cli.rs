@@ -28,7 +28,7 @@ use super::location::{
     location_from_response, parse_create_inputs, parse_lookup_inputs, render_location_block,
     LocationInputs,
 };
-use super::pytext::dumps_indent2;
+use super::pytext::{dumps_indent2, safe_block, safe_text};
 use super::region::resolve_region_from_env;
 use super::result::OpResult;
 use super::snapshot_parsing::parse_snapshot_fields;
@@ -78,7 +78,11 @@ pub const CHECKS: &[&str] = &[
 fn invalid(op: &str, detail: impl AsRef<str>) -> ToolkitError {
     ToolkitError::runtime(
         "invalid_arguments",
-        format!("invalid arguments for op '{op}': {}", detail.as_ref()),
+        format!(
+            "invalid arguments for op '{}': {}",
+            safe_text(op),
+            safe_text(detail.as_ref())
+        ),
     )
     .with_exit_code(2)
 }
@@ -212,7 +216,10 @@ fn read_arguments(invocation: &Invocation) -> Result<Json, ToolkitError> {
             read_regular_file(Path::new(path), MAX_ARGUMENT_BYTES).map_err(|error| {
                 ToolkitError::usage(
                     "arguments_unreadable",
-                    format!("--json-file could not be read: {error}"),
+                    format!(
+                        "--json-file could not be read: {}",
+                        safe_text(&error.to_string())
+                    ),
                 )
             })?
         }
@@ -226,7 +233,10 @@ fn read_arguments(invocation: &Invocation) -> Result<Json, ToolkitError> {
     let payload = parse_json(&text).map_err(|error| {
         ToolkitError::usage(
             "invalid_json",
-            format!("arguments are not valid JSON: {error}"),
+            format!(
+                "arguments are not valid JSON: {}",
+                safe_text(&error.to_string())
+            ),
         )
     })?;
     if !matches!(payload, Json::Object(_)) {
@@ -255,7 +265,8 @@ fn op_name<'a>(
         Err(ToolkitError::usage(
             "unknown_op",
             format!(
-                "argument {kind}: invalid choice: '{name}' (choose from {})",
+                "argument {kind}: invalid choice: '{}' (choose from {})",
+                safe_text(name),
                 known.join(", ")
             ),
         ))
@@ -665,7 +676,7 @@ pub fn render_command(invocation: &Invocation, out: &mut Output<'_>) -> Result<(
     if !result.ok {
         out.set_exit_status(result.exit_status());
     }
-    out.line(&result.text)
+    out.line(&safe_block(&result.text))
 }
 
 fn validation_outcome(
@@ -786,5 +797,7 @@ pub fn validate_command(invocation: &Invocation, out: &mut Output<'_>) -> Result
 
 /// `toolkit cloudwatch region [--region R]`.
 pub fn region_command(invocation: &Invocation, out: &mut Output<'_>) -> Result<(), ToolkitError> {
-    out.line(&resolve_region_from_env(invocation.value("--region")))
+    out.line(&safe_text(&resolve_region_from_env(
+        invocation.value("--region"),
+    )))
 }

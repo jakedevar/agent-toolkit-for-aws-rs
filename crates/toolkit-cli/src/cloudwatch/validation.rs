@@ -2,7 +2,7 @@
 //! (`di_validation.py`). Every message is byte-for-byte the legacy text.
 
 use super::consts::SNAPSHOT_SIGNAL_TYPE;
-use super::pytext::{opt_int, opt_text, strip};
+use super::pytext::{opt_int, safe_opt, safe_text, strip};
 
 /// The API's canonical `ProgrammingLanguage` casing, or `None` if unknown.
 /// The API enum is case-sensitive (`Java`, `Python`, `Javascript`).
@@ -30,7 +30,7 @@ pub fn normalize_instrumentation_type(
     }
     let error = format!(
         "ERROR: instrumentation_type must be one of BREAKPOINT, PROBE (received: {})",
-        opt_text(instrumentation_type)
+        safe_opt(instrumentation_type)
     );
     (normalized, Some(error))
 }
@@ -42,6 +42,7 @@ pub fn normalize_instrumentation_type(
 #[must_use]
 pub fn validate_capture_names(field_name: &str, names: Option<&[String]>) -> Option<String> {
     let names = names?;
+    let field_name = safe_text(field_name);
     if names.is_empty() {
         return Some(format!(
             "ERROR: {field_name} must contain at least one name if provided. \
@@ -109,7 +110,7 @@ pub fn validate_snapshot_signal(signal_type: Option<&str>) -> Option<String> {
     }
     Some(format!(
         "ERROR: signal_type must be SNAPSHOT for this API (received: {})",
-        opt_text(signal_type)
+        safe_opt(signal_type)
     ))
 }
 
@@ -185,11 +186,11 @@ pub fn format_code_location_troubleshooting(
     lines.extend(rules.iter().map(|line| (*line).to_string()));
 
     lines.push("LOCATION INPUTS RECEIVED:".to_string());
-    lines.push(format!("- language={}", opt_text(language)));
-    lines.push(format!("- file_path={}", opt_text(file_path)));
-    lines.push(format!("- code_unit={}", opt_text(code_unit)));
-    lines.push(format!("- class_name={}", opt_text(class_name)));
-    lines.push(format!("- method_name={}", opt_text(method_name)));
+    lines.push(format!("- language={}", safe_opt(language)));
+    lines.push(format!("- file_path={}", safe_opt(file_path)));
+    lines.push(format!("- code_unit={}", safe_opt(code_unit)));
+    lines.push(format!("- class_name={}", safe_opt(class_name)));
+    lines.push(format!("- method_name={}", safe_opt(method_name)));
     lines.push(format!("- line_number={}", opt_int(line_number)));
 
     lines.join("\n")
@@ -226,7 +227,8 @@ pub fn validate_location_inputs(
 
     if !matches!(lang.as_str(), "python" | "java" | "javascript") {
         errors.push(format!(
-            "language must be Python, Java, or JavaScript (received: {language})."
+            "language must be Python, Java, or JavaScript (received: {}).",
+            safe_text(language)
         ));
     }
 
@@ -263,8 +265,8 @@ pub fn validate_location_inputs(
                     if parts.len() > 1 {
                         suggestions.push(format!(
                             "Use code_unit=\"{}\" and class_name=\"{}\".",
-                            parts[..parts.len() - 1].join("."),
-                            parts[parts.len() - 1]
+                            safe_text(&parts[..parts.len() - 1].join(".")),
+                            safe_text(parts[parts.len() - 1])
                         ));
                     }
                 }

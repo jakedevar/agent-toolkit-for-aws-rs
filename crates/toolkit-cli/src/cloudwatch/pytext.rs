@@ -227,3 +227,73 @@ pub fn string_array(items: &[String]) -> Json {
 pub fn clone_or_null(data: &Json, key: &str) -> Json {
     data.get(key).cloned().unwrap_or(Json::Null)
 }
+
+/// True for a character that must never reach a terminal or a report line
+/// unescaped: C0 and C1 controls (ESC, CR, BEL, DEL, NEL, ...), the Unicode
+/// line/paragraph separators, and the invisible direction-control and BOM
+/// characters that can reorder or hide text (joiners stay, for emoji).
+fn is_unsafe_char(c: char) -> bool {
+    c.is_control()
+        || matches!(
+            c,
+            '\u{061c}'
+                | '\u{200e}'..='\u{200f}'
+                | '\u{2028}'..='\u{202e}'
+                | '\u{2066}'..='\u{2069}'
+                | '\u{feff}'
+        )
+}
+
+fn escape_unsafe(text: &str, keep_layout: bool) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        match c {
+            '\n' | '\t' if keep_layout => out.push(c),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if is_unsafe_char(c) => {
+                let code = u32::from(c);
+                let _ = if code <= 0xff {
+                    write!(out, "\\x{code:02x}")
+                } else if code <= 0xffff {
+                    write!(out, "\\u{code:04x}")
+                } else {
+                    write!(out, "\\U{code:08x}")
+                };
+            }
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// A caller-derived value made safe to embed in one diagnostic line: every
+/// control (newline, carriage return, tab, ESC, ...) and invisible format
+/// character is replaced by a visible Python-style escape (`\n`, `\x1b`,
+/// `‮`). Ordinary text, including non-ASCII letters, is unchanged, and
+/// the backslash is left alone.
+#[must_use]
+pub fn safe_text(text: &str) -> String {
+    escape_unsafe(text, false)
+}
+
+/// Like [`safe_text`] but keeps newlines and tabs, for tool-authored multi-line prose
+/// (bullets, trailers) that a caller supplies whole: terminal controls are
+/// still escaped, so the block cannot clear or rewrite the terminal.
+#[must_use]
+pub fn safe_block(text: &str) -> String {
+    escape_unsafe(text, true)
+}
+
+/// [`safe_text`] of an optional string, `None` rendering as `None`.
+#[must_use]
+pub fn safe_opt(value: Option<&str>) -> String {
+    safe_text(opt_text(value))
+}
+
+/// [`safe_text`] of `str(value)` for a JSON value.
+#[must_use]
+pub fn safe_json(value: &Json) -> String {
+    safe_text(&pyfmt::text(value))
+}

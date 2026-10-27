@@ -12,7 +12,7 @@
 
 use toolkit_core::Json;
 
-use super::pytext::{get_members, members};
+use super::pytext::{get_members, members, safe_json, safe_text};
 use super::validation::{canonical_language, validate_location_inputs};
 use crate::dynamodb::pyfmt;
 
@@ -72,21 +72,21 @@ impl CodeLocation {
     #[must_use]
     pub fn describe(&self) -> String {
         let mut target = if pyfmt::truthy(&self.file_path) {
-            pyfmt::text(&self.file_path)
+            safe_json(&self.file_path)
         } else {
             "N/A".to_string()
         };
         if pyfmt::truthy(&self.class_name) {
             target.push_str(" :: ");
-            target.push_str(&pyfmt::text(&self.class_name));
+            target.push_str(&safe_json(&self.class_name));
         }
         if pyfmt::truthy(&self.method_name) {
             target.push('.');
-            target.push_str(&pyfmt::text(&self.method_name));
+            target.push_str(&safe_json(&self.method_name));
         }
         if self.line_number != Json::Null {
             target.push_str(":L");
-            target.push_str(&pyfmt::text(&self.line_number));
+            target.push_str(&safe_json(&self.line_number));
         }
         target
     }
@@ -97,7 +97,7 @@ impl CodeLocation {
         if self.line_number == Json::Null {
             "FUNCTION/METHOD-LEVEL".to_string()
         } else {
-            format!("LINE-LEVEL (L{})", pyfmt::text(&self.line_number))
+            format!("LINE-LEVEL (L{})", safe_json(&self.line_number))
         }
     }
 
@@ -109,7 +109,7 @@ impl CodeLocation {
     pub fn format_details(&self, location_hash: Option<&str>) -> String {
         let mut lines = vec!["- LocationKind: CODE".to_string()];
         if let Some(hash) = location_hash.filter(|hash| !hash.is_empty()) {
-            lines.push(format!("- LocationHash: {hash}"));
+            lines.push(format!("- LocationHash: {}", safe_text(hash)));
         }
         let ordered = [
             ("Language", &self.language),
@@ -121,13 +121,13 @@ impl CodeLocation {
         ];
         for (label, value) in ordered {
             if *value != Json::Null {
-                lines.push(format!("- {label}: {}", pyfmt::text(value)));
+                lines.push(format!("- {label}: {}", safe_json(value)));
             }
         }
         let mut extras: Vec<&(String, Json)> = self.extra_fields.iter().collect();
         extras.sort_by(|left, right| left.0.cmp(&right.0));
         for (key, value) in extras {
-            lines.push(format!("- {key}: {}", pyfmt::text(value)));
+            lines.push(format!("- {}: {}", safe_text(key), safe_json(value)));
         }
         let mut text = lines.join("\n");
         text.push('\n');
@@ -189,7 +189,7 @@ impl HashLocation {
     /// A one-line description naming the location hash.
     #[must_use]
     pub fn describe(&self) -> String {
-        format!("LocationHash {}", self.location_hash)
+        format!("LocationHash {}", safe_text(&self.location_hash))
     }
 
     /// The `{"LocationHash": ...}` lookup identifier payload.
@@ -221,7 +221,7 @@ impl UnknownLocation {
     pub fn format_details(&self, location_hash: Option<&str>) -> String {
         let mut lines = vec!["- LocationKind: UNKNOWN".to_string()];
         if let Some(hash) = location_hash.filter(|hash| !hash.is_empty()) {
-            lines.push(format!("- LocationHash: {hash}"));
+            lines.push(format!("- LocationHash: {}", safe_text(hash)));
         }
         if self.raw.is_empty() {
             lines.push("- Location payload could not be parsed.".to_string());
@@ -229,7 +229,7 @@ impl UnknownLocation {
             let mut ordered: Vec<&(String, Json)> = self.raw.iter().collect();
             ordered.sort_by(|left, right| left.0.cmp(&right.0));
             for (key, value) in ordered {
-                lines.push(format!("- {key}: {}", pyfmt::text(value)));
+                lines.push(format!("- {}: {}", safe_text(key), safe_json(value)));
             }
         }
         let mut text = lines.join("\n");
@@ -472,7 +472,7 @@ pub fn render_location_block(location: &Location, location_hash: Option<&str>) -
         Location::Hash(hash) => {
             format!(
                 "- LocationKind: HASH\n- LocationHash: {}\n",
-                hash.location_hash
+                safe_text(&hash.location_hash)
             )
         }
         Location::Code(code) => {
