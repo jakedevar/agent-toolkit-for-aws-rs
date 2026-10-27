@@ -598,3 +598,117 @@ fn the_stdout_fixtures_would_flag_the_unfixed_output() {
     );
     assert!(!found.is_empty());
 }
+
+/// The relational helpers (#4394) print database-, AWS- and caller-derived
+/// text on their success and status paths, which the generic loop never
+/// reaches (its payloads are invalid). Each fixture is a VALID recording whose
+/// text is hostile; the commands must reach their report and escape it.
+#[test]
+fn relational_reports_escape_hostile_recorded_and_argument_text() {
+    let scratch = Scratch::new();
+    let hostile_json = "x\\u001b[31m\\r\\nPASS: forged\\u202e AKIAIOSFODNN7EXAMPLE";
+
+    // rds-oracle: every database cell, version and message is recorded text.
+    let session = scratch.0.join("oracle.json");
+    fs::write(
+        &session,
+        format!(
+            r#"{{"connect": {{"version": "{hostile_json}"}},
+               "probes": {{"basic": {{"rows": [["{hostile_json}", "{hostile_json}", null]]}},
+                           "protocol": {{"rows": [["{hostile_json}"]]}},
+                           "banners": {{"rows": [["{hostile_json}"]]}},
+                           "auth": {{"error": {{"code": 1031, "message": "{hostile_json}"}}}}}}}}"#
+        ),
+    )
+    .expect("write session");
+    let args: Vec<String> = [
+        "rds-oracle",
+        "test-connection",
+        "db.example.com",
+        "1521",
+        "ORCL",
+        "admin",
+        "--verbose",
+        "--recorded",
+    ]
+    .iter()
+    .map(ToString::to_string)
+    .chain([session.display().to_string()])
+    .collect();
+    let (run, found) = run_ok(&args, &scratch.0);
+    let stdout = String::from_utf8_lossy(&run.stdout);
+    assert_eq!(run.status, Some(0), "{stdout}");
+    assert!(
+        stdout.contains("PASS: Query succeeded"),
+        "must reach the report: {stdout:?}"
+    );
+    assert!(stdout.contains("\\u202E"), "{stdout:?}");
+    assert!(
+        !stdout.contains("AKIAIOSFODNN7EXAMPLE"),
+        "key id redacted: {stdout:?}"
+    );
+    assert!(found.is_empty(), "{found:?}");
+
+    // rds commitment: AWS error text lands in the JSON document.
+    let aws = scratch.0.join("aws.json");
+    fs::write(
+        &aws,
+        format!(
+            r#"{{"calls": [{{"service": "rds", "operation": "DescribeDBInstances",
+               "request": {{"DBInstanceIdentifier": "prod"}},
+               "error": {{"code": "{hostile_json}", "message": "{hostile_json}"}}}}]}}"#
+        ),
+    )
+    .expect("write aws");
+    let args: Vec<String> = ["rds", "commitment", "--instance", "prod", "--recorded"]
+        .iter()
+        .map(ToString::to_string)
+        .chain([aws.display().to_string()])
+        .collect();
+    let (run, found) = run_ok(&args, &scratch.0);
+    let stdout = String::from_utf8_lossy(&run.stdout);
+    assert_eq!(run.status, Some(0), "{stdout}");
+    assert!(
+        stdout.contains("\"error\": \"An error occurred"),
+        "{stdout:?}"
+    );
+    assert!(
+        !stdout.contains("AKIAIOSFODNN7EXAMPLE"),
+        "key id redacted: {stdout:?}"
+    );
+    assert!(found.is_empty(), "{found:?}");
+
+    // timestream validate-input: the failing value is argument text.
+    let args: Vec<String> = ["timestream-influxdb", "validate-input"]
+        .iter()
+        .map(ToString::to_string)
+        .chain([format!("region={HOSTILE}"), format!("vpc_id={HOSTILE}")])
+        .collect();
+    let (run, found) = run_ok(&args, &scratch.0);
+    let stdout = String::from_utf8_lossy(&run.stdout);
+    assert_eq!(run.status, Some(1), "{stdout}");
+    assert!(stdout.starts_with("Validation FAILED:\n"), "{stdout:?}");
+    assert_eq!(stdout.lines().count(), 3, "no forged line: {stdout:?}");
+    assert!(found.is_empty(), "{found:?}");
+
+    // dsql tenant-query: recorded rows are printed as JSON (always escaped).
+    let rows = scratch.0.join("rows.json");
+    fs::write(
+        &rows,
+        format!(
+            r#"{{"statements": [{{"sql": "SELECT * FROM \"entities\" WHERE tenant_id = 'acme'",
+               "rows": [["{hostile_json}"]]}}]}}"#
+        ),
+    )
+    .expect("write rows");
+    let args: Vec<String> = ["dsql", "tenant-query", "--tenant", "acme", "--recorded"]
+        .iter()
+        .map(ToString::to_string)
+        .chain([rows.display().to_string()])
+        .collect();
+    let (run, found) = run_ok(&args, &scratch.0);
+    let stdout = String::from_utf8_lossy(&run.stdout);
+    assert_eq!(run.status, Some(0), "{stdout}");
+    assert!(stdout.contains("\\u001b[31m"), "{stdout:?}");
+    assert!(found.is_empty(), "{found:?}");
+}

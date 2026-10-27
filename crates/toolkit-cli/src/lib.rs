@@ -36,6 +36,7 @@ pub mod dynamodb;
 pub mod elasticache;
 pub mod manifests;
 mod msk;
+mod relational;
 mod safe_text;
 pub mod spec;
 pub mod startup;
@@ -143,6 +144,16 @@ Usage:
       [--read-latency-threshold N] [--write-latency-threshold N]
       [--ecpu-threshold N] [--evictions-threshold N]
       [--new-connections-threshold N] [--output FILE]
+  toolkit dsql selftest
+  toolkit dsql tenant-sql --tenant SLUG
+  toolkit dsql tenant-query --tenant SLUG [--recorded FILE]
+  toolkit rds commitment [offline] [--region R] [--format json] [--instance ID]
+      [--instance-type TYPE] [--engine mysql|mariadb|postgres] [--num-instances N]
+      [--multi-az] [--recorded FILE]
+  toolkit rds-oracle test-connection ENDPOINT PORT SERVICE_NAME USERNAME [--verbose]
+      [--recorded FILE]
+  toolkit timestream-influxdb validate-input [KEY=VALUE...]
+  toolkit timestream-influxdb instance-types [recommend WRITES QUERIES DAYS]
   toolkit asm exec [--] COMMAND [ARG...]
   toolkit --version
   toolkit help
@@ -396,8 +407,34 @@ Commands:
                 COMMAND's status; 1 when a reference cannot be resolved or
                 COMMAND cannot be started (nothing is run then). See
                 docs/migration/asm-exec.md.
+  dsql selftest | tenant-sql | tenant-query
+                Aurora DSQL safe SQL helpers (#4394). selftest runs the
+                safe_query checks; tenant-sql prints the SELECT for a tenant
+                slug (lowercase letters, digits, hyphen, 1-64 characters);
+                tenant-query runs it on a read-only cursor and prints the rows
+                as JSON. This build has no live connection: tenant-query needs
+                --recorded FILE (recorded rows).
+  rds commitment
+                RDS Reserved Instance and Database Savings Plan estimator
+                (#4394, read-only; no purchase API). `offline` prices
+                --instance-type and --engine; otherwise --instance ID is looked
+                up. Prints JSON. This build has no live AWS client:
+                --recorded FILE replays recorded responses, otherwise only
+                the bundled on-demand prices are used.
+  rds-oracle test-connection
+                Oracle connection report for an RDS instance (#4394). Endpoint,
+                DSN and user are hidden unless --verbose. This build opens no
+                connection and reads no password: --recorded FILE replays a
+                recorded session, otherwise the run fails at the driver check
+                with exit 1.
+  timestream-influxdb validate-input | instance-types
+                Timestream for InfluxDB input rules (instance_name,
+                instance_type, region, vpc_id, subnet_id, sg_id, snapshot_id,
+                storage_gb; exit 1 on a bad value) and the instance type
+                table with its sizing recommendation. See
+                docs/migration/relational.md.
 
-Options:
+Options:)
   --json        Emit a JSON array of {name, description, path} objects.
   --plugin NAME (manifests validate) Validate only the plugin directory
                 ROOT/plugins/NAME. (sync plugin-skills) Sync only that plugin.
@@ -1260,6 +1297,76 @@ pub const COMMANDS: &[CommandSpec] = &[
         max_positionals: usize::MAX,
         passthrough: true,
         handler: asm_exec::exec_command,
+    },
+    CommandSpec {
+        path: &["dsql", "selftest"],
+        flags: &[],
+        value_flags: &[],
+        strict_values: true,
+        repeatable_flags: &[],
+        max_positionals: 0,
+        passthrough: false,
+        handler: relational::dsql_selftest_command,
+    },
+    CommandSpec {
+        path: &["dsql", "tenant-sql"],
+        flags: &[],
+        value_flags: relational::TENANT_SQL_VALUE_FLAGS,
+        strict_values: true,
+        repeatable_flags: &[],
+        max_positionals: 0,
+        passthrough: false,
+        handler: relational::dsql_tenant_sql_command,
+    },
+    CommandSpec {
+        path: &["dsql", "tenant-query"],
+        flags: &[],
+        value_flags: relational::TENANT_QUERY_VALUE_FLAGS,
+        strict_values: true,
+        repeatable_flags: &[],
+        max_positionals: 0,
+        passthrough: false,
+        handler: relational::dsql_tenant_query_command,
+    },
+    CommandSpec {
+        path: &["rds", "commitment"],
+        flags: relational::RDS_FLAGS,
+        value_flags: relational::RDS_VALUE_FLAGS,
+        strict_values: true,
+        repeatable_flags: &[],
+        max_positionals: 1,
+        passthrough: false,
+        handler: relational::rds_commitment_command,
+    },
+    CommandSpec {
+        path: &["rds-oracle", "test-connection"],
+        flags: relational::ORACLE_FLAGS,
+        value_flags: relational::ORACLE_VALUE_FLAGS,
+        strict_values: true,
+        repeatable_flags: &[],
+        max_positionals: 4,
+        passthrough: false,
+        handler: relational::oracle_test_connection_command,
+    },
+    CommandSpec {
+        path: &["timestream-influxdb", "validate-input"],
+        flags: &[],
+        value_flags: &[],
+        strict_values: true,
+        repeatable_flags: &[],
+        max_positionals: 64,
+        passthrough: false,
+        handler: relational::timestream_validate_input_command,
+    },
+    CommandSpec {
+        path: &["timestream-influxdb", "instance-types"],
+        flags: &[],
+        value_flags: &[],
+        strict_values: true,
+        repeatable_flags: &[],
+        max_positionals: 4,
+        passthrough: false,
+        handler: relational::timestream_instance_types_command,
     },
 ];
 
