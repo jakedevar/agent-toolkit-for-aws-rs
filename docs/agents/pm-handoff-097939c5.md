@@ -175,3 +175,5 @@ Friction: #4727, Rsi #4694, Rsi #4704
   Kaizen #4743 (router bare `-`; also fixes #4764) worker 293605ec (Sonnet) from f6fac27d (op 8c0d840d).
   4/4 busy: ecf77dbc (#4727 repair), 14bc584a (#4381 repair), fa5c7051 (#4408 repair), 293605ec (#4743).
   Round 13 candidates: #4727 (after #4745 re-review), #4381 (after #4742 re-review; contains 8f429632), #4408 (after #4744), #4743.
+- 21:40Z: #4727 repair 44c513a51fe7f3e76368d6a68c35fdeb1d7e7d9f (ecf77dbc; scope by flag/type/import, ban shape reads unless marked; 24 markers in ai_models/bedrock_agent; scoped 13a692cd ok base c464befb). Ruling: output construction not flagged = OK.
+  Re-review round 2 #4745 worker 6a6ca4e7 (Codex sol high, pinned, op 345a6e58). NB #4381 repair merged 8f429632 (pre-repair); round 13 must merge 44c513a5 too and the repaired scanner must pass on cloudwatch.
