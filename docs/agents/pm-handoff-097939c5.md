@@ -112,3 +112,4 @@ rust-migration-health (health_anomaly), pm-safety-net (hourly resume), terminal 
   Manager scoped 8ab77458 pending. If ok: GATE = a1db6c61 / source_session_id 215a5c49-13fb-46cb-bc56-0c4311d0c467.
   New slice #4394 (RDS/DSQL/Timestream) worker a33d3291 from 550b629d.
 - 19:25Z: scoped 8ab77458 on a1db6c61 OK (2365 tests), check ok. GATE = a1db6c61 / source_session_id 215a5c49-13fb-46cb-bc56-0c4311d0c467. Noted on #4575. Still no GM mail.
+- 19:30Z: #4384 impl a611fb03 (e8a85e85; 6 ai-models commands; scoped 53205e7e ok). Follow-ups #4719 (live client), #4720 (retire Python). Review #4721 worker c10f6e6c (pinned).
