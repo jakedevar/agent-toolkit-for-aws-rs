@@ -192,3 +192,5 @@ Friction: #4727, Rsi #4694, Rsi #4704
   Round 13 note: merge order #4727 final -> #4381 97ea8fac (KeyOrder::Contained may conflict with #4727 r2 if it touches KeyOrder); cloudwatch must pass the FINAL #4727 scanner (may need extra markers in the integration round, registration-or-marker-only).
 - 21:51Z: #4744 round 2 on b848f1d8: CHANGES_REQUESTED #4777 (root overlap disables derived link checks), #4778 (malformed service data PASS), #4779 (decide Scratch rejects linked explicit RUN_DIR).
   Ruling: provenance-based trust (3 explicit roots may be links; every derived component refuses links; Scratch same). FINAL repair (Opus) 3832ac18 continue_from fa5c7051 (op 45e579e5). Round 3 re-review: if only new symlink edge cases in this fixture checker, accept + file follow-ups.
+- 21:53Z: #4776 review of #4743 fee052eb: CHANGES_REQUESTED #4780 (`--output -` writes literal file `-`).
+  Ruling: fail closed; router-level STDIO_DASH allowlist const (no CommandSpec schema change), shipped empty; restore `skills list -` test. Repair (Sonnet) 238d72f3 continue_from 293605ec (op 1568b639). Then re-review #4776 pinned.
