@@ -271,7 +271,7 @@ fn escape_unsafe(text: &str, keep_layout: bool) -> String {
 /// A caller-derived value made safe to embed in one diagnostic line: every
 /// control (newline, carriage return, tab, ESC, ...) and invisible format
 /// character is replaced by a visible Python-style escape (`\n`, `\x1b`,
-/// `‮`). Ordinary text, including non-ASCII letters, is unchanged, and
+/// `\uXXXX`). Ordinary text, including non-ASCII letters, is unchanged, and
 /// the backslash is left alone.
 #[must_use]
 pub fn safe_text(text: &str) -> String {

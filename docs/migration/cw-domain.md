@@ -137,7 +137,7 @@ port escapes these, centrally, in `cloudwatch::pytext`:
 - `safe_text` replaces every control character (C0, DEL, C1, including `\n`,
   `\r`, `\t`, ESC), the Unicode line/paragraph separators, the bidirectional
   controls and the BOM with a visible Python-style escape (`\n`, `\x1b`,
-  `‮`). Ordinary text, including non-ASCII letters, joiners, and the
+  `\uXXXX`). Ordinary text, including non-ASCII letters, joiners, and the
   backslash, is unchanged. It is applied to every caller-derived scalar that
   lands inside a diagnostic line: the `received:` values and `LOCATION INPUTS
   RECEIVED` block, the Java class-name suggestion, the capture field name, the
