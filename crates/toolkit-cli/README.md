@@ -454,6 +454,31 @@ unreadable registry, answers or evidence file, malformed data, a linked file or 
 value. The parity table, every deliberate difference and the Python-to-Rust test mapping are in
 `docs/migration/startup-scoring.md`.
 
+### startup build-diagram and verify-model-path (#4402)
+
+```
+toolkit startup build-diagram RESULT CONFIRM [DESIGN]
+toolkit startup verify-model-path RECOMMENDATION [--output FILE] [--workload ID[,ID...]]
+```
+
+Replacements for the agent-advisor `scripts/build_diagram.py` and `scripts/verify_model_path.py`
+and their tests. `build-diagram` composes the Mermaid flowchart and ASCII fallback of a scoring
+result (one unit, the legacy result/confirm path, or the multi-unit and Temporal topologies of
+DESIGN), writes `diagram.md` beside RESULT and prints `RESULT=ok RUNTIME=<runtime>`
+(`multi-unit` with a design). A CONFIRM or DESIGN file that does not exist is absent. It writes
+text only and runs no renderer. `verify-model-path` validates RECOMMENDATION against the
+`model-recommendation` schema, probes each selected `recommended` workload through the five API
+paths (Mantle Messages, OpenAI Responses and Chat Completions, Bedrock Converse and InvokeModel)
+after verifying an application inference profile, validates the result against the
+`model-verification` schema, writes it (default `model-verification.json` beside
+RECOMMENDATION) and prints `RESULT=ok|failed WORKLOADS=<n>`; exit 2 when a workload `failed` or
+`needs_resolution`. A probe error is redacted before it is stored. The probe client is a seam: this
+build wires none, so a probe is stored as a `RuntimeError` failure and nothing is sent. A
+missing argument is exit 2; an unreadable, linked or malformed file, or a document of the wrong
+shape, is exit 1 with a one-line message that names the field and never echoes a value. The
+parity table, every deliberate difference and the Python-to-Rust test mapping are in
+`docs/migration/startup-diagram.md`.
+
 ## sync (#4377)
 
 `toolkit sync plugin-skills` makes every `plugins/<plugin>/skills/<name>` copy

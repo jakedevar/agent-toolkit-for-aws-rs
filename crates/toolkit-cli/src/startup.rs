@@ -16,6 +16,8 @@
 //! | `startup migration-report` | `validate-migration-report.py` |
 //! | `startup score` | `agent-advisor/scripts/scoring.py` (#4400) |
 //! | `startup score-units` | `agent-advisor/scripts/score_units.py` (#4400) |
+//! | `startup build-diagram` | `agent-advisor/scripts/build_diagram.py` (#4402) |
+//! | `startup verify-model-path` | `agent-advisor/scripts/verify_model_path.py` (#4402) |
 //!
 //! Each prints the Python messages unchanged: findings go to stderr through
 //! [`Output::diagnostic`] and a failing run additionally ends with one
@@ -29,13 +31,15 @@ use std::fs;
 use std::io;
 use std::path::Path;
 
-use toolkit_core::read_regular_file;
+use toolkit_core::{parse_json, read_regular_file, Json};
 
 use crate::manifests::{read_failure, universal_newlines};
 
 mod artifacts;
 mod consent;
+mod diagram;
 mod model_ids;
+mod model_path;
 mod parity;
 mod plan;
 mod pricing;
@@ -47,7 +51,9 @@ pub(crate) mod text;
 
 pub use artifacts::artifacts_command;
 pub use consent::consent_audit_command;
+pub use diagram::build_diagram_command;
 pub use model_ids::model_id_lint_command;
+pub use model_path::verify_model_path_command;
 pub use parity::pricing_parity_command;
 pub use plan::emit_plan_command;
 pub use pricing::pricing_command;
@@ -128,6 +134,19 @@ pub(crate) fn read_text(path: &Path, shown: &str) -> Result<String, String> {
     read_regular_file(path, MAX_ARTIFACT_BYTES)
         .map(|text| universal_newlines(&text))
         .map_err(|error| format!("cannot read {shown}: {}", read_failure(&error)))
+}
+
+/// Reads and parses a JSON file. The error text names the file (escaped) and
+/// the parse failure, never a value of the document.
+pub(crate) fn read_json_document(path: &Path) -> Result<Json, String> {
+    let label = crate::safe_text::safe_path(&path.display().to_string());
+    let text = read_text(path, &label)?;
+    parse_json(&text).map_err(|error| {
+        format!(
+            "{label}: invalid JSON ({})",
+            crate::ai_data::parse_failure_text(&error)
+        )
+    })
 }
 
 #[cfg(test)]

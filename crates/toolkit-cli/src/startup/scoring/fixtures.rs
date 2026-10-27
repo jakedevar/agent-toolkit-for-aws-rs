@@ -14,10 +14,10 @@ use crate::run;
 static COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 /// A unique temporary directory removed on drop.
-pub(super) struct TempDir(PathBuf);
+pub(in crate::startup) struct TempDir(PathBuf);
 
 impl TempDir {
-    pub(super) fn new(label: &str) -> Self {
+    pub(in crate::startup) fn new(label: &str) -> Self {
         let path = std::env::temp_dir().join(format!(
             "toolkit-scoring-{label}-{}-{}",
             std::process::id(),
@@ -29,7 +29,7 @@ impl TempDir {
     }
 
     /// A named child directory (created) of this one.
-    pub(super) fn dir(&self, name: &str) -> PathBuf {
+    pub(in crate::startup) fn dir(&self, name: &str) -> PathBuf {
         let path = self.0.join(name);
         fs::create_dir_all(&path).expect("create fixture dir");
         path
@@ -50,23 +50,23 @@ impl Drop for TempDir {
     }
 }
 
-pub(super) fn write(root: &Path, rel: &str, content: &str) {
+pub(in crate::startup) fn write(root: &Path, rel: &str, content: &str) {
     let path = root.join(rel);
     fs::create_dir_all(path.parent().expect("fixture has a parent")).expect("create fixture dir");
     fs::write(path, content).expect("write fixture");
 }
 
-pub(super) fn path_text(path: &Path) -> &str {
+pub(in crate::startup) fn path_text(path: &Path) -> &str {
     path.to_str().expect("utf-8 temp path")
 }
 
 /// Parses fixture JSON.
-pub(super) fn j(text: &str) -> Json {
+pub(in crate::startup) fn j(text: &str) -> Json {
     parse_json(text).expect("fixture JSON")
 }
 
 /// Runs the CLI in-process; returns (status, stdout, stderr).
-pub(super) fn exec(values: &[&str]) -> (u8, String, String) {
+pub(in crate::startup) fn exec(values: &[&str]) -> (u8, String, String) {
     let args: Vec<OsString> = values.iter().map(OsString::from).collect();
     let mut out = Vec::new();
     let mut err = Vec::new();
@@ -79,18 +79,18 @@ pub(super) fn exec(values: &[&str]) -> (u8, String, String) {
 }
 
 /// The agent-advisor skill of the real plugin tree.
-pub(super) fn real_skill() -> PathBuf {
+pub(in crate::startup) fn real_skill() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../plugins/aws-startup-advisor/skills/agent-advisor")
 }
 
 /// The runtime registry of the real skill.
-pub(super) fn real_runtimes() -> PathBuf {
+pub(in crate::startup) fn real_runtimes() -> PathBuf {
     real_skill().join("references").join("runtimes")
 }
 
 /// A minimal valid runtime profile (`_minimal` of `test_scoring.py`).
-pub(super) fn minimal(id: &str, status: &str) -> Json {
+pub(in crate::startup) fn minimal(id: &str, status: &str) -> Json {
     Json::object(vec![
         ("id", Json::string(id)),
         ("display_name", Json::string(id)),
@@ -104,7 +104,7 @@ pub(super) fn minimal(id: &str, status: &str) -> Json {
 }
 
 /// `profile` with `key` replaced (or added) by the JSON `value`.
-pub(super) fn with(profile: Json, key: &str, value: &str) -> Json {
+pub(in crate::startup) fn with(profile: Json, key: &str, value: &str) -> Json {
     let Json::Object(mut members) = profile else {
         panic!("a profile is an object");
     };
@@ -117,6 +117,6 @@ pub(super) fn with(profile: Json, key: &str, value: &str) -> Json {
 }
 
 /// The text of a profile, for writing into a registry directory.
-pub(super) fn profile_text(profile: &Json) -> String {
+pub(in crate::startup) fn profile_text(profile: &Json) -> String {
     profile.to_compact_string()
 }

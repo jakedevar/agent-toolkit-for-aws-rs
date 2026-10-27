@@ -32,7 +32,7 @@ mod units;
 mod value;
 
 #[cfg(test)]
-mod fixtures;
+pub(in crate::startup) mod fixtures;
 #[cfg(test)]
 mod locks;
 #[cfg(test)]
