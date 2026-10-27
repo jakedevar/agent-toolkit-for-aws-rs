@@ -59,8 +59,7 @@ fn node<'a>(value: &'a mut Json, path: &str) -> &'a mut Json {
             Json::Object(members) => members
                 .iter_mut()
                 .find(|(key, _)| key.as_str() == part)
-                .map(|(_, inner)| inner)
-                .unwrap_or_else(|| panic!("no key {part} in {path}")),
+                .map_or_else(|| panic!("no key {part} in {path}"), |(_, inner)| inner),
             Json::Array(items) => {
                 let index: usize = part.parse().expect("array index");
                 &mut items[index]
