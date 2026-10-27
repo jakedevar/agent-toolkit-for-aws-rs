@@ -685,7 +685,10 @@ fn the_schema_keywords_of_the_contract_are_all_enforced() {
         recommend(&[path_text(&dir.join("input.json"))])
     };
     assert_eq!(status, 1);
-    assert!(stderr.contains("$.workloads: an array value violates the schema keyword 'minItems'"), "{stderr}");
+    assert!(
+        stderr.contains("$.workloads: an array value violates the schema keyword 'minItems'"),
+        "{stderr}"
+    );
     // An integral float is an integer for the contract, as in jsonschema.
     write(
         &dir,
