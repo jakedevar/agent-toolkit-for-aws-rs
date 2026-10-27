@@ -505,7 +505,7 @@ fn populate_stage(source: &Path, entries: &[TreeEntry], stage: &Path) -> Result<
         let target = stage.join(&entry.rel);
         match entry.kind {
             Kind::Dir => {
-                fs::create_dir(&target).map_err(|e| io_failure("create directory", &target, &e))?
+                fs::create_dir(&target).map_err(|e| io_failure("create directory", &target, &e))?;
             }
             _ => copy_file_atomic(&source.join(&entry.rel), &target)?,
         }
