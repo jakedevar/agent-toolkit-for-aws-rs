@@ -2,7 +2,7 @@
   "schema_version": 1,
   "baseline_commit": "86edeadd0da48e03a8d3045e2775881bd6450e68",
   "programme_issue": 4369,
-  "classification_status": "initial; independent audit #4371 pending",
+  "classification_status": "audited; #4371 report in docs/migration/inventory-audit.md awaits independent review",
   "files": [
     {
       "path": "plugins/aws-agents/skills/agents-build/scripts/process_payment_tool.py",
