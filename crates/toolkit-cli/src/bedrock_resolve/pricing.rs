@@ -472,6 +472,7 @@ fn table_answer(model_id: &str, identity: Identity<'_, '_>) -> Option<Price> {
 /// The static table: exact rows, then date/revision-normalized unique rows.
 /// `None` when the id is not priced there (Opus 5.5 always is, region-aware,
 /// elsewhere).
+#[cfg(test)]
 pub(crate) fn static_fallback(model_id: &str) -> Option<Price> {
     table_answer(model_id, classify(STATIC_FALLBACK, model_id))
 }
@@ -481,6 +482,7 @@ pub(crate) fn static_fallback(model_id: &str) -> Option<Price> {
 /// "openai.gpt-", "-v1"), a separator boundary alone ("...opus-4-8-foo") or a
 /// base shared by several rows is not a match: another model's rate would be
 /// a wrong answer.
+#[cfg(test)]
 pub(super) fn unique_normalized_row<'a>(
     table: &'a [(&'a str, f64, f64)],
     model_id: &str,
