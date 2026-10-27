@@ -24,10 +24,30 @@ use std::path::PathBuf;
 
 use toolkit_core::{discover_skills, skills_to_json, ErrorKind, ToolkitError};
 
+mod msk;
+
 /// Usage text printed by `help` (stdout) and after usage errors (stderr).
 pub const USAGE: &str = "\
 Usage:
   toolkit skills list [ROOT] [--json]
+  toolkit msk size [--emit-static-pricing] [--use-max-partitions]
+                   [--no-rack-affined-consumers] [--region REGION]
+                   [--pricing-source auto|api|static]
+                   [--avg-data-in-mbs N] [--peak-data-in-mbs N]
+                   [--avg-data-out-mbs N] [--peak-data-out-mbs N]
+                   [--num-partitions N] [--retention-hours N]
+                   [--primary-retention-hours N] [--replication-factor N]
+                   [--utilization-standard F] [--utilization-express F]
+                   [--pst-per-broker-mbs N] [--discount-pct PCT]
+                   [--broker-classes standard|express|standard,express]
+                   [--broker-quota N]
+  toolkit msk compat CLUSTER_CONFIG [--out-dir DIR]
+  toolkit msk sim compute [--instance-type T] [--broker-count N]
+                          [--kafka-version V]
+  toolkit msk sim render --instance-type T --broker-count N
+                         --kafka-version V --output PATH
+  toolkit msk sim validate --test e2e_latency|broker_restart --config JSON
+                           [--instance-type T] [--broker-count N]
   toolkit --version
   toolkit help
 
@@ -35,23 +55,44 @@ Commands:
   skills list   List skill directories (directories containing SKILL.md) under
                 ROOT, sorted by name then relative path. ROOT defaults to
                 `skills` in the current directory.
+  msk size      MSK broker sizing and monthly cost report (MiB/s, GiB, USD).
+                The workload options are required unless
+                --emit-static-pricing is given. Only --pricing-source static
+                (us-east-1) prices offline; `auto` falls back to it, `api`
+                needs a build with an AWS Pricing API client.
+  msk compat    Five-pillar MSK Express compatibility assessment of a
+                discovery cluster-config.json. Writes
+                compatibility.<cluster_name>.json into --out-dir (default:
+                current directory) and reports the path and the overall
+                verdict on stderr.
+  msk sim       MSK Express load-test simulation: `compute` derives capacity
+                and fleet sizes, `render` writes a CloudFormation template
+                with the sizing baked in, `validate` returns PASS/REJECT with
+                warnings for a proposed test config.
 
 Options:
   --json        Emit a JSON array of {name, description, path} objects.
   -h, --help    Print this help.
   -V, --version Print the version.
+  Value options take `--name value` or `--name=value`; the msk commands are
+  documented in crates/toolkit-cli/README.md.
 
 Exit codes:
   0  success (including help, version and an empty result)
   1  runtime error (missing root, root not a directory, unreadable files,
-     stdout write failure)
+     stdout write failure); msk size: pricing or workload error;
+     msk sim validate: decision REJECT
   2  usage error (unknown command, missing or unknown arguments,
-     or a non-UTF-8 argument)";
+     or a non-UTF-8 argument); msk sim: invalid sizing, config or output
+     (JSON {\"error\": ...} on stderr)";
+
 
 /// Buffered stdout lines with the closed-pipe and write-error contract.
 pub struct Output<'a> {
     sink: &'a mut dyn Write,
     closed: bool,
+    diagnostics: Vec<String>,
+    status: u8,
 }
 
 impl<'a> Output<'a> {
@@ -60,7 +101,35 @@ impl<'a> Output<'a> {
         Self {
             sink,
             closed: false,
+            diagnostics: Vec::new(),
+            status: 0,
         }
+    }
+
+    /// Queues a line for stderr. Diagnostics are written by [`run`] after the
+    /// handler returns, whatever its outcome, so commands that print a
+    /// published stderr format (warnings, a JSON error object) keep stdout
+    /// and stderr separate.
+    pub fn diagnostic(&mut self, text: impl Into<String>) {
+        self.diagnostics.push(text.into());
+    }
+
+    /// Sets the exit status [`run`] returns when the handler itself succeeds.
+    /// Commands whose published contract uses a non-zero status together with
+    /// regular output (a REJECT verdict, a legacy error code) set it here.
+    pub fn set_exit_status(&mut self, status: u8) {
+        self.status = status;
+    }
+
+    /// The status set with [`Output::set_exit_status`] (default 0).
+    #[must_use]
+    pub fn exit_status(&self) -> u8 {
+        self.status
+    }
+
+    /// Takes the queued stderr lines.
+    pub fn take_diagnostics(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.diagnostics)
     }
 
     /// True once the reader went away; handlers should stop producing output.
@@ -124,6 +193,9 @@ pub struct Invocation {
     pub positionals: Vec<String>,
     /// Flags that were present (each at most once).
     pub flags: Vec<String>,
+    /// Value options as `(name, value)`; a repeated option keeps its last
+    /// value, like the legacy argument parsers.
+    pub options: Vec<(String, String)>,
 }
 
 impl Invocation {
@@ -131,6 +203,22 @@ impl Invocation {
     #[must_use]
     pub fn has_flag(&self, name: &str) -> bool {
         self.flags.iter().any(|flag| flag == name)
+    }
+
+    /// The value of option `name` (for example `--region`), if given.
+    #[must_use]
+    pub fn option(&self, name: &str) -> Option<&str> {
+        self.options
+            .iter()
+            .find(|(key, _)| key == name)
+            .map(|(_, value)| value.as_str())
+    }
+
+    fn set_option(&mut self, name: &str, value: &str) {
+        match self.options.iter_mut().find(|(key, _)| key == name) {
+            Some(entry) => entry.1 = value.to_string(),
+            None => self.options.push((name.to_string(), value.to_string())),
+        }
     }
 
     /// The positional argument at `index`, if any.
@@ -150,6 +238,9 @@ pub struct CommandSpec {
     pub path: &'static [&'static str],
     /// Long flags the command accepts, for example `["--json"]`.
     pub flags: &'static [&'static str],
+    /// Long options that take a value (`--name value` or `--name=value`),
+    /// for example `["--region"]`.
+    pub value_flags: &'static [&'static str],
     /// Maximum number of positional arguments.
     pub max_positionals: usize,
     /// The implementation.
@@ -166,12 +257,50 @@ impl fmt::Debug for CommandSpec {
 }
 
 /// The routing table. New domain slices register their commands here.
-pub const COMMANDS: &[CommandSpec] = &[CommandSpec {
-    path: &["skills", "list"],
-    flags: &["--json"],
-    max_positionals: 1,
-    handler: skills_list,
-}];
+pub const COMMANDS: &[CommandSpec] = &[
+    CommandSpec {
+        path: &["skills", "list"],
+        flags: &["--json"],
+        value_flags: &[],
+        max_positionals: 1,
+        handler: skills_list,
+    },
+    CommandSpec {
+        path: &["msk", "size"],
+        flags: msk::SIZE_FLAGS,
+        value_flags: msk::SIZE_VALUE_FLAGS,
+        max_positionals: 0,
+        handler: msk::size,
+    },
+    CommandSpec {
+        path: &["msk", "compat"],
+        flags: &[],
+        value_flags: msk::COMPAT_VALUE_FLAGS,
+        max_positionals: 1,
+        handler: msk::compat,
+    },
+    CommandSpec {
+        path: &["msk", "sim", "compute"],
+        flags: &[],
+        value_flags: msk::SIM_COMPUTE_VALUE_FLAGS,
+        max_positionals: 0,
+        handler: msk::sim_compute,
+    },
+    CommandSpec {
+        path: &["msk", "sim", "render"],
+        flags: &[],
+        value_flags: msk::SIM_RENDER_VALUE_FLAGS,
+        max_positionals: 0,
+        handler: msk::sim_render,
+    },
+    CommandSpec {
+        path: &["msk", "sim", "validate"],
+        flags: &[],
+        value_flags: msk::SIM_VALIDATE_VALUE_FLAGS,
+        max_positionals: 0,
+        handler: msk::sim_validate,
+    },
+];
 
 /// Outcome of routing the arguments.
 #[derive(Debug)]
@@ -220,10 +349,28 @@ pub fn route<'a>(specs: &'a [CommandSpec], args: &[String]) -> Result<Routed<'a>
     };
 
     let mut invocation = Invocation::default();
-    for arg in &args[spec.path.len()..] {
+    let mut rest = args[spec.path.len()..].iter();
+    while let Some(arg) = rest.next() {
         let word = arg.as_str();
         if word == "-h" || word == "--help" {
             return Ok(Routed::Help);
+        }
+        if let Some((name, value)) = word
+            .split_once('=')
+            .filter(|(name, _)| spec.value_flags.contains(name))
+        {
+            invocation.set_option(name, value);
+            continue;
+        }
+        if spec.value_flags.contains(&word) {
+            let Some(value) = rest.next() else {
+                return Err(ToolkitError::usage(
+                    "invalid_arguments",
+                    format!("invalid arguments: option {word} requires a value"),
+                ));
+            };
+            invocation.set_option(word, value);
+            continue;
         }
         if word.starts_with('-') {
             if !spec.flags.contains(&word) {
@@ -301,8 +448,14 @@ pub fn run(args: &[OsString], out: &mut dyn Write, err: &mut dyn Write) -> u8 {
         Ok(Routed::Run(spec, invocation)) => {
             let mut output = Output::new(out);
             let result = (spec.handler)(&invocation, &mut output).and_then(|()| output.finish());
+            let status = output.exit_status();
+            for line in output.take_diagnostics() {
+                // stderr may be closed too; there is nowhere left to report that.
+                let _ = err.write_all(line.as_bytes());
+                let _ = err.write_all(b"\n");
+            }
             match result {
-                Ok(()) => 0,
+                Ok(()) => status,
                 Err(error) => report(err, &error),
             }
         }
@@ -462,7 +615,7 @@ mod tests {
         for spec in COMMANDS {
             let joined = spec.path.join(" ");
             assert!(USAGE.contains(&joined), "usage lacks '{joined}'");
-            for flag in spec.flags {
+            for flag in spec.flags.iter().chain(spec.value_flags) {
                 assert!(USAGE.contains(flag), "usage lacks '{flag}'");
             }
         }
@@ -595,5 +748,98 @@ mod tests {
         assert!(output.is_closed());
         assert!(output.line("second").is_ok(), "later lines are dropped");
         assert!(output.finish().is_ok());
+    }
+
+    #[test]
+    fn value_options_accept_both_spellings_and_the_last_value_wins() {
+        let Ok(Routed::Run(spec, invocation)) = route_words(&[
+            "msk",
+            "sim",
+            "compute",
+            "--instance-type",
+            "a",
+            "--broker-count=9",
+            "--instance-type",
+            "b",
+        ]) else {
+            panic!("expected a runnable route");
+        };
+        assert_eq!(spec.path, &["msk", "sim", "compute"]);
+        assert_eq!(invocation.option("--instance-type"), Some("b"));
+        assert_eq!(invocation.option("--broker-count"), Some("9"));
+        assert_eq!(invocation.option("--kafka-version"), None);
+        assert_eq!(invocation.options.len(), 2);
+    }
+
+    #[test]
+    fn value_options_consume_the_next_word_even_when_it_looks_like_a_flag() {
+        let Ok(Routed::Run(_, invocation)) =
+            route_words(&["msk", "size", "--avg-data-in-mbs", "-5", "--use-max-partitions"])
+        else {
+            panic!("expected a runnable route");
+        };
+        assert_eq!(invocation.option("--avg-data-in-mbs"), Some("-5"));
+        assert!(invocation.has_flag("--use-max-partitions"));
+        assert!(invocation.positionals.is_empty());
+    }
+
+    #[test]
+    fn value_option_errors_are_usage_errors() {
+        for values in [
+            vec!["msk", "sim", "compute", "--broker-count"],
+            vec!["msk", "sim", "compute", "--wat", "1"],
+            vec!["msk", "sim", "compute", "extra"],
+            vec!["msk", "size", "--json"],
+            vec!["msk", "compat", "a", "b"],
+            vec!["msk"],
+            vec!["msk", "sim"],
+            vec!["skills", "list", "--root", "x"],
+        ] {
+            let Err(error) = route_words(&values) else {
+                panic!("{values:?} must be a usage error");
+            };
+            assert_eq!(error.kind(), ErrorKind::Usage, "{values:?}");
+            assert_eq!(error.exit_code(), 2);
+        }
+        let Err(error) = route_words(&["msk", "sim", "compute", "--broker-count"]) else {
+            panic!("missing value must fail");
+        };
+        assert_eq!(
+            error.message(),
+            "invalid arguments: option --broker-count requires a value"
+        );
+    }
+
+    #[test]
+    fn handlers_can_queue_stderr_lines_and_set_the_exit_status() {
+        fn handler(_: &Invocation, output: &mut Output<'_>) -> Result<(), ToolkitError> {
+            output.line("data")?;
+            output.diagnostic("warning one");
+            output.diagnostic(String::from("warning two"));
+            output.set_exit_status(7);
+            Ok(())
+        }
+        let spec = CommandSpec {
+            path: &["demo"],
+            flags: &[],
+            value_flags: &[],
+            max_positionals: 0,
+            handler,
+        };
+        let Ok(Routed::Run(spec, invocation)) = route(std::slice::from_ref(&spec), &words(&["demo"]))
+        else {
+            panic!("expected a runnable route");
+        };
+        let mut out = Vec::new();
+        let mut output = Output::new(&mut out);
+        (spec.handler)(&invocation, &mut output).expect("handler succeeds");
+        assert_eq!(output.exit_status(), 7);
+        assert_eq!(
+            output.take_diagnostics(),
+            vec!["warning one".to_string(), "warning two".to_string()]
+        );
+        assert!(output.take_diagnostics().is_empty());
+        drop(output);
+        assert_eq!(out, b"data\n");
     }
 }

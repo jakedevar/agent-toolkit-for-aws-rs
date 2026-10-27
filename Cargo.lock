@@ -7,8 +7,16 @@ name = "toolkit-cli"
 version = "0.1.0"
 dependencies = [
  "toolkit-core",
+ "toolkit-msk",
 ]
 
 [[package]]
 name = "toolkit-core"
 version = "0.1.0"
+
+[[package]]
+name = "toolkit-msk"
+version = "0.1.0"
+dependencies = [
+ "toolkit-core",
+]

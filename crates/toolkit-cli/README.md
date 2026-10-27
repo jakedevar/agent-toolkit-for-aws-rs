@@ -14,11 +14,14 @@ access and no live cloud activity.
 
 ```
 toolkit skills list [ROOT] [--json]
+toolkit msk size [options]
+toolkit msk compat CLUSTER_CONFIG [--out-dir DIR]
+toolkit msk sim compute|render|validate [options]
 toolkit --version
 toolkit help
 ```
 
-`-h` / `--help` and `-V` / `--version` work in place of the third line.
+`-h` / `--help` and `-V` / `--version` work in place of the last line.
 
 ### skills list
 
@@ -200,3 +203,21 @@ crate (use optional domain crates or features).
 A leading UTF-8 byte-order mark is ignored. `name:` with no value or an empty
 quoted value is reported by the parser as an empty string; skill discovery
 treats an empty or whitespace-only `name` as absent and uses the directory name.
+
+## msk commands (slice #4387)
+
+`toolkit msk size`, `toolkit msk compat` and `toolkit msk sim compute|render|validate`
+replace the three legacy MSK Python scripts. Their options, output formats,
+exit statuses, parity evidence and intentional changes are documented in
+`docs/migration/msk-contracts.md`.
+
+Router extensions they rely on (additive; `skills list` is unchanged):
+
+- Value options: a command lists them in `CommandSpec.value_flags`; they are
+  written `--name value` or `--name=value`, the value is always the next word,
+  a repeated option keeps its last value and a missing value is a usage error
+  (exit 2). Handlers read them with `Invocation::option`.
+- `Output::diagnostic` queues lines for stderr and `Output::set_exit_status`
+  sets the status returned when the handler succeeds, for commands whose
+  published contract prints regular output together with a non-zero status or
+  a specific stderr format.

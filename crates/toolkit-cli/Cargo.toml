@@ -12,6 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 toolkit-core = { path = "../toolkit-core" }
+toolkit-msk = { path = "../toolkit-msk" }
 
 [lints]
 workspace = true

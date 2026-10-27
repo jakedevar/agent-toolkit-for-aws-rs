@@ -1,0 +1,13 @@
+[package]
+name = "toolkit-msk"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "MSK sizing, Express compatibility and simulation configuration tools (slice #4387)."
+
+[dependencies]
+toolkit-core = { path = "../toolkit-core" }
+
+[lints]
+workspace = true
