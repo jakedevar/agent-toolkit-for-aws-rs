@@ -104,3 +104,6 @@ rust-migration-health (health_anomaly), pm-safety-net (hourly resume), terminal 
   Close-on-land additions: #4383 #4709 #4712 #4713 #4407 #4708 #4714.
 - 19:05Z: round 9 head 550b629d7aa376a967e194192b7be6e7563d2c08 (worker f14baf2c; merges c49e6a7d #4383, 7868aaf3 #4407 both conflict-free (remerge empty) + 550b629d three repeatable_flags lines; verified). Own branch rsi/f14baf2c.
   Manager scoped c434776b pending. If ok: GATE = 550b629d / source_session_id f14baf2c-46e0-412c-8c18-46172eb22ecc.
+- 19:10Z: #4403 ACCEPT 14c60071 (#4682 round 4, 93154385). Round 10 worker 215a5c49 (continue_from f14baf2c): #4403 onto 550b629d + repeatable_flags/passthrough on its 4 rows.
+  Kaizen worker 257d2d14 on #4697 (diag_contract covers repeatable_flags) from dcd47147.
+  Close-on-land additions: #4403 #4682 #4684 #4685 #4698 #4711 #4676(superseded).
