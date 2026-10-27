@@ -105,6 +105,16 @@ fn check_report(context: &Context<'_>, platform: Platform) {
     let l = context.ledger;
     let report = context.run.join("decision-report.html");
     let report_text = report.display().to_string();
+    if matches!(platform, Platform::Gcp)
+        && !context.guard_derived(
+            &context
+                .fixture
+                .join("after-decide-complete")
+                .join("estimation-infra.json"),
+        )
+    {
+        return;
+    }
     let (result, stdout, stderr) = match platform {
         // The cost-figure anchor gate is skipped (fail open on absence) unless
         // the estimation artifact is supplied, and `--no-require-toc` would
@@ -176,6 +186,13 @@ fn first_lines(text: &str) -> String {
 /// directory stays clean) and must EMIT a schema-shaped file, not a skip.
 fn check_plan(context: &Context<'_>, platform: Platform) {
     let l = context.ledger;
+    let plugin_json = context
+        .plugin_root
+        .join(".claude-plugin")
+        .join("plugin.json");
+    if !context.guard_derived(&plugin_json) {
+        return;
+    }
     let scratch = match Scratch::copy_of(&context.run) {
         Ok(scratch) => scratch,
         Err(message) => {
@@ -184,10 +201,6 @@ fn check_plan(context: &Context<'_>, platform: Platform) {
         }
     };
     let scratch_run = scratch.run_dir();
-    let plugin_json = context
-        .plugin_root
-        .join(".claude-plugin")
-        .join("plugin.json");
     let (result, stdout, stderr) = capture(
         crate::startup::emit_plan_command,
         &[],

@@ -15,6 +15,7 @@ use crate::startup::scoring::fixtures::{exec, j, path_text, TempDir};
 mod azure;
 mod capture;
 mod decide_workshop;
+mod repair;
 
 /// The shipped plugin the expectation documents and golden trees live in.
 /// One invalid-fixture case: a label, the damage, the message it must produce.
@@ -489,4 +490,13 @@ fn a_malformed_expectation_document_fails_closed() {
         stdout.contains("missing expected-workshop.json"),
         "{stdout}"
     );
+}
+
+/// The node at `path` (object keys, array indexes), mutably.
+pub(super) fn step_mut<'a>(doc: &'a mut Json, path: &[&str]) -> &'a mut Json {
+    let mut node = doc;
+    for segment in path {
+        node = step(node, segment);
+    }
+    node
 }

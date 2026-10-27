@@ -86,10 +86,12 @@ expectation documents) and `mod.rs` (dispatch, reads, report). Python `==`, trut
    `startup::{is_regular_file_under, read_text_under}`: a link at any component is a failure, and a
    directory is not a file. The scratch copy for `emit-plan` refuses links instead of following them
    (`shutil.copytree` followed them) and is removed on drop.
-5. **Bounded, escaped echo.** A message that quotes a run value uses `repr` truncated to 160
-   characters, and every report line goes through `neutralize_line` (control, bidirectional and
-   invisible characters become escapes; the line cannot be forged). Parse failures name the file and
-   position, never content. The messages that name a secret marker name the marker, not the value.
+5. **Bounded, escaped echo.** Assertions read every run value in full (`str(v)` / `repr(v)` are
+   never shortened, #4746); only a recorded message is bounded, to 1200 characters with a
+   `...[N more chars]` suffix. Every report line goes through `neutralize_line` (control,
+   bidirectional and invisible characters become escapes; the line cannot be forged). Parse
+   failures name the file and position, never content. The messages that name a secret marker name
+   the marker, not the value.
 6. **No subprocess.** The decide programs ran `validate-migration-report.py`,
    `validate-heroku-migration-report.py` and `emit-plan-json.py` through `sys.executable`; they now
    call the Rust handlers that replace those scripts in memory. A validator failure shows the first
@@ -98,6 +100,30 @@ expectation documents) and `mod.rs` (dispatch, reads, report). Python `==`, trut
    with `fancy-regex` anchored at the start (`re.match`); the markdown-table scans of the design
    program (`` `azurerm_..` ``, `` `Microsoft...` ``, `` `name.md` ``, the warning-code table) are
    hand-written scanners with the same token rules.
+8. **Repairs after review #4744 (fail closed beats Python parity).** Where the Python program was
+   laxer or silent, the Rust check fails and says why:
+   - *Empty documents* (#4747). An empty or whitespace-only run or expectation document, or a
+     falsey JSON root (`{}`, `[]`, `null`, `false`, `0`, `""`), is a named failure. The Azure estimate
+     program printed a bare `FAIL`; here it names the file. A program that stops before it recorded
+     any finding reports `KIND stopped before evaluating its assertions` and exits 1, never `PASS`.
+   - *Warnings keep their type* (#4748). `warnings`, `pricing_source`, `capture_warnings` and
+     `excluded` are serialised as supplied (`est.get("warnings", [])`: only an absent key reads as
+     the default), so a forbidden warning is found whatever its JSON shape. `aws-design.json`
+     `services` that is neither absent nor a list is a failure.
+   - *Booleans are never numbers* (#4753). A boolean `monthly_difference` or `annual_difference`
+     fails the reconciliation, as the Python `close()` guard did, instead of reading as 1/0.
+   - *Explanations are text* (#4754). A cost-line `basis` and a `$0.00` cluster `note` must be
+     non-blank strings; a truthy value of another type is reported (`... must be explanatory text,
+     not bool`) instead of counting as an explanation.
+   - *Derived paths are link-checked* (#4759). Every read below `--plugin-root` that the command
+     derives itself (the `fixtures` directory, the fixture set, golden trees, table directories,
+     shipped skill files, `.claude-plugin/plugin.json`, the estimate handed to the report
+     validator) is checked component by component from the plugin root. The explicit `--plugin-root`,
+     RUN_DIR and SEED_DIR keep their own caller-chosen-root semantics (the root itself may be a
+     link).
+   - *Reads are bounded and a bound hit is an error*. Every file read uses the shared 64 MiB
+     limit of `startup::read_text_under` / `read_regular_file`; a larger file is an unreadable-file
+     failure, never a silently shortened input.
 
 ## Callers (left in place; retired by #4415)
 
@@ -112,6 +138,7 @@ imports `check_expected_clarify.py` as a module, and a comment in
 ## Tests
 
 `startup/fixtures/tests.rs` (registry coverage, README, usage, fail-closed, hostile input, symlinks,
+`tests/repair.rs` for the #4744 repairs,
 malformed expectations), `tests/decide_workshop.rs`, `tests/capture.rs`, `tests/azure.rs`, plus unit
 tests in `ledger.rs`, `azure/clarify.rs`, `azure/design.rs` and `azure/estimate.rs`. They run offline
 against the committed trees and temporary copies; the `diag_contract` integration test covers the

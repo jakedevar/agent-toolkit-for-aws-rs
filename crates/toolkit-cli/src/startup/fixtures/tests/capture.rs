@@ -427,7 +427,7 @@ fn gcp_drift_fails_without_its_inputs() {
 
 // ------------------------------------------------------------- GCP baseline
 
-const GCP_ESTIMATE: &str = r#"{
+pub(super) const GCP_ESTIMATE: &str = r#"{
   "current_costs": {
     "source": "inventory_estimate",
     "accuracy": "+/-20-30% (derived from rate cards)",
@@ -440,7 +440,7 @@ const GCP_ESTIMATE: &str = r#"{
   "warnings": []
 }"#;
 
-fn gcp_baseline_run() -> Copy {
+pub(super) fn gcp_baseline_run() -> Copy {
     let run = Copy::empty();
     run.write("estimation-infra.json", GCP_ESTIMATE);
     run
@@ -521,7 +521,7 @@ fn gcp_baseline_fails_on_each_broken_expectation() {
 
 /// A passing estimate for the seed design of the scenario: one line per
 /// designed service, priced so every identity holds.
-fn heroku_estimate_run() -> Copy {
+pub(super) fn heroku_estimate_run() -> Copy {
     let run = Copy::empty();
     let design_text = std::fs::read_to_string(
         golden("heroku-live-capture", "seed-estimate").join("aws-design.json"),

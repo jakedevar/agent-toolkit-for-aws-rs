@@ -20,8 +20,11 @@ use crate::manifests::{is_falsy, py_eq, py_repr};
 /// `None`, for the views below.
 pub(super) static NULL: Json = Json::Null;
 
-/// Longest `repr` of a run value echoed into a message.
-const SHOWN_CHARS: usize = 160;
+/// Longest message the report echoes. The views below return the full,
+/// Python-compatible text (`str(v)`, `repr(v)`) because assertions compare and
+/// search it; only the finished message is bounded (#4746), so a run value
+/// can never be cut short before an assertion looks at it.
+const MESSAGE_CHARS: usize = 1200;
 
 /// Failed assertions and notes, in the order the program found them.
 #[derive(Default)]
@@ -40,12 +43,12 @@ impl Ledger {
 
     /// `FAILS.append(msg)`.
     pub(super) fn fail(&self, msg: impl Into<String>) {
-        self.fails.borrow_mut().push(msg.into());
+        self.fails.borrow_mut().push(bounded(&msg.into()));
     }
 
     /// `NOTES.append(msg)`.
     pub(super) fn note(&self, msg: impl Into<String>) {
-        self.notes.borrow_mut().push(msg.into());
+        self.notes.borrow_mut().push(bounded(&msg.into()));
     }
 
     pub(super) fn fails(&self) -> Vec<String> {
@@ -159,28 +162,30 @@ pub(super) fn eq_str(value: &Json, expected: &str) -> bool {
     value.as_str() == Some(expected)
 }
 
-/// `str(value)`: a string as itself, anything else as its `repr`.
+/// `str(value)`: a string as itself, anything else as its `repr`. Never
+/// shortened; a message is bounded when it is recorded.
 pub(super) fn ps(value: &Json) -> String {
     match value {
-        Json::String(text) => bounded(text),
+        Json::String(text) => text.clone(),
         other => rp(other),
     }
 }
 
-/// `repr(value)`, bounded: run artifacts are caller text, so a message echoes
-/// at most a short prefix of any value.
+/// `repr(value)`, in full.
 pub(super) fn rp(value: &Json) -> String {
-    bounded(&py_repr(value))
+    py_repr(value)
 }
 
 /// `repr` of a string.
 pub(super) fn rs(text: &str) -> String {
-    bounded(&crate::manifests::py_repr_str(text))
+    crate::manifests::py_repr_str(text)
 }
 
+/// At most [`MESSAGE_CHARS`] characters of a recorded message: run artifacts
+/// are caller text, so a report echoes only a bounded prefix of them.
 fn bounded(text: &str) -> String {
     let mut chars = text.chars();
-    let head: String = chars.by_ref().take(SHOWN_CHARS).collect();
+    let head: String = chars.by_ref().take(MESSAGE_CHARS).collect();
     let dropped = chars.count();
     if dropped == 0 {
         head
@@ -195,7 +200,7 @@ pub(super) fn rl<S: AsRef<str>>(items: &[S]) -> String {
         .iter()
         .map(|item| crate::manifests::py_repr_str(item.as_ref()))
         .collect();
-    bounded(&format!("[{}]", inner.join(", ")))
+    format!("[{}]", inner.join(", "))
 }
 
 /// `json.dumps(value)` (ASCII output).
@@ -465,7 +470,15 @@ mod tests {
         assert_eq!(rp(&Json::Bool(true)), "True");
         assert_eq!(ps(&Json::string("plain")), "plain");
         let long = Json::string("x".repeat(500));
-        assert!(rp(&long).ends_with("more chars]"));
-        assert!(rp(&long).chars().count() < 200);
+        assert_eq!(rp(&long).chars().count(), 502);
+        let ledger = Ledger::default();
+        let huge = Json::string("x".repeat(5000));
+        ledger.fail(format!("{} tail", rp(&huge)));
+        let shown = ledger.fails().remove(0);
+        assert!(shown.ends_with("more chars]"), "{shown}");
+        assert!(shown.chars().count() < MESSAGE_CHARS + 40);
+        let long = Json::string("y".repeat(5000));
+        ledger.fail(ps(&long));
+        assert!(ledger.fails()[1].ends_with("more chars]"));
     }
 }

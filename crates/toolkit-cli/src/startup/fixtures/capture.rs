@@ -13,7 +13,7 @@ use toolkit_core::Json;
 
 use super::ledger::{
     dumps, eq, eq_str, get, isclose, items, list, number, number_or_bool, objs, path, ps, r2, rl,
-    rp, strip, truthy, NULL,
+    rp, strip, truthy, type_name, NULL,
 };
 use super::{Context, Flow};
 
@@ -514,7 +514,7 @@ pub(super) fn gcp_drift(context: &Context<'_>) -> Flow {
         eq(get(lm, "project"), exp_lm.at("project").json()),
         "live project",
     );
-    let warns = dumps(&Json::Array(list(lm, "capture_warnings").to_vec())).to_lowercase();
+    let warns = dumps(&or_default(lm, "capture_warnings", Json::Array(Vec::new()))).to_lowercase();
     for mention in exp_lm.at("capture_warnings_must_mention").strs() {
         l.check(
             warns.contains(mention),
@@ -649,9 +649,9 @@ pub(super) fn gcp_baseline(context: &Context<'_>) -> Flow {
 
     let warn_text = format!(
         "{}{}{}",
-        dumps(&Json::Array(list(&src, "warnings").to_vec())),
-        dumps(&Json::Array(list(cur, "warnings").to_vec())),
-        dumps(&Json::Array(list(cur, "excluded").to_vec())),
+        dumps(&or_default(&src, "warnings", Json::Array(Vec::new()))),
+        dumps(&or_default(cur, "warnings", Json::Array(Vec::new()))),
+        dumps(&or_default(cur, "excluded", Json::Array(Vec::new()))),
     );
     let cur_text = dumps(cur);
     for name in exp.at("excluded_must_be_warned").strs() {
@@ -669,6 +669,21 @@ pub(super) fn gcp_baseline(context: &Context<'_>) -> Flow {
 }
 
 // ---------------------------------------------------------- Heroku estimate
+
+/// Names a boolean figure in a message: it would read as 1 or 0 there.
+fn bool_note(value: &Json) -> &'static str {
+    if matches!(value, Json::Bool(_)) {
+        " (a boolean is not a number)"
+    } else {
+        ""
+    }
+}
+
+/// `value.get(key, default)`: the supplied value whatever its type, the
+/// default only for an absent key.
+fn or_default(value: &Json, key: &str, default: Json) -> Json {
+    value.get(key).cloned().unwrap_or(default)
+}
 
 /// `math.isclose(a, b, abs_tol=0.01)` for a figure that must be a number.
 fn close(value: &Json, target: f64) -> bool {
@@ -780,21 +795,29 @@ pub(super) fn heroku_estimate(context: &Context<'_>) -> Flow {
                     format!("cost_comparison.{option}.{field} missing"),
                 );
             }
-            let aws = number_or_bool(get(o, "aws_monthly"));
-            let diff = number_or_bool(get(o, "monthly_difference"));
+            // The outer guards accept a JSON bool (a Python `int`), but the
+            // figure compared first goes through `close`, which refuses one
+            // (#4753): a boolean difference fails instead of reading as 1/0.
+            let aws_json = get(o, "aws_monthly");
+            let diff_json = get(o, "monthly_difference");
+            let (aws, diff) = (number_or_bool(aws_json), number_or_bool(diff_json));
             if let (Some(aws), Some(diff)) = (aws, diff) {
                 l.check(
-                    isclose(diff, aws - baseline, 0.01),
+                    close(diff_json, aws - baseline),
                     format!(
-                        "cost_comparison.{option} monthly_difference {diff} != {aws} - {baseline}"
+                        "cost_comparison.{option} monthly_difference {diff} != {aws} - {baseline}{}",
+                        bool_note(diff_json)
                     ),
                 );
             }
-            if let (Some(diff), Some(annual)) = (diff, number_or_bool(get(o, "annual_difference")))
-            {
+            let annual_json = get(o, "annual_difference");
+            if let (Some(diff), Some(annual)) = (diff, number_or_bool(annual_json)) {
                 l.check(
-                    isclose(annual, diff * 12.0, 0.01),
-                    format!("cost_comparison.{option} annual_difference {annual} != 12 x {diff}"),
+                    close(annual_json, diff * 12.0),
+                    format!(
+                        "cost_comparison.{option} annual_difference {annual} != 12 x {diff}{}",
+                        bool_note(annual_json)
+                    ),
                 );
             }
         }
@@ -865,18 +888,26 @@ pub(super) fn heroku_estimate(context: &Context<'_>) -> Flow {
         .truthy()
     {
         if let Some(design) = context.json_in_dir(run, "aws-design.json") {
-            let empty = Json::Object(Vec::new());
-            let pricing = if truthy(get(&est, "pricing_source")) {
-                get(&est, "pricing_source")
-            } else {
-                &empty
-            };
+            // `est.get("warnings", [])` and `est.get("pricing_source", {})`:
+            // the supplied value is serialised as it is, whatever its type
+            // (#4748); only an absent key reads as the default.
             let warnings_txt = format!(
                 "{}{}",
-                dumps(&Json::Array(list(&est, "warnings").to_vec())),
-                dumps(pricing)
+                dumps(&or_default(&est, "warnings", Json::Array(Vec::new()))),
+                dumps(&or_default(
+                    &est,
+                    "pricing_source",
+                    Json::Object(Vec::new())
+                ))
             );
-            for svc in list(&design, "services") {
+            let services = get(&design, "services");
+            if !matches!(services, Json::Array(_)) && !matches!(services, Json::Null) {
+                l.fail(format!(
+                    "aws-design.json services is {}, not a list",
+                    type_name(services)
+                ));
+            }
+            for svc in items(services) {
                 let sid = get(svc, "service_id").as_str().unwrap_or("");
                 let name = get(svc, "aws_service").as_str().unwrap_or("");
                 let covered = doc.contains(sid) || doc.contains(name) || warnings_txt.contains(sid);
@@ -891,7 +922,7 @@ pub(super) fn heroku_estimate(context: &Context<'_>) -> Flow {
     }
 
     // --- Warnings hygiene ---
-    let warn_doc = dumps(&Json::Array(list(&est, "warnings").to_vec()));
+    let warn_doc = dumps(&or_default(&est, "warnings", Json::Array(Vec::new())));
     for bad in exp.at("warnings_must_not_contain").strs() {
         l.check(
             !warn_doc.contains(bad),

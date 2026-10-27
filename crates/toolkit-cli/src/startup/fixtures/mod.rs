@@ -244,7 +244,39 @@ enum Read {
 }
 
 impl Context<'_> {
-    fn read(root: &Path, path: &Path) -> Read {
+    /// The traversal anchor for a read of `path` below `root`. A path the
+    /// toolkit derives below `--plugin-root` (the fixtures directory, a fixture
+    /// set, a golden tree, a table directory, the shipped skills) is checked
+    /// from the plugin root, so a link in any derived component is refused;
+    /// `root` itself is never examined (#4759). The caller-chosen RUN_DIR and
+    /// SEED_DIR keep their own explicit-root semantics.
+    fn anchor<'p>(&'p self, root: &'p Path, path: &Path) -> &'p Path {
+        let caller = path.starts_with(&self.run)
+            || self
+                .seed
+                .as_ref()
+                .is_some_and(|seed| path.starts_with(seed));
+        if !caller && path.starts_with(&self.plugin_root) {
+            &self.plugin_root
+        } else {
+            root
+        }
+    }
+
+    /// Records a failure when a link lies below the plugin root on the way
+    /// to `path`, for a path handed to another command rather than read here.
+    pub(super) fn guard_derived(&self, path: &Path) -> bool {
+        match super::refuse_links_below(self.anchor(&self.plugin_root, path), path) {
+            Ok(()) => true,
+            Err(message) => {
+                self.ledger.fail(message);
+                false
+            }
+        }
+    }
+
+    fn read(&self, root: &Path, path: &Path) -> Read {
+        let root = self.anchor(root, path);
         match is_regular_file_under(root, path) {
             Err(message) => Read::Unreadable(message),
             Ok(false) => Read::Missing,
@@ -264,7 +296,8 @@ impl Context<'_> {
     /// Whether `name` is a regular file below `root` (`Path.exists()` for a
     /// file; a link is reported, not followed).
     pub(super) fn exists(&self, root: &Path, name: &str) -> bool {
-        match is_regular_file_under(root, &root.join(name)) {
+        let path = root.join(name);
+        match is_regular_file_under(self.anchor(root, &path), &path) {
             Ok(found) => found,
             Err(message) => {
                 self.ledger.fail(message);
@@ -276,7 +309,7 @@ impl Context<'_> {
     /// The text of `name` below `root`, with Python's universal newlines;
     /// `None` when it is absent (silently) or unreadable (recorded).
     pub(super) fn text_if_exists(&self, root: &Path, name: &str) -> Option<String> {
-        match Self::read(root, &root.join(name)) {
+        match self.read(root, &root.join(name)) {
             Read::Text(text) => Some(text),
             Read::Missing => None,
             Read::Unreadable(message) => {
@@ -311,7 +344,7 @@ impl Context<'_> {
     /// [`Self::json_in_dir`] that also returns the file's text.
     pub(super) fn json_in_dir_with_text(&self, root: &Path, name: &str) -> Option<(String, Json)> {
         let path = root.join(name);
-        match Self::read(root, &path) {
+        match self.read(root, &path) {
             Read::Text(text) => {
                 let json = self.parse_text(&text, name)?;
                 Some((text, json))
@@ -331,7 +364,7 @@ impl Context<'_> {
     /// A required document, a missing one worded `missing LABEL at PATH`.
     pub(super) fn json_labeled(&self, root: &Path, name: &str, label: &str) -> Option<Json> {
         let path = root.join(name);
-        match Self::read(root, &path) {
+        match self.read(root, &path) {
             Read::Text(text) => self.parse_text(&text, label),
             Read::Missing => {
                 self.ledger
@@ -362,7 +395,7 @@ impl Context<'_> {
         suffix: &str,
     ) -> Option<std::collections::BTreeSet<String>> {
         let dir = self.fixture.join(relative);
-        if let Err(message) = super::refuse_links_below(&self.fixture, &dir) {
+        if let Err(message) = super::refuse_links_below(self.anchor(&self.fixture, &dir), &dir) {
             self.ledger.fail(message);
             return None;
         }
@@ -407,7 +440,7 @@ impl Context<'_> {
     /// byte-for-byte comparisons).
     pub(super) fn raw_text(&self, root: &Path, name: &str) -> Option<String> {
         let path = root.join(name);
-        match is_regular_file_under(root, &path) {
+        match is_regular_file_under(self.anchor(root, &path), &path) {
             Ok(true) => match read_regular_file(&path, MAX_ARTIFACT_BYTES) {
                 Ok(text) => Some(text),
                 Err(error) => {
@@ -507,6 +540,11 @@ fn copy_tree(source: &Path, target: &Path) -> Result<(), String> {
         }
         Ok(())
     } else if metadata.is_file() {
+        if metadata.len() > MAX_ARTIFACT_BYTES {
+            return Err(format!(
+                "cannot copy {shown}: larger than {MAX_ARTIFACT_BYTES} bytes"
+            ));
+        }
         fs::copy(source, target)
             .map(|_| ())
             .map_err(|error| format!("cannot copy {shown}: {error}"))
@@ -582,7 +620,15 @@ pub fn check_expected_command(
         run: PathBuf::from(run),
         seed: seed.map(PathBuf::from),
     };
-    let _ = (program.run)(&context);
+    // `Stop` ends a program early with the findings so far. An early end that
+    // recorded no finding evaluated nothing, so it must never read as a pass
+    // (#4747).
+    if (program.run)(&context).is_none() && ledger.fails().is_empty() {
+        ledger.fail(format!(
+            "{} stopped before evaluating its assertions",
+            program.name
+        ));
+    }
     report(output, &ledger, program)
 }
 

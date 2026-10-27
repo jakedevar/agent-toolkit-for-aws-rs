@@ -71,6 +71,23 @@ fn banded(l: &Ledger, label: &str, got: &Json, lo: &Json, hi: &Json, basis: &str
     }
 }
 
+/// `bool((value or "").strip())`: a non-blank string. A truthy value of any
+/// other type is a finding of its own (Python's `.strip()` raised on it),
+/// never an explanation (#4754).
+fn is_explanation(l: &Ledger, value: &Json, what: &str) -> bool {
+    match value {
+        Json::String(text) => !strip(text).is_empty(),
+        other if truthy(other) => {
+            l.fail(format!(
+                "{what} must be explanatory text, not {}",
+                type_name(other)
+            ));
+            false
+        }
+        _ => false,
+    }
+}
+
 /// `v or default`: the value if truthy, else the empty object.
 fn or_empty(value: &Json) -> &Json {
     static EMPTY: Json = Json::Object(Vec::new());
@@ -208,6 +225,12 @@ pub(in crate::startup::fixtures) fn run(context: &Context<'_>) -> Flow {
     let run = &context.run;
     let exp_doc = context.expectation_or_empty("expected-estimate.json");
     if !truthy(&exp_doc) {
+        // Python printed a bare FAIL here; an empty document is a finding of
+        // its own (#4747), never a pass with nothing evaluated.
+        l.fail(format!(
+            "expected-estimate.json is empty ({}); no estimate assertion could be evaluated",
+            rp(&exp_doc)
+        ));
         return None;
     }
     let exp = context.spec(&exp_doc, "expected-estimate.json");
@@ -237,6 +260,10 @@ pub(in crate::startup::fixtures) fn run(context: &Context<'_>) -> Flow {
         "after-clarify-complete",
     );
     if !truthy(&est) {
+        l.fail(format!(
+            "{estimate_file} is empty ({}); no estimate assertion could be evaluated",
+            rp(&est)
+        ));
         return None;
     }
 
@@ -417,7 +444,7 @@ pub(in crate::startup::fixtures) fn run(context: &Context<'_>) -> Flow {
         let sid = rp(get(entry, "service_id"));
         let basis = get(entry, "basis");
         l.check(
-            truthy(basis) && !strip(basis.as_str().unwrap_or("x")).is_empty(),
+            is_explanation(l, basis, &format!("{sid}: basis")),
             format!(
                 "{sid}: basis is required on every line, including the $0 ones -- 'a VPC is not billed' is the answer to a question a reader otherwise has to assume."
             ),
@@ -1471,7 +1498,7 @@ pub(in crate::startup::fixtures) fn run(context: &Context<'_>) -> Flow {
             if v == 0.0 {
                 let note = get(entry, "note");
                 l.check(
-                    truthy(note) && !strip(note.as_str().unwrap_or("x")).is_empty(),
+                    is_explanation(l, note, "per_cluster note"),
                     format!(
                         "per_cluster {} is $0.00 with no note. A cluster whose every line was excluded is UNPRICED, not free, and the number alone cannot say which.",
                         rp(get(entry, "cluster_id"))
