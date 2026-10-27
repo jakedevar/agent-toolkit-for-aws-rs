@@ -786,3 +786,47 @@ scripts' own connection-failure result (exit 1). Text taken from inputs is
 escaped before it is printed (#4602). The parity table, the snapshot and
 describe formats, the intentional changes and the follow-ups are in
 [docs/migration/elasticache.md](../../docs/migration/elasticache.md).
+
+## cloudwatch (#4380)
+
+`toolkit cloudwatch render`, `toolkit cloudwatch validate` and
+`toolkit cloudwatch region` expose the pure logic of the CloudWatch
+dynamic-instrumentation scripts (`skills/core-skills/aws-observability/scripts/cloudwatch/`):
+location and capture parsing, input validation, status assessment, error text
+and the response renderers. Nothing contacts AWS; the live Application Signals
+and Logs clients, the gateway and the operation entrypoints stay in Python
+until slice `cw-api` (#4381) ports them on top of these modules.
+
+```
+toolkit cloudwatch render RENDERER (--json TEXT | --json-file FILE)
+toolkit cloudwatch validate CHECK (--json TEXT | --json-file FILE)
+toolkit cloudwatch region [--region REGION]
+```
+
+- The arguments are one JSON object using the legacy parameter names. Pass
+  exactly one of `--json` (short, trusted payloads) and `--json-file` (keeps
+  values off the command line). Value flags use the shared router
+  (`strict_values: true`: `--name value` or `--name=value`, no empty value and
+  none starting with `-`), so stdin (`-`) is not accepted.
+- `RENDERER` is one of `location`, `create-success`, `list`, `get`,
+  `batch-delete`, `status-history`, `status-assessment`, `snapshot-search`,
+  `snapshot-sample`, `snapshot-fields`, `failure`. The text is printed
+  verbatim, like the scripts' `print(result.text)`. `status-assessment` replays
+  recorded ACTIVE/READY/ERROR checks (`checks.<STATUS>.events` / `error`)
+  through the assessment policy and renders the verdict; `failure` renders an
+  AWS failure (`failure.kind` is `client_error`, `endpoint_connection`,
+  `timeout`, `credentials` or `other`).
+- `CHECK` is one of `instrumentation-type`, `location-inputs`
+  (`mode` `create` or `lookup`), `capture-names`, `probe`, `location-hash`,
+  `snapshot-signal`. A passing check prints `OK`, the normalized type or the
+  request payload; a failing check prints the legacy `ERROR: ...` text on
+  stdout and exits 1, like an operation's `OpResult(ok=False, ...)`.
+- `region` prints the resolved region: `--region` > `AWS_REGION` >
+  `AWS_DEFAULT_REGION` > `us-east-1` (an empty value counts as unset).
+- Exit codes: `0` success, `1` a failed check (or an assessment whose window
+  ends before it starts), `2` a usage error or the legacy `TypeError` case: an
+  unknown, missing or mistyped argument prints `error: invalid arguments for op
+  '<op>': ...` on stderr. Credentials are never read, printed or logged.
+
+Function-by-function parity, the injected-seam design for #4381 and every
+intentional change: [docs/migration/cw-domain.md](../../docs/migration/cw-domain.md).
