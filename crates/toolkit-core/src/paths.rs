@@ -8,9 +8,28 @@
 //! - [`read_regular_file`] reads a bounded UTF-8 text file only when the path
 //!   is a regular file and not a symbolic link. On Unix the opened handle's
 //!   device and inode must match the pre-open `lstat`, which closes the
-//!   check-then-open window: a file swapped for a link in between is refused
-//!   with [`PathError::Changed`] instead of being followed. Other platforms
-//!   keep the `lstat` check only.
+//!   check-then-open window **for the final path component**: a file swapped
+//!   for a link in between is refused with [`PathError::Changed`] instead of
+//!   being followed. Other platforms keep the `lstat` check only.
+//!
+//! # Threat model
+//!
+//! Static symbolic links are always refused, at any component below the
+//! root. These functions do **not** defend against concurrent mutation of
+//! the tree during a run. In particular the identity check covers only the
+//! final component: if an *ancestor* directory is renamed away and replaced
+//! with a symlink to an outside directory after a walk has listed it but
+//! before it is opened, the pathname-based `lstat`, open and `read_dir` all
+//! resolve through the swapped ancestor, the opened handle matches the
+//! `lstat` taken through the same swapped path, and outside content can be
+//! read. Defending against that requires a traversal anchored to verified
+//! directory handles (`openat`-style, no-follow per component), which needs a
+//! non-`std` dependency or `unsafe`; the toolkit does not take that on
+//! because renaming directories inside the user's own checkout while the tool
+//! runs is outside its model. Callers use only the public signatures here
+//! (`resolve_within`, `read_regular_file`) and the discovery entry point, so a
+//! later slice that needs adversarial containment can replace the
+//! implementation with a handle-anchored walker without an API change.
 
 use std::fmt;
 use std::fs;
