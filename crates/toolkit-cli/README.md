@@ -454,6 +454,32 @@ unreadable registry, answers or evidence file, malformed data, a linked file or 
 value. The parity table, every deliberate difference and the Python-to-Rust test mapping are in
 `docs/migration/startup-scoring.md`.
 
+### startup model-recommend (#4401)
+
+```
+toolkit startup model-recommend INPUT [--output FILE] [--catalog FILE] [--openai-catalog FILE]
+                                [--plugin-root DIR]
+```
+
+Replacement for the agent-advisor `scripts/model_recommendation.py` orchestrator and its
+`anthropic_model_recommendation.py` / `openai_model_recommendation.py` engines and tests.
+It reads a `model-recommendation-input.json` document, recommends a Bedrock model and API
+path for every workload (OpenAI sources through the OpenAI engine, everything else through
+the Anthropic engine, which marks providers it cannot reason about `provider_module_pending`),
+writes `model-recommendation.json` beside INPUT (or `--output`), removes a stale
+`model-verification.json` beside it when the invocation contract changed, and prints
+`RESULT=ok WORKLOADS=<n> SCHEMA_VALIDATED=yes`. The dated catalogs
+`references/models/anthropic-bedrock-2026-09-24.json` and `openai-bedrock-2026-09-24.json` of
+the skill under `--plugin-root` (default `.`) stay data; `--catalog` and `--openai-catalog`
+name other files (the OpenAI catalog is only read for an OpenAI workload). INPUT and the result
+are always checked against the shipped `scripts/schemas/model-recommendation*.json` (Python only
+did so when `jsonschema` was installed). Offline and deterministic. A missing INPUT is exit 2;
+an unreadable, linked or invalid input or catalog, a schema finding, a catalog with no
+candidate for a workload or a result that cannot be written is exit 1. Findings are
+`  - $.path: message` lines on stderr that name the field and the rule but never a value of the
+input, followed by one `error:` summary line. The parity table, every deliberate difference and
+the Python-to-Rust test mapping are in `docs/migration/startup-models.md`.
+
 ## sync (#4377)
 
 `toolkit sync plugin-skills` makes every `plugins/<plugin>/skills/<name>` copy
