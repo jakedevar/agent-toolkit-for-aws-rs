@@ -1552,7 +1552,7 @@ pub const STDIO_DASH_POSITIONAL: &str = "<positional>";
 /// A slice that wants stdin/stdout support adds its pair here in the same
 /// change that makes its handler treat `-` explicitly (bounded, UTF-8 checked,
 /// with the same diagnostic escaping as any other input). The list ships
-/// empty because no slice reads stdin yet; the CloudWatch `--json` entry is
+/// empty because no slice reads stdin yet; the cloudwatch `--json` entry is
 /// added when that slice is integrated.
 pub const STDIO_DASH: &[(&str, &str)] = &[];
 
