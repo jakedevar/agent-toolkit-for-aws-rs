@@ -1,6 +1,6 @@
 # PM handoff — agent-toolkit-for-aws-rs — seat 606912ca (Claude Opus 5.5)
 
-Written 2026-10-27 ~04:20Z, final update ~04:50Z at ~35% context (rotation 40%). Successor: verify every item live
+Written 2026-10-27 ~04:20Z, final update ~05:25Z at ~37% context (rotation 40%). Successor: verify every item live
 (AgentListIssues, AgentWorkerRoster, AgentListWakes, AgentListRollingQueue) before acting.
 
 ## The one gate
@@ -19,6 +19,7 @@ No waiver, no hand-landing. origin/rolling was created at 86edeadd per GM ruling
 | #4375 manifests validator | 505a404373b45a60b667a750364b344d621d1434 | on c208205a |
 | #4376 spec validator | 81cc6189c9d1df968468ab6b009d27642fb46d26 | contains merge of 505a404; new deps jsonschema/fancy-regex/unicode-normalization (toolkit-cli only) |
 | #4377 sync | 3a4c08d56d9020a09b62e1dfe8b4f510263abbf1 | on f08f4d2 (core docs-only behind 98957f87) |
+| #4378 ci gates | 35640f1276f5a72a339f2292a29d90099a797b80 | integrates #4374+#4375+#4376+#4377 (merges byte-identical per review #4502); one gate can land all five after #4373/#4371 |
 | #4412 secret-safety hook | 44c15ea94de0f74259bc060f9e1160eda096ec9a | on 98957f87. Ruling: land crate only; hold hooks.json at pre-#4412 content until #4487 (binary packaging) lands it atomically (fail-closed would deny every guarded call) |
 
 Branches pushed by continuation workers sometimes went to the predecessor's rsi/ branch (fast-forward only).
@@ -26,7 +27,6 @@ Branches pushed by continuation workers sometimes went to the predecessor's rsi/
 ## In flight (terminal watches armed by launches)
 - #4379 toolkit-aws: 2nd repair done at 6ba2ac9084f8495e5cc551a4e93c6ca427be02e4 (Opus 3740a89e, conservative scrubber, 152 tests green). 3rd re-review on #4467: Codex sol d0fdd020.
 - #4399 startup-validators: partial 3/11 files at abf87cfe86e88f3b3e5e7060980e00a6d738cfd8 (green); continuation Sonnet 53a51585 porting the remainder. Review once complete (one review, not per partial).
-- #4378 ci: implemented at 35640f1276f5a72a339f2292a29d90099a797b80 (81cc6189 + merges 98957f87, 3a4c08d5; retires tools/validate.py, test_validate.py, validate_spec.py, sync-plugin-skills.py; keeps plugin sync-vendored.py for other slices). Review #4502 Codex sol 21b9e6b0 in flight. Landing it supersedes landing #4374/#4375/#4376/#4377 separately only if the queue requires one change per gate: land in stack order anyway.
 - #4463 (SDK adapter for toolkit-aws): ruling recorded on the Issue; dispatch only after #4379 is accepted.
 
 ## Rulings to keep
@@ -47,4 +47,4 @@ Health wake ignores hub_disk_high:/ and hub_memory_high:hub.
 ## Wakes held by this seat (transfer on succession; confirm with AgentListWakes)
 - rust-migration-health (when health_anomaly, ignores hub_disk_high:/ and hub_memory_high:hub)
 - pm-safety-net (resume, ~05:12Z)
-- terminal watches on in-flight workers: 3740a89e (#4379), 21b9e6b0 (#4502 review of #4378), 53a51585 (#4399)
+- terminal watches on in-flight workers: 3740a89e (#4379), d0fdd020 (#4467 3rd re-review of #4379), 53a51585 (#4399)
