@@ -26,6 +26,7 @@ use toolkit_core::{discover_skills, skills_to_json, ErrorKind, ToolkitError};
 
 pub mod manifests;
 pub mod spec;
+mod sync;
 
 /// Usage text printed by `help` (stdout) and after usage errors (stderr).
 pub const USAGE: &str = "\
@@ -33,6 +34,8 @@ Usage:
   toolkit skills list [ROOT] [--json]
   toolkit manifests validate [ROOT] [--plugin NAME]
   toolkit spec validate [ROOT]
+  toolkit sync plugin-skills [--root DIR] [--plugin NAME] [--check]
+  toolkit sync vendored [--plugin-root DIR] [--check]
   toolkit --version
   toolkit help
 
@@ -53,18 +56,32 @@ Commands:
                 the schemas cannot express, and the SKILL.md frontmatter of
                 each plugin skill. Problems are reported as `  ERROR: ...`
                 lines on stderr and exit status 1.
+  sync plugin-skills
+                Make plugins/<plugin>/skills/<name> copies byte-identical to the
+                canonical skills/**/<name> (a directory holding SKILL.md). --root
+                defaults to the current directory. --check reports drift, exits
+                1 and writes nothing.
+  sync vendored Make each skills/<skill>/references/vendored copy in the plugin
+                at --plugin-root (default plugins/aws-startup-advisor)
+                byte-identical to skills/shared and its README table. --check
+                reports drift, exits 1 and writes nothing.
 
 Options:
   --json        Emit a JSON array of {name, description, path} objects.
-  --plugin NAME Validate only the plugin directory ROOT/plugins/NAME.
+  --plugin NAME (manifests validate) Validate only the plugin directory
+                ROOT/plugins/NAME. (sync plugin-skills) Sync only that plugin.
+  --check       (sync) Report drift without writing; exit 1 when out of sync.
+  --root DIR, --plugin-root DIR
+                (sync) Repository root and plugin root. A value may also be
+                written --flag=VALUE.
   -h, --help    Print this help.
   -V, --version Print the version.
 
 Exit codes:
   0  success (including help, version and an empty result)
   1  runtime error (missing root, root not a directory, unreadable files,
-     stdout write failure, unknown plugin, failed manifest or
-     spec validation)
+     stdout write failure, unknown plugin, failed manifest or spec
+     validation, or drift found by a sync --check)
   2  usage error (unknown command, missing or unknown arguments,
      or a non-UTF-8 argument)";
 
@@ -179,19 +196,21 @@ impl Invocation {
         self.flags.iter().any(|flag| flag == name)
     }
 
-    /// The positional argument at `index`, if any.
-    #[must_use]
-    pub fn positional(&self, index: usize) -> Option<&str> {
-        self.positionals.get(index).map(String::as_str)
-    }
-
-    /// The value given to the value flag `name` (for example `--plugin`).
+    /// The value of the value flag `name` (for example `--plugin`; the last one
+    /// when repeated).
     #[must_use]
     pub fn value(&self, name: &str) -> Option<&str> {
         self.values
             .iter()
+            .rev()
             .find(|(flag, _)| flag == name)
             .map(|(_, value)| value.as_str())
+    }
+
+    /// The positional argument at `index`, if any.
+    #[must_use]
+    pub fn positional(&self, index: usize) -> Option<&str> {
+        self.positionals.get(index).map(String::as_str)
     }
 
     fn set_value(&mut self, name: &str, value: &str) {
@@ -213,8 +232,14 @@ pub struct CommandSpec {
     pub path: &'static [&'static str],
     /// Long flags the command accepts, for example `["--json"]`.
     pub flags: &'static [&'static str],
-    /// Long flags that take a value, as `--name value` or `--name=value`.
+    /// Long flags that take one value, written `--name VALUE` or
+    /// `--name=VALUE`. A missing value is a usage error; see `strict_values`.
     pub value_flags: &'static [&'static str],
+    /// Whether a value flag rejects an empty value and one starting with `-`
+    /// (so `--plugin-root --check` is a usage error). Off for
+    /// `manifests validate`, whose `--plugin` takes the next word whatever it
+    /// looks like (#4375); on for `sync` (#4377).
+    pub strict_values: bool,
     /// Maximum number of positional arguments.
     pub max_positionals: usize,
     /// The implementation.
@@ -226,6 +251,7 @@ impl fmt::Debug for CommandSpec {
         f.debug_struct("CommandSpec")
             .field("path", &self.path)
             .field("flags", &self.flags)
+            .field("value_flags", &self.value_flags)
             .finish_non_exhaustive()
     }
 }
@@ -236,6 +262,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         path: &["skills", "list"],
         flags: &["--json"],
         value_flags: &[],
+        strict_values: false,
         max_positionals: 1,
         handler: skills_list,
     },
@@ -243,6 +270,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         path: &["manifests", "validate"],
         flags: &[],
         value_flags: &["--plugin"],
+        strict_values: false,
         max_positionals: 1,
         handler: manifests::validate_command,
     },
@@ -250,8 +278,25 @@ pub const COMMANDS: &[CommandSpec] = &[
         path: &["spec", "validate"],
         flags: &[],
         value_flags: &[],
+        strict_values: false,
         max_positionals: 1,
         handler: spec::validate_command,
+    },
+    CommandSpec {
+        path: &["sync", "plugin-skills"],
+        flags: &["--check"],
+        value_flags: &["--root", "--plugin"],
+        strict_values: true,
+        max_positionals: 0,
+        handler: sync::plugin_skills,
+    },
+    CommandSpec {
+        path: &["sync", "vendored"],
+        flags: &["--check"],
+        value_flags: &["--plugin-root"],
+        strict_values: true,
+        max_positionals: 0,
+        handler: sync::vendored,
     },
 ];
 
@@ -268,6 +313,12 @@ pub enum Routed<'a> {
 
 fn usage_error() -> ToolkitError {
     ToolkitError::usage("invalid_arguments", "invalid arguments")
+}
+
+/// Whether `value` may follow a value flag of `spec` (see
+/// [`CommandSpec::strict_values`]).
+fn value_allowed(spec: &CommandSpec, value: &str) -> bool {
+    !spec.strict_values || !(value.is_empty() || value.starts_with('-'))
 }
 
 /// Routes already-decoded arguments (without the program name).
@@ -313,15 +364,21 @@ pub fn route<'a>(specs: &'a [CommandSpec], args: &[String]) -> Result<Routed<'a>
         }
         if word.starts_with('-') {
             if spec.value_flags.contains(&word) {
-                // `--name value`: the next word is the value, whatever it is.
+                // `--name value`: the next word is the value.
                 let Some(value) = rest.next() else {
                     return Err(usage_error());
                 };
+                if !value_allowed(spec, value) {
+                    return Err(usage_error());
+                }
                 invocation.set_value(word, value);
             } else if let Some((name, value)) = word
                 .split_once('=')
                 .filter(|(name, _)| spec.value_flags.contains(name))
             {
+                if !value_allowed(spec, value) {
+                    return Err(usage_error());
+                }
                 invocation.set_value(name, value);
             } else if !spec.flags.contains(&word) {
                 return Err(usage_error());
@@ -509,6 +566,65 @@ mod tests {
     }
 
     #[test]
+    fn value_flags_take_one_value_in_either_spelling() {
+        for values in [
+            vec![
+                "sync",
+                "plugin-skills",
+                "--root",
+                "r",
+                "--plugin",
+                "p",
+                "--check",
+            ],
+            vec!["sync", "plugin-skills", "--check", "--plugin=p", "--root=r"],
+        ] {
+            let Ok(Routed::Run(spec, invocation)) = route_words(&values) else {
+                panic!("expected a runnable route for {values:?}");
+            };
+            assert_eq!(spec.path, &["sync", "plugin-skills"]);
+            assert_eq!(invocation.value("--root"), Some("r"));
+            assert_eq!(invocation.value("--plugin"), Some("p"));
+            assert!(invocation.has_flag("--check"));
+            assert!(invocation.positionals.is_empty());
+        }
+        let Ok(Routed::Run(_, invocation)) =
+            route_words(&["sync", "vendored", "--plugin-root", "a", "--plugin-root=b"])
+        else {
+            panic!("expected a runnable route");
+        };
+        assert_eq!(
+            invocation.value("--plugin-root"),
+            Some("b"),
+            "last one wins"
+        );
+        assert_eq!(invocation.value("--root"), None);
+    }
+
+    #[test]
+    fn value_flag_misuse_is_a_usage_error() {
+        for values in [
+            vec!["sync", "vendored", "--plugin-root"],
+            vec!["sync", "vendored", "--plugin-root", "--check"],
+            vec!["sync", "vendored", "--plugin-root", ""],
+            vec!["sync", "vendored", "--plugin-root="],
+            vec!["sync", "vendored", "--plugin-root=-x"],
+            vec!["sync", "vendored", "--check=1"],
+            vec!["sync", "vendored", "--root", "x"],
+            vec!["sync", "vendored", "positional"],
+            vec!["sync", "plugin-skills", "--json"],
+            vec!["skills", "list", "--root", "x"],
+            vec!["sync"],
+        ] {
+            let Err(error) = route_words(&values) else {
+                panic!("{values:?} must be a usage error");
+            };
+            assert_eq!(error.kind(), ErrorKind::Usage, "{values:?}");
+            assert_eq!(error.exit_code(), 2);
+        }
+    }
+
+    #[test]
     fn help_and_version_short_circuit() {
         for values in [
             vec!["--help"],
@@ -559,6 +675,9 @@ mod tests {
             let joined = spec.path.join(" ");
             assert!(USAGE.contains(&joined), "usage lacks '{joined}'");
             for flag in spec.flags.iter().chain(spec.value_flags) {
+                assert!(USAGE.contains(flag), "usage lacks '{flag}'");
+            }
+            for flag in spec.value_flags {
                 assert!(USAGE.contains(flag), "usage lacks '{flag}'");
             }
         }
