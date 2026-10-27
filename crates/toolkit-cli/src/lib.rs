@@ -24,6 +24,7 @@ use std::path::PathBuf;
 
 use toolkit_core::{discover_skills, skills_to_json, ErrorKind, ToolkitError};
 
+pub mod dynamodb;
 pub mod manifests;
 mod msk;
 pub mod spec;
@@ -55,6 +56,10 @@ Usage:
                          --kafka-version V --output PATH
   toolkit msk sim validate --test e2e_latency|broker_restart --config JSON
                            [--instance-type T] [--broker-count N]
+  toolkit dynamodb calculate-costs --model FILE [--requirements FILE] [--output FILE]
+  toolkit dynamodb iterate-design --model FILE --config FILE --loop-state FILE
+      [--manifest FILE] [--apply-change FILE] [--mode MODE] [--timestamp TS]
+      [--yes-deploy] [--allow-spend] [--skip-deploy] [--calculator-only] [--dry-run]
   toolkit --version
   toolkit help
 
@@ -98,6 +103,11 @@ Commands:
                 and fleet sizes, `render` writes a CloudFormation template
                 with the sizing baked in, `validate` returns PASS/REJECT with
                 warnings for a proposed test config.
+  dynamodb calculate-costs
+                Price a dynamodb_data_model.json (RRU/WRU, GSI amplification,
+                storage, vector indexes) and write a cost_report.md.
+  dynamodb iterate-design
+                Run ONE round of the human-driven DynamoDB design loop, then stop.
 
 Options:
   --json        Emit a JSON array of {name, description, path} objects.
@@ -120,7 +130,10 @@ Exit codes:
      workload error; msk sim validate: decision REJECT)
   2  usage error (unknown command, missing or unknown arguments,
      or a non-UTF-8 argument; msk sim: invalid sizing, config or output,
-     reported as a JSON {\"error\": ...} object on stderr)";
+     reported as a JSON {\"error\": ...} object on stderr)
+  Some commands keep a published status instead (iterate-design: 2 for a
+  missing input file or refused change, 4 for a deploy without --yes-deploy,
+  or the failed step's own status); see crates/toolkit-cli/README.md.";
 
 /// Buffered stdout lines with the closed-pipe and write-error contract.
 pub struct Output<'a> {
@@ -390,6 +403,22 @@ pub const COMMANDS: &[CommandSpec] = &[
         strict_values: false,
         max_positionals: 0,
         handler: msk::sim_validate,
+    },
+    CommandSpec {
+        path: &["dynamodb", "calculate-costs"],
+        flags: &[],
+        value_flags: dynamodb::CALCULATE_COSTS_VALUE_FLAGS,
+        strict_values: true,
+        max_positionals: 0,
+        handler: dynamodb::calculate_costs_command,
+    },
+    CommandSpec {
+        path: &["dynamodb", "iterate-design"],
+        flags: dynamodb::ITERATE_DESIGN_FLAGS,
+        value_flags: dynamodb::ITERATE_DESIGN_VALUE_FLAGS,
+        strict_values: true,
+        max_positionals: 0,
+        handler: dynamodb::iterate_design_command,
     },
 ];
 
@@ -770,9 +799,6 @@ mod tests {
             for flag in spec.flags.iter().chain(spec.value_flags) {
                 assert!(USAGE.contains(flag), "usage lacks '{flag}'");
             }
-            for flag in spec.value_flags {
-                assert!(USAGE.contains(flag), "usage lacks '{flag}'");
-            }
         }
         let paths: Vec<&[&str]> = COMMANDS.iter().map(|spec| spec.path).collect();
         for (index, path) in paths.iter().enumerate() {
@@ -893,6 +919,89 @@ mod tests {
         assert!(String::from_utf8(err)
             .expect("utf-8 stderr")
             .contains("cannot write to stdout"));
+    }
+
+    #[test]
+    fn dynamodb_value_flags_route_with_the_canonical_router() {
+        let Ok(Routed::Run(spec, invocation)) = route_words(&[
+            "dynamodb",
+            "calculate-costs",
+            "--model",
+            "a.json",
+            "--output=x.md",
+            "--output=y.md",
+        ]) else {
+            panic!("expected a runnable route");
+        };
+        assert_eq!(spec.path, &["dynamodb", "calculate-costs"]);
+        assert_eq!(invocation.value("--model"), Some("a.json"));
+        assert_eq!(invocation.value("--output"), Some("y.md"), "last wins");
+        assert_eq!(invocation.value("--absent"), None);
+        assert!(invocation.positionals.is_empty() && invocation.flags.is_empty());
+        for values in [
+            vec!["dynamodb", "calculate-costs", "--model"],
+            vec!["dynamodb", "calculate-costs", "--model", "--output", "x"],
+            vec!["dynamodb", "calculate-costs", "-o", "x"],
+            vec!["dynamodb", "calculate-costs", "--req", "x"],
+            vec!["dynamodb", "calculate-costs", "--model", "a.json", "extra"],
+            vec!["dynamodb", "iterate-design", "--model=a", "--dry-run=1"],
+        ] {
+            let Err(error) = route_words(&values) else {
+                panic!("{values:?} must be a usage error");
+            };
+            assert_eq!(error.exit_code(), 2, "{values:?}");
+        }
+        let Ok(Routed::Run(_, invocation)) = route_words(&[
+            "dynamodb",
+            "iterate-design",
+            "--dry-run",
+            "--model",
+            "m",
+            "--yes-deploy",
+        ]) else {
+            panic!("expected a runnable route");
+        };
+        assert!(invocation.has_flag("--dry-run") && invocation.has_flag("--yes-deploy"));
+        assert_eq!(invocation.value("--model"), Some("m"));
+    }
+
+    #[test]
+    fn diagnostics_reach_stderr_even_when_the_command_succeeds() {
+        let root = TempDir::new("diagnostics");
+        fs::write(
+            root.path().join("model.json"),
+            r#"{"tables":[],"access_patterns":[{"pattern_id":"P","operation":"GetItem"}]}"#,
+        )
+        .expect("write model");
+        let model = root.path().join("model.json");
+        let missing = root.path().join("absent.json");
+        let report = root.path().join("report.md");
+        let (status, stdout, stderr) = exec(&[
+            "dynamodb",
+            "calculate-costs",
+            "--model",
+            model.to_str().expect("utf-8 path"),
+            "--requirements",
+            missing.to_str().expect("utf-8 path"),
+            "--output",
+            report.to_str().expect("utf-8 path"),
+        ]);
+        assert_eq!(status, 0, "{stderr}");
+        assert_eq!(
+            stderr,
+            format!(
+                "Warning: Could not load requirements (path does not exist: {}), using defaults.\n",
+                missing.display()
+            )
+        );
+        assert_eq!(
+            stdout,
+            format!(
+                "Cost report written to {}\nAnalyzed 1 access patterns across 0 tables.\n",
+                report.display()
+            )
+        );
+        assert!(report.exists());
     }
 
     #[test]

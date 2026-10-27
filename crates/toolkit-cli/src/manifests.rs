@@ -651,7 +651,7 @@ pub(crate) fn read_failure(error: &PathError) -> String {
         PathError::TooLarge { limit, .. } => format!("larger than {limit} bytes"),
         PathError::NotUtf8(_) => "not valid UTF-8".to_string(),
         PathError::Changed(_) => "changed while it was being opened".to_string(),
-        PathError::Io(error, _) => error.to_string(),
+        PathError::Io(error, _) | PathError::WriteFailed(error, _) => error.to_string(),
     }
 }
 

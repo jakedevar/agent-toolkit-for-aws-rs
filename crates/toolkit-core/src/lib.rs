@@ -17,6 +17,7 @@
 //!   (`skills/shared` to per-skill vendored copies) on top.
 #![allow(clippy::module_name_repetitions)]
 
+pub mod digest;
 pub mod error;
 pub mod frontmatter;
 pub mod json;
@@ -31,12 +32,13 @@ pub mod yaml;
 #[cfg(test)]
 mod testutil;
 
+pub use digest::sha256_hex;
 pub use error::{ErrorKind, ParseError, ToolkitError};
 pub use frontmatter::parse_frontmatter;
 pub use json::{escape_json_string, parse_json, skills_to_json, Json};
 pub use paths::{
-    normalize_relative, open_regular_file, read_regular_file, resolve_within, PathError,
-    MAX_TEXT_FILE_BYTES,
+    normalize_relative, open_regular_file, read_regular_file, resolve_within, write_regular_file,
+    PathError, MAX_TEXT_FILE_BYTES,
 };
 pub use plugin_skills::{
     build_canonical_index, sync_plugin_skills, PluginSkillsOptions, PluginSkillsReport,
