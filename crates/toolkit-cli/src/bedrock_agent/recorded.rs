@@ -21,26 +21,32 @@
 //! service error response), `connect` or `no_credentials` (a transport
 //! failure that ends the run). Every optional member (`request`, `unsupported`,
 //! `error.kind`, `error.code`, `error.message`) is absent or of its type; a
-//! present member of another type, `null` included, rejects the recording. An unmatched call fails with a `Connect` error
+//! present member of another type, `null` included, rejects the recording. An
+//! unmatched call fails with a `Connect` error
 //! that names the service and operation only, never a request value.
+//!
+//! The step members and the request comparison follow the shared rules of
+//! `toolkit_aws::recorded` (#4727); the reasons keep this command's wording.
 
+use toolkit_aws::recorded::{
+    optional_member, optional_text, step_fields, KeyOrder, MemberError, RecordedOutcome, Step,
+    StepShapeError,
+};
 use toolkit_aws::{AwsError, ServiceError};
 use toolkit_core::Json;
 
 use super::client::{AgentClient, Service};
 
-enum Outcome {
-    Response(Json),
-    Service { code: String, message: String },
-    Connect(String),
-    NoCredentials,
-}
+/// JSON equality that ignores object key order (the shared helper; the tests
+/// import it from here).
+#[cfg(test)]
+pub(crate) use toolkit_aws::recorded::same_json;
 
 struct Entry {
     service: Service,
     operation: String,
-    request: Json,
-    outcome: Outcome,
+    /// The recorded request (`{}` when absent) and the outcome.
+    step: Step,
 }
 
 /// Replays the entries of a recorded-response file.
@@ -49,60 +55,14 @@ pub(crate) struct RecordedClient {
     unsupported: Vec<String>,
 }
 
-/// The one accessor of an *optional* recorded member: absent is `Ok(None)`; a
-/// present member must be of the expected type (`null` is not absent) or the
-/// recording is rejected. The reason names the member and its expected type,
-/// never the value.
-fn optional_member<'j, T>(
-    object: &'j Json,
-    key: &str,
-    expected: &str,
-    expect: impl FnOnce(&'j Json) -> Option<T>,
-) -> Result<Option<T>, String> {
-    match object.get(key) {
-        None => Ok(None),
-        Some(member) => expect(member).map(Some).ok_or_else(|| {
-            format!(
-                "\"{key}\" must be {expected} when present (it is {})",
-                member.type_name()
-            )
-        }),
-    }
-}
-
-fn optional_string<'j>(object: &'j Json, key: &str) -> Result<Option<&'j str>, String> {
-    optional_member(object, key, "a string", Json::as_str)
-}
-
-fn optional_object<'j>(object: &'j Json, key: &str) -> Result<Option<&'j Json>, String> {
-    optional_member(object, key, "an object", |member| {
-        matches!(member, Json::Object(_)).then_some(member)
-    })
-}
-
-fn optional_array<'j>(object: &'j Json, key: &str) -> Result<Option<&'j Vec<Json>>, String> {
-    optional_member(object, key, "an array", |member| match member {
-        Json::Array(items) => Some(items),
-        _ => None,
-    })
-}
-
-/// JSON equality that ignores object key order.
-pub(crate) fn same_json(left: &Json, right: &Json) -> bool {
-    match (left, right) {
-        (Json::Object(a), Json::Object(b)) => {
-            a.len() == b.len()
-                && a.iter().all(|(key, value)| {
-                    b.iter()
-                        .find(|(other, _)| other == key)
-                        .is_some_and(|(_, other)| same_json(value, other))
-                })
-        }
-        (Json::Array(a), Json::Array(b)) => {
-            a.len() == b.len() && a.iter().zip(b).all(|(x, y)| same_json(x, y))
-        }
-        _ => left == right,
-    }
+/// `"<key>" must be <expected> when present (it is <found>)`.
+fn quoted(error: &MemberError) -> String {
+    format!(
+        "\"{}\" must be {} when present (it is {})",
+        error.key(),
+        error.expected(),
+        error.found()
+    )
 }
 
 impl RecordedClient {
@@ -112,6 +72,7 @@ impl RecordedClient {
     ///
     /// A reason naming the entry index and the wrong member, never a value.
     pub(crate) fn from_document(document: &Json) -> Result<Self, String> {
+        // recorded-shape: required member; absent, null or another type rejects the recording.
         let Some(Json::Array(calls)) = document.get("calls") else {
             return Err("the recorded responses need a \"calls\" array".to_string());
         };
@@ -119,7 +80,14 @@ impl RecordedClient {
         for (index, call) in calls.iter().enumerate() {
             entries.push(parse_entry(index, call)?);
         }
-        let unsupported = optional_array(document, "unsupported")?
+        let unsupported =
+            optional_member(document, "unsupported", "an array", |member| match member {
+                // recorded-shape: the `unsupported` member of the recording, read through the shared
+                // `optional_member` (absent is none, null or another type is rejected).
+                Json::Array(names) => Some(names),
+                _ => None,
+            })
+            .map_err(|error| quoted(&error))?
             .map(|names| {
                 names
                     .iter()
@@ -152,45 +120,50 @@ fn parse_entry(index: usize, call: &Json) -> Result<Entry, String> {
         .filter(|name| !name.is_empty())
         .ok_or_else(|| bad("\"operation\" must be a non-empty string"))?
         .to_string();
-    let request = optional_object(call, "request")
-        .map_err(|reason| bad(&reason))?
+    let fields = step_fields(call).map_err(|error| match error {
+        StepShapeError::Request(member) => bad(&quoted(&member)),
+        StepShapeError::Outcome | StepShapeError::ErrorNotObject => {
+            bad("exactly one of \"response\" (an object) and \"error\" (an object) is required")
+        }
+    })?;
+    let request = fields
+        .request
         .cloned()
         .unwrap_or_else(|| Json::Object(Vec::new()));
-    let outcome = match (call.get("response"), call.get("error")) {
-        (Some(response @ Json::Object(_)), None) => Outcome::Response(response.clone()),
-        (None, Some(error @ Json::Object(_))) => {
+    let step = match fields.outcome {
+        RecordedOutcome::Response(response) => Step::response(Some(request), response.clone()),
+        RecordedOutcome::Error(error) => {
             // Every optional member is validated whatever the kind, so a
             // wrong-typed one is rejected instead of defaulted or dropped.
-            let in_error = |reason: String| bad(&format!("error {reason}"));
-            let message = optional_string(error, "message").map_err(in_error)?;
-            let code = optional_string(error, "code").map_err(in_error)?;
-            let kind = optional_string(error, "kind").map_err(in_error)?;
-            let message = message.unwrap_or_default().to_string();
-            match kind.unwrap_or("client") {
-                "client" => Outcome::Service {
-                    code: code.unwrap_or_default().to_string(),
+            let in_error = |member: MemberError| bad(&format!("error {}", quoted(&member)));
+            let message = optional_text(error, "message").map_err(in_error)?;
+            let code = optional_text(error, "code").map_err(in_error)?;
+            let kind = optional_text(error, "kind").map_err(in_error)?;
+            let message = message.unwrap_or_default();
+            let failure = match kind.unwrap_or("client") {
+                "client" => AwsError::Service(Box::new(ServiceError::new(
+                    "POST",
+                    "/",
+                    400,
+                    Some(code.unwrap_or_default()),
                     message,
-                },
-                "connect" => Outcome::Connect(message),
-                "no_credentials" => Outcome::NoCredentials,
+                    None,
+                ))),
+                "connect" => AwsError::connect(message),
+                "no_credentials" => AwsError::NoCredentials,
                 _ => {
                     return Err(bad(
                         "\"error.kind\" must be client, connect or no_credentials",
                     ))
                 }
-            }
-        }
-        _ => {
-            return Err(bad(
-                "exactly one of \"response\" (an object) and \"error\" (an object) is required",
-            ))
+            };
+            Step::failure(Some(request), failure)
         }
     };
     Ok(Entry {
         service,
         operation,
-        request,
-        outcome,
+        step,
     })
 }
 
@@ -204,15 +177,10 @@ impl AgentClient for RecordedClient {
         let entry = self.entries.iter().find(|entry| {
             entry.service == service
                 && entry.operation == operation
-                && same_json(&entry.request, request)
+                && entry.step.matches(request, KeyOrder::Ignored)
         });
-        match entry.map(|entry| &entry.outcome) {
-            Some(Outcome::Response(response)) => Ok(response.clone()),
-            Some(Outcome::Service { code, message }) => Err(AwsError::Service(Box::new(
-                ServiceError::new("POST", "/", 400, Some(code), message, None),
-            ))),
-            Some(Outcome::Connect(message)) => Err(AwsError::connect(message)),
-            Some(Outcome::NoCredentials) => Err(AwsError::NoCredentials),
+        match entry {
+            Some(entry) => entry.step.outcome(),
             None => Err(AwsError::connect(format!(
                 "no recorded response for {} {operation} with this request",
                 service.name()

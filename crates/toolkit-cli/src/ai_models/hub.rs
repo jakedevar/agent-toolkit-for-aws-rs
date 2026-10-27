@@ -2,11 +2,11 @@
 //! `get_model_names.py` and `get_recipes.py`, plus the identifier checks that
 //! run before any request.
 
+use toolkit_aws::recorded::{optional_object_list, MemberError};
 use toolkit_aws::{collect_pages, next_token_from, AwsError, Page, PageLimits};
 use toolkit_core::{escape_untrusted, Json};
 
 use super::client::{Operation, SageMakerClient};
-use super::members::optional_object_list;
 use super::normalize::{keywords_of, normalize_hub_content, CUSTOMIZATION_KEYWORD};
 
 /// `MaxResults` of every `ListHubContents` request.
@@ -30,6 +30,12 @@ pub(super) enum ModelsError {
 impl From<AwsError> for ModelsError {
     fn from(error: AwsError) -> Self {
         Self::Aws(error)
+    }
+}
+
+impl From<MemberError> for ModelsError {
+    fn from(error: MemberError) -> Self {
+        Self::Data(error.to_string())
     }
 }
 
@@ -154,7 +160,7 @@ pub(super) fn list_hub_contents(
     collect_pages(&PageLimits::default(), |token| {
         let response = client.call(Operation::ListHubContents, &list_request(hub, token))?;
         let items = optional_object_list(&response, "HubContentSummaries")
-            .map_err(AwsError::invalid_response)?;
+            .map_err(|error| AwsError::invalid_response(error.to_string()))?;
         Ok(Page {
             items: items.to_vec(),
             next_token: next_token_from(&response, "NextToken")?,

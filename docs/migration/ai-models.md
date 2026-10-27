@@ -44,7 +44,8 @@ with the request the Python code passed as keyword arguments.
   recording that runs out, an unknown key or a malformed step is an error
   naming the position (`calls.Search[0].error.code`) and the rule, never a
   value. The file is read with the symlink-refusing, size-bounded reader. The
-  accessors live in `members.rs` and are shared with the response sites.
+  accessors and the step replay are the shared `toolkit_aws::recorded` module
+  (#4727), also used by the response sites.
 - AWS response members follow the same rule through the same accessors
   (`optional_list`, `optional_object_list`, `optional_string_list`):
   `HubContentSummaries`, `Results`, `HubContentSearchKeywords`,

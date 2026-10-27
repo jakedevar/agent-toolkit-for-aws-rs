@@ -23,32 +23,29 @@
 //! positions and rules, never values.
 //!
 //! `error.kind` is `service` (default), `no_credentials` or `connect`.
+//!
+//! The step members, the request check and the replay order are the shared
+//! rules of `toolkit_aws::recorded` (#4727); the reasons keep this command's
+//! wording.
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::VecDeque;
 
+use toolkit_aws::recorded::{
+    optional_member, optional_text, step_fields, KeyOrder, MemberError, RecordedOutcome,
+    ReplayError, Step, StepQueue, StepShapeError,
+};
 use toolkit_aws::{AwsError, ServiceError};
 use toolkit_core::Json;
 
 use super::client::{Operation, SageMakerClient};
-use super::members::{optional_member, optional_object, optional_string};
-
-/// What a step replays once its request has been checked.
-enum Outcome {
-    Response(Json),
-    Failure(AwsError),
-}
-
-/// One recorded call: the expected request, if any, and the outcome.
-struct Step {
-    expected: Option<Json>,
-    outcome: Outcome,
-}
 
 /// Replays the recorded steps of a JSON document, in order per operation.
 pub(super) struct RecordedClient {
-    calls: BTreeMap<Operation, VecDeque<Step>>,
+    calls: StepQueue<Operation>,
 }
 
+// recorded-shape: the recording document being validated: a required object, every other
+// shape is rejected, and no member is defaulted.
 fn object_keys<'a>(
     value: &'a Json,
     allowed: &[&str],
@@ -74,7 +71,7 @@ fn object_keys<'a>(
 }
 
 /// `error.status`: absent is 400; a present one is an HTTP status code.
-fn optional_status(error: &Json) -> Result<Option<u16>, String> {
+fn optional_status(error: &Json) -> Result<Option<u16>, MemberError> {
     optional_member(
         error,
         "status",
@@ -90,10 +87,10 @@ fn optional_status(error: &Json) -> Result<Option<u16>, String> {
 /// a wrong-typed one is rejected instead of defaulted or dropped.
 fn parse_failure(error: &Json, at: &str) -> Result<AwsError, String> {
     object_keys(error, &["kind", "code", "message", "status"], at)?;
-    let in_error = |reason: String| format!("{at}.{reason}");
-    let kind = optional_string(error, "kind").map_err(in_error)?;
-    let code = optional_string(error, "code").map_err(in_error)?;
-    let message = optional_string(error, "message").map_err(in_error)?;
+    let in_error = |reason: MemberError| format!("{at}.{reason}");
+    let kind = optional_text(error, "kind").map_err(in_error)?;
+    let code = optional_text(error, "code").map_err(in_error)?;
+    let message = optional_text(error, "message").map_err(in_error)?;
     let status = optional_status(error).map_err(in_error)?;
     let message = message.unwrap_or("");
     match kind.unwrap_or("service") {
@@ -114,21 +111,21 @@ fn parse_failure(error: &Json, at: &str) -> Result<AwsError, String> {
 }
 
 fn parse_step(value: &Json, at: &str) -> Result<Step, String> {
-    let members = object_keys(value, &["request", "response", "error"], at)?;
-    let find = |key: &str| members.iter().find(|(name, _)| name == key).map(|(_, v)| v);
-    let expected = optional_object(value, "request")
-        .map_err(|reason| format!("{at}.{reason}"))?
-        .cloned();
-    let outcome = match (find("response"), find("error")) {
-        (Some(response @ Json::Object(_)), None) => Outcome::Response(response.clone()),
-        (None, Some(error)) => Outcome::Failure(parse_failure(error, &format!("{at}.error"))?),
-        _ => {
-            return Err(format!(
-                "{at} needs exactly one of `response` (an object) or `error`"
-            ))
+    object_keys(value, &["request", "response", "error"], at)?;
+    let fields = step_fields(value).map_err(|error| match error {
+        StepShapeError::Request(member) => format!("{at}.{member}"),
+        StepShapeError::Outcome => {
+            format!("{at} needs exactly one of `response` (an object) or `error`")
         }
-    };
-    Ok(Step { expected, outcome })
+        StepShapeError::ErrorNotObject => format!("{at}.error must be an object"),
+    })?;
+    let expected = fields.request.cloned();
+    Ok(match fields.outcome {
+        RecordedOutcome::Response(response) => Step::response(expected, response.clone()),
+        RecordedOutcome::Error(error) => {
+            Step::failure(expected, parse_failure(error, &format!("{at}.error"))?)
+        }
+    })
 }
 
 impl RecordedClient {
@@ -145,11 +142,15 @@ impl RecordedClient {
         };
         let names: Vec<&str> = Operation::ALL.iter().map(|op| op.name()).collect();
         let by_operation = object_keys(calls, &names, "`calls`")?;
-        let mut parsed = BTreeMap::new();
+        // The request of a recording this command already pins is compared
+        // member by member, in order.
+        let mut parsed = StepQueue::new(KeyOrder::Significant);
         for (name, steps) in by_operation {
             let Some(operation) = Operation::ALL.iter().find(|op| op.name() == name) else {
                 continue;
             };
+            // recorded-shape: a required list of the recording being validated; every other shape
+            // is rejected with an error naming the operation.
             let Json::Array(steps) = steps else {
                 return Err(format!("calls.{name} must be a list of steps"));
             };
@@ -166,26 +167,17 @@ impl RecordedClient {
 
 impl SageMakerClient for RecordedClient {
     fn call(&mut self, operation: Operation, request: &Json) -> Result<Json, AwsError> {
-        let Some(step) = self.calls.get_mut(&operation).and_then(VecDeque::pop_front) else {
-            return Err(AwsError::invalid_response(format!(
+        // The expected request is checked before either outcome is replayed.
+        match self.calls.replay(&operation, request) {
+            Ok(outcome) => outcome,
+            Err(ReplayError::Exhausted) => Err(AwsError::invalid_response(format!(
                 "the recorded input has no further response for {}",
                 operation.name()
-            )));
-        };
-        // The expected request is checked before either outcome is replayed.
-        if step
-            .expected
-            .as_ref()
-            .is_some_and(|expected| expected != request)
-        {
-            return Err(AwsError::invalid_response(format!(
+            ))),
+            Err(ReplayError::RequestMismatch) => Err(AwsError::invalid_response(format!(
                 "the {} request differs from the recorded request",
                 operation.name()
-            )));
-        }
-        match step.outcome {
-            Outcome::Response(response) => Ok(response),
-            Outcome::Failure(error) => Err(error),
+            ))),
         }
     }
 }
