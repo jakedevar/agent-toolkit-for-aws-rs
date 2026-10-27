@@ -7,13 +7,16 @@ Python inventory (#4371) records legacy contracts separately.
 ## Binary
 
 The workspace builds one binary, `toolkit` (crate `toolkit-cli`), from the
-read-only shared library `toolkit-core`. The CLI performs no writes, no network
-access and no live cloud activity.
+read-only shared library `toolkit-core`. `toolkit skills list` performs no writes. `toolkit sync ...` (#4377) writes only in
+its non-`--check` modes and only inside the tree it was given. The CLI performs no
+network access and no live cloud activity.
 
 ## Commands
 
 ```
 toolkit skills list [ROOT] [--json]
+toolkit sync plugin-skills [--root DIR] [--plugin NAME] [--check]
+toolkit sync vendored [--plugin-root DIR] [--check]
 toolkit --version
 toolkit help
 ```
@@ -200,3 +203,14 @@ crate (use optional domain crates or features).
 A leading UTF-8 byte-order mark is ignored. `name:` with no value or an empty
 quoted value is reported by the parser as an empty string; skill discovery
 treats an empty or whitespace-only `name` as absent and uses the directory name.
+
+## sync (#4377)
+
+`toolkit sync plugin-skills` makes every `plugins/<plugin>/skills/<name>` copy
+byte-identical to the canonical `skills/**/<name>` directory; `toolkit sync
+vendored` does the same for each skill's `references/vendored` copies of
+`skills/shared` and checks their README tables. `--check` reports drift and
+writes nothing (exit 1 when out of sync); value flags accept `--flag VALUE` or
+`--flag=VALUE`. Symbolic links are never followed; writes are atomic. The full
+parity table against the Python tools, the deletion and symlink boundaries and
+the telemetry seam are in [docs/migration/sync-contracts.md](../../docs/migration/sync-contracts.md).

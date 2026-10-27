@@ -24,10 +24,14 @@ use std::path::PathBuf;
 
 use toolkit_core::{discover_skills, skills_to_json, ErrorKind, ToolkitError};
 
+mod sync;
+
 /// Usage text printed by `help` (stdout) and after usage errors (stderr).
 pub const USAGE: &str = "\
 Usage:
   toolkit skills list [ROOT] [--json]
+  toolkit sync plugin-skills [--root DIR] [--plugin NAME] [--check]
+  toolkit sync vendored [--plugin-root DIR] [--check]
   toolkit --version
   toolkit help
 
@@ -35,16 +39,29 @@ Commands:
   skills list   List skill directories (directories containing SKILL.md) under
                 ROOT, sorted by name then relative path. ROOT defaults to
                 `skills` in the current directory.
+  sync plugin-skills
+                Make plugins/<plugin>/skills/<name> copies byte-identical to the
+                canonical skills/**/<name> (a directory holding SKILL.md). --root
+                defaults to the current directory. --check reports drift, exits
+                1 and writes nothing.
+  sync vendored Make each skills/<skill>/references/vendored copy in the plugin
+                at --plugin-root (default plugins/aws-startup-advisor)
+                byte-identical to skills/shared and its README table. --check
+                reports drift, exits 1 and writes nothing.
 
 Options:
   --json        Emit a JSON array of {name, description, path} objects.
+  --check       (sync) Report drift without writing; exit 1 when out of sync.
+  --root DIR, --plugin NAME, --plugin-root DIR
+                (sync) Repository root, one plugin directory name, plugin root.
+                A value may also be written --flag=VALUE.
   -h, --help    Print this help.
   -V, --version Print the version.
 
 Exit codes:
   0  success (including help, version and an empty result)
   1  runtime error (missing root, root not a directory, unreadable files,
-     stdout write failure)
+     stdout write failure, or drift found by a sync --check)
   2  usage error (unknown command, missing or unknown arguments,
      or a non-UTF-8 argument)";
 
@@ -124,6 +141,8 @@ pub struct Invocation {
     pub positionals: Vec<String>,
     /// Flags that were present (each at most once).
     pub flags: Vec<String>,
+    /// Value flags in the order given, as (`--name`, value) pairs.
+    pub values: Vec<(String, String)>,
 }
 
 impl Invocation {
@@ -131,6 +150,16 @@ impl Invocation {
     #[must_use]
     pub fn has_flag(&self, name: &str) -> bool {
         self.flags.iter().any(|flag| flag == name)
+    }
+
+    /// The value of the value flag `name` (the last one when repeated).
+    #[must_use]
+    pub fn value(&self, name: &str) -> Option<&str> {
+        self.values
+            .iter()
+            .rev()
+            .find(|(flag, _)| flag == name)
+            .map(|(_, value)| value.as_str())
     }
 
     /// The positional argument at `index`, if any.
@@ -150,6 +179,10 @@ pub struct CommandSpec {
     pub path: &'static [&'static str],
     /// Long flags the command accepts, for example `["--json"]`.
     pub flags: &'static [&'static str],
+    /// Long flags that take one value, written `--name VALUE` or
+    /// `--name=VALUE`. A missing value, or one starting with `-`, is a usage
+    /// error. Core change for #4377 (same minimal shape as #4375's `value_flags`).
+    pub value_flags: &'static [&'static str],
     /// Maximum number of positional arguments.
     pub max_positionals: usize,
     /// The implementation.
@@ -161,17 +194,35 @@ impl fmt::Debug for CommandSpec {
         f.debug_struct("CommandSpec")
             .field("path", &self.path)
             .field("flags", &self.flags)
+            .field("value_flags", &self.value_flags)
             .finish_non_exhaustive()
     }
 }
 
 /// The routing table. New domain slices register their commands here.
-pub const COMMANDS: &[CommandSpec] = &[CommandSpec {
-    path: &["skills", "list"],
-    flags: &["--json"],
-    max_positionals: 1,
-    handler: skills_list,
-}];
+pub const COMMANDS: &[CommandSpec] = &[
+    CommandSpec {
+        path: &["skills", "list"],
+        flags: &["--json"],
+        value_flags: &[],
+        max_positionals: 1,
+        handler: skills_list,
+    },
+    CommandSpec {
+        path: &["sync", "plugin-skills"],
+        flags: &["--check"],
+        value_flags: &["--root", "--plugin"],
+        max_positionals: 0,
+        handler: sync::plugin_skills,
+    },
+    CommandSpec {
+        path: &["sync", "vendored"],
+        flags: &["--check"],
+        value_flags: &["--plugin-root"],
+        max_positionals: 0,
+        handler: sync::vendored,
+    },
+];
 
 /// Outcome of routing the arguments.
 #[derive(Debug)]
@@ -220,17 +271,34 @@ pub fn route<'a>(specs: &'a [CommandSpec], args: &[String]) -> Result<Routed<'a>
     };
 
     let mut invocation = Invocation::default();
-    for arg in &args[spec.path.len()..] {
+    let mut rest = args[spec.path.len()..].iter();
+    while let Some(arg) = rest.next() {
         let word = arg.as_str();
         if word == "-h" || word == "--help" {
             return Ok(Routed::Help);
         }
         if word.starts_with('-') {
-            if !spec.flags.contains(&word) {
+            if let Some((name, value)) = word.split_once('=') {
+                if !spec.value_flags.contains(&name) || value.is_empty() || value.starts_with('-') {
+                    return Err(usage_error());
+                }
+                invocation
+                    .values
+                    .push((name.to_string(), value.to_string()));
+            } else if spec.value_flags.contains(&word) {
+                let Some(value) = rest
+                    .next()
+                    .filter(|value| !value.is_empty() && !value.starts_with('-'))
+                else {
+                    return Err(usage_error());
+                };
+                invocation.values.push((word.to_string(), value.clone()));
+            } else if spec.flags.contains(&word) {
+                if !invocation.has_flag(word) {
+                    invocation.flags.push(arg.clone());
+                }
+            } else {
                 return Err(usage_error());
-            }
-            if !invocation.has_flag(word) {
-                invocation.flags.push(arg.clone());
             }
         } else {
             if invocation.positionals.len() >= spec.max_positionals {
@@ -413,6 +481,65 @@ mod tests {
     }
 
     #[test]
+    fn value_flags_take_one_value_in_either_spelling() {
+        for values in [
+            vec![
+                "sync",
+                "plugin-skills",
+                "--root",
+                "r",
+                "--plugin",
+                "p",
+                "--check",
+            ],
+            vec!["sync", "plugin-skills", "--check", "--plugin=p", "--root=r"],
+        ] {
+            let Ok(Routed::Run(spec, invocation)) = route_words(&values) else {
+                panic!("expected a runnable route for {values:?}");
+            };
+            assert_eq!(spec.path, &["sync", "plugin-skills"]);
+            assert_eq!(invocation.value("--root"), Some("r"));
+            assert_eq!(invocation.value("--plugin"), Some("p"));
+            assert!(invocation.has_flag("--check"));
+            assert!(invocation.positionals.is_empty());
+        }
+        let Ok(Routed::Run(_, invocation)) =
+            route_words(&["sync", "vendored", "--plugin-root", "a", "--plugin-root=b"])
+        else {
+            panic!("expected a runnable route");
+        };
+        assert_eq!(
+            invocation.value("--plugin-root"),
+            Some("b"),
+            "last one wins"
+        );
+        assert_eq!(invocation.value("--root"), None);
+    }
+
+    #[test]
+    fn value_flag_misuse_is_a_usage_error() {
+        for values in [
+            vec!["sync", "vendored", "--plugin-root"],
+            vec!["sync", "vendored", "--plugin-root", "--check"],
+            vec!["sync", "vendored", "--plugin-root", ""],
+            vec!["sync", "vendored", "--plugin-root="],
+            vec!["sync", "vendored", "--plugin-root=-x"],
+            vec!["sync", "vendored", "--check=1"],
+            vec!["sync", "vendored", "--root", "x"],
+            vec!["sync", "vendored", "positional"],
+            vec!["sync", "plugin-skills", "--json"],
+            vec!["skills", "list", "--root", "x"],
+            vec!["sync"],
+        ] {
+            let Err(error) = route_words(&values) else {
+                panic!("{values:?} must be a usage error");
+            };
+            assert_eq!(error.kind(), ErrorKind::Usage, "{values:?}");
+            assert_eq!(error.exit_code(), 2);
+        }
+    }
+
+    #[test]
     fn help_and_version_short_circuit() {
         for values in [
             vec!["--help"],
@@ -463,6 +590,9 @@ mod tests {
             let joined = spec.path.join(" ");
             assert!(USAGE.contains(&joined), "usage lacks '{joined}'");
             for flag in spec.flags {
+                assert!(USAGE.contains(flag), "usage lacks '{flag}'");
+            }
+            for flag in spec.value_flags {
                 assert!(USAGE.contains(flag), "usage lacks '{flag}'");
             }
         }
