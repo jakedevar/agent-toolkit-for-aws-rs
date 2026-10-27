@@ -58,3 +58,4 @@ rust-migration-health (health_anomaly), pm-safety-net (hourly resume), terminal 
 - #4380 repair3 ac3e7d44: re-review on #4632 worker 524d5796.
 - Kaizen: #4577 satisfied by e7200c3 (in integration head; close on land). Worker 30281162 on #4670 (repeatable value flags) from 9df52366.
 - Round 7 candidates: #4380, #4402, #4403 (after accept), #4670.
+- 17:25Z: scoped 9047da8f on 9df52366 OK (1929 tests), AgentCheckLandingCandidate ok. GATE = 9df52366 / source_session_id 0c85ed62. Noted on #4575.
