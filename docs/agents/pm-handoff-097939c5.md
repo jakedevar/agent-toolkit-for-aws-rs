@@ -165,3 +165,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
   Repair (Sonnet) fa5c7051 continue_from c65e27aa (op 5111e7f3), scoped base dcd47147. Then re-review #4744 pinned.
   4/4 busy: e1952dc1 (#4394), ecf77dbc (#4727), 14bc584a (#4381), fa5c7051 (#4408).
 - 20:58Z: #4394 repair 72c730b23b78b823c891e655ef1dd39809ff6a00 (e1952dc1; TenantRead template type, ReadOnly guard deleted; scoped e4f6faa7 ok base 550b629d, 1932). Re-review round 2 #4736 worker e70d7b66 (Codex sol high, pinned, op 7da27b2b).
+- 21:00Z: #4394 ACCEPT 72c730b2 (#4736 round 2, e70d7b66; quick but targeted read of tenant.rs/sql.rs + forge-path greps; friction #4760). Close-on-land additions: #4394 #4736 #4738.
+  Round 12 worker e43420e5 (continue_from 5ed0647c, op 4479d1dd): #4394 72c730b2 onto c464befb. Then manager scoped (base origin/rolling, timeout 180) -> new gate.
+  4/4 busy: ecf77dbc (#4727), 14bc584a (#4381), fa5c7051 (#4408), e43420e5 (#4575 r12).
