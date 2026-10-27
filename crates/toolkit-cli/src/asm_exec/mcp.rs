@@ -327,7 +327,7 @@ fn truthy(value: &Json) -> bool {
     match value {
         Json::Null | Json::Bool(false) => false,
         Json::Int(number) => *number != 0,
-        Json::Float(number) => *number != 0.0,
+        Json::Float(number) => number.abs() > 0.0,
         Json::String(text) => !text.is_empty(),
         Json::Array(items) => !items.is_empty(),
         Json::Object(pairs) => !pairs.is_empty(),

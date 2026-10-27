@@ -65,7 +65,8 @@ fn resolve_with(reply: Option<impl AsRef<str>>, secret: &str) -> Result<Secret, 
         None => handshake(),
     };
     let rig = Rig::new(transport);
-    rig.backend(URL).resolve(secret, "AWSCURRENT", None)
+    let backend = rig.backend(URL);
+    backend.resolve(secret, "AWSCURRENT", None)
 }
 
 #[test]
