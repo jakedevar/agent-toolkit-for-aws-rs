@@ -1044,3 +1044,60 @@ toolkit cloudwatch region [--region REGION]
 
 Function-by-function parity, the injected-seam design for #4381 and every
 intentional change: [docs/migration/cw-domain.md](../../docs/migration/cw-domain.md).
+
+## cloudwatch operations (#4381)
+
+`toolkit cloudwatch instrumentation`, `snapshots`, `evaluate-traces` and
+`capture-dataset` port the operation entrypoints and host scripts of the
+CloudWatch skill (`di_instrumentation.py`, `di_snapshots.py`,
+`evaluate_traces.py`, `capture_dataset_from_traces.py`) on top of the #4380
+modules. **This build has no live AWS client**: every AWS call goes through an
+injected client that is either a recorded replay (`--recorded FILE`) or one
+that sends nothing and reads no credentials, so the first call of a run without
+`--recorded` fails with `this build includes no live AWS client`. The live
+binding is a follow-up.
+
+```
+toolkit cloudwatch instrumentation OP (--json TEXT | --json-file FILE) [--recorded FILE]
+    [--now ISO] [--i-have-confirmed] [--region REGION] [--profile PROFILE]
+toolkit cloudwatch snapshots OP (--json TEXT | --json-file FILE) [--out FILE] [--recorded FILE]
+toolkit cloudwatch evaluate-traces (--trace-id ID | --trace-ids IDS) [--evaluator-id ID | --evaluator-ids IDS]
+    [--level TRACE|TOOL_CALL|SESSION] [--session-id ID] [--window-days N] [--include-explanations]
+    [--no-writeback] [--retention-days N] [--kms-key-id KEY] [--recorded FILE] [--now ISO]
+toolkit cloudwatch capture-dataset --trace-ids IDS [--mode create|add] [--dataset-name NAME]
+    [--dataset-id ID] [--description TEXT] [--window-days N] [--i-have-confirmed] [--recorded FILE]
+```
+
+- `instrumentation OP` is `create`, `list`, `get`, `delete`,
+  `batch-delete-by-scope`, `batch-delete-by-arns`, `get-status` or
+  `check-status`; `snapshots OP` is `sample` or `search`. The arguments are one
+  JSON object with the legacy parameter names (`--print-contract` prints the
+  schema). An unknown or mistyped argument exits 2; a failed operation prints
+  its report on stdout and exits 1. Caller values are escaped to one line
+  before they reach a request or a diagnostic, and AWS text is escaped by the
+  final output pass.
+- **Mutations.** `create`, `delete` and both batch deletes change live
+  resources: without `--i-have-confirmed` they print `ERROR: refusing to run`
+  and exit 1 before any client call. `capture-dataset` refuses the same way
+  (`confirmationRequired`). `evaluate-traces` writes each score back as a
+  `gen_ai.evaluation.result` record unless `--no-writeback` is given, like the
+  script.
+- `snapshots --out FILE` writes the result owner-only (`0600`), refusing a
+  symbolic link or a non-regular file at the path. `search`/`sample` exit 1 for
+  a bare `ERROR` line and for a result whose inner `status` is `ERROR`,
+  `TIMEOUT`, `FAILED` or `CANCELLED`.
+- `evaluate-traces` and `capture-dataset` print one JSON receipt (pretty on
+  success, one compact line with exit 1 on failure). The judge's explanation is
+  left off the receipt unless `--include-explanations` is given.
+- `--recorded FILE` is a JSON object `{"calls": [{"service", "operation",
+  "request"?, "response" | "error"}]}`. A call matches the entries of its
+  service and operation whose recorded `request` is contained in the actual
+  one; entries are consumed in file order and the last repeats. A member of
+  the wrong type, `null` included, rejects the file. `--now ISO` pins the clock
+  (ttl expiry, session names, writeback timestamps).
+- Stdin (`--json -`) is not accepted: the router refuses values that start
+  with `-`.
+
+Parity table, recorded format, intentional changes, the Python callers left for
+#4415 and the live-binding follow-up:
+[docs/migration/cw-api.md](../../docs/migration/cw-api.md).

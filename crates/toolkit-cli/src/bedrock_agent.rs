@@ -29,8 +29,8 @@ use crate::startup::read_json_document;
 use crate::{Invocation, Output};
 
 mod client;
-mod fetch;
-mod recorded;
+pub(crate) mod fetch;
+pub(crate) mod recorded;
 
 #[cfg(test)]
 mod tests;

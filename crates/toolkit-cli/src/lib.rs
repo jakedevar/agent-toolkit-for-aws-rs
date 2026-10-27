@@ -123,6 +123,19 @@ Usage:
   toolkit cloudwatch render RENDERER (--json TEXT | --json-file FILE)
   toolkit cloudwatch validate CHECK (--json TEXT | --json-file FILE)
   toolkit cloudwatch region [--region REGION]
+  toolkit cloudwatch instrumentation OP (--json TEXT | --json-file FILE) [--recorded FILE]
+      [--now ISO] [--i-have-confirmed] [--region REGION] [--profile PROFILE]
+  toolkit cloudwatch instrumentation --print-contract
+  toolkit cloudwatch snapshots OP (--json TEXT | --json-file FILE) [--out FILE]
+      [--recorded FILE] [--region REGION] [--profile PROFILE]
+  toolkit cloudwatch snapshots --print-contract
+  toolkit cloudwatch evaluate-traces (--trace-id ID | --trace-ids IDS)
+      [--evaluator-id ID | --evaluator-ids IDS] [--level TRACE|TOOL_CALL|SESSION]
+      [--session-id ID] [--window-days N] [--include-explanations] [--no-writeback]
+      [--retention-days N] [--kms-key-id KEY] [--recorded FILE] [--now ISO]
+  toolkit cloudwatch capture-dataset --trace-ids IDS [--mode create|add]
+      [--dataset-name NAME] [--dataset-id ID] [--description TEXT] [--window-days N]
+      [--i-have-confirmed] [--recorded FILE]
   toolkit elasticache price [--engine valkey|redis|memcached] [--mode serverless|node]
       [--region R] [--data-gb N] [--ecpu-millions N] [--ops-per-sec N]
       [--node-type T] [--nodes N] [--ri-term TERM] [--avg-payload-kb N]
@@ -383,6 +396,24 @@ Commands:
                 check prints the legacy ERROR text on stdout and exits 1; an
                 unknown or mistyped argument exits 2. Nothing contacts AWS.
                 See docs/migration/cw-domain.md.
+  cloudwatch instrumentation | snapshots | evaluate-traces | capture-dataset
+                CloudWatch operations over an injected AWS client (#4381). This
+                build has no live AWS client: they send nothing and read no
+                credentials. Pass --recorded FILE to replay recorded responses
+                (docs/migration/cw-api.md); without it the first AWS call fails
+                with 'this build includes no live AWS client'. instrumentation
+                OP is create, list, get, delete, batch-delete-by-scope,
+                batch-delete-by-arns, get-status or check-status; create, delete
+                and the batch deletes change live resources and are refused
+                without --i-have-confirmed. snapshots OP is sample or search
+                (Logs Insights; --out writes the result owner-only, never
+                through a symbolic link). The op arguments are one JSON object
+                (--json TEXT or --json-file FILE; stdin is not accepted);
+                --print-contract shows the argument schema.
+                evaluate-traces scores Omni traces with AgentCore evaluators and
+                capture-dataset turns traces into an evaluation dataset
+                (--i-have-confirmed required to write); both print one JSON
+                receipt. See docs/migration/cw-api.md.
   elasticache   ElastiCache cost, validation, audit and dashboard tools
                 (#4392). `price` estimates serverless and node-based cost,
                 reserved options and Extended Support surcharges;
@@ -1204,6 +1235,46 @@ pub const COMMANDS: &[CommandSpec] = &[
         max_positionals: 0,
         passthrough: false,
         handler: cloudwatch::region_command,
+    },
+    CommandSpec {
+        path: &["cloudwatch", "instrumentation"],
+        flags: cloudwatch::INSTRUMENTATION_FLAGS,
+        value_flags: cloudwatch::INSTRUMENTATION_VALUE_FLAGS,
+        strict_values: true,
+        repeatable_flags: &[],
+        max_positionals: 1,
+        passthrough: false,
+        handler: cloudwatch::instrumentation_command,
+    },
+    CommandSpec {
+        path: &["cloudwatch", "snapshots"],
+        flags: cloudwatch::SNAPSHOT_FLAGS,
+        value_flags: cloudwatch::SNAPSHOT_VALUE_FLAGS,
+        strict_values: true,
+        repeatable_flags: &[],
+        max_positionals: 1,
+        passthrough: false,
+        handler: cloudwatch::snapshots_command,
+    },
+    CommandSpec {
+        path: &["cloudwatch", "evaluate-traces"],
+        flags: cloudwatch::EVALUATE_FLAGS,
+        value_flags: cloudwatch::EVALUATE_VALUE_FLAGS,
+        strict_values: true,
+        repeatable_flags: &[],
+        max_positionals: 0,
+        passthrough: false,
+        handler: cloudwatch::evaluate_command,
+    },
+    CommandSpec {
+        path: &["cloudwatch", "capture-dataset"],
+        flags: cloudwatch::CAPTURE_FLAGS,
+        value_flags: cloudwatch::CAPTURE_VALUE_FLAGS,
+        strict_values: true,
+        repeatable_flags: &[],
+        max_positionals: 0,
+        passthrough: false,
+        handler: cloudwatch::capture_command,
     },
     CommandSpec {
         path: &["elasticache", "price"],

@@ -75,7 +75,7 @@ pub const CHECKS: &[&str] = &[
     "snapshot-signal",
 ];
 
-fn invalid(op: &str, detail: impl AsRef<str>) -> ToolkitError {
+pub(super) fn invalid(op: &str, detail: impl AsRef<str>) -> ToolkitError {
     ToolkitError::runtime(
         "invalid_arguments",
         format!(
@@ -288,7 +288,7 @@ const CHECK_ARGUMENTS: &[(&str, ArgSpec)] = &[
     ("snapshot-signal", &[("signal_type", Caller)]),
 ];
 
-fn spec_of(table: &[(&str, ArgSpec)], op: &str) -> Result<ArgSpec, ToolkitError> {
+pub(super) fn spec_of(table: &[(&str, ArgSpec)], op: &str) -> Result<ArgSpec, ToolkitError> {
     table
         .iter()
         .find(|(name, _)| *name == op)
@@ -355,14 +355,14 @@ fn escape_arguments(value: &Json, spec: ArgSpec) -> Json {
 /// A typed view of the JSON arguments object of one op. It holds only the
 /// arguments as escaped by [`escape_arguments`]: the raw caller object is not
 /// kept, so no accessor can hand a renderer a raw caller string (#4662).
-struct Args {
+pub(super) struct Args {
     op: String,
     spec: ArgSpec,
     value: Json,
 }
 
 impl Args {
-    fn new(op: &str, value: &Json, spec: ArgSpec) -> Result<Self, ToolkitError> {
+    pub(super) fn new(op: &str, value: &Json, spec: ArgSpec) -> Result<Self, ToolkitError> {
         let Json::Object(pairs) = value else {
             return Err(invalid(op, "arguments must be a JSON object"));
         };
@@ -376,7 +376,7 @@ impl Args {
         })
     }
 
-    fn present(&self, key: &str) -> Option<&Json> {
+    pub(super) fn present(&self, key: &str) -> Option<&Json> {
         debug_assert!(
             origin_of(self.spec, key).is_some(),
             "op '{}' reads argument '{key}' that its ArgSpec does not list",
@@ -385,7 +385,18 @@ impl Args {
         self.value.get(key).filter(|value| **value != Json::Null)
     }
 
-    fn mistyped(&self, key: &str, expected: &str, got: &Json) -> ToolkitError {
+    /// The argument as given, an explicit `null` included (`present` treats
+    /// `null` as absent, like Python's `None` default).
+    pub(super) fn explicit(&self, key: &str) -> Option<&Json> {
+        debug_assert!(
+            origin_of(self.spec, key).is_some(),
+            "op '{}' reads argument '{key}' that its ArgSpec does not list",
+            self.op
+        );
+        self.value.get(key)
+    }
+
+    pub(super) fn mistyped(&self, key: &str, expected: &str, got: &Json) -> ToolkitError {
         invalid(
             &self.op,
             format!(
@@ -395,12 +406,12 @@ impl Args {
         )
     }
 
-    fn required(&self, key: &str) -> Result<&Json, ToolkitError> {
+    pub(super) fn required(&self, key: &str) -> Result<&Json, ToolkitError> {
         self.present(key)
             .ok_or_else(|| invalid(&self.op, format!("missing required argument '{key}'")))
     }
 
-    fn opt_str(&self, key: &str) -> Result<Option<&str>, ToolkitError> {
+    pub(super) fn opt_str(&self, key: &str) -> Result<Option<&str>, ToolkitError> {
         match self.present(key) {
             None => Ok(None),
             Some(Json::String(text)) => Ok(Some(text.as_str())),
@@ -408,14 +419,14 @@ impl Args {
         }
     }
 
-    fn req_str(&self, key: &str) -> Result<&str, ToolkitError> {
+    pub(super) fn req_str(&self, key: &str) -> Result<&str, ToolkitError> {
         match self.required(key)? {
             Json::String(text) => Ok(text.as_str()),
             other => Err(self.mistyped(key, "a string", other)),
         }
     }
 
-    fn opt_i64(&self, key: &str) -> Result<Option<i64>, ToolkitError> {
+    pub(super) fn opt_i64(&self, key: &str) -> Result<Option<i64>, ToolkitError> {
         match self.present(key) {
             None => Ok(None),
             Some(Json::Int(number)) => Ok(Some(*number)),
@@ -423,12 +434,12 @@ impl Args {
         }
     }
 
-    fn req_i64(&self, key: &str) -> Result<i64, ToolkitError> {
+    pub(super) fn req_i64(&self, key: &str) -> Result<i64, ToolkitError> {
         self.opt_i64(key)?
             .ok_or_else(|| invalid(&self.op, format!("missing required argument '{key}'")))
     }
 
-    fn opt_bool(&self, key: &str) -> Result<Option<bool>, ToolkitError> {
+    pub(super) fn opt_bool(&self, key: &str) -> Result<Option<bool>, ToolkitError> {
         match self.present(key) {
             None => Ok(None),
             Some(Json::Bool(flag)) => Ok(Some(*flag)),
@@ -436,7 +447,7 @@ impl Args {
         }
     }
 
-    fn opt_strings(&self, key: &str) -> Result<Option<Vec<String>>, ToolkitError> {
+    pub(super) fn opt_strings(&self, key: &str) -> Result<Option<Vec<String>>, ToolkitError> {
         match self.present(key) {
             None => Ok(None),
             Some(Json::Array(items)) => items
@@ -451,7 +462,7 @@ impl Args {
         }
     }
 
-    fn opt_array(&self, key: &str) -> Result<&[Json], ToolkitError> {
+    pub(super) fn opt_array(&self, key: &str) -> Result<&[Json], ToolkitError> {
         match self.present(key) {
             None => Ok(&[]),
             Some(Json::Array(items)) => Ok(items),
@@ -459,7 +470,7 @@ impl Args {
         }
     }
 
-    fn opt_time(&self, key: &str) -> Result<Option<UtcTime>, ToolkitError> {
+    pub(super) fn opt_time(&self, key: &str) -> Result<Option<UtcTime>, ToolkitError> {
         self.opt_str(key)?
             .map(|text| {
                 parse_iso_timestamp(text)
@@ -468,13 +479,13 @@ impl Args {
             .transpose()
     }
 
-    fn req_time(&self, key: &str) -> Result<UtcTime, ToolkitError> {
+    pub(super) fn req_time(&self, key: &str) -> Result<UtcTime, ToolkitError> {
         self.opt_time(key)?
             .ok_or_else(|| invalid(&self.op, format!("missing required argument '{key}'")))
     }
 }
 
-fn read_arguments(invocation: &Invocation) -> Result<Json, ToolkitError> {
+pub(super) fn read_arguments(invocation: &Invocation) -> Result<Json, ToolkitError> {
     let text = match (invocation.value("--json"), invocation.value("--json-file")) {
         (Some(_), Some(_)) => {
             return Err(ToolkitError::usage(
@@ -519,7 +530,7 @@ fn read_arguments(invocation: &Invocation) -> Result<Json, ToolkitError> {
     Ok(payload)
 }
 
-fn op_name<'a>(
+pub(super) fn op_name<'a>(
     invocation: &'a Invocation,
     kind: &str,
     known: &[&str],
@@ -544,7 +555,7 @@ fn op_name<'a>(
     }
 }
 
-fn now() -> UtcTime {
+pub(super) fn now() -> UtcTime {
     let seconds = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0.0, |elapsed| elapsed.as_secs_f64());

@@ -124,7 +124,7 @@ fn client_error_text(operation: &str, error: &ServiceError) -> String {
 /// The one accessor of an *optional* member of a response: an absent member is
 /// `None`, a present member must satisfy `expect` (which returns `None` for a
 /// wrong type, an explicit `null` included) or the response is invalid.
-fn optional_member<'j, T>(
+pub(crate) fn optional_member<'j, T>(
     response: &'j Json,
     key: &str,
     expected: &str,
@@ -144,7 +144,7 @@ fn optional_member<'j, T>(
 /// The one helper of an *optional list member* (a listing, `PolicyNames`): an
 /// absent member and `[]` are an empty list; `null` and any other type are an
 /// `aws_invalid_response`. Every listing site goes through it.
-fn optional_list(response: &Json, key: &str) -> Result<Vec<Json>, AwsError> {
+pub(crate) fn optional_list(response: &Json, key: &str) -> Result<Vec<Json>, AwsError> {
     optional_member(response, key, "a list", |member| match member {
         Json::Array(items) => Some(items.clone()),
         _ => None,
@@ -154,7 +154,10 @@ fn optional_list(response: &Json, key: &str) -> Result<Vec<Json>, AwsError> {
 
 /// An optional string member: absent is `None`; `null` and other types are an
 /// `aws_invalid_response`.
-fn optional_text<'j>(response: &'j Json, key: &str) -> Result<Option<&'j str>, AwsError> {
+pub(crate) fn optional_text<'j>(
+    response: &'j Json,
+    key: &str,
+) -> Result<Option<&'j str>, AwsError> {
     optional_member(response, key, "a string", Json::as_str)
 }
 

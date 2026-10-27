@@ -53,7 +53,7 @@ pub(crate) struct RecordedClient {
 /// present member must be of the expected type (`null` is not absent) or the
 /// recording is rejected. The reason names the member and its expected type,
 /// never the value.
-fn optional_member<'j, T>(
+pub(crate) fn optional_member<'j, T>(
     object: &'j Json,
     key: &str,
     expected: &str,
@@ -70,17 +70,20 @@ fn optional_member<'j, T>(
     }
 }
 
-fn optional_string<'j>(object: &'j Json, key: &str) -> Result<Option<&'j str>, String> {
+pub(crate) fn optional_string<'j>(object: &'j Json, key: &str) -> Result<Option<&'j str>, String> {
     optional_member(object, key, "a string", Json::as_str)
 }
 
-fn optional_object<'j>(object: &'j Json, key: &str) -> Result<Option<&'j Json>, String> {
+pub(crate) fn optional_object<'j>(object: &'j Json, key: &str) -> Result<Option<&'j Json>, String> {
     optional_member(object, key, "an object", |member| {
         matches!(member, Json::Object(_)).then_some(member)
     })
 }
 
-fn optional_array<'j>(object: &'j Json, key: &str) -> Result<Option<&'j Vec<Json>>, String> {
+pub(crate) fn optional_array<'j>(
+    object: &'j Json,
+    key: &str,
+) -> Result<Option<&'j Vec<Json>>, String> {
     optional_member(object, key, "an array", |member| match member {
         Json::Array(items) => Some(items),
         _ => None,
