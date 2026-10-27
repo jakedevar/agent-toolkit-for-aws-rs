@@ -144,3 +144,4 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 19:25Z: round 11 head c464befb9eb0f9d6d65bbbc173c972f1405703b0 (worker 5ed0647c; merges 55651da5 #4697 conflict-free, c464befb #4384 registration-only lib.rs hunks, verified). Own branch rsi/5ed0647c.
   Manager scoped 6ad13616 pending. If ok: GATE = c464befb / source_session_id 5ed0647c-beda-43b9-8324-c63a41267ba1.
   Kaizen #4727 worker 2205a1f9 (Opus) from c464befb: shared recorded validator in toolkit-aws, migrate bedrock_agent + ai_models behaviour-identically.
+- 20:15Z: #4394 impl 294179ff (a33d3291; 6 relational scripts, Safe SQL type; scoped 7f89c1d8 ok). Review #4736 (security) worker db36d49d (pinned).
