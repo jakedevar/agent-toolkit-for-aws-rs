@@ -275,7 +275,16 @@ fn unknown_op_and_unknown_choices_are_escaped_with_exit_two() {
     assert_eq!(status(&unknown_op), 2);
     assert_eq!(text(&unknown_op.stdout), "");
     assert!(text(&unknown_op.stderr).contains(&format!("invalid choice: '{ESCAPED}'")));
-    assert_eq!(text(&unknown_op.stderr).lines().count(), 1);
+    // A usage error appends help text, so only the first line is the diagnostic.
+    let first = text(&unknown_op.stderr)
+        .lines()
+        .next()
+        .unwrap_or("")
+        .to_string();
+    assert!(
+        first.contains(&format!("invalid choice: '{ESCAPED}'")),
+        "{first}"
+    );
     assert_channels_safe(&unknown_op);
 
     let mode = format!(r#"{{"mode":"{HOSTILE_JSON}"}}"#);
