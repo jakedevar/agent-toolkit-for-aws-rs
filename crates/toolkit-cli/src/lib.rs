@@ -24,10 +24,16 @@ use std::path::PathBuf;
 
 use toolkit_core::{discover_skills, skills_to_json, ErrorKind, ToolkitError};
 
+pub mod dynamodb;
+
 /// Usage text printed by `help` (stdout) and after usage errors (stderr).
 pub const USAGE: &str = "\
 Usage:
   toolkit skills list [ROOT] [--json]
+  toolkit dynamodb calculate-costs --model FILE [--requirements|-r FILE] [--output|-o FILE]
+  toolkit dynamodb iterate-design --model FILE --config FILE --loop-state FILE
+      [--manifest FILE] [--apply-change FILE] [--mode MODE] [--timestamp TS]
+      [--yes-deploy] [--allow-spend] [--skip-deploy] [--calculator-only] [--dry-run]
   toolkit --version
   toolkit help
 
@@ -35,6 +41,11 @@ Commands:
   skills list   List skill directories (directories containing SKILL.md) under
                 ROOT, sorted by name then relative path. ROOT defaults to
                 `skills` in the current directory.
+  dynamodb calculate-costs
+                Price a dynamodb_data_model.json (RRU/WRU, GSI amplification,
+                storage, vector indexes) and write a cost_report.md.
+  dynamodb iterate-design
+                Run ONE round of the human-driven DynamoDB design loop, then stop.
 
 Options:
   --json        Emit a JSON array of {name, description, path} objects.
@@ -46,12 +57,16 @@ Exit codes:
   1  runtime error (missing root, root not a directory, unreadable files,
      stdout write failure)
   2  usage error (unknown command, missing or unknown arguments,
-     or a non-UTF-8 argument)";
+     or a non-UTF-8 argument)
+  Some commands keep a published status instead (iterate-design: 2 for a
+  missing input file or refused change, 4 for a deploy without --yes-deploy,
+  or the failed step's own status); see crates/toolkit-cli/README.md.";
 
 /// Buffered stdout lines with the closed-pipe and write-error contract.
 pub struct Output<'a> {
     sink: &'a mut dyn Write,
     closed: bool,
+    diagnostics: Vec<String>,
 }
 
 impl<'a> Output<'a> {
@@ -60,7 +75,21 @@ impl<'a> Output<'a> {
         Self {
             sink,
             closed: false,
+            diagnostics: Vec::new(),
         }
+    }
+
+    /// Queues a non-fatal diagnostic line (for example a warning). [`run`]
+    /// writes the queued lines to stderr, in order, after the handler
+    /// returns, whether it succeeded or failed.
+    pub fn diagnostic(&mut self, text: &str) {
+        self.diagnostics.push(text.to_string());
+    }
+
+    /// The diagnostic lines queued so far.
+    #[must_use]
+    pub fn diagnostics(&self) -> &[String] {
+        &self.diagnostics
     }
 
     /// True once the reader went away; handlers should stop producing output.
@@ -124,9 +153,29 @@ pub struct Invocation {
     pub positionals: Vec<String>,
     /// Flags that were present (each at most once).
     pub flags: Vec<String>,
+    /// Value options as `(long name, value)`; a repeated option keeps its
+    /// last value, like `argparse`.
+    pub options: Vec<(String, String)>,
 }
 
 impl Invocation {
+    /// The value of option `name` (its long form, for example `--model`).
+    #[must_use]
+    pub fn option(&self, name: &str) -> Option<&str> {
+        self.options
+            .iter()
+            .find(|(key, _)| key == name)
+            .map(|(_, value)| value.as_str())
+    }
+
+    fn set_option(&mut self, name: &str, value: &str) {
+        if let Some(slot) = self.options.iter_mut().find(|(key, _)| key == name) {
+            slot.1 = value.to_string();
+        } else {
+            self.options.push((name.to_string(), value.to_string()));
+        }
+    }
+
     /// Whether `name` (for example `--json`) was passed.
     #[must_use]
     pub fn has_flag(&self, name: &str) -> bool {
@@ -143,6 +192,16 @@ impl Invocation {
 /// A command implementation.
 pub type Handler = fn(&Invocation, &mut Output<'_>) -> Result<(), ToolkitError>;
 
+/// A flag that takes one value, accepted as `--name value`, `--name=value`
+/// or (when declared) `-s value`.
+#[derive(Debug, Clone, Copy)]
+pub struct ValueFlag {
+    /// Long form, for example `--model`. Options are stored under this name.
+    pub long: &'static str,
+    /// Optional short form, for example `-r`.
+    pub short: Option<&'static str>,
+}
+
 /// One routable command.
 #[derive(Clone, Copy)]
 pub struct CommandSpec {
@@ -150,6 +209,8 @@ pub struct CommandSpec {
     pub path: &'static [&'static str],
     /// Long flags the command accepts, for example `["--json"]`.
     pub flags: &'static [&'static str],
+    /// Flags that take a value, for example `--model FILE`.
+    pub value_flags: &'static [ValueFlag],
     /// Maximum number of positional arguments.
     pub max_positionals: usize,
     /// The implementation.
@@ -166,12 +227,29 @@ impl fmt::Debug for CommandSpec {
 }
 
 /// The routing table. New domain slices register their commands here.
-pub const COMMANDS: &[CommandSpec] = &[CommandSpec {
-    path: &["skills", "list"],
-    flags: &["--json"],
-    max_positionals: 1,
-    handler: skills_list,
-}];
+pub const COMMANDS: &[CommandSpec] = &[
+    CommandSpec {
+        path: &["skills", "list"],
+        flags: &["--json"],
+        value_flags: &[],
+        max_positionals: 1,
+        handler: skills_list,
+    },
+    CommandSpec {
+        path: &["dynamodb", "calculate-costs"],
+        flags: &[],
+        value_flags: dynamodb::CALCULATE_COSTS_VALUE_FLAGS,
+        max_positionals: 0,
+        handler: dynamodb::calculate_costs_command,
+    },
+    CommandSpec {
+        path: &["dynamodb", "iterate-design"],
+        flags: dynamodb::ITERATE_DESIGN_FLAGS,
+        value_flags: dynamodb::ITERATE_DESIGN_VALUE_FLAGS,
+        max_positionals: 0,
+        handler: dynamodb::iterate_design_command,
+    },
+];
 
 /// Outcome of routing the arguments.
 #[derive(Debug)]
@@ -220,17 +298,35 @@ pub fn route<'a>(specs: &'a [CommandSpec], args: &[String]) -> Result<Routed<'a>
     };
 
     let mut invocation = Invocation::default();
-    for arg in &args[spec.path.len()..] {
+    let mut rest = args[spec.path.len()..].iter();
+    while let Some(arg) = rest.next() {
         let word = arg.as_str();
         if word == "-h" || word == "--help" {
             return Ok(Routed::Help);
         }
         if word.starts_with('-') {
-            if !spec.flags.contains(&word) {
-                return Err(usage_error());
-            }
-            if !invocation.has_flag(word) {
-                invocation.flags.push(arg.clone());
+            if let Some(flag) = spec
+                .value_flags
+                .iter()
+                .find(|flag| flag.long == word || flag.short == Some(word))
+            {
+                // Like argparse, a value may not itself look like an option.
+                let Some(value) = rest.next().filter(|value| !value.starts_with('-')) else {
+                    return Err(usage_error());
+                };
+                invocation.set_option(flag.long, value);
+            } else if let Some((name, value)) = word
+                .split_once('=')
+                .filter(|(name, _)| spec.value_flags.iter().any(|flag| flag.long == *name))
+            {
+                invocation.set_option(name, value);
+            } else {
+                if !spec.flags.contains(&word) {
+                    return Err(usage_error());
+                }
+                if !invocation.has_flag(word) {
+                    invocation.flags.push(arg.clone());
+                }
             }
         } else {
             if invocation.positionals.len() >= spec.max_positionals {
@@ -301,6 +397,12 @@ pub fn run(args: &[OsString], out: &mut dyn Write, err: &mut dyn Write) -> u8 {
         Ok(Routed::Run(spec, invocation)) => {
             let mut output = Output::new(out);
             let result = (spec.handler)(&invocation, &mut output).and_then(|()| output.finish());
+            // Diagnostics (warnings) reach stderr before any error report, so
+            // the final `error:` line is always the last thing printed.
+            for line in output.diagnostics() {
+                let _ = err.write_all(line.as_bytes());
+                let _ = err.write_all(b"\n");
+            }
             match result {
                 Ok(()) => 0,
                 Err(error) => report(err, &error),
@@ -465,6 +567,12 @@ mod tests {
             for flag in spec.flags {
                 assert!(USAGE.contains(flag), "usage lacks '{flag}'");
             }
+            for flag in spec.value_flags {
+                assert!(USAGE.contains(flag.long), "usage lacks '{}'", flag.long);
+                if let Some(short) = flag.short {
+                    assert!(USAGE.contains(short), "usage lacks '{short}'");
+                }
+            }
         }
         let paths: Vec<&[&str]> = COMMANDS.iter().map(|spec| spec.path).collect();
         for (index, path) in paths.iter().enumerate() {
@@ -585,6 +693,110 @@ mod tests {
         assert!(String::from_utf8(err)
             .expect("utf-8 stderr")
             .contains("cannot write to stdout"));
+    }
+
+    #[test]
+    fn value_options_accept_three_spellings_and_keep_the_last() {
+        let Ok(Routed::Run(spec, invocation)) = route_words(&[
+            "dynamodb",
+            "calculate-costs",
+            "--model",
+            "a.json",
+            "-o",
+            "x.md",
+            "--output=y.md",
+            "-r",
+            "r.json",
+            "--requirements=",
+        ]) else {
+            panic!("expected a runnable route");
+        };
+        assert_eq!(spec.path, &["dynamodb", "calculate-costs"]);
+        assert_eq!(invocation.option("--model"), Some("a.json"));
+        assert_eq!(invocation.option("--output"), Some("y.md"), "last wins");
+        assert_eq!(invocation.option("--requirements"), Some(""), "empty value");
+        assert_eq!(invocation.option("--absent"), None);
+        assert!(invocation.positionals.is_empty());
+        assert!(invocation.flags.is_empty());
+    }
+
+    #[test]
+    fn malformed_value_options_are_usage_errors() {
+        for values in [
+            // No value, or a value that looks like another option.
+            vec!["dynamodb", "calculate-costs", "--model"],
+            vec!["dynamodb", "calculate-costs", "--model", "--output", "x"],
+            vec!["dynamodb", "calculate-costs", "-o"],
+            vec!["dynamodb", "calculate-costs", "-o", "-r"],
+            // `=` only splits a declared value option; a short form has no `=`.
+            vec!["dynamodb", "calculate-costs", "--bogus=1"],
+            vec!["dynamodb", "calculate-costs", "-o=x"],
+            // A value option without a short form, and abbreviations.
+            vec!["dynamodb", "iterate-design", "-m", "x"],
+            vec!["dynamodb", "calculate-costs", "--req", "x"],
+            // A stray positional.
+            vec!["dynamodb", "calculate-costs", "--model", "a.json", "extra"],
+            // A value option is not a boolean flag.
+            vec!["dynamodb", "iterate-design", "--model=a", "--dry-run=1"],
+        ] {
+            let Err(error) = route_words(&values) else {
+                panic!("{values:?} must be a usage error");
+            };
+            assert_eq!(error.kind(), ErrorKind::Usage, "{values:?}");
+            assert_eq!(error.exit_code(), 2);
+        }
+        // Boolean flags still work beside value options.
+        let Ok(Routed::Run(_, invocation)) = route_words(&[
+            "dynamodb",
+            "iterate-design",
+            "--dry-run",
+            "--model",
+            "m",
+            "--yes-deploy",
+        ]) else {
+            panic!("expected a runnable route");
+        };
+        assert!(invocation.has_flag("--dry-run") && invocation.has_flag("--yes-deploy"));
+        assert_eq!(invocation.option("--model"), Some("m"));
+    }
+
+    #[test]
+    fn diagnostics_reach_stderr_even_when_the_command_succeeds() {
+        let root = TempDir::new("diagnostics");
+        fs::write(
+            root.path().join("model.json"),
+            r#"{"tables":[],"access_patterns":[{"pattern_id":"P","operation":"GetItem"}]}"#,
+        )
+        .expect("write model");
+        let model = root.path().join("model.json");
+        let missing = root.path().join("absent.json");
+        let report = root.path().join("report.md");
+        let (status, stdout, stderr) = exec(&[
+            "dynamodb",
+            "calculate-costs",
+            "--model",
+            model.to_str().expect("utf-8 path"),
+            "--requirements",
+            missing.to_str().expect("utf-8 path"),
+            "--output",
+            report.to_str().expect("utf-8 path"),
+        ]);
+        assert_eq!(status, 0, "{stderr}");
+        assert_eq!(
+            stderr,
+            format!(
+                "Warning: Could not load requirements (path does not exist: {}), using defaults.\n",
+                missing.display()
+            )
+        );
+        assert_eq!(
+            stdout,
+            format!(
+                "Cost report written to {}\nAnalyzed 1 access patterns across 0 tables.\n",
+                report.display()
+            )
+        );
+        assert!(report.exists());
     }
 
     #[test]

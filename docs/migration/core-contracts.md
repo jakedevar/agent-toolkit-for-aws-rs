@@ -86,8 +86,24 @@ file already failed); repeated flags are accepted once.
   as to block ones (quoted forms stay literal). The `SKILL.md` frontmatter reader
   remains the separate, lenient two-key reader documented in the CLI README.
 
+## Additions for the `dynamo-cost` slice (#4389)
+
+Extensions of the shared interfaces, each with unit tests, no new dependency:
+
+- `CommandSpec::value_flags` / `Invocation::option`: value options (see the CLI
+  README).
+- `Output::diagnostic`: queued non-fatal stderr lines.
+- `ToolkitError::with_exit_code`: a command keeps a published non-default exit
+  status (`0` is ignored).
+- `toolkit_core::write_regular_file`: refuses a symlink or non-regular target;
+  a missing file is created with `create_new`, so a link planted after the
+  check is refused by the OS. Same concurrent-mutation limit as
+  `read_regular_file`.
+- `toolkit_core::sha256_hex`: FIPS 180-4 SHA-256 for stable content
+  fingerprints (not for secrets).
+
 ## Not in scope
 
-No domain command beyond `skills list`; no AWS SDK dependency; no change to
+No domain command beyond `skills list` and the `dynamodb` commands (#4389); no AWS SDK dependency; no change to
 the foundation verification adapter, `.rsi/*`, `Makefile` or `Cargo.lock`
 (no dependency changes, so the lockfile is unchanged).

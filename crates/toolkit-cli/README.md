@@ -7,18 +7,22 @@ Python inventory (#4371) records legacy contracts separately.
 ## Binary
 
 The workspace builds one binary, `toolkit` (crate `toolkit-cli`), from the
-read-only shared library `toolkit-core`. The CLI performs no writes, no network
-access and no live cloud activity.
+shared library `toolkit-core`. `skills list` is read-only; the `dynamodb`
+commands write only the files named in their section below. No command uses the
+network or performs live cloud activity.
 
 ## Commands
 
 ```
 toolkit skills list [ROOT] [--json]
+toolkit dynamodb calculate-costs --model FILE [--requirements|-r FILE] [--output|-o FILE]
+toolkit dynamodb iterate-design --model FILE --config FILE --loop-state FILE [options]
 toolkit --version
 toolkit help
 ```
 
-`-h` / `--help` and `-V` / `--version` work in place of the third line.
+`-h` / `--help` and `-V` / `--version` work in place of the last two lines.
+The `dynamodb` commands are described in their own section below.
 
 ### skills list
 
@@ -128,6 +132,48 @@ Observed unsupported forms — behavior, not bugs:
 
 These limits are intentional for this slice; anything not confidently parsed
 falls back to the documented defaults instead of failing discovery.
+
+## DynamoDB commands (slice `dynamo-cost`, #4389)
+
+```
+toolkit dynamodb calculate-costs --model FILE [--requirements|-r FILE] [--output|-o FILE]
+toolkit dynamodb iterate-design --model FILE --config FILE --loop-state FILE
+    [--manifest FILE] [--apply-change FILE] [--mode MODE] [--timestamp TS]
+    [--yes-deploy] [--allow-spend] [--skip-deploy] [--calculator-only] [--dry-run]
+```
+
+Ports of `calculate_costs.py` and `iterate_design.py`; the parity table and
+every intentional change are in `docs/migration/dynamo-cost.md`. Neither
+command contacts AWS.
+
+- `calculate-costs` prices a `dynamodb_data_model.json` (RRU/WRU, GSI write
+  amplification, storage, vector indexes), writes the Markdown report to
+  `--output` (default `cost_report.md` beside the model) and prints
+  `Cost report written to <path>` and `Analyzed N access patterns across M
+  tables.`. A missing/zero-pattern model, an unreadable model or an impossible
+  vector design is a runtime error (exit 1); an unreadable `--requirements` file
+  is a warning on stderr and the run continues with defaults.
+- `iterate-design` runs ONE round of the design loop and stops. Exit codes keep
+  the legacy script's: `2` for a missing input file or a refused
+  `--apply-change`/`--skip-deploy`, `4` for a round that needs a real deploy
+  without `--yes-deploy`, and the failed step's own status when a pipeline step
+  fails. Pipeline steps run as `toolkit dynamodb <step>` commands through the
+  command table; only `calculate-costs` exists in this slice, so a round that
+  needs deploy/benchmark/report stops with
+  `error: pipeline step ... is not available in this build` (exit 1) before any
+  cloud action. `--calculator-only` is fully functional.
+- Inputs are read through the symlink-refusing path contract (UTF-8, at most
+  16 MiB) and outputs are written without following symlinks.
+
+## Value options and diagnostics (#4389)
+
+`CommandSpec` also declares `value_flags` (`ValueFlag { long, short }`).
+A value option is accepted as `--name value`, `--name=value` or `-s value`; the
+value may not itself start with `-`; a repeated option keeps its last value;
+handlers read them with `Invocation::option("--name")`. `Output::diagnostic`
+queues non-fatal stderr lines (warnings) that `run` prints before any error
+report. `ToolkitError::with_exit_code` lets a command keep a published
+non-default exit status (never `0`).
 
 ## Exit codes
 

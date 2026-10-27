@@ -47,6 +47,7 @@ pub struct ToolkitError {
     kind: ErrorKind,
     code: &'static str,
     message: String,
+    exit_override: Option<u8>,
 }
 
 impl ToolkitError {
@@ -57,6 +58,7 @@ impl ToolkitError {
             kind: ErrorKind::Usage,
             code,
             message: message.into(),
+            exit_override: None,
         }
     }
 
@@ -67,7 +69,19 @@ impl ToolkitError {
             kind: ErrorKind::Runtime,
             code,
             message: message.into(),
+            exit_override: None,
         }
+    }
+
+    /// Replaces the process exit status for a command that must keep a
+    /// published non-default status (for example a legacy status 4 for a
+    /// refused deploy). `0` is ignored: an error never exits successfully.
+    #[must_use]
+    pub fn with_exit_code(mut self, status: u8) -> Self {
+        if status != 0 {
+            self.exit_override = Some(status);
+        }
+        self
     }
 
     /// The error class.
@@ -91,7 +105,7 @@ impl ToolkitError {
     /// Process exit status.
     #[must_use]
     pub fn exit_code(&self) -> u8 {
-        self.kind.exit_code()
+        self.exit_override.unwrap_or_else(|| self.kind.exit_code())
     }
 
     /// Structured form: `{"error": {"kind", "code", "message"}}`.
@@ -177,7 +191,9 @@ impl From<PathError> for ToolkitError {
             PathError::TooLarge { .. } => Self::runtime("path_too_large", error.to_string()),
             PathError::NotUtf8(_) => Self::runtime("path_not_utf8", error.to_string()),
             PathError::Changed(_) => Self::runtime("path_changed", error.to_string()),
-            PathError::Io(..) => Self::runtime("io_error", error.to_string()),
+            PathError::Io(..) | PathError::WriteFailed(..) => {
+                Self::runtime("io_error", error.to_string())
+            }
         }
     }
 }
@@ -204,6 +220,17 @@ mod tests {
         assert_eq!(ErrorKind::Runtime.exit_code(), 1);
         assert_eq!(ToolkitError::usage("u", "bad").exit_code(), 2);
         assert_eq!(ToolkitError::runtime("r", "bad").exit_code(), 1);
+    }
+
+    #[test]
+    fn exit_override_replaces_the_status_but_never_with_zero() {
+        let error = ToolkitError::runtime("r", "bad").with_exit_code(4);
+        assert_eq!(error.exit_code(), 4);
+        assert_eq!(error.kind(), ErrorKind::Runtime);
+        let zero = ToolkitError::runtime("r", "bad").with_exit_code(0);
+        assert_eq!(zero.exit_code(), 1, "an error never exits with status 0");
+        let usage = ToolkitError::usage("u", "bad").with_exit_code(3);
+        assert_eq!(usage.exit_code(), 3);
     }
 
     #[test]

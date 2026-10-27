@@ -63,6 +63,8 @@ pub enum PathError {
     Changed(PathBuf),
     /// Any other I/O failure.
     Io(io::Error, PathBuf),
+    /// Writing the file failed.
+    WriteFailed(io::Error, PathBuf),
 }
 
 impl fmt::Display for PathError {
@@ -82,6 +84,9 @@ impl fmt::Display for PathError {
                 write!(f, "{} changed while it was being opened", path.display())
             }
             Self::Io(error, path) => write!(f, "cannot read {}: {error}", path.display()),
+            Self::WriteFailed(error, path) => {
+                write!(f, "cannot write {}: {error}", path.display())
+            }
         }
     }
 }
@@ -207,6 +212,40 @@ pub fn read_regular_file(path: &Path, max_bytes: u64) -> Result<String, PathErro
     String::from_utf8(bytes).map_err(|_| PathError::NotUtf8(path.to_path_buf()))
 }
 
+/// Writes `contents` to `path`, creating or truncating a regular file, and
+/// refusing to write through a symbolic link or into a non-regular file.
+///
+/// A missing file is created with `create_new`, so a link planted between the
+/// check and the create is refused by the operating system instead of
+/// followed. Replacing an existing regular file has the same
+/// concurrent-mutation limit as [`read_regular_file`] (see the threat model).
+///
+/// # Errors
+///
+/// Returns [`PathError::Symlink`], [`PathError::NotRegularFile`] or
+/// [`PathError::WriteFailed`].
+pub fn write_regular_file(path: &Path, contents: &str) -> Result<(), PathError> {
+    use std::io::Write;
+
+    let failed = |error: io::Error| PathError::WriteFailed(error, path.to_path_buf());
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            Err(PathError::Symlink(path.to_path_buf()))
+        }
+        Ok(metadata) if !metadata.is_file() => Err(PathError::NotRegularFile(path.to_path_buf())),
+        Ok(_) => fs::write(path, contents).map_err(failed),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            let mut file = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(path)
+                .map_err(failed)?;
+            file.write_all(contents.as_bytes()).map_err(failed)
+        }
+        Err(error) => Err(failed(error)),
+    }
+}
+
 #[cfg(unix)]
 fn same_file(before: &fs::Metadata, after: &fs::Metadata) -> bool {
     use std::os::unix::fs::MetadataExt;
@@ -281,6 +320,45 @@ mod tests {
         assert!(matches!(error, PathError::Symlink(_)), "{error}");
         let error = resolve_within(&root, "link").expect_err("final link refused");
         assert!(matches!(error, PathError::Symlink(_)));
+    }
+
+    #[test]
+    fn writes_create_and_replace_regular_files() {
+        let root = TempDir::new("write-ok");
+        let file = root.join("out.txt");
+        write_regular_file(&file, "first").expect("create");
+        assert_eq!(std::fs::read_to_string(&file).expect("read"), "first");
+        write_regular_file(&file, "2").expect("replace");
+        assert_eq!(std::fs::read_to_string(&file).expect("read"), "2");
+    }
+
+    #[test]
+    fn writes_refuse_directories_and_missing_parents() {
+        let root = TempDir::new("write-bad");
+        let dir = write_regular_file(&root, "x").expect_err("directory refused");
+        assert!(matches!(dir, PathError::NotRegularFile(_)), "{dir}");
+        let missing = write_regular_file(&root.join("no/such/dir.txt"), "x").expect_err("parent");
+        assert!(matches!(missing, PathError::WriteFailed(..)), "{missing}");
+        assert!(missing.to_string().starts_with("cannot write "));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn writes_refuse_symlinks_even_dangling_ones() {
+        let root = TempDir::new("write-link");
+        let outside = TempDir::new("write-link-outside");
+        std::fs::write(outside.join("target.txt"), "keep").expect("write");
+        std::os::unix::fs::symlink(outside.join("target.txt"), root.join("link")).expect("link");
+        let error = write_regular_file(&root.join("link"), "overwrite").expect_err("refused");
+        assert!(matches!(error, PathError::Symlink(_)), "{error}");
+        assert_eq!(
+            std::fs::read_to_string(outside.join("target.txt")).expect("read"),
+            "keep"
+        );
+        std::os::unix::fs::symlink(outside.join("gone"), root.join("dangling")).expect("link");
+        let dangling = write_regular_file(&root.join("dangling"), "x").expect_err("refused");
+        assert!(matches!(dangling, PathError::Symlink(_)));
+        assert!(!outside.join("gone").exists());
     }
 
     #[test]
