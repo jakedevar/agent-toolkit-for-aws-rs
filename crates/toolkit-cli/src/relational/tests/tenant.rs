@@ -1,10 +1,13 @@
-//! `tenant_query.py`: tenant isolation, read-only safety and the cursors.
+//! `tenant_query.py`: tenant isolation, the structural read-only surface and
+//! the cursors.
+
+use std::marker::PhantomData;
 
 use toolkit_core::Json;
 
 use super::super::tenant::{
-    select_by_tenant, tenant_sql, DbError, NoLiveCursor, ReadOnly, RecordedCursor, Row, SqlCursor,
-    TenantQueryError,
+    select_by_tenant, DbError, NoLiveCursor, RecordedCursor, Row, SqlCursor, TenantQueryError,
+    TenantRead, TENANT_READ_TEMPLATE,
 };
 use super::json;
 
@@ -17,8 +20,8 @@ struct Spy {
 }
 
 impl SqlCursor for Spy {
-    fn execute(&mut self, sql: &str) -> Result<(), DbError> {
-        self.executed.push(sql.to_string());
+    fn execute(&mut self, statement: &TenantRead) -> Result<(), DbError> {
+        self.executed.push(statement.sql().to_string());
         match &self.fail {
             Some(message) => Err(DbError(message.clone())),
             None => Ok(()),
@@ -32,9 +35,25 @@ impl SqlCursor for Spy {
 
 const ENTITIES_ACME: &str = "SELECT * FROM \"entities\" WHERE tenant_id = 'acme'";
 
+/// The template statement for a valid tenant, spelled out independently of
+/// the code under test.
+fn template_for(tenant: &str) -> String {
+    format!("SELECT * FROM \"entities\" WHERE tenant_id = '{tenant}'")
+}
+
+fn tenant_sql(tenant: &str) -> Result<String, String> {
+    TenantRead::for_tenant(tenant)
+        .map(|statement| statement.sql().to_string())
+        .map_err(|error| error.to_string())
+}
+
 #[test]
 fn the_tenant_filter_is_always_in_the_statement() {
     assert_eq!(tenant_sql("acme").expect("sql"), ENTITIES_ACME);
+    assert_eq!(
+        TENANT_READ_TEMPLATE,
+        "SELECT * FROM {t} WHERE tenant_id = {tid}"
+    );
     for tenant in ["a", "tenant-2", &"z".repeat(64)] {
         let sql = tenant_sql(tenant).expect("sql");
         assert!(
@@ -43,6 +62,8 @@ fn the_tenant_filter_is_always_in_the_statement() {
         );
         assert_eq!(sql.matches("tenant_id").count(), 1);
     }
+    let read = TenantRead::for_tenant("acme").expect("read");
+    assert_eq!(read.to_string(), ENTITIES_ACME);
 }
 
 #[test]
@@ -122,42 +143,172 @@ fn tenants_are_isolated_each_statement_names_only_its_tenant() {
     assert!(cursor.executed[1].contains("'tenant-b'") && !cursor.executed[1].contains("tenant-a"));
 }
 
+/// Statements that must never reach a cursor: writes, stacked statements and
+/// the write-capable `SELECT` forms of #4738 that a `SELECT`-prefix filter let
+/// through.
+const NOT_A_TENANT_READ: &[&str] = &[
+    "",
+    "DELETE FROM entities",
+    "DELETE FROM entities WHERE tenant_id = 'acme'",
+    "UPDATE entities SET name = 'x'",
+    "INSERT INTO entities VALUES (1)",
+    "DROP TABLE entities",
+    "WITH x AS (SELECT 1) DELETE FROM entities",
+    "SELECT 1; DROP TABLE entities",
+    "SELECT 1;",
+    "SELECT 1\0",
+    "/* SELECT */ DELETE FROM t",
+    "EXPLAIN ANALYZE DELETE FROM t",
+    "SELECT * INTO copied_entities FROM entities",
+    "SELECT nextval('tenant_counter')",
+    "SELECT setval('tenant_counter', 1)",
+    "SELECT * FROM entities FOR UPDATE",
+    "SELECT * FROM \"entities\" WHERE tenant_id = 'acme' FOR UPDATE",
+    "WITH d AS (DELETE FROM entities RETURNING *) SELECT * FROM d",
+    "SELECT pg_terminate_backend(1)",
+    "SELECT lo_import('/etc/passwd')",
+    "SELECT * FROM \"entities\" WHERE tenant_id = 'acme'",
+];
+
 #[test]
-fn the_read_only_cursor_refuses_writes_before_they_reach_the_driver() {
-    let mut cursor = ReadOnly(Spy::default());
-    for write in [
-        "DELETE FROM entities WHERE tenant_id = 'acme'",
-        "UPDATE entities SET name = 'x'",
-        "SELECT 1; DELETE FROM entities",
-        "DROP TABLE entities",
-    ] {
-        assert!(cursor.execute(write).is_err(), "{write}");
+fn only_template_statements_for_valid_tenants_reach_the_inner_cursor() {
+    let long = "9".repeat(64);
+    let valid = [
+        "a",
+        "0",
+        "-",
+        "acme",
+        "tenant-a",
+        "tenant-b",
+        "a-b-c-1-2-3",
+        "--",
+        long.as_str(),
+    ];
+    let mut cursor = Spy::default();
+    for tenant in valid {
+        select_by_tenant(&mut cursor, &Json::string(tenant)).expect(tenant);
     }
-    assert!(cursor.0.executed.is_empty());
-    cursor.execute(ENTITIES_ACME).expect("select passes");
-    assert_eq!(cursor.0.executed, [ENTITIES_ACME]);
-    // The statement select_by_tenant builds always satisfies the guard.
-    select_by_tenant(&mut cursor, &Json::string("acme")).expect("select");
+    // Every SQL text a hostile caller could try is offered as the only input
+    // the public surface takes, the tenant: none of it reaches the cursor.
+    for hostile in NOT_A_TENANT_READ {
+        let error = select_by_tenant(&mut cursor, &Json::string(*hostile)).expect_err(hostile);
+        assert!(matches!(error, TenantQueryError::Unsafe(_)), "{hostile:?}");
+        assert!(TenantRead::for_tenant(hostile).is_err(), "{hostile:?}");
+    }
+    for invalid in [
+        "A",
+        "acme ",
+        " acme",
+        "x".repeat(65).as_str(),
+        "t\u{e9}",
+        "a_b",
+    ] {
+        assert!(
+            select_by_tenant(&mut cursor, &Json::string(invalid)).is_err(),
+            "{invalid:?}"
+        );
+    }
+    let expected: Vec<String> = valid.iter().map(|tenant| template_for(tenant)).collect();
+    assert_eq!(cursor.executed, expected);
+    // Each executed statement is exactly the template around one slug.
+    for sql in &cursor.executed {
+        let slug = sql
+            .strip_prefix("SELECT * FROM \"entities\" WHERE tenant_id = '")
+            .and_then(|rest| rest.strip_suffix('\''))
+            .expect("template shape");
+        assert!(
+            (1..=64).contains(&slug.len())
+                && slug
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-'),
+            "{sql}"
+        );
+    }
+}
+
+// The cursor's input type cannot be made from text. These probes resolve at
+// compile time: the inherent constant exists only when the bound holds, so
+// the trait default (`false`) is used otherwise.
+trait Fallback {
+    const FROM_STRING: bool = false;
+    const FROM_STR_REF: bool = false;
+    const PARSE: bool = false;
+    const DEFAULT: bool = false;
+}
+
+struct FromStringProbe<T>(PhantomData<T>);
+impl<T> Fallback for FromStringProbe<T> {}
+impl<T: From<String>> FromStringProbe<T> {
+    const FROM_STRING: bool = true;
+}
+
+struct FromStrRefProbe<T>(PhantomData<T>);
+impl<T> Fallback for FromStrRefProbe<T> {}
+impl<T: for<'a> From<&'a str>> FromStrRefProbe<T> {
+    const FROM_STR_REF: bool = true;
+}
+
+struct ParseProbe<T>(PhantomData<T>);
+impl<T> Fallback for ParseProbe<T> {}
+impl<T: std::str::FromStr> ParseProbe<T> {
+    const PARSE: bool = true;
+}
+
+struct DefaultProbe<T>(PhantomData<T>);
+impl<T> Fallback for DefaultProbe<T> {}
+impl<T: Default> DefaultProbe<T> {
+    const DEFAULT: bool = true;
+}
+
+#[test]
+fn a_tenant_read_cannot_be_made_from_text() {
+    // The probes detect the conversions on a type that has them.
+    assert!(FromStringProbe::<String>::FROM_STRING);
+    assert!(FromStrRefProbe::<String>::FROM_STR_REF);
+    assert!(ParseProbe::<String>::PARSE);
+    assert!(DefaultProbe::<String>::DEFAULT);
+    // TenantRead has none of them; its field is private to `tenant.rs`, so
+    // `TenantRead::for_tenant` is the only constructor.
+    assert!(!FromStringProbe::<TenantRead>::FROM_STRING);
+    assert!(!FromStrRefProbe::<TenantRead>::FROM_STR_REF);
+    assert!(!ParseProbe::<TenantRead>::PARSE);
+    assert!(!DefaultProbe::<TenantRead>::DEFAULT);
 }
 
 #[test]
 fn the_no_live_cursor_fails_every_call_without_a_connection() {
     let mut cursor = NoLiveCursor;
-    let error = cursor
-        .execute(ENTITIES_ACME)
-        .expect_err("no live connection");
+    let read = TenantRead::for_tenant("acme").expect("read");
+    let error = cursor.execute(&read).expect_err("no live connection");
     assert!(
         error.0.contains("no live Aurora DSQL connection"),
         "{error}"
     );
     assert!(cursor.fetchall().is_err());
-    let error =
-        select_by_tenant(&mut ReadOnly(NoLiveCursor), &Json::string("acme")).expect_err("fails");
+    let error = select_by_tenant(&mut NoLiveCursor, &Json::string("acme")).expect_err("fails");
     assert!(matches!(error, TenantQueryError::Database(_)));
 }
 
 fn recorded(text: &str) -> Result<RecordedCursor, String> {
     RecordedCursor::from_document(&json(text))
+}
+
+#[test]
+fn a_recorded_write_is_only_compared_never_run() {
+    // A recording may hold any SQL text; it is matched against the tenant
+    // read and never executed, so a write in it is simply unmatched.
+    let mut cursor = recorded(
+        r#"{"statements": [
+            {"sql": "SELECT * INTO copied_entities FROM entities", "rows": [["x"]]},
+            {"sql": "SELECT nextval('tenant_counter')", "rows": [[1]]}
+        ]}"#,
+    )
+    .expect("valid");
+    let error = select_by_tenant(&mut cursor, &Json::string("acme")).expect_err("unmatched");
+    assert_eq!(
+        error.to_string(),
+        "no recorded statement matches the executed SQL"
+    );
 }
 
 #[test]

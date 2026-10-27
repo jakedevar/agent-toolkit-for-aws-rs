@@ -1011,8 +1011,8 @@ toolkit timestream-influxdb instance-types [recommend WRITES QUERIES DAYS]
 
 - `dsql tenant-sql` prints `SELECT * FROM "entities" WHERE tenant_id = 'SLUG'`
   for a slug of 1-64 lowercase letters, digits and hyphens; anything else is an
-  error (exit 1) and prints no SQL. `tenant-query` runs it on a read-only cursor
-  (one `SELECT`, no `;`) and prints the rows as JSON; without `--recorded` it
+  error (exit 1) and prints no SQL. `tenant-query` runs that statement, the only one
+  its cursor accepts (no raw SQL reaches a cursor), and prints the rows as JSON; without `--recorded` it
   fails with exit 1. `selftest` prints `safe_query self-test passed`.
 - `rds commitment` prints the Reserved Instance / Database Savings Plan
   comparison as JSON (the script's keys and rounding). `offline` needs

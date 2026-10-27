@@ -437,31 +437,6 @@ pub(crate) fn build(template: &str, parts: &[(&str, &Safe)]) -> SqlResult<String
     Ok(sql)
 }
 
-/// The statement is a single read-only `SELECT`: it starts with `SELECT` and
-/// holds no statement separator or NUL. A defence in depth for cursors that
-/// must never run a write.
-pub(crate) fn require_read_only(sql: &str) -> SqlResult<()> {
-    let trimmed = sql.trim_start();
-    let starts_with_select = trimmed
-        .get(..6)
-        .is_some_and(|head| head.eq_ignore_ascii_case("select"))
-        && trimmed[6..]
-            .chars()
-            .next()
-            .is_some_and(|c| c.is_whitespace() || c == '*' || c == '(');
-    if !starts_with_select {
-        return Err(UnsafeSqlError::new(
-            "only a single SELECT statement is allowed on a read-only cursor",
-        ));
-    }
-    if sql.contains(';') || sql.contains('\0') {
-        return Err(UnsafeSqlError::new(
-            "a read-only statement must not contain a statement separator or NUL",
-        ));
-    }
-    Ok(())
-}
-
 /// The smoke test of `python safe_query.py`: every validator and `build`.
 pub(crate) fn selftest() -> Result<(), String> {
     fn check(condition: bool, message: &str) -> Result<(), String> {

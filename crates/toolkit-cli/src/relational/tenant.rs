@@ -1,11 +1,19 @@
 //! Tenant-scoped reads of Aurora DSQL (port of `aurora-dsql/scripts/tenant_query.py`).
 //!
 //! `select_by_tenant` validates the untrusted tenant with [`TENANT_SLUG`],
-//! builds one `SELECT` with [`build`] and runs it on a [`SqlCursor`]. The
+//! makes the one [`TenantRead`] statement and runs it on a [`SqlCursor`]. The
 //! cursor is the seam: tests and `--recorded FILE` use scripted cursors, and the
 //! build ships no live connection ([`NoLiveCursor`] opens no socket and reads no
 //! credential). A live cursor behind a TLS-authenticated DSQL connection is a
 //! follow-up (`docs/migration/relational.md`).
+//!
+//! The read-only guarantee is structural, not a filter on SQL text: a
+//! [`SqlCursor`] accepts only a [`TenantRead`], and a [`TenantRead`] can only be
+//! made by [`TenantRead::for_tenant`] from the fixed template
+//! [`TENANT_READ_TEMPLATE`] and a tenant that passed [`TENANT_SLUG`]. There is
+//! no raw-SQL path into a cursor (#4738). A general read path over arbitrary
+//! SQL is out of scope: it would need a database-enforced read-only
+//! transaction or role, not a statement filter.
 //!
 //! Format validation confirms that the value looks like a tenant slug. It does
 //! not prove the caller may read that tenant's data: authorize the caller
@@ -16,7 +24,43 @@ use std::fmt;
 use toolkit_core::Json;
 
 use super::members::{optional_array, optional_object, optional_string, py_type_name};
-use super::sql::{build, ident, regex, require_read_only, UnsafeSqlError, TENANT_SLUG};
+use super::sql::{build, ident, regex, UnsafeSqlError, TENANT_SLUG};
+
+/// The template of the one statement this slice runs.
+pub(crate) const TENANT_READ_TEMPLATE: &str = "SELECT * FROM {t} WHERE tenant_id = {tid}";
+
+/// The tenant read `select_by_tenant` runs: [`TENANT_READ_TEMPLATE`] filled
+/// with the `entities` table and a validated tenant slug.
+///
+/// The field is private and the type implements no conversion from a string
+/// (`From`, `FromStr`, `Default`, deserialization): [`Self::for_tenant`] is its
+/// only constructor, so no other SQL can be expressed as a `TenantRead`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TenantRead(String);
+
+impl TenantRead {
+    /// The tenant read for `tenant`.
+    ///
+    /// # Errors
+    ///
+    /// `Unsafe` when the tenant is not a valid slug.
+    pub(crate) fn for_tenant(tenant: &str) -> Result<Self, UnsafeSqlError> {
+        let table = ident("entities")?;
+        let tenant_id = regex(tenant, &TENANT_SLUG, "req.tenant")?;
+        build(TENANT_READ_TEMPLATE, &[("t", &table), ("tid", &tenant_id)]).map(Self)
+    }
+
+    /// The statement text, for the driver or for printing.
+    pub(crate) fn sql(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for TenantRead {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
 
 /// A failure reported by a cursor. The text is untrusted (a driver or the
 /// recording), so callers print it through the diagnostic helpers.
@@ -33,12 +77,13 @@ impl fmt::Display for DbError {
 pub(crate) type Row = Vec<Json>;
 
 /// What `tenant_query.py` needs of a driver cursor: `.execute(sql)` then
-/// `.fetchall()`.
+/// `.fetchall()`. `execute` takes a [`TenantRead`], never raw SQL: the only
+/// statement a cursor of this slice can be asked to run is the tenant read.
 pub(crate) trait SqlCursor {
     /// # Errors
     ///
     /// The driver's failure.
-    fn execute(&mut self, sql: &str) -> Result<(), DbError>;
+    fn execute(&mut self, statement: &TenantRead) -> Result<(), DbError>;
 
     /// # Errors
     ///
@@ -69,20 +114,6 @@ impl fmt::Display for TenantQueryError {
     }
 }
 
-/// The statement `select_by_tenant` runs for a validated tenant.
-///
-/// # Errors
-///
-/// `Unsafe` when the tenant is not a valid slug.
-pub(crate) fn tenant_sql(tenant: &str) -> Result<String, UnsafeSqlError> {
-    let table = ident("entities")?;
-    let tenant_id = regex(tenant, &TENANT_SLUG, "req.tenant")?;
-    build(
-        "SELECT * FROM {t} WHERE tenant_id = {tid}",
-        &[("t", &table), ("tid", &tenant_id)],
-    )
-}
-
 /// All rows of `entities` for `tenant`, which is untrusted and may be any
 /// decoded JSON value.
 ///
@@ -97,23 +128,11 @@ pub(crate) fn select_by_tenant(
     let Json::String(tenant) = tenant else {
         return Err(TenantQueryError::NotAString(py_type_name(tenant)));
     };
-    let sql = tenant_sql(tenant).map_err(TenantQueryError::Unsafe)?;
-    cursor.execute(&sql).map_err(TenantQueryError::Database)?;
+    let statement = TenantRead::for_tenant(tenant).map_err(TenantQueryError::Unsafe)?;
+    cursor
+        .execute(&statement)
+        .map_err(TenantQueryError::Database)?;
     cursor.fetchall().map_err(TenantQueryError::Database)
-}
-
-/// Refuses every statement that is not a single `SELECT`, then delegates.
-pub(crate) struct ReadOnly<C: SqlCursor>(pub(crate) C);
-
-impl<C: SqlCursor> SqlCursor for ReadOnly<C> {
-    fn execute(&mut self, sql: &str) -> Result<(), DbError> {
-        require_read_only(sql).map_err(|error| DbError(error.to_string()))?;
-        self.0.execute(sql)
-    }
-
-    fn fetchall(&mut self) -> Result<Vec<Row>, DbError> {
-        self.0.fetchall()
-    }
 }
 
 /// The cursor of a run without `--recorded`: it opens no connection, reads no
@@ -121,7 +140,7 @@ impl<C: SqlCursor> SqlCursor for ReadOnly<C> {
 pub(crate) struct NoLiveCursor;
 
 impl SqlCursor for NoLiveCursor {
-    fn execute(&mut self, _sql: &str) -> Result<(), DbError> {
+    fn execute(&mut self, _statement: &TenantRead) -> Result<(), DbError> {
         Err(DbError(
             "this build includes no live Aurora DSQL connection; pass --recorded FILE to \
              replay recorded rows"
@@ -149,7 +168,8 @@ enum Outcome {
 /// ]}
 /// ```
 ///
-/// A statement matches an entry with exactly the same `sql`. `rows` and
+/// A statement matches an entry with exactly the same `sql`; the recorded text is
+/// only compared with a [`TenantRead`], never run. `rows` and
 /// `error` are optional and exclusive; both absent means no rows. A present
 /// member of another type, `null` included, rejects the recording. An
 /// unmatched statement fails with a message that does not echo the SQL.
@@ -205,9 +225,13 @@ impl RecordedCursor {
 }
 
 impl SqlCursor for RecordedCursor {
-    fn execute(&mut self, sql: &str) -> Result<(), DbError> {
+    fn execute(&mut self, statement: &TenantRead) -> Result<(), DbError> {
         self.pending = None;
-        match self.statements.iter().find(|(recorded, _)| recorded == sql) {
+        match self
+            .statements
+            .iter()
+            .find(|(recorded, _)| recorded == statement.sql())
+        {
             Some((_, Outcome::Rows(rows))) => {
                 self.pending = Some(rows.clone());
                 Ok(())

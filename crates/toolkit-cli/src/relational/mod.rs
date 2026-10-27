@@ -38,7 +38,7 @@ mod tests;
 use oracle::{ConnectParams, NoLiveDriver, OracleDriver, RecordedDriver};
 use rds::client::{AwsRead, NoLiveClient, RecordedClient};
 use rds::{analyze_instance_live, build_comparison, Workload, ENGINES};
-use tenant::{select_by_tenant, tenant_sql, NoLiveCursor, ReadOnly, RecordedCursor, SqlCursor};
+use tenant::{select_by_tenant, NoLiveCursor, RecordedCursor, SqlCursor, TenantRead};
 
 /// Value flags of `dsql tenant-sql`.
 pub const TENANT_SQL_VALUE_FLAGS: &[&str] = &["--tenant"];
@@ -126,13 +126,14 @@ pub fn dsql_tenant_sql_command(
     output: &mut Output<'_>,
 ) -> Result<(), ToolkitError> {
     let tenant = required_value(invocation, "--tenant")?;
-    let statement = tenant_sql(tenant)
+    let statement = TenantRead::for_tenant(tenant)
         .map_err(|error| ToolkitError::runtime("unsafe_sql", error.to_string()))?;
-    output.line(&statement)
+    output.line(statement.sql())
 }
 
 /// `toolkit dsql tenant-query --tenant SLUG [--recorded FILE]`: runs the
-/// tenant `SELECT` on a read-only cursor and prints the rows as JSON.
+/// tenant read (the only statement a cursor accepts, `tenant::TenantRead`) and
+/// prints the rows as JSON.
 ///
 /// Without `--recorded` this build has no live connection and fails.
 ///
@@ -148,12 +149,10 @@ pub fn dsql_tenant_query_command(
     let mut recorded;
     let mut none;
     let cursor: &mut dyn SqlCursor = if let Some(path) = invocation.value("--recorded") {
-        recorded = ReadOnly(load_recording(path, "dsql_recorded", |document| {
-            RecordedCursor::from_document(document)
-        })?);
+        recorded = load_recording(path, "dsql_recorded", RecordedCursor::from_document)?;
         &mut recorded
     } else {
-        none = ReadOnly(NoLiveCursor);
+        none = NoLiveCursor;
         &mut none
     };
     let rows = select_by_tenant(cursor, &Json::string(tenant)).map_err(|error| {

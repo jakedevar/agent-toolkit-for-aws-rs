@@ -1,8 +1,8 @@
 //! `safe_query.py`: validators, `build` and the injection corpus.
 
 use super::super::sql::{
-    allow, build, ident, integer, integer_text, keyword, literal, literal_with, regex,
-    require_read_only, selftest, Pattern, Safe, INT, ISO_DATE, TENANT_SLUG, UUID,
+    allow, build, ident, integer, integer_text, keyword, literal, literal_with, regex, selftest,
+    Pattern, Safe, INT, ISO_DATE, TENANT_SLUG, UUID,
 };
 
 fn permissive() -> Pattern {
@@ -236,32 +236,4 @@ fn build_rejects_every_mismatch_and_every_format_feature() {
     assert!(message("SELECT }", &[("x", &col)]).contains("Single '}'"));
     assert!(message("SELECT {x", &[("x", &col)]).contains("expected '}'"));
     assert!(message("SELECT {x}", &[("x", &col), ("x", &col)]).contains("duplicate"));
-}
-
-#[test]
-fn read_only_guard_allows_one_select_and_nothing_else() {
-    for good in [
-        "SELECT * FROM \"entities\" WHERE tenant_id = 'acme'",
-        "  select 1",
-        "SELECT(1)",
-        "SELECT\n1",
-    ] {
-        assert!(require_read_only(good).is_ok(), "{good:?}");
-    }
-    for bad in [
-        "",
-        "DELETE FROM entities",
-        "UPDATE entities SET x = 1",
-        "INSERT INTO entities VALUES (1)",
-        "DROP TABLE entities",
-        "WITH x AS (SELECT 1) DELETE FROM entities",
-        "SELECT 1; DROP TABLE entities",
-        "SELECT 1;",
-        "SELECTED",
-        "SELECT 1\0",
-        "/* SELECT */ DELETE FROM t",
-        "EXPLAIN ANALYZE DELETE FROM t",
-    ] {
-        assert!(require_read_only(bad).is_err(), "{bad:?}");
-    }
 }

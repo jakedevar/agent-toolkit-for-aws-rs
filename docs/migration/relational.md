@@ -56,8 +56,9 @@ Nothing here opens a socket or reads a credential.
   only constructor of the connection string and is printed only with
   `--verbose`, redacted and escaped.
 - DSQL: `tenant::SqlCursor` (`execute`, `fetchall`). `RecordedCursor` replays
-  `--recorded FILE`; `NoLiveCursor` fails every call. The command wraps either
-  in `ReadOnly`, which refuses anything but one `SELECT`.
+  `--recorded FILE`; `NoLiveCursor` fails every call. `execute` takes a
+  `TenantRead`, not SQL text: the only statement a cursor can be asked to run
+  is the tenant read (see intentional change 11).
 
 Recorded formats (rustdoc of `rds/client.rs`, `oracle.rs`, `tenant.rs`): RDS
 `{"calls": [{"service": "rds"|"savingsplans", "region"?, "operation", "request"?,
@@ -76,9 +77,12 @@ echoing the request.
   rejection, injection corpus, 63/64/65-character boundaries),
   `tests/tenant.rs` (the tenant filter is in every statement; an invalid or
   non-string tenant never reaches the cursor; two tenants' statements name only
-  their own; `ReadOnly` refuses `DELETE`/`UPDATE`/`DROP`/stacked statements
-  before the driver). The scripts build raw SQL where the driver cannot bind;
-  the Rust `Safe` type cannot be made from a raw string.
+  their own; only template statements for valid tenants reach a spy cursor, and
+  writes, stacked statements and write-capable `SELECT` forms such as
+  `SELECT * INTO`, `SELECT nextval(...)`, `FOR UPDATE` and data-modifying CTEs
+  cannot be expressed through the public surface). The scripts build raw SQL
+  where the driver cannot bind; the Rust `Safe` type cannot be made from a raw
+  string.
 - **AC2 connection failures and price/instance boundaries.** Oracle: each
   hint code (12170, 12541, 1017, 12514, 12505, 28000), exit 1 on driver or
   connection failure, later check failures keep the script's exit 0
@@ -119,7 +123,7 @@ echoing the request.
    `select_by_tenant` still reports a non-string tenant with the Python type name.
 7. **Added entry points.** `dsql tenant-sql` prints the validated tenant
    `SELECT` for `psql -c` pipelines (the Python docs told shell users to compose
-   it in a `python3` subshell). `ReadOnly` is new defence in depth.
+   it in a `python3` subshell). The cursor surface is narrowed (change 11).
 8. **Usage errors** replace Python tracebacks: `KEY` without `=`, non-integer
    workload numbers, an unknown `instance-types` word, `--region` that is not
    an AWS region shape, a flag of the other `rds commitment` mode (argparse's
@@ -130,6 +134,22 @@ echoing the request.
    would have continued with a mistyped value).
 10. **Warning** the script raised with `warnings.warn` (non-us-east-1 price) is
     `warning: ...` on stderr, escaped on one line.
+11. **Narrowed read-only surface (#4738).** The first port wrapped cursors in
+    `ReadOnly`, a guard over SQL text that accepted any statement starting with
+    `SELECT` without `;`/NUL, so `SELECT * INTO copied FROM entities`,
+    `SELECT nextval(...)`, `SELECT ... FOR UPDATE` and side-effecting functions
+    passed. It and `sql::require_read_only` are removed, and no keyword filter
+    replaces them. `SqlCursor::execute` now takes a `tenant::TenantRead`, whose
+    field is private and whose only constructor, `TenantRead::for_tenant`, fills
+    the fixed template `SELECT * FROM {t} WHERE tenant_id = {tid}` with the
+    `entities` table and a `TENANT_SLUG`-validated tenant. It implements no
+    `From`, `FromStr`, `Default` or deserialization, so no other SQL can reach a
+    cursor (`tests/tenant.rs` checks this with compile-time trait probes and
+    with the counterexamples offered as tenants). Recorded `sql` entries are
+    only compared with the tenant read, never run. No ported caller needs a
+    general raw-SQL read path (`tenant_query.py` runs only this statement). A
+    future one is out of scope here: it needs a database-enforced read-only
+    design (read-only transaction or role), not a statement filter.
 
 ## Python callers left for #4415
 
@@ -152,4 +172,6 @@ The Python scripts stay in place. Callers to re-point when they are retired:
 - Live bindings behind the `toolkit-aws` transport/signer: RDS +
   Savings Plans read client, Oracle driver (with the password handling above),
   Aurora DSQL cursor (IAM-token authenticated TLS connection). Filed as #4733,
-  no credential, IAM or network exposure exists in this slice.
+  no credential, IAM or network exposure exists in this slice. The live DSQL
+  cursor must implement `SqlCursor` over `TenantRead` (change 11) and add no
+  raw-SQL entry point.
