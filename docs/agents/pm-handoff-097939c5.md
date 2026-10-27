@@ -76,3 +76,6 @@ rust-migration-health (health_anomaly), pm-safety-net (hourly resume), terminal 
   New slices from a41cfbb5: #4470 (P2 DNS reserved ranges) worker 196ff993; #4407 (startup refs/model staleness) worker 0e783946.
 - 18:00Z: scoped 5f3914db on a41cfbb5 OK (2156 tests), check ok. GATE = a41cfbb5 / source_session_id 80238d9c-cfe4-46bc-8b23-d896eea045ca. Noted on #4575.
 - 18:10Z: #4470 already_satisfied by b897cd82 + eb81e617 (in a41cfbb5) -> add #4470 to close-on-land list. Worker 9a7fd936 on #4383 (Bedrock agent discovery) from a41cfbb5.
+- 18:15Z: round 8 head dcd4714791aac1d77286b3a4f3a7d3e95c298f5c (worker 2c1dd570; merge b550f20c #4670 conflict-free + dcd47147 five `repeatable_flags: &[]` lines, verified).
+  Pushed to branch rsi/80238d9c… (fast-forward of a41cfbb5); sandbox 2c1dd570 HEAD = dcd47147. Manager scoped b4cf6561 pending.
+  If ok: GATE = dcd47147 with source_session_id 2c1dd570-280b-4289-a803-36b6b2a9f66d (sandbox holds HEAD; check AgentCheckLandingCandidate first). Else a41cfbb5 / 80238d9c.
