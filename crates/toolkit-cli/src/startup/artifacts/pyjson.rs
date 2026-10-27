@@ -309,11 +309,26 @@ impl Reader {
 /// `ensure_ascii=True`.
 pub(crate) fn dumps(value: &Json, indent: Option<usize>, sort_keys: bool) -> String {
     let mut out = String::new();
-    write_value(&mut out, value, indent, sort_keys, 0);
+    write_value(&mut out, value, indent, sort_keys, true, 0);
     out
 }
 
-fn write_value(out: &mut String, value: &Json, indent: Option<usize>, sort: bool, level: usize) {
+/// `json.dumps(value, ensure_ascii=False)` (compact separators `, ` and `: `):
+/// non-ASCII text is written as itself, control characters stay escaped.
+pub(crate) fn dumps_unicode(value: &Json) -> String {
+    let mut out = String::new();
+    write_value(&mut out, value, None, false, false, 0);
+    out
+}
+
+fn write_value(
+    out: &mut String,
+    value: &Json,
+    indent: Option<usize>,
+    sort: bool,
+    ascii: bool,
+    level: usize,
+) {
     match value {
         Json::Null => out.push_str("null"),
         Json::Bool(true) => out.push_str("true"),
@@ -336,7 +351,7 @@ fn write_value(out: &mut String, value: &Json, indent: Option<usize>, sort: bool
             };
             out.push_str(&text);
         }
-        Json::String(text) => write_string(out, text),
+        Json::String(text) => write_string(out, text, ascii),
         Json::Array(items) => {
             if items.is_empty() {
                 out.push_str("[]");
@@ -345,7 +360,7 @@ fn write_value(out: &mut String, value: &Json, indent: Option<usize>, sort: bool
             out.push('[');
             for (index, item) in items.iter().enumerate() {
                 separator(out, indent, level + 1, index == 0);
-                write_value(out, item, indent, sort, level + 1);
+                write_value(out, item, indent, sort, ascii, level + 1);
             }
             close(out, indent, level, ']');
         }
@@ -361,9 +376,9 @@ fn write_value(out: &mut String, value: &Json, indent: Option<usize>, sort: bool
             out.push('{');
             for (index, (key, member)) in ordered.into_iter().enumerate() {
                 separator(out, indent, level + 1, index == 0);
-                write_string(out, key);
+                write_string(out, key, ascii);
                 out.push_str(": ");
-                write_value(out, member, indent, sort, level + 1);
+                write_value(out, member, indent, sort, ascii, level + 1);
             }
             close(out, indent, level, '}');
         }
@@ -395,7 +410,7 @@ fn close(out: &mut String, indent: Option<usize>, level: usize, bracket: char) {
     out.push(bracket);
 }
 
-fn write_string(out: &mut String, text: &str) {
+fn write_string(out: &mut String, text: &str, ascii: bool) {
     out.push('"');
     for c in text.chars() {
         match c {
@@ -407,6 +422,7 @@ fn write_string(out: &mut String, text: &str) {
             '\u{8}' => out.push_str("\\b"),
             '\u{c}' => out.push_str("\\f"),
             c if (' '..='\u{7e}').contains(&c) || c == '\u{7f}' => out.push(c),
+            c if !ascii && u32::from(c) >= 0x80 => out.push(c),
             c => {
                 let mut units = [0_u16; 2];
                 for unit in c.encode_utf16(&mut units) {
