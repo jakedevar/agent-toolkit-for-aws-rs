@@ -146,3 +146,5 @@ Friction: #4727, Rsi #4694, Rsi #4704
   Kaizen #4727 worker 2205a1f9 (Opus) from c464befb: shared recorded validator in toolkit-aws, migrate bedrock_agent + ai_models behaviour-identically.
 - 20:15Z: #4394 impl 294179ff (a33d3291; 6 relational scripts, Safe SQL type; scoped 7f89c1d8 ok). Review #4736 (security) worker db36d49d (pinned).
 - 20:25Z: #4736 review of #4394 294179ff: CHANGES_REQUESTED #4738 (ReadOnly cursor accepts write-capable SELECT). Ruling: narrow to unforgeable TenantRead template type, no blacklist; general read-only raw SQL -> follow-up needing DB-enforced read-only. Repair (Opus) e1952dc1 (continue_from a33d3291).
+- 20:18Z: SEAT -> c76fd1a6 (context-cap rotation of f9df4bb0). Scoped 6ad13616 on c464befb progressing (toolkit-aws/cli/core done). Load 18, disk 142G free.
+  Workers: e1952dc1 #4394 repair running; c65e27aa #4408, 2205a1f9 #4727, ad948f84 #4381 parked on jobs (disk_floor holds). db36d49d #4736 done. No GM mail (gm-1b353269-4452-live-1) yet.
