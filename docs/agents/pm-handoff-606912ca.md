@@ -25,7 +25,7 @@ No waiver, no hand-landing. origin/rolling was created at 86edeadd per GM ruling
 Branches pushed by continuation workers sometimes went to the predecessor's rsi/ branch (fast-forward only).
 
 ## In flight (terminal watches armed by launches)
-- #4379 toolkit-aws: 2nd repair done at 6ba2ac9084f8495e5cc551a4e93c6ca427be02e4 (Opus 3740a89e, conservative scrubber, 152 tests green). 3rd re-review on #4467: Codex sol d0fdd020.
+- #4379 toolkit-aws: 3rd re-review (d0fdd020) at 6ba2ac90 requested changes #4515 (recognizer union), #4516 (label containment), #4469 (Endpoint/ClientConfig Debug path: ruled scheme+host only, path as <path: N bytes>). 3rd repair Opus 287b16af in flight; then 4th re-review on #4467 (Codex sol).
 - #4399 startup-validators: partial 3/11 files at abf87cfe86e88f3b3e5e7060980e00a6d738cfd8 (green); continuation Sonnet 53a51585 porting the remainder. Review once complete (one review, not per partial).
 - #4463 (SDK adapter for toolkit-aws): ruling recorded on the Issue; dispatch only after #4379 is accepted.
 
@@ -47,4 +47,4 @@ Health wake ignores hub_disk_high:/ and hub_memory_high:hub.
 ## Wakes held by this seat (transfer on succession; confirm with AgentListWakes)
 - rust-migration-health (when health_anomaly, ignores hub_disk_high:/ and hub_memory_high:hub)
 - pm-safety-net (resume, ~05:12Z)
-- terminal watches on in-flight workers: 3740a89e (#4379), d0fdd020 (#4467 3rd re-review of #4379), 53a51585 (#4399)
+- terminal watches on in-flight workers: 3740a89e (#4379), 287b16af (#4379 3rd repair), 53a51585 (#4399)
