@@ -158,3 +158,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
   4/4 busy: e1952dc1 (#4394 repair), c53fe35c (#4742), b22a9bdd (#4744), 41a28fe9 (#4745).
 - 20:52Z: #4745 review of #4727 8f429632: CHANGES_REQUESTED #4751 (renamed helper / nested Json::Array evades scanner), #4752 (client not named RecordedClient escapes scope).
   Ruling: scope by `--recorded` flag / any recorded import form; in scope, ban all Json shape reads unless `// recorded-shape:` marked. Repair (Sonnet) ecf77dbc continue_from 2205a1f9 (op 4283d892), then re-review #4745 pinned.
+- 20:55Z: #4742 review of #4381 036c0b66: CHANGES_REQUESTED #4749 #4750 #4755 #4757 #4758 (output symlink race; malformed responses -> false empty/write/score counts).
+  Ruling: merge #4727 8f429632 into #4381 branch and route all recorded reads through toolkit_aws::recorded; O_NOFOLLOW/temp+rename outputs. Repair (Opus) 14bc584a continue_from ad948f84 (op bea1d132); scoped base 8f429632. Then re-review #4742 pinned.
+  Dependency: #4381 now integrates after (or with) #4727.
