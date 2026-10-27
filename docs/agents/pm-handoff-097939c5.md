@@ -156,3 +156,5 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 20:41Z: kaizen #4727 impl 8f4296325fb29707ac736e84912727a8364435fe (2205a1f9; toolkit_aws::recorded + recorded_contract.rs; bedrock_agent + ai_models migrated; scoped aa5c9ea5 ok base c464befb, aws 180 + cli 2065). Friction Rsi #4740 (disk-floor hold timed out a scoped_test).
   Review #4745 worker 41a28fe9 (Codex sol high, pinned, op 83ff19cb). Rulings: ai-models keeps key-order-sensitive compare; unused-steps check = reviewer to advise follow-up.
   4/4 busy: e1952dc1 (#4394 repair), c53fe35c (#4742), b22a9bdd (#4744), 41a28fe9 (#4745).
+- 20:52Z: #4745 review of #4727 8f429632: CHANGES_REQUESTED #4751 (renamed helper / nested Json::Array evades scanner), #4752 (client not named RecordedClient escapes scope).
+  Ruling: scope by `--recorded` flag / any recorded import form; in scope, ban all Json shape reads unless `// recorded-shape:` marked. Repair (Sonnet) ecf77dbc continue_from 2205a1f9 (op 4283d892), then re-review #4745 pinned.
