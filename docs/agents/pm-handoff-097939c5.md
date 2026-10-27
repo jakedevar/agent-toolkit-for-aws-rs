@@ -111,3 +111,4 @@ rust-migration-health (health_anomaly), pm-safety-net (hourly resume), terminal 
 - 19:20Z: round 10 head a1db6c616f8792880f803b260094d9f01b6a8613 (worker 215a5c49; merge c09860b1 #4403 14c60071, registration-only conflicts + 4 repeatable_flags lines, verified via remerge-diff; a1db6c61 mod order). Own branch rsi/215a5c49.
   Manager scoped 8ab77458 pending. If ok: GATE = a1db6c61 / source_session_id 215a5c49-13fb-46cb-bc56-0c4311d0c467.
   New slice #4394 (RDS/DSQL/Timestream) worker a33d3291 from 550b629d.
+- 19:25Z: scoped 8ab77458 on a1db6c61 OK (2365 tests), check ok. GATE = a1db6c61 / source_session_id 215a5c49-13fb-46cb-bc56-0c4311d0c467. Noted on #4575. Still no GM mail.
