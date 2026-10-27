@@ -401,16 +401,34 @@ live once in `toolkit_aws::recorded`; use it instead of writing your own.
    accessors, prefixed by the position (`calls.Search[0].error`), never by a
    recorded value.
 
-`tests/recorded_contract.rs` enforces this for every top-level module of
-`src` whose non-test code defines a `RecordedClient` or uses
-`toolkit_aws::recorded`: such a slice must use the module, must not define
-its own `optional_*` or `same_json` helper, and must not read an array or
-object member ad hoc (`Some(Json::Array(..))`, `Some(Json::Object(..))`,
-`x @ Json::Array(..)`, `x @ Json::Object(..)`, `as_array`, `as_object`). When
-the value is not a response (a snapshot file, the command's own manifest, a
-request it built), or the member is required and every other shape is
-rejected, put `// recorded-shape: <reason>` on the line or in the comment
-block directly above it.
+`tests/recorded_contract.rs` enforces this without keying on any spelling you
+choose (a type name, a helper name, a way of nesting `match`). It reads the
+token stream of every non-test file of `crates/toolkit-cli/src`, comments and
+string contents removed, and puts a top-level module of `src` in scope when it
+has **any** of these signals:
+
+- a recording flag: the string `"--recorded"` (also `"--recording"`,
+  `"--replay"`) in the module, or a `COMMANDS` row that names the flag, inline
+  or through a constant, and routes to it;
+- a recorded replay type or trait: an identifier that mentions `Recorded` or
+  `Replay` together with `Client`, `Step`, `Queue` or `Replay`
+  (`RecordedClient`, `RecordedAwsClient`, `ReplayClient`, ...);
+- an import of `toolkit_aws::recorded` in any form: plain, grouped
+  (`toolkit_aws::{recorded, ..}`), aliased (`recorded as r`,
+  `toolkit_aws as aws` then `aws::recorded`), or in a nested module.
+
+A module with a flag or a type signal must import `toolkit_aws::recorded`. Every
+module in scope must not define its own `optional_*`, `nullable_text` or
+`same_json` helper, and must not **read a JSON shape**: any `Json::Array`,
+`Json::Object`, `Value::Array` or `Value::Object` in a pattern (`match`,
+`if let`, `let ... else`, `matches!`, behind `Some(..)` or a nested `match`,
+through an alias or a `use Json::{Array, Object}`), and any `as_array`,
+`as_object`, `as_array_mut` or `as_object_mut`. Building a value (`Json::Array(items)`
+as an expression) is not a read. When the value is not a response (a snapshot
+file, the command's own manifest, a request or entry it built), or the member
+is required and every other shape is rejected, or the code classifies every
+JSON type on purpose, put `// recorded-shape: <reason>` with a specific reason
+on the line, or above the `fn`, `impl`, `const` or other item it covers.
 
 ## Frontmatter additions (#4374)
 

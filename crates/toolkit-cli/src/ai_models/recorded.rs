@@ -44,6 +44,8 @@ pub(super) struct RecordedClient {
     calls: StepQueue<Operation>,
 }
 
+// recorded-shape: the recording document being validated: a required object, every other
+// shape is rejected, and no member is defaulted.
 fn object_keys<'a>(
     value: &'a Json,
     allowed: &[&str],
@@ -147,6 +149,8 @@ impl RecordedClient {
             let Some(operation) = Operation::ALL.iter().find(|op| op.name() == name) else {
                 continue;
             };
+            // recorded-shape: a required list of the recording being validated; every other shape
+            // is rejected with an error naming the operation.
             let Json::Array(steps) = steps else {
                 return Err(format!("calls.{name} must be a list of steps"));
             };

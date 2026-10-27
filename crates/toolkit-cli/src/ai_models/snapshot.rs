@@ -35,6 +35,8 @@ fn fail<T>(message: impl Into<String>) -> Result<T, SnapshotError> {
     Err(SnapshotError(message.into()))
 }
 
+// recorded-shape: the models of a snapshot file or of this command's normalized catalog,
+// not a response.
 fn objects(models: &[Json]) -> bool {
     models.iter().all(|model| matches!(model, Json::Object(_)))
 }
@@ -142,6 +144,7 @@ pub(super) fn validate_catalog_snapshot(
     expected_hub: Option<&str>,
     expected_region: Option<&str>,
 ) -> Result<(), SnapshotError> {
+    // recorded-shape: a snapshot file the user supplied, not a response.
     if !matches!(snapshot, Json::Object(_)) {
         return fail("Catalog snapshot must be a JSON object");
     }

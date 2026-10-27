@@ -82,6 +82,8 @@ impl RecordedClient {
         }
         let unsupported =
             optional_member(document, "unsupported", "an array", |member| match member {
+                // recorded-shape: the `unsupported` member of the recording, read through the shared
+                // `optional_member` (absent is none, null or another type is rejected).
                 Json::Array(names) => Some(names),
                 _ => None,
             })

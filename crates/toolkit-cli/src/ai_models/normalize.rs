@@ -80,6 +80,7 @@ impl Entry {
     }
 
     /// `entry.setdefault(key, []).append(item)`.
+    // recorded-shape: the normalized model entry this command is building, not a response.
     fn push_item(&mut self, key: &str, item: &str) {
         if let Some((_, Json::Array(items))) = self.0.iter_mut().find(|(name, _)| name == key) {
             items.push(Json::string(item));
@@ -120,6 +121,8 @@ pub(super) fn keywords_of(record: &Json) -> Result<Vec<&str>, String> {
 
 /// `_document_scalar`: one lower-cased string of a top-level field of the
 /// record's `HubContentDocument`, or `None`.
+// recorded-shape: port of `_document_scalar`: the embedded HubContentDocument is free-form
+// text the service does not type, any shape but an object or list of strings yields None.
 fn document_scalar(record: &Json, field: &str) -> Option<String> {
     let document = record.get("HubContentDocument")?.as_str()?;
     if document.is_empty() {
@@ -143,6 +146,8 @@ fn document_scalar(record: &Json, field: &str) -> Option<String> {
 #[allow(clippy::cast_precision_loss)]
 /// The `original_creation_time` text of a Hub record, if it has a truthy one:
 /// strings pass through, epoch seconds become `isoformat()` of the UTC instant.
+// recorded-shape: Python-truthiness port of `OriginalCreationTime`; every JSON type is
+// classified here (none is defaulted), the value is not a typed response list.
 fn original_creation_time(record: &Json) -> Option<String> {
     match record.get("OriginalCreationTime")? {
         Json::Null | Json::Bool(false) | Json::Int(0) => None,

@@ -467,6 +467,8 @@ fn append_exact_alternatives(
 }
 
 /// Validates the generated expression against the service limits.
+// recorded-shape: the Search request expression this command built, validated against the
+// service limits; it is never a response.
 pub(super) fn validate_search_expression(expression: &Json, path: &str) -> Outcome<()> {
     let Json::Object(_) = expression else {
         return constraint_error(format!("{path} must be an object"));
@@ -524,6 +526,8 @@ pub(super) fn validate_search_expression(expression: &Json, path: &str) -> Outco
     Ok(())
 }
 
+// recorded-shape: the Search request filters this command built, validated against the
+// service limits, not a response.
 fn check_filter_values(filters: &[Json], path: &str) -> Outcome<()> {
     for (index, filter) in filters.iter().enumerate() {
         let Json::Object(_) = filter else {
@@ -808,6 +812,7 @@ pub(super) fn restore_catalog_order(
     let restored: Vec<Json> = search_models
         .iter()
         .map(|model| {
+            // recorded-shape: a normalized catalog model (this command's own output), not a response.
             let Json::Object(members) = model else {
                 return model.clone();
             };

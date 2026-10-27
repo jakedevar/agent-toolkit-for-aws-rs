@@ -65,6 +65,8 @@ fn object(pairs: Vec<(&str, Json)>) -> Json {
 }
 
 /// `value` with `ResponseMetadata` removed at every depth.
+// recorded-shape: a total walk over any JSON value that drops `ResponseMetadata`;
+// no member is read, typed or defaulted.
 pub(crate) fn strip_response_metadata(value: &Json) -> Json {
     match value {
         Json::Object(members) => Json::Object(
@@ -88,6 +90,7 @@ fn unwrap_member(detail: &Json, key: &str) -> Json {
 }
 
 /// `{**object, key: value}`: an existing key keeps its position.
+// recorded-shape: the document object this command assembles, not a response.
 fn with_member(object: &Json, key: &str, value: Json) -> Json {
     let Json::Object(members) = object else {
         return object.clone();
@@ -101,6 +104,7 @@ fn with_member(object: &Json, key: &str, value: Json) -> Json {
 }
 
 /// Python truthiness of a JSON value.
+// recorded-shape: Python truthiness classifies every JSON type; nothing is defaulted.
 fn truthy(value: &Json) -> bool {
     match value {
         Json::Null => false,
@@ -537,6 +541,8 @@ impl<'a> Fetcher<'a> {
 }
 
 /// `tag` of the DRAFT warning for the aliases that are not the test alias.
+// recorded-shape: Python `routing[0]` parity (#4383): a truthy `routingConfiguration`
+// that is not a list renders `?`, it is not an error.
 fn production_alias_tag(aliases: &[Json]) -> Option<String> {
     let production: Vec<&Json> = aliases
         .iter()
@@ -594,6 +600,8 @@ pub(crate) fn discover(client: &mut dyn AgentClient, params: &Params) -> Result<
         Err(error) => return Err(Failure::Fatal(error)),
     };
     let agent_doc = unwrap_member(&agent, "agent");
+    // recorded-shape: a required value; the GetAgent response must be an object, every
+    // other shape is an invalid response.
     if !matches!(agent_doc, Json::Object(_)) {
         return Err(AwsError::invalid_response("the GetAgent response is not an object").into());
     }

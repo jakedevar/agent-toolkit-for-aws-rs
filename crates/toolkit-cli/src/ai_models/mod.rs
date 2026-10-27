@@ -290,6 +290,8 @@ fn read_models_file(path: &str) -> Result<Vec<Json>, ToolkitError> {
         )
     })?;
     match document {
+        // recorded-shape: a snapshot file (`--snapshot-file`) the user supplied, not a response;
+        // every shape but a list of objects is rejected.
         Json::Array(models) if models.iter().all(|m| matches!(m, Json::Object(_))) => Ok(models),
         _ => Err(runtime(
             "ai_models_read",
