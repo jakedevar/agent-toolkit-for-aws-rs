@@ -151,7 +151,7 @@ port escapes these, centrally, in `cloudwatch::pytext`:
   the location troubleshooting footer) and the complete text printed by
   `cloudwatch render`. No renderer can therefore emit a raw control other
   than the layout characters `\n` and `\t`. Caller-supplied text never goes
-  through `safe_block` (see "Caller text is single-line" below).
+  through `safe_block`; it is escaped once at parse time (see "Caller text is single-line" below).
 
 Intentional differences: a real AWS message that contains a newline now shows
 `\n` on one line instead of breaking the `Error:` line, and a path or name that
@@ -162,53 +162,81 @@ mistyped arguments still print on stderr and exit 2. The regression tests are
 `crates/toolkit-cli/tests/cloudwatch.rs` (binary, fake-secret sentinels in the
 environment, both channels inspected byte by byte).
 
-### Caller text is single-line (#4652, #4653)
+### Caller text is single-line (#4652, #4653, #4662)
 
 The rule: any text whose origin is the caller is rendered on one line with
 `safe_text`, so its newlines appear as `\n` and it cannot start a forged
 report line. Caller text here means argv values, JSON argument keys and
-values, caller-supplied context or prose, and AWS error messages.
-`cloudwatch::cli` applies the rule at the boundary, before any renderer runs:
+values (whatever their type or nesting), caller-supplied context or prose,
+and AWS error messages.
 
-- Report context scalars of the text renderers: `list`, `get` and
-  `status-history` (`normalized_type`, `service`, `environment`,
-  `requested_status`); `batch-delete` (`mode`, `instrumentation_type`,
-  `service`, `environment`); `create-success` (`normalized_type`, `service`,
-  `environment`, every `capture_arguments` / `capture_locals` name);
-  `status-assessment` (`location_hash`, `service`, `environment`,
-  `normalized_type`, and each recorded check's `error`).
-- The `render failure` prose fields `attempted_label`, `possible_causes`,
-  `troubleshooting` and `trailer`. In the library, `Prose` is trusted,
-  tool-authored and may span lines (the location troubleshooting trailer of
-  `create_instrumentation` does). Through the CLI, every field comes from
-  caller JSON, so each one is made single-line before the `Prose` is built.
-  A caller that passes a multi-line trailer now sees it on one line with
-  `\n` escapes. No caller field is kept multi-line, so no continuation-line
-  marker is needed.
-- AWS error messages embedded in reports: the `batch-delete` `Errors[]`
-  `ResourceArn` / `Code` / `Message` and the status `ErrorCause`, in the
-  event lists, the ERROR check and the `OVERALL STATUS: ERROR (...)` line.
-  The earlier sections already covered the failure `Error:` line.
+**One escaping step, at parse time (#4662).** Rounds #4652 and #4653 escaped
+named fields one by one, and #4662 then found eight more (the `create-success`
+capture limits, copied as raw JSON into `CaptureLimits`). The rule is now
+enforced in one place. `cloudwatch::cli::RENDERER_ARGUMENTS` lists every
+renderer argument with its `Origin`, and `CHECK_ARGUMENTS` does the same for
+`cloudwatch validate`. `Args::new` refuses any key the table does not list,
+escapes the arguments by origin, and keeps only the escaped copy, so no
+accessor can hand a renderer a raw caller string. Reading a key the table does
+not list panics in debug builds.
 
-`snapshot-search` and `snapshot-sample` print `json.dumps` text. A caller value
-there is a JSON string whose newline and controls are JSON escapes, so it is
-left unchanged: escaping it again would alter the JSON value.
+| `Origin` | Arguments | Parse-time step |
+|---|---|---|
+| `Caller` | every report context scalar, `limits`, `attribute_filters`, `location`, `capture_*`, `now` and the other times, the whole `failure` object, `action`, `attempted`, the four prose fields, every `validate` argument | every string and object key, at any depth, through `safe_text` |
+| `EachMember(spec)` | `status-assessment` `checks` | each member parsed by `CHECK_RESULT_ARGUMENTS`: `error` and `has_events` are `Caller`, `events` is `AwsResponse` |
+| `JsonEncoded` | the `snapshot-search` / `snapshot-sample` context (service, environment, hash, filters, times, `query_string`, ...) | none at parse; the renderer prints them only inside `json.dumps` (`ensure_ascii`), which escapes every newline, control and bidi character |
+| `AwsResponse` | `data`, `config`, `response`, `query_result`, `result`, `checks.*.events` | none at parse (manager ruling below) |
 
-The residual limit: other AWS-structured report data (for example a
-`Description`, a location field returned by the service, or a `NextToken`) is
-not reshaped line by line. Only its terminal controls are escaped. Those
+`JsonEncoded` stays verbatim because the toolkit builds a multi-line Logs
+Insights query (`fields ...\n| filter ...`). Escaping it at parse would change
+its JSON value; JSON encoding is its single escaping step.
+
+Consequences, all intentional:
+
+- A caller capture limit (or any other caller value) holding a newline now
+  shows `\n` on its line. Clean values are byte-identical. Argument
+  evaluation order is unchanged, so missing-argument and mistyped-argument
+  errors are unchanged.
+- A caller string nested in a list or dict that the legacy text prints with
+  `str()` (for example an `attempted` list value) shows the escaped text
+  inside the Python repr, which doubles its backslashes
+  (`['a\\nb']`).
+- `validate location-inputs` prints its payload JSON from the escaped
+  values, so a file path containing a control character shows the escape
+  text in that JSON. No real path contains one.
+- In the library, `Prose` is trusted, tool-authored text and may span lines
+  (the location troubleshooting trailer of `create_instrumentation` does).
+  Through the CLI every `Prose` field comes from caller JSON, already
+  single-line. A caller who passes a multi-line trailer sees it on one line
+  with `\n` escapes, and no continuation-line marker is needed.
+- AWS error messages embedded in reports stay single-line in the renderers
+  themselves: the `batch-delete` `Errors[]` `ResourceArn` / `Code` /
+  `Message` and the status `ErrorCause`.
+
+The residual limit (manager ruling on #4380): AWS-structured response data
+other than error messages (for example a `Description`, a location field
+returned by the service, or a `NextToken`) is not reshaped line by line. Only
+its terminal controls are escaped, by the final `safe_block` pass. Those
 fields come from the service response, not from the caller.
 
-Regression tests are in the `#4652 / #4653` section of
-`crates/toolkit-cli/tests/cloudwatch.rs`:
+Regression tests:
 
-- the reviewer's `list` reproduction and all four prose reproductions,
-  checked byte for byte;
-- a substitution test per text renderer. Every caller field holds a token.
-  The output for an ESC-plus-newline payload must equal the benign output
-  with each token replaced by its escaped form, and no `FORGED_REPORT` line
-  may appear.
-- the same check for the two JSON renderers, using the JSON-escaped form.
+- `src/cloudwatch/tests_caller_text.rs` (unit, exhaustive). It walks
+  `RENDERER_ARGUMENTS` over fixtures for every renderer. It fails if a
+  renderer has no fixture or if no fixture sets one of the listed arguments
+  (or nested check keys). Each string, number and boolean leaf, and each
+  object key, under a `Caller` or `JsonEncoded` argument is replaced on its
+  own: first by a token, then by ESC `[2J`, CR, LF, U+202E and a
+  `FORGED_REPORT` marker. Then either the hostile report equals the benign
+  report with the token replaced by its escaped form (`safe_text`, its repr,
+  or the JSON escape for `JsonEncoded`), or the input is refused with a
+  single-line diagnostic. No raw control and no forged line may appear. The
+  test also asserts that all eight `create-success` limits reach the report.
+- `crates/toolkit-cli/tests/cloudwatch.rs` (binary): the reviewer's `list`
+  reproduction, all four prose reproductions, and the #4662 reproduction for
+  each of the eight limits, checked byte for byte. It also runs the
+  substitution test per text renderer (now with all eight limits) and the
+  JSON-renderer check.
 
 ### Calendar construction (#4635)
 

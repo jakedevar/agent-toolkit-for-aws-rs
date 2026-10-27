@@ -72,6 +72,8 @@ pub const ARGUMENT_VALUE_FLAGS: &[&str] = &["--json", "--json-file"];
 pub const REGION_VALUE_FLAGS: &[&str] = &["--region"];
 
 #[cfg(test)]
+mod tests_caller_text;
+#[cfg(test)]
 mod tests_core;
 #[cfg(test)]
 mod tests_render;

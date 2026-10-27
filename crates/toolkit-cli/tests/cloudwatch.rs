@@ -415,6 +415,34 @@ fn list_render_reproduction_from_4652_is_byte_exact() {
 }
 
 #[test]
+fn create_success_limit_reproduction_from_4662_is_byte_exact() {
+    for (key, label) in [
+        ("MaxHits", "Max Hits"),
+        ("MaxStringLength", "Max String Length"),
+        ("MaxCollectionWidth", "Max Collection Width"),
+        ("MaxCollectionDepth", "Max Collection Depth"),
+        ("MaxStackFrames", "Max Stack Frames"),
+        ("MaxStackTraceSize", "Max Stack Trace Size"),
+        ("MaxObjectDepth", "Max Object Depth"),
+        ("MaxFieldsPerObject", "Max Fields Per Object"),
+    ] {
+        let json = format!(
+            r#"{{"normalized_type":"BREAKPOINT","service":"svc","environment":"prod","now":"2025-02-03T10:00:00Z","limits":{{"{key}":"{HOSTILE_JSON}"}}}}"#
+        );
+        let output =
+            toolkit_with_secret(&["cloudwatch", "render", "create-success", "--json", &json]);
+        assert_eq!(status(&output), 0, "{}", text(&output.stderr));
+        assert_eq!(text(&output.stderr), "");
+        let stdout = text(&output.stdout);
+        assert!(
+            stdout.contains(&format!("\nCAPTURE LIMITS:\n- {label}: {ESCAPED}\n\nNOTE:")),
+            "{key}: {stdout}"
+        );
+        assert_channels_safe(&output);
+    }
+}
+
+#[test]
 fn text_renderers_keep_every_caller_scalar_on_one_line() {
     let cases: &[(&str, &str)] = &[
         (
@@ -444,6 +472,11 @@ fn text_renderers_keep_every_caller_scalar_on_one_line() {
         (
             "create-success",
             r#"{"response":{},"location":{"CodeLocation":{"Language":"CALLERTOKEN","FilePath":"CALLERTOKEN","MethodName":"CALLERTOKEN"}},"normalized_type":"CALLERTOKEN","service":"CALLERTOKEN","environment":"CALLERTOKEN","capture_arguments":["CALLERTOKEN"],"capture_locals":["CALLERTOKEN"],"now":"2025-02-03T10:00:00Z"}"#,
+        ),
+        // #4662: all eight caller capture limits.
+        (
+            "create-success",
+            r#"{"normalized_type":"BREAKPOINT","service":"svc","environment":"prod","now":"2025-02-03T10:00:00Z","limits":{"MaxHits":"CALLERTOKEN","MaxStringLength":"CALLERTOKEN","MaxCollectionWidth":"CALLERTOKEN","MaxCollectionDepth":"CALLERTOKEN","MaxStackFrames":"CALLERTOKEN","MaxStackTraceSize":"CALLERTOKEN","MaxObjectDepth":"CALLERTOKEN","MaxFieldsPerObject":"CALLERTOKEN"}}"#,
         ),
         // ACTIVE confirmed: the subject block and the snapshot log-group tip.
         (

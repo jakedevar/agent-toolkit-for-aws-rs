@@ -87,30 +87,301 @@ fn invalid(op: &str, detail: impl AsRef<str>) -> ToolkitError {
     .with_exit_code(2)
 }
 
-/// A typed view of the JSON arguments object of one op.
-struct Args<'a> {
-    op: String,
-    value: &'a Json,
+/// Where one op argument comes from. It decides the one escaping step
+/// [`Args::new`] applies when the arguments are parsed, so the rule lives in
+/// one table instead of at each renderer call (#4652, #4653, #4662).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Origin {
+    /// Caller text: every string inside it, and every object key, is made
+    /// single-line with [`safe_text`] at parse time. No renderer ever sees a
+    /// raw caller newline, carriage return, ESC or bidi control, whatever
+    /// the field's type or nesting.
+    Caller,
+    /// Caller text the renderer prints only inside `json.dumps` output
+    /// (`ensure_ascii`), where every newline, control and bidi character is
+    /// already a JSON escape. JSON encoding is its one escaping step; the
+    /// value is kept verbatim so a multi-line Logs Insights query keeps its
+    /// JSON value.
+    JsonEncoded,
+    /// An AWS response object. Manager ruling on #4380: its free text
+    /// (Description, NextToken, ...) may keep newlines; terminal controls are
+    /// escaped by the final `safe_block` pass of `render_command`.
+    AwsResponse,
+    /// An object whose every member is an argument object of this spec (the
+    /// recorded status checks: caller errors around AWS events).
+    EachMember(ArgSpec),
 }
 
-impl<'a> Args<'a> {
-    fn new(op: &str, value: &'a Json, allowed: &[&str]) -> Result<Self, ToolkitError> {
+/// The arguments of one op, each with its [`Origin`].
+pub type ArgSpec = &'static [(&'static str, Origin)];
+
+use Origin::{AwsResponse, Caller, EachMember, JsonEncoded};
+
+/// One recorded status check of `status-assessment`.
+pub const CHECK_RESULT_ARGUMENTS: ArgSpec = &[
+    ("has_events", Caller),
+    ("events", AwsResponse),
+    ("error", Caller),
+];
+
+/// The `failure` object of the `failure` renderer.
+const FAILURE_ARGUMENTS: ArgSpec = &[
+    ("kind", Caller),
+    ("code", Caller),
+    ("message", Caller),
+    ("display", Caller),
+    ("type_name", Caller),
+];
+
+/// Every renderer with every argument it accepts and that argument's
+/// [`Origin`]. [`Args::new`] rejects any other key, and reading a key not
+/// listed here is a bug that panics in debug builds, so this table is the
+/// complete list of renderer inputs; the caller-text test walks it.
+pub const RENDERER_ARGUMENTS: &[(&str, ArgSpec)] = &[
+    (
+        "location",
+        &[("location", Caller), ("location_hash", Caller)],
+    ),
+    (
+        "create-success",
+        &[
+            ("response", AwsResponse),
+            ("normalized_type", Caller),
+            ("service", Caller),
+            ("environment", Caller),
+            ("location", Caller),
+            ("ttl_hours", Caller),
+            ("capture_arguments", Caller),
+            ("capture_locals", Caller),
+            ("is_line_level", Caller),
+            ("capture_return", Caller),
+            ("capture_stack_trace", Caller),
+            ("limits", Caller),
+            ("attribute_filters", Caller),
+            ("now", Caller),
+        ],
+    ),
+    (
+        "list",
+        &[
+            ("data", AwsResponse),
+            ("normalized_type", Caller),
+            ("service", Caller),
+            ("environment", Caller),
+        ],
+    ),
+    (
+        "get",
+        &[
+            ("config", AwsResponse),
+            ("service", Caller),
+            ("environment", Caller),
+        ],
+    ),
+    (
+        "batch-delete",
+        &[
+            ("mode", Caller),
+            ("data", AwsResponse),
+            ("instrumentation_type", Caller),
+            ("service", Caller),
+            ("environment", Caller),
+        ],
+    ),
+    (
+        "status-history",
+        &[
+            ("data", AwsResponse),
+            ("normalized_type", Caller),
+            ("service", Caller),
+            ("environment", Caller),
+            ("requested_status", Caller),
+        ],
+    ),
+    (
+        "status-assessment",
+        &[
+            ("created_at", Caller),
+            ("requested_start", Caller),
+            ("query_end", Caller),
+            ("checks", EachMember(CHECK_RESULT_ARGUMENTS)),
+            ("location_hash", Caller),
+            ("service", Caller),
+            ("environment", Caller),
+            ("normalized_type", Caller),
+        ],
+    ),
+    (
+        "snapshot-search",
+        &[
+            ("query_result", AwsResponse),
+            ("service_name", JsonEncoded),
+            ("environment", JsonEncoded),
+            ("location_hash", JsonEncoded),
+            ("custom_filters", JsonEncoded),
+            ("start_time_utc", JsonEncoded),
+            ("end_time_utc", JsonEncoded),
+            ("start_epoch", JsonEncoded),
+            ("end_epoch", JsonEncoded),
+            ("query_string", JsonEncoded),
+        ],
+    ),
+    (
+        "snapshot-sample",
+        &[
+            ("query_result", AwsResponse),
+            ("service_name", JsonEncoded),
+            ("environment", JsonEncoded),
+            ("location_hash", JsonEncoded),
+            ("start_time_utc", JsonEncoded),
+            ("end_time_utc", JsonEncoded),
+            ("max_timeout", JsonEncoded),
+            ("query_string", JsonEncoded),
+            ("include_raw", JsonEncoded),
+        ],
+    ),
+    ("snapshot-fields", &[("result", AwsResponse)]),
+    (
+        "failure",
+        &[
+            ("failure", Caller),
+            ("action", Caller),
+            ("attempted", Caller),
+            ("attempted_label", Caller),
+            ("possible_causes", Caller),
+            ("troubleshooting", Caller),
+            ("trailer", Caller),
+        ],
+    ),
+];
+
+/// Every check of `cloudwatch validate` with its arguments: all caller text.
+const CHECK_ARGUMENTS: &[(&str, ArgSpec)] = &[
+    ("instrumentation-type", &[("instrumentation_type", Caller)]),
+    (
+        "location-inputs",
+        &[
+            ("mode", Caller),
+            ("location_hash", Caller),
+            ("language", Caller),
+            ("file_path", Caller),
+            ("code_unit", Caller),
+            ("class_name", Caller),
+            ("method_name", Caller),
+            ("line_number", Caller),
+            ("allow_code_location_lookup", Caller),
+        ],
+    ),
+    (
+        "capture-names",
+        &[("field_name", Caller), ("names", Caller)],
+    ),
+    (
+        "probe",
+        &[
+            ("instrumentation_type", Caller),
+            ("language", Caller),
+            ("line_number", Caller),
+        ],
+    ),
+    ("location-hash", &[("location_hash", Caller)]),
+    ("snapshot-signal", &[("signal_type", Caller)]),
+];
+
+fn spec_of(table: &[(&str, ArgSpec)], op: &str) -> Result<ArgSpec, ToolkitError> {
+    table
+        .iter()
+        .find(|(name, _)| *name == op)
+        .map(|(_, spec)| *spec)
+        .ok_or_else(|| invalid(op, "unknown op"))
+}
+
+fn origin_of(spec: ArgSpec, key: &str) -> Option<Origin> {
+    spec.iter()
+        .find(|(name, _)| *name == key)
+        .map(|(_, origin)| *origin)
+}
+
+/// Caller JSON with every string and every object key made single-line.
+fn escape_caller_json(value: &Json) -> Json {
+    match value {
+        Json::String(text) => Json::String(safe_text(text)),
+        Json::Array(items) => Json::Array(items.iter().map(escape_caller_json).collect()),
+        Json::Object(pairs) => Json::Object(
+            pairs
+                .iter()
+                .map(|(key, item)| (safe_text(key), escape_caller_json(item)))
+                .collect(),
+        ),
+        other => other.clone(),
+    }
+}
+
+/// The parse-time escaping of one argument value by its [`Origin`].
+fn escape_by_origin(value: &Json, origin: Origin) -> Json {
+    match origin {
+        Caller => escape_caller_json(value),
+        JsonEncoded | AwsResponse => value.clone(),
+        EachMember(spec) => match value {
+            Json::Object(members) => Json::Object(
+                members
+                    .iter()
+                    .map(|(key, member)| (safe_text(key), escape_arguments(member, spec)))
+                    .collect(),
+            ),
+            other => escape_caller_json(other),
+        },
+    }
+}
+
+/// An arguments object with each listed key escaped by its [`Origin`]. An
+/// unlisted key (which [`Args::new`] refuses) or a non-object is treated as
+/// caller text.
+fn escape_arguments(value: &Json, spec: ArgSpec) -> Json {
+    match value {
+        Json::Object(pairs) => Json::Object(
+            pairs
+                .iter()
+                .map(|(key, item)| match origin_of(spec, key) {
+                    Some(origin) => (key.clone(), escape_by_origin(item, origin)),
+                    None => (safe_text(key), escape_caller_json(item)),
+                })
+                .collect(),
+        ),
+        other => escape_caller_json(other),
+    }
+}
+
+/// A typed view of the JSON arguments object of one op. It holds only the
+/// arguments as escaped by [`escape_arguments`]: the raw caller object is not
+/// kept, so no accessor can hand a renderer a raw caller string (#4662).
+struct Args {
+    op: String,
+    spec: ArgSpec,
+    value: Json,
+}
+
+impl Args {
+    fn new(op: &str, value: &Json, spec: ArgSpec) -> Result<Self, ToolkitError> {
         let Json::Object(pairs) = value else {
             return Err(invalid(op, "arguments must be a JSON object"));
         };
-        if let Some((key, _)) = pairs
-            .iter()
-            .find(|(key, _)| !allowed.contains(&key.as_str()))
-        {
+        if let Some((key, _)) = pairs.iter().find(|(key, _)| origin_of(spec, key).is_none()) {
             return Err(invalid(op, format!("got an unexpected argument '{key}'")));
         }
         Ok(Self {
             op: op.to_string(),
-            value,
+            spec,
+            value: escape_arguments(value, spec),
         })
     }
 
-    fn present(&self, key: &str) -> Option<&'a Json> {
+    fn present(&self, key: &str) -> Option<&Json> {
+        debug_assert!(
+            origin_of(self.spec, key).is_some(),
+            "op '{}' reads argument '{key}' that its ArgSpec does not list",
+            self.op
+        );
         self.value.get(key).filter(|value| **value != Json::Null)
     }
 
@@ -124,12 +395,12 @@ impl<'a> Args<'a> {
         )
     }
 
-    fn required(&self, key: &str) -> Result<&'a Json, ToolkitError> {
+    fn required(&self, key: &str) -> Result<&Json, ToolkitError> {
         self.present(key)
             .ok_or_else(|| invalid(&self.op, format!("missing required argument '{key}'")))
     }
 
-    fn opt_str(&self, key: &str) -> Result<Option<&'a str>, ToolkitError> {
+    fn opt_str(&self, key: &str) -> Result<Option<&str>, ToolkitError> {
         match self.present(key) {
             None => Ok(None),
             Some(Json::String(text)) => Ok(Some(text.as_str())),
@@ -137,29 +408,11 @@ impl<'a> Args<'a> {
         }
     }
 
-    fn req_str(&self, key: &str) -> Result<&'a str, ToolkitError> {
+    fn req_str(&self, key: &str) -> Result<&str, ToolkitError> {
         match self.required(key)? {
             Json::String(text) => Ok(text.as_str()),
             other => Err(self.mistyped(key, "a string", other)),
         }
-    }
-
-    /// A required caller string for a text report, made single-line with
-    /// [`safe_text`] so it cannot add or forge a report line (#4652).
-    fn req_line(&self, key: &str) -> Result<String, ToolkitError> {
-        self.req_str(key).map(safe_text)
-    }
-
-    /// [`Args::req_line`] for an optional string.
-    fn opt_line(&self, key: &str) -> Result<Option<String>, ToolkitError> {
-        Ok(self.opt_str(key)?.map(safe_text))
-    }
-
-    /// [`Args::req_line`] for each item of an optional string array.
-    fn opt_lines(&self, key: &str) -> Result<Option<Vec<String>>, ToolkitError> {
-        Ok(self
-            .opt_strings(key)?
-            .map(|items| items.iter().map(|item| safe_text(item)).collect()))
     }
 
     fn opt_i64(&self, key: &str) -> Result<Option<i64>, ToolkitError> {
@@ -198,7 +451,7 @@ impl<'a> Args<'a> {
         }
     }
 
-    fn opt_array(&self, key: &str) -> Result<&'a [Json], ToolkitError> {
+    fn opt_array(&self, key: &str) -> Result<&[Json], ToolkitError> {
         match self.present(key) {
             None => Ok(&[]),
             Some(Json::Array(items)) => Ok(items),
@@ -304,7 +557,7 @@ fn json_or_empty(value: Option<&Json>) -> &Json {
     value.unwrap_or(&Json::Null)
 }
 
-fn limits_from(args: &Args<'_>) -> Result<CaptureLimits, ToolkitError> {
+fn limits_from(args: &Args) -> Result<CaptureLimits, ToolkitError> {
     let Some(value) = args.present("limits") else {
         return Ok(CaptureLimits::unset());
     };
@@ -335,23 +588,19 @@ fn status_check_from(
             format!("the recorded checks have no '{status}' entry that this assessment needs"),
         ));
     };
-    let args = Args::new(op, check, &["has_events", "events", "error"])?;
+    let args = Args::new(op, check, CHECK_RESULT_ARGUMENTS)?;
     let events = args.opt_array("events")?.to_vec();
     let has_events = args.opt_bool("has_events")?.unwrap_or(!events.is_empty());
     Ok(StatusCheckResult {
         has_events,
         events,
-        error: args.opt_line("error")?,
+        error: args.opt_str("error")?.map(str::to_string),
     })
 }
 
-fn failure_from(args: &Args<'_>) -> Result<AwsFailure, ToolkitError> {
+fn failure_from(args: &Args) -> Result<AwsFailure, ToolkitError> {
     let value = args.required("failure")?;
-    let inner = Args::new(
-        &args.op,
-        value,
-        &["kind", "code", "message", "display", "type_name"],
-    )?;
+    let inner = Args::new(&args.op, value, FAILURE_ARGUMENTS)?;
     let display = inner.opt_str("display")?.unwrap_or("").to_string();
     Ok(match inner.req_str("kind")? {
         "client_error" => AwsFailure::Client {
@@ -382,127 +631,66 @@ fn failure_from(args: &Args<'_>) -> Result<AwsFailure, ToolkitError> {
 }
 
 fn render_text(op: &str, value: &Json) -> Result<String, ToolkitError> {
+    let args = Args::new(op, value, spec_of(RENDERER_ARGUMENTS, op)?)?;
     match op {
         "location" => {
-            let args = Args::new(op, value, &["location", "location_hash"])?;
             let location = location_from_response(json_or_empty(args.present("location")));
             Ok(render_location_block(
                 &location,
                 args.opt_str("location_hash")?,
             ))
         }
-        "create-success" => render_create_success(value),
-        "list" => {
-            let args = Args::new(
-                op,
-                value,
-                &["data", "normalized_type", "service", "environment"],
-            )?;
-            Ok(render_list_instrumentations_output(
-                json_or_empty(args.present("data")),
-                &args.req_line("normalized_type")?,
-                &args.req_line("service")?,
-                &args.req_line("environment")?,
-            ))
-        }
-        "get" => {
-            let args = Args::new(op, value, &["config", "service", "environment"])?;
-            Ok(render_get_instrumentation_output(
-                json_or_empty(args.present("config")),
-                &args.req_line("service")?,
-                &args.req_line("environment")?,
-            ))
-        }
+        "create-success" => render_create_success(&args),
+        "list" => Ok(render_list_instrumentations_output(
+            json_or_empty(args.present("data")),
+            args.req_str("normalized_type")?,
+            args.req_str("service")?,
+            args.req_str("environment")?,
+        )),
+        "get" => Ok(render_get_instrumentation_output(
+            json_or_empty(args.present("config")),
+            args.req_str("service")?,
+            args.req_str("environment")?,
+        )),
         "batch-delete" => {
-            let args = Args::new(
-                op,
-                value,
-                &[
-                    "mode",
-                    "data",
-                    "instrumentation_type",
-                    "service",
-                    "environment",
-                ],
-            )?;
-            let mode = args.req_line("mode")?;
-            let instrumentation_type = args.req_line("instrumentation_type")?;
-            let service = args.opt_line("service")?;
-            let environment = args.opt_line("environment")?;
+            let mode = args.req_str("mode")?;
+            let instrumentation_type = args.req_str("instrumentation_type")?;
+            let service = args.opt_str("service")?;
+            let environment = args.opt_str("environment")?;
             Ok(format_batch_delete_response(
-                &mode,
+                mode,
                 json_or_empty(args.present("data")),
-                &instrumentation_type,
-                service.as_deref(),
-                environment.as_deref(),
+                instrumentation_type,
+                service,
+                environment,
             ))
         }
-        "status-history" => {
-            let args = Args::new(
-                op,
-                value,
-                &[
-                    "data",
-                    "normalized_type",
-                    "service",
-                    "environment",
-                    "requested_status",
-                ],
-            )?;
-            Ok(render_get_instrumentation_configuration_status_output(
-                json_or_empty(args.present("data")),
-                &args.req_line("normalized_type")?,
-                &args.req_line("service")?,
-                &args.req_line("environment")?,
-                &args.req_line("requested_status")?,
-            ))
-        }
-        "snapshot-search" => render_snapshot_search(value),
-        "snapshot-sample" => render_snapshot_sample(value),
-        "snapshot-fields" => {
-            let args = Args::new(op, value, &["result"])?;
-            Ok(dumps_indent2(&parse_snapshot_fields(json_or_empty(
-                args.present("result"),
-            ))))
-        }
-        "failure" => render_failure_text(value),
+        "status-history" => Ok(render_get_instrumentation_configuration_status_output(
+            json_or_empty(args.present("data")),
+            args.req_str("normalized_type")?,
+            args.req_str("service")?,
+            args.req_str("environment")?,
+            args.req_str("requested_status")?,
+        )),
+        "snapshot-search" => render_snapshot_search(&args),
+        "snapshot-sample" => render_snapshot_sample(&args),
+        "snapshot-fields" => Ok(dumps_indent2(&parse_snapshot_fields(json_or_empty(
+            args.present("result"),
+        )))),
+        "failure" => render_failure_text(&args),
         other => Err(invalid(other, "unknown renderer")),
     }
 }
 
-fn render_create_success(value: &Json) -> Result<String, ToolkitError> {
-    let op = "create-success";
-    let args = Args::new(
-        op,
-        value,
-        &[
-            "response",
-            "normalized_type",
-            "service",
-            "environment",
-            "location",
-            "ttl_hours",
-            "capture_arguments",
-            "capture_locals",
-            "is_line_level",
-            "capture_return",
-            "capture_stack_trace",
-            "limits",
-            "attribute_filters",
-            "now",
-        ],
-    )?;
+fn render_create_success(args: &Args) -> Result<String, ToolkitError> {
     let location = location_from_response(json_or_empty(args.present("location")));
-    let capture_arguments = args.opt_lines("capture_arguments")?;
-    let capture_locals = args.opt_lines("capture_locals")?;
-    let limits = limits_from(&args)?;
-    let normalized_type = args.req_line("normalized_type")?;
-    let service = args.req_line("service")?;
-    let environment = args.req_line("environment")?;
+    let capture_arguments = args.opt_strings("capture_arguments")?;
+    let capture_locals = args.opt_strings("capture_locals")?;
+    let limits = limits_from(args)?;
     let summary = CreateSummary {
-        normalized_type: &normalized_type,
-        service: &service,
-        environment: &environment,
+        normalized_type: args.req_str("normalized_type")?,
+        service: args.req_str("service")?,
+        environment: args.req_str("environment")?,
         location: &location,
         ttl_hours: args.opt_i64("ttl_hours")?,
         capture_arguments: capture_arguments.as_deref(),
@@ -522,20 +710,7 @@ fn render_create_success(value: &Json) -> Result<String, ToolkitError> {
 
 fn render_assessment(value: &Json) -> Result<OpResult, ToolkitError> {
     let op = "status-assessment";
-    let args = Args::new(
-        op,
-        value,
-        &[
-            "created_at",
-            "requested_start",
-            "query_end",
-            "checks",
-            "location_hash",
-            "service",
-            "environment",
-            "normalized_type",
-        ],
-    )?;
+    let args = Args::new(op, value, spec_of(RENDERER_ARGUMENTS, op)?)?;
     let created_at = args.req_time("created_at")?;
     let requested_start = args.req_time("requested_start")?;
     let query_end = args.req_time("query_end")?;
@@ -562,41 +737,20 @@ fn render_assessment(value: &Json) -> Result<OpResult, ToolkitError> {
     if let Some(error) = missing {
         return Err(error);
     }
-    let location_hash = args.req_line("location_hash")?;
-    let service = args.req_line("service")?;
-    let environment = args.req_line("environment")?;
-    let normalized_type = args.req_line("normalized_type")?;
     let subject = StatusSubject {
-        location_hash: &location_hash,
-        service: &service,
-        environment: &environment,
-        normalized_type: &normalized_type,
+        location_hash: args.req_str("location_hash")?,
+        service: args.req_str("service")?,
+        environment: args.req_str("environment")?,
+        normalized_type: args.req_str("normalized_type")?,
     };
     Ok(OpResult::success(render_status_assessment(
         &verdict, &subject, &window,
     )))
 }
 
-fn render_snapshot_search(value: &Json) -> Result<String, ToolkitError> {
-    let op = "snapshot-search";
-    let args = Args::new(
-        op,
-        value,
-        &[
-            "query_result",
-            "service_name",
-            "environment",
-            "location_hash",
-            "custom_filters",
-            "start_time_utc",
-            "end_time_utc",
-            "start_epoch",
-            "end_epoch",
-            "query_string",
-        ],
-    )?;
+fn render_snapshot_search(args: &Args) -> Result<String, ToolkitError> {
     let query_result = QueryResult::from_json(json_or_empty(args.present("query_result")))
-        .map_err(|message| invalid(op, message))?;
+        .map_err(|message| invalid(&args.op, message))?;
     let custom_filters = args.opt_strings("custom_filters")?.unwrap_or_default();
     let context = SearchContext {
         service_name: args.req_str("service_name")?,
@@ -615,25 +769,9 @@ fn render_snapshot_search(value: &Json) -> Result<String, ToolkitError> {
     ))
 }
 
-fn render_snapshot_sample(value: &Json) -> Result<String, ToolkitError> {
-    let op = "snapshot-sample";
-    let args = Args::new(
-        op,
-        value,
-        &[
-            "query_result",
-            "service_name",
-            "environment",
-            "location_hash",
-            "start_time_utc",
-            "end_time_utc",
-            "max_timeout",
-            "query_string",
-            "include_raw",
-        ],
-    )?;
+fn render_snapshot_sample(args: &Args) -> Result<String, ToolkitError> {
     let query_result = QueryResult::from_json(json_or_empty(args.present("query_result")))
-        .map_err(|message| invalid(op, message))?;
+        .map_err(|message| invalid(&args.op, message))?;
     let context = SampleContext {
         service_name: args.req_str("service_name")?,
         environment: args.req_str("environment")?,
@@ -650,22 +788,8 @@ fn render_snapshot_sample(value: &Json) -> Result<String, ToolkitError> {
     ))
 }
 
-fn render_failure_text(value: &Json) -> Result<String, ToolkitError> {
-    let op = "failure";
-    let args = Args::new(
-        op,
-        value,
-        &[
-            "failure",
-            "action",
-            "attempted",
-            "attempted_label",
-            "possible_causes",
-            "troubleshooting",
-            "trailer",
-        ],
-    )?;
-    let failure = failure_from(&args)?;
+fn render_failure_text(args: &Args) -> Result<String, ToolkitError> {
+    let failure = failure_from(args)?;
     let attempted: Vec<(String, Json)> = match args.present("attempted") {
         None => Vec::new(),
         Some(Json::Object(pairs)) => pairs.clone(),
@@ -675,19 +799,17 @@ fn render_failure_text(value: &Json) -> Result<String, ToolkitError> {
         .iter()
         .map(|(key, value)| (key.as_str(), value.clone()))
         .collect();
-    // `Prose` is trusted multi-line text when the library builds it; here every
-    // field comes from caller JSON, so each one is made single-line (#4653).
-    let causes = args.opt_lines("possible_causes")?.unwrap_or_default();
+    // `Prose` may span lines when the library builds it; every field here
+    // came from caller JSON, which `Args` already made single-line (#4653).
+    let causes = args.opt_strings("possible_causes")?.unwrap_or_default();
     let cause_refs: Vec<&str> = causes.iter().map(String::as_str).collect();
-    let steps = args.opt_lines("troubleshooting")?.unwrap_or_default();
+    let steps = args.opt_strings("troubleshooting")?.unwrap_or_default();
     let step_refs: Vec<&str> = steps.iter().map(String::as_str).collect();
-    let attempted_label = args.opt_line("attempted_label")?;
-    let trailer = args.opt_line("trailer")?;
     let prose = Prose {
-        attempted_label: attempted_label.as_deref(),
+        attempted_label: args.opt_str("attempted_label")?,
         possible_causes: &cause_refs,
         troubleshooting: &step_refs,
-        trailer: trailer.as_deref(),
+        trailer: args.opt_str("trailer")?,
     };
     Ok(render_failure(
         &failure,
@@ -697,19 +819,27 @@ fn render_failure_text(value: &Json) -> Result<String, ToolkitError> {
     ))
 }
 
+/// The result `cloudwatch render RENDERER` prints for one arguments object:
+/// the renderer's text after the final whole-output `safe_block` pass.
+pub(super) fn render_report(op: &str, arguments: &Json) -> Result<OpResult, ToolkitError> {
+    let mut result = if op == "status-assessment" {
+        render_assessment(arguments)?
+    } else {
+        OpResult::success(render_text(op, arguments)?)
+    };
+    result.text = safe_block(&result.text);
+    Ok(result)
+}
+
 /// `toolkit cloudwatch render RENDERER (--json TEXT | --json-file FILE)`.
 pub fn render_command(invocation: &Invocation, out: &mut Output<'_>) -> Result<(), ToolkitError> {
     let op = op_name(invocation, "renderer", RENDERERS)?;
     let arguments = read_arguments(invocation)?;
-    let result = if op == "status-assessment" {
-        render_assessment(&arguments)?
-    } else {
-        OpResult::success(render_text(op, &arguments)?)
-    };
+    let result = render_report(op, &arguments)?;
     if !result.ok {
         out.set_exit_status(result.exit_status());
     }
-    out.line(&safe_block(&result.text))
+    out.line(&result.text)
 }
 
 fn validation_outcome(
@@ -727,29 +857,14 @@ fn validation_outcome(
 }
 
 fn run_check(op: &str, value: &Json, out: &mut Output<'_>) -> Result<(), ToolkitError> {
+    let args = Args::new(op, value, spec_of(CHECK_ARGUMENTS, op)?)?;
     match op {
         "instrumentation-type" => {
-            let args = Args::new(op, value, &["instrumentation_type"])?;
             let (normalized, error) =
                 normalize_instrumentation_type(args.opt_str("instrumentation_type")?);
             validation_outcome(out, error, &normalized)
         }
         "location-inputs" => {
-            let args = Args::new(
-                op,
-                value,
-                &[
-                    "mode",
-                    "location_hash",
-                    "language",
-                    "file_path",
-                    "code_unit",
-                    "class_name",
-                    "method_name",
-                    "line_number",
-                    "allow_code_location_lookup",
-                ],
-            )?;
             let inputs = LocationInputs {
                 location_hash: args.opt_str("location_hash")?,
                 language: args.opt_str("language")?,
@@ -780,17 +895,11 @@ fn run_check(op: &str, value: &Json, out: &mut Output<'_>) -> Result<(), Toolkit
             }
         }
         "capture-names" => {
-            let args = Args::new(op, value, &["field_name", "names"])?;
             let names = args.opt_strings("names")?;
             let error = validate_capture_names(args.req_str("field_name")?, names.as_deref());
             validation_outcome(out, error, "OK")
         }
         "probe" => {
-            let args = Args::new(
-                op,
-                value,
-                &["instrumentation_type", "language", "line_number"],
-            )?;
             let (normalized, error) =
                 normalize_instrumentation_type(args.opt_str("instrumentation_type")?);
             if error.is_some() {
@@ -804,19 +913,15 @@ fn run_check(op: &str, value: &Json, out: &mut Output<'_>) -> Result<(), Toolkit
             validation_outcome(out, error, "OK")
         }
         "location-hash" => {
-            let args = Args::new(op, value, &["location_hash"])?;
             let error = (!is_valid_location_hash(args.opt_str("location_hash")?))
                 .then(|| "ERROR: location_hash must be a 16-character hex string".to_string());
             validation_outcome(out, error, "OK")
         }
-        "snapshot-signal" => {
-            let args = Args::new(op, value, &["signal_type"])?;
-            validation_outcome(
-                out,
-                validate_snapshot_signal(args.opt_str("signal_type")?),
-                "OK",
-            )
-        }
+        "snapshot-signal" => validation_outcome(
+            out,
+            validate_snapshot_signal(args.opt_str("signal_type")?),
+            "OK",
+        ),
         other => Err(invalid(other, "unknown check")),
     }
 }
