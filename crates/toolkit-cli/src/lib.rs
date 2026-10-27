@@ -992,7 +992,6 @@ mod tests {
         let mut output = Output::with_diagnostics(&mut out, &mut err);
         (spec.handler)(&invocation, &mut output).expect("handler succeeds");
         assert_eq!(output.exit_status(), 7);
-        drop(output);
         assert_eq!(out, b"data\n");
         assert_eq!(err, b"warning one\nwarning two\n");
     }
