@@ -1522,6 +1522,32 @@ fn an_incomplete_or_failing_omni_query_ends_the_capture() {
             .any(|c| c.1 == "StopTelemetryQuerySession"),
         "the session is stopped on every path"
     );
+
+    // An unrecognised status is a response value: the diagnostic never
+    // echoes it (#4784).
+    let mut client = Fake::new(|service, operation, _| match (service, operation) {
+        (Service::CloudWatchOmni, "StartTelemetryQuerySession") => {
+            Ok(json(r#"{"sessionId": "s"}"#))
+        }
+        (Service::CloudWatchOmni, "StartTelemetryQuery") => Ok(json(r#"{"queryId": "q"}"#)),
+        (Service::CloudWatchOmni, "GetTelemetryQueryResults") => {
+            Ok(json(r#"{"status": "SYNTHETIC_STATUS_SENTINEL"}"#))
+        }
+        _ => Ok(json("{}")),
+    });
+    let payload = dataset::run(
+        &mut client,
+        &mut VirtualPacer::default(),
+        &capture_options("aa"),
+    )
+    .expect_err("unrecognised status");
+    assert_eq!(
+        payload.get("error").and_then(Json::as_str),
+        Some(
+            "Omni SQL query did not complete (status=<unrecognised>); reduce --trace-ids or \
+             narrow --window-days"
+        )
+    );
 }
 
 // ---- malformed Evaluate results are never a score (#4758) ---------------
@@ -1838,6 +1864,100 @@ fn malformed_listings_and_counts_stop_the_add_before_any_write() {
         assert!(
             !control_calls(&client).contains(&"AddDatasetExamples"),
             "{operation} {answer}: no write"
+        );
+        // #4785: the resolver's failure keeps bb's conversion error too.
+        assert_no_write_receipt(&payload, &format!("{operation} {answer}"));
+    }
+}
+
+/// #4785: every way the dataset resolver can fail (a service error, a
+/// malformed first or later page, or no such dataset) is a failure receipt
+/// that names the listing failure and keeps the conversion errors already
+/// collected, never a partial success.
+#[test]
+fn dataset_resolver_failures_keep_the_conversion_errors() {
+    let pages = |first: &'static str, second: &'static str| {
+        let mut inner = capture_client(one_row(), target_datasets(), None);
+        Fake::new(move |service, called, request| {
+            use super::aws_client::AwsCalls;
+            if called == "ListDatasets" {
+                return Ok(json(if request.get("nextToken").is_some() {
+                    second
+                } else {
+                    first
+                }));
+            }
+            inner.call(service, called, request)
+        })
+    };
+    let cases: Vec<(&str, Fake, &str)> = vec![
+        (
+            "service error",
+            {
+                let mut inner = capture_client(one_row(), target_datasets(), None);
+                Fake::new(move |service, called, request| {
+                    use super::aws_client::AwsCalls;
+                    if called == "ListDatasets" {
+                        return Err(service_error("AccessDeniedException", "denied"));
+                    }
+                    inner.call(service, called, request)
+                })
+            },
+            "list_datasets failed: An error occurred (AccessDeniedException)",
+        ),
+        (
+            "malformed first page",
+            pages(r#"{"datasets": null}"#, "{}"),
+            "list_datasets failed: the ListDatasets response is invalid",
+        ),
+        (
+            "malformed later page",
+            pages(
+                r#"{"datasets": [], "nextToken": "p2"}"#,
+                r#"{"datasets": [{"datasetId": 7, "datasetName": "target"}]}"#,
+            ),
+            "list_datasets failed: the ListDatasets response is invalid",
+        ),
+        (
+            "bad later token",
+            pages(
+                r#"{"datasets": [], "nextToken": "p2"}"#,
+                r#"{"datasets": [], "nextToken": []}"#,
+            ),
+            "list_datasets failed:",
+        ),
+        (
+            "not an object",
+            pages("[]", "{}"),
+            "list_datasets failed: the ListDatasets response is not an object",
+        ),
+        (
+            "no such dataset",
+            pages(
+                r#"{"datasets": [{"datasetId": "x", "datasetName": "y"}]}"#,
+                "{}",
+            ),
+            "dataset 'target' not found",
+        ),
+    ];
+    for (what, mut client, expected) in cases {
+        let payload = dataset::run(&mut client, &mut VirtualPacer::default(), &add_options())
+            .expect_err(what);
+        let error = payload.get("error").and_then(Json::as_str).unwrap_or("");
+        assert!(
+            error.starts_with(expected),
+            "{what}: {}",
+            failure_text(&payload)
+        );
+        assert_no_write_receipt(&payload, what);
+        assert_eq!(
+            pyfmt::dumps(payload.get("conversionErrors").unwrap(), false),
+            r#"[{"traceId": "bb", "error": "no spans found in window"}]"#,
+            "{what}"
+        );
+        assert!(
+            !control_calls(&client).contains(&"AddDatasetExamples"),
+            "{what}: no write"
         );
     }
 }

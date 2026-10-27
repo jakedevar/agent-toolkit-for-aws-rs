@@ -402,8 +402,39 @@ fn query_start_errors_keep_the_legacy_texts() {
     let result = query_with(&mut no_id, 30);
     assert_eq!(
         result.error.as_deref(),
-        Some("start_query did not return a queryId (response: {'queryId': ''})")
+        Some("start_query did not return a queryId")
     );
+}
+
+/// #4784: an absent or empty `queryId` still fails, but the diagnostic never
+/// carries the rest of the response.
+#[test]
+fn query_missing_id_never_echoes_the_response() {
+    for body in [
+        r#"{"authorization": "SYNTHETIC_PRIVATE_SENTINEL", "customerPayload": {"text": "SYNTHETIC_CUSTOMER_SENTINEL"}}"#,
+        r#"{"queryId": "", "authorization": "SYNTHETIC_PRIVATE_SENTINEL", "customerPayload": {"text": "SYNTHETIC_CUSTOMER_SENTINEL"}}"#,
+    ] {
+        let mut fake = Fake::always(body);
+        let result = query_with(&mut fake, 30);
+        assert_eq!(result.status, "Error", "{body}");
+        assert_eq!(result.query_id, Json::Null, "{body}");
+        assert_eq!(
+            result.error.as_deref(),
+            Some("start_query did not return a queryId"),
+            "{body}"
+        );
+        assert_eq!(fake.calls.len(), 1, "no poll without an id: {body}");
+    }
+    // A wrong-typed id is still an invalid response that names the member
+    // and its type, never the value or the other members.
+    let mut wrong = Fake::always(
+        r#"{"queryId": ["SYNTHETIC_ID_SENTINEL"], "authorization": "SYNTHETIC_PRIVATE_SENTINEL"}"#,
+    );
+    let result = query_with(&mut wrong, 30);
+    assert_eq!(result.status, "Error");
+    let error = result.error.unwrap_or_default();
+    assert!(error.contains("queryId"), "{error}");
+    assert!(!error.contains("SYNTHETIC"), "{error}");
 }
 
 #[test]
@@ -1058,6 +1089,16 @@ fn check_status_input_and_created_at_failures() {
     assert_eq!(
         no_created.text,
         "ERROR: Failed to fetch created_at: CreatedAt not found in instrumentation configuration"
+    );
+
+    // #4784: a CreatedAt string that is not a timestamp fails without the
+    // response value in the diagnostic.
+    let mut fake = status_script("SYNTHETIC_CREATED_SENTINEL", &[]);
+    let not_iso = check_status(&format!("{{{CHECK_ARGS}, {window}}}"), &mut fake);
+    assert_eq!(
+        not_iso.text,
+        "ERROR: Failed to fetch created_at: CreatedAt is not a timestamp: expected an ISO 8601 \
+         string or epoch seconds, got a string that is not ISO 8601"
     );
 
     let mut fake = Fake::new(|_, _, _| Err(service_error("ResourceNotFoundException", "gone")));

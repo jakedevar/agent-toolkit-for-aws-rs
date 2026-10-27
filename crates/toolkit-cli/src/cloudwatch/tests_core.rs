@@ -197,6 +197,9 @@ fn time_from_json_accepts_strings_and_epoch_seconds() {
     assert_eq!(from_int, from_float);
     assert!(time_from_json(&Json::Bool(true)).is_err());
     assert!(time_from_json(&Json::Int(i64::MAX)).is_err());
+    // The value comes from a response: the error names its type only (#4784).
+    let error = time_from_json(&Json::string("SYNTHETIC_TIME_SENTINEL")).expect_err("not ISO");
+    assert!(!error.contains("SYNTHETIC"), "{error}");
 }
 
 // ───────────────────────────── region ─────────────────────────────

@@ -989,6 +989,100 @@ fn a_malformed_create_dataset_response_exits_one_without_a_write_count() {
     );
 }
 
+// ---- the round-2 review #4742 fixtures (#4784, #4785) -------------------
+
+/// #4784: an absent or empty `queryId` fails both snapshot commands, and the
+/// diagnostic never carries the other response members.
+#[test]
+fn a_missing_query_id_fails_without_echoing_the_response() {
+    let root = temp_root("missing-query-id");
+    let extras = r#""authorization":"SYNTHETIC_PRIVATE_SENTINEL","customerPayload":{"text":"SYNTHETIC_CUSTOMER_SENTINEL"}"#;
+    for (label, response) in [
+        ("absent", format!("{{{extras}}}")),
+        ("empty", format!(r#"{{"queryId":"",{extras}}}"#)),
+    ] {
+        let recorded = write(
+            &root,
+            &format!("start-{label}.json"),
+            &format!(
+                r#"{{"calls":[{{"service":"logs","operation":"StartQuery","response":{response}}}]}}"#
+            ),
+        );
+        for op in ["sample", "search"] {
+            let output = toolkit(&[
+                "cloudwatch",
+                "snapshots",
+                op,
+                "--json",
+                SAMPLE_ARGS,
+                "--recorded",
+                &recorded,
+            ]);
+            let stdout = text(&output.stdout);
+            let stderr = text(&output.stderr);
+            assert_eq!(status(&output), 1, "{op} {label}: {stdout}{stderr}");
+            assert!(
+                stdout.contains("start_query did not return a queryId"),
+                "{op} {label}: {stdout}"
+            );
+            for sentinel in ["SYNTHETIC", "authorization", "customerPayload"] {
+                assert!(
+                    !stdout.contains(sentinel) && !stderr.contains(sentinel),
+                    "{op} {label} leaked {sentinel}: {stdout}{stderr}"
+                );
+            }
+        }
+    }
+}
+
+/// #4785: a malformed `ListDatasets` in add mode fails (exit 1) with the
+/// listing error and bb's conversion error, never without it and never with
+/// a write count.
+#[test]
+fn a_malformed_dataset_listing_keeps_the_conversion_errors() {
+    let root = temp_root("bad-listing");
+    let prelude = omni_prelude(
+        r#"{"traceId":"aa","spanId":"0000000000000001","name":"root","input_value":"hi","output_value":"hello","kind":2}"#,
+    );
+    let recorded = write(
+        &root,
+        "list.json",
+        &format!(
+            r#"{{"calls":[{prelude},
+{{"service":"bedrock-agentcore-control","operation":"ListDatasets","response":{{"datasets":null}}}}]}}"#
+        ),
+    );
+    let output = toolkit(&[
+        "cloudwatch",
+        "capture-dataset",
+        "--trace-ids",
+        "aa,bb",
+        "--mode",
+        "add",
+        "--dataset-name",
+        "fixture",
+        "--i-have-confirmed",
+        "--recorded",
+        &recorded,
+    ]);
+    let stdout = text(&output.stdout);
+    assert_eq!(status(&output), 1, "{stdout}");
+    assert!(
+        stdout.contains(
+            "list_datasets failed: the ListDatasets response is invalid: the member \
+             \\u0060datasets\\u0060 of the response is not a list of objects (it is null)"
+        ),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains(
+            r#""conversionErrors": [{"traceId": "bb", "error": "no spans found in window"}]"#
+        ),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("examplesWritten"), "{stdout}");
+}
+
 /// #4758: an object-valued score is a score error (exit 1), never
 /// `tracesScored: 1` / `pairsScored: 1`.
 #[test]
