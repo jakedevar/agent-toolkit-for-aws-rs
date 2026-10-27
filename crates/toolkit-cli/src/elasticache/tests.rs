@@ -196,7 +196,7 @@ fn grouping_and_splitting_helpers() {
     assert_eq!(group_int(0), "0");
     assert_eq!(group_int(999), "999");
     assert_eq!(group_int(1000), "1,000");
-    assert_eq!(group_int(-1234567), "-1,234,567");
+    assert_eq!(group_int(-1_234_567), "-1,234,567");
     assert_eq!(splitext("out/est.csv"), ("out/est", ".csv"));
     assert_eq!(splitext("est"), ("est", ""));
     assert_eq!(splitext(".hidden"), (".hidden", ""));

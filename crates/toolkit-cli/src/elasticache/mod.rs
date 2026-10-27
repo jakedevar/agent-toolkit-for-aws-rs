@@ -179,8 +179,8 @@ fn required_text<'a>(invocation: &'a Invocation, flag: &str) -> Result<&'a str, 
 /// Exactly one of two options (an `argparse` required mutually exclusive group).
 fn exclusive<'a>(
     invocation: &'a Invocation,
-    first: &str,
-    second: &str,
+    first: &'a str,
+    second: &'a str,
 ) -> Result<(&'a str, &'a str), ToolkitError> {
     match (invocation.value(first), invocation.value(second)) {
         (Some(_), Some(_)) => Err(usage(format!(
