@@ -71,3 +71,6 @@ rust-migration-health (health_anomaly), pm-safety-net (hourly resume), terminal 
 - 17:50Z: round 7 head a41cfbb5f5dfbb9272fcb168d797ee4b2bcab961 (worker 80238d9c; merges bf135496 #4380, a41cfbb5 #4402; remerge-diff checked: registration + visibility-only pub(crate) widening in startup/scoring fixtures, passthrough:false added to cloudwatch specs).
   Manager scoped 5f3914db pending. If ok + check ok: GATE = a41cfbb5, source_session_id 80238d9c.
   Round 8 (continue_from 80238d9c): #4670 f440232a + #4403 (when #4682 accepts); add `repeatable_flags: &[]` to new rows.
+- 17:58Z: #4682 re-review of be2fc335: CHANGES_REQUESTED -> #4698 (recorded --price-list path prices malformed ids by display name). Repair 2 (Opus) worker 6ea6a0d7 (continue_from 5c918875): validate id before any price source.
+  Round 8 worker 2c1dd570 (continue_from 80238d9c): #4670 f440232a onto a41cfbb5 + repeatable_flags on round-7 rows.
+  New slices from a41cfbb5: #4470 (P2 DNS reserved ranges) worker 196ff993; #4407 (startup refs/model staleness) worker 0e783946.
