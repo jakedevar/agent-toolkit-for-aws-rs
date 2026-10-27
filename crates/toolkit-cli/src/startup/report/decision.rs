@@ -37,7 +37,17 @@ fn word_shingles(text: &str, size: usize) -> HashSet<String> {
 /// `rendered_text` shares a word phrase with the artifact `phrase`; the
 /// shingle width is the phrase's own token count, capped at four.
 pub(super) fn phrase_rendered(phrase: &str, rendered_text: &str) -> bool {
-    let words = ascii_words(&plain_text(phrase));
+    phrase_rendered_by(plain_text, phrase, rendered_text)
+}
+
+/// [`phrase_rendered`] with the phrase normalized by `normalize` (the Heroku
+/// validator folds the phrase without re-parsing it as markup).
+pub(super) fn phrase_rendered_by(
+    normalize: fn(&str) -> String,
+    phrase: &str,
+    rendered_text: &str,
+) -> bool {
+    let words = ascii_words(&normalize(phrase));
     if words.is_empty() {
         return true;
     }
@@ -49,6 +59,7 @@ pub(super) fn phrase_rendered(phrase: &str, rendered_text: &str) -> bool {
 
 /// Augmenting-path step of the phrase-to-item matching.
 fn assign(
+    normalize: fn(&str) -> String,
     phrase_index: usize,
     seen_items: &mut HashSet<usize>,
     matched_items: &mut HashMap<usize, usize>,
@@ -56,14 +67,14 @@ fn assign(
     items: &[String],
 ) -> bool {
     for (item_index, item) in items.iter().enumerate() {
-        if seen_items.contains(&item_index) || !phrase_rendered(&phrases[phrase_index], item) {
+        if seen_items.contains(&item_index) || !phrase_rendered_by(normalize, &phrases[phrase_index], item) {
             continue;
         }
         seen_items.insert(item_index);
         let previous = matched_items.get(&item_index).copied();
         let free = match previous {
             None => true,
-            Some(other) => assign(other, seen_items, matched_items, phrases, items),
+            Some(other) => assign(normalize, other, seen_items, matched_items, phrases, items),
         };
         if free {
             matched_items.insert(item_index, phrase_index);
@@ -75,10 +86,20 @@ fn assign(
 
 /// The artifact phrases that cannot be assigned distinct rendered items.
 fn unmatched_phrases(phrases: &[Json], rendered_items: &[String]) -> Vec<String> {
+    unmatched_phrases_by(plain_text, phrases, rendered_items)
+}
+
+/// [`unmatched_phrases`] with the phrases normalized by `normalize`.
+pub(super) fn unmatched_phrases_by(
+    normalize: fn(&str) -> String,
+    phrases: &[Json],
+    rendered_items: &[String],
+) -> Vec<String> {
     let texts: Vec<String> = phrases.iter().map(py_str).collect();
     let mut matched_items: HashMap<usize, usize> = HashMap::new();
     for phrase_index in 0..texts.len() {
         assign(
+            normalize,
             phrase_index,
             &mut HashSet::new(),
             &mut matched_items,
@@ -233,6 +254,12 @@ pub(super) fn scenario_count(migration_dir: Option<&Path>) -> usize {
     let Ok(index) = loads(&text) else {
         return 0;
     };
+    scenario_len(&index)
+}
+
+/// `len(index.get("scenarios") or [])`: the number of scenarios an
+/// `index.json` document lists.
+pub(super) fn scenario_len(index: &Json) -> usize {
     match index.get("scenarios") {
         Some(Json::Array(items)) => items.len(),
         Some(Json::Object(members)) => members.len(),

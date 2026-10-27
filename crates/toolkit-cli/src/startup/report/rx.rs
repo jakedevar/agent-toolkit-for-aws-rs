@@ -106,6 +106,19 @@ impl Rx {
             .map(|found| (found.start(), found.end()))
     }
 
+    /// `re.sub(pattern, replacement, text)` for a literal replacement.
+    pub(super) fn replace_all_with(&self, text: &str, replacement: &str) -> String {
+        let mut out = String::with_capacity(text.len());
+        let mut cursor = 0;
+        for (start, end) in self.find_all(text) {
+            out.push_str(&text[cursor..start]);
+            out.push_str(replacement);
+            cursor = end;
+        }
+        out.push_str(&text[cursor..]);
+        out
+    }
+
     /// `re.finditer`: the spans of every non-overlapping match.
     pub(super) fn find_all(&self, text: &str) -> Vec<Span> {
         self.0

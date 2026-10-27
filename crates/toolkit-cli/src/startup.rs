@@ -49,7 +49,7 @@ pub use parity::pricing_parity_command;
 pub use plan::emit_plan_command;
 pub use pricing::pricing_command;
 pub use program::program_artifacts_command;
-pub use report::migration_report_command;
+pub use report::{heroku_report_command, migration_report_command};
 pub use terraform::terraform_policy_command;
 
 /// Largest artifact or plugin file the validators read (64 MiB).

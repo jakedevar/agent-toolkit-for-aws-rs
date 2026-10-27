@@ -433,6 +433,30 @@ fixture-bleed and what-if scenario checks. `REPORT_OK | ...` on stdout (exit 0);
 summary (exit 1); a missing REPORT argument or an unknown `--mode` is exit 2 (a report file that does not exist is exit 1). The patterns run
 on `fancy-regex`; `html.parser` and `html.unescape` are ported in `startup/report/html.rs`.
 
+### startup heroku-report (#4406)
+
+```
+toolkit startup heroku-report REPORT [--migration-dir DIR] [--mode full|decision]
+```
+
+Replacement for `skills/heroku-to-aws/scripts/validate-heroku-migration-report.py` and its three
+test files. Checks the thin stakeholder report of the heroku-to-aws skill: the required
+sections (`decision-summary`, `exec-costs`, `cost-optimization` and `next-steps` in full mode;
+`decision-cta` instead of the last two in `--mode decision`), the `draft for review` footer,
+whole-dollar currency formatting, the `data-cost-key` figure against
+`projected_costs.aws_monthly_balanced` of `estimation-infra.json` in `--migration-dir`, the
+cost-optimization content, the typography-first verdict, the "What would flip this" list,
+the scenario table, `decision_basis`, accessibility and the decision-mode phase state.
+`REPORT_OK | ...` on stdout (exit 0); `REPORT_FAIL | file=... | errors=N` and `  - problem` lines
+on stderr plus an `error:` summary (exit 1); a missing REPORT or an unknown `--mode` is exit 2.
+Values read from the report path, `--mode`, or the artifacts are escaped and bounded before
+they are quoted in a diagnostic (#4602). The migration directory is read without following
+symbolic links: a link is reported as a problem. The shared tokenizer, cost-figure cross-check,
+currency patterns and phrase matching are the ones of `startup migration-report`
+(`startup/report/`). `skills/heroku-to-aws/scripts/emit-plan-json.py` is byte-identical to the
+plugin copy and is replaced by `startup emit-plan`. Parity and deliberate differences:
+[docs/migration/heroku.md](../../docs/migration/heroku.md).
+
 ## sync (#4377)
 
 `toolkit sync plugin-skills` makes every `plugins/<plugin>/skills/<name>` copy
