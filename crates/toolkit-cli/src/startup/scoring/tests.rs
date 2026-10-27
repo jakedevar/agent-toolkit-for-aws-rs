@@ -1706,9 +1706,9 @@ fn score_units_passes_the_trusted_entry_point_to_every_unit() {
     );
 
     // A raw `_entry_point` in the system or unit answers is overwritten.
-    let (unit_ids, _) = unit_eliminated(&format!(
-        r#"{{"system":{{"_entry_point":"migrate"}},"units":{{"u":{{"workload_class":"agent_session","_entry_point":"migrate"}}}}}}"#
-    ));
+    let (unit_ids, _) = unit_eliminated(
+        r#"{"system":{"_entry_point":"migrate"},"units":{"u":{"workload_class":"agent_session","_entry_point":"migrate"}}}"#,
+    );
     assert!(unit_ids.is_empty());
 }
 
