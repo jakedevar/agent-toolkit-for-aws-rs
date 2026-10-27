@@ -900,17 +900,38 @@ pub(super) fn heroku_estimate(context: &Context<'_>) -> Flow {
                     Json::Object(Vec::new())
                 ))
             );
-            let services = get(&design, "services");
-            if !matches!(services, Json::Array(_)) && !matches!(services, Json::Null) {
-                l.fail(format!(
-                    "aws-design.json services is {}, not a list",
-                    type_name(services)
-                ));
-            }
-            for svc in items(services) {
-                let sid = get(svc, "service_id").as_str().unwrap_or("");
-                let name = get(svc, "aws_service").as_str().unwrap_or("");
-                let covered = doc.contains(sid) || doc.contains(name) || warnings_txt.contains(sid);
+            l.design_shape(&design, "aws-design.json");
+            for svc in objs(get(&design, "services")) {
+                // A service is matched by its id. A missing, non-text or blank
+                // id (or a supplied non-text name) would match everything
+                // through `"" in doc`, so it is a named failure (#4778).
+                let sid_value = get(svc, "service_id");
+                let Some(sid) = sid_value.as_str().filter(|sid| !strip(sid).is_empty()) else {
+                    l.fail(format!(
+                        "aws-design.json service service_id must be non-empty text, not {}",
+                        if matches!(sid_value, Json::String(_)) {
+                            rp(sid_value)
+                        } else {
+                            type_name(sid_value).to_string()
+                        }
+                    ));
+                    continue;
+                };
+                let name_value = get(svc, "aws_service");
+                let name = match name_value {
+                    Json::Null => None,
+                    Json::String(name) => Some(name.as_str()).filter(|name| !name.is_empty()),
+                    other => {
+                        l.fail(format!(
+                            "design service {sid} aws_service is {}, not text",
+                            type_name(other)
+                        ));
+                        None
+                    }
+                };
+                let covered = doc.contains(sid)
+                    || name.is_some_and(|name| doc.contains(name))
+                    || warnings_txt.contains(sid);
                 l.check(
                     covered,
                     format!(

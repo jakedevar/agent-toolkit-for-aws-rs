@@ -1643,6 +1643,7 @@ pub(in crate::startup::fixtures) fn run(context: &Context<'_>) -> Flow {
 
     let design_file = exp.at("design_file").str();
     let design = context.json_labeled(&context.run, design_file, design_file)?;
+    l.design_shape(&design, design_file);
 
     let inventory_file = exp.at("inventory_file").str();
     let inv_dir = if context.exists(&context.run, inventory_file) {

@@ -82,10 +82,20 @@ expectation documents) and `mod.rs` (dispatch, reads, report). Python `==`, trut
    missing required key. Here a missing, mistyped or unparsable document is a recorded failure and a
    key the Python program would have indexed with `[...]` is checked, so a fixture that cannot be
    evaluated never passes. Optional files that Python probed with `.exists()` stay optional.
-4. **Symlink-refusing reads.** Every run, seed, expectation and referenced skill file is read with
-   `startup::{is_regular_file_under, read_text_under}`: a link at any component is a failure, and a
-   directory is not a file. The scratch copy for `emit-plan` refuses links instead of following them
-   (`shutil.copytree` followed them) and is removed on drop.
+4. **One link-trust model, chosen by read provenance (#4759, #4777, #4779).** The caller selects
+   three roots: `--plugin-root`, RUN_DIR and SEED_DIR. Each is taken as given and may itself be a
+   symbolic link. That is the only exception. Every other path is derived from one of those roots and
+   carries it as its anchor (`fixtures::Anchored`). Paths derived from the plugin root are the
+   `fixtures` directory, the fixture set, golden trees, table directories, `../../skills` files,
+   `.claude-plugin/plugin.json` and the estimate handed to the report validator. Paths derived from
+   the run or seed directory are its documents and the children found by walking it. A symbolic link
+   at any component below the anchor is a failure, and so is a path that is not below its anchor.
+   The anchor depends on where the path came from, never on path prefixes. A RUN_DIR or SEED_DIR that
+   equals or contains the plugin root therefore does not exempt a fixture read from the plugin-root
+   checks. A directory is not a file. The scratch copy for `emit-plan` follows the same rule.
+   Its entry is the caller's RUN_DIR, which may be a link. Every child it discovers is refused if it
+   is a link (`shutil.copytree` followed them) or a file over the 64 MiB read bound. The copy is
+   removed on drop.
 5. **Bounded, escaped echo.** Assertions read every run value in full (`str(v)` / `repr(v)` are
    never shortened, #4746); only a recorded message is bounded, to 1200 characters with a
    `...[N more chars]` suffix. Every report line goes through `neutralize_line` (control,
@@ -108,19 +118,23 @@ expectation documents) and `mod.rs` (dispatch, reads, report). Python `==`, trut
      any finding reports `KIND stopped before evaluating its assertions` and exits 1, never `PASS`.
    - *Warnings keep their type* (#4748). `warnings`, `pricing_source`, `capture_warnings` and
      `excluded` are serialised as supplied (`est.get("warnings", [])`: only an absent key reads as
-     the default), so a forbidden warning is found whatever its JSON shape. `aws-design.json`
-     `services` that is neither absent nor a list is a failure.
+     the default), so a forbidden warning is found whatever its JSON shape.
+   - *Malformed service data is a named failure* (#4778). Every program that reads a design
+     document (both workshops, non-web scaling, `heroku-estimate`, `azure-design` and
+     `azure-estimate`) checks its shape through one reader, `Ledger::design_shape`. The root must
+     be an object. A supplied `services` must be a list of objects. An absent `services` keeps the
+     empty-list default, but an explicit `null`, any other type, or a non-object element is
+     reported by name (`services is NoneType, not a list`, `services[0] is NoneType, not an
+     object`). Python's `design.get("services") or []` in the Azure programs read `null` as empty.
+     `heroku-estimate` coverage also requires each service's `service_id` to be non-blank text and
+     a supplied `aws_service` to be text. An empty name no longer matches through `"" in doc`,
+     which certified coverage for every service in Python.
    - *Booleans are never numbers* (#4753). A boolean `monthly_difference` or `annual_difference`
      fails the reconciliation, as the Python `close()` guard did, instead of reading as 1/0.
    - *Explanations are text* (#4754). A cost-line `basis` and a `$0.00` cluster `note` must be
      non-blank strings; a truthy value of another type is reported (`... must be explanatory text,
      not bool`) instead of counting as an explanation.
-   - *Derived paths are link-checked* (#4759). Every read below `--plugin-root` that the command
-     derives itself (the `fixtures` directory, the fixture set, golden trees, table directories,
-     shipped skill files, `.claude-plugin/plugin.json`, the estimate handed to the report
-     validator) is checked component by component from the plugin root. The explicit `--plugin-root`,
-     RUN_DIR and SEED_DIR keep their own caller-chosen-root semantics (the root itself may be a
-     link).
+   - *Derived paths are link-checked* (#4759, #4777, #4779), under the single rule in item 4.
    - *Reads are bounded and a bound hit is an error*. Every file read uses the shared 64 MiB
      limit of `startup::read_text_under` / `read_regular_file`; a larger file is an unreadable-file
      failure, never a silently shortened input.
@@ -138,7 +152,7 @@ imports `check_expected_clarify.py` as a module, and a comment in
 ## Tests
 
 `startup/fixtures/tests.rs` (registry coverage, README, usage, fail-closed, hostile input, symlinks,
-`tests/repair.rs` for the #4744 repairs,
+`tests/repair.rs` and `tests/roots.rs` for the #4744 repairs,
 malformed expectations), `tests/decide_workshop.rs`, `tests/capture.rs`, `tests/azure.rs`, plus unit
 tests in `ledger.rs`, `azure/clarify.rs`, `azure/design.rs` and `azure/estimate.rs`. They run offline
 against the committed trees and temporary copies; the `diag_contract` integration test covers the

@@ -16,6 +16,7 @@ mod azure;
 mod capture;
 mod decide_workshop;
 mod repair;
+mod roots;
 
 /// The shipped plugin the expectation documents and golden trees live in.
 /// One invalid-fixture case: a label, the damage, the message it must produce.
@@ -499,4 +500,48 @@ pub(super) fn step_mut<'a>(doc: &'a mut Json, path: &[&str]) -> &'a mut Json {
         node = step(node, segment);
     }
     node
+}
+
+#[test]
+fn an_anchored_path_keeps_its_root_and_refuses_one_outside_it() {
+    use super::Anchored;
+    let root = TempDir::new("anchored-root");
+    fs::create_dir_all(root.join("a/b")).expect("tree");
+    let derived = Anchored::root(root.to_path_buf()).join("a").join("b");
+    assert_eq!(derived.check(&derived.join("file.json")), Ok(()));
+    // An absolute name replaces the joined path; it is not below the anchor.
+    let escaped = derived.join("/etc/hostname");
+    let error = escaped.check(&escaped).expect_err("outside its anchor");
+    assert!(error.contains("not below"), "{error}");
+}
+
+#[test]
+fn the_design_reader_names_every_malformed_shape() {
+    let ledger = super::ledger::Ledger::default();
+    assert!(ledger.design_shape(&j(r#"{"name": "no services"}"#), "d.json"));
+    assert!(ledger.design_shape(&j(r#"{"services": [{"service_id": "x"}]}"#), "d.json"));
+    assert!(ledger.fails().is_empty());
+    for (doc, needle) in [
+        ("[]", "d.json is list, not an object"),
+        (
+            r#"{"services": null}"#,
+            "d.json services is NoneType, not a list",
+        ),
+        (
+            r#"{"services": [{}, null, 1]}"#,
+            "d.json services[1] is NoneType, not an object",
+        ),
+        (
+            r#"{"services": [{}, null, 1]}"#,
+            "d.json services[2] is int, not an object",
+        ),
+    ] {
+        let ledger = super::ledger::Ledger::default();
+        assert!(!ledger.design_shape(&j(doc), "d.json"), "{doc}");
+        assert!(
+            ledger.fails().iter().any(|fail| fail == needle),
+            "{doc}: {:?}",
+            ledger.fails()
+        );
+    }
 }

@@ -3,15 +3,13 @@
 //! `expected-workshop.json` and with the frozen discovery inventory of its
 //! seed directory.
 
-use std::path::Path;
-
 use toolkit_core::Json;
 
 use super::ledger::{eq, eq_str, get, list, objs, path, ps, truthy, Spec};
-use super::{Context, Flow};
+use super::{Anchored, Context, Flow};
 
 /// The scenario index and the count window both programs check.
-fn load_index(context: &Context<'_>, run: &Path) -> Option<Json> {
+fn load_index(context: &Context<'_>, run: &Anchored) -> Option<Json> {
     let l = context.ledger;
     let index_present = context.exists(run, "scenarios/index.json");
     l.check(
@@ -37,7 +35,7 @@ fn inventory_frozen(
     context: &Context<'_>,
     exp: &Spec<'_>,
     name: &str,
-    seed_dir: &Path,
+    seed_dir: &Anchored,
     wording: (&str, &str, &str),
 ) {
     let l = context.ledger;
@@ -55,7 +53,7 @@ fn inventory_frozen(
     }
 }
 
-fn seed_dir(context: &Context<'_>) -> std::path::PathBuf {
+fn seed_dir(context: &Context<'_>) -> Anchored {
     context
         .seed
         .clone()
@@ -128,6 +126,7 @@ pub(super) fn heroku(context: &Context<'_>) -> Flow {
     );
 
     let (design_text, design) = context.json_in_dir_with_text(run, "aws-design.json")?;
+    l.design_shape(&design, "aws-design.json");
     let eb = first_service(&design, "Elastic Beanstalk");
     l.check(
         eb.is_some(),
@@ -159,6 +158,7 @@ pub(super) fn heroku(context: &Context<'_>) -> Flow {
         && exp.get("design_must_differ_from_baseline").truthy()
     {
         if let Some(base_design) = context.json_in_dir(&scenarios_dir, &base_design_name) {
+            l.design_shape(&base_design, &base_design_name);
             let base_eb = first_service(&base_design, "Elastic Beanstalk");
             l.check(
                 base_eb.is_some(),
@@ -214,7 +214,7 @@ pub(super) fn heroku(context: &Context<'_>) -> Flow {
 /// `balanced_must_differ_from_baseline`: the active total moved.
 fn balanced_differs(
     context: &Context<'_>,
-    scenarios_dir: &Path,
+    scenarios_dir: &Anchored,
     manifest: &str,
     est: &Json,
     heroku: bool,
@@ -343,6 +343,7 @@ pub(super) fn gcp(context: &Context<'_>) -> Flow {
     }
     if exp.get("must_keep_incompatible_worker_x86").truthy() {
         let design = context.json_in_dir(run, "aws-design.json")?;
+        l.design_shape(&design, "aws-design.json");
         let worker = objs(get(&design, "services"))
             .find(|service| eq_str(get(service, "source_resource_id"), "run:worker"));
         l.check(worker.is_some(), "missing worker service");

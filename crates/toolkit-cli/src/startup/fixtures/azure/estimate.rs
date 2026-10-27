@@ -254,6 +254,7 @@ pub(in crate::startup::fixtures) fn run(context: &Context<'_>) -> Flow {
         Json::Object(Vec::new())
     };
     let design = upstream(context, exp.at("design_file").str(), "after-design");
+    l.design_shape(&design, exp.at("design_file").str());
     let prefs = upstream(
         context,
         exp.at("preferences_file").str(),

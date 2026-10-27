@@ -225,15 +225,86 @@ const PROGRAMS: &[Program] = &[
     },
 ];
 
+/// A path together with the root it was derived from (#4777).
+///
+/// There is one trust model, and it depends on where a path came from, never on
+/// comparing path prefixes. The caller selects three roots (`--plugin-root`,
+/// `RUN_DIR` and `SEED_DIR`) and each is taken as given: it may itself be a
+/// symbolic link. Every path the toolkit derives from one of them keeps that
+/// root as its anchor. That covers fixture sets, golden trees, tables, shipped
+/// skills and manifests below the plugin root, and documents or child
+/// directories below the run or seed directory. A symbolic link at any
+/// component below the anchor is refused, however the roots overlap: a run
+/// directory that is, or contains, the plugin root does not exempt a fixture
+/// read from the plugin-root checks.
+#[derive(Clone, Debug)]
+pub(super) struct Anchored {
+    root: PathBuf,
+    path: PathBuf,
+}
+
+impl Anchored {
+    /// A caller-selected root, or a directory this command created.
+    pub(super) fn root(path: impl Into<PathBuf>) -> Self {
+        let path = path.into();
+        Self {
+            root: path.clone(),
+            path,
+        }
+    }
+
+    /// `relative` below this path, keeping the same anchor.
+    pub(super) fn join(&self, relative: impl AsRef<Path>) -> Self {
+        Self {
+            root: self.root.clone(),
+            path: self.path.join(relative),
+        }
+    }
+
+    /// Refuses a symbolic link at any component of `path` below the anchor.
+    /// It also refuses a path that is not below its anchor at all, such as an
+    /// absolute name in an expectation document.
+    fn check(&self, path: &Path) -> Result<(), String> {
+        if !path.starts_with(&self.root) {
+            return Err(format!(
+                "cannot read {}: not below {}",
+                crate::safe_text::safe_path(&path.display().to_string()),
+                crate::safe_text::safe_path(&self.root.display().to_string())
+            ));
+        }
+        super::refuse_links_below(&self.root, path)
+    }
+
+    /// Whether `path` is a regular file, with [`Self::check`] applied first.
+    fn regular_file(&self, path: &Path) -> Result<bool, String> {
+        self.check(path)?;
+        is_regular_file_under(&self.root, path)
+    }
+}
+
+impl std::ops::Deref for Anchored {
+    type Target = Path;
+
+    fn deref(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl AsRef<Path> for Anchored {
+    fn as_ref(&self) -> &Path {
+        &self.path
+    }
+}
+
 /// Everything one program needs: where things are and the ledger.
 pub(super) struct Context<'a> {
     pub(super) ledger: &'a Ledger,
-    pub(super) plugin_root: PathBuf,
-    /// `<plugin-root>/fixtures/<set>`.
-    pub(super) fixture: PathBuf,
-    pub(super) run: PathBuf,
+    pub(super) plugin_root: Anchored,
+    /// `<plugin-root>/fixtures/<set>`, anchored at the plugin root.
+    pub(super) fixture: Anchored,
+    pub(super) run: Anchored,
     /// The caller's second positional, if the program takes one.
-    pub(super) seed: Option<PathBuf>,
+    pub(super) seed: Option<Anchored>,
 }
 
 /// How a read ended.
@@ -244,29 +315,10 @@ enum Read {
 }
 
 impl Context<'_> {
-    /// The traversal anchor for a read of `path` below `root`. A path the
-    /// toolkit derives below `--plugin-root` (the fixtures directory, a fixture
-    /// set, a golden tree, a table directory, the shipped skills) is checked
-    /// from the plugin root, so a link in any derived component is refused;
-    /// `root` itself is never examined (#4759). The caller-chosen `RUN_DIR` and
-    /// `SEED_DIR` keep their own explicit-root semantics.
-    fn anchor<'p>(&'p self, root: &'p Path, path: &Path) -> &'p Path {
-        let caller = path.starts_with(&self.run)
-            || self
-                .seed
-                .as_ref()
-                .is_some_and(|seed| path.starts_with(seed));
-        if !caller && path.starts_with(&self.plugin_root) {
-            &self.plugin_root
-        } else {
-            root
-        }
-    }
-
-    /// Records a failure when a link lies below the plugin root on the way
-    /// to `path`, for a path handed to another command rather than read here.
-    pub(super) fn guard_derived(&self, path: &Path) -> bool {
-        match super::refuse_links_below(self.anchor(&self.plugin_root, path), path) {
+    /// Records a failure when a link lies below its anchor on the way to
+    /// `path`, for a path handed to another command rather than read here.
+    pub(super) fn guard_derived(&self, path: &Anchored) -> bool {
+        match path.check(path) {
             Ok(()) => true,
             Err(message) => {
                 self.ledger.fail(message);
@@ -275,14 +327,13 @@ impl Context<'_> {
         }
     }
 
-    fn read(&self, root: &Path, path: &Path) -> Read {
-        let root = self.anchor(root, path);
-        match is_regular_file_under(root, path) {
+    fn read(root: &Anchored, path: &Path) -> Read {
+        match root.regular_file(path) {
             Err(message) => Read::Unreadable(message),
             Ok(false) => Read::Missing,
             Ok(true) => {
                 match read_text_under(
-                    root,
+                    &root.root,
                     path,
                     &crate::safe_text::safe_path(&path.display().to_string()),
                 ) {
@@ -295,9 +346,9 @@ impl Context<'_> {
 
     /// Whether `name` is a regular file below `root` (`Path.exists()` for a
     /// file; a link is reported, not followed).
-    pub(super) fn exists(&self, root: &Path, name: &str) -> bool {
-        let path = root.join(name);
-        match is_regular_file_under(self.anchor(root, &path), &path) {
+    pub(super) fn exists(&self, root: &Anchored, name: &str) -> bool {
+        let path = root.path.join(name);
+        match root.regular_file(&path) {
             Ok(found) => found,
             Err(message) => {
                 self.ledger.fail(message);
@@ -308,8 +359,8 @@ impl Context<'_> {
 
     /// The text of `name` below `root`, with Python's universal newlines;
     /// `None` when it is absent (silently) or unreadable (recorded).
-    pub(super) fn text_if_exists(&self, root: &Path, name: &str) -> Option<String> {
-        match self.read(root, &root.join(name)) {
+    pub(super) fn text_if_exists(&self, root: &Anchored, name: &str) -> Option<String> {
+        match Self::read(root, &root.path.join(name)) {
             Read::Text(text) => Some(text),
             Read::Missing => None,
             Read::Unreadable(message) => {
@@ -331,20 +382,24 @@ impl Context<'_> {
     }
 
     /// `json.loads(path.read_text())` of `name` below `root` when it exists.
-    pub(super) fn json_if_exists(&self, root: &Path, name: &str) -> Option<Json> {
+    pub(super) fn json_if_exists(&self, root: &Anchored, name: &str) -> Option<Json> {
         let text = self.text_if_exists(root, name)?;
         self.parse_text(&text, name)
     }
 
     /// A required document, a missing one worded `missing NAME in DIR`.
-    pub(super) fn json_in_dir(&self, root: &Path, name: &str) -> Option<Json> {
+    pub(super) fn json_in_dir(&self, root: &Anchored, name: &str) -> Option<Json> {
         self.json_in_dir_with_text(root, name).map(|(_, json)| json)
     }
 
     /// [`Self::json_in_dir`] that also returns the file's text.
-    pub(super) fn json_in_dir_with_text(&self, root: &Path, name: &str) -> Option<(String, Json)> {
-        let path = root.join(name);
-        match self.read(root, &path) {
+    pub(super) fn json_in_dir_with_text(
+        &self,
+        root: &Anchored,
+        name: &str,
+    ) -> Option<(String, Json)> {
+        let path = root.path.join(name);
+        match Self::read(root, &path) {
             Read::Text(text) => {
                 let json = self.parse_text(&text, name)?;
                 Some((text, json))
@@ -362,9 +417,9 @@ impl Context<'_> {
     }
 
     /// A required document, a missing one worded `missing LABEL at PATH`.
-    pub(super) fn json_labeled(&self, root: &Path, name: &str, label: &str) -> Option<Json> {
-        let path = root.join(name);
-        match self.read(root, &path) {
+    pub(super) fn json_labeled(&self, root: &Anchored, name: &str, label: &str) -> Option<Json> {
+        let path = root.path.join(name);
+        match Self::read(root, &path) {
             Read::Text(text) => self.parse_text(&text, label),
             Read::Missing => {
                 self.ledger
@@ -395,7 +450,7 @@ impl Context<'_> {
         suffix: &str,
     ) -> Option<std::collections::BTreeSet<String>> {
         let dir = self.fixture.join(relative);
-        if let Err(message) = super::refuse_links_below(self.anchor(&self.fixture, &dir), &dir) {
+        if let Err(message) = dir.check(&dir) {
             self.ledger.fail(message);
             return None;
         }
@@ -438,9 +493,9 @@ impl Context<'_> {
 
     /// The raw bytes of a file as text, without newline translation (for the
     /// byte-for-byte comparisons).
-    pub(super) fn raw_text(&self, root: &Path, name: &str) -> Option<String> {
-        let path = root.join(name);
-        match is_regular_file_under(self.anchor(root, &path), &path) {
+    pub(super) fn raw_text(&self, root: &Anchored, name: &str) -> Option<String> {
+        let path = root.path.join(name);
+        match root.regular_file(&path) {
             Ok(true) => match read_regular_file(&path, MAX_ARTIFACT_BYTES) {
                 Ok(text) => Some(text),
                 Err(error) => {
@@ -488,15 +543,25 @@ pub(super) fn capture(
     )
 }
 
-/// A scratch copy of a run directory, removed on drop. Symbolic links are
-/// refused, not followed.
+/// A scratch copy of a run directory, removed on drop.
 pub(super) struct Scratch(PathBuf);
 
 impl Scratch {
-    /// Copies `source` into a fresh directory below the system temp directory.
-    pub(super) fn copy_of(source: &Path) -> Result<Self, String> {
+    /// Copies `source` into a fresh directory below the system temp directory
+    /// (#4779). The entry follows the [`Anchored`] rule: a link at a component
+    /// below its anchor is refused, but the caller-selected root itself may be
+    /// a symbolic link and is followed. Every child the copy finds by walking
+    /// is derived, so a symbolic link there is refused, as is a file over the
+    /// shared read bound.
+    pub(super) fn copy_of(source: &Anchored) -> Result<Self, String> {
         use std::collections::hash_map::RandomState;
         use std::hash::{BuildHasher, Hasher};
+        source.check(source)?;
+        let shown = crate::safe_text::safe_path(&source.display().to_string());
+        // `check` refused a link at every component below the anchor, so this
+        // follows a link only when `source` is the caller's own root.
+        let metadata =
+            fs::metadata(source).map_err(|error| format!("cannot read {shown}: {error}"))?;
         let token = RandomState::new().build_hasher().finish();
         let root = std::env::temp_dir().join(format!(
             "toolkit-check-expected-{}-{token:016x}",
@@ -506,12 +571,13 @@ impl Scratch {
             .map_err(|error| format!("cannot create scratch directory: {error}"))?;
         let scratch = Self(root);
         let target = scratch.0.join("run");
-        copy_tree(source, &target)?;
+        copy_entry(source, &target, &metadata)?;
         Ok(scratch)
     }
 
-    pub(super) fn run_dir(&self) -> PathBuf {
-        self.0.join("run")
+    /// The copied run directory: a root this command created.
+    pub(super) fn run_dir(&self) -> Anchored {
+        Anchored::root(self.0.join("run"))
     }
 }
 
@@ -521,6 +587,7 @@ impl Drop for Scratch {
     }
 }
 
+/// Copies one discovered child: a symbolic link is refused, not followed.
 fn copy_tree(source: &Path, target: &Path) -> Result<(), String> {
     let shown = crate::safe_text::safe_path(&source.display().to_string());
     let metadata =
@@ -530,6 +597,13 @@ fn copy_tree(source: &Path, target: &Path) -> Result<(), String> {
             "cannot read {shown}: symbolic links are not followed"
         ));
     }
+    copy_entry(source, target, &metadata)
+}
+
+/// Copies `source`, already described by `metadata`, to `target`; children
+/// go through [`copy_tree`].
+fn copy_entry(source: &Path, target: &Path, metadata: &fs::Metadata) -> Result<(), String> {
+    let shown = crate::safe_text::safe_path(&source.display().to_string());
     if metadata.is_dir() {
         fs::create_dir(target).map_err(|error| format!("cannot copy {shown}: {error}"))?;
         let entries =
@@ -611,14 +685,14 @@ pub fn check_expected_command(
             format!("kind {} takes no seed directory", program.name),
         ));
     }
-    let plugin_root = PathBuf::from(invocation.value("--plugin-root").unwrap_or("."));
+    let plugin_root = Anchored::root(invocation.value("--plugin-root").unwrap_or("."));
     let ledger = Ledger::default();
     let context = Context {
         ledger: &ledger,
         fixture: plugin_root.join("fixtures").join(program.set),
         plugin_root,
-        run: PathBuf::from(run),
-        seed: seed.map(PathBuf::from),
+        run: Anchored::root(run),
+        seed: seed.map(Anchored::root),
     };
     // `Stop` ends a program early with the findings so far. An early end that
     // recorded no finding evaluated nothing, so it must never read as a pass

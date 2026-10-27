@@ -125,9 +125,13 @@ fn check_sizing_tables(context: &Context<'_>, exp: &Spec<'_>) {
 /// `load(plugin_root / relative)`: `missing NAME in DIR` or `NAME is not valid
 /// JSON`.
 fn load_table(context: &Context<'_>, relative: &str) -> Option<Json> {
-    let full = context.plugin_root.join(relative);
-    let name = full.file_name()?.to_string_lossy().into_owned();
-    let dir = full.parent()?.to_path_buf();
+    let relative = std::path::Path::new(relative);
+    let name = relative.file_name()?.to_string_lossy().into_owned();
+    let dir = context.plugin_root.join(
+        relative
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new("")),
+    );
     context.json_in_dir(&dir, &name)
 }
 
@@ -153,6 +157,7 @@ pub(super) fn run(context: &Context<'_>) -> Flow {
     let inventory = context.json_in_dir(&context.run, "heroku-resource-inventory.json");
     let design = context.json_in_dir(&context.run, "aws-design.json");
     let (inventory, design) = (inventory?, design?);
+    context.ledger.design_shape(&design, "aws-design.json");
 
     let mut by_source: BTreeMap<String, Vec<&Json>> = BTreeMap::new();
     for service in objs(get(&design, "services")) {

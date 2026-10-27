@@ -734,7 +734,7 @@ fn check_db_cutover_default_rule(context: &Context<'_>, prefs: &Json, inv: &Json
 fn check_cluster_rows(
     context: &Context<'_>,
     prefs: &Json,
-    clusters_dir: &std::path::Path,
+    clusters_dir: &super::super::Anchored,
     exp: &Spec<'_>,
 ) {
     let l = context.ledger;

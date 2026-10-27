@@ -51,6 +51,42 @@ impl Ledger {
         self.notes.borrow_mut().push(bounded(&msg.into()));
     }
 
+    /// Checks the shape of a design document named `label` (#4778). This is
+    /// the one reader every design consumer goes through.
+    ///
+    /// The root must be an object. A supplied `services` must be a list whose
+    /// elements are objects. An absent `services` keeps the legacy
+    /// empty-list default. A supplied `null`, any other type, or a non-object
+    /// element is a named failure: it never reads as an empty list or as a
+    /// service with blank fields. Returns whether the shape held.
+    pub(super) fn design_shape(&self, design: &Json, label: &str) -> bool {
+        let Json::Object(_) = design else {
+            self.fail(format!("{label} is {}, not an object", type_name(design)));
+            return false;
+        };
+        let Some(services) = design.get("services") else {
+            return true;
+        };
+        let Json::Array(entries) = services else {
+            self.fail(format!(
+                "{label} services is {}, not a list",
+                type_name(services)
+            ));
+            return false;
+        };
+        let mut ok = true;
+        for (index, entry) in entries.iter().enumerate() {
+            if !matches!(entry, Json::Object(_)) {
+                self.fail(format!(
+                    "{label} services[{index}] is {}, not an object",
+                    type_name(entry)
+                ));
+                ok = false;
+            }
+        }
+        ok
+    }
+
     pub(super) fn fails(&self) -> Vec<String> {
         self.fails.borrow().clone()
     }
