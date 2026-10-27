@@ -13,6 +13,7 @@
 //! | `startup consent-audit` | `consent-disclosure-audit.py` |
 //! | `startup pricing-parity` | `check-bedrock-pricing-parity.py` |
 //! | `startup terraform-policy` | `validate-terraform-policy.py` (tf-best-practices) |
+//! | `startup migration-report` | `validate-migration-report.py` |
 //!
 //! Each prints the Python messages unchanged: findings go to stderr through
 //! [`Output::diagnostic`] and a failing run additionally ends with one
@@ -37,6 +38,7 @@ mod parity;
 mod plan;
 mod pricing;
 mod program;
+mod report;
 mod terraform;
 mod text;
 
@@ -47,6 +49,7 @@ pub use parity::pricing_parity_command;
 pub use plan::emit_plan_command;
 pub use pricing::pricing_command;
 pub use program::program_artifacts_command;
+pub use report::migration_report_command;
 pub use terraform::terraform_policy_command;
 
 /// Largest artifact or plugin file the validators read (64 MiB).

@@ -44,6 +44,9 @@ Usage:
   toolkit startup consent-audit [--plugin-root DIR]
   toolkit startup pricing-parity [--plugin-root DIR]
   toolkit startup terraform-policy DIR [--json FILE]
+  toolkit startup migration-report REPORT [--estimation-infra FILE] [--estimation-ai FILE]
+                            [--aws-design FILE] [--migration-dir DIR] [--no-require-toc]
+                            [--no-readability] [--mode full|decision|ai_only]
   toolkit --version
   toolkit help
 
@@ -106,6 +109,16 @@ Commands:
                 security-group ingress, wildcard IAM, RDS and ElastiCache
                 encryption. --json FILE writes the verdict. Violations are
                 POLICY_FAIL lines on stderr and exit status 1.
+  startup migration-report
+                Validate a generated migration-report.html (or decision-report.html
+                with --mode decision, or an AI-only report with --mode ai_only):
+                required section ids, table-of-contents anchors, appendix depth,
+                readability, accessibility, the visual shell, the data-cost-key
+                figures against --estimation-infra, and the decision-core content.
+                --estimation-ai and --aws-design add the checks that need those
+                artifacts; --migration-dir enables fixture-bleed and what-if
+                scenario checks. Problems are `  - ...` lines on stderr after
+                REPORT_FAIL and exit status 1; a pass prints REPORT_OK.
   startup artifacts
                 Validate migration artifacts against the contracts the skills
                 publish (JSON examples in the schema documents plus the JSON
@@ -381,6 +394,19 @@ pub const COMMANDS: &[CommandSpec] = &[
         value_flags: &["--json"],
         max_positionals: 1,
         handler: startup::terraform_policy_command,
+    },
+    CommandSpec {
+        path: &["startup", "migration-report"],
+        flags: &["--no-require-toc", "--no-readability"],
+        value_flags: &[
+            "--estimation-infra",
+            "--estimation-ai",
+            "--aws-design",
+            "--migration-dir",
+            "--mode",
+        ],
+        max_positionals: 1,
+        handler: startup::migration_report_command,
     },
 ];
 
