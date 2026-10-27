@@ -18,9 +18,9 @@ Both commands use the canonical router (`value_flags`, `strict_values: true`,
 router, option or stderr helper was added. Schemas are evaluated by the engine
 of slice `spec` (`spec/engine.rs`, a local-only, bounded draft 2020-12 validator);
 files are read with the link-safe readers of `toolkit-core` (`read_regular_file`,
-`write_regular_file`). `bedrock_report/identity.rs` reuses the Python `\s`
-predicate of `startup/text.rs`. Model identity resolution (`model_identity.py`),
-pricing and image normalization are slice #4403; preflight and IAM are #4404.
+`write_regular_file`). the same-model rule is the canonical `bedrock_resolve/identity.rs` of slice #4403
+(`model_identity.py`, see `docs/migration/bedrock-resolve.md`); pricing and image
+normalization are #4403 too; preflight and IAM are #4404.
 
 ## Parity
 
@@ -101,17 +101,17 @@ pricing and image normalization are slice #4403; preflight and IAM are #4404.
    ...` on stderr, exits 1 and prints no summary (Python raised a traceback). A
    non-UTF-8 report is refused. `~/saws-migrate-results` is resolved from `HOME`
    only when a report is found and `--results-dir` is absent.
-9. **`same_model` copy.** The identity rule is mirrored in
-   `bedrock_report/identity.rs` because `model_identity.py` (#4403) is not
-   integrated; follow-up #4607 replaces the copy.
+9. **`same_model` is shared.** The private copy in `bedrock_report/identity.rs`
+   moved to the canonical `bedrock_resolve/identity.rs` (#4403, follow-up #4607);
+   `validate` and `render` import it from there. Behaviour is identical.
 10. **Large integers.** `COMPLETED`/`TOTAL` of a `partial` result print with
     Python's `str()` of the parsed value; an integer beyond 64 bits therefore
     prints as a float spelling instead of the exact digits.
 
 ## Out of scope
 
-- `model_identity.py`, `bedrock_pricing.py`, `image_input.py`, `resolve_source_model.py`
-  (#4403); `source_baseline.py`, `preflight_bedrock.py`, `iam_policy.py` (#4404).
+- `model_identity.py`, `bedrock_pricing.py`, `image_input.py` and `resolve_source_model.py`
+  are ported by #4403 (`bedrock-resolve.md`); `source_baseline.py`, `preflight_bedrock.py`, `iam_policy.py` (#4404).
   The tests of `test_astra_execution_contract.py` that import those modules are
   listed in follow-up #4608.
 - The tests of that file that execute Python embedded in skill documents

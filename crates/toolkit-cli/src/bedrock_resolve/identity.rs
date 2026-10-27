@@ -1,11 +1,12 @@
-//! The conservative same-model rule `validate_result.py` applies to an
-//! analysis result (`model_identity.same_model`).
+//! The conservative same-model rule of `model_identity.py` (slice #4403).
 //!
-//! `model_identity.py` itself is slice #4403; until it lands this private copy
-//! is the only user. Once #4403 ports the module, `same_model` should move
-//! there and this file go away.
+//! This is the one canonical copy. `bedrock-report validate` (`validate_result.py`
+//! checks every claimed `same_model_family`) and `bedrock-resolve identity`
+//! both call it (#4607).
 
 use std::sync::LazyLock;
+
+use toolkit_core::Json;
 
 use crate::startup::text::is_space;
 
@@ -13,7 +14,7 @@ static DECIMAL: LazyLock<fancy_regex::Regex> =
     LazyLock::new(|| fancy_regex::Regex::new(r"\A\p{Nd}\z").expect("a valid category class"));
 
 /// Python `\d` for `str`: a character of the Unicode category `Nd`.
-pub(super) fn is_decimal(c: char) -> bool {
+pub(crate) fn is_decimal(c: char) -> bool {
     if c.is_ascii() {
         return c.is_ascii_digit();
     }
@@ -24,7 +25,7 @@ pub(super) fn is_decimal(c: char) -> bool {
 }
 
 /// Python `str.strip()`: removes leading and trailing whitespace.
-pub(super) fn strip(text: &str) -> &str {
+pub(crate) fn strip(text: &str) -> &str {
     text.trim_matches(is_space)
 }
 
@@ -92,15 +93,36 @@ fn identity(model_id: &str, provider: &str, target: bool) -> Option<String> {
 
 /// Whether `source_model` and `target_model` name the same model of `provider`
 /// (only `anthropic` and `openai` are known; anything else is never the same).
-pub(super) fn same_model(provider: &str, source_model: &str, target_model: &str) -> bool {
+pub(crate) fn same_model(provider: &str, source_model: &str, target_model: &str) -> bool {
+    same_model_of(provider, Some(source_model), Some(target_model))
+}
+
+/// [`same_model`] for values that may be absent or not text (a mapping row
+/// without `source_model`, or with a JSON `null`): those are never the same.
+fn same_model_of(provider: &str, source: Option<&str>, target: Option<&str>) -> bool {
     if !matches!(provider, "anthropic" | "openai") {
         return false;
     }
+    let (Some(source), Some(target)) = (source, target) else {
+        return false;
+    };
     matches!(
         (
-            identity(source_model, provider, false),
-            identity(target_model, provider, true),
+            identity(source, provider, false),
+            identity(target, provider, true),
         ),
         (Some(source), Some(target)) if source == target
     )
+}
+
+/// `same_model_family`: true when `mappings` is not empty and every row's
+/// `source_model` is the same model as its `aws_model_id`. A row that is not
+/// an object, or lacks either text field, is never the same model (the
+/// Python function raised on a row that was not a dict).
+pub(crate) fn same_model_family(provider: &str, mappings: &[Json]) -> bool {
+    !mappings.is_empty()
+        && mappings.iter().all(|item| {
+            let field = |name: &str| item.get(name).and_then(Json::as_str);
+            same_model_of(provider, field("source_model"), field("aws_model_id"))
+        })
 }

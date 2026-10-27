@@ -9,9 +9,9 @@
 //! Both scripts belong to the `llm-to-bedrock` skill of the
 //! `aws-startup-advisor` plugin. The five phase-result schemas are the plugin's
 //! own `scripts/schemas/*.json` files, compiled into the binary, so the schema
-//! files stay the single source of the contract. Model identity resolution
-//! (`model_identity.py`) is #4403 and preflight/IAM is #4404; only the
-//! `same_model` rule `validate_result.py` needs is mirrored in `identity`.
+//! files stay the single source of the contract. The same-model rule of
+//! `model_identity.py` is the canonical `bedrock_resolve::identity` (#4403,
+//! #4607); preflight and IAM are #4404.
 //! See `docs/migration/bedrock-report.md` for the parity table and the
 //! intentional changes.
 
@@ -19,7 +19,6 @@ use toolkit_core::{PathError, ToolkitError};
 
 use crate::{Invocation, Output};
 
-mod identity;
 mod render;
 mod validate;
 

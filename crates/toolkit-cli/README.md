@@ -398,7 +398,8 @@ cache (as the split commit `7a638343ebb2` wrote it) and the remaining GCP/Azure 
 (`git show`, so the history must contain both) and prints a JSON report with sorted keys on
 success. A failed assertion is `error: <message>` (exit 1). The step that executed the old
 and new `bedrock_pricing.py` is not ported (the report says `pricing_behavior: not
-checked`; the Bedrock pricing slice #4403 carries it). The proof is pinned to the
+checked`; the table comparison is a Rust test of the Bedrock pricing slice #4403, wiring
+it into this report is follow-up #4677). The proof is pinned to the
 pre-split and split commits, so the cache's later growth does not matter (item 36 of
 `docs/migration/startup-validators.md`).
 ### startup terraform-policy
@@ -603,6 +604,56 @@ Usage errors (both or neither input, a missing companion option, an unknown
 `--schema`) exit 2 with the usage text. Parity table, the schema and identity
 seams and every intentional change:
 [docs/migration/bedrock-report.md](../../docs/migration/bedrock-report.md).
+
+## bedrock-resolve (#4403)
+
+`toolkit bedrock-resolve` replaces `model_identity.py`, `image_input.py`,
+`bedrock_pricing.py` and `resolve_source_model.py` of the `llm-to-bedrock` skill
+(plugin `aws-startup-advisor`). It is offline: the provider catalog and the AWS
+Pricing API answer are recorded files (live clients: follow-up #4675). Value flags
+are `--name VALUE` or `--name=VALUE` (not empty, not starting with `-`).
+
+```
+toolkit bedrock-resolve identity --provider anthropic|openai
+    (--source MODEL --target BEDROCK_ID | --mappings FILE)
+toolkit bedrock-resolve image --emit format|mime|data-url|converse|responses|chat
+    [--image PATH] [--prompt TEXT | --prompt-file FILE] [--detail low|high|auto|original]
+toolkit bedrock-resolve pricing --region REGION --models ID[,ID...] [--price-list FILE]
+toolkit bedrock-resolve source-model ENV_FILE --catalog FILE
+    [--plan-model-id ID] [--source-provider NAME]
+```
+
+- `identity` prints `{"same_model": true|false}`: the source and the Bedrock id are
+  the same first-party model (region prefix and `-vN:M` revision of the target
+  ignored; moving aliases, wildcards, profile ARNs and other providers never
+  match). `--mappings` takes a JSON list of `{source_model, aws_model_id}` rows and
+  prints `{"same_model_family": ...}` (non-empty, every row the same model).
+- `image` prints one value as JSON: the Converse `format` (`.jpg` is `jpeg`), the
+  `mime_type`, the base64 `data_url`, or a Converse, Responses or Chat Completions
+  user message (Converse `source.bytes` is `{"base64": ...}`; Responses always
+  carries `detail`, default `auto`). Unsupported extensions fail before the file is
+  read; image files of at most 20 MiB.
+- `pricing` prints `{model_id: {input_per_1k_usd, output_per_1k_usd, available,
+  note}}` (indent 2). The built-in table (44 rows) and the region-aware Opus 5.5
+  rule answer first; proprietary GPT ids need an exact row; anything else is
+  `available: false` unless `--price-list FILE` (`[{region, model: display name,
+  price_list: [item JSON text]}]`) holds a recorded answer. Always exit 0.
+- `source-model` resolves `PLAN_MODEL_ID` (or `--plan-model-id`) against the
+  catalog of the provider chosen by the env file (`SOURCE_PROVIDER` or
+  `--source-provider` is authoritative; the ambient environment never chooses).
+  `--catalog` is a JSON list of ids or the provider's response pages. Prints
+  `{"status": "exact"|"prefix", "resolved_id", ...}` (a date or pure version suffix
+  only; `mini`, `pro`, `latest` ... are never picked) or `{"status": "not_found",
+  "candidates": [...]}` (exit 0), `{"status": "no_key"}` (exit 2) or `{"status":
+  "error", "detail": ...}` (exit 3: no or incomplete catalog, or a resolved id
+  that cannot be shown safely).
+
+Env-file key values are only used to choose the provider and to redact output
+(`***`). Text from arguments, files and catalogs is escaped (`\x1b`, `‮`) and
+bounded in diagnostics and output; links are refused for every file read. Parity
+table, the pricing-behaviour decision, every intentional change and the shared
+`same_model` seam:
+[docs/migration/bedrock-resolve.md](../../docs/migration/bedrock-resolve.md).
 
 ## asm exec (#4451)
 

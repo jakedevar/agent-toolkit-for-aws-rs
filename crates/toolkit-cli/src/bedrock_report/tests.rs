@@ -14,9 +14,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use toolkit_core::{parse_json, Json};
 
-use super::identity::same_model;
 use super::render::{display_path, find_report_path, summarize};
 use super::validate::{compare_run_contexts, load_schema, EVALUATION_CONTRACT_VERSION};
+use crate::bedrock_resolve::identity::same_model;
 use crate::COMMANDS;
 
 static COUNTER: AtomicUsize = AtomicUsize::new(0);

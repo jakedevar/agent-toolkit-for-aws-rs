@@ -33,7 +33,7 @@ use toolkit_core::read_regular_file;
 
 use crate::manifests::{read_failure, universal_newlines};
 
-mod artifacts;
+pub(crate) mod artifacts;
 mod consent;
 mod model_ids;
 mod parity;
