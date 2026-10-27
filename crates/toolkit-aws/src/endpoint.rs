@@ -442,7 +442,7 @@ fn is_non_public_v6(address: Ipv6Addr) -> bool {
 }
 
 /// Name of the first non-public block containing `address`, for messages.
-fn non_public_reason(address: IpAddr) -> &'static str {
+pub(crate) fn non_public_reason(address: IpAddr) -> &'static str {
     match address {
         IpAddr::V4(v4) => v4_reason(v4),
         IpAddr::V6(v6) => {

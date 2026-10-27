@@ -175,11 +175,21 @@ dependency justifications and the test list are in `aws-core-contracts.md`
   print fixed, value-free `Debug`; no SDK value is formatted with `Debug`.
   `credential_process` and SSO profiles are honoured, as boto3 does.
   Running the configured process is standard chain behavior, not a new input.
-- **T2 logs and errors**: every SDK error (credential, signing, connector,
-  body read) is rendered through its `Display` chain (`DisplayErrorContext`)
-  into the redacting `AwsError` constructors and truncated. Tests feed
-  secret-bearing SDK messages and assert that nothing survives in `Display` or
-  `Debug`. `aws-sigv4` traces its inputs at `trace` level; the SDK's own
+- **T2 logs and errors**: credential and signing failures keep **no** SDK
+  text (#4594, review #4592). A `credential_process` failure carries the
+  process's stderr, and a custom provider's message is arbitrary; pattern
+  redaction cannot recognise an unlabelled bare secret there. So the boundary
+  error is a fixed label for the `CredentialsError` variant plus the provider
+  name, with no source chain, and a signing failure names only its stage.
+  Tests use a fake provider whose `Display`, derived `Debug` and source chain
+  carry bare secrets, and the real aws-config `credential_process` provider
+  over a fake failing `sh -c` command (stderr and unparsable stdout). They
+  check that the SDK error does carry the secret and that the `AwsError`
+  `Display`, `Debug` and `{:#?}` do not, directly, through a `ProviderChain`
+  and through the signer. Connector and body-read failures (no credential
+  material) are still rendered through their `Display` chain
+  (`DisplayErrorContext`) into the redacting `AwsError` constructors and
+  truncated. `aws-sigv4` traces its inputs at `trace` level; the SDK's own
   `Debug` for credentials redacts the secret, and this crate installs no
   `tracing` subscriber.
 - **T3 endpoint / rebinding**: the residual from the #4467 addendum is
@@ -188,8 +198,21 @@ dependency justifications and the test list are in `aws-core-contracts.md`
   `https://` URLs without userinfo are sent. Hosts resolve through a
   connect-time guard that applies the same public-address policy
   (`endpoint::public_addresses`, factored out of `validate_endpoint`
-  unchanged) to the very addresses the socket uses. A refusal is
-  non-retryable `InvalidConfig`. The credential chain's own IMDS/container/STS
+  unchanged) to the very addresses the socket uses. The hyper connector skips
+  the resolver for a literal IP host (#4593, review #4592), so the transport
+  applies the same policy to a literal host before calling the connector: a
+  bracketed IPv6 address (IPv4-mapped, NAT64 and IPv4-compatible forms judged
+  by their embedded IPv4), and an IPv4 host in every `inet_aton` form the
+  system resolver accepts (dotted, decimal `2130706433`, octal `0177.0.0.1`,
+  hex `0x7f.1`, short `127.1`, trailing dot). A zone identifier, a numeric
+  host that does not parse, and any host character outside letters, digits,
+  `-` and `.` are refused. As a backstop, the peer address of the socket the
+  response came over is checked too; a non-public peer poisons the pooled
+  connection and the response is refused. (The smithy client exposes the
+  connection only with the response, so that check cannot stop the bytes
+  already sent. The literal check and the DNS guard between them cover
+  every address the connector dials.) A refusal is non-retryable
+  `InvalidConfig`. The credential chain's own IMDS/container/STS
   traffic uses aws-config's client by design (it must reach link-local
   metadata endpoints).
 - **T6 retries**: unchanged. The transport sends one request per call;

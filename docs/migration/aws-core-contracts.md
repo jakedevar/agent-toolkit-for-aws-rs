@@ -204,7 +204,7 @@ under `--locked`.
 | --- | --- | --- |
 | `CredentialsProvider` | `SdkCredentialsProvider::default_chain(&runtime, &config)` | The SDK default chain: environment, then shared config/credentials profile (static keys, SSO, assume-role, `credential_process`), then web identity, then ECS/EKS container role, then EC2 instance metadata. `AWS_PROFILE` (validated by `ClientConfig`) selects the profile **for credentials only**. The chain gets the boundary's resolved region for its STS/SSO calls, so a profile region never selects the target region. Reports the name `sdk-default-chain`. `from_sdk` wraps any other SDK provider. |
 | `Signer` | `SigV4Signer::new(provider)` | `aws-sigv4` header signing (`authorization`, `x-amz-date`, `x-amz-security-token` for temporary credentials, signed payload hash). Credentials are loaded from any `CredentialsProvider` on every attempt; credentials expired at signing time are refused. |
-| `Transport` | `SdkTransport::new(&runtime)` | smithy hyper client, rustls with the aws-lc provider (one crypto provider, the same one aws-config's own client uses). Connect and read timeouts come from `Timeouts`, and the read timeout also bounds reading the body. The transport never follows redirects (hyper does not; a 3xx is returned as a response), configures no proxy, sends only `https://` URLs without userinfo, and resolves hosts through the **connect-time DNS guard**. |
+| `Transport` | `SdkTransport::new(&runtime)` | smithy hyper client, rustls with the aws-lc provider (one crypto provider, the same one aws-config's own client uses). Connect and read timeouts come from `Timeouts`, and the read timeout also bounds reading the body. The transport never follows redirects (hyper does not; a 3xx is returned as a response), configures no proxy, sends only `https://` URLs without userinfo, and resolves hosts through the **connect-time DNS guard**. A literal IP host, which the hyper connector never sends to the resolver, gets the same public-address policy before the connector is called, and the socket's peer address is checked again when the response arrives (#4593). |
 
 `SdkRuntime` is a current-thread tokio runtime the synchronous adapters drive
 SDK futures on. The adapters must not be called from inside another tokio
@@ -218,7 +218,10 @@ so the default `make test` covers it:
 - `credential_error`: an SDK `CredentialsNotLoaded` becomes `NoCredentials`, so
   a `ProviderChain` moves on. Timeout, invalid configuration, provider and
   unhandled failures become `CredentialProvider` errors and stop the chain
-  (botocore rules). The detail is redacted and truncated to 512 characters.
+  (botocore rules). The message is a fixed label for the kind; the provider's
+  own text is never taken (#4594). A `credential_process` stderr or a custom
+  provider message can hold an unlabelled secret that pattern redaction
+  cannot recognise.
 - `adopt_credentials`: an empty key id or secret is refused
   (`PartialCredentials`); expired credentials are refused
   (`CredentialsExpired`).
@@ -232,6 +235,15 @@ so the default `make test` covers it:
   addresses the socket will connect to. A rejection is carried through the
   SDK error chain and surfaces as non-retryable `InvalidConfig` (field
   `endpoint`).
+- `require_public_host` / `literal_host_address`: the same policy for a
+  literal IP host, which the hyper connector dials without asking the resolver
+  (#4593). Bracketed IPv6 (IPv4-mapped, NAT64 and IPv4-compatible forms
+  included); IPv4 in every `inet_aton` form a resolver accepts (dotted,
+  decimal, octal, hex, one to four parts, trailing dot). A zone identifier, a
+  numeric host that does not parse and any host character outside letters,
+  digits, `-` and `.` are refused (field `url`).
+- `require_public_peer`: the same policy for the socket peer address the
+  transport reads from the connection when the response arrives (backstop).
 - `require_https`, `response_headers` (wire headers that `Headers::insert`
   refuses are dropped rather than failing the response).
 
@@ -240,9 +252,21 @@ so the default `make test` covers it:
 - Default build: `binding` tests cover every mapping above, including redaction
   of secret-bearing SDK messages, guard acceptance and rejection, chain
   search through `source()` and `io::Error` payloads, and the https gate.
+  Literal hosts are read in every form (IPv4 dotted, decimal, octal, hex,
+  short and trailing-dot; IPv6 plain, mapped, NAT64, IPv4-compatible).
+  Non-public ones, zone identifiers and unreadable hosts are refused, and
+  non-public socket peers are refused too.
 - `--features sdk` (`sdk::tests`): fake SDK `ProvideCredentials`
   implementations exercise adoption, expiry, not-loaded fall-through, the
   stopping kinds with redaction, and participation in a `ProviderChain`.
+  For #4594, a fake provider error carries bare, unlabelled secrets in its
+  `Display`, `Debug` and source chain, and the real aws-config
+  `credential_process` provider runs a fake failing `sh -c` command (secret on
+  stderr; secret in unparsable or wrong-version stdout). The boundary error
+  is exactly the fixed label, directly, through a `ProviderChain` and through
+  the signer. For #4593, every literal-IP form is refused before the fake
+  connector or the production connector is called. A non-public socket peer
+  reported by the connection is refused and the connection poisoned.
   SigV4 is checked against the AWS signing test-suite vector `get-vanilla`
   (exact `authorization` value), plus session-token, expiry and
   credential-error cases. A fake smithy `HttpConnector` checks request and
@@ -252,7 +276,8 @@ so the default `make test` covers it:
   end-to-end `ApiClient` run uses `SigV4Signer` + `SdkTransport` over the fake
   connector: 503 then 200, with two fresh signatures for the right
   region/service. No test calls `default_chain` (which would read the real
-  environment and files), opens a socket or resolves DNS.
+  environment and files), opens a socket or resolves DNS. The
+  `credential_process` tests start a local `sh` process and nothing else.
 
 ### Dependencies (feature `sdk` only; pinned with `=`)
 
@@ -301,4 +326,17 @@ under `rustls-webpki` and is never compiled. No `openssl` or `native-tls`.
   declared in `.rsi/jobs.toml` and `.rsi/project.toml` with a 20-minute
   timeout and a 200% CPU cap (#4463 ruling, #4577).
 - The DNS-rebinding residual recorded in T3 is **closed for the SDK
-  transport**: the guard checks the addresses the socket connects to.
+  transport**: the guard checks the addresses the socket connects to, and a
+  literal IP host is checked before the connector runs (#4593).
+- **Peer-address backstop, not a pre-send gate.** The smithy client exposes
+  the connection (`CaptureSmithyConnection`) only once the response has
+  arrived, and its TCP connector cannot be wrapped through the public API. So
+  the peer check refuses the response and poisons the connection but cannot
+  stop bytes already sent. Prevention rests on the literal-host check plus the
+  resolver guard. In hyper-util 0.1.21 those two cover every address
+  `HttpConnector` dials. A connection that reports no peer address (test
+  doubles) skips the backstop.
+- **Credential errors carry no provider text** (#4594). Diagnosing a failing
+  `credential_process` or SSO profile now needs the SDK's own tools (for
+  example running the process by hand); the boundary reports only which kind
+  of failure the default chain had.

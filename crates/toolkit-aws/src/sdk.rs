@@ -18,13 +18,23 @@
 //!   redirects (hyper never follows them), no proxy, https only, and a
 //!   connect-time DNS guard that applies the public-address policy to the very
 //!   addresses the socket connects to ([`crate::binding::guarded_addresses`]).
+//!   The hyper connector never asks the resolver about a literal IP host, so
+//!   the same policy is applied to a literal host, in every numeric form a
+//!   resolver accepts, before the connector is called
+//!   ([`crate::binding::require_public_host`]), and again to the peer address
+//!   of the socket the response came over (#4593).
 //!
 //! Retries stay with [`crate::ApiClient`] and its [`crate::RetryPolicy`]; the
 //! transport sends exactly one request per call.
 //!
-//! Redaction: no SDK value is ever formatted with `Debug`. SDK errors are
-//! rendered with their `Display` chain and pass through the redacting
-//! [`AwsError`] constructors; the adapters print fixed, value-free `Debug`.
+//! Redaction: no SDK value is ever formatted with `Debug`. Credential and
+//! signing failures keep only their kind (and the provider name): a provider's
+//! or the signer's own text is never read, because a `credential_process`
+//! stderr or a custom provider message can hold an unlabelled secret that
+//! pattern redaction cannot recognise (#4594). Connector and body-read
+//! failures are rendered with their `Display` chain and pass through the
+//! redacting [`AwsError`] constructors; the adapters print fixed, value-free
+//! `Debug`.
 //!
 //! Runtime: the boundary is synchronous, so each adapter drives SDK futures on
 //! an [`SdkRuntime`] (a current-thread tokio runtime). Do not call the adapters
@@ -43,6 +53,7 @@ use aws_sigv4::http_request::{sign, SignableBody, SignableRequest, SigningSettin
 use aws_sigv4::sign::v4;
 use aws_smithy_async::rt::sleep::TokioSleep;
 use aws_smithy_http_client::{tls, Connector};
+use aws_smithy_runtime_api::client::connection::CaptureSmithyConnection;
 use aws_smithy_runtime_api::client::dns::{DnsFuture, ResolveDns, ResolveDnsError};
 use aws_smithy_runtime_api::client::http::{
     HttpConnector, HttpConnectorSettings, SharedHttpConnector,
@@ -56,7 +67,8 @@ use aws_smithy_types::error::display::DisplayErrorContext;
 
 use crate::binding::{
     adopt_credentials, connector_error, credential_error, find_guard_rejection, guarded_addresses,
-    require_https, response_headers, ConnectorFailure, CredentialFailure, SDK_DEFAULT_CHAIN,
+    require_https, require_public_host, require_public_peer, response_headers, ConnectorFailure,
+    CredentialFailure, SDK_DEFAULT_CHAIN,
 };
 use crate::config::ClientConfig;
 use crate::credentials::CredentialsProvider;
@@ -100,7 +112,11 @@ impl fmt::Debug for SdkRuntime {
     }
 }
 
-/// Classify an SDK credential failure without formatting it with `Debug`.
+/// Classify an SDK credential failure by its variant only. Neither the
+/// error's `Display` nor its `Debug` nor its source chain is read: a
+/// `credential_process` failure carries the process's stderr and a custom
+/// provider's message is arbitrary, so either can hold an unlabelled secret
+/// that redaction cannot recognise (#4594).
 fn map_credentials_error(error: &CredentialsError) -> AwsError {
     let kind = match error {
         CredentialsError::CredentialsNotLoaded(_) => CredentialFailure::NotLoaded,
@@ -109,11 +125,7 @@ fn map_credentials_error(error: &CredentialsError) -> AwsError {
         CredentialsError::ProviderError(_) => CredentialFailure::Provider,
         _ => CredentialFailure::Unhandled,
     };
-    credential_error(
-        SDK_DEFAULT_CHAIN,
-        kind,
-        &DisplayErrorContext(error).to_string(),
-    )
+    credential_error(SDK_DEFAULT_CHAIN, kind)
 }
 
 /// [`CredentialsProvider`] over an SDK credentials provider, by default the
@@ -216,13 +228,12 @@ impl<P> fmt::Debug for SigV4Signer<P> {
     }
 }
 
-fn signing_error(error: &(dyn std::error::Error + 'static)) -> AwsError {
+/// A signing failure, by stage only: the signer's error text is built from the
+/// request and the credentials being signed with, so it is never kept.
+fn signing_error(stage: &'static str) -> AwsError {
     AwsError::invalid_config(
         "signing",
-        format!(
-            "the request could not be signed: {}",
-            DisplayErrorContext(error)
-        ),
+        format!("the request could not be signed ({stage})"),
     )
 }
 
@@ -251,7 +262,7 @@ impl<P: CredentialsProvider> Signer for SigV4Signer<P> {
                 .time(now)
                 .settings(SigningSettings::default())
                 .build()
-                .map_err(|error| signing_error(&error))?
+                .map_err(|_| signing_error("signing parameters"))?
                 .into();
             let signable = SignableRequest::new(
                 request.method.as_str(),
@@ -259,9 +270,9 @@ impl<P: CredentialsProvider> Signer for SigV4Signer<P> {
                 request.headers.entries(),
                 SignableBody::Bytes(&request.body),
             )
-            .map_err(|error| signing_error(&error))?;
+            .map_err(|_| signing_error("request"))?;
             let (instructions, _signature) = sign(signable, &params)
-                .map_err(|error| signing_error(&error))?
+                .map_err(|_| signing_error("signature"))?
                 .into_parts();
             instructions.into_parts().0
         };
@@ -403,16 +414,38 @@ fn map_connector_error(error: &ConnectorError) -> AwsError {
     connector_error(kind, &DisplayErrorContext(error).to_string())
 }
 
+/// Refuse a response that came over a socket whose peer is not public, and
+/// poison that connection so it is never reused (#4593).
+///
+/// A backstop: the connector dials only a literal host, already checked by
+/// [`require_public_host`], or the answers of the guarded resolver. It runs once
+/// the response headers are in, because the smithy client exposes the
+/// connection only then; it keeps any response from a non-public peer from
+/// reaching the caller. Connectors that report no connection (test doubles)
+/// skip it.
+fn check_peer(capture: &CaptureSmithyConnection) -> Result<(), AwsError> {
+    let Some(connection) = capture.get() else {
+        return Ok(());
+    };
+    let Some(peer) = connection.remote_addr() else {
+        return Ok(());
+    };
+    require_public_peer(peer.ip()).inspect_err(|_| connection.poison())
+}
+
 /// Send one request and read the whole body within the read timeout.
 async fn exchange(
     connector: SharedHttpConnector,
-    request: SdkHttpRequest,
+    mut request: SdkHttpRequest,
     read_timeout: Duration,
 ) -> Result<HttpResponse, AwsError> {
+    let capture = CaptureSmithyConnection::new();
+    request.add_extension(capture.clone());
     let response = connector
         .call(request)
         .await
         .map_err(|error| map_connector_error(&error))?;
+    check_peer(&capture)?;
     let status = response.status().as_u16();
     let headers = response_headers(response.headers().iter());
     let collected = tokio::time::timeout(
@@ -440,6 +473,7 @@ async fn exchange(
 impl Transport for SdkTransport {
     fn send(&self, request: &HttpRequest) -> Result<HttpResponse, AwsError> {
         require_https(&request.url)?;
+        require_public_host(&request.url)?;
         let sdk_request = to_sdk_request(request)?;
         let connector = self.connector_for(&request.timeouts);
         self.runtime
@@ -458,11 +492,13 @@ mod tests {
     use crate::testing::{FakeProvider, FixedResolver, RecordingSleeper};
     use crate::transport::{ApiRequest, Headers, Method};
     use aws_credential_types::provider::future;
+    use aws_smithy_runtime_api::client::connection::ConnectionMetadata;
     use aws_smithy_runtime_api::client::http::HttpConnectorFuture;
     use aws_smithy_runtime_api::client::orchestrator::HttpResponse as SdkHttpResponse;
     use aws_smithy_runtime_api::http::StatusCode;
     use std::collections::VecDeque;
-    use std::net::IpAddr;
+    use std::net::{IpAddr, SocketAddr};
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::UNIX_EPOCH;
 
     /// 2015-08-30T12:36:00Z, the AWS `SigV4` test-suite time.
@@ -479,8 +515,11 @@ mod tests {
         SdkRuntime::new().expect("runtime")
     }
 
+    /// A fixed SDK credentials outcome.
+    type SdkOutcome = fn() -> Result<SdkCredentials, CredentialsError>;
+
     /// An SDK credentials provider with a fixed outcome.
-    struct FakeSdkProvider(fn() -> Result<SdkCredentials, CredentialsError>);
+    struct FakeSdkProvider(SdkOutcome);
 
     impl fmt::Debug for FakeSdkProvider {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -529,6 +568,76 @@ mod tests {
         ))
     }
 
+    /// A fake secret with no label, prefix or scheme: pattern redaction cannot
+    /// recognise it (redact.rs documents this), so only never taking provider
+    /// text keeps it out of errors (#4594).
+    const BARE_SECRET: &str = "Zq7bW2xNcv8RtYp4LmKd9HsF3gJaE6uQ1oXiT5nB";
+
+    /// A second bare fake secret, carried only in an error's source chain.
+    const BARE_SOURCE_SECRET: &str = "Hk3pV9sLq2WmZx7RtB5nYc8DfG4jAe6uN1oXiTsQ";
+
+    /// A custom provider error that carries bare secrets in its `Display`, its
+    /// derived `Debug` and its source chain.
+    #[derive(Debug)]
+    struct LeakyProviderError {
+        detail: &'static str,
+        source: Option<Box<LeakyProviderError>>,
+    }
+
+    impl fmt::Display for LeakyProviderError {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            write!(f, "custom provider refused: {}", self.detail)
+        }
+    }
+
+    impl std::error::Error for LeakyProviderError {
+        fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+            self.source
+                .as_deref()
+                .map(|inner| inner as &(dyn std::error::Error + 'static))
+        }
+    }
+
+    fn leaky_custom_error() -> LeakyProviderError {
+        LeakyProviderError {
+            detail: BARE_SECRET,
+            source: Some(Box::new(LeakyProviderError {
+                detail: BARE_SOURCE_SECRET,
+                source: None,
+            })),
+        }
+    }
+
+    fn bare_provider_failure() -> Result<SdkCredentials, CredentialsError> {
+        Err(CredentialsError::provider_error(leaky_custom_error()))
+    }
+
+    fn bare_invalid_configuration() -> Result<SdkCredentials, CredentialsError> {
+        Err(CredentialsError::invalid_configuration(leaky_custom_error()))
+    }
+
+    fn bare_unhandled() -> Result<SdkCredentials, CredentialsError> {
+        Err(CredentialsError::unhandled(leaky_custom_error()))
+    }
+
+    fn bare_not_loaded() -> Result<SdkCredentials, CredentialsError> {
+        Err(CredentialsError::not_loaded(leaky_custom_error()))
+    }
+
+    /// Every rendering of `error` is free of both bare secrets.
+    fn assert_no_bare_secret(error: &AwsError) {
+        for shown in [
+            error.to_string(),
+            format!("{error:?}"),
+            format!("{error:#?}"),
+        ] {
+            for secret in [BARE_SECRET, BARE_SOURCE_SECRET] {
+                assert!(!shown.contains(&secret[..12]), "{shown}");
+            }
+        }
+        assert!(std::error::Error::source(error).is_none());
+    }
+
     fn sdk_invalid() -> Result<SdkCredentials, CredentialsError> {
         Err(CredentialsError::invalid_configuration(
             "profile x has no keys",
@@ -566,6 +675,10 @@ mod tests {
     #[test]
     fn sdk_credential_failures_map_onto_the_chain_rules() {
         assert_eq!(
+            sdk_provider(sdk_leaky_failure).load().unwrap_err(),
+            AwsError::provider(SDK_DEFAULT_CHAIN, "the credential provider failed")
+        );
+        assert_eq!(
             sdk_provider(|| Ok(sdk_expired())).load().unwrap_err(),
             AwsError::CredentialsExpired
         );
@@ -579,6 +692,96 @@ mod tests {
             for shown in [error.to_string(), format!("{error:?}")] {
                 assert!(!shown.contains("FAKESECRETVALUE"), "{shown}");
             }
+        }
+    }
+
+    #[test]
+    fn unlabelled_secrets_in_provider_errors_never_reach_the_boundary_error() {
+        // Precondition: redaction alone would let these through.
+        for secret in [BARE_SECRET, BARE_SOURCE_SECRET] {
+            assert_eq!(crate::redact::redact_text(secret), secret);
+        }
+        let cases: [(SdkOutcome, &str); 3] = [
+            (bare_provider_failure, "the credential provider failed"),
+            (
+                bare_invalid_configuration,
+                "invalid credential configuration",
+            ),
+            (bare_unhandled, "unexpected credential error"),
+        ];
+        for (outcome, label) in cases {
+            // The SDK error itself does carry the secrets...
+            let raw = outcome().unwrap_err();
+            let raw_shown = DisplayErrorContext(&raw).to_string();
+            assert!(raw_shown.contains(BARE_SECRET), "{raw_shown}");
+            assert!(raw_shown.contains(BARE_SOURCE_SECRET), "{raw_shown}");
+            // ...the boundary error is the fixed kind plus provider name only.
+            let error = sdk_provider(outcome).load().unwrap_err();
+            assert_eq!(error, AwsError::provider(SDK_DEFAULT_CHAIN, label));
+            assert_no_bare_secret(&error);
+            // The same through a provider chain and through the signer.
+            let chain = crate::credentials::ProviderChain::new()
+                .with(Box::new(sdk_provider(sdk_not_loaded)))
+                .with(Box::new(sdk_provider(outcome)));
+            assert_no_bare_secret(&chain.load().unwrap_err());
+            let mut request = vanilla_request();
+            let signed = SigV4Signer::new(sdk_provider(outcome))
+                .with_clock(suite_time)
+                .sign(&mut request, &suite_scope())
+                .unwrap_err();
+            assert_eq!(signed, error);
+            assert_no_bare_secret(&signed);
+            assert!(request.headers.is_empty());
+        }
+        let not_loaded = sdk_provider(bare_not_loaded).load().unwrap_err();
+        assert_eq!(not_loaded, AwsError::NoCredentials);
+        assert_no_bare_secret(&not_loaded);
+    }
+
+    /// The real aws-config `credential_process` provider over a fake shell
+    /// command (`sh -c`): no AWS call, no network.
+    fn credential_process(command: String) -> SdkCredentialsProvider {
+        SdkCredentialsProvider::from_sdk(
+            &runtime(),
+            aws_config::credential_process::CredentialProcessProvider::new(command),
+        )
+        .with_clock(suite_time)
+    }
+
+    #[test]
+    fn a_failing_credential_process_never_surfaces_its_output() {
+        let stderr_command = format!("printf '%s' '{BARE_SECRET}' >&2; exit 3");
+        // Precondition: aws-config puts the process's stderr in its error.
+        let raw = runtime()
+            .block_on(
+                aws_config::credential_process::CredentialProcessProvider::new(
+                    stderr_command.clone(),
+                )
+                .provide_credentials(),
+            )
+            .unwrap_err();
+        let raw_shown = DisplayErrorContext(&raw).to_string();
+        assert!(raw_shown.contains(BARE_SECRET), "{raw_shown}");
+
+        for command in [
+            stderr_command,
+            // Output that is not valid credential JSON but holds the secret.
+            format!(
+                "printf '%s' '{{\"Version\": 1, \"AccessKeyId\": \"{BARE_SOURCE_SECRET}\", \
+                 \"SecretAccessKey\": \"{BARE_SECRET}\"'"
+            ),
+            format!(
+                "printf '%s' '{{\"Version\": 2, \"AccessKeyId\": \"FAKEKEYID\", \
+                 \"SecretAccessKey\": \"{BARE_SECRET}\"}}'"
+            ),
+        ] {
+            let error = credential_process(command.clone()).load().unwrap_err();
+            assert_eq!(
+                error,
+                AwsError::provider(SDK_DEFAULT_CHAIN, "the credential provider failed"),
+                "{command}"
+            );
+            assert_no_bare_secret(&error);
         }
     }
 
@@ -745,6 +948,9 @@ mod tests {
     struct FakeConnector {
         script: Arc<Mutex<VecDeque<Outcome>>>,
         seen: Arc<Mutex<Seen>>,
+        /// The socket peer the connection reports, as the hyper client does.
+        peer: Option<SocketAddr>,
+        poisoned: Arc<AtomicBool>,
     }
 
     impl fmt::Debug for FakeConnector {
@@ -758,12 +964,34 @@ mod tests {
             Self {
                 script: Arc::new(Mutex::new(outcomes.into())),
                 seen: Arc::new(Mutex::new(Seen::default())),
+                peer: None,
+                poisoned: Arc::new(AtomicBool::new(false)),
             }
+        }
+
+        fn with_peer(mut self, peer: &str) -> Self {
+            self.peer = Some(peer.parse().expect("fixture socket address"));
+            self
         }
     }
 
     impl HttpConnector for FakeConnector {
         fn call(&self, request: SdkHttpRequest) -> HttpConnectorFuture {
+            if let (Some(peer), Some(capture)) =
+                (self.peer, request.extension::<CaptureSmithyConnection>())
+            {
+                let poisoned = Arc::clone(&self.poisoned);
+                capture.set_connection_retriever(move || {
+                    let poisoned = Arc::clone(&poisoned);
+                    Some(
+                        ConnectionMetadata::builder()
+                            .proxied(false)
+                            .remote_addr(peer)
+                            .poison_fn(move || poisoned.store(true, Ordering::SeqCst))
+                            .build(),
+                    )
+                });
+            }
             {
                 let mut seen = self.seen.lock().unwrap();
                 seen.methods.push(request.method().to_string());
@@ -842,6 +1070,117 @@ mod tests {
             "aws_invalid_config"
         );
         assert!(seen.lock().unwrap().methods.is_empty());
+    }
+
+    #[test]
+    fn non_public_literal_ip_urls_are_refused_before_the_connector_is_called() {
+        let connector = FakeConnector::new(vec![Ok((200, vec![], ""))]);
+        let seen = Arc::clone(&connector.seen);
+        let transport = SdkTransport::with_connector(&runtime(), connector);
+        for url in [
+            "https://127.0.0.1/",
+            "https://127.0.0.1:443/x",
+            "https://10.0.0.1/",
+            "https://169.254.169.254/latest/meta-data/",
+            "https://2130706433/",
+            "https://0177.0.0.1/",
+            "https://0x7f.0.0.1/",
+            "https://0xA9FEA9FE/",
+            "https://127.1/",
+            "https://127.0.0.1./",
+            "https://[::1]/",
+            "https://[::]/",
+            "https://[fe80::1]/",
+            "https://[::ffff:127.0.0.1]/",
+            "https://[::ffff:a9fe:a9fe]/",
+            "https://[64:ff9b::a9fe:a9fe]/",
+            "https://[::127.0.0.1]/",
+        ] {
+            let mut request = vanilla_request();
+            request.url = url.to_string();
+            let error = transport.send(&request).unwrap_err();
+            assert_eq!(error.code(), "aws_invalid_config", "{url}");
+            assert!(!error.is_retryable(), "{url}");
+            assert!(error.to_string().contains("non-public address"), "{error}");
+        }
+        for url in [
+            "https://[fe80::1%25eth0]/",
+            "https://256.0.0.1/",
+            "https://127.0.0.%31/",
+        ] {
+            let mut request = vanilla_request();
+            request.url = url.to_string();
+            let error = transport.send(&request).unwrap_err();
+            assert_eq!(error.code(), "aws_invalid_config", "{url}");
+        }
+        assert!(seen.lock().unwrap().methods.is_empty());
+        // A public literal and a name still go out.
+        for url in [
+            "https://52.94.0.10/",
+            "https://logs.us-east-1.amazonaws.com/",
+        ] {
+            let connector = FakeConnector::new(vec![Ok((200, vec![], ""))]);
+            let seen = Arc::clone(&connector.seen);
+            let mut request = vanilla_request();
+            request.url = url.to_string();
+            SdkTransport::with_connector(&runtime(), connector)
+                .send(&request)
+                .expect(url);
+            assert_eq!(seen.lock().unwrap().uris, vec![url]);
+        }
+    }
+
+    #[test]
+    fn the_production_transport_refuses_literal_ips_without_connecting() {
+        // The guarded production stack: the refusal comes before the hyper
+        // connector, which would skip the resolver for a literal IP.
+        let transport =
+            SdkTransport::with_resolver(&runtime(), Arc::new(StaticResolver("52.94.0.10")));
+        for url in [
+            "https://127.0.0.1/",
+            "https://[::1]/",
+            "https://2130706433/",
+            "https://[::ffff:169.254.169.254]/",
+        ] {
+            let mut request = vanilla_request();
+            request.url = url.to_string();
+            let error = transport.send(&request).unwrap_err();
+            assert_eq!(error.code(), "aws_invalid_config", "{url}");
+            assert!(error.to_string().contains("non-public address"), "{error}");
+        }
+        assert!(transport.connectors.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_response_from_a_non_public_socket_peer_is_refused_and_the_connection_poisoned() {
+        for peer in [
+            "127.0.0.1:443",
+            "10.0.0.1:443",
+            "169.254.169.254:443",
+            "[::1]:443",
+            "[::ffff:127.0.0.1]:443",
+            "[fe80::1%2]:443",
+        ] {
+            let connector = FakeConnector::new(vec![Ok((200, vec![], "{}"))]).with_peer(peer);
+            let poisoned = Arc::clone(&connector.poisoned);
+            let transport = SdkTransport::with_connector(&runtime(), connector);
+            let error = transport.send(&vanilla_request()).unwrap_err();
+            assert_eq!(error.code(), "aws_invalid_config", "{peer}");
+            assert!(!error.is_retryable(), "{peer}");
+            assert!(
+                error.to_string().contains("the connection reached"),
+                "{error}"
+            );
+            assert!(poisoned.load(Ordering::SeqCst), "{peer}");
+        }
+        for peer in ["52.94.0.10:443", "[2600:1f18::1]:443"] {
+            let connector = FakeConnector::new(vec![Ok((200, vec![], "{}"))]).with_peer(peer);
+            let poisoned = Arc::clone(&connector.poisoned);
+            let transport = SdkTransport::with_connector(&runtime(), connector);
+            let response = transport.send(&vanilla_request()).expect(peer);
+            assert_eq!(response.status, 200);
+            assert!(!poisoned.load(Ordering::SeqCst), "{peer}");
+        }
     }
 
     #[test]

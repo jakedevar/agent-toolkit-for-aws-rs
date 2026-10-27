@@ -6,13 +6,16 @@
 //! type lives here, so the default, SDK-free build compiles and tests it:
 //!
 //! - how an SDK credential failure becomes an [`AwsError`] (`NoCredentials`
-//!   falls through a [`crate::ProviderChain`]; anything else stops it);
+//!   falls through a [`crate::ProviderChain`]; anything else stops it). The
+//!   provider's own error text is never kept (#4594);
 //! - how SDK credentials are adopted (empty parts and expired credentials are
 //!   refused);
 //! - how an HTTP connector failure becomes a retryable `Connect` / `Timeout`
 //!   or a non-retryable endpoint refusal;
 //! - the connect-time DNS guard that re-applies the public-address policy of
 //!   [`crate::validate_endpoint`] to the very addresses the connection uses;
+//! - the same policy for a literal IP host in a hand-built URL, in every form
+//!   a resolver accepts, and for the socket's peer address (#4593);
 //! - the https-only gate for a hand-built [`crate::HttpRequest`] URL;
 //! - copying wire response headers into [`Headers`].
 //!
@@ -25,11 +28,11 @@
 
 use std::error::Error;
 use std::fmt;
-use std::net::IpAddr;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::time::SystemTime;
 
 use crate::credentials::Credentials;
-use crate::endpoint::{public_addresses, HostResolver};
+use crate::endpoint::{is_non_public, non_public_reason, public_addresses, HostResolver};
 use crate::error::{AwsError, TimeoutPhase};
 use crate::redact::snippet;
 use crate::transport::Headers;
@@ -58,12 +61,16 @@ pub enum CredentialFailure {
 
 /// Map an SDK credential failure onto the boundary error.
 ///
-/// `NotLoaded` becomes `NoCredentials` (the detail is dropped, as botocore's
-/// `Unable to locate credentials` does); every other kind becomes a
-/// `CredentialProvider` error from `provider` whose message is the kind plus
-/// the redacted, truncated `detail`.
+/// `NotLoaded` becomes `NoCredentials` (as botocore's `Unable to locate
+/// credentials`); every other kind becomes a `CredentialProvider` error from
+/// `provider` whose message is a fixed label for the kind.
+///
+/// The provider's own error text is deliberately not taken (#4594): it can
+/// carry anything a `credential_process` printed on stderr or a custom
+/// provider put in its message, and pattern redaction cannot recognise an
+/// unlabelled bare secret. Only the kind and the provider name are reported.
 #[must_use]
-pub fn credential_error(provider: &'static str, kind: CredentialFailure, detail: &str) -> AwsError {
+pub fn credential_error(provider: &'static str, kind: CredentialFailure) -> AwsError {
     let label = match kind {
         CredentialFailure::NotLoaded => return AwsError::NoCredentials,
         CredentialFailure::TimedOut => "the provider timed out",
@@ -71,7 +78,7 @@ pub fn credential_error(provider: &'static str, kind: CredentialFailure, detail:
         CredentialFailure::Provider => "the credential provider failed",
         CredentialFailure::Unhandled => "unexpected credential error",
     };
-    AwsError::provider(provider, with_detail(label, detail))
+    AwsError::provider(provider, label)
 }
 
 /// Adopt credentials handed over by the SDK.
@@ -237,6 +244,177 @@ pub fn require_https(url: &str) -> Result<(), AwsError> {
     Ok(())
 }
 
+/// Apply the public-address policy to a literal IP host in `url` before any
+/// connection is made (#4593).
+///
+/// The hyper connector skips the resolver, and so the DNS guard, for a host
+/// that parses as an IP address, and the system resolver turns the legacy
+/// numeric forms (`2130706433`, `0177.0.0.1`, `0x7f.1`, `127.1`) into
+/// addresses too. So the host is read the way a resolver would read it:
+///
+/// - a bracketed host must be a plain IPv6 address (IPv4-mapped, NAT64 and
+///   IPv4-compatible forms are judged by [`is_non_public`]); a zone identifier
+///   (`[fe80::1%25eth0]`) or anything else in brackets is refused;
+/// - a host whose last label is numeric (decimal, octal with a leading `0`, or
+///   hexadecimal with `0x`) is an IPv4 literal in `inet_aton` form, one to
+///   four parts, optional trailing dot; one that does not parse is refused;
+/// - any other host is a name, left to the connect-time DNS guard. A host with
+///   characters outside letters, digits, `-` and `.` (percent-encoding, `_`,
+///   whitespace) is refused, so this reading and the HTTP client's cannot
+///   differ.
+///
+/// # Errors
+/// `InvalidConfig` (field `endpoint`, not retryable) naming the address and
+/// its block for a non-public literal; `InvalidConfig` (field `url`) for a
+/// host that cannot be read unambiguously. The URL itself is never echoed.
+pub fn require_public_host(url: &str) -> Result<(), AwsError> {
+    match literal_host_address(url)? {
+        Some(address) => require_public_address(address, "the URL names"),
+        None => Ok(()),
+    }
+}
+
+/// Apply the public-address policy to the peer address of the socket a
+/// request actually used: a backstop behind [`require_public_host`] and the
+/// DNS guard, which between them already cover every address the connector
+/// dials.
+///
+/// # Errors
+/// `InvalidConfig` (field `endpoint`, not retryable) for a non-public peer.
+pub fn require_public_peer(address: IpAddr) -> Result<(), AwsError> {
+    require_public_address(address, "the connection reached")
+}
+
+fn require_public_address(address: IpAddr, what: &str) -> Result<(), AwsError> {
+    if is_non_public(address) {
+        return Err(AwsError::invalid_config(
+            "endpoint",
+            format!(
+                "{what} the non-public address {address} ({}). \
+                 Refusing to send credentials to a non-public address",
+                non_public_reason(address)
+            ),
+        ));
+    }
+    Ok(())
+}
+
+fn unreadable_host(reason: &str) -> AwsError {
+    AwsError::invalid_config("url", format!("the URL host {reason}"))
+}
+
+/// The IP address a URL's host names literally, if it is one (see
+/// [`require_public_host`] for the forms recognised).
+///
+/// # Errors
+/// `InvalidConfig` (field `url`) for a host that cannot be read unambiguously.
+pub fn literal_host_address(url: &str) -> Result<Option<IpAddr>, AwsError> {
+    let rest = url.split_once("://").map_or(url, |(_, rest)| rest);
+    let authority_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let authority = &rest[..authority_end];
+    let port_ok = |port: &str| port.len() <= 5 && port.bytes().all(|b| b.is_ascii_digit());
+    if let Some(inner) = authority.strip_prefix('[') {
+        let Some((host, after)) = inner.split_once(']') else {
+            return Err(unreadable_host("has an unclosed bracket"));
+        };
+        if !(after.is_empty() || after.strip_prefix(':').is_some_and(port_ok)) {
+            return Err(unreadable_host(
+                "is followed by something other than a port",
+            ));
+        }
+        if host.contains('%') {
+            return Err(unreadable_host(
+                "carries an IPv6 zone identifier, which a public endpoint never needs",
+            ));
+        }
+        return host
+            .parse::<Ipv6Addr>()
+            .map(|address| Some(IpAddr::V6(address)))
+            .map_err(|_| unreadable_host("is not a valid IPv6 address"));
+    }
+    let (host, port) = match authority.split_once(':') {
+        Some((host, port)) => (host, Some(port)),
+        None => (authority, None),
+    };
+    if port.is_some_and(|port| !port_ok(port)) {
+        return Err(unreadable_host("has a malformed port"));
+    }
+    if host.is_empty()
+        || !host
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'.')
+    {
+        return Err(unreadable_host(
+            "must be made of letters, digits, '-' and '.' only",
+        ));
+    }
+    if !ends_in_number(host) {
+        return Ok(None);
+    }
+    parse_ipv4_literal(host)
+        .map(|address| Some(IpAddr::V4(address)))
+        .ok_or_else(|| unreadable_host("ends in a number but is not a valid IPv4 address"))
+}
+
+/// Whether the last label of `host` is numeric, which makes the whole host an
+/// IPv4 literal to a resolver (the WHATWG URL "ends in a number" rule). No DNS
+/// top-level domain is numeric.
+fn ends_in_number(host: &str) -> bool {
+    let host = host.strip_suffix('.').unwrap_or(host);
+    let last = host.rsplit('.').next().unwrap_or(host);
+    if !last.is_empty() && last.bytes().all(|b| b.is_ascii_digit()) {
+        return true;
+    }
+    last.strip_prefix("0x")
+        .or_else(|| last.strip_prefix("0X"))
+        .is_some_and(|hex| hex.bytes().all(|b| b.is_ascii_hexdigit()))
+}
+
+/// Parse an IPv4 literal the way `inet_aton` does: one to four parts, each
+/// decimal, octal (leading `0`) or hexadecimal (`0x`); the last part fills the
+/// remaining bytes (`127.1` is `127.0.0.1`, `2130706433` is `127.0.0.1`).
+fn parse_ipv4_literal(host: &str) -> Option<Ipv4Addr> {
+    let host = host.strip_suffix('.').unwrap_or(host);
+    let parts = host
+        .split('.')
+        .map(parse_ipv4_number)
+        .collect::<Option<Vec<u64>>>()?;
+    let (&last, init) = parts.split_last()?;
+    if init.len() > 3 || init.iter().any(|&part| part > 255) {
+        return None;
+    }
+    let mut value = 0_u64;
+    for &part in init {
+        value = (value << 8) | part;
+    }
+    // Bits left for the last part: 32, 24, 16 or 8.
+    let width = 32 - 8 * u32::try_from(init.len()).ok()?;
+    if last >> width != 0 {
+        return None;
+    }
+    u32::try_from((value << width) | last)
+        .ok()
+        .map(Ipv4Addr::from)
+}
+
+fn parse_ipv4_number(part: &str) -> Option<u64> {
+    let (digits, radix) =
+        if let Some(hex) = part.strip_prefix("0x").or_else(|| part.strip_prefix("0X")) {
+            if hex.is_empty() {
+                return Some(0);
+            }
+            (hex, 16)
+        } else if let Some(octal) = part.strip_prefix('0').filter(|rest| !rest.is_empty()) {
+            (octal, 8)
+        } else {
+            (part, 10)
+        };
+    if digits.is_empty() || digits.len() > 16 || !digits.chars().all(|c| c.is_digit(radix)) {
+        return None;
+    }
+    u64::from_str_radix(digits, radix).ok()
+}
+
 /// Copy response headers from the wire. Names and values that
 /// [`Headers::insert`] refuses (characters outside its name alphabet, control
 /// characters) are dropped rather than failing the whole response; a repeated
@@ -286,7 +464,7 @@ mod tests {
     #[test]
     fn not_loaded_falls_through_and_other_kinds_stop_the_chain() {
         assert_eq!(
-            credential_error(SDK_DEFAULT_CHAIN, CredentialFailure::NotLoaded, LEAKY),
+            credential_error(SDK_DEFAULT_CHAIN, CredentialFailure::NotLoaded),
             AwsError::NoCredentials
         );
         for (kind, label) in [
@@ -301,26 +479,35 @@ mod tests {
             ),
             (CredentialFailure::Unhandled, "unexpected credential error"),
         ] {
-            let error = credential_error(SDK_DEFAULT_CHAIN, kind, LEAKY);
+            let error = credential_error(SDK_DEFAULT_CHAIN, kind);
             assert_eq!(error.code(), "aws_credential_provider", "{kind:?}");
             assert!(!error.is_retryable(), "{kind:?}");
-            let shown = error.to_string();
-            assert!(shown.contains(SDK_DEFAULT_CHAIN), "{shown}");
-            assert!(shown.contains(label), "{shown}");
-            assert_clean(&error);
+            // The whole message is the fixed label: nothing a provider said.
+            assert_eq!(
+                error.to_string(),
+                format!("credential provider {SDK_DEFAULT_CHAIN} failed: {label}")
+            );
         }
     }
 
     #[test]
-    fn empty_details_leave_only_the_label_and_long_ones_are_truncated() {
-        let bare = credential_error("p", CredentialFailure::Provider, "   ");
+    fn credential_errors_carry_only_the_kind_and_the_provider_name() {
+        let error = credential_error("p", CredentialFailure::Provider);
         assert_eq!(
-            bare.to_string(),
-            "credential provider p failed: the credential provider failed"
+            error,
+            AwsError::CredentialProvider {
+                provider: "p",
+                message: "the credential provider failed".to_string(),
+            }
         );
-        let long = "x".repeat(10 * MAX_DETAIL_CHARS);
-        let shown = credential_error("p", CredentialFailure::Provider, &long).to_string();
-        assert!(shown.len() < 2 * MAX_DETAIL_CHARS, "{}", shown.len());
+        assert_eq!(
+            format!("{error:?}"),
+            format!(
+                "{:?}",
+                AwsError::provider("p", "the credential provider failed")
+            )
+        );
+        assert!(error.source().is_none());
     }
 
     #[test]
@@ -467,6 +654,127 @@ mod tests {
             assert!(!error.to_string().contains("FAKEPASS"), "{error}");
             assert!(!error.to_string().contains("logs.us-east-1"), "{error}");
         }
+    }
+
+    fn literal(url: &str) -> Option<IpAddr> {
+        literal_host_address(url).unwrap_or_else(|error| panic!("{url}: {error}"))
+    }
+
+    #[test]
+    fn literal_hosts_are_read_in_every_form_a_resolver_accepts() {
+        let v4 = |text: &str| Some(text.parse::<IpAddr>().unwrap());
+        for (url, expected) in [
+            ("https://127.0.0.1/", v4("127.0.0.1")),
+            ("https://127.0.0.1:8443/x", v4("127.0.0.1")),
+            ("https://127.0.0.1./", v4("127.0.0.1")),
+            ("https://2130706433/", v4("127.0.0.1")),
+            ("https://0177.0.0.1/", v4("127.0.0.1")),
+            ("https://0x7f.0.0.1/", v4("127.0.0.1")),
+            ("https://0x7F000001/", v4("127.0.0.1")),
+            ("https://017700000001/", v4("127.0.0.1")),
+            ("https://127.1/", v4("127.0.0.1")),
+            ("https://10.1.258/", v4("10.1.1.2")),
+            ("https://169.254.43518/", v4("169.254.169.254")),
+            ("https://0/", v4("0.0.0.0")),
+            ("https://[::1]/", v4("::1")),
+            ("https://[::1]:443/", v4("::1")),
+            ("https://[::ffff:127.0.0.1]/", v4("::ffff:127.0.0.1")),
+            ("https://[::FFFF:7f00:1]/", v4("::ffff:127.0.0.1")),
+            (
+                "https://[64:ff9b::a9fe:a9fe]/",
+                v4("64:ff9b::169.254.169.254"),
+            ),
+            ("https://[2600:1f18::1]/", v4("2600:1f18::1")),
+            ("https://logs.us-east-1.amazonaws.com/", None),
+            ("https://logs.us-east-1.amazonaws.com:443/a?b=c", None),
+            ("https://127.0.0.1.nip.io/", None),
+        ] {
+            assert_eq!(literal(url), expected, "{url}");
+        }
+    }
+
+    #[test]
+    fn non_public_literal_hosts_are_refused_before_connecting() {
+        for (url, block) in [
+            ("https://127.0.0.1/", "loopback"),
+            ("https://2130706433/", "loopback"),
+            ("https://0177.0.0.1/", "loopback"),
+            ("https://0x7f.1/", "loopback"),
+            ("https://127.1/", "loopback"),
+            ("https://10.0.0.1/", "private"),
+            ("https://012.0.0.1/", "private"),
+            ("https://169.254.169.254/", "link-local"),
+            ("https://0xa9.0xfe.0xa9.0xfe/", "link-local"),
+            ("https://2852039166/", "link-local"),
+            ("https://0/", "this network"),
+            ("https://[::1]/", "outside the global unicast range"),
+            ("https://[::]/", "outside the global unicast range"),
+            ("https://[fe80::1]/", "outside the global unicast range"),
+            ("https://[fd00::1]/", "outside the global unicast range"),
+            ("https://[::ffff:127.0.0.1]/", "loopback"),
+            ("https://[::ffff:a9fe:a9fe]/", "link-local"),
+            ("https://[64:ff9b::10.0.0.1]/", "private"),
+            ("https://[::127.0.0.1]/", "outside the global unicast range"),
+        ] {
+            let error = require_public_host(url).unwrap_err();
+            assert_eq!(error.code(), "aws_invalid_config", "{url}");
+            assert!(!error.is_retryable(), "{url}");
+            let shown = error.to_string();
+            assert!(shown.contains("non-public address"), "{url}: {shown}");
+            assert!(shown.contains(block), "{url}: {shown}");
+        }
+        for url in [
+            "https://52.94.0.10/",
+            "https://[2600:1f18::1]:443/",
+            "https://[::ffff:52.94.0.10]/",
+            "https://[64:ff9b::52.94.0.10]/",
+            "https://logs.us-east-1.amazonaws.com/",
+        ] {
+            assert!(require_public_host(url).is_ok(), "{url}");
+        }
+    }
+
+    #[test]
+    fn hosts_that_cannot_be_read_unambiguously_are_refused() {
+        for url in [
+            "https://[fe80::1%25eth0]/",
+            "https://[fe80::1%eth0]/",
+            "https://[::1/",
+            "https://[::1]x/",
+            "https://[v1.fe80]/",
+            "https://[127.0.0.1]/",
+            "https://::1/",
+            "https:///",
+            "https://127.0.0.%31/",
+            "https://evil_host.amazonaws.com/",
+            "https://256.0.0.1/",
+            "https://1.2.3.4.5/",
+            "https://4294967296/",
+            "https://08.0.0.1/",
+            "https://example.0x/x",
+            "https://.1/",
+            "https://host:44a/",
+            "https://host:123456/",
+        ] {
+            let error = literal_host_address(url).unwrap_err();
+            assert_eq!(error.code(), "aws_invalid_config", "{url}");
+            assert!(require_public_host(url).is_err(), "{url}");
+        }
+    }
+
+    #[test]
+    fn non_public_socket_peers_are_refused() {
+        for peer in ["127.0.0.1", "10.0.0.1", "::1", "::ffff:169.254.169.254"] {
+            let error = require_public_peer(peer.parse().unwrap()).unwrap_err();
+            assert_eq!(error.code(), "aws_invalid_config", "{peer}");
+            assert!(!error.is_retryable(), "{peer}");
+            assert!(
+                error.to_string().contains("the connection reached"),
+                "{error}"
+            );
+        }
+        assert!(require_public_peer("52.94.0.10".parse().unwrap()).is_ok());
+        assert!(require_public_peer("2600:1f18::1".parse().unwrap()).is_ok());
     }
 
     #[test]
