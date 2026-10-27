@@ -6,6 +6,7 @@
 
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, VecDeque};
+use std::fmt;
 use std::net::IpAddr;
 use std::rc::Rc;
 use std::time::Duration;
@@ -107,11 +108,26 @@ impl Sleeper for RecordingSleeper {
 }
 
 /// A credentials provider with a fixed outcome that counts its loads.
-#[derive(Debug)]
+///
+/// `Debug` never shows the fixture key material.
 pub struct FakeProvider {
     name: &'static str,
     outcome: Result<(String, String), AwsError>,
     calls: Rc<Cell<u32>>,
+}
+
+impl fmt::Debug for FakeProvider {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let outcome = match &self.outcome {
+            Ok(_) => "Ok([REDACTED])".to_string(),
+            Err(error) => format!("Err({error:?})"),
+        };
+        f.debug_struct("FakeProvider")
+            .field("name", &self.name)
+            .field("outcome", &format_args!("{outcome}"))
+            .field("calls", &self.calls.get())
+            .finish()
+    }
 }
 
 impl FakeProvider {
@@ -282,6 +298,21 @@ impl Signer for FakeSigner {
 mod tests {
     use super::*;
     use crate::transport::{Method, Timeouts};
+
+    #[test]
+    fn fake_provider_debug_never_shows_fixture_keys() {
+        let provider = FakeProvider::with_keys("env", "AKIAFAKEFAKEFAKEFAKE", "FAKE-SECRET-VALUE");
+        let shown = format!("{provider:?}");
+        assert!(!shown.contains("FAKE"), "{shown}");
+        assert!(shown.contains("Ok([REDACTED])"));
+        let failing = FakeProvider::failing(
+            "env",
+            AwsError::Connect {
+                message: "token=FAKE-TOKEN-VALUE".to_string(),
+            },
+        );
+        assert!(!format!("{failing:?}").contains("FAKE"));
+    }
 
     fn request() -> HttpRequest {
         HttpRequest {

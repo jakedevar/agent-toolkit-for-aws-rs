@@ -12,7 +12,7 @@ use std::fmt;
 
 use toolkit_core::ToolkitError;
 
-use crate::redact::{is_secret_name, redact_text, sanitize_path, snippet, REDACTED};
+use crate::redact::{is_secret_name, redact_text, sanitize_path, snippet, Scrubbed, REDACTED};
 
 /// Longest response message kept in a [`ServiceError`].
 pub const MAX_MESSAGE_CHARS: usize = 1024;
@@ -66,8 +66,9 @@ impl fmt::Display for TimeoutPhase {
 /// An HTTP-level error response from a service.
 ///
 /// The request path is stored sanitized and the message redacted and
-/// truncated; the raw response body is never kept.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// truncated; the raw response body is never kept. `Debug` and `Display`
+/// scrub every field again, so no constructor path can print a secret.
+#[derive(Clone, PartialEq, Eq)]
 pub struct ServiceError {
     method: String,
     path: String,
@@ -89,7 +90,7 @@ impl ServiceError {
         request_id: Option<&str>,
     ) -> Self {
         Self {
-            method: method.to_ascii_uppercase(),
+            method: snippet(&method.to_ascii_uppercase(), 16),
             path: sanitize_path(path),
             status,
             code: code.filter(|c| !c.is_empty()).map(|c| snippet(c, 128)),
@@ -157,16 +158,39 @@ impl fmt::Display for ServiceError {
     /// `<METHOD> <sanitized path> failed (<status>)[: <code>]`; like the Python
     /// `ApiError`, the message is not part of the one-line form.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} {} failed ({})", self.method, self.path, self.status)?;
+        write!(
+            f,
+            "{} {} failed ({})",
+            Scrubbed(&self.method),
+            Scrubbed(&sanitize_path(&self.path)),
+            self.status
+        )?;
         if let Some(code) = &self.code {
-            write!(f, ": {code}")?;
+            write!(f, ": {}", Scrubbed(code))?;
         }
         Ok(())
     }
 }
 
+impl fmt::Debug for ServiceError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ServiceError")
+            .field("method", &Scrubbed(&self.method))
+            .field("path", &Scrubbed(&sanitize_path(&self.path)))
+            .field("status", &self.status)
+            .field("code", &self.code.as_deref().map(Scrubbed))
+            .field("message", &Scrubbed(&self.message))
+            .field("request_id", &self.request_id.as_deref().map(Scrubbed))
+            .finish()
+    }
+}
+
 /// The one error type of the AWS boundary.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// The variants carry public strings, so a caller can build one by hand with
+/// a raw secret. `Display` and `Debug` therefore scrub every string field
+/// through [`redact_text`] again; the constructors scrub once more up front.
+#[derive(Clone, PartialEq, Eq)]
 pub enum AwsError {
     /// A region, endpoint, profile, timeout or request setting is invalid.
     InvalidConfig {
@@ -322,7 +346,7 @@ impl fmt::Display for AwsError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidConfig { field, reason } => {
-                write!(f, "invalid {field}: {}", redact_text(reason))
+                write!(f, "invalid {}: {}", Scrubbed(field), Scrubbed(reason))
             }
             Self::CredentialArgument { flag } => write!(
                 f,
@@ -333,13 +357,18 @@ impl fmt::Display for AwsError {
             ),
             Self::NoCredentials => f.write_str("Unable to locate credentials"),
             Self::PartialCredentials { missing } => {
-                write!(f, "Partial credentials found: missing {missing}")
+                write!(
+                    f,
+                    "Partial credentials found: missing {}",
+                    Scrubbed(missing)
+                )
             }
             Self::CredentialsExpired => f.write_str("The AWS credentials have expired"),
             Self::CredentialProvider { provider, message } => write!(
                 f,
-                "credential provider {provider} failed: {}",
-                redact_text(message)
+                "credential provider {} failed: {}",
+                Scrubbed(provider),
+                Scrubbed(message)
             ),
             Self::Connect { message } => {
                 write!(
@@ -358,6 +387,52 @@ impl fmt::Display for AwsError {
             Self::InvalidResponse { reason } => {
                 write!(f, "invalid response: {}", redact_text(reason))
             }
+        }
+    }
+}
+
+impl fmt::Debug for AwsError {
+    /// Same redaction contract as `Display`, whatever constructor was used.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidConfig { field, reason } => f
+                .debug_struct("InvalidConfig")
+                .field("field", &Scrubbed(field))
+                .field("reason", &Scrubbed(reason))
+                .finish(),
+            Self::CredentialArgument { flag } => f
+                .debug_struct("CredentialArgument")
+                .field("flag", &Scrubbed(&snippet(flag, 64)))
+                .finish(),
+            Self::NoCredentials => f.write_str("NoCredentials"),
+            Self::PartialCredentials { missing } => f
+                .debug_struct("PartialCredentials")
+                .field("missing", &Scrubbed(missing))
+                .finish(),
+            Self::CredentialsExpired => f.write_str("CredentialsExpired"),
+            Self::CredentialProvider { provider, message } => f
+                .debug_struct("CredentialProvider")
+                .field("provider", &Scrubbed(provider))
+                .field("message", &Scrubbed(message))
+                .finish(),
+            Self::Connect { message } => f
+                .debug_struct("Connect")
+                .field("message", &Scrubbed(message))
+                .finish(),
+            Self::Timeout { phase, message } => f
+                .debug_struct("Timeout")
+                .field("phase", phase)
+                .field("message", &Scrubbed(message))
+                .finish(),
+            Self::Service(service) => f.debug_tuple("Service").field(service).finish(),
+            Self::Pagination { reason } => f
+                .debug_struct("Pagination")
+                .field("reason", &Scrubbed(reason))
+                .finish(),
+            Self::InvalidResponse { reason } => f
+                .debug_struct("InvalidResponse")
+                .field("reason", &Scrubbed(reason))
+                .finish(),
         }
     }
 }
@@ -422,11 +497,11 @@ pub fn render_failure_with(
     let head = format!("Failed to {}\n\n", redact_text(action));
     match error {
         AwsError::Service(service) => {
-            let code = service.code().unwrap_or("ClientError");
+            let code = redact_text(service.code().unwrap_or("ClientError"));
             let message = if service.message().is_empty() {
                 error.to_string()
             } else {
-                service.message().to_string()
+                redact_text(service.message())
             };
             let (causes, steps) = guidance.map_or((DEFAULT_CAUSES, DEFAULT_TROUBLESHOOTING), |g| {
                 (g.possible_causes, g.troubleshooting)
@@ -490,7 +565,7 @@ fn attempted_block(attempted: &[(&str, &str)]) -> String {
             } else {
                 snippet(value, 512)
             };
-            format!("- {}: {shown}", redact_text(key))
+            format!("- {}: {shown}", snippet(key, 64))
         })
         .collect();
     if lines.is_empty() {
@@ -507,7 +582,7 @@ fn numbered(label: &str, items: &[&str]) -> String {
     let body: Vec<String> = items
         .iter()
         .enumerate()
-        .map(|(index, item)| format!("{}. {item}", index + 1))
+        .map(|(index, item)| format!("{}. {}", index + 1, redact_text(item)))
         .collect();
     format!("\n{label}\n{}\n", body.join("\n"))
 }
@@ -613,6 +688,182 @@ mod tests {
             built.to_string(),
             "credential provider env failed: [REDACTED] rejected"
         );
+    }
+
+    /// Synthetic hostile messages: (text, marker that must never appear).
+    const HOSTILE: &[(&str, &str)] = &[
+        (
+            "dial https://FAKE-USER:FAKE-URL-PASSWORD@logs.amazonaws.com failed",
+            "FAKE-URL-PASSWORD",
+        ),
+        (r#"{"password":"aa\"FAKE-TAIL-LEAK"}"#, "FAKE-TAIL-LEAK"),
+        (
+            "{\"password\":\n\"FAKE-JSON-PASSWORD\"}",
+            "FAKE-JSON-PASSWORD",
+        ),
+        ("token=FAKE-TOKEN-VALUE", "FAKE-TOKEN-VALUE"),
+    ];
+
+    /// Every variant that carries a raw string, built by hand (no constructor).
+    fn hand_built(message: &str) -> Vec<AwsError> {
+        vec![
+            AwsError::InvalidConfig {
+                field: "region",
+                reason: message.to_string(),
+            },
+            AwsError::CredentialArgument {
+                flag: message.to_string(),
+            },
+            AwsError::CredentialProvider {
+                provider: "env",
+                message: message.to_string(),
+            },
+            AwsError::Connect {
+                message: message.to_string(),
+            },
+            AwsError::Timeout {
+                phase: TimeoutPhase::Read,
+                message: message.to_string(),
+            },
+            AwsError::Pagination {
+                reason: message.to_string(),
+            },
+            AwsError::InvalidResponse {
+                reason: message.to_string(),
+            },
+        ]
+    }
+
+    #[test]
+    fn hostile_messages_never_reach_display_conversion_or_failure_blocks() {
+        for &(text, leak) in HOSTILE {
+            for error in hand_built(text).into_iter().chain([
+                AwsError::connect(text),
+                AwsError::provider("env", text),
+                AwsError::timeout(TimeoutPhase::Connect, text),
+                AwsError::invalid_config("endpoint", text),
+                AwsError::pagination(text),
+                AwsError::invalid_response(text),
+            ]) {
+                let shown = error.to_string();
+                assert!(!shown.contains(leak), "{error:?}: {shown}");
+                let converted: ToolkitError = error.clone().into();
+                assert!(
+                    !converted.message().contains(leak),
+                    "{}",
+                    converted.message()
+                );
+                let block = render_failure("do it", &error, &[("p", text)]);
+                assert!(!block.contains(leak), "{block}");
+                // The scrubbed text is stable under a second pass (a flag is
+                // truncated to 64 characters, which can cut a redaction short).
+                if !matches!(error, AwsError::CredentialArgument { .. }) {
+                    assert_eq!(redact_text(&shown), shown);
+                    assert_eq!(redact_text(converted.message()), converted.message());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn connect_message_with_url_userinfo_is_stripped_in_every_path() {
+        let message = "proxy https://FAKE-USER:FAKE-URL-PASSWORD@logs.amazonaws.com refused";
+        let error = AwsError::connect(message);
+        let expected =
+            "could not connect to the endpoint: proxy https://[REDACTED]@logs.amazonaws.com refused";
+        assert_eq!(error.to_string(), expected);
+        let converted: ToolkitError = error.clone().into();
+        assert_eq!(converted.message(), expected);
+        let block = render_failure("list", &error, &[]);
+        assert!(block.contains("https://[REDACTED]@logs.amazonaws.com"));
+        assert!(!block.contains("FAKE-URL-PASSWORD") && !block.contains("FAKE-USER"));
+        let hand = AwsError::Connect {
+            message: message.to_string(),
+        };
+        assert_eq!(hand.to_string(), expected);
+    }
+
+    #[test]
+    fn non_json_service_bodies_are_scrubbed_in_message_display_and_block() {
+        for &(body, leak) in HOSTILE {
+            let service = ServiceError::new("post", "/x", 500, Some("Oops"), body, Some("r-1"));
+            assert!(!service.message().contains(leak), "{}", service.message());
+            let error = AwsError::service(service);
+            assert!(!error.to_string().contains(leak));
+            let block = render_failure("act", &error, &[]);
+            assert!(!block.contains(leak), "{block}");
+            assert!(!format!("{error:?}").contains(leak));
+            // Message is already scrubbed: a second pass changes nothing.
+            let AwsError::Service(inner) = &error else {
+                panic!("expected service error");
+            };
+            assert_eq!(redact_text(inner.message()), inner.message());
+        }
+        let url = ServiceError::new(
+            "GET",
+            "/x",
+            502,
+            None,
+            "bad gateway via http://FAKE-USER:FAKE-URL-PASSWORD@10.0.0.1:8080/",
+            None,
+        );
+        assert_eq!(
+            url.message(),
+            "bad gateway via http://[REDACTED]@10.0.0.1:8080/"
+        );
+    }
+
+    #[test]
+    fn debug_never_shows_raw_secrets_for_direct_variants() {
+        for &(text, leak) in HOSTILE {
+            for error in hand_built(text) {
+                let debug = format!("{error:?}");
+                let pretty = format!("{error:#?}");
+                assert!(!debug.contains(leak), "{debug}");
+                assert!(!pretty.contains(leak), "{pretty}");
+            }
+        }
+        let error = AwsError::Connect {
+            message: "token=FAKE-TOKEN-VALUE".into(),
+        };
+        assert_eq!(
+            format!("{error:?}"),
+            r#"Connect { message: "token=[REDACTED]" }"#
+        );
+        assert_eq!(format!("{:?}", AwsError::NoCredentials), "NoCredentials");
+    }
+
+    #[test]
+    fn debug_of_service_errors_is_scrubbed_even_through_a_box() {
+        let error = AwsError::service(ServiceError::new(
+            "POST",
+            "/api/launches/3f2504e0-4f89-41d3-9a0c-0305e82c3301?token=FAKE-QUERY-TOKEN",
+            400,
+            Some("password=FAKE-CODE-VALUE"),
+            "token=FAKE-TOKEN-VALUE",
+            Some("secret=FAKE-REQUEST-ID"),
+        ));
+        let debug = format!("{error:?}");
+        for leak in [
+            "FAKE-QUERY-TOKEN",
+            "FAKE-CODE-VALUE",
+            "FAKE-TOKEN-VALUE",
+            "FAKE-REQUEST-ID",
+            "3f2504e0",
+        ] {
+            assert!(!debug.contains(leak), "{debug}");
+        }
+        assert!(debug.contains("/api/launches/<id>"));
+    }
+
+    #[test]
+    fn guidance_text_is_scrubbed_too() {
+        let guidance = Guidance {
+            possible_causes: &["token=FAKE-CAUSE-VALUE"],
+            troubleshooting: &["password: FAKE-STEP-VALUE"],
+        };
+        let text = render_failure_with("act", &service(400, Some("X")), &[], Some(&guidance));
+        assert!(!text.contains("FAKE-"), "{text}");
     }
 
     #[test]

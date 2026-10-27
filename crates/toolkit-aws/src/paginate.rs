@@ -9,6 +9,7 @@
 //! [`next_token_from`] themselves.
 
 use std::collections::HashSet;
+use std::fmt;
 
 use toolkit_core::Json;
 
@@ -21,12 +22,24 @@ pub const DEFAULT_MAX_PAGES: usize = 1000;
 pub const DEFAULT_MAX_ITEMS: usize = 100_000;
 
 /// One page of results.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// `Debug` shows the item count and the token length only: items may hold
+/// sensitive data and tokens are opaque cursors.
+#[derive(Clone, PartialEq, Eq)]
 pub struct Page<T> {
     /// Items on this page.
     pub items: Vec<T>,
     /// Token for the next page; `None` or empty ends the walk.
     pub next_token: Option<String>,
+}
+
+impl<T> fmt::Debug for Page<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Page")
+            .field("items", &self.items.len())
+            .field("next_token_len", &self.next_token.as_ref().map(String::len))
+            .finish()
+    }
 }
 
 /// Caps on one pagination walk.
@@ -116,6 +129,17 @@ pub fn next_token_from(response: &Json, key: &str) -> Result<Option<String>, Aws
 mod tests {
     use super::*;
     use toolkit_core::parse_json;
+
+    #[test]
+    fn page_debug_shows_counts_not_items_or_tokens() {
+        let page = Page {
+            items: vec!["FAKE-ITEM-SECRET".to_string()],
+            next_token: Some("FAKE-CURSOR-TOKEN".to_string()),
+        };
+        let shown = format!("{page:?}");
+        assert!(!shown.contains("FAKE-"), "{shown}");
+        assert!(shown.contains("items: 1") && shown.contains("next_token_len: Some(17)"));
+    }
 
     fn page(items: &[u32], next: Option<&str>) -> Page<u32> {
         Page {

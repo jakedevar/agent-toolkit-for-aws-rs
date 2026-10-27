@@ -6,6 +6,9 @@
 //! URLs. Credentials are never read here.
 
 use std::collections::BTreeMap;
+use std::fmt;
+
+use crate::redact::{is_secret_name, Scrubbed, REDACTED};
 
 /// Source of environment variables.
 pub trait Env {
@@ -24,8 +27,24 @@ impl Env for ProcessEnv {
 }
 
 /// A fixed in-memory environment for tests and for callers that pre-resolve.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+///
+/// `Debug` hides values of secret-looking names and scrubs the others.
+#[derive(Clone, Default, PartialEq, Eq)]
 pub struct MapEnv(BTreeMap<String, String>);
+
+impl fmt::Debug for MapEnv {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut map = f.debug_map();
+        for (name, value) in &self.0 {
+            if is_secret_name(name) {
+                map.entry(&Scrubbed(name), &REDACTED);
+            } else {
+                map.entry(&Scrubbed(name), &Scrubbed(value));
+            }
+        }
+        map.finish()
+    }
+}
 
 impl MapEnv {
     /// An empty environment.
@@ -64,6 +83,19 @@ mod tests {
         assert_eq!(env.var("A").as_deref(), Some("1"));
         assert_eq!(env.var("B").as_deref(), Some(""));
         assert_eq!(env.var("C"), None);
+    }
+
+    #[test]
+    fn map_env_debug_hides_secret_names_and_scrubs_values() {
+        let env = MapEnv::new()
+            .with("AWS_SECRET_ACCESS_KEY", "FAKE-SECRET-VALUE")
+            .with("MY_TOKEN", "FAKE-TOKEN-VALUE")
+            .with("NOTE", "see https://FAKE-USER:FAKE-PW@h.example/ now")
+            .with("AWS_REGION", "us-east-1");
+        let shown = format!("{env:?}");
+        assert!(!shown.contains("FAKE-"), "{shown}");
+        assert!(shown.contains("\"AWS_REGION\": \"us-east-1\""));
+        assert!(shown.contains("\"MY_TOKEN\": \"[REDACTED]\""));
     }
 
     #[test]

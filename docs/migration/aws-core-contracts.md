@@ -16,7 +16,7 @@ A new crate `crates/toolkit-aws` depending only on `toolkit-core` and `std`
 | Module | Contract | Python evidence |
 | --- | --- | --- |
 | `config` | `resolve_region` (flag > `AWS_REGION` > `AWS_DEFAULT_REGION` > `us-east-1`, empty = unset, profile region ignored), `resolve_profile` (`AWS_PROFILE`, credentials only), `resolve_endpoint` (flag > `AWS_ENDPOINT_URL_<SERVICE>` > `AWS_ENDPOINT_URL`), `ClientConfig::resolve` | `di_region.py`, `di_session.py` |
-| `endpoint` | `validate_endpoint`: https only, no userinfo/query/fragment, restricted host characters, host allowlist (`.api.aws`, `.amazonaws.com`), DNS answer must be public (injected `HostResolver`); `Endpoint::for_service` synthesizes `https://<service>.<region>.amazonaws.com` after label/region validation | `launch_config._validate_base_url` |
+| `endpoint` | `validate_endpoint`: https only, no userinfo/query/fragment, restricted host characters, host allowlist (`.api.aws`, `.amazonaws.com`), every DNS answer must be public per the explicit range policy below (injected `HostResolver`); `Endpoint::for_service` synthesizes `https://<service>.<region>.amazonaws.com` after label/region validation | `launch_config._validate_base_url` |
 | `credentials` | `CredentialsProvider` seam; `ProviderChain` with botocore rules (first success wins, `NoCredentials` falls through, any other error stops); `Credentials`/`Secret` with fixed redacted `Debug`; `reject_credential_arguments`; `STANDARD_CHAIN_STAGES` pins the stage names an SDK adapter must report | `di_session.build_client`, absence of credential arguments everywhere |
 | `retry` | `RetryPolicy` (default 3 retries, `Adaptive` label, 1 s base, 20 s cap, hard cap 10 retries), `run_with_retry`, injected `Sleeper`/`Jitter` | `launch_api_client.py` (`max_attempts: 3, mode: adaptive`) |
 | `transport` | `ApiRequest` → `HttpRequest`, `Transport` and `Signer` seams, `Timeouts` (default 60 s; the launch slice sets 120 s), header-injection and path validation, percent-encoded queries, redacting `Debug` | `launch_api_client.py` timeouts |
@@ -47,11 +47,75 @@ No `toolkit` subcommand is added: this is a library for the domain slices.
 | --- | --- |
 | Region must look like an AWS region name | A typo fails early instead of building a bogus host |
 | Endpoint overrides reject userinfo, query and fragment; path must not contain `..`/whitespace/backslash; port must be 1–65535 | Credentials in URLs and URL-confusion tricks; Python accepted them |
-| Carrier-grade NAT (`100.64/10`), multicast, unspecified and IPv4-mapped IPv6 ranges are treated as non-public in the DNS check | Wider than Python's `is_private/loopback/link_local/reserved` |
+| The DNS check uses an explicit non-public range policy (see "Non-public address policy" below): the special-purpose IPv4 blocks of RFC 6890, and for IPv6 everything outside `2000::/3` plus the special-purpose blocks inside it; IPv4-mapped and NAT64 addresses are judged by their embedded IPv4 address, not rejected wholesale | Wider than Python's `is_private/loopback/link_local/reserved` |
+| `AWS_PROFILE` is limited to 128 bytes drawn from ASCII letters, digits and `. _ @ + / -`; an empty value is "unset"; any other value is `aws_invalid_config` and is never echoed | **Intentional compatibility decision (#4473).** `di_session.py` passed `AWS_PROFILE` straight to `boto3.Session`. This boundary never reads the shared config or credentials files, so it cannot know which names the SDK accepts. It accepts the conventional profile-name alphabet (default, SSO and role-profile naming schemes, `name/with/slashes`, `user@host` styles) and refuses the rest so a hostile `AWS_PROFILE` cannot smuggle control characters, whitespace or secret-looking text into logs and later file lookups. The deferred SDK adapter (#4463) may relax this to what the SDK supports; widening is backward compatible, narrowing is not. |
 | Failure-block troubleshooting step 2 reads "Verify the identifiers and parameters passed in the request" | The Python text named CloudWatch-specific identifiers; domain slices pass tailored `Guidance` |
 | Service errors keep a redacted, truncated (1024 char) message; raw bodies are never kept | The Python `ApiError` kept the raw body on the exception |
 | `max_attempts` is expressed as `max_retries` (3 retries = 4 attempts) | botocore's `Config(retries=...)` counts retries, so the Python made four attempts |
 | `Adaptive` is carried as a label; the runner applies the standard schedule | The client-side rate limiter belongs to the SDK binding |
+
+## Non-public address policy (#4470)
+
+`validate_endpoint` with `EndpointPolicy::aws_public()` asks the injected
+`HostResolver` for every address of the host and rejects the host if **any**
+answer is non-public. `endpoint::is_non_public` is an explicit range policy,
+not a list of std predicates:
+
+| Family | Non-public | Public |
+| --- | --- | --- |
+| IPv4 | `0.0.0.0/8`, `10/8`, `100.64/10` (CGNAT), `127/8`, `169.254/16`, `172.16/12`, `192.0.0/24`, `192.0.2/24`, `192.88.99/24`, `192.168/16`, `198.18/15` (benchmarking), `198.51.100/24`, `203.0.113/24`, `224/4` (multicast) and `240/4` (reserved, includes `255.255.255.255`) | everything else |
+| IPv6 | everything outside `2000::/3` (so `::`, `::1`, `::2`-style reserved, IPv4-compatible `::/96`, `100::/64`, `5f00::/16`, `fc00::/7`, `fe80::/10`, `fec0::/10`, `ff00::/8`, `64:ff9b:1::/48`), and inside it `2001::/23` (IETF assignments, Teredo, benchmarking), `2001:db8::/32`, `2002::/16` (6to4) and `3fff::/20` (documentation) | the rest of `2000::/3` |
+| IPv4-mapped IPv6 (`::ffff:a.b.c.d`) | judged by `a.b.c.d` with the IPv4 rules | same |
+| NAT64 `64:ff9b::/96` | judged by the embedded IPv4 address | same (a translated public address stays public) |
+
+The tables are the public constants `NON_PUBLIC_V4` and
+`NON_PUBLIC_V6_IN_GLOBAL`; the rejection message names the address and the
+block. Tests pin both edges of every IPv4 block and their public neighbours,
+representative and edge IPv6 addresses, mapped and NAT64 forms, mixed answers
+(one non-public answer in any position rejects) and real public AWS answers.
+The policy deliberately rejects *more* than Python's `ipaddress` predicates
+(for example `198.18.0.1`, `224.0.0.1`, `2001:db8::1`); it never accepts less.
+The DNS-rebinding residual between the check and the SDK connection is
+unchanged.
+
+## Error redaction contract (#4468, #4469)
+
+One scrubber, `redact::redact_text`, backs every error path: `AwsError`
+`Display` and `Debug`, the `From<AwsError> for ToolkitError` conversion,
+`ServiceError` (message snippet, one-line `Display`, `Debug`),
+`render_failure` (action, error text, attempted parameters, guidance lines) and
+every request/response/env/provider `Debug`. It
+
+- strips `user:password@` from every `scheme://` URL embedded anywhere in the
+  text (also in the JSON-escaped `:\/\/` form);
+- redacts labelled values (`password`, `token`, `secret`, `authorization`,
+  `x-amz-*`, ...) in plain `key=value`, `key: value`, `key => value`, JSON and
+  JSON-embedded-in-a-string syntax, with any whitespace (newlines included) or
+  `\n`/`\t` escapes around the separator, and with escaped quotes inside
+  strings honoured (`"aa\"tail"` is one value);
+- when the end of a value is uncertain (unterminated string, stray text glued to
+  the closing quote) redacts to the end of the input - hiding too much is the
+  safe error;
+- is idempotent, so scrubbing at construction and again at display is stable.
+
+`snippet` scrubs *before* it flattens control characters (whitespace controls
+become a space, other controls `?`) and truncates, so flattening cannot create
+or hide a match.
+
+`Debug` is enforced at formatting time, independent of how a value was built.
+`AwsError` and `ServiceError` have hand-written `Debug` that scrubs every string
+field (so `RetryFailure`, `Attempted` and any struct holding them are covered).
+`Headers` `Debug` hides the value of any header whose name is secret-bearing
+(`hides_header_value`: the exact sensitive set, any `secret/token/password/
+signature/authorization/cookie/credential/api_key` marker, and `key`, `auth`,
+`session`, `pass`, `bearer`, `private`, `cred`) and scrubs every other value.
+`ApiRequest`/`HttpRequest`/`HttpResponse` print scrubbed URLs and headers and
+body *lengths* only; `Page` prints counts only; `MapEnv` hides secret-named
+values and scrubs the rest; `FakeProvider` never prints its fixture keys.
+
+Known limit, unchanged: a bare 40-character secret with no label cannot be told
+from an identifier and is not recognized, which is why the crate never formats a
+secret value in the first place (`Secret`/`Credentials` print a fixed marker).
 
 ## Residual: SDK binding (needs a follow-up)
 

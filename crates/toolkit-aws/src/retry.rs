@@ -303,6 +303,32 @@ mod tests {
     use crate::error::{ServiceError, TimeoutPhase};
     use crate::testing::RecordingSleeper;
 
+    #[test]
+    fn retry_failure_debug_scrubs_nested_hand_built_errors() {
+        let failure = RetryFailure {
+            error: AwsError::Connect {
+                message: "dial https://FAKE-USER:FAKE-URL-PASSWORD@x.amazonaws.com token=FAKE-TOKEN-VALUE"
+                    .to_string(),
+            },
+            attempts: 4,
+        };
+        for shown in [
+            format!("{failure:?}"),
+            format!("{failure:#?}"),
+            failure.to_string(),
+        ] {
+            assert!(!shown.contains("FAKE-"), "{shown}");
+        }
+        assert!(format!("{failure:?}").contains("attempts: 4"));
+        let attempted = Attempted {
+            value: AwsError::Pagination {
+                reason: "{\"password\":\"aa\\\"FAKE-TAIL-LEAK\"}".to_string(),
+            },
+            attempts: 2,
+        };
+        assert!(!format!("{attempted:?}").contains("FAKE-TAIL-LEAK"));
+    }
+
     fn status(code: u16) -> AwsError {
         AwsError::service(ServiceError::new("GET", "/x", code, None, "", None))
     }

@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use crate::endpoint::Endpoint;
 use crate::error::AwsError;
-use crate::redact::{is_sensitive_header, redact_url, REDACTED};
+use crate::redact::{hides_header_value, redact_url, Scrubbed, REDACTED};
 
 /// Longest connect or read timeout accepted.
 pub const MAX_TIMEOUT: Duration = Duration::from_secs(3600);
@@ -99,7 +99,8 @@ impl Timeouts {
 }
 
 /// HTTP headers: names are lowercased, a later insert replaces an earlier one,
-/// and values of sensitive headers are hidden by `Debug`.
+/// and `Debug` hides the value of every secret-bearing header name
+/// ([`hides_header_value`]) and scrubs all other values.
 #[derive(Clone, PartialEq, Eq, Default)]
 pub struct Headers(Vec<(String, String)>);
 
@@ -175,10 +176,10 @@ impl fmt::Debug for Headers {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut map = f.debug_map();
         for (name, value) in self.entries() {
-            if is_sensitive_header(name) {
-                map.entry(&name, &REDACTED);
+            if hides_header_value(name) {
+                map.entry(&Scrubbed(name), &REDACTED);
             } else {
-                map.entry(&name, &value);
+                map.entry(&Scrubbed(name), &Scrubbed(value));
             }
         }
         map.finish()
@@ -496,6 +497,93 @@ mod tests {
         let shown = format!("{api:?}");
         assert!(shown.contains("query_params: 1") && shown.contains("body_len: 11"));
         assert!(!shown.contains("secret-body"));
+    }
+
+    fn leaky_headers() -> Headers {
+        let mut headers = Headers::new();
+        for (name, value) in [
+            ("x-extra", "Bearer FAKE-BEARER-VALUE"),
+            ("x-access-token", "FAKE-ACCESS-TOKEN"),
+            ("x-custom-key", "FAKE-KEY-VALUE"),
+            ("x-session-ref", "FAKE-SESSION-VALUE"),
+            ("x-note", "retry token=FAKE-NOTE-TOKEN later"),
+            (
+                "x-origin",
+                "https://FAKE-USER:FAKE-ORIGIN-PASSWORD@host.example/",
+            ),
+            ("x-json", "{\"password\":\"aa\\\"FAKE-JSON-TAIL\"}"),
+            ("content-type", "application/json"),
+        ] {
+            headers.insert(name, value).unwrap();
+        }
+        headers
+    }
+
+    const HEADER_LEAKS: &[&str] = &[
+        "FAKE-BEARER-VALUE",
+        "FAKE-ACCESS-TOKEN",
+        "FAKE-KEY-VALUE",
+        "FAKE-SESSION-VALUE",
+        "FAKE-NOTE-TOKEN",
+        "FAKE-ORIGIN-PASSWORD",
+        "FAKE-USER",
+        "FAKE-JSON-TAIL",
+    ];
+
+    #[test]
+    fn headers_debug_hides_secret_named_values_and_scrubs_the_rest() {
+        let shown = format!("{:?}", leaky_headers());
+        for leak in HEADER_LEAKS {
+            assert!(!shown.contains(leak), "{leak} leaked in {shown}");
+        }
+        // Secret-named headers are hidden entirely; others keep scrubbed text.
+        assert!(shown.contains("\"x-extra\": \"Bearer [REDACTED]\""));
+        assert!(shown.contains("\"x-access-token\": \"[REDACTED]\""));
+        assert!(shown.contains("\"x-note\": \"retry token=[REDACTED] later\""));
+        assert!(shown.contains("\"x-origin\": \"https://[REDACTED]@host.example/\""));
+        assert!(shown.contains("\"content-type\": \"application/json\""));
+        let pretty = format!("{:#?}", leaky_headers());
+        for leak in HEADER_LEAKS {
+            assert!(!pretty.contains(leak), "{leak} leaked in {pretty}");
+        }
+    }
+
+    #[test]
+    fn every_request_and_response_debug_path_scrubs_headers_and_urls() {
+        let mut api = ApiRequest::new(
+            Method::Get,
+            "/p?x=1&token=FAKE-PATH-TOKEN#https://FAKE-USER:FAKE-PATH-PASSWORD@h.example/",
+        );
+        api.headers = leaky_headers();
+        let request = HttpRequest {
+            method: Method::Post,
+            url: "https://FAKE-USER:FAKE-URL-PASSWORD@x.amazonaws.com/p?token=FAKE-URL-TOKEN"
+                .to_string(),
+            headers: leaky_headers(),
+            body: b"FAKE-BODY".to_vec(),
+            timeouts: Timeouts::default(),
+        };
+        let mut response = HttpResponse::new(500, b"FAKE-BODY");
+        response.headers = leaky_headers();
+        let shown = [
+            format!("{api:?}"),
+            format!("{api:#?}"),
+            format!("{request:?}"),
+            format!("{request:#?}"),
+            format!("{response:?}"),
+            format!("{response:#?}"),
+        ];
+        for text in &shown {
+            for leak in HEADER_LEAKS.iter().chain(&[
+                "FAKE-PATH-TOKEN",
+                "FAKE-PATH-PASSWORD",
+                "FAKE-URL-PASSWORD",
+                "FAKE-URL-TOKEN",
+                "FAKE-BODY",
+            ]) {
+                assert!(!text.contains(leak), "{leak} leaked in {text}");
+            }
+        }
     }
 
     #[test]

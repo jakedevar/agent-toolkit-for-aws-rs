@@ -49,3 +49,26 @@ workspace. The boundary is shaped so the binding is purely additive later:
   SDK config (`RetryConfig`, `TimeoutConfig`, `Region`, endpoint URL).
 
 A follow-up Issue is filed for the feature-gated adapter and lock generation.
+
+## Addendum after independent review #4467 (bounded repair of #4379)
+
+The review of source `f30a9138` found that rows T2 and T3 above were stated more
+strongly than the first implementation delivered. The pre-review text is left as
+written; the corrected, authoritative contracts are in
+`aws-core-contracts.md` ("Error redaction contract", "Non-public address
+policy"):
+
+- T2: userinfo was only stripped by `redact_url`, labelled JSON values with
+  escaped quotes or newline separators leaked a tail, and `Debug` of `AwsError`
+  and of unrecognized header names bypassed the scrubber. Now one scrubber
+  (`redact_text`, including embedded-URL userinfo and JSON string rules) backs
+  every error and `Debug` path, with hand-written `Debug` that scrubs at
+  formatting time (#4468, #4469).
+- T3: "DNS result checked against non-public ranges" relied on std predicates
+  that miss multicast, benchmarking, documentation and reserved space. Now an
+  explicit RFC 6890-based range policy rejects the whole host if any answer is
+  non-public (#4470).
+- New residual recorded: the future SDK adapter (#4463) must disable or
+  validate redirects and must connect to the already-validated address (or
+  re-run the same policy on the connected peer); the current client has no
+  production transport.

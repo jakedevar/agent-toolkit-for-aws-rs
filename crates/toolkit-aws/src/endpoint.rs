@@ -294,17 +294,80 @@ fn check_resolution(host: &str, resolver: &dyn HostResolver) -> Result<(), Strin
     for address in addresses {
         if is_non_public(address) {
             return Err(format!(
-                "host {host} resolves to the private, loopback or link-local address {address}. \
-                 Refusing to send credentials to a non-public address"
+                "host {host} resolves to the non-public address {address} ({}). \
+                 Refusing to send credentials to a non-public address",
+                non_public_reason(address)
             ));
         }
     }
     Ok(())
 }
 
-/// Whether an address is private, loopback, link-local, reserved or otherwise
-/// not publicly routable (Python: `is_private`, `is_loopback`, `is_link_local`,
-/// `is_reserved`, plus carrier-grade NAT and unspecified/multicast ranges).
+/// Special-purpose IPv4 blocks that are never a public AWS endpoint
+/// (IANA IPv4 Special-Purpose Address Registry, RFC 6890 and successors).
+/// Each entry is `(network, prefix length, what it is)`.
+pub const NON_PUBLIC_V4: &[([u8; 4], u8, &str)] = &[
+    ([0, 0, 0, 0], 8, "this network (RFC 1122)"),
+    ([10, 0, 0, 0], 8, "private (RFC 1918)"),
+    ([100, 64, 0, 0], 10, "carrier-grade NAT (RFC 6598)"),
+    ([127, 0, 0, 0], 8, "loopback (RFC 1122)"),
+    ([169, 254, 0, 0], 16, "link-local (RFC 3927)"),
+    ([172, 16, 0, 0], 12, "private (RFC 1918)"),
+    ([192, 0, 0, 0], 24, "IETF protocol assignments (RFC 6890)"),
+    ([192, 0, 2, 0], 24, "documentation TEST-NET-1 (RFC 5737)"),
+    ([192, 88, 99, 0], 24, "6to4 relay anycast (RFC 7526)"),
+    ([192, 168, 0, 0], 16, "private (RFC 1918)"),
+    ([198, 18, 0, 0], 15, "benchmarking (RFC 2544)"),
+    ([198, 51, 100, 0], 24, "documentation TEST-NET-2 (RFC 5737)"),
+    ([203, 0, 113, 0], 24, "documentation TEST-NET-3 (RFC 5737)"),
+    ([224, 0, 0, 0], 4, "multicast (RFC 5771)"),
+    (
+        [240, 0, 0, 0],
+        4,
+        "reserved and limited broadcast (RFC 1112)",
+    ),
+];
+
+/// IPv6 blocks inside the global-unicast space `2000::/3` that are not public
+/// endpoints. Everything *outside* `2000::/3` is non-public as well (see
+/// [`is_non_public_v6`]).
+pub const NON_PUBLIC_V6_IN_GLOBAL: &[(u128, u8, &str)] = &[
+    (
+        0x2001_0000 << 96,
+        23,
+        "IETF protocol assignments incl. Teredo, benchmarking (RFC 2928)",
+    ),
+    (0x2001_0db8 << 96, 32, "documentation (RFC 3849)"),
+    (0x2002_0000 << 96, 16, "6to4 (RFC 3056, deprecated)"),
+    (0x3fff_0000 << 96, 20, "documentation (RFC 9637)"),
+];
+
+/// Whether `address` lies in `network/prefix`.
+fn in_block(address: u128, network: u128, prefix: u8, width: u8) -> bool {
+    let shift = u32::from(width - prefix);
+    // A prefix of 0 would shift by the full width; no block here has one.
+    (address >> shift) == (network >> shift)
+}
+
+/// Whether an address is not a publicly routable unicast address, so a signed
+/// request must never be sent to it.
+///
+/// The policy is an explicit range list, applied to *every* answer (one
+/// non-public answer rejects the host):
+///
+/// - IPv4: the special-purpose blocks in [`NON_PUBLIC_V4`] (private, loopback,
+///   link-local, carrier-grade NAT, multicast, benchmarking `198.18.0.0/15`,
+///   documentation, `0.0.0.0/8`, and `240.0.0.0/4` including the broadcast
+///   address).
+/// - IPv6: only the global-unicast block `2000::/3` can be public, minus the
+///   blocks in [`NON_PUBLIC_V6_IN_GLOBAL`]. That makes `::`, `::1`,
+///   `::2`-style reserved addresses, `100::/64`, `fc00::/7`, `fe80::/10`,
+///   `ff00::/8` and the rest of the unallocated space non-public.
+/// - IPv4-mapped (`::ffff:a.b.c.d`) addresses are judged by their IPv4 form.
+///   The well-known NAT64 prefix `64:ff9b::/96` is judged by its embedded IPv4
+///   address (a translated public address stays public); the local-use
+///   `64:ff9b:1::/48` is non-public. IPv4-compatible `::/96` addresses are
+///   deprecated and always non-public.
 #[must_use]
 pub fn is_non_public(address: IpAddr) -> bool {
     match address {
@@ -313,30 +376,78 @@ pub fn is_non_public(address: IpAddr) -> bool {
             if let Some(mapped) = v6.to_ipv4_mapped() {
                 return is_non_public_v4(mapped);
             }
+            if let Some(embedded) = nat64_embedded_v4(v6) {
+                return is_non_public_v4(embedded);
+            }
             is_non_public_v6(v6)
         }
     }
 }
 
+/// The IPv4 address embedded in a well-known NAT64 (`64:ff9b::/96`) address.
+fn nat64_embedded_v4(address: Ipv6Addr) -> Option<Ipv4Addr> {
+    let segments = address.segments();
+    (segments[..6] == [0x64, 0xff9b, 0, 0, 0, 0]).then(|| {
+        let [a, b] = segments[6].to_be_bytes();
+        let [c, d] = segments[7].to_be_bytes();
+        Ipv4Addr::new(a, b, c, d)
+    })
+}
+
 fn is_non_public_v4(address: Ipv4Addr) -> bool {
-    let [a, b, _, _] = address.octets();
-    address.is_private()
-        || address.is_loopback()
-        || address.is_link_local()
-        || address.is_broadcast()
-        || address.is_documentation()
-        || a == 0
-        || a >= 240
-        || (a == 100 && (b & 0xc0) == 64)
+    let value = u128::from(u32::from(address));
+    NON_PUBLIC_V4.iter().any(|&(network, prefix, _)| {
+        in_block(
+            value,
+            u128::from(u32::from(Ipv4Addr::from(network))),
+            prefix,
+            32,
+        )
+    })
 }
 
 fn is_non_public_v6(address: Ipv6Addr) -> bool {
-    let first = address.segments()[0];
-    address.is_loopback()
-        || address.is_unspecified()
-        || address.is_multicast()
-        || (first & 0xfe00) == 0xfc00
-        || (first & 0xffc0) == 0xfe80
+    let value = u128::from(address);
+    let global_unicast = in_block(value, 0x2000_u128 << 112, 3, 128);
+    !global_unicast
+        || NON_PUBLIC_V6_IN_GLOBAL
+            .iter()
+            .any(|&(network, prefix, _)| in_block(value, network, prefix, 128))
+}
+
+/// Name of the first non-public block containing `address`, for messages.
+fn non_public_reason(address: IpAddr) -> &'static str {
+    match address {
+        IpAddr::V4(v4) => v4_reason(v4),
+        IpAddr::V6(v6) => {
+            if let Some(mapped) = v6.to_ipv4_mapped() {
+                return v4_reason(mapped);
+            }
+            if let Some(embedded) = nat64_embedded_v4(v6) {
+                return v4_reason(embedded);
+            }
+            let value = u128::from(v6);
+            NON_PUBLIC_V6_IN_GLOBAL
+                .iter()
+                .find(|&&(network, prefix, _)| in_block(value, network, prefix, 128))
+                .map_or("outside the global unicast range", |&(_, _, what)| what)
+        }
+    }
+}
+
+fn v4_reason(address: Ipv4Addr) -> &'static str {
+    let value = u128::from(u32::from(address));
+    NON_PUBLIC_V4
+        .iter()
+        .find(|&&(network, prefix, _)| {
+            in_block(
+                value,
+                u128::from(u32::from(Ipv4Addr::from(network))),
+                prefix,
+                32,
+            )
+        })
+        .map_or("not publicly routable", |&(_, _, what)| what)
 }
 
 #[cfg(test)]
@@ -501,6 +612,251 @@ mod tests {
                 "{address}"
             );
         }
+    }
+
+    fn ip(text: &str) -> IpAddr {
+        text.parse()
+            .unwrap_or_else(|_| panic!("test fixture {text:?} is not an IP address"))
+    }
+
+    fn rejected_by_validate(address: &str) -> bool {
+        let resolver = FixedResolver::new().answer("x.amazonaws.com", &[address]);
+        validate_endpoint(
+            "https://x.amazonaws.com",
+            "e",
+            &EndpointPolicy::aws_public(),
+            &resolver,
+        )
+        .is_err()
+    }
+
+    #[test]
+    fn ipv4_special_purpose_blocks_are_rejected_at_both_edges() {
+        // (first, last) of every block in the policy, spelled out independently
+        // of the table in the code.
+        let blocks = [
+            ("0.0.0.0", "0.255.255.255"),
+            ("10.0.0.0", "10.255.255.255"),
+            ("100.64.0.0", "100.127.255.255"),
+            ("127.0.0.0", "127.255.255.255"),
+            ("169.254.0.0", "169.254.255.255"),
+            ("172.16.0.0", "172.31.255.255"),
+            ("192.0.0.0", "192.0.0.255"),
+            ("192.0.2.0", "192.0.2.255"),
+            ("192.88.99.0", "192.88.99.255"),
+            ("192.168.0.0", "192.168.255.255"),
+            ("198.18.0.0", "198.19.255.255"),
+            ("198.51.100.0", "198.51.100.255"),
+            ("203.0.113.0", "203.0.113.255"),
+            ("224.0.0.0", "239.255.255.255"),
+            ("240.0.0.0", "255.255.255.255"),
+        ];
+        assert_eq!(blocks.len(), NON_PUBLIC_V4.len());
+        for (first, last) in blocks {
+            for edge in [first, last] {
+                assert!(is_non_public(ip(edge)), "{edge}");
+                assert!(rejected_by_validate(edge), "{edge}");
+                // Also as an IPv4-mapped IPv6 answer.
+                let mapped = format!("::ffff:{edge}");
+                assert!(is_non_public(ip(&mapped)), "{mapped}");
+            }
+        }
+        for named in [
+            "224.0.0.1",
+            "198.18.0.1",
+            "198.19.255.254",
+            "255.255.255.255",
+        ] {
+            assert!(rejected_by_validate(named), "{named}");
+        }
+    }
+
+    #[test]
+    fn ipv4_neighbours_of_the_blocks_and_real_aws_addresses_stay_public() {
+        for public in [
+            "1.0.0.0",
+            "9.255.255.255",
+            "11.0.0.0",
+            "100.63.255.255",
+            "100.128.0.0",
+            "126.255.255.255",
+            "128.0.0.0",
+            "169.253.255.255",
+            "169.255.0.0",
+            "172.15.255.255",
+            "172.32.0.0",
+            "192.0.1.0",
+            "192.0.3.0",
+            "192.88.98.255",
+            "192.88.100.0",
+            "192.167.255.255",
+            "192.169.0.0",
+            "198.17.255.255",
+            "198.20.0.0",
+            "198.51.99.255",
+            "198.51.101.0",
+            "203.0.112.255",
+            "203.0.114.0",
+            "223.255.255.255",
+            "3.5.140.2",
+            "8.8.8.8",
+            "52.1.2.3",
+            "54.239.28.85",
+            "99.77.128.1",
+        ] {
+            assert!(!is_non_public(ip(public)), "{public}");
+            assert!(!rejected_by_validate(public), "{public}");
+            let mapped = format!("::ffff:{public}");
+            assert!(!is_non_public(ip(&mapped)), "{mapped}");
+        }
+    }
+
+    #[test]
+    fn ipv6_reserved_special_purpose_and_unallocated_space_is_rejected() {
+        for address in [
+            // Unspecified, loopback and the rest of ::/96 (reserved,
+            // IPv4-compatible - always rejected, even with a public tail).
+            "::",
+            "::1",
+            "::2",
+            "::3",
+            "::8.8.8.8",
+            "::52.1.2.3",
+            // IPv4-translated / mapped forms of non-public IPv4.
+            "::ffff:0:0",
+            "::ffff:10.0.0.1",
+            "::ffff:127.0.0.1",
+            "::ffff:169.254.169.254",
+            "::ffff:224.0.0.1",
+            "::ffff:198.18.0.1",
+            "::ffff:255.255.255.255",
+            "::ffff:0:10.0.0.1",
+            // NAT64: local-use prefix and embedded non-public IPv4.
+            "64:ff9b:1::1",
+            "64:ff9b::10.0.0.1",
+            "64:ff9b::127.0.0.1",
+            "64:ff9b::192.168.1.1",
+            "64:ff9b::198.18.0.1",
+            "64:ff9b::224.0.0.1",
+            "64:ff9b::",
+            // Discard-only, SRv6, unallocated and outside 2000::/3.
+            "100::1",
+            "5f00::1",
+            "1fff:ffff::1",
+            "4000::1",
+            "8000::1",
+            "e000::1",
+            // Unique local, link-local, site-local, multicast.
+            "fc00::1",
+            "fd00::1",
+            "fdff:ffff::1",
+            "fe80::1",
+            "febf:ffff::1",
+            "fec0::1",
+            "ff00::",
+            "ff02::1",
+            // Inside 2000::/3 but special purpose: edges of each block.
+            "2001::1",
+            "2001:0:4136:e378:8000:63bf:3fff:fdd2",
+            "2001:1ff:ffff::1",
+            "2001:db8::1",
+            "2001:db8:ffff:ffff::1",
+            "2002::1",
+            "2002:ffff::1",
+            "2002:a00:1::1",
+            "3fff::1",
+            "3fff:fff:ffff::1",
+        ] {
+            assert!(is_non_public(ip(address)), "{address}");
+            assert!(rejected_by_validate(address), "{address}");
+        }
+    }
+
+    #[test]
+    fn ipv6_public_unicast_and_translated_public_addresses_pass() {
+        for address in [
+            "2600:1f18::1",
+            "2a05:d018::1",
+            "2406:da00::1",
+            "2001:200::1",
+            "2001:4860:4860::8888",
+            "2001:db7:ffff::1",
+            "2001:db9::1",
+            "2003::1",
+            "3fff:1000::1",
+            "2000::1",
+            "::ffff:52.1.2.3",
+            "64:ff9b::52.1.2.3",
+            "64:ff9b::8.8.8.8",
+        ] {
+            assert!(!is_non_public(ip(address)), "{address}");
+            assert!(!rejected_by_validate(address), "{address}");
+        }
+    }
+
+    #[test]
+    fn any_non_public_answer_rejects_the_host_whatever_its_position() {
+        let policy = EndpointPolicy::aws_public();
+        let mixes: [&[&str]; 5] = [
+            &["52.1.2.3", "2600:1f18::1", "198.18.0.1"],
+            &["224.0.0.1", "52.1.2.3"],
+            &["52.1.2.3", "2001:db8::1"],
+            &["2600:1f18::1", "::2"],
+            &["52.1.2.3", "::ffff:10.0.0.1", "54.239.28.85"],
+        ];
+        for answers in mixes {
+            let resolver = FixedResolver::new().answer("x.amazonaws.com", answers);
+            let error = validate_endpoint("https://x.amazonaws.com", "e", &policy, &resolver)
+                .expect_err(&answers.join(","));
+            assert!(
+                error.to_string().contains("non-public address"),
+                "{answers:?}"
+            );
+        }
+        let all_public = FixedResolver::new().answer(
+            "x.amazonaws.com",
+            &[
+                "52.1.2.3",
+                "2600:1f18::1",
+                "54.239.28.85",
+                "::ffff:99.77.128.1",
+            ],
+        );
+        assert!(validate_endpoint("https://x.amazonaws.com", "e", &policy, &all_public).is_ok());
+    }
+
+    #[test]
+    fn rejection_message_names_the_address_and_the_block() {
+        let resolver = FixedResolver::new().answer("x.amazonaws.com", &["198.18.0.1"]);
+        let text = validate_endpoint(
+            "https://x.amazonaws.com",
+            "e",
+            &EndpointPolicy::aws_public(),
+            &resolver,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            text.contains("198.18.0.1") && text.contains("benchmarking"),
+            "{text}"
+        );
+        assert!(text.contains("Refusing to send credentials to a non-public address"));
+        assert_eq!(
+            non_public_reason(ip("2001:db8::1")),
+            "documentation (RFC 3849)"
+        );
+        assert_eq!(
+            non_public_reason(ip("::ffff:10.0.0.1")),
+            "private (RFC 1918)"
+        );
+        assert_eq!(
+            non_public_reason(ip("64:ff9b::224.0.0.1")),
+            "multicast (RFC 5771)"
+        );
+        assert_eq!(
+            non_public_reason(ip("fe80::1")),
+            "outside the global unicast range"
+        );
     }
 
     #[test]
