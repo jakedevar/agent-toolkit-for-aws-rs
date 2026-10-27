@@ -28,9 +28,10 @@ the current directory) and defaults to `skills` in the current directory.
 
 Discovery rules:
 
-- The walk stays strictly inside ROOT. Symlinked directories are never
-  followed, and a `SKILL.md` that is itself a symlink is skipped (never read),
-  whatever it points to.
+- Static symlinks are always refused: a symlinked directory is never followed
+  and a `SKILL.md` that is itself a symlink is skipped (never read), whatever
+  it points to. The walk does not defend against concurrent mutation of the
+  tree during a run (see the last bullet of this list).
 - Hidden directories (leading `.`) and the directories `node_modules` and
   `target` are skipped entirely, as entries and as descent targets. Directory
   names that are not valid UTF-8 are skipped silently.
@@ -46,10 +47,18 @@ Discovery rules:
   a `SKILL.md` directly in ROOT is ignored (point ROOT at the parent to list a
   single skill). Decision recorded for #4374; pinned by tests.
 - The `SKILL.md` read re-checks the opened file against the pre-open `lstat`
-  (device and inode on Unix), so a file swapped for a symlink between the
-  directory scan and the read is skipped or refused, never followed. A file
-  replaced by a symlink or non-file in that window is skipped like any link.
+  (device and inode on Unix), so the *final* file swapped for a symlink or
+  non-file between the directory scan and the read is skipped or refused.
   Other platforms keep the `lstat` check only.
+- Concurrent mutation is out of the tool's model. Walking is pathname-based,
+  so if an *ancestor* directory is renamed away and replaced with a symlink to
+  an outside directory after it was listed but before it is opened, the
+  `lstat`, open and listing all resolve through the swapped path and outside
+  content could be reported. Do not run the tool against a tree that is being
+  rewritten by an untrusted party. The public API (`discover_skills`,
+  `resolve_within`, `read_regular_file`) is shaped so a handle-anchored walker
+  can replace the implementation later if a slice needs adversarial
+  containment.
 - `SKILL.md` larger than 1 MiB, or not valid UTF-8, is a runtime error (exit 1)
   naming the file.
 
@@ -169,7 +178,11 @@ crate (use optional domain crates or features).
   same `Json` type. Everything else (tabs, anchors/aliases/tags, complex keys,
   duplicate keys, multiple documents, multi-line plain or quoted scalars,
   `|+`/indentation indicators, nesting deeper than 64) is a line-numbered
-  error. YAML 1.1 booleans (`yes`/`no`/`on`/`off`), leading-zero numbers, `+5`,
+  error. The 64-level nesting budget is one budget for the whole document:
+  block mappings, block sequences (including same-indent sequences) and flow
+  collections all count. The anchor/alias/tag and reserved-indicator rules
+  apply to flow keys and flow plain scalars too (`{&a k: v}`, `[]` are
+  errors); quote the text to use it literally (`{"&a k": v}`). YAML 1.1 booleans (`yes`/`no`/`on`/`off`), leading-zero numbers, `+5`,
   hex/octal and `.inf`/`.nan` stay strings. See the module documentation.
 - **Schema** (`schema`): a small structural check (scalar types, arrays,
   objects with required/optional members, unknown members rejected unless
@@ -177,8 +190,9 @@ crate (use optional domain crates or features).
   of `skills list` has a published schema (`skills_output_schema`) that the
   tests validate real output against.
 - **Paths** (`paths`): `normalize_relative` (rejects empty, absolute,
-  drive-prefixed, `..`, backslash and NUL), `resolve_within` (refuses a symlink
-  at any component below the root) and `read_regular_file` (no symlinks, only
+  drive-prefixed, `..`, backslash and NUL), `resolve_within` (refuses a static symlink
+  at any component below the root; not a defence against concurrent mutation,
+  see the discovery rules) and `read_regular_file` (no symlinks, only
   regular files, size-bounded, UTF-8, identity re-check after open).
 
 ## Frontmatter additions (#4374)
