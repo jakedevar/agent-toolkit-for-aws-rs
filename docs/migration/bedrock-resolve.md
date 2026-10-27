@@ -44,7 +44,7 @@ matches) is new in Rust and reachable through `identity --mappings`.
 | Messages | Converse image before text; Responses wrapper with `detail` always on the image block; Chat `image_url.url` | same shapes | `the_responses_message_is_wrapped_as_a_user_message`, `the_converse_message_puts_the_image_before_the_text`, `the_chat_message_keeps_the_mime_normalization` |
 | Missing bytes, bad detail | `ValueError`, bytes checked before the extension, detail before bytes | same order | `an_image_path_without_bytes_is_an_error`, `every_sdk_detail_level_is_accepted_and_others_are_refused` |
 | Rate table | `STATIC_FALLBACK`, 44 rows, order significant | same rows, same order | `the_rate_table_matches_the_python_source` |
-| Lookup order | profile ARN, Opus 5.5 rule, static table, GPT short-circuit, Pricing API | same, with the recorded answer as the last step | `opus_5_5_pricing_is_region_and_profile_aware`, `table_models_are_served_without_a_price_list`, `an_unpriced_gpt_says_unavailable_not_nonexistent` |
+| Lookup order | profile ARN, Opus 5.5 rule, static table, GPT short-circuit, Pricing API | model-id validation first (item 10: a rejected id is unavailable whatever the table or recorded answers hold), then the same order with the recorded answer as the last step, for well-formed ids outside the table only | `opus_5_5_pricing_is_region_and_profile_aware`, `table_models_are_served_without_a_price_list`, `an_unpriced_gpt_says_unavailable_not_nonexistent`, `rejected_ids_are_never_priced_even_by_a_matching_recorded_answer` |
 | Partial matches | bidirectional family match, date stamp strip, proprietary GPT ids exact only | exact, or the unique row sharing the date/revision-normalized form (item 10; prefixes and ambiguous bases are unavailable); GPT exact only | `opus_4_8_is_priced_in_every_id_shape`, `unknown_astra_ids_never_inherit_another_rate`, `cris_forms_never_partial_match`, `truncated_empty_or_partial_ids_are_never_priced` |
 | Inference options | Geo is 1.10x, Global is standard | same | `gpt_rates_follow_the_inference_option`, `global_and_eu_anthropic_prefixes_price_their_inference_option` |
 | Price parser | base input/output token dimensions only; cache, read, write, batch skipped | same | `price_dimensions_are_the_base_input_and_output_rates` |
@@ -138,24 +138,56 @@ Rust tests, command output re-deferred**.
    `rates not found in price item` as before.
 9. **Unicode corners.** `display_name_guess` uses Rust's case mapping for
    `capitalize()` and an approximation of `str.isdigit()` (decimal plus
-   superscript/subscript/enclosed digits); the name is only matched against
-   recorded entries, so the difference cannot price a model.
+   superscript/subscript/enclosed digits). Since #4698 it only ever sees an id
+   that passed the lowercase-ASCII grammar of item 10, so these corners are not
+   reachable from a lookup.
 
-10. **Fail-closed price matching (#4684, intentional change).** Python's
+10. **Fail-closed price matching (#4684, #4698, intentional change).** Python's
     forward rule (`key.startswith(base)`) priced any truncated, empty or
     ambiguous id as the first table row that began with it, so `-v1`, `anthropic`
-    or `anthropic.claude` came back as Haiku 4.5. The Rust table lookup prices an
-    id only when, after removing a strict `-v<N>[:<M>]` revision and then a
-    `-YYYYMMDD` date stamp, it equals the same normal form of exactly one table
-    row. Prefixes (`anthropic`, `openai.gpt-`, `amazon.nova`), the empty id,
-    `-v1`, ids with an extra suffix after a separator
-    (`...opus-4-8-foo`) and bases shared by more than one row are
-    `available: false` with the fixed `Pricing unavailable` note and no rate. The
-    documented normalization still prices ids that resolve to one recognized row
-    (`anthropic.claude-haiku-4-5`, `us.anthropic.claude-sonnet-4-6-20250514-v1:0`,
-    `amazon.nova-pro`). Tests: `truncated_empty_or_partial_ids_are_never_priced`,
+    or `anthropic.claude` came back as Haiku 4.5, and its display-name guess
+    dropped everything after the first `:`, so a recorded Pricing API answer for
+    `Claude Opus 4.8` also priced `anthropic.claude-opus-4-8-v1:`,
+    `...-v1:0:0` and `...:arbitrary`. The Rust lookup classifies the id once,
+    **before any source of price** (the static table, the Opus 5.5 and GPT
+    rules, and the recorded `--price-list` answers), as one of:
+
+    - **Rejected**: `available: false`, null rates and one fixed note that
+      repeats nothing of the id, whatever the table or the recorded answers
+      hold. An id is rejected when it is not
+      `[geo.]provider.model[-YYYYMMDD][-v<N>[:<M>]]` in lowercase ASCII (at
+      least two dot-separated segments of nonempty `[a-z0-9]` tokens joined by
+      single `-`; at most one `:`, between a `-v<N>` or `-<N>` revision and
+      ASCII digits): the empty id, `anthropic`, `openai.gpt-`, `-v1`, `-v1:0`,
+      `...-v1:`, `...-v1:0:0`, `...:arbitrary`, non-ASCII digits, upper case,
+      a trailing separator, the provisioned-throughput `...:28k` forms and an
+      ARN that is not an inference-profile ARN (`claude-opus-5-5` and such an
+      ARN no longer get the Opus 5.5 note). It is also rejected when its normal
+      form is shared by more than one row, or when it is outside the table but
+      shows as a row's display name under the same geo/provider prefix
+      (`anthropic.claude-opus-4.8`, `anthropic.claude-opus-4-8:0` for
+      `anthropic.claude-opus-4-8`): a matching display name alone never
+      validates a model id.
+    - **Known row**: the id is a table key, or after removing a strict
+      `-v<N>[:<M>]` revision and then a `-YYYYMMDD` date stamp it equals the
+      same normal form of exactly one row (`anthropic.claude-haiku-4-5`,
+      `us.anthropic.claude-sonnet-4-6-20250514-v1:0`, `amazon.nova-pro`); GPT
+      ids still need an exact key. The table answers; a recorded answer is not
+      consulted.
+    - **Well-formed unknown**: any other well-formed id (`anthropic.claude`,
+      `...opus-4-8-foo`, `apac.anthropic.claude-opus-4-8`,
+      `openai.gpt-oss-120b-1:0`). Only these reach `display_name_guess` and the
+      recorded answers; without a recorded answer for their own display name
+      they are `available: false`.
+
+    Tests: `truncated_empty_or_partial_ids_are_never_priced`,
     `a_base_shared_by_several_rows_is_ambiguous`,
-    `every_supported_normalized_id_still_prices_exactly_one_row`.
+    `every_supported_normalized_id_still_prices_exactly_one_row`,
+    `rejected_ids_are_never_priced_even_by_a_matching_recorded_answer`,
+    `every_negative_pricing_input_stays_unpriced_with_a_recorded_answer`,
+    `the_pricing_command_rejects_malformed_revisions_with_a_recorded_answer`,
+    `well_formed_ids_outside_the_table_still_use_a_recorded_answer`,
+    `every_table_row_is_a_well_formed_known_row`.
 11. **Ambiguous snapshots are not resolved (#4685, intentional change).** The
     script took the first of two equally long safe snapshots in catalog order.
     The Rust resolver removes duplicate catalog ids first (one model listed twice

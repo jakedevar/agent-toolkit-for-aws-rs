@@ -340,54 +340,155 @@ fn without_v_revision(text: &str) -> String {
     }
 }
 
-/// The static table: exact rows, then date/revision-normalized unique rows. `None` when the id is not
-/// priced there (Opus 5.5 always is, region-aware, elsewhere).
-pub(crate) fn static_fallback(model_id: &str) -> Option<Price> {
+/// What a model id is, decided once before any source of price is consulted
+/// (#4684, #4698). A [`Identity::Rejected`] id is never priced: not by the
+/// static table, the Opus 5.5 or GPT rules, nor a recorded Pricing API answer
+/// whose display name happens to match.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum Identity<'t, 'm> {
+    /// Malformed, truncated or ambiguous: `available: false`, no rate.
+    Rejected,
+    /// One table row: the id itself (`exact`) or its date/revision normal form.
+    KnownRow {
+        row: &'t (&'t str, f64, f64),
+        exact: bool,
+    },
+    /// A well-formed id outside the table, which may use a recorded answer.
+    WellFormedUnknown(WellFormedId<'m>),
+}
+
+/// A model id that passed the Bedrock id grammar of [`WellFormedId::parse`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct WellFormedId<'m>(&'m str);
+
+impl<'m> WellFormedId<'m> {
+    /// `[geo.]provider.model[-YYYYMMDD][-v<N>[:<M>]]` in lowercase ASCII: at
+    /// least two dot-separated segments, each made of nonempty `[a-z0-9]`
+    /// tokens joined by single `-`, and at most one `:`, which must sit between
+    /// a `-v<N>` (or `-<N>`) revision and ASCII digits. Anything else (an empty
+    /// id, `anthropic`, `openai.gpt-`, `-v1`, `...-v1:`, `...-v1:0:0`,
+    /// `...:arbitrary`, upper case, non-ASCII digits) is `None`.
+    pub(crate) fn parse(model_id: &'m str) -> Option<Self> {
+        let digits = |text: &str| !text.is_empty() && text.bytes().all(|b| b.is_ascii_digit());
+        let body = match model_id.split_once(':') {
+            None => model_id,
+            Some((body, minor)) => {
+                let revision = body.trim_end_matches(|c: char| c.is_ascii_digit());
+                let has_major = revision.len() < body.len();
+                if !digits(minor)
+                    || !has_major
+                    || !(revision.ends_with("-v") || revision.ends_with('-'))
+                {
+                    return None;
+                }
+                body
+            }
+        };
+        let token = |text: &str| {
+            !text.is_empty()
+                && text
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+        };
+        let well_formed =
+            body.split('.').count() >= 2 && body.split('.').all(|part| part.split('-').all(token));
+        well_formed.then_some(Self(model_id))
+    }
+
+    pub(crate) fn as_str(self) -> &'m str {
+        self.0
+    }
+}
+
+/// Classifies `model_id` against `table`: grammar first, then an exact row,
+/// then the one row sharing its date/revision normal form. A normal form
+/// shared by several rows is ambiguous, and an id outside the table that
+/// shows as a row's display name under the same prefix (`...claude-opus-4.8`
+/// for `...claude-opus-4-8`) is a respelling of that row: both are rejected.
+pub(crate) fn classify<'t, 'm>(
+    table: &'t [(&'t str, f64, f64)],
+    model_id: &'m str,
+) -> Identity<'t, 'm> {
+    let Some(id) = WellFormedId::parse(model_id) else {
+        return Identity::Rejected;
+    };
+    if let Some(row) = table.iter().find(|(key, _, _)| *key == model_id) {
+        return Identity::KnownRow { row, exact: true };
+    }
+    let wanted = normalized_id(model_id);
+    let mut hits = table
+        .iter()
+        .filter(|(key, _, _)| normalized_id(key) == wanted);
+    match (hits.next(), hits.next()) {
+        (Some(row), None) => return Identity::KnownRow { row, exact: false },
+        (Some(_), Some(_)) => return Identity::Rejected,
+        (None, _) => {}
+    }
+    let shown = display_parts(model_id);
+    if table.iter().any(|(key, _, _)| display_parts(key) == shown) {
+        return Identity::Rejected;
+    }
+    Identity::WellFormedUnknown(id)
+}
+
+/// The fixed answer for a [`Identity::Rejected`] id; it repeats nothing of it.
+pub(crate) fn rejected() -> Price {
+    unavailable(
+        "the model id is malformed, truncated or ambiguous (expected a Bedrock id such as \
+anthropic.claude-haiku-4-5-20251001-v1:0), so neither the static table nor a recorded \
+Pricing API response is consulted",
+    )
+}
+
+/// The table's answer for a classified id: an exact row, then the unique
+/// date/revision-normalized row, except that proprietary GPT ids require an
+/// EXACT match in every form (tier names differ only by suffix at very
+/// different price points, the inference options by prefix at a 10% spread).
+fn table_answer(model_id: &str, identity: Identity<'_, '_>) -> Option<Price> {
     if model_id.contains("claude-opus-5") {
         return None; // Opus 5.5 requires exact, region-aware pricing.
     }
-    if let Some((_, input, output)) = STATIC_FALLBACK.iter().find(|(key, _, _)| *key == model_id) {
-        return Some(table_price(
+    match identity {
+        Identity::KnownRow {
+            row: (_, input, output),
+            exact: true,
+        } => Some(table_price(
             *input,
             *output,
             "static fallback (PriceList API had no entry)".to_string(),
-        ));
+        )),
+        Identity::KnownRow {
+            row: (key, input, output),
+            exact: false,
+        } if !is_mantle_gpt(model_id) && !is_geo_gpt_profile(model_id) => Some(table_price(
+            *input,
+            *output,
+            format!("static fallback (matched {key})"),
+        )),
+        _ => None,
     }
-    // Proprietary GPT ids require an EXACT match in every form: tier names
-    // differ only by suffix at very different price points, the inference
-    // options by prefix at a 10% spread.
-    if is_mantle_gpt(model_id) || is_geo_gpt_profile(model_id) {
-        return None;
-    }
-    // Fail closed (#4684): see `unique_normalized_row`.
-    let (key, input, output) = unique_normalized_row(STATIC_FALLBACK, model_id)?;
-    Some(table_price(
-        *input,
-        *output,
-        format!("static fallback (matched {key})"),
-    ))
 }
 
-/// The one row of `table` whose date/revision normal form equals that of
-/// `model_id`. A prefix of a row ("anthropic", "openai.gpt-", "-v1"), a
-/// separator boundary alone ("...opus-4-8-foo") or a base shared by several
-/// rows is not a match: another model's rate would be a wrong answer.
+/// The static table: exact rows, then date/revision-normalized unique rows.
+/// `None` when the id is not priced there (Opus 5.5 always is, region-aware,
+/// elsewhere).
+pub(crate) fn static_fallback(model_id: &str) -> Option<Price> {
+    table_answer(model_id, classify(STATIC_FALLBACK, model_id))
+}
+
+/// The one row of `table` that a well-formed `model_id` names, exactly or by
+/// its date/revision normal form. A prefix of a row ("anthropic",
+/// "openai.gpt-", "-v1"), a separator boundary alone ("...opus-4-8-foo") or a
+/// base shared by several rows is not a match: another model's rate would be
+/// a wrong answer.
 pub(super) fn unique_normalized_row<'a>(
     table: &'a [(&'a str, f64, f64)],
     model_id: &str,
 ) -> Option<&'a (&'a str, f64, f64)> {
-    let wanted = normalized_id(model_id);
-    if wanted.is_empty() {
-        return None;
+    match classify(table, model_id) {
+        Identity::KnownRow { row, .. } => Some(row),
+        _ => None,
     }
-    let mut hits = table
-        .iter()
-        .filter(|(key, _, _)| normalized_id(key) == wanted);
-    let row = hits.next()?;
-    if hits.next().is_some() {
-        return None; // Ambiguous: more than one row shares the base.
-    }
-    Some(row)
 }
 
 /// A Bedrock model id without its `-v<N>[:<M>]` revision and then its
@@ -446,20 +547,29 @@ fn capitalize(text: &str) -> String {
     })
 }
 
-/// A Pricing-API display-name guess from a Bedrock model id:
+/// A Pricing-API display-name guess from a well-formed Bedrock model id:
 /// `us.anthropic.claude-haiku-4-5-20251001-v1:0` is `Claude Haiku 4.5`. The
-/// API's `model` attribute holds display names, not model ids.
-pub(crate) fn display_name_guess(model_id: &str) -> String {
+/// API's `model` attribute holds display names, not model ids. Only a
+/// [`WellFormedId`] is accepted, so no text after a malformed `:` is dropped.
+pub(crate) fn display_name_guess(model_id: WellFormedId<'_>) -> String {
+    display_parts(model_id.as_str()).1
+}
+
+/// The prefix the guess drops (geo profile and provider) and the guessed name.
+fn display_parts(model_id: &str) -> (&str, String) {
     let base = model_id.split(':').next().unwrap_or(model_id);
-    let base = ["us.", "eu.", "apac.", "global."]
+    let after_geo = ["us.", "eu.", "apac.", "global."]
         .iter()
         .find_map(|prefix| base.strip_prefix(prefix))
         .unwrap_or(base);
-    let base = base.split_once('.').map_or(base, |(_, rest)| rest);
-    let base = without_v_revision(base);
-    let base = without_date_stamp(&base);
+    let named = after_geo
+        .split_once('.')
+        .map_or(after_geo, |(_, rest)| rest);
+    let scope = &base[..base.len() - named.len()];
+    let named = without_v_revision(named);
+    let named = without_date_stamp(&named);
     let mut words: Vec<String> = Vec::new();
-    for token in base.split('-') {
+    for token in named.split('-') {
         if !token.is_empty() && token.chars().all(is_py_digit) {
             match words.last_mut() {
                 Some(last) if is_version_text(last) => *last = format!("{last}.{token}"),
@@ -469,7 +579,7 @@ pub(crate) fn display_name_guess(model_id: &str) -> String {
             words.push(capitalize(token));
         }
     }
-    words.join(" ")
+    (scope, words.join(" "))
 }
 
 /// A recorded `pricing.get_products` answer for one display name and region.
@@ -533,7 +643,11 @@ impl PriceList {
 
 /// Best-effort lookup of a model that is not in the static table in the
 /// recorded Pricing API answers.
-fn recorded_lookup(region: &str, model_id: &str, price_list: Option<&PriceList>) -> Price {
+fn recorded_lookup(
+    region: &str,
+    model_id: WellFormedId<'_>,
+    price_list: Option<&PriceList>,
+) -> Price {
     let name = display_name_guess(model_id);
     let Some(price_list) = price_list else {
         return unavailable(&format!(
@@ -592,15 +706,20 @@ fn profile_id(model_id: &str) -> Option<&str> {
     .then_some(profile)
 }
 
-/// The price of `model_id` in `region`. Never fails.
+/// The price of `model_id` in `region`. Never fails. The id is classified
+/// first; a rejected id is unavailable whatever the table or `price_list` hold.
 pub(crate) fn lookup(region: &str, model_id: &str, price_list: Option<&PriceList>) -> Price {
     let model_id = profile_id(model_id).unwrap_or(model_id);
+    let identity = classify(STATIC_FALLBACK, model_id);
+    if matches!(identity, Identity::Rejected) {
+        return rejected();
+    }
     if model_id.contains("claude-opus-5") {
         return opus55_pricing(region, model_id);
     }
     // The curated table is the primary source: the Pricing API keys models by
     // display name and often lacks entries for new inference profiles.
-    if let Some(mut price) = static_fallback(model_id) {
+    if let Some(mut price) = table_answer(model_id, identity) {
         price.note = "static pricing table (verified 2026-10-05 against \
 aws.amazon.com/bedrock/pricing, the Bedrock model cards' Geo/Global inference ID tables, \
 and the vendored pricing cache)"
@@ -620,5 +739,10 @@ and the vendored pricing cache)"
             safe_text(model_id)
         ));
     }
-    recorded_lookup(region, model_id, price_list)
+    match identity {
+        Identity::WellFormedUnknown(id) => recorded_lookup(region, id, price_list),
+        // A table row the table declined (a non-exact GPT form the GPT rule
+        // above did not answer) is never priced from a display name.
+        Identity::KnownRow { .. } | Identity::Rejected => rejected(),
+    }
 }

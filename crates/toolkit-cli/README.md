@@ -634,10 +634,14 @@ toolkit bedrock-resolve source-model ENV_FILE --catalog FILE
   carries `detail`, default `auto`). Unsupported extensions fail before the file is
   read; image files of at most 20 MiB.
 - `pricing` prints `{model_id: {input_per_1k_usd, output_per_1k_usd, available,
-  note}}` (indent 2). The built-in table (44 rows) and the region-aware Opus 5.5
-  rule answer first; an id is priced from the table only when its date/revision-normalized
-  form equals exactly one row (prefixes, the empty id and ambiguous bases are
-  unavailable); proprietary GPT ids need an exact row; anything else is
+  note}}` (indent 2). Every id is validated first: a malformed, truncated or
+  ambiguous id (not lowercase-ASCII `[geo.]provider.model[-YYYYMMDD][-v<N>[:<M>]]`,
+  a base shared by several rows, or a respelling of a row such as
+  `...claude-opus-4.8`) is `available: false` with a fixed note, even when
+  `--price-list` holds an answer for its display name. Then the built-in table
+  (44 rows) and the region-aware Opus 5.5 rule answer; an id is priced from the
+  table only when it or its date/revision-normalized form equals exactly one row;
+  proprietary GPT ids need an exact row; any other well-formed id is
   `available: false` unless `--price-list FILE` (`[{region, model: display name,
   price_list: [item JSON text]}]`) holds a recorded answer. Always exit 0.
 - `source-model` resolves `PLAN_MODEL_ID` (or `--plan-model-id`) against the

@@ -18,7 +18,7 @@ use toolkit_core::{parse_json, Json};
 
 use super::identity::{same_model, same_model_family};
 use super::image;
-use super::pricing::{self, PriceList};
+use super::pricing::{self, Identity, PriceList, WellFormedId};
 use super::pricing_table::STATIC_FALLBACK;
 use super::source;
 use crate::safe_text::is_unsafe;
@@ -993,12 +993,19 @@ fn a_base_shared_by_several_rows_is_ambiguous() {
     ];
     for id in [
         "x.model",
-        "x.model-20250101-v1:0",
+        "x.model-20250101",
+        "x.model-20250101-v2:0",
         "x.model-20990101",
         "x.model-v2:0",
     ] {
         assert!(pricing::unique_normalized_row(&table, id).is_none(), "{id}");
+        assert_eq!(pricing::classify(&table, id), Identity::Rejected, "{id}");
     }
+    // An exact key names one row even when its normal form is shared.
+    assert_eq!(
+        pricing::unique_normalized_row(&table, "x.model-20250101-v1:0").map(|row| row.1),
+        Some(1.0)
+    );
     assert_eq!(
         pricing::unique_normalized_row(&table, "x.other-20260301-v1:0").map(|row| row.0),
         Some("x.other-v1:0")
@@ -1110,7 +1117,11 @@ fn display_names_are_derived_from_model_ids() {
         ("anthropic.claude-3-haiku-20240307-v1:0", "Claude 3 Haiku"),
         ("apac.amazon.nova-pro-v1:0", "Nova Pro"),
     ] {
-        assert_eq!(pricing::display_name_guess(id), name, "{id}");
+        assert_eq!(
+            pricing::display_name_guess(WellFormedId::parse(id).unwrap()),
+            name,
+            "{id}"
+        );
     }
 }
 
@@ -1276,12 +1287,7 @@ fn opus_5_5_pricing_is_region_and_profile_aware() {
         ("us-west-2", "anthropic.claude-opus-5-5"),
         ("eu-west-1", "us.anthropic.claude-opus-5-5"),
         ("us-east-1", "apac.anthropic.claude-opus-5-5"),
-        ("us-east-1", "claude-opus-5-5"),
         ("us-east-1", "global.anthropic.claude-opus-5"),
-        (
-            "us-east-1",
-            "arn:aws:bedrock:us-east-1:12345:inference-profile/global.anthropic.claude-opus-5-5",
-        ),
     ] {
         let price = lookup(region, id);
         assert!(!price.available, "{region} {id}");
@@ -1291,6 +1297,14 @@ fn opus_5_5_pricing_is_region_and_profile_aware() {
             "{}",
             price.note
         );
+    }
+    // #4698: an id without a provider, or an ARN that is not a profile ARN, is
+    // rejected before the Opus 5.5 rule is consulted.
+    for id in [
+        "claude-opus-5-5",
+        "arn:aws:bedrock:us-east-1:12345:inference-profile/global.anthropic.claude-opus-5-5",
+    ] {
+        assert_eq!(lookup("us-east-1", id), pricing::rejected(), "{id}");
     }
 }
 
@@ -1388,6 +1402,240 @@ fn a_recorded_price_list_is_validated() {
         assert!(PriceList::from_json(&json(document)).is_err(), "{document}");
     }
     assert_eq!(PriceList::from_json(&json("[]")), Ok(PriceList(Vec::new())));
+}
+
+/// The offline response of #4698: a valid `get_products` answer for the
+/// display name `Claude Opus 4.8` in us-east-1 (0.005 in, 0.025 out).
+const OPUS_4_8_RESPONSE: &str = r#"[{"region":"us-east-1","model":"Claude Opus 4.8","price_list":["{\"terms\":{\"OnDemand\":{\"x\":{\"priceDimensions\":{\"input\":{\"description\":\"input tokens\",\"pricePerUnit\":{\"USD\":\"0.005\"}},\"output\":{\"description\":\"output tokens\",\"pricePerUnit\":{\"USD\":\"0.025\"}}}}}}}"]}]"#;
+
+fn opus_4_8_response() -> PriceList {
+    PriceList::from_json(&json(OPUS_4_8_RESPONSE)).expect("the #4698 fixture")
+}
+
+/// Ids whose identity is malformed, truncated or a respelling of a table row:
+/// rejected before any source of price, whatever a recorded answer holds.
+const REJECTED_IDS: &[&str] = &[
+    "",
+    "-",
+    ":",
+    "anthropic",
+    "openai",
+    "amazon",
+    "us.",
+    ".anthropic.claude-opus-4-8",
+    "openai.gpt-",
+    "-v1",
+    "-v1:0",
+    "anthropic.claude-opus-4-8-",
+    "anthropic.claude-opus-4-8.",
+    "anthropic.claude-opus-4-8--v1:0",
+    // Malformed revisions (#4698): truncated, repeated, arbitrary, non-ASCII.
+    "anthropic.claude-opus-4-8-v1:",
+    "anthropic.claude-opus-4-8-v1:0:0",
+    "anthropic.claude-opus-4-8-v1::0",
+    "anthropic.claude-opus-4-8:arbitrary",
+    "anthropic.claude-opus-4-8-v:0",
+    "anthropic.claude-opus-4-8-x1:0",
+    "anthropic.claude-opus-4-8-v\u{661}:0",
+    "anthropic.claude-opus-4-8-v1:\u{660}",
+    "anthropic.claude-opus-4-8-v\u{ff11}:0",
+    "anthropic.claude-opus-4-8-v1:0:28k",
+    "anthropic.claude-opus-4-8-v1:0\n",
+    "anthropic.claude-opus-4-8-v1:0 ",
+    "us.anthropic.claude-opus-4-8:0",
+    // Respellings that only a display name would equate with a table row.
+    "anthropic.claude-opus-4.8",
+    "us.anthropic.claude-opus-4.8-20250610-v1:0",
+    "anthropic.claude-OPUS-4-8",
+    "Anthropic.Claude-Opus-4-8",
+    "anthropic.claude-opus-4-8:0",
+    "anthropic.claude-opus-4-\u{e5f}",
+    "arn:aws:bedrock:us-east-1:1:inference-profile/anthropic.claude-opus-4-8",
+];
+
+/// Well-formed ids that name no table row: unavailable without a matching
+/// recorded answer, and the #4698 response names none of them.
+const UNMATCHED_IDS: &[&str] = &[
+    "anthropic.claude",
+    "anthropic.claude-sonnet",
+    "anthropic.claude-haiku-4",
+    "us.anthropic.claude",
+    "amazon.nova",
+    "anthropic.claude-opus-4-8-foo",
+    "us.anthropic.claude-sonnet-5-preview",
+    "anthropic.claude-opus-4-85-v1:0",
+    "anthropic.claude-opus-4-8-v",
+    "anthropic.claude-opus-4-8-vx1",
+    // A seven-digit date is not a date stamp: the id stays distinct.
+    "anthropic.claude-opus-4-8-2025061",
+    "anthropic.claude-opus-4-8-2025061-v1:0",
+    "anthropic.claude-opus-4-8-20250610-extra",
+];
+
+#[test]
+fn rejected_ids_are_never_priced_even_by_a_matching_recorded_answer() {
+    // #4698: the recorded response is valid and prices `Claude Opus 4.8`; it
+    // must not validate a malformed, truncated or respelled id.
+    let list = opus_4_8_response();
+    for id in REJECTED_IDS {
+        assert_eq!(
+            pricing::classify(STATIC_FALLBACK, id),
+            Identity::Rejected,
+            "{id:?}"
+        );
+        assert_eq!(
+            WellFormedId::parse(id).is_some(),
+            {
+                // Respellings are well-formed text; the rest is not.
+                matches!(
+                    *id,
+                    "anthropic.claude-opus-4.8"
+                        | "us.anthropic.claude-opus-4.8-20250610-v1:0"
+                        | "us.anthropic.claude-opus-4-8:0"
+                        | "anthropic.claude-opus-4-8:0"
+                )
+            },
+            "{id:?}"
+        );
+        for price_list in [None, Some(&list)] {
+            let price = pricing::lookup("us-east-1", id, price_list);
+            assert_eq!(price, pricing::rejected(), "{id:?}");
+            assert_eq!(
+                price.to_json().to_compact_string(),
+                format!(
+                    r#"{{"available":false,"input_per_1k_usd":null,"output_per_1k_usd":null,"note":"{}"}}"#,
+                    price.note
+                ),
+                "{id:?}"
+            );
+        }
+        assert_eq!(pricing::static_fallback(id), None, "{id:?}");
+    }
+}
+
+#[test]
+fn every_negative_pricing_input_stays_unpriced_with_a_recorded_answer() {
+    let list = opus_4_8_response();
+    for id in REJECTED_IDS.iter().chain(UNMATCHED_IDS) {
+        let price = pricing::lookup("us-east-1", id, Some(&list));
+        assert!(!price.available, "{id:?}");
+        assert_eq!(rates(&price), (None, None), "{id:?}");
+        assert!(price.note.starts_with("Pricing unavailable: "), "{id:?}");
+    }
+    for id in UNMATCHED_IDS {
+        assert!(
+            matches!(
+                pricing::classify(STATIC_FALLBACK, id),
+                Identity::WellFormedUnknown(_)
+            ),
+            "{id:?}"
+        );
+        let shown = pricing::display_name_guess(WellFormedId::parse(id).unwrap());
+        assert_ne!(shown, "Claude Opus 4.8", "{id:?}");
+    }
+}
+
+#[test]
+fn the_pricing_command_rejects_malformed_revisions_with_a_recorded_answer() {
+    // The #4698 reproduction, through the command.
+    let dir = TempDir::new("price-4698");
+    let file = dir.file("prices.json", OPUS_4_8_RESPONSE);
+    let (status, out, err) = exec(&[
+        "bedrock-resolve",
+        "pricing",
+        "--region",
+        "us-east-1",
+        "--models",
+        "anthropic.claude-opus-4-8-v1:,anthropic.claude-opus-4-8-v1:0:0,anthropic.claude-opus-4-8:arbitrary,apac.anthropic.claude-opus-4-8",
+        "--price-list",
+        &file,
+    ]);
+    assert_eq!((status, err.as_str()), (0, ""));
+    let answer = json(&out);
+    for id in [
+        "anthropic.claude-opus-4-8-v1:",
+        "anthropic.claude-opus-4-8-v1:0:0",
+        "anthropic.claude-opus-4-8:arbitrary",
+    ] {
+        let entry = answer.get(id).unwrap_or_else(|| panic!("{id}"));
+        assert_eq!(entry, &pricing::rejected().to_json(), "{id}");
+    }
+    // The response itself is valid: a well-formed id outside the table that
+    // shows as that display name is priced from it.
+    let apac = answer.get("apac.anthropic.claude-opus-4-8").unwrap();
+    assert_eq!(apac.get("available"), Some(&Json::Bool(true)));
+    assert_eq!(apac.get("input_per_1k_usd"), Some(&Json::Float(0.005)));
+}
+
+#[test]
+fn well_formed_ids_outside_the_table_still_use_a_recorded_answer() {
+    let list = opus_4_8_response();
+    for id in [
+        "apac.anthropic.claude-opus-4-8",
+        "apac.anthropic.claude-opus-4-8-20250610-v1:0",
+        "apac.anthropic.claude-opus-4-8-v2",
+    ] {
+        assert!(
+            matches!(
+                pricing::classify(STATIC_FALLBACK, id),
+                Identity::WellFormedUnknown(_)
+            ),
+            "{id}"
+        );
+        let price = pricing::lookup("us-east-1", id, Some(&list));
+        assert!(price.available, "{id}");
+        assert_eq!(rates(&price), (Some(0.005), Some(0.025)), "{id}");
+        assert_eq!(
+            price.note,
+            "live Pricing API (matched display name 'Claude Opus 4.8')"
+        );
+    }
+    // The `-<N>:<M>` revision of the open-weight models is well-formed.
+    let item = price_item(&[
+        ("d1", "0.00015", "Input tokens"),
+        ("d2", "0.0006", "Output tokens"),
+    ])
+    .to_compact_string();
+    let oss = PriceList::from_json(&Json::Array(vec![Json::object(vec![
+        ("region", Json::string("us-west-2")),
+        ("model", Json::string("Gpt Oss 120b 1")),
+        ("price_list", Json::Array(vec![Json::string(item)])),
+    ])]))
+    .unwrap();
+    let price = pricing::lookup("us-west-2", "openai.gpt-oss-120b-1:0", Some(&oss));
+    assert_eq!(rates(&price), (Some(0.00015), Some(0.0006)));
+    // Table rows and their normalized forms are still the table's answer, and
+    // the table wins over a recorded answer for the same display name.
+    for id in [
+        "anthropic.claude-opus-4-8",
+        "anthropic.claude-opus-4-8-v1:0",
+        "anthropic.claude-opus-4-8-20250610-v1:0",
+        "us.anthropic.claude-opus-4-8-20250610",
+    ] {
+        assert!(
+            matches!(
+                pricing::classify(STATIC_FALLBACK, id),
+                Identity::KnownRow { .. }
+            ),
+            "{id}"
+        );
+        let price = pricing::lookup("us-east-1", id, Some(&list));
+        assert!(price.available, "{id}");
+        assert!(price.note.starts_with("static pricing table"), "{id}");
+    }
+}
+
+#[test]
+fn every_table_row_is_a_well_formed_known_row() {
+    for row in STATIC_FALLBACK {
+        assert!(WellFormedId::parse(row.0).is_some(), "{}", row.0);
+        assert_eq!(
+            pricing::classify(STATIC_FALLBACK, row.0),
+            Identity::KnownRow { row, exact: true },
+            "{}",
+            row.0
+        );
+    }
 }
 
 #[test]
@@ -1575,7 +1823,9 @@ fn the_parity_probes_of_the_python_check_resolve_as_before() {
         Ok((Some(0.003), Some(0.015)))
     );
     assert_eq!(
-        pricing::display_name_guess("us.anthropic.claude-haiku-4-5-20251001-v1:0"),
+        pricing::display_name_guess(
+            WellFormedId::parse("us.anthropic.claude-haiku-4-5-20251001-v1:0").unwrap()
+        ),
         "Claude Haiku 4.5"
     );
     assert_eq!(STATIC_FALLBACK.len(), 44);
