@@ -537,7 +537,9 @@ pub struct Invocation {
     pub positionals: Vec<String>,
     /// Flags that were present (each at most once).
     pub flags: Vec<String>,
-    /// Value flags that were present with their value (the last one wins).
+    /// Value flags that were present with their value: one entry per plain value
+    /// flag (the last one wins), one entry per occurrence, in command-line order,
+    /// for a [`CommandSpec::repeatable_flags`] flag.
     pub values: Vec<(String, String)>,
 }
 
@@ -563,6 +565,24 @@ impl Invocation {
     #[must_use]
     pub fn positional(&self, index: usize) -> Option<&str> {
         self.positionals.get(index).map(String::as_str)
+    }
+
+    /// Every value of the value flag `name` in command-line order: one for a
+    /// plain value flag (its last), one per occurrence for a
+    /// [`CommandSpec::repeatable_flags`] flag, none when absent.
+    pub fn values_of<'a>(&'a self, name: &'a str) -> impl Iterator<Item = &'a str> + 'a {
+        self.values
+            .iter()
+            .filter(move |(flag, _)| flag == name)
+            .map(|(_, value)| value.as_str())
+    }
+
+    fn store_value(&mut self, spec: &CommandSpec, name: &str, value: &str) {
+        if spec.repeatable_flags.contains(&name) {
+            self.values.push((name.to_string(), value.to_string()));
+        } else {
+            self.set_value(name, value);
+        }
     }
 
     fn set_value(&mut self, name: &str, value: &str) {
@@ -592,6 +612,13 @@ pub struct CommandSpec {
     /// `manifests validate`, whose `--plugin` takes the next word whatever it
     /// looks like (#4375); on for `sync` (#4377).
     pub strict_values: bool,
+    /// Long flags that take one value like `value_flags` (same spellings, same
+    /// `strict_values` check on every value) but may be repeated, argparse
+    /// `action="append"` style: every occurrence is kept in command-line order
+    /// and read with [`Invocation::values_of`]. A flag listed here is a value
+    /// flag without also being listed in `value_flags`; listed in both, it is
+    /// repeatable. A plain `value_flags` flag keeps only its last value (#4670).
+    pub repeatable_flags: &'static [&'static str],
     /// Maximum number of positional arguments.
     pub max_positionals: usize,
     /// Whether every word after the command path is a positional argument,
@@ -620,6 +647,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         flags: &["--json"],
         value_flags: &[],
         strict_values: false,
+        repeatable_flags: &[],
         max_positionals: 1,
         passthrough: false,
         handler: skills_list,
@@ -629,6 +657,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         flags: &[],
         value_flags: &["--plugin"],
         strict_values: false,
+        repeatable_flags: &[],
         max_positionals: 1,
         passthrough: false,
         handler: manifests::validate_command,
@@ -638,6 +667,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         flags: &[],
         value_flags: &[],
         strict_values: false,
+        repeatable_flags: &[],
         max_positionals: 1,
         passthrough: false,
         handler: spec::validate_command,
@@ -647,6 +677,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         flags: &[],
         value_flags: &["--plugin-root"],
         strict_values: false,
+        repeatable_flags: &[],
         max_positionals: 0,
         passthrough: false,
         handler: startup::pricing_command,
@@ -656,6 +687,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         flags: &[],
         value_flags: &["--migration-dir"],
         strict_values: false,
+        repeatable_flags: &[],
         max_positionals: 0,
         passthrough: false,
         handler: startup::program_artifacts_command,
@@ -665,6 +697,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         flags: &[],
         value_flags: &["--plugin-root"],
         strict_values: false,
+        repeatable_flags: &[],
         max_positionals: 0,
         passthrough: false,
         handler: startup::model_id_lint_command,
@@ -680,6 +713,7 @@ pub const COMMANDS: &[CommandSpec] = &[
             "--plugin-root",
         ],
         strict_values: false,
+        repeatable_flags: &[],
         max_positionals: 0,
         passthrough: false,
         handler: startup::artifacts_command,
@@ -689,6 +723,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         flags: &[],
         value_flags: &["--migration-dir", "--plugin-root", "--plugin-json"],
         strict_values: false,
+        repeatable_flags: &[],
         max_positionals: 0,
         passthrough: false,
         handler: startup::emit_plan_command,
@@ -698,6 +733,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         flags: &[],
         value_flags: &["--plugin-root"],
         strict_values: false,
+        repeatable_flags: &[],
         max_positionals: 0,
         passthrough: false,
         handler: startup::consent_audit_command,
@@ -707,6 +743,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         flags: &[],
         value_flags: &["--plugin-root"],
         strict_values: false,
+        repeatable_flags: &[],
         max_positionals: 0,
         passthrough: false,
         handler: startup::pricing_parity_command,
@@ -716,6 +753,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         flags: &[],
         value_flags: &["--json"],
         strict_values: false,
+        repeatable_flags: &[],
         max_positionals: 1,
         passthrough: false,
         handler: startup::terraform_policy_command,
@@ -731,6 +769,7 @@ pub const COMMANDS: &[CommandSpec] = &[
             "--mode",
         ],
         strict_values: false,
+        repeatable_flags: &[],
         max_positionals: 1,
         passthrough: false,
         handler: startup::migration_report_command,
@@ -740,6 +779,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         flags: &[],
         value_flags: &["--migration-dir", "--mode"],
         strict_values: true,
+        repeatable_flags: &[],
         max_positionals: 1,
         passthrough: false,
         handler: startup::heroku_report_command,
@@ -749,6 +789,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         flags: &[],
         value_flags: &["--plugin-root", "--runtimes-dir"],
         strict_values: false,
+        repeatable_flags: &[],
         max_positionals: 1,
         passthrough: false,
         handler: startup::score_command,
@@ -758,6 +799,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         flags: &[],
         value_flags: &["--plugin-root", "--runtimes-dir"],
         strict_values: false,
+        repeatable_flags: &[],
         max_positionals: 1,
         passthrough: false,
         handler: startup::score_units_command,
@@ -767,6 +809,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         flags: &[],
         value_flags: &["--output", "--catalog", "--openai-catalog", "--plugin-root"],
         strict_values: false,
+        repeatable_flags: &[],
         max_positionals: 1,
         passthrough: false,
         handler: startup::model_recommend_command,
@@ -794,6 +837,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         flags: &["--check"],
         value_flags: &["--root", "--plugin"],
         strict_values: true,
+        repeatable_flags: &[],
         max_positionals: 0,
         passthrough: false,
         handler: sync::plugin_skills,
@@ -803,6 +847,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         flags: &["--check"],
         value_flags: &["--plugin-root"],
         strict_values: true,
+        repeatable_flags: &[],
         max_positionals: 0,
         passthrough: false,
         handler: sync::vendored,
@@ -812,6 +857,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         flags: msk::SIZE_FLAGS,
         value_flags: msk::SIZE_VALUE_FLAGS,
         strict_values: false,
+        repeatable_flags: &[],
         max_positionals: 0,
         passthrough: false,
         handler: msk::size,
@@ -821,6 +867,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         flags: &[],
         value_flags: msk::COMPAT_VALUE_FLAGS,
         strict_values: false,
+        repeatable_flags: &[],
         max_positionals: 1,
         passthrough: false,
         handler: msk::compat,
@@ -830,6 +877,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         flags: &[],
         value_flags: msk::SIM_COMPUTE_VALUE_FLAGS,
         strict_values: false,
+        repeatable_flags: &[],
         max_positionals: 0,
         passthrough: false,
         handler: msk::sim_compute,
@@ -839,6 +887,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         flags: &[],
         value_flags: msk::SIM_RENDER_VALUE_FLAGS,
         strict_values: false,
+        repeatable_flags: &[],
         max_positionals: 0,
         passthrough: false,
         handler: msk::sim_render,
@@ -848,6 +897,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         flags: &[],
         value_flags: msk::SIM_VALIDATE_VALUE_FLAGS,
         strict_values: false,
+        repeatable_flags: &[],
         max_positionals: 0,
         passthrough: false,
         handler: msk::sim_validate,
@@ -857,6 +907,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         flags: &[],
         value_flags: dynamodb::CALCULATE_COSTS_VALUE_FLAGS,
         strict_values: true,
+        repeatable_flags: &[],
         max_positionals: 0,
         passthrough: false,
         handler: dynamodb::calculate_costs_command,
@@ -866,6 +917,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         flags: dynamodb::ITERATE_DESIGN_FLAGS,
         value_flags: dynamodb::ITERATE_DESIGN_VALUE_FLAGS,
         strict_values: true,
+        repeatable_flags: &[],
         max_positionals: 0,
         passthrough: false,
         handler: dynamodb::iterate_design_command,
@@ -887,6 +939,7 @@ pub const COMMANDS: &[CommandSpec] = &[
             "--format",
         ],
         strict_values: false,
+        repeatable_flags: &[],
         max_positionals: 0,
         passthrough: false,
         handler: aurora::acu_estimate_command,
@@ -896,6 +949,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         flags: &["--offline"],
         value_flags: &["--engine", "--region"],
         strict_values: false,
+        repeatable_flags: &[],
         max_positionals: 0,
         passthrough: false,
         handler: aurora::acu_list_instances_command,
@@ -905,6 +959,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         flags: &["--offline"],
         value_flags: &["--engine", "--region"],
         strict_values: false,
+        repeatable_flags: &[],
         max_positionals: 0,
         passthrough: false,
         handler: aurora::acu_pricing_source_command,
@@ -915,6 +970,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         flags: &["--offline"],
         value_flags: &["--engine", "--region"],
         strict_values: false,
+        repeatable_flags: &[],
         max_positionals: 0,
         passthrough: false,
         handler: aurora::acu_help_command,
@@ -932,6 +988,7 @@ pub const COMMANDS: &[CommandSpec] = &[
             "--avg-acu",
         ],
         strict_values: false,
+        repeatable_flags: &[],
         max_positionals: 1,
         passthrough: false,
         handler: aurora::commitment_command,
@@ -951,6 +1008,7 @@ pub const COMMANDS: &[CommandSpec] = &[
             "--monthly-io-millions",
         ],
         strict_values: false,
+        repeatable_flags: &[],
         max_positionals: 1,
         passthrough: false,
         handler: aurora::io_command,
@@ -960,6 +1018,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         flags: ai_data::DETECT_FORMAT_FLAGS,
         value_flags: ai_data::DETECT_FORMAT_VALUE_FLAGS,
         strict_values: true,
+        repeatable_flags: &[],
         max_positionals: 1,
         passthrough: false,
         handler: ai_data::detect_format_command,
@@ -969,6 +1028,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         flags: &[],
         value_flags: &[],
         strict_values: false,
+        repeatable_flags: &[],
         max_positionals: 1,
         passthrough: false,
         handler: ai_data::validate_metrics_command,
@@ -978,6 +1038,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         flags: &[],
         value_flags: ai_data::TRANSFORM_VALUE_FLAGS,
         strict_values: true,
+        repeatable_flags: &[],
         max_positionals: 0,
         passthrough: false,
         handler: ai_data::transform_plan_command,
@@ -987,6 +1048,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         flags: &[],
         value_flags: ai_data::TRANSFORM_VALUE_FLAGS,
         strict_values: true,
+        repeatable_flags: &[],
         max_positionals: 0,
         passthrough: false,
         handler: ai_data::transform_submit_command,
@@ -996,6 +1058,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         flags: &[],
         value_flags: ai_data::DESCRIBE_VALUE_FLAGS,
         strict_values: true,
+        repeatable_flags: &[],
         max_positionals: 1,
         passthrough: false,
         handler: ai_data::transform_describe_command,
@@ -1005,6 +1068,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         flags: &[],
         value_flags: bedrock_report::RENDER_VALUE_FLAGS,
         strict_values: true,
+        repeatable_flags: &[],
         max_positionals: 1,
         passthrough: false,
         handler: bedrock_report::render_command,
@@ -1014,6 +1078,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         flags: &[],
         value_flags: bedrock_report::VALIDATE_VALUE_FLAGS,
         strict_values: true,
+        repeatable_flags: &[],
         max_positionals: 1,
         passthrough: false,
         handler: bedrock_report::validate_command,
@@ -1050,6 +1115,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         flags: elasticache::PRICE_FLAGS,
         value_flags: elasticache::PRICE_VALUE_FLAGS,
         strict_values: false,
+        repeatable_flags: &[],
         max_positionals: 0,
         passthrough: false,
         handler: elasticache::price_command,
@@ -1059,6 +1125,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         flags: elasticache::ESTIMATE_FLAGS,
         value_flags: elasticache::ESTIMATE_VALUE_FLAGS,
         strict_values: false,
+        repeatable_flags: &[],
         max_positionals: 0,
         passthrough: false,
         handler: elasticache::estimate_serverless_command,
@@ -1068,6 +1135,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         flags: &[],
         value_flags: &[],
         strict_values: false,
+        repeatable_flags: &[],
         max_positionals: usize::MAX,
         passthrough: false,
         handler: elasticache::validate_input_command,
@@ -1077,6 +1145,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         flags: elasticache::REFERENCES_FLAGS,
         value_flags: elasticache::REFERENCES_VALUE_FLAGS,
         strict_values: true,
+        repeatable_flags: &[],
         max_positionals: 0,
         passthrough: false,
         handler: elasticache::validate_references_command,
@@ -1086,6 +1155,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         flags: elasticache::PREFLIGHT_FLAGS,
         value_flags: elasticache::PREFLIGHT_VALUE_FLAGS,
         strict_values: false,
+        repeatable_flags: &[],
         max_positionals: 0,
         passthrough: false,
         handler: elasticache::preflight_command,
@@ -1095,6 +1165,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         flags: elasticache::AUDIT_FLAGS,
         value_flags: elasticache::AUDIT_VALUE_FLAGS,
         strict_values: false,
+        repeatable_flags: &[],
         max_positionals: 0,
         passthrough: false,
         handler: elasticache::audit_command,
@@ -1104,6 +1175,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         flags: elasticache::DASHBOARD_FLAGS,
         value_flags: elasticache::DASHBOARD_VALUE_FLAGS,
         strict_values: false,
+        repeatable_flags: &[],
         max_positionals: 0,
         passthrough: false,
         handler: elasticache::dashboard_command,
@@ -1113,6 +1185,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         flags: &[],
         value_flags: &[],
         strict_values: false,
+        repeatable_flags: &[],
         max_positionals: usize::MAX,
         passthrough: true,
         handler: asm_exec::exec_command,
@@ -1140,6 +1213,11 @@ fn value_allowed(spec: &CommandSpec, value: &str) -> bool {
     !spec.strict_values || !(value.is_empty() || value.starts_with('-'))
 }
 
+/// Whether `name` is a value flag of `spec`, plain or repeatable.
+fn is_value_flag(spec: &CommandSpec, name: &str) -> bool {
+    spec.value_flags.contains(&name) || spec.repeatable_flags.contains(&name)
+}
+
 /// Routes already-decoded arguments (without the program name).
 ///
 /// `help`/`-h`/`--help` and `version`/`-V`/`--version` as the first argument
@@ -1147,8 +1225,9 @@ fn value_allowed(spec: &CommandSpec, value: &str) -> bool {
 /// help, any other `-`-prefixed word must be one of the command's flags or
 /// value flags and there may be at most `max_positionals` other words. A value
 /// flag takes the next word (or the text after `=`) as its value; repeating it
-/// keeps the last value, and a value flag at the end of the arguments with no
-/// value is a usage error.
+/// keeps the last value (every value, in order, for a flag in
+/// [`CommandSpec::repeatable_flags`]), and a value flag at the end of the
+/// arguments with no value is a usage error.
 ///
 /// # Errors
 ///
@@ -1186,7 +1265,7 @@ pub fn route<'a>(specs: &'a [CommandSpec], args: &[String]) -> Result<Routed<'a>
             return Ok(Routed::Help);
         }
         if word.starts_with('-') {
-            if spec.value_flags.contains(&word) {
+            if is_value_flag(spec, word) {
                 // `--name value`: the next word is the value.
                 let Some(value) = rest.next() else {
                     return Err(usage_error());
@@ -1194,15 +1273,15 @@ pub fn route<'a>(specs: &'a [CommandSpec], args: &[String]) -> Result<Routed<'a>
                 if !value_allowed(spec, value) {
                     return Err(usage_error());
                 }
-                invocation.set_value(word, value);
+                invocation.store_value(spec, word, value);
             } else if let Some((name, value)) = word
                 .split_once('=')
-                .filter(|(name, _)| spec.value_flags.contains(name))
+                .filter(|(name, _)| is_value_flag(spec, name))
             {
                 if !value_allowed(spec, value) {
                     return Err(usage_error());
                 }
-                invocation.set_value(name, value);
+                invocation.store_value(spec, name, value);
             } else if !spec.flags.contains(&word) {
                 return Err(usage_error());
             } else if !invocation.has_flag(word) {
@@ -1465,6 +1544,208 @@ mod tests {
             };
             assert_eq!(error.kind(), ErrorKind::Usage, "{values:?}");
             assert_eq!(error.exit_code(), 2);
+        }
+    }
+
+    /// Two commands with the same flags: `strict` rejects empty and dash values,
+    /// `loose` takes the next word whatever it looks like.
+    const REPEATABLE_SPECS: &[CommandSpec] = &[
+        CommandSpec {
+            path: &["strict"],
+            flags: &["--json"],
+            value_flags: &["--mode"],
+            strict_values: true,
+            repeatable_flags: &["--workload"],
+            max_positionals: 1,
+            passthrough: false,
+            handler: skills_list,
+        },
+        CommandSpec {
+            path: &["loose"],
+            flags: &["--json"],
+            value_flags: &["--mode", "--both"],
+            strict_values: false,
+            repeatable_flags: &["--workload", "--both"],
+            max_positionals: 1,
+            passthrough: false,
+            handler: skills_list,
+        },
+    ];
+
+    fn route_repeatable(values: &[&str]) -> Result<Invocation, ToolkitError> {
+        match route(REPEATABLE_SPECS, &words(values))? {
+            Routed::Run(_, invocation) => Ok(invocation),
+            other => panic!("expected a runnable route, got {other:?}"),
+        }
+    }
+
+    fn workloads(values: &[&str]) -> Vec<String> {
+        let invocation = route_repeatable(values).expect("routes");
+        invocation
+            .values_of("--workload")
+            .map(String::from)
+            .collect()
+    }
+
+    #[test]
+    fn a_repeatable_flag_keeps_every_value_in_order_in_either_spelling() {
+        assert_eq!(
+            workloads(&[
+                "strict",
+                "--workload",
+                "a",
+                "--workload=b",
+                "--workload",
+                "c"
+            ]),
+            ["a", "b", "c"]
+        );
+        // The same value twice is two values, not a collapse.
+        assert_eq!(
+            workloads(&["strict", "--workload=a", "--workload", "a"]),
+            ["a", "a"]
+        );
+        // `value` is still the last one.
+        let invocation =
+            route_repeatable(&["strict", "--workload", "a", "--workload", "b"]).expect("routes");
+        assert_eq!(invocation.value("--workload"), Some("b"));
+    }
+
+    #[test]
+    fn a_single_or_absent_repeatable_flag_yields_one_or_no_value() {
+        assert_eq!(workloads(&["strict", "--workload", "only"]), ["only"]);
+        assert_eq!(workloads(&["strict", "--workload=only"]), ["only"]);
+        let invocation = route_repeatable(&["strict", "--json"]).expect("routes");
+        assert_eq!(invocation.values_of("--workload").count(), 0);
+        assert_eq!(invocation.value("--workload"), None);
+        assert_eq!(Invocation::default().values_of("--workload").count(), 0);
+    }
+
+    #[test]
+    fn repeated_values_interleave_with_other_flags_and_positionals() {
+        let invocation = route_repeatable(&[
+            "strict",
+            "--workload",
+            "a",
+            "--mode",
+            "m1",
+            "pos",
+            "--json",
+            "--workload=b",
+            "--mode=m2",
+            "--json",
+            "--workload",
+            "c",
+        ])
+        .expect("routes");
+        assert_eq!(
+            invocation.values_of("--workload").collect::<Vec<_>>(),
+            ["a", "b", "c"]
+        );
+        // A plain value flag between them still keeps only its last value.
+        assert_eq!(invocation.values_of("--mode").collect::<Vec<_>>(), ["m2"]);
+        assert_eq!(invocation.value("--mode"), Some("m2"));
+        assert_eq!(invocation.flags, vec!["--json".to_string()]);
+        assert_eq!(invocation.positionals, vec!["pos".to_string()]);
+        // Entries of the repeatable flag keep their order relative to each other.
+        let order: Vec<_> = invocation
+            .values
+            .iter()
+            .map(|(n, v)| (n.as_str(), v.as_str()))
+            .collect();
+        assert_eq!(
+            order,
+            [
+                ("--workload", "a"),
+                ("--mode", "m2"),
+                ("--workload", "b"),
+                ("--workload", "c"),
+            ]
+        );
+    }
+
+    #[test]
+    fn strict_values_refuse_each_repeated_value_that_is_empty_or_dashed() {
+        for bad in [
+            ["--workload", ""].as_slice(),
+            &["--workload", "-x"],
+            &["--workload", "--json"],
+            &["--workload="],
+            &["--workload=-x"],
+            &["--workload"],
+        ] {
+            for position in [0, 1] {
+                let mut values = vec!["strict"];
+                if position == 1 {
+                    values.extend(["--workload", "ok"]);
+                }
+                values.extend_from_slice(bad);
+                if position == 0 {
+                    values.extend(["--workload", "ok"]);
+                }
+                let Err(error) = route_repeatable(&values) else {
+                    panic!("{values:?} must be a usage error");
+                };
+                assert_eq!(error.kind(), ErrorKind::Usage, "{values:?}");
+                assert_eq!(error.exit_code(), 2);
+            }
+        }
+    }
+
+    #[test]
+    fn a_non_strict_command_takes_any_next_word_for_every_repeated_value() {
+        let invocation = route_repeatable(&[
+            "loose",
+            "--workload",
+            "--json",
+            "--workload=",
+            "--workload",
+            "",
+            "--workload=-x",
+        ])
+        .expect("routes");
+        assert_eq!(
+            invocation.values_of("--workload").collect::<Vec<_>>(),
+            ["--json", "", "", "-x"]
+        );
+        assert!(invocation.flags.is_empty());
+    }
+
+    #[test]
+    fn a_plain_value_flag_still_keeps_only_its_last_value_when_repeated() {
+        let invocation = route_repeatable(&["strict", "--mode", "a", "--mode=b", "--mode", "c"])
+            .expect("routes");
+        assert_eq!(invocation.values_of("--mode").collect::<Vec<_>>(), ["c"]);
+        assert_eq!(invocation.value("--mode"), Some("c"));
+        assert_eq!(invocation.values.len(), 1);
+        // A flag in both lists is repeatable.
+        let invocation = route_repeatable(&["loose", "--both", "a", "--both=b"]).expect("routes");
+        assert_eq!(
+            invocation.values_of("--both").collect::<Vec<_>>(),
+            ["a", "b"]
+        );
+        // Repeatable flags are only known to the commands that declare them, and
+        // `--help` still wins.
+        assert!(route(COMMANDS, &words(&["sync", "vendored", "--workload", "a"])).is_err());
+        assert!(matches!(
+            route(
+                REPEATABLE_SPECS,
+                &words(&["strict", "--workload", "a", "--help"])
+            ),
+            Ok(Routed::Help)
+        ));
+    }
+
+    #[test]
+    fn registered_repeatable_flags_are_not_also_plain_flags() {
+        for spec in COMMANDS {
+            for flag in spec.repeatable_flags {
+                assert!(
+                    !spec.flags.contains(flag),
+                    "{:?}: {flag} is both a switch and a repeatable value flag",
+                    spec.path
+                );
+            }
         }
     }
 
@@ -1845,6 +2126,7 @@ mod tests {
             flags: &[],
             value_flags: &[],
             strict_values: false,
+            repeatable_flags: &[],
             max_positionals: 0,
             passthrough: false,
             handler,
