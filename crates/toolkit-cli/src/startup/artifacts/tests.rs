@@ -1887,3 +1887,141 @@ fn invalid_neutral_shared_artifacts_fail_their_schemas() {
         );
     }
 }
+
+/// #4596: a path the user passes explicitly may have symlinked parents, as in
+/// Python; only its final component is checked, even when it is spelled
+/// beneath `--plugin-root`.
+#[cfg(unix)]
+#[test]
+fn explicit_manifest_and_baseline_may_have_symlinked_parents() {
+    let temp = TempDir::new("explicit-parent-link");
+    write(&temp, "plugin/keep", "");
+    write(&temp, "outside/manifest.json", "{\"skills\": {}}");
+    write(&temp, "outside/baseline.json", "[]");
+    fs::create_dir_all(temp.join("run")).expect("run dir");
+    std::os::unix::fs::symlink(temp.join("outside"), temp.join("plugin/chosen"))
+        .expect("directory link");
+    let plugin = text(&temp.join("plugin")).to_string();
+    let run = text(&temp.join("run")).to_string();
+
+    for manifest in ["plugin/chosen/manifest.json", "outside/manifest.json"] {
+        let manifest = temp.join(manifest);
+        let (status, stdout, stderr) = artifacts(&[
+            "--self-check",
+            "--plugin-root",
+            &plugin,
+            "--manifest",
+            text(&manifest),
+        ]);
+        assert_eq!(status, 0, "{manifest:?}: {stdout}{stderr}");
+    }
+
+    for baseline in ["plugin/chosen/baseline.json", "outside/baseline.json"] {
+        let baseline = temp.join(baseline);
+        let (status, stdout, stderr) = artifacts(&[
+            "--run-dir",
+            &run,
+            "--skill",
+            "gcp-to-aws",
+            "--plugin-root",
+            &plugin_arg(),
+            "--baseline",
+            text(&baseline),
+        ]);
+        assert_eq!(status, 0, "{baseline:?}: {stdout}{stderr}");
+    }
+}
+
+/// #4596: the final component of an explicit path is still refused.
+#[cfg(unix)]
+#[test]
+fn explicit_manifest_and_baseline_final_links_are_refused() {
+    let temp = TempDir::new("explicit-final-link");
+    write(&temp, "plugin/keep", "");
+    write(&temp, "outside/manifest.json", "{\"skills\": {}}");
+    write(&temp, "outside/baseline.json", "[]");
+    fs::create_dir_all(temp.join("run")).expect("run dir");
+    std::os::unix::fs::symlink(
+        temp.join("outside/manifest.json"),
+        temp.join("plugin/manifest-link.json"),
+    )
+    .expect("manifest link");
+    std::os::unix::fs::symlink(
+        temp.join("outside/baseline.json"),
+        temp.join("plugin/baseline-link.json"),
+    )
+    .expect("baseline link");
+    let plugin = text(&temp.join("plugin")).to_string();
+    let run = text(&temp.join("run")).to_string();
+
+    let manifest = temp.join("plugin/manifest-link.json");
+    let (status, _, stderr) = artifacts(&[
+        "--self-check",
+        "--plugin-root",
+        &plugin,
+        "--manifest",
+        text(&manifest),
+    ]);
+    assert_eq!(status, 1);
+    assert!(
+        stderr.contains("symbolic links are not followed"),
+        "{stderr}"
+    );
+
+    let baseline = temp.join("plugin/baseline-link.json");
+    let (status, _, stderr) = artifacts(&[
+        "--run-dir",
+        &run,
+        "--skill",
+        "gcp-to-aws",
+        "--plugin-root",
+        &plugin_arg(),
+        "--baseline",
+        text(&baseline),
+    ]);
+    assert_eq!(status, 1);
+    assert!(
+        stderr.contains("symbolic links are not followed"),
+        "{stderr}"
+    );
+}
+
+/// #4596: the validator-owned default baseline still gets every component
+/// checked beneath the selected root.
+#[cfg(unix)]
+#[test]
+fn default_manifest_and_baseline_descendant_links_stay_refused() {
+    let temp = TempDir::new("default-descendant-link");
+    write(
+        &temp,
+        "outside/artifact-contracts-baseline.json",
+        "{\"entries\": []}",
+    );
+    std::os::unix::fs::symlink(real_plugin().join("scripts"), temp.join("scripts"))
+        .expect("scripts link");
+    let (status, _, stderr) = artifacts(&["--self-check", "--plugin-root", text(&temp)]);
+    assert_eq!(status, 1, "{stderr}");
+    assert!(
+        stderr.contains("symbolic links are not followed"),
+        "{stderr}"
+    );
+
+    let plugin = TempDir::new("default-baseline-link");
+    write(&plugin, "fixtures/keep", "");
+    std::os::unix::fs::symlink(temp.join("outside"), plugin.join("scripts")).expect("scripts link");
+    let manifest = real_plugin().join("scripts/artifact-contracts.json");
+    let (status, _, stderr) = artifacts(&[
+        "--fixtures",
+        "--plugin-root",
+        text(&plugin),
+        "--manifest",
+        text(&manifest),
+        "--skill",
+        "gcp-to-aws",
+    ]);
+    assert_eq!(status, 1, "{stderr}");
+    assert!(
+        stderr.contains("symbolic links are not followed"),
+        "{stderr}"
+    );
+}

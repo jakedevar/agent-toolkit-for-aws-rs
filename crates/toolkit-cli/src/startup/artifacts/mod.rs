@@ -23,7 +23,9 @@ use self::patterns::fnmatch;
 use self::pyjson::{dumps, loads};
 use self::schema::Context;
 use self::shape::validate_shape;
-use super::{is_regular_file_under, read_text, read_text_under, refuse_links_below};
+use super::{
+    is_regular_file, is_regular_file_under, read_text, read_text_under, refuse_links_below,
+};
 use crate::{Invocation, Output};
 
 pub(crate) mod contracts;
@@ -355,11 +357,16 @@ pub fn artifacts_command(
 ) -> Result<(), ToolkitError> {
     let mode = mode_of(invocation)?;
     let root = PathBuf::from(invocation.value("--plugin-root").unwrap_or("."));
+    // A path the user passes explicitly may have symlinked parents (only its
+    // final component is checked); the validator-owned defaults beneath the
+    // plugin root get every component checked (#4584, #4596).
+    let manifest_explicit = invocation.value("--manifest").is_some();
     let manifest_path = invocation.value("--manifest").map_or_else(
         || root.join("scripts/artifact-contracts.json"),
         PathBuf::from,
     );
     let baseline_arg = invocation.value("--baseline").map(PathBuf::from);
+    let baseline_explicit = baseline_arg.is_some();
     let use_default_baseline = matches!(mode, Mode::Fixtures);
     let baseline_path = baseline_arg.or_else(|| {
         use_default_baseline.then(|| root.join("scripts/artifact-contracts-baseline.json"))
@@ -367,9 +374,13 @@ pub fn artifacts_command(
     let failed = |message: String| ToolkitError::runtime("artifacts_input_invalid", message);
 
     let mut env = Env::new(&root);
-    let manifest_text =
-        read_text_under(&root, &manifest_path, &manifest_path.display().to_string())
-            .map_err(&failed)?;
+    let manifest_shown = manifest_path.display().to_string();
+    let manifest_text = if manifest_explicit {
+        read_text(&manifest_path, &manifest_shown)
+    } else {
+        read_text_under(&root, &manifest_path, &manifest_shown)
+    }
+    .map_err(&failed)?;
     let manifest =
         loads(&manifest_text).map_err(|e| failed(format!("{}: {e}", manifest_path.display())))?;
     let mut findings: Vec<Finding> = Vec::new();
@@ -435,9 +446,19 @@ pub fn artifacts_command(
     let mut stale: Vec<Json> = Vec::new();
     if !invocation.has_flag("--no-baseline") && !self_check {
         if let Some(path) = &baseline_path {
-            if is_regular_file_under(&root, path).map_err(&failed)? {
+            let present = if baseline_explicit {
+                is_regular_file(path)
+            } else {
+                is_regular_file_under(&root, path)
+            };
+            if present.map_err(&failed)? {
                 let shown = path.display().to_string();
-                let text = read_text_under(&root, path, &shown).map_err(&failed)?;
+                let text = if baseline_explicit {
+                    read_text(path, &shown)
+                } else {
+                    read_text_under(&root, path, &shown)
+                }
+                .map_err(&failed)?;
                 let baseline = loads(&text).map_err(|e| failed(format!("{shown}: {e}")))?;
                 stale = apply_baseline(&mut findings, &baseline);
                 let shown_rel = env.rel(path);
