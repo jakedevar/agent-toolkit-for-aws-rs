@@ -314,9 +314,12 @@ fn usage_variants(spec: &CommandSpec) -> Vec<Vec<String>> {
         }
         variants.push(extra);
     }
-    // The bare `-` stdin marker (#4743) as a value of every value flag, in both
-    // spellings, and as a positional: the router accepts it, so the command
-    // behind it must still keep its output safe (stdin is closed here).
+    // The bare `-` stdio marker (#4743) as a value of every value flag, in both
+    // spellings, and as a positional. The router refuses it except for pairs
+    // listed in `STDIO_DASH` (and for the value of a non-strict command, which
+    // takes any value), so the diagnostic or the command behind it must keep
+    // its output safe (stdin is closed here). The semantic contract (usage
+    // error, no file touched) is `an_unlisted_bare_dash_is_a_usage_error_*`.
     for flag in all_value_flags(spec) {
         let mut spaced = base.clone();
         spaced.extend([flag.to_string(), "-".to_string()]);
@@ -853,4 +856,185 @@ fn relational_reports_escape_hostile_recorded_and_argument_text() {
     assert_eq!(run.status, Some(0), "{stdout}");
     assert!(stdout.contains("\\u001b[31m"), "{stdout:?}");
     assert!(found.is_empty(), "{found:?}");
+}
+
+// ---------------------------------------------------------------------------
+// The bare `-` stdio marker is fail-closed (#4743, #4780).
+// ---------------------------------------------------------------------------
+
+/// The command path as `STDIO_DASH` spells it.
+fn joined_path(spec: &CommandSpec) -> String {
+    spec.path.join(" ")
+}
+
+fn dash_is_listed(spec: &CommandSpec, flag: &str) -> bool {
+    let path = joined_path(spec);
+    toolkit_cli::STDIO_DASH
+        .iter()
+        .any(|(command, listed)| *command == path && *listed == flag)
+}
+
+/// Every `STDIO_DASH` pair names a registered command and one of its value
+/// flags (or `<positional>` on a command that takes positionals), once.
+#[test]
+fn every_stdio_dash_entry_names_a_real_command_and_flag() {
+    let mut seen = BTreeSet::new();
+    for (command, flag) in toolkit_cli::STDIO_DASH {
+        assert!(seen.insert((*command, *flag)), "duplicate {command} {flag}");
+        let spec = COMMANDS
+            .iter()
+            .find(|spec| joined_path(spec) == *command)
+            .unwrap_or_else(|| panic!("STDIO_DASH names no command {command:?}"));
+        assert!(!spec.passthrough, "{command}: passthrough takes every word");
+        if *flag == toolkit_cli::STDIO_DASH_POSITIONAL {
+            assert!(spec.max_positionals > 0, "{command} takes no positionals");
+        } else {
+            assert!(
+                all_value_flags(spec).contains(flag),
+                "{command} has no value flag {flag}"
+            );
+        }
+    }
+}
+
+fn is_usage_error(run: &Run) -> bool {
+    run.status == Some(2)
+        && String::from_utf8_lossy(&run.stderr).starts_with("error: invalid arguments\n")
+}
+
+/// Every command, every value flag and every positional: `-` is a plain usage
+/// error unless the pair is listed (and then the router accepts it). The scratch
+/// directory holds a sentinel file named `-` that must never be touched, so a
+/// slice cannot receive the marker and quietly treat it as a path.
+#[test]
+fn an_unlisted_bare_dash_is_a_usage_error_and_touches_no_file() {
+    let scratch = Scratch::new();
+    let sentinel = scratch.0.join("-");
+    fs::write(&sentinel, "KEEP-ORIGINAL\n").expect("write sentinel");
+    let mut failures = BTreeSet::new();
+    for spec in COMMANDS.iter().filter(|spec| !spec.passthrough) {
+        let base: Vec<String> = spec.path.iter().map(|word| (*word).to_string()).collect();
+        let mut cases: Vec<(String, Vec<String>)> = Vec::new();
+        for flag in all_value_flags(spec) {
+            let mut spaced = base.clone();
+            spaced.extend([flag.to_string(), "-".to_string()]);
+            cases.push((flag.to_string(), spaced));
+            let mut attached = base.clone();
+            attached.push(format!("{flag}=-"));
+            cases.push((flag.to_string(), attached));
+        }
+        if spec.max_positionals > 0 {
+            let mut dash = base.clone();
+            dash.push("-".to_string());
+            cases.push((toolkit_cli::STDIO_DASH_POSITIONAL.to_string(), dash));
+        }
+        for (flag, args) in cases {
+            let positional = flag == toolkit_cli::STDIO_DASH_POSITIONAL;
+            let routed = toolkit_cli::route(COMMANDS, &args).is_ok();
+            if dash_is_listed(spec, &flag) {
+                if !routed {
+                    failures.insert(format!("listed pair refused: {}", display_args(&args)));
+                }
+            } else if positional || spec.strict_values {
+                // Refused by the router, with the pre-#4743 diagnostic.
+                if routed {
+                    failures.insert(format!("unlisted `-` routed: {}", display_args(&args)));
+                } else {
+                    let run = spawn_toolkit(&args, &scratch.0);
+                    if !is_usage_error(&run) {
+                        failures.insert(format!("not a usage error: {}", display_args(&args)));
+                    }
+                }
+            }
+            // A non-strict command takes any value verbatim, as it did before
+            // #4743; that is outside this contract.
+        }
+    }
+    assert_eq!(
+        fs::read_to_string(&sentinel).expect("sentinel survives"),
+        "KEEP-ORIGINAL\n"
+    );
+    let entries: Vec<_> = fs::read_dir(&scratch.0)
+        .expect("read scratch")
+        .map(|entry| entry.expect("entry").file_name())
+        .collect();
+    assert_eq!(entries.len(), 1, "unexpected files created: {entries:?}");
+    assert!(failures.is_empty(), "{failures:?}");
+}
+
+/// The #4780 reproductions with complete, valid companion arguments: the exact
+/// commands that overwrote or read a literal file named `-` now fail with a
+/// usage error before any filesystem access, with `./-` present or absent.
+#[test]
+fn the_4780_reproductions_fail_before_touching_a_file_named_dash() {
+    let model = r#"{"tables":[],"access_patterns":[{"pattern_id":"p","operation":"GetItem","table":"T","peak_rps":1,"estimated_item_size_bytes":1024}]}"#;
+    for spelling in [vec!["--output", "-"], vec!["--output=-"]] {
+        // `./-` present: preserved.
+        let scratch = Scratch::new();
+        fs::write(scratch.0.join("model.json"), model).expect("write model");
+        fs::write(scratch.0.join("-"), "KEEP-ORIGINAL\n").expect("write sentinel");
+        let mut args: Vec<String> = ["dynamodb", "calculate-costs", "--model", "model.json"]
+            .iter()
+            .map(|word| (*word).to_string())
+            .collect();
+        args.extend(spelling.iter().map(|word| (*word).to_string()));
+        let run = spawn_toolkit(&args, &scratch.0);
+        assert!(is_usage_error(&run), "{args:?}: {:?}", run.status);
+        assert!(run.stdout.is_empty(), "{args:?}");
+        assert_eq!(
+            fs::read_to_string(scratch.0.join("-")).expect("sentinel"),
+            "KEEP-ORIGINAL\n",
+            "{args:?}"
+        );
+
+        // `./-` absent: not created.
+        let scratch = Scratch::new();
+        fs::write(scratch.0.join("model.json"), model).expect("write model");
+        let run = spawn_toolkit(&args, &scratch.0);
+        assert!(is_usage_error(&run), "{args:?}: {:?}", run.status);
+        assert!(!scratch.0.join("-").exists(), "{args:?} created ./-");
+    }
+
+    // The read side: a file or directory named `-` is never opened.
+    let scratch = Scratch::new();
+    fs::write(
+        scratch.0.join("-"),
+        r#"{"instrumentation_type":"BREAKPOINT"}"#,
+    )
+    .expect("write sentinel");
+    for args in [
+        [
+            "cloudwatch",
+            "validate",
+            "instrumentation-type",
+            "--json-file",
+            "-",
+        ]
+        .as_slice(),
+        &[
+            "cloudwatch",
+            "validate",
+            "instrumentation-type",
+            "--json-file=-",
+        ],
+    ] {
+        let args: Vec<String> = args.iter().map(|word| (*word).to_string()).collect();
+        let run = spawn_toolkit(&args, &scratch.0);
+        assert!(is_usage_error(&run), "{args:?}: {:?}", run.status);
+        assert!(run.stdout.is_empty(), "{args:?}");
+    }
+    let scratch = Scratch::new();
+    fs::create_dir_all(scratch.0.join("-/example")).expect("create dir");
+    fs::write(
+        scratch.0.join("-/example/SKILL.md"),
+        "---\nname: example\n---\n",
+    )
+    .expect("write skill");
+    let args: Vec<String> = ["skills", "list", "-"]
+        .iter()
+        .map(|w| (*w).to_string())
+        .collect();
+    let run = spawn_toolkit(&args, &scratch.0);
+    assert!(is_usage_error(&run), "skills list -: {:?}", run.status);
+    assert!(run.stdout.is_empty());
 }

@@ -1530,11 +1530,48 @@ fn usage_error() -> ToolkitError {
     ToolkitError::usage("invalid_arguments", "invalid arguments")
 }
 
-/// Whether `value` may follow a value flag of `spec` (see
-/// [`CommandSpec::strict_values`]). The exact token `-` is always allowed: it
-/// is the argparse stdin marker (`--json -`, #4743), not a flag.
-fn value_allowed(spec: &CommandSpec, value: &str) -> bool {
-    !spec.strict_values || value == "-" || !(value.is_empty() || value.starts_with('-'))
+/// The pseudo-flag naming a command's positional arguments in [`STDIO_DASH`].
+pub const STDIO_DASH_POSITIONAL: &str = "<positional>";
+
+/// The (command path, flag) pairs that accept the exact token `-` as the
+/// argparse stdin/stdout marker (`--json -`, #4743, #4780).
+///
+/// Fail closed: `-` is accepted ONLY where a pair is listed here, as the value
+/// of the named value flag (`--f -` and `--f=-`) or, for the pseudo-flag
+/// [`STDIO_DASH_POSITIONAL`], as a positional. The command path is the
+/// space-joined [`CommandSpec::path`] (for example
+/// `"cloudwatch validate instrumentation-type"`). Everywhere else `-` is
+/// refused exactly as it was before #4743: a positional `-` is an unknown
+/// flag, and on a `strict_values` command `-` is a refused dash-prefixed
+/// value (a command without `strict_values` keeps taking any value verbatim,
+/// as it always did).
+///
+/// A command that is not listed never receives a `-` it could mistake for a
+/// stream: most slices turn a path argument straight into a filesystem path,
+/// where an accepted `-` would silently read or overwrite a file named `-`.
+/// A slice that wants stdin/stdout support adds its pair here in the same
+/// change that makes its handler treat `-` explicitly (bounded, UTF-8 checked,
+/// with the same diagnostic escaping as any other input). The list ships
+/// empty because no slice reads stdin yet; the CloudWatch `--json` entry is
+/// added when that slice is integrated.
+pub const STDIO_DASH: &[(&str, &str)] = &[];
+
+/// Whether `-` is an accepted stdio marker for `flag` (a value flag name, or
+/// [`STDIO_DASH_POSITIONAL`]) of `spec` according to `allowed`.
+fn dash_listed(allowed: &[(&str, &str)], spec: &CommandSpec, flag: &str) -> bool {
+    let path = spec.path.join(" ");
+    allowed
+        .iter()
+        .any(|(command, listed)| *command == path && *listed == flag)
+}
+
+/// Whether `value` may follow the value flag `flag` of `spec` (see
+/// [`CommandSpec::strict_values`]). The exact token `-` additionally needs
+/// the pair to be listed in `allowed` ([`STDIO_DASH`]).
+fn value_allowed(spec: &CommandSpec, allowed: &[(&str, &str)], flag: &str, value: &str) -> bool {
+    !spec.strict_values
+        || !(value.is_empty() || value.starts_with('-'))
+        || (value == "-" && dash_listed(allowed, spec, flag))
 }
 
 /// Whether `name` is a value flag of `spec`, plain or repeatable.
@@ -1558,6 +1595,16 @@ fn is_value_flag(spec: &CommandSpec, name: &str) -> bool {
 /// Returns a usage error (exit status 2) for no arguments, an unknown
 /// command, an unknown flag or too many positional arguments.
 pub fn route<'a>(specs: &'a [CommandSpec], args: &[String]) -> Result<Routed<'a>, ToolkitError> {
+    route_with(specs, STDIO_DASH, args)
+}
+
+/// [`route`] with an explicit [`STDIO_DASH`] allowlist, so tests can exercise
+/// the opt-in while the shipped constant is empty.
+fn route_with<'a>(
+    specs: &'a [CommandSpec],
+    stdio_dash: &[(&str, &str)],
+    args: &[String],
+) -> Result<Routed<'a>, ToolkitError> {
     let Some(first) = args.first().map(String::as_str) else {
         return Err(usage_error());
     };
@@ -1588,14 +1635,17 @@ pub fn route<'a>(specs: &'a [CommandSpec], args: &[String]) -> Result<Routed<'a>
         if word == "-h" || word == "--help" {
             return Ok(Routed::Help);
         }
-        // A bare `-` is a positional (argparse's stdin marker), not a flag.
-        if word.starts_with('-') && word != "-" {
+        // A bare `-` is a positional only where STDIO_DASH lists the command's
+        // `<positional>`; otherwise it is an unknown flag, as before #4743.
+        if word.starts_with('-')
+            && !(word == "-" && dash_listed(stdio_dash, spec, STDIO_DASH_POSITIONAL))
+        {
             if is_value_flag(spec, word) {
                 // `--name value`: the next word is the value.
                 let Some(value) = rest.next() else {
                     return Err(usage_error());
                 };
-                if !value_allowed(spec, value) {
+                if !value_allowed(spec, stdio_dash, word, value) {
                     return Err(usage_error());
                 }
                 invocation.store_value(spec, word, value);
@@ -1603,7 +1653,7 @@ pub fn route<'a>(specs: &'a [CommandSpec], args: &[String]) -> Result<Routed<'a>
                 .split_once('=')
                 .filter(|(name, _)| is_value_flag(spec, name))
             {
-                if !value_allowed(spec, value) {
+                if !value_allowed(spec, stdio_dash, name, value) {
                     return Err(usage_error());
                 }
                 invocation.store_value(spec, name, value);
@@ -1989,62 +2039,125 @@ mod tests {
         );
     }
 
+    /// Routes `values` against `REPEATABLE_SPECS` with an explicit `-` allowlist.
+    fn route_dash(allowed: &[(&str, &str)], values: &[&str]) -> Result<Invocation, ToolkitError> {
+        match route_with(REPEATABLE_SPECS, allowed, &words(values))? {
+            Routed::Run(_, invocation) => Ok(invocation),
+            other => panic!("expected a runnable route, got {other:?}"),
+        }
+    }
+
     #[test]
-    fn a_bare_dash_is_a_value_for_every_kind_of_value_flag_even_when_strict() {
-        // argparse parity (#4743): `--json -` means stdin.
-        for command in ["strict", "loose"] {
-            let invocation = route_repeatable(&[command, "--mode", "-"]).expect("routes");
-            assert_eq!(invocation.value("--mode"), Some("-"));
-            let invocation = route_repeatable(&[command, "--mode=-"]).expect("routes");
-            assert_eq!(invocation.value("--mode"), Some("-"));
-            let invocation = route_repeatable(&[
-                command,
+    fn the_shipped_stdio_dash_list_is_empty_until_a_slice_reads_stdin() {
+        assert!(STDIO_DASH.is_empty(), "{STDIO_DASH:?}");
+    }
+
+    #[test]
+    fn an_unlisted_bare_dash_is_refused_as_before_4743() {
+        // Strict command: value and positional `-` are refused, in both spellings.
+        for values in [
+            ["strict", "--mode", "-"].as_slice(),
+            &["strict", "--mode=-"],
+            &["strict", "--workload", "-"],
+            &["strict", "--workload=-"],
+            &["strict", "-"],
+            &["strict", "--mode", "m", "-", "-"],
+        ] {
+            let Err(error) = route_repeatable(values) else {
+                panic!("{values:?} must be a usage error");
+            };
+            assert_eq!(error.kind(), ErrorKind::Usage, "{values:?}");
+            assert_eq!(error.code(), "invalid_arguments", "{values:?}");
+            assert_eq!(error.message(), "invalid arguments", "{values:?}");
+        }
+        // A listed pair does not open its neighbours: another flag on the same
+        // command, the same flag on another command, or the positional.
+        let allowed = [("strict", "--mode")];
+        assert!(route_dash(&allowed, &["strict", "--workload", "-"]).is_err());
+        assert!(route_dash(&allowed, &["strict", "--workload=-"]).is_err());
+        assert!(route_dash(&allowed, &["strict", "-"]).is_err());
+        let other_command = [("loose", "<positional>")];
+        assert!(route_dash(&other_command, &["strict", "-"]).is_err());
+        let other_flag = [("loose", "--workload")];
+        assert!(route_dash(&other_flag, &["strict", "--workload", "-"]).is_err());
+        // Listing the positional does not allow `-` as a flag value.
+        let positional_only = [("strict", STDIO_DASH_POSITIONAL)];
+        assert!(route_dash(&positional_only, &["strict", "--mode", "-"]).is_err());
+        assert!(route_dash(&positional_only, &["strict", "--mode=-"]).is_err());
+    }
+
+    #[test]
+    fn a_non_strict_command_keeps_taking_any_value_unlisted() {
+        // Unchanged by #4743: only `strict_values` commands ever refused values.
+        let invocation = route_repeatable(&["loose", "--mode", "-"]).expect("routes");
+        assert_eq!(invocation.value("--mode"), Some("-"));
+        // But a positional `-` was always an unknown flag, listed or not.
+        assert!(route_repeatable(&["loose", "-"]).is_err());
+    }
+
+    #[test]
+    fn a_listed_pair_accepts_a_bare_dash_value_in_both_spellings() {
+        let allowed = [("strict", "--mode"), ("strict", "--workload")];
+        let invocation = route_dash(&allowed, &["strict", "--mode", "-"]).expect("routes");
+        assert_eq!(invocation.value("--mode"), Some("-"));
+        let invocation = route_dash(&allowed, &["strict", "--mode=-"]).expect("routes");
+        assert_eq!(invocation.value("--mode"), Some("-"));
+        let invocation = route_dash(
+            &allowed,
+            &[
+                "strict",
                 "--workload",
                 "-",
                 "--workload=-",
                 "--workload",
                 "a",
-            ])
-            .expect("routes");
-            assert_eq!(
-                invocation.values_of("--workload").collect::<Vec<_>>(),
-                ["-", "-", "a"]
-            );
-        }
+            ],
+        )
+        .expect("routes");
+        assert_eq!(
+            invocation.values_of("--workload").collect::<Vec<_>>(),
+            ["-", "-", "a"]
+        );
     }
 
     #[test]
-    fn other_dash_prefixed_values_are_still_refused_when_strict() {
-        for bad in ["-x", "--foo", "--", "-=", "-- ", "-\u{0}", "--json"] {
+    fn a_listed_pair_still_refuses_every_other_dashed_or_empty_value() {
+        let allowed = [("strict", "--mode"), ("strict", "--workload")];
+        for bad in ["-x", "--foo", "--", "-=", "-- ", "-\u{0}", "--json", ""] {
             for flag in ["--mode", "--workload"] {
                 assert!(
-                    route_repeatable(&["strict", flag, bad]).is_err(),
+                    route_dash(&allowed, &["strict", flag, bad]).is_err(),
                     "{flag} {bad:?}"
                 );
                 let attached = format!("{flag}={bad}");
                 assert!(
-                    route_repeatable(&["strict", &attached]).is_err(),
+                    route_dash(&allowed, &["strict", &attached]).is_err(),
                     "{attached:?}"
                 );
             }
         }
         // `--mode -` does not swallow the next flag as a value either.
-        assert!(route_repeatable(&["strict", "--mode", "-", "--bogus"]).is_err());
+        assert!(route_dash(&allowed, &["strict", "--mode", "-", "--bogus"]).is_err());
     }
 
     #[test]
-    fn a_bare_dash_is_a_positional_where_positionals_are_accepted() {
-        let invocation = route_repeatable(&["strict", "-"]).expect("routes");
+    fn a_listed_positional_accepts_a_bare_dash_and_counts_it() {
+        let allowed = [("strict", STDIO_DASH_POSITIONAL)];
+        let invocation = route_dash(&allowed, &["strict", "-"]).expect("routes");
         assert_eq!(invocation.positionals, ["-"]);
         // Beside a switch and a value flag, in any order.
         let invocation =
-            route_repeatable(&["strict", "--json", "--mode", "m", "-"]).expect("routes");
+            route_dash(&allowed, &["strict", "--json", "--mode", "m", "-"]).expect("routes");
         assert_eq!(invocation.positionals, ["-"]);
         assert!(invocation.has_flag("--json"));
         assert_eq!(invocation.value("--mode"), Some("m"));
         // It counts against `max_positionals`.
-        assert!(route_repeatable(&["strict", "-", "-"]).is_err());
-        // A command that takes no positionals refuses it.
+        assert!(route_dash(&allowed, &["strict", "-", "-"]).is_err());
+        assert!(route_dash(&allowed, &["strict", "a", "-"]).is_err());
+        // Other dash-prefixed words are still unknown flags.
+        assert!(route_dash(&allowed, &["strict", "-x"]).is_err());
+        assert!(route_dash(&allowed, &["strict", "--"]).is_err());
+        // A command that takes no positionals refuses it even when listed.
         let none = &[CommandSpec {
             path: &["none"],
             flags: &[],
@@ -2055,7 +2168,26 @@ mod tests {
             passthrough: false,
             handler: skills_list,
         }];
-        assert!(route(none, &words(&["none", "-"])).is_err());
+        let listed = [("none", STDIO_DASH_POSITIONAL)];
+        assert!(route_with(none, &listed, &words(&["none", "-"])).is_err());
+    }
+
+    #[test]
+    fn a_listed_multi_word_command_path_is_matched_space_joined() {
+        let specs = &[CommandSpec {
+            path: &["group", "leaf"],
+            flags: &[],
+            value_flags: &["--json"],
+            strict_values: true,
+            repeatable_flags: &[],
+            max_positionals: 0,
+            passthrough: false,
+            handler: skills_list,
+        }];
+        let args = words(&["group", "leaf", "--json", "-"]);
+        assert!(route_with(specs, &[], &args).is_err());
+        assert!(route_with(specs, &[("group", "--json")], &args).is_err());
+        assert!(route_with(specs, &[("group leaf", "--json")], &args).is_ok());
     }
 
     #[test]
@@ -2174,9 +2306,7 @@ mod tests {
             vec!["skills"],
             vec!["skills", "export"],
             vec!["skills", "list", "--wat"],
-            // A bare `-` is a positional now (#4743), so it only fails when it
-            // is one too many.
-            vec!["skills", "list", "a", "-"],
+            vec!["skills", "list", "-"],
             vec!["skills", "list", "a", "b"],
             vec!["list"],
             vec!["--json"],
