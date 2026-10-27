@@ -25,12 +25,19 @@ use std::path::PathBuf;
 use toolkit_core::{discover_skills, skills_to_json, ErrorKind, ToolkitError};
 
 pub mod dynamodb;
+pub mod manifests;
+pub mod spec;
+mod sync;
 
 /// Usage text printed by `help` (stdout) and after usage errors (stderr).
 pub const USAGE: &str = "\
 Usage:
   toolkit skills list [ROOT] [--json]
-  toolkit dynamodb calculate-costs --model FILE [--requirements|-r FILE] [--output|-o FILE]
+  toolkit manifests validate [ROOT] [--plugin NAME]
+  toolkit spec validate [ROOT]
+  toolkit sync plugin-skills [--root DIR] [--plugin NAME] [--check]
+  toolkit sync vendored [--plugin-root DIR] [--check]
+  toolkit dynamodb calculate-costs --model FILE [--requirements FILE] [--output FILE]
   toolkit dynamodb iterate-design --model FILE --config FILE --loop-state FILE
       [--manifest FILE] [--apply-change FILE] [--mode MODE] [--timestamp TS]
       [--yes-deploy] [--allow-spend] [--skip-deploy] [--calculator-only] [--dry-run]
@@ -41,6 +48,28 @@ Commands:
   skills list   List skill directories (directories containing SKILL.md) under
                 ROOT, sorted by name then relative path. ROOT defaults to
                 `skills` in the current directory.
+  manifests validate
+                Validate the marketplace manifests, plugin manifests, MCP
+                configs and SKILL.md frontmatter of the repository at ROOT
+                (default: the current directory). With --plugin NAME only
+                that plugin under ROOT/plugins is validated. Problems are
+                reported as `  ERROR: ...` lines on stderr and exit status 1.
+  spec validate
+                Validate every plugin under ROOT/plugins (default ROOT: the
+                current directory) against the Agent Plugins v1.0.0 schemas in
+                ROOT/tools/schemas/1.0.0, the path, placeholder and MCP rules
+                the schemas cannot express, and the SKILL.md frontmatter of
+                each plugin skill. Problems are reported as `  ERROR: ...`
+                lines on stderr and exit status 1.
+  sync plugin-skills
+                Make plugins/<plugin>/skills/<name> copies byte-identical to the
+                canonical skills/**/<name> (a directory holding SKILL.md). --root
+                defaults to the current directory. --check reports drift, exits
+                1 and writes nothing.
+  sync vendored Make each skills/<skill>/references/vendored copy in the plugin
+                at --plugin-root (default plugins/aws-startup-advisor)
+                byte-identical to skills/shared and its README table. --check
+                reports drift, exits 1 and writes nothing.
   dynamodb calculate-costs
                 Price a dynamodb_data_model.json (RRU/WRU, GSI amplification,
                 storage, vector indexes) and write a cost_report.md.
@@ -49,13 +78,20 @@ Commands:
 
 Options:
   --json        Emit a JSON array of {name, description, path} objects.
+  --plugin NAME (manifests validate) Validate only the plugin directory
+                ROOT/plugins/NAME. (sync plugin-skills) Sync only that plugin.
+  --check       (sync) Report drift without writing; exit 1 when out of sync.
+  --root DIR, --plugin-root DIR
+                (sync) Repository root and plugin root. A value may also be
+                written --flag=VALUE.
   -h, --help    Print this help.
   -V, --version Print the version.
 
 Exit codes:
   0  success (including help, version and an empty result)
   1  runtime error (missing root, root not a directory, unreadable files,
-     stdout write failure)
+     stdout write failure, unknown plugin, failed manifest or spec
+     validation, or drift found by a sync --check)
   2  usage error (unknown command, missing or unknown arguments,
      or a non-UTF-8 argument)
   Some commands keep a published status instead (iterate-design: 2 for a
@@ -65,8 +101,8 @@ Exit codes:
 /// Buffered stdout lines with the closed-pipe and write-error contract.
 pub struct Output<'a> {
     sink: &'a mut dyn Write,
+    diagnostics: Option<&'a mut dyn Write>,
     closed: bool,
-    diagnostics: Vec<String>,
 }
 
 impl<'a> Output<'a> {
@@ -74,22 +110,31 @@ impl<'a> Output<'a> {
     pub fn new(sink: &'a mut dyn Write) -> Self {
         Self {
             sink,
+            diagnostics: None,
             closed: false,
-            diagnostics: Vec::new(),
         }
     }
 
-    /// Queues a non-fatal diagnostic line (for example a warning). [`run`]
-    /// writes the queued lines to stderr, in order, after the handler
-    /// returns, whether it succeeded or failed.
-    pub fn diagnostic(&mut self, text: &str) {
-        self.diagnostics.push(text.to_string());
+    /// Wraps a stdout writer plus a diagnostics (stderr) writer for commands
+    /// that report findings line by line (#4375).
+    pub fn with_diagnostics(sink: &'a mut dyn Write, diagnostics: &'a mut dyn Write) -> Self {
+        Self {
+            sink,
+            diagnostics: Some(diagnostics),
+            closed: false,
+        }
     }
 
-    /// The diagnostic lines queued so far.
-    #[must_use]
-    pub fn diagnostics(&self) -> &[String] {
-        &self.diagnostics
+    /// Writes `text` and a newline to the diagnostics writer, if there is one.
+    ///
+    /// Failures are ignored: when stderr itself is gone there is nowhere left
+    /// to report that, which is also the rule for the final error report.
+    pub fn diagnostic(&mut self, text: &str) {
+        if let Some(writer) = self.diagnostics.as_mut() {
+            let _ = writer
+                .write_all(text.as_bytes())
+                .and_then(|()| writer.write_all(b"\n"));
+        }
     }
 
     /// True once the reader went away; handlers should stop producing output.
@@ -153,33 +198,26 @@ pub struct Invocation {
     pub positionals: Vec<String>,
     /// Flags that were present (each at most once).
     pub flags: Vec<String>,
-    /// Value options as `(long name, value)`; a repeated option keeps its
-    /// last value, like `argparse`.
-    pub options: Vec<(String, String)>,
+    /// Value flags that were present with their value (the last one wins).
+    pub values: Vec<(String, String)>,
 }
 
 impl Invocation {
-    /// The value of option `name` (its long form, for example `--model`).
-    #[must_use]
-    pub fn option(&self, name: &str) -> Option<&str> {
-        self.options
-            .iter()
-            .find(|(key, _)| key == name)
-            .map(|(_, value)| value.as_str())
-    }
-
-    fn set_option(&mut self, name: &str, value: &str) {
-        if let Some(slot) = self.options.iter_mut().find(|(key, _)| key == name) {
-            slot.1 = value.to_string();
-        } else {
-            self.options.push((name.to_string(), value.to_string()));
-        }
-    }
-
     /// Whether `name` (for example `--json`) was passed.
     #[must_use]
     pub fn has_flag(&self, name: &str) -> bool {
         self.flags.iter().any(|flag| flag == name)
+    }
+
+    /// The value of the value flag `name` (for example `--plugin`; the last one
+    /// when repeated).
+    #[must_use]
+    pub fn value(&self, name: &str) -> Option<&str> {
+        self.values
+            .iter()
+            .rev()
+            .find(|(flag, _)| flag == name)
+            .map(|(_, value)| value.as_str())
     }
 
     /// The positional argument at `index`, if any.
@@ -187,20 +225,18 @@ impl Invocation {
     pub fn positional(&self, index: usize) -> Option<&str> {
         self.positionals.get(index).map(String::as_str)
     }
+
+    fn set_value(&mut self, name: &str, value: &str) {
+        if let Some(slot) = self.values.iter_mut().find(|(flag, _)| flag == name) {
+            slot.1 = value.to_string();
+        } else {
+            self.values.push((name.to_string(), value.to_string()));
+        }
+    }
 }
 
 /// A command implementation.
 pub type Handler = fn(&Invocation, &mut Output<'_>) -> Result<(), ToolkitError>;
-
-/// A flag that takes one value, accepted as `--name value`, `--name=value`
-/// or (when declared) `-s value`.
-#[derive(Debug, Clone, Copy)]
-pub struct ValueFlag {
-    /// Long form, for example `--model`. Options are stored under this name.
-    pub long: &'static str,
-    /// Optional short form, for example `-r`.
-    pub short: Option<&'static str>,
-}
 
 /// One routable command.
 #[derive(Clone, Copy)]
@@ -209,8 +245,14 @@ pub struct CommandSpec {
     pub path: &'static [&'static str],
     /// Long flags the command accepts, for example `["--json"]`.
     pub flags: &'static [&'static str],
-    /// Flags that take a value, for example `--model FILE`.
-    pub value_flags: &'static [ValueFlag],
+    /// Long flags that take one value, written `--name VALUE` or
+    /// `--name=VALUE`. A missing value is a usage error; see `strict_values`.
+    pub value_flags: &'static [&'static str],
+    /// Whether a value flag rejects an empty value and one starting with `-`
+    /// (so `--plugin-root --check` is a usage error). Off for
+    /// `manifests validate`, whose `--plugin` takes the next word whatever it
+    /// looks like (#4375); on for `sync` (#4377).
+    pub strict_values: bool,
     /// Maximum number of positional arguments.
     pub max_positionals: usize,
     /// The implementation.
@@ -222,6 +264,7 @@ impl fmt::Debug for CommandSpec {
         f.debug_struct("CommandSpec")
             .field("path", &self.path)
             .field("flags", &self.flags)
+            .field("value_flags", &self.value_flags)
             .finish_non_exhaustive()
     }
 }
@@ -232,13 +275,47 @@ pub const COMMANDS: &[CommandSpec] = &[
         path: &["skills", "list"],
         flags: &["--json"],
         value_flags: &[],
+        strict_values: false,
         max_positionals: 1,
         handler: skills_list,
+    },
+    CommandSpec {
+        path: &["manifests", "validate"],
+        flags: &[],
+        value_flags: &["--plugin"],
+        strict_values: false,
+        max_positionals: 1,
+        handler: manifests::validate_command,
+    },
+    CommandSpec {
+        path: &["spec", "validate"],
+        flags: &[],
+        value_flags: &[],
+        strict_values: false,
+        max_positionals: 1,
+        handler: spec::validate_command,
+    },
+    CommandSpec {
+        path: &["sync", "plugin-skills"],
+        flags: &["--check"],
+        value_flags: &["--root", "--plugin"],
+        strict_values: true,
+        max_positionals: 0,
+        handler: sync::plugin_skills,
+    },
+    CommandSpec {
+        path: &["sync", "vendored"],
+        flags: &["--check"],
+        value_flags: &["--plugin-root"],
+        strict_values: true,
+        max_positionals: 0,
+        handler: sync::vendored,
     },
     CommandSpec {
         path: &["dynamodb", "calculate-costs"],
         flags: &[],
         value_flags: dynamodb::CALCULATE_COSTS_VALUE_FLAGS,
+        strict_values: true,
         max_positionals: 0,
         handler: dynamodb::calculate_costs_command,
     },
@@ -246,6 +323,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         path: &["dynamodb", "iterate-design"],
         flags: dynamodb::ITERATE_DESIGN_FLAGS,
         value_flags: dynamodb::ITERATE_DESIGN_VALUE_FLAGS,
+        strict_values: true,
         max_positionals: 0,
         handler: dynamodb::iterate_design_command,
     },
@@ -266,12 +344,21 @@ fn usage_error() -> ToolkitError {
     ToolkitError::usage("invalid_arguments", "invalid arguments")
 }
 
+/// Whether `value` may follow a value flag of `spec` (see
+/// [`CommandSpec::strict_values`]).
+fn value_allowed(spec: &CommandSpec, value: &str) -> bool {
+    !spec.strict_values || !(value.is_empty() || value.starts_with('-'))
+}
+
 /// Routes already-decoded arguments (without the program name).
 ///
 /// `help`/`-h`/`--help` and `version`/`-V`/`--version` as the first argument
 /// win over everything after them. Inside a command, `-h`/`--help` selects
-/// help, any other `-`-prefixed word must be one of the command's flags and
-/// there may be at most `max_positionals` other words.
+/// help, any other `-`-prefixed word must be one of the command's flags or
+/// value flags and there may be at most `max_positionals` other words. A value
+/// flag takes the next word (or the text after `=`) as its value; repeating it
+/// keeps the last value, and a value flag at the end of the arguments with no
+/// value is a usage error.
 ///
 /// # Errors
 ///
@@ -305,28 +392,27 @@ pub fn route<'a>(specs: &'a [CommandSpec], args: &[String]) -> Result<Routed<'a>
             return Ok(Routed::Help);
         }
         if word.starts_with('-') {
-            if let Some(flag) = spec
-                .value_flags
-                .iter()
-                .find(|flag| flag.long == word || flag.short == Some(word))
-            {
-                // Like argparse, a value may not itself look like an option.
-                let Some(value) = rest.next().filter(|value| !value.starts_with('-')) else {
+            if spec.value_flags.contains(&word) {
+                // `--name value`: the next word is the value.
+                let Some(value) = rest.next() else {
                     return Err(usage_error());
                 };
-                invocation.set_option(flag.long, value);
-            } else if let Some((name, value)) = word
-                .split_once('=')
-                .filter(|(name, _)| spec.value_flags.iter().any(|flag| flag.long == *name))
-            {
-                invocation.set_option(name, value);
-            } else {
-                if !spec.flags.contains(&word) {
+                if !value_allowed(spec, value) {
                     return Err(usage_error());
                 }
-                if !invocation.has_flag(word) {
-                    invocation.flags.push(arg.clone());
+                invocation.set_value(word, value);
+            } else if let Some((name, value)) = word
+                .split_once('=')
+                .filter(|(name, _)| spec.value_flags.contains(name))
+            {
+                if !value_allowed(spec, value) {
+                    return Err(usage_error());
                 }
+                invocation.set_value(name, value);
+            } else if !spec.flags.contains(&word) {
+                return Err(usage_error());
+            } else if !invocation.has_flag(word) {
+                invocation.flags.push(arg.clone());
             }
         } else {
             if invocation.positionals.len() >= spec.max_positionals {
@@ -395,14 +481,8 @@ pub fn run(args: &[OsString], out: &mut dyn Write, err: &mut dyn Write) -> u8 {
             print_static(out, err, &format!("toolkit {}", env!("CARGO_PKG_VERSION")))
         }
         Ok(Routed::Run(spec, invocation)) => {
-            let mut output = Output::new(out);
+            let mut output = Output::with_diagnostics(out, err);
             let result = (spec.handler)(&invocation, &mut output).and_then(|()| output.finish());
-            // Diagnostics (warnings) reach stderr before any error report, so
-            // the final `error:` line is always the last thing printed.
-            for line in output.diagnostics() {
-                let _ = err.write_all(line.as_bytes());
-                let _ = err.write_all(b"\n");
-            }
             match result {
                 Ok(()) => 0,
                 Err(error) => report(err, &error),
@@ -515,6 +595,65 @@ mod tests {
     }
 
     #[test]
+    fn value_flags_take_one_value_in_either_spelling() {
+        for values in [
+            vec![
+                "sync",
+                "plugin-skills",
+                "--root",
+                "r",
+                "--plugin",
+                "p",
+                "--check",
+            ],
+            vec!["sync", "plugin-skills", "--check", "--plugin=p", "--root=r"],
+        ] {
+            let Ok(Routed::Run(spec, invocation)) = route_words(&values) else {
+                panic!("expected a runnable route for {values:?}");
+            };
+            assert_eq!(spec.path, &["sync", "plugin-skills"]);
+            assert_eq!(invocation.value("--root"), Some("r"));
+            assert_eq!(invocation.value("--plugin"), Some("p"));
+            assert!(invocation.has_flag("--check"));
+            assert!(invocation.positionals.is_empty());
+        }
+        let Ok(Routed::Run(_, invocation)) =
+            route_words(&["sync", "vendored", "--plugin-root", "a", "--plugin-root=b"])
+        else {
+            panic!("expected a runnable route");
+        };
+        assert_eq!(
+            invocation.value("--plugin-root"),
+            Some("b"),
+            "last one wins"
+        );
+        assert_eq!(invocation.value("--root"), None);
+    }
+
+    #[test]
+    fn value_flag_misuse_is_a_usage_error() {
+        for values in [
+            vec!["sync", "vendored", "--plugin-root"],
+            vec!["sync", "vendored", "--plugin-root", "--check"],
+            vec!["sync", "vendored", "--plugin-root", ""],
+            vec!["sync", "vendored", "--plugin-root="],
+            vec!["sync", "vendored", "--plugin-root=-x"],
+            vec!["sync", "vendored", "--check=1"],
+            vec!["sync", "vendored", "--root", "x"],
+            vec!["sync", "vendored", "positional"],
+            vec!["sync", "plugin-skills", "--json"],
+            vec!["skills", "list", "--root", "x"],
+            vec!["sync"],
+        ] {
+            let Err(error) = route_words(&values) else {
+                panic!("{values:?} must be a usage error");
+            };
+            assert_eq!(error.kind(), ErrorKind::Usage, "{values:?}");
+            assert_eq!(error.exit_code(), 2);
+        }
+    }
+
+    #[test]
     fn help_and_version_short_circuit() {
         for values in [
             vec!["--help"],
@@ -564,14 +703,8 @@ mod tests {
         for spec in COMMANDS {
             let joined = spec.path.join(" ");
             assert!(USAGE.contains(&joined), "usage lacks '{joined}'");
-            for flag in spec.flags {
+            for flag in spec.flags.iter().chain(spec.value_flags) {
                 assert!(USAGE.contains(flag), "usage lacks '{flag}'");
-            }
-            for flag in spec.value_flags {
-                assert!(USAGE.contains(flag.long), "usage lacks '{}'", flag.long);
-                if let Some(short) = flag.short {
-                    assert!(USAGE.contains(short), "usage lacks '{short}'");
-                }
             }
         }
         let paths: Vec<&[&str]> = COMMANDS.iter().map(|spec| spec.path).collect();
@@ -696,56 +829,35 @@ mod tests {
     }
 
     #[test]
-    fn value_options_accept_three_spellings_and_keep_the_last() {
+    fn dynamodb_value_flags_route_with_the_canonical_router() {
         let Ok(Routed::Run(spec, invocation)) = route_words(&[
             "dynamodb",
             "calculate-costs",
             "--model",
             "a.json",
-            "-o",
-            "x.md",
+            "--output=x.md",
             "--output=y.md",
-            "-r",
-            "r.json",
-            "--requirements=",
         ]) else {
             panic!("expected a runnable route");
         };
         assert_eq!(spec.path, &["dynamodb", "calculate-costs"]);
-        assert_eq!(invocation.option("--model"), Some("a.json"));
-        assert_eq!(invocation.option("--output"), Some("y.md"), "last wins");
-        assert_eq!(invocation.option("--requirements"), Some(""), "empty value");
-        assert_eq!(invocation.option("--absent"), None);
-        assert!(invocation.positionals.is_empty());
-        assert!(invocation.flags.is_empty());
-    }
-
-    #[test]
-    fn malformed_value_options_are_usage_errors() {
+        assert_eq!(invocation.value("--model"), Some("a.json"));
+        assert_eq!(invocation.value("--output"), Some("y.md"), "last wins");
+        assert_eq!(invocation.value("--absent"), None);
+        assert!(invocation.positionals.is_empty() && invocation.flags.is_empty());
         for values in [
-            // No value, or a value that looks like another option.
             vec!["dynamodb", "calculate-costs", "--model"],
             vec!["dynamodb", "calculate-costs", "--model", "--output", "x"],
-            vec!["dynamodb", "calculate-costs", "-o"],
-            vec!["dynamodb", "calculate-costs", "-o", "-r"],
-            // `=` only splits a declared value option; a short form has no `=`.
-            vec!["dynamodb", "calculate-costs", "--bogus=1"],
-            vec!["dynamodb", "calculate-costs", "-o=x"],
-            // A value option without a short form, and abbreviations.
-            vec!["dynamodb", "iterate-design", "-m", "x"],
+            vec!["dynamodb", "calculate-costs", "-o", "x"],
             vec!["dynamodb", "calculate-costs", "--req", "x"],
-            // A stray positional.
             vec!["dynamodb", "calculate-costs", "--model", "a.json", "extra"],
-            // A value option is not a boolean flag.
             vec!["dynamodb", "iterate-design", "--model=a", "--dry-run=1"],
         ] {
             let Err(error) = route_words(&values) else {
                 panic!("{values:?} must be a usage error");
             };
-            assert_eq!(error.kind(), ErrorKind::Usage, "{values:?}");
-            assert_eq!(error.exit_code(), 2);
+            assert_eq!(error.exit_code(), 2, "{values:?}");
         }
-        // Boolean flags still work beside value options.
         let Ok(Routed::Run(_, invocation)) = route_words(&[
             "dynamodb",
             "iterate-design",
@@ -757,7 +869,7 @@ mod tests {
             panic!("expected a runnable route");
         };
         assert!(invocation.has_flag("--dry-run") && invocation.has_flag("--yes-deploy"));
-        assert_eq!(invocation.option("--model"), Some("m"));
+        assert_eq!(invocation.value("--model"), Some("m"));
     }
 
     #[test]

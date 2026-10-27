@@ -94,16 +94,21 @@ struct Run {
 
 fn run(args: &IterateArgs, env: &mut FakeEnv) -> Run {
     let mut buffer: Vec<u8> = Vec::new();
-    let (result, diagnostics) = {
-        let mut out = Output::new(&mut buffer);
+    let mut stderr: Vec<u8> = Vec::new();
+    let result = {
+        let mut out = Output::with_diagnostics(&mut buffer, &mut stderr);
         let result = run_iterate_round(args, env, &mut out);
         let _ = out.finish();
-        (result, out.diagnostics().to_vec())
+        result
     };
     Run {
         result,
         stdout: String::from_utf8(buffer).expect("utf-8 stdout"),
-        diagnostics,
+        diagnostics: String::from_utf8(stderr)
+            .expect("utf-8 stderr")
+            .lines()
+            .map(ToString::to_string)
+            .collect(),
     }
 }
 
@@ -1048,4 +1053,64 @@ fn unported_pipeline_steps_fail_before_any_cloud_action() {
     let error = dispatch_step(&argv, &mut out).expect_err("usage");
     assert_eq!(error.kind(), ErrorKind::Usage);
     assert!(buffer.is_empty());
+}
+
+// Python's json.dumps(ensure_ascii=True) escapes U+007F as the six ASCII bytes
+// `\u007f` (its ESCAPE_ASCII class keeps only U+0020..U+007E raw). The digest
+// below is the SHA-256 of the signature text below, computed with `sha256sum`
+// from the literal bytes (not from this code), so a raw DEL byte in the hashed
+// text (digest 5a6514eb7310...) would fail here and make an unchanged design
+// look like a schema change.
+const DEL_SIGNATURE: &str = r#"[["Tbl", "pk\u007f", null, [], false, null]]"#;
+const DEL_SIGNATURE_SHA256: &str =
+    "2212db5492d3842b139f0f5e387159aac665e0f01b1048e379f2385b74434630";
+const DEL_MODEL: &str = r#"{"tables":[{"table_name":"Tbl","key_schema":{"partition_key":"pk\u007f"}}],
+    "access_patterns":[{"pattern_id":"P","operation":"GetItem","table":"Tbl","peak_rps":1}]}"#;
+
+#[test]
+fn a_del_character_in_a_key_name_keeps_the_legacy_fingerprint() {
+    assert_eq!(sha256_hex(DEL_SIGNATURE.as_bytes()), DEL_SIGNATURE_SHA256);
+    // The raw-DEL spelling is what the old (wrong) serializer hashed.
+    assert_eq!(
+        sha256_hex("[[\"Tbl\", \"pk\u{7f}\", null, [], false, null]]".as_bytes()),
+        "5a6514eb73103e53c10a1d43217a9af688b449a7fc8a7c073bc2345f47eeb11b"
+    );
+    let fingerprint = schema_fingerprint(&json(DEL_MODEL)).expect("fingerprint");
+    assert_eq!(fingerprint, DEL_SIGNATURE_SHA256[..12]);
+    assert_eq!(fingerprint, "2212db5492d3");
+}
+
+#[test]
+fn a_del_character_in_a_key_name_reuses_the_recorded_deployment() {
+    let dir = TempDir::new("del-reuse");
+    fs::write(dir.join("model.json"), DEL_MODEL).expect("model");
+    fs::write(dir.join("config.json"), "{}").expect("config");
+    fs::write(
+        dir.join("created_resources.json"),
+        r#"{"prefix":"existing","lambda":{"name":"fn"}}"#,
+    )
+    .expect("manifest");
+    // A loop state written by the legacy script for this very design.
+    fs::write(
+        dir.join("loop_state.json"),
+        r#"{"rounds":[],"current_schema_fingerprint":"2212db5492d3"}"#,
+    )
+    .expect("loop state");
+    let args = args_for(&dir);
+    let mut env = FakeEnv {
+        summary: "{}".to_string(),
+        findings: "{}".to_string(),
+        ..FakeEnv::default()
+    };
+    // No --yes-deploy: a redeploy decision would be refused with status 4.
+    let outcome = run(&args, &mut env);
+    outcome.result.as_ref().expect("an unchanged design reuses");
+    assert!(
+        outcome
+            .stdout
+            .contains("schema_fingerprint=2212db5492d3 (prior=2212db5492d3) -> decision=reuse"),
+        "{}",
+        outcome.stdout
+    );
+    assert!(!step_names(&env).contains(&"deploy-model"));
 }

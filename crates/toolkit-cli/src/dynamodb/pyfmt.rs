@@ -218,7 +218,7 @@ fn push_ascii_json_string(out: &mut String, text: &str) {
             '\t' => out.push_str("\\t"),
             '\u{08}' => out.push_str("\\b"),
             '\u{0C}' => out.push_str("\\f"),
-            c if (' '..='~').contains(&c) || c == '\u{7f}' => out.push(c),
+            c if (' '..='~').contains(&c) => out.push(c),
             c => {
                 let mut units = [0_u16; 2];
                 for unit in c.encode_utf16(&mut units) {
@@ -401,15 +401,88 @@ mod tests {
         let value = json("{\"b\": [1, 2.0, null, true], \"a\": \"é😀\\n\\u007f\"}");
         assert_eq!(
             dumps(&value, false),
-            "{\"b\": [1, 2.0, null, true], \"a\": \"\\u00e9\\ud83d\\ude00\\n\u{7f}\"}"
+            "{\"b\": [1, 2.0, null, true], \"a\": \"\\u00e9\\ud83d\\ude00\\n\\u007f\"}"
         );
         assert_eq!(
             dumps(&value, true),
-            "{\"a\": \"\\u00e9\\ud83d\\ude00\\n\u{7f}\", \"b\": [1, 2.0, null, true]}"
+            "{\"a\": \"\\u00e9\\ud83d\\ude00\\n\\u007f\", \"b\": [1, 2.0, null, true]}"
         );
         assert_eq!(dumps(&json("[]"), false), "[]");
         assert_eq!(dumps(&json("{}"), true), "{}");
+        assert_eq!(dumps(&json("[]"), true), "[]");
         assert_eq!(dumps(&Json::Float(f64::NAN), false), "NaN");
         assert_eq!(dumps(&Json::Float(f64::NEG_INFINITY), false), "-Infinity");
+    }
+
+    /// Python's `json.encoder` (`ensure_ascii=True`) keeps only U+0020..U+007E
+    /// raw (`ESCAPE_ASCII = r'([\\"]|[^\ -~])'`); it writes `\\`, `\"`, `\b`,
+    /// `\f`, `\n`, `\r`, `\t` for those characters and `\u` plus four lower-case
+    /// hex digits for every other one, as a UTF-16 surrogate pair above U+FFFF.
+    /// Each pair below is written out by hand from those rules.
+    #[test]
+    fn dumps_escapes_everything_but_space_to_tilde_like_python() {
+        let cases: &[(&str, &str)] = &[
+            // ASCII control characters: the named short forms, `\u00xx` else.
+            ("\u{00}", r"\u0000"),
+            ("\u{01}", r"\u0001"),
+            ("\u{07}", r"\u0007"),
+            ("\u{08}", r"\b"),
+            ("\u{09}", r"\t"),
+            ("\u{0a}", r"\n"),
+            ("\u{0b}", r"\u000b"),
+            ("\u{0c}", r"\f"),
+            ("\u{0d}", r"\r"),
+            ("\u{0e}", r"\u000e"),
+            ("\u{1a}", r"\u001a"),
+            ("\u{1b}", r"\u001b"),
+            ("\u{1f}", r"\u001f"),
+            // The raw range, and quote/backslash.
+            (" ", " "),
+            ("/", "/"),
+            ("A~", "A~"),
+            ("\"", "\\\""),
+            ("\\", "\\\\"),
+            // DEL is outside U+0020..U+007E, so it is escaped.
+            ("\u{7f}", r"\u007f"),
+            ("pk\u{7f}", r"pk\u007f"),
+            // C1 controls and other non-ASCII, BMP, lower-case hex.
+            ("\u{80}", r"\u0080"),
+            ("\u{9f}", r"\u009f"),
+            ("\u{a0}", r" "),
+            ("\u{e9}", r"é"),
+            ("\u{ff}", r"ÿ"),
+            ("\u{2028}", r" "),
+            ("\u{fffd}", r"�"),
+            ("\u{ffff}", r"￿"),
+            // Beyond the BMP: surrogate pairs.
+            ("\u{10000}", r"𐀀"),
+            ("\u{1f600}", r"😀"),
+            ("\u{10ffff}", r"􏿿"),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(
+                dumps(&Json::String((*input).to_string()), false),
+                format!("\"{expected}\""),
+                "{input:?}"
+            );
+        }
+        // Object keys follow the same rule.
+        assert_eq!(dumps(&json("{\"k\\u007f\": 1}"), true), "{\"k\\u007f\": 1}");
+    }
+
+    #[test]
+    fn dumps_never_emits_a_byte_outside_the_printable_ascii_range() {
+        for code in (0..=0xffff_u32).chain([0x10000, 0x1f600, 0x10ffff]) {
+            let Some(c) = char::from_u32(code) else {
+                continue; // surrogate code points are not Rust chars
+            };
+            let out = dumps(&Json::String(c.to_string()), false);
+            assert!(
+                out.bytes().all(|byte| (0x20..=0x7e).contains(&byte)),
+                "U+{code:04X} leaked a raw byte: {out:?}"
+            );
+            let raw = (0x20..=0x7e).contains(&code) && c != '"' && c != '\\';
+            assert_eq!(out.len() == 3, raw, "U+{code:04X}: {out:?}");
+        }
     }
 }

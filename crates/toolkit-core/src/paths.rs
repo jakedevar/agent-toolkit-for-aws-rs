@@ -164,23 +164,21 @@ pub fn resolve_within(root: &Path, relative: &str) -> Result<PathBuf, PathError>
     Ok(current)
 }
 
-/// Reads a UTF-8 text file of at most `max_bytes` bytes, refusing symbolic
-/// links and non-regular files.
+/// Opens a regular file for reading, refusing symbolic links and non-regular
+/// files, and returns the handle with its metadata.
+///
+/// This is the shared open step behind [`read_regular_file`] and the byte-exact
+/// synchronization commands (#4377), which must not impose a text size limit.
+/// On Unix the opened handle's device and inode must match the pre-open
+/// `lstat` (final component only; see the module threat model).
 ///
 /// # Errors
 ///
 /// Returns [`PathError::NotFound`], [`PathError::Symlink`],
-/// [`PathError::NotRegularFile`], [`PathError::Changed`] (identity mismatch
-/// after open, Unix), [`PathError::TooLarge`], [`PathError::NotUtf8`] or
+/// [`PathError::NotRegularFile`], [`PathError::Changed`] or
 /// [`PathError::Io`].
-pub fn read_regular_file(path: &Path, max_bytes: u64) -> Result<String, PathError> {
-    let to_error = |error: io::Error| {
-        if error.kind() == io::ErrorKind::NotFound {
-            PathError::NotFound(path.to_path_buf())
-        } else {
-            PathError::Io(error, path.to_path_buf())
-        }
-    };
+pub fn open_regular_file(path: &Path) -> Result<(fs::File, fs::Metadata), PathError> {
+    let to_error = |error: io::Error| io_error(path, error);
     let before = fs::symlink_metadata(path).map_err(to_error)?;
     if before.file_type().is_symlink() {
         return Err(PathError::Symlink(path.to_path_buf()));
@@ -193,6 +191,21 @@ pub fn read_regular_file(path: &Path, max_bytes: u64) -> Result<String, PathErro
     if !opened.is_file() || !same_file(&before, &opened) {
         return Err(PathError::Changed(path.to_path_buf()));
     }
+    Ok((file, opened))
+}
+
+/// Reads a UTF-8 text file of at most `max_bytes` bytes, refusing symbolic
+/// links and non-regular files.
+///
+/// # Errors
+///
+/// Returns [`PathError::NotFound`], [`PathError::Symlink`],
+/// [`PathError::NotRegularFile`], [`PathError::Changed`] (identity mismatch
+/// after open, Unix), [`PathError::TooLarge`], [`PathError::NotUtf8`] or
+/// [`PathError::Io`].
+pub fn read_regular_file(path: &Path, max_bytes: u64) -> Result<String, PathError> {
+    let (file, opened) = open_regular_file(path)?;
+    let to_error = |error: io::Error| io_error(path, error);
     if opened.len() > max_bytes {
         return Err(PathError::TooLarge {
             path: path.to_path_buf(),
@@ -210,6 +223,14 @@ pub fn read_regular_file(path: &Path, max_bytes: u64) -> Result<String, PathErro
         });
     }
     String::from_utf8(bytes).map_err(|_| PathError::NotUtf8(path.to_path_buf()))
+}
+
+fn io_error(path: &Path, error: io::Error) -> PathError {
+    if error.kind() == io::ErrorKind::NotFound {
+        PathError::NotFound(path.to_path_buf())
+    } else {
+        PathError::Io(error, path.to_path_buf())
+    }
 }
 
 /// Writes `contents` to `path`, creating or truncating a regular file, and

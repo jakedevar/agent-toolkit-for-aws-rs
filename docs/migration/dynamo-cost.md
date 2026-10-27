@@ -11,11 +11,16 @@ are retired by a later slice after this one is verified):
 | `iterate_design.py` | `toolkit dynamodb iterate-design` | `crates/toolkit-cli/src/dynamodb/iterate.rs` |
 | `repr` / `round` / `format(",")` / `json.dumps` renderings | (library) | `crates/toolkit-cli/src/dynamodb/pyfmt.rs` |
 
-Shared contract additions (all in the #4374 core/CLI interfaces, not new
-engines): value options in `CommandSpec` (`ValueFlag`, `Invocation::option`),
-`Output::diagnostic` (stderr warnings), `ToolkitError::with_exit_code`,
-`toolkit_core::write_regular_file` (symlink-refusing writer) and
-`toolkit_core::sha256_hex`. No dependency was added.
+Shared contracts: the value options (`value_flags` + `strict_values: true`,
+`Invocation::value`) and stderr warnings (`Output::diagnostic`) are the
+canonical router support from #4376/#4377; this slice's earlier parallel
+`ValueFlag`/`Invocation::option`/queued-diagnostic helpers were removed in the
+merge of that head. The only additions kept, all strictly additive and unused by
+the other commands, are `ToolkitError::with_exit_code` (published exit statuses
+4 and the pipeline step's own status have no canonical equivalent),
+`toolkit_core::write_regular_file` (symlink-refusing writer; the canonical
+tree-sync writer copies whole trees and cannot write one report) and
+`toolkit_core::sha256_hex` (schema fingerprints). No dependency was added.
 
 There are no Python tests for this slice (2 files in the inventory). Numeric
 parity cases come from the formulas and the worked examples in the Python
@@ -64,7 +69,7 @@ derived by hand and commented with its arithmetic.
 | Vector validation | all messages, `sorted(...)` key lists, `repr` of bad values, unnamed index never matches a missing `index` | `validate_vector_model` tests |
 | Report | exact headline, disclaimer, padded Markdown tables (character widths), 30% concentration notes (`{:.0f}` rounding), GSI rows/footnote, vector section; no trailing newline | golden-line tests in `cost_tests.rs` and `tests/dynamodb.rs` |
 | CLI output | `Cost report written to <path>` and `Analyzed N access patterns across M tables.` on stdout; default `cost_report.md` beside the model | `tests/dynamodb.rs` |
-| Fingerprint | sha256 of `json.dumps(sig, sort_keys=True)` (Python separators, ensure_ascii), first 12 hex; tables/GSIs sorted by name, attributes sorted, type upper-cased; volume/size/consistency excluded | `schema_fingerprint` tests (blob hand-derived; SHA-256 against FIPS vectors) |
+| Fingerprint | sha256 of `json.dumps(sig, sort_keys=True)` (Python separators, ensure_ascii), first 12 hex; tables/GSIs sorted by name, attributes sorted, type upper-cased; volume/size/consistency excluded | `schema_fingerprint` tests (blob hand-derived; SHA-256 against FIPS vectors); U+007F in a key name stays `\u007f` (ensure_ascii escapes everything outside U+0020..U+007E), regression digest `2212db5492d3` from `sha256sum` of the literal legacy bytes (#4543) |
 | Reuse-vs-redeploy | calculator-only > schema changed > manifest+same > manifest+no prior > deploy | round tests |
 | Change files | `merge` deep-merge (null removes), `ops` add/replace/remove, list `-`, negative indices, insert clamping | `apply_change` tests |
 | Mode presets | quick / representative values and "explicit config wins" | `resolve_config` tests |
@@ -76,11 +81,12 @@ derived by hand and commented with its arithmetic.
 1. **Command shape.** `python3 calculate_costs.py ...` / `python3
    iterate_design.py ...` become `toolkit dynamodb calculate-costs ...` /
    `toolkit dynamodb iterate-design ...` with the same option names (`--model`,
-   `--requirements/-r`, `--output/-o`; `--model --config --loop-state
+   `--requirements`, `--output`; `--model --config --loop-state
    --manifest --apply-change --mode --timestamp --yes-deploy --allow-spend
    --skip-deploy --calculator-only --dry-run`). Options also accept
-   `--name=value`. argparse prefix abbreviations (`--req`) are not accepted and
-   an option value may not itself start with `-`. The step lines printed by
+   `--name=value`. argparse prefix abbreviations (`--req`) and the `-r`/`-o` short forms are not
+   accepted (the canonical router has no short value flags), and an option value
+   may not be empty or start with `-`. The step lines printed by
    `iterate-design` show the `toolkit ...` command instead of
    `python3 <script path> ...`; the calculator runs in-process and prints the
    same two lines the child script printed.

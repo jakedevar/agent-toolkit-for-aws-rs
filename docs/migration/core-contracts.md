@@ -90,9 +90,9 @@ file already failed); repeated flags are accepted once.
 
 Extensions of the shared interfaces, each with unit tests, no new dependency:
 
-- `CommandSpec::value_flags` / `Invocation::option`: value options (see the CLI
-  README).
-- `Output::diagnostic`: queued non-fatal stderr lines.
+- Value options and stderr warnings use the canonical `value_flags` router and
+  `Output::diagnostic` from #4376/#4377; this slice's parallel versions were
+  dropped in the merge of that head.
 - `ToolkitError::with_exit_code`: a command keeps a published non-default exit
   status (`0` is ignored).
 - `toolkit_core::write_regular_file`: refuses a symlink or non-regular target;

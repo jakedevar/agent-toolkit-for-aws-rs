@@ -40,7 +40,7 @@ use std::path::{Path, PathBuf};
 
 use toolkit_core::{parse_json, read_regular_file, write_regular_file, Json, ToolkitError};
 
-use crate::{Invocation, Output, ValueFlag};
+use crate::{Invocation, Output};
 
 pub mod cost;
 pub mod iterate;
@@ -52,20 +52,7 @@ pub use iterate::iterate_design_command;
 pub const MAX_INPUT_BYTES: u64 = 16 * 1024 * 1024;
 
 /// Value flags of `dynamodb calculate-costs`.
-pub const CALCULATE_COSTS_VALUE_FLAGS: &[ValueFlag] = &[
-    ValueFlag {
-        long: "--model",
-        short: None,
-    },
-    ValueFlag {
-        long: "--requirements",
-        short: Some("-r"),
-    },
-    ValueFlag {
-        long: "--output",
-        short: Some("-o"),
-    },
-];
+pub const CALCULATE_COSTS_VALUE_FLAGS: &[&str] = &["--model", "--requirements", "--output"];
 
 /// Boolean flags of `dynamodb iterate-design`.
 pub const ITERATE_DESIGN_FLAGS: &[&str] = &[
@@ -77,35 +64,14 @@ pub const ITERATE_DESIGN_FLAGS: &[&str] = &[
 ];
 
 /// Value flags of `dynamodb iterate-design`.
-pub const ITERATE_DESIGN_VALUE_FLAGS: &[ValueFlag] = &[
-    ValueFlag {
-        long: "--model",
-        short: None,
-    },
-    ValueFlag {
-        long: "--config",
-        short: None,
-    },
-    ValueFlag {
-        long: "--loop-state",
-        short: None,
-    },
-    ValueFlag {
-        long: "--manifest",
-        short: None,
-    },
-    ValueFlag {
-        long: "--apply-change",
-        short: None,
-    },
-    ValueFlag {
-        long: "--mode",
-        short: None,
-    },
-    ValueFlag {
-        long: "--timestamp",
-        short: None,
-    },
+pub const ITERATE_DESIGN_VALUE_FLAGS: &[&str] = &[
+    "--model",
+    "--config",
+    "--loop-state",
+    "--manifest",
+    "--apply-change",
+    "--mode",
+    "--timestamp",
 ];
 
 /// The value of a required option, or the argparse-style usage error.
@@ -113,7 +79,7 @@ pub(crate) fn required_option<'a>(
     invocation: &'a Invocation,
     name: &str,
 ) -> Result<&'a str, ToolkitError> {
-    invocation.option(name).ok_or_else(|| {
+    invocation.value(name).ok_or_else(|| {
         ToolkitError::usage(
             "missing_option",
             format!("the following arguments are required: {name}"),
@@ -265,8 +231,8 @@ pub fn calculate_costs_command(
 ) -> Result<(), ToolkitError> {
     let args = CalculateArgs {
         model: PathBuf::from(required_option(invocation, "--model")?),
-        requirements: invocation.option("--requirements").map(PathBuf::from),
-        output: invocation.option("--output").map(PathBuf::from),
+        requirements: invocation.value("--requirements").map(PathBuf::from),
+        output: invocation.value("--output").map(PathBuf::from),
     };
     run_calculate_costs(&args, out)
 }

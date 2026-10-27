@@ -7,15 +7,18 @@ Python inventory (#4371) records legacy contracts separately.
 ## Binary
 
 The workspace builds one binary, `toolkit` (crate `toolkit-cli`), from the
-shared library `toolkit-core`. `skills list` is read-only; the `dynamodb`
-commands write only the files named in their section below. No command uses the
-network or performs live cloud activity.
+shared library `toolkit-core`. `toolkit skills list` is read-only; `toolkit sync ...` (#4377)
+writes only in its non-`--check` modes and only inside the tree it was given; the
+`toolkit dynamodb` commands write only the files named in their section below. The
+CLI performs no network access and no live cloud activity.
 
 ## Commands
 
 ```
 toolkit skills list [ROOT] [--json]
-toolkit dynamodb calculate-costs --model FILE [--requirements|-r FILE] [--output|-o FILE]
+toolkit sync plugin-skills [--root DIR] [--plugin NAME] [--check]
+toolkit sync vendored [--plugin-root DIR] [--check]
+toolkit dynamodb calculate-costs --model FILE [--requirements FILE] [--output FILE]
 toolkit dynamodb iterate-design --model FILE --config FILE --loop-state FILE [options]
 toolkit --version
 toolkit help
@@ -136,7 +139,7 @@ falls back to the documented defaults instead of failing discovery.
 ## DynamoDB commands (slice `dynamo-cost`, #4389)
 
 ```
-toolkit dynamodb calculate-costs --model FILE [--requirements|-r FILE] [--output|-o FILE]
+toolkit dynamodb calculate-costs --model FILE [--requirements FILE] [--output FILE]
 toolkit dynamodb iterate-design --model FILE --config FILE --loop-state FILE
     [--manifest FILE] [--apply-change FILE] [--mode MODE] [--timestamp TS]
     [--yes-deploy] [--allow-spend] [--skip-deploy] [--calculator-only] [--dry-run]
@@ -167,13 +170,13 @@ command contacts AWS.
 
 ## Value options and diagnostics (#4389)
 
-`CommandSpec` also declares `value_flags` (`ValueFlag { long, short }`).
-A value option is accepted as `--name value`, `--name=value` or `-s value`; the
-value may not itself start with `-`; a repeated option keeps its last value;
-handlers read them with `Invocation::option("--name")`. `Output::diagnostic`
-queues non-fatal stderr lines (warnings) that `run` prints before any error
-report. `ToolkitError::with_exit_code` lets a command keep a published
-non-default exit status (never `0`).
+The `dynamodb` commands use the shared value-flag router (`value_flags`,
+`strict_values: true`; `--name value` or `--name=value`, the value may not be
+empty or start with `-`, the last repeat wins; read with `Invocation::value`)
+and `Output::diagnostic` for the stderr warnings, both from #4376/#4377. The
+only additions from this slice are `ToolkitError::with_exit_code`, which lets a
+command keep a published non-default exit status (never `0`), plus the
+symlink-refusing `write_regular_file` and `sha256_hex` in `toolkit-core`.
 
 ## Exit codes
 
@@ -246,3 +249,76 @@ crate (use optional domain crates or features).
 A leading UTF-8 byte-order mark is ignored. `name:` with no value or an empty
 quoted value is reported by the parser as an empty string; skill discovery
 treats an empty or whitespace-only `name` as absent and uses the directory name.
+
+## manifests validate (#4375)
+
+```
+toolkit manifests validate [ROOT] [--plugin NAME]
+```
+
+Replacement for `python3 tools/validate.py [--plugin X]`; full rule parity table
+and the recorded differences are in `docs/migration/manifests-validator.md`.
+`ROOT` defaults to the current directory. The command is read-only and offline.
+
+- Without `--plugin` it validates the Claude Code, Codex and Cursor marketplace
+  manifests, every directory under `ROOT/plugins` (Claude, Codex, optional
+  Cursor and Devin manifests, optional `.mcp.json`, the `SKILL.md` frontmatter
+  of each direct child of `skills/`) and every `SKILL.md` below `ROOT/skills`.
+  With `--plugin NAME` (or `--plugin=NAME`) only `ROOT/plugins/NAME` is checked.
+- `Validating ...` progress lines go to stdout, in order. Each finding is a
+  `  ERROR: <message>` line on stderr and the run continues.
+- Success prints a blank line and `All validations passed.` (exit 0). Any finding
+  ends with `error: Validation failed with N error(s).` on stderr (exit 1). An
+  unknown or unsafe plugin name (`error: Plugin not found: NAME`) and an unusable
+  root are runtime errors (exit 1); bad arguments are usage errors (exit 2).
+
+The routing table gained value flags (`--name value` / `--name=value`,
+`Invocation::value`, last value wins, missing value is a usage error) and
+`Output::with_diagnostics` / `Output::diagnostic` for stderr lines (#4375).
+
+## spec validate (#4376)
+
+```
+toolkit spec validate [ROOT]
+```
+
+Replacement for `python3 tools/validate_spec.py`; full rule parity table and
+the recorded differences are in `docs/migration/spec-validator.md`. `ROOT`
+defaults to the current directory. The command is read-only and offline; it has
+no Python, PyYAML or Python `jsonschema` dependency. Schemas are evaluated by
+the Rust `jsonschema` crate (local references only, no resolvers) with
+`fancy-regex` under a backtracking limit; names are compared under exact NFKC
+(`unicode-normalization`). A schema that cannot be compiled or evaluated is a
+runtime error (exit 1), never a pass. Dependencies are listed and justified in
+`docs/migration/spec-validator.md`.
+
+- Checks every directory under `ROOT/plugins`: no symbolic links, `plugin.json`
+  and `mcp.json` against the vendored schemas in `ROOT/tools/schemas/1.0.0`,
+  the rules the schemas cannot express (path containment, placeholders, MCP URL
+  and header rules) and the frontmatter, length and naming rules of every
+  `plugins/*/skills/*/SKILL.md`.
+- `Validating plugin: plugins/NAME` and `Validating skills` progress lines go to
+  stdout. Each finding is a `  ERROR: <label>: <message> (at <path>)` or
+  `  ERROR: <message>` line on stderr and the run continues.
+- Success prints a blank line and `All Agent Plugins v1.0.0 checks passed.`
+  (exit 0). Any finding ends with `error: Spec validation failed with N
+  error(s).` on stderr (exit 1). An unusable root, `plugins/` directory or
+  schema is a runtime error (exit 1); bad arguments are usage errors (exit 2).
+
+## sync (#4377)
+
+`toolkit sync plugin-skills` makes every `plugins/<plugin>/skills/<name>` copy
+byte-identical to the canonical `skills/**/<name>` directory; `toolkit sync
+vendored` does the same for each skill's `references/vendored` copies of
+`skills/shared` and checks their README tables. `--check` reports drift and
+writes nothing (exit 1 when out of sync); value flags accept `--flag VALUE` or
+`--flag=VALUE`. Symbolic links are never followed; writes are atomic. The full
+parity table against the Python tools, the deletion and symlink boundaries and
+the telemetry seam are in [docs/migration/sync-contracts.md](../../docs/migration/sync-contracts.md).
+
+Merge note (#4378): both slices extended the value-flag routing. The combined
+parser keeps #4375's `Invocation::set_value` (last value wins) and #4377's
+rule that sync value flags reject an empty value or one starting with `-`
+(`--plugin-root --check` is a usage error) through the per-command
+`CommandSpec::strict_values` switch: off for `manifests validate`, whose
+`--plugin` takes the next word whatever it looks like, on for `sync`.

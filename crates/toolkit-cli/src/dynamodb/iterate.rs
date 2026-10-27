@@ -1323,12 +1323,12 @@ pub fn iterate_design_command(
                 .option("--manifest")
                 .unwrap_or("created_resources.json"),
         ),
-        apply_change: invocation.option("--apply-change").map(PathBuf::from),
+        apply_change: invocation.value("--apply-change").map(PathBuf::from),
         mode: invocation
             .option("--mode")
             .unwrap_or("representative")
             .to_string(),
-        timestamp: invocation.option("--timestamp").map(ToString::to_string),
+        timestamp: invocation.value("--timestamp").map(ToString::to_string),
         yes_deploy: invocation.has_flag("--yes-deploy"),
         allow_spend: invocation.has_flag("--allow-spend"),
         skip_deploy: invocation.has_flag("--skip-deploy"),
