@@ -50,7 +50,7 @@ Provenance:
 | C15 | Earlier draft: 46 AI/ML rows under `code_templates/templates/`, 7 of 23 files starting with IPython magic lines | No tracked inventory path contains `code_templates/templates`; the claim had no support and is withdrawn | §5, U-3 |
 | C16 | Earlier draft: the secret hook launcher "succeeds without running the hook" when no interpreter exists | The chain ends in `py -3 "$0"` with no `|| true`, so a missing interpreter ends in a non-zero shell exit (127), not success; whether the host treats that as non-blocking is host behaviour, not verified here (U-7) | §8.4 |
 | C17 | Earlier draft: `uvx` MCP launch in one file | Six config files across three plugins | §8.2, R12 |
-| C18 | Earlier draft: §9 restated the ACs under different wording | §9 now answers the Issue's own AC1–AC5 | §9 |
+| C18 | Earlier draft: §9 restated the ACs under different wording; the e1a32f47 revision then called AC1 "Met for mapping" | §9 answers the Issue's own AC1–AC5; AC1 mapping is PARTIAL: coverage, blob identity and slice/Issue pair existence are validated, per-file scope ownership is not (review #4449, U-10) | §9, U-10 |
 
 ## 2. Instruction-compliance record
 
@@ -436,7 +436,8 @@ Notes that constrain later slices:
 ## 6. Slice ownership
 
 36 slices hold rows; every one of the 391 rows carries a slice key and a slice Issue, and no
-row is unassigned. Class columns are T = `toolkit-helper`, D = `test-or-diagnostic`, P =
+row is unassigned. These counts restate the manifest's own assignments; they do not show
+that each file lies within its slice's scope (§9 AC1, U-10). Class columns are T = `toolkit-helper`, D = `test-or-diagnostic`, P =
 `external-service-payload`. Slice scope text and dependencies live in
 `docs/migration/issues.json` and are not repeated here. The table is regenerated and diffed
 by R8.
@@ -1016,10 +1017,28 @@ owned by a slice Issue; this audit records evidence and does not decide the port
 These are #4371's own acceptance criteria, as stated on the Issue. Each is stated with what
 was not done.
 
-- **AC1 — Validate every file-to-slice mapping, duplicates and callers.** Met for mapping and
-  duplicates: 391 inventory rows equal the 391 tracked `*.py` paths; every row has a slice
-  and a slice Issue; 0 `original_blob` mismatches; 271 distinct blobs; 84 multi-row groups,
-  187 singletons, 120 mirrors, 0 canonical mismatch (§4–§6, R2–R8). Callers: partly. The
+- **AC1 — Validate every file-to-slice mapping, duplicates and callers.** Partial for
+  mapping, met for duplicates, partial for callers.
+  *Mapping — validated:* 391 inventory rows equal the 391 tracked `*.py` paths (0 missing,
+  0 extra); 0 `original_blob` mismatches; every row carries a slice key and a slice Issue
+  number; every distinct (slice, Issue) pair in the manifest exists as a (key, issue) pair in
+  `docs/migration/issues.json`. The reviewer's independent check of that last point was
+  `jq -r '.issues[] | [.key, (.issue|tostring)] | @tsv' docs/migration/issues.json | sort`
+  against `jq -r '.files[] | [.slice, (.issue|tostring)] | @tsv'
+  docs/migration/python-inventory.json | sort -u`, then `comm -23` of the second list
+  against the first, which printed nothing (review #4449). Row, class and slice counts
+  (§4, §6, R8) are reproduced from the manifest's own `slice` and `issue` fields.
+  *Mapping — not validated:* that each individual file belongs to the slice the manifest
+  assigns it, judged against that slice's scope text in `docs/migration/issues.json`. Path
+  coverage, blob identity and slice/Issue pair existence do not establish that, and the
+  counts in §6 only restate the manifest's assignments. No per-file ownership audit was
+  performed (the manager ruled out a full one for this Issue). *Remaining:* each slice's
+  implementer checks every file in its slice against its Issue scope at dispatch and reports
+  any misassigned file back to the manager; until then the manifest assignment is
+  unverified, not confirmed.
+  *Duplicates — met:* 271 distinct blobs; 84 multi-row groups, 187 singletons, 120 mirrors,
+  0 canonical mismatch (§4–§5, R2–R7); this is a content-identity check and does not depend
+  on slice scope. *Callers:* partly. The
   non-Python launch surfaces are enumerated (§8.2–§8.7: 6 MCP configs, 3 hook files with 11
   launcher lines, 2 `mise.toml` files, 3 workflows). By basename search (R14) 179 of 271
   canonical rows are mentioned in at least one tracked non-`.py` file and 92 are not (by
@@ -1042,9 +1061,12 @@ was not done.
   JSON schema or error-code contract was written down, because that is the owning slices'
   AC1 work and doing it for 271 files would be the broad second audit this repair excluded.
   Rust crate availability for the SDK candidates was not investigated (no network use).
-- **AC4 — Split oversized slices into proposed child Issues.** Not met as filed Issues: this
-  Issue may publish only to #4371, so it cannot create child Issues, and dispatch belongs to
-  the manager. Measured sizing and concrete split proposals are in §6 and §12, with R15.
+- **AC4 — Split oversized slices into proposed child Issues.** Not met as filed Issues:
+  decomposing slices and creating child Issues is a manager decision under the project
+  rules, so this Issue proposes splits and does not file them. (The control surface does not
+  prevent an Issue-bound worker from calling `AgentCreateIssue`; the binding limits only
+  `AgentGetIssue` and `AgentUpdateIssue`. The reason is ownership, not a missing capability.)
+  Measured sizing and concrete split proposals are in §6 and §12, with R15.
 - **AC5 — Audit remaining active development instructions.** Met at the evidence level:
   §8.2–§8.7 and §8.9 list the remaining Python-dependent launchers, tasks, workflows and
   prose with file references. No dependency was removed or replaced and the repository is not
@@ -1127,11 +1149,15 @@ revision, and the Rust candidate-verification gate remains unsupported and is no
   can count an import word in a docstring, miss dynamic imports, and treat a basename match
   as a reference. They indicate where to look, not what a file does.
 - **U-9 Python-to-Python callers.** Import edges between inventory files were not mapped.
+- **U-10 Per-file slice ownership.** Whether each file belongs to the slice the manifest
+  assigns it, against that slice's scope text in `docs/migration/issues.json`, was not
+  validated (§9 AC1). Each slice's implementer checks this at dispatch.
 
 ## 12. Proposed follow-ups (not filed by this Issue)
 
-These are proposals for the manager. This Issue publishes only to #4371 and files no
-programme Issues.
+These are proposals for the manager. Decomposition of slices into child Issues is a
+manager decision under the project rules, so this Issue files no programme Issues; its
+only publication is its handoff on #4371.
 
 1. Reconcile `docs/migration/README.md` with measured line counts or record its counting
    rule (F-5, U-5).
