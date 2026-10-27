@@ -79,7 +79,7 @@ The policy deliberately rejects *more* than Python's `ipaddress` predicates
 The DNS-rebinding residual between the check and the SDK connection is
 unchanged.
 
-## Error redaction contract (#4468, #4469, #4494, #4515, #4516)
+## Error redaction contract (#4468, #4469, #4494, #4515, #4516, #4536)
 
 One scrubber, `redact::redact_text`, backs every error path: `AwsError`
 `Display` and `Debug`, the `From<AwsError> for ToolkitError` conversion,
@@ -110,7 +110,9 @@ a secret ends, it hides more.
   read through to its end, letters, digits, `_`, `-` and `.`, before the
   separator is looked for (#4516)) followed by `=`,
   `:` or `=>` (any whitespace, newlines and `\n`/`\t`/`\u…` escapes around it).
-  A quoted value follows JSON escape rules at any escape depth. It is trusted
+  A quoted value follows JSON escape rules at escape depths up to 32
+  backslashes; a value opened by a deeper escape is hidden to the end of the
+  input (#4536). It is trusted
   only when its closing quote is followed, after optional whitespace, by `,`,
   `}`, `]`, `;`, `)` or the end (possibly after the quotes that close
   enclosing strings); otherwise, or when unterminated, the value is hidden to
@@ -135,6 +137,24 @@ a secret ends, it hides more.
   *before* upper-casing, since both transformations can remove the context a
   recognizer needs. `snippet` scrubs, flattens and truncates, then scrubs its
   own output.
+- **Bounded work (#4536).** Redaction is linear in the length of its input.
+  Each pass builds lookup tables in one right-to-left sweep (backslash runs,
+  whitespace runs including escapes, line ends, unquoted value ends, base64
+  runs), so every scan in a recognizer is a table lookup. Each complete key is
+  classified once by the labels it contains and its separator and value are
+  parsed once, however often a label repeats inside it (`token` x 20,000 + `=x`
+  no longer walks the key suffix once per occurrence). Two quoted values with
+  the same quote and escape depth cannot overlap, so with the depth cap each
+  of the at most 66 quote/depth classes crosses the input at most once. The
+  clean-close check after an unquoted value is cached by the value's end.
+  At most nine passes run. Text longer than 256 KiB
+  (`redact::MAX_REDACT_INPUT_BYTES`) is replaced by `[REDACTED]` without
+  scanning. It is never cut first, since a cut could split a key ID or token
+  so that its remainder is no longer recognized. The cap also bounds the
+  lookup tables to a fixed amount of memory. Tests count elementary scan steps
+  deterministically: 27 adversarial input families must grow about linearly
+  in work when the input grows fourfold, and must stay under 1,000 steps per
+  byte. They do not rely on timing.
 
 `Debug` is enforced at formatting time, independent of how a value was built:
 `AwsError`, `ServiceError`, `Guidance`, `ClientSettings`, `SigningScope`,
@@ -154,7 +174,9 @@ failed` becomes `a basic [REDACTED] failed`), the first word after any key
 that contains a label (`ExpiredTokenException: The …` becomes
 `ExpiredTokenException: [REDACTED] …`, `tokens: 5` becomes
 `tokens: [REDACTED]`), and a value with glued text
-after its closing quote hides the rest of the input. The adversarial fixture table
+after its closing quote hides the rest of the input. A diagnostic text longer
+than 256 KiB is hidden entirely, and so is a quoted value escaped more than 32
+levels deep from its opening quote on. The adversarial fixture table
 `redact::ADVERSARIAL` runs every case through all of these paths and asserts
 that no synthetic secret survives and that a second pass changes nothing.
 

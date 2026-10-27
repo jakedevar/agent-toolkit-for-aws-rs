@@ -155,6 +155,20 @@ const MIN_SESSION_TOKEN_LEN: usize = 100;
 /// Passes after which a still-changing input is hidden entirely.
 const MAX_PASSES: usize = 8;
 
+/// Longest text [`redact_text`] scans, in bytes (256 KiB). Longer text is
+/// hidden entirely instead of being cut first (#4536): cutting raw text could
+/// split a key ID or token so that its remainder is no longer recognized. An
+/// error message or `Debug` output this long carries no useful diagnostic, and
+/// the cap bounds the per-pass lookup tables to a fixed amount of memory.
+pub const MAX_REDACT_INPUT_BYTES: usize = 256 * 1024;
+
+/// Deepest quote escaping (backslashes before a quote) whose closing quote is
+/// searched for. A quoted value opened by a deeper escape is hidden to the end
+/// of the input. Each nesting of `Debug` inside a string roughly doubles the
+/// depth (1, 3, 7, 15, 31), so 32 covers five levels. The cap is what keeps the
+/// quoted-value scans linear (see [`Text`]).
+const MAX_QUOTE_ESCAPE_DEPTH: usize = 32;
+
 /// The one diagnostic scrubber: replace credential-looking content in `input`
 /// with [`REDACTED`].
 ///
@@ -162,14 +176,25 @@ const MAX_PASSES: usize = 8;
 /// crate goes through this function. One pass collects every span that any
 /// recognizer wants hidden (URL userinfo, labelled values, scheme credentials,
 /// key IDs and session tokens), each recognizer tried at every position of the
-/// same input even inside another's span, and replaces their union. Passes repeat until the text no longer changes, so the result is
-/// idempotent by construction: `redact_text(&redact_text(x)) == redact_text(x)`.
-/// When the end of a value is uncertain the redaction extends to the end of
-/// the input.
+/// same input even inside another's span, and replaces their union. Passes
+/// repeat until the text no longer changes, so the result is idempotent by
+/// construction: `redact_text(&redact_text(x)) == redact_text(x)`. When the
+/// end of a value is uncertain the redaction extends to the end of the input.
+///
+/// Each pass does work linear in the length of its text, there
+/// are at most `MAX_PASSES + 1` passes, and a text longer than
+/// [`MAX_REDACT_INPUT_BYTES`] is replaced by [`REDACTED`] without scanning, so
+/// untrusted error text cannot make redaction expensive (#4536).
 #[must_use]
 pub fn redact_text(input: &str) -> String {
+    if input.len() > MAX_REDACT_INPUT_BYTES {
+        return REDACTED.to_string();
+    }
     let mut current = scrub_once(input);
     for _ in 0..MAX_PASSES {
+        if current.len() > MAX_REDACT_INPUT_BYTES {
+            return REDACTED.to_string();
+        }
         let next = scrub_once(&current);
         if next == current {
             return current;
@@ -179,10 +204,29 @@ pub fn redact_text(input: &str) -> String {
     REDACTED.to_string()
 }
 
+/// Count of elementary scan steps, so tests can prove the work bound
+/// deterministically instead of timing it (#4536). Compiled out of non-test
+/// builds.
+#[cfg(test)]
+thread_local! {
+    static WORK: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn tick(steps: usize) {
+    WORK.with(|work| work.set(work.get() + steps));
+}
+
+#[cfg(not(test))]
+#[inline]
+fn tick(_steps: usize) {}
+
 /// One pass: hide the union of every recognizer's spans.
 fn scrub_once(input: &str) -> String {
-    let mut spans = url_userinfo_spans(input);
-    spans.extend(labelled_spans(input));
+    let text = Text::new(input);
+    let mut spans = url_userinfo_spans(&text);
+    spans.extend(labelled_spans(&text));
+    tick(spans.len());
     spans.sort_unstable();
     let mut out = String::with_capacity(input.len());
     let mut copied = 0;
@@ -206,24 +250,150 @@ fn scrub_once(input: &str) -> String {
     out
 }
 
+/// One pass's view of the input with lookup tables that make every scan a
+/// table lookup (#4536).
+///
+/// Each table is filled right to left in one sweep, so building them is
+/// linear. With them a pass is linear in the input length `n`:
+///
+/// - labels are matched once per position, and each *complete* key (a maximal
+///   run of key bytes) has its separator and value parsed at most twice (line
+///   label, other label) however many labels it contains;
+/// - whitespace runs, backslash runs, unquoted value ends, line ends and
+///   base64 runs are table lookups; an escape body is at most 9 bytes;
+/// - a quoted value scan stops at the first quote that could close it. Two
+///   values with the same quote and escape depth cannot overlap, since the
+///   later opening quote would close the earlier value. Every scan therefore
+///   belongs to one of at most `2 * (MAX_QUOTE_ESCAPE_DEPTH + 1)` classes and
+///   each class covers the input at most once. The clean-close check after a
+///   closing quote crosses only whitespace and quotes, which a separator or
+///   scheme name ends, so it also covers the input at most once per class;
+/// - the clean-close check after an unquoted value is cached by the value's
+///   end, which many nested keys (`token=token=...x"`) may share.
+struct Text<'a> {
+    input: &'a str,
+    bytes: &'a [u8],
+    lower: Vec<u8>,
+    /// Index after the run of backslashes starting at each index.
+    backslash_end: Vec<usize>,
+    /// `Text::skip_ws` from each index.
+    ws_end: Vec<usize>,
+    /// Next `\n` or `\r` at or after each index.
+    line_end: Vec<usize>,
+    /// Next [`is_value_end`] byte at or after each index.
+    value_end: Vec<usize>,
+    /// Where an unquoted labelled value starting at each index stops: a value
+    /// end byte or a backslash run followed by a quote.
+    unquoted_end: Vec<usize>,
+    /// Index after the run of base64 bytes starting at each index.
+    base64_end: Vec<usize>,
+    /// Clean-close result per unquoted value end.
+    unquoted_clean: std::cell::RefCell<std::collections::HashMap<usize, bool>>,
+}
+
+/// Right-to-left table: the first index at or after each index where `stop`
+/// holds (or the length).
+fn next_stop(len: usize, stop: impl Fn(usize) -> bool) -> Vec<usize> {
+    let mut table = vec![len; len + 1];
+    for i in (0..len).rev() {
+        table[i] = if stop(i) { i } else { table[i + 1] };
+    }
+    tick(len);
+    table
+}
+
+impl<'a> Text<'a> {
+    fn new(input: &'a str) -> Self {
+        let bytes = input.as_bytes();
+        let len = bytes.len();
+        let lower = input.to_ascii_lowercase().into_bytes();
+        let backslash_end = next_stop(len, |i| bytes[i] != b'\\');
+        let line_end = next_stop(len, |i| matches!(bytes[i], b'\n' | b'\r'));
+        let value_end = next_stop(len, |i| is_value_end(bytes[i]));
+        let unquoted_end = next_stop(len, |i| {
+            is_value_end(bytes[i])
+                || (bytes[i] == b'\\' && bytes.get(backslash_end[i]).copied().is_some_and(is_quote))
+        });
+        let base64_end = next_stop(len, |i| !is_base64(bytes[i]));
+        let mut ws_end = vec![len; len + 1];
+        for p in (0..len).rev() {
+            ws_end[p] = if bytes[p] == b'\\' {
+                match escaped_whitespace_end(input, backslash_end[p]) {
+                    Some(next) => ws_end[next],
+                    None => p,
+                }
+            } else if input.is_char_boundary(p) {
+                match input[p..].chars().next() {
+                    Some(c) if c.is_whitespace() => ws_end[p + c.len_utf8()],
+                    _ => p,
+                }
+            } else {
+                p
+            };
+        }
+        tick(len);
+        Self {
+            input,
+            bytes,
+            lower,
+            backslash_end,
+            ws_end,
+            line_end,
+            value_end,
+            unquoted_end,
+            base64_end,
+            unquoted_clean: std::cell::RefCell::default(),
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.bytes.len()
+    }
+
+    /// Skip whitespace (Unicode, newlines included) and escaped whitespace at
+    /// any escape depth: `\n`, `\r`, `\t`, JSON `\u00a0` and Rust `\u{2003}`
+    /// forms, also with doubled backslashes (`\\t`).
+    fn skip_ws(&self, p: usize) -> usize {
+        self.ws_end[p.min(self.len())]
+    }
+
+    /// Number of consecutive backslashes at `p`, and the index after them.
+    fn skip_backslashes(&self, p: usize) -> (usize, usize) {
+        let p = p.min(self.len());
+        let after = self.backslash_end[p];
+        (after - p, after)
+    }
+
+    /// If a quote, possibly written as an escaped quote (`\"`), starts at
+    /// `at`: its escape depth (number of backslashes) and the index of the
+    /// quote itself.
+    fn quote_at(&self, at: usize) -> Option<(usize, usize)> {
+        let (depth, index) = self.skip_backslashes(at);
+        (index < self.len() && is_quote(self.bytes[index])).then_some((depth, index))
+    }
+}
+
 /// Userinfo spans of every `scheme://` URL in `input`, plain or with escaped
 /// slashes at any depth (`:\/\/` in JSON, `:\\/\\/` once more escaped).
 ///
 /// The authority runs to the first `/`, `?`, `#` or whitespace. Everything
 /// before its *last* `@` is userinfo, whatever it contains (quotes,
 /// apostrophes, backslashes, more `@`). An `@` in the path, query or fragment
-/// is not userinfo.
-fn url_userinfo_spans(input: &str) -> Vec<(usize, usize)> {
-    let bytes = input.as_bytes();
+/// is not userinfo. Authorities of different URLs never overlap (each ends at
+/// the next `/`), so the scan is linear.
+fn url_userinfo_spans(text: &Text) -> Vec<(usize, usize)> {
+    let input = text.input;
     let mut spans = Vec::new();
     for (colon, _) in input.match_indices(':') {
-        let Some(authority) = after_double_slash(bytes, colon + 1) else {
+        tick(1);
+        let Some(authority) = after_double_slash(text, colon + 1) else {
             continue;
         };
         let tail = &input[authority..];
         let authority_len = tail
             .find(|c: char| c.is_whitespace() || matches!(c, '/' | '?' | '#'))
             .unwrap_or(tail.len());
+        tick(authority_len);
         if let Some(at) = tail[..authority_len].rfind('@') {
             if at > 0 {
                 spans.push((authority, authority + at));
@@ -235,10 +405,10 @@ fn url_userinfo_spans(input: &str) -> Vec<(usize, usize)> {
 
 /// Index after `//` at `p`, each slash optionally preceded by escaping
 /// backslashes.
-fn after_double_slash(bytes: &[u8], mut p: usize) -> Option<usize> {
+fn after_double_slash(text: &Text, mut p: usize) -> Option<usize> {
     for _ in 0..2 {
-        let (_, after) = skip_backslashes(bytes, p);
-        if bytes.get(after) != Some(&b'/') {
+        let (_, after) = text.skip_backslashes(p);
+        if text.bytes.get(after) != Some(&b'/') {
             return None;
         }
         p = after + 1;
@@ -253,28 +423,63 @@ fn after_double_slash(bytes: &[u8], mut p: usize) -> Option<usize> {
 /// `token=Bearer X` the label hides `Bearer` and the scheme still hides `X`.
 /// No span ever lets the scan skip ahead.
 ///
+/// A secret label may sit anywhere in a key (#4516): each complete key (a
+/// maximal run of key bytes such as `token_value`, `password_backup` or
+/// `ExpiredTokenException`) is classified once by the labels it contains, and
+/// its separator and value are then parsed once (#4536), so trailing name text
+/// never hides a labelled value and repeated labels never repeat the work.
+///
 /// A scheme word that is itself (the start of) a labelled value never gets
 /// the prose exemption: in `password=Token abcd` the label hides `Token`, so
 /// `abcd` is treated as its credential and hidden too.
-fn labelled_spans(input: &str) -> Vec<(usize, usize)> {
-    let lower = input.to_ascii_lowercase();
-    let lower = lower.as_bytes();
+fn labelled_spans(text: &Text) -> Vec<(usize, usize)> {
+    let bytes = text.bytes;
     let mut spans = Vec::new();
-    for i in 0..input.len() {
-        value_spans_at(input, lower, i, &mut spans);
+    let mut start = 0;
+    while start < bytes.len() {
+        if !is_key_byte(bytes[start]) {
+            start += 1;
+            continue;
+        }
+        let key_end = scan_until(bytes, start, |b| !is_key_byte(b));
+        let (mut line_label, mut secret_label) = (false, false);
+        for (at, byte) in bytes.iter().enumerate().take(key_end).skip(start) {
+            if !byte.is_ascii_alphanumeric() {
+                continue;
+            }
+            spans.extend(identifier_span(text, at));
+            let lower = &text.lower[at..];
+            tick(LINE_KEYS.len() + SECRET_KEYS.len());
+            line_label = line_label
+                || LINE_KEYS
+                    .iter()
+                    .any(|key| lower.starts_with(key.as_bytes()));
+            secret_label = secret_label
+                || SECRET_KEYS
+                    .iter()
+                    .any(|key| lower.starts_with(key.as_bytes()));
+        }
+        if line_label {
+            spans.extend(value_span(text, key_end, true));
+        }
+        if secret_label {
+            spans.extend(value_span(text, key_end, false));
+        }
+        start = key_end;
     }
     // How many value spans open and close at each byte, so one sweep knows
     // whether a position lies inside a labelled value.
-    let mut opens = vec![0_usize; input.len() + 1];
-    let mut closes = vec![0_usize; input.len() + 1];
+    let mut opens = vec![0_usize; bytes.len() + 1];
+    let mut closes = vec![0_usize; bytes.len() + 1];
     for &(from, to) in &spans {
         opens[from] += 1;
         closes[to] += 1;
     }
+    tick(spans.len() + bytes.len());
     let mut covering = 0_usize;
-    for (i, (open, close)) in opens.iter().zip(&closes).take(input.len()).enumerate() {
+    for (i, (open, close)) in opens.iter().zip(&closes).take(bytes.len()).enumerate() {
         covering = covering + open - close;
-        spans.extend(scheme_span(input, lower, i, covering == 0));
+        spans.extend(scheme_span(text, i, covering == 0));
     }
     spans
 }
@@ -484,30 +689,6 @@ fn is_key_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.')
 }
 
-/// Push every span `[from, to)` that the shape and label recognizers want
-/// hidden for a match starting at `i`: a key ID or session token, and the
-/// value of every secret label found at `i`.
-///
-/// A secret label may sit anywhere in a key (#4516): the key is read through
-/// to its end (`token_value`, `password_backup`, `ExpiredTokenException`)
-/// before its separator and value are looked for, so trailing name text never
-/// hides a labelled value.
-fn value_spans_at(input: &str, lower: &[u8], i: usize, spans: &mut Vec<(usize, usize)>) {
-    let bytes = input.as_bytes();
-    if !bytes[i].is_ascii_alphanumeric() {
-        return;
-    }
-    spans.extend(identifier_span(bytes, i));
-    for (keys, whole_line) in [(LINE_KEYS, true), (SECRET_KEYS, false)] {
-        for key in keys {
-            if lower[i..].starts_with(key.as_bytes()) {
-                let key_end = scan_until(bytes, i + key.len(), |b| !is_key_byte(b));
-                spans.extend(value_span(input, key_end, whole_line));
-            }
-        }
-    }
-}
-
 /// Credential after an authentication scheme starting at `i`.
 ///
 /// Any run of whitespace (Unicode, newlines and `\n`/`\t` escapes included)
@@ -515,23 +696,24 @@ fn value_spans_at(input: &str, lower: &[u8], i: usize, spans: &mut Vec<(usize, u
 /// next delimiter; a parameter-list credential runs to the end of the line; a
 /// quoted credential follows the quoted-value rules. `prose_ok` allows the
 /// prose exemption of English scheme words (`token included`).
-fn scheme_span(input: &str, lower: &[u8], i: usize, prose_ok: bool) -> Option<(usize, usize)> {
-    let bytes = input.as_bytes();
+fn scheme_span(text: &Text, i: usize, prose_ok: bool) -> Option<(usize, usize)> {
+    let bytes = text.bytes;
     if !bytes[i].is_ascii_alphabetic() || !is_word_boundary(bytes, i) {
         return None;
     }
+    tick(AUTH_SCHEMES.len());
     for auth in AUTH_SCHEMES {
-        if !lower[i..].starts_with(auth.name.as_bytes()) {
+        if !text.lower[i..].starts_with(auth.name.as_bytes()) {
             continue;
         }
         let after = i + auth.name.len();
-        let start = skip_ws(input, after);
+        let start = text.skip_ws(after);
         if start == after || start >= bytes.len() {
             continue;
         }
-        if let Some((depth, open)) = quote_at(bytes, start) {
+        if let Some((depth, open)) = text.quote_at(start) {
             let from = open + 1;
-            let end = quoted_value_end(input, from, bytes[open], depth);
+            let end = quoted_value_end(text, from, bytes[open], depth);
             if end > from {
                 return Some((from, end));
             }
@@ -544,9 +726,9 @@ fn scheme_span(input: &str, lower: &[u8], i: usize, prose_ok: bool) -> Option<(u
             continue;
         }
         let end = if auth.params {
-            scan_until(bytes, start, |b| b == b'\n' || b == b'\r')
+            text.line_end[start]
         } else {
-            scan_until(bytes, start, is_value_end)
+            text.value_end[start]
         };
         return Some((start, end));
     }
@@ -554,17 +736,27 @@ fn scheme_span(input: &str, lower: &[u8], i: usize, prose_ok: bool) -> Option<(u
 }
 
 /// A short all-lowercase word followed by whitespace, punctuation or the end.
+/// Looks at no more than 16 bytes.
 fn is_prose_word(bytes: &[u8], start: usize) -> bool {
-    let end = scan_until(bytes, start, |b| !b.is_ascii_lowercase());
-    end > start
-        && end - start < 16
+    const MAX_PROSE_WORD: usize = 16;
+    let run = bytes[start..]
+        .iter()
+        .take(MAX_PROSE_WORD)
+        .take_while(|b| b.is_ascii_lowercase())
+        .count();
+    tick(run);
+    let end = start + run;
+    run > 0
+        && run < MAX_PROSE_WORD
         && (end == bytes.len()
             || bytes[end].is_ascii_whitespace()
             || matches!(bytes[end], b'.' | b',' | b')' | b'!' | b'?'))
 }
 
-/// Access-key IDs and STS session tokens, recognized by shape alone.
-fn identifier_span(bytes: &[u8], i: usize) -> Option<(usize, usize)> {
+/// Access-key IDs and STS session tokens, recognized by shape alone. Only the
+/// start of an alphanumeric run is examined, so each run is scanned once.
+fn identifier_span(text: &Text, i: usize) -> Option<(usize, usize)> {
+    let bytes = text.bytes;
     if i > 0 && bytes[i - 1].is_ascii_alphanumeric() {
         return None;
     }
@@ -584,7 +776,7 @@ fn identifier_span(bytes: &[u8], i: usize) -> Option<(usize, usize)> {
         .iter()
         .any(|prefix| bytes[i..].starts_with(prefix.as_bytes()))
     {
-        let end = scan_until(bytes, i, |b| !is_base64(b));
+        let end = text.base64_end[i];
         if end - i >= MIN_SESSION_TOKEN_LEN {
             return Some((i, end));
         }
@@ -592,36 +784,19 @@ fn identifier_span(bytes: &[u8], i: usize) -> Option<(usize, usize)> {
     None
 }
 
-/// Skip whitespace (Unicode, newlines included) and escaped whitespace at any
-/// escape depth: `\n`, `\r`, `\t`, JSON ` ` and Rust `\u{2003}` forms,
-/// also with doubled backslashes (`\\t`). `p` must be a char boundary.
-fn skip_ws(input: &str, mut p: usize) -> usize {
-    let bytes = input.as_bytes();
-    loop {
-        if bytes.get(p) == Some(&b'\\') {
-            let (_, after) = skip_backslashes(bytes, p);
-            let Some(next) = escaped_whitespace_end(input, after) else {
-                return p;
-            };
-            p = next;
-            continue;
-        }
-        match input[p..].chars().next() {
-            Some(c) if c.is_whitespace() => p += c.len_utf8(),
-            _ => return p,
-        }
-    }
-}
-
 /// End of an escape body at `p` (just after its backslashes) that encodes
 /// whitespace: `n`, `r`, `t`, `uXXXX` or `u{X..}` naming a whitespace char.
+/// Looks at no more than 9 bytes.
 fn escaped_whitespace_end(input: &str, p: usize) -> Option<usize> {
     let bytes = input.as_bytes();
     match *bytes.get(p)? {
         b'n' | b'r' | b't' => Some(p + 1),
         b'u' => {
             let (digits, end) = if bytes.get(p + 1) == Some(&b'{') {
-                let close = p + 2 + input.get(p + 2..)?.find('}')?;
+                // At most six digits, so the `}` is within the next 7 bytes.
+                let window = bytes.get(p + 2..).unwrap_or_default();
+                let window = &window[..window.len().min(7)];
+                let close = p + 2 + window.iter().position(|&b| b == b'}')?;
                 (input.get(p + 2..close)?, close + 1)
             } else {
                 (input.get(p + 1..p + 5)?, p + 5)
@@ -641,24 +816,8 @@ fn escaped_whitespace_end(input: &str, p: usize) -> Option<usize> {
     }
 }
 
-/// Number of consecutive backslashes at `p`, and the index after them.
-fn skip_backslashes(bytes: &[u8], p: usize) -> (usize, usize) {
-    let mut q = p;
-    while q < bytes.len() && bytes[q] == b'\\' {
-        q += 1;
-    }
-    (q - p, q)
-}
-
 fn is_quote(byte: u8) -> bool {
     matches!(byte, b'"' | b'\'')
-}
-
-/// If a quote, possibly written as an escaped quote (`\"`), starts at `at`:
-/// its escape depth (number of backslashes) and the index of the quote itself.
-fn quote_at(bytes: &[u8], at: usize) -> Option<(usize, usize)> {
-    let (depth, index) = skip_backslashes(bytes, at);
-    (index < bytes.len() && is_quote(bytes[index])).then_some((depth, index))
 }
 
 /// Value span after a key that ended at `after_key`.
@@ -668,11 +827,11 @@ fn quote_at(bytes: &[u8], at: usize) -> Option<(usize, usize)> {
 /// (including newlines) around the separator. Once a label and separator are
 /// found, a value that is not cleanly terminated is hidden to the end of the
 /// input.
-fn value_span(input: &str, after_key: usize, whole_line: bool) -> Option<(usize, usize)> {
-    let bytes = input.as_bytes();
-    let mut pos = skip_ws(input, after_key);
-    if let Some((_, key_quote)) = quote_at(bytes, pos) {
-        pos = skip_ws(input, key_quote + 1);
+fn value_span(text: &Text, after_key: usize, whole_line: bool) -> Option<(usize, usize)> {
+    let bytes = text.bytes;
+    let mut pos = text.skip_ws(after_key);
+    if let Some((_, key_quote)) = text.quote_at(pos) {
+        pos = text.skip_ws(key_quote + 1);
     }
     if pos >= bytes.len() || !matches!(bytes[pos], b'=' | b':') {
         return None;
@@ -681,8 +840,8 @@ fn value_span(input: &str, after_key: usize, whole_line: bool) -> Option<(usize,
     if bytes.get(pos) == Some(&b'>') {
         pos += 1;
     }
-    let mut value_at = skip_ws(input, pos);
-    if whole_line && quote_at(bytes, value_at).is_none() {
+    let mut value_at = text.skip_ws(pos);
+    if whole_line && text.quote_at(value_at).is_none() {
         // An empty header value must not swallow the next header line; only a
         // quoted value may start on a later line.
         value_at = pos;
@@ -692,44 +851,42 @@ fn value_span(input: &str, after_key: usize, whole_line: bool) -> Option<(usize,
         {
             value_at += 1;
         }
+        tick(value_at - pos);
     }
     if value_at >= bytes.len() {
         return None;
     }
-    if let Some((depth, open)) = quote_at(bytes, value_at) {
+    if let Some((depth, open)) = text.quote_at(value_at) {
         let start = open + 1;
-        let end = quoted_value_end(input, start, bytes[open], depth);
+        let end = quoted_value_end(text, start, bytes[open], depth);
         return (end > start).then_some((start, end));
     }
     if whole_line {
-        let end = scan_until(bytes, value_at, |b| b == b'\n' || b == b'\r');
+        let end = text.line_end[value_at];
         return (end > value_at).then_some((value_at, end));
     }
-    unquoted_value_span(input, value_at)
+    unquoted_value_span(text, value_at)
 }
 
 /// An unquoted value: a token ending at whitespace, `&`, `,`, `;`, `)`, `}` or
 /// the end (not `]`, which ends the `[REDACTED]` marker itself and would stop
-/// redaction converging). A value cut short by a quote (plain or escaped) is trusted
-/// only when that quote closes cleanly; otherwise it is hidden to the end.
-fn unquoted_value_span(input: &str, start: usize) -> Option<(usize, usize)> {
-    let bytes = input.as_bytes();
-    let mut end = start;
-    while end < bytes.len() {
-        if is_value_end(bytes[end]) {
-            break;
-        }
-        if bytes[end] == b'\\' && quote_at(bytes, end).is_some() {
-            break;
-        }
-        end += 1;
-    }
+/// redaction converging). A value cut short by a quote (plain or escaped) is
+/// trusted only when that quote closes cleanly; otherwise it is hidden to the
+/// end.
+fn unquoted_value_span(text: &Text, start: usize) -> Option<(usize, usize)> {
+    let end = text.unquoted_end[start];
     if end == start {
         return None;
     }
-    if let Some((depth, quote_index)) = quote_at(bytes, end) {
-        if !closes_cleanly(input, quote_index + 1, bytes[quote_index], depth) {
-            return Some((start, bytes.len()));
+    if let Some((depth, quote_index)) = text.quote_at(end) {
+        let cached = text.unquoted_clean.borrow().get(&end).copied();
+        let clean = cached.unwrap_or_else(|| {
+            let clean = closes_cleanly(text, quote_index + 1, text.bytes[quote_index], depth);
+            text.unquoted_clean.borrow_mut().insert(end, clean);
+            clean
+        });
+        if !clean {
+            return Some((start, text.len()));
         }
     }
     Some((start, end))
@@ -741,16 +898,21 @@ fn unquoted_value_span(input: &str, start: usize) -> Option<(usize, usize)> {
 /// plain JSON, 1 for JSON embedded in a string (`\"`), and so on. In plain
 /// text a quote preceded by an odd number of backslashes is escaped; in an
 /// escaped context only a quote preceded by exactly `escape_depth` backslashes
-/// closes the value. An unterminated value, or a closing quote that is not
-/// followed by a structural delimiter ([`closes_cleanly`]), makes the end
-/// uncertain, so the span then runs to the end of the input.
-fn quoted_value_end(input: &str, start: usize, quote: u8, escape_depth: usize) -> usize {
-    let bytes = input.as_bytes();
+/// closes the value. An unterminated value, a closing quote that is not
+/// followed by a structural delimiter ([`closes_cleanly`]), or an escape depth
+/// above `MAX_QUOTE_ESCAPE_DEPTH` makes the end uncertain, so the span then
+/// runs to the end of the input.
+fn quoted_value_end(text: &Text, start: usize, quote: u8, escape_depth: usize) -> usize {
+    let bytes = text.bytes;
+    if escape_depth > MAX_QUOTE_ESCAPE_DEPTH {
+        return bytes.len();
+    }
     let mut p = start;
     while p < bytes.len() {
+        tick(1);
         if bytes[p] == b'\\' {
             let run_start = p;
-            let (run, after_run) = skip_backslashes(bytes, p);
+            let (run, after_run) = text.skip_backslashes(p);
             p = after_run;
             if p < bytes.len() && bytes[p] == quote {
                 let closes = if escape_depth == 0 {
@@ -760,7 +922,7 @@ fn quoted_value_end(input: &str, start: usize, quote: u8, escape_depth: usize) -
                 };
                 if closes {
                     let end = if escape_depth == 0 { p } else { run_start };
-                    return if closes_cleanly(input, p + 1, quote, escape_depth) {
+                    return if closes_cleanly(text, p + 1, quote, escape_depth) {
                         end
                     } else {
                         bytes.len()
@@ -769,7 +931,7 @@ fn quoted_value_end(input: &str, start: usize, quote: u8, escape_depth: usize) -
                 p += 1;
             }
         } else if bytes[p] == quote && escape_depth == 0 {
-            return if closes_cleanly(input, p + 1, quote, 0) {
+            return if closes_cleanly(text, p + 1, quote, 0) {
                 p
             } else {
                 bytes.len()
@@ -786,17 +948,22 @@ fn quoted_value_end(input: &str, start: usize, quote: u8, escape_depth: usize) -
 /// `;`, `)` (as in a `Debug` `Some("...")`) or the end of the input, possibly
 /// after the quotes that close enclosing strings (an escaped quote of lower
 /// depth, or at depth 0 a quote of the other kind). Anything else is glued
-/// text and makes the end uncertain.
-fn closes_cleanly(input: &str, mut p: usize, quote: u8, escape_depth: usize) -> bool {
-    let bytes = input.as_bytes();
+/// text and makes the end uncertain, as does an escape depth above
+/// `MAX_QUOTE_ESCAPE_DEPTH`.
+fn closes_cleanly(text: &Text, mut p: usize, quote: u8, escape_depth: usize) -> bool {
+    let bytes = text.bytes;
+    if escape_depth > MAX_QUOTE_ESCAPE_DEPTH {
+        return false;
+    }
     let mut depth = escape_depth;
     let mut quote = quote;
     loop {
-        p = skip_ws(input, p);
+        tick(1);
+        p = text.skip_ws(p);
         if p >= bytes.len() || matches!(bytes[p], b',' | b'}' | b']' | b';' | b')') {
             return true;
         }
-        let (run, after) = skip_backslashes(bytes, p);
+        let (run, after) = text.skip_backslashes(p);
         if after < bytes.len() && is_quote(bytes[after]) {
             let encloses = if depth > 0 {
                 run < depth
@@ -819,6 +986,7 @@ fn scan_until(bytes: &[u8], start: usize, stop: impl Fn(u8) -> bool) -> usize {
     while p < bytes.len() && !stop(bytes[p]) {
         p += 1;
     }
+    tick(p - start);
     p
 }
 
@@ -1607,5 +1775,176 @@ mod tests {
             assert_eq!(scrub_once(text), text, "{text:?}");
             assert_eq!(redact_text(text), text, "{text:?}");
         }
+    }
+
+    /// Elementary scan steps one `redact_text` call spends on `input` (#4536).
+    fn work_of(input: &str) -> usize {
+        WORK.with(|work| work.set(0));
+        let out = redact_text(input);
+        let work = WORK.with(std::cell::Cell::get);
+        assert_eq!(redact_text(&out), out, "not idempotent");
+        work
+    }
+
+    /// Smallest `m` with `m * m >= k`.
+    fn ceil_sqrt(k: usize) -> usize {
+        let mut m = 1;
+        while m * m < k {
+            m += 1;
+        }
+        m
+    }
+
+    type Family = (&'static str, Box<dyn Fn(usize) -> String>);
+
+    fn fam(name: &'static str, build: impl Fn(usize) -> String + 'static) -> Family {
+        (name, Box::new(build))
+    }
+
+    /// Input families whose scans were (or could become) quadratic: each maps
+    /// a repetition count to an input whose length is linear in it.
+    fn work_bound_families() -> Vec<Family> {
+        vec![
+            // The #4536 report: one key with the label repeated.
+            fam("repeated label, separator, short value", |k| {
+                format!("{}=x", "token".repeat(k))
+            }),
+            fam("repeated label, no separator", |k| "token".repeat(k)),
+            fam("repeated label, long value", |k| {
+                format!("{}={}", "token".repeat(k), "v".repeat(5 * k))
+            }),
+            fam("repeated label, long quoted value", |k| {
+                format!("{}=\"{}\"", "token".repeat(k), "v".repeat(5 * k))
+            }),
+            fam("mixed labels in one key", |k| {
+                format!("{}: {}", "Password_Secret-token.".repeat(k), "w".repeat(k))
+            }),
+            fam("mixed labels in one key, no separator", |k| {
+                format!("{} x", "Authorization-Cookie_pwd".repeat(k))
+            }),
+            // Values that contain further labelled keys.
+            fam("nested unquoted values", |k| {
+                format!("{}x", "token=".repeat(k))
+            }),
+            fam("nested values sharing a quoted end", |k| {
+                format!("{}x{}", "token=".repeat(k), "'\"".repeat(k))
+            }),
+            fam("nested line values", |k| "authorization: ".repeat(k)),
+            fam("quoted openers", |k| "token=\"".repeat(k)),
+            fam("escaped quoted openers", |k| "token=\\\"a ".repeat(k)),
+            fam("closed values before alternating quotes", |k| {
+                "token=\"a\"'\"'\" ".repeat(k)
+            }),
+            fam("escape depths cycling past the cap", |k| {
+                (0..k / 10)
+                    .map(|i| format!("token={}\"a ", "\\".repeat(i % 40 + 1)))
+                    .collect()
+            }),
+            fam("escape depths growing with the input", |k| {
+                (1..=ceil_sqrt(k))
+                    .map(|d| format!("token={}\"a ", "\\".repeat(d)))
+                    .collect()
+            }),
+            // Scheme credentials.
+            fam("parameter schemes", |k| "AWS4-HMAC-SHA256 ".repeat(k)),
+            fam("credentials across escaped newlines", |k| {
+                "Bearer x\\n".repeat(k)
+            }),
+            fam("credentials across Unicode spaces", |k| {
+                "Bearer\u{2003}x\u{2003}".repeat(k)
+            }),
+            fam("prose word then a long word", |k| {
+                format!("token {}", "a".repeat(5 * k))
+            }),
+            fam("repeated prose scheme", |k| "token ".repeat(k)),
+            // Shapes, whitespace and escapes.
+            fam("base64 runs", |k| "IQoJ+".repeat(k)),
+            fam("key IDs between labels", |k| {
+                "AKIAIOSFODNN7EXAMPLE token=".repeat(k)
+            }),
+            fam("backslash run in a value", |k| {
+                format!("token={}", "\\".repeat(5 * k))
+            }),
+            fam("unclosed brace escapes", |k| "token \\u{".repeat(k)),
+            fam("long escaped whitespace before a separator", |k| {
+                format!("token{}=x", "\\n\\u{2003} ".repeat(k))
+            }),
+            fam("Unicode whitespace after labels", |k| {
+                "token\u{2003}".repeat(k)
+            }),
+            fam("URL authorities", |k| "a://b:c@".repeat(k)),
+            fam("escaped URL slashes", |k| "a:\\/\\/".repeat(k)),
+        ]
+    }
+
+    #[test]
+    fn redaction_work_is_linear_in_the_input_length() {
+        // Quadratic work grows 16-fold when the input grows 4-fold; linear
+        // work about 4-fold. The bound per byte covers every pass.
+        const K: usize = 1000;
+        const PER_BYTE: usize = 1000;
+        for (name, family) in work_bound_families() {
+            let small = family(K);
+            let large = family(4 * K);
+            assert!(
+                large.len() <= MAX_REDACT_INPUT_BYTES,
+                "{name}: input too long"
+            );
+            assert!(large.len() >= 3 * small.len(), "{name}: not linear in k");
+            let (small_work, large_work) = (work_of(&small), work_of(&large));
+            assert!(
+                large_work <= 5 * small_work.max(small.len()),
+                "{name}: work {small_work} -> {large_work} for {} -> {} bytes",
+                small.len(),
+                large.len()
+            );
+            assert!(
+                large_work <= PER_BYTE * large.len(),
+                "{name}: {large_work} steps for {} bytes",
+                large.len()
+            );
+        }
+    }
+
+    #[test]
+    fn the_reported_repeated_label_input_is_redacted_in_linear_work() {
+        // #4536: "token" x 20,000 + "=x" (100,002 bytes) took about 10^9 key
+        // byte checks per pass before the fix.
+        let input = format!("{}=x", "token".repeat(20_000));
+        assert_eq!(input.len(), 100_002);
+        let work = work_of(&input);
+        assert!(work <= 400 * input.len(), "{work} steps");
+        assert_eq!(
+            redact_text(&input),
+            format!("{}=[REDACTED]", "token".repeat(20_000))
+        );
+        // Without a separator nothing is hidden, and the work stays linear.
+        let bare = "token".repeat(20_000);
+        assert!(work_of(&bare) <= 400 * bare.len());
+        assert_eq!(redact_text(&bare), bare);
+    }
+
+    #[test]
+    fn text_over_the_size_cap_is_hidden_without_scanning() {
+        let at_cap = "a".repeat(MAX_REDACT_INPUT_BYTES);
+        assert_eq!(redact_text(&at_cap), at_cap);
+        let over = format!("token=FAKE-OVER-CAP {}", "a".repeat(MAX_REDACT_INPUT_BYTES));
+        assert_eq!(work_of(&over), 0);
+        assert_eq!(redact_text(&over), REDACTED);
+        assert_eq!(snippet(&over, 1024), REDACTED);
+        assert_eq!(Scrubbed(&over).to_string(), REDACTED);
+    }
+
+    #[test]
+    fn quotes_escaped_past_the_depth_cap_hide_to_the_end() {
+        let deep = "\\".repeat(MAX_QUOTE_ESCAPE_DEPTH + 1);
+        let input = format!("token={deep}\"FAKE-DEEP{deep}\", tail");
+        assert_eq!(redact_text(&input), format!("token={deep}\"[REDACTED]"));
+        let ok = "\\".repeat(MAX_QUOTE_ESCAPE_DEPTH - 1);
+        let input = format!("token={ok}\"FAKE-OK{ok}\", tail");
+        assert_eq!(
+            redact_text(&input),
+            format!("token={ok}\"[REDACTED]{ok}\", tail")
+        );
     }
 }

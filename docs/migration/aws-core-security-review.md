@@ -120,3 +120,43 @@ keys, header-line keys). They run through every error, header, request,
 response and signing-scope wrapper, with exact output and a second-pass
 identity check. Endpoint and resolved-configuration paths have their own table
 tests in both `Debug` forms.
+
+## Addendum after re-review #4467 of `7aeeb319`
+
+The fourth review accepted the three leak repairs (#4515, #4516, #4469) and
+found one availability regression (#4536, P2). Making a label match anywhere
+in a key had made diagnostic redaction quadratic: every occurrence of a label
+re-read the rest of its key. `"token".repeat(k) + "=x"` cost about `5k²/2`
+byte checks per pass. Untrusted service error text reaches the scrubber
+before `snippet` truncates it (`client::service_error` -> `ServiceError::new`),
+so a large error body could use excessive CPU.
+
+Repair (`crates/toolkit-aws/src/redact.rs`). The accepted redaction rules and
+their outputs are unchanged, except for two hard limits that hide more:
+
+- Each scrub pass builds per-input lookup tables in linear time: backslash
+  runs, whitespace runs including escapes, line ends, unquoted value ends and
+  base64 runs. Every scan a recognizer used to repeat from many start
+  positions is now a lookup. These scans covered the remainder of a key, a
+  nested value, a header line, a parameter credential, a token credential
+  across escaped newlines, a base64 run, a backslash run inside a value and an
+  unclosed `\u{` escape. An earlier static audit found each of them quadratic
+  on a crafted input.
+- Each complete key is classified once by the labels it contains, and its
+  value is parsed at most twice: once as a header line, once as an ordinary
+  value. Recognizers still run at every position of the original input, so
+  the overlap fix (#4515) is unchanged.
+- Quoted-value scans are linear because two values with the same quote and
+  escape depth cannot overlap. To bound the number of depth classes, a value
+  opened by more than 32 escaping backslashes is hidden to the end of the
+  input. This is conservative: it hides more and never leaks.
+- Text longer than 256 KiB is replaced by `[REDACTED]` without being scanned.
+  It is never truncated before redaction.
+
+Evidence: a deterministic step counter, compiled only for tests. It covers 27
+adversarial families, including the reported input with and without a
+separator and with short and long values. Each family must stay under 1,000
+steps per byte, and its work may grow at most fivefold when its input grows
+fourfold. The reported 100,002-byte input must stay under 400 steps per byte
+and produce its exact output. Separate tests cover the size cap and the depth
+cap. All existing exact-output, leak and idempotence tables are unchanged.
