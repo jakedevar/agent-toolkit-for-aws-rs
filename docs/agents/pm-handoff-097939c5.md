@@ -44,3 +44,17 @@ Open older: #4461 #4475 #4485 #4486 #4497 #4500 #4533 #4535 #4576 #4573.
 
 ## Wakes
 rust-migration-health (health_anomaly), pm-safety-net (hourly resume), terminal watches per launch, Manager action results.
+
+## Seat f9df4bb0 (Claude Opus 5.5, context-cap successor of 097939c5) — 2026-10-27 ~17:05Z
+- GM mail gm-1b353269-4452-live-1: not received yet (inbox empty of messages at 17:00Z).
+- #4639 ACCEPTED at 6e63a91d (#4660, a0432b20). Friction #4681 (harness).
+- #4575 round 6 DONE: head 9df52366a7b6e696b98a5274f8860df161285981, worker 0c85ed62-76e7-4e51-9932-fc7bfaab4dfe
+  (merges #4401 d56b762a -> 9617e160, #4639 6e63a91d -> 9df52366; zero conflict hunks; diag_contract 6/6; workspace 0 failed).
+  Manager scoped_test 9047da8f (base origin/rolling, 180m) pending. If ok + AgentCheckLandingCandidate ok:
+  GATE = 9df52366, source_session_id 0c85ed62 (NOT d1c6cb13), derive_filters true, issue 4575. Add #4401 #4639 #4665 #4666 #4667 #4660 to close-on-land list.
+- #4682 review of #4403 b6d33f22: CHANGES_REQUESTED -> blockers #4684 (pricing ambiguous prefix), #4685 (snapshot tie). Ruling: AC2 fail-closed beats parity; #4676 superseded.
+  Repair worker 5c918875 (continue_from 57dd95f0). Then re-review on #4682.
+- #4402 repair c5f847e6 (#4679 Mermaid encoder + NodeIds): re-review on #4674 worker 2b3ad766.
+- #4380 repair3 ac3e7d44: re-review on #4632 worker 524d5796.
+- Kaizen: #4577 satisfied by e7200c3 (in integration head; close on land). Worker 30281162 on #4670 (repeatable value flags) from 9df52366.
+- Round 7 candidates: #4380, #4402, #4403 (after accept), #4670.
