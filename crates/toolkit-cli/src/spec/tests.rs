@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use super::{
-    find_placeholders, looks_like_path, nfkc_lite, parse_frontmatter, split_url, validate_tree,
+    engine, find_placeholders, looks_like_path, nfkc, parse_frontmatter, split_url, validate_tree,
     Frontmatter, UrlParts,
 };
 use crate::manifests::Report;
@@ -755,7 +755,7 @@ fn http_url_rules() {
     assert_eq!(
         url_errors("https://[::1/x"),
         [format!(
-            "{MCP}: server 'h' url is not a valid URL (invalid IPv6 URL)"
+            "{MCP}: server 'h' url is not a valid URL (Invalid IPv6 URL)"
         )]
     );
     let accepted = [
@@ -1177,11 +1177,11 @@ fn unusable_roots_and_schemas_are_runtime_errors() {
     write(
         &unsupported,
         "tools/schemas/1.0.0/plugin.schema.json",
-        r#"{"anyOf":[]}"#,
+        r#"{"$ref":"https://example.test/x"}"#,
     );
     let (code, message) = code_of(&unsupported);
     assert_eq!(code, "schema_unsupported");
-    assert!(message.contains("anyOf"), "{message}");
+    assert!(message.contains("not local"), "{message}");
 }
 
 #[test]
@@ -1336,13 +1336,6 @@ fn path_like_values_follow_the_original_prefixes() {
 }
 
 #[test]
-fn nfkc_fold_covers_fullwidth_ascii_only() {
-    assert_eq!(nfkc_lite("ＡＢＣ１２３－"), "ABC123-");
-    assert_eq!(nfkc_lite("a\u{3000}b"), "a b");
-    assert_eq!(nfkc_lite("plain-é"), "plain-é");
-}
-
-#[test]
 fn frontmatter_block_is_found_like_the_original() {
     assert!(matches!(parse_frontmatter("x"), Frontmatter::Missing));
     assert!(matches!(
@@ -1394,4 +1387,569 @@ fn urls_split_like_urlsplit() {
     }
     assert!(split_url("https://[::1/x").is_err());
     assert!(split_url("https://::1]/x").is_err());
+}
+
+// ---- exact NFKC (B4) -----------------------------------------------------------------
+
+#[test]
+fn nfkc_is_exact_unicode_normalization() {
+    // Fullwidth and ideographic space fold as before.
+    assert_eq!(nfkc("ＡＢＣ１２３－"), "ABC123-");
+    assert_eq!(nfkc("a\u{3000}b"), "a b");
+    // Canonical composition: e + COMBINING ACUTE ACCENT becomes U+00E9.
+    assert_eq!(nfkc("e\u{301}"), "\u{e9}");
+    // Compatibility expansion: LATIN SMALL LIGATURE FF becomes `ff`.
+    assert_eq!(nfkc("\u{fb00}"), "ff");
+    assert_eq!(nfkc("\u{fb03}"), "ffi");
+    assert_eq!(nfkc("\u{2460}"), "1");
+    assert_eq!(nfkc("plain-é"), "plain-é");
+}
+
+#[test]
+fn skill_names_compare_after_composition_and_expansion() {
+    let accepted = [
+        // decomposed name, precomposed directory
+        ("\u{e9}", "e\u{301}"),
+        // precomposed name, decomposed directory
+        ("e\u{301}", "\u{e9}"),
+        // ligature in the name, expanded directory
+        ("ff", "\u{fb00}"),
+        ("\u{fb00}", "ff"),
+        ("\u{fb03}-x", "ffi-x"),
+    ];
+    for (dir, name) in accepted {
+        let body = fields(&format!("\"{name}\""), DESCRIPTION);
+        assert_eq!(
+            frontmatter_errors(dir, &body),
+            Vec::<String>::new(),
+            "{dir:?} / {name:?}"
+        );
+    }
+    // Still different after normalization.
+    let body = fields("\"e\u{301}\"", DESCRIPTION);
+    assert_eq!(
+        frontmatter_errors("e", &body),
+        [format!(
+            "{}: name 'e\u{301}' != directory 'e'",
+            skill_rel("e")
+        )]
+    );
+    // An expansion that is uppercase is reported on the normalized text.
+    let body = fields("\"\u{ff21}\u{ff22}\"", DESCRIPTION);
+    assert_eq!(
+        frontmatter_errors("ab", &body),
+        [
+            format!("{}: name must be lowercase", skill_rel("ab")),
+            format!(
+                "{}: name '\u{ff21}\u{ff22}' != directory 'ab'",
+                skill_rel("ab")
+            ),
+        ]
+    );
+}
+
+#[test]
+fn skill_name_length_counts_normalized_characters() {
+    // 64 decomposed letters are 128 code points but 64 after composition.
+    let decomposed = "e\u{301}".repeat(64);
+    let composed = "\u{e9}".repeat(64);
+    assert_eq!(
+        frontmatter_errors(
+            &composed,
+            &fields(&format!("\"{decomposed}\""), DESCRIPTION)
+        ),
+        Vec::<String>::new()
+    );
+    // 65 of them exceed the limit once normalized.
+    let long = "e\u{301}".repeat(65);
+    let long_dir = "\u{e9}".repeat(65);
+    assert_eq!(
+        frontmatter_errors(&long_dir, &fields(&format!("\"{long}\""), DESCRIPTION)),
+        [format!("{}: name exceeds 64 chars", skill_rel(&long_dir))]
+    );
+    // 32 ligatures expand to exactly 64 letters; 33 expand to 66.
+    let ligatures = "\u{fb00}".repeat(32);
+    let expanded = "f".repeat(64);
+    assert_eq!(
+        frontmatter_errors(&expanded, &fields(&format!("\"{ligatures}\""), DESCRIPTION)),
+        Vec::<String>::new()
+    );
+    let too_many = "\u{fb00}".repeat(33);
+    let too_many_dir = "f".repeat(66);
+    assert_eq!(
+        frontmatter_errors(
+            &too_many_dir,
+            &fields(&format!("\"{too_many}\""), DESCRIPTION)
+        ),
+        [format!(
+            "{}: name exceeds 64 chars",
+            skill_rel(&too_many_dir)
+        )]
+    );
+}
+
+// ---- float zero is falsy (B3) --------------------------------------------------------
+
+#[test]
+fn float_zero_is_a_missing_required_field() {
+    let rel = skill_rel("demo-skill");
+    for zero in ["0.0", "-0.0", "0"] {
+        assert_eq!(
+            frontmatter_errors(
+                "demo-skill",
+                &format!("name: demo-skill\ndescription: {zero}\n")
+            ),
+            [format!("{rel}: missing required 'description'")],
+            "description: {zero}"
+        );
+        assert_eq!(
+            frontmatter_errors("0", &format!("name: {zero}\ndescription: {DESCRIPTION}\n")),
+            [format!("{}: missing required 'name'", skill_rel("0"))],
+            "name: {zero}"
+        );
+    }
+}
+
+#[test]
+fn quoted_and_nonzero_floats_are_text() {
+    let rel = skill_rel("demo-skill");
+    // A quoted "0.0" is a non-empty string, not zero.
+    assert_eq!(
+        frontmatter_errors("demo-skill", "name: demo-skill\ndescription: \"0.0\"\n"),
+        Vec::<String>::new()
+    );
+    assert_eq!(
+        frontmatter_errors("demo-skill", "name: demo-skill\ndescription: 0.5\n"),
+        Vec::<String>::new()
+    );
+    // A float name is its Python text (`1.0`), not `1`.
+    assert_eq!(
+        frontmatter_errors("1", "name: 1.0\ndescription: Fine description here.\n"),
+        [
+            format!("{}: name has invalid characters", skill_rel("1")),
+            format!("{}: name '1.0' != directory '1'", skill_rel("1")),
+        ]
+    );
+    // The same name written as a string reports the same way.
+    assert_eq!(
+        frontmatter_errors(
+            "demo-skill",
+            &format!("name: \"0.0\"\ndescription: {DESCRIPTION}\n")
+        ),
+        [
+            format!("{rel}: name has invalid characters"),
+            format!("{rel}: name '0.0' != directory 'demo-skill'"),
+        ]
+    );
+}
+
+// ---- URL splitting (B5) --------------------------------------------------------------
+
+#[test]
+fn bracketed_hosts_must_be_ipv6_literals() {
+    let valid = [
+        "http://[::1]/x",
+        "http://[::1]:80/x",
+        "https://[2001:db8::1]/x",
+        "http://[fe80::1%eth0]/x",
+        "http://[::ffff:192.0.2.1]/x",
+        "http://[v1.fe80]/x",
+    ];
+    for url in valid {
+        assert!(split_url(url).is_ok(), "{url}: {:?}", split_url(url));
+    }
+    let invalid = [
+        (
+            "http://[localhost]/mcp",
+            "'localhost' does not appear to be an IPv4 or IPv6 address",
+        ),
+        (
+            "http://[127.0.0.1]/mcp",
+            "An IPv4 address cannot be in brackets",
+        ),
+        (
+            "http://[]/mcp",
+            "'' does not appear to be an IPv4 or IPv6 address",
+        ),
+        ("http://[::1/mcp", "Invalid IPv6 URL"),
+        ("http://::1]/mcp", "Invalid IPv6 URL"),
+        (
+            "http://[::1%]/mcp",
+            "'::1%' does not appear to be an IPv4 or IPv6 address",
+        ),
+        (
+            "http://[gggg::1]/mcp",
+            "'gggg::1' does not appear to be an IPv4 or IPv6 address",
+        ),
+        (
+            "http://[1:2:3:4:5:6:7:8:9]/mcp",
+            "'1:2:3:4:5:6:7:8:9' does not appear to be an IPv4 or IPv6 address",
+        ),
+        ("http://[v]/mcp", "IPvFuture address is invalid"),
+        ("http://[vx.y]/mcp", "IPvFuture address is invalid"),
+        ("http://[v1.]/mcp", "IPvFuture address is invalid"),
+    ];
+    for (url, reason) in invalid {
+        assert_eq!(split_url(url), Err(reason.to_string()), "{url}");
+    }
+}
+
+#[test]
+fn bracketed_non_ip_hosts_never_get_the_loopback_exception() {
+    let url_errors = |url: &str| server_errors("h", &format!(r#"{{"type":"sse","url":"{url}"}}"#));
+    assert_eq!(
+        url_errors("http://[localhost]/mcp"),
+        [format!(
+            "{MCP}: server 'h' url is not a valid URL ('localhost' does not appear to be an IPv4 or IPv6 address)"
+        )]
+    );
+    assert_eq!(
+        url_errors("http://[127.0.0.1]/mcp"),
+        [format!(
+            "{MCP}: server 'h' url is not a valid URL (An IPv4 address cannot be in brackets)"
+        )]
+    );
+    assert_eq!(url_errors("http://[::1]:8080/mcp"), Vec::<String>::new());
+    assert_eq!(url_errors("http://127.0.0.1:9/mcp"), Vec::<String>::new());
+}
+
+#[test]
+fn netlocs_are_checked_under_nfkc() {
+    // Characters that normalize to a URL delimiter hide a different authority
+    // from the splitter: U+FF0F becomes `/`, U+FF1F `?`, U+FF03 `#`, U+FE55 `:`.
+    for netloc in [
+        "example.test\u{ff0f}evil",
+        "example.test\u{ff1f}q",
+        "example.test\u{ff03}f",
+        "host\u{fe55}80",
+    ] {
+        assert_eq!(
+            split_url(&format!("https://{netloc}")).map(|_| ()),
+            Err(format!(
+                "netloc '{netloc}' contains invalid characters under NFKC normalization"
+            )),
+            "{netloc:?}"
+        );
+    }
+    // Non-ASCII netlocs that do not gain a delimiter are fine.
+    assert!(split_url("https://b\u{fc}cher.example/").is_ok());
+    assert!(split_url("https://\u{ff45}xample.test/").is_ok());
+    // ASCII netlocs are never normalized.
+    assert!(split_url("https://example.test:8080/x").is_ok());
+}
+
+#[test]
+fn nfkc_delimiter_netlocs_are_findings_in_the_command_not_passes() {
+    let errors = server_errors(
+        "h",
+        "{\"type\":\"streamable-http\",\"url\":\"https://example.test\u{ff0f}evil\"}",
+    );
+    assert_eq!(
+        errors,
+        [format!(
+            "{MCP}: server 'h' url is not a valid URL (netloc 'example.test\u{ff0f}evil' contains invalid characters under NFKC normalization)"
+        )]
+    );
+}
+
+// ---- schema engine: fail-closed compilation and bounded evaluation (B1, B2) --------------
+
+fn json(text: &str) -> toolkit_core::Json {
+    toolkit_core::parse_json(text).expect("fixture JSON parses")
+}
+
+fn compile_error(schema: &str) -> String {
+    match engine::compile(json(schema)) {
+        Ok(_) => panic!("schema was accepted: {schema}"),
+        Err(reason) => reason,
+    }
+}
+
+fn evaluate(schema: &str, instance: &str) -> Result<Vec<String>, String> {
+    let compiled = engine::compile(json(schema)).expect("schema compiles");
+    compiled.validate(&json(instance)).map(|issues| {
+        issues
+            .into_iter()
+            .map(|issue| format!("{} (at {})", issue.message, issue.path_text()))
+            .collect()
+    })
+}
+
+#[test]
+fn external_references_are_rejected_even_under_combinators() {
+    for schema in [
+        r#"{"$ref":"https://example.test/schema"}"#,
+        r#"{"not":{"$ref":"https://example.test/schema"}}"#,
+        r#"{"oneOf":[{"$ref":"other.json"},{"type":"string"}]}"#,
+        r#"{"properties":{"a":{"$ref":"http://localhost:1/x#/definitions/y"}}}"#,
+        r#"{"$ref":"file:///etc/passwd"}"#,
+        r#"{"$ref":"https://json-schema.org/draft/2020-12/schema"}"#,
+    ] {
+        let reason = compile_error(schema);
+        assert!(reason.contains("not local"), "{schema}: {reason}");
+    }
+}
+
+#[test]
+fn missing_non_schema_and_unsupported_references_are_rejected() {
+    let reason = compile_error(r##"{"not":{"$ref":"#/$defs/missing"}}"##);
+    assert!(reason.contains("does not resolve"), "{reason}");
+    let reason = compile_error(r##"{"$ref":"#/description","description":"not a schema"}"##);
+    assert!(reason.contains("not a schema"), "{reason}");
+    let reason = compile_error(r##"{"$ref":"#anchor"}"##);
+    assert!(reason.contains("does not resolve"), "{reason}");
+    let reason = compile_error(r##"{"$defs":{"a b":{}},"$ref":"#/$defs/a%20b"}"##);
+    assert!(reason.contains("percent-encoding"), "{reason}");
+    let reason = compile_error(r##"{"$dynamicRef":"#x"}"##);
+    assert!(reason.contains("dynamic references"), "{reason}");
+    let reason = compile_error(r##"{"$defs":{"a":{"$id":"https://example.test/a"}}}"##);
+    assert!(reason.contains("nested '$id'"), "{reason}");
+}
+
+#[test]
+fn recursive_references_are_rejected() {
+    for schema in [
+        r##"{"$ref":"#"}"##,
+        r##"{"properties":{"child":{"$ref":"#"}}}"##,
+        r##"{"$defs":{"a":{"$ref":"#/$defs/a"}},"$ref":"#/$defs/a"}"##,
+        r##"{"$defs":{"a":{"$ref":"#/$defs/b"},"b":{"items":{"$ref":"#/$defs/a"}}},"$ref":"#/$defs/a"}"##,
+    ] {
+        let reason = compile_error(schema);
+        assert!(reason.contains("recursive"), "{schema}: {reason}");
+    }
+    // A shared (non-recursive) definition reached twice is fine.
+    let schema = r##"{"$defs":{"s":{"type":"string"}},"properties":{"a":{"$ref":"#/$defs/s"},"b":{"$ref":"#/$defs/s"}}}"##;
+    assert_eq!(
+        evaluate(schema, r#"{"a":"x","b":1}"#),
+        Ok(vec!["1 is not of type 'string' (at b)".to_string()])
+    );
+}
+
+#[test]
+fn invalid_regular_expressions_are_rejected() {
+    // Python refuses "nothing to repeat"; fancy-regex alone would accept it.
+    for pattern in ["^*", "$+", "\\\\b?", "a|^{2}", "^{1,3}", "(^)*x$*"] {
+        let schema = format!(r#"{{"type":"string","pattern":"{pattern}"}}"#);
+        let outcome = engine::compile(json(&schema));
+        if pattern == "(^)*x$*" {
+            // A group before the quantifier is repeatable, an anchor is not.
+            assert!(outcome.is_err(), "{pattern}");
+        } else {
+            let reason = outcome
+                .err()
+                .unwrap_or_else(|| panic!("{pattern} accepted"));
+            assert!(reason.contains("nothing to repeat"), "{pattern}: {reason}");
+        }
+    }
+    for pattern in ["(", "[a", "*a", "(?P<n"] {
+        let schema = format!(r#"{{"type":"string","pattern":"{pattern}"}}"#);
+        assert!(engine::compile(json(&schema)).is_err(), "{pattern}");
+    }
+    // Quantifiers elsewhere, lazy forms and literal braces stay valid.
+    for pattern in [
+        "^a*$",
+        "^a+?$",
+        "^(?:ab)*$",
+        "^a{2,3}$",
+        "^[*+?]$",
+        "^\\\\^*$",
+    ] {
+        let schema = format!(r#"{{"type":"string","pattern":"{pattern}"}}"#);
+        assert!(engine::compile(json(&schema)).is_ok(), "{pattern}");
+    }
+    // The same applies to patternProperties keys.
+    let reason = compile_error(r#"{"patternProperties":{"^*":{}}}"#);
+    assert!(reason.contains("nothing to repeat"), "{reason}");
+}
+
+#[test]
+fn catastrophic_patterns_stay_bounded() {
+    // Without lookaround or backreferences the pattern runs on the linear
+    // engine, so nested quantifiers cannot blow up.
+    let started = std::time::Instant::now();
+    let input = format!("{}!", "a".repeat(40));
+    let schema = r#"{"type":"string","pattern":"^(a+)+$"}"#;
+    let outcome = evaluate(schema, &format!("\"{input}\""));
+    assert_eq!(
+        outcome,
+        Ok(vec![format!(
+            "'{input}' does not match '^(a+)+$' (at <root>)"
+        )])
+    );
+    assert!(started.elapsed() < std::time::Duration::from_secs(10));
+}
+
+#[test]
+fn backtracking_exhaustion_is_an_evaluation_failure_not_a_match() {
+    let hostile = format!("\"{}!\"", "a".repeat(60));
+    let pattern = r#"^(a|a)*\\1b"#;
+    let started = std::time::Instant::now();
+    // The pattern alone.
+    let schema = format!(r#"{{"type":"string","pattern":"{pattern}"}}"#);
+    let reason = evaluate(&schema, &hostile).expect_err("exhaustion is an error");
+    assert!(reason.contains("regular expression"), "{reason}");
+    // Under `not`: exhaustion must not read as a non-match and pass.
+    let schema = format!(r#"{{"not":{{"pattern":"{pattern}"}}}}"#);
+    assert!(evaluate(&schema, &hostile).is_err());
+    // Under `oneOf`, where one alternative's outcome decides the result.
+    let schema = format!(r#"{{"oneOf":[{{"pattern":"{pattern}"}},{{"type":"string"}}]}}"#);
+    assert!(evaluate(&schema, &hostile).is_err());
+    // Inside a negative lookahead: exhaustion must not satisfy it.
+    let schema = format!(
+        r#"{{"type":"string","pattern":"^(?!{})"}}"#,
+        pattern.trim_start_matches('^')
+    );
+    assert!(evaluate(&schema, &hostile).is_err());
+    // A property name checked by `propertyNames` is covered too.
+    let schema = format!(r#"{{"propertyNames":{{"not":{{"pattern":"{pattern}"}}}}}}"#);
+    let object = format!("{{{}:1}}", &hostile);
+    assert!(evaluate(&schema, &object).is_err());
+    assert!(started.elapsed() < std::time::Duration::from_secs(30));
+}
+
+#[test]
+fn instance_violations_stay_distinct_from_evaluation_failures() {
+    // A shared deterministic violation is reported even though the pattern
+    // itself cannot be decided.
+    let hostile = format!("\"{}!\"", "a".repeat(60));
+    let schema = r#"{"type":"string","maxLength":5,"pattern":"^(a|a)*\\1b"}"#;
+    let outcome = evaluate(schema, &hostile).expect("the length violation is decided");
+    assert_eq!(outcome.len(), 1, "{outcome:?}");
+    assert!(
+        outcome[0].ends_with("is too long (at <root>)"),
+        "{outcome:?}"
+    );
+    // And a pattern that decides normally is an ordinary finding or a pass.
+    let schema = r#"{"type":"string","pattern":"^(?!.*--)[a-z]+$"}"#;
+    assert_eq!(evaluate(schema, "\"abc\""), Ok(vec![]));
+    assert_eq!(
+        evaluate(schema, "\"a--b\""),
+        Ok(vec![
+            "'a--b' does not match '^(?!.*--)[a-z]+$' (at <root>)".to_string()
+        ])
+    );
+}
+
+#[test]
+fn a_replacement_schema_cannot_turn_failures_into_a_pass() {
+    // Command level: the vendored plugin schema is replaced by one that would
+    // have let any plugin through if the unresolvable reference were ignored.
+    let cases = [
+        (
+            r#"{"not":{"$ref":"https://example.test/schema"}}"#,
+            "not local",
+        ),
+        (
+            r##"{"not":{"$ref":"#/$defs/missing"}}"##,
+            "does not resolve",
+        ),
+        (
+            r##"{"$ref":"#/description","description":"x"}"##,
+            "not a schema",
+        ),
+        (
+            r#"{"type":"object","properties":{"name":{"pattern":"^*"}}}"#,
+            "nothing to repeat",
+        ),
+    ];
+    for (schema, expected) in cases {
+        let root = TempDir::new("bad-replacement-schema");
+        write_valid_repo(&root);
+        write(&root, "tools/schemas/1.0.0/plugin.schema.json", schema);
+        let error = validate_tree(&root).expect_err("the schema is refused");
+        assert_eq!(error.exit_code(), 1);
+        assert_eq!(error.code(), "schema_unsupported");
+        assert!(error.message().contains(expected), "{}", error.message());
+    }
+}
+
+#[test]
+fn exhaustion_while_validating_a_manifest_is_a_runtime_error() {
+    let root = TempDir::new("exhausted-schema");
+    write_valid_repo(&root);
+    write(
+        &root,
+        "tools/schemas/1.0.0/plugin.schema.json",
+        r#"{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"description":{"not":{"pattern":"^(a|a)*\\1b"}}}}"#,
+    );
+    let hostile = format!("{}!", "a".repeat(60));
+    write(
+        &root,
+        MANIFEST,
+        &plugin_json("demo").replace("Demo plugin.", &hostile),
+    );
+    let error = validate_tree(&root).expect_err("evaluation fails");
+    assert_eq!(error.exit_code(), 1);
+    assert_eq!(error.code(), "schema_evaluation_failed");
+    assert!(
+        error
+            .message()
+            .contains("schema evaluation failed for plugins/demo/plugin.json"),
+        "{}",
+        error.message()
+    );
+}
+
+#[test]
+fn schema_messages_keep_the_published_wording() {
+    let schema = r##"{
+        "type":"object",
+        "properties":{
+            "n":{"type":["string","null"]},
+            "c":{"const":{"b":1,"a":[true]}},
+            "e":{"enum":["x","y"]},
+            "s":{"type":"string","minLength":2,"maxLength":3},
+            "t":{"minLength":1},
+            "p":{"propertyNames":{"not":{"enum":["bad"]}}},
+            "o":{"oneOf":[{"type":"integer"},{"minimum":0}]},
+            "f":false
+        },
+        "required":["req"],
+        "additionalProperties":false
+    }"##;
+    let outcome = evaluate(
+        schema,
+        r#"{"n":5,"c":{"a":[true],"b":2},"e":"z","s":"abcd","t":"","p":{"bad":1,"ok":2},"o":3,"f":1,"z2":1,"z1":2}"#,
+    )
+    .expect("violations only");
+    assert_eq!(
+        outcome,
+        vec![
+            "'req' is a required property (at <root>)",
+            "Additional properties are not allowed ('z1', 'z2' were unexpected) (at <root>)",
+            "{'b': 1, 'a': [True]} was expected (at c)",
+            "'z' is not one of ['x', 'y'] (at e)",
+            "False schema does not allow 1 (at f)",
+            "5 is not of type 'string', 'null' (at n)",
+            "3 is valid under each of {'minimum': 0}, {'type': 'integer'} (at o)",
+            "'bad' should not be valid under {'enum': ['bad']} (at p)",
+            "'abcd' is too long (at s)",
+            "'' should be non-empty (at t)",
+        ]
+    );
+}
+
+#[test]
+fn findings_at_one_path_follow_the_schema_keyword_order() {
+    let schema = r#"{"type":"string","maxLength":1,"minLength":3,"pattern":"^z"}"#;
+    assert_eq!(
+        evaluate(schema, "\"ab\""),
+        Ok(vec![
+            "'ab' is too long (at <root>)".to_string(),
+            "'ab' is too short (at <root>)".to_string(),
+            "'ab' does not match '^z' (at <root>)".to_string(),
+        ])
+    );
+    // Array indexes sort numerically before names; keys that look numeric in
+    // an object stay keys.
+    let schema = r#"{"properties":{"l":{"items":{"type":"string"}},"o":{"additionalProperties":{"type":"string"}}}}"#;
+    assert_eq!(
+        evaluate(schema, r#"{"l":[1,"a",2],"o":{"10":1,"2":2}}"#),
+        Ok(vec![
+            "1 is not of type 'string' (at l/0)".to_string(),
+            "2 is not of type 'string' (at l/2)".to_string(),
+            "1 is not of type 'string' (at o/10)".to_string(),
+            "2 is not of type 'string' (at o/2)".to_string(),
+        ])
+    );
 }

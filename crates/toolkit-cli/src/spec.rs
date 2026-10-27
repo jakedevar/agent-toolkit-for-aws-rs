@@ -6,8 +6,8 @@
 //!
 //! 1. no symbolic links anywhere under `plugins/`;
 //! 2. every `plugin.json` and `mcp.json` validates against the vendored
-//!    schemas in `ROOT/tools/schemas/1.0.0` (evaluated by the bundled
-//!    [`jsonschema`] module, no external dependency);
+//!    schemas in `ROOT/tools/schemas/1.0.0` (evaluated offline by the
+//!    `engine` submodule on the `jsonschema` crate);
 //! 3. the rules the schemas cannot express: path containment (spec section
 //!    4.1), placeholder restrictions (9.2) and MCP URL and header rules
 //!    (7.2.1);
@@ -22,6 +22,7 @@
 //! `docs/migration/spec-validator.md`.
 
 use std::fs;
+use std::net::{Ipv4Addr, Ipv6Addr};
 use std::path::{Path, PathBuf};
 
 use toolkit_core::{
@@ -34,8 +35,9 @@ use crate::manifests::{
 };
 use crate::{Invocation, Output};
 
-mod jsonschema;
-mod regex;
+use unicode_normalization::UnicodeNormalization;
+
+mod engine;
 #[cfg(test)]
 mod tests;
 
@@ -107,7 +109,7 @@ pub fn validate_tree(root: &Path) -> Result<Report, ToolkitError> {
     for name in &names {
         if plugins_dir.join(name).is_dir() {
             // One malformed plugin must not stop the others from being checked.
-            validator.validate_plugin_dir(name);
+            validator.validate_plugin_dir(name)?;
         }
     }
 
@@ -148,7 +150,7 @@ pub fn validate_command(
     output.line("All Agent Plugins v1.0.0 checks passed.")
 }
 
-fn load_schema(root: &Path, name: &str) -> Result<Json, ToolkitError> {
+fn load_schema(root: &Path, name: &str) -> Result<engine::Schema, ToolkitError> {
     let shown = format!("{SCHEMA_DIR}/{name}");
     let text = read_regular_file(&root.join(SCHEMA_DIR).join(name), MAX_TEXT_FILE_BYTES).map_err(
         |error| {
@@ -161,13 +163,12 @@ fn load_schema(root: &Path, name: &str) -> Result<Json, ToolkitError> {
     let schema = parse_json(&text).map_err(|error| {
         ToolkitError::runtime("schema_invalid", format!("invalid schema {shown}: {error}"))
     })?;
-    jsonschema::check_schema(&schema).map_err(|reason| {
+    engine::compile(schema).map_err(|reason| {
         ToolkitError::runtime(
             "schema_unsupported",
             format!("unsupported schema {shown}: {reason}"),
         )
-    })?;
-    Ok(schema)
+    })
 }
 
 /// Sorted file names of directory entries (lossy for non-UTF-8 names).
@@ -214,8 +215,8 @@ enum SchemaKind {
 
 struct SpecValidator<'a> {
     root: &'a Path,
-    plugin_schema: Json,
-    mcp_schema: Json,
+    plugin_schema: engine::Schema,
+    mcp_schema: engine::Schema,
     report: Report,
 }
 
@@ -273,12 +274,25 @@ impl SpecValidator<'_> {
         }
     }
 
-    fn schema_errors(&mut self, kind: SchemaKind, document: &Json, label: &str) {
+    /// Reports every schema violation of `document`. A schema that cannot be
+    /// evaluated (for example a regular expression that exhausts its limit)
+    /// is a runtime error, never a finding and never a pass.
+    fn schema_errors(
+        &mut self,
+        kind: SchemaKind,
+        document: &Json,
+        label: &str,
+    ) -> Result<(), ToolkitError> {
         let schema = match kind {
             SchemaKind::Plugin => &self.plugin_schema,
             SchemaKind::Mcp => &self.mcp_schema,
         };
-        let issues = jsonschema::validate(schema, document);
+        let issues = schema.validate(document).map_err(|reason| {
+            ToolkitError::runtime(
+                "schema_evaluation_failed",
+                format!("schema evaluation failed for {label}: {reason}"),
+            )
+        })?;
         for issue in issues {
             self.error(format!(
                 "{label}: {} (at {})",
@@ -286,9 +300,10 @@ impl SpecValidator<'_> {
                 issue.path_text()
             ));
         }
+        Ok(())
     }
 
-    fn validate_plugin_dir(&mut self, name: &str) {
+    fn validate_plugin_dir(&mut self, name: &str) -> Result<(), ToolkitError> {
         let rel = format!("plugins/{name}");
         let plugin_dir = self.root.join("plugins").join(name);
         self.progress(format!("Validating plugin: {rel}"));
@@ -297,17 +312,17 @@ impl SpecValidator<'_> {
             self.error(format!(
                 "{rel}: missing required root plugin.json (spec §5.1)"
             ));
-            return;
+            return Ok(());
         }
         let manifest_rel = format!("{rel}/plugin.json");
         let Some(manifest) = self.read_json(&manifest_rel) else {
-            return;
+            return Ok(());
         };
-        self.schema_errors(SchemaKind::Plugin, &manifest, &manifest_rel);
+        self.schema_errors(SchemaKind::Plugin, &manifest, &manifest_rel)?;
         if !matches!(manifest, Json::Object(_)) {
             // The schema already reported the wrong top-level type; the
             // member checks below need an object.
-            return;
+            return Ok(());
         }
 
         if manifest.get("$schema").and_then(Json::as_str) != Some(PLUGIN_SCHEMA_ID) {
@@ -327,7 +342,7 @@ impl SpecValidator<'_> {
         let mcp_rel = format!("{rel}/mcp.json");
         if plugin_dir.join("mcp.json").exists() {
             if let Some(mcp) = self.read_json(&mcp_rel) {
-                self.schema_errors(SchemaKind::Mcp, &mcp, &mcp_rel);
+                self.schema_errors(SchemaKind::Mcp, &mcp, &mcp_rel)?;
                 if matches!(mcp, Json::Object(_)) {
                     if mcp.get("$schema").and_then(Json::as_str) != Some(MCP_SCHEMA_ID) {
                         self.error(format!("{mcp_rel}: $schema must be {MCP_SCHEMA_ID}"));
@@ -347,6 +362,7 @@ impl SpecValidator<'_> {
                 "{rel}: skills exists but is not a directory (spec §6.2)"
             ));
         }
+        Ok(())
     }
 
     /// Extension namespaces must be reverse-domain; every string leaf that can
@@ -668,7 +684,7 @@ impl SpecValidator<'_> {
     }
 
     fn check_skill_name(&mut self, rel: &str, name: &str, directory: &str) {
-        let normalized = nfkc_lite(name);
+        let normalized = nfkc(name);
         if normalized.chars().count() > MAX_NAME {
             self.error(format!("{rel}: name exceeds {MAX_NAME} chars"));
         }
@@ -684,7 +700,7 @@ impl SpecValidator<'_> {
         if !normalized.chars().all(|c| c.is_alphanumeric() || c == '-') {
             self.error(format!("{rel}: name has invalid characters"));
         }
-        if normalized != nfkc_lite(directory) {
+        if normalized != nfkc(directory) {
             self.error(format!(
                 "{rel}: name {} != directory {}",
                 py_repr_str(name),
@@ -784,18 +800,13 @@ fn truthy_text(value: Option<&Json>) -> String {
     }
 }
 
-/// The part of Unicode NFKC normalization the standard library can express:
-/// fullwidth ASCII forms (U+FF01..U+FF5E) fold to ASCII and the ideographic
-/// space to a space. Other compatibility characters are left as they are
-/// (see the intentional changes in `docs/migration/spec-validator.md`).
-fn nfkc_lite(text: &str) -> String {
-    text.chars()
-        .map(|c| match c {
-            '\u{ff01}'..='\u{ff5e}' => char::from_u32(u32::from(c) - 0xfee0).unwrap_or(c),
-            '\u{3000}' => ' ',
-            other => other,
-        })
-        .collect()
+/// Unicode NFKC normalization, as `unicodedata.normalize("NFKC", text)`:
+/// canonical composition (`e` + U+0301 becomes U+00E9) and compatibility
+/// expansion (U+FB00 becomes `ff`, fullwidth forms become ASCII). Names and
+/// directory names are normalized with this before any check, so every length,
+/// case, character and equality test sees the normalized text.
+fn nfkc(text: &str) -> String {
+    text.nfkc().collect()
 }
 
 #[derive(Debug)]
@@ -836,6 +847,14 @@ struct UrlParts {
     hostname: Option<String>,
 }
 
+/// `urllib.parse.urlsplit` plus the `hostname` and `username`/`password`
+/// accessors the Python tool reads.
+///
+/// Like `urlsplit` it fails, with the same wording, on a bracket without its
+/// partner, on a bracketed host that is not an IPv6 literal (a name or an IPv4
+/// address in brackets, or a malformed `v...` IPvFuture), and on a netloc
+/// whose NFKC form would contain a URL delimiter (for example U+FF0F, the
+/// fullwidth solidus).
 fn split_url(url: &str) -> Result<UrlParts, String> {
     // Python strips leading C0 control characters and spaces and removes
     // tabs and newlines anywhere before splitting.
@@ -868,10 +887,15 @@ fn split_url(url: &str) -> Result<UrlParts, String> {
         netloc = &after[..end];
         rest = &after[end..];
         if netloc.contains('[') != netloc.contains(']') {
-            return Err("invalid IPv6 URL".to_string());
+            return Err("Invalid IPv6 URL".to_string());
+        }
+        if let Some((_, tail)) = netloc.split_once('[') {
+            let bracketed = tail.split(']').next().unwrap_or("");
+            check_bracketed_host(bracketed)?;
         }
     }
     let fragment = rest.find('#').map_or("", |index| &rest[index + 1..]);
+    check_netloc(netloc)?;
 
     let (userinfo, hostinfo) = match netloc.rfind('@') {
         Some(index) => (Some(&netloc[..index]), &netloc[index + 1..]),
@@ -881,18 +905,83 @@ fn split_url(url: &str) -> Result<UrlParts, String> {
         let (user, password) = info.split_once(':').unwrap_or((info, ""));
         !user.is_empty() || !password.is_empty()
     });
-    let host = match hostinfo.find('[') {
-        Some(open) => hostinfo[open + 1..].split(']').next().unwrap_or(""),
+    let host = match hostinfo.split_once('[') {
+        Some((_, bracketed)) => bracketed.split(']').next().unwrap_or(""),
         None => hostinfo.split(':').next().unwrap_or(""),
     };
     Ok(UrlParts {
         scheme,
         fragment: fragment.to_string(),
         has_credentials,
-        hostname: if host.is_empty() {
-            None
-        } else {
-            Some(host.to_lowercase())
-        },
+        hostname: lowercase_host(host),
     })
+}
+
+/// `SplitResult.hostname`: lowercased, except an IPv6 zone identifier after
+/// `%`, which keeps its case; `None` for an empty host.
+fn lowercase_host(host: &str) -> Option<String> {
+    if host.is_empty() {
+        return None;
+    }
+    Some(match host.split_once('%') {
+        Some((address, zone)) => format!("{}%{zone}", address.to_lowercase()),
+        None => host.to_lowercase(),
+    })
+}
+
+/// Python's `_check_bracketed_host`: the text between `[` and `]` must be an
+/// IPv6 literal (optionally with a `%zone`) or an IPvFuture address.
+fn check_bracketed_host(host: &str) -> Result<(), String> {
+    if let Some(future) = host.strip_prefix('v') {
+        // re.match(r"\Av[a-fA-F0-9]+\..+\Z", hostname)
+        let valid = future.split_once('.').is_some_and(|(version, tail)| {
+            !version.is_empty()
+                && version.chars().all(|c| c.is_ascii_hexdigit())
+                && !tail.is_empty()
+                && !tail.contains('\n')
+        });
+        return if valid {
+            Ok(())
+        } else {
+            Err("IPvFuture address is invalid".to_string())
+        };
+    }
+    if host.parse::<Ipv4Addr>().is_ok() {
+        return Err("An IPv4 address cannot be in brackets".to_string());
+    }
+    let (address, zone) = match host.split_once('%') {
+        Some((address, zone)) => (address, Some(zone)),
+        None => (host, None),
+    };
+    let zone_ok = zone.is_none_or(|zone| !zone.is_empty() && !zone.contains('%'));
+    if zone_ok && address.parse::<Ipv6Addr>().is_ok() {
+        Ok(())
+    } else {
+        Err(format!(
+            "{} does not appear to be an IPv4 or IPv6 address",
+            py_repr_str(host)
+        ))
+    }
+}
+
+/// Python's `_checknetloc`: IDNA uses NFKC equivalence, so a non-ASCII netloc
+/// whose normalized form gains a URL delimiter is refused.
+fn check_netloc(netloc: &str) -> Result<(), String> {
+    if netloc.is_empty() || netloc.is_ascii() {
+        return Ok(());
+    }
+    let stripped: String = netloc
+        .chars()
+        .filter(|c| !matches!(c, '@' | ':' | '#' | '?'))
+        .collect();
+    let normalized = nfkc(&stripped);
+    if stripped == normalized {
+        return Ok(());
+    }
+    if normalized.contains(['/', '?', '#', '@', ':']) {
+        return Err(format!(
+            "netloc '{netloc}' contains invalid characters under NFKC normalization"
+        ));
+    }
+    Ok(())
 }

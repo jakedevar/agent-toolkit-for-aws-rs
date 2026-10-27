@@ -751,14 +751,40 @@ fn is_kebab(name: &str) -> bool {
         && segments.all(|segment| !segment.is_empty() && segment.chars().all(kebab_char))
 }
 
-/// Python truthiness of a JSON value (`float` zero is not special-cased).
+/// Python truthiness of a JSON value: `None`, `False`, zero of either numeric
+/// type (`0`, `0.0` and `-0.0`), and empty strings, arrays and objects are
+/// falsy.
+#[allow(clippy::float_cmp)]
 pub(crate) fn is_falsy(value: &Json) -> bool {
     match value {
         Json::Null | Json::Bool(false) | Json::Int(0) => true,
+        Json::Float(number) => *number == 0.0,
         Json::String(text) => text.is_empty(),
         Json::Array(items) => items.is_empty(),
         Json::Object(members) => members.is_empty(),
-        Json::Bool(true) | Json::Int(_) | Json::Float(_) => false,
+        Json::Bool(true) | Json::Int(_) => false,
+    }
+}
+
+/// Python `repr` of a float: always a fraction or exponent (`1.0`, `0.0`,
+/// `-0.0`), exponents as `e+16` / `e-07`, and `inf`, `-inf` and `nan`.
+pub(crate) fn py_float_repr(number: f64) -> String {
+    if number.is_nan() {
+        return "nan".to_string();
+    }
+    if number.is_infinite() {
+        return if number > 0.0 { "inf" } else { "-inf" }.to_string();
+    }
+    // Rust's Debug form switches to an exponent at the same magnitudes as
+    // Python's repr (below 1e-4 and from 1e16) but writes `1e16` / `1e-7`.
+    let text = format!("{number:?}");
+    match text.split_once('e') {
+        Some((mantissa, exponent)) => {
+            let value: i32 = exponent.parse().unwrap_or(0);
+            let sign = if value < 0 { '-' } else { '+' };
+            format!("{mantissa}e{sign}{:02}", value.abs())
+        }
+        None => text,
     }
 }
 
@@ -843,7 +869,7 @@ pub(crate) fn py_repr(value: &Json) -> String {
         Json::Bool(true) => "True".to_string(),
         Json::Bool(false) => "False".to_string(),
         Json::Int(number) => number.to_string(),
-        Json::Float(number) => number.to_string(),
+        Json::Float(number) => py_float_repr(*number),
         Json::String(text) => py_repr_str(text),
         Json::Array(items) => {
             let inner: Vec<String> = items.iter().map(py_repr).collect();

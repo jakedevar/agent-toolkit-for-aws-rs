@@ -222,7 +222,12 @@ toolkit spec validate [ROOT]
 Replacement for `python3 tools/validate_spec.py`; full rule parity table and
 the recorded differences are in `docs/migration/spec-validator.md`. `ROOT`
 defaults to the current directory. The command is read-only and offline; it has
-no Python or `jsonschema` dependency.
+no Python, PyYAML or Python `jsonschema` dependency. Schemas are evaluated by
+the Rust `jsonschema` crate (local references only, no resolvers) with
+`fancy-regex` under a backtracking limit; names are compared under exact NFKC
+(`unicode-normalization`). A schema that cannot be compiled or evaluated is a
+runtime error (exit 1), never a pass. Dependencies are listed and justified in
+`docs/migration/spec-validator.md`.
 
 - Checks every directory under `ROOT/plugins`: no symbolic links, `plugin.json`
   and `mcp.json` against the vendored schemas in `ROOT/tools/schemas/1.0.0`,
