@@ -582,7 +582,7 @@ pub fn render_failure_with(
                 numbered(
                     "TROUBLESHOOTING:",
                     &[
-                        "Verify AWS credentials: aws configure list",
+                        "Verify AWS credentials with: aws configure list",
                         "Set AWS_PROFILE or supply credentials via env vars",
                     ]
                 )
@@ -1036,7 +1036,7 @@ TROUBLESHOOTING:
         let none = render_failure("list", &AwsError::NoCredentials, &[("a", "b")]);
         assert!(none.contains("Error: NoCredentialsError - Unable to locate credentials"));
         assert!(none.contains("ATTEMPTED PARAMETERS:\n- a: b\n"));
-        assert!(none.contains("1. Verify AWS credentials: aws configure list"));
+        assert!(none.contains("1. Verify AWS credentials with: aws configure list"));
         let partial = render_failure(
             "list",
             &AwsError::PartialCredentials {
@@ -1163,6 +1163,43 @@ TROUBLESHOOTING:
                 format!("{error:?}"),
                 format!("Connect {{ message: \"{shown}\" }}")
             );
+        }
+    }
+
+    #[test]
+    fn overlapping_and_suffixed_label_inputs_have_exact_text() {
+        // Re-review #4467 of 6ba2ac90: #4515 (overlap) and #4516 (label
+        // inside a longer key), through constructor and hand-built variants.
+        for (raw, shown) in [
+            (
+                "token=Bearer FAKE-OVERLAP-VALUE",
+                "token=[REDACTED] [REDACTED]",
+            ),
+            (
+                "password=Basic RkFLRTpPVkVSTEFQ",
+                "password=[REDACTED] [REDACTED]",
+            ),
+            (
+                "password_backup=FAKE-SUFFIX40 rest",
+                "password_backup=[REDACTED] rest",
+            ),
+            ("my_Password_Old: FAKE-MID41", "my_Password_Old: [REDACTED]"),
+        ] {
+            let hand_built = AwsError::Connect {
+                message: raw.to_string(),
+            };
+            for error in [AwsError::connect(raw), hand_built] {
+                assert_eq!(
+                    error.to_string(),
+                    format!("could not connect to the endpoint: {shown}")
+                );
+                assert_eq!(
+                    format!("{error:?}"),
+                    format!("Connect {{ message: \"{shown}\" }}")
+                );
+                let converted: ToolkitError = error.into();
+                assert!(converted.message().contains(shown), "{raw:?}");
+            }
         }
     }
 

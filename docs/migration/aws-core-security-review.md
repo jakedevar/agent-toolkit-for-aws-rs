@@ -88,3 +88,35 @@ input; any whitespace run separates an authentication scheme from its
 credential; and every `Display`/`Debug`/rendered block is scrubbed again on
 its fully printed text, which makes the output idempotent. Over-redaction of
 some ordinary words (`a basic check`, `negotiate TLS`) is the accepted cost.
+
+## Addendum after re-review #4467 of `6ba2ac90`
+
+The third review found three remaining leaks, each repaired by a manager
+ruling:
+
+1. **Overlapping recognizers (#4515).** The label scan jumped to the end of
+   each match, so in `token=Bearer X` the label hid only `Bearer` and the
+   scheme recognizer never saw it; `X` survived. Every recognizer now runs at
+   every position of the original input, inside other spans too, and the
+   union is replaced. A scheme word that lies inside a labelled value also
+   loses the prose exemption (`password=Token abcd` hides `abcd`).
+2. **Label followed by more key text (#4516).** `token_value` and
+   `password_backup` were not recognized because the separator was expected
+   right after the label. The key is now read through to its end (letters,
+   digits, `_`, `-`, `.`) before the separator is looked for. The cost is
+   more over-redaction of the word after such keys
+   (`ExpiredTokenException: [REDACTED] …`). The credential troubleshooting
+   step was reworded (`Verify AWS credentials with: aws configure list`) so it
+   is not itself hidden.
+3. **Validated endpoint path in `Debug` (#4469).** `Endpoint` and
+   `ClientConfig` used derived `Debug`, which printed a path that passed
+   validation but carried a secret. Product choice (manager): `Debug` shows
+   scheme, host and port, and the path only as `<path: N bytes>`. The
+   operational URL is unchanged.
+
+The shared `redact::ADVERSARIAL` table gained the overlap and full-key cases
+(start/middle/end of a key, mixed case, escaped JSON, dotted and hyphenated
+keys, header-line keys). They run through every error, header, request,
+response and signing-scope wrapper, with exact output and a second-pass
+identity check. Endpoint and resolved-configuration paths have their own table
+tests in both `Debug` forms.

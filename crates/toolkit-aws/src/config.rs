@@ -202,7 +202,7 @@ impl fmt::Debug for ClientSettings<'_> {
 }
 
 /// Everything needed to address, authenticate and pace requests to one service.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct ClientConfig {
     service: String,
     region: ResolvedRegion,
@@ -210,6 +210,24 @@ pub struct ClientConfig {
     profile: Option<String>,
     retry: RetryPolicy,
     timeouts: Timeouts,
+}
+
+impl fmt::Debug for ClientConfig {
+    /// The endpoint shows scheme, host and port only (its path as a length,
+    /// see `Endpoint`'s `Debug`); the strings are scrubbed and the whole
+    /// printed text is scrubbed again.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write_scrubbed_debug(f, |f| {
+            f.debug_struct("ClientConfig")
+                .field("service", &Scrubbed(&self.service))
+                .field("region", &self.region)
+                .field("endpoint", &self.endpoint)
+                .field("profile", &self.profile.as_deref().map(Scrubbed))
+                .field("retry", &self.retry)
+                .field("timeouts", &self.timeouts)
+                .finish()
+        })
+    }
 }
 
 impl ClientConfig {
@@ -570,5 +588,45 @@ mod tests {
             empty.contains("region: None") && empty.contains("endpoint: None"),
             "{empty}"
         );
+    }
+
+    #[test]
+    fn client_config_debug_shows_only_the_endpoint_path_length() {
+        // Re-review #4467 finding 3 (#4469): a validated override path can
+        // still carry a secret; the resolved configuration must not print it.
+        const PATHS: &[(&str, &[&str])] = &[
+            ("/password=FAKE-CFG-PW1/x", &["FAKE-CFG-PW1"]),
+            ("/token_value:FAKE-CFG-TK2", &["FAKE-CFG-TK2"]),
+            ("/opaque/FAKECFGSEGMENT3", &["FAKECFGSEGMENT3", "opaque"]),
+        ];
+        for &(path, leaks) in PATHS {
+            let url = format!("https://logs.amazonaws.com{path}");
+            let settings = ClientSettings {
+                endpoint: Some(url.as_str()),
+                ..ClientSettings::default()
+            };
+            let env = MapEnv::new().with("AWS_PROFILE", "dev");
+            let config = resolve("logs", &settings, &env).unwrap();
+            assert_eq!(config.endpoint().url(), url);
+            let marker = format!("<path: {} bytes>", path.len());
+            for shown in [format!("{config:?}"), format!("{config:#?}")] {
+                for leak in leaks {
+                    assert!(!shown.contains(leak), "{leak:?} leaked: {shown}");
+                }
+                for kept in [
+                    marker.as_str(),
+                    "\"https\"",
+                    "\"logs.amazonaws.com\"",
+                    "\"logs\"",
+                    "\"dev\"",
+                    "us-east-1",
+                    "retry",
+                    "timeouts",
+                ] {
+                    assert!(shown.contains(kept), "{kept:?} missing: {shown}");
+                }
+                assert_eq!(crate::redact::redact_text(&shown), shown);
+            }
+        }
     }
 }

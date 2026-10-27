@@ -17,7 +17,7 @@ use std::fmt;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs};
 
 use crate::error::AwsError;
-use crate::redact::snippet;
+use crate::redact::{snippet, write_scrubbed_debug, Scrubbed};
 
 /// Hostname suffixes accepted by [`EndpointPolicy::aws_public`].
 pub const DEFAULT_ALLOWED_SUFFIXES: &[&str] = &[".api.aws", ".amazonaws.com"];
@@ -82,7 +82,7 @@ impl EndpointPolicy {
 }
 
 /// A validated https endpoint: host, optional port and optional base path.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct Endpoint {
     host: String,
     port: Option<u16>,
@@ -147,6 +147,25 @@ impl Endpoint {
     }
 }
 
+impl fmt::Debug for Endpoint {
+    /// Scheme, host and port only. The base path is shown as its length,
+    /// `<path: N bytes>`, never as text: validation proves where requests go,
+    /// not that the path carries no secret (#4469). The operational URL comes
+    /// from `Display`/[`Endpoint::url`], which this does not change.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write_scrubbed_debug(f, |f| {
+            f.debug_struct("Endpoint")
+                .field("scheme", &"https")
+                .field("host", &Scrubbed(&self.host))
+                .field("port", &self.port)
+                .field("path", &format_args!("<path: {} bytes>", self.path.len()))
+                .finish()
+        })
+    }
+}
+
+/// The operational URL (`https://host[:port][path]`) handed to the
+/// transport. Diagnostics use `Debug`, which never prints the path.
 impl fmt::Display for Endpoint {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "https://{}", self.host)?;
@@ -986,5 +1005,62 @@ mod tests {
         assert_eq!(china.url(), "https://logs.cn-north-1.amazonaws.com.cn");
         assert!(Endpoint::for_service("a.b", "us-east-1").is_err());
         assert!(Endpoint::for_service("logs", "us-east-1.evil.com").is_err());
+    }
+
+    /// Validated endpoints whose path carries synthetic secrets (labelled,
+    /// scheme, userinfo-like and unlabelled): `(url, stored path, leaks)`.
+    const SECRET_PATHS: &[(&str, &str, &[&str])] = &[
+        (
+            "https://logs.amazonaws.com/password=FAKE-PATH-PW1",
+            "/password=FAKE-PATH-PW1",
+            &["FAKE-PATH-PW1"],
+        ),
+        (
+            "https://logs.amazonaws.com:8443/v1/token_value:FAKE-PATH-TK2/",
+            "/v1/token_value:FAKE-PATH-TK2",
+            &["FAKE-PATH-TK2"],
+        ),
+        (
+            "https://logs.amazonaws.com/u:FAKE-PATH-PW3@x/Bearer%20FAKE-PATH-B4",
+            "/u:FAKE-PATH-PW3@x/Bearer%20FAKE-PATH-B4",
+            &["FAKE-PATH-PW3", "FAKE-PATH-B4"],
+        ),
+        (
+            "https://logs.amazonaws.com/opaque/FAKEPATHSEGMENT5",
+            "/opaque/FAKEPATHSEGMENT5",
+            &["FAKEPATHSEGMENT5", "opaque"],
+        ),
+    ];
+
+    #[test]
+    fn endpoint_debug_shows_scheme_and_host_and_only_the_path_length() {
+        // Re-review #4467 finding 3 (#4469): validation proves the
+        // destination, not that the path is free of secrets.
+        let resolver = FixedResolver::new().answer_any(&["54.239.28.85"]);
+        for &(url, path, leaks) in SECRET_PATHS {
+            let endpoint =
+                validate_endpoint(url, "endpoint", &EndpointPolicy::aws_public(), &resolver)
+                    .unwrap();
+            // The operational URL still carries the real path.
+            assert_eq!(endpoint.path(), path);
+            assert!(endpoint.url().ends_with(path), "{url}");
+            let marker = format!("<path: {} bytes>", path.len());
+            let compact = format!("{endpoint:?}");
+            assert_eq!(
+                compact,
+                format!(
+                    "Endpoint {{ scheme: \"https\", host: \"logs.amazonaws.com\", \
+                     port: {:?}, path: {marker} }}",
+                    endpoint.port()
+                )
+            );
+            for shown in [compact, format!("{endpoint:#?}")] {
+                for leak in leaks {
+                    assert!(!shown.contains(leak), "{leak:?} leaked: {shown}");
+                }
+                assert!(shown.contains(&marker), "{shown}");
+                assert_eq!(crate::redact::redact_text(&shown), shown);
+            }
+        }
     }
 }

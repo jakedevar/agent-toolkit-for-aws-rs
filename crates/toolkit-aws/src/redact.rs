@@ -58,8 +58,9 @@ impl fmt::Debug for Secret {
 }
 
 /// Labels (lowercase) whose value is a secret. A label matches anywhere in a
-/// key (`my_token=`, `nextToken:`, `x-amz-security-token:` all count) as long
-/// as a `=`, `:` or `=>` separator follows it.
+/// key, case-insensitively (`my_token=`, `nextToken:`, `token_value:`,
+/// `password_backup=` all count): the key is read through to its end and its
+/// value is hidden when a `=`, `:` or `=>` separator follows the whole key.
 const SECRET_KEYS: &[&str] = &[
     "aws_secret_access_key",
     "aws_session_token",
@@ -160,8 +161,8 @@ const MAX_PASSES: usize = 8;
 /// Every error `Display`, `Debug`, conversion and rendered failure in this
 /// crate goes through this function. One pass collects every span that any
 /// recognizer wants hidden (URL userinfo, labelled values, scheme credentials,
-/// key IDs and session tokens), all on the same input, and replaces their
-/// union. Passes repeat until the text no longer changes, so the result is
+/// key IDs and session tokens), each recognizer tried at every position of the
+/// same input even inside another's span, and replaces their union. Passes repeat until the text no longer changes, so the result is
 /// idempotent by construction: `redact_text(&redact_text(x)) == redact_text(x)`.
 /// When the end of a value is uncertain the redaction extends to the end of
 /// the input.
@@ -246,20 +247,34 @@ fn after_double_slash(bytes: &[u8], mut p: usize) -> Option<usize> {
 }
 
 /// Spans of labelled values, scheme credentials, key IDs and session tokens.
+///
+/// Every recognizer runs at *every* position of the original input, including
+/// positions inside a span another recognizer already matched (#4515): in
+/// `token=Bearer X` the label hides `Bearer` and the scheme still hides `X`.
+/// No span ever lets the scan skip ahead.
+///
+/// A scheme word that is itself (the start of) a labelled value never gets
+/// the prose exemption: in `password=Token abcd` the label hides `Token`, so
+/// `abcd` is treated as its credential and hidden too.
 fn labelled_spans(input: &str) -> Vec<(usize, usize)> {
-    let bytes = input.as_bytes();
     let lower = input.to_ascii_lowercase();
     let lower = lower.as_bytes();
     let mut spans = Vec::new();
-    let mut i = 0;
-    while i < bytes.len() {
-        match find_span(input, lower, i) {
-            Some((from, to)) => {
-                spans.push((from, to));
-                i = to.max(i + 1);
-            }
-            None => i += 1,
-        }
+    for i in 0..input.len() {
+        value_spans_at(input, lower, i, &mut spans);
+    }
+    // How many value spans open and close at each byte, so one sweep knows
+    // whether a position lies inside a labelled value.
+    let mut opens = vec![0_usize; input.len() + 1];
+    let mut closes = vec![0_usize; input.len() + 1];
+    for &(from, to) in &spans {
+        opens[from] += 1;
+        closes[to] += 1;
+    }
+    let mut covering = 0_usize;
+    for (i, (open, close)) in opens.iter().zip(&closes).take(input.len()).enumerate() {
+        covering = covering + open - close;
+        spans.extend(scheme_span(input, lower, i, covering == 0));
     }
     spans
 }
@@ -463,30 +478,34 @@ fn is_base64(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || matches!(byte, b'/' | b'+' | b'=')
 }
 
-/// Span `[from, to)` of `input` to redact when a secret starts at `i`.
-fn find_span(input: &str, lower: &[u8], i: usize) -> Option<(usize, usize)> {
+/// Bytes that continue a field or key name (`token_value`, `x-amz-token`,
+/// `auth.token.id`).
+fn is_key_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.')
+}
+
+/// Push every span `[from, to)` that the shape and label recognizers want
+/// hidden for a match starting at `i`: a key ID or session token, and the
+/// value of every secret label found at `i`.
+///
+/// A secret label may sit anywhere in a key (#4516): the key is read through
+/// to its end (`token_value`, `password_backup`, `ExpiredTokenException`)
+/// before its separator and value are looked for, so trailing name text never
+/// hides a labelled value.
+fn value_spans_at(input: &str, lower: &[u8], i: usize, spans: &mut Vec<(usize, usize)>) {
     let bytes = input.as_bytes();
     if !bytes[i].is_ascii_alphanumeric() {
-        return None;
+        return;
     }
-    if let Some(span) = identifier_span(bytes, i) {
-        return Some(span);
-    }
-    for key in LINE_KEYS {
-        if lower[i..].starts_with(key.as_bytes()) {
-            if let Some(span) = value_span(input, i + key.len(), true) {
-                return Some(span);
+    spans.extend(identifier_span(bytes, i));
+    for (keys, whole_line) in [(LINE_KEYS, true), (SECRET_KEYS, false)] {
+        for key in keys {
+            if lower[i..].starts_with(key.as_bytes()) {
+                let key_end = scan_until(bytes, i + key.len(), |b| !is_key_byte(b));
+                spans.extend(value_span(input, key_end, whole_line));
             }
         }
     }
-    for key in SECRET_KEYS {
-        if lower[i..].starts_with(key.as_bytes()) {
-            if let Some(span) = value_span(input, i + key.len(), false) {
-                return Some(span);
-            }
-        }
-    }
-    scheme_span(input, lower, i)
 }
 
 /// Credential after an authentication scheme starting at `i`.
@@ -494,10 +513,11 @@ fn find_span(input: &str, lower: &[u8], i: usize) -> Option<(usize, usize)> {
 /// Any run of whitespace (Unicode, newlines and `\n`/`\t` escapes included)
 /// separates the scheme from its credential. A token credential runs to the
 /// next delimiter; a parameter-list credential runs to the end of the line; a
-/// quoted credential follows the quoted-value rules.
-fn scheme_span(input: &str, lower: &[u8], i: usize) -> Option<(usize, usize)> {
+/// quoted credential follows the quoted-value rules. `prose_ok` allows the
+/// prose exemption of English scheme words (`token included`).
+fn scheme_span(input: &str, lower: &[u8], i: usize, prose_ok: bool) -> Option<(usize, usize)> {
     let bytes = input.as_bytes();
-    if !is_word_boundary(bytes, i) {
+    if !bytes[i].is_ascii_alphabetic() || !is_word_boundary(bytes, i) {
         return None;
     }
     for auth in AUTH_SCHEMES {
@@ -520,7 +540,7 @@ fn scheme_span(input: &str, lower: &[u8], i: usize) -> Option<(usize, usize)> {
         if !is_credential_start(bytes[start]) {
             continue;
         }
-        if auth.prose_word && is_prose_word(bytes, start) {
+        if prose_ok && auth.prose_word && is_prose_word(bytes, start) {
             continue;
         }
         let end = if auth.params {
@@ -990,6 +1010,76 @@ pub(crate) const ADVERSARIAL: &[(&str, &str, &[&str])] = &[
         "retry nextToken=[REDACTED] later",
         &["FAKENEXT36"],
     ),
+    // Re-review #4467 finding 1 (#4515): a label whose unquoted value is a
+    // scheme word must not stop the scheme recognizer from hiding the
+    // credential after it.
+    (
+        "token=Bearer FAKE-OVERLAP-VALUE",
+        "token=[REDACTED] [REDACTED]",
+        &["FAKE-OVERLAP-VALUE"],
+    ),
+    (
+        "password=Basic RkFLRTpPVkVSTEFQ",
+        "password=[REDACTED] [REDACTED]",
+        &["RkFLRTpPVkVSTEFQ"],
+    ),
+    (
+        "secret:\tbearer\tFAKE-OVL37 next",
+        "secret:\t[REDACTED]\t[REDACTED] next",
+        &["FAKE-OVL37"],
+    ),
+    (
+        r#"{"msg":"token=Bearer FAKE-OVL38"}"#,
+        r#"{"msg":"token=[REDACTED] [REDACTED]"}"#,
+        &["FAKE-OVL38"],
+    ),
+    (
+        "api_key: Token fakeovl",
+        "api_key: [REDACTED] [REDACTED]",
+        &["fakeovl"],
+    ),
+    // Finding 2 (#4516): the label at the start, middle and end of a longer
+    // key, any case, plain and escaped JSON.
+    (
+        r#"{"token_value":"FAKE-SUFFIX39"}"#,
+        r#"{"token_value":"[REDACTED]"}"#,
+        &["FAKE-SUFFIX39"],
+    ),
+    (
+        "password_backup=FAKE-SUFFIX40 rest",
+        "password_backup=[REDACTED] rest",
+        &["FAKE-SUFFIX40"],
+    ),
+    (
+        "my_Password_Old: FAKE-MID41",
+        "my_Password_Old: [REDACTED]",
+        &["FAKE-MID41"],
+    ),
+    (
+        "CLIENT_SECRET_VALUE = FAKE-UPPER42, ok",
+        "CLIENT_SECRET_VALUE = [REDACTED], ok",
+        &["FAKE-UPPER42"],
+    ),
+    (
+        r#"{\"client_secret_value\":\"FAKE-ESC43\",\"n\":1}"#,
+        r#"{\"client_secret_value\":\"[REDACTED]\",\"n\":1}"#,
+        &["FAKE-ESC43"],
+    ),
+    (
+        "x-session-token-v2: FAKE-HDR44",
+        "x-session-token-v2: [REDACTED]",
+        &["FAKE-HDR44"],
+    ),
+    (
+        "auth.token.value=FAKE-DOT45&x=1",
+        "auth.token.value=[REDACTED]&x=1",
+        &["FAKE-DOT45"],
+    ),
+    (
+        "authorization_header: Bearer FAKE-LINE46\nnext: 1",
+        "authorization_header: [REDACTED]\nnext: 1",
+        &["FAKE-LINE46"],
+    ),
 ];
 
 #[cfg(test)]
@@ -1425,8 +1515,12 @@ mod tests {
             "The security token included in the request is invalid",
             "the service returned a pagination token it had already returned",
             "pagination failed: nextToken must be a string, got integer",
-            "Verify AWS credentials: aws configure list",
+            "Verify AWS credentials with: aws configure list",
             "userinfo (credentials) in the URL is not allowed",
+            "Error: ExpiredTokenException - boom",
+            "GET /x failed (403): InvalidClientTokenId",
+            "the password_backup file is stale",
+            "Partial credentials found: missing secret_access_key",
             "https://host.example/?mail=a@b",
             "message digest mismatch",
         ] {
@@ -1445,6 +1539,17 @@ mod tests {
             ),
             ("password: it's", "password: [REDACTED]"),
             ("x mytoken=abc y", "x mytoken=[REDACTED] y"),
+            // Full-key containment (#4516): any key containing a label hides
+            // its value, ordinary words included.
+            (
+                "Verify AWS credentials: aws configure list",
+                "Verify AWS credentials: [REDACTED] configure list",
+            ),
+            (
+                "ExpiredTokenException: The security token expired",
+                "ExpiredTokenException: [REDACTED] security token expired",
+            ),
+            ("tokens: 5", "tokens: [REDACTED]"),
         ] {
             let out = redact_text(input);
             assert_eq!(out, expected, "{input:?}");

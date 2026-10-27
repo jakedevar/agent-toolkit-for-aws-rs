@@ -50,6 +50,7 @@ No `toolkit` subcommand is added: this is a library for the domain slices.
 | The DNS check uses an explicit non-public range policy (see "Non-public address policy" below): the special-purpose IPv4 blocks of RFC 6890, and for IPv6 everything outside `2000::/3` plus the special-purpose blocks inside it; IPv4-mapped and NAT64 addresses are judged by their embedded IPv4 address, not rejected wholesale | Wider than Python's `is_private/loopback/link_local/reserved` |
 | `AWS_PROFILE` is limited to 128 bytes drawn from ASCII letters, digits and `. _ @ + / -`; an empty value is "unset"; any other value is `aws_invalid_config` and is never echoed | **Intentional compatibility decision (#4473).** `di_session.py` passed `AWS_PROFILE` straight to `boto3.Session`. This boundary never reads the shared config or credentials files, so it cannot know which names the SDK accepts. It accepts the conventional profile-name alphabet (default, SSO and role-profile naming schemes, `name/with/slashes`, `user@host` styles) and refuses the rest so a hostile `AWS_PROFILE` cannot smuggle control characters, whitespace or secret-looking text into logs and later file lookups. The deferred SDK adapter (#4463) may relax this to what the SDK supports; widening is backward compatible, narrowing is not. |
 | Failure-block troubleshooting step 2 reads "Verify the identifiers and parameters passed in the request" | The Python text named CloudWatch-specific identifiers; domain slices pass tailored `Guidance` |
+| The credential troubleshooting step reads "Verify AWS credentials with: aws configure list" (Python: "Verify AWS credentials: aws configure list") | Under full-key label matching (#4516) `credentials:` is a labelled key, so the Python wording would render as `credentials: [REDACTED] configure list` |
 | Service errors keep a redacted, truncated (1024 char) message; raw bodies are never kept | The Python `ApiError` kept the raw body on the exception |
 | `max_attempts` is expressed as `max_retries` (3 retries = 4 attempts) | botocore's `Config(retries=...)` counts retries, so the Python made four attempts |
 | `Adaptive` is carried as a label; the runner applies the standard schedule | The client-side rate limiter belongs to the SDK binding |
@@ -78,7 +79,7 @@ The policy deliberately rejects *more* than Python's `ipaddress` predicates
 The DNS-rebinding residual between the check and the SDK connection is
 unchanged.
 
-## Error redaction contract (#4468, #4469, #4494)
+## Error redaction contract (#4468, #4469, #4494, #4515, #4516)
 
 One scrubber, `redact::redact_text`, backs every error path: `AwsError`
 `Display` and `Debug`, the `From<AwsError> for ToolkitError` conversion,
@@ -90,7 +91,10 @@ a secret ends, it hides more.
 - **Union of spans.** One pass runs every recognizer on the *same* input (URL
   userinfo, labelled values, scheme credentials, access-key IDs, STS session
   tokens) and replaces the union of their spans, so one recognizer can never
-  remove the context another needs. Passes repeat until the text stops
+  remove the context another needs. Each recognizer is tried at *every*
+  position of the original input, including positions inside another
+  recognizer's span (#4515): in `token=Bearer X` the label hides `Bearer` and
+  the scheme recognizer still hides `X`. Passes repeat until the text stops
   changing (a still-changing text after eight passes becomes `[REDACTED]`), so
   `redact_text` is idempotent by construction.
 - **URL userinfo.** For every `scheme://` (also `:\/\/` and further escaped
@@ -101,7 +105,10 @@ a secret ends, it hides more.
   that over-redaction is accepted.
 - **Labelled values.** A key containing a secret label (`password`, `token`,
   `secret`, `credential`, `signature`, `api_key`, `x-amz-*`, ...; matched
-  anywhere in the key, so `nextToken` and `my_token` count) followed by `=`,
+  anywhere in the key, case-insensitively, so `nextToken`, `my_token`,
+  `token_value`, `my_Password_Old` and `password_backup` all count: the key is
+  read through to its end, letters, digits, `_`, `-` and `.`, before the
+  separator is looked for (#4516)) followed by `=`,
   `:` or `=>` (any whitespace, newlines and `\n`/`\t`/`\u…` escapes around it).
   A quoted value follows JSON escape rules at any escape depth. It is trusted
   only when its closing quote is followed, after optional whitespace, by `,`,
@@ -118,7 +125,8 @@ a secret ends, it hides more.
   case-insensitive. Any run of whitespace (Unicode, newlines, escaped forms)
   separates scheme and credential. For the English words `token`, `digest`,
   `negotiate` and `oauth`, a following short all-lowercase word is prose
-  (`token included`, `digest mismatch`) and is kept.
+  (`token included`, `digest mismatch`) and is kept, unless the scheme word
+  itself lies inside a labelled value (`password=Token abcd` hides `abcd`).
 - **Whole-output pass.** Every hand-written `Display`/`Debug` scrubs each field
   and then scrubs the whole printed text again (`write_scrubbed_debug`/
   `write_scrubbed_display`); `render_failure` scrubs the assembled block. Rust's
@@ -133,11 +141,19 @@ a secret ends, it hides more.
 `Headers`, `ApiRequest`/`HttpRequest`/`HttpResponse`, `MapEnv`,
 `ProviderChain` and `FakeProvider` all scrub; `Headers` also hides the value of
 any secret-bearing header name (`hides_header_value`), request/response bodies
-print lengths only and `Page` prints counts only. `ClientConfig`, `Endpoint`
-and `ResolvedRegion` print only validated values.
+print lengths only and `Page` prints counts only. `Endpoint` `Debug` shows
+the scheme, host and port only and renders the base path as
+`<path: N bytes>`, never its text (#4469; validation proves where requests go,
+not that the path is free of secrets). `ClientConfig` `Debug` nests that
+`Endpoint` form, scrubs its service and profile strings and is scrubbed again
+as a whole. The operational URL (`Endpoint::url`/`Display`) is unchanged.
+`ResolvedRegion` prints only its validated region name and source.
 
 Accepted over-redaction: ordinary words after a scheme name (`a basic check
-failed` becomes `a basic [REDACTED] failed`), and a value with glued text
+failed` becomes `a basic [REDACTED] failed`), the first word after any key
+that contains a label (`ExpiredTokenException: The …` becomes
+`ExpiredTokenException: [REDACTED] …`, `tokens: 5` becomes
+`tokens: [REDACTED]`), and a value with glued text
 after its closing quote hides the rest of the input. The adversarial fixture table
 `redact::ADVERSARIAL` runs every case through all of these paths and asserts
 that no synthetic secret survives and that a second pass changes nothing.
