@@ -120,6 +120,39 @@ pub fn neutralize_text(text: &str) -> Cow<'_, str> {
     neutralize(text, true)
 }
 
+/// [`neutralize_text`] that also escapes the newlines of the values in
+/// `untrusted` wherever they appear verbatim in `text`.
+///
+/// Some diagnostics are legitimately multi-line, so [`neutralize_text`] keeps
+/// newlines; but a caller-supplied value that contains a newline and is echoed
+/// into such a message would forge a line. The command line is the one source of
+/// untrusted text every handler sees, so the CLI passes its argument values
+/// here: each occurrence of a listed value is written with its newlines (and
+/// every other unsafe character) escaped, then the rest of `text` is neutralised
+/// as by [`neutralize_text`]. Values without a newline are ignored.
+#[must_use]
+pub fn neutralize_text_knowing<'a>(text: &'a str, untrusted: &[String]) -> Cow<'a, str> {
+    let mut values: Vec<&str> = untrusted
+        .iter()
+        .map(String::as_str)
+        .filter(|value| value.contains('\n'))
+        .collect();
+    // Longest first, so a value that contains another is replaced as a whole.
+    values.sort_by_key(|value| std::cmp::Reverse(value.len()));
+    let mut current = Cow::Borrowed(text);
+    for value in values {
+        if current.contains(value) {
+            let replaced = current.replace(value, &neutralize_line(value));
+            current = Cow::Owned(replaced);
+        }
+    }
+    if current.chars().any(|c| c != '\n' && is_unsafe_char(c)) {
+        Cow::Owned(neutralize_text(&current).into_owned())
+    } else {
+        current
+    }
+}
+
 fn neutralize(text: &str, keep_newlines: bool) -> Cow<'_, str> {
     let unsafe_here = |c: char| is_unsafe_char(c) && !(keep_newlines && c == '\n');
     if !text.chars().any(unsafe_here) {
@@ -272,6 +305,24 @@ mod tests {
         assert!(!neutralize_line(&all).chars().any(is_unsafe_char));
         assert_eq!(neutralize_text("a\nb\r\u{1b}c"), "a\nb\\r\\u001Bc");
         assert!(matches!(neutralize_text("one\ntwo\n"), Cow::Borrowed(_)));
+    }
+
+    #[test]
+    fn known_values_have_their_newlines_escaped_inside_multiline_text() {
+        let value = "a\nerror: forged".to_string();
+        assert_eq!(
+            neutralize_text_knowing(
+                "error: bad a\nerror: forged here\nreal second line",
+                &[value]
+            ),
+            "error: bad a\\nerror: forged here\nreal second line"
+        );
+        assert!(matches!(
+            neutralize_text_knowing("x\ny", &["no newline".to_string(), String::new()]),
+            Cow::Borrowed(_)
+        ));
+        let nested = ["a\nb".to_string(), "a\nb\nc".to_string()];
+        assert_eq!(neutralize_text_knowing("[a\nb\nc]", &nested), "[a\\nb\\nc]");
     }
 
     #[test]

@@ -22,7 +22,9 @@ use std::fmt;
 use std::io::{self, Write};
 use std::path::PathBuf;
 
-use toolkit_core::{discover_skills, neutralize_text, skills_to_json, ErrorKind, ToolkitError};
+use toolkit_core::{
+    discover_skills, neutralize_text_knowing, skills_to_json, ErrorKind, ToolkitError,
+};
 
 mod ai_data;
 pub mod asm_exec;
@@ -270,6 +272,9 @@ pub struct Output<'a> {
     diagnostics: Option<&'a mut dyn Write>,
     closed: bool,
     status: u8,
+    /// Argument values that contain a newline: escaped wherever a message
+    /// echoes them verbatim (see [`neutralize_text_knowing`]).
+    untrusted: Vec<String>,
 }
 
 impl<'a> Output<'a> {
@@ -280,6 +285,7 @@ impl<'a> Output<'a> {
             diagnostics: None,
             closed: false,
             status: 0,
+            untrusted: Vec::new(),
         }
     }
 
@@ -291,7 +297,14 @@ impl<'a> Output<'a> {
             diagnostics: Some(diagnostics),
             closed: false,
             status: 0,
+            untrusted: Vec::new(),
         }
+    }
+
+    /// Registers the command-line values to escape wherever a diagnostic echoes
+    /// them verbatim (only values with a newline matter).
+    pub fn set_untrusted(&mut self, args: &[String]) {
+        self.untrusted = untrusted_values(args);
     }
 
     /// Writes `text` and a newline to the diagnostics writer, if there is one.
@@ -301,14 +314,16 @@ impl<'a> Output<'a> {
     ///
     /// Control characters other than newline (ESC, BEL, CR, tab), bidirectional
     /// overrides and similar invisible characters are escaped by
-    /// [`neutralize_text`] so echoed caller text cannot drive the terminal
-    /// (#4639); newlines stay because some diagnostics are multi-line blocks, so
-    /// a handler that echoes untrusted text must quote it itself. Safe text is
-    /// written unchanged.
+    /// [`neutralize_text_knowing`] so echoed caller text cannot drive the terminal
+    /// (#4639); newlines stay because some diagnostics are multi-line blocks, except
+    /// inside a command-line value that itself contains a newline (see
+    /// [`Output::set_untrusted`]), which is escaped wherever it is echoed verbatim.
+    /// A handler that echoes other untrusted text must quote it itself. Safe text
+    /// is written unchanged.
     pub fn diagnostic(&mut self, text: &str) {
         if let Some(writer) = self.diagnostics.as_mut() {
             let _ = writer
-                .write_all(neutralize_text(text).as_bytes())
+                .write_all(neutralize_text_knowing(text, &self.untrusted).as_bytes())
                 .and_then(|()| writer.write_all(b"\n"));
         }
     }
@@ -921,9 +936,26 @@ fn skills_list(invocation: &Invocation, output: &mut Output<'_>) -> Result<(), T
     Ok(())
 }
 
+/// The command-line values (and the value half of `--flag=value`) that contain a
+/// newline: the only argument text that can forge a line in a multi-line message.
+fn untrusted_values(args: &[String]) -> Vec<String> {
+    let mut values = Vec::new();
+    for arg in args {
+        if arg.contains('\n') {
+            values.push(arg.clone());
+            if let Some((_, value)) = arg.split_once('=') {
+                if value.contains('\n') {
+                    values.push(value.to_string());
+                }
+            }
+        }
+    }
+    values
+}
+
 /// Writes the error report and returns the exit status.
-fn report(err: &mut dyn Write, error: &ToolkitError) -> u8 {
-    let message = neutralize_text(error.message());
+fn report(err: &mut dyn Write, error: &ToolkitError, untrusted: &[String]) -> u8 {
+    let message = neutralize_text_knowing(error.message(), untrusted);
     let text = match error.kind() {
         ErrorKind::Usage => format!("error: {message}\n\n{USAGE}\n"),
         ErrorKind::Runtime => format!("error: {message}\n"),
@@ -938,7 +970,7 @@ fn print_static(out: &mut dyn Write, err: &mut dyn Write, text: &str) -> u8 {
     let result = output.line(text).and_then(|()| output.finish());
     match result {
         Ok(()) => 0,
-        Err(error) => report(err, &error),
+        Err(error) => report(err, &error, &[]),
     }
 }
 
@@ -954,10 +986,12 @@ pub fn run(args: &[OsString], out: &mut dyn Write, err: &mut dyn Write) -> u8 {
                     "invalid_arguments",
                     "invalid arguments: arguments must be valid UTF-8",
                 ),
+                &[],
             );
         };
         text_args.push(text.to_string());
     }
+    let untrusted = untrusted_values(&text_args);
     match route(COMMANDS, &text_args) {
         Ok(Routed::Help) => print_static(out, err, USAGE),
         Ok(Routed::Version) => {
@@ -965,13 +999,14 @@ pub fn run(args: &[OsString], out: &mut dyn Write, err: &mut dyn Write) -> u8 {
         }
         Ok(Routed::Run(spec, invocation)) => {
             let mut output = Output::with_diagnostics(out, err);
+            output.set_untrusted(&text_args);
             let result = (spec.handler)(&invocation, &mut output).and_then(|()| output.finish());
             match result {
                 Ok(()) => output.exit_status(),
-                Err(error) => report(err, &error),
+                Err(error) => report(err, &error, &untrusted),
             }
         }
-        Err(error) => report(err, &error),
+        Err(error) => report(err, &error, &untrusted),
     }
 }
 
