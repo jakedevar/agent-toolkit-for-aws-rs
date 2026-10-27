@@ -42,19 +42,48 @@ domain crates or features.
 | Is ROOT itself eligible for discovery? | No. Only directories under ROOT are candidates; `ROOT/SKILL.md` is ignored. Point ROOT at the parent to list one skill. This preserves the published bootstrap behaviour. | `root_itself_is_not_eligible_but_nested_skills_are`, binary `root_itself_is_not_listed_but_children_are` |
 | Actual-binary symlink and closed-pipe JSON coverage | Added, because this slice changed the `SKILL.md` read path and the output writer. | binary `symlinks_never_leak_content_or_listings_through_the_binary`, `closed_stdout_pipe_with_json_is_success_not_panic` |
 | Temp fixture cleanup on failure | All fixtures use a drop-guarded temporary directory (core `testutil::TempDir`, CLI test-local guard), so a failing assertion no longer leaks directories. | every fixture-based test |
-| `SKILL.md` check/read TOCTOU under concurrent mutation | Mitigated without `unsafe`: the file is `lstat`ed, opened, and the opened handle's device/inode must equal the `lstat` (Unix). A swap between check and open is refused (`PathError::Changed`) or skipped; it is never followed. Residual: content may change between open and read (normal file semantics), and non-Unix platforms keep only the `lstat` check. | `symlinked_skill_md_file_is_skipped_not_read`, `symlinked_files_are_never_read` |
+| `SKILL.md` check/read TOCTOU under concurrent mutation | Partially mitigated without `unsafe`, for the **final component only**: the file is `lstat`ed, opened, and the opened handle's device/inode must equal the `lstat` (Unix). The final file swapped for a link or non-file between the scan and the read is refused (`PathError::Changed`) or skipped. **Not mitigated (accepted, see "Threat model" below):** an *ancestor* directory renamed away and replaced with a symlink to an outside directory after the walk listed it; the `lstat`, open and `read_dir` all resolve through the swapped path, the identity check passes against that path, and outside content can be reported under an inside-looking relative path. Also residual: content may change between open and read, and non-Unix platforms keep only the `lstat` check. | `symlinked_skill_md_file_is_skipped_not_read`, `symlinked_files_are_never_read` |
 | Recipe duplicate-merge concern | Resolved in the #4426 note (harness resolver read); no repair, no change here. | — |
 
 Other intentional changes: a `SKILL.md` over 1 MiB or not valid UTF-8 is a
 runtime error that names the file (it was an unbounded read, and a non-UTF-8
 file already failed); repeated flags are accepted once.
 
+## Threat model for filesystem handling
+
+- **Always refused:** static symbolic links. `resolve_within` fails with
+  `PathError::Symlink` for a link at any component below the root, and skill
+  discovery never follows a linked directory and never reads a linked
+  `SKILL.md`, whatever it points to (covered by core and actual-binary tests).
+- **Not defended:** concurrent mutation of the tree during a run. The walk is
+  pathname-based. The reviewed (#4455) ancestor-swap window: discovery lists a
+  real child directory, an attacker renames it away and puts a symlink to an
+  outside directory in its place, and the later `symlink_metadata`,
+  `read_regular_file` open and queued `read_dir` all resolve through the
+  swapped ancestor. The final-component identity check cannot see this,
+  because both the `lstat` and the opened handle refer to the same outside
+  file. Manager ruling on #4374: this is outside the tool's model (an
+  adversary renaming directories inside the user's own checkout while the
+  tool runs; the Python original had the same window), and closing it needs
+  `openat`-style handle-anchored traversal, i.e. a non-`std` dependency or
+  `unsafe`, which core forbids. Therefore no claim in the docs or module
+  documentation says the walk "stays inside" ROOT under concurrent change.
+- **Upgrade path:** callers only use `discover_skills`, `resolve_within` and
+  `read_regular_file`. A later slice that needs adversarial containment can
+  replace their implementation with a verified-directory-handle, no-follow
+  per-component walker without changing these public signatures.
+
 ## Parser limits (explicit)
 
 - JSON: no BOM, no duplicate keys, depth ≤ 128, integers outside `i64` are
   floats.
-- YAML subset: see `crates/toolkit-core/src/yaml.rs`; depth ≤ 64; unsupported
-  constructs are errors, never guesses. The `SKILL.md` frontmatter reader
+- YAML subset: see `crates/toolkit-core/src/yaml.rs`; at most 64 container
+  levels in one budget shared by block mappings, block sequences (including
+  same-indent sequences) and flow collections (a mixed document of 40 block
+  plus 40 flow levels is rejected, exactly 64 is accepted); unsupported
+  constructs are errors, never guesses, and the anchor/alias/tag and
+  reserved-indicator rules apply to flow keys and flow plain scalars exactly
+  as to block ones (quoted forms stay literal). The `SKILL.md` frontmatter reader
   remains the separate, lenient two-key reader documented in the CLI README.
 
 ## Not in scope
