@@ -1,6 +1,6 @@
 # PM handoff — agent-toolkit-for-aws-rs — seat 606912ca (Claude Opus 5.5)
 
-Written 2026-10-27 ~04:20Z at ~32% context (rotation 40%). Successor: verify every item live
+Written 2026-10-27 ~04:20Z, final update ~04:50Z at ~35% context (rotation 40%). Successor: verify every item live
 (AgentListIssues, AgentWorkerRoster, AgentListWakes, AgentListRollingQueue) before acting.
 
 ## The one gate
@@ -25,7 +25,7 @@ Branches pushed by continuation workers sometimes went to the predecessor's rsi/
 
 ## In flight (terminal watches armed by launches)
 - #4379 toolkit-aws: 2nd security repair, Opus worker 3740a89e from b897cd82 (re-review #4467 findings 1-3, #4468, #4494; conservative-by-construction scrubber ruling). Then re-review on #4467 (Codex gpt-6.1-sol).
-- #4399 startup-validators: Sonnet 8b65101f (base 81cc6189 + merge 98957f87).
+- #4399 startup-validators: partial 3/11 files at abf87cfe86e88f3b3e5e7060980e00a6d738cfd8 (green); continuation Sonnet 53a51585 porting the remainder. Review once complete (one review, not per partial).
 - #4378 ci: implemented at 35640f1276f5a72a339f2292a29d90099a797b80 (81cc6189 + merges 98957f87, 3a4c08d5; retires tools/validate.py, test_validate.py, validate_spec.py, sync-plugin-skills.py; keeps plugin sync-vendored.py for other slices). Review #4502 Codex sol 21b9e6b0 in flight. Landing it supersedes landing #4374/#4375/#4376/#4377 separately only if the queue requires one change per gate: land in stack order anyway.
 - #4463 (SDK adapter for toolkit-aws): ruling recorded on the Issue; dispatch only after #4379 is accepted.
 
@@ -43,3 +43,8 @@ Branches pushed by continuation workers sometimes went to the predecessor's rsi/
 Filed (harness): #4448 OpenRouter step limit strands, #4475 disk_floor_hold notice noise, #4485 launch fails on transient root_busy/circuit. Reviewer-filed: #4461 24 GiB reservation per tiny job, #4466, #4497. Closed: #4434 (root cause #4427).
 
 Health wake ignores hub_disk_high:/ and hub_memory_high:hub.
+
+## Wakes held by this seat (transfer on succession; confirm with AgentListWakes)
+- rust-migration-health (when health_anomaly, ignores hub_disk_high:/ and hub_memory_high:hub)
+- pm-safety-net (resume, ~05:12Z)
+- terminal watches on in-flight workers: 3740a89e (#4379), 21b9e6b0 (#4502 review of #4378), 53a51585 (#4399)
