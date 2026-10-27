@@ -161,3 +161,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 20:55Z: #4742 review of #4381 036c0b66: CHANGES_REQUESTED #4749 #4750 #4755 #4757 #4758 (output symlink race; malformed responses -> false empty/write/score counts).
   Ruling: merge #4727 8f429632 into #4381 branch and route all recorded reads through toolkit_aws::recorded; O_NOFOLLOW/temp+rename outputs. Repair (Opus) 14bc584a continue_from ad948f84 (op bea1d132); scoped base 8f429632. Then re-review #4742 pinned.
   Dependency: #4381 now integrates after (or with) #4727.
+- 20:57Z: #4744 review of #4408 3bf3a8db: CHANGES_REQUESTED #4746 #4747 #4748 #4753 #4754 #4759 (truncated inputs, empty-doc success, dropped warnings, bool-as-number, invalid explanations, symlink bypass). Reviewer friction Rsi #4756.
+  Repair (Sonnet) fa5c7051 continue_from c65e27aa (op 5111e7f3), scoped base dcd47147. Then re-review #4744 pinned.
+  4/4 busy: e1952dc1 (#4394), ecf77dbc (#4727), 14bc584a (#4381), fa5c7051 (#4408).
