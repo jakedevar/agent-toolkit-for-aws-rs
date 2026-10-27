@@ -22,9 +22,7 @@ use std::fmt;
 use std::io::{self, Write};
 use std::path::PathBuf;
 
-use toolkit_core::{
-    discover_skills, neutralize_line, neutralize_text, skills_to_json, ErrorKind, ToolkitError,
-};
+use toolkit_core::{discover_skills, neutralize_text, skills_to_json, ErrorKind, ToolkitError};
 
 mod ai_data;
 pub mod asm_exec;
@@ -925,7 +923,7 @@ fn skills_list(invocation: &Invocation, output: &mut Output<'_>) -> Result<(), T
 
 /// Writes the error report and returns the exit status.
 fn report(err: &mut dyn Write, error: &ToolkitError) -> u8 {
-    let message = neutralize_line(error.message());
+    let message = neutralize_text(error.message());
     let text = match error.kind() {
         ErrorKind::Usage => format!("error: {message}\n\n{USAGE}\n"),
         ErrorKind::Runtime => format!("error: {message}\n"),

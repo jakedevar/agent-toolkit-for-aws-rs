@@ -99,7 +99,7 @@ pub fn quote_untrusted(text: &str) -> String {
 /// already safe is returned borrowed.
 ///
 /// This is the last-line defence at the output sinks (`Output::diagnostic` and
-/// the final `error:` report in `toolkit-cli`), so an echo a slice forgot to
+/// the final `error:` report in `toolkit-cli`, which use [`neutralize_text`]), so an echo a slice forgot to
 /// quote still cannot forge a line or drive the terminal. It is not a
 /// substitute for [`quote_untrusted`] at the call site: the result is not
 /// quoted, so an escaped value is not distinguishable from one that contained a
