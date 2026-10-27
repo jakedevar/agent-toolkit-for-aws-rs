@@ -211,3 +211,4 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 22:41Z: round 13 head 92781c675aad41750925b7fce30288a019d4ca04 (1de8fe29; merges cc723717 #4727, af692157 #4743 clean; 92781c67 #4408 registration-only). STOPPED before jobs: recorded_contract fails 3/25 on relational (#4394): no shared import, members.rs helper copies, 18 shape reads (fail-closed).
   Filed #4799 (P2): migrate relational onto toolkit_aws::recorded, behaviour byte-identical. Worker 36d6de30 (Opus) from 92781c67 (op 5037b4ef). Then review (security-flavoured), then round 13 = its head + fmt/clippy/ws-test + manager scoped.
   4/4 busy: 16f724e9 (#4381 r2), b4182810 (#4793), a7277981 (#4391), 36d6de30 (#4799).
+- 22:41Z: queue entry 5060cb2e still queued after 1h, no blocker visible. Filed harness Rsi #4800; reported up to GM (interim #4452 evidence). Not cancelling.
