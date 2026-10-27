@@ -408,9 +408,8 @@ fn found_secret(reply: &Json) -> Result<Secret, String> {
                 }
             }
         }
-        Some(_) => {}
         None if matches!(result, Json::Object(_)) => envelopes.push(result.clone()),
-        None => {}
+        Some(_) | None => {}
     }
     for envelope in &envelopes {
         if envelope.get("status").and_then(Json::as_str) == Some("error") {

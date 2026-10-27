@@ -666,7 +666,7 @@ fn a_launch_failure_exits_one_and_names_only_the_unresolved_word() {
     assert!(
         outcome
             .stderr
-            .starts_with("asm-exec: ERROR: Failed to run {{resolve:secretsmanager:cmd}}: "),
+            .starts_with("asm-exec: ERROR: Failed to run <reference>: "),
         "{}",
         outcome.stderr
     );

@@ -222,13 +222,27 @@ pub fn run_with(deps: &Deps<'_>, args: &[String], output: &mut Output<'_>) {
         Ok(code) => output.set_exit_status(code.0),
         Err(error) => {
             // The unresolved first word: it can hold references, never values.
-            let shown = command.first().map_or("", String::as_str);
+            let shown = command
+                .first()
+                .map(String::as_str)
+                .map_or_else(String::new, describe);
             fail(
                 output,
                 &format!("asm-exec: ERROR: Failed to run {shown}: {error}"),
             );
         }
     }
+}
+
+/// A command word for a message: each reference replaced by `<reference>` so
+/// the text names no secret and the scrubber does not mistake the prefix for
+/// a labelled value.
+fn describe(word: &str) -> String {
+    let replaced = substitute::<()>(word.as_bytes(), &mut |_| Ok(b"<reference>".to_vec()));
+    replaced
+        .ok()
+        .and_then(|bytes| String::from_utf8(bytes).ok())
+        .unwrap_or_else(|| "<command>".to_string())
 }
 
 type Prepared = (OsString, Vec<OsString>, Vec<(OsString, OsString)>);
@@ -265,14 +279,14 @@ fn os_bytes(value: &OsStr) -> Vec<u8> {
 }
 
 #[cfg(unix)]
-fn os_from_bytes(bytes: Vec<u8>) -> Option<OsString> {
+fn os_from_bytes(bytes: Vec<u8>) -> OsString {
     use std::os::unix::ffi::OsStringExt;
-    Some(OsString::from_vec(bytes))
+    OsString::from_vec(bytes)
 }
 
 #[cfg(not(unix))]
-fn os_from_bytes(bytes: Vec<u8>) -> Option<OsString> {
-    String::from_utf8(bytes).ok().map(OsString::from)
+fn os_from_bytes(bytes: Vec<u8>) -> OsString {
+    OsString::from(String::from_utf8_lossy(&bytes).into_owned())
 }
 
 /// Resolves references; owns the backends and the diagnostics they produce.
@@ -341,8 +355,7 @@ impl<'a> Resolver<'a> {
         } else {
             input.to_vec()
         };
-        os_from_bytes(bytes)
-            .ok_or_else(|| "asm-exec: ERROR: The resolved text is not valid UTF-8".to_string())
+        Ok(os_from_bytes(bytes))
     }
 
     /// `resolve_one` of the Python. `Err` is the line to print before exit 1.
@@ -360,7 +373,7 @@ impl<'a> Resolver<'a> {
             .or_else(|| non_empty(self.env, "AWS_REGION"))
             .or_else(|| non_empty(self.env, "AWS_DEFAULT_REGION"));
 
-        let mut value = self.from_agent(&reference);
+        let mut value = self.agent_value(&reference);
         if value.is_none() {
             value = match self.mcp.resolve(
                 &reference.secret_id,
@@ -388,7 +401,7 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    fn from_agent(&self, reference: &Reference) -> Option<Secret> {
+    fn agent_value(&self, reference: &Reference) -> Option<Secret> {
         if let Some(reason) = self.sma_skipped.take() {
             self.note(format!(
                 "asm-exec: Secrets Manager Agent not used: {reason} \

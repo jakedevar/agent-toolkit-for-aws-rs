@@ -54,7 +54,7 @@ mcp,credentials,process}.rs`), registered in the canonical `COMMANDS` table of
   endpoint must pass `toolkit_aws::validate_endpoint` (https, AWS domains only,
   every DNS answer public).
 - The command that is started is never named after resolution: a launch
-  failure prints the **unresolved** first word.
+  failure prints the first word with every reference shown as `<reference>`.
 - Resolution failures stop everything before the command starts: arguments are
   resolved first, then the environment (the Python order); the first failure
   exits 1 with nothing launched.
@@ -92,7 +92,7 @@ and the test binary itself.
 | JSON key | `json.loads(v)[key]`; missing key or non-JSON: `asm-exec: ERROR: JSON key 'k' not found in: <id>`, exit 1; non-strings via `json.dumps` | same text; `json.dumps` formatting reproduced (`, ` / `: ` separators, ASCII, float `repr`) | `json_keys_select_members_and_non_strings_are_dumped_like_python`, `reference::tests::json_dumps...` |
 | Empty value | treated as unresolved (`if not value`) | same | `an_empty_secret_does_not_resolve` |
 | Unresolvable | `asm-exec: ERROR: Failed to resolve: <ref>`, exit 1, command not started | same line, scrubbed | `an_unresolvable_reference_stops_everything...` |
-| Launch failure | uncaught `FileNotFoundError` traceback, exit 1 | `asm-exec: ERROR: Failed to run <unresolved word>: <os error>`, exit 1 | `a_launch_failure_exits_one...` |
+| Launch failure | uncaught `FileNotFoundError` traceback, exit 1 | `asm-exec: ERROR: Failed to run <word, references shown as <reference>>: <os error>`, exit 1 | `a_launch_failure_exits_one...` |
 | Child I/O | inherits stdin/stdout/stderr | same | e2e `the_command_keeps_the_standard_streams` |
 
 ## Intentional differences (recorded)

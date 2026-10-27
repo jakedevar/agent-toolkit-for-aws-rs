@@ -188,7 +188,7 @@ fn json_dumps_matches_python_formatting() {
             .unwrap();
     assert_eq!(
         python_json_dumps(&value),
-        r#"{"a": 1, "b": [true, null, "é\n\"q\"\\"], "c": 1.5, "d": {"x": "y"}, "e": [], "f": {}}"#
+        r#"{"a": 1, "b": [true, null, "\u00e9\n\"q\"\\"], "c": 1.5, "d": {"x": "y"}, "e": [], "f": {}}"#
     );
     assert_eq!(python_json_dumps(&Json::Bool(false)), "false");
     assert_eq!(python_json_dumps(&Json::Float(100.0)), "100.0");

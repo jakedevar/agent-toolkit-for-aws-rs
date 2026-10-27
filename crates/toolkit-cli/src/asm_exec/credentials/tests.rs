@@ -47,6 +47,7 @@ impl CommandRunner for FakeRunner {
     }
 }
 
+#[allow(clippy::unnecessary_wraps)]
 fn ok(stdout: &str) -> Result<CommandOutput, RunFailure> {
     Ok(CommandOutput {
         success: true,
@@ -54,6 +55,7 @@ fn ok(stdout: &str) -> Result<CommandOutput, RunFailure> {
     })
 }
 
+#[allow(clippy::unnecessary_wraps)]
 fn exit_failure() -> Result<CommandOutput, RunFailure> {
     Ok(CommandOutput {
         success: false,
