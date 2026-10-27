@@ -79,7 +79,10 @@ mod tests {
     #[test]
     fn matches_python_json_dumps() {
         let value = Json::object(vec![
-            ("a", Json::Array(vec![Json::Int(1), Json::string("é😀\n")])),
+            (
+                "a",
+                Json::Array(vec![Json::Int(1), Json::string("\u{e9}\u{1f600}\n")]),
+            ),
             ("b", Json::Null),
             ("c", Json::Bool(true)),
             ("d", Json::Bool(false)),
@@ -88,7 +91,7 @@ mod tests {
         ]);
         assert_eq!(
             python_dumps(&value),
-            r#"{"a": [1, "é😀\n"], "b": null, "c": true, "d": false, "e": {}, "f": []}"#
+            r#"{"a": [1, "\u00e9\ud83d\ude00\n"], "b": null, "c": true, "d": false, "e": {}, "f": []}"#
         );
     }
 
@@ -101,6 +104,6 @@ mod tests {
     #[test]
     fn non_ascii_whitespace_is_hidden_like_in_the_legacy_text() {
         let text = python_dumps(&Json::string("a\u{a0}b"));
-        assert_eq!(text, r#""a b""#);
+        assert_eq!(text, r#""a\u00a0b""#);
     }
 }

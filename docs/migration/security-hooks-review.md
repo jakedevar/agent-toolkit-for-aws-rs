@@ -97,7 +97,7 @@ fail-closed behaviour; binary build and staging is a release dependency (see han
    `python2.7 -c` is covered.
 7. `\b` after `get-secret-value` treats only ASCII letters, digits and `_` as word
    characters, so a following non-ASCII letter also denies.
-8. Case-insensitive matching folds `ſ`, `İ`, `ı` and `K` like Python's
+8. Case-insensitive matching folds U+017F, U+0130, U+0131 and U+212A (long s, dotted and dotless i, Kelvin sign) like Python's
    `re.I`.
 9. R8 accepts a flag cluster whose last letter is `c` **or `e`** (legacy `-[a-zA-Z]*c`
    or exactly `-e`), so `perl -ne`, `node -pe` and `ruby -ne` are inline execution too.
