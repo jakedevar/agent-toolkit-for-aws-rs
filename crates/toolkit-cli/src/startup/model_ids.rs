@@ -271,13 +271,13 @@ pub(crate) fn rebuild_dual_ids(tokens: &[String]) -> Vec<String> {
 /// nothing refuses to run a no-op gate.
 pub(crate) fn load_banned_ids(plugin: &Path) -> Result<(Vec<String>, Vec<String>), String> {
     let registry = plugin.join(REGISTRY_REL);
-    if !super::is_regular_file(&registry)? {
+    if !super::is_regular_file_under(plugin, &registry)? {
         return Ok((
             Vec::new(),
             vec![format!("registry not found: {REGISTRY_REL}")],
         ));
     }
-    let text = super::read_text(&registry, REGISTRY_REL)?;
+    let text = super::read_text_under(plugin, &registry, REGISTRY_REL)?;
     let lines = py_splitlines(&text);
     let mut ids: Vec<String> = Vec::new();
     let mut excluded_count = 0;

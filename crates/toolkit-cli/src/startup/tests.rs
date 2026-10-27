@@ -1794,3 +1794,142 @@ fn closed_pipe_after_a_clean_run_is_success() {
     assert_eq!(run(&args, &mut BrokenPipe, &mut err), 0);
     assert!(err.is_empty());
 }
+
+// ---- descendant symbolic links (#4584) -------------------------------------
+
+#[cfg(unix)]
+#[test]
+fn refuse_links_below_checks_every_component_under_the_root() {
+    use super::refuse_links_below;
+    use std::os::unix::fs::symlink;
+
+    let root = TempDir::new("below-root");
+    let outside = TempDir::new("below-outside");
+    write(&outside, "STARTUP_PROGRAMS.md", "outside");
+    write(&root, "plain/inner/file.md", "inside");
+    write(&root, "plain/regular.txt", "x");
+    symlink(&*outside, root.join("linked")).expect("directory link");
+    symlink(outside.join("absent"), root.join("dangling")).expect("dangling link");
+    symlink(&*outside, root.join("plain/inner/deep")).expect("deep link");
+
+    // Ordinary paths, missing paths and paths below a regular file pass.
+    for rel in ["plain/inner/file.md", "missing/x.md", "plain/regular.txt/x"] {
+        assert_eq!(refuse_links_below(&root, &root.join(rel)), Ok(()), "{rel}");
+    }
+    // A link at the first, a middle or the last component, and a dangling one.
+    for rel in [
+        "linked/STARTUP_PROGRAMS.md",
+        "linked",
+        "dangling",
+        "dangling/x",
+        "plain/inner/deep/STARTUP_PROGRAMS.md",
+    ] {
+        let error = refuse_links_below(&root, &root.join(rel)).expect_err(rel);
+        assert!(error.contains("symbolic links are not followed"), "{error}");
+    }
+    // The explicit root itself may be a link: it is the caller's choice.
+    let via_link = TempDir::new("below-via-link");
+    symlink(&*root, via_link.join("root")).expect("root link");
+    let linked_root = via_link.join("root");
+    assert_eq!(
+        refuse_links_below(&linked_root, &linked_root.join("plain/inner/file.md")),
+        Ok(())
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn program_refuses_a_symlinked_descendant_directory() {
+    let outside = TempDir::new("program-descendant-target");
+    // The review's exact input: outside content that would be a finding.
+    write(&outside, "STARTUP_PROGRAMS.md", "Your status: eligible");
+    let dir = TempDir::new("program-descendant");
+    write(&dir, "preferences.json", &unknown_prefs());
+    std::os::unix::fs::symlink(&*outside, dir.join("ai-migration")).expect("directory link");
+    let (status, stdout, stderr) = artifacts(&dir);
+    assert_eq!(status, 1);
+    assert_eq!(stdout, "");
+    assert!(
+        stderr.contains("symbolic links are not followed"),
+        "{stderr}"
+    );
+    assert!(
+        !stderr.contains("eligible"),
+        "outside content was read: {stderr}"
+    );
+
+    // The same link to innocuous content is refused, not a silent pass.
+    write(&outside, "STARTUP_PROGRAMS.md", "Nothing to see here.");
+    let (status, stdout, stderr) = artifacts(&dir);
+    assert_eq!(status, 1, "{stdout}");
+    assert!(
+        stderr.contains("symbolic links are not followed"),
+        "{stderr}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn program_refuses_a_dangling_descendant_link_and_reads_a_real_directory() {
+    let dir = TempDir::new("program-dangling");
+    write(&dir, "preferences.json", &unknown_prefs());
+    std::os::unix::fs::symlink(dir.join("nowhere"), dir.join("ai-migration")).expect("link");
+    let (status, _, stderr) = artifacts(&dir);
+    assert_eq!(status, 1);
+    assert!(
+        stderr.contains("symbolic links are not followed"),
+        "{stderr}"
+    );
+
+    let normal = TempDir::new("program-normal-descendant");
+    write(&normal, "preferences.json", &unknown_prefs());
+    write(&normal, "ai-migration/STARTUP_PROGRAMS.md", "Nothing here.");
+    let (status, stdout, stderr) = artifacts(&normal);
+    assert_eq!(
+        (status, stdout.as_str(), stderr.as_str()),
+        (0, STARTUP_OK, "")
+    );
+    write(
+        &normal,
+        "ai-migration/STARTUP_PROGRAMS.md",
+        "Your status: eligible",
+    );
+    let (status, _, stderr) = artifacts(&normal);
+    assert_eq!(status, 1);
+    assert!(
+        stderr.contains("ai-migration/STARTUP_PROGRAMS.md"),
+        "{stderr}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn model_id_lint_refuses_a_symlinked_registry_directory() {
+    let outside = TempDir::new("lint-descendant-target");
+    write(&outside, "shared/ai/ai-model-lifecycle.md", REGISTRY);
+    let plugin = TempDir::new("lint-descendant");
+    std::os::unix::fs::symlink(&*outside, plugin.join("skills")).expect("directory link");
+    let (status, _, stderr) = lint(&plugin);
+    assert_eq!(status, 1);
+    assert!(
+        stderr.contains("symbolic links are not followed"),
+        "{stderr}"
+    );
+}
+
+// ---- Python word class (#4585) ----------------------------------------------
+
+#[test]
+fn word_characters_are_python_letters_numbers_and_underscore_only() {
+    // Combining marks (including the alphabetic vowel signs), join controls
+    // and connector punctuation other than `_` are not word characters.
+    for c in [
+        '\u{301}', '\u{93e}', '\u{200d}', '\u{200c}', '\u{203f}', '\u{ad}',
+    ] {
+        assert!(!is_word(c), "{c:?}");
+    }
+    // Letters, every number category and `_` are.
+    for c in ['é', '日', 'ǅ', 'ʰ', '²', '٣', 'Ⅷ', '½', '_'] {
+        assert!(is_word(c), "{c:?}");
+    }
+}

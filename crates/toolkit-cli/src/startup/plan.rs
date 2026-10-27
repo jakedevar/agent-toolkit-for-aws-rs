@@ -23,7 +23,7 @@ use std::time::{Duration, SystemTime};
 use toolkit_core::{Json, ToolkitError};
 
 use super::artifacts::pyjson::{dumps, loads};
-use super::{is_regular_file, read_text};
+use super::{is_regular_file, is_regular_file_under, read_text, read_text_under};
 use crate::manifests::{is_falsy, is_py_space, py_repr_opt, py_strip};
 use crate::{Invocation, Output};
 
@@ -661,11 +661,11 @@ fn plan_accuracy(costs: &Costs, base_data: Option<&Json>, ai: Option<&Json>) -> 
 
 /// The plugin version for `producerVersion`; any fault reading the manifest
 /// just omits it.
-fn producer_version(plugin_json: &Path) -> Option<String> {
-    if !is_regular_file(plugin_json).ok()? {
+fn producer_version(plugin_root: &Path, plugin_json: &Path) -> Option<String> {
+    if !is_regular_file_under(plugin_root, plugin_json).ok()? {
         return None;
     }
-    let text = read_text(plugin_json, "plugin.json").ok()?;
+    let text = read_text_under(plugin_root, plugin_json, "plugin.json").ok()?;
     match loads(&text).ok()?.get("version") {
         Some(Json::String(version)) if !version.is_empty() => Some(version.clone()),
         _ => None,
@@ -674,7 +674,11 @@ fn producer_version(plugin_json: &Path) -> Option<String> {
 
 /// The plan from validated artifacts, with its platform and scope, or the
 /// reason to fail open.
-fn build_plan(dir: &Path, plugin_json: &Path) -> Step<(Json, &'static str, &'static str)> {
+fn build_plan(
+    dir: &Path,
+    plugin_root: &Path,
+    plugin_json: &Path,
+) -> Step<(Json, &'static str, &'static str)> {
     let (run_id, platform) = read_status(dir)?;
     // infra and billing are mutually exclusive (billing is the no-IaC
     // fallback); AI runs independently and may accompany either.
@@ -708,7 +712,7 @@ fn build_plan(dir: &Path, plugin_json: &Path) -> Step<(Json, &'static str, &'sta
     ];
     // The web contract names the field `producerVersion`, not `pluginVersion`;
     // it is optional, so an unreadable manifest only omits it.
-    if let Some(version) = producer_version(plugin_json) {
+    if let Some(version) = producer_version(plugin_root, plugin_json) {
         plan.push(("producerVersion", Json::string(version)));
     }
     Ok((Json::object(plan), platform, costs.scope))
@@ -816,13 +820,22 @@ pub fn emit_plan_command(
         ));
     };
     let dir = normalized(dir);
-    let plugin_json = invocation.value("--plugin-json").map_or_else(
+    // `(root, plugin.json)`: links below the plugin root are refused (#4584); an
+    // explicit `--plugin-json` is the caller's own choice, so only its last
+    // component is checked.
+    let (plugin_root, plugin_json) = invocation.value("--plugin-json").map_or_else(
         || {
-            normalized(invocation.value("--plugin-root").unwrap_or("."))
-                .join(".claude-plugin")
-                .join("plugin.json")
+            let root = normalized(invocation.value("--plugin-root").unwrap_or("."));
+            let json = root.join(".claude-plugin").join("plugin.json");
+            (root, json)
         },
-        normalized,
+        |explicit| {
+            let json = normalized(explicit);
+            (
+                json.parent().map(Path::to_path_buf).unwrap_or_default(),
+                json,
+            )
+        },
     );
     let out_path = dir.join("plan.json");
 
@@ -830,7 +843,7 @@ pub fn emit_plan_command(
     // a directory that keeps failing open still gets cleaned up.
     sweep_orphan_temps(&dir);
 
-    match build_plan(&dir, &plugin_json) {
+    match build_plan(&dir, &plugin_root, &plugin_json) {
         Err(Stop::Skip(reason)) => {
             // This run should have NO plan, so drop a stale one.
             let _ = fs::remove_file(&out_path);

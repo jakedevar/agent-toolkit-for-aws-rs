@@ -1446,3 +1446,94 @@ fn the_decision_mode_line_names_its_mode() {
         "{out}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Python word-boundary semantics (#4585)
+// ---------------------------------------------------------------------------
+
+/// Runs the command over the reference report with `extra` appended.
+fn run_with_appended(extra: &str) -> (u8, String, String) {
+    let dir = TempDir::new("word-boundary");
+    let report = dir.join("migration-report.html");
+    fs::write(&report, format!("{}{extra}", reference_html())).expect("write report");
+    let report = report.to_string_lossy().into_owned();
+    let infra = fixture_arg("estimation-infra-reference.json");
+    let ai = fixture_arg("estimation-ai-reference.json");
+    exec(&[
+        "startup",
+        "migration-report",
+        &report,
+        "--estimation-infra",
+        &infra,
+        "--estimation-ai",
+        &ai,
+    ])
+}
+
+#[test]
+fn the_reference_report_passes_without_the_appended_word() {
+    let (code, _, err) = run_with_appended("<p>fine</p>");
+    assert_eq!(code, 0, "{err}");
+}
+
+#[test]
+fn a_todo_marker_is_forbidden_even_before_a_combining_mark() {
+    // U+0301 and U+200D are not Python `\w` characters, so `\bTODO\b` fires.
+    for tail in ["", "\u{301}", "\u{200d}", "\u{203f}", "-", "."] {
+        let (code, out, err) = run_with_appended(&format!("<p>TODO{tail}</p>"));
+        assert_eq!(code, 1, "tail {tail:?}: {out}");
+        assert!(
+            err.contains("forbidden content: TODO marker"),
+            "tail {tail:?}: {err}"
+        );
+    }
+}
+
+#[test]
+fn an_ownership_cost_label_is_flagged_before_a_combining_mark() {
+    for tail in ["", "\u{301}", "\u{200d}"] {
+        let (code, _, err) = run_with_appended(&format!("<p>TCO{tail}</p>"));
+        assert_eq!(code, 1, "tail {tail:?}: {err}");
+        assert!(
+            err.contains("misleading ownership-cost label"),
+            "tail {tail:?}: {err}"
+        );
+    }
+}
+
+#[test]
+fn letters_and_numbers_python_admits_keep_the_word_together() {
+    // Letters (L*), every number category (N*) and `_` continue the word, so
+    // neither marker is a standalone word here.
+    for tail in ["é", "_", "²", "٣", "Ⅷ", "x", "9", "世"] {
+        let (code, _, err) = run_with_appended(&format!("<p>TODO{tail} TCO{tail}</p>"));
+        assert_eq!(code, 0, "tail {tail:?}: {err}");
+    }
+    // The word may also start inside a longer word.
+    let (code, _, err) = run_with_appended("<p>éTODO ¹TCO</p>");
+    assert_eq!(code, 0, "{err}");
+}
+
+#[test]
+fn the_word_class_adapter_matches_python_for_boundaries_and_classes() {
+    use super::rx::Rx;
+
+    let todo = Rx::new(r"\bTODO\b");
+    assert!(todo.is_match("TODO"));
+    assert!(todo.is_match("a TODO\u{301}"));
+    assert!(todo.is_match("\u{301}TODO"));
+    assert!(!todo.is_match("TODOé"));
+    assert!(!todo.is_match("éTODO"));
+    assert!(!todo.is_match("TODO_"));
+    // `\w` inside and outside a class, `\W`, and `\B`.
+    let words = Rx::new(r"\b[\w'-]+\b");
+    assert_eq!(words.find_all("it's a e\u{301}-x").len(), 4);
+    // U+0301 is not a word character, so `\W` accepts it.
+    assert!(Rx::new(r"a\Wb").is_match("a\u{301}b"));
+    assert!(Rx::new(r"a\Wb").is_match("a-b"));
+    assert!(Rx::new(r"\w+")
+        .find("\u{301}ab")
+        .is_some_and(|span| span == (2, 4)));
+    assert!(Rx::new(r"a\Bb").is_match("ab"));
+    assert!(!Rx::new(r"a\Bb").is_match("a b"));
+}

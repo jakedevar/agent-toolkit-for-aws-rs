@@ -70,6 +70,49 @@ pub(crate) fn is_regular_file(path: &Path) -> Result<bool, String> {
     }
 }
 
+/// Refuses a symbolic link at any component of `path` below `root`.
+///
+/// `path` is a validator-owned relative path joined to the selected `root`
+/// (the root itself is the caller's explicit choice and is not examined). A
+/// component that does not exist, or lies below a regular file, ends the walk:
+/// the caller's own presence check then reports the path absent. A dangling
+/// link is still a link and is refused (#4584).
+pub(crate) fn refuse_links_below(root: &Path, path: &Path) -> Result<(), String> {
+    let Ok(relative) = path.strip_prefix(root) else {
+        return Ok(());
+    };
+    let mut current = root.to_path_buf();
+    for component in relative.components() {
+        current.push(component);
+        match fs::symlink_metadata(&current) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(format!(
+                    "cannot read {}: symbolic links are not followed",
+                    current.display()
+                ));
+            }
+            Ok(metadata) if !metadata.is_dir() => return Ok(()),
+            Ok(_) => {}
+            Err(error) if is_missing(&error) => return Ok(()),
+            Err(error) => return Err(format!("cannot read {}: {error}", current.display())),
+        }
+    }
+    Ok(())
+}
+
+/// [`is_regular_file`] for a path below `root`: a link at any component is an
+/// error, not only at the last one.
+pub(crate) fn is_regular_file_under(root: &Path, path: &Path) -> Result<bool, String> {
+    refuse_links_below(root, path)?;
+    is_regular_file(path)
+}
+
+/// [`read_text`] for a path below `root`, refusing a link at every component.
+pub(crate) fn read_text_under(root: &Path, path: &Path, shown: &str) -> Result<String, String> {
+    refuse_links_below(root, path)?;
+    read_text(path, shown)
+}
+
 /// `ENOENT`, or `ENOTDIR` (20) for a path below a regular file.
 fn is_missing(error: &io::Error) -> bool {
     error.kind() == io::ErrorKind::NotFound || error.raw_os_error() == Some(20)

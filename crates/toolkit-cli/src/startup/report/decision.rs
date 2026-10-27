@@ -12,7 +12,7 @@ use super::walk::{plain_text, rendered_fragment, section_html, Kind};
 use super::Mode;
 use crate::manifests::{is_falsy, py_strip};
 use crate::startup::artifacts::pyjson::loads;
-use crate::startup::{is_regular_file, read_text};
+use crate::startup::{is_regular_file_under, read_text_under};
 
 /// `re.findall(r"[a-z0-9]+", text)`.
 fn ascii_words(text: &str) -> Vec<String> {
@@ -224,10 +224,10 @@ pub(super) fn scenario_count(migration_dir: Option<&Path>) -> usize {
         return 0;
     };
     let path = dir.join("scenarios").join("index.json");
-    if !matches!(is_regular_file(&path), Ok(true)) {
+    if !matches!(is_regular_file_under(dir, &path), Ok(true)) {
         return 0;
     }
-    let Ok(text) = read_text(&path, "scenarios/index.json") else {
+    let Ok(text) = read_text_under(dir, &path, "scenarios/index.json") else {
         return 0;
     };
     let Ok(index) = loads(&text) else {

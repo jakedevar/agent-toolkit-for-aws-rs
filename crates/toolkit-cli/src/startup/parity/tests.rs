@@ -441,3 +441,19 @@ fn mutated_copies_fail_with_the_python_messages() {
         assert!(message.contains(expected), "{label}: {message}");
     }
 }
+
+#[cfg(unix)]
+#[test]
+fn a_symlinked_descendant_directory_is_refused_not_read() {
+    let dir = scratch_plugin("descendant-link");
+    let outside = TempDir::new("descendant-link-target");
+    fs::rename(dir.join("skills/gcp-to-aws"), outside.join("gcp-to-aws"))
+        .expect("move the directory away");
+    std::os::unix::fs::symlink(outside.join("gcp-to-aws"), dir.join("skills/gcp-to-aws"))
+        .expect("directory link");
+    let message = failure(&dir);
+    assert!(
+        message.contains("symbolic links are not followed"),
+        "{message}"
+    );
+}

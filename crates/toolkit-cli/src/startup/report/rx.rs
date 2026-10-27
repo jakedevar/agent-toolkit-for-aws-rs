@@ -13,6 +13,64 @@ pub(super) type Span = (usize, usize);
 /// Capture groups of one match: group 0 is the whole match.
 pub(super) type Groups = Vec<Option<Span>>;
 
+/// The body of Python's `str` word class, `\w`: letters, numbers and `_`
+/// (`str.isalnum()` plus the underscore). The engine's own `\w` and `\b` also
+/// count combining marks, join controls and connector punctuation, which lets
+/// `TODO` followed by U+0301 slip past `\bTODO\b` (#4585).
+const WORD_CLASS: &str = r"\p{L}\p{N}_";
+
+/// Rewrites Python `re` word escapes into explicit classes and look-arounds
+/// over [`WORD_CLASS`], so the patterns keep their Python meaning.
+///
+/// `\b` is a position between a word and a non-word character (or the text
+/// edge); `\w` becomes the class and `\W` its complement outside a bracket
+/// class. Escapes inside `[...]` keep their position (`[\w'-]`).
+fn python_word_semantics(pattern: &str) -> String {
+    let word = format!("[{WORD_CLASS}]");
+    let boundary = format!("(?:(?<={word})(?!{word})|(?<!{word})(?={word}))");
+    let mut out = String::with_capacity(pattern.len() + 64);
+    let mut in_class = false;
+    let mut chars = pattern.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' => {
+                let Some(next) = chars.next() else {
+                    out.push('\\');
+                    break;
+                };
+                match (next, in_class) {
+                    ('b', false) => out.push_str(&boundary),
+                    ('w', false) => out.push_str(&word),
+                    ('w', true) => out.push_str(WORD_CLASS),
+                    ('W', false) => {
+                        out.push_str(&format!("[^{WORD_CLASS}]"));
+                    }
+                    ('B', false) => {
+                        out.push_str(&format!("(?:(?<={word})(?={word})|(?<!{word})(?!{word}))"));
+                    }
+                    ('b' | 'W' | 'B', true) => {
+                        panic!("a word escape inside a bracket class is not supported");
+                    }
+                    _ => {
+                        out.push('\\');
+                        out.push(next);
+                    }
+                }
+            }
+            '[' if !in_class => {
+                in_class = true;
+                out.push(c);
+            }
+            ']' if in_class => {
+                in_class = false;
+                out.push(c);
+            }
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
 /// A compiled pattern.
 pub(super) struct Rx(Regex);
 
@@ -29,7 +87,7 @@ pub(super) use rx;
 impl Rx {
     /// Compiles `pattern`; the patterns are literals of this crate.
     pub(super) fn new(pattern: &str) -> Self {
-        let regex = RegexBuilder::new(pattern)
+        let regex = RegexBuilder::new(&python_word_semantics(pattern))
             .backtrack_limit(usize::MAX)
             .build()
             .expect("the report validator patterns are valid");

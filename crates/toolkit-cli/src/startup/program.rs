@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use toolkit_core::{parse_json, Json, ToolkitError};
 
 use super::text::{Pattern, Tok};
-use super::{is_regular_file, read_text};
+use super::{is_regular_file_under, read_text_under};
 use crate::manifests::is_falsy;
 use crate::{Invocation, Output};
 
@@ -176,10 +176,10 @@ pub fn program_artifacts_command(
 /// `preferences.json` (or it records no usable status).
 fn load_status(migration_dir: &Path) -> Result<Option<Json>, String> {
     let path = migration_dir.join("preferences.json");
-    if !is_regular_file(&path)? {
+    if !is_regular_file_under(migration_dir, &path)? {
         return Ok(None);
     }
-    let prefs = parse_json(&read_text(&path, "preferences.json")?)
+    let prefs = parse_json(&read_text_under(migration_dir, &path, "preferences.json")?)
         .map_err(|error| format!("preferences.json: {error}"))?;
     if !matches!(prefs, Json::Object(_)) {
         return Err(format!(
@@ -226,16 +226,22 @@ pub(crate) fn validate_startup_artifacts(migration_dir: &Path) -> Result<Vec<Str
     let mut texts: Vec<(String, String)> = Vec::new();
     for name in ["STARTUP_PROGRAMS.md", "migration-report.html"] {
         let path = migration_dir.join(name);
-        if is_regular_file(&path)? {
-            texts.push((name.to_string(), read_text(&path, name)?));
+        if is_regular_file_under(migration_dir, &path)? {
+            texts.push((
+                name.to_string(),
+                read_text_under(migration_dir, &path, name)?,
+            ));
         }
     }
     let ai_label = "ai-migration/STARTUP_PROGRAMS.md";
     let ai_path = migration_dir
         .join("ai-migration")
         .join("STARTUP_PROGRAMS.md");
-    if is_regular_file(&ai_path)? {
-        texts.push((ai_label.to_string(), read_text(&ai_path, ai_label)?));
+    if is_regular_file_under(migration_dir, &ai_path)? {
+        texts.push((
+            ai_label.to_string(),
+            read_text_under(migration_dir, &ai_path, ai_label)?,
+        ));
     }
 
     let mut errors = Vec::new();

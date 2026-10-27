@@ -74,9 +74,28 @@ pub(crate) fn is_space(c: char) -> bool {
     c.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&c)
 }
 
-/// Python `\w` for `str`: alphanumerics and the underscore.
+/// Python `\w` for `str`: `str.isalnum()` characters (letters, `L*`, and
+/// numbers, `N*`) and the underscore. Combining marks, join controls and
+/// connector punctuation other than `_` are NOT word characters, although
+/// Rust's `char::is_alphanumeric` (Unicode `Alphabetic`, which includes the
+/// combining vowel signs) and the regex engines' Unicode `\w` count some of
+/// them (#4585).
 pub(crate) fn is_word(c: char) -> bool {
-    c.is_alphanumeric() || c == '_'
+    if c.is_ascii() {
+        return c.is_ascii_alphanumeric() || c == '_';
+    }
+    // Every Python word character is `Alphabetic` or `Numeric` to Rust; only
+    // that rare non-ASCII subset needs the exact general-category check.
+    c.is_alphanumeric() && is_letter_or_number(c)
+}
+
+/// `\p{L}` or `\p{N}`, which is Python's `isalpha() or isnumeric()`.
+fn is_letter_or_number(c: char) -> bool {
+    static CLASS: std::sync::LazyLock<fancy_regex::Regex> = std::sync::LazyLock::new(|| {
+        fancy_regex::Regex::new(r"\A[\p{L}\p{N}]\z").expect("a valid category class")
+    });
+    let mut buffer = [0_u8; 4];
+    CLASS.is_match(c.encode_utf8(&mut buffer)).unwrap_or(false)
 }
 
 /// Simple case folding as used by `re.IGNORECASE`, including the extra

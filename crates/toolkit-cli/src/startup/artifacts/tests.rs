@@ -1783,3 +1783,107 @@ fn find_artifacts_sorts_by_path_components() {
 }
 
 mod documents;
+
+#[test]
+fn an_invalid_skill_is_a_usage_error_in_every_mode() {
+    let plugin = plugin_arg();
+    let dir = TempDir::new("invalid-skill");
+    for mode in [
+        vec!["--self-check"],
+        vec!["--fixtures"],
+        vec!["--run-dir", text(&dir)],
+    ] {
+        let mut args = mode.clone();
+        args.extend(["--plugin-root", plugin.as_str(), "--skill", "typo"]);
+        let (status, stdout, stderr) = artifacts(&args);
+        assert_eq!(status, 2, "{args:?}: {stdout}");
+        assert_eq!(stdout, "", "{args:?}");
+        assert!(
+            stderr.starts_with(
+                "error: argument --skill: invalid choice: 'typo' (choose from 'gcp-to-aws', \
+                 'heroku-to-aws', 'azure-to-aws')\n"
+            ),
+            "{args:?}: {stderr}"
+        );
+    }
+    // Even without a mode the choice is checked first, as argparse does.
+    let (status, _, stderr) = artifacts(&["--skill", "typo", "--plugin-root", &plugin]);
+    assert_eq!(status, 2);
+    assert!(stderr.contains("invalid choice: 'typo'"), "{stderr}");
+}
+
+#[test]
+fn a_valid_or_absent_skill_is_accepted_by_the_modes_that_ignore_it() {
+    let plugin = plugin_arg();
+    for skill in ["gcp-to-aws", "heroku-to-aws", "azure-to-aws"] {
+        let (status, stdout, stderr) =
+            artifacts(&["--self-check", "--plugin-root", &plugin, "--skill", skill]);
+        assert_eq!(status, 0, "{skill}: {stdout}{stderr}");
+        assert!(stdout.contains("PASS"), "{stdout}");
+    }
+    let (status, stdout, _) = artifacts(&["--self-check", "--plugin-root", &plugin]);
+    assert_eq!(status, 0, "{stdout}");
+    let (status, stdout, stderr) = artifacts(&[
+        "--fixtures",
+        "--plugin-root",
+        &plugin,
+        "--skill",
+        "gcp-to-aws",
+    ]);
+    assert_eq!(status, 0, "{stdout}{stderr}");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_symlinked_scripts_directory_below_the_plugin_root_is_refused() {
+    let plugin = TempDir::new("scripts-link");
+    std::os::unix::fs::symlink(real_plugin().join("scripts"), plugin.join("scripts"))
+        .expect("directory link");
+    let (status, _, stderr) = artifacts(&["--self-check", "--plugin-root", text(&plugin)]);
+    assert_eq!(status, 1);
+    assert!(
+        stderr.contains("symbolic links are not followed"),
+        "{stderr}"
+    );
+}
+
+/// `test_invalid_neutral_shared_artifacts_fail_their_schemas` (#4587): the
+/// Python test calls `validate_run_dir(neutral, None, ...)` directly, so the
+/// Rust internal API carries it; no CLI mode is involved.
+#[test]
+fn invalid_neutral_shared_artifacts_fail_their_schemas() {
+    let matrix = real_plugin().join("fixtures/ai-migration-matrix/combined-gcp-openai");
+    let manifest = json(
+        &fs::read_to_string(real_plugin().join("scripts/artifact-contracts.json"))
+            .expect("manifest"),
+    );
+    for (name, dropped) in [
+        (".phase-status.json", "migration_id"),
+        ("integration-validation.json", "run_id"),
+    ] {
+        let Json::Object(members) = json(&fs::read_to_string(matrix.join(name)).expect("fixture"))
+        else {
+            panic!("{name} is not an object");
+        };
+        assert!(members.iter().any(|(key, _)| key == dropped), "{name}");
+        let mutated = Json::Object(
+            members
+                .into_iter()
+                .filter(|(key, _)| key != dropped)
+                .collect(),
+        );
+        let run = TempDir::new("neutral-invalid");
+        write(&run, name, &dumps(&mutated, None, false));
+        let mut env = Env::new(&real_plugin());
+        let mut findings = Vec::new();
+        let checked = super::validate_run_dir(&mut env, &run, None, &manifest, &mut findings)
+            .expect("validated");
+        assert_eq!(checked, 1, "{name}");
+        assert!(
+            findings
+                .iter()
+                .any(|finding| finding.code == Code::SchemaViolation),
+            "{name}: {findings:?}"
+        );
+    }
+}

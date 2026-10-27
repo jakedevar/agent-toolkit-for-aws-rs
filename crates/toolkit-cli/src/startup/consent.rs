@@ -16,10 +16,10 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 
-use toolkit_core::{read_regular_file, ToolkitError};
+use toolkit_core::{read_regular_file, PathError, ToolkitError};
 
 use super::text::{fold, is_space, is_word, Pattern, Tok};
-use super::MAX_ARTIFACT_BYTES;
+use super::{refuse_links_below, MAX_ARTIFACT_BYTES};
 use crate::manifests::{
     py_repr_str, py_splitlines, py_strip, read_failure, resolve_lenient, universal_newlines,
 };
@@ -540,7 +540,10 @@ pub(crate) fn audit(plugin: &Path) -> Outcome {
     for (skill, name) in files {
         let rel = format!("skills/{skill}/{TARGET_DIR}/{name}");
         let path = plugin.join(&rel);
-        let text = match read_regular_file(&path, MAX_ARTIFACT_BYTES) {
+        let read = refuse_links_below(plugin, &path)
+            .map_err(|_| PathError::Symlink(path.clone()))
+            .and_then(|()| read_regular_file(&path, MAX_ARTIFACT_BYTES));
+        let text = match read {
             Ok(text) => universal_newlines(&text),
             Err(error) => {
                 // An unreadable file was inspected for NOTHING, not confirmed

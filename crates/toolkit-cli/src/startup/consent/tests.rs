@@ -820,3 +820,28 @@ fn unqualified_claims_report_line_numbers_and_stripped_lines() {
     );
     assert!(unqualified_claims(text, &BTreeSet::new()).is_empty());
 }
+
+#[cfg(unix)]
+#[test]
+fn a_symlinked_skill_directory_is_a_failure_not_a_read() {
+    let dir = TempDir::new("skill-link");
+    let root = write_fixture(&dir, GET_ONLY_FILE);
+    let outside = TempDir::new("skill-link-target");
+    fs::rename(
+        root.join("skills/example-skill"),
+        outside.join("example-skill"),
+    )
+    .expect("move the skill away");
+    std::os::unix::fs::symlink(
+        outside.join("example-skill"),
+        root.join("skills/example-skill"),
+    )
+    .expect("directory link");
+    let (code, out, err) = run_audit(&root);
+    assert_eq!(code, 1, "{out}");
+    assert!(err.contains(TARGET_REL), "{err}");
+    assert!(
+        err.contains("could not read file (symbolic links are not followed)"),
+        "{err}"
+    );
+}

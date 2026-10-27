@@ -23,7 +23,7 @@ use std::process::Command;
 use toolkit_core::{read_regular_file, Json, ToolkitError};
 
 use super::artifacts::pyjson::dumps;
-use super::MAX_ARTIFACT_BYTES;
+use super::{refuse_links_below, MAX_ARTIFACT_BYTES};
 use crate::manifests::{
     is_py_space, py_splitlines, py_strip, read_failure, resolve_lenient, universal_newlines,
 };
@@ -311,10 +311,19 @@ pub(crate) fn strip_embeddings(text: &str) -> String {
     out
 }
 
-fn read_text(path: &Path) -> Check<String> {
-    read_regular_file(path, MAX_ARTIFACT_BYTES)
+fn read_text(plugin: &Path, relative: &str) -> Check<String> {
+    let path = plugin.join(relative);
+    refuse_links_below(plugin, &path)?;
+    read_regular_file(&path, MAX_ARTIFACT_BYTES)
         .map(|text| universal_newlines(&text))
         .map_err(|error| format!("cannot read {}: {}", path.display(), read_failure(&error)))
+}
+
+/// Raw bytes of a file below `plugin`, refusing a link at any component.
+fn read_bytes(plugin: &Path, relative: &str) -> Check<Vec<u8>> {
+    let path = plugin.join(relative);
+    refuse_links_below(plugin, &path)?;
+    fs::read(&path).map_err(|error| format!("cannot read {relative}: {error}"))
 }
 
 /// `git show <rev>:<path>` in `repo`; the canonical cache is read at
@@ -445,11 +454,11 @@ fn check_non_bedrock_sections(texts: &Texts) -> Check<()> {
 
 /// Estimate documents, the Azure cache and the Azure embeddings table.
 fn check_references(plugin: &Path, texts: &Texts) -> Check<()> {
-    let gcp_estimate = read_text(&plugin.join(GCP_ESTIMATE))?;
-    let gcp_estimate_ai = read_text(&plugin.join(GCP_ESTIMATE_AI))?;
-    let azure_estimate = read_text(&plugin.join(AZURE_ESTIMATE))?;
-    let azure_estimate_ai = read_text(&plugin.join(AZURE_ESTIMATE_AI))?;
-    let azure_openai = read_text(&plugin.join(AZURE_OPENAI))?;
+    let gcp_estimate = read_text(plugin, GCP_ESTIMATE)?;
+    let gcp_estimate_ai = read_text(plugin, GCP_ESTIMATE_AI)?;
+    let azure_estimate = read_text(plugin, AZURE_ESTIMATE)?;
+    let azure_estimate_ai = read_text(plugin, AZURE_ESTIMATE_AI)?;
+    let azure_openai = read_text(plugin, AZURE_OPENAI)?;
     let azure_cache = &texts.azure_cache;
 
     ensure(
@@ -529,7 +538,7 @@ fn check_embeddings_and_copies(plugin: &Path, texts: &Texts) -> Check<()> {
         "Bedrock embedding target rows were not preserved during the split",
     )?;
     for copy in VENDORED {
-        let text = read_text(&plugin.join(copy))?;
+        let text = read_text(plugin, copy)?;
         ensure(
             markdown_data_rows(subsection(&text, heading)?) == old_rows,
             &format!(
@@ -538,11 +547,9 @@ fn check_embeddings_and_copies(plugin: &Path, texts: &Texts) -> Check<()> {
             ),
         )?;
     }
-    let canonical_bytes = fs::read(plugin.join(CANONICAL))
-        .map_err(|error| format!("cannot read {CANONICAL}: {error}"))?;
+    let canonical_bytes = read_bytes(plugin, CANONICAL)?;
     for copy in VENDORED {
-        let bytes =
-            fs::read(plugin.join(copy)).map_err(|error| format!("cannot read {copy}: {error}"))?;
+        let bytes = read_bytes(plugin, copy)?;
         ensure(
             bytes == canonical_bytes,
             &format!("vendored drift: {}", plugin.join(copy).display()),
@@ -591,14 +598,14 @@ fn check_lookups(texts: &Texts) -> Check<(usize, Json)> {
 pub(crate) fn run_checks(plugin: &Path, show: &dyn Fn(&str) -> Check<String>) -> Check<Json> {
     let texts = Texts {
         old: show(OLD_CACHE)?,
-        canonical: read_text(&plugin.join(CANONICAL))?,
+        canonical: read_text(plugin, CANONICAL)?,
         split_canonical: show(SPLIT_CANONICAL)?,
-        remaining: read_text(&plugin.join(GCP_CACHE))?,
+        remaining: read_text(plugin, GCP_CACHE)?,
         azure_old: show(OLD_AZURE_CACHE)?,
-        azure_cache: read_text(&plugin.join(AZURE_CACHE))?,
+        azure_cache: read_text(plugin, AZURE_CACHE)?,
     };
     let old_accuracy = pricing_accuracy_bands(&show(OLD_SKILL)?)?;
-    let new_accuracy = pricing_accuracy_bands(&read_text(&plugin.join(GCP_SKILL))?)?;
+    let new_accuracy = pricing_accuracy_bands(&read_text(plugin, GCP_SKILL)?)?;
     ensure(
         new_accuracy == old_accuracy,
         "estimate accuracy metadata changed",
@@ -613,7 +620,7 @@ pub(crate) fn run_checks(plugin: &Path, show: &dyn Fn(&str) -> Check<String>) ->
     for consumer in NEUTRAL_CONSUMERS {
         let path = plugin.join(consumer);
         ensure(
-            !read_text(&path)?.contains(forbidden),
+            !read_text(plugin, consumer)?.contains(forbidden),
             &format!("neutral GCP pricing dependency remains: {}", path.display()),
         )?;
     }

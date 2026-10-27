@@ -23,7 +23,7 @@ use self::patterns::fnmatch;
 use self::pyjson::{dumps, loads};
 use self::schema::Context;
 use self::shape::validate_shape;
-use super::{is_regular_file, read_text};
+use super::{is_regular_file_under, read_text, read_text_under, refuse_links_below};
 use crate::{Invocation, Output};
 
 pub(crate) mod contracts;
@@ -306,6 +306,14 @@ const SKILLS: [&str; 3] = ["gcp-to-aws", "heroku-to-aws", "azure-to-aws"];
 
 fn mode_of(invocation: &Invocation) -> Result<Mode, ToolkitError> {
     let usage = |message: &str| ToolkitError::usage("artifacts_usage", message.to_string());
+    // argparse validates `choices` while parsing, in every mode and before the
+    // mode group is checked (#4586).
+    let skill = invocation.value("--skill");
+    if let Some(skill) = skill.filter(|skill| !SKILLS.contains(skill)) {
+        return Err(usage(&format!(
+            "argument --skill: invalid choice: '{skill}' (choose from 'gcp-to-aws', 'heroku-to-aws', 'azure-to-aws')"
+        )));
+    }
     let self_check = invocation.has_flag("--self-check");
     let fixtures = invocation.has_flag("--fixtures");
     let run_dir = invocation.value("--run-dir");
@@ -324,14 +332,9 @@ fn mode_of(invocation: &Invocation) -> Result<Mode, ToolkitError> {
     let Some(run_dir) = run_dir else {
         return Err(usage("--run-dir needs a directory"));
     };
-    let Some(skill) = invocation.value("--skill") else {
+    let Some(skill) = skill else {
         return Err(usage("--run-dir requires --skill"));
     };
-    if !SKILLS.contains(&skill) {
-        return Err(usage(
-            "--skill must be one of gcp-to-aws, heroku-to-aws, azure-to-aws",
-        ));
-    }
     if !Path::new(run_dir).is_dir() {
         return Err(usage(&format!("{run_dir} is not a directory")));
     }
@@ -365,7 +368,8 @@ pub fn artifacts_command(
 
     let mut env = Env::new(&root);
     let manifest_text =
-        read_text(&manifest_path, &manifest_path.display().to_string()).map_err(&failed)?;
+        read_text_under(&root, &manifest_path, &manifest_path.display().to_string())
+            .map_err(&failed)?;
     let manifest =
         loads(&manifest_text).map_err(|e| failed(format!("{}: {e}", manifest_path.display())))?;
     let mut findings: Vec<Finding> = Vec::new();
@@ -388,6 +392,7 @@ pub fn artifacts_command(
         }
         Mode::Fixtures => {
             let fixtures_root = env.root.join("fixtures");
+            refuse_links_below(&env.root, &fixtures_root).map_err(&failed)?;
             let mut dirs: Vec<(String, PathBuf)> = Vec::new();
             let entries = fs::read_dir(&fixtures_root)
                 .map_err(|e| failed(format!("cannot read {}: {e}", fixtures_root.display())))?;
@@ -430,9 +435,9 @@ pub fn artifacts_command(
     let mut stale: Vec<Json> = Vec::new();
     if !invocation.has_flag("--no-baseline") && !self_check {
         if let Some(path) = &baseline_path {
-            if is_regular_file(path).map_err(&failed)? {
+            if is_regular_file_under(&root, path).map_err(&failed)? {
                 let shown = path.display().to_string();
-                let text = read_text(path, &shown).map_err(&failed)?;
+                let text = read_text_under(&root, path, &shown).map_err(&failed)?;
                 let baseline = loads(&text).map_err(|e| failed(format!("{shown}: {e}")))?;
                 stale = apply_baseline(&mut findings, &baseline);
                 let shown_rel = env.rel(path);

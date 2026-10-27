@@ -149,7 +149,11 @@ the remainder below.
 2. **Symbolic links are refused**, never followed (core threat model): a
    linked cache, selector, catalog, `preferences.json` or artifact is a runtime
    error (`symbolic links are not followed`) instead of being read or — for
-   `Path.is_file()` — silently passing. In the lint, linked files and
+   `Path.is_file()` — silently passing. The refusal covers every component
+   below the selected root (a linked `ai-migration/` directory, a linked
+   `scripts/` or `skills/` directory, a dangling link), not only the last one
+   (#4584); the explicit root, report path, `--plugin-json` or `--manifest`
+   argument is the caller's own choice and is not examined. In the lint, linked files and
    directories are not scanned (Python read linked files). A path component
    that makes the catalog name escape (`..`, backslash, absolute) is refused;
    Python joined it.
@@ -165,7 +169,11 @@ the remainder below.
 7. **Case folding / `\w` / `\s`.** Case-insensitive matching uses simple
    Unicode lower-casing plus Python's extra equivalences (dotted/dotless i,
    long s, Kelvin sign); `\s` is Unicode whitespace plus `\x1c`-`\x1f`;
-   `\w` is alphanumerics and `_`. Python's tables follow its own Unicode
+   `\w` is letters, numbers and `_` only (Python `str.isalnum()` plus `_`;
+   combining marks, join controls and connector punctuation are not word
+   characters). The report validator rewrites `\b`, `\B`, `\w` and `\W` into that
+   class before compiling (#4585), so `TODO` followed by U+0301 is still a
+   `TODO` word. Python's tables follow its own Unicode
    version; characters whose class differs between versions may differ.
 8. **Unicode digits in prices.** `float()` accepts non-ASCII digits; the Rust
    rate parser accepts ASCII digits only (a non-ASCII price cell counts as
@@ -365,9 +373,10 @@ the remainder below.
     reference, stub and decision fixtures, and the command.
 43. **Artifact tests.** The document-specific cases of `tests/test_validate_artifacts.py`
     (heroku/gcp/azure contract regressions against the real documents and fixtures) are
-    migrated in `startup/artifacts/tests/documents.rs`. Not migrated:
-    `test_invalid_neutral_shared_artifacts_fail_their_schemas`, which calls the validator
-    without a `--skill` (the command requires one).
+    migrated in `startup/artifacts/tests/documents.rs`.
+    `test_invalid_neutral_shared_artifacts_fail_their_schemas` calls the internal
+    `validate_run_dir(neutral, None, ...)`, not the CLI; it is ported as
+    `invalid_neutral_shared_artifacts_fail_their_schemas` through the Rust API (#4587).
 
 ## File membership (#4371 U-10)
 
@@ -411,3 +420,29 @@ sets it to `false`, which keeps the behaviour this slice documented (a value
 flag takes the next word whatever it looks like). No helper was added beside the
 canonical `Invocation::value` / `positional` / `has_flag` API and `route`. The
 usage text and README list both sets of commands and options.
+
+## Review fixes (#4578: #4584, #4585, #4586, #4587)
+
+- **#4584 descendant links.** `startup::refuse_links_below` walks every component
+  of a validator-owned path below the selected root with `symlink_metadata`
+  (never lexical normalisation, never following) and refuses a link, even a
+  dangling one. `program-artifacts` (`preferences.json`, `STARTUP_PROGRAMS.md`,
+  `migration-report.html`, `ai-migration/STARTUP_PROGRAMS.md`), the migration
+  report's `scenarios/index.json`, the `emit-plan` default `plugin.json`,
+  `pricing-parity` (text and byte comparisons), `consent-audit` (a linked skill
+  or reference directory is a failure for that file), `model-id-lint`'s registry
+  and `artifacts` (default manifest, baseline, contract documents, schemas and
+  the `fixtures` directory) use it. Tests: `refuse_links_below_*`,
+  `program_refuses_a_symlinked_descendant_directory` (the review's input) and
+  per-command cases.
+- **#4585 Unicode word boundaries.** See item 7: `rx.rs` rewrites the Python
+  word escapes to the explicit class `[\p{L}\p{N}_]` and look-arounds, and
+  `text::is_word` (the consent and lint matchers) now excludes the alphabetic
+  combining vowel signs Rust's `is_alphanumeric` counts. Negative and positive
+  fixtures assert the command exit status (`report/tests.rs`).
+- **#4586 `--skill` choices.** A supplied `--skill` outside the three skills is
+  a usage error (exit 2, argparse's `invalid choice` message) in every mode,
+  checked before the mode group, as argparse does while parsing; it is still
+  required only with `--run-dir`.
+- **#4587.** The two omitted neutral-artifact negative tests are ported through
+  `validate_run_dir`.
