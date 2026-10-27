@@ -16,7 +16,6 @@ use super::errors::AwsFailure;
 use super::pytext::get_text;
 use super::response_shape::{check, Field, Shape};
 use super::snapshot_rendering::QueryResult;
-use crate::dynamodb::pyfmt;
 
 /// The CloudWatch Logs operations the snapshot tools may call.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -183,16 +182,20 @@ pub fn execute_cloudwatch_query(
         }
     };
 
-    let query_id = start_response.get("queryId").cloned().unwrap_or(Json::Null);
-    if !pyfmt::truthy(&query_id) {
-        return error_result(
-            format!(
-                "start_query did not return a queryId (response: {})",
-                pyfmt::text(&start_response)
-            ),
-            None,
-        );
-    }
+    // `call` has checked `queryId` already; read it through the shared
+    // accessor. An absent or empty id is the legacy "did not return a
+    // queryId" error, without the response dump the Python helper appended:
+    // the response may carry anything, and a diagnostic never echoes it
+    // (#4784).
+    let query_id = match optional_text(&start_response, "queryId") {
+        Ok(Some(id)) if !id.is_empty() => Json::string(id),
+        Ok(_) => {
+            return error_result("start_query did not return a queryId".to_string(), None);
+        }
+        Err(error) => {
+            return error_result(format!("the StartQuery response is invalid: {error}"), None);
+        }
+    };
 
     #[allow(clippy::cast_precision_loss)]
     let timeout = max_timeout as f64;

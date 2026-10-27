@@ -59,6 +59,30 @@ fn response_id(response: &Json, key: &str, operation: &str) -> Result<String, St
         .ok_or_else(|| format!("Omni {operation} failed: the response has no {key}"))
 }
 
+/// The query statuses a diagnostic may name. Any other status text is a
+/// response value, which a diagnostic never echoes (#4784).
+const KNOWN_STATUSES: [&str; 6] = [
+    "Scheduled",
+    "Running",
+    "Complete",
+    "Failed",
+    "Cancelled",
+    "Timeout",
+];
+
+/// The status as an incomplete-query diagnostic shows it: a known status by
+/// name, `None` when there was none, and never an unrecognised value.
+fn shown_status(status: Option<&str>) -> &'static str {
+    match status {
+        None => "None",
+        Some(status) => KNOWN_STATUSES
+            .iter()
+            .find(|known| **known == status)
+            .copied()
+            .unwrap_or("<unrecognised>"),
+    }
+}
+
 fn query_rows(
     client: &mut dyn AwsCalls,
     pacer: &mut dyn Pacer,
@@ -114,7 +138,7 @@ fn query_rows(
     if status.as_deref() != Some("Complete") {
         return Err(format!(
             "Omni SQL query did not complete (status={}); {incomplete_hint}",
-            status.as_deref().unwrap_or("None")
+            shown_status(status.as_deref())
         ));
     }
 

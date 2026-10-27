@@ -366,7 +366,12 @@ fn control_call(
 }
 
 /// Resolves a dataset id from an id or a name, walking the listing.
-fn resolve_dataset_id(client: &mut dyn AwsCalls, id_or_name: &str) -> Result<String, Json> {
+///
+/// # Errors
+///
+/// The failure text alone: the caller builds the receipt, so the conversion
+/// errors it has already collected are never dropped (#4785).
+fn resolve_dataset_id(client: &mut dyn AwsCalls, id_or_name: &str) -> Result<String, String> {
     let mut token: Option<String> = None;
     let mut seen: HashSet<String> = HashSet::new();
     loop {
@@ -374,13 +379,10 @@ fn resolve_dataset_id(client: &mut dyn AwsCalls, id_or_name: &str) -> Result<Str
             Some(token) => Json::object(vec![("nextToken", Json::string(token.as_str()))]),
             None => Json::Object(Vec::new()),
         };
-        let response = control_call(client, "ListDatasets", &request).map_err(|failure| {
-            error_receipt(format!("list_datasets failed: {}", failure_text(&failure)))
-        })?;
+        let response = control_call(client, "ListDatasets", &request)
+            .map_err(|failure| format!("list_datasets failed: {}", failure_text(&failure)))?;
         let invalid = |error: MemberError| {
-            error_receipt(format!(
-                "list_datasets failed: the ListDatasets response is invalid: {error}"
-            ))
+            format!("list_datasets failed: the ListDatasets response is invalid: {error}")
         };
         let datasets = optional_object_list(&response, "datasets").map_err(invalid)?;
         for dataset in datasets {
@@ -393,14 +395,11 @@ fn resolve_dataset_id(client: &mut dyn AwsCalls, id_or_name: &str) -> Result<Str
             }
         }
         let next = next_token_from(&response, "nextToken")
-            .map_err(|error| error_receipt(format!("list_datasets failed: {error}")))?;
+            .map_err(|error| format!("list_datasets failed: {error}"))?;
         match next {
             Some(next) if seen.insert(next.clone()) => token = Some(next),
             _ => {
-                return Err(error_receipt(format!(
-                    "dataset {} not found",
-                    pyfmt::repr_str(id_or_name)
-                )));
+                return Err(format!("dataset {} not found", pyfmt::repr_str(id_or_name)));
             }
         }
     }
@@ -655,7 +654,15 @@ pub fn run(
         let wanted = truthy_text(options.dataset_id.as_deref())
             .or_else(|| truthy_text(options.dataset_name.as_deref()))
             .unwrap_or_default();
-        let dataset_id = resolve_dataset_id(client, wanted)?;
+        // Every resolver failure (a service error, a malformed listing or
+        // page, or no such dataset) keeps the conversion errors (#4785).
+        let dataset_id = resolve_dataset_id(client, wanted).map_err(|message| {
+            error_with(
+                message,
+                "conversionErrors",
+                Json::Array(conversion_errors.clone()),
+            )
+        })?;
         let added = i64::try_from(examples.len()).unwrap_or(i64::MAX);
         let counted = count_examples(client, &dataset_id).map_err(|message| {
             error_with(

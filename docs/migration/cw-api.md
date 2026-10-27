@@ -255,6 +255,38 @@ resource are gated anyway, so the live binding inherits the rule:
     found"); an absent or empty `Configuration` still reads as not found.
 20. **Log query rows.** A row `field` or `value` that is present and not a
     string is an invalid row (Python copied any value).
+21. **Value-free diagnostics (repair round 2, #4784).** A diagnostic about a
+    response or a recording names only fixed member names, positions and JSON
+    type labels, never a value (the `toolkit_aws::recorded` rule). The changes
+    from Python:
+    - An absent or empty `StartQuery` `queryId` is still `start_query did not
+      return a queryId`, but without the `(response: {...})` dump Python
+      appended.
+    - A `GetInstrumentationConfiguration` `CreatedAt` string that is not ISO 8601
+      no longer quotes the value. The error now reads `CreatedAt is not a
+      timestamp: expected an ISO 8601 string or epoch seconds, got a string that
+      is not ISO 8601`.
+    - The Omni incomplete-query error names a known status (`Scheduled`,
+      `Running`, `Complete`, `Failed`, `Cancelled`, `Timeout`) or `None`. Any
+      other status text shows as `<unrecognised>`.
+
+    Three kinds of text are still shown, all escaped:
+    - The service error itself (`An error occurred (<Code>) when calling the
+      <Operation> operation: <Message>`, and the transport errors' text). That
+      text is the error, as in Python.
+    - The caller's own arguments (`ATTEMPTED PARAMETERS:`, an invalid trace id,
+      `dataset '<name>' not found`).
+    - The data a command exists to show (snapshot bodies, rendered
+      configurations, receipts).
+22. **Dataset resolution keeps `conversionErrors` (repair round 2, #4785).** In
+    add mode, every `ListDatasets` failure keeps the `conversionErrors` already
+    collected and never reports `examplesWritten`. That covers a service error,
+    a malformed first or later page, a wrong-typed `nextToken`, a non-object
+    response and `dataset '<name>' not found`. The receipt has the same shape as
+    the create, get and add failures: `{"error": ..., "conversionErrors":
+    [...]}`, naming the listing failure and every conversion error. Item 15's
+    guarantee now holds on every `capture-dataset` path that runs after
+    conversion.
 
 ## Python callers left for #4415
 
