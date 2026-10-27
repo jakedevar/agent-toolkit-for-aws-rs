@@ -448,16 +448,16 @@ mod tests {
             // C1 controls and other non-ASCII, BMP, lower-case hex.
             ("\u{80}", r"\u0080"),
             ("\u{9f}", r"\u009f"),
-            ("\u{a0}", r" "),
-            ("\u{e9}", r"é"),
-            ("\u{ff}", r"ÿ"),
-            ("\u{2028}", r" "),
-            ("\u{fffd}", r"�"),
-            ("\u{ffff}", r"￿"),
+            ("\u{a0}", r"\u00a0"),
+            ("\u{e9}", r"\u00e9"),
+            ("\u{ff}", r"\u00ff"),
+            ("\u{2028}", r"\u2028"),
+            ("\u{fffd}", r"\ufffd"),
+            ("\u{ffff}", r"\uffff"),
             // Beyond the BMP: surrogate pairs.
-            ("\u{10000}", r"𐀀"),
-            ("\u{1f600}", r"😀"),
-            ("\u{10ffff}", r"􏿿"),
+            ("\u{10000}", r"\ud800\udc00"),
+            ("\u{1f600}", r"\ud83d\ude00"),
+            ("\u{10ffff}", r"\udbff\udfff"),
         ];
         for (input, expected) in cases {
             assert_eq!(
