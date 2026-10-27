@@ -25,7 +25,7 @@ use toolkit_aws::redact_text;
 use toolkit_core::{neutralize_line, Json};
 
 use super::members::{
-    optional_array, optional_bool, optional_int, optional_object, optional_seconds, optional_string,
+    array_member, bool_member, int_member, object_member, seconds_member, text_member,
 };
 use crate::aurora::pyfmt::fmt_f;
 
@@ -205,8 +205,8 @@ pub(crate) struct RecordedDriver {
 
 fn parse_db_error(error: &Json) -> Result<DbError, String> {
     Ok(DbError {
-        code: optional_int(error, "code")?,
-        message: optional_string(error, "message")?
+        code: int_member(error, "code")?,
+        message: text_member(error, "message")?
             .unwrap_or_default()
             .to_string(),
     })
@@ -224,14 +224,15 @@ fn parse_cell(cell: &Json) -> Result<Option<String>, String> {
 }
 
 fn parse_probe(probe: &Json) -> Result<ProbeResult, String> {
-    let rows = optional_array(probe, "rows")?;
-    let error = optional_object(probe, "error")?;
+    let rows = array_member(probe, "rows")?;
+    let error = object_member(probe, "error")?;
     match (rows, error) {
         (Some(_), Some(_)) => Err("\"rows\" and \"error\" are exclusive".to_string()),
         (None, Some(error)) => Ok(Err(parse_db_error(error)?)),
         (rows, None) => {
             let mut parsed = Vec::new();
             for row in rows.into_iter().flatten() {
+                // recorded-shape: a required row of the recording; any shape but an array rejects it.
                 let Json::Array(cells) = row else {
                     return Err("every row must be an array".to_string());
                 };
@@ -252,10 +253,11 @@ impl RecordedDriver {
     ///
     /// A reason naming the wrong member, never a value.
     pub(crate) fn from_document(document: &Json) -> Result<Self, String> {
+        // recorded-shape: the recorded session must be an object; any other shape rejects it.
         if !matches!(document, Json::Object(_)) {
             return Err("the recorded session must be a JSON object".to_string());
         }
-        let driver = match optional_object(document, "driver")? {
+        let driver = match object_member(document, "driver")? {
             None => Ok(DriverInfo {
                 name: "oracledb".to_string(),
                 version: "0".to_string(),
@@ -263,10 +265,10 @@ impl RecordedDriver {
             }),
             Some(info) => {
                 let in_driver = |reason: String| format!("driver {reason}");
-                let installed = optional_bool(info, "installed").map_err(in_driver)?;
-                let name = optional_string(info, "name").map_err(in_driver)?;
-                let version = optional_string(info, "version").map_err(in_driver)?;
-                let thin = optional_bool(info, "thin").map_err(in_driver)?;
+                let installed = bool_member(info, "installed").map_err(in_driver)?;
+                let name = text_member(info, "name").map_err(in_driver)?;
+                let version = text_member(info, "version").map_err(in_driver)?;
+                let thin = bool_member(info, "thin").map_err(in_driver)?;
                 if installed.unwrap_or(true) {
                     Ok(DriverInfo {
                         name: name.unwrap_or("oracledb").to_string(),
@@ -281,16 +283,16 @@ impl RecordedDriver {
                 }
             }
         };
-        let connect = match optional_object(document, "connect")? {
+        let connect = match object_member(document, "connect")? {
             None => Ok(Connected {
                 version: String::new(),
                 elapsed_seconds: 0.0,
             }),
             Some(info) => {
                 let in_connect = |reason: String| format!("connect {reason}");
-                let version = optional_string(info, "version").map_err(in_connect)?;
-                let elapsed = optional_seconds(info, "elapsed_seconds").map_err(in_connect)?;
-                match optional_object(info, "error").map_err(in_connect)? {
+                let version = text_member(info, "version").map_err(in_connect)?;
+                let elapsed = seconds_member(info, "elapsed_seconds").map_err(in_connect)?;
+                match object_member(info, "error").map_err(in_connect)? {
                     Some(error) => Err(ConnectFailure {
                         error: parse_db_error(error).map_err(in_connect)?,
                         elapsed_seconds: elapsed.unwrap_or(0.0),
@@ -303,12 +305,12 @@ impl RecordedDriver {
             }
         };
         let mut probes: [Option<ProbeResult>; 4] = [None, None, None, None];
-        if let Some(recorded) = optional_object(document, "probes")? {
+        if let Some(recorded) = object_member(document, "probes")? {
             for (slot, probe) in [Probe::Basic, Probe::Protocol, Probe::Banners, Probe::Auth]
                 .into_iter()
                 .enumerate()
             {
-                if let Some(entry) = optional_object(recorded, probe.key())
+                if let Some(entry) = object_member(recorded, probe.key())
                     .map_err(|reason| format!("probes {reason}"))?
                 {
                     probes[slot] = Some(

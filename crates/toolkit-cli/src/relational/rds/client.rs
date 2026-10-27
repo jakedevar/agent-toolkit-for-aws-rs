@@ -10,10 +10,11 @@
 //! (`docs/migration/relational.md`). No purchase operation exists in
 //! [`Service`]'s vocabulary: the analyzer is read-only by construction.
 
+use toolkit_aws::recorded::{self, KeyOrder, RecordedOutcome, Step, StepShapeError};
 use toolkit_aws::{AwsError, ServiceError};
 use toolkit_core::Json;
 
-use crate::relational::members::{optional_object, optional_string, same_json};
+use crate::relational::members::{text_member, when_present};
 
 /// The AWS services the analyzer reads.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -73,19 +74,11 @@ impl AwsRead for NoLiveClient {
     }
 }
 
-enum Outcome {
-    Response(Json),
-    Service { code: String, message: String },
-    Connect(String),
-    NoCredentials,
-}
-
 struct Entry {
     service: Service,
     region: Option<String>,
     operation: String,
-    request: Json,
-    outcome: Outcome,
+    step: Step,
 }
 
 /// Replays the entries of a recorded-response file:
@@ -103,14 +96,18 @@ struct Entry {
 /// ]}
 /// ```
 ///
-/// A call matches the entry with the same service, operation and request
-/// (objects compare without regard to key order, so a paginated request must
-/// carry the recorded token) and, when the entry has a `region`, the same
-/// region. `request`, `region`, `error.kind`, `error.code` and `error.message`
-/// are optional; a present member of another type, `null` included, rejects
-/// the recording. `error.kind` is `client` (default, a service error
-/// response), `connect` or `no_credentials`. An unmatched call fails with a
-/// `Connect` error that names the service and operation only.
+/// Each entry is one shared [`Step`] (`toolkit_aws::recorded`, #4727): its
+/// `request` and outcome are read with [`recorded::step_fields`]. A call
+/// matches the entry with the same service and operation whose expected
+/// request is the call's request ([`Step::matches`], objects compare without
+/// regard to key order, so a paginated request must carry the recorded token;
+/// an absent `request` is `{}`), for response and error entries alike, and,
+/// when the entry has a `region`, the same region. `request`, `region`,
+/// `error.kind`, `error.code` and `error.message` are optional; a present
+/// member of another type, `null` included, rejects the recording.
+/// `error.kind` is `client` (default, a service error response), `connect` or
+/// `no_credentials`. An unmatched call fails with a `Connect` error that names
+/// the service and operation only.
 pub(crate) struct RecordedClient {
     entries: Vec<Entry>,
 }
@@ -120,6 +117,7 @@ impl RecordedClient {
     ///
     /// A reason naming the entry index and the wrong member, never a value.
     pub(crate) fn from_document(document: &Json) -> Result<Self, String> {
+        // recorded-shape: required member; absent, null or another type rejects the recording.
         let Some(Json::Array(calls)) = document.get("calls") else {
             return Err("the recorded responses need a \"calls\" array".to_string());
         };
@@ -144,47 +142,54 @@ fn parse_entry(index: usize, call: &Json) -> Result<Entry, String> {
         .filter(|name| !name.is_empty())
         .ok_or_else(|| bad("\"operation\" must be a non-empty string"))?
         .to_string();
-    let region = optional_string(call, "region")
+    let region = text_member(call, "region")
         .map_err(|reason| bad(&reason))?
         .map(str::to_string);
-    let request = optional_object(call, "request")
-        .map_err(|reason| bad(&reason))?
-        .cloned()
-        .unwrap_or_else(|| Json::Object(Vec::new()));
-    let outcome = match (call.get("response"), call.get("error")) {
-        (Some(response @ Json::Object(_)), None) => Outcome::Response(response.clone()),
-        (None, Some(error @ Json::Object(_))) => {
+    let fields = recorded::step_fields(call).map_err(|error| match error {
+        StepShapeError::Request(error) => bad(&when_present(&error, "an object")),
+        StepShapeError::Outcome | StepShapeError::ErrorNotObject => {
+            bad("exactly one of \"response\" (an object) and \"error\" (an object) is required")
+        }
+    })?;
+    let request = Some(
+        fields
+            .request
+            .cloned()
+            .unwrap_or_else(|| Json::Object(Vec::new())),
+    );
+    let step = match fields.outcome {
+        RecordedOutcome::Response(response) => Step::response(request, response.clone()),
+        RecordedOutcome::Error(error) => {
             let in_error = |reason: String| bad(&format!("error {reason}"));
-            let message = optional_string(error, "message").map_err(in_error)?;
-            let code = optional_string(error, "code").map_err(in_error)?;
-            let kind = optional_string(error, "kind").map_err(in_error)?;
-            let message = message.unwrap_or_default().to_string();
-            match kind.unwrap_or("client") {
-                "client" => Outcome::Service {
-                    code: code.unwrap_or_default().to_string(),
+            let message = text_member(error, "message").map_err(in_error)?;
+            let code = text_member(error, "code").map_err(in_error)?;
+            let kind = text_member(error, "kind").map_err(in_error)?;
+            let message = message.unwrap_or_default();
+            let failure = match kind.unwrap_or("client") {
+                "client" => AwsError::Service(Box::new(ServiceError::new(
+                    "POST",
+                    "/",
+                    400,
+                    Some(code.unwrap_or_default()),
                     message,
-                },
-                "connect" => Outcome::Connect(message),
-                "no_credentials" => Outcome::NoCredentials,
+                    None,
+                ))),
+                "connect" => AwsError::connect(message),
+                "no_credentials" => AwsError::NoCredentials,
                 _ => {
                     return Err(bad(
                         "\"error.kind\" must be client, connect or no_credentials",
                     ))
                 }
-            }
-        }
-        _ => {
-            return Err(bad(
-                "exactly one of \"response\" (an object) and \"error\" (an object) is required",
-            ))
+            };
+            Step::failure(request, failure)
         }
     };
     Ok(Entry {
         service,
         region,
         operation,
-        request,
-        outcome,
+        step,
     })
 }
 
@@ -203,15 +208,10 @@ impl AwsRead for RecordedClient {
                     .region
                     .as_deref()
                     .is_none_or(|recorded| recorded == region)
-                && same_json(&entry.request, request)
+                && entry.step.matches(request, KeyOrder::Ignored)
         });
-        match entry.map(|entry| &entry.outcome) {
-            Some(Outcome::Response(response)) => Ok(response.clone()),
-            Some(Outcome::Service { code, message }) => Err(AwsError::Service(Box::new(
-                ServiceError::new("POST", "/", 400, Some(code), message, None),
-            ))),
-            Some(Outcome::Connect(message)) => Err(AwsError::connect(message)),
-            Some(Outcome::NoCredentials) => Err(AwsError::NoCredentials),
+        match entry {
+            Some(entry) => entry.step.outcome(),
             None => Err(AwsError::connect(format!(
                 "no recorded response for {} {operation} with this request",
                 service.name()

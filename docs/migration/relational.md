@@ -32,7 +32,7 @@ All seven are registered once in `COMMANDS` (`strict_values: true`,
 `passthrough: false`, `repeatable_flags: &[]`: no Python flag here is
 `action="append"`). Code is `crates/toolkit-cli/src/relational/`:
 `sql.rs` (safe_query), `tenant.rs`, `rds/{mod,client}.rs`, `oracle.rs`,
-`timestream.rs`, `members.rs` (shared fail-closed recorded-input accessors),
+`timestream.rs`, `members.rs` (the `toolkit_aws::recorded` accessors in this slice's wording, #4799),
 `tests/`. CLI-level tests: `relational/tests/commands.rs` (in-process router)
 and `tests/diag_contract.rs::relational_reports_escape_hostile_recorded_and_argument_text`
 (real binary, valid hostile recordings). The generic `diag_contract` loop covers

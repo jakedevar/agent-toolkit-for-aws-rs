@@ -23,7 +23,7 @@ use std::fmt;
 
 use toolkit_core::Json;
 
-use super::members::{optional_array, optional_object, optional_string, py_type_name};
+use super::members::{array_member, object_member, py_type_name, text_member};
 use super::sql::{build, ident, regex, UnsafeSqlError, TENANT_SLUG};
 
 /// The template of the one statement this slice runs.
@@ -183,6 +183,7 @@ impl RecordedCursor {
     ///
     /// A reason naming the entry index and the wrong member, never a value.
     pub(crate) fn from_document(document: &Json) -> Result<Self, String> {
+        // recorded-shape: required member; absent, null or another type rejects the recording.
         let Some(Json::Array(entries)) = document.get("statements") else {
             return Err("the recorded rows need a \"statements\" array".to_string());
         };
@@ -193,20 +194,20 @@ impl RecordedCursor {
                 .get("sql")
                 .and_then(Json::as_str)
                 .ok_or_else(|| bad("\"sql\" must be a string"))?;
-            let rows = optional_array(entry, "rows").map_err(|reason| bad(&reason))?;
-            let error = optional_object(entry, "error").map_err(|reason| bad(&reason))?;
+            let rows = array_member(entry, "rows").map_err(|reason| bad(&reason))?;
+            let error = object_member(entry, "error").map_err(|reason| bad(&reason))?;
             let outcome = match (rows, error) {
                 (Some(_), Some(_)) => {
                     return Err(bad("\"rows\" and \"error\" are exclusive"));
                 }
                 (None, Some(error)) => {
-                    let message =
-                        optional_string(error, "message").map_err(|reason| bad(&reason))?;
+                    let message = text_member(error, "message").map_err(|reason| bad(&reason))?;
                     Outcome::Failure(message.unwrap_or_default().to_string())
                 }
                 (rows, None) => {
                     let mut parsed = Vec::new();
                     for row in rows.into_iter().flatten() {
+                        // recorded-shape: a required row of the recording; any shape but an array rejects it.
                         let Json::Array(cells) = row else {
                             return Err(bad("every row must be an array"));
                         };

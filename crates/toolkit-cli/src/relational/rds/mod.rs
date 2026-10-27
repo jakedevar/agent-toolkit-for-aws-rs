@@ -14,7 +14,9 @@
 use toolkit_aws::{collect_pages, next_token_from, AwsError, Page, PageLimits};
 use toolkit_core::Json;
 
-use super::members::optional_string;
+use toolkit_aws::recorded;
+
+use super::members::{response_reason, text_member};
 use crate::aurora::api::json_float;
 use crate::aurora::pyfmt::{round_num, round_to, Num};
 
@@ -187,16 +189,15 @@ pub(crate) fn on_demand_price(
 type FetchResult<T> = Result<T, String>;
 
 fn string_member<'j>(object: &'j Json, key: &str) -> FetchResult<&'j str> {
-    optional_string(object, key).map(Option::unwrap_or_default)
+    text_member(object, key).map(Option::unwrap_or_default)
 }
 
 fn number_member(object: &Json, key: &str) -> FetchResult<f64> {
-    match object.get(key) {
-        None => Ok(0.0),
-        Some(member) => Num::from_json(member)
-            .map(Num::value)
-            .ok_or_else(|| format!("\"{key}\" must be a number (it is {})", member.type_name())),
-    }
+    recorded::optional_member(object, key, "a number", |member| {
+        Num::from_json(member).map(Num::value)
+    })
+    .map(Option::unwrap_or_default)
+    .map_err(|error| response_reason(&error, "a number"))
 }
 
 fn float_member(object: &Json, key: &str) -> FetchResult<f64> {
@@ -207,14 +208,7 @@ fn float_member(object: &Json, key: &str) -> FetchResult<f64> {
 }
 
 fn items<'j>(response: &'j Json, key: &str) -> FetchResult<&'j [Json]> {
-    match response.get(key) {
-        None => Ok(&[]),
-        Some(Json::Array(items)) => Ok(items),
-        Some(other) => Err(format!(
-            "\"{key}\" must be an array (it is {})",
-            other.type_name()
-        )),
-    }
+    recorded::optional_list(response, key).map_err(|error| response_reason(&error, "an array"))
 }
 
 fn parse_offering(offering: &Json, instance_type: &str) -> FetchResult<Option<RiOffering>> {
@@ -342,16 +336,9 @@ fn dsp_request(region: &str, product: &str, token: Option<&str>) -> Json {
 
 fn parse_rate(entry: &Json) -> FetchResult<Option<(String, DspRate)>> {
     let empty = Json::Object(Vec::new());
-    let offering = match entry.get("savingsPlanOffering") {
-        None => &empty,
-        Some(object @ Json::Object(_)) => object,
-        Some(other) => {
-            return Err(format!(
-                "\"savingsPlanOffering\" must be an object (it is {})",
-                other.type_name()
-            ))
-        }
-    };
+    let offering = recorded::optional_object(entry, "savingsPlanOffering")
+        .map_err(|error| response_reason(&error, "an object"))?
+        .unwrap_or(&empty);
     let term_years = term_years_of(number_member(offering, "durationSeconds")?);
     let payment_option = string_member(offering, "paymentOption")?.to_string();
     // `float(rate)` that fails skips the entry; so does a rate that is not positive.
@@ -652,6 +639,7 @@ fn call_failure_text(operation: &str, error: &AwsError) -> String {
     toolkit_aws::redact_text(&text)
 }
 
+// recorded-shape: appends to the output document this command builds, not a response.
 fn set_member(document: &mut Json, key: &str, value: Json) {
     if let Json::Object(members) = document {
         members.push((key.to_string(), value));
@@ -675,22 +663,20 @@ struct Described {
 }
 
 fn describe(instance: &Json) -> FetchResult<Described> {
+    // recorded-shape: each required `DBInstances` entry must be an object; any other shape fails the fetch.
     if !matches!(instance, Json::Object(_)) {
         return Err(format!(
             "\"DBInstances\" entries must be objects (it is {})",
             instance.type_name()
         ));
     }
-    let multi_az = match instance.get("MultiAZ") {
-        None => false,
-        Some(Json::Bool(flag)) => *flag,
-        Some(other) => {
-            return Err(format!(
-                "\"MultiAZ\" must be a boolean (it is {})",
-                other.type_name()
-            ))
-        }
-    };
+    let multi_az =
+        recorded::optional_member(instance, "MultiAZ", "a boolean", |member| match member {
+            Json::Bool(flag) => Some(*flag),
+            _ => None,
+        })
+        .map_err(|error| response_reason(&error, "a boolean"))?
+        .unwrap_or(false);
     Ok(Described {
         engine: string_member(instance, "Engine")?.to_string(),
         instance_type: string_member(instance, "DBInstanceClass")?.to_string(),
@@ -777,6 +763,7 @@ pub(crate) fn analyze_instance_live(
 }
 
 /// Appends to the document's `notes` array.
+// recorded-shape: appends to the output document this command builds, not a response.
 fn push_note(document: &mut Json, note: String) {
     if let Json::Object(members) = document {
         if let Some((_, Json::Array(notes))) = members.iter_mut().find(|(key, _)| key == "notes") {
