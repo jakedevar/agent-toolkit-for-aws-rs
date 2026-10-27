@@ -215,6 +215,37 @@ fn value_for(mode: Fill, scratch: &Path, file: &Path, dir: &Path) -> String {
     }
 }
 
+/// Every value flag of `spec`: the union of `value_flags` and
+/// `repeatable_flags` (a flag may be declared only in the latter, #4697), each
+/// once, in declaration order.
+fn all_value_flags(spec: &CommandSpec) -> Vec<&'static str> {
+    let mut flags: Vec<&'static str> = Vec::new();
+    for flag in spec.value_flags.iter().chain(spec.repeatable_flags) {
+        if !flags.contains(flag) {
+            flags.push(flag);
+        }
+    }
+    flags
+}
+
+/// The words that pass `value` to `flag`. A plain flag is passed once, in the
+/// fill's spelling. A repeatable flag is passed in two occurrences, one per
+/// spelling (`--f V` then `--f=V`), so a handler that echoes any occurrence of
+/// the flag, not only the first or the last, is caught.
+fn flag_words(spec: &CommandSpec, flag: &str, value: &str, mode: Fill) -> Vec<String> {
+    let spaced = [flag.to_string(), value.to_string()];
+    let attached = format!("{flag}={value}");
+    if spec.repeatable_flags.contains(&flag) {
+        let mut words = Vec::from(spaced);
+        words.push(attached);
+        words
+    } else if matches!(mode, Fill::Attached) {
+        vec![attached]
+    } else {
+        Vec::from(spaced)
+    }
+}
+
 /// The argument vectors that exercise `spec` for one fill.
 fn argv_variants(
     spec: &CommandSpec,
@@ -226,17 +257,12 @@ fn argv_variants(
     let value = value_for(mode, scratch, file, dir);
     let base: Vec<String> = spec.path.iter().map(|word| (*word).to_string()).collect();
     let mut with_values = base.clone();
-    for flag in spec
-        .value_flags
-        .iter()
+    let value_flags: Vec<&'static str> = all_value_flags(spec)
+        .into_iter()
         .filter(|flag| !flag_is_excluded(flag))
-    {
-        if matches!(mode, Fill::Attached) {
-            with_values.push(format!("{flag}={value}"));
-        } else {
-            with_values.push((*flag).to_string());
-            with_values.push(value.clone());
-        }
+        .collect();
+    for flag in &value_flags {
+        with_values.extend(flag_words(spec, flag, &value, mode));
     }
     let positionals = spec.max_positionals.min(3);
     for _ in 0..positionals {
@@ -252,19 +278,24 @@ fn argv_variants(
     }
     // A single value flag at a time, so a command that validates the first
     // flag it sees and stops is still pushed through every later one.
-    for flag in spec
-        .value_flags
-        .iter()
-        .filter(|flag| !flag_is_excluded(flag))
-    {
+    for flag in &value_flags {
         let mut one = base.clone();
-        if matches!(mode, Fill::Attached) {
-            one.push(format!("{flag}={value}"));
-        } else {
-            one.push((*flag).to_string());
-            one.push(value.clone());
-        }
+        one.extend(flag_words(spec, flag, &value, mode));
         variants.push(one);
+        if spec.repeatable_flags.contains(flag) {
+            // A benign first occurrence, then the hostile one in each spelling:
+            // a handler that validates the first value and stops, or echoes
+            // only a later one, is still pushed through the later occurrence.
+            for hostile_second in [
+                vec![(*flag).to_string(), value.clone()],
+                vec![format!("{flag}={value}")],
+            ] {
+                let mut later = base.clone();
+                later.extend([(*flag).to_string(), "benign".to_string()]);
+                later.extend(hostile_second);
+                variants.push(later);
+            }
+        }
     }
     variants
 }
@@ -283,7 +314,7 @@ fn usage_variants(spec: &CommandSpec) -> Vec<Vec<String>> {
         }
         variants.push(extra);
     }
-    if let Some(flag) = spec.value_flags.first() {
+    if let Some(flag) = all_value_flags(spec).first() {
         // A value flag at the end of the arguments has no value.
         let mut dangling = base;
         dangling.push((*flag).to_string());
@@ -440,6 +471,101 @@ fn every_command_has_hostile_variants() {
         }
         assert!(count > 0, "{:?}", spec.path);
     }
+}
+
+/// A handler that echoes only the SECOND occurrence of its repeatable flag,
+/// raw. A generator that passes a repeatable flag once, or not at all, never
+/// reaches it.
+fn echo_second_probe(
+    invocation: &toolkit_cli::Invocation,
+    output: &mut toolkit_cli::Output<'_>,
+) -> Result<(), toolkit_core::ToolkitError> {
+    if let Some(second) = invocation.values_of("--probe").nth(1) {
+        output.line(second)?;
+    }
+    Ok(())
+}
+
+/// A synthetic command whose only value flag is repeatable (#4697): no
+/// production command is changed.
+const REPEATABLE_ONLY_SPEC: CommandSpec = CommandSpec {
+    path: &["probe"],
+    flags: &[],
+    value_flags: &[],
+    strict_values: false,
+    repeatable_flags: &["--probe"],
+    max_positionals: 0,
+    passthrough: false,
+    handler: echo_second_probe,
+};
+
+/// Runs `args` through the router and the synthetic handler in-process and
+/// returns what the contract detector finds in its output.
+fn probe_findings(args: &[String]) -> BTreeSet<String> {
+    let mut found = BTreeSet::new();
+    let specs = [REPEATABLE_ONLY_SPEC];
+    if let Ok(toolkit_cli::Routed::Run(spec, invocation)) = toolkit_cli::route(&specs, args) {
+        let mut stdout = Vec::new();
+        let mut output = toolkit_cli::Output::new(&mut stdout);
+        (spec.handler)(&invocation, &mut output).expect("fixture handler");
+        let text = String::from_utf8(stdout).expect("UTF-8 output");
+        violations(&text, "stdout", args, &mut found);
+    }
+    found
+}
+
+/// The generator must pass a flag declared only in `repeatable_flags`, in two
+/// occurrences and both spellings, and the detector must flag a handler that
+/// echoes the second one raw. Without the repeatable-flag support in the
+/// generator this fixture would be clean.
+#[test]
+fn a_repeatable_only_flag_gets_hostile_coverage_in_every_occurrence() {
+    let spec = &REPEATABLE_ONLY_SPEC;
+    assert!(spec.value_flags.is_empty());
+    assert_eq!(all_value_flags(spec), ["--probe"]);
+
+    let scratch = PathBuf::from("/nonexistent-scratch");
+    let file = scratch.join("payload.json");
+    let dir = scratch.join("payload");
+    let mut all_variants = Vec::new();
+    for mode in FILLS {
+        let variants = argv_variants(spec, mode, &scratch, &file, &dir);
+        let flagged = variants
+            .iter()
+            .filter(|args| !probe_findings(args).is_empty())
+            .count();
+        // The Text-like fills carry control characters; the payload-file and
+        // payload-dir fills carry plain paths, which a raw echo does not hurt.
+        if matches!(mode, Fill::Text | Fill::Attached | Fill::HostilePath) {
+            assert!(flagged > 0, "{mode:?}: no variant flagged the raw echo");
+        }
+        all_variants.extend(variants);
+    }
+    let hostile = format!("{HOSTILE}{ARG_MARKER}");
+    let spaced = ["--probe".to_string(), hostile.clone()];
+    let attached = format!("--probe={hostile}");
+    assert!(
+        all_variants
+            .iter()
+            .any(|args| args.windows(2).any(|pair| pair == spaced)),
+        "the spaced spelling must be passed"
+    );
+    assert!(
+        all_variants.iter().any(|args| args.contains(&attached)),
+        "the attached spelling must be passed"
+    );
+    // One variant passes both spellings of the flag: two occurrences.
+    assert!(all_variants
+        .iter()
+        .any(|args| { args.windows(2).any(|pair| pair == spaced) && args.contains(&attached) }));
+
+    // The finding is about the second occurrence only: the first alone is not
+    // echoed, so the detector is not firing on something else.
+    let first_only = vec!["probe".to_string(), "--probe".to_string(), hostile];
+    assert!(probe_findings(&first_only).is_empty());
+    let mut variants_for_dangling = usage_variants(spec);
+    variants_for_dangling.retain(|args| args.last().is_some_and(|last| last == "--probe"));
+    assert_eq!(variants_for_dangling.len(), 1, "dangling repeatable flag");
 }
 
 /// The hostile directory name used by the stdout-report fixtures below: every
