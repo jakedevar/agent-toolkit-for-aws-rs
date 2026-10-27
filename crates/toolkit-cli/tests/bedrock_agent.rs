@@ -406,3 +406,119 @@ fn hostile_argument_values_never_reach_the_output_raw() {
     assert!(!stderr.contains('\u{202e}'));
     assert!(!stderr.lines().any(|line| line.starts_with("ERROR: forged")));
 }
+
+/// Runs the command on `recorded` against a fresh output and an existing one;
+/// both runs must fail with exit 1, print no success line and leave the output
+/// paths as they were.
+fn assert_refused_and_nothing_written(recorded: &str, label: &str) {
+    let dir = temp_root("refused");
+    let recorded = write_recorded(&dir, recorded);
+    let fresh = dir.join("fresh").join("manifest.json");
+    let existing = dir.join("existing.json");
+    fs::write(&existing, "previous manifest").expect("seed");
+    for out in [&fresh, &existing] {
+        let out_text = out.to_string_lossy().into_owned();
+        let run = toolkit(
+            &[
+                "bedrock-agent",
+                "fetch",
+                "--agent-id",
+                "AGENT12345",
+                "--region",
+                "us-east-1",
+                "--out",
+                &out_text,
+                "--recorded",
+                &recorded,
+            ],
+            &[],
+        );
+        assert_eq!(status(&run), 1, "{label}: {}", text(&run.stderr));
+        assert!(!text(&run.stdout).contains("Wrote"), "{label}");
+        assert_eq!(text(&run.stdout), "", "{label}");
+        assert!(text(&run.stderr).contains("error"), "{label}");
+    }
+    assert!(!fresh.exists(), "{label}: a manifest was written");
+    assert_eq!(
+        fs::read_to_string(&existing).expect("read"),
+        "previous manifest",
+        "{label}"
+    );
+}
+
+#[test]
+fn a_wrong_typed_recorded_error_member_fails_closed_without_a_manifest() {
+    for member in ["kind", "code", "message"] {
+        for wrong in ["null", "1", "true", "[]", "{}"] {
+            let entry = format!(
+                r#"{{"service": "bedrock-agent", "operation": "ListAgentCollaborators",
+                    "request": {{"agentId": "AGENT12345", "agentVersion": "DRAFT"}},
+                    "error": {{"{member}": {wrong}}}}}"#
+            );
+            let recorded = RECORDED.replace(r#""calls": ["#, &format!(r#""calls": [{entry},"#));
+            assert_refused_and_nothing_written(&recorded, &format!("{member}={wrong}"));
+        }
+    }
+}
+
+#[test]
+fn a_null_or_wrong_typed_listing_member_fails_closed_without_a_manifest() {
+    for (member, wrong) in [
+        ("actionGroupSummaries", "null"),
+        ("actionGroupSummaries", "{}"),
+        ("agentKnowledgeBaseSummaries", "null"),
+        ("agentCollaboratorSummaries", "7"),
+        ("agentAliasSummaries", "null"),
+        ("agentVersionSummaries", "\"no\""),
+    ] {
+        let recorded = if member == "agentAliasSummaries" {
+            RECORDED.replace(
+                r#""agentAliasSummaries": [{"agentAliasId": "PRODALIAS1"}]"#,
+                &format!(r#""agentAliasSummaries": {wrong}"#),
+            )
+        } else if member == "agentVersionSummaries" {
+            RECORDED.replace(
+                r#""agentVersionSummaries": [{"agentVersion": "DRAFT"}, {"agentVersion": "1"}]"#,
+                &format!(r#""agentVersionSummaries": {wrong}"#),
+            )
+        } else {
+            RECORDED.replace(
+                &format!(r#""{member}": []"#),
+                &format!(r#""{member}": {wrong}"#),
+            )
+        };
+        assert_ne!(recorded, RECORDED, "{member}: the fixture was not edited");
+        assert_refused_and_nothing_written(&recorded, &format!("{member}={wrong}"));
+    }
+}
+
+#[test]
+fn an_omitted_or_empty_listing_member_still_succeeds() {
+    for replacement in [r#""agentCollaboratorSummaries": []"#, "\"unrelated\": 1"] {
+        let dir = temp_root("omitted");
+        let recorded = write_recorded(
+            &dir,
+            &RECORDED.replace(r#""agentCollaboratorSummaries": []"#, replacement),
+        );
+        let out = dir.join("manifest.json");
+        let out_text = out.to_string_lossy().into_owned();
+        let run = toolkit(
+            &[
+                "bedrock-agent",
+                "fetch",
+                "--agent-id",
+                "AGENT12345",
+                "--region",
+                "us-east-1",
+                "--out",
+                &out_text,
+                "--recorded",
+                &recorded,
+            ],
+            &[],
+        );
+        assert_eq!(status(&run), 0, "{}", text(&run.stderr));
+        assert!(text(&run.stdout).starts_with(&format!("Wrote {out_text}\n")));
+        assert!(out.exists());
+    }
+}

@@ -50,6 +50,13 @@ failures). An unmatched call is a `Connect` error naming service and operation
 only. `unsupported` models an SDK without `list_agent_collaborators`. S3
 `GetObject` responses carry `{"Body": "<text>"}`.
 
+Optional recorded members (`request`, `unsupported`, `error.kind`, `error.code`,
+`error.message`) are either absent (the default applies) or of the stated type
+(a string, an object or an array). A present member of another type, `null`
+included, rejects the recording: exit 1, no success line, no manifest written
+or overwritten; the reason names the member and its expected type, never its
+value.
+
 ## Acceptance criteria
 
 - **AC1 (mocked discovery, pagination, errors).** `bedrock_agent/tests.rs`:
@@ -91,7 +98,9 @@ only. `unsupported` models an SDK without `list_agent_collaborators`. S3
 5. **Region.** `--region`, else `AWS_REGION`, else `AWS_DEFAULT_REGION` (the
    `toolkit-aws` order; boto3 also reads profile config, which is not read here);
    the region check happens before any call instead of after `sts`.
-6. **Response shape errors** (a list member that is not a list, a summary without
+6. **Response shape errors** (an optional list member (every listing and the
+   IAM `PolicyNames`) that is present but `null` or not a list, an
+   `agentResourceRoleArn` that is not a string, a summary without
    its id, a non-string S3 `Body`) end the run with `aws_invalid_response`; Python
    raised `KeyError`/`TypeError`. A non-object `s3` reference is left unchanged.
 7. `datetime` values: recorded responses are JSON, so timestamps are recorded

@@ -121,16 +121,41 @@ fn client_error_text(operation: &str, error: &ServiceError) -> String {
     )
 }
 
-/// The elements of the list member `key` of a page; a missing member is an
-/// empty list.
-fn list_items(response: &Json, key: &str) -> Result<Vec<Json>, AwsError> {
+/// The one accessor of an *optional* member of a response: an absent member is
+/// `None`, a present member must satisfy `expect` (which returns `None` for a
+/// wrong type, an explicit `null` included) or the response is invalid.
+fn optional_member<'j, T>(
+    response: &'j Json,
+    key: &str,
+    expected: &str,
+    expect: impl FnOnce(&'j Json) -> Option<T>,
+) -> Result<Option<T>, AwsError> {
     match response.get(key) {
-        None | Some(Json::Null) => Ok(Vec::new()),
-        Some(Json::Array(items)) => Ok(items.clone()),
-        Some(_) => Err(AwsError::invalid_response(format!(
-            "the member `{key}` of a response is not a list"
-        ))),
+        None => Ok(None),
+        Some(member) => expect(member).map(Some).ok_or_else(|| {
+            AwsError::invalid_response(format!(
+                "the member `{key}` of a response is not {expected} (it is {})",
+                member.type_name()
+            ))
+        }),
     }
+}
+
+/// The one helper of an *optional list member* (a listing, `PolicyNames`): an
+/// absent member and `[]` are an empty list; `null` and any other type are an
+/// `aws_invalid_response`. Every listing site goes through it.
+fn optional_list(response: &Json, key: &str) -> Result<Vec<Json>, AwsError> {
+    optional_member(response, key, "a list", |member| match member {
+        Json::Array(items) => Some(items.clone()),
+        _ => None,
+    })
+    .map(Option::unwrap_or_default)
+}
+
+/// An optional string member: absent is `None`; `null` and other types are an
+/// `aws_invalid_response`.
+fn optional_text<'j>(response: &'j Json, key: &str) -> Result<Option<&'j str>, AwsError> {
+    optional_member(response, key, "a string", Json::as_str)
 }
 
 /// The string member `key` of a summary (`summary["actionGroupId"]`).
@@ -227,7 +252,7 @@ impl<'a> Fetcher<'a> {
                 request.push(("nextToken", Json::string(token)));
             }
             let response = self.invoke(service, operation, request)?;
-            let summaries = list_items(&response, list_key)?;
+            let summaries = optional_list(&response, list_key)?;
             for summary in &summaries {
                 handle(self, summary)?;
             }
@@ -502,23 +527,21 @@ impl<'a> Fetcher<'a> {
         let inline_names = self.safe(Service::Iam, "ListRolePolicies", role_request())?;
         let mut inline_policies: Vec<Json> = Vec::new();
         if inline_names.get("_error").is_none() {
-            if let Some(Json::Array(names)) = inline_names.get("PolicyNames") {
-                for name in names {
-                    let Some(name) = name.as_str() else {
-                        return Err(AwsError::invalid_response(
-                            "a policy name in a response is not a string",
-                        ));
-                    };
-                    let document = self.safe(
-                        Service::Iam,
-                        "GetRolePolicy",
-                        vec![
-                            ("RoleName", Json::string(role_name)),
-                            ("PolicyName", Json::string(name)),
-                        ],
-                    )?;
-                    inline_policies.push(strip_response_metadata(&document));
-                }
+            for name in optional_list(&inline_names, "PolicyNames")? {
+                let Some(name) = name.as_str() else {
+                    return Err(AwsError::invalid_response(
+                        "a policy name in a response is not a string",
+                    ));
+                };
+                let document = self.safe(
+                    Service::Iam,
+                    "GetRolePolicy",
+                    vec![
+                        ("RoleName", Json::string(role_name)),
+                        ("PolicyName", Json::string(name)),
+                    ],
+                )?;
+                inline_policies.push(strip_response_metadata(&document));
             }
         }
         Ok(object(vec![
@@ -593,10 +616,7 @@ pub(crate) fn discover(client: &mut dyn AgentClient, params: &Params) -> Result<
     if !matches!(agent_doc, Json::Object(_)) {
         return Err(AwsError::invalid_response("the GetAgent response is not an object").into());
     }
-    let role_arn = agent_doc
-        .get("agentResourceRoleArn")
-        .and_then(Json::as_str)
-        .map(str::to_string);
+    let role_arn = optional_text(&agent_doc, "agentResourceRoleArn")?.map(str::to_string);
     let role_info = fetcher.iam_role(role_arn.as_deref())?;
     let aliases_and_versions = fetcher.aliases_and_versions(&params.agent_id)?;
 

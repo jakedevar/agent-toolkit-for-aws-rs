@@ -19,7 +19,9 @@
 //! (objects compare without regard to key order, so a paginated request must
 //! carry the recorded `nextToken`). `error.kind` is `client` (default, a
 //! service error response), `connect` or `no_credentials` (a transport
-//! failure that ends the run). An unmatched call fails with a `Connect` error
+//! failure that ends the run). Every optional member (`request`, `unsupported`,
+//! `error.kind`, `error.code`, `error.message`) is absent or of its type; a
+//! present member of another type, `null` included, rejects the recording. An unmatched call fails with a `Connect` error
 //! that names the service and operation only, never a request value.
 
 use toolkit_aws::{AwsError, ServiceError};
@@ -47,8 +49,42 @@ pub(crate) struct RecordedClient {
     unsupported: Vec<String>,
 }
 
-fn string_member<'a>(object: &'a Json, key: &str) -> Option<&'a str> {
-    object.get(key).and_then(Json::as_str)
+/// The one accessor of an *optional* recorded member: absent is `Ok(None)`; a
+/// present member must be of the expected type (`null` is not absent) or the
+/// recording is rejected. The reason names the member and its expected type,
+/// never the value.
+fn optional_member<'j, T>(
+    object: &'j Json,
+    key: &str,
+    expected: &str,
+    expect: impl FnOnce(&'j Json) -> Option<T>,
+) -> Result<Option<T>, String> {
+    match object.get(key) {
+        None => Ok(None),
+        Some(member) => expect(member).map(Some).ok_or_else(|| {
+            format!(
+                "\"{key}\" must be {expected} when present (it is {})",
+                member.type_name()
+            )
+        }),
+    }
+}
+
+fn optional_string<'j>(object: &'j Json, key: &str) -> Result<Option<&'j str>, String> {
+    optional_member(object, key, "a string", Json::as_str)
+}
+
+fn optional_object<'j>(object: &'j Json, key: &str) -> Result<Option<&'j Json>, String> {
+    optional_member(object, key, "an object", |member| {
+        matches!(member, Json::Object(_)).then_some(member)
+    })
+}
+
+fn optional_array<'j>(object: &'j Json, key: &str) -> Result<Option<&'j Vec<Json>>, String> {
+    optional_member(object, key, "an array", |member| match member {
+        Json::Array(items) => Some(items),
+        _ => None,
+    })
 }
 
 /// JSON equality that ignores object key order.
@@ -83,18 +119,19 @@ impl RecordedClient {
         for (index, call) in calls.iter().enumerate() {
             entries.push(parse_entry(index, call)?);
         }
-        let unsupported = match document.get("unsupported") {
-            None | Some(Json::Null) => Vec::new(),
-            Some(Json::Array(names)) => names
-                .iter()
-                .map(|name| {
-                    name.as_str().map(str::to_string).ok_or_else(|| {
-                        "\"unsupported\" must be an array of operation names".to_string()
+        let unsupported = optional_array(document, "unsupported")?
+            .map(|names| {
+                names
+                    .iter()
+                    .map(|name| {
+                        name.as_str().map(str::to_string).ok_or_else(|| {
+                            "\"unsupported\" must be an array of operation names".to_string()
+                        })
                     })
-                })
-                .collect::<Result<_, _>>()?,
-            Some(_) => return Err("\"unsupported\" must be an array".to_string()),
-        };
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .transpose()?
+            .unwrap_or_default();
         Ok(Self {
             entries,
             unsupported,
@@ -104,27 +141,34 @@ impl RecordedClient {
 
 fn parse_entry(index: usize, call: &Json) -> Result<Entry, String> {
     let bad = |what: &str| format!("recorded call {index}: {what}");
-    let service = string_member(call, "service")
+    let service = call
+        .get("service")
+        .and_then(Json::as_str)
         .and_then(Service::from_name)
         .ok_or_else(|| bad("\"service\" must be sts, bedrock-agent, iam or s3"))?;
-    let operation = string_member(call, "operation")
+    let operation = call
+        .get("operation")
+        .and_then(Json::as_str)
         .filter(|name| !name.is_empty())
         .ok_or_else(|| bad("\"operation\" must be a non-empty string"))?
         .to_string();
-    let request = match call.get("request") {
-        None | Some(Json::Null) => Json::Object(Vec::new()),
-        Some(request @ Json::Object(_)) => request.clone(),
-        Some(_) => return Err(bad("\"request\" must be an object")),
-    };
+    let request = optional_object(call, "request")
+        .map_err(|reason| bad(&reason))?
+        .cloned()
+        .unwrap_or_else(|| Json::Object(Vec::new()));
     let outcome = match (call.get("response"), call.get("error")) {
         (Some(response @ Json::Object(_)), None) => Outcome::Response(response.clone()),
         (None, Some(error @ Json::Object(_))) => {
-            let message = string_member(error, "message")
-                .unwrap_or_default()
-                .to_string();
-            match string_member(error, "kind").unwrap_or("client") {
+            // Every optional member is validated whatever the kind, so a
+            // wrong-typed one is rejected instead of defaulted or dropped.
+            let in_error = |reason: String| bad(&format!("error {reason}"));
+            let message = optional_string(error, "message").map_err(in_error)?;
+            let code = optional_string(error, "code").map_err(in_error)?;
+            let kind = optional_string(error, "kind").map_err(in_error)?;
+            let message = message.unwrap_or_default().to_string();
+            match kind.unwrap_or("client") {
                 "client" => Outcome::Service {
-                    code: string_member(error, "code").unwrap_or_default().to_string(),
+                    code: code.unwrap_or_default().to_string(),
                     message,
                 },
                 "connect" => Outcome::Connect(message),

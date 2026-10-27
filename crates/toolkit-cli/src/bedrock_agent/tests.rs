@@ -1517,3 +1517,303 @@ fn the_command_is_registered_with_the_strict_router_contract() {
         assert!(spec.value_flags.contains(&flag), "{flag}");
     }
 }
+
+// ------------------------------------------- optional members: absent vs invalid
+
+/// Every JSON value that is neither absent nor of the expected type.
+const WRONG_TYPES: [&str; 6] = ["null", "1", "true", "\"text\"", "{}", "{\"a\":1}"];
+
+/// One recorded call whose response is a listing, with the script that makes
+/// the rest of the discovery succeed around it.
+struct ListingSite {
+    label: &'static str,
+    service: &'static str,
+    operation: &'static str,
+    request: &'static str,
+    key: &'static str,
+    scaffold: fn() -> Script,
+}
+
+fn plain() -> Script {
+    minimal()
+}
+
+fn with_knowledge_base() -> Script {
+    with_front(knowledge_base(), minimal())
+}
+
+fn with_role() -> Script {
+    with_front(role_agent(), minimal())
+}
+
+const LISTING_SITES: [ListingSite; 7] = [
+    ListingSite {
+        label: "aliases",
+        service: "bedrock-agent",
+        operation: "ListAgentAliases",
+        request: r#"{"agentId":"AGENT12345"}"#,
+        key: "agentAliasSummaries",
+        scaffold: plain,
+    },
+    ListingSite {
+        label: "versions",
+        service: "bedrock-agent",
+        operation: "ListAgentVersions",
+        request: r#"{"agentId":"AGENT12345"}"#,
+        key: "agentVersionSummaries",
+        scaffold: plain,
+    },
+    ListingSite {
+        label: "action groups",
+        service: "bedrock-agent",
+        operation: "ListAgentActionGroups",
+        request: r#"{"agentId":"AGENT12345","agentVersion":"DRAFT"}"#,
+        key: "actionGroupSummaries",
+        scaffold: plain,
+    },
+    ListingSite {
+        label: "knowledge bases",
+        service: "bedrock-agent",
+        operation: "ListAgentKnowledgeBases",
+        request: r#"{"agentId":"AGENT12345","agentVersion":"DRAFT"}"#,
+        key: "agentKnowledgeBaseSummaries",
+        scaffold: plain,
+    },
+    ListingSite {
+        label: "collaborators",
+        service: "bedrock-agent",
+        operation: "ListAgentCollaborators",
+        request: r#"{"agentId":"AGENT12345","agentVersion":"DRAFT"}"#,
+        key: "agentCollaboratorSummaries",
+        scaffold: plain,
+    },
+    ListingSite {
+        label: "data sources",
+        service: "bedrock-agent",
+        operation: "ListDataSources",
+        request: r#"{"knowledgeBaseId":"KB00000001"}"#,
+        key: "dataSourceSummaries",
+        scaffold: with_knowledge_base,
+    },
+    ListingSite {
+        label: "inline policy names",
+        service: "iam",
+        operation: "ListRolePolicies",
+        request: r#"{"RoleName":"AgentRole"}"#,
+        key: "PolicyNames",
+        scaffold: with_role,
+    },
+];
+
+impl ListingSite {
+    /// The discovery script in which this site answers `response`.
+    fn script(&self, response: &str) -> Script {
+        with_front(
+            Script::default().ok(self.service, self.operation, self.request, response),
+            (self.scaffold)(),
+        )
+    }
+}
+
+#[test]
+fn every_listing_member_rejects_null_and_wrong_types_as_invalid_responses() {
+    for site in &LISTING_SITES {
+        for wrong in WRONG_TYPES {
+            let response = format!("{{\"{}\":{wrong}}}", site.key);
+            assert_eq!(
+                fatal_code(run(&site.script(&response), "DRAFT", false)),
+                "aws_invalid_response",
+                "{}: {response}",
+                site.label
+            );
+        }
+    }
+}
+
+#[test]
+fn every_listing_member_still_accepts_an_absent_member_and_an_empty_list() {
+    for site in &LISTING_SITES {
+        for response in ["{}".to_string(), format!("{{\"{}\":[]}}", site.key)] {
+            let result = run(&site.script(&response), "DRAFT", false);
+            assert!(result.is_ok(), "{}: {response}", site.label);
+        }
+    }
+}
+
+#[test]
+fn an_invalid_listing_is_never_recorded_as_an_error_entry_or_tolerated() {
+    // The sites that record a service error in place must not record an
+    // invalid response the same way: the run ends instead.
+    for label in ["aliases", "versions", "collaborators", "data sources"] {
+        let site = LISTING_SITES
+            .iter()
+            .find(|site| site.label == label)
+            .expect("site");
+        let response = format!("{{\"{}\":null}}", site.key);
+        assert_eq!(
+            fatal_code(run(&site.script(&response), "DRAFT", false)),
+            "aws_invalid_response",
+            "{label}"
+        );
+    }
+}
+
+#[test]
+fn a_null_listing_on_a_later_page_ends_the_run_and_keeps_no_manifest() {
+    let script = with_front(
+        Script::default()
+            .ok(
+                "bedrock-agent",
+                "ListAgentAliases",
+                r#"{"agentId":"AGENT12345"}"#,
+                r#"{"agentAliasSummaries":[],"nextToken":"p2"}"#,
+            )
+            .ok(
+                "bedrock-agent",
+                "ListAgentAliases",
+                r#"{"agentId":"AGENT12345","nextToken":"p2"}"#,
+                r#"{"agentAliasSummaries":null}"#,
+            ),
+        minimal(),
+    );
+    assert_eq!(
+        fatal_code(run(&script, "DRAFT", false)),
+        "aws_invalid_response"
+    );
+}
+
+#[test]
+fn the_role_arn_is_absent_or_a_string_and_nothing_else() {
+    let agent = |agent: &str| {
+        with_front(
+            Script::default().ok(
+                "bedrock-agent",
+                "GetAgent",
+                r#"{"agentId":"AGENT12345"}"#,
+                &format!("{{\"agent\":{agent}}}"),
+            ),
+            minimal(),
+        )
+    };
+    assert!(run(&agent(r#"{"agentName":"a"}"#), "DRAFT", false).is_ok());
+    for wrong in ["null", "1", "true", "[]", "{}"] {
+        let script = agent(&format!("{{\"agentResourceRoleArn\":{wrong}}}"));
+        assert_eq!(
+            fatal_code(run(&script, "DRAFT", false)),
+            "aws_invalid_response",
+            "{wrong}"
+        );
+    }
+}
+
+#[test]
+fn an_invalid_listing_writes_no_manifest_and_leaves_an_existing_one_alone() {
+    let dir = TempDir::new("invalid-listing");
+    let fresh = dir.join_text("fresh/manifest.json");
+    let existing = dir.join_text("existing.json");
+    fs::write(&existing, "previous manifest").expect("seed");
+    for site in &LISTING_SITES {
+        let response = format!("{{\"{}\":null}}", site.key);
+        for out in [&fresh, &existing] {
+            let (result, stdout, ..) =
+                run_fetch(&mut site.script(&response).client(), "DRAFT", out);
+            assert!(result.is_err(), "{}", site.label);
+            assert_eq!(stdout, "", "{}: no success line", site.label);
+        }
+    }
+    assert!(!Path::new(&fresh).exists());
+    assert_eq!(
+        fs::read_to_string(&existing).expect("read"),
+        "previous manifest"
+    );
+}
+
+/// A recorded error entry with one member replaced by `member_json`.
+fn recorded_error(member: &str, member_json: &str) -> String {
+    let mut parts = vec![
+        r#""kind":"client""#.to_string(),
+        r#""code":"ThrottlingException""#.to_string(),
+        r#""message":"slow""#.to_string(),
+    ];
+    parts.retain(|part| !part.starts_with(&format!("\"{member}\"")));
+    parts.push(format!("\"{member}\":{member_json}"));
+    format!(
+        r#"{{"calls":[{{"service":"sts","operation":"X","error":{{{}}}}}]}}"#,
+        parts.join(",")
+    )
+}
+
+#[test]
+fn a_present_but_wrong_typed_recorded_error_member_is_rejected() {
+    for member in ["kind", "code", "message"] {
+        for wrong in WRONG_TYPES.into_iter().filter(|wrong| *wrong != "\"text\"") {
+            let document = recorded_error(member, wrong);
+            let reason = RecordedClient::from_document(&json(&document))
+                .map(|_| ())
+                .expect_err(&document);
+            assert!(reason.contains(member), "{document}: {reason}");
+            assert!(reason.contains("recorded call 0"), "{reason}");
+        }
+    }
+}
+
+#[test]
+fn recorded_error_members_are_validated_whatever_the_kind() {
+    for kind in ["client", "connect", "no_credentials"] {
+        for member in ["code", "message"] {
+            let document = format!(
+                r#"{{"calls":[{{"service":"sts","operation":"X","error":{{"kind":"{kind}","{member}":null}}}}]}}"#
+            );
+            assert!(
+                RecordedClient::from_document(&json(&document)).is_err(),
+                "{document}"
+            );
+        }
+    }
+}
+
+#[test]
+fn absent_recorded_error_members_keep_their_defaults() {
+    for document in [
+        r#"{"calls":[{"service":"sts","operation":"X","error":{}}]}"#,
+        r#"{"calls":[{"service":"sts","operation":"X","error":{"kind":"connect"}}]}"#,
+        r#"{"calls":[{"service":"sts","operation":"X","error":{"kind":"no_credentials"}}]}"#,
+        r#"{"calls":[{"service":"sts","operation":"X","error":{"code":"E","message":"m"}}]}"#,
+    ] {
+        assert!(
+            RecordedClient::from_document(&json(document)).is_ok(),
+            "{document}"
+        );
+    }
+}
+
+#[test]
+fn every_optional_recorded_member_rejects_null_and_wrong_types() {
+    for (member, wrongs) in [
+        ("request", &["null", "1", "[]", "\"x\""][..]),
+        ("unsupported", &["null", "1", "{}", "\"x\""][..]),
+    ] {
+        for wrong in wrongs {
+            let document = if member == "request" {
+                format!(
+                    r#"{{"calls":[{{"service":"sts","operation":"X","request":{wrong},"response":{{}}}}]}}"#
+                )
+            } else {
+                format!(r#"{{"calls":[],"unsupported":{wrong}}}"#)
+            };
+            let reason = RecordedClient::from_document(&json(&document))
+                .map(|_| ())
+                .expect_err(&document);
+            assert!(reason.contains(member), "{document}: {reason}");
+        }
+    }
+}
+
+#[test]
+fn recorded_validation_reasons_never_echo_the_wrong_value() {
+    let document = recorded_error("message", r#"{"secret":"SENSITIVE-VALUE-123"}"#);
+    let reason = RecordedClient::from_document(&json(&document))
+        .map(|_| ())
+        .expect_err("rejected");
+    assert!(!reason.contains("SENSITIVE"), "{reason}");
+}
