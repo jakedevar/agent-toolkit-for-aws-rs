@@ -529,3 +529,169 @@ fn unreadable_skill_md_is_a_runtime_error_naming_the_file() {
     assert!(stderr(&output).contains("SKILL.md"));
     assert!(stderr(&output).contains("not valid UTF-8"));
 }
+
+// ---- manifests validate (#4375) ------------------------------------------
+
+fn write_file(root: &Path, relative: &str, content: &str) {
+    let path = root.join(relative);
+    fs::create_dir_all(path.parent().expect("fixture has a parent")).expect("create fixture dir");
+    fs::write(path, content).expect("write fixture");
+}
+
+/// A minimal valid repository: one plugin named `demo`, three marketplaces,
+/// one top-level skill.
+fn write_manifest_repo(root: &Path) {
+    let market = r#"{"name":"m","plugins":[{"name":"demo","source":"./plugins/demo"}]}"#;
+    write_file(root, ".claude-plugin/marketplace.json", market);
+    write_file(root, ".agents/plugins/marketplace.json", market);
+    write_file(root, ".cursor-plugin/marketplace.json", market);
+    let meta = r#"{"name":"demo","version":"1.0.0","description":"Demo."}"#;
+    write_file(root, "plugins/demo/.claude-plugin/plugin.json", meta);
+    write_file(
+        root,
+        "plugins/demo/.codex-plugin/plugin.json",
+        r#"{"name":"demo","version":"1.0.0","description":"Demo.","author":{},"interface":{}}"#,
+    );
+    write_file(
+        root,
+        "plugins/demo/.mcp.json",
+        r#"{"mcpServers":{"a":{"command":"tool"}}}"#,
+    );
+    let skill = "---\nname: demo-skill\ndescription: A description that is long enough.\n---\n";
+    write_file(root, "plugins/demo/skills/demo-skill/SKILL.md", skill);
+    write_file(
+        root,
+        "skills/group/top-skill/SKILL.md",
+        &skill.replace("demo-skill", "top-skill"),
+    );
+}
+
+#[test]
+fn manifests_validate_passes_on_a_valid_repository() {
+    let root = temp_root("manifests-ok");
+    write_manifest_repo(&root);
+    let output = run(&["manifests", "validate"], &root);
+    assert_eq!(code(&output), 0, "stderr: {}", stderr(&output));
+    assert_eq!(stderr(&output), "");
+    assert_eq!(
+        stdout(&output),
+        "Validating Claude Code marketplace: .claude-plugin/marketplace.json\n\
+         Validating Codex marketplace: .agents/plugins/marketplace.json\n\
+         Validating Cursor marketplace: .cursor-plugin/marketplace.json\n\
+         Validating plugin: demo\n\
+         Validating skill: skills/group/top-skill\n\
+         \n\
+         All validations passed.\n",
+        "ROOT defaults to the current directory"
+    );
+}
+
+#[test]
+fn manifests_validate_reports_errors_on_stderr_and_exits_one() {
+    let root = temp_root("manifests-fail");
+    write_manifest_repo(&root);
+    write_file(
+        &root,
+        "plugins/demo/.mcp.json",
+        r#"{"mcpServers":{"a":{}}}"#,
+    );
+    write_file(&root, "skills/group/top-skill/SKILL.md", "no frontmatter\n");
+
+    let output = run(
+        &["manifests", "validate", root.to_str().expect("utf-8 root")],
+        Path::new("/"),
+    );
+    assert_eq!(code(&output), 1);
+    assert!(stdout(&output).starts_with("Validating Claude Code marketplace: "));
+    assert!(!stdout(&output).contains("All validations passed."));
+    assert_eq!(
+        stderr(&output),
+        "  ERROR: MCP server 'a' is stdio but missing 'command'\n\
+         \x20 ERROR: Missing YAML frontmatter in skills/group/top-skill/SKILL.md\n\
+         error: Validation failed with 2 error(s).\n"
+    );
+}
+
+#[test]
+fn manifests_validate_plugin_selection_and_usage_errors() {
+    let root = temp_root("manifests-plugin");
+    write_manifest_repo(&root);
+    write_file(&root, ".claude-plugin/marketplace.json", "broken");
+    let root_arg = root.to_str().expect("utf-8 root");
+
+    let output = run(
+        &["manifests", "validate", root_arg, "--plugin", "demo"],
+        &root,
+    );
+    assert_eq!(code(&output), 0, "stderr: {}", stderr(&output));
+    assert_eq!(
+        stdout(&output),
+        "Validating plugin: demo\n\nAll validations passed.\n"
+    );
+
+    let output = run(
+        &["manifests", "validate", root_arg, "--plugin", "ghost"],
+        &root,
+    );
+    assert_eq!(code(&output), 1);
+    assert_eq!(stdout(&output), "");
+    assert_eq!(stderr(&output), "error: Plugin not found: ghost\n");
+
+    for args in [
+        vec!["manifests", "validate", "--plugin"],
+        vec!["manifests", "validate", "--json"],
+        vec!["manifests", "validate", "a", "b"],
+        vec!["manifests"],
+    ] {
+        let output = run(&args, &root);
+        assert_eq!(code(&output), 2, "{args:?}");
+        assert_eq!(stdout(&output), "");
+        assert!(
+            stderr(&output).starts_with("error: invalid arguments\n\nUsage:"),
+            "{args:?}"
+        );
+    }
+}
+
+#[test]
+fn manifests_validate_passes_on_the_real_repository_tree() {
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let output = run(
+        &[
+            "manifests",
+            "validate",
+            repo.to_str().expect("utf-8 repo path"),
+        ],
+        &repo,
+    );
+    assert_eq!(code(&output), 0, "stderr: {}", stderr(&output));
+    assert_eq!(stderr(&output), "");
+    let text = stdout(&output);
+    assert!(text.ends_with("\nAll validations passed.\n"), "{text}");
+    assert!(text.contains("Validating plugin: aws-core\n"));
+}
+
+#[cfg(unix)]
+#[test]
+fn manifests_validate_never_follows_symlinked_skill_files() {
+    use std::os::unix::fs::symlink;
+    let root = temp_root("manifests-link");
+    write_manifest_repo(&root);
+    let outside = temp_root("manifests-link-outside");
+    write_file(
+        &outside,
+        "SKILL.md",
+        "---\nname: linked-skill\ndescription: A description that is long enough.\n---\n",
+    );
+    fs::create_dir_all(root.join("skills/linked-skill")).expect("create dir");
+    symlink(
+        outside.join("SKILL.md"),
+        root.join("skills/linked-skill/SKILL.md"),
+    )
+    .expect("create symlink");
+    let output = run(&["manifests", "validate"], &root);
+    assert_eq!(code(&output), 1);
+    assert!(stderr(&output).contains(
+        "  ERROR: Cannot read skills/linked-skill/SKILL.md: symbolic links are not followed\n"
+    ));
+}

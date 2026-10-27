@@ -186,3 +186,29 @@ crate (use optional domain crates or features).
 A leading UTF-8 byte-order mark is ignored. `name:` with no value or an empty
 quoted value is reported by the parser as an empty string; skill discovery
 treats an empty or whitespace-only `name` as absent and uses the directory name.
+
+## manifests validate (#4375)
+
+```
+toolkit manifests validate [ROOT] [--plugin NAME]
+```
+
+Replacement for `python3 tools/validate.py [--plugin X]`; full rule parity table
+and the recorded differences are in `docs/migration/manifests-validator.md`.
+`ROOT` defaults to the current directory. The command is read-only and offline.
+
+- Without `--plugin` it validates the Claude Code, Codex and Cursor marketplace
+  manifests, every directory under `ROOT/plugins` (Claude, Codex, optional
+  Cursor and Devin manifests, optional `.mcp.json`, the `SKILL.md` frontmatter
+  of each direct child of `skills/`) and every `SKILL.md` below `ROOT/skills`.
+  With `--plugin NAME` (or `--plugin=NAME`) only `ROOT/plugins/NAME` is checked.
+- `Validating ...` progress lines go to stdout, in order. Each finding is a
+  `  ERROR: <message>` line on stderr and the run continues.
+- Success prints a blank line and `All validations passed.` (exit 0). Any finding
+  ends with `error: Validation failed with N error(s).` on stderr (exit 1). An
+  unknown or unsafe plugin name (`error: Plugin not found: NAME`) and an unusable
+  root are runtime errors (exit 1); bad arguments are usage errors (exit 2).
+
+The routing table gained value flags (`--name value` / `--name=value`,
+`Invocation::value`, last value wins, missing value is a usage error) and
+`Output::with_diagnostics` / `Output::diagnostic` for stderr lines (#4375).
