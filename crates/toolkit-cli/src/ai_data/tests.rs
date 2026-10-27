@@ -221,16 +221,16 @@ fn messages_need_a_valid_role() {
     let result = detect(&[r#"{"messages":[{"role":"bot","content":"hi"}]}"#]);
     assert_eq!(
         messages(&result),
-        ["1:invalid_structure:Invalid role 'bot' in message 0"]
+        ["1:invalid_structure:Invalid role in message 0 (got str; allowed: 'user', 'assistant', 'system')"]
     );
-    // A non-string role is shown the way Python's str() shows it.
+    // Only the type of a bad role is reported, never its value (#4602).
     let result =
         detect(&[r#"{"messages":[{"role":5,"content":"hi"},{"role":null,"content":"x"}]}"#]);
     assert_eq!(
         messages(&result),
         [
-            "1:invalid_structure:Invalid role '5' in message 0",
-            "1:invalid_structure:Invalid role 'None' in message 1",
+            "1:invalid_structure:Invalid role in message 0 (got int; allowed: 'user', 'assistant', 'system')",
+            "1:invalid_structure:Invalid role in message 1 (got NoneType; allowed: 'user', 'assistant', 'system')",
         ]
     );
 }
@@ -280,7 +280,7 @@ fn dpo_candidates_need_a_preference_label() {
         messages(&result),
         [
             "1:missing_field:DPO message 1 candidate 0 missing 'preferenceLabel'",
-            "1:invalid_structure:Invalid preferenceLabel 'maybe' in message 1 candidate 1",
+            "1:invalid_structure:Invalid preferenceLabel in message 1 candidate 1 (got str; allowed: 'preferred', 'non-preferred')",
         ]
     );
     // Shapes Python would crash on become findings.
@@ -719,9 +719,78 @@ fn detect_format_json_is_ascii_only() {
     assert_eq!(status, 1);
     assert!(stdout.is_ascii(), "{stdout}");
     assert!(
-        stdout.contains("Invalid role '\\u00e9\\ud83d\\ude00\\u007f' in message 0"),
+        stdout.contains(
+            "Invalid role in message 0 (got str; allowed: 'user', 'assistant', 'system')"
+        ),
         "{stdout}"
     );
+    assert!(!stdout.contains("\\u00e9"), "{stdout}");
+}
+
+/// A role or preferenceLabel string that tries to forge report lines, clear the
+/// terminal and smuggle a fake secret (#4602 reproduction, as JSON escapes).
+const HOSTILE_STRING: &str = r#""REVIEW_SENTINEL\u001b[2J\nFORGED_REPORT\rAKIAFAKESECRETSENTINEL""#;
+/// The same, nested inside an object value.
+const HOSTILE_OBJECT: &str = r#"{"secret":"OBJECT_SENTINEL\u001b]0;x\u0007","nested":{"token":"NESTED_SENTINEL\r\nFORGED_REPORT"}}"#;
+
+fn assert_no_payload_echo(label: &str, stdout: &str, stderr: &str) {
+    for (stream, text) in [("stdout", stdout), ("stderr", stderr)] {
+        for needle in ["SENTINEL", "FORGED_REPORT", "AKIA", "secret", "token"] {
+            assert!(
+                !text.contains(needle),
+                "{label} {stream} leaks {needle}: {text:?}"
+            );
+        }
+        assert!(
+            !text.chars().any(|c| c.is_control() && c != '\n'),
+            "{label} {stream} carries a raw control character: {text:?}"
+        );
+    }
+}
+
+#[test]
+fn detect_format_never_echoes_invalid_role_or_preference_label_values() {
+    let dir = TempDir::new("leak");
+    let head = r#"{"role":"user","content":[{"text":"a"}]}"#;
+    for (kind, value, type_name) in [
+        ("string", HOSTILE_STRING, "str"),
+        ("object", HOSTILE_OBJECT, "dict"),
+    ] {
+        let role = dir.file(
+            &format!("role-{kind}.jsonl"),
+            &format!("{{\"messages\":[{{\"role\":{value},\"content\":\"x\"}}]}}\n"),
+        );
+        let role_message = format!(
+            "Invalid role in message 0 (got {type_name}; allowed: 'user', 'assistant', 'system')"
+        );
+        let label = dir.file(
+            &format!("label-{kind}.jsonl"),
+            &format!(
+                "{{\"messages\":[{head},{{\"role\":\"assistant\",\"candidates\":[{{\"content\":[{{\"text\":\"b\"}}],\"preferenceLabel\":{value}}}]}}]}}\n"
+            ),
+        );
+        let label_message = format!(
+            "Invalid preferenceLabel in message 1 candidate 0 (got {type_name}; allowed: 'preferred', 'non-preferred')"
+        );
+        for (path, message) in [(&role, &role_message), (&label, &label_message)] {
+            let (status, stdout, stderr) = exec(&["ai-data", "detect-format", path]);
+            assert_eq!(status, 1, "{path}: {stdout}");
+            assert_no_payload_echo(path, &stdout, &stderr);
+            assert!(
+                stdout.contains(&format!("\nErrors:\n  Line 1: {message}\n")),
+                "{stdout}"
+            );
+            let (status, stdout, stderr) = exec(&["ai-data", "detect-format", path, "--json"]);
+            assert_eq!(status, 1, "{path}: {stdout}");
+            assert_no_payload_echo(path, &stdout, &stderr);
+            assert!(
+                stdout.contains(&format!(
+                    "      \"line_number\": 1,\n      \"error_type\": \"invalid_structure\",\n      \"message\": \"{message}\"\n"
+                )),
+                "{stdout}"
+            );
+        }
+    }
 }
 
 #[test]

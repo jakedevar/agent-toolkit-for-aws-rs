@@ -12,7 +12,6 @@ use std::io::Read;
 use std::path::Path;
 
 use toolkit_core::{open_regular_file, parse_json, Json};
-use toolkit_msk::pyfmt::py_str;
 
 use super::{parse_failure_text, py_type_name};
 use crate::manifests::is_falsy;
@@ -419,6 +418,13 @@ fn check_for(format: FormatType) -> Option<Check> {
     }
 }
 
+/// Allowed `role` values, as shown in diagnostics. The offending value itself is
+/// never echoed: it is untrusted payload content (#4602).
+const ROLES: &str = "'user', 'assistant', 'system'";
+
+/// Allowed `preferenceLabel` values, as shown in diagnostics (see [`ROLES`]).
+const PREFERENCE_LABELS: &str = "'preferred', 'non-preferred'";
+
 fn check_role(message: &Json, index: usize, line: usize, sink: &mut Sink) {
     match message.get("role") {
         None => sink.push(
@@ -434,7 +440,10 @@ fn check_role(message: &Json, index: usize, line: usize, sink: &mut Sink) {
             sink.push(
                 line,
                 INVALID_STRUCTURE,
-                format!("Invalid role '{}' in message {index}", py_str(role)),
+                format!(
+                    "Invalid role in message {index} (got {}; allowed: {ROLES})",
+                    py_type_name(role)
+                ),
             );
         }
         Some(_) => {}
@@ -480,8 +489,8 @@ fn check_candidates(candidates: &Json, index: usize, line: usize, sink: &mut Sin
                     line,
                     INVALID_STRUCTURE,
                     format!(
-                        "Invalid preferenceLabel '{}' in message {index} candidate {position}",
-                        py_str(label)
+                        "Invalid preferenceLabel in message {index} candidate {position} (got {}; allowed: {PREFERENCE_LABELS})",
+                        py_type_name(label)
                     ),
                 );
             }

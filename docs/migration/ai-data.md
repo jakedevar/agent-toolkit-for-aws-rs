@@ -25,7 +25,7 @@ wires `NoObjectStore` and `NoSageMaker`.
 | 11 formats + `unknown` | `_classify_schema` order: query+response, verl, messages, DPO, SFT | same order, same `completion` fall-through | `every_format_is_detected_and_validates_cleanly`, `classification_precedence_follows_the_script` |
 | Nova SFT vs DPO | last message `candidates` key, else truthy `content` | same, Python truthiness | `nova_last_message_decides_between_sft_and_dpo` |
 | Role, content, candidate checks and texts | `_validate_*_messages` | same messages | `messages_need_a_valid_role`, `gpt_oss_content_must_be_a_string`, `nova_messages_need_list_content_or_candidates`, `dpo_candidates_need_a_preference_label` |
-| `Invalid role '<str(role)>'` | `str()` of the value | `py_str` (`5`, `None`, `['a']`) | `messages_need_a_valid_role` |
+| Invalid `role` / `preferenceLabel` | `str()` of the value echoed | type name and allowed values only (intentional change 11) | `messages_need_a_valid_role`, `dpo_candidates_need_a_preference_label`, `detect_format_never_echoes_invalid_role_or_preference_label_values` |
 | Required field types and prefixes | `FORMAT_SCHEMAS` | same table | `flat_formats_check_field_types_with_their_prefix`, `rlvr_checks_reference_answer_and_content` |
 | Verl and Verl Legacy prompt rules | `_validate_verl_*` | same | `verl_prompts_are_checked` |
 | Schema consistency | `Expected X but found Y` per record | same | `records_must_match_the_first_records_format` |
@@ -130,6 +130,18 @@ wires `NoObjectStore` and `NoSageMaker`.
     `s3://<bucket>[/...]` and the script must exist as a regular file (Python
     passed anything to the SDK). Empty `--region`, `--execution-role` and
     `--image-uri` mean "not given".
+11. **No payload echo in diagnostics (#4602).** Python printed an invalid
+    value: `Invalid role '<str(role)>' in message N` and `Invalid
+    preferenceLabel '<str(label)>' in message N candidate M`. That copied
+    untrusted record content (secrets, nested objects, newlines, CR and terminal
+    escape sequences) into the text report, where it could forge report lines or
+    drive the terminal, and into the JSON report. The messages now name the
+    field, location, Python type and allowed values only: `Invalid role in
+    message N (got str; allowed: 'user', 'assistant', 'system')` and
+    `Invalid preferenceLabel in message N candidate M (got dict; allowed:
+    'preferred', 'non-preferred')`. Error type `invalid_structure`, line
+    numbers and exit 1 are unchanged. No other `detect-format` message carries
+    record values (parse errors are fixed reason texts with positions).
 
 ## Callers (not changed in this slice)
 
