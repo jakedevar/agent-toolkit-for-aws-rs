@@ -252,3 +252,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
   Re-review #4819 r2 worker 9d76e4eb (Codex sol high, pinned, op 0bed14d1).
   NOTE for integration: #4391 at baa7989e will show 3 relational reds until combined with r13 (b8204e9d fixes them).
   4/4 busy: 8fdc14b5 (#4751 scanner), 658303dd (#4806), 36f263f8 (#4742 r4), 9d76e4eb (#4819 r2).
+- 02:20Z: #4742 r4 (36f263f8) on e9c83bd7: findings #4816-8 FIXED at root; allowlist OK; CHANGES_REQUESTED only on harness coverage: #4837 (26 rows[*] alias columns absent from fixtures), #4838 (flat Location/CaptureConfiguration + 3 status Location paths absent).
+  RULING: coverage by construction - derive read paths from Shape defs + column tables, synthesise absent paths, assert every derived path mutated (test fails on uncovered new member). Repair r4 worker 7e684f35 (Opus high, continue_from 955e5b50, op 7f65fad8). Next re-review: limited to coverage-by-construction + defects found.
+  4/4 busy: 8fdc14b5 (#4751), 658303dd (#4806), 9d76e4eb (#4819 r2), 7e684f35 (#4381 r4).
