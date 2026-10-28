@@ -1067,6 +1067,7 @@ fn check_status_reports_a_status_query_failure_as_an_api_error_line() {
 #[test]
 fn check_status_fails_on_an_invalid_status_response() {
     // (malformed status, events the other statuses return, calls expected)
+    #[allow(clippy::type_complexity)]
     let cases: [(&str, &'static [(&'static str, &'static str)], usize); 4] = [
         ("ACTIVE", &[("ACTIVE", "null")], 2),
         (

@@ -2084,7 +2084,11 @@ fn show_path(path: &[Seg]) -> String {
                 }
                 out.push_str(key);
             }
-            Seg::Index(index) => out.push_str(&format!("[{index}]")),
+            Seg::Index(index) => {
+                out.push('[');
+                out.push_str(&index.to_string());
+                out.push(']');
+            }
         }
     }
     out
@@ -2136,8 +2140,7 @@ fn replacement(kind: Mutation, original: &Json, sentinel: &str) -> Json {
             Json::Int(_) | Json::Float(_) => Json::Bool(true),
             Json::Bool(_) => Json::Int(1),
             Json::Object(_) => Json::Array(Vec::new()),
-            Json::Array(_) => Json::Object(Vec::new()),
-            Json::Null => Json::Object(Vec::new()),
+            Json::Array(_) | Json::Null => Json::Object(Vec::new()),
         },
     }
 }
@@ -2254,6 +2257,7 @@ fn judge(
 /// See the section comment. Ignored by nothing: it is the slice's guard
 /// against response values in diagnostics and malformed success.
 #[test]
+#[allow(clippy::too_many_lines)]
 fn every_recorded_response_member_fails_closed_or_is_documented() {
     let root = temp_root("mutation");
     let scenarios = harness_scenarios();
