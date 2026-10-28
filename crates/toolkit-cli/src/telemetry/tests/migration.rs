@@ -1026,7 +1026,10 @@ fn plant_lock(run_dir: &Path, mode: u32, modified: std::time::SystemTime) {
         .set_times(fs::FileTimes::new().set_modified(modified))
         .expect("set lock time");
     assert_eq!(
-        fs::symlink_metadata(&lock).expect("stat").modified().expect("mtime"),
+        fs::symlink_metadata(&lock)
+            .expect("stat")
+            .modified()
+            .expect("mtime"),
         modified,
         "the filesystem kept the planted time"
     );
@@ -1071,7 +1074,10 @@ fn a_private_lock_with_an_impossible_time_is_stale_and_a_fresh_one_still_blocks(
         p.reconcile(SESSION_ID).is_empty(),
         "the holder is about to report the same transitions"
     );
-    assert!(p.has_lock() && !p.has_snapshot(), "a fresh lock is left alone");
+    assert!(
+        p.has_lock() && !p.has_snapshot(),
+        "a fresh lock is left alone"
+    );
     fs::remove_dir(p.run_dir.join(".telemetry-lock")).expect("unlock");
 
     // No live hook made a lock dated before 1970 or decades ahead: either

@@ -328,16 +328,15 @@ fn acquire_lock(ctx: &Ctx<'_>, run_dir: &Path) -> Option<Lock> {
             if !metadata.is_dir() {
                 return None;
             }
-            if !marks_a_live_holder(ctx, &metadata) {
-                // Removal does not follow links inside the directory. If a peer
-                // recreated it first, creation fails and that peer holds it.
-                let _ = fs::remove_dir_all(&lock);
-                create_private_dir(&lock).ok()?;
-                Lock::created(lock)
-            } else {
+            if marks_a_live_holder(ctx, &metadata) {
                 // The holder is about to report the same transitions.
-                None
+                return None;
             }
+            // Removal does not follow links inside the directory. If a peer
+            // recreated it first, creation fails and that peer holds it.
+            let _ = fs::remove_dir_all(&lock);
+            create_private_dir(&lock).ok()?;
+            Lock::created(lock)
         }
         // An unwritable run directory: emit nothing.
         Err(_) => None,
