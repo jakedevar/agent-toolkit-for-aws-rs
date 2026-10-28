@@ -86,7 +86,8 @@
 //! Test code (`tests.rs`, `tests/`, `#[cfg(test)]` items, and every file that
 //! only test-only module declarations load, such as the file of an
 //! out-of-line `#[cfg(test)] mod NAME;` and its submodules, whatever its name,
-//! #4869, #4872) is out of scope. The README section "Slices without a live
+//! #4869, #4872) is out of scope. A declaration counts at any depth, in a
+//! function or constant block too (#4880). The README section "Slices without a live
 //! AWS client" is the guide for slice authors.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -1725,64 +1726,177 @@ fn natural_dirs(relative: &str) -> ModDirs {
     }
 }
 
-/// Every module declaration in `items` of the file `declarer`, resolved
-/// against `dirs` to the files of `present` it loads.
-fn module_loads(
-    items: &[Item],
-    declarer: &str,
-    dirs: &ModDirs,
+/// Every module declaration of the file `declarer` that loads a file of
+/// `present`, at any depth (#4880): the file's items, inline modules, and the
+/// blocks of functions, methods, constants, statics and expressions. A
+/// declaration inherits `#[cfg(test)]` from any enclosing item. Whatever the
+/// walk cannot classify counts as a production load, which keeps a file
+/// scanned: a default-path `mod NAME;` in a block (rustc refuses it), and a
+/// `mod NAME` in a macro's or unparsed item's tokens.
+struct ModuleLoads<'a> {
+    declarer: &'a str,
+    present: &'a BTreeSet<&'a str>,
+    dirs: ModDirs,
+    /// Inside a `#[cfg(test)]` item.
     test: bool,
-    present: &BTreeSet<&str>,
-    out: &mut Vec<ModLoad>,
-) {
-    for item in items {
-        let Item::Mod(module) = item else { continue };
-        let test = test || is_cfg_test(&module.attrs);
+    /// Inside a block, where rustc resolves against the module's directory
+    /// alone and refuses a default-path `mod NAME;`.
+    in_block: bool,
+    out: &'a mut Vec<ModLoad>,
+}
+
+impl ModuleLoads<'_> {
+    fn load(&mut self, target: String, test: bool, owns: Option<String>) {
+        if self.present.contains(target.as_str()) {
+            self.out.push(ModLoad {
+                declarer: self.declarer.to_string(),
+                target,
+                test,
+                owns,
+            });
+        }
+    }
+
+    /// `#[path = "P"] mod NAME;` loads `P`. A `#[path]` file is a mod-rs
+    /// file: its children live beside it.
+    fn path_load(&mut self, path: &str, test: bool) {
+        let target = join_path(&self.dirs.paths, path);
+        let owns = target
+            .rsplit_once('/')
+            .map_or(String::new(), |(parent, _)| parent.to_string());
+        self.load(target, test, Some(owns));
+    }
+
+    /// `mod NAME;` loads `NAME.rs` or `NAME/mod.rs`.
+    fn default_load(&mut self, name: &str, test: bool) {
+        for file in [format!("{name}.rs"), format!("{name}/mod.rs")] {
+            let target = join_path(&self.dirs.default, &file);
+            self.load(target, test, None);
+        }
+    }
+
+    /// `walk` with the context swapped in; the current one comes back after.
+    fn within(&mut self, dirs: ModDirs, test: bool, in_block: bool, walk: impl FnOnce(&mut Self)) {
+        let dirs = std::mem::replace(&mut self.dirs, dirs);
+        let test = std::mem::replace(&mut self.test, test);
+        let in_block = std::mem::replace(&mut self.in_block, in_block);
+        walk(self);
+        self.dirs = dirs;
+        self.test = test;
+        self.in_block = in_block;
+    }
+
+    /// Module declarations hidden in tokens `syn` does not parse: when a
+    /// `mod NAME` is among them, each such `NAME` loads its default files and
+    /// each string literal its `#[path]` file, all as production loads.
+    fn token_loads(&mut self, tokens: &TokenStream) {
+        fn collect(tokens: &TokenStream, names: &mut Vec<String>, paths: &mut Vec<String>) {
+            let mut after_mod = false;
+            for token in tokens.clone() {
+                match &token {
+                    TokenTree::Ident(ident) if after_mod => names.push(name_of(ident)),
+                    TokenTree::Group(group) => collect(&group.stream(), names, paths),
+                    TokenTree::Literal(_) => {
+                        if let Ok(path) = syn::parse2::<syn::LitStr>(token.clone().into()) {
+                            paths.push(path.value());
+                        }
+                    }
+                    _ => {}
+                }
+                after_mod = matches!(&token, TokenTree::Ident(ident) if ident == "mod");
+            }
+        }
+        let (mut names, mut paths) = (Vec::new(), Vec::new());
+        collect(tokens, &mut names, &mut paths);
+        if names.is_empty() {
+            return;
+        }
+        for name in &names {
+            self.default_load(name, false);
+        }
+        for path in &paths {
+            self.path_load(path, false);
+        }
+    }
+
+    /// The items of an inline module, walked with its context.
+    fn inline(&mut self, items: &[Item], dirs: ModDirs, test: bool, in_block: bool) {
+        self.within(dirs, test, in_block, |this| {
+            for item in items {
+                this.visit_item(item);
+            }
+        });
+    }
+}
+
+impl<'ast> Visit<'ast> for ModuleLoads<'_> {
+    fn visit_item(&mut self, item: &'ast Item) {
+        if let Item::Verbatim(tokens) = item {
+            self.token_loads(tokens);
+        }
+        let test = self.test || is_cfg_test(item_attrs(item));
+        let (dirs, in_block) = (self.dirs.clone(), self.in_block);
+        self.within(dirs, test, in_block, |this| visit::visit_item(this, item));
+    }
+
+    fn visit_impl_item(&mut self, item: &'ast ImplItem) {
+        let test = self.test || is_cfg_test(impl_item_attrs(item));
+        let (dirs, in_block) = (self.dirs.clone(), self.in_block);
+        self.within(dirs, test, in_block, |this| {
+            visit::visit_impl_item(this, item);
+        });
+    }
+
+    fn visit_trait_item(&mut self, item: &'ast TraitItem) {
+        let test = self.test || is_cfg_test(trait_item_attrs(item));
+        let (dirs, in_block) = (self.dirs.clone(), self.in_block);
+        self.within(dirs, test, in_block, |this| {
+            visit::visit_trait_item(this, item);
+        });
+    }
+
+    fn visit_block(&mut self, block: &'ast syn::Block) {
+        // In a block rustc resolves against the module's own directory and
+        // drops the non-mod-rs offset: `a/b.rs` resolves against `a`.
+        let dirs = ModDirs::owned(self.dirs.paths.clone());
+        let test = self.test;
+        self.within(dirs, test, true, |this| visit::visit_block(this, block));
+    }
+
+    fn visit_item_mod(&mut self, module: &'ast syn::ItemMod) {
+        let test = self.test || is_cfg_test(&module.attrs);
         let name = name_of(&module.ident);
-        let path = path_attr(&module.attrs);
-        if let Some((_, items)) = &module.content {
+        match (&module.content, path_attr(&module.attrs)) {
             // An inline module loads no file itself (#4872); its out-of-line
-            // children resolve below it.
-            let dir = match &path {
-                Some(path) => join_path(&dirs.paths, path),
-                None => join_path(&dirs.default, &name),
-            };
-            module_loads(items, declarer, &ModDirs::owned(dir), test, present, out);
-            continue;
-        }
-        let candidates = match &path {
-            // A `#[path]` file is a mod-rs file: its children live beside it.
-            Some(path) => {
-                let target = join_path(&dirs.paths, path);
-                let owns = target
-                    .rsplit_once('/')
-                    .map_or(String::new(), |(parent, _)| parent.to_string());
-                vec![(target, Some(owns))]
+            // children resolve below its `#[path]` directory, or below it.
+            (Some((_, items)), Some(path)) => {
+                let dirs = ModDirs::owned(join_path(&self.dirs.paths, &path));
+                self.inline(items, dirs, test, false);
             }
-            None => vec![
-                (join_path(&dirs.default, &format!("{name}.rs")), None),
-                (join_path(&dirs.default, &format!("{name}/mod.rs")), None),
-            ],
-        };
-        for (target, owns) in candidates {
-            if present.contains(target.as_str()) {
-                out.push(ModLoad {
-                    declarer: declarer.to_string(),
-                    target,
-                    test,
-                    owns,
-                });
+            (Some((_, items)), None) => {
+                let dirs = ModDirs::owned(join_path(&self.dirs.default, &name));
+                let in_block = self.in_block;
+                self.inline(items, dirs, test, in_block);
             }
+            (None, Some(path)) => self.path_load(&path, test),
+            // rustc refuses a default-path module in a block: fail safe.
+            (None, None) => self.default_load(&name, test && !self.in_block),
         }
+    }
+
+    fn visit_macro(&mut self, mac: &'ast Macro) {
+        self.token_loads(&mac.tokens);
+        visit::visit_macro(self, mac);
     }
 }
 
 /// The files (relative to `src`) that only test code loads (#4869, #4872):
 /// every module declaration that loads the file is test-only, either
-/// `#[cfg(test)]` itself (or inside a `#[cfg(test)]` inline module) or in a
-/// file that is itself test-only. A file no declaration in sight loads, or one
-/// that any other declaration loads (`#[cfg(not(test))]`, no `cfg`, another
-/// `cfg`), stays scanned. An inline `#[cfg(test)] mod NAME { .. }` claims no
+/// `#[cfg(test)]` itself (or inside a `#[cfg(test)]` item or inline module) or
+/// in a file that is itself test-only. Declarations count at any depth,
+/// function and constant blocks included (#4880). A file no declaration in
+/// sight loads, or one that any other declaration loads (`#[cfg(not(test))]`,
+/// no `cfg`, another `cfg`, one the walk cannot classify), stays scanned. An inline `#[cfg(test)] mod NAME { .. }` claims no
 /// file, and `#[path = "P"]` loads `P`, never the default `NAME.rs`.
 fn test_only_files(files: &[Parsed]) -> BTreeSet<String> {
     let present: BTreeSet<&str> = files.iter().map(|file| file.relative.as_str()).collect();
@@ -1806,7 +1920,15 @@ fn test_only_files(files: &[Parsed]) -> BTreeSet<String> {
             continue;
         };
         let start = loads.len();
-        module_loads(&ast.items, &relative, &dirs, false, &present, &mut loads);
+        ModuleLoads {
+            declarer: &relative,
+            present: &present,
+            dirs,
+            test: false,
+            in_block: false,
+            out: &mut loads,
+        }
+        .visit_file(ast);
         for load in &loads[start..] {
             if let Some(owns) = &load.owns {
                 queue.push_back((load.target.clone(), ModDirs::owned(owns.clone())));
@@ -3787,4 +3909,89 @@ fn a_file_any_non_test_declaration_loads_stays_scanned() {
         vec!["fresh/checks/kept.rs"],
         "{report:?}"
     );
+}
+
+#[test]
+fn a_function_local_production_module_keeps_its_file_scanned() {
+    // #4880, the reviewer's reproduction: a production `#[path]` module in a
+    // function body loads the file a top-level `#[cfg(test)]` module loads.
+    let reproduction = "use toolkit_aws::recorded::Step;\n#[cfg(test)]\nmod shared;\npub fn run() {\n    #[path = \"shared.rs\"]\n    mod live;\n    live::run();\n}";
+    let report = analyse_with(
+        &[
+            file("fresh/mod.rs", reproduction),
+            file("fresh/shared.rs", TEST_MODULE_READ),
+        ],
+        Some(&[("fresh", Class::Recorded)]),
+    );
+    assert!(!report.is_clean(), "{report:?}");
+    assert_eq!(read_files(&report), vec!["fresh/shared.rs"], "{report:?}");
+    // The same miss in a constant block, a static, a method, a nested block,
+    // under `cfg(feature)` or `cfg(all(test, ..))`, in an inline module's
+    // function, or in a default-path declaration rustc refuses in a block
+    // (fail safe), or in a macro's tokens.
+    for production in [
+        "const _: () = { #[path = \"shared.rs\"] mod live; };",
+        "pub fn run() { let _ = const { #[path = \"shared.rs\"] mod live; 0 }; }",
+        "static LIVE: u8 = { #[path = \"shared.rs\"] mod live; 0 };",
+        "pub struct S;\nimpl S {\n    pub fn run(&self) { #[path = \"shared.rs\"] mod live; }\n}",
+        "pub fn run() { if true { loop { #[path = \"shared.rs\"] mod live; break; } } }",
+        "pub fn run() {\n    #[cfg(feature = \"live\")]\n    #[path = \"shared.rs\"]\n    mod live;\n}",
+        "pub fn run() {\n    #[cfg(all(test, unix))]\n    #[path = \"shared.rs\"]\n    mod live;\n}",
+        "mod outer {\n    pub fn run() { #[path = \"../shared.rs\"] mod live; }\n}",
+        "pub fn run() { mod shared; }",
+        "pub fn run() { wrap! { #[path = \"shared.rs\"] mod live; } }",
+    ] {
+        let files = vec![
+            file(
+                "fresh/mod.rs",
+                &format!("use toolkit_aws::recorded::Step;\n#[cfg(test)]\nmod shared;\n{production}"),
+            ),
+            file("fresh/shared.rs", TEST_MODULE_READ),
+        ];
+        let report = analyse_with(&files, Some(&[("fresh", Class::Recorded)]));
+        assert_eq!(
+            read_files(&report),
+            vec!["fresh/shared.rs"],
+            "{production}: {report:?}"
+        );
+    }
+    // In a block of a non-mod-rs `fresh/sub.rs`, `#[path]` resolves against
+    // `fresh`, as rustc does.
+    let files = vec![
+        file(
+            "fresh/mod.rs",
+            "use toolkit_aws::recorded::Step;\nmod sub;\n#[cfg(test)]\nmod shared;",
+        ),
+        file(
+            "fresh/sub.rs",
+            "pub fn run() { #[path = \"shared.rs\"] mod live; }",
+        ),
+        file("fresh/shared.rs", TEST_MODULE_READ),
+    ];
+    let report = analyse_with(&files, Some(&[("fresh", Class::Recorded)]));
+    assert_eq!(read_files(&report), vec!["fresh/shared.rs"], "{report:?}");
+}
+
+#[test]
+fn a_function_local_test_module_is_test_code() {
+    // #4880: a nested declaration is test-only under its own `#[cfg(test)]`
+    // or an enclosing `#[cfg(test)]` item; a lone test loader drops the file.
+    for test in [
+        "pub fn run() {\n    #[cfg(test)]\n    #[path = \"mocks/fake.rs\"]\n    mod fake;\n}",
+        "#[cfg(test)]\nfn helper() { #[path = \"mocks/fake.rs\"] mod fake; }",
+        "#[cfg(test)]\nconst _: () = { #[path = \"mocks/fake.rs\"] mod fake; };",
+        "pub struct S;\nimpl S {\n    #[cfg(test)]\n    fn helper(&self) { #[path = \"mocks/fake.rs\"] mod fake; }\n}",
+        "#[cfg(test)]\nmod checks {\n    fn helper() { #[path = \"../mocks/fake.rs\"] mod fake; }\n}",
+    ] {
+        let files = vec![
+            file(
+                "fresh/mod.rs",
+                &format!("use toolkit_aws::recorded::Step;\nmod live;\n{test}"),
+            ),
+            file("fresh/live.rs", TEST_MODULE_READ),
+            file("fresh/mocks/fake.rs", TEST_MODULE_READ),
+        ];
+        let report = analyse_with(&files, Some(&[("fresh", Class::Recorded)]));
+        assert_eq!(read_files(&report), vec!["fresh/live.rs"], "{test}: {report:?}");
+    }
 }
