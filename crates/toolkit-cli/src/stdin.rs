@@ -58,6 +58,14 @@ mod tests {
         assert!(error.message().contains("1048576"), "{}", error.message());
     }
 
+    struct Broken;
+
+    impl Read for Broken {
+        fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
+            Err(io::Error::other("boom"))
+        }
+    }
+
     #[test]
     fn refuses_invalid_utf8_and_reports_read_errors() {
         let error = read_bounded(&mut b"\xff".as_slice(), "--json-file").expect_err("utf-8");
@@ -66,12 +74,6 @@ mod tests {
             .message()
             .starts_with("--json-file - could not be read"));
 
-        struct Broken;
-        impl Read for Broken {
-            fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
-                Err(io::Error::other("boom"))
-            }
-        }
         let error = read_bounded(&mut Broken, "--json").expect_err("read error");
         assert_eq!(error.exit_code(), 2);
         assert!(error.message().contains("boom"));
