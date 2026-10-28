@@ -335,3 +335,5 @@ Friction: #4727, Rsi #4694, Rsi #4704
   ROUND 15: new integration Issue #4898 (#4575 closed). Worker 4f5ab2f8 (Opus high, base ce0eaf6a r14): merge #4751 cc098344, #4839 506ccaca, #4584 e60717ac. Mail #4576 / #4398 SHAs when accepted (#4398 must move to registry after #4576).
   If r14 entry 78a019f9 lands first, r15 still descends from it: enqueue r15 normally after.
   4/4 busy: fc21470d (#4395), 15fa44f7 (#4398 repair), 4f5ab2f8 (r15), 8f6e1b47 (#4876 r2).
+- 10-28 20:40Z: #4876 r2 (8f6e1b47) on #4576 5e7a3da1: #4881 PASS, help PASS; #4879 still FAIL (heading/intro exception lets a full 78-route index through). RULING: drop prose exception; a README block may name families of ONE registered slice only (derived from SLICES). Repair 2 worker ffb73739 (Sonnet high, continue_from bef791ca). PM accepts on diff+fixture inspection (no r3).
+  4/4 busy: fc21470d (#4395), 15fa44f7 (#4398 repair), 4f5ab2f8 (r15 #4898), ffb73739 (#4576 repair 2).
