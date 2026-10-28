@@ -436,7 +436,9 @@ live once in `toolkit_aws::recorded`; use it instead of writing your own.
 
 `tests/recorded_contract.rs` enforces this without keying on any spelling you
 choose (a type name, a helper name, a way of nesting `match`). It parses every
-non-test file of `crates/toolkit-cli/src` with `syn` and decides the scope from
+non-test file of `crates/toolkit-cli/src` with `syn` (a test file is
+`tests.rs`, anything under `tests/`, or the file of a `#[cfg(test)] mod NAME;`
+and its submodules, whatever `NAME` is, #4869) and decides the scope from
 an **inventory** of every top-level module of `src` (#4752). A new module fails
 the contract until it is listed there, as one of:
 
@@ -469,16 +471,24 @@ module in scope must:
 - not define its own `optional_*`, `nullable_text` or `same_json` helper;
 - not **read a JSON shape**. That is any pattern whose path ends in `Array` or
   `Object` (`Json::Array(v)`, `Json::Array { 0: v }`, `J::Object { .. }`,
-  `Self::Array(v)`, an imported or renamed variant), wherever the grammar puts
-  it: `match`, `if let`, `while let`, `let ... else`, an annotated `let`, a
-  guard, a struct-field pattern, behind `&`, `ref`, `@`, `Some` or a tuple.
-  It is also any `as_array`, `as_object`, `as_array_mut` or `as_object_mut`.
-  `matches!` and the standard expression macros (`assert!`, `vec!`,
-  `format!`, ...) are parsed with their grammar. Any other macro body (a local
-  `macro_rules!`, its invocations, a pattern macro) fails closed: a shape
-  variant with a payload in it counts, even in a construction. Building a
-  value in code (`Json::Array(items)` as an expression) is not a read. A file
-  that does not parse is a failure;
+  `Self::Array(v)`, an imported variant), or in a name that any `use` in `src`
+  gives one (`use toolkit_core::Json::Array as List`, then `List(v)` or
+  `variants::List(v)` in any file; #4863), wherever the grammar puts it:
+  `match`, `if let`, `while let`, `let ... else`, an annotated `let`, a guard,
+  a struct-field pattern, behind `&`, `ref`, `@`, `Some` or a tuple. It is
+  also any `as_array`, `as_object`, `as_array_mut` or `as_object_mut`. A raw
+  identifier is the name it spells: `r#Array` is `Array` (#4861). `matches!`
+  and the standard expression macros (`assert!`, `vec!`, `format!`, ...) are
+  parsed with their grammar. Any other macro body (a pattern macro, a macro
+  from another crate) fails closed: a shape variant with a payload in it
+  counts, even in a construction. Building a value in code
+  (`Json::Array(items)` as an expression) is not a read. A file that does not
+  parse is a failure;
+- not **define or invoke a local macro** (#4862): a `macro_rules!` item, or
+  an invocation of a macro that `src` defines, is a failure unless the
+  definition carries a `// recorded-shape:` marker. The scanner never expands
+  a macro, so a local one named like a standard macro (`vec!`) does not get
+  the standard grammar either;
 - not **alias the JSON value type**: `type J = Json;`, `type J = (Json);`,
   `type V = serde_json::Value;`, `use toolkit_core::Json as J`,
   `use toolkit_core::Json::{self as J}`, a re-export (`pub use .. as`) or an
@@ -499,14 +509,21 @@ there, **except** the items nested in its body (a function, `mod`, `impl`,
 marker never covers a `mod`, an `impl` or `trait` block, any other item, or a
 file header (inner attribute) scope.
 
-**The scanner is a tripwire, not a proof.** It checks exactly the list above
-(inventory, scope signals, module adoption, helper definitions, shape reads,
-JSON type aliases and marker reasons) on the syntax tree, with no type
-inference, so a determined author can still hide a read. Review is the defense
-against deliberate evasion. Code written to get past the scanner is a review
-blocker even when the test passes: a renamed type, an indirection that hides a
-shape read, a marker whose reason does not match the code, or an inventory
-entry that misstates what a module reads.
+Every finding counts at its own position: two reads on one line are two
+findings, and a `Pending` count is a count of those occurrences (#4864). The
+report prints the findings of a line once, with how many it holds.
+
+**Threat model: a tripwire, not a proof.** The scanner guards honest code
+against an *accidental* raw read of a recorded response. It checks exactly
+the list above (inventory, scope signals, module adoption, helper
+definitions, shape reads, JSON type aliases, local macros and marker reasons)
+on the syntax tree, with no type inference and no macro expansion. Deliberate
+obfuscation is out of its scope: review and the adoption of the shared module
+catch it, and code written to get past the scanner is a review blocker even
+when the test passes (a renamed type, an indirection that hides a shape read,
+a marker whose reason does not match the code, or an inventory entry that
+misstates what a module reads). A further scanner evasion blocks a review only
+when it falls in one of the classes above.
 
 ## Frontmatter additions (#4374)
 
