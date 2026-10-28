@@ -1249,7 +1249,10 @@ fn consumer_sources(dir: &Path, found: &mut Vec<(String, String)>) {
             if name != "tests" {
                 consumer_sources(&path, found);
             }
-        } else if name.ends_with(".rs") && name != "tests.rs" && !name.starts_with("tests_") {
+        } else if Path::new(name).extension().is_some_and(|ext| ext == "rs")
+            && name != "tests.rs"
+            && !name.starts_with("tests_")
+        {
             let relative = path
                 .strip_prefix(&root)
                 .expect("under src")
