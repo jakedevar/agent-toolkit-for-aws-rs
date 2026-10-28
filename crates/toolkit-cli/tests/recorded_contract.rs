@@ -83,9 +83,10 @@
 //! inventory entry that misstates what a module reads) is a review blocker.
 //! A further evasion blocks a review only when it falls in a class above.
 //!
-//! Test code (`tests.rs`, `tests/`, `#[cfg(test)]` items, and the file of an
-//! out-of-line `#[cfg(test)] mod NAME;` with its submodules, whatever its
-//! name, #4869) is out of scope. The README section "Slices without a live
+//! Test code (`tests.rs`, `tests/`, `#[cfg(test)]` items, and every file that
+//! only test-only module declarations load, such as the file of an
+//! out-of-line `#[cfg(test)] mod NAME;` and its submodules, whatever its name,
+//! #4869, #4872) is out of scope. The README section "Slices without a live
 //! AWS client" is the guide for slice authors.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -1646,51 +1647,189 @@ fn classify(
     pending
 }
 
-/// The module paths (relative to `src`, `/`-separated, no extension) of every
-/// `#[cfg(test)] mod NAME;` and `#[cfg(test)] mod NAME { .. }` (#4869). An
-/// out-of-line test module lives in `NAME.rs` or `NAME/mod.rs` beside its
-/// parent module, whatever its name (`tests_core`, `cost_tests`), and its own
-/// submodules under `NAME/`: all of it is test code. A `#[path]` attribute is
-/// not followed.
-fn cfg_test_modules(files: &[Parsed]) -> Vec<String> {
-    fn walk(items: &[Item], dir: &str, out: &mut Vec<String>) {
-        for item in items {
-            let Item::Mod(module) = item else { continue };
-            let name = name_of(&module.ident);
-            let child = if dir.is_empty() {
-                name
-            } else {
-                format!("{dir}/{name}")
+/// Where a module file's own declarations resolve (#4872): `mod NAME;` loads
+/// `default/NAME.rs` or `default/NAME/mod.rs`, `#[path = "P"] mod NAME;` loads
+/// `paths/P`. A mod-rs file (`a/mod.rs`, `lib.rs`, `main.rs`, any file loaded
+/// through `#[path]`) has both in its directory; a non-mod-rs `a/b.rs` has
+/// `default` `a/b` and `paths` `a`.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct ModDirs {
+    default: String,
+    paths: String,
+}
+
+impl ModDirs {
+    fn owned(dir: String) -> Self {
+        Self {
+            default: dir.clone(),
+            paths: dir,
+        }
+    }
+}
+
+/// One module declaration that loads a file: who declares it, the file, and
+/// whether the declaration is test-only (`#[cfg(test)]` on it or on an
+/// enclosing inline module).
+struct ModLoad {
+    declarer: String,
+    target: String,
+    test: bool,
+    /// The directory a `#[path]`-loaded file owns, as a mod-rs file.
+    owns: Option<String>,
+}
+
+/// `rest` (a `/`-separated relative path) resolved against `dir`.
+fn join_path(dir: &str, rest: &str) -> String {
+    let mut parts: Vec<&str> = dir.split('/').filter(|part| !part.is_empty()).collect();
+    for part in rest.split('/') {
+        match part {
+            "" | "." => {}
+            ".." => {
+                parts.pop();
+            }
+            part => parts.push(part),
+        }
+    }
+    parts.join("/")
+}
+
+/// The `#[path = "P"]` of a module declaration.
+fn path_attr(attrs: &[Attribute]) -> Option<String> {
+    attrs.iter().find_map(|attr| match &attr.meta {
+        syn::Meta::NameValue(meta) if meta.path.is_ident("path") => match &meta.value {
+            Expr::Lit(syn::ExprLit {
+                lit: syn::Lit::Str(path),
+                ..
+            }) => Some(path.value()),
+            _ => None,
+        },
+        _ => None,
+    })
+}
+
+/// The directories of `relative` when its parent loads it by the default
+/// path: the compiler's mod-rs / non-mod-rs rule.
+fn natural_dirs(relative: &str) -> ModDirs {
+    let stem = relative.strip_suffix(".rs").unwrap_or(relative);
+    match stem.rsplit_once('/') {
+        Some((parent, "mod")) => ModDirs::owned(parent.to_string()),
+        None if ROOTS.contains(&stem) || stem == "mod" => ModDirs::owned(String::new()),
+        Some((parent, _)) => ModDirs {
+            default: stem.to_string(),
+            paths: parent.to_string(),
+        },
+        None => ModDirs {
+            default: stem.to_string(),
+            paths: String::new(),
+        },
+    }
+}
+
+/// Every module declaration in `items` of the file `declarer`, resolved
+/// against `dirs` to the files of `present` it loads.
+fn module_loads(
+    items: &[Item],
+    declarer: &str,
+    dirs: &ModDirs,
+    test: bool,
+    present: &BTreeSet<&str>,
+    out: &mut Vec<ModLoad>,
+) {
+    for item in items {
+        let Item::Mod(module) = item else { continue };
+        let test = test || is_cfg_test(&module.attrs);
+        let name = name_of(&module.ident);
+        let path = path_attr(&module.attrs);
+        if let Some((_, items)) = &module.content {
+            // An inline module loads no file itself (#4872); its out-of-line
+            // children resolve below it.
+            let dir = match &path {
+                Some(path) => join_path(&dirs.paths, path),
+                None => join_path(&dirs.default, &name),
             };
-            if is_cfg_test(&module.attrs) {
-                out.push(child);
-            } else if let Some((_, items)) = &module.content {
-                walk(items, &child, out);
+            module_loads(items, declarer, &ModDirs::owned(dir), test, present, out);
+            continue;
+        }
+        let candidates = match &path {
+            // A `#[path]` file is a mod-rs file: its children live beside it.
+            Some(path) => {
+                let target = join_path(&dirs.paths, path);
+                let owns = target
+                    .rsplit_once('/')
+                    .map_or(String::new(), |(parent, _)| parent.to_string());
+                vec![(target, Some(owns))]
+            }
+            None => vec![
+                (join_path(&dirs.default, &format!("{name}.rs")), None),
+                (join_path(&dirs.default, &format!("{name}/mod.rs")), None),
+            ],
+        };
+        for (target, owns) in candidates {
+            if present.contains(target.as_str()) {
+                out.push(ModLoad {
+                    declarer: declarer.to_string(),
+                    target,
+                    test,
+                    owns,
+                });
             }
         }
     }
-    let mut modules = Vec::new();
-    for file in files {
-        let Ok(ast) = &file.ast else { continue };
-        // The directory that holds the file's child modules: `a/mod.rs`,
-        // `lib.rs` and `main.rs` own their directory, `a/b.rs` owns `a/b/`.
-        let stem = file.relative.strip_suffix(".rs").unwrap_or(&file.relative);
-        let dir = match stem.rsplit_once('/') {
-            Some((parent, "mod")) => parent,
-            None if ROOTS.contains(&stem) || stem == "mod" => "",
-            _ => stem,
-        };
-        walk(&ast.items, dir, &mut modules);
-    }
-    modules
 }
 
-/// Whether the file `relative` is (inside) one of the test `modules`.
-fn is_in_test_module(relative: &str, modules: &[String]) -> bool {
-    modules.iter().any(|module| {
-        relative.strip_suffix(".rs") == Some(module.as_str())
-            || relative.starts_with(&format!("{module}/"))
-    })
+/// The files (relative to `src`) that only test code loads (#4869, #4872):
+/// every module declaration that loads the file is test-only, either
+/// `#[cfg(test)]` itself (or inside a `#[cfg(test)]` inline module) or in a
+/// file that is itself test-only. A file no declaration in sight loads, or one
+/// that any other declaration loads (`#[cfg(not(test))]`, no `cfg`, another
+/// `cfg`), stays scanned. An inline `#[cfg(test)] mod NAME { .. }` claims no
+/// file, and `#[path = "P"]` loads `P`, never the default `NAME.rs`.
+fn test_only_files(files: &[Parsed]) -> BTreeSet<String> {
+    let present: BTreeSet<&str> = files.iter().map(|file| file.relative.as_str()).collect();
+    let asts: BTreeMap<&str, &syn::File> = files
+        .iter()
+        .filter_map(|file| Some((file.relative.as_str(), file.ast.as_ref().ok()?)))
+        .collect();
+    // Walk each file by its default-path directories and, once a `#[path]`
+    // reaches it, by those of a mod-rs file too.
+    let mut queue: VecDeque<(String, ModDirs)> = asts
+        .keys()
+        .map(|relative| ((*relative).to_string(), natural_dirs(relative)))
+        .collect();
+    let mut walked = BTreeSet::new();
+    let mut loads: Vec<ModLoad> = Vec::new();
+    while let Some((relative, dirs)) = queue.pop_front() {
+        if !walked.insert((relative.clone(), dirs.clone())) {
+            continue;
+        }
+        let Some(ast) = asts.get(relative.as_str()) else {
+            continue;
+        };
+        let start = loads.len();
+        module_loads(&ast.items, &relative, &dirs, false, &present, &mut loads);
+        for load in &loads[start..] {
+            if let Some(owns) = &load.owns {
+                queue.push_back((load.target.clone(), ModDirs::owned(owns.clone())));
+            }
+        }
+    }
+    // The least fixed point: a file is test-only once every load of it is.
+    let mut test_only = BTreeSet::new();
+    loop {
+        let mut by_target: BTreeMap<&str, bool> = BTreeMap::new();
+        for load in &loads {
+            let only_test = load.test || test_only.contains(&load.declarer);
+            *by_target.entry(load.target.as_str()).or_insert(true) &= only_test;
+        }
+        let next: BTreeSet<String> = by_target
+            .into_iter()
+            .filter_map(|(target, only_test)| only_test.then(|| target.to_string()))
+            .collect();
+        if next == test_only {
+            return test_only;
+        }
+        test_only = next;
+    }
 }
 
 /// The contract over `files`, scoped by the recording signals alone.
@@ -1702,8 +1841,8 @@ fn analyse(files: &[SourceFile]) -> Report {
 /// classified and the classification decides the scope.
 fn analyse_with(files: &[SourceFile], inventory: Option<&[(&str, Class)]>) -> Report {
     let mut parsed: Vec<Parsed> = files.iter().map(parse).collect();
-    let test_modules = cfg_test_modules(&parsed);
-    parsed.retain(|file| !is_in_test_module(&file.relative, &test_modules));
+    let test_only = test_only_files(&parsed);
+    parsed.retain(|file| !test_only.contains(&file.relative));
     let constants = flag_constants(&parsed);
     let names = crate_names(&parsed);
     let mut report = Report::default();
@@ -3508,37 +3647,133 @@ fn a_read_added_beside_a_pending_read_fails_the_real_contract() {
 fn an_out_of_line_cfg_test_module_is_test_code_whatever_its_name() {
     // #4869: `#[cfg(test)] mod tests_core;` brings in `tests_core.rs` (or
     // `tests_core/mod.rs`) and its own submodules; none is production code.
-    let read = "fn items(r: &Json) -> &[Json] {\n    match r.get(\"Items\") { Some(Json::Array(v)) => v, _ => &[] }\n}";
     let files = vec![
         file(
             "fresh/mod.rs",
-            "use toolkit_aws::recorded::Step;\n#[cfg(test)]\nmod tests_core;\n#[cfg(test)]\nmod fixtures;\nmod inner {\n    #[cfg(test)]\n    mod deep;\n}\nmod live;\nmod sub;",
+            "use toolkit_aws::recorded::Step;\n#[cfg(test)]\nmod tests_core;\n#[cfg(test)]\nmod fixtures;\nmod inner {\n    #[cfg(test)]\n    mod deep;\n}\n#[cfg(test)]\nmod checks {\n    mod helper;\n}\n#[cfg(test)]\n#[path = \"mocks/fake.rs\"]\nmod fake;\nmod live;\nmod sub;",
         ),
-        file("fresh/tests_core.rs", read),
-        file("fresh/fixtures/mod.rs", read),
-        file("fresh/fixtures/more.rs", read),
-        file("fresh/inner/deep.rs", read),
+        file("fresh/tests_core.rs", TEST_MODULE_READ),
+        file(
+            "fresh/fixtures/mod.rs",
+            &format!("mod more;\n{TEST_MODULE_READ}"),
+        ),
+        file("fresh/fixtures/more.rs", TEST_MODULE_READ),
+        file("fresh/inner/deep.rs", TEST_MODULE_READ),
+        // The out-of-line child of an inline test module.
+        file("fresh/checks/helper.rs", TEST_MODULE_READ),
+        // A `#[path]` test module, and its child beside it (a mod-rs file).
+        file(
+            "fresh/mocks/fake.rs",
+            &format!("mod twin;\n{TEST_MODULE_READ}"),
+        ),
+        file("fresh/mocks/twin.rs", TEST_MODULE_READ),
         file("fresh/sub.rs", "#[cfg(test)]\nmod check;\npub fn run() {}"),
-        file("fresh/sub/check.rs", read),
-        // Production modules beside them still count.
-        file("fresh/live.rs", read),
-        file("fresh/tests_core_live.rs", read),
+        file("fresh/sub/check.rs", TEST_MODULE_READ),
+        // Production modules beside them still count, and so does a file no
+        // declaration in sight loads.
+        file("fresh/live.rs", TEST_MODULE_READ),
+        file("fresh/tests_core_live.rs", TEST_MODULE_READ),
         // A top-level test module of the crate root.
         file("lib.rs", "pub mod fresh;\n#[cfg(test)]\nmod crate_checks;"),
-        file("crate_checks.rs", read),
+        file("crate_checks.rs", TEST_MODULE_READ),
     ];
     let report = analyse_with(&files, Some(&[("fresh", Class::Recorded)]));
+    assert_eq!(
+        read_files(&report),
+        vec!["fresh/live.rs", "fresh/tests_core_live.rs"],
+        "{report:?}"
+    );
+    // `crate_checks` is test code, so it needs no inventory entry.
+    assert!(report.inventory.is_empty(), "{report:?}");
+}
+
+/// A production-shaped raw read for the test-module fixtures.
+const TEST_MODULE_READ: &str = "fn response_items(r: &Json) -> &[Json] {\n    match r.get(\"Items\") { Some(Json::Array(v)) => v, _ => &[] }\n}";
+
+/// The files of `report`'s reads, sorted.
+fn read_files(report: &Report) -> Vec<&str> {
     let mut at: Vec<&str> = report
         .reads
         .iter()
         .map(|read| read.split(':').next().expect("file"))
         .collect();
     at.sort_unstable();
+    at
+}
+
+#[test]
+fn an_inline_test_mock_does_not_exclude_the_production_module() {
+    // #4872, the reviewer's reproduction: production loads `transport.rs`,
+    // test builds swap in an inline mock of the same name. The mock claims no
+    // file, so the production read is still refused.
+    let files = vec![
+        file(
+            "fresh/mod.rs",
+            "use toolkit_aws::recorded::Step;\n#[cfg(not(test))]\nmod transport;\n#[cfg(test)]\nmod transport { pub fn mock() {} }",
+        ),
+        file("fresh/transport.rs", TEST_MODULE_READ),
+    ];
+    let report = analyse_with(&files, Some(&[("fresh", Class::Recorded)]));
+    assert!(!report.is_clean(), "{report:?}");
+    assert_eq!(read_files(&report), vec!["fresh/transport.rs"], "{report:?}");
+}
+
+#[test]
+fn a_path_selected_test_mock_does_not_exclude_the_production_module() {
+    // #4872: the test build loads `mock_transport.rs` through `#[path]`, so
+    // the default `transport.rs` stays production code.
+    let files = vec![
+        file(
+            "fresh/mod.rs",
+            "use toolkit_aws::recorded::Step;\n#[cfg(not(test))]\nmod transport;\n#[cfg(test)]\n#[path = \"mock_transport.rs\"]\nmod transport;",
+        ),
+        file("fresh/transport.rs", TEST_MODULE_READ),
+        file("fresh/mock_transport.rs", "pub fn mock() {}"),
+    ];
+    let report = analyse_with(&files, Some(&[("fresh", Class::Recorded)]));
+    assert!(!report.is_clean(), "{report:?}");
+    assert_eq!(read_files(&report), vec!["fresh/transport.rs"], "{report:?}");
+}
+
+#[test]
+fn a_file_any_non_test_declaration_loads_stays_scanned() {
+    // #4872: a file is test code only when every declaration that loads it
+    // is test-only; `cfg(not(test))`, no `cfg` or another `cfg` keeps it.
+    for production in [
+        "#[cfg(not(test))]\n#[path = \"shared.rs\"]\nmod shared_live;",
+        "#[path = \"shared.rs\"]\nmod shared_live;",
+        "#[cfg(feature = \"live\")]\n#[path = \"shared.rs\"]\nmod shared_live;",
+        "#[cfg(all(test, unix))]\n#[path = \"shared.rs\"]\nmod shared_live;",
+    ] {
+        let files = vec![
+            file(
+                "fresh/mod.rs",
+                &format!("use toolkit_aws::recorded::Step;\n#[cfg(test)]\nmod shared;\n{production}"),
+            ),
+            file("fresh/shared.rs", TEST_MODULE_READ),
+        ];
+        let report = analyse_with(&files, Some(&[("fresh", Class::Recorded)]));
+        assert_eq!(
+            read_files(&report),
+            vec!["fresh/shared.rs"],
+            "{production}: {report:?}"
+        );
+    }
+    // A production file under a test-only parent is test code; one a
+    // production parent also loads is not.
+    let files = vec![
+        file(
+            "fresh/mod.rs",
+            "use toolkit_aws::recorded::Step;\n#[cfg(test)]\nmod checks;\n#[path = \"checks/kept.rs\"]\nmod kept;",
+        ),
+        file("fresh/checks.rs", "mod dropped;\nmod kept;"),
+        file("fresh/checks/dropped.rs", TEST_MODULE_READ),
+        file("fresh/checks/kept.rs", TEST_MODULE_READ),
+    ];
+    let report = analyse_with(&files, Some(&[("fresh", Class::Recorded)]));
     assert_eq!(
-        at,
-        vec!["fresh/live.rs", "fresh/tests_core_live.rs"],
+        read_files(&report),
+        vec!["fresh/checks/kept.rs"],
         "{report:?}"
     );
-    // `crate_checks` is test code, so it needs no inventory entry.
-    assert!(report.inventory.is_empty(), "{report:?}");
 }
