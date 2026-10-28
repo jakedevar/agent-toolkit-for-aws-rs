@@ -286,6 +286,90 @@ fn a_run_reported_by_the_shipped_binary_leaves_no_snapshot_and_sends_nothing() {
     assert!(!run.join(".telemetry-lock").exists());
 }
 
+/// `toolkit telemetry reconcile` in `project` under umask 000, set in a child
+/// shell so this test process's umask is never touched.
+#[cfg(unix)]
+fn reconcile_under_umask_000(home: &Home, project: &Path, bundle: &Path) -> Output {
+    let mut command = Command::new("/bin/sh");
+    command
+        .args(["-c", "umask 000 && exec \"$0\" \"$@\"", BIN])
+        .args([
+            "telemetry",
+            "reconcile",
+            "--telemetry-dir",
+            &bundle.display().to_string(),
+        ])
+        .env_clear()
+        .env("HOME", &home.0)
+        .env("CLAUDECODE", "1")
+        .current_dir(project)
+        .stdin(Stdio::null());
+    command.output().expect("spawn sh")
+}
+
+#[cfg(unix)]
+#[test]
+fn snapshots_and_locks_stay_private_under_a_permissive_umask() {
+    use std::os::unix::fs::PermissionsExt;
+    let mode = |path: &Path| {
+        fs::symlink_metadata(path)
+            .expect("stat")
+            .permissions()
+            .mode()
+            & 0o777
+    };
+    let chmod = |path: &Path, bits: u32| {
+        fs::set_permissions(path, fs::Permissions::from_mode(bits)).expect("chmod");
+    };
+    let home = Home::new("umask");
+    home.accept();
+    let project = home.0.join("project");
+    let run = project.join(".migration/0226-1430");
+    fs::create_dir_all(&run).expect("run");
+    fs::write(
+        run.join(".phase-status.json"),
+        "{\"migration_id\": \"0226-1430\", \"owning_skill\": \"GCP_TO_AWS\", \"current_phase\": \"clarify\", \"phases\": {\"discover\": \"completed\"}}",
+    )
+    .expect("status");
+    let bundle = home.0.join("bundle");
+    fs::create_dir_all(&bundle).expect("bundle");
+    fs::write(bundle.join("version.json"), "{\"version\": \"2.0.3\"}").expect("version");
+    let snapshot = run.join(".telemetry-snapshot.json");
+    let lock = run.join(".telemetry-lock");
+    let quiet = |output: &Output| {
+        assert_eq!(output.status.code(), Some(0));
+        assert_eq!(
+            (text(&output.stdout), text(&output.stderr)),
+            (String::new(), String::new())
+        );
+    };
+
+    // A corrupt snapshot takes the rebuild branch, the one write the shipped
+    // sink reaches; its replacement is 0600 although the umask allows 0666.
+    fs::write(&snapshot, "[1, 2]").expect("corrupt");
+    chmod(&snapshot, 0o600);
+    quiet(&reconcile_under_umask_000(&home, &project, &bundle));
+    assert_eq!(mode(&snapshot), 0o600);
+    assert!(text(&fs::read(&snapshot).expect("snapshot")).contains("\"runId\""));
+    assert!(!lock.exists());
+
+    // A world-writable lock directory, fresh by its time, is not honoured: it
+    // is replaced by a private one, so the run is processed (its 0666
+    // snapshot rebuilt privately, not trusted) and the lock released.
+    fs::create_dir(&lock).expect("lock");
+    chmod(&lock, 0o777);
+    fs::write(&snapshot, "{\"runId\": \"0badf00d-1111-4222-8333-444444444444\", \"phases\": {}}")
+        .expect("forged");
+    chmod(&snapshot, 0o666);
+    quiet(&reconcile_under_umask_000(&home, &project, &bundle));
+    assert!(!lock.exists(), "the open lock was replaced and released");
+    assert_eq!(mode(&snapshot), 0o600);
+    assert!(
+        !text(&fs::read(&snapshot).expect("snapshot")).contains("0badf00d"),
+        "the forged identity is not carried over"
+    );
+}
+
 #[test]
 fn the_committed_bundles_are_in_sync_through_the_binary() {
     let home = Home::new("bundles");

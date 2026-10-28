@@ -790,6 +790,8 @@ fn a_stale_lock_is_taken_over_and_a_fresh_one_blocks() {
     let fx = fixture();
     let p = Project::gcp(&fx, &phase_status(json!({})));
     fs::create_dir(p.run_dir.join(".telemetry-lock")).expect("lock");
+    // Private whatever the umask: a lock other users can write is not honoured.
+    set_mode(&p.run_dir.join(".telemetry-lock"), 0o700);
     assert!(
         p.reconcile(SESSION_ID).is_empty(),
         "the holder is about to report the same transitions"
@@ -805,6 +807,186 @@ fn a_stale_lock_is_taken_over_and_a_fresh_one_blocks() {
         "an abandoned lock is taken over"
     );
     assert!(!p.has_lock());
+}
+
+// ------------------------------------------------- snapshot and lock privacy
+
+/// `chmod`: fixtures get explicit modes so no assertion depends on the umask.
+fn set_mode(path: &Path, mode: u32) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(mode)).expect("chmod");
+    }
+    #[cfg(not(unix))]
+    let _ = (path, mode);
+}
+
+#[cfg(unix)]
+fn mode_of(path: &Path) -> u32 {
+    use std::os::unix::fs::PermissionsExt;
+    fs::symlink_metadata(path).expect("stat").permissions().mode() & 0o777
+}
+
+/// Records the lock directory's mode at every request, so the lock can be
+/// observed while it is held (it is removed when the run is done).
+#[cfg(unix)]
+fn record_lock_modes(fx: &Fx, run_dir: &Path) -> std::sync::Arc<std::sync::Mutex<Vec<u32>>> {
+    let modes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let seen = std::sync::Arc::clone(&modes);
+    let lock = run_dir.join(".telemetry-lock");
+    fx.sink.respond_by(move |_| {
+        seen.lock().expect("modes").push(mode_of(&lock));
+        PostStatus::Status(200)
+    });
+    modes
+}
+
+/// The run directory holds nothing but what the test wrote and the snapshot:
+/// no temporary file is left behind.
+#[cfg(unix)]
+fn no_temporaries(run_dir: &Path) {
+    let leftovers: Vec<String> = fs::read_dir(run_dir)
+        .expect("run dir")
+        .filter_map(Result::ok)
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.ends_with(".tmp"))
+        .collect();
+    assert!(leftovers.is_empty(), "{leftovers:?}");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_new_snapshot_is_readable_and_writable_by_its_owner_only() {
+    let fx = fixture();
+    let p = Project::gcp(&fx, &phase_status(json!({})));
+    assert_eq!(p.reconcile(SESSION_ID).len(), 2);
+    assert_eq!(mode_of(&p.snapshot_path()), 0o600);
+    no_temporaries(&p.run_dir);
+    // A later write (a new transition) replaces it privately too.
+    p.write_status(&phase_status(
+        json!({"current_phase": "design", "phases": with_phases(&[("clarify", "completed")])}),
+    ));
+    assert_eq!(p.reconcile(SESSION_ID).len(), 1);
+    assert_eq!(mode_of(&p.snapshot_path()), 0o600);
+    no_temporaries(&p.run_dir);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_rebuilt_snapshot_is_readable_and_writable_by_its_owner_only() {
+    let fx = fixture();
+    let p = Project::gcp(&fx, &phase_status(json!({})));
+    p.reconcile(SESSION_ID);
+    // Corrupt but private: only the rebuild branch can write the replacement.
+    fs::write(p.snapshot_path(), "[1, 2]").expect("corrupt");
+    set_mode(&p.snapshot_path(), 0o600);
+    assert!(p.reconcile(SESSION_ID).is_empty(), "a rebuild sends nothing");
+    assert_eq!(p.snapshot()["runId"], RUN_ID);
+    assert_eq!(mode_of(&p.snapshot_path()), 0o600);
+    no_temporaries(&p.run_dir);
+}
+
+#[cfg(unix)]
+#[test]
+fn the_lock_directory_is_private_while_held_including_a_taken_over_stale_one() {
+    let fx = fixture();
+    let p = Project::gcp(&fx, &phase_status(json!({})));
+    let modes = record_lock_modes(&fx, &p.run_dir);
+    assert_eq!(p.reconcile(SESSION_ID).len(), 2);
+    assert_eq!(*modes.lock().expect("modes"), vec![0o700, 0o700]);
+    assert!(!p.has_lock());
+
+    // An abandoned lock (private, so only its age decides) is replaced by a
+    // private one.
+    modes.lock().expect("modes").clear();
+    fs::create_dir(p.run_dir.join(".telemetry-lock")).expect("stale lock");
+    set_mode(&p.run_dir.join(".telemetry-lock"), 0o755);
+    fx.set_clock(crate::telemetry::system_now() + 3600.0);
+    p.write_status(&phase_status(
+        json!({"current_phase": "design", "phases": with_phases(&[("clarify", "completed")])}),
+    ));
+    assert_eq!(p.reconcile(SESSION_ID).len(), 1);
+    assert_eq!(*modes.lock().expect("modes"), vec![0o700]);
+    assert!(!p.has_lock());
+}
+
+#[cfg(unix)]
+#[test]
+fn a_snapshot_other_users_can_write_is_not_trusted_and_is_replaced_privately() {
+    let fx = fixture();
+    let p = Project::gcp(&fx, &phase_status(json!({})));
+    assert_eq!(p.reconcile(SESSION_ID).len(), 2);
+    // Another user rewrites a world-writable snapshot to forge a run identity,
+    // owner and history; read, it would re-send DISCOVER under that identity.
+    fs::write(
+        p.snapshot_path(),
+        json!({
+            "runId": OTHER_SESSION,
+            "sessionId": OTHER_SESSION,
+            "phases": {},
+            "gateFailures": [],
+            "completed": false,
+        })
+        .to_string(),
+    )
+    .expect("forged");
+    set_mode(&p.snapshot_path(), 0o666);
+    assert!(
+        p.reconcile(SESSION_ID).is_empty(),
+        "nothing is sent from untrusted state"
+    );
+    assert_eq!(mode_of(&p.snapshot_path()), 0o600, "replaced privately");
+    let snapshot = p.snapshot();
+    assert_eq!(snapshot["runId"], RUN_ID, "the forged identity is not used");
+    assert_eq!(snapshot["sessionId"], SESSION_ID);
+    assert_eq!(snapshot["phases"], phase_status(json!({}))["phases"]);
+    no_temporaries(&p.run_dir);
+
+    // Group-writable is not private either.
+    set_mode(&p.snapshot_path(), 0o620);
+    p.write_status(&phase_status(
+        json!({"current_phase": "design", "phases": with_phases(&[("clarify", "completed")])}),
+    ));
+    assert!(p.reconcile(SESSION_ID).is_empty());
+    assert_eq!(mode_of(&p.snapshot_path()), 0o600);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_lock_directory_other_users_can_write_is_not_honoured() {
+    let fx = fixture();
+    let p = Project::gcp(&fx, &phase_status(json!({})));
+    // Fresh by the clock, but anyone may keep a world-writable directory fresh
+    // (adding an entry updates its time), so it says nothing about a holder.
+    fs::create_dir(p.run_dir.join(".telemetry-lock")).expect("lock");
+    set_mode(&p.run_dir.join(".telemetry-lock"), 0o777);
+    let modes = record_lock_modes(&fx, &p.run_dir);
+    assert_eq!(p.reconcile(SESSION_ID).len(), 2);
+    assert_eq!(
+        *modes.lock().expect("modes"),
+        vec![0o700, 0o700],
+        "replaced by a private lock"
+    );
+    assert!(!p.has_lock());
+
+    // Group-writable is not private either; a symbolic link is still refused.
+    fs::create_dir(p.run_dir.join(".telemetry-lock")).expect("lock");
+    set_mode(&p.run_dir.join(".telemetry-lock"), 0o770);
+    p.write_status(&phase_status(
+        json!({"current_phase": "design", "phases": with_phases(&[("clarify", "completed")])}),
+    ));
+    assert_eq!(p.reconcile(SESSION_ID).len(), 1);
+    assert!(!p.has_lock());
+    let elsewhere = fx.dir.path().join("elsewhere");
+    fs::create_dir(&elsewhere).expect("target");
+    set_mode(&elsewhere, 0o777);
+    std::os::unix::fs::symlink(&elsewhere, p.run_dir.join(".telemetry-lock")).expect("link");
+    p.write_status(&phase_status(
+        json!({"current_phase": "estimate", "phases": with_phases(&[("clarify", "completed"), ("design", "completed")])}),
+    ));
+    assert!(p.reconcile(SESSION_ID).is_empty());
+    assert!(elsewhere.exists(), "a linked lock is never removed through");
 }
 
 #[test]

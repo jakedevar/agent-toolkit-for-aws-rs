@@ -134,6 +134,15 @@ Telemetry defaults to **no emission** and never blocks the host:
 9. **The hook payload** from stdin is bounded to 1 MiB.
 10. A non-string `sessionId` in a snapshot reads as absent; the lock's staleness is measured
     against the injected clock (tests) rather than wall time.
+11. **Private snapshot and lock (#4894).** Snapshots are written 0600 (temporary file created
+    with that mode, synced, then renamed) and lock directories are created 0700, whatever the umask
+    (Python used the umask defaults, so 0664/0775 under umask 002). A snapshot that is group- or
+    other-writable, or not owned by the current user, is never read: it is treated like a corrupt
+    one, so nothing is sent and it is replaced by a private snapshot of the current state (the
+    transitions since are not reported). A group- or other-writable lock directory is not honoured
+    as a holder (anyone could keep it fresh) and is replaced by a private one, as a stale lock is.
+    While the Python hooks still share these files, a snapshot they write under a group-writable
+    umask is rebuilt the next time the Rust command runs.
 
 Unchanged on purpose: the consent file layout, the wire fields, the notice and acknowledge
 wording, the snapshot layout (`runId`, `sessionId`, `started`, `phases`, `gateFailures`,

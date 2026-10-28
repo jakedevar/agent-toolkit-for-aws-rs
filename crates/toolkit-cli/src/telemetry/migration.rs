@@ -79,14 +79,22 @@ enum Snapshot {
     /// Present but not a JSON object. A missing snapshot means a new run; a
     /// corrupt one must not, or the run would be re-reported from
     /// `RUN_STARTED`. The caller rebuilds it from the current state without
-    /// sending, so the run reports again from its next transition.
+    /// sending, so the run reports again from its next transition. A snapshot
+    /// another user could have written (group- or other-writable, or not
+    /// owned by this user) is never read: it is treated the same way, so it is
+    /// replaced by a private one and nothing is sent from it.
     Unreadable,
     Data(Json),
 }
 
-fn read_snapshot(path: &Path) -> Snapshot {
+/// `owner` is the user this process creates files as ([`Lock::owner`]).
+fn read_snapshot(path: &Path, owner: Option<u32>) -> Snapshot {
     if !path.exists() {
         return Snapshot::Absent;
+    }
+    let trusted = fs::symlink_metadata(path).is_ok_and(|metadata| private_to(&metadata, owner));
+    if !trusted {
+        return Snapshot::Unreadable;
     }
     match read_json(path) {
         Some(data @ Json::Object(_)) => Snapshot::Data(data),
@@ -94,8 +102,31 @@ fn read_snapshot(path: &Path) -> Snapshot {
     }
 }
 
+/// Whether only `owner` can change what `metadata` describes: owned by
+/// `owner` and neither group- nor other-writable. An unknown owner is never
+/// trusted on Unix; elsewhere there is no mode to check.
+#[cfg(unix)]
+fn private_to(metadata: &fs::Metadata, owner: Option<u32>) -> bool {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    owner == Some(metadata.uid()) && !open_to_others(metadata.permissions().mode())
+}
+
+#[cfg(not(unix))]
+fn private_to(_metadata: &fs::Metadata, _owner: Option<u32>) -> bool {
+    true
+}
+
+/// Group- or other-writable.
+#[cfg(unix)]
+const fn open_to_others(mode: u32) -> bool {
+    mode & 0o022 != 0
+}
+
 /// Temporary file plus rename, so a hook killed at the host's timeout cannot
-/// leave a half-written file where [`read_snapshot`] would find it.
+/// leave a half-written file where [`read_snapshot`] would find it. The file
+/// is created 0600 (a umask can only narrow that), so no other user can
+/// rewrite what the next run trusts, and synced before it replaces the old
+/// one.
 fn write_json(path: &Path, value: &Json) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
@@ -108,11 +139,19 @@ fn write_json(path: &Path, value: &Json) -> std::io::Result<()> {
     let _ = fs::remove_file(&temporary);
     let mut text = pyjson::dumps(value, Some(2), false);
     text.push('\n');
-    let written = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let written = options
         .open(&temporary)
-        .and_then(|mut file| file.write_all(text.as_bytes()))
+        .and_then(|mut file| {
+            file.write_all(text.as_bytes())?;
+            file.sync_all()
+        })
         .and_then(|()| fs::rename(&temporary, path));
     if written.is_err() {
         let _ = fs::remove_file(&temporary);
@@ -196,24 +235,82 @@ fn find_run_dirs(start_dir: &Path) -> Vec<PathBuf> {
 /// An exclusive per-run lock (directory creation as an atomic test-and-set).
 /// Overlapping hooks would otherwise read the same "before" state and report
 /// the same transitions twice.
-struct Lock(PathBuf);
+///
+/// The directory is created 0700 (a umask can only narrow it). One that
+/// another user can write is never honoured: anyone could keep it fresh by
+/// adding an entry, so it says nothing about a holder; it is replaced like an
+/// abandoned one.
+struct Lock {
+    path: PathBuf,
+    /// The user this process creates files as: the owner of the directory it
+    /// just created. A snapshot is trusted only when it belongs to this user.
+    owner: Option<u32>,
+}
+
+impl Lock {
+    /// Takes a directory this process just created. On Unix a lock whose owner
+    /// cannot be read is released at once: nothing could be checked against it.
+    fn created(path: PathBuf) -> Option<Self> {
+        #[cfg(unix)]
+        let owner = {
+            use std::os::unix::fs::MetadataExt;
+            fs::symlink_metadata(&path).ok().map(|metadata| metadata.uid())
+        };
+        #[cfg(not(unix))]
+        let owner = None;
+        let lock = Self { path, owner };
+        if cfg!(unix) && lock.owner.is_none() {
+            return None;
+        }
+        Some(lock)
+    }
+}
 
 impl Drop for Lock {
     fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.0);
+        let _ = fs::remove_dir_all(&self.path);
     }
+}
+
+fn create_private_dir(path: &Path) -> std::io::Result<()> {
+    let mut builder = fs::DirBuilder::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    builder.create(path)
+}
+
+#[cfg(unix)]
+fn writable_by_others(metadata: &fs::Metadata) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    open_to_others(metadata.permissions().mode())
+}
+
+#[cfg(not(unix))]
+fn writable_by_others(_metadata: &fs::Metadata) -> bool {
+    false
 }
 
 fn acquire_lock(ctx: &Ctx<'_>, run_dir: &Path) -> Option<Lock> {
     let lock = run_dir.join(LOCK_DIR);
-    match fs::create_dir(&lock) {
-        Ok(()) => Some(Lock(lock)),
+    match create_private_dir(&lock) {
+        Ok(()) => Lock::created(lock),
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
             let metadata = fs::symlink_metadata(&lock).ok()?;
+            // A link or a file is not a lock this program made: never removed.
+            if !metadata.is_dir() {
+                return None;
+            }
             let modified = metadata.modified().ok()?.duration_since(UNIX_EPOCH).ok()?;
-            if metadata.is_dir() && (ctx.now)() - modified.as_secs_f64() > LOCK_STALE_SECONDS {
+            let stale = (ctx.now)() - modified.as_secs_f64() > LOCK_STALE_SECONDS;
+            if stale || writable_by_others(&metadata) {
+                // Removal does not follow links inside the directory. If a peer
+                // recreated it first, creation fails and that peer holds it.
                 let _ = fs::remove_dir_all(&lock);
-                fs::create_dir(&lock).ok().map(|()| Lock(lock))
+                create_private_dir(&lock).ok()?;
+                Lock::created(lock)
             } else {
                 // The holder is about to report the same transitions.
                 None
@@ -556,7 +653,7 @@ fn process_run(ctx: &Ctx<'_>, run_dir: &Path, request: &Request<'_>) -> R<()> {
     };
 
     let snapshot_file = run_dir.join(SNAPSHOT_FILE);
-    let Some(_lock) = acquire_lock(ctx, run_dir) else {
+    let Some(lock) = acquire_lock(ctx, run_dir) else {
         return Ok(());
     };
 
@@ -571,7 +668,7 @@ fn process_run(ctx: &Ctx<'_>, run_dir: &Path, request: &Request<'_>) -> R<()> {
     if status.get("owning_skill") != Some(&Json::string(skill.as_str())) {
         return Ok(());
     }
-    let (snapshot, rebuild) = match read_snapshot(&snapshot_file) {
+    let (snapshot, rebuild) = match read_snapshot(&snapshot_file, lock.owner) {
         Snapshot::Absent => (None, false),
         Snapshot::Unreadable => (None, true), // re-observed below, without sending
         Snapshot::Data(data) => (Some(data), false),
@@ -670,9 +767,10 @@ fn process_run(ctx: &Ctx<'_>, run_dir: &Path, request: &Request<'_>) -> R<()> {
     let status_phases = || -> R<Json> { Ok(or_obj(status.get("phases"))?.clone()) };
 
     if rebuild {
-        // A corrupt snapshot (not this program's: its write is atomic) cannot
-        // say what was reported. Those transitions are lost; recording the
-        // current state lets the run report again from the next one.
+        // A corrupt snapshot (not this program's: its write is atomic), or one
+        // another user could have written, cannot say what was reported.
+        // Those transitions are lost; recording the current state privately
+        // lets the run report again from the next one.
         let (ended, run_mode) = run_ended(&status)?;
         let gates: Vec<Json> = gate_failure_entries(gate_failures.as_ref())
             .into_iter()
