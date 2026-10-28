@@ -36,6 +36,7 @@ mod bedrock_agent;
 mod bedrock_report;
 mod bedrock_resolve;
 pub mod cloudwatch;
+pub mod docgraph;
 pub mod dynamodb;
 mod dynamodb_deploy;
 pub mod elasticache;

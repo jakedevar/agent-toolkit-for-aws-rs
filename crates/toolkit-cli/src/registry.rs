@@ -39,10 +39,6 @@ use crate::CommandSpec;
 
 /// The rank of a slice added after the registry existed: after every earlier
 /// slice, then ordered by name.
-#[allow(
-    dead_code,
-    reason = "the convention for slices added after the registry; no such slice exists yet"
-)]
 pub(crate) const NEW_RANK: u16 = 1000;
 
 /// What one slice contributes to the command table and the help text.
@@ -85,6 +81,7 @@ pub(crate) const SLICES: &[Slice] = &[
     crate::bedrock_resolve::SLICE,
     crate::cloudwatch::API_SLICE,
     crate::cloudwatch::DOMAIN_SLICE,
+    crate::docgraph::SLICE,
     crate::dynamodb::SLICE,
     crate::dynamodb_deploy::SLICE,
     crate::elasticache::SLICE,
@@ -545,8 +542,9 @@ mod tests {
     }
 
     /// The route paths of the old `COMMANDS` table (commit ce0eaf6a, before the
-    /// registry), in table order: the public order of [`COMMANDS`].
-    const LEGACY_COMMAND_ORDER: [&str; 78] = [
+    /// registry), in table order: the public order of [`COMMANDS`]. The routes of
+    /// slices added after the registry follow at the end, ordered by slice name.
+    const LEGACY_COMMAND_ORDER: [&str; 81] = [
         "skills list",
         "manifests validate",
         "spec validate",
@@ -625,6 +623,11 @@ mod tests {
         "rds-oracle test-connection",
         "timestream-influxdb validate-input",
         "timestream-influxdb instance-types",
+        // Slices added after the registry (NEW_RANK), by slice name.
+        // docgraph (#4395):
+        "documentdb wa-review",
+        "neptune validate-input",
+        "neptune seed",
     ];
 
     #[test]

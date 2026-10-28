@@ -1,0 +1,391 @@
+//! DocumentDB and Neptune analysis and data utilities (#4395, slice
+//! `docgraph`).
+//!
+//! | Command | Replaces |
+//! | --- | --- |
+//! | `toolkit documentdb wa-review` | `amazon-documentdb/scripts/wa_review.py` |
+//! | `toolkit neptune validate-input` | `amazon-neptune/scripts/input_validator.py` |
+//! | `toolkit neptune seed` | `amazon-neptune/scripts/seed_test_data.py` |
+//!
+//! `cdk_test_env.py` (a CDK stack for a throwaway Neptune cluster) is replaced
+//! by the declarative CloudFormation template
+//! `skills/specialized-skills/database-skills/amazon-neptune/scripts/neptune_test_env.cfn.json`,
+//! whose security properties are asserted by this module's tests. No command
+//! creates an environment.
+//!
+//! No command opens a socket, a database connection or reads a credential in
+//! this build. Every AWS or database interaction goes through a seam
+//! ([`client::AwsClient`], [`seed::GremlinSession`]) with a recorded
+//! implementation (`--recorded FILE`) and a "no live client" implementation.
+//! Live bindings, the `--uri` database collection of `wa_review.py` and the
+//! helper libraries `graphrag_pipeline.py` and `agentic_memory.py` are
+//! follow-ups. Parity evidence and the intentional changes are in
+//! `docs/migration/docgraph.md`.
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss,
+    clippy::doc_markdown,
+    clippy::missing_errors_doc,
+    clippy::too_many_lines
+)]
+
+use std::path::Path;
+
+use toolkit_aws::{is_valid_region, Env, ProcessEnv};
+use toolkit_core::{parse_json, Json, ToolkitError};
+
+use crate::ai_data::parse_failure_text;
+use crate::aurora::args::usage;
+use crate::cloudwatch::timefmt::parse_iso_timestamp;
+use crate::dynamodb::iterate::utc_iso;
+use crate::startup::read_text;
+use crate::{CommandSpec, Invocation, Output};
+
+mod access;
+mod checks;
+mod client;
+mod dbchecks;
+mod infra;
+mod neptune_input;
+mod report;
+mod seed;
+mod snapshot;
+mod tables;
+
+#[cfg(test)]
+mod tests;
+
+use checks::clean;
+use client::{AwsClient, NoLiveClient, RecordedClient};
+use seed::{GremlinSession, NoLiveSession, RecordedSession, SeedError};
+
+/// `documentdb wa-review`.
+pub const WA_REVIEW: CommandSpec = CommandSpec {
+    path: &["documentdb", "wa-review"],
+    flags: &[],
+    value_flags: &[
+        "--cluster-id",
+        "--region",
+        "--analysis-data",
+        "--recorded",
+        "--output",
+        "--now",
+    ],
+    strict_values: true,
+    repeatable_flags: &[],
+    max_positionals: 0,
+    passthrough: false,
+    handler: wa_review_command,
+};
+
+/// `neptune validate-input`.
+pub const NEPTUNE_VALIDATE_INPUT: CommandSpec = CommandSpec {
+    path: &["neptune", "validate-input"],
+    flags: &[],
+    value_flags: &[],
+    strict_values: false,
+    repeatable_flags: &[],
+    max_positionals: usize::MAX,
+    passthrough: false,
+    handler: validate_input_command,
+};
+
+/// `neptune seed`.
+pub const NEPTUNE_SEED: CommandSpec = CommandSpec {
+    path: &["neptune", "seed"],
+    flags: &["--confirm-wipe", "--dry-run"],
+    value_flags: &["--endpoint", "--recorded"],
+    strict_values: true,
+    repeatable_flags: &[],
+    max_positionals: 0,
+    passthrough: false,
+    handler: seed_command,
+};
+
+/// Registration of the `docgraph` slice: its routes and help text (see
+/// `crate::registry`). Added after the registry, so both ranks are
+/// [`crate::registry::NEW_RANK`].
+pub(crate) const SLICE: crate::registry::Slice = crate::registry::Slice {
+    name: "docgraph",
+    commands: &[WA_REVIEW, NEPTUNE_VALIDATE_INPUT, NEPTUNE_SEED],
+    synopsis: r"  toolkit documentdb wa-review --cluster-id ID --region R [--recorded FILE]
+      [--analysis-data FILE] [--output DIR] [--now TS]
+  toolkit neptune validate-input [KEY=VALUE...]
+  toolkit neptune seed [--confirm-wipe] [--endpoint HOST] [--recorded FILE | --dry-run]
+",
+    description: r"  documentdb    DocumentDB Well-Architected review (#4395). wa-review runs the 41
+                infrastructure and database checks over recorded AWS responses
+                (--recorded) and a pre-collected analysis (--analysis-data) and
+                writes wa_review_results.json and wa_review_report.md.
+  neptune       Neptune input validation and test-graph seeding (#4395).
+                validate-input checks identifiers before a write call; seed
+                wipes and seeds the test graphs only with --confirm-wipe (or
+                NEPTUNE_SEED_CONFIRM_WIPE=1), replays --recorded responses or
+                prints the statements with --dry-run: this build has no
+                Gremlin or AWS client. See docs/migration/docgraph.md.
+",
+    exit_notes: "",
+    doc: "docs/migration/docgraph.md",
+    synopsis_rank: crate::registry::NEW_RANK,
+    description_rank: crate::registry::NEW_RANK,
+};
+
+/// The value of a required value flag, when given.
+fn required<'a>(invocation: &'a Invocation, flag: &str) -> Option<&'a str> {
+    invocation.value(flag)
+}
+
+fn now_seconds() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .and_then(|elapsed| i64::try_from(elapsed.as_secs()).ok())
+        .unwrap_or(0)
+}
+
+/// A caller path as this slice shows it (#4907): the whole path is passed
+/// through the shared redactor (URL userinfo, labelled credentials, key ids),
+/// then its control, bidirectional and invisible characters are escaped. A
+/// path is never shortened, so the file name stays visible.
+fn shown_path(path: &str) -> String {
+    clean(path)
+}
+
+/// Reads and parses a JSON file named by the caller. The error text names the
+/// file as [`shown_path`] does and the failure, never a value of the document
+/// (`startup::read_json_document` with a redacted label).
+fn read_document(path: &str) -> Result<Json, String> {
+    let label = shown_path(path);
+    let text = read_text(Path::new(path), &label)?;
+    parse_json(&text)
+        .map_err(|error| format!("{label}: invalid JSON ({})", parse_failure_text(&error)))
+}
+
+fn recorded_error(path: &str, reason: &str) -> ToolkitError {
+    ToolkitError::runtime(
+        "docgraph_recorded",
+        format!("{}: {reason}", shown_path(path)),
+    )
+}
+
+fn load_recorded(path: &str) -> Result<Json, ToolkitError> {
+    read_document(path).map_err(|reason| ToolkitError::runtime("docgraph_recorded", reason))
+}
+
+/// Handler of `toolkit documentdb wa-review`.
+pub fn wa_review_command(
+    invocation: &Invocation,
+    out: &mut Output<'_>,
+) -> Result<(), ToolkitError> {
+    let missing: Vec<&str> = ["--cluster-id", "--region"]
+        .into_iter()
+        .filter(|flag| required(invocation, flag).is_none())
+        .collect();
+    if !missing.is_empty() {
+        return Err(usage(format!(
+            "the following arguments are required: {}",
+            missing.join(", ")
+        )));
+    }
+    let cluster_id = required(invocation, "--cluster-id").unwrap_or_default();
+    let region = required(invocation, "--region").unwrap_or_default();
+    if !neptune_input::identifier(cluster_id, 63) {
+        return Err(usage(
+            "--cluster-id must start with a letter and hold only letters, digits and hyphens (63 characters at most)",
+        ));
+    }
+    if !is_valid_region(region) {
+        return Err(usage("--region must look like us-east-1"));
+    }
+    let now = match invocation.value("--now") {
+        None => now_seconds(),
+        Some(text) => parse_iso_timestamp(text)
+            .map_err(|_| usage("--now must be an ISO timestamp such as 2026-01-31T12:00:00Z"))?
+            .epoch_seconds(),
+    };
+    let output_dir = invocation.value("--output").unwrap_or(".");
+
+    out.line(&format!(
+        "Running Well-Architected Review for {cluster_id} in {region}..."
+    ))?;
+    out.line("  Running infrastructure checks (AWS APIs)...")?;
+    let mut recorded: Option<RecordedClient> = None;
+    if let Some(path) = invocation.value("--recorded") {
+        let document = load_recorded(path)?;
+        recorded = Some(
+            RecordedClient::from_document(&document)
+                .map_err(|reason| recorded_error(path, &reason))?,
+        );
+    } else {
+        out.diagnostic(
+            "note: this build includes no live AWS client; pass --recorded FILE to replay recorded responses",
+        );
+    }
+    let mut no_live = NoLiveClient;
+    let client: &mut dyn AwsClient = match recorded.as_mut() {
+        Some(recorded) => recorded,
+        None => &mut no_live,
+    };
+    let mut results = infra::run_infra_checks(client, cluster_id, now).checks;
+    out.line(&format!(
+        "  Infrastructure: {} checks completed",
+        results.len()
+    ))?;
+
+    let mut analysis = None;
+    if let Some(path) = invocation.value("--analysis-data") {
+        out.line(&format!(
+            "  Loading database stats from {}...",
+            shown_path(path)
+        ))?;
+        let document = read_document(path)
+            .map_err(|reason| ToolkitError::runtime("docgraph_analysis", reason))?;
+        analysis = snapshot::read_analysis(&document)
+            .map_err(|reason| ToolkitError::runtime("docgraph_analysis", reason))?;
+    }
+    if let Some(collections) = analysis {
+        out.line("  Running database-level checks...")?;
+        let db_results = dbchecks::run_db_checks(&collections).checks;
+        out.line(&format!(
+            "  Database: {} checks completed",
+            db_results.len()
+        ))?;
+        results.extend(db_results);
+    } else {
+        out.line("  Skipping database-level checks (no --uri or --analysis-data)")?;
+    }
+
+    let timestamp = utc_iso(now);
+    let date = format!("{} {}", &timestamp[..10], &timestamp[11..16]);
+    let (json_path, md_path) = report::write_report(
+        Path::new(output_dir),
+        &results,
+        cluster_id,
+        &timestamp,
+        &date,
+    )
+    .map_err(|reason| ToolkitError::runtime("docgraph_report", reason))?;
+    out.line("")?;
+    out.line(&format!("  Results: {}", shown_path(&json_path)))?;
+    out.line(&format!("  Report:  {}", shown_path(&md_path)))?;
+
+    let [pass, warn, fail, info] = report::counts(&results);
+    out.line("")?;
+    out.line(&format!(
+        "  Total: {} checks -- {pass} pass, {warn} warn, {fail} fail, {info} info",
+        results.len()
+    ))
+}
+
+/// Handler of `toolkit neptune validate-input`.
+pub fn validate_input_command(
+    invocation: &Invocation,
+    out: &mut Output<'_>,
+) -> Result<(), ToolkitError> {
+    if invocation.positionals.is_empty() {
+        out.line("Usage: toolkit neptune validate-input key=value [key=value ...]")?;
+        out.line(&format!("Valid keys: {}", neptune_input::valid_keys_repr()))?;
+        return Ok(());
+    }
+    let mut pairs: Vec<(String, String)> = Vec::new();
+    for argument in &invocation.positionals {
+        let Some((key, value)) = argument.split_once('=') else {
+            out.line(&format!(
+                "Invalid argument: {}. Use key=value format.",
+                neptune_input::shown(argument)
+            ))?;
+            out.set_exit_status(1);
+            return Ok(());
+        };
+        match pairs.iter_mut().find(|(existing, _)| existing == key) {
+            Some(pair) => pair.1 = value.to_string(),
+            None => pairs.push((key.to_string(), value.to_string())),
+        }
+    }
+    let errors = neptune_input::validate_all(&pairs);
+    if errors.is_empty() {
+        return out.line("\u{2705} All validations passed.");
+    }
+    out.line("Validation failed:")?;
+    for error in &errors {
+        out.line(&format!("  \u{274c} {error}"))?;
+    }
+    out.set_exit_status(1);
+    Ok(())
+}
+
+/// A host name for the Gremlin URL: letters, digits, dots and hyphens.
+fn is_host(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 253
+        && value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
+}
+
+fn seed_failure(error: &SeedError) -> ToolkitError {
+    let reason = match error {
+        SeedError::WipeNotConfirmed => seed::WIPE_REFUSAL.to_string(),
+        SeedError::Verification(reason) => (*reason).to_string(),
+        SeedError::Call(toolkit_aws::AwsError::Service(_)) => {
+            "seeding failed: the graph returned an error".to_string()
+        }
+        SeedError::Call(other) => format!("seeding failed: {other}"),
+    };
+    ToolkitError::runtime("docgraph_seed", reason)
+}
+
+/// Handler of `toolkit neptune seed`.
+pub fn seed_command(invocation: &Invocation, out: &mut Output<'_>) -> Result<(), ToolkitError> {
+    let recorded = invocation.value("--recorded");
+    if invocation.has_flag("--dry-run") {
+        if recorded.is_some() {
+            return Err(usage("--dry-run and --recorded cannot be combined"));
+        }
+        for line in seed::dry_run_lines() {
+            out.line(&line)?;
+        }
+        return Ok(());
+    }
+    let endpoint = invocation.value("--endpoint").unwrap_or("localhost");
+    if !is_host(endpoint) {
+        return Err(usage(
+            "--endpoint must be a host name of letters, digits, dots and hyphens",
+        ));
+    }
+    let confirmed = invocation.has_flag("--confirm-wipe")
+        || ProcessEnv.var("NEPTUNE_SEED_CONFIRM_WIPE").as_deref() == Some("1");
+    let mut replay: Option<RecordedSession> = None;
+    if let Some(path) = recorded {
+        let document = load_recorded(path)?;
+        replay = Some(
+            RecordedSession::from_document(&document)
+                .map_err(|reason| recorded_error(path, &reason))?,
+        );
+    }
+    let mut no_live = NoLiveSession;
+    let session: &mut dyn GremlinSession = match replay.as_mut() {
+        Some(replay) => replay,
+        None => &mut no_live,
+    };
+    let mut lines: Vec<String> = Vec::new();
+    let result = seed::run(session, endpoint, confirmed, &mut |text| {
+        lines.push(text.to_string());
+    });
+    for line in &lines {
+        out.line(line)?;
+    }
+    result.map_err(|error| seed_failure(&error))?;
+    if let Some(replay) = &replay {
+        // A run that left recorded entries unused is a wrong recording.
+        let unused = replay.unused();
+        if unused > 0 {
+            return Err(ToolkitError::runtime(
+                "docgraph_recorded",
+                format!("{unused} recorded call(s) were not used"),
+            ));
+        }
+    }
+    Ok(())
+}

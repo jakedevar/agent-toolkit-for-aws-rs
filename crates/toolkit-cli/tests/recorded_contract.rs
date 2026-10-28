@@ -2084,6 +2084,7 @@ const INVENTORY: &[(&str, Class)] = &[
     ),
     ("bedrock_resolve", Class::Recorded),
     ("cloudwatch", Class::Recorded),
+    ("docgraph", Class::Recorded),
     (
         "dynamodb",
         Class::NotRecorded(
@@ -2151,7 +2152,7 @@ fn every_slice_is_classified_and_the_classification_holds() {
 #[test]
 fn the_known_recorded_slices_are_in_scope() {
     let report = contract();
-    for slice in ["ai_models", "bedrock_agent", "relational"] {
+    for slice in ["ai_models", "bedrock_agent", "docgraph", "relational"] {
         let signals = report.scope.get(slice);
         assert!(
             signals.is_some_and(|s| s.contains("flag") && s.contains("import")),
