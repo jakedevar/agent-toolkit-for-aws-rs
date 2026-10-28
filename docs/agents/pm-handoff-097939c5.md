@@ -238,3 +238,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 01:52Z: #4821 ACCEPT b8204e9d (07153277; no findings). ENQUEUED round 13 b8204e9d as entry 2a2dece6-cdfd-4d08-868c-66015db54f32 (supersedes 5060cb2e, kept seq 2887, derive_filters, source_session 36d6de30). Queue wakes me once. Close on land: #4575 + #4727 #4743 #4408 #4799 #4793 and listed review Issues (#4821, #4744 #4746 #4747 #4748 #4753 #4754 #4759 #4777 #4778 #4779, #4764 #4776 #4780?, #4794 #4805) - verify each on land.
   Kaizen worker 8fdc14b5 (Opus high, op a213e9bc) on #4751 + #4752 #4773 #4774 #4775 scanner hardening, base b8204e9d.
   4/4 busy: 955e5b50 (#4381 r3), 8fba463c (#4409 parked), 955d98b9 (#4391 repair), 8fdc14b5 (#4751 scanner).
+- 01:55Z: #4409 impl PARTIAL 29a96720aa4c59e2a4bd581a13bec71591fc2a5e (8fba463c; 26/32 files, 196 tests -> tests/startup_contracts; 107 schema-driven tests split to #4806; merged #4408 e54d43ee as b2c59e55; scoped 1a75e23e ok base b2c59e55, cli 2473). Embedded-python cost compare -> noted on #4609.
+  Review #4832 worker f450c1d3 (Codex sol high, pinned, op 83f0c2da).
+  4/4 busy: 955e5b50 (#4381 r3), 955d98b9 (#4391 repair), 8fdc14b5 (#4751 scanner), f450c1d3 (#4832 review).
