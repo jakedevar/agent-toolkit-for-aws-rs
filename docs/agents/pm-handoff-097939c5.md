@@ -220,3 +220,5 @@ Friction: #4727, Rsi #4694, Rsi #4704
   New slice #4409 (startup contract tests -> Rust) worker 8fba463c (Sonnet) from f6fac27d (op 7dcf18e5).
   4/4 busy: 16f724e9 (#4381 r2), a7277981 (#4391), 36d6de30 (#4799), 8fba463c (#4409).
 - 00:09Z: safety net: 5060cb2e still queued (HOL). 4 workers parked on jobs (disk_floor holds). HUB DISK 81G free (90%, was 142G at 20:18Z); sandboxes 139G/435 dirs; nothing settle-eligible (no landings). Net re-armed 01:09Z with <50G escalation.
+- 00:35Z: #4381 final repair d29a258523964309bed0feff86bd254f4cdeb3ff (16f724e9; #4784 #4785 + 2 more value-echo fixes; parent-proof 08b09ff9/32372477; scoped 286912b7 ok base 8f429632, aws 181 + cli 2192). Accepted decisions: escaped caller args + AWS error text OK; surface-all conversion errors.
+  Round-3 FINAL re-review #4742 worker 87588a96 (op 0704cd81), blocking limited. If ACCEPT: round 13+ merges #4381 d29a2585 after #4727/#4793; cloudwatch must then pass the stricter scanner (marker-only or stop).
