@@ -295,3 +295,8 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 10-28 19:58Z: #4468 cluster: all 6 already fixed on rolling (b897cd8 5902276 7aeeb31 6ba2ac9 7b2ce8f 5112a8b); worker e5345267 added regression table 1e7a8fb3094fd049de9d391ea9ee7e520c78228d (tests+docs; PM-inspected; scoped 32f12757 ok; check ok). ENQUEUED entry 5c529ed1 (seq 2915). On land close #4468 #4469 #4494 #4515 #4516 #4536; #4568 stays open.
   Startup-artifacts cluster worker (Opus high, base rolling) bound #4584 covering #4585 #4586 #4587 #4596 #4603.
   4/4 busy: f77e05af (r14), fb8e2044 (#4751 repair), 0326fbbf (#4867), #4584 worker.
+- 10-28 20:05Z: ROUND 14 head ce0eaf6a272b0f2519686d2e8dade96c30775796 (f77e05af; merges fd7c6f95 #4391, 4b798387 #4381, 6f6ac811 #4409, 776c06f8 #4806, + comment-only markers commit; scoped df15f976 ok aws 181 cli 2810; check ok). ENQUEUED entry 78a019f9 (seq 2916). On land close: #4391 #4819 #4822 #4823 #4824 #4840; #4381 #4742 #4784 #4785 #4816 #4817 #4818 #4837 #4838; #4409 #4806 #4832 #4854 #4859. Friction #4869 (cfg(test) mod files scanned) -> mailed into #4751 repair.
+  #4867 on #4839 e49f83ad: CHANGES_REQUESTED #4870 (raw get chains on CacheUsageLimits/cache_clusters). Repair worker 5393fd21 (Opus, continue_from c6b026ce).
+  #4576 registration hotspot worker (Sonnet high, base ce0eaf6a).
+  4/4 busy: fb8e2044 (#4751 repair +#4869), cf272dfd (#4584 cluster), 5393fd21 (#4839 repair), #4576 worker.
+  Queue: 5c529ed1 (#4468 tests, seq 2915), 78a019f9 (r14, seq 2916).
