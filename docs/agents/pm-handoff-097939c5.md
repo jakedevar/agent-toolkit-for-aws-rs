@@ -267,3 +267,7 @@ Friction: #4727, Rsi #4694, Rsi #4704
   4/4 busy: 658303dd (#4806), 7e684f35 (#4381 r4), 68503650 (#4819 r3), 1d5e3f47 (#4852).
   NEXT high-value: #4839 (bedrock_resolve + elasticache onto toolkit_aws::recorded) once a slot frees.
 - 10-28 18:50Z: GM 17446779: entry 2a2dece6 is SKIPPED (queue checkout missing local rolling ref: missing_rolling), not HOL. Rsi P1 #4850 owned by Rsi PM. Leave entry; keep current with supersedes; do NOT create local rolling by hand.
+- 10-28 18:55Z: #4819 r3 ACCEPT #4391 at d10ee77730ad452dfb3c1e4256e56397bc1999df (68503650). Close on land: #4391 #4819 #4822 #4823 #4824 #4840.
+  ACCEPTED, awaiting round 14: #4409 29a96720, #4391 d10ee777. Pending: #4381 r4 (7e684f35), #4751 2d3904a1 (review #4852), #4806 (658303dd).
+  #4839 worker c6b026ce (Opus high, base 2d3904a1, op 19a17bb9): bedrock_resolve + elasticache onto toolkit_aws::recorded.
+  4/4 busy: 658303dd (#4806), 7e684f35 (#4381 r4), 1d5e3f47 (#4852), c6b026ce (#4839).
