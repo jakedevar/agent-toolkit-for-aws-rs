@@ -223,6 +223,7 @@ fn fetch_created_at(
     // `Gateway::call` has checked the shape of `Configuration` (#4749): a
     // `null` or wrong-typed one is an invalid response, never "not found".
     let config = match optional_object(&response, "Configuration") {
+        // recorded-shape: `optional_object` already proved `Configuration` an object; this tests only that it is non-empty.
         Ok(Some(config)) if matches!(config, Json::Object(members) if !members.is_empty()) => {
             config
         }

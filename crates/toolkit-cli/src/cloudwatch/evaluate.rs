@@ -597,6 +597,7 @@ fn summarize(
     // present member of the wrong type, `null` included, rejects it, so a
     // malformed result is a score error and never a scored pair, a persisted
     // record or a count.
+    // recorded-shape: the response envelope must be an object; every other shape is a score error (#4758).
     if !matches!(response, Json::Object(_)) {
         return Err(format!(
             "the Evaluate response is not an object (it is {})",
@@ -663,6 +664,7 @@ fn summarize(
 
 /// Drops private (`_`-prefixed) keys: what the receipt may print, versus what
 /// the writeback may read. The last step before printing.
+// recorded-shape: rows this command built in `summarize`; not a response.
 fn public_rows(rows: &[Json]) -> Vec<Json> {
     rows.iter()
         .map(|row| match row {
@@ -1264,6 +1266,7 @@ pub fn run(
             );
             calls_budget -= pair.calls_made;
             for row in &mut pair.rows {
+                // recorded-shape: a row this command built in `summarize`; not a response.
                 if let Json::Object(pairs) = row {
                     set(pairs, "traceId", Json::string(trace_id.as_str()));
                 }

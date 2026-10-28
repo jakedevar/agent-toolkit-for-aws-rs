@@ -1417,6 +1417,7 @@ fn contract_tables_cover_every_op_and_agree_with_the_argument_tables() {
             .iter()
             .find(|(name, _)| name == op)
             .expect("spec");
+        // recorded-shape: test assertion over the contract document the command printed.
         let Json::Object(contract_args) = args else {
             panic!("args object")
         };

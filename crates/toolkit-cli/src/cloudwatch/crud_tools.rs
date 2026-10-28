@@ -386,6 +386,7 @@ pub(super) fn batch_delete_by_arns(
 ) -> Result<OpResult, ToolkitError> {
     let instrumentation_type = args.req_str("instrumentation_type")?;
     let resource_arns = args.required("resource_arns")?;
+    // recorded-shape: the caller's `resource_arns` argument; not a response.
     let Json::Array(arns) = resource_arns else {
         return Err(args.mistyped("resource_arns", "an array", resource_arns));
     };

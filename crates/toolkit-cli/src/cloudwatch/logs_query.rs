@@ -139,6 +139,7 @@ fn failure_message(prefix: &str, failure: &AwsFailure) -> String {
 /// order, a repeated field name keeping its first position and the last
 /// value. `None` for a row of another shape (a row that is not a list of
 /// objects, or a `field`/`value` that is present and not a string).
+// recorded-shape: a result row must be a list of objects; every other shape rejects the whole query result (#4750).
 fn result_row(line: &Json) -> Option<Json> {
     let Json::Array(fields) = line else {
         return None;

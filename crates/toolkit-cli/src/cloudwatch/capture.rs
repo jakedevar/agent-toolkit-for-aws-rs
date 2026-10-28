@@ -184,6 +184,7 @@ const CODE_CAPTURE_HINT_KEYS: [&str; 4] = [
 /// fallback some response shapes relied on).
 #[must_use]
 pub fn capture_from_response(union: &Json) -> Capture {
+    // recorded-shape: display-only union parse; Gateway::call shape-checks a response's CaptureConfiguration first (#4749).
     let Json::Object(members) = union else {
         return Capture::Unknown(UnknownCapture { raw: Vec::new() });
     };

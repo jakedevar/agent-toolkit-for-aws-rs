@@ -257,6 +257,7 @@ fn single_trace_scores_one_pair_with_one_fetch() {
         panic!("results")
     };
     let keys: Vec<&str> = match &results[0] {
+        // recorded-shape: test assertion over a receipt, request or fixture the test holds.
         Json::Object(pairs) => pairs.iter().map(|(key, _)| key.as_str()).collect(),
         other => panic!("{other:?}"),
     };
@@ -836,6 +837,7 @@ fn service_names_become_safe_single_log_group_segments() {
                     let renamed = rows
                         .into_iter()
                         .map(|row| match row {
+                            // recorded-shape: test assertion over a receipt, request or fixture the test holds.
                             Json::Object(mut pairs) => {
                                 for (key, value) in &mut pairs {
                                     if key == "svc_name" {

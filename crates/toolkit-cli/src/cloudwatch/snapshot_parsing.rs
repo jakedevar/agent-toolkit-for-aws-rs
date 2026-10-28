@@ -66,6 +66,7 @@ fn is_true(value: Option<&Json>) -> bool {
 /// A compact preview of one snapshot `CapturedValue`.
 #[must_use]
 pub fn preview_captured_value(captured: &Json) -> Json {
+    // recorded-shape: the snapshot body a log event carries (#4380); not a response member.
     let Json::Object(_) = captured else {
         return captured.clone();
     };
@@ -103,6 +104,7 @@ pub fn preview_captured_value(captured: &Json) -> Json {
         // objects collapsed to just their type.
         let mut fields_preview: Vec<(String, Json)> = Vec::new();
         for (name, field) in fields {
+            // recorded-shape: the snapshot body a log event carries (#4380); not a response member.
             let shown = if let Json::Object(_) = field {
                 if is_true(field.get("is_null")) {
                     Json::Null
@@ -285,6 +287,7 @@ pub fn parse_snapshot_fields(result: &Json) -> Json {
     let mut line_return_values: Vec<(String, Json)> = Vec::new();
     let mut line_throwables: Vec<(String, Json)> = Vec::new();
     for (line_number, line_capture) in members(line_captures).unwrap_or(&[]) {
+        // recorded-shape: the snapshot body a log event carries (#4380); not a response member.
         if !matches!(line_capture, Json::Object(_)) {
             continue;
         }
@@ -320,6 +323,7 @@ pub fn parse_snapshot_fields(result: &Json) -> Json {
     let stack_preview: Vec<Json> = stack
         .iter()
         .take(5)
+        // recorded-shape: the snapshot body a log event carries (#4380); not a response member.
         .filter(|frame| matches!(frame, Json::Object(_)))
         .map(|frame| {
             Json::object(vec![

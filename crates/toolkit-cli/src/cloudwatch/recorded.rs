@@ -77,6 +77,7 @@ impl RecordedClient {
     ///
     /// A reason naming the entry index and the wrong member, never a value.
     pub fn from_document(document: &Json) -> Result<Self, String> {
+        // recorded-shape: the recording document itself; every shape but an object rejects the recording.
         if !matches!(document, Json::Object(_)) {
             return Err("the recorded responses must be a JSON object".to_string());
         }
@@ -95,6 +96,7 @@ impl RecordedClient {
 
 fn parse_entry(index: usize, call: &Json) -> Result<Entry, String> {
     let bad = |what: &str| format!("recorded call {index}: {what}");
+    // recorded-shape: a recorded call entry; every shape but an object rejects the recording.
     if !matches!(call, Json::Object(_)) {
         return Err(bad("must be an object"));
     }

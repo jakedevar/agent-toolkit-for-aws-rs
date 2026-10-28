@@ -173,6 +173,7 @@ fn check_member(object: &Json, key: &str, shape: Shape, prefix: &str) -> Result<
         Shape::TextMapList => {
             let items = optional_object_list(object, key).map_err(wrap)?;
             for (index, item) in items.iter().enumerate() {
+                // recorded-shape: `optional_object_list` already rejected every item that is not an object.
                 let Json::Object(members) = item else {
                     continue;
                 };

@@ -429,6 +429,7 @@ fn count_examples(client: &mut dyn AwsCalls, dataset_id: &str) -> Result<Option<
     let Ok(response) = client.call(Service::BedrockAgentCoreControl, "GetDataset", &request) else {
         return Ok(None);
     };
+    // recorded-shape: the response envelope must be an object; every other shape stops the write (#4755).
     if !matches!(response, Json::Object(_)) {
         return Err(format!(
             "get_dataset failed: the GetDataset response is not an object (it is {})",

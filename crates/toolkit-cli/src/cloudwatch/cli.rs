@@ -303,6 +303,7 @@ fn origin_of(spec: ArgSpec, key: &str) -> Option<Origin> {
 }
 
 /// Caller JSON with every string and every object key made single-line.
+// recorded-shape: caller arguments, typed by the #4380 origin table; not a response.
 fn escape_caller_json(value: &Json) -> Json {
     match value {
         Json::String(text) => Json::String(safe_text(text)),
@@ -323,6 +324,7 @@ fn escape_by_origin(value: &Json, origin: Origin) -> Json {
         Caller => escape_caller_json(value),
         JsonEncoded | AwsResponse => value.clone(),
         EachMember(spec) => match value {
+            // recorded-shape: caller arguments, typed by the #4380 origin table; not a response.
             Json::Object(members) => Json::Object(
                 members
                     .iter()
@@ -337,6 +339,7 @@ fn escape_by_origin(value: &Json, origin: Origin) -> Json {
 /// An arguments object with each listed key escaped by its [`Origin`]. An
 /// unlisted key (which [`Args::new`] refuses) or a non-object is treated as
 /// caller text.
+// recorded-shape: caller arguments, typed by the #4380 origin table; not a response.
 fn escape_arguments(value: &Json, spec: ArgSpec) -> Json {
     match value {
         Json::Object(pairs) => Json::Object(
@@ -363,6 +366,7 @@ pub(super) struct Args {
 
 impl Args {
     pub(super) fn new(op: &str, value: &Json, spec: ArgSpec) -> Result<Self, ToolkitError> {
+        // recorded-shape: caller arguments, typed by the #4380 origin table; not a response.
         let Json::Object(pairs) = value else {
             return Err(invalid(op, "arguments must be a JSON object"));
         };
@@ -523,6 +527,7 @@ pub(super) fn read_arguments(invocation: &Invocation) -> Result<Json, ToolkitErr
             ),
         )
     })?;
+    // recorded-shape: the caller's --json arguments payload; not a response.
     if !matches!(payload, Json::Object(_)) {
         return Err(ToolkitError::usage(
             "arguments_not_object",
@@ -574,6 +579,7 @@ fn limits_from(args: &Args) -> Result<CaptureLimits, ToolkitError> {
     let Some(value) = args.present("limits") else {
         return Ok(CaptureLimits::unset());
     };
+    // recorded-shape: the caller's `limits` argument; not a response.
     let Json::Object(_) = value else {
         return Err(args.mistyped("limits", "an object", value));
     };
