@@ -399,3 +399,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
   4/4 busy: ff7ae0b8 (#4396), f8244a11 (#4941), b7e56ccf (#4390 repair), 092f281f (r16).
 - 10-28 23:13Z: safety net: all 4 parked on daemon jobs (092f281f r16, ff7ae0b8 #4396, f8244a11 #4941, b7e56ccf #4390 repair). Queue 5c529ed1 + 92e0b509 still queued. Net re-armed 00:13Z.
 - 10-28 23:3xZ: *** LANDED *** entry 5c529ed1: #4468 regression table 1e7a8fb3094fd049de9d391ea9ee7e520c78228d on origin/rolling (ancestry verified). #4468 auto-closed; closed #4469 #4494 #4515 #4516 #4536 by hand. #4568 stays open. r15 entry 92e0b509 (seq 2916) next.
+- 10-28 23:30Z: SEAT ROTATED b14ee35f -> 8cd977f6 (context cap). *** LANDED *** ROUND 15 e77d1c18 (rolling merge fa3fa13, entry 92e0b509). Closed 52 Issues (full r14+r15 ON-LAND list above; #4898 auto). #4395 left open (#4886 remainder). Reported up (pm-8cd977f6-landed-r15-e77d1c18).
+  Queue now empty. Round 16 (#4960, 092f281f) enqueues normally (no supersedes) when verified; base e77d1c18 is now an ancestor of rolling.
+  4/4 busy, parked on jobs: 092f281f (r16), ff7ae0b8 (#4396), f8244a11 (#4941), b7e56ccf (#4390 repair).
