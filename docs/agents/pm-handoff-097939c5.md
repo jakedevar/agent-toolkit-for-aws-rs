@@ -228,3 +228,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 01:25Z: #4391 impl 2b60c3eeebf3a2fbe361c4e828ca09a662026ff0 (a7277981; deploy-model + generate-teardown offline plans; merged ec2740ed as 30cb293d; scoped 5fe61856 ok except 3 pre-existing relational recorded_contract reds). Follow-up #4801 (live path). #4809 cancelled as dup of #4799.
   Security pre-review #4819 worker 98ce3af8 (Codex sol high, pinned, op 73a3b333).
   4/4 busy: 955e5b50 (#4381 r3), 36d6de30 (#4799), 8fba463c (#4409), 98ce3af8 (#4819).
+- 01:47Z: #4799 impl b8204e9db480a007c82ff2dc53131fccd0feba84 (36d6de30; b7599d98 relational onto shared module + merge 362c237d #4793; recorded_contract 27/27; scoped b3482a59 ok base 92781c67, 2300; 83 relational tests unchanged). Friction harness #4820 (disk-floor hold timeouts).
+  Review #4821 worker 07153277 (Codex sol, op 94e980df). b8204e9d = candidate ROUND-13 HEAD (f6fac27d + #4727 + #4743 + #4408 + #4799 + #4793). Manager scoped 22788cb6 (base origin/rolling, 180m) started in 36d6de30 sandbox.
+  If #4821 ACCEPT + scoped ok + check ok: enqueue b8204e9d, source_session_id 36d6de30-f7d0-474c-be99-868d24fc08dd, supersedes 5060cb2e if still queued.
