@@ -58,7 +58,7 @@ pub(crate) const SLICE: crate::registry::Slice = crate::registry::Slice {
         crate::CommandSpec {
             path: &["bedrock-probes", "preflight"],
             flags: &[],
-            value_flags: PREFLIGHT_VALUE_FLAGS,
+            value_flags: BEDROCK_PREFLIGHT_VALUE_FLAGS,
             strict_values: true,
             repeatable_flags: &[],
             max_positionals: 0,
@@ -88,7 +88,7 @@ pub(crate) const SLICE: crate::registry::Slice = crate::registry::Slice {
         crate::CommandSpec {
             path: &["bedrock-probes", "source-baseline"],
             flags: &[],
-            value_flags: BASELINE_VALUE_FLAGS,
+            value_flags: BEDROCK_BASELINE_VALUE_FLAGS,
             strict_values: true,
             repeatable_flags: &[],
             max_positionals: 1,
@@ -135,7 +135,12 @@ mod tests;
 /// Value flags of `bedrock-probes iam-policy`.
 pub(crate) const IAM_VALUE_FLAGS: &[&str] = &["--models", "--region", "--account-id", "--output"];
 /// Value flags of `bedrock-probes preflight`.
-pub(crate) const PREFLIGHT_VALUE_FLAGS: &[&str] = &[
+///
+/// The two constants that hold `--recorded` carry a `BEDROCK_` prefix:
+/// `tests/recorded_contract.rs` matches such constants by bare name across
+/// `src`, so a shared name (elasticache has its own `PREFLIGHT_VALUE_FLAGS`)
+/// would put another slice's rows in recorded scope.
+pub(crate) const BEDROCK_PREFLIGHT_VALUE_FLAGS: &[&str] = &[
     "--region",
     "--models",
     "--dataset-size",
@@ -147,7 +152,7 @@ pub(crate) const API_PATH_VALUE_FLAGS: &[&str] = &["--models", "--plan-path", "-
 /// Value flags of `bedrock-probes classify`.
 pub(crate) const CLASSIFY_VALUE_FLAGS: &[&str] = &["--models", "--region"];
 /// Value flags of `bedrock-probes source-baseline`.
-pub(crate) const BASELINE_VALUE_FLAGS: &[&str] = &[
+pub(crate) const BEDROCK_BASELINE_VALUE_FLAGS: &[&str] = &[
     "--source-model-id",
     "--dataset",
     "--output",
