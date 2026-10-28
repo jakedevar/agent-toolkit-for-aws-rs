@@ -390,3 +390,5 @@ Friction: #4727, Rsi #4694, Rsi #4704
   4/4 busy: 12fe1c8e (#4390), ff7ae0b8 (#4396), f8244a11 (#4941), fd1f037d (#4927 r2).
 - 10-28 22:49Z: #4390 impl 824aadc7ad863418da4e0667f53ac9b0effe8314 (12fe1c8e; dynamodb_bench slice: benchmark-model (recorded lambda:Invoke seam, --allow-spend) + generate-perf-report; benchmark_lambda.py payload not ported; follow-up #4953 live client + handler runtime (product choice, deferred); scoped dc3cbd43 ok, clippy f20f5641, fmt d83ad67d). Review #4954 worker 44992d7f (Codex sol, pinned).
   4/4 busy: ff7ae0b8 (#4396), f8244a11 (#4941), fd1f037d (#4927 r2), 44992d7f (#4954).
+- 10-28 22:50Z: #4927 r2 (fd1f037d) on #4780 85fe65b6: one blocker #4955 (LITERAL_DASH --date-suffix composes report paths). Other checks PASS. RULING: drop it + re-audit all entries for path composition. Repair 2 worker bfa8c133 (Sonnet, continue_from dc00af2d); PM accepts on inspection (no r3).
+  4/4 busy: ff7ae0b8 (#4396), f8244a11 (#4941), 44992d7f (#4954), bfa8c133 (#4780 repair 2).
