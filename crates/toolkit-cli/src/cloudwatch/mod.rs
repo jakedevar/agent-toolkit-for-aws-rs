@@ -218,8 +218,7 @@ pub(crate) const API_SLICE: crate::registry::Slice = crate::registry::Slice {
                 without --i-have-confirmed. snapshots OP is sample or search
                 (Logs Insights; --out writes the result owner-only, never
                 through a symbolic link). The op arguments are one JSON object
-                (--json TEXT or --json-file FILE; either may be - for
-                at most 1 MiB of UTF-8 from stdin);
+                (--json TEXT or --json-file FILE; stdin is not accepted);
                 --print-contract shows the argument schema.
                 evaluate-traces scores Omni traces with AgentCore evaluators and
                 capture-dataset turns traces into an evaluation dataset

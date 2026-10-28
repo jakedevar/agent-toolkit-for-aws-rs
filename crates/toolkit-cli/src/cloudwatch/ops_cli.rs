@@ -553,7 +553,7 @@ pub fn instrumentation_command(
              first, then re-run with --i-have-confirmed."
         ));
     }
-    let payload = read_arguments(invocation, true)?;
+    let payload = read_arguments(invocation)?;
     let now = clock_of(invocation)?;
     let args = Args::new(op, &payload, spec_of(INSTRUMENTATION_ARGUMENTS, op)?)?;
     let mut client = client_of(invocation)?;
@@ -703,7 +703,7 @@ pub fn snapshots_command(
         return out.line(&dumps_indent2(&snapshot_contract()));
     }
     let op = op_name(invocation, "op", SNAPSHOT_OPS)?;
-    let payload = read_arguments(invocation, true)?;
+    let payload = read_arguments(invocation)?;
     let args = Args::new(op, &payload, spec_of(SNAPSHOT_ARGUMENTS, op)?)?;
     let mut client = client_of(invocation)?;
     let mut pacer = VirtualPacer::default();
