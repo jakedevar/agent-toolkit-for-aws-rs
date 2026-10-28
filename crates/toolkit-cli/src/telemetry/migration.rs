@@ -295,6 +295,29 @@ fn writable_by_others(_metadata: &fs::Metadata) -> bool {
     false
 }
 
+/// Whether an existing lock directory (a real directory, never a link) shows
+/// that another hook holds the lock now. Trust is decided before the age: a
+/// directory other users can write proves nothing, whatever its time says.
+/// A private one is held only while its modification time is within
+/// `LOCK_STALE_SECONDS` of now on either side. A time that cannot be read,
+/// lies before 1970 or lies further ahead is not one a live holder made, so
+/// it fails toward replacement, never toward a lock held forever.
+fn marks_a_live_holder(ctx: &Ctx<'_>, metadata: &fs::Metadata) -> bool {
+    if writable_by_others(metadata) {
+        return false;
+    }
+    let Some(modified) = metadata
+        .modified()
+        .ok()
+        .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+    else {
+        return false;
+    };
+    let age = (ctx.now)() - modified.as_secs_f64();
+    // A NaN age compares false, so it is stale too.
+    age.abs() <= LOCK_STALE_SECONDS
+}
+
 fn acquire_lock(ctx: &Ctx<'_>, run_dir: &Path) -> Option<Lock> {
     let lock = run_dir.join(LOCK_DIR);
     match create_private_dir(&lock) {
@@ -305,9 +328,7 @@ fn acquire_lock(ctx: &Ctx<'_>, run_dir: &Path) -> Option<Lock> {
             if !metadata.is_dir() {
                 return None;
             }
-            let modified = metadata.modified().ok()?.duration_since(UNIX_EPOCH).ok()?;
-            let stale = (ctx.now)() - modified.as_secs_f64() > LOCK_STALE_SECONDS;
-            if stale || writable_by_others(&metadata) {
+            if !marks_a_live_holder(ctx, &metadata) {
                 // Removal does not follow links inside the directory. If a peer
                 // recreated it first, creation fails and that peer holds it.
                 let _ = fs::remove_dir_all(&lock);

@@ -1000,6 +1000,95 @@ fn a_lock_directory_other_users_can_write_is_not_honoured() {
     assert!(elsewhere.exists(), "a linked lock is never removed through");
 }
 
+/// One second before 1970: a time `duration_since(UNIX_EPOCH)` cannot convert.
+#[cfg(unix)]
+fn before_1970() -> std::time::SystemTime {
+    std::time::UNIX_EPOCH
+        .checked_sub(Duration::from_secs(1))
+        .expect("pre-epoch time")
+}
+
+/// About thirty years ahead of the real clock.
+#[cfg(unix)]
+fn far_future() -> std::time::SystemTime {
+    std::time::SystemTime::now() + Duration::from_secs(30 * 365 * 24 * 3600)
+}
+
+/// A real lock directory with the given mode and modification time, as its
+/// owner can make it (`chmod`, then `touch -d`).
+#[cfg(unix)]
+fn plant_lock(run_dir: &Path, mode: u32, modified: std::time::SystemTime) {
+    let lock = run_dir.join(".telemetry-lock");
+    fs::create_dir(&lock).expect("lock");
+    set_mode(&lock, mode);
+    fs::File::open(&lock)
+        .expect("open lock")
+        .set_times(fs::FileTimes::new().set_modified(modified))
+        .expect("set lock time");
+    assert_eq!(
+        fs::symlink_metadata(&lock).expect("stat").modified().expect("mtime"),
+        modified,
+        "the filesystem kept the planted time"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_writable_lock_is_replaced_whatever_its_time() {
+    let fx = fixture();
+    let p = Project::gcp(&fx, &phase_status(json!({})));
+    let modes = record_lock_modes(&fx, &p.run_dir);
+    // A time before 1970 has no age to compare, which must not let a lock
+    // anyone can write survive: it would block reporting for good.
+    plant_lock(&p.run_dir, 0o777, before_1970());
+    assert_eq!(p.reconcile(SESSION_ID).len(), 2, "reporting proceeds");
+    assert_eq!(
+        *modes.lock().expect("modes"),
+        vec![0o700, 0o700],
+        "replaced by a private lock"
+    );
+    assert!(!p.has_lock(), "the replacement is released");
+
+    // Nor does a time far ahead keep a group-writable lock alive.
+    modes.lock().expect("modes").clear();
+    plant_lock(&p.run_dir, 0o770, far_future());
+    p.write_status(&phase_status(
+        json!({"current_phase": "design", "phases": with_phases(&[("clarify", "completed")])}),
+    ));
+    assert_eq!(p.reconcile(SESSION_ID).len(), 1, "reporting proceeds");
+    assert_eq!(*modes.lock().expect("modes"), vec![0o700]);
+    assert!(!p.has_lock(), "the replacement is released");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_private_lock_with_an_impossible_time_is_stale_and_a_fresh_one_still_blocks() {
+    let fx = fixture();
+    let p = Project::gcp(&fx, &phase_status(json!({})));
+    // A private lock that is fresh by the clock is honoured.
+    plant_lock(&p.run_dir, 0o700, std::time::SystemTime::now());
+    assert!(
+        p.reconcile(SESSION_ID).is_empty(),
+        "the holder is about to report the same transitions"
+    );
+    assert!(p.has_lock() && !p.has_snapshot(), "a fresh lock is left alone");
+    fs::remove_dir(p.run_dir.join(".telemetry-lock")).expect("unlock");
+
+    // No live hook made a lock dated before 1970 or decades ahead: either
+    // would otherwise be held forever (or until that date).
+    let modes = record_lock_modes(&fx, &p.run_dir);
+    plant_lock(&p.run_dir, 0o700, before_1970());
+    assert_eq!(p.reconcile(SESSION_ID).len(), 2, "reporting proceeds");
+    assert!(!p.has_lock(), "the replacement is released");
+    plant_lock(&p.run_dir, 0o700, far_future());
+    p.write_status(&phase_status(
+        json!({"current_phase": "design", "phases": with_phases(&[("clarify", "completed")])}),
+    ));
+    assert_eq!(p.reconcile(SESSION_ID).len(), 1, "reporting proceeds");
+    assert_eq!(*modes.lock().expect("modes"), vec![0o700, 0o700, 0o700]);
+    assert!(!p.has_lock(), "the replacement is released");
+}
+
 #[test]
 fn an_unwritable_run_directory_emits_nothing() {
     let fx = fixture();
