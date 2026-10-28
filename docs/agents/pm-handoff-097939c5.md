@@ -386,3 +386,5 @@ Friction: #4727, Rsi #4694, Rsi #4704
   Kaizen #4941 worker f8244a11 (Opus high, base e77d1c18): shared redact->bound->escape in safe_path/diag helpers, migrate docgraph local helper; r16 integration migrates bedrock_probes diag::path.
   ROUND 16 ready so far: #4404 6f4e4af8 (base f597a058). Pending: #4780 repair (dc00af2d), #4390 (12fe1c8e), #4396 (ff7ae0b8), #4941 (f8244a11).
   4/4 busy: 12fe1c8e, ff7ae0b8, dc00af2d, f8244a11.
+- 10-28 22:48Z: #4780 repair 85fe65b62fd18cbe073ff35c9eaa372103e34d8e (dc00af2d; COVERS #4934-#4936; stdin dropped, cloudwatch byte-identical to base, global USAGE pinned (len 35200, FNV 0xa95b3df510f48191), LITERAL_DASH 30 audited non-path flags + FIFO canary; fmt c5cfad30 clippy eace443e scoped 2871831a ok cli 2833). Re-review #4927 r2 worker fd1f037d (Codex sol, pinned).
+  4/4 busy: 12fe1c8e (#4390), ff7ae0b8 (#4396), f8244a11 (#4941), fd1f037d (#4927 r2).
