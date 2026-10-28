@@ -22,6 +22,8 @@ Verification update (2026-10-26): native manager jobs built exact `bb0df26` and 
 
 Latest foundation source: manager combined the preserved GLM source and governance documentation on the allocated branch. Commit `1ab92d8` built cleanly and all 42 offline tests passed (26 core, five CLI unit, 11 binary integration). Its fmt and clippy jobs ran after adding the required `cpu_quota_percent = 200` to each recipe; their diagnostics identified two formatting sites and one control-flow lint. GLM worker `c0fdbb81-d558-446f-8f5b-23496e7fcea9` committed that bounded cleanup as `d9c6e3c`. The final combined source still needs exact-commit daemon verification and independent review. Harness #4425 remains the trusted candidate blocker; no acceptance or landing is claimed. Inventory correction continues separately under GLM worker `8268e555-ffae-4416-b6d1-c04a5578162b`, with the stranded DeepSeek draft retained as unaccepted evidence.
 
+CLI path-argument policy (bare `-`, #4780): [cli-bare-dash.md](cli-bare-dash.md) lists the router rule and the audited literal `-` parameters (no parameter reads stdin).
+
 Dependencies exist in manager ledger with require_integrated true, as well as linked Issue bodies. Pinned bootstrap stacking is an explicit exception recorded by manager. At most two initial workers; normal concurrency stays inside project cap. No ready label bypasses prerequisites.
 
 ## Issue map

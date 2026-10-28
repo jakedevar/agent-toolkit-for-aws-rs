@@ -316,10 +316,9 @@ fn usage_variants(spec: &CommandSpec) -> Vec<Vec<String>> {
     }
     // The bare `-` stdio marker (#4743) as a value of every value flag, in both
     // spellings, and as a positional. The router refuses it except for pairs
-    // listed in `STDIO_DASH` (and for the value of a non-strict command, which
-    // takes any value), so the diagnostic or the command behind it must keep
+    // listed in `STDIO_DASH` or `LITERAL_DASH`, so the diagnostic or the command behind it must keep
     // its output safe (stdin is closed here). The semantic contract (usage
-    // error, no file touched) is `an_unlisted_bare_dash_is_a_usage_error_*`.
+    // error, no file touched) is `every_value_flag_and_positional_dash_is_refused_or_in_exactly_one_list`.
     for flag in all_value_flags(spec) {
         let mut spaced = base.clone();
         spaced.extend([flag.to_string(), "-".to_string()]);
@@ -862,52 +861,167 @@ fn relational_reports_escape_hostile_recorded_and_argument_text() {
 // The bare `-` stdio marker is fail-closed (#4743, #4780).
 // ---------------------------------------------------------------------------
 
-/// The command path as `STDIO_DASH` spells it.
+/// The command path as `STDIO_DASH` and `LITERAL_DASH` spell it.
 fn joined_path(spec: &CommandSpec) -> String {
     spec.path.join(" ")
 }
 
-fn dash_is_listed(spec: &CommandSpec, flag: &str) -> bool {
+fn pair_listed(list: &[(&str, &str)], spec: &CommandSpec, flag: &str) -> bool {
     let path = joined_path(spec);
-    toolkit_cli::STDIO_DASH
-        .iter()
+    list.iter()
         .any(|(command, listed)| *command == path && *listed == flag)
 }
 
-/// Every `STDIO_DASH` pair names a registered command and one of its value
-/// flags (or `<positional>` on a command that takes positionals), once.
+fn stdio_listed(spec: &CommandSpec, flag: &str) -> bool {
+    pair_listed(toolkit_cli::STDIO_DASH, spec, flag)
+}
+
+fn literal_listed(spec: &CommandSpec, flag: &str) -> bool {
+    pair_listed(toolkit_cli::LITERAL_DASH, spec, flag)
+}
+
+/// Words of a flag name that mark a path parameter. `LITERAL_DASH` must never
+/// list one: a path keeps the fail-closed refusal (#4934). A tripwire on the
+/// name, next to the audit in `docs/migration/cli-bare-dash.md`, not a proof.
+const PATH_WORDS: [&str; 28] = [
+    "suffix",
+    "prefix",
+    "stem",
+    "extension",
+    "filename",
+    "basename",
+    "file",
+    "path",
+    "dir",
+    "root",
+    "out",
+    "output",
+    "recorded",
+    "snapshot",
+    "manifest",
+    "config",
+    "schema",
+    "catalog",
+    "script",
+    "mappings",
+    "baseline",
+    "input",
+    "csv",
+    "image",
+    "plugin",
+    "model",
+    "requirements",
+    "state",
+];
+
+fn names_a_path(flag: &str) -> bool {
+    flag.trim_start_matches('-')
+        .split('-')
+        .any(|word| PATH_WORDS.contains(&word))
+}
+
+/// Every `STDIO_DASH` and `LITERAL_DASH` pair names a registered command and one
+/// of its value flags (`<positional>` only in `STDIO_DASH`, on a command that
+/// takes positionals), once, in exactly one of the two lists, and a
+/// `LITERAL_DASH` flag never names a path.
 #[test]
-fn every_stdio_dash_entry_names_a_real_command_and_flag() {
+fn every_dash_allowlist_entry_names_a_real_command_and_flag_in_exactly_one_list() {
     let mut seen = BTreeSet::new();
-    for (command, flag) in toolkit_cli::STDIO_DASH {
-        assert!(seen.insert((*command, *flag)), "duplicate {command} {flag}");
-        let spec = COMMANDS
-            .iter()
-            .find(|spec| joined_path(spec) == *command)
-            .unwrap_or_else(|| panic!("STDIO_DASH names no command {command:?}"));
-        assert!(!spec.passthrough, "{command}: passthrough takes every word");
-        if *flag == toolkit_cli::STDIO_DASH_POSITIONAL {
-            assert!(spec.max_positionals > 0, "{command} takes no positionals");
-        } else {
+    for (list_name, list) in [
+        ("STDIO_DASH", toolkit_cli::STDIO_DASH),
+        ("LITERAL_DASH", toolkit_cli::LITERAL_DASH),
+    ] {
+        for (command, flag) in list {
             assert!(
-                all_value_flags(spec).contains(flag),
-                "{command} has no value flag {flag}"
+                seen.insert((*command, *flag)),
+                "{command} {flag} is listed twice or in both lists"
             );
+            let spec = COMMANDS
+                .iter()
+                .find(|spec| joined_path(spec) == *command)
+                .unwrap_or_else(|| panic!("{list_name} names no command {command:?}"));
+            assert!(!spec.passthrough, "{command}: passthrough takes every word");
+            if *flag == toolkit_cli::STDIO_DASH_POSITIONAL {
+                assert_eq!(list_name, "STDIO_DASH", "{command}: a literal positional");
+                assert!(spec.max_positionals > 0, "{command} takes no positionals");
+            } else {
+                assert!(
+                    all_value_flags(spec).contains(flag),
+                    "{command} has no value flag {flag}"
+                );
+            }
+            if list_name == "LITERAL_DASH" {
+                assert!(
+                    !names_a_path(flag),
+                    "{command} {flag} looks like a path parameter; a path is never a literal"
+                );
+            }
         }
+    }
+}
+
+/// The detector behind the path tripwire: the path flags of the reproductions
+/// and of the commands that write or read files are caught, the audited
+/// selectors are not.
+#[test]
+fn the_path_tripwire_catches_path_flags_and_spares_the_audited_selectors() {
+    for path_flag in [
+        "--output",
+        "--out",
+        "--json-file",
+        "--recorded",
+        "--plugin-root",
+        "--snapshot-file",
+        "--model",
+        "--schema",
+        "--migration-dir",
+        "--date-suffix",
+    ] {
+        assert!(names_a_path(path_flag), "{path_flag}");
+    }
+    for selector in [
+        "--workload",
+        "--agent-id",
+        "--region",
+        "--profile",
+        "--models",
+        "--description",
+        "--dataset-name",
+        "--trace-ids",
+    ] {
+        assert!(!names_a_path(selector), "{selector}");
     }
 }
 
 fn is_usage_error(run: &Run) -> bool {
     run.status == Some(2)
-        && String::from_utf8_lossy(&run.stderr).starts_with("error: invalid arguments\n")
+        && String::from_utf8_lossy(&run.stderr).starts_with("error: invalid arguments")
 }
 
-/// Every command, every value flag and every positional: `-` is a plain usage
-/// error unless the pair is listed (and then the router accepts it). The scratch
-/// directory holds a sentinel file named `-` that must never be touched, so a
-/// slice cannot receive the marker and quietly treat it as a path.
+/// A refused `-` is a usage error whose first stderr line is a single escaped
+/// diagnostic naming `flag` (or the positional argument).
+fn is_dash_refusal(run: &Run, flag: &str) -> bool {
+    let stderr = String::from_utf8_lossy(&run.stderr);
+    let first = stderr.lines().next().unwrap_or_default();
+    let names = if flag == toolkit_cli::STDIO_DASH_POSITIONAL {
+        "a bare - argument"
+    } else {
+        flag
+    };
+    run.status == Some(2)
+        && first.starts_with("error: invalid arguments: ")
+        && first.contains(names)
+        && first.contains("./-")
+}
+
+/// Every command, every value flag and every positional: a `-` is a plain usage
+/// error unless the pair is listed in exactly one of `STDIO_DASH` and
+/// `LITERAL_DASH` (and then the router accepts it, handing a literal flag the
+/// value `-` unchanged). The scratch directory holds a sentinel file named `-`
+/// that must never be touched, so a slice cannot receive the marker and quietly
+/// treat it as a path.
 #[test]
-fn an_unlisted_bare_dash_is_a_usage_error_and_touches_no_file() {
+fn every_value_flag_and_positional_dash_is_refused_or_in_exactly_one_list() {
     let scratch = Scratch::new();
     let sentinel = scratch.0.join("-");
     fs::write(&sentinel, "KEEP-ORIGINAL\n").expect("write sentinel");
@@ -929,25 +1043,50 @@ fn an_unlisted_bare_dash_is_a_usage_error_and_touches_no_file() {
             cases.push((toolkit_cli::STDIO_DASH_POSITIONAL.to_string(), dash));
         }
         for (flag, args) in cases {
-            let positional = flag == toolkit_cli::STDIO_DASH_POSITIONAL;
-            let routed = toolkit_cli::route(COMMANDS, &args).is_ok();
-            if dash_is_listed(spec, &flag) {
-                if !routed {
-                    failures.insert(format!("listed pair refused: {}", display_args(&args)));
+            let stdio = stdio_listed(spec, &flag);
+            let literal = literal_listed(spec, &flag);
+            if stdio && literal {
+                failures.insert(format!("in both lists: {}", display_args(&args)));
+                continue;
+            }
+            let routed = toolkit_cli::route(COMMANDS, &args);
+            if stdio || literal {
+                match routed {
+                    Ok(toolkit_cli::Routed::Run(_, invocation)) => {
+                        // A listed literal pair hands the handler exactly `-`.
+                        if literal && !invocation.values_of(&flag).any(|value| value == "-") {
+                            failures.insert(format!(
+                                "literal `-` not passed unchanged: {}",
+                                display_args(&args)
+                            ));
+                        }
+                    }
+                    _ => {
+                        failures.insert(format!("listed pair refused: {}", display_args(&args)));
+                    }
                 }
-            } else if positional || spec.strict_values {
-                // Refused by the router, with the pre-#4743 diagnostic.
-                if routed {
+            } else {
+                // Refused by the router for EVERY registered value flag and
+                // positional that is not listed, strict or not: a slice never
+                // receives a `-` it could open as a file named `-` (#4780). The
+                // diagnostic names the flag; the registry is the audit, so a new
+                // slice cannot opt out by forgetting a declaration.
+                if routed.is_ok() {
                     failures.insert(format!("unlisted `-` routed: {}", display_args(&args)));
                 } else {
                     let run = spawn_toolkit(&args, &scratch.0);
-                    if !is_usage_error(&run) {
-                        failures.insert(format!("not a usage error: {}", display_args(&args)));
+                    if !is_dash_refusal(&run, &flag) {
+                        failures.insert(format!(
+                            "not a dash refusal naming {flag}: {} -> {:?}",
+                            display_args(&args),
+                            String::from_utf8_lossy(&run.stderr)
+                                .lines()
+                                .next()
+                                .unwrap_or_default()
+                        ));
                     }
                 }
             }
-            // A non-strict command takes any value verbatim, as it did before
-            // #4743; that is outside this contract.
         }
     }
     assert_eq!(
@@ -960,6 +1099,424 @@ fn an_unlisted_bare_dash_is_a_usage_error_and_touches_no_file() {
         .collect();
     assert_eq!(entries.len(), 1, "unexpected files created: {entries:?}");
     assert!(failures.is_empty(), "{failures:?}");
+}
+
+#[cfg(unix)]
+fn make_fifo(path: &Path) {
+    let made = Command::new("mkfifo")
+        .arg(path)
+        .status()
+        .expect("run mkfifo");
+    assert!(made.success(), "mkfifo {}", path.display());
+}
+
+/// A `LITERAL_DASH` flag is a selector, never a path: with a FIFO named `-` in
+/// the working directory (any open for read or write blocks, so the run times
+/// out), every listed pair in both spellings terminates without a dash refusal
+/// and touches nothing in the directory (#4934).
+#[cfg(unix)]
+#[test]
+fn a_literal_dash_flag_never_reaches_the_filesystem() {
+    use std::os::unix::fs::FileTypeExt;
+    for (command, flag) in toolkit_cli::LITERAL_DASH {
+        let spec = COMMANDS
+            .iter()
+            .find(|spec| joined_path(spec) == *command)
+            .expect("registered command");
+        let base: Vec<String> = spec.path.iter().map(|word| (*word).to_string()).collect();
+        let mut spaced = base.clone();
+        spaced.extend([(*flag).to_string(), "-".to_string()]);
+        let mut attached = base;
+        attached.push(format!("{flag}=-"));
+        for args in [spaced, attached] {
+            let scratch = Scratch::new();
+            make_fifo(&scratch.0.join("-"));
+            let run = spawn_toolkit(&args, &scratch.0);
+            assert!(
+                run.status.is_some(),
+                "{}: blocked, a file named - was opened",
+                display_args(&args)
+            );
+            let stderr = String::from_utf8_lossy(&run.stderr);
+            assert!(
+                !stderr.contains("does not accept -"),
+                "{}: refused: {stderr}",
+                display_args(&args)
+            );
+            let entries: Vec<_> = fs::read_dir(&scratch.0)
+                .expect("read scratch")
+                .map(|entry| entry.expect("entry"))
+                .collect();
+            assert_eq!(entries.len(), 1, "{}: files created", display_args(&args));
+            assert!(
+                entries[0].file_type().expect("type").is_fifo(),
+                "{}: ./- replaced",
+                display_args(&args)
+            );
+        }
+    }
+}
+
+/// The complete offline companions of `bedrock-report render`: an empty phase
+/// results directory and a repository holding two reports that tell a selection
+/// by suffix apart from the fallback (the last name in order). `-` sorts before
+/// every digit, so with `--date-suffix -` the fallback would pick
+/// `MIGRATION_REPORT_2026-12-31.md` and an accepted `-` would pick
+/// `MIGRATION_REPORT_-.md` instead.
+fn report_scratch() -> Scratch {
+    let scratch = Scratch::new();
+    fs::create_dir(scratch.0.join("phases")).expect("phases");
+    fs::create_dir(scratch.0.join("repo")).expect("repo");
+    for (name, body) in [
+        ("MIGRATION_REPORT_-.md", "selected-by-dash"),
+        ("MIGRATION_REPORT_2026-02-02.md", "selected-by-date"),
+        ("MIGRATION_REPORT_2026-12-31.md", "fallback"),
+    ] {
+        fs::write(scratch.0.join("repo").join(name), body).expect("report fixture");
+    }
+    scratch
+}
+
+fn report_args(suffix: &[&str]) -> Vec<String> {
+    let mut args: Vec<String> = [
+        "bedrock-report",
+        "render",
+        "--phase-results",
+        "phases",
+        "--repo",
+        "repo",
+        "--results-dir",
+        "results",
+    ]
+    .iter()
+    .map(|word| (*word).to_string())
+    .collect();
+    args.extend(suffix.iter().map(|word| (*word).to_string()));
+    args
+}
+
+/// `--date-suffix` is composed into the report file name
+/// (`MIGRATION_REPORT_<suffix>.md`, `find_report_path`), so a bare `-` there
+/// would select and copy `MIGRATION_REPORT_-.md`. It is not in `LITERAL_DASH`:
+/// the router refuses the `-` in both spellings before any report is looked up
+/// (#4955), while an ordinary suffix still selects its report. A FIFO named `-`
+/// cannot see this flow, so this test uses the complete companions and a
+/// `MIGRATION_REPORT_-.md` that must neither be selected nor copied.
+#[test]
+fn a_dash_report_date_suffix_is_refused_and_selects_no_report() {
+    for suffix in [&["--date-suffix", "-"][..], &["--date-suffix=-"][..]] {
+        let scratch = report_scratch();
+        let args = report_args(suffix);
+        let run = spawn_toolkit(&args, &scratch.0);
+        assert!(
+            is_dash_refusal(&run, "--date-suffix"),
+            "{}: {}",
+            display_args(&args),
+            String::from_utf8_lossy(&run.stderr)
+        );
+        assert!(!scratch.0.join("results").exists(), "a report was copied");
+        assert_eq!(
+            fs::read_to_string(scratch.0.join("repo/MIGRATION_REPORT_-.md")).expect("report"),
+            "selected-by-dash"
+        );
+    }
+    // The control: an ordinary suffix still selects exactly its report, so the
+    // fixture does tell a selection by suffix from the fallback.
+    let scratch = report_scratch();
+    let args = report_args(&["--date-suffix", "2026-02-02"]);
+    let run = spawn_toolkit(&args, &scratch.0);
+    assert_eq!(
+        run.status,
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(scratch.0.join("results/MIGRATION_REPORT_2026-02-02.md"))
+            .expect("copied report"),
+        "selected-by-date"
+    );
+    assert!(!scratch.0.join("results/MIGRATION_REPORT_-.md").exists());
+}
+
+/// Source files under `src` that are not unit-test modules.
+fn consumer_sources(dir: &Path, found: &mut Vec<(String, String)>) {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    for entry in fs::read_dir(dir).expect("read src dir") {
+        let path = entry.expect("entry").path();
+        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        if path.is_dir() {
+            if name != "tests" {
+                consumer_sources(&path, found);
+            }
+        } else if Path::new(name).extension().is_some_and(|ext| ext == "rs")
+            && name != "tests.rs"
+            && !name.starts_with("tests_")
+        {
+            let relative = path
+                .strip_prefix(&root)
+                .expect("under src")
+                .to_string_lossy()
+                .into_owned();
+            found.push((relative, fs::read_to_string(&path).expect("read source")));
+        }
+    }
+}
+
+/// Source text that reaches the filesystem or builds a path.
+const FILESYSTEM_TOKENS: [&str; 8] = [
+    "fs::",
+    "PathBuf",
+    "Path::",
+    "&Path",
+    "read_regular_file",
+    "write_regular_file",
+    "read_json_document",
+    "OpenOptions",
+];
+
+/// Every non-test source file that names a `LITERAL_DASH` flag and also reaches
+/// the filesystem, as `(file, flag)`. The first audit of `--date-suffix` stopped
+/// at the JSON field it was stored in while `find_report_path` in the same file
+/// went on to build `MIGRATION_REPORT_<suffix>.md` (#4955), so a listed flag
+/// that shares a file with filesystem code needs a recorded, per-flag reading
+/// of the whole dataflow here and in `docs/migration/cli-bare-dash.md`. The
+/// scan is by flag name, so another command that spells the same flag
+/// (`--region`) is listed too.
+fn filesystem_bearing_consumers() -> BTreeSet<(String, String)> {
+    let mut sources = Vec::new();
+    consumer_sources(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+        &mut sources,
+    );
+    let mut found = BTreeSet::new();
+    for (_, flag) in toolkit_cli::LITERAL_DASH {
+        for (file, text) in &sources {
+            if file == "lib.rs" || !text.contains(&format!("\"{flag}\"")) {
+                continue;
+            }
+            if FILESYSTEM_TOKENS.iter().any(|token| text.contains(token)) {
+                found.insert((file.clone(), (*flag).to_string()));
+            }
+        }
+    }
+    found
+}
+
+/// The audited pairs of [`filesystem_bearing_consumers`]. Each file also holds
+/// filesystem code; the flag's own dataflow was followed to its end (request
+/// fields, lookup keys, comparisons, output text) and never reaches a path, a
+/// file name or a directory name. A file that is not about a listed command
+/// (`elasticache`, `relational`, `ai-data`, `cloudwatch region`) is
+/// there for the flag name only.
+const AUDITED_FILESYSTEM_CONSUMERS: [(&str, &str); 19] = [
+    ("startup/model_path.rs", "--workload"),
+    ("bedrock_agent.rs", "--agent-id"),
+    ("bedrock_agent.rs", "--agent-version"),
+    ("bedrock_agent.rs", "--agent-alias-id"),
+    ("bedrock_agent.rs", "--region"),
+    ("bedrock_agent.rs", "--profile"),
+    ("bedrock_resolve/mod.rs", "--provider"),
+    ("bedrock_resolve/mod.rs", "--source"),
+    ("bedrock_resolve/mod.rs", "--target"),
+    ("bedrock_resolve/mod.rs", "--region"),
+    ("bedrock_resolve/mod.rs", "--models"),
+    ("cloudwatch/ops_cli.rs", "--region"),
+    ("cloudwatch/ops_cli.rs", "--profile"),
+    ("cloudwatch/cli.rs", "--region"),
+    ("msk.rs", "--region"),
+    ("ai_models/mod.rs", "--region"),
+    ("ai_data/mod.rs", "--region"),
+    ("elasticache/mod.rs", "--region"),
+    ("relational/mod.rs", "--region"),
+];
+
+/// A `LITERAL_DASH` flag that shares a source file with filesystem code must be
+/// in the audited table (#4955). The scan finds `--date-suffix` in
+/// `bedrock_report/render.rs`, the flow the FIFO canary missed.
+#[test]
+fn a_literal_flag_in_a_filesystem_bearing_file_is_audited_per_flag() {
+    let audited: BTreeSet<(String, String)> = AUDITED_FILESYSTEM_CONSUMERS
+        .iter()
+        .map(|(file, flag)| ((*file).to_string(), (*flag).to_string()))
+        .collect();
+    let found = filesystem_bearing_consumers();
+    let unaudited: Vec<_> = found.difference(&audited).collect();
+    assert!(
+        unaudited.is_empty(),
+        "a LITERAL_DASH flag shares a file with filesystem code; follow its whole dataflow \
+         (path components, joins, format! into a path), then record it in \
+         AUDITED_FILESYSTEM_CONSUMERS and docs/migration/cli-bare-dash.md: {unaudited:?}"
+    );
+    // The table does not rot: every audited row is still found by the scan.
+    let stale: Vec<_> = audited.difference(&found).collect();
+    assert!(stale.is_empty(), "stale audited rows: {stale:?}");
+}
+
+/// The scan would have caught the #4955 entry: `bedrock_report/render.rs`
+/// names `--date-suffix` and reaches the filesystem.
+#[test]
+fn the_filesystem_scan_catches_the_removed_date_suffix_flow() {
+    let mut sources = Vec::new();
+    consumer_sources(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+        &mut sources,
+    );
+    let render = sources
+        .iter()
+        .find(|(file, _)| file == "bedrock_report/render.rs")
+        .expect("render.rs");
+    assert!(render.1.contains("\"--date-suffix\""));
+    assert!(FILESYSTEM_TOKENS
+        .iter()
+        .any(|token| render.1.contains(token)));
+    assert!(!toolkit_cli::LITERAL_DASH
+        .iter()
+        .any(|(_, flag)| *flag == "--date-suffix"));
+}
+
+/// A schema-valid recommendation whose only workload is named `-`
+/// (`decision_required`, so no probe or network request is made).
+const DASH_WORKLOAD_RECOMMENDATION: &str = r#"{"schema_version":2,
+ "catalog":{"provider":"anthropic","verified_at":"2026-07-01","verified_region":"us-east-1","source":null},
+ "catalog_provenance":{"anthropic":{"provider":"anthropic","verified_at":"2026-07-01","verified_region":"us-east-1","source":null}},
+ "primary_unit":"-",
+ "workloads":{"-":{"workload_id":"-","provider_module":"anthropic","decision_status":"decision_required",
+  "source":{"provider":"anthropic","model_ids":["claude-3-7-sonnet-latest"],"sdk":"anthropic","api_surface":"messages","source_paths":["src/agent.py"]},
+  "source_analysis":{"detected_version":null,"target_version":null,"version_changed":null},
+  "feature_assessment":{},"primary_model":null,"model_identity":null,"api_path":null,"invocation_model_id":null,
+  "decision_options":[
+   {"model_key":"k","model":"m","api_path":"runtime_converse","invocation_model_id":null,"requires_cris":false,"reason":"r"},
+   {"model_key":"k","model":"m","api_path":"runtime_converse","invocation_model_id":null,"requires_cris":false,"reason":"r"}],
+  "alternatives":[],"rationale":["because"],"blocks":[],"tuning":[],
+  "compatibility":{"native":[],"portable":[],"rearchitecture":[],"unsupported":[]},
+  "architecture_impacts":[],"migration_deltas":[],
+  "evaluation":{"mode":"prompt","gates":["quality"]},
+  "rollout":{"strategy":"decision_required","gate":"g"},
+  "verification":{"region":"us-east-1","catalog_verified_at":"2026-07-01","verified_at":null,
+   "probe_status":"not_run","availability_claim":"provisional","invocation_model_id":null,"required_checks":["probe"]}}}}"#;
+
+/// The reviewer's #4934 reproduction as a positive test: a workload whose ID is
+/// the literal `-` is selected by `--workload -` and `--workload=-`, in both
+/// spellings, exactly like the comma-list control `--workload=-,`. `./-` (a FIFO
+/// here, so any open would block) is never opened and `./-` as the ID would be a
+/// different workload.
+#[cfg(unix)]
+#[test]
+fn verify_model_path_selects_a_workload_named_dash_in_both_spellings() {
+    let spellings: [&[&str]; 3] = [&["--workload", "-"], &["--workload=-"], &["--workload=-,"]];
+    for spelling in spellings {
+        let scratch = Scratch::new();
+        make_fifo(&scratch.0.join("-"));
+        fs::write(
+            scratch.0.join("recommendation.json"),
+            DASH_WORKLOAD_RECOMMENDATION,
+        )
+        .expect("write recommendation");
+        let mut args: Vec<String> = [
+            "startup",
+            "verify-model-path",
+            "recommendation.json",
+            "--output",
+            "verification.json",
+        ]
+        .iter()
+        .map(|word| (*word).to_string())
+        .collect();
+        args.extend(spelling.iter().map(|word| (*word).to_string()));
+        let run = spawn_toolkit(&args, &scratch.0);
+        let stdout = String::from_utf8_lossy(&run.stdout);
+        let stderr = String::from_utf8_lossy(&run.stderr);
+        assert_eq!(run.status, Some(0), "{args:?}: {stdout}{stderr}");
+        assert_eq!(stdout.trim_end(), "RESULT=ok WORKLOADS=1", "{args:?}");
+        let verification =
+            fs::read_to_string(scratch.0.join("verification.json")).expect("verification");
+        assert!(verification.contains("\"-\""), "{args:?}: {verification}");
+    }
+}
+
+/// Another audited literal, complete and offline: `bedrock-resolve identity` takes
+/// three strings and only compares them (`model_identity.py:51-53`), so `-` is an
+/// ordinary, unknown value (`same_model` false, exit 0). A file named `-` is a FIFO
+/// here and must not block the run.
+#[cfg(unix)]
+#[test]
+fn bedrock_resolve_identity_compares_literal_dash_ids() {
+    for spelling in [
+        vec!["--provider", "-", "--source", "-", "--target", "-"],
+        vec!["--provider=-", "--source=-", "--target=-"],
+    ] {
+        let scratch = Scratch::new();
+        make_fifo(&scratch.0.join("-"));
+        let mut args: Vec<String> = ["bedrock-resolve", "identity"]
+            .iter()
+            .map(|word| (*word).to_string())
+            .collect();
+        args.extend(spelling.iter().map(|word| (*word).to_string()));
+        let run = spawn_toolkit(&args, &scratch.0);
+        let stderr = String::from_utf8_lossy(&run.stderr);
+        assert!(
+            !stderr.contains("does not accept -"),
+            "{args:?} refused: {stderr}"
+        );
+        assert!(run.status.is_some(), "{args:?} blocked on ./-");
+        assert_eq!(run.status, Some(0), "{args:?}: {stderr}");
+        assert!(
+            String::from_utf8_lossy(&run.stdout).contains("same_model"),
+            "{args:?}: {:?}",
+            String::from_utf8_lossy(&run.stdout)
+        );
+    }
+}
+
+/// 64-bit FNV-1a, for pinning text without a dependency.
+fn fnv1a64(bytes: &[u8]) -> u64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
+}
+
+/// The global usage text is printed for every command's `--help` and appended to
+/// every usage error, so one slice's description edit changes the help bytes of
+/// every other command (#4936). Its length and FNV-1a hash are pinned to the
+/// text at the base f597a058 (round-14 head plus the #4576 registry): a
+/// deliberate usage change updates the pin in the same commit and says so in the
+/// Issue; an incidental one fails here.
+const USAGE_BASE_LEN: usize = 35200;
+const USAGE_BASE_FNV1A64: u64 = 0xa95b_3df5_10f4_8191;
+
+#[test]
+fn the_global_usage_text_is_byte_identical_to_the_base() {
+    let bytes = toolkit_cli::USAGE.as_bytes();
+    assert_eq!(
+        (bytes.len(), fnv1a64(bytes)),
+        (USAGE_BASE_LEN, USAGE_BASE_FNV1A64),
+        "the global usage text changed; len={} fnv1a64={:#018x}",
+        bytes.len(),
+        fnv1a64(bytes)
+    );
+}
+
+/// Every command's `--help` prints exactly the pinned global usage text, and so
+/// does the usage text of every usage error.
+#[test]
+fn every_command_help_is_the_global_usage_text() {
+    let scratch = Scratch::new();
+    // A passthrough command forwards `--help` to the program it runs.
+    for spec in COMMANDS.iter().filter(|spec| !spec.passthrough) {
+        let mut args: Vec<String> = spec.path.iter().map(|word| (*word).to_string()).collect();
+        args.push("--help".to_string());
+        let run = spawn_toolkit(&args, &scratch.0);
+        assert_eq!(run.status, Some(0), "{args:?}");
+        assert_eq!(
+            String::from_utf8_lossy(&run.stdout),
+            format!("{}\n", toolkit_cli::USAGE),
+            "{args:?}"
+        );
+    }
 }
 
 /// The #4780 reproductions with complete, valid companion arguments: the exact
@@ -1037,4 +1594,213 @@ fn the_4780_reproductions_fail_before_touching_a_file_named_dash() {
     let run = spawn_toolkit(&args, &scratch.0);
     assert!(is_usage_error(&run), "skills list -: {:?}", run.status);
     assert!(run.stdout.is_empty());
+}
+
+/// One of the reviewer's four #4780 reproductions: a complete, valid command
+/// whose only path argument is spelled `-`.
+struct Repro {
+    name: &'static str,
+    /// The complete valid command without its path argument.
+    command: &'static [&'static str],
+    /// The flag whose value is the path argument.
+    flag: &'static str,
+    /// Files made before the run: (path, contents).
+    fixtures: &'static [(&'static str, &'static str)],
+}
+
+const REPROS: &[Repro] = &[
+    Repro {
+        name: "elasticache dashboard --output",
+        command: &["elasticache", "dashboard", "--serverless", "demo"],
+        flag: "--output",
+        fixtures: &[],
+    },
+    Repro {
+        name: "startup terraform-policy --json",
+        command: &["startup", "terraform-policy", "terraform"],
+        flag: "--json",
+        fixtures: &[(
+            "terraform/main.tf",
+            "resource \"null_resource\" \"example\" {}\n",
+        )],
+    },
+    Repro {
+        name: "cloudwatch validate instrumentation-type --json-file",
+        command: &["cloudwatch", "validate", "instrumentation-type"],
+        flag: "--json-file",
+        fixtures: &[],
+    },
+];
+
+/// The same command with the path argument spelled in every way.
+fn repro_args(repro: &Repro, spelling: usize, path: &str) -> Vec<String> {
+    let mut args: Vec<String> = repro.command.iter().map(|w| (*w).to_string()).collect();
+    match spelling {
+        0 => args.extend([repro.flag.to_string(), path.to_string()]),
+        _ => args.push(format!("{}={path}", repro.flag)),
+    }
+    args
+}
+
+fn make_fixtures(scratch: &Scratch, repro: &Repro) {
+    for (path, contents) in repro.fixtures {
+        let full = scratch.0.join(path);
+        fs::create_dir_all(full.parent().expect("parent")).expect("create fixture dir");
+        fs::write(full, contents).expect("write fixture");
+    }
+}
+
+/// The reviewer's four reproductions, with complete valid companion arguments and
+/// both spellings: a pre-existing `./-` is preserved byte for byte, an absent
+/// `./-` is not created, and the exit status is the usage status 2 (#4780).
+#[test]
+fn the_4780_reproductions_refuse_dash_and_leave_a_file_named_dash_alone() {
+    const SENTINEL: &str = "KEEP-ORIGINAL\n";
+    const BREAKPOINT: &str = r#"{"instrumentation_type":"BREAKPOINT"}"#;
+    for repro in REPROS {
+        for spelling in 0..2 {
+            let args = repro_args(repro, spelling, "-");
+            // `./-` present: preserved (the read-side repro keeps its input there).
+            let scratch = Scratch::new();
+            make_fixtures(&scratch, repro);
+            let kept = if repro.flag == "--json-file" {
+                BREAKPOINT
+            } else {
+                SENTINEL
+            };
+            fs::write(scratch.0.join("-"), kept).expect("write sentinel");
+            let run = spawn_toolkit(&args, &scratch.0);
+            assert!(
+                is_dash_refusal(&run, repro.flag),
+                "{}: {args:?}: {:?} {:?}",
+                repro.name,
+                run.status,
+                String::from_utf8_lossy(&run.stderr)
+            );
+            assert!(run.stdout.is_empty(), "{}: {args:?}", repro.name);
+            assert_eq!(
+                fs::read(scratch.0.join("-")).expect("sentinel survives"),
+                kept.as_bytes(),
+                "{}: {args:?} changed ./-",
+                repro.name
+            );
+
+            // `./-` absent: not created.
+            let scratch = Scratch::new();
+            make_fixtures(&scratch, repro);
+            let run = spawn_toolkit(&args, &scratch.0);
+            assert!(
+                is_dash_refusal(&run, repro.flag),
+                "{}: {args:?}: {:?}",
+                repro.name,
+                run.status
+            );
+            assert!(
+                !scratch.0.join("-").exists(),
+                "{}: {args:?} created ./-",
+                repro.name
+            );
+        }
+    }
+
+    // `skills list -`: the positional root is not enumerated as ./-.
+    let scratch = Scratch::new();
+    fs::create_dir_all(scratch.0.join("-/example")).expect("create dir");
+    fs::write(
+        scratch.0.join("-/example/SKILL.md"),
+        "---\nname: example\n---\n",
+    )
+    .expect("write skill");
+    let args: Vec<String> = ["skills", "list", "-"]
+        .iter()
+        .map(|w| (*w).to_string())
+        .collect();
+    let run = spawn_toolkit(&args, &scratch.0);
+    assert!(
+        is_dash_refusal(&run, toolkit_cli::STDIO_DASH_POSITIONAL),
+        "skills list -: {:?} {:?}",
+        run.status,
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert!(run.stdout.is_empty());
+}
+
+/// `./-` stays a legal explicit literal path for the same four commands.
+#[test]
+fn an_explicit_dot_slash_dash_is_still_a_literal_path() {
+    // elasticache dashboard --output ./- writes the template to ./-.
+    let elasticache = &REPROS[0];
+    for spelling in 0..2 {
+        let scratch = Scratch::new();
+        let run = spawn_toolkit(&repro_args(elasticache, spelling, "./-"), &scratch.0);
+        assert_eq!(
+            run.status,
+            Some(0),
+            "{:?}",
+            String::from_utf8_lossy(&run.stderr)
+        );
+        assert!(
+            String::from_utf8_lossy(&run.stdout).starts_with("Written to ./-\n"),
+            "{:?}",
+            String::from_utf8_lossy(&run.stdout)
+        );
+        let written = fs::read_to_string(scratch.0.join("-")).expect("./- written");
+        assert!(written.starts_with('{'), "{written}");
+    }
+
+    // startup terraform-policy --json ./- writes the verdict to ./-.
+    let terraform = &REPROS[1];
+    for spelling in 0..2 {
+        let scratch = Scratch::new();
+        make_fixtures(&scratch, terraform);
+        let run = spawn_toolkit(&repro_args(terraform, spelling, "./-"), &scratch.0);
+        assert_eq!(
+            run.status,
+            Some(0),
+            "{:?}",
+            String::from_utf8_lossy(&run.stderr)
+        );
+        assert!(String::from_utf8_lossy(&run.stdout).starts_with("POLICY_OK"));
+        let verdict = fs::read_to_string(scratch.0.join("-")).expect("./- written");
+        assert!(verdict.starts_with('{'), "{verdict}");
+    }
+
+    // cloudwatch validate ... --json-file ./- reads ./-.
+    let cloudwatch = &REPROS[2];
+    for spelling in 0..2 {
+        let scratch = Scratch::new();
+        fs::write(
+            scratch.0.join("-"),
+            r#"{"instrumentation_type":"BREAKPOINT"}"#,
+        )
+        .expect("write ./-");
+        let run = spawn_toolkit(&repro_args(cloudwatch, spelling, "./-"), &scratch.0);
+        assert_eq!(
+            run.status,
+            Some(0),
+            "{:?}",
+            String::from_utf8_lossy(&run.stderr)
+        );
+    }
+
+    // skills list ./- lists ./-/example.
+    let scratch = Scratch::new();
+    fs::create_dir_all(scratch.0.join("-/example")).expect("create dir");
+    fs::write(
+        scratch.0.join("-/example/SKILL.md"),
+        "---\nname: example\n---\n",
+    )
+    .expect("write skill");
+    let args: Vec<String> = ["skills", "list", "./-"]
+        .iter()
+        .map(|w| (*w).to_string())
+        .collect();
+    let run = spawn_toolkit(&args, &scratch.0);
+    assert_eq!(
+        run.status,
+        Some(0),
+        "{:?}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert!(String::from_utf8_lossy(&run.stdout).contains("example"));
 }
