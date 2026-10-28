@@ -45,7 +45,6 @@ use super::validation::{
     is_valid_location_hash, normalize_instrumentation_type, validate_capture_names,
     validate_probe_constraints, validate_snapshot_signal,
 };
-use crate::stdin::read_stdin;
 use crate::{Invocation, Output};
 
 /// Upper bound for an arguments file (16 MiB).
@@ -492,21 +491,7 @@ impl Args {
     }
 }
 
-/// Reads the op arguments from `--json` or `--json-file`.
-///
-/// `stdin` is true only for the commands whose Python original reads a lone `-`
-/// as standard input (`STDIO_DASH`): there `--json -` and `--json-file -` read at
-/// most 1 MiB of UTF-8 from stdin. Elsewhere the router has already refused `-`,
-/// and a `-` that still arrives is refused again rather than opened as a file.
-pub(super) fn read_arguments(invocation: &Invocation, stdin: bool) -> Result<Json, ToolkitError> {
-    for flag in ["--json", "--json-file"] {
-        if !stdin && invocation.value(flag) == Some("-") {
-            return Err(ToolkitError::usage(
-                "invalid_arguments",
-                format!("invalid arguments: {flag} does not accept - (standard input/output)"),
-            ));
-        }
-    }
+pub(super) fn read_arguments(invocation: &Invocation) -> Result<Json, ToolkitError> {
     let text = match (invocation.value("--json"), invocation.value("--json-file")) {
         (Some(_), Some(_)) => {
             return Err(ToolkitError::usage(
@@ -514,9 +499,7 @@ pub(super) fn read_arguments(invocation: &Invocation, stdin: bool) -> Result<Jso
                 "pass the arguments via exactly one of --json or --json-file",
             ))
         }
-        (Some("-"), None) => read_stdin("--json")?,
         (Some(text), None) => text.to_string(),
-        (None, Some("-")) => read_stdin("--json-file")?,
         (None, Some(path)) => {
             read_regular_file(Path::new(path), MAX_ARGUMENT_BYTES).map_err(|error| {
                 ToolkitError::usage(
@@ -871,7 +854,7 @@ pub(super) fn render_report(op: &str, arguments: &Json) -> Result<OpResult, Tool
 /// `toolkit cloudwatch render RENDERER (--json TEXT | --json-file FILE)`.
 pub fn render_command(invocation: &Invocation, out: &mut Output<'_>) -> Result<(), ToolkitError> {
     let op = op_name(invocation, "renderer", RENDERERS)?;
-    let arguments = read_arguments(invocation, false)?;
+    let arguments = read_arguments(invocation)?;
     let result = render_report(op, &arguments)?;
     if !result.ok {
         out.set_exit_status(result.exit_status());
@@ -966,7 +949,7 @@ fn run_check(op: &str, value: &Json, out: &mut Output<'_>) -> Result<(), Toolkit
 /// `toolkit cloudwatch validate CHECK (--json TEXT | --json-file FILE)`.
 pub fn validate_command(invocation: &Invocation, out: &mut Output<'_>) -> Result<(), ToolkitError> {
     let op = op_name(invocation, "check", CHECKS)?;
-    let arguments = read_arguments(invocation, false)?;
+    let arguments = read_arguments(invocation)?;
     run_check(op, &arguments, out)
 }
 
