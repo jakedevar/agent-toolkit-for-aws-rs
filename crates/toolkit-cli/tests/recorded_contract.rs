@@ -2074,19 +2074,14 @@ const INVENTORY: &[(&str, Class)] = &[
         Class::NotRecorded("the skill's own report payloads and phase-result files"),
     ),
     ("bedrock_resolve", Class::Recorded),
-    (
-        "cloudwatch",
-        Class::NotRecorded(
-            "pure renderers and checks over a caller-supplied argument object (`--json`, \
-             `--json-file`); no AWS call is recorded or replayed",
-        ),
-    ),
+    ("cloudwatch", Class::Recorded),
     (
         "dynamodb",
         Class::NotRecorded(
             "a pure cost calculator and a design loop over the skill's own state files",
         ),
     ),
+    ("dynamodb_deploy", Class::Recorded),
     ("elasticache", Class::Recorded),
     (
         "manifests",

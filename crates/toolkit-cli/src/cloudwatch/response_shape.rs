@@ -190,6 +190,7 @@ fn check_member(object: &Json, key: &str, shape: Shape, prefix: &str) -> Result<
             }
             Ok(())
         }
+        // recorded-shape: matches the variant of this module's own `Shape` schema enum; the member itself is read through `optional_object`.
         Shape::Object(fields) => match optional_object(object, key).map_err(wrap)? {
             Some(inner) => check_at(inner, fields, &join(prefix, key)),
             None => Ok(()),
@@ -292,6 +293,7 @@ fn paths_at(fields: &[Field], prefix: &str, union: Option<&UnionSide>, out: &mut
         };
         push(path.clone(), *shape);
         match *shape {
+            // recorded-shape: matches the variant of this module's own `Shape` schema enum, never a JSON response value.
             Shape::Object(inner) => paths_at(inner, &path, union, out),
             Shape::ObjectList(inner) => {
                 let items = format!("{path}[*]");
