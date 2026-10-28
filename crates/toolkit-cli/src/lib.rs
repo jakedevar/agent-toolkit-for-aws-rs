@@ -336,9 +336,13 @@ pub const STDIO_DASH: &[(&str, &str)] = &[];
 /// that the Python original takes as an arbitrary string with no `-` sentinel
 /// (argparse hands a lone `-` through as an ordinary value), and whose Rust
 /// handler uses it only as a key, a request field or output text, never as a
-/// filesystem path. A parameter that names a file or directory MUST NOT be
-/// listed here: a path parameter keeps the fail-closed refusal and `./-` is the
-/// way to name a file called `-`. Value flags only (`--f -` and `--f=-`);
+/// filesystem path, not even as a component of one (a filename, a suffix, a
+/// directory name, a join or a `format!` into a path). A parameter that names a
+/// file or directory, or is composed into a path, MUST NOT be listed here: it
+/// keeps the fail-closed refusal and `./-` is the way to name a file called `-`
+/// (`bedrock-report render --date-suffix`, which selects
+/// `MIGRATION_REPORT_<suffix>.md`, is refused for that reason, #4955).
+/// Value flags only (`--f -` and `--f=-`);
 /// a positional is never listed. A pair is listed in at most one of this list
 /// and [`STDIO_DASH`].
 ///
@@ -360,7 +364,6 @@ pub const LITERAL_DASH: &[(&str, &str)] = &[
     ("bedrock-resolve identity", "--target"),
     ("bedrock-resolve pricing", "--region"),
     ("bedrock-resolve pricing", "--models"),
-    ("bedrock-report render", "--date-suffix"),
     ("cloudwatch instrumentation", "--region"),
     ("cloudwatch instrumentation", "--profile"),
     ("cloudwatch snapshots", "--region"),

@@ -883,7 +883,13 @@ fn literal_listed(spec: &CommandSpec, flag: &str) -> bool {
 /// Words of a flag name that mark a path parameter. `LITERAL_DASH` must never
 /// list one: a path keeps the fail-closed refusal (#4934). A tripwire on the
 /// name, next to the audit in `docs/migration/cli-bare-dash.md`, not a proof.
-const PATH_WORDS: [&str; 22] = [
+const PATH_WORDS: [&str; 28] = [
+    "suffix",
+    "prefix",
+    "stem",
+    "extension",
+    "filename",
+    "basename",
     "file",
     "path",
     "dir",
@@ -969,6 +975,7 @@ fn the_path_tripwire_catches_path_flags_and_spares_the_audited_selectors() {
         "--model",
         "--schema",
         "--migration-dir",
+        "--date-suffix",
     ] {
         assert!(names_a_path(path_flag), "{path_flag}");
     }
@@ -1148,6 +1155,221 @@ fn a_literal_dash_flag_never_reaches_the_filesystem() {
             );
         }
     }
+}
+
+/// The complete offline companions of `bedrock-report render`: an empty phase
+/// results directory and a repository holding two reports that tell a selection
+/// by suffix apart from the fallback (the last name in order). `-` sorts before
+/// every digit, so with `--date-suffix -` the fallback would pick
+/// `MIGRATION_REPORT_2026-12-31.md` and an accepted `-` would pick
+/// `MIGRATION_REPORT_-.md` instead.
+fn report_scratch() -> Scratch {
+    let scratch = Scratch::new();
+    fs::create_dir(scratch.0.join("phases")).expect("phases");
+    fs::create_dir(scratch.0.join("repo")).expect("repo");
+    for (name, body) in [
+        ("MIGRATION_REPORT_-.md", "selected-by-dash"),
+        ("MIGRATION_REPORT_2026-02-02.md", "selected-by-date"),
+        ("MIGRATION_REPORT_2026-12-31.md", "fallback"),
+    ] {
+        fs::write(scratch.0.join("repo").join(name), body).expect("report fixture");
+    }
+    scratch
+}
+
+fn report_args(suffix: &[&str]) -> Vec<String> {
+    let mut args: Vec<String> = [
+        "bedrock-report",
+        "render",
+        "--phase-results",
+        "phases",
+        "--repo",
+        "repo",
+        "--results-dir",
+        "results",
+    ]
+    .iter()
+    .map(|word| (*word).to_string())
+    .collect();
+    args.extend(suffix.iter().map(|word| (*word).to_string()));
+    args
+}
+
+/// `--date-suffix` is composed into the report file name
+/// (`MIGRATION_REPORT_<suffix>.md`, `find_report_path`), so a bare `-` there
+/// would select and copy `MIGRATION_REPORT_-.md`. It is not in `LITERAL_DASH`:
+/// the router refuses the `-` in both spellings before any report is looked up
+/// (#4955), while an ordinary suffix still selects its report. A FIFO named `-`
+/// cannot see this flow, so this test uses the complete companions and a
+/// `MIGRATION_REPORT_-.md` that must neither be selected nor copied.
+#[test]
+fn a_dash_report_date_suffix_is_refused_and_selects_no_report() {
+    for suffix in [&["--date-suffix", "-"][..], &["--date-suffix=-"][..]] {
+        let scratch = report_scratch();
+        let args = report_args(suffix);
+        let run = spawn_toolkit(&args, &scratch.0);
+        assert!(
+            is_dash_refusal(&run, "--date-suffix"),
+            "{}: {}",
+            display_args(&args),
+            String::from_utf8_lossy(&run.stderr)
+        );
+        assert!(!scratch.0.join("results").exists(), "a report was copied");
+        assert_eq!(
+            fs::read_to_string(scratch.0.join("repo/MIGRATION_REPORT_-.md")).expect("report"),
+            "selected-by-dash"
+        );
+    }
+    // The control: an ordinary suffix still selects exactly its report, so the
+    // fixture does tell a selection by suffix from the fallback.
+    let scratch = report_scratch();
+    let args = report_args(&["--date-suffix", "2026-02-02"]);
+    let run = spawn_toolkit(&args, &scratch.0);
+    assert_eq!(
+        run.status,
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(scratch.0.join("results/MIGRATION_REPORT_2026-02-02.md"))
+            .expect("copied report"),
+        "selected-by-date"
+    );
+    assert!(!scratch.0.join("results/MIGRATION_REPORT_-.md").exists());
+}
+
+/// Source files under `src` that are not unit-test modules.
+fn consumer_sources(dir: &Path, found: &mut Vec<(String, String)>) {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    for entry in fs::read_dir(dir).expect("read src dir") {
+        let path = entry.expect("entry").path();
+        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        if path.is_dir() {
+            if name != "tests" {
+                consumer_sources(&path, found);
+            }
+        } else if name.ends_with(".rs") && name != "tests.rs" && !name.starts_with("tests_") {
+            let relative = path
+                .strip_prefix(&root)
+                .expect("under src")
+                .to_string_lossy()
+                .into_owned();
+            found.push((relative, fs::read_to_string(&path).expect("read source")));
+        }
+    }
+}
+
+/// Source text that reaches the filesystem or builds a path.
+const FILESYSTEM_TOKENS: [&str; 8] = [
+    "fs::",
+    "PathBuf",
+    "Path::",
+    "&Path",
+    "read_regular_file",
+    "write_regular_file",
+    "read_json_document",
+    "OpenOptions",
+];
+
+/// Every non-test source file that names a `LITERAL_DASH` flag and also reaches
+/// the filesystem, as `(file, flag)`. The first audit of `--date-suffix` stopped
+/// at the JSON field it was stored in while `find_report_path` in the same file
+/// went on to build `MIGRATION_REPORT_<suffix>.md` (#4955), so a listed flag
+/// that shares a file with filesystem code needs a recorded, per-flag reading
+/// of the whole dataflow here and in `docs/migration/cli-bare-dash.md`. The
+/// scan is by flag name, so another command that spells the same flag
+/// (`--region`) is listed too.
+fn filesystem_bearing_consumers() -> BTreeSet<(String, String)> {
+    let mut sources = Vec::new();
+    consumer_sources(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+        &mut sources,
+    );
+    let mut found = BTreeSet::new();
+    for (_, flag) in toolkit_cli::LITERAL_DASH {
+        for (file, text) in &sources {
+            if file == "lib.rs" || !text.contains(&format!("\"{flag}\"")) {
+                continue;
+            }
+            if FILESYSTEM_TOKENS.iter().any(|token| text.contains(token)) {
+                found.insert((file.clone(), (*flag).to_string()));
+            }
+        }
+    }
+    found
+}
+
+/// The audited pairs of [`filesystem_bearing_consumers`]. Each file also holds
+/// filesystem code; the flag's own dataflow was followed to its end (request
+/// fields, lookup keys, comparisons, output text) and never reaches a path, a
+/// file name or a directory name. A file that is not about a listed command
+/// (`elasticache`, `relational`, `ai-data`, `cloudwatch region`) is
+/// there for the flag name only.
+const AUDITED_FILESYSTEM_CONSUMERS: [(&str, &str); 19] = [
+    ("startup/model_path.rs", "--workload"),
+    ("bedrock_agent.rs", "--agent-id"),
+    ("bedrock_agent.rs", "--agent-version"),
+    ("bedrock_agent.rs", "--agent-alias-id"),
+    ("bedrock_agent.rs", "--region"),
+    ("bedrock_agent.rs", "--profile"),
+    ("bedrock_resolve/mod.rs", "--provider"),
+    ("bedrock_resolve/mod.rs", "--source"),
+    ("bedrock_resolve/mod.rs", "--target"),
+    ("bedrock_resolve/mod.rs", "--region"),
+    ("bedrock_resolve/mod.rs", "--models"),
+    ("cloudwatch/ops_cli.rs", "--region"),
+    ("cloudwatch/ops_cli.rs", "--profile"),
+    ("cloudwatch/cli.rs", "--region"),
+    ("msk.rs", "--region"),
+    ("ai_models/mod.rs", "--region"),
+    ("ai_data/mod.rs", "--region"),
+    ("elasticache/mod.rs", "--region"),
+    ("relational/mod.rs", "--region"),
+];
+
+/// A `LITERAL_DASH` flag that shares a source file with filesystem code must be
+/// in the audited table (#4955). The scan finds `--date-suffix` in
+/// `bedrock_report/render.rs`, the flow the FIFO canary missed.
+#[test]
+fn a_literal_flag_in_a_filesystem_bearing_file_is_audited_per_flag() {
+    let audited: BTreeSet<(String, String)> = AUDITED_FILESYSTEM_CONSUMERS
+        .iter()
+        .map(|(file, flag)| ((*file).to_string(), (*flag).to_string()))
+        .collect();
+    let found = filesystem_bearing_consumers();
+    let unaudited: Vec<_> = found.difference(&audited).collect();
+    assert!(
+        unaudited.is_empty(),
+        "a LITERAL_DASH flag shares a file with filesystem code; follow its whole dataflow \
+         (path components, joins, format! into a path), then record it in \
+         AUDITED_FILESYSTEM_CONSUMERS and docs/migration/cli-bare-dash.md: {unaudited:?}"
+    );
+    // The table does not rot: every audited row is still found by the scan.
+    let stale: Vec<_> = audited.difference(&found).collect();
+    assert!(stale.is_empty(), "stale audited rows: {stale:?}");
+}
+
+/// The scan would have caught the #4955 entry: `bedrock_report/render.rs`
+/// names `--date-suffix` and reaches the filesystem.
+#[test]
+fn the_filesystem_scan_catches_the_removed_date_suffix_flow() {
+    let mut sources = Vec::new();
+    consumer_sources(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+        &mut sources,
+    );
+    let render = sources
+        .iter()
+        .find(|(file, _)| file == "bedrock_report/render.rs")
+        .expect("render.rs");
+    assert!(render.1.contains("\"--date-suffix\""));
+    assert!(FILESYSTEM_TOKENS
+        .iter()
+        .any(|token| render.1.contains(token)));
+    assert!(!toolkit_cli::LITERAL_DASH
+        .iter()
+        .any(|(_, flag)| *flag == "--date-suffix"));
 }
 
 /// A schema-valid recommendation whose only workload is named `-`

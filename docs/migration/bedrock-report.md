@@ -95,6 +95,8 @@ normalization are #4403 too; preflight and IAM are #4404.
    results directory. A `reportDateSuffix`/`--date-suffix` containing `/`, `\`
    or NUL never names a report (`MIGRATION_REPORT_a/../../x.md` reached outside
    the repository).
+   A bare `-` suffix is refused by the router for the same reason, in both
+   spellings (`docs/migration/cli-bare-dash.md`, #4955); the Python original took it.
 8. **Safe copy.** The report is copied as UTF-8 text of at most 16 MiB, content
    only (no mode or timestamps), and the destination is never written through a
    symbolic link. A copy failure prints `render_report: cannot copy the report:

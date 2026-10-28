@@ -316,7 +316,11 @@ parameters and the reproductions are in `docs/migration/cli-bare-dash.md`.
     takes as an arbitrary string and that the handler never uses as a path
     (`startup verify-model-path --workload -`, #4934). Path parameters are never
     listed, a positional is never listed, and each entry is audited against its
-    Python `file:line` in `docs/migration/cli-bare-dash.md`.
+    Python `file:line` in `docs/migration/cli-bare-dash.md`. A value that is
+    composed into a path (a file name, suffix or directory name) is not listed
+    either: `bedrock-report render --date-suffix -` is refused because it would
+    select `MIGRATION_REPORT_-.md` (#4955).
+
 - For a listed pair the exact token `-` is a value of that flag, spaced
   (`--workload -`) or attached (`--workload=-`), plain or repeatable, even on a
   `strict_values` command. Every other `-`-prefixed value (`-x`, `--foo`, `--`) and

@@ -75,7 +75,6 @@ would block, so a handler that treated the value as a path fails the test.
 | `bedrock-resolve identity` | `--target` | `model_identity.py:53` | same |
 | `bedrock-resolve pricing` | `--region` | `bedrock_pricing.py:341` | `bedrock_resolve/mod.rs:350`: price lookup key |
 | `bedrock-resolve pricing` | `--models` | `bedrock_pricing.py:342` | `bedrock_resolve/mod.rs:351`: split on `,`, each id a lookup key |
-| `bedrock-report render` | `--date-suffix` | `render_report.py:113` | `bedrock_report/render.rs:50,125`: a JSON string field of the payload |
 | `cloudwatch instrumentation` | `--region` | `di_instrumentation.py:223` | accepted, not consumed (recorded client only) |
 | `cloudwatch instrumentation` | `--profile` | `di_instrumentation.py:229` | accepted, not consumed |
 | `cloudwatch snapshots` | `--region` | `di_snapshots.py:255` | accepted, not consumed |
@@ -95,6 +94,61 @@ would block, so a handler that treated the value as a path fails the test.
 | `msk size` | `--region` | `msk_sizing.py:1363` | `msk.rs:326`: price-table lookup key |
 | `ai-models search` | `--region` | `search_deployable_models.py:839` | `ai_models/mod.rs:471`: `check_region` validates it, then it is compared with a snapshot's region field (the snapshot path is `--snapshot-file`, not listed) |
 
+### Re-audit of every entry for path composition (#4955)
+
+The first audit followed each flag to the field or request it ends in. That is not
+enough: a value can also become a path component (a file name, a suffix, a
+directory, a `join`, a `format!` into a path). `--date-suffix` did exactly that:
+`bedrock_report/render.rs` stores it in `reportDateSuffix` (`:125`), then
+`find_report_path` (`:146-149`) builds `repo/MIGRATION_REPORT_<suffix>.md`, tests it
+with `fs::symlink_metadata` (`:133-134`) and `copy_report` reads and copies it
+(`:64-66`, `:187`, `:200-201`). `--date-suffix -` would therefore select
+`MIGRATION_REPORT_-.md`. Every remaining entry was re-read to the end of its
+dataflow for that, in the Rust handler and in every module it hands the value to
+(the whole of `bedrock_agent/`, `bedrock_resolve/`, `cloudwatch/`, `toolkit-msk`,
+`toolkit-aws`):
+
+| Pair | Where the value ends | Path composition? |
+| --- | --- | --- |
+| `startup verify-model-path --workload` | `model_path.rs:215` `selected_workloads`, then `verify.rs:398-425`: compared with the recommendation's `workloads` object keys; the output path is `--output` or `VERIFICATION_FILENAME` next to the input, never the workload id | none |
+| `bedrock-agent fetch --agent-id` / `--agent-version` / `--agent-alias-id` | `Params` (`bedrock_agent.rs:218-223`), request fields of `fetch.rs` (`agentId`, `agentVersion`, alias selection) and the manifest text; the only paths are `--out` and `--recorded` | none |
+| `bedrock-agent fetch --region` / `--profile` | `region_of` -> `resolve_region` (validated name, `toolkit-aws` has no file access); `--profile` is never read | none |
+| `bedrock-resolve identity --provider` / `--source` / `--target` | `bedrock_resolve/mod.rs:187-188` -> `identity::same_model`: string comparison; paths are `--mappings` only | none |
+| `bedrock-resolve pricing --region` / `--models` | `mod.rs:350-351`, `pricing.rs` lookup keys (`words.join(" ")` is text); the only path is `--price-list` | none |
+| `cloudwatch instrumentation` / `snapshots --region` / `--profile` | accepted, never read; `client_of` opens only `--recorded`, `snapshots` writes only `--out` | none |
+| `cloudwatch evaluate-traces --trace-id` / `--trace-ids` / `--session-id` / `--evaluator-id` / `--evaluator-ids` / `--kms-key-id` / `--region` | `omni_cli.rs` `owned(...)` request fields of `evaluate.rs` (error text, `join(", ")` of ids); `omni_cli.rs` and `evaluate.rs` use no file API | none |
+| `cloudwatch capture-dataset --trace-ids` / `--dataset-name` / `--dataset-id` / `--description` / `--region` | `omni_cli.rs` request fields of `dataset.rs` (service request and text); no file API | none |
+| `msk size --region` | `msk.rs:325` `SizeOptions.region` -> `toolkit-msk` price-table lookup and report text (`size_report.rs:486-533`); `msk.rs`'s file calls belong to other commands and `size` opens no file (`--emit-static-pricing` is a boolean flag that prints) | none |
+| `ai-models search --region` | `ai_models/mod.rs:471`: `check_region` (`is_valid_region`), then compared with a snapshot's region field (`snapshot.rs:174`); the snapshot path is `--snapshot-file` | none |
+
+Result: `--date-suffix` is the only entry that composes a path, and it is removed.
+No other entry was removed. The check is kept in the tests, not only here:
+`a_literal_flag_in_a_filesystem_bearing_file_is_audited_per_flag`
+(`tests/diag_contract.rs`) scans the non-test sources for every `LITERAL_DASH`
+flag name that shares a file with filesystem code (`fs::`, `Path`, the
+regular-file helpers) and fails for a `(file, flag)` that is not recorded in
+`AUDITED_FILESYSTEM_CONSUMERS` (and for a stale row), so a new entry, or a flag
+that moves into a file with filesystem code, forces a reading of the whole
+dataflow. `the_filesystem_scan_catches_the_removed_date_suffix_flow` shows that the
+scan finds `--date-suffix` in `bedrock_report/render.rs`. The path-word tripwire
+also names `suffix`, `prefix`, `stem`, `extension`, `filename` and `basename`. The
+FIFO canary alone cannot see a composed name (a FIFO called `./-` is not
+`MIGRATION_REPORT_-.md`, and without its companions the handler returns before the
+value is used), which is why `a_dash_report_date_suffix_is_refused_and_selects_no_report`
+runs the complete offline command with a repository holding `MIGRATION_REPORT_-.md`.
+
+### Divergence: `bedrock-report render --date-suffix -` is refused (#4955)
+
+`render_report.py:113` takes `--date-suffix` as an arbitrary string and `:74-75`
+builds the report name from it, so the Python original accepts `-` and would select
+`MIGRATION_REPORT_-.md`. The Rust port refuses the bare `-` for this flag, in both
+spellings, like every flag that is composed into a path (PM ruling): exit 2, the
+flag-naming diagnostic, no report looked up, nothing copied. Every other suffix
+behaves as before (`2026-02-02`, `-x`, `--date-suffix=-,`), and the fallback (the last
+`MIGRATION_REPORT_*.md` in name order) is unchanged. Only a request to select a report
+named exactly `MIGRATION_REPORT_-.md` by its suffix is affected; omit the flag to get
+the name-order fallback.
+
 ### Audited and left refused
 
 - **Validated in the Python original, so `-` is invalid there too:**
@@ -111,6 +165,8 @@ would block, so a handler that treated the value as a path fails the test.
   (`--emit`, `--detail`), `cloudwatch region`. There is no original that accepts `-`,
   so `-` stays refused; add a pair to `LITERAL_DASH` with its audit row if a
   legitimate `-` value ever appears.
+- **Composed into a path:** `bedrock-report render --date-suffix` (#4955, see the
+  divergence above).
 - **Paths** (listed above) and **positionals** (`skills list DIR`, `msk compat
   CLUSTER_CONFIG`, `ai-data detect-format FILE_PATH`, ...): never literal.
 
