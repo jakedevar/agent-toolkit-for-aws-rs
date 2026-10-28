@@ -802,12 +802,13 @@ mod tests {
             .collect::<std::collections::BTreeSet<_>>()
             .into_iter()
             .collect();
-        let routes: String = LEGACY_COMMAND_ORDER
+        let routes = LEGACY_COMMAND_ORDER
             .iter()
-            .map(|path| format!("toolkit {path}\n"))
-            .collect();
+            .map(|path| format!("toolkit {path}"))
+            .collect::<Vec<_>>()
+            .join("\n");
         let everything = format!(
-            "{readme}\n## Toolkit reference\n\nAvailable families: {}.\n\n```\n{routes}```\n",
+            "{readme}\n## Toolkit reference\n\nAvailable families: {}.\n\n```\n{routes}\n```\n",
             families.join(", ")
         );
         assert!(command_index_problem(&everything).is_some());
@@ -818,9 +819,8 @@ mod tests {
         );
         assert!(command_index_problem(&two).is_some());
         // The same two lines as a plain list, with no fence.
-        let listed = format!(
-            "{readme}\n## msk and aurora\n\n- toolkit msk help\n- toolkit aurora acu\n"
-        );
+        let listed =
+            format!("{readme}\n## msk and aurora\n\n- toolkit msk help\n- toolkit aurora acu\n");
         assert!(command_index_problem(&listed).is_some());
     }
 
@@ -828,9 +828,8 @@ mod tests {
     fn the_readme_guard_allows_per_slice_examples() {
         let readme = readme();
         // One family, one slice.
-        let one = format!(
-            "{readme}\n## aurora\n\n```\ntoolkit aurora acu\ntoolkit aurora acu\n```\n"
-        );
+        let one =
+            format!("{readme}\n## aurora\n\n```\ntoolkit aurora acu\ntoolkit aurora acu\n```\n");
         assert_eq!(command_index_problem(&one), None);
         // The relational slice owns four families, so its examples pass together
         // (without any prose that names them).
