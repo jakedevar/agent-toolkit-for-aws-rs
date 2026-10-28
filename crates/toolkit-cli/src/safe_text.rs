@@ -130,6 +130,82 @@ mod tests {
         assert_eq!(shown.chars().count(), long.chars().count() + 3);
     }
 
+    /// The #4941 bound of a shown caller path, in characters.
+    const MAX_PATH_CHARS: usize = 200;
+
+    /// `https://user:FAKE_SECRET` + `pad` x characters + `@example.invalid/x.json`.
+    fn userinfo(pad: usize) -> String {
+        format!(
+            "https://user:FAKE_SECRET{}@example.invalid/x.json",
+            "x".repeat(pad)
+        )
+    }
+
+    fn assert_no_secret(shown: &str) {
+        assert!(
+            !shown.contains("FAKE_SECRE"),
+            "credential leaked: {shown:?}"
+        );
+        assert!(!shown.contains("user:"), "user name leaked: {shown:?}");
+    }
+
+    #[test]
+    fn a_caller_path_is_redacted_before_it_is_shown() {
+        let shown = safe_path(&userinfo(0));
+        assert_eq!(shown, "https://[REDACTED]@example.invalid/x.json");
+        let shown = safe_path("/data/password=FAKE_SECRET/x.json");
+        assert!(shown.starts_with("/data/password=[REDACTED]"), "{shown}");
+        assert_no_secret(&shown);
+    }
+
+    #[test]
+    fn a_caller_path_is_redacted_in_full_before_it_is_bounded() {
+        // The `@host` lies past the bound: cutting first would hide it from
+        // the userinfo recognizer and print the password.
+        for pad in [150, 190, 250, 5000] {
+            let shown = safe_path(&userinfo(pad));
+            assert_no_secret(&shown);
+        }
+        let text_shown = safe_text(&userinfo(150));
+        assert_no_secret(&text_shown);
+        // An access-key id that straddles the 200-character bound.
+        let key = format!("/{}/AKIAQQQQQQQQQQQQQQQQ/x.json", "d".repeat(190));
+        assert!(!safe_path(&key).contains("AKIAQQQQ"), "{}", safe_path(&key));
+    }
+
+    #[test]
+    fn a_long_caller_path_is_bounded_on_a_character_boundary_then_escaped() {
+        let long = format!("/{}", "d".repeat(MAX_PATH_CHARS + 99));
+        let shown = safe_path(&long);
+        assert_eq!(shown, format!("{}...", &long[..MAX_PATH_CHARS]));
+        let wide = "é".repeat(MAX_PATH_CHARS + 1);
+        assert_eq!(
+            safe_path(&wide),
+            format!("{}...", "é".repeat(MAX_PATH_CHARS))
+        );
+        // The bound counts characters of the redacted text, before escaping.
+        let control = format!("{}\nrest", "a".repeat(MAX_PATH_CHARS - 1));
+        assert_eq!(
+            safe_path(&control),
+            format!("{}\\x0a...", "a".repeat(MAX_PATH_CHARS - 1))
+        );
+        // A 300-character path ending in a credential.
+        let ending = format!("/{}/api_key=FAKE_SECRET", "d".repeat(277));
+        assert_eq!(ending.chars().count(), 300);
+        assert_no_secret(&safe_path(&ending));
+    }
+
+    #[test]
+    fn an_ordinary_path_up_to_the_bound_is_unchanged() {
+        let exact = format!("/{}", "p".repeat(MAX_PATH_CHARS - 1));
+        assert_eq!(safe_path(&exact), exact);
+        assert_eq!(
+            safe_path("./out/wa_review_results.json"),
+            "./out/wa_review_results.json"
+        );
+        assert_eq!(safe_path("dir/ü 日本/x.md"), "dir/ü 日本/x.md");
+    }
+
     #[test]
     fn quoted_text_escapes_the_quote() {
         assert_eq!(safe_quoted("it's"), "'it\\'s'");

@@ -188,6 +188,15 @@ enum Fill {
     PayloadDir,
     /// `--flag=<hostile>` spelling for value flags; hostile positionals.
     Attached,
+    /// Credential-shaped paths (#4941), run only by
+    /// `every_registered_path_value_is_shown_without_its_credential`: URL
+    /// userinfo right before the host.
+    SecretUrl,
+    /// A 300-character path whose last component is a labelled credential.
+    SecretLong,
+    /// A 300-character userinfo URL whose `@host` lies past the 200-character
+    /// display bound, so a value cut before redaction keeps the password.
+    SecretPastBound,
 }
 
 const FILLS: [Fill; 5] = [
@@ -212,7 +221,46 @@ fn value_for(mode: Fill, scratch: &Path, file: &Path, dir: &Path) -> String {
         Fill::HostilePath => format!("{}/{HOSTILE}{ARG_MARKER}", scratch.display()),
         Fill::PayloadFile => file.display().to_string(),
         Fill::PayloadDir => dir.display().to_string(),
+        Fill::SecretUrl => format!("https://user:{PATH_SECRET}@example.invalid/x.json"),
+        Fill::SecretLong => long_path_ending_in_a_secret(scratch),
+        Fill::SecretPastBound => userinfo_past_the_bound(),
     }
+}
+
+/// The fake credential of the #4941 path cases. It rides only in argument
+/// values; no 10-character prefix of it may reach stdout or stderr.
+const PATH_SECRET: &str = "FAKE_SECRET";
+/// Length of the long #4941 path cases, in characters.
+const LONG_PATH_CHARS: usize = 300;
+
+/// `<scratch>/dddddddddd/.../password=FAKE_SECRET`, exactly
+/// [`LONG_PATH_CHARS`] characters long.
+fn long_path_ending_in_a_secret(scratch: &Path) -> String {
+    let tail = format!("password={PATH_SECRET}");
+    let mut path = format!("{}/", scratch.display());
+    let room = LONG_PATH_CHARS
+        .checked_sub(path.chars().count() + tail.chars().count() + 1)
+        .expect("scratch path short enough for a 300-character case");
+    for index in 0..room {
+        path.push(if index % 11 == 10 { '/' } else { 'd' });
+    }
+    path.push('/');
+    path.push_str(&tail);
+    assert_eq!(path.chars().count(), LONG_PATH_CHARS);
+    path
+}
+
+/// `https://user:FAKE_SECRETxxx...x@example.invalid/x.json`, exactly
+/// [`LONG_PATH_CHARS`] characters long: the password starts well inside the
+/// 200-character display bound and the `@host` that marks it as userinfo
+/// lies beyond it.
+fn userinfo_past_the_bound() -> String {
+    let head = format!("https://user:{PATH_SECRET}");
+    let tail = "@example.invalid/x.json";
+    let pad = LONG_PATH_CHARS - head.len() - tail.len();
+    let url = format!("{head}{}{tail}", "x".repeat(pad));
+    assert_eq!(url.chars().count(), LONG_PATH_CHARS);
+    url
 }
 
 /// Every value flag of `spec`: the union of `value_flags` and
@@ -490,6 +538,107 @@ fn every_command_has_hostile_variants() {
         }
         assert!(count > 0, "{:?}", spec.path);
     }
+}
+
+/// The credential-shaped path fills of #4941.
+const SECRET_FILLS: [Fill; 3] = [Fill::SecretUrl, Fill::SecretLong, Fill::SecretPastBound];
+
+/// Shortest prefix of [`PATH_SECRET`] whose appearance counts as a leak.
+const LEAK_PREFIX_CHARS: usize = 10;
+
+/// Every way `stream` discloses the #4941 credential: [`PATH_SECRET`] or any
+/// prefix of it at least [`LEAK_PREFIX_CHARS`] long (each contains the
+/// shortest one).
+fn secret_leaks(stream: &str, label: &str, args: &[String], found: &mut BTreeSet<String>) {
+    let prefix: String = PATH_SECRET.chars().take(LEAK_PREFIX_CHARS).collect();
+    if stream.contains(&prefix) {
+        found.insert(format!(
+            "credential prefix {prefix:?} in {label} for {}",
+            display_args(args)
+        ));
+    }
+}
+
+/// Every registered command, with every value flag and positional (each may
+/// name a file or directory) set to a credential-shaped path (#4941): the
+/// shared diagnostic helpers redact the whole value, then bound it to 200
+/// characters, then escape it, so neither the userinfo password nor the
+/// labelled credential at the end of a 300-character path is printed, also
+/// when the `@host` lies past the bound.
+#[test]
+fn every_registered_path_value_is_shown_without_its_credential() {
+    let scratch = Scratch::new();
+    let (file, dir) = write_payloads(&scratch.0);
+    let mut found = BTreeSet::new();
+    let mut spawns = 0_usize;
+    for spec in COMMANDS {
+        let mut variants: Vec<Vec<String>> = Vec::new();
+        for mode in SECRET_FILLS {
+            variants.extend(argv_variants(spec, mode, &scratch.0, &file, &dir));
+        }
+        variants.sort();
+        variants.dedup();
+        for args in &variants {
+            let run = spawn_toolkit(args, &scratch.0);
+            spawns += 1;
+            if run.status.is_none() {
+                found.insert(format!(
+                    "timed out or killed by signal: {}",
+                    display_args(args)
+                ));
+            }
+            for (label, bytes) in [("stdout", &run.stdout), ("stderr", &run.stderr)] {
+                secret_leaks(&String::from_utf8_lossy(bytes), label, args, &mut found);
+            }
+        }
+    }
+    assert!(
+        spawns > COMMANDS.len(),
+        "the contract must actually run commands"
+    );
+    assert!(
+        found.is_empty(),
+        "a credential in a caller path reached stdout/stderr ({} distinct findings over \
+         {spawns} runs); show caller paths with safe_text::safe_path (redact, bound, \
+         escape):\n{}",
+        found.len(),
+        found.iter().cloned().collect::<Vec<_>>().join("\n")
+    );
+}
+
+/// The #4941 fills are what they claim and the leak detector sees every
+/// prefix of 10 characters or more, but not a redacted rendering.
+#[test]
+fn the_secret_path_fills_and_leak_detector_are_not_vacuous() {
+    let scratch = PathBuf::from("/nonexistent-scratch");
+    let long = value_for(Fill::SecretLong, &scratch, &scratch, &scratch);
+    assert_eq!(long.chars().count(), LONG_PATH_CHARS);
+    assert!(long.ends_with(&format!("password={PATH_SECRET}")), "{long}");
+    let past = value_for(Fill::SecretPastBound, &scratch, &scratch, &scratch);
+    assert_eq!(past.chars().count(), LONG_PATH_CHARS);
+    assert!(past.find('@').expect("userinfo delimiter") > 200, "{past}");
+    assert!(past.find(PATH_SECRET).expect("password") < 200, "{past}");
+    let url = value_for(Fill::SecretUrl, &scratch, &scratch, &scratch);
+    assert_eq!(url, "https://user:FAKE_SECRET@example.invalid/x.json");
+
+    let args = vec!["x".to_string()];
+    for leak in [
+        PATH_SECRET.to_string(),
+        "error: /p/FAKE_SECRE...".to_string(),
+        past.chars().take(200).collect(),
+    ] {
+        let mut one = BTreeSet::new();
+        secret_leaks(&leak, "stderr", &args, &mut one);
+        assert!(!one.is_empty(), "{leak} must be flagged");
+    }
+    let mut clean = BTreeSet::new();
+    secret_leaks(
+        "error: https://[REDACTED]@example.invalid/x.json: FAKE_SECR",
+        "stderr",
+        &args,
+        &mut clean,
+    );
+    assert!(clean.is_empty(), "{clean:?}");
 }
 
 /// A handler that echoes only the SECOND occurrence of its repeatable flag,
