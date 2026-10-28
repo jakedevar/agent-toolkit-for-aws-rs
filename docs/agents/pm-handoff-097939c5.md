@@ -327,3 +327,5 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - Rehydrated: 7 wakes carried (4 terminal watches 6951a548/bef791ca/fc21470d/7587433b + 39bbfbb0, health, safety net 20:33Z).
 - Queue: 5c529ed1 (#4468, 2915) + 78a019f9 (r14, 2916) still queued ~65 min; no deploy hold, build_disk open, load 9.4. If still queued at 20:33Z net -> report up (Rsi #4850 class).
 - 4/4 busy: 7587433b (#4893 review, running), fc21470d (#4395, parked on jobs), 6951a548 (#4751 r3 repair, parked), bef791ca (#4576 repair, parked).
+- 10-28 20:20Z: #4893 (7587433b) on #4398 d63c30f4: CHANGES_REQUESTED, one blocker #4894 (snapshot temp files/lock dir default perms; no insecure-state rejection). Checks 1,2,3,5 PASS. Repair worker 15fa44f7 (Opus high, continue_from 39bbfbb0). Then narrow re-review on #4893 (check 4 only).
+  4/4 busy: fc21470d (#4395), 6951a548 (#4751 r3), bef791ca (#4576 repair), 15fa44f7 (#4398 repair).
