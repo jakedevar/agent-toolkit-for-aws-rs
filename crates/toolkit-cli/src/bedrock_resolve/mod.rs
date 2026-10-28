@@ -33,10 +33,10 @@ use crate::startup::artifacts::pyjson::dumps;
 use crate::{Invocation, Output};
 
 pub(crate) mod identity;
-mod image;
+pub(crate) mod image;
 mod pricing;
 mod pricing_table;
-mod source;
+pub(crate) mod source;
 
 /// Registration of the `bedrock-resolve` slice: its routes and help text (see `crate::registry`).
 pub(crate) const SLICE: crate::registry::Slice = crate::registry::Slice {
