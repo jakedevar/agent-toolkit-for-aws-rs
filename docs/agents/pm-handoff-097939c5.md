@@ -317,3 +317,4 @@ Friction: #4727, Rsi #4694, Rsi #4704
   #4576 impl 084fa8b302d1d788980135b57009dff6480efee7 (c621f43f; registry.rs SLICES one sorted line per slice, per-slice SLICE consts, compile-time COMMANDS/USAGE; help cmp-identical; scoped 5c347e9f ok cli 2817; base ce0eaf6a). Review #4876 (Codex sol, pinned).
   4/4 busy: 39bbfbb0 (#4398), fc21470d (#4395), #4852 r3, #4876.
 - 10-28 19:33Z (wall clock; earlier log stamps after 18:40Z ran ahead, ignore): safety net: queue 5c529ed1 + 78a019f9 queued ~22 min; no failed workers; disk 134G (83%), load 7.2. Net re-armed 20:33Z.
+- 10-28 19:45Z: #4852 r3 on 0b0fbb32: #4872 PASS; new #4880 (function-local/const-block mod loaders not seen -> file wrongly test-only). Last narrow repair (Opus, continue_from 10864034): syn Visit over all items, fail-safe = production. PM accepts on diff+fixture inspection (no r4).
