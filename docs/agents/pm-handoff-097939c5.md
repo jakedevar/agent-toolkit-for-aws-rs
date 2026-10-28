@@ -305,3 +305,8 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 10-28 20:35Z: #4839 repair 506ccaca09cfd441e9b54a6c3d343203d6d361bb (5393fd21; e839045 #4870 object containers via shared accessors, null refuses; bfb3a5e merge of #4751 63e4a11f; 506ccac adapts #4864 contract test; scoped a3cae162 ok cli 2323). Re-review #4867 r2 (Codex sol, pinned). Integration of #4839 must also merge the final #4751 head (after #4872 repair).
 - 10-28 20:45Z: #4584 cluster e60717ac85a65e83f79f84a1f19f1a42bb391d98 (cf272dfd; paths.rs one link rule; COVERS #4584 #4603; scoped ba0d6c46 ok 2301). Already on rolling -> closed: #4585 #4586 #4587 #4596. #4871 cancelled dup of #4865. Review #4873 (Codex sol high, pinned).
   4/4 busy: c621f43f (#4576), 10864034 (#4751 repair 2), 202e11d8 (#4867 r2), #4873 reviewer.
+- 10-28 20:50Z: #4867 r2 ACCEPT #4839 at 506ccaca09cfd441e9b54a6c3d343203d6d361bb (202e11d8). Close on land: #4839 #4867 #4870. Integrate after final #4751 head merged.
+  New slice #4398 telemetry consent worker (Sonnet high, base rolling).
+  Queue: 5c529ed1 (#4468, 2915), 78a019f9 (r14, 2916) both queued.
+  4/4 busy: c621f43f (#4576), 10864034 (#4751 repair 2), 9652858a (#4873), #4398 worker.
+  ROUND 15 candidates: #4751 final, #4839 506ccaca, #4584 e60717ac (if #4873 ACCEPT), #4576.
