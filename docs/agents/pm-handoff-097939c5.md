@@ -287,3 +287,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
   4/4 busy: c6b026ce (#4839), f77e05af (r14), d3eae528 (#4806 repair), #4751 repair.
 - 10-28 19:30Z: *** LANDED *** round 13 b8204e9db480a007c82ff2dc53131fccd0feba84 on origin/rolling (entry 2a2dece6 published; ancestry verified). #4575 auto-closed. Closed by hand with landed SHA: 4387 4389 4388 4379 4399 4394 4736 4738 4537 4538 4572 4727 4743 4764 4776 4408 4744 4746 4747 4748 4753 4754 4759 4777 4778 4779 4799 4821 4793 4794 4805. Left open: #4780 (bare '-' follow-up). Reported up.
   Round 14 (f77e05af) is based on b8204e9d = rolling: enqueue normally (no supersedes) once verified; #4575 is Closed, so its integration worker binding may need a new integration Issue for later rounds.
+- 10-28 19:45Z: #4806 ACCEPTED at c960392150f09619924eda7d752bce81ee32f02e (PM-inspected 2-file test-only fix for #4859 + scoped d83c59d3 ok). Mailed r14 worker f77e05af to merge c9603921 (msg a6e672b7). Close on land: #4806 #4409 #4832 #4854 #4859.
+  Redaction cluster worker (Opus high, base rolling) bound #4468 covering P1 #4469 #4494 #4515 #4516 + P2 #4536: one span-collect-then-replace pass.
+  4/4 busy: c6b026ce (#4839), f77e05af (r14), fb8e2044 (#4751 repair), #4468 worker.
