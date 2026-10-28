@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use toolkit_core::Json;
 
 use super::jsonc::{remove_trailing_commas, replace_lone_ellipsis, strip_jsonc};
+use super::paths::Origin;
 use super::patterns::{fnmatch, heading_matches, heading_token};
 use super::pyjson::{loads, JsonError};
 use super::schema::{unsupported_keywords, SubsetValidator};
@@ -16,7 +17,6 @@ use super::shape::{
 use super::{Code, Finding};
 use crate::manifests::{is_falsy, is_py_space, py_eq, py_splitlines, py_strip, resolve_lenient};
 use crate::startup::text::is_word;
-use crate::startup::{is_regular_file_under, read_text_under};
 
 /// The plugin root and the caches one run shares.
 pub(crate) struct Env {
@@ -233,7 +233,8 @@ fn read_doc(
     findings: &mut Vec<Finding>,
 ) -> Result<Option<String>, String> {
     let shown = env.rel(doc);
-    if !is_regular_file_under(&env.root, doc)? {
+    let origin = Origin::Discovered(&env.root);
+    if !origin.is_file(doc)? {
         findings.push(Finding::new(
             Code::SchemaParse,
             &shown,
@@ -243,7 +244,7 @@ fn read_doc(
         ));
         return Ok(None);
     }
-    read_text_under(&env.root, doc, &shown).map(Some)
+    origin.read(doc, &shown).map(Some)
 }
 
 /// `build_shape_contract`.
@@ -584,7 +585,8 @@ pub(crate) fn build_contracts(
                 .ok_or_else(|| "manifest field 'json_schema' must be a string".to_string())?;
             let file = env.root.join(path);
             let shown = env.rel(&file);
-            let loaded = read_text_under(&env.root, &file, &shown)
+            let loaded = Origin::Discovered(&env.root)
+                .read(&file, &shown)
                 .and_then(|text| loads(&text).map_err(|e| e.to_string()));
             match loaded {
                 Ok(schema) => {

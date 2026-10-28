@@ -152,7 +152,7 @@ the remainder below.
    `Path.is_file()` — silently passing. The refusal covers every component
    below the selected root (a linked `ai-migration/` directory, a linked
    `scripts/` or `skills/` directory, a dangling link), not only the last one
-   (#4584); the explicit root, report path, `--plugin-json` or `--manifest`
+   (#4584); the explicit root, report path, `--plugin-json`, `--manifest` or `--baseline`
    argument is the caller's own choice and is not examined. In the lint, linked files and
    directories are not scanned (Python read linked files). A path component
    that makes the catalog name escape (`..`, backslash, absolute) is refused;
@@ -448,3 +448,32 @@ usage text and README list both sets of commands and options.
   required only with `--run-dir`.
 - **#4587.** The two omitted neutral-artifact negative tests are ported through
   `validate_run_dir`.
+- **#4596 explicit `--manifest` / `--baseline`.** A path named on the command
+  line may have linked parent directories, as in Python, even when it is spelled
+  beneath `--plugin-root`; only its final component is refused when it is a
+  link. The default manifest and baseline beneath the plugin root keep the
+  every-component check.
+
+## Artifacts path policy (#4584, #4596, #4603)
+
+`startup artifacts` routes every file it opens through one policy,
+`startup::artifacts::paths::Origin`:
+
+- `Origin::Explicit` (`--manifest`, `--baseline`): final component only.
+- `Origin::Discovered(root)` (default manifest and baseline, the `fixtures`
+  directory, every `shape`, `extra_shapes`, `route_shapes` document and
+  `json_schema` the manifest declares): no component may be a link. A path
+  spelled beneath the root is walked from the root; any other spelling (an
+  absolute declaration, which Python's `root / path` keeps unchanged) is walked
+  from its own first component. Each step is decided by `symlink_metadata` on
+  the component as it is reached, never by comparing the spelling with the
+  root, so `/t/elsewhere/../plugin/linked/schema.md` no longer escapes the check
+  by not starting with the root's text (it was read through `linked/` before).
+  Intentional change: an absolute contract declaration whose own ancestors
+  include a link (for example macOS `/var` → `/private/var`) is refused; spell
+  declarations relative to the plugin root, as the shipped manifest does.
+  Test: `a_declared_path_not_spelled_beneath_the_root_still_refuses_linked_directories`.
+- #4603: `explicit_manifest_and_baseline_may_have_symlinked_parents` now passes
+  the temporary plugin root (with an explicit minimal manifest) in its baseline
+  loop, so the linked-parent baseline lies beneath the selected root and the
+  test fails if the explicit baseline branch is reverted.

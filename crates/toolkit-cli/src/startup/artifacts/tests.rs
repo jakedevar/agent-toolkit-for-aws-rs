@@ -1924,6 +1924,9 @@ fn explicit_manifest_and_baseline_may_have_symlinked_parents() {
         assert_eq!(status, 0, "{manifest:?}: {stdout}{stderr}");
     }
 
+    // #4603: the baseline is spelled beneath the selected (temporary) plugin
+    // root, so only the explicit-path branch lets the linked parent through.
+    let manifest = temp.join("outside/manifest.json");
     for baseline in ["plugin/chosen/baseline.json", "outside/baseline.json"] {
         let baseline = temp.join(baseline);
         let (status, stdout, stderr) = artifacts(&[
@@ -1932,7 +1935,9 @@ fn explicit_manifest_and_baseline_may_have_symlinked_parents() {
             "--skill",
             "gcp-to-aws",
             "--plugin-root",
-            &plugin_arg(),
+            &plugin,
+            "--manifest",
+            text(&manifest),
             "--baseline",
             text(&baseline),
         ]);
@@ -2032,4 +2037,59 @@ fn default_manifest_and_baseline_descendant_links_stay_refused() {
         stderr.contains("symbolic links are not followed"),
         "{stderr}"
     );
+}
+
+/// #4584: a contract document or schema the manifest declares is discovered
+/// by the validator, so no component may be a link, even when the declaration
+/// is absolute and is not spelled beneath the plugin root. The check follows
+/// the components as they resolve, not the spelling: `<temp>/elsewhere/..`
+/// leads back into the plugin root and through its linked directory.
+#[cfg(unix)]
+#[test]
+fn a_declared_path_not_spelled_beneath_the_root_still_refuses_linked_directories() {
+    let temp = TempDir::new("declared-absolute-link");
+    let base = fs::canonicalize(&*temp).expect("canonical temp");
+    let doc = "## thing.json\n\n```json\n{\"a\": 1}\n```\n";
+    write(&base, "outside/schema.md", doc);
+    write(&base, "outside/thing.schema.json", "{\"type\": \"object\"}");
+    write(&base, "elsewhere/keep", "");
+    write(&base, "plugin/keep", "");
+    std::os::unix::fs::symlink(base.join("outside"), base.join("plugin/linked"))
+        .expect("directory link");
+    let plugin = base.join("plugin");
+    let manifest_for = |field: &str, path: &str| {
+        let spec = if field == "shape" {
+            format!("{{\"shape\": \"{path}/schema.md\", \"root_heading\": \"thing.json\"}}")
+        } else {
+            format!("{{\"json_schema\": \"{path}/thing.schema.json\"}}")
+        };
+        format!("{{\"skills\": {{\"gcp-to-aws\": {{\"thing.json\": {spec}}}}}}}")
+    };
+    let self_check = |manifest: &str| {
+        write(&plugin, "scripts/artifact-contracts.json", manifest);
+        artifacts(&["--self-check", "--plugin-root", text(&plugin)])
+    };
+    let base = text(&base).to_string();
+    for field in ["shape", "json_schema"] {
+        for linked in [
+            format!("{base}/elsewhere/../plugin/linked"),
+            format!("{base}/plugin/linked"),
+        ] {
+            let (status, stdout, stderr) = self_check(&manifest_for(field, &linked));
+            assert_eq!(status, 1, "{field} {linked}: {stdout}{stderr}");
+            assert!(
+                format!("{stdout}{stderr}").contains("symbolic links are not followed"),
+                "{field} {linked}: {stdout}{stderr}"
+            );
+        }
+        // Without a link the same absolute declarations stay readable, as in
+        // Python's `root / path`.
+        for direct in [
+            format!("{base}/elsewhere/../outside"),
+            format!("{base}/outside"),
+        ] {
+            let (status, stdout, stderr) = self_check(&manifest_for(field, &direct));
+            assert_eq!(status, 0, "{field} {direct}: {stdout}{stderr}");
+        }
+    }
 }
