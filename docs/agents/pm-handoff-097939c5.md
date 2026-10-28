@@ -388,3 +388,5 @@ Friction: #4727, Rsi #4694, Rsi #4704
   4/4 busy: 12fe1c8e, ff7ae0b8, dc00af2d, f8244a11.
 - 10-28 22:48Z: #4780 repair 85fe65b62fd18cbe073ff35c9eaa372103e34d8e (dc00af2d; COVERS #4934-#4936; stdin dropped, cloudwatch byte-identical to base, global USAGE pinned (len 35200, FNV 0xa95b3df510f48191), LITERAL_DASH 30 audited non-path flags + FIFO canary; fmt c5cfad30 clippy eace443e scoped 2871831a ok cli 2833). Re-review #4927 r2 worker fd1f037d (Codex sol, pinned).
   4/4 busy: 12fe1c8e (#4390), ff7ae0b8 (#4396), f8244a11 (#4941), fd1f037d (#4927 r2).
+- 10-28 22:49Z: #4390 impl 824aadc7ad863418da4e0667f53ac9b0effe8314 (12fe1c8e; dynamodb_bench slice: benchmark-model (recorded lambda:Invoke seam, --allow-spend) + generate-perf-report; benchmark_lambda.py payload not ported; follow-up #4953 live client + handler runtime (product choice, deferred); scoped dc3cbd43 ok, clippy f20f5641, fmt d83ad67d). Review #4954 worker 44992d7f (Codex sol, pinned).
+  4/4 busy: ff7ae0b8 (#4396), f8244a11 (#4941), fd1f037d (#4927 r2), 44992d7f (#4954).
