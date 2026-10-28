@@ -273,3 +273,4 @@ Friction: #4727, Rsi #4694, Rsi #4704
   4/4 busy: 658303dd (#4806), 7e684f35 (#4381 r4), 1d5e3f47 (#4852), c6b026ce (#4839).
 - 10-28 19:00Z: #4806 impl 6256e34216de0ccd48efac1712211d344150084c (658303dd; 115 Python tests (not 107) + 1 extra ported by name; scoped 0b447b38 ok base 29a96720, cli 2589; ws/fmt/clippy ok). Worker used a provider-native Agent fork for RDfA files -> harness kaizen filed; review #4854 worker d2b31c3c (Codex sol high, pinned, op 72fa3ac9) with extra RDfA scrutiny. If ACCEPT: #4806 supersedes #4409 head (descends 29a96720) for round 14; #4409 closes with #4806.
   4/4 busy: 7e684f35 (#4381 r4), 1d5e3f47 (#4852), c6b026ce (#4839), d2b31c3c (#4854).
+  Kaizen: agent-fork policy gap filed locally as #4855 (harness:true refused agent_create_issue_harness_project_unresolved, new since #4835 succeeded at 02:00Z). Add "no provider-native Agent/Task/fork" to worker briefs until fixed.
