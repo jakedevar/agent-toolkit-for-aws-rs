@@ -884,28 +884,9 @@ fn literal_listed(spec: &CommandSpec, flag: &str) -> bool {
 /// list one: a path keeps the fail-closed refusal (#4934). A tripwire on the
 /// name, next to the audit in `docs/migration/cli-bare-dash.md`, not a proof.
 const PATH_WORDS: [&str; 22] = [
-    "file",
-    "path",
-    "dir",
-    "root",
-    "out",
-    "output",
-    "recorded",
-    "snapshot",
-    "manifest",
-    "config",
-    "schema",
-    "catalog",
-    "script",
-    "mappings",
-    "baseline",
-    "input",
-    "csv",
-    "image",
-    "plugin",
-    "model",
-    "requirements",
-    "state",
+    "file", "path", "dir", "root", "out", "output", "recorded", "snapshot", "manifest", "config",
+    "schema", "catalog", "script", "mappings", "baseline", "input", "csv", "image", "plugin",
+    "model", "requirements", "state",
 ];
 
 fn names_a_path(flag: &str) -> bool {

@@ -298,46 +298,33 @@ argparse treats a lone `-` as an ordinary value, and a few scripts use it to mea
 into a filesystem path, where a `-` would read or overwrite a file literally named
 `-` (`elasticache dashboard --output -` truncated `./-`). So the router fails
 closed, before any handler and so before any filesystem access, for EVERY
-registered value flag and positional: a command receives `-` only if it is listed.
-`./-` stays a legal explicit literal path. The full policy, the audited literal
-parameters and the reproductions are in `docs/migration/cli-bare-dash.md`.
+registered value flag and positional: a command receives `-` only if it opts in.
+`./-` stays a legal explicit literal path. The full policy, the parameters that
+keep `-` and the reproductions are in `docs/migration/cli-bare-dash.md`.
 
-- There are two allowlists in `src/lib.rs`, each a list of `(command path, flag)`
-  pairs (the space-joined `CommandSpec::path` and a value flag name). There is no
-  field on `CommandSpec`, so adding a pair never touches a command row. A pair is
-  in at most one of them.
-  - `STDIO_DASH` lists parameters whose Python original reads `-` as standard
-    input; a handler for a listed pair must read it deliberately (bounded, UTF-8
-    checked, with a finite wait). It ships empty: no parameter reads stdin, the
-    CloudWatch `--json -` / `--json-file -` included (#4935).
-    `STDIO_DASH_POSITIONAL` (`"<positional>"`) names a command's positionals.
-  - `LITERAL_DASH` lists value flags whose exact value `-` is a legitimate literal
-    passed through unchanged: a selector, id, name or text that the Python original
-    takes as an arbitrary string and that the handler never uses as a path
-    (`startup verify-model-path --workload -`, #4934). Path parameters are never
-    listed, a positional is never listed, and each entry is audited against its
-    Python `file:line` in `docs/migration/cli-bare-dash.md`.
+- The allowlist is `STDIO_DASH` in `src/lib.rs`, a list of `(command path, flag)`
+  pairs: the space-joined `CommandSpec::path` and either a value flag name
+  (`"--json"`) or `STDIO_DASH_POSITIONAL` (`"<positional>"`). There is no field on
+  `CommandSpec`, so adding a pair never touches a command row. It lists exactly
+  `--json` and `--json-file` of `cloudwatch instrumentation` and `cloudwatch
+  snapshots`, whose Python originals read stdin.
 - For a listed pair the exact token `-` is a value of that flag, spaced
-  (`--workload -`) or attached (`--workload=-`), plain or repeatable, even on a
-  `strict_values` command. Every other `-`-prefixed value (`-x`, `--foo`, `--`) and
-  the empty value keep their previous handling.
+  (`--json -`) or attached (`--json=-`), plain or repeatable, even on a
+  `strict_values` command; or, for `<positional>`, a positional that counts against
+  `max_positionals`. Every other `-`-prefixed value (`-x`, `--foo`, `--`) and the
+  empty value keep their previous handling.
 - For every other pair `-` is a usage error (exit 2, before the handler runs):
   `error: invalid arguments: --output does not accept - (standard input/output);
   use ./- for a file named -`, one line naming the flag, then the usage text. A
   positional `-` gets the same error without a flag name. This holds for
   `strict_values` and non-strict commands alike, so a new slice cannot forget it.
-- `tests/diag_contract.rs` enumerates every registered value flag and positional
-  from `COMMANDS` (`every_value_flag_and_positional_dash_is_refused_or_in_exactly_one_list`):
-  each is refused, or listed in exactly one of the two lists, and a new flag
-  fails the test until it is one or the other. A `LITERAL_DASH` flag is run
-  against a FIFO named `-` that must never be opened
-  (`a_literal_dash_flag_never_reaches_the_filesystem`).
+- A slice requests stdin support by adding its pair in the same change that makes
+  its handler treat `-` explicitly: bounded (`stdin::read_bounded`, 1 MiB), UTF-8
+  checked, diagnostics escaped like its other inputs, and no fallback to a file
+  named `-`. `tests/diag_contract.rs` enumerates every registered value flag and
+  positional from `COMMANDS` (`an_unlisted_bare_dash_is_a_usage_error_and_touches_no_file`)
+  and checks that every entry names a real command and flag.
 - The router never reads stdin itself.
-- The global usage text is printed for every command's `--help` and appended to
-  every usage error, so a slice's description edit reaches every command. Its
-  length and hash are pinned to the base text
-  (`the_global_usage_text_is_byte_identical_to_the_base`); a deliberate change
-  updates the pin in the same commit.
 
 ## Shared library contracts (`toolkit-core`)
 
@@ -1268,7 +1255,8 @@ toolkit cloudwatch region [--region REGION]
   exactly one of `--json` (short, trusted payloads) and `--json-file` (keeps
   values off the command line). Value flags use the shared router
   (`strict_values: true`: `--name value` or `--name=value`, no empty value and
-  none starting with `-`), so stdin (`-`) is not accepted.
+  none starting with `-`), and a bare `-` is refused (`render`, `validate` and
+  `region` have no Python original that reads stdin; see `docs/migration/cli-bare-dash.md`).
 - `RENDERER` is one of `location`, `create-success`, `list`, `get`,
   `batch-delete`, `status-history`, `status-assessment`, `snapshot-search`,
   `snapshot-sample`, `snapshot-fields`, `failure`. The text is printed
@@ -1363,9 +1351,9 @@ toolkit cloudwatch capture-dataset --trace-ids IDS [--mode create|add] [--datase
   `batch-delete-by-scope`, `batch-delete-by-arns`, `get-status` or
   `check-status`; `snapshots OP` is `sample` or `search`. The arguments are one
   JSON object with the legacy parameter names (`--print-contract` prints the
-  schema). `--json -` and `--json-file -` are refused: stdin is not an
-  argument source (`docs/migration/cli-bare-dash.md`). An unknown or mistyped
-  argument exits 2; a failed operation prints
+  schema). `--json -` and `--json-file -` read the JSON object from stdin (at most
+  1 MiB of UTF-8, as the Python originals do; larger, invalid or empty input exits 2).
+  An unknown or mistyped argument exits 2; a failed operation prints
   its report on stdout and exits 1. Caller values are escaped to one line
   before they reach a request or a diagnostic, and AWS text is escaped by the
   final output pass.

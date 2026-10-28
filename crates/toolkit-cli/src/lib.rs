@@ -47,6 +47,7 @@ mod safe_text;
 mod skills;
 pub mod spec;
 pub mod startup;
+mod stdin;
 mod sync;
 
 pub use registry::{COMMANDS, USAGE};
@@ -309,7 +310,7 @@ fn usage_error() -> ToolkitError {
 pub const STDIO_DASH_POSITIONAL: &str = "<positional>";
 
 /// The (command path, flag) pairs that accept the exact token `-` as the
-/// argparse stdin marker (#4743, #4780).
+/// argparse stdin marker (`--json -`, #4743, #4780).
 ///
 /// Fail closed: `-` is accepted ONLY where a pair is listed here, as the value
 /// of the named value flag (`--f -` and `--f=-`) or, for the pseudo-flag
@@ -321,67 +322,21 @@ pub const STDIO_DASH_POSITIONAL: &str = "<positional>";
 /// accepted `-` would silently read or overwrite a file named `-`. `./-` stays
 /// a legal explicit literal path.
 ///
-/// The list is empty: no registered parameter reads standard input (the
-/// CloudWatch `--json -` / `--json-file -` of the Python originals are
-/// deliberately not accepted, see `docs/migration/cw-api.md`). A slice that
-/// wants stdin support adds its pair here in the same change that makes its
-/// handler read stdin deliberately (bounded, with a finite wait) and lists it in
-/// `docs/migration/cli-bare-dash.md`.
-pub const STDIO_DASH: &[(&str, &str)] = &[];
-
-/// The (command path, value flag) pairs whose exact value `-` is a legitimate
-/// LITERAL value passed through to the handler unchanged (#4780, #4934).
-///
-/// This is not a stdio marker: each listed flag is a selector, id, name or text
-/// that the Python original takes as an arbitrary string with no `-` sentinel
-/// (argparse hands a lone `-` through as an ordinary value), and whose Rust
-/// handler uses it only as a key, a request field or output text, never as a
-/// filesystem path. A parameter that names a file or directory MUST NOT be
-/// listed here: a path parameter keeps the fail-closed refusal and `./-` is the
-/// way to name a file called `-`. Value flags only (`--f -` and `--f=-`);
-/// a positional is never listed. A pair is listed in at most one of this list
-/// and [`STDIO_DASH`].
-///
-/// Every entry is audited, with its Python `file:line` and its Rust consumer,
-/// in `docs/migration/cli-bare-dash.md`. The contract test
-/// `every_value_flag_and_positional_dash_is_refused_or_in_exactly_one_list`
-/// (`tests/diag_contract.rs`) fails for a registered value flag that is neither
-/// refused nor listed, and `a_literal_dash_flag_never_reaches_the_filesystem`
-/// runs each pair against a file named `-` that must stay untouched.
-pub const LITERAL_DASH: &[(&str, &str)] = &[
-    ("startup verify-model-path", "--workload"),
-    ("bedrock-agent fetch", "--agent-id"),
-    ("bedrock-agent fetch", "--agent-version"),
-    ("bedrock-agent fetch", "--agent-alias-id"),
-    ("bedrock-agent fetch", "--region"),
-    ("bedrock-agent fetch", "--profile"),
-    ("bedrock-resolve identity", "--provider"),
-    ("bedrock-resolve identity", "--source"),
-    ("bedrock-resolve identity", "--target"),
-    ("bedrock-resolve pricing", "--region"),
-    ("bedrock-resolve pricing", "--models"),
-    ("bedrock-report render", "--date-suffix"),
-    ("cloudwatch instrumentation", "--region"),
-    ("cloudwatch instrumentation", "--profile"),
-    ("cloudwatch snapshots", "--region"),
-    ("cloudwatch snapshots", "--profile"),
-    ("cloudwatch evaluate-traces", "--trace-id"),
-    ("cloudwatch evaluate-traces", "--trace-ids"),
-    ("cloudwatch evaluate-traces", "--session-id"),
-    ("cloudwatch evaluate-traces", "--evaluator-id"),
-    ("cloudwatch evaluate-traces", "--evaluator-ids"),
-    ("cloudwatch evaluate-traces", "--region"),
-    ("cloudwatch evaluate-traces", "--kms-key-id"),
-    ("cloudwatch capture-dataset", "--trace-ids"),
-    ("cloudwatch capture-dataset", "--dataset-name"),
-    ("cloudwatch capture-dataset", "--dataset-id"),
-    ("cloudwatch capture-dataset", "--description"),
-    ("cloudwatch capture-dataset", "--region"),
-    ("msk size", "--region"),
-    ("ai-models search", "--region"),
+/// A slice that wants stdin support adds its pair here in the same change that
+/// makes its handler read stdin deliberately (bounded and UTF-8 checked, see
+/// `stdin::read_bounded`) and lists it in `docs/migration/cli-bare-dash.md`.
+/// Only parameters whose Python original reads `-` as stdin are listed.
+pub const STDIO_DASH: &[(&str, &str)] = &[
+    ("cloudwatch instrumentation", "--json"),
+    ("cloudwatch instrumentation", "--json-file"),
+    ("cloudwatch snapshots", "--json"),
+    ("cloudwatch snapshots", "--json-file"),
 ];
 
-/// Whether `-` is an accepted marker for `flag` (a value flag name, or
+/// Red-test stub (#4934): no literal `-` pair is listed yet.
+pub const LITERAL_DASH: &[(&str, &str)] = &[];
+
+/// Whether `-` is an accepted stdio marker for `flag` (a value flag name, or
 /// [`STDIO_DASH_POSITIONAL`]) of `spec` according to `allowed`.
 fn dash_listed(allowed: &[(&str, &str)], spec: &CommandSpec, flag: &str) -> bool {
     let path = spec.path.join(" ");
@@ -390,25 +345,17 @@ fn dash_listed(allowed: &[(&str, &str)], spec: &CommandSpec, flag: &str) -> bool
         .any(|(command, listed)| *command == path && *listed == flag)
 }
 
-/// The two allowlists of the exact value `-`: stdio markers and literals.
-#[derive(Clone, Copy)]
-struct DashLists<'a> {
-    stdio: &'a [(&'a str, &'a str)],
-    literal: &'a [(&'a str, &'a str)],
-}
-
 /// Whether `value` may follow the value flag `flag` of `spec` (see
 /// [`CommandSpec::strict_values`]). The exact token `-` is refused for every
-/// command unless the pair is listed in [`STDIO_DASH`] or [`LITERAL_DASH`]; a
-/// listed pair takes it as an ordinary value, whatever `strict_values` says.
+/// command unless the pair is listed in `allowed` ([`STDIO_DASH`]).
 fn value_allowed(
     spec: &CommandSpec,
-    lists: DashLists<'_>,
+    allowed: &[(&str, &str)],
     flag: &str,
     value: &str,
 ) -> Result<(), ToolkitError> {
     if value == "-" {
-        return if dash_listed(lists.stdio, spec, flag) || dash_listed(lists.literal, spec, flag) {
+        return if dash_listed(allowed, spec, flag) {
             Ok(())
         } else {
             Err(dash_value_error(flag))
@@ -462,21 +409,14 @@ fn is_value_flag(spec: &CommandSpec, name: &str) -> bool {
 /// Returns a usage error (exit status 2) for no arguments, an unknown
 /// command, an unknown flag or too many positional arguments.
 pub fn route<'a>(specs: &'a [CommandSpec], args: &[String]) -> Result<Routed<'a>, ToolkitError> {
-    route_lists(
-        specs,
-        DashLists {
-            stdio: STDIO_DASH,
-            literal: LITERAL_DASH,
-        },
-        args,
-    )
+    route_with(specs, STDIO_DASH, args)
 }
 
-/// [`route`] with explicit allowlists, so tests can exercise the opt-ins
-/// independently of the shipped constants.
-fn route_lists<'a>(
+/// [`route`] with an explicit [`STDIO_DASH`] allowlist, so tests can exercise
+/// the opt-in while the shipped constant is empty.
+fn route_with<'a>(
     specs: &'a [CommandSpec],
-    lists: DashLists<'_>,
+    stdio_dash: &[(&str, &str)],
     args: &[String],
 ) -> Result<Routed<'a>, ToolkitError> {
     let Some(first) = args.first().map(String::as_str) else {
@@ -512,20 +452,20 @@ fn route_lists<'a>(
         // A bare `-` is a positional only where STDIO_DASH lists the command's
         // `<positional>`; otherwise it is an unknown flag, as before #4743.
         if word.starts_with('-')
-            && !(word == "-" && dash_listed(lists.stdio, spec, STDIO_DASH_POSITIONAL))
+            && !(word == "-" && dash_listed(stdio_dash, spec, STDIO_DASH_POSITIONAL))
         {
             if is_value_flag(spec, word) {
                 // `--name value`: the next word is the value.
                 let Some(value) = rest.next() else {
                     return Err(usage_error());
                 };
-                value_allowed(spec, lists, word, value)?;
+                value_allowed(spec, stdio_dash, word, value)?;
                 invocation.store_value(spec, word, value);
             } else if let Some((name, value)) = word
                 .split_once('=')
                 .filter(|(name, _)| is_value_flag(spec, name))
             {
-                value_allowed(spec, lists, name, value)?;
+                value_allowed(spec, stdio_dash, name, value)?;
                 invocation.store_value(spec, name, value);
             } else if word == "-" {
                 return Err(dash_positional_error());
@@ -542,23 +482,6 @@ fn route_lists<'a>(
         }
     }
     Ok(Routed::Run(spec, invocation))
-}
-
-/// [`route_lists`] with only a [`STDIO_DASH`]-style allowlist (tests).
-#[cfg(test)]
-fn route_with<'a>(
-    specs: &'a [CommandSpec],
-    stdio_dash: &[(&str, &str)],
-    args: &[String],
-) -> Result<Routed<'a>, ToolkitError> {
-    route_lists(
-        specs,
-        DashLists {
-            stdio: stdio_dash,
-            literal: &[],
-        },
-        args,
-    )
 }
 
 fn skills_list(invocation: &Invocation, output: &mut Output<'_>) -> Result<(), ToolkitError> {
@@ -937,60 +860,18 @@ mod tests {
     }
 
     #[test]
-    fn the_shipped_stdio_dash_list_is_empty() {
-        // No registered parameter reads standard input (#4935): a bare `-` is a
-        // stdio marker nowhere.
-        assert!(STDIO_DASH.is_empty(), "{STDIO_DASH:?}");
-    }
-
-    #[test]
-    fn the_literal_dash_list_is_value_flags_only_and_disjoint_from_stdio() {
-        let mut seen = std::collections::BTreeSet::new();
-        for (command, flag) in LITERAL_DASH {
-            assert!(seen.insert((*command, *flag)), "duplicate {command} {flag}");
-            assert_ne!(*flag, STDIO_DASH_POSITIONAL, "{command}: positional");
-            assert!(flag.starts_with("--"), "{command} {flag}");
-            assert!(
-                !STDIO_DASH.contains(&(*command, *flag)),
-                "{command} {flag} is in both lists"
-            );
-        }
-    }
-
-    /// Routes `values` against `REPEATABLE_SPECS` with an explicit literal list.
-    fn route_literal(
-        literal: &[(&str, &str)],
-        values: &[&str],
-    ) -> Result<Invocation, ToolkitError> {
-        let lists = DashLists {
-            stdio: &[],
-            literal,
-        };
-        match route_lists(REPEATABLE_SPECS, lists, &words(values))? {
-            Routed::Run(_, invocation) => Ok(invocation),
-            other => panic!("expected a runnable route, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn a_literal_dash_pair_takes_the_value_unchanged_and_opens_only_itself() {
-        let literal = [("strict", "--mode"), ("loose", "--both")];
-        // Plain and attached spelling, strict and non-strict, the value is `-`.
-        let invocation = route_literal(&literal, &["strict", "--mode", "-"]).expect("routes");
-        assert_eq!(invocation.value("--mode"), Some("-"));
-        let invocation = route_literal(&literal, &["strict", "--mode=-"]).expect("routes");
-        assert_eq!(invocation.value("--mode"), Some("-"));
-        let invocation = route_literal(&literal, &["loose", "--both", "-"]).expect("routes");
-        assert_eq!(invocation.values_of("--both").collect::<Vec<_>>(), ["-"]);
-        // Another flag of the same command, another command and a positional stay refused.
-        assert!(route_literal(&literal, &["strict", "--workload", "-"]).is_err());
-        assert!(route_literal(&literal, &["strict", "--workload=-"]).is_err());
-        assert!(route_literal(&literal, &["loose", "--mode", "-"]).is_err());
-        assert!(route_literal(&literal, &["strict", "-"]).is_err());
-        // The literal pair does not loosen the other dash rules.
-        assert!(route_literal(&literal, &["strict", "--mode", "-x"]).is_err());
-        assert!(route_literal(&literal, &["strict", "--mode", ""]).is_err());
-        assert!(route_literal(&literal, &["strict", "--mode", "--"]).is_err());
+    fn the_shipped_stdio_dash_list_is_the_python_stdin_parameters_only() {
+        // Each pair has a Python original that reads `-` as stdin and a handler
+        // that reads it bounded (docs/migration/cli-bare-dash.md).
+        assert_eq!(
+            STDIO_DASH,
+            [
+                ("cloudwatch instrumentation", "--json"),
+                ("cloudwatch instrumentation", "--json-file"),
+                ("cloudwatch snapshots", "--json"),
+                ("cloudwatch snapshots", "--json-file"),
+            ]
+        );
     }
 
     #[test]

@@ -253,8 +253,8 @@ it with such a value; the boundary tests cover -1, 0, 999999, 1000000 and the
 `crates/toolkit-cli/README.md`) is new: the Python host scripts only run the
 live operations, which stay with #4381 (including `--profile`, `--out` with its
 0600 file mode, and `--print-contract`). The commands read their JSON arguments
-through `--json` / `--json-file` and do not support stdin (`-`) because the
-shared router's `strict_values` rejects values that start with `-`. An unknown,
+through `--json` / `--json-file` and do not support stdin (`-`): they have no Python original, so the shared router refuses a bare `-`
+(`cli-bare-dash.md`). An unknown,
 missing or mistyped argument keeps the legacy exit status 2 through
 `ToolkitError::with_exit_code`; a failed check keeps the legacy "text on
 stdout, exit 1" contract through `Output::set_exit_status`.

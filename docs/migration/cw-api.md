@@ -177,9 +177,10 @@ resource are gated anyway, so the live binding inherits the rule:
 2. **`--i-have-confirmed` on the four mutating instrumentation ops** (the manager
    brief requires an explicit flag; the Python required one only for the dataset
    write).
-3. **No stdin arguments.** `--json -` / `--json-file -` are refused by the shared
-   router (`strict_values: true` rejects a value starting with `-`); use
-   `--json-file`.
+3. **Bounded stdin arguments (#4780).** `--json -` and `--json-file -` read the
+   JSON object from stdin like the Python originals (`STDIO_DASH`; at most 1 MiB,
+   UTF-8; larger, invalid or empty input exits 2). `./-` names a file called `-`.
+   Every other bare `-` is refused by the router (`docs/migration/cli-bare-dash.md`).
 4. **Caller text is escaped before it reaches a request.** Every `Caller`
    argument is made single-line (`safe_text`) at parse time (the #4380 origin
    table), so a control or bidi character in a service name or path is sent
