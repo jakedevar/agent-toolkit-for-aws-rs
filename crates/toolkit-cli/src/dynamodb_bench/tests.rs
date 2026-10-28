@@ -177,6 +177,7 @@ fn an_empty_response_has_every_default() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn wrong_typed_or_null_members_reject_the_response_without_echoing_values() {
     const SECRET: &str = "FAKE-RECORDED-SECRET-4390";
     for (text, needle) in [

@@ -1361,7 +1361,7 @@ fn outputs_are_published_atomically_and_privately() {
                 .to_string_lossy()
                 .to_string()
         })
-        .filter(|name| name.ends_with(".tmp"))
+        .filter(|name| name.rsplit('.').next() == Some("tmp"))
         .collect();
     assert!(leftovers.is_empty(), "{leftovers:?}");
 }
@@ -1422,7 +1422,7 @@ fn a_failed_publication_leaves_the_existing_output_and_no_temporary_file() {
                 .to_string_lossy()
                 .to_string()
         })
-        .filter(|name| name.ends_with(".tmp"))
+        .filter(|name| name.rsplit('.').next() == Some("tmp"))
         .collect();
     assert!(leftovers.is_empty(), "{leftovers:?}");
 }
