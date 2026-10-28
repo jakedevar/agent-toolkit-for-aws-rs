@@ -278,3 +278,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
   Re-review #4742 r5 worker 36a3dfe5 (Codex sol high, pinned, op cbe48cca).
   harness:true filings now refused agent_create_issue_harness_project_unresolved (#4849, #4855 filed locally) -> report up with next GM report.
   4/4 busy: 1d5e3f47 (#4852), c6b026ce (#4839), d2b31c3c (#4854), 36a3dfe5 (#4742 r5).
+- 10-28 19:15Z: #4742 r5 ACCEPT #4381 at 5c8a7722cb19957b47a273aaa9694d0241a0fbc4 (36a3dfe5). Close on land: #4381 #4742 #4784 #4785 #4816 #4817 #4818 #4837 #4838.
+  ROUND 14 worker f77e05af (Opus high, #4575, base b8204e9d, op 81f10a80): merge #4391 d10ee777, #4381 5c8a7722, #4409 29a96720; may mail #4806 (if #4854 ACCEPT) and #4751 2d3904a1 (if #4852 ACCEPT) before final checks. When verified: enqueue with supersedes=2a2dece6 if still queued (Rsi #4850 blocks the queue).
+  4/4 busy: 1d5e3f47 (#4852), c6b026ce (#4839), d2b31c3c (#4854), f77e05af (r14).
