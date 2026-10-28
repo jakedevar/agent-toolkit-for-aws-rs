@@ -25,6 +25,7 @@ use super::client::RecordedClient;
 use super::infra::run_infra_checks;
 
 mod neptune;
+mod redaction;
 mod review;
 mod template;
 
@@ -126,4 +127,24 @@ fn the_commands_are_registered_strict_and_not_passthrough() {
     }
     assert_eq!(seen, 3);
     assert!(Status::Info.as_str() == "info");
+}
+
+/// The fake credential of review #4904's reproductions (#4907, #4908).
+pub(super) const FAKE: &str = "FAKE_REVIEW_VALUE";
+
+/// `https://review-user:FAKE_REVIEW_VALUE` + `pad` x characters +
+/// `@example.invalid/` + `tail`: URL userinfo whose `@host` delimiter lies
+/// `pad` characters past the password (200 puts it beyond every display
+/// bound of this slice).
+pub(super) fn userinfo_url(pad: usize, tail: &str) -> String {
+    format!(
+        "https://review-user:{FAKE}{}@example.invalid/{tail}",
+        "x".repeat(pad)
+    )
+}
+
+/// Neither the fake password nor the user name reached `text`.
+pub(super) fn assert_no_userinfo(text: &str) {
+    assert!(!text.contains(FAKE), "password leaked: {text:?}");
+    assert!(!text.contains("review-user"), "user name leaked: {text:?}");
 }

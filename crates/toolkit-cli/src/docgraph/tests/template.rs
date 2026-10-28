@@ -42,20 +42,9 @@ fn the_cluster_models_the_secure_patterns_of_the_stack() {
     let cluster = resource(&t, "NeptuneCluster");
     assert_eq!(property(cluster, "StorageEncrypted"), &Json::Bool(true));
     assert_eq!(property(cluster, "IamAuthEnabled"), &Json::Bool(true));
-    // Throwaway cluster: deletion protection off and delete on removal, as in
-    // the CDK stack; the description tells production to turn it on.
-    assert_eq!(property(cluster, "DeletionProtection"), &Json::Bool(false));
-    assert_eq!(
-        cluster.get("DeletionPolicy").and_then(Json::as_str),
-        Some("Delete")
-    );
     let scaling = property(cluster, "ServerlessScalingConfiguration");
     assert_eq!(scaling.get("MinCapacity"), Some(&Json::Int(1)));
     assert_eq!(scaling.get("MaxCapacity"), Some(&Json::Int(4)));
-    assert!(t
-        .get("Description")
-        .and_then(Json::as_str)
-        .is_some_and(|d| d.contains("DeletionProtection to true")));
     assert_eq!(
         resource(&t, "NeptuneInstance")
             .get("Properties")
@@ -143,12 +132,175 @@ fn the_seed_role_is_scoped_to_the_cluster() {
         !policies.contains("\"Resource\":\"*\""),
         "no wildcard resource: {policies}"
     );
-    for (name, other) in resources_of_type(&t, "AWS::IAM::Role") {
-        assert!(
-            !other.to_compact_string().contains("\"Action\":\"*\""),
-            "{name}"
+    // The data-plane grant lists exactly the actions the seed and validation
+    // flows use (#4905); no `neptune-db:*`.
+    let statement = role
+        .get("Properties")
+        .and_then(|p| p.get("Policies"))
+        .and_then(|p| match p {
+            Json::Array(items) => items.first(),
+            _ => None,
+        })
+        .and_then(|p| p.get("PolicyDocument"))
+        .and_then(|d| d.get("Statement"))
+        .and_then(|s| match s {
+            Json::Array(items) => items.first(),
+            _ => None,
+        })
+        .expect("seed role statement");
+    let Some(Json::Array(actions)) = statement.get("Action") else {
+        panic!("Action must be an explicit list: {policies}");
+    };
+    let actions: Vec<&str> = actions.iter().filter_map(Json::as_str).collect();
+    assert_eq!(actions, SEED_ROLE_ACTIONS);
+}
+
+/// The neptune-db actions of the seed role, in template order.
+const SEED_ROLE_ACTIONS: [&str; 6] = [
+    "neptune-db:connect",
+    "neptune-db:ReadDataViaQuery",
+    "neptune-db:WriteDataViaQuery",
+    "neptune-db:DeleteDataViaQuery",
+    "neptune-db:GetQueryStatus",
+    "neptune-db:GetEngineStatus",
+];
+
+/// Every `Action` / `NotAction` value anywhere under `node` that contains an
+/// IAM wildcard (`*` or `?`): the bare `*`, a service wildcard such as
+/// `svc:*` and a partial one such as `svc:Get*` alike. A `NotAction` is
+/// reported whatever it holds: it grants everything it does not list.
+fn wildcard_actions(node: &Json) -> Vec<String> {
+    fn walk(node: &Json, found: &mut Vec<String>) {
+        match node {
+            Json::Object(members) => {
+                for (key, value) in members {
+                    if key == "NotAction" {
+                        found.push(format!("NotAction {}", value.to_compact_string()));
+                    } else if key == "Action" {
+                        let listed: Vec<&Json> = match value {
+                            Json::Array(items) => items.iter().collect(),
+                            other => vec![other],
+                        };
+                        for action in listed {
+                            match action.as_str() {
+                                Some(text) if !text.contains(['*', '?']) => {}
+                                _ => found.push(action.to_compact_string()),
+                            }
+                        }
+                    }
+                    walk(value, found);
+                }
+            }
+            Json::Array(items) => items.iter().for_each(|item| walk(item, found)),
+            _ => {}
+        }
+    }
+    let mut found = Vec::new();
+    walk(node, &mut found);
+    found
+}
+
+#[test]
+fn no_policy_in_the_template_grants_a_wildcard_action() {
+    let t = template();
+    assert_eq!(wildcard_actions(&t), Vec::<String>::new());
+}
+
+#[test]
+fn the_wildcard_check_rejects_every_wildcard_shape() {
+    for action in [
+        r#""*""#,
+        r#""neptune-db:*""#,
+        r#""neptune-db:Read*""#,
+        r#""neptune-db:Get?ueryStatus""#,
+        r#"["neptune-db:connect", "iam:*"]"#,
+        r#"{"Fn::Sub": "neptune-db:connect"}"#,
+    ] {
+        let document = parse_json(&format!(
+            r#"{{"Resources": {{"R": {{"Properties": {{"Policies": [{{"PolicyDocument": {{"Statement": [{{"Effect": "Allow", "Action": {action}, "Resource": "arn"}}]}}}}]}}}}}}}}"#
+        ))
+        .expect("fixture");
+        assert_eq!(wildcard_actions(&document).len(), 1, "{action}");
+    }
+    let not_action = parse_json(
+        r#"{"Statement": [{"Effect": "Allow", "NotAction": "neptune-db:connect", "Resource": "arn"}]}"#,
+    )
+    .expect("fixture");
+    assert_eq!(wildcard_actions(&not_action).len(), 1);
+    let explicit =
+        parse_json(r#"{"Action": ["neptune-db:connect", "sts:AssumeRole"]}"#).expect("fixture");
+    assert!(wildcard_actions(&explicit).is_empty());
+}
+
+/// The deletion-safe defaults (#4906): the cluster is snapshotted on deletion
+/// and on replacement and is deletion-protected unless the stack is launched
+/// with the explicit, non-default `DeletionProtection=false`; only then may
+/// the instance be deleted with the stack.
+#[test]
+fn the_cluster_is_deletion_safe_by_default() {
+    let t = template();
+    let parameter = t
+        .get("Parameters")
+        .and_then(|p| p.get("DeletionProtection"))
+        .expect("DeletionProtection parameter");
+    assert_eq!(
+        parameter.get("Default").and_then(Json::as_str),
+        Some("true")
+    );
+    assert_eq!(
+        parameter.get("AllowedValues").map(Json::to_compact_string),
+        Some("[\"true\",\"false\"]".to_string())
+    );
+    let cluster = resource(&t, "NeptuneCluster");
+    assert_eq!(
+        property(cluster, "DeletionProtection").to_compact_string(),
+        "{\"Ref\":\"DeletionProtection\"}"
+    );
+    for policy in ["DeletionPolicy", "UpdateReplacePolicy"] {
+        assert_eq!(
+            cluster.get(policy).and_then(Json::as_str),
+            Some("Snapshot"),
+            "cluster {policy}"
         );
     }
+    // The conditional instance policies need the language extensions.
+    assert_eq!(
+        t.get("Transform").and_then(Json::as_str),
+        Some("AWS::LanguageExtensions")
+    );
+    assert_eq!(
+        t.get("Conditions")
+            .and_then(|c| c.get("TeardownAllowed"))
+            .map(Json::to_compact_string),
+        Some("{\"Fn::Equals\":[{\"Ref\":\"DeletionProtection\"},\"false\"]}".to_string())
+    );
+    let instance = resource(&t, "NeptuneInstance");
+    for policy in ["DeletionPolicy", "UpdateReplacePolicy"] {
+        assert_eq!(
+            instance.get(policy).map(Json::to_compact_string),
+            Some("{\"Fn::If\":[\"TeardownAllowed\",\"Delete\",\"Retain\"]}".to_string()),
+            "instance {policy}"
+        );
+    }
+    // No resource anywhere deletes unconditionally.
+    let Some(Json::Object(all)) = t.get("Resources") else {
+        panic!("Resources");
+    };
+    for (name, resource) in all {
+        for policy in ["DeletionPolicy", "UpdateReplacePolicy"] {
+            assert_ne!(
+                resource.get(policy).and_then(Json::as_str),
+                Some("Delete"),
+                "{name} {policy}"
+            );
+        }
+    }
+    let description = t.get("Description").and_then(Json::as_str).expect("text");
+    assert!(
+        description.contains("DeletionProtection=false"),
+        "{description}"
+    );
+    assert!(!description.contains("THROWAWAY"), "{description}");
 }
 
 #[test]

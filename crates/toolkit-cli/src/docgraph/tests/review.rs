@@ -11,7 +11,7 @@ use crate::docgraph::{report, tables};
 const START: &str = "2026-01-24T12:00:00Z";
 
 /// What a recording of a cluster contains; the default is a healthy cluster.
-struct Cluster {
+pub(super) struct Cluster {
     retention: i64,
     deletion_protection: bool,
     encrypted: bool,
@@ -64,7 +64,12 @@ impl Default for Cluster {
     }
 }
 
-fn call(service: &str, operation: &str, request: Option<&str>, response: &str) -> String {
+pub(super) fn call(
+    service: &str,
+    operation: &str,
+    request: Option<&str>,
+    response: &str,
+) -> String {
     let request = request.map_or(String::new(), |r| format!(r#""request": {r},"#));
     format!(
         r#"{{"service": "{service}", "operation": "{operation}", {request} "response": {response}}}"#
@@ -94,7 +99,7 @@ fn metric(iid: &str, name: &str, period: i64, stats: &[&str], response: &str) ->
 }
 
 impl Cluster {
-    fn recording(&self) -> String {
+    pub(super) fn recording(&self) -> String {
         let mut calls = Vec::new();
         let cluster = format!(
             r#"{{"DBClusters": [{{"BackupRetentionPeriod": {}, "DeletionProtection": {}, "StorageEncrypted": {},
