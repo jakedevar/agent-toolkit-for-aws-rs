@@ -80,11 +80,11 @@ name or value of the file.
   stack is `skills/.../amazon-neptune/scripts/neptune_test_env.cfn.json`, a
   CloudFormation template (VPC with two private and two public subnets, one NAT,
   security group open on 8182 to the VPC CIDR only, a Neptune Serverless
-  cluster 1-4 NCU with encryption at rest and IAM authentication, deletion
-  protection off with `DeletionPolicy: Delete` for the throwaway cluster, the
-  `created_by` / `generation_model` tags, the seed Lambda role, the five
-  outputs). `docgraph/tests/template.rs` asserts those properties from the file.
-  Nothing deploys it; tearing the stack down is `aws cloudformation delete-stack`.
+  cluster 1-4 NCU with encryption at rest and IAM authentication, deletion-safe
+  defaults (decision 9), the `created_by` / `generation_model` tags, the seed
+  Lambda role with explicit `neptune-db` actions, the five outputs).
+  `docgraph/tests/template.rs` asserts those properties from the file, and that
+  no `Action` anywhere holds a wildcard. Nothing deploys it.
 - **AC3 no paid environment creation in default tests.** No test (and no
   command) creates, deploys or contacts anything; the template is only parsed.
 
@@ -110,7 +110,11 @@ name or value of the file.
    that reaches a label or detail (instance ids, engine version, event message,
    collection names) goes through the shared redactor and has control,
    bidirectional and invisible characters escaped. The failover event message is
-   still limited to 120 characters.
+   still limited to 120 characters, but the whole message is redacted first,
+   then cut, then escaped (#4908): userinfo whose `@host` lies past the bound,
+   or an access-key id the bound would cut in half, is still recognized. A
+   message without credential-shaped text shows the same 120-character prefix
+   as the script.
 5. **Arguments are validated.** `--cluster-id` must be a DocumentDB identifier
    (starts with a letter, letters/digits/hyphens, 63 at most) and `--region` the
    shared region shape, both usage errors (exit 2) before any call, so a hostile
@@ -118,8 +122,9 @@ name or value of the file.
    `mkdir(parents=True)` did. `--now TS` (ISO UTC) is new: it pins the review
    instant (and with it the metric windows and the report timestamp) so a recording
    is deterministic; the default is the system clock.
-6. **`validate-input`** shows a rejected value escaped, bounded and redacted
-   (the script printed it raw), and matches the whole value (the script's `$`
+6. **`validate-input`** shows a rejected value (and an unknown key or a
+   malformed argument) redacted in full, then bounded and escaped (the script
+   printed it raw; #4908), and matches the whole value (the script's `$`
    also matched before a trailing newline; `\d` meant any Unicode digit, here
    ASCII). The region rule is the shared `is_valid_region` (it also bounds the
    length at 32). `+12` is shown as `12` in the range message as before.
@@ -134,12 +139,52 @@ name or value of the file.
 8. **`json.dump` parity.** Non-ASCII text in a label is written as UTF-8, not
    `\uXXXX` (`ensure_ascii`), and a float prints as Rust's shortest form.
    Neither occurs in the check texts; stated for completeness.
-9. **`cdk_test_env.py`.** The cluster still has deletion protection off and
-   deletes on removal (documented in the template description). `grant_connect`
-   becomes `neptune-db:*` scoped to this cluster's resource id; the CDK
-   `generation_model` stack argument becomes the `GenerationModel` parameter.
-   The template has not been deployed in this slice (no paid environment); a
-   reviewer can lint it with `cfn-lint` or `aws cloudformation validate-template`.
+9. **`cdk_test_env.py`.** The CDK stack was a throwaway (deletion protection
+   off, destroy on removal). Review #4904 requires deletion-safe defaults
+   (#4906), so the template now defaults to them: the cluster has
+   `DeletionPolicy` and `UpdateReplacePolicy` `Snapshot` and
+   `DeletionProtection` from the `DeletionProtection` parameter (allowed
+   `true`/`false`, default `true`); the instance (no storage of its own, and
+   `Snapshot` is not a policy `AWS::Neptune::DBInstance` supports) is
+   `Retain` by default. Throwaway teardown is only the explicit non-default
+   `DeletionProtection=false`: it lifts protection and switches the instance
+   policies to `Delete` through the `TeardownAllowed` condition (the
+   `AWS::LanguageExtensions` transform, which allows `Fn::If` in those
+   attributes); stack deletion still leaves a final cluster snapshot, to be
+   deleted by hand. `grant_connect` (#4905) becomes an explicit list scoped to
+   this cluster's resource id, with no wildcard:
+   - `neptune-db:connect`: open the Gremlin WebSocket (IAM auth);
+   - `neptune-db:ReadDataViaQuery`: the verification reads (`g.V().count()`,
+     `has(...)` traversals);
+   - `neptune-db:WriteDataViaQuery`: `addV` / `addE` / `property` seeding;
+   - `neptune-db:DeleteDataViaQuery`: the guarded wipe `g.V().drop()`.
+
+   `neptune-db:GetEngineStatus` and `neptune-db:GetQueryStatus` are left out:
+   neither the seed nor the validation flow reads engine or query status
+   (`validate-input` makes no call at all); a live binding that needs them
+   (#4886) adds them by name.
+
+   Fine-grained actions need engine 1.2.0.0 or later (Neptune Serverless
+   already requires it); on older engines `neptune-db:connect` alone granted
+   all data access. The attached managed policy
+   `AWSLambdaVPCAccessExecutionRole` grants only CloudWatch Logs writes and the
+   EC2 network-interface calls a VPC Lambda needs, no Neptune data action.
+   `template.rs` fails on any `Action` (anywhere in the template, string or
+   list) holding `*` or `?` (the bare `*`, `svc:*`, `svc:Get*`), on any
+   non-string action and on any `NotAction`, with a negative test of each
+   shape. The CDK `generation_model` stack argument becomes the
+   `GenerationModel` parameter. The template has not been deployed in this
+   slice (no paid environment); a reviewer can lint it with `cfn-lint` or
+   `aws cloudformation validate-template`.
+10. **Caller paths are redacted before they are shown** (#4907). Every path this
+    slice prints (`--recorded`, `--analysis-data`, in the progress line and in
+    read or parse errors, and the `Results:` / `Report:` banners under
+    `--output`) goes through the shared redactor (`toolkit_aws::redact_text`:
+    URL userinfo, labelled credentials, key ids) and then has control,
+    bidirectional and invisible characters escaped; paths are never shortened.
+    The file reader is `startup::read_text` with that redacted label (the
+    shared `read_json_document` escapes but does not redact its label). A path
+    without credential-shaped text is shown as given.
 
 ## Not in this slice
 

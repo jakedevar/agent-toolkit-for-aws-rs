@@ -33,13 +33,13 @@
 use std::path::Path;
 
 use toolkit_aws::{is_valid_region, Env, ProcessEnv};
-use toolkit_core::{Json, ToolkitError};
+use toolkit_core::{parse_json, Json, ToolkitError};
 
+use crate::ai_data::parse_failure_text;
 use crate::aurora::args::usage;
 use crate::cloudwatch::timefmt::parse_iso_timestamp;
 use crate::dynamodb::iterate::utc_iso;
-use crate::safe_text::safe_path;
-use crate::startup::read_json_document;
+use crate::startup::read_text;
 use crate::{CommandSpec, Invocation, Output};
 
 mod access;
@@ -56,6 +56,7 @@ mod tables;
 #[cfg(test)]
 mod tests;
 
+use checks::clean;
 use client::{AwsClient, NoLiveClient, RecordedClient};
 use seed::{GremlinSession, NoLiveSession, RecordedSession, SeedError};
 
@@ -115,16 +116,33 @@ fn now_seconds() -> i64 {
         .unwrap_or(0)
 }
 
+/// A caller path as this slice shows it (#4907): the whole path is passed
+/// through the shared redactor (URL userinfo, labelled credentials, key ids),
+/// then its control, bidirectional and invisible characters are escaped. A
+/// path is never shortened, so the file name stays visible.
+fn shown_path(path: &str) -> String {
+    clean(path)
+}
+
+/// Reads and parses a JSON file named by the caller. The error text names the
+/// file as [`shown_path`] does and the failure, never a value of the document
+/// (`startup::read_json_document` with a redacted label).
+fn read_document(path: &str) -> Result<Json, String> {
+    let label = shown_path(path);
+    let text = read_text(Path::new(path), &label)?;
+    parse_json(&text)
+        .map_err(|error| format!("{label}: invalid JSON ({})", parse_failure_text(&error)))
+}
+
 fn recorded_error(path: &str, reason: &str) -> ToolkitError {
     ToolkitError::runtime(
         "docgraph_recorded",
-        format!("{}: {reason}", safe_path(path)),
+        format!("{}: {reason}", shown_path(path)),
     )
 }
 
 fn load_recorded(path: &str) -> Result<Json, ToolkitError> {
-    read_json_document(Path::new(path))
-        .map_err(|reason| ToolkitError::runtime("docgraph_recorded", reason))
+    read_document(path).map_err(|reason| ToolkitError::runtime("docgraph_recorded", reason))
 }
 
 /// Handler of `toolkit documentdb wa-review`.
@@ -191,9 +209,9 @@ pub fn wa_review_command(
     if let Some(path) = invocation.value("--analysis-data") {
         out.line(&format!(
             "  Loading database stats from {}...",
-            safe_path(path)
+            shown_path(path)
         ))?;
-        let document = read_json_document(Path::new(path))
+        let document = read_document(path)
             .map_err(|reason| ToolkitError::runtime("docgraph_analysis", reason))?;
         analysis = snapshot::read_analysis(&document)
             .map_err(|reason| ToolkitError::runtime("docgraph_analysis", reason))?;
@@ -221,8 +239,8 @@ pub fn wa_review_command(
     )
     .map_err(|reason| ToolkitError::runtime("docgraph_report", reason))?;
     out.line("")?;
-    out.line(&format!("  Results: {}", safe_path(&json_path)))?;
-    out.line(&format!("  Report:  {}", safe_path(&md_path)))?;
+    out.line(&format!("  Results: {}", shown_path(&json_path)))?;
+    out.line(&format!("  Report:  {}", shown_path(&md_path)))?;
 
     let [pass, warn, fail, info] = report::counts(&results);
     out.line("")?;

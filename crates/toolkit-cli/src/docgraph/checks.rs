@@ -83,6 +83,14 @@ pub(super) fn clean(text: &str) -> String {
     safe_path(&redact_text(text))
 }
 
+/// [`clean`] bounded to the first `count` characters (`text[:count]`): the
+/// whole text is redacted first, then cut, then escaped, so a credential that
+/// crosses the bound (URL userinfo whose `@host` lies beyond it, an access-key
+/// id cut in half) is still recognized (#4908).
+pub(super) fn clean_prefix(text: &str, count: usize) -> String {
+    safe_path(&first_chars(&redact_text(text), count))
+}
+
 /// The first `count` characters (`text[:count]`).
 pub(super) fn first_chars(text: &str, count: usize) -> String {
     text.chars().take(count).collect()

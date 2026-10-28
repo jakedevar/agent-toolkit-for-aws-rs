@@ -1,7 +1,14 @@
 {
   "AWSTemplateFormatVersion": "2010-09-09",
-  "Description": "Neptune skill test environment: a THROWAWAY Neptune Serverless cluster in a VPC for end-to-end skill evals (declarative replacement of cdk_test_env.py). Tear the stack down after the evals; the cluster has deletion protection off on purpose. Production clusters MUST set DeletionProtection to true.",
+  "Description": "Neptune skill test environment: a Neptune Serverless cluster in a VPC for end-to-end skill evals (declarative replacement of cdk_test_env.py). Deletion-safe by default: the cluster is deletion-protected and is snapshotted on deletion or replacement, and the instance is retained. Throwaway teardown is an explicit opt-in: launch or update the stack with DeletionProtection=false; stack deletion then removes the instance and leaves a final cluster snapshot to delete by hand.",
+  "Transform": "AWS::LanguageExtensions",
   "Parameters": {
+    "DeletionProtection": {
+      "Type": "String",
+      "Default": "true",
+      "AllowedValues": ["true", "false"],
+      "Description": "Keep true (the default) to protect the cluster from deletion. false is the explicit throwaway-teardown opt-in: it lifts deletion protection and lets stack deletion remove the instance. The cluster is snapshotted on deletion or replacement either way."
+    },
     "GenerationModel": {
       "Type": "String",
       "Default": "unknown",
@@ -13,6 +20,9 @@
       "AllowedPattern": "^(10|172|192)\\.[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}/(1[6-9]|20)$",
       "Description": "Private CIDR of the VPC. Port 8182 is opened to this range only."
     }
+  },
+  "Conditions": {
+    "TeardownAllowed": { "Fn::Equals": [{ "Ref": "DeletionProtection" }, "false"] }
   },
   "Resources": {
     "NeptuneVpc": {
@@ -179,14 +189,14 @@
     },
     "NeptuneCluster": {
       "Type": "AWS::Neptune::DBCluster",
-      "DeletionPolicy": "Delete",
-      "UpdateReplacePolicy": "Delete",
+      "DeletionPolicy": "Snapshot",
+      "UpdateReplacePolicy": "Snapshot",
       "Properties": {
         "DBSubnetGroupName": { "Ref": "NeptuneSubnetGroup" },
         "VpcSecurityGroupIds": [{ "Ref": "NeptuneSecurityGroup" }],
         "StorageEncrypted": true,
         "IamAuthEnabled": true,
-        "DeletionProtection": false,
+        "DeletionProtection": { "Ref": "DeletionProtection" },
         "ServerlessScalingConfiguration": { "MinCapacity": 1, "MaxCapacity": 4 },
         "Tags": [
           { "Key": "created_by", "Value": "neptune-skill" },
@@ -196,8 +206,8 @@
     },
     "NeptuneInstance": {
       "Type": "AWS::Neptune::DBInstance",
-      "DeletionPolicy": "Delete",
-      "UpdateReplacePolicy": "Delete",
+      "DeletionPolicy": { "Fn::If": ["TeardownAllowed", "Delete", "Retain"] },
+      "UpdateReplacePolicy": { "Fn::If": ["TeardownAllowed", "Delete", "Retain"] },
       "Properties": {
         "DBClusterIdentifier": { "Ref": "NeptuneCluster" },
         "DBInstanceClass": "db.serverless",
@@ -233,7 +243,12 @@
               "Statement": [
                 {
                   "Effect": "Allow",
-                  "Action": "neptune-db:*",
+                  "Action": [
+                    "neptune-db:connect",
+                    "neptune-db:ReadDataViaQuery",
+                    "neptune-db:WriteDataViaQuery",
+                    "neptune-db:DeleteDataViaQuery"
+                  ],
                   "Resource": {
                     "Fn::Sub": "arn:${AWS::Partition}:neptune-db:${AWS::Region}:${AWS::AccountId}:${NeptuneCluster.ClusterResourceId}/*"
                   }

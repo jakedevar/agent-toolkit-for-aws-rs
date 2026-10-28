@@ -7,9 +7,9 @@
 //! matches before a trailing newline, so `"prod\n"` was accepted; here the
 //! whole value must match. `\d` meant any Unicode digit; here ASCII digits.
 //! A value shown in a message is escaped (control, bidirectional and invisible
-//! characters), bounded and passed through the shared redactor. The region
-//! rule is the shared `toolkit_aws::is_valid_region` (it also bounds the
-//! length at 32).
+//! characters) and bounded after the whole value went through the shared
+//! redactor. The region rule is the shared `toolkit_aws::is_valid_region` (it
+//! also bounds the length at 32).
 
 use toolkit_aws::{is_valid_region, redact_text};
 
@@ -46,9 +46,11 @@ pub(super) fn valid_keys_repr() -> String {
     format!("[{}]", quoted.join(", "))
 }
 
-/// A value of the command line as a message shows it.
+/// A value of the command line as a message shows it: the whole value is
+/// redacted first, then bounded and escaped, so userinfo whose `@host` lies
+/// past the bound is still recognized (#4908).
 pub(super) fn shown(value: &str) -> String {
-    redact_text(&safe_text(value))
+    safe_text(&redact_text(value))
 }
 
 fn all(value: &str, test: impl Fn(char) -> bool) -> bool {

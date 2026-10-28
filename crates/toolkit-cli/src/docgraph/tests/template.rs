@@ -156,13 +156,11 @@ fn the_seed_role_is_scoped_to_the_cluster() {
 }
 
 /// The neptune-db actions of the seed role, in template order.
-const SEED_ROLE_ACTIONS: [&str; 6] = [
+const SEED_ROLE_ACTIONS: [&str; 4] = [
     "neptune-db:connect",
     "neptune-db:ReadDataViaQuery",
     "neptune-db:WriteDataViaQuery",
     "neptune-db:DeleteDataViaQuery",
-    "neptune-db:GetQueryStatus",
-    "neptune-db:GetEngineStatus",
 ];
 
 /// Every `Action` / `NotAction` value anywhere under `node` that contains an

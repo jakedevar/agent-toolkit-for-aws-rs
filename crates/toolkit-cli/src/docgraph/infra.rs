@@ -18,7 +18,7 @@ use toolkit_aws::AwsError;
 use toolkit_core::Json;
 
 use super::access::{optional_bool, optional_int, optional_number};
-use super::checks::{clean, first_chars, Findings, Status};
+use super::checks::{clean, clean_prefix, Findings, Status};
 use super::client::{AwsClient, Service};
 use super::snapshot::group;
 use super::tables::{connection_limit, ram_gib, GRAVITON_FAMILIES};
@@ -514,7 +514,7 @@ fn failover_events(
             "REL7",
             format!("{} failover event(s) in last 13 days", failovers.len()),
             Status::Warn,
-            format!("Most recent: {}", clean(&first_chars(&last.message, 120))),
+            format!("Most recent: {}", clean_prefix(&last.message, 120)),
         );
     } else {
         findings.add(
