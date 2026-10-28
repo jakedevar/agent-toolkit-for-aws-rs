@@ -350,3 +350,5 @@ Friction: #4727, Rsi #4694, Rsi #4704
   4/4 busy: 4f5ab2f8 (r15), a338b5cb (#4395 repair), d60a4063 (#4780), b4230421 (#4893 r2).
 - 10-28 21:38Z: #4395 repair c659ce745ebda94db79c9a7e2f1fa5d652afc026 (a338b5cb; COVERS #4905-#4908; 4 explicit neptune-db actions, template.rs rejects */?/NotAction; Snapshot + DeletionProtection param default true via LanguageExtensions; redact->truncate(120)->escape; 10 new tests red on old files f02794ed; scoped a60e80a4 ok). Re-review #4904 r2 worker 07db2e68 (Codex sol, pinned).
   4/4 busy: 4f5ab2f8 (r15), d60a4063 (#4780), b4230421 (#4893 r2), 07db2e68 (#4904 r2).
+- 10-28 21:40Z: #4893 r2 (b4230421) on #4398 26ae66ab: CHANGES_REQUESTED #4917 (writable lock with pre-1970 mtime skips replacement -> reporting suppressed). Repair 2 worker 3209a487 (Opus, continue_from 15fa44f7): trust checks before timestamp conversion, bad mtime = stale. PM accepts on inspection (no r3).
+  4/4 busy: 4f5ab2f8 (r15), d60a4063 (#4780), 07db2e68 (#4904 r2), 3209a487 (#4398 repair 2).
