@@ -797,6 +797,39 @@ mod tests {
     }
 
     #[test]
+    fn the_readme_guard_rejects_prose_that_authorizes_a_cross_slice_index() {
+        let readme = readme();
+        // The review #4876 reproduction: the introduction lists every family,
+        // then one fenced block holds all 78 routes.
+        let families: Vec<&str> = LEGACY_COMMAND_ORDER
+            .iter()
+            .filter_map(|path| path.split(' ').next())
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        let routes: String = LEGACY_COMMAND_ORDER
+            .iter()
+            .map(|path| format!("toolkit {path}\n"))
+            .collect();
+        let everything = format!(
+            "{readme}\n## Toolkit reference\n\nAvailable families: {}.\n\n```\n{routes}```\n",
+            families.join(", ")
+        );
+        assert!(command_index_problem(&everything).is_some());
+        // A two-line block across two slices whose heading and introduction
+        // name both families.
+        let two = format!(
+            "{readme}\n## msk and aurora\n\nExamples of `msk` and `aurora`.\n\n```\ntoolkit msk help\ntoolkit aurora acu\n```\n"
+        );
+        assert!(command_index_problem(&two).is_some());
+        // The same two lines as a plain list, with no fence.
+        let listed = format!(
+            "{readme}\n## msk and aurora\n\n- toolkit msk help\n- toolkit aurora acu\n"
+        );
+        assert!(command_index_problem(&listed).is_some());
+    }
+
+    #[test]
     fn the_readme_guard_allows_per_slice_examples() {
         let readme = readme();
         // One family, one section.
