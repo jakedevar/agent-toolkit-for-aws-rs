@@ -220,6 +220,12 @@ pub enum KeyOrder {
     /// Object members must also be in the same order (`Json` equality); kept
     /// for the recordings an existing slice already pins with it.
     Significant,
+    /// The recorded request is *contained* in the actual one: every recorded
+    /// object member is present with an equal value (recursively, key order
+    /// ignored), and the actual objects may hold more members; arrays and
+    /// scalars must be equal. For a slice whose requests carry generated
+    /// members (client tokens, span bodies) a fixture leaves out (#4381).
+    Contained,
 }
 
 impl KeyOrder {
@@ -229,7 +235,21 @@ impl KeyOrder {
         match self {
             Self::Ignored => same_json(expected, actual),
             Self::Significant => expected == actual,
+            Self::Contained => contains_json(expected, actual),
         }
+    }
+}
+
+/// True when every member of `expected` is in `actual` with an equal value,
+/// recursively for objects; arrays and scalars compare with [`same_json`].
+fn contains_json(expected: &Json, actual: &Json) -> bool {
+    match (expected, actual) {
+        (Json::Object(wanted), Json::Object(_)) => wanted.iter().all(|(key, value)| {
+            actual
+                .get(key)
+                .is_some_and(|found| contains_json(value, found))
+        }),
+        _ => same_json(expected, actual),
     }
 }
 
@@ -528,6 +548,22 @@ mod tests {
         assert!(!same_json(&j("[1,2]"), &j("[2,1]")));
         assert!(KeyOrder::Ignored.same(&j(r#"{"a":1,"b":2}"#), &j(r#"{"b":2,"a":1}"#)));
         assert!(!KeyOrder::Significant.same(&j(r#"{"a":1,"b":2}"#), &j(r#"{"b":2,"a":1}"#)));
+    }
+
+    #[test]
+    fn contained_requests_allow_extra_object_members_only() {
+        let order = KeyOrder::Contained;
+        assert!(order.same(&j(r#"{"a":{"b":1}}"#), &j(r#"{"x":0,"a":{"c":2,"b":1}}"#)));
+        assert!(order.same(&j("{}"), &j(r#"{"a":1}"#)));
+        assert!(!order.same(&j(r#"{"a":1}"#), &j(r#"{"b":1}"#)));
+        assert!(!order.same(&j(r#"{"a":null}"#), &j("{}")));
+        assert!(!order.same(&j(r#"{"a":[1]}"#), &j(r#"{"a":[1,2]}"#)));
+        assert!(!order.same(&j(r#"{"a":"t"}"#), &j(r#"{"a":"u"}"#)));
+        let step = Step::failure(Some(j(r#"{"t":"1"}"#)), AwsError::NoCredentials);
+        assert!(matches!(
+            step.replay(&j(r#"{"t":"2"}"#), order),
+            Err(ReplayError::RequestMismatch)
+        ));
     }
 
     fn denied() -> AwsError {

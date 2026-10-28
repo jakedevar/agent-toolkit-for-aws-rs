@@ -232,10 +232,14 @@ pub fn format_timestamp(value: Option<&Json>, default: &str) -> String {
 ///
 /// # Errors
 ///
-/// A description when the value is neither.
+/// A value-free description when the value is neither: it names the JSON
+/// type, never the value, because the value comes from a response (#4784).
 pub fn time_from_json(value: &Json) -> Result<UtcTime, String> {
     match value {
-        Json::String(text) => parse_iso_timestamp(text),
+        Json::String(text) => parse_iso_timestamp(text).map_err(|_| {
+            "expected an ISO 8601 string or epoch seconds, got a string that is not ISO 8601"
+                .to_string()
+        }),
         Json::Int(seconds) => seconds
             .checked_mul(MICROS_PER_SECOND)
             .and_then(UtcTime::from_epoch_micros)

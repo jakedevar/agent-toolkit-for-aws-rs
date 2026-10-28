@@ -301,6 +301,7 @@ fn small_samples_are_returned_whole_with_field_documentation() {
         parsed.get("messages"),
         Some(&Json::Array(vec![Json::string("m")]))
     );
+    // recorded-shape: test assertion over a document the test built.
     let Some(Json::Object(documentation)) = parsed.get("field_documentation") else {
         panic!("field_documentation missing");
     };

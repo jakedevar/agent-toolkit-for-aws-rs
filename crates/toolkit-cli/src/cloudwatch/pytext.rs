@@ -84,6 +84,7 @@ pub fn get_truthy_text(data: &Json, key: &str) -> Option<String> {
 #[must_use]
 pub fn get_array<'a>(data: &'a Json, key: &str) -> &'a [Json] {
     match data.get(key) {
+        // recorded-shape: tolerant renderer helper; every response is shape-checked first (response_shape.rs).
         Some(Json::Array(items)) => items,
         _ => &[],
     }
