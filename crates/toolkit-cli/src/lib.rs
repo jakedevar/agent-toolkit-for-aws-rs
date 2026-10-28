@@ -322,7 +322,7 @@ pub const STDIO_DASH_POSITIONAL: &str = "<positional>";
 /// a legal explicit literal path.
 ///
 /// The list is empty: no registered parameter reads standard input (the
-/// CloudWatch `--json -` / `--json-file -` of the Python originals are
+/// `cloudwatch` commands' `--json -` / `--json-file -` of the Python originals are
 /// deliberately not accepted, see `docs/migration/cw-api.md`). A slice that
 /// wants stdin support adds its pair here in the same change that makes its
 /// handler read stdin deliberately (bounded, with a finite wait) and lists it in
