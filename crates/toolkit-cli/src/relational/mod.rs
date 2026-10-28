@@ -32,6 +32,125 @@ mod sql;
 mod tenant;
 mod timestream;
 
+/// Registration of the `relational` slice: its routes and help text (see `crate::registry`).
+pub(crate) const SLICE: crate::registry::Slice = crate::registry::Slice {
+    name: "relational",
+    commands: &[
+        crate::CommandSpec {
+            path: &["dsql", "selftest"],
+            flags: &[],
+            value_flags: &[],
+            strict_values: true,
+            repeatable_flags: &[],
+            max_positionals: 0,
+            passthrough: false,
+            handler: dsql_selftest_command,
+        },
+        crate::CommandSpec {
+            path: &["dsql", "tenant-sql"],
+            flags: &[],
+            value_flags: TENANT_SQL_VALUE_FLAGS,
+            strict_values: true,
+            repeatable_flags: &[],
+            max_positionals: 0,
+            passthrough: false,
+            handler: dsql_tenant_sql_command,
+        },
+        crate::CommandSpec {
+            path: &["dsql", "tenant-query"],
+            flags: &[],
+            value_flags: TENANT_QUERY_VALUE_FLAGS,
+            strict_values: true,
+            repeatable_flags: &[],
+            max_positionals: 0,
+            passthrough: false,
+            handler: dsql_tenant_query_command,
+        },
+        crate::CommandSpec {
+            path: &["rds", "commitment"],
+            flags: RDS_FLAGS,
+            value_flags: RDS_VALUE_FLAGS,
+            strict_values: true,
+            repeatable_flags: &[],
+            max_positionals: 1,
+            passthrough: false,
+            handler: rds_commitment_command,
+        },
+        crate::CommandSpec {
+            path: &["rds-oracle", "test-connection"],
+            flags: ORACLE_FLAGS,
+            value_flags: ORACLE_VALUE_FLAGS,
+            strict_values: true,
+            repeatable_flags: &[],
+            max_positionals: 4,
+            passthrough: false,
+            handler: oracle_test_connection_command,
+        },
+        crate::CommandSpec {
+            path: &["timestream-influxdb", "validate-input"],
+            flags: &[],
+            value_flags: &[],
+            strict_values: true,
+            repeatable_flags: &[],
+            max_positionals: 64,
+            passthrough: false,
+            handler: timestream_validate_input_command,
+        },
+        crate::CommandSpec {
+            path: &["timestream-influxdb", "instance-types"],
+            flags: &[],
+            value_flags: &[],
+            strict_values: true,
+            repeatable_flags: &[],
+            max_positionals: 4,
+            passthrough: false,
+            handler: timestream_instance_types_command,
+        },
+    ],
+    synopsis: r"  toolkit dsql selftest
+  toolkit dsql tenant-sql --tenant SLUG
+  toolkit dsql tenant-query --tenant SLUG [--recorded FILE]
+  toolkit rds commitment [offline] [--region R] [--format json] [--instance ID]
+      [--instance-type TYPE] [--engine mysql|mariadb|postgres] [--num-instances N]
+      [--multi-az] [--recorded FILE]
+  toolkit rds-oracle test-connection ENDPOINT PORT SERVICE_NAME USERNAME [--verbose]
+      [--recorded FILE]
+  toolkit timestream-influxdb validate-input [KEY=VALUE...]
+  toolkit timestream-influxdb instance-types [recommend WRITES QUERIES DAYS]
+",
+    description: r"  dsql selftest | tenant-sql | tenant-query
+                Aurora DSQL safe SQL helpers (#4394). selftest runs the
+                safe_query checks; tenant-sql prints the SELECT for a tenant
+                slug (lowercase letters, digits, hyphen, 1-64 characters);
+                tenant-query runs it on a read-only cursor and prints the rows
+                as JSON. This build has no live connection: tenant-query needs
+                --recorded FILE (recorded rows).
+  rds commitment
+                RDS Reserved Instance and Database Savings Plan estimator
+                (#4394, read-only; no purchase API). `offline` prices
+                --instance-type and --engine; otherwise --instance ID is looked
+                up. Prints JSON. This build has no live AWS client:
+                --recorded FILE replays recorded responses, otherwise only
+                the bundled on-demand prices are used.
+  rds-oracle test-connection
+                Oracle connection report for an RDS instance (#4394). Endpoint,
+                DSN and user are hidden unless --verbose. This build opens no
+                connection and reads no password: --recorded FILE replays a
+                recorded session, otherwise the run fails at the driver check
+                with exit 1.
+  timestream-influxdb validate-input | instance-types
+                Timestream for InfluxDB input rules (instance_name,
+                instance_type, region, vpc_id, subnet_id, sg_id, snapshot_id,
+                storage_gb; exit 1 on a bad value) and the instance type
+                table with its sizing recommendation. See
+                docs/migration/relational.md.
+",
+    exit_notes: "",
+    doc: "docs/migration/relational.md",
+    synopsis_rank: 330,
+    description_rank: 340,
+};
+
 #[cfg(test)]
 mod tests;
 

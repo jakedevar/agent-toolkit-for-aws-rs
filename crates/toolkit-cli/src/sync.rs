@@ -16,6 +16,50 @@ use toolkit_core::{sync_plugin_skills, sync_vendored, PluginSkillsOptions, Toolk
 
 use crate::{Invocation, Output};
 
+/// Registration of the `sync` slice: its routes and help text (see `crate::registry`).
+pub(crate) const SLICE: crate::registry::Slice = crate::registry::Slice {
+    name: "sync",
+    commands: &[
+        crate::CommandSpec {
+            path: &["sync", "plugin-skills"],
+            flags: &["--check"],
+            value_flags: &["--root", "--plugin"],
+            strict_values: true,
+            repeatable_flags: &[],
+            max_positionals: 0,
+            passthrough: false,
+            handler: plugin_skills,
+        },
+        crate::CommandSpec {
+            path: &["sync", "vendored"],
+            flags: &["--check"],
+            value_flags: &["--plugin-root"],
+            strict_values: true,
+            repeatable_flags: &[],
+            max_positionals: 0,
+            passthrough: false,
+            handler: vendored,
+        },
+    ],
+    synopsis: r"  toolkit sync plugin-skills [--root DIR] [--plugin NAME] [--check]
+  toolkit sync vendored [--plugin-root DIR] [--check]
+",
+    description: r"  sync plugin-skills
+                Make plugins/<plugin>/skills/<name> copies byte-identical to the
+                canonical skills/**/<name> (a directory holding SKILL.md). --root
+                defaults to the current directory. --check reports drift, exits
+                1 and writes nothing.
+  sync vendored Make each skills/<skill>/references/vendored copy in the plugin
+                at --plugin-root (default plugins/aws-startup-advisor)
+                byte-identical to skills/shared and its README table. --check
+                reports drift, exits 1 and writes nothing.
+",
+    exit_notes: "",
+    doc: "docs/migration/sync-contracts.md",
+    synopsis_rank: 200,
+    description_rank: 200,
+};
+
 /// Default plugin root for `sync vendored`, relative to the current
 /// directory (the repository root).
 const DEFAULT_VENDORED_PLUGIN_ROOT: &str = "plugins/aws-startup-advisor";

@@ -11,6 +11,7 @@
 //! redact output. Anything unusable about the catalog is the script's
 //! `{"status": "error"}` answer (exit 3), never a guess.
 
+use toolkit_aws::recorded::{list_value, object_members, optional_list};
 use toolkit_core::Json;
 
 use super::identity::strip;
@@ -253,6 +254,9 @@ pub(crate) fn resolve(catalog: &[String], plan_id: &str) -> Json {
 }
 
 /// Python truthiness of a JSON value (`data.get("has_more")`).
+// recorded-shape: Python truthiness of a provider listing page's `has_more` or
+// `nextPageToken` (an OpenAI, Anthropic or Gemini page, not an AWS response);
+// every JSON type is classified and none is defaulted.
 fn truthy(value: Option<&Json>) -> bool {
     match value {
         None | Some(Json::Null | Json::Bool(false)) => false,
@@ -265,12 +269,14 @@ fn truthy(value: Option<&Json>) -> bool {
     }
 }
 
+/// The `key` list of a catalog page. A required list must be present; an
+/// optional one may be absent (no ids). `null` or another type refuses.
 fn page_list<'a>(page: &'a Json, key: &str, required: bool) -> Result<&'a [Json], String> {
-    match page.get(key) {
-        Some(Json::Array(items)) => Ok(items),
-        None if !required => Ok(&[]),
-        _ => Err(format!("a catalog page has no `{key}` list")),
+    let refused = || format!("a catalog page has no `{key}` list");
+    if required && page.get(key).is_none() {
+        return Err(refused());
     }
+    optional_list(page, key).map_err(|_| refused())
 }
 
 fn text_member(item: &Json, key: &str) -> Result<String, String> {
@@ -295,8 +301,8 @@ fn text_member(item: &Json, key: &str) -> Result<String, String> {
 /// might be incomplete is never used: a model past the missing page would be
 /// reported `not_found`.
 pub(crate) fn catalog_ids(provider_key: &str, document: &Json) -> Result<Vec<String>, String> {
-    let pages: Vec<&Json> = match document {
-        Json::Array(items) if items.iter().all(|item| matches!(item, Json::String(_))) => {
+    let pages: Vec<&Json> = if let Some(items) = list_value(document) {
+        if items.iter().all(|item| matches!(item, Json::String(_))) {
             let ids: Vec<String> = items
                 .iter()
                 .filter_map(|item| item.as_str().map(str::to_string))
@@ -307,9 +313,11 @@ pub(crate) fn catalog_ids(provider_key: &str, document: &Json) -> Result<Vec<Str
                 Ok(ids)
             };
         }
-        Json::Array(items) => items.iter().collect(),
-        object @ Json::Object(_) => vec![object],
-        _ => return Err("the catalog must be a list of ids or of response pages".to_string()),
+        items.iter().collect()
+    } else if object_members(document).is_some() {
+        vec![document]
+    } else {
+        return Err("the catalog must be a list of ids or of response pages".to_string());
     };
     let mut ids: Vec<String> = Vec::new();
     let mut pages = pages.into_iter();

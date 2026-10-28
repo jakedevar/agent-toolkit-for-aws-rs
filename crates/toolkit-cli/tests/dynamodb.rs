@@ -579,19 +579,18 @@ fn deploying_rounds_are_gated_and_the_unported_steps_stop_before_any_cloud_actio
     assert_eq!(status(&skipped), 2);
     assert!(text(&skipped.stderr).starts_with("error: --skip-deploy was passed but this round needs a redeploy (schema fingerprint changed: None -> "));
 
-    // With consent the deploy step is not part of this build: it stops with a
-    // runtime error before any cloud action, and cleans up.
+    // With consent the deploy step is `deploy-model`, which only plans offline:
+    // it refuses this fixture config (no aws_profile) before any cloud action,
+    // and the round cleans up.
     let consented = iterate(&dir, &["--yes-deploy"]);
-    assert_eq!(status(&consented), 1);
+    assert_eq!(status(&consented), 2);
     let stderr = text(&consented.stderr);
     assert!(
-        stderr.contains(
-            "error: pipeline step `toolkit dynamodb deploy-model` is not available in this build"
-        ),
+        stderr.contains("error: benchmark_config.json missing required field: aws_profile\n"),
         "{stderr}"
     );
     assert!(
-        stderr.ends_with("error: step 'deploy_model' failed (exit 1). See output above.\n"),
+        stderr.ends_with("error: step 'deploy_model' failed (exit 2). See output above.\n"),
         "{stderr}"
     );
     assert!(text(&consented.stdout).contains("\n[iterate_design] deploy_model: toolkit dynamodb deploy-model --model model.json --config "));

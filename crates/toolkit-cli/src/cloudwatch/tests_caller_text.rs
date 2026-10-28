@@ -132,6 +132,7 @@ fn with_step(path: &[Step], step: Step) -> Vec<Step> {
     next
 }
 
+// recorded-shape: test helper walking arguments the test built; not a response.
 fn collect_leaves(value: &Json, kind: Kind, path: &[Step], out: &mut Vec<Leaf>) {
     match value {
         Json::Null => {}
@@ -153,6 +154,7 @@ fn collect_leaves(value: &Json, kind: Kind, path: &[Step], out: &mut Vec<Leaf>) 
 }
 
 /// Every caller leaf of an arguments object, by the spec's origins.
+// recorded-shape: test helper walking arguments the test built; not a response.
 fn collect_arguments(value: &Json, spec: ArgSpec, path: &[Step], out: &mut Vec<Leaf>) {
     let Json::Object(pairs) = value else {
         panic!("arguments must be an object");
@@ -180,6 +182,7 @@ fn collect_arguments(value: &Json, spec: ArgSpec, path: &[Step], out: &mut Vec<L
     }
 }
 
+// recorded-shape: test helper walking arguments the test built; not a response.
 fn replace_at(value: &mut Json, path: &[Step], text: &str) {
     let Some((step, rest)) = path.split_first() else {
         *value = Json::String(text.to_string());
@@ -275,6 +278,7 @@ fn fixture_leaves() -> Vec<(&'static str, Json, Vec<Leaf>)> {
                 for (member_key, _) in *inner {
                     assert!(
                         fixtures.iter().any(|fixture| match fixture.get(key) {
+                            // recorded-shape: test assertion over a document the test built.
                             Some(Json::Object(members)) => members
                                 .iter()
                                 .any(|(_, member)| member.get(member_key).is_some()),

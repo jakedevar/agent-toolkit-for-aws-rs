@@ -29,6 +29,35 @@ use crate::manifests::{
 };
 use crate::{Invocation, Output};
 
+/// Registration of the `startup-parity` slice: its routes and help text (see `crate::registry`).
+pub(crate) const SLICE: crate::registry::Slice = crate::registry::Slice {
+    name: "startup-parity",
+    commands: &[crate::CommandSpec {
+        path: &["startup", "pricing-parity"],
+        flags: &[],
+        value_flags: &["--plugin-root"],
+        strict_values: false,
+        repeatable_flags: &[],
+        max_positionals: 0,
+        passthrough: false,
+        handler: crate::startup::pricing_parity_command,
+    }],
+    synopsis: r"  toolkit startup pricing-parity [--plugin-root DIR]
+",
+    description: r"  startup pricing-parity
+                Prove the Bedrock pricing-cache split of the plugin at --plugin-root
+                DIR (default: the current directory) preserved the data of the
+                pre-split commit (read with git show): sections, metadata,
+                embedding rows, lookup keys, representative estimates, byte-equal
+                vendored copies and neutral consumers. Prints a JSON report; the
+                Python-behaviour comparison of bedrock_pricing.py is not run.
+",
+    exit_notes: "",
+    doc: "docs/migration/startup-validators.md",
+    synopsis_rank: 100,
+    description_rank: 90,
+};
+
 /// The pre-split comparison commit: the parent of the split commit, so the
 /// GPT-6 rows the split carried are part of the pre-split data (the Python
 /// script pinned `883270642209`, which predates them).

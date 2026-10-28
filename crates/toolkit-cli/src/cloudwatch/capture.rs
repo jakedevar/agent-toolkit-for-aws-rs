@@ -184,10 +184,12 @@ const CODE_CAPTURE_HINT_KEYS: [&str; 4] = [
 /// fallback some response shapes relied on).
 #[must_use]
 pub fn capture_from_response(union: &Json) -> Capture {
+    // recorded-shape: display-only union parse; Gateway::call shape-checks a response's CaptureConfiguration first (#4749).
     let Json::Object(members) = union else {
         return Capture::Unknown(UnknownCapture { raw: Vec::new() });
     };
 
+    // recorded-shape: display-only union parse; Gateway::call shape-checks a response's CaptureConfiguration first (#4749).
     if let Some(code @ Json::Object(_)) = union.get("CodeCapture") {
         return Capture::Code(code_capture_from(code));
     }
@@ -208,6 +210,7 @@ pub fn capture_from_response(union: &Json) -> Capture {
 /// `str()`. A missing key, a `null` and a non-array all read as "not set".
 fn names_from(payload: &Json, key: &str) -> Option<Vec<String>> {
     match payload.get(key) {
+        // recorded-shape: display-only union parse; Gateway::call shape-checks a response's CaptureConfiguration first (#4749).
         Some(Json::Array(items)) => Some(items.iter().map(pyfmt::text).collect()),
         _ => None,
     }
@@ -215,6 +218,7 @@ fn names_from(payload: &Json, key: &str) -> Option<Vec<String>> {
 
 fn code_capture_from(payload: &Json) -> CodeCapture {
     let raw_limits = match payload.get("CaptureLimits") {
+        // recorded-shape: display-only union parse; Gateway::call shape-checks a response's CaptureConfiguration first (#4749).
         Some(limits @ Json::Object(_)) => limits,
         _ => &Json::Null,
     };

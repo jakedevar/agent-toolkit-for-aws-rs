@@ -226,6 +226,8 @@ pub fn dumps_inline(value: &Json) -> String {
     out
 }
 
+// recorded-shape: a total writer of any JSON value into its inline display form;
+// every type is rendered, no member is read, typed or defaulted.
 fn write_inline(out: &mut String, value: &Json) {
     match value {
         Json::Array(items) => {

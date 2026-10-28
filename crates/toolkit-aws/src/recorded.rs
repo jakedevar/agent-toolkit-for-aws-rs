@@ -28,9 +28,12 @@
 //! (with [`optional_object_list`] and [`optional_string_list`]): an absent
 //! member or `[]` is empty, while `null` or another type is an invalid
 //! response, never an empty discovery. A legitimately nullable scalar is read
-//! only by explicit opt-in: [`nullable_text`] for a scalar and
-//! [`crate::next_token_from`] for a pagination token (absent, `null` and `""`
-//! end paging).
+//! only by explicit opt-in: [`nullable_text`] for a scalar,
+//! [`nullable_list`] for a list whose `null` the slice documents as "none",
+//! and [`crate::next_token_from`] for a pagination token (absent, `null` and
+//! `""` end paging). A whole value that must be a list or an object (a
+//! recorded document, a list entry) is read with [`list_value`] or
+//! [`object_members`].
 //!
 //! **Diagnostics.** A [`MemberError`] carries the member name (a literal of
 //! the code), the expected type and the type found, never a value, so a
@@ -192,6 +195,44 @@ pub fn nullable_text<'j>(object: &'j Json, key: &str) -> Result<Option<&'j str>,
     .map(Option::flatten)
 }
 
+/// The explicit opt-in for a list member whose `null` a slice documents as
+/// "none" (the recorded answer of a failed call, a script's `or []`): absent
+/// and `null` are `None`, `[]` is an empty list.
+///
+/// # Errors
+///
+/// The member is present and neither a list nor `null`.
+pub fn nullable_list<'j>(object: &'j Json, key: &str) -> Result<Option<&'j [Json]>, MemberError> {
+    optional_member(object, key, "a list or null", |member| match member {
+        Json::Null => Some(None),
+        Json::Array(items) => Some(Some(items.as_slice())),
+        _ => None,
+    })
+    .map(Option::flatten)
+}
+
+/// A whole value that must be a list (a recorded document, an entry of a
+/// list, a required member already looked up): `None` for any other type,
+/// `null` included. The caller names the value in its own diagnostic.
+#[must_use]
+pub fn list_value(value: &Json) -> Option<&[Json]> {
+    match value {
+        Json::Array(items) => Some(items),
+        _ => None,
+    }
+}
+
+/// The members, in order, of a whole value that must be an object: `None`
+/// for any other type, `null` included. The caller names the value in its
+/// own diagnostic.
+#[must_use]
+pub fn object_members(value: &Json) -> Option<&[(String, Json)]> {
+    match value {
+        Json::Object(members) => Some(members),
+        _ => None,
+    }
+}
+
 /// JSON equality that ignores object key order (Python `dict` equality).
 #[must_use]
 pub fn same_json(left: &Json, right: &Json) -> bool {
@@ -220,6 +261,12 @@ pub enum KeyOrder {
     /// Object members must also be in the same order (`Json` equality); kept
     /// for the recordings an existing slice already pins with it.
     Significant,
+    /// The recorded request is *contained* in the actual one: every recorded
+    /// object member is present with an equal value (recursively, key order
+    /// ignored), and the actual objects may hold more members; arrays and
+    /// scalars must be equal. For a slice whose requests carry generated
+    /// members (client tokens, span bodies) a fixture leaves out (#4381).
+    Contained,
 }
 
 impl KeyOrder {
@@ -229,7 +276,21 @@ impl KeyOrder {
         match self {
             Self::Ignored => same_json(expected, actual),
             Self::Significant => expected == actual,
+            Self::Contained => contains_json(expected, actual),
         }
+    }
+}
+
+/// True when every member of `expected` is in `actual` with an equal value,
+/// recursively for objects; arrays and scalars compare with [`same_json`].
+fn contains_json(expected: &Json, actual: &Json) -> bool {
+    match (expected, actual) {
+        (Json::Object(wanted), Json::Object(_)) => wanted.iter().all(|(key, value)| {
+            actual
+                .get(key)
+                .is_some_and(|found| contains_json(value, found))
+        }),
+        _ => same_json(expected, actual),
     }
 }
 
@@ -476,6 +537,51 @@ mod tests {
     }
 
     #[test]
+    fn nullable_list_is_the_explicit_opt_in() {
+        let doc = j(r#"{"null": null, "list": [1], "empty": [], "obj": {}, "text": "t"}"#);
+        assert_eq!(nullable_list(&doc, "null").expect("null"), None);
+        assert_eq!(nullable_list(&doc, "absent").expect("absent"), None);
+        assert_eq!(
+            nullable_list(&doc, "list")
+                .expect("list")
+                .map(<[Json]>::len),
+            Some(1)
+        );
+        assert_eq!(
+            nullable_list(&doc, "empty")
+                .expect("empty")
+                .map(<[Json]>::len),
+            Some(0)
+        );
+        for (key, found) in [("obj", "object"), ("text", "string")] {
+            let error = nullable_list(&doc, key).expect_err("not a list");
+            assert_eq!(
+                error.to_string(),
+                format!("{key} must be a list or null when present (it is {found})")
+            );
+        }
+    }
+
+    #[test]
+    fn whole_values_are_lists_or_objects_only_by_their_type() {
+        let list = j("[1, 2]");
+        let object = j(r#"{"a": 1, "b": 2}"#);
+        assert_eq!(list_value(&list).map(<[Json]>::len), Some(2));
+        assert!(list_value(&object).is_none());
+        let keys: Vec<&str> = object_members(&object)
+            .expect("object")
+            .iter()
+            .map(|(key, _)| key.as_str())
+            .collect();
+        assert_eq!(keys, ["a", "b"]);
+        assert!(object_members(&list).is_none());
+        for other in ["null", "1", "\"t\"", "true"] {
+            assert!(list_value(&j(other)).is_none(), "{other}");
+            assert!(object_members(&j(other)).is_none(), "{other}");
+        }
+    }
+
+    #[test]
     fn member_errors_never_carry_the_value() {
         let doc = Json::object(vec![("k", Json::string(SECRET))]);
         let error = optional_list(&doc, "k").expect_err("string");
@@ -528,6 +634,22 @@ mod tests {
         assert!(!same_json(&j("[1,2]"), &j("[2,1]")));
         assert!(KeyOrder::Ignored.same(&j(r#"{"a":1,"b":2}"#), &j(r#"{"b":2,"a":1}"#)));
         assert!(!KeyOrder::Significant.same(&j(r#"{"a":1,"b":2}"#), &j(r#"{"b":2,"a":1}"#)));
+    }
+
+    #[test]
+    fn contained_requests_allow_extra_object_members_only() {
+        let order = KeyOrder::Contained;
+        assert!(order.same(&j(r#"{"a":{"b":1}}"#), &j(r#"{"x":0,"a":{"c":2,"b":1}}"#)));
+        assert!(order.same(&j("{}"), &j(r#"{"a":1}"#)));
+        assert!(!order.same(&j(r#"{"a":1}"#), &j(r#"{"b":1}"#)));
+        assert!(!order.same(&j(r#"{"a":null}"#), &j("{}")));
+        assert!(!order.same(&j(r#"{"a":[1]}"#), &j(r#"{"a":[1,2]}"#)));
+        assert!(!order.same(&j(r#"{"a":"t"}"#), &j(r#"{"a":"u"}"#)));
+        let step = Step::failure(Some(j(r#"{"t":"1"}"#)), AwsError::NoCredentials);
+        assert!(matches!(
+            step.replay(&j(r#"{"t":"2"}"#), order),
+            Err(ReplayError::RequestMismatch)
+        ));
     }
 
     fn denied() -> AwsError {

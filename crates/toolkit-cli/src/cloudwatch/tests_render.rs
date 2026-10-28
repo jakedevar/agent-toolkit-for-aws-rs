@@ -178,6 +178,7 @@ fn search_success_summarizes_each_record() {
     );
     assert_eq!(
         parsed.get("results").and_then(|r| match r {
+            // recorded-shape: test assertion over a document the test built.
             Json::Array(items) => Some(items.len()),
             _ => None,
         }),
@@ -185,6 +186,7 @@ fn search_success_summarizes_each_record() {
     );
     // Key order is the legacy order, and output is ASCII-only.
     let order: Vec<&str> = match &parsed {
+        // recorded-shape: test assertion over a document the test built.
         Json::Object(pairs) => pairs.iter().map(|(key, _)| key.as_str()).collect(),
         _ => Vec::new(),
     };
@@ -301,6 +303,7 @@ fn small_samples_are_returned_whole_with_field_documentation() {
         parsed.get("messages"),
         Some(&Json::Array(vec![Json::string("m")]))
     );
+    // recorded-shape: test assertion over a document the test built.
     let Some(Json::Object(documentation)) = parsed.get("field_documentation") else {
         panic!("field_documentation missing");
     };
@@ -312,6 +315,7 @@ fn small_samples_are_returned_whole_with_field_documentation() {
     );
     assert_eq!(documentation[18].0, "CapturedValue shapes");
     let order: Vec<&str> = match &parsed {
+        // recorded-shape: test assertion over a document the test built.
         Json::Object(pairs) => pairs.iter().map(|(key, _)| key.as_str()).collect(),
         _ => Vec::new(),
     };

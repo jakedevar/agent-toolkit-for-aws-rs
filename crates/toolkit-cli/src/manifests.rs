@@ -24,6 +24,34 @@ use toolkit_core::{
 
 use crate::{Invocation, Output};
 
+/// Registration of the `manifests` slice: its routes and help text (see `crate::registry`).
+pub(crate) const SLICE: crate::registry::Slice = crate::registry::Slice {
+    name: "manifests",
+    commands: &[crate::CommandSpec {
+        path: &["manifests", "validate"],
+        flags: &[],
+        value_flags: &["--plugin"],
+        strict_values: false,
+        repeatable_flags: &[],
+        max_positionals: 1,
+        passthrough: false,
+        handler: validate_command,
+    }],
+    synopsis: r"  toolkit manifests validate [ROOT] [--plugin NAME]
+",
+    description: r"  manifests validate
+                Validate the marketplace manifests, plugin manifests, MCP
+                configs and SKILL.md frontmatter of the repository at ROOT
+                (default: the current directory). With --plugin NAME only
+                that plugin under ROOT/plugins is validated. Problems are
+                reported as `  ERROR: ...` lines on stderr and exit status 1.
+",
+    exit_notes: "",
+    doc: "docs/migration/manifests-validator.md",
+    synopsis_rank: 20,
+    description_rank: 20,
+};
+
 /// Deepest `skills/` nesting the walk follows (guards against pathological trees).
 const MAX_WALK_DEPTH: usize = 64;
 

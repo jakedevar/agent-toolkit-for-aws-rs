@@ -46,6 +46,41 @@ use super::{
 use crate::manifests::{is_py_space, py_splitlines, resolve_lenient, universal_newlines};
 use crate::{Invocation, Output};
 
+/// Registration of the `startup-skill-refs` slice: its routes and help text (see `crate::registry`).
+pub(crate) const SLICE: crate::registry::Slice = crate::registry::Slice {
+    name: "startup-skill-refs",
+    commands: &[crate::CommandSpec {
+        path: &["startup", "skill-refs"],
+        flags: &["--check", "--list", "--json", "--no-baseline"],
+        value_flags: &["--plugin-root", "--baseline"],
+        strict_values: true,
+        repeatable_flags: &[],
+        max_positionals: 0,
+        passthrough: false,
+        handler: crate::startup::skill_refs_command,
+    }],
+    synopsis: r"  toolkit startup skill-refs (--check | --list) [--plugin-root DIR] [--baseline FILE]
+                            [--no-baseline] [--json]
+",
+    description: r"  startup skill-refs (--check | --list)
+                Check that every file path the aws-startup-advisor skills and
+                agents mention exists (check-skill-refs.py). --check lists each
+                missing reference as `ERROR  MISSING_REF  file:line  `token``,
+                each baseline entry that matched nothing as STALE_BASELINE and a
+                final PASS or FAIL count line; exit 1 on any problem. --list
+                prints every reference and where it resolved. --baseline FILE
+                (default tools/skill-refs-baseline.json of --plugin-root; a
+                missing file is ignored) holds `ignore` rules and known dead
+                `entries`; --no-baseline drops it; --json prints one JSON report.
+                Symbolic links are refused. --plugin-root defaults to the current
+                directory.
+",
+    exit_notes: "",
+    doc: "docs/migration/startup-tools.md",
+    synopsis_rank: 170,
+    description_rank: 170,
+};
+
 const ROOTS: [&str; 11] = [
     "references",
     "knowledge",

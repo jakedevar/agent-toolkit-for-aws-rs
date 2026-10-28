@@ -37,6 +37,129 @@ mod commitment;
 mod io;
 pub(crate) mod pyfmt;
 
+/// Registration of the `aurora` slice: its routes and help text (see `crate::registry`).
+pub(crate) const SLICE: crate::registry::Slice = crate::registry::Slice {
+    name: "aurora",
+    commands: &[
+        crate::CommandSpec {
+            path: &["aurora", "acu", "estimate"],
+            flags: &["--offline"],
+            value_flags: &[
+                "--engine",
+                "--region",
+                "--instance",
+                "--cpu-p95",
+                "--cpu-max",
+                "--cpu-avg",
+                "--connections",
+                "--working-set",
+                "--storage",
+                "--num-instances",
+                "--format",
+            ],
+            strict_values: false,
+            repeatable_flags: &[],
+            max_positionals: 0,
+            passthrough: false,
+            handler: acu_estimate_command,
+        },
+        crate::CommandSpec {
+            path: &["aurora", "acu", "list-instances"],
+            flags: &["--offline"],
+            value_flags: &["--engine", "--region"],
+            strict_values: false,
+            repeatable_flags: &[],
+            max_positionals: 0,
+            passthrough: false,
+            handler: acu_list_instances_command,
+        },
+        crate::CommandSpec {
+            path: &["aurora", "acu", "pricing-source"],
+            flags: &["--offline"],
+            value_flags: &["--engine", "--region"],
+            strict_values: false,
+            repeatable_flags: &[],
+            max_positionals: 0,
+            passthrough: false,
+            handler: acu_pricing_source_command,
+        },
+        // `aurora acu` alone prints the help; it must follow the longer `acu` paths.
+        crate::CommandSpec {
+            path: &["aurora", "acu"],
+            flags: &["--offline"],
+            value_flags: &["--engine", "--region"],
+            strict_values: false,
+            repeatable_flags: &[],
+            max_positionals: 0,
+            passthrough: false,
+            handler: acu_help_command,
+        },
+        crate::CommandSpec {
+            path: &["aurora", "commitment"],
+            flags: &["--all", "--serverless", "--io-optimized"],
+            value_flags: &[
+                "--engine",
+                "--region",
+                "--format",
+                "--cluster",
+                "--instance",
+                "--num-instances",
+                "--avg-acu",
+            ],
+            strict_values: false,
+            repeatable_flags: &[],
+            max_positionals: 1,
+            passthrough: false,
+            handler: commitment_command,
+        },
+        crate::CommandSpec {
+            path: &["aurora", "io"],
+            flags: &["--all"],
+            value_flags: &[
+                "--engine",
+                "--region",
+                "--format",
+                "--days",
+                "--cluster",
+                "--instance",
+                "--num-instances",
+                "--storage-gib",
+                "--monthly-io-millions",
+            ],
+            strict_values: false,
+            repeatable_flags: &[],
+            max_positionals: 1,
+            passthrough: false,
+            handler: io_command,
+        },
+    ],
+    synopsis: r"  toolkit aurora acu estimate --engine mysql|postgresql --instance TYPE --cpu-p95 N --cpu-max N
+      [--cpu-avg N] [--connections N] [--working-set GIB] [--storage GIB]
+      [--num-instances N] [--format json|table] [--region R] [--offline]
+  toolkit aurora acu list-instances --engine ENGINE [--region R] [--offline]
+  toolkit aurora acu pricing-source --engine ENGINE [--region R] [--offline]
+  toolkit aurora commitment [offline] --engine ENGINE [--region R] [--format json|table]
+      [--cluster ID | --all] [--instance TYPE] [--num-instances N] [--io-optimized]
+      [--serverless --avg-acu N]
+  toolkit aurora io [offline] --engine ENGINE [--region R] [--format json|table] [--days N]
+      [--cluster ID | --all] [--instance TYPE] [--num-instances N]
+      [--storage-gib GIB] [--monthly-io-millions N]
+",
+    description: r"  aurora acu | commitment | io
+                Aurora ACU sizing, Reserved Instance and Savings Plan, and
+                Standard versus I/O-Optimized cost analyzers (#4388). --engine
+                (mysql or postgresql) is required. `offline` prices a
+                user-supplied workload; without it the command reads AWS,
+                which this build cannot do (exit 2), except `acu`, which falls
+                back to the built-in us-east-1 prices. Output is JSON unless
+                --format table. See docs/migration/aurora.md.
+",
+    exit_notes: "",
+    doc: "crates/toolkit-cli/README.md",
+    synopsis_rank: 240,
+    description_rank: 240,
+};
+
 #[cfg(test)]
 mod tests;
 

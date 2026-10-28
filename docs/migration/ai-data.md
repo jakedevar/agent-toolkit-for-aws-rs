@@ -9,7 +9,7 @@ are repointed (see "Callers").
 | --- | --- |
 | `dataset-evaluation/scripts/format_detector.py` | `toolkit ai-data detect-format` (`crates/toolkit-cli/src/ai_data/format.rs`) |
 | `model-evaluation/scripts/validate_custom_metrics.py` | `toolkit ai-data validate-metrics` (`ai_data/metrics.rs`) |
-| `dataset-transformation/scripts/transformation_tools.py` | `toolkit ai-data transform plan|submit|describe` (`ai_data/transform.rs`) |
+| `dataset-transformation/scripts/transformation_tools.py` | `toolkit ai-data transform plan`, `toolkit ai-data transform submit`, `toolkit ai-data transform describe` (`ai_data/transform.rs`) |
 
 The commands use the canonical router (`value_flags`, `strict_values: true` for
 `detect-format` and `transform`), `Output::diagnostic` and

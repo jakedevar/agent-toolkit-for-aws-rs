@@ -13,12 +13,13 @@
 //! sibling Python scripts as subprocesses. Here every pipeline step is a
 //! `toolkit dynamodb <step>` command dispatched through the shared command
 //! table ([`RoundEnv::run_step`]); the cost calculator is this slice's own
-//! `dynamodb calculate-costs`. The deploy, benchmark and report commands
-//! belong to the `dynamo-deploy` (#4391) and `dynamo-bench` (#4390) slices
-//! and are not part of this build, so a round that needs them stops with the
-//! `dynamodb_step_unavailable` error before any AWS action — the safety gates
-//! (`--yes-deploy`, `--skip-deploy`, `--allow-spend`) are evaluated first and
-//! forwarded unchanged to those commands once they are registered.
+//! `dynamodb calculate-costs`. The benchmark and report commands belong to the
+//! `dynamo-bench` (#4390) slice and are not part of this build, so a round that
+//! needs them stops with the `dynamodb_step_unavailable` error before any AWS
+//! action. `dynamodb deploy-model` (#4391) is registered but only plans
+//! offline from a recorded identity: a round that reaches it without one stops
+//! at the missing AWS client. The safety gates (`--yes-deploy`, `--skip-deploy`,
+//! `--allow-spend`) are evaluated first and forwarded unchanged.
 
 use std::collections::BTreeSet;
 use std::fs;

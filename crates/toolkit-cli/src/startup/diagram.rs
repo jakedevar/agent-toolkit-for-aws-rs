@@ -33,6 +33,37 @@ use crate::manifests::read_failure;
 use crate::safe_text::{safe_path, safe_text};
 use crate::{Invocation, Output};
 
+/// Registration of the `startup-diagram` slice: its routes and help text (see `crate::registry`).
+pub(crate) const SLICE: crate::registry::Slice = crate::registry::Slice {
+    name: "startup-diagram",
+    commands: &[crate::CommandSpec {
+        path: &["startup", "build-diagram"],
+        flags: &[],
+        value_flags: &[],
+        strict_values: false,
+        repeatable_flags: &[],
+        max_positionals: 3,
+        passthrough: false,
+        handler: crate::startup::build_diagram_command,
+    }],
+    synopsis: r"  toolkit startup build-diagram RESULT CONFIRM [DESIGN]
+",
+    description: r"  startup build-diagram RESULT CONFIRM [DESIGN]
+                Compose the architecture diagram of the scoring result RESULT
+                (agent-advisor build_diagram.py): the runtime, model and
+                AgentCore services, or the multi-unit topology of the design
+                DESIGN when it has several units. CONFIRM and DESIGN are
+                treated as absent when the file does not exist. Writes
+                diagram.md (a Mermaid block plus an ASCII fallback) beside
+                RESULT and prints RESULT=ok RUNTIME=<runtime>. Text from the
+                documents is escaped; no renderer is run.
+",
+    exit_notes: "",
+    doc: "docs/migration/startup-diagram.md",
+    synopsis_rank: 150,
+    description_rank: 150,
+};
+
 #[cfg(test)]
 mod tests;
 

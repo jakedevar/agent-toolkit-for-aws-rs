@@ -13,6 +13,34 @@ use super::{is_regular_file_under, read_text_under};
 use crate::manifests::is_falsy;
 use crate::{Invocation, Output};
 
+/// Registration of the `startup-program` slice: its routes and help text (see `crate::registry`).
+pub(crate) const SLICE: crate::registry::Slice = crate::registry::Slice {
+    name: "startup-program",
+    commands: &[crate::CommandSpec {
+        path: &["startup", "program-artifacts"],
+        flags: &[],
+        value_flags: &["--migration-dir"],
+        strict_values: false,
+        repeatable_flags: &[],
+        max_positionals: 0,
+        passthrough: false,
+        handler: crate::startup::program_artifacts_command,
+    }],
+    synopsis: r"  toolkit startup program-artifacts --migration-dir DIR
+",
+    description: r"  startup program-artifacts
+                Check that STARTUP_PROGRAMS.md, ai-migration/STARTUP_PROGRAMS.md
+                and migration-report.html in the migration directory do not
+                imply a confirmed AWS Activate tier when preferences.json
+                records startup_program_status as unknown, and that they link
+                to the Activate application page when they mention it.
+",
+    exit_notes: "",
+    doc: "docs/migration/startup-validators.md",
+    synopsis_rank: 50,
+    description_rank: 50,
+};
+
 /// Phrases that imply a confirmed tier: forbidden when the status is unknown.
 static FORBIDDEN_WHEN_UNKNOWN: [Pattern; 6] = [
     Pattern::new(

@@ -52,7 +52,7 @@ fn has(errors: &Errors, code: &str, path: &str) -> bool {
 }
 
 /// The value at a dotted path (array indexes are numbers; `""` is the root).
-fn node<'a>(value: &'a mut Json, path: &str) -> &'a mut Json {
+pub(super) fn node<'a>(value: &'a mut Json, path: &str) -> &'a mut Json {
     let mut current = value;
     for part in path.split('.').filter(|part| !part.is_empty()) {
         current = match current {
@@ -71,7 +71,7 @@ fn node<'a>(value: &'a mut Json, path: &str) -> &'a mut Json {
 }
 
 /// Sets (or adds) the member `key` of the object at `path`.
-fn put(value: &mut Json, path: &str, key: &str, new: Json) {
+pub(super) fn put(value: &mut Json, path: &str, key: &str, new: Json) {
     let Json::Object(members) = node(value, path) else {
         panic!("{path} is not an object");
     };
@@ -82,7 +82,7 @@ fn put(value: &mut Json, path: &str, key: &str, new: Json) {
 }
 
 /// Removes the member `key` of the object at `path`.
-fn remove(value: &mut Json, path: &str, key: &str) -> Option<Json> {
+pub(super) fn remove(value: &mut Json, path: &str, key: &str) -> Option<Json> {
     let Json::Object(members) = node(value, path) else {
         panic!("{path} is not an object");
     };

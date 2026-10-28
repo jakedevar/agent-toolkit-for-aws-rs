@@ -5143,3 +5143,302 @@ fn audit_command_does_not_pass_unidentified_or_partial_discovery() {
         }
     }
 }
+
+// #4839: the audit reads the describe file through `toolkit_aws::recorded`. A
+// resource list, `NodeGroups` or `MemberClusters` that is present but not a
+// list used to read as empty; each now refuses or reports the value unknown.
+
+#[test]
+fn a_null_or_wrong_typed_resource_list_refuses_the_audit() {
+    for (list, found) in [
+        ("null", "null"),
+        (r#""cache1""#, "string"),
+        (r#"{"ServerlessCacheName": "cache1"}"#, "object"),
+        ("7", "integer"),
+    ] {
+        let describe = json(&format!(r#"{{"serverless_caches": {list}}}"#));
+        let serverless = audit::audit_serverless(&describe, "cache1");
+        let message = format!(
+            "Serverless cache 'cache1' cannot be audited: serverless_caches must be a list when present (it is {found})"
+        );
+        assert!(serverless.failed(), "{list}");
+        assert_eq!(serverless, Audit::NotFound(message.clone()), "{list}");
+        assert_eq!(
+            audit::format_report(&serverless),
+            format!("ERROR: {message}")
+        );
+
+        let describe = json(&format!(r#"{{"replication_groups": {list}}}"#));
+        let replication = audit::audit_replication_group(&describe, "rg1");
+        assert_eq!(
+            replication,
+            Audit::NotFound(format!(
+                "Replication group 'rg1' cannot be audited: replication_groups must be a list when present (it is {found})"
+            )),
+            "{list}"
+        );
+    }
+    // An absent or empty list is still "not found".
+    for describe in ["{}", r#"{"serverless_caches": []}"#] {
+        assert_eq!(
+            audit::audit_serverless(&json(describe), "cache1"),
+            Audit::NotFound("Serverless cache 'cache1' not found".to_string()),
+            "{describe}"
+        );
+    }
+}
+
+#[test]
+fn the_audit_command_refuses_a_null_resource_list() {
+    let dir = TempDir::new("audit-null-list");
+    let path = dir.file("describe.json", r#"{"replication_groups": null}"#);
+    for (flags, stdout) in [
+        (
+            &[][..],
+            "ERROR: Replication group 'rg1' cannot be audited: replication_groups must be a list when present (it is null)\n",
+        ),
+        (
+            &["--json"][..],
+            "{\n  \"error\": \"Replication group 'rg1' cannot be audited: replication_groups must be a list when present (it is null)\"\n}\n",
+        ),
+    ] {
+        let mut args = vec![
+            "elasticache",
+            "audit",
+            "--replication-group",
+            "rg1",
+            "--describe",
+            &path,
+        ];
+        args.extend_from_slice(flags);
+        assert_eq!(
+            exec(&args),
+            (1, stdout.to_string(), String::new()),
+            "{flags:?}"
+        );
+    }
+}
+
+#[test]
+fn a_wrong_typed_node_group_list_has_no_count() {
+    for node_groups in [r#""x""#, "{}", "7"] {
+        let result = replication_audit(&format!(r#", "NodeGroups": {node_groups}"#), "");
+        assert_eq!(
+            member(&audit_info(&result), "num_node_groups"),
+            &Json::string("unknown"),
+            "{node_groups}"
+        );
+        assert_eq!(statuses_of(&result, "Security groups"), ["ERROR"]);
+        assert!(audit::format_report(&result).contains("  Node groups:     unknown\n"));
+    }
+    // Absent and `null` (documented as none) still count zero node groups.
+    for group in ["", r#", "NodeGroups": null"#, r#", "NodeGroups": []"#] {
+        let result = replication_audit(group, "");
+        assert_eq!(
+            member(&audit_info(&result), "num_node_groups"),
+            &Json::Int(0),
+            "{group}"
+        );
+    }
+}
+
+#[test]
+fn a_wrong_typed_member_cluster_list_leaves_the_engine_unknown() {
+    for clusters in [r#""a""#, r#"{"a": 1}"#, "7"] {
+        let result = replication_audit(&format!(r#", "MemberClusters": {clusters}"#), "");
+        let info = audit_info(&result);
+        assert_eq!(member(&info, "engine"), &Json::string("unknown"));
+        assert_eq!(member(&info, "engine_version"), &Json::string("unknown"));
+        assert_eq!(member(&info, "node_type"), &Json::string("unknown"));
+        assert_eq!(statuses_of(&result, "Security groups"), ["ERROR"]);
+    }
+    // Absent, `null` and `[]` name no first member: no engine details, as before.
+    for group in [
+        "",
+        r#", "MemberClusters": null"#,
+        r#", "MemberClusters": []"#,
+    ] {
+        let info = audit_info(&replication_audit(group, ""));
+        assert!(info.get("engine_version").is_none(), "{group}");
+        assert!(info.get("node_type").is_none(), "{group}");
+    }
+}
+
+// #4870: the recorded object containers (`CacheUsageLimits` and its limits,
+// `cache_clusters`, `security_groups`, the describe file itself) are read
+// through `toolkit_aws::recorded`. One that is present but of the wrong type
+// used to read as missing; it is now not inspected and named by its type.
+
+/// The detail of the only finding of `check`.
+fn detail_of(result: &Audit, check: &str) -> String {
+    let details: Vec<String> = audit_findings(result)
+        .into_iter()
+        .filter(|(name, _, _)| name == check)
+        .map(|(_, _, detail)| detail)
+        .collect();
+    assert_eq!(details.len(), 1, "{check}: {details:?}");
+    details[0].clone()
+}
+
+#[test]
+fn a_wrong_typed_usage_limit_object_is_not_inspected() {
+    for (limits, found) in [
+        (r#""bad""#, "string"),
+        ("null", "null"),
+        ("[]", "array"),
+        ("7", "integer"),
+    ] {
+        let result = serverless_audit(&format!(r#", "CacheUsageLimits": {limits}"#), "");
+        for check in ["Data storage limit", "ECPU limit"] {
+            assert_eq!(statuses_of(&result, check), ["ERROR"], "{limits} {check}");
+            assert_eq!(
+                detail_of(&result, check),
+                format!("Not inspected: CacheUsageLimits must be an object when present (it is {found})"),
+                "{limits}"
+            );
+        }
+        let info = audit_info(&result);
+        assert!(info.get("max_data_gb").is_none(), "{limits}");
+        assert!(info.get("max_ecpu_per_sec").is_none(), "{limits}");
+    }
+
+    // One wrong-typed limit leaves the other limit read.
+    for (bad, good, bad_check, good_check) in [
+        (
+            "DataStorage",
+            "ECPUPerSecond",
+            "Data storage limit",
+            "ECPU limit",
+        ),
+        (
+            "ECPUPerSecond",
+            "DataStorage",
+            "ECPU limit",
+            "Data storage limit",
+        ),
+    ] {
+        for (value, found) in [(r#""bad""#, "string"), ("null", "null"), ("[1]", "array")] {
+            let result = serverless_audit(
+                &format!(
+                    r#", "CacheUsageLimits": {{"{bad}": {value}, "{good}": {{"Maximum": 10}}}}"#
+                ),
+                "",
+            );
+            assert_eq!(
+                detail_of(&result, bad_check),
+                format!("Not inspected: CacheUsageLimits.{bad} must be an object when present (it is {found})"),
+                "{bad} {value}"
+            );
+            assert_eq!(statuses_of(&result, bad_check), ["ERROR"]);
+            assert_eq!(statuses_of(&result, good_check), ["PASS"], "{bad} {value}");
+        }
+    }
+
+    // Absent limits (or an empty limits object) are still unset: WARN.
+    for cache in [
+        "",
+        r#", "CacheUsageLimits": {}"#,
+        r#", "CacheUsageLimits": {"DataStorage": {}, "ECPUPerSecond": {}}"#,
+    ] {
+        let result = serverless_audit(cache, "");
+        assert_eq!(
+            statuses_of(&result, "Data storage limit"),
+            ["WARN"],
+            "{cache}"
+        );
+        assert_eq!(statuses_of(&result, "ECPU limit"), ["WARN"], "{cache}");
+    }
+}
+
+#[test]
+fn a_wrong_typed_cluster_record_map_is_named_by_its_type() {
+    for (clusters, found) in [
+        ("[]", "array"),
+        (r#"[{"a": {"SecurityGroups": []}}]"#, "array"),
+        (r#""x""#, "string"),
+        ("null", "null"),
+    ] {
+        let result = replication_audit(
+            TWO_MEMBERS,
+            &format!(r#", "cache_clusters": {clusters}, "security_groups": {NARROW_A_B}"#),
+        );
+        for check in [
+            "Security groups of cluster a",
+            "Security groups of cluster b",
+        ] {
+            assert_eq!(statuses_of(&result, check), ["ERROR"], "{clusters}");
+            assert_eq!(
+                detail_of(&result, check),
+                format!(
+                    "Not inspected: cache_clusters must be an object when present (it is {found})"
+                ),
+                "{clusters}"
+            );
+        }
+        let info = audit_info(&result);
+        assert_eq!(member(&info, "engine_version"), &Json::string("unknown"));
+        assert_eq!(member(&info, "node_type"), &Json::string("unknown"));
+    }
+
+    // An absent map is still "no record supplied" for every member.
+    let result = replication_audit(
+        TWO_MEMBERS,
+        &format!(r#", "security_groups": {NARROW_A_B}"#),
+    );
+    assert_eq!(
+        detail_of(&result, "Security groups of cluster a"),
+        "Not inspected: no describe_cache_clusters record for this member was supplied"
+    );
+}
+
+#[test]
+fn a_wrong_typed_security_group_list_is_named_by_its_type() {
+    for (groups, found) in [("null", "null"), (r#""none""#, "string"), ("{}", "object")] {
+        let result = serverless_audit(
+            r#", "SecurityGroupIds": ["sg-1"]"#,
+            &format!(r#", "security_groups": {groups}"#),
+        );
+        assert_eq!(
+            statuses_of(&result, "Security groups"),
+            ["ERROR"],
+            "{groups}"
+        );
+        assert_eq!(
+            detail_of(&result, "Security groups"),
+            format!(
+                "Could not inspect: security_groups must be a list when present (it is {found})"
+            ),
+        );
+    }
+    // An absent list is still "no records supplied".
+    let result = serverless_audit(r#", "SecurityGroupIds": ["sg-1"]"#, "");
+    assert_eq!(
+        detail_of(&result, "Security groups"),
+        "Could not inspect: no security group records were supplied for sg-1"
+    );
+}
+
+#[test]
+fn a_describe_file_that_is_not_an_object_cannot_be_audited() {
+    for (describe, found) in [
+        (r#"[{"ServerlessCacheName": "cache1"}]"#, "array"),
+        (r#""cache1""#, "string"),
+        ("null", "null"),
+        ("7", "integer"),
+    ] {
+        let serverless = audit::audit_serverless(&json(describe), "cache1");
+        assert!(serverless.failed(), "{describe}");
+        assert_eq!(
+            serverless,
+            Audit::NotFound(format!(
+                "Serverless cache 'cache1' cannot be audited: the describe file must be an object (it is {found})"
+            )),
+        );
+        assert_eq!(
+            audit::audit_replication_group(&json(describe), "rg1"),
+            Audit::NotFound(format!(
+                "Replication group 'rg1' cannot be audited: the describe file must be an object (it is {found})"
+            )),
+        );
+    }
+}

@@ -49,6 +49,7 @@ pub fn escape_logs_insights_string(value: &str) -> String {
 /// The value when it is a JSON object, else `null` (reads as an empty dict).
 fn dict(value: Option<&Json>) -> &Json {
     match value {
+        // recorded-shape: the snapshot body a log event carries, parsed with the Python's tolerant rules (#4380); not a response member.
         Some(object @ Json::Object(_)) => object,
         _ => &Json::Null,
     }
@@ -65,6 +66,7 @@ fn is_true(value: Option<&Json>) -> bool {
 /// A compact preview of one snapshot `CapturedValue`.
 #[must_use]
 pub fn preview_captured_value(captured: &Json) -> Json {
+    // recorded-shape: the snapshot body a log event carries (#4380); not a response member.
     let Json::Object(_) = captured else {
         return captured.clone();
     };
@@ -102,6 +104,7 @@ pub fn preview_captured_value(captured: &Json) -> Json {
         // objects collapsed to just their type.
         let mut fields_preview: Vec<(String, Json)> = Vec::new();
         for (name, field) in fields {
+            // recorded-shape: the snapshot body a log event carries (#4380); not a response member.
             let shown = if let Json::Object(_) = field {
                 if is_true(field.get("is_null")) {
                     Json::Null
@@ -129,6 +132,7 @@ pub fn preview_captured_value(captured: &Json) -> Json {
         return Json::Object(preview);
     }
 
+    // recorded-shape: the snapshot body a log event carries, parsed with the Python's tolerant rules (#4380); not a response member.
     if let Some(Json::Array(elements)) = captured.get("elements") {
         preview.push((
             "element_count".to_string(),
@@ -140,6 +144,7 @@ pub fn preview_captured_value(captured: &Json) -> Json {
         return Json::Object(preview);
     }
 
+    // recorded-shape: the snapshot body a log event carries, parsed with the Python's tolerant rules (#4380); not a response member.
     if let Some(Json::Array(entries)) = captured.get("entries") {
         preview.push((
             "entry_count".to_string(),
@@ -178,6 +183,7 @@ fn names_only(map: &Json) -> Json {
 
 fn throwable_summary(throwable: &Json) -> Json {
     let frames = match throwable.get("stacktrace") {
+        // recorded-shape: the snapshot body a log event carries, parsed with the Python's tolerant rules (#4380); not a response member.
         Some(Json::Array(items)) => items.len(),
         _ => 0,
     };
@@ -219,6 +225,7 @@ fn some_or_null(entries: Vec<(String, Json)>) -> Json {
 pub fn parse_snapshot_fields(result: &Json) -> Json {
     let snapshot_data = match result.get("@message") {
         Some(Json::String(message)) => match parse_json(message) {
+            // recorded-shape: the snapshot body a log event carries, parsed with the Python's tolerant rules (#4380); not a response member.
             Ok(parsed @ Json::Object(_)) => parsed,
             _ => Json::Object(Vec::new()),
         },
@@ -280,6 +287,7 @@ pub fn parse_snapshot_fields(result: &Json) -> Json {
     let mut line_return_values: Vec<(String, Json)> = Vec::new();
     let mut line_throwables: Vec<(String, Json)> = Vec::new();
     for (line_number, line_capture) in members(line_captures).unwrap_or(&[]) {
+        // recorded-shape: the snapshot body a log event carries (#4380); not a response member.
         if !matches!(line_capture, Json::Object(_)) {
             continue;
         }
@@ -304,6 +312,7 @@ pub fn parse_snapshot_fields(result: &Json) -> Json {
             line_return_values.push((line_number.clone(), preview_captured_value(value)));
         }
 
+        // recorded-shape: the snapshot body a log event carries, parsed with the Python's tolerant rules (#4380); not a response member.
         if let Some(value @ Json::Object(pairs)) = line_capture.get("throwable") {
             if !pairs.is_empty() {
                 line_throwables.push((line_number.clone(), throwable_summary(value)));
@@ -314,6 +323,7 @@ pub fn parse_snapshot_fields(result: &Json) -> Json {
     let stack_preview: Vec<Json> = stack
         .iter()
         .take(5)
+        // recorded-shape: the snapshot body a log event carries (#4380); not a response member.
         .filter(|frame| matches!(frame, Json::Object(_)))
         .map(|frame| {
             Json::object(vec![

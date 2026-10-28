@@ -38,6 +38,7 @@ impl QueryResult {
     /// A description when the value is not an object with a string
     /// `status`, or when `results` / `messages` are present but not arrays.
     pub fn from_json(value: &Json) -> Result<Self, String> {
+        // recorded-shape: caller input of `cloudwatch render` (#4380); not a response.
         let Json::Object(_) = value else {
             return Err("query_result must be a JSON object".to_string());
         };
@@ -48,6 +49,7 @@ impl QueryResult {
         let list = |key: &str| -> Result<Vec<Json>, String> {
             match value.get(key) {
                 None | Some(Json::Null) => Ok(Vec::new()),
+                // recorded-shape: caller input of `cloudwatch render` (#4380); not a response.
                 Some(Json::Array(items)) => Ok(items.clone()),
                 Some(_) => Err(format!("query_result.{key} must be an array")),
             }
@@ -120,6 +122,7 @@ fn messages_json(query_result: &QueryResult) -> Json {
 fn snapshot_object(message: Option<&Json>) -> Json {
     match message {
         Some(Json::String(text)) => match parse_json(text) {
+            // recorded-shape: the snapshot body a log event carries (#4380); not a response member.
             Ok(parsed @ Json::Object(_)) => parsed,
             _ => Json::Object(Vec::new()),
         },
@@ -203,6 +206,7 @@ pub fn render_search_snapshots_for_status_event_output(
         .map(|result| {
             let snapshot = snapshot_object(result.get("@message"));
             let attributes = match snapshot.get("attributes") {
+                // recorded-shape: the snapshot body a log event carries (#4380); not a response member.
                 Some(attributes @ Json::Object(_)) => attributes.clone(),
                 _ => Json::Object(Vec::new()),
             };
@@ -471,6 +475,7 @@ pub fn render_get_sample_snapshot_for_breakpoint_output(
 
     let sample_snapshot = if use_parsed {
         let mut parsed = parse_snapshot_fields(first);
+        // recorded-shape: the document `parse_snapshot_fields` built; not a response.
         if let Json::Object(pairs) = &mut parsed {
             pairs.retain(|(key, _)| key != "raw_snapshot");
         }

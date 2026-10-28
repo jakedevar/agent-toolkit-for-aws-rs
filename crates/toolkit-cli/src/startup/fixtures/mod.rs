@@ -60,6 +60,40 @@ mod ledger;
 mod nonweb;
 mod workshop;
 
+/// Registration of the `startup-fixtures` slice: its routes and help text (see `crate::registry`).
+pub(crate) const SLICE: crate::registry::Slice = crate::registry::Slice {
+    name: "startup-fixtures",
+    commands: &[crate::CommandSpec {
+        path: &["startup", "check-expected"],
+        flags: &[],
+        value_flags: &["--plugin-root"],
+        strict_values: true,
+        repeatable_flags: &[],
+        max_positionals: 3,
+        passthrough: false,
+        handler: crate::startup::check_expected_command,
+    }],
+    synopsis: r"  toolkit startup check-expected KIND RUN_DIR [SEED_DIR] [--plugin-root DIR]
+",
+    description: r"  startup check-expected KIND RUN_DIR [SEED_DIR]
+                Assert a migration run directory against the expectations of a
+                committed fixture set (the fixtures/**/check_expected_*.py
+                programs). KIND is one of heroku-decide, heroku-decide-retained,
+                gcp-decide, heroku-workshop, gcp-workshop, heroku-nonweb-scaling,
+                heroku-drift, heroku-estimate, gcp-drift, gcp-baseline,
+                azure-discover, azure-clarify, azure-clarify-complete,
+                azure-clarify-fast-path, azure-design or azure-estimate. The
+                expectation documents are read from
+                <plugin-root>/fixtures/<set> (default plugin root: the current
+                directory); SEED_DIR (workshop kinds only) defaults to the
+                fixture seed. Prints PASS, or a FAIL block and exit 1.
+",
+    exit_notes: "",
+    doc: "docs/migration/startup-fixtures.md",
+    synopsis_rank: 190,
+    description_rank: 190,
+};
+
 #[cfg(test)]
 mod tests;
 

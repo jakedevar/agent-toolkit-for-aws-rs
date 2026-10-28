@@ -90,6 +90,8 @@ fn text_of<'a>(value: &'a Json, key: &str) -> &'a str {
     value.get(key).and_then(Json::as_str).unwrap_or("")
 }
 
+// recorded-shape: a price table file the user passes (the AWS bulk pricing offer file
+// or the old script's cache, `--pricing-json`), not a recorded API response.
 fn members(value: Option<&Json>) -> &[(String, Json)] {
     match value {
         Some(Json::Object(items)) => items,

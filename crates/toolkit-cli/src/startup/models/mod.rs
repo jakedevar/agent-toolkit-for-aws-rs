@@ -33,6 +33,40 @@ mod openai;
 mod recommend;
 mod request;
 
+/// Registration of the `startup-models` slice: its routes and help text (see `crate::registry`).
+pub(crate) const SLICE: crate::registry::Slice = crate::registry::Slice {
+    name: "startup-models",
+    commands: &[crate::CommandSpec {
+        path: &["startup", "model-recommend"],
+        flags: &[],
+        value_flags: &["--output", "--catalog", "--openai-catalog", "--plugin-root"],
+        strict_values: false,
+        repeatable_flags: &[],
+        max_positionals: 1,
+        passthrough: false,
+        handler: crate::startup::model_recommend_command,
+    }],
+    synopsis: r"  toolkit startup model-recommend INPUT [--output FILE] [--catalog FILE] [--openai-catalog FILE]
+                            [--plugin-root DIR]
+",
+    description: r"  startup model-recommend INPUT
+                Recommend a Bedrock model and API path for every workload of
+                INPUT (agent-advisor model_recommendation.py), validating INPUT
+                and the result against the shipped schemas. Writes
+                model-recommendation.json beside INPUT (or --output FILE),
+                removes a stale model-verification.json beside it when the
+                invocation contract changed, and prints RESULT=ok WORKLOADS=n
+                SCHEMA_VALIDATED=yes. The dated catalogs are read from
+                skills/agent-advisor/references/models of --plugin-root
+                (default: the current directory) unless --catalog FILE
+                (Anthropic) or --openai-catalog FILE names them.
+",
+    exit_notes: "",
+    doc: "docs/migration/startup-models.md",
+    synopsis_rank: 140,
+    description_rank: 140,
+};
+
 #[cfg(test)]
 mod tests;
 

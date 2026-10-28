@@ -19,5 +19,11 @@ unicode-normalization = { version = "0.1", default-features = false, features = 
 serde_json = { version = "1", default-features = false, features = ["std"] }
 toolkit-msk = { path = "../toolkit-msk" }
 
+# The recorded-response contract (`tests/recorded_contract.rs`, #4751) reads
+# the slices' syntax tree; span locations give it the line of each finding.
+[dev-dependencies]
+proc-macro2 = { version = "1", default-features = false, features = ["span-locations"] }
+syn = { version = "2", default-features = false, features = ["full", "parsing", "printing", "visit"] }
+
 [lints]
 workspace = true

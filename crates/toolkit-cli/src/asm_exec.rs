@@ -60,6 +60,38 @@ use reference::{
 };
 use sma::SmaBackend;
 
+/// Registration of the `asm-exec` slice: its routes and help text (see `crate::registry`).
+pub(crate) const SLICE: crate::registry::Slice = crate::registry::Slice {
+    name: "asm-exec",
+    commands: &[crate::CommandSpec {
+        path: &["asm", "exec"],
+        flags: &[],
+        value_flags: &[],
+        strict_values: false,
+        repeatable_flags: &[],
+        max_positionals: usize::MAX,
+        passthrough: true,
+        handler: exec_command,
+    }],
+    synopsis: r"  toolkit asm exec [--] COMMAND [ARG...]
+",
+    description: r"  asm exec      Replace every {{resolve:secretsmanager:ID[:SecretString[:KEY
+                [:STAGE]]]}} reference in COMMAND, its arguments and the
+                environment with the secret value, then run COMMAND with the
+                result. One optional leading `--` is dropped; every other word,
+                dash-prefixed ones included, belongs to COMMAND. Exits with
+                COMMAND's status; 1 when a reference cannot be resolved or
+                COMMAND cannot be started (nothing is run then). See
+                docs/migration/asm-exec.md.
+",
+    exit_notes: r"  asm exec exits with the status of COMMAND (a command ended by signal N
+  exits 256-N); its own failures exit 1, including a missing COMMAND.
+",
+    doc: "docs/migration/asm-exec.md",
+    synopsis_rank: 340,
+    description_rank: 330,
+};
+
 /// Printed when no command is given.
 pub const USAGE_LINE: &str = "Usage: asm-exec <command> [args...]";
 

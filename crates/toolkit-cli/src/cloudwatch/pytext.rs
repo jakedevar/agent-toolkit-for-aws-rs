@@ -84,6 +84,7 @@ pub fn get_truthy_text(data: &Json, key: &str) -> Option<String> {
 #[must_use]
 pub fn get_array<'a>(data: &'a Json, key: &str) -> &'a [Json] {
     match data.get(key) {
+        // recorded-shape: tolerant renderer helper; every response is shape-checked first (response_shape.rs).
         Some(Json::Array(items)) => items,
         _ => &[],
     }
@@ -93,6 +94,7 @@ pub fn get_array<'a>(data: &'a Json, key: &str) -> &'a [Json] {
 #[must_use]
 pub fn members(value: &Json) -> Option<&[(String, Json)]> {
     match value {
+        // recorded-shape: tolerant renderer helper; every response is shape-checked first (response_shape.rs).
         Json::Object(pairs) => Some(pairs),
         _ => None,
     }
@@ -140,6 +142,7 @@ fn push_indent(out: &mut String, indent: usize, level: usize) {
     }
 }
 
+// recorded-shape: renders any value as Python repr text; it reads no response member.
 fn write_value(out: &mut String, value: &Json, indent: usize, level: usize) {
     match value {
         Json::Null => out.push_str("null"),

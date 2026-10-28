@@ -38,6 +38,35 @@ use crate::{Invocation, Output};
 use unicode_normalization::UnicodeNormalization;
 
 pub(crate) mod engine;
+/// Registration of the `spec` slice: its routes and help text (see `crate::registry`).
+pub(crate) const SLICE: crate::registry::Slice = crate::registry::Slice {
+    name: "spec",
+    commands: &[crate::CommandSpec {
+        path: &["spec", "validate"],
+        flags: &[],
+        value_flags: &[],
+        strict_values: false,
+        repeatable_flags: &[],
+        max_positionals: 1,
+        passthrough: false,
+        handler: validate_command,
+    }],
+    synopsis: r"  toolkit spec validate [ROOT]
+",
+    description: r"  spec validate
+                Validate every plugin under ROOT/plugins (default ROOT: the
+                current directory) against the Agent Plugins v1.0.0 schemas in
+                ROOT/tools/schemas/1.0.0, the path, placeholder and MCP rules
+                the schemas cannot express, and the SKILL.md frontmatter of
+                each plugin skill. Problems are reported as `  ERROR: ...`
+                lines on stderr and exit status 1.
+",
+    exit_notes: "",
+    doc: "docs/migration/spec-validator.md",
+    synopsis_rank: 30,
+    description_rank: 30,
+};
+
 #[cfg(test)]
 mod tests;
 

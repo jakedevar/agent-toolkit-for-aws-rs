@@ -68,7 +68,7 @@ directory) with `json.dumps(indent=2)` formatting (two-space indent, ASCII
 only, trailing newline) and reports the written path and `overall: <verdict>`
 on stderr. Exit 0 on success, 1 on any runtime error, 2 for a missing argument.
 
-### `toolkit msk sim compute|render|validate`
+### `toolkit msk sim compute`, `toolkit msk sim render`, `toolkit msk sim validate`
 
 - `compute [--instance-type T] [--broker-count N] [--kafka-version V]` prints
   the derived capacity/fleet/test-bounds document.

@@ -33,6 +33,36 @@ use super::{is_regular_file_under, MAX_ARTIFACT_BYTES};
 use crate::manifests::{is_py_space, read_failure, resolve_lenient, universal_newlines};
 use crate::{Invocation, Output};
 
+/// Registration of the `startup-model-staleness` slice: its routes and help text (see `crate::registry`).
+pub(crate) const SLICE: crate::registry::Slice = crate::registry::Slice {
+    name: "startup-model-staleness",
+    commands: &[crate::CommandSpec {
+        path: &["startup", "model-staleness"],
+        flags: &["--strict"],
+        value_flags: &["--plugin-root"],
+        strict_values: true,
+        repeatable_flags: &[],
+        max_positionals: 0,
+        passthrough: false,
+        handler: crate::startup::model_staleness_command,
+    }],
+    synopsis: r"  toolkit startup model-staleness [--plugin-root DIR] [--strict]
+",
+    description: r"  startup model-staleness
+                Check the Bedrock model-lifecycle registry
+                skills/shared/ai/ai-model-lifecycle.md of --plugin-root: its
+                `**Last updated:**` and `**Staleness window:**` contract, the
+                required vendored copies and byte-identical vendored copies
+                (model-staleness.py). A drifted or missing copy, or a missing,
+                malformed or future-dated contract, fails always; a snapshot
+                older than its window warns, and fails (exit 1) with --strict.
+",
+    exit_notes: "",
+    doc: "docs/migration/startup-tools.md",
+    synopsis_rank: 180,
+    description_rank: 180,
+};
+
 /// The canonical registry, relative to the plugin root.
 const CANONICAL: &str = "skills/shared/ai/ai-model-lifecycle.md";
 /// File name of the registry and of every copy of it.

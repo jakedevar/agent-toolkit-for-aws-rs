@@ -7,6 +7,7 @@
 //! the table is simply unavailable. A lookup never fails: it reports
 //! `available: false` and a note instead.
 
+use toolkit_aws::recorded::{list_value, object_members, optional_object, optional_text};
 use toolkit_core::{parse_json, Json};
 use toolkit_msk::pyfmt::py_float_parse;
 
@@ -69,38 +70,33 @@ pub(crate) fn unavailable(note: &str) -> Price {
 /// is not a number). The message never repeats a value of the item.
 pub(crate) fn parse_price_dimensions(item: &Json) -> Result<(Option<f64>, Option<f64>), String> {
     const BAD: &str = "the price item has an unexpected structure";
+    // An absent member is empty; a present one must be an object (`null`
+    // included in the refusals), and `BAD` never names a value.
     let members = |value: &Json, key: &str| -> Result<Vec<Json>, String> {
-        match value.get(key) {
-            None => Ok(Vec::new()),
-            Some(Json::Object(pairs)) => {
-                Ok(pairs.iter().map(|(_, member)| member.clone()).collect())
-            }
-            Some(_) => Err(BAD.to_string()),
-        }
+        let object = optional_object(value, key).map_err(|_| BAD.to_string())?;
+        Ok(object
+            .and_then(object_members)
+            .map(|pairs| pairs.iter().map(|(_, member)| member.clone()).collect())
+            .unwrap_or_default())
     };
     let section = |value: &Json, key: &str| -> Result<Json, String> {
-        match value.get(key) {
-            None => Ok(Json::Object(Vec::new())),
-            Some(object @ Json::Object(_)) => Ok(object.clone()),
-            Some(_) => Err(BAD.to_string()),
-        }
+        let object = optional_object(value, key).map_err(|_| BAD.to_string())?;
+        Ok(object.map_or_else(|| Json::Object(Vec::new()), Json::clone))
     };
-    if !matches!(item, Json::Object(_)) {
+    if object_members(item).is_none() {
         return Err(BAD.to_string());
     }
     let (mut input, mut output) = (None, None);
     let on_demand = section(&section(item, "terms")?, "OnDemand")?;
-    let Json::Object(terms) = on_demand else {
+    let Some(terms) = object_members(&on_demand) else {
         return Err(BAD.to_string());
     };
-    for (_, term) in &terms {
+    for (_, term) in terms {
         for dimension in members(term, "priceDimensions")? {
             let usd = dimension_usd(&dimension)?;
-            let description = match dimension.get("description") {
-                None => String::new(),
-                Some(Json::String(text)) => text.to_lowercase(),
-                Some(_) => return Err(BAD.to_string()),
-            };
+            let description = optional_text(&dimension, "description")
+                .map_err(|_| BAD.to_string())?
+                .map_or_else(String::new, str::to_lowercase);
             if ["cache", "read", "write", "batch"]
                 .iter()
                 .any(|skip| description.contains(skip))
@@ -120,13 +116,12 @@ pub(crate) fn parse_price_dimensions(item: &Json) -> Result<(Option<f64>, Option
 /// `float(dim.get("pricePerUnit", {}).get("USD", "0") or 0)`.
 fn dimension_usd(dimension: &Json) -> Result<f64, String> {
     const BAD: &str = "the price item has an unexpected structure";
-    if !matches!(dimension, Json::Object(_)) {
+    if object_members(dimension).is_none() {
         return Err(BAD.to_string());
     }
-    let per_unit = match dimension.get("pricePerUnit") {
-        None => return Ok(0.0),
-        Some(object @ Json::Object(_)) => object,
-        Some(_) => return Err(BAD.to_string()),
+    let Some(per_unit) = optional_object(dimension, "pricePerUnit").map_err(|_| BAD.to_string())?
+    else {
+        return Ok(0.0);
     };
     match per_unit.get("USD") {
         None | Some(Json::Null | Json::Bool(false)) => Ok(0.0),
@@ -675,7 +670,7 @@ impl PriceList {
     ///
     /// A document of another shape; the message never repeats a value of it.
     pub(crate) fn from_json(document: &Json) -> Result<Self, String> {
-        let Json::Array(entries) = document else {
+        let Some(entries) = list_value(document) else {
             return Err("a recorded price list must be a JSON array".to_string());
         };
         if entries.len() > MAX_PRICE_LIST_ENTRIES {
@@ -686,9 +681,12 @@ impl PriceList {
         let mut recorded = Vec::with_capacity(entries.len());
         for entry in entries {
             let text = |key: &str| entry.get(key).and_then(Json::as_str).map(str::to_string);
-            let (Some(region), Some(model), Some(Json::Array(items))) =
-                (text("region"), text("model"), entry.get("price_list"))
-            else {
+            // `price_list` is required: absent, `null` or another type refuses.
+            let (Some(region), Some(model), Some(items)) = (
+                text("region"),
+                text("model"),
+                entry.get("price_list").and_then(list_value),
+            ) else {
                 return Err(
                     "every recorded price list entry needs text region and model and an array price_list"
                         .to_string(),
@@ -697,7 +695,7 @@ impl PriceList {
             recorded.push(RecordedPriceList {
                 region,
                 model,
-                items: items.clone(),
+                items: items.to_vec(),
             });
         }
         Ok(Self(recorded))

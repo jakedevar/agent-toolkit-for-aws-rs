@@ -19,21 +19,61 @@ use std::path::{Path, PathBuf};
 use toolkit_core::{Json, ToolkitError};
 
 use self::contracts::{artifact_name, build_contracts, matches_glob, shape_for, Contract, Env};
+use self::paths::Origin;
 use self::patterns::fnmatch;
 use self::pyjson::{dumps, loads};
 use self::schema::Context;
 use self::shape::validate_shape;
-use super::{
-    is_regular_file, is_regular_file_under, read_text, read_text_under, refuse_links_below,
-};
+use super::read_text;
 use crate::{Invocation, Output};
 
 pub(crate) mod contracts;
 pub(crate) mod jsonc;
+pub(crate) mod paths;
 pub(crate) mod patterns;
 pub(crate) mod pyjson;
 pub(crate) mod schema;
 pub(crate) mod shape;
+
+/// Registration of the `startup-artifacts` slice: its routes and help text (see `crate::registry`).
+pub(crate) const SLICE: crate::registry::Slice = crate::registry::Slice {
+    name: "startup-artifacts",
+    commands: &[crate::CommandSpec {
+        path: &["startup", "artifacts"],
+        flags: &["--self-check", "--fixtures", "--no-baseline", "--json"],
+        value_flags: &[
+            "--run-dir",
+            "--skill",
+            "--manifest",
+            "--baseline",
+            "--plugin-root",
+        ],
+        strict_values: false,
+        repeatable_flags: &[],
+        max_positionals: 0,
+        passthrough: false,
+        handler: crate::startup::artifacts_command,
+    }],
+    synopsis: r"  toolkit startup artifacts (--self-check | --fixtures | --run-dir DIR --skill NAME)
+                            [--plugin-root DIR] [--manifest FILE] [--baseline FILE]
+                            [--no-baseline] [--json]
+",
+    description: r"  startup artifacts
+                Validate migration artifacts against the contracts the skills
+                publish (JSON examples in the schema documents plus the JSON
+                Schemas) using the manifest scripts/artifact-contracts.json of
+                the plugin at --plugin-root DIR. --self-check parses every
+                contract document, --fixtures checks the fixture goldens with
+                the shipped baseline, --run-dir DIR --skill NAME checks one
+                run (--skill is gcp-to-aws, heroku-to-aws or azure-to-aws).
+                Findings and the PASS/FAIL summary go to stdout (--json for a
+                report object); exit status 1 when an error finding remains.
+",
+    exit_notes: "",
+    doc: "docs/migration/startup-validators.md",
+    synopsis_rank: 70,
+    description_rank: 120,
+};
 
 #[cfg(test)]
 mod tests;
@@ -359,28 +399,35 @@ pub fn artifacts_command(
     let root = PathBuf::from(invocation.value("--plugin-root").unwrap_or("."));
     // A path the user passes explicitly may have symlinked parents (only its
     // final component is checked); the validator-owned defaults beneath the
-    // plugin root get every component checked (#4584, #4596).
-    let manifest_explicit = invocation.value("--manifest").is_some();
-    let manifest_path = invocation.value("--manifest").map_or_else(
-        || root.join("scripts/artifact-contracts.json"),
-        PathBuf::from,
+    // plugin root get every component checked (#4584, #4596; see `paths`).
+    let (manifest_path, manifest_origin) = invocation.value("--manifest").map_or_else(
+        || {
+            (
+                root.join("scripts/artifact-contracts.json"),
+                Origin::Discovered(&root),
+            )
+        },
+        |explicit| (PathBuf::from(explicit), Origin::Explicit),
     );
-    let baseline_arg = invocation.value("--baseline").map(PathBuf::from);
-    let baseline_explicit = baseline_arg.is_some();
     let use_default_baseline = matches!(mode, Mode::Fixtures);
-    let baseline_path = baseline_arg.or_else(|| {
-        use_default_baseline.then(|| root.join("scripts/artifact-contracts-baseline.json"))
-    });
+    let baseline = invocation.value("--baseline").map_or_else(
+        || {
+            use_default_baseline.then(|| {
+                (
+                    root.join("scripts/artifact-contracts-baseline.json"),
+                    Origin::Discovered(&root),
+                )
+            })
+        },
+        |explicit| Some((PathBuf::from(explicit), Origin::Explicit)),
+    );
     let failed = |message: String| ToolkitError::runtime("artifacts_input_invalid", message);
 
     let mut env = Env::new(&root);
     let manifest_shown = manifest_path.display().to_string();
-    let manifest_text = if manifest_explicit {
-        read_text(&manifest_path, &manifest_shown)
-    } else {
-        read_text_under(&root, &manifest_path, &manifest_shown)
-    }
-    .map_err(&failed)?;
+    let manifest_text = manifest_origin
+        .read(&manifest_path, &manifest_shown)
+        .map_err(&failed)?;
     let manifest =
         loads(&manifest_text).map_err(|e| failed(format!("{}: {e}", manifest_path.display())))?;
     let mut findings: Vec<Finding> = Vec::new();
@@ -403,7 +450,9 @@ pub fn artifacts_command(
         }
         Mode::Fixtures => {
             let fixtures_root = env.root.join("fixtures");
-            refuse_links_below(&env.root, &fixtures_root).map_err(&failed)?;
+            Origin::Discovered(&env.root)
+                .refuse_links(&fixtures_root)
+                .map_err(&failed)?;
             let mut dirs: Vec<(String, PathBuf)> = Vec::new();
             let entries = fs::read_dir(&fixtures_root)
                 .map_err(|e| failed(format!("cannot read {}: {e}", fixtures_root.display())))?;
@@ -445,20 +494,10 @@ pub fn artifacts_command(
 
     let mut stale: Vec<Json> = Vec::new();
     if !invocation.has_flag("--no-baseline") && !self_check {
-        if let Some(path) = &baseline_path {
-            let present = if baseline_explicit {
-                is_regular_file(path)
-            } else {
-                is_regular_file_under(&root, path)
-            };
-            if present.map_err(&failed)? {
+        if let Some((path, origin)) = &baseline {
+            if origin.is_file(path).map_err(&failed)? {
                 let shown = path.display().to_string();
-                let text = if baseline_explicit {
-                    read_text(path, &shown)
-                } else {
-                    read_text_under(&root, path, &shown)
-                }
-                .map_err(&failed)?;
+                let text = origin.read(path, &shown).map_err(&failed)?;
                 let baseline = loads(&text).map_err(|e| failed(format!("{shown}: {e}")))?;
                 stale = apply_baseline(&mut findings, &baseline);
                 let shown_rel = env.rel(path);

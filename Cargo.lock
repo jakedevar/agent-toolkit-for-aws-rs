@@ -1940,7 +1940,9 @@ version = "0.1.0"
 dependencies = [
  "fancy-regex",
  "jsonschema",
+ "proc-macro2",
  "serde_json",
+ "syn 2.0.119",
  "toolkit-aws",
  "toolkit-core",
  "toolkit-msk",

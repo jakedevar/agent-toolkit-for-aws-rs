@@ -28,6 +28,34 @@ use crate::{Invocation, Output};
 mod hcl;
 mod iam;
 
+/// Registration of the `startup-terraform` slice: its routes and help text (see `crate::registry`).
+pub(crate) const SLICE: crate::registry::Slice = crate::registry::Slice {
+    name: "startup-terraform",
+    commands: &[crate::CommandSpec {
+        path: &["startup", "terraform-policy"],
+        flags: &[],
+        value_flags: &["--json"],
+        strict_values: false,
+        repeatable_flags: &[],
+        max_positionals: 1,
+        passthrough: false,
+        handler: crate::startup::terraform_policy_command,
+    }],
+    synopsis: r"  toolkit startup terraform-policy DIR [--json FILE]
+",
+    description: r"  startup terraform-policy
+                Static policy checks on the generated Terraform in DIR: ALB TLS
+                posture, public RDS, public database and admin ports in inline
+                security-group ingress, wildcard IAM, RDS and ElastiCache
+                encryption. --json FILE writes the verdict. Violations are
+                POLICY_FAIL lines on stderr and exit status 1.
+",
+    exit_notes: "",
+    doc: "docs/migration/startup-validators.md",
+    synopsis_rank: 110,
+    description_rank: 100,
+};
+
 #[cfg(test)]
 mod tests;
 

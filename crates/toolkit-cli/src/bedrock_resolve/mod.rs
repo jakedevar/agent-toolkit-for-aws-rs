@@ -38,6 +38,82 @@ mod pricing;
 mod pricing_table;
 mod source;
 
+/// Registration of the `bedrock-resolve` slice: its routes and help text (see `crate::registry`).
+pub(crate) const SLICE: crate::registry::Slice = crate::registry::Slice {
+    name: "bedrock-resolve",
+    commands: &[
+        crate::CommandSpec {
+            path: &["bedrock-resolve", "identity"],
+            flags: &[],
+            value_flags: IDENTITY_VALUE_FLAGS,
+            strict_values: true,
+            repeatable_flags: &[],
+            max_positionals: 0,
+            passthrough: false,
+            handler: identity_command,
+        },
+        crate::CommandSpec {
+            path: &["bedrock-resolve", "image"],
+            flags: &[],
+            value_flags: IMAGE_VALUE_FLAGS,
+            strict_values: true,
+            repeatable_flags: &[],
+            max_positionals: 0,
+            passthrough: false,
+            handler: image_command,
+        },
+        crate::CommandSpec {
+            path: &["bedrock-resolve", "pricing"],
+            flags: &[],
+            value_flags: PRICING_VALUE_FLAGS,
+            strict_values: true,
+            repeatable_flags: &[],
+            max_positionals: 0,
+            passthrough: false,
+            handler: pricing_command,
+        },
+        crate::CommandSpec {
+            path: &["bedrock-resolve", "source-model"],
+            flags: &[],
+            value_flags: SOURCE_VALUE_FLAGS,
+            strict_values: true,
+            repeatable_flags: &[],
+            max_positionals: 1,
+            passthrough: false,
+            handler: source_command,
+        },
+    ],
+    synopsis: r"  toolkit bedrock-resolve identity --provider anthropic|openai
+      (--source MODEL --target BEDROCK_ID | --mappings FILE)
+  toolkit bedrock-resolve image --emit format|mime|data-url|converse|responses|chat
+      [--image PATH] [--prompt TEXT | --prompt-file FILE] [--detail low|high|auto|original]
+  toolkit bedrock-resolve pricing --region REGION --models ID[,ID...] [--price-list FILE]
+  toolkit bedrock-resolve source-model ENV_FILE --catalog FILE
+      [--plan-model-id ID] [--source-provider NAME]
+",
+    description: r#"  bedrock-resolve
+                Model identity, image, pricing and source-model resolution of
+                the llm-to-bedrock skill (#4403), offline. identity prints
+                {"same_model": bool} for a source model and a Bedrock id (or
+                {"same_model_family": bool} for a mappings file). image builds
+                a Converse, Responses or Chat Completions user message, a data
+                URL or the Converse format of an image file. pricing prints
+                the per-1K-token USD rates of the listed model ids from the
+                built-in table (available: false for anything unpriced; a
+                recorded Pricing API answer may be given with --price-list).
+                source-model resolves PLAN_MODEL_ID (or --plan-model-id)
+                against a recorded provider catalog (--catalog), picking the
+                same line only for a date or pure version suffix: exit 2
+                {"status": "no_key"}, exit 3 {"status": "error"}. Recorded
+                inputs replace the live provider and Pricing API calls. See
+                docs/migration/bedrock-resolve.md.
+"#,
+    exit_notes: "",
+    doc: "docs/migration/bedrock-resolve.md",
+    synopsis_rank: 320,
+    description_rank: 320,
+};
+
 #[cfg(test)]
 mod tests;
 
@@ -119,6 +195,8 @@ pub(crate) fn identity_command(
         (Some(path), (None, None)) => {
             let document = read_json_file(path, MAX_TEXT_FILE_BYTES)
                 .map_err(|message| failure("mappings_unreadable", message))?;
+            // recorded-shape: the `--mappings` file the user writes (model id
+            // pairs), not an AWS response; any shape but a JSON array is refused.
             let Json::Array(rows) = document else {
                 return Err(failure(
                     "mappings_not_a_list",
@@ -316,6 +394,8 @@ pub(crate) fn pricing_command(
 
 /// Replaces every string of `value` (object keys are fixed names) by its
 /// display form.
+// recorded-shape: a total walk over the output document this command built;
+// every JSON type is copied, no member is read, typed or defaulted.
 fn shown_json(value: &Json, secrets: &[String]) -> Json {
     match value {
         Json::String(text) => Json::string(source::shown(text, secrets)),
