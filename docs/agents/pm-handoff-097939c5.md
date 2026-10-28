@@ -318,3 +318,5 @@ Friction: #4727, Rsi #4694, Rsi #4704
   4/4 busy: 39bbfbb0 (#4398), fc21470d (#4395), #4852 r3, #4876.
 - 10-28 19:33Z (wall clock; earlier log stamps after 18:40Z ran ahead, ignore): safety net: queue 5c529ed1 + 78a019f9 queued ~22 min; no failed workers; disk 134G (83%), load 7.2. Net re-armed 20:33Z.
 - 10-28 19:45Z: #4852 r3 on 0b0fbb32: #4872 PASS; new #4880 (function-local/const-block mod loaders not seen -> file wrongly test-only). Last narrow repair (Opus, continue_from 10864034): syn Visit over all items, fail-safe = production. PM accepts on diff+fixture inspection (no r4).
+- 10-28 19:55Z: #4876 on #4576 084fa8b3: help/usage byte-identical PASS; findings #4881 (public COMMANDS order changed), #4879 (README guard weak), #4878 (adjacent alphabetical insert conflicts). RULING: #4878 non-blocking, P3 (single list inherent; keep-both resolution). Narrow repair (Sonnet, continue_from c621f43f) for #4881 + #4879.
+  4/4 busy: 39bbfbb0 (#4398), fc21470d (#4395), 6951a548 (#4751 r3), bef791ca (#4576 repair).
