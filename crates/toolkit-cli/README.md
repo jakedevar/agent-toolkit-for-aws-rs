@@ -24,6 +24,8 @@ toolkit msk compat CLUSTER_CONFIG [--out-dir DIR]
 toolkit msk sim compute|render|validate [options]
 toolkit dynamodb calculate-costs --model FILE [--requirements FILE] [--output FILE]
 toolkit dynamodb iterate-design --model FILE --config FILE --loop-state FILE [options]
+toolkit dynamodb deploy-model --model FILE --config FILE --manifest-out FILE --yes-deploy [--recorded FILE --plan-out FILE]
+toolkit dynamodb generate-teardown --manifest FILE --out FILE --yes-generate-teardown
 toolkit asm exec [--] COMMAND [ARG...]
 toolkit --version
 toolkit help
@@ -166,12 +168,42 @@ command contacts AWS.
   `--apply-change`/`--skip-deploy`, `4` for a round that needs a real deploy
   without `--yes-deploy`, and the failed step's own status when a pipeline step
   fails. Pipeline steps run as `toolkit dynamodb <step>` commands through the
-  command table; only `calculate-costs` exists in this slice, so a round that
-  needs deploy/benchmark/report stops with
+  command table; `calculate-costs` and (offline) `deploy-model` exist, so a
+  round that needs benchmark/report stops with
   `error: pipeline step ... is not available in this build` (exit 1) before any
   cloud action. `--calculator-only` is fully functional.
 - Inputs are read through the symlink-refusing path contract (UTF-8, at most
   16 MiB) and outputs are written without following symlinks.
+
+## DynamoDB deployment and teardown plans (slice `dynamo-deploy`, #4391)
+
+```
+toolkit dynamodb deploy-model --model FILE --config FILE --manifest-out FILE --yes-deploy
+    [--recorded FILE --plan-out FILE] [--created-at TS] [--run-id ID]
+toolkit dynamodb generate-teardown --manifest FILE --out FILE --yes-generate-teardown
+```
+
+Ports of `deploy_model.py` and `generate_teardown.py` as **offline plan
+generators**: neither creates, changes or deletes an AWS resource, neither runs a
+script, and a live path is a follow-up. The behavior contract, the security
+surface and every intentional change are in `docs/migration/dynamodb-deploy.md`.
+
+- `deploy-model` validates the design and `benchmark_config.json` exactly as the
+  script did, reads the caller identity from a recorded document (`--recorded`,
+  one `sts:GetCallerIdentity` step and an optional `iam:ListAccountAliases`
+  step; the `toolkit_aws::recorded` rules apply), refuses a production ARN or
+  alias, and writes the deployment plan to `--plan-out`: the `CreateTable`,
+  IAM and Lambda requests a live deploy would send, with the generated IAM
+  policy text. Without `--recorded` the identity step fails (exit 2) after the
+  design checks. `--manifest-out` is accepted for the caller contract and is
+  never written (no resource exists). `--yes-deploy` is required.
+- `generate-teardown` writes `teardown.sh` from a run manifest only with
+  `--yes-generate-teardown`; without it nothing is written (exit 2). Every
+  manifest value is validated and shell-quoted. The script is owner-only
+  executable (`0700`) and is never run by this command.
+- Outputs are written to a private temporary file and renamed (`0600`, or
+  `0700` for the script); a symbolic link or non-regular file at the output is
+  refused. Diagnostics quote caller, file and AWS text.
 
 ## Value options and diagnostics (#4389)
 

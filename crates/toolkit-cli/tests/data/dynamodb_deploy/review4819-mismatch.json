@@ -1,0 +1,1 @@
+{"calls":[{"service":"sts","operation":"GetCallerIdentity","request":{},"response":{"Account":"111122223333","Arn":"arn:aws:iam::111122223333:user/dev"}},{"service":"iam","operation":"ListAccountAliases","request":{"unexpected":true},"response":{"AccountAliases":["acme-production"]}}]}

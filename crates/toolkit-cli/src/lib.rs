@@ -35,6 +35,7 @@ mod bedrock_report;
 mod bedrock_resolve;
 pub mod cloudwatch;
 pub mod dynamodb;
+mod dynamodb_deploy;
 pub mod elasticache;
 pub mod manifests;
 mod msk;
@@ -98,6 +99,9 @@ Usage:
   toolkit dynamodb iterate-design --model FILE --config FILE --loop-state FILE
       [--manifest FILE] [--apply-change FILE] [--mode MODE] [--timestamp TS]
       [--yes-deploy] [--allow-spend] [--skip-deploy] [--calculator-only] [--dry-run]
+  toolkit dynamodb deploy-model --model FILE --config FILE --manifest-out FILE --yes-deploy
+      [--recorded FILE --plan-out FILE] [--created-at TS] [--run-id ID]
+  toolkit dynamodb generate-teardown --manifest FILE --out FILE --yes-generate-teardown
   toolkit aurora acu estimate --engine mysql|postgresql --instance TYPE --cpu-p95 N --cpu-max N
       [--cpu-avg N] [--connections N] [--working-set GIB] [--storage GIB]
       [--num-instances N] [--format json|table] [--region R] [--offline]
@@ -363,6 +367,12 @@ Commands:
                 storage, vector indexes) and write a cost_report.md.
   dynamodb iterate-design
                 Run ONE round of the human-driven DynamoDB design loop, then stop.
+  dynamodb deploy-model | generate-teardown
+                Offline plans of the DynamoDB benchmark deployment (#4391). deploy-model
+                writes the CreateTable, IAM and Lambda requests a live deploy would
+                send, from a recorded caller identity (--recorded); it creates nothing.
+                generate-teardown writes teardown.sh from a run manifest only with
+                --yes-generate-teardown; neither command runs a script or calls AWS.
   aurora acu | commitment | io
                 Aurora ACU sizing, Reserved Instance and Savings Plan, and
                 Standard versus I/O-Optimized cost analyzers (#4388). --engine
@@ -1084,6 +1094,26 @@ pub const COMMANDS: &[CommandSpec] = &[
         max_positionals: 0,
         passthrough: false,
         handler: dynamodb::iterate_design_command,
+    },
+    CommandSpec {
+        path: &["dynamodb", "deploy-model"],
+        flags: dynamodb_deploy::DEPLOY_MODEL_FLAGS,
+        value_flags: dynamodb_deploy::DEPLOY_MODEL_VALUE_FLAGS,
+        strict_values: true,
+        repeatable_flags: &[],
+        max_positionals: 0,
+        passthrough: false,
+        handler: dynamodb_deploy::deploy_model_command,
+    },
+    CommandSpec {
+        path: &["dynamodb", "generate-teardown"],
+        flags: dynamodb_deploy::GENERATE_TEARDOWN_FLAGS,
+        value_flags: dynamodb_deploy::GENERATE_TEARDOWN_VALUE_FLAGS,
+        strict_values: true,
+        repeatable_flags: &[],
+        max_positionals: 0,
+        passthrough: false,
+        handler: dynamodb_deploy::generate_teardown_command,
     },
     CommandSpec {
         path: &["aurora", "acu", "estimate"],
