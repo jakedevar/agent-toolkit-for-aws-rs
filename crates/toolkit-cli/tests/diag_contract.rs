@@ -316,9 +316,9 @@ fn usage_variants(spec: &CommandSpec) -> Vec<Vec<String>> {
     }
     // The bare `-` stdio marker (#4743) as a value of every value flag, in both
     // spellings, and as a positional. The router refuses it except for pairs
-    // listed in `STDIO_DASH`, so the diagnostic or the command behind it must keep
+    // listed in `STDIO_DASH` or `LITERAL_DASH`, so the diagnostic or the command behind it must keep
     // its output safe (stdin is closed here). The semantic contract (usage
-    // error, no file touched) is `an_unlisted_bare_dash_is_a_usage_error_*`.
+    // error, no file touched) is `every_value_flag_and_positional_dash_is_refused_or_in_exactly_one_list`.
     for flag in all_value_flags(spec) {
         let mut spaced = base.clone();
         spaced.extend([flag.to_string(), "-".to_string()]);
@@ -861,38 +861,109 @@ fn relational_reports_escape_hostile_recorded_and_argument_text() {
 // The bare `-` stdio marker is fail-closed (#4743, #4780).
 // ---------------------------------------------------------------------------
 
-/// The command path as `STDIO_DASH` spells it.
+/// The command path as `STDIO_DASH` and `LITERAL_DASH` spell it.
 fn joined_path(spec: &CommandSpec) -> String {
     spec.path.join(" ")
 }
 
-fn dash_is_listed(spec: &CommandSpec, flag: &str) -> bool {
+fn pair_listed(list: &[(&str, &str)], spec: &CommandSpec, flag: &str) -> bool {
     let path = joined_path(spec);
-    toolkit_cli::STDIO_DASH
-        .iter()
+    list.iter()
         .any(|(command, listed)| *command == path && *listed == flag)
 }
 
-/// Every `STDIO_DASH` pair names a registered command and one of its value
-/// flags (or `<positional>` on a command that takes positionals), once.
+fn stdio_listed(spec: &CommandSpec, flag: &str) -> bool {
+    pair_listed(toolkit_cli::STDIO_DASH, spec, flag)
+}
+
+fn literal_listed(spec: &CommandSpec, flag: &str) -> bool {
+    pair_listed(toolkit_cli::LITERAL_DASH, spec, flag)
+}
+
+/// Words of a flag name that mark a path parameter. `LITERAL_DASH` must never
+/// list one: a path keeps the fail-closed refusal (#4934). A tripwire on the
+/// name, next to the audit in `docs/migration/cli-bare-dash.md`, not a proof.
+const PATH_WORDS: [&str; 22] = [
+    "file", "path", "dir", "root", "out", "output", "recorded", "snapshot", "manifest", "config",
+    "schema", "catalog", "script", "mappings", "baseline", "input", "csv", "image", "plugin",
+    "model", "requirements", "state",
+];
+
+fn names_a_path(flag: &str) -> bool {
+    flag.trim_start_matches('-')
+        .split('-')
+        .any(|word| PATH_WORDS.contains(&word))
+}
+
+/// Every `STDIO_DASH` and `LITERAL_DASH` pair names a registered command and one
+/// of its value flags (`<positional>` only in `STDIO_DASH`, on a command that
+/// takes positionals), once, in exactly one of the two lists, and a
+/// `LITERAL_DASH` flag never names a path.
 #[test]
-fn every_stdio_dash_entry_names_a_real_command_and_flag() {
+fn every_dash_allowlist_entry_names_a_real_command_and_flag_in_exactly_one_list() {
     let mut seen = BTreeSet::new();
-    for (command, flag) in toolkit_cli::STDIO_DASH {
-        assert!(seen.insert((*command, *flag)), "duplicate {command} {flag}");
-        let spec = COMMANDS
-            .iter()
-            .find(|spec| joined_path(spec) == *command)
-            .unwrap_or_else(|| panic!("STDIO_DASH names no command {command:?}"));
-        assert!(!spec.passthrough, "{command}: passthrough takes every word");
-        if *flag == toolkit_cli::STDIO_DASH_POSITIONAL {
-            assert!(spec.max_positionals > 0, "{command} takes no positionals");
-        } else {
+    for (list_name, list) in [
+        ("STDIO_DASH", toolkit_cli::STDIO_DASH),
+        ("LITERAL_DASH", toolkit_cli::LITERAL_DASH),
+    ] {
+        for (command, flag) in list {
             assert!(
-                all_value_flags(spec).contains(flag),
-                "{command} has no value flag {flag}"
+                seen.insert((*command, *flag)),
+                "{command} {flag} is listed twice or in both lists"
             );
+            let spec = COMMANDS
+                .iter()
+                .find(|spec| joined_path(spec) == *command)
+                .unwrap_or_else(|| panic!("{list_name} names no command {command:?}"));
+            assert!(!spec.passthrough, "{command}: passthrough takes every word");
+            if *flag == toolkit_cli::STDIO_DASH_POSITIONAL {
+                assert_eq!(list_name, "STDIO_DASH", "{command}: a literal positional");
+                assert!(spec.max_positionals > 0, "{command} takes no positionals");
+            } else {
+                assert!(
+                    all_value_flags(spec).contains(flag),
+                    "{command} has no value flag {flag}"
+                );
+            }
+            if list_name == "LITERAL_DASH" {
+                assert!(
+                    !names_a_path(flag),
+                    "{command} {flag} looks like a path parameter; a path is never a literal"
+                );
+            }
         }
+    }
+}
+
+/// The detector behind the path tripwire: the path flags of the reproductions
+/// and of the commands that write or read files are caught, the audited
+/// selectors are not.
+#[test]
+fn the_path_tripwire_catches_path_flags_and_spares_the_audited_selectors() {
+    for path_flag in [
+        "--output",
+        "--out",
+        "--json-file",
+        "--recorded",
+        "--plugin-root",
+        "--snapshot-file",
+        "--model",
+        "--schema",
+        "--migration-dir",
+    ] {
+        assert!(names_a_path(path_flag), "{path_flag}");
+    }
+    for selector in [
+        "--workload",
+        "--agent-id",
+        "--region",
+        "--profile",
+        "--models",
+        "--description",
+        "--dataset-name",
+        "--trace-ids",
+    ] {
+        assert!(!names_a_path(selector), "{selector}");
     }
 }
 
@@ -917,12 +988,14 @@ fn is_dash_refusal(run: &Run, flag: &str) -> bool {
         && first.contains("./-")
 }
 
-/// Every command, every value flag and every positional: `-` is a plain usage
-/// error unless the pair is listed (and then the router accepts it). The scratch
-/// directory holds a sentinel file named `-` that must never be touched, so a
-/// slice cannot receive the marker and quietly treat it as a path.
+/// Every command, every value flag and every positional: a `-` is a plain usage
+/// error unless the pair is listed in exactly one of `STDIO_DASH` and
+/// `LITERAL_DASH` (and then the router accepts it, handing a literal flag the
+/// value `-` unchanged). The scratch directory holds a sentinel file named `-`
+/// that must never be touched, so a slice cannot receive the marker and quietly
+/// treat it as a path.
 #[test]
-fn an_unlisted_bare_dash_is_a_usage_error_and_touches_no_file() {
+fn every_value_flag_and_positional_dash_is_refused_or_in_exactly_one_list() {
     let scratch = Scratch::new();
     let sentinel = scratch.0.join("-");
     fs::write(&sentinel, "KEEP-ORIGINAL\n").expect("write sentinel");
@@ -944,18 +1017,35 @@ fn an_unlisted_bare_dash_is_a_usage_error_and_touches_no_file() {
             cases.push((toolkit_cli::STDIO_DASH_POSITIONAL.to_string(), dash));
         }
         for (flag, args) in cases {
-            let routed = toolkit_cli::route(COMMANDS, &args).is_ok();
-            if dash_is_listed(spec, &flag) {
-                if !routed {
-                    failures.insert(format!("listed pair refused: {}", display_args(&args)));
+            let stdio = stdio_listed(spec, &flag);
+            let literal = literal_listed(spec, &flag);
+            if stdio && literal {
+                failures.insert(format!("in both lists: {}", display_args(&args)));
+                continue;
+            }
+            let routed = toolkit_cli::route(COMMANDS, &args);
+            if stdio || literal {
+                match routed {
+                    Ok(toolkit_cli::Routed::Run(_, invocation)) => {
+                        // A listed literal pair hands the handler exactly `-`.
+                        if literal && !invocation.values_of(&flag).any(|value| value == "-") {
+                            failures.insert(format!(
+                                "literal `-` not passed unchanged: {}",
+                                display_args(&args)
+                            ));
+                        }
+                    }
+                    _ => {
+                        failures.insert(format!("listed pair refused: {}", display_args(&args)));
+                    }
                 }
             } else {
                 // Refused by the router for EVERY registered value flag and
-                // positional, strict or not: a slice never receives a `-` it
-                // could open as a file named `-` (#4780). The diagnostic names
-                // the flag; the registry is the audit, so a new slice cannot
-                // opt out by forgetting a declaration.
-                if routed {
+                // positional that is not listed, strict or not: a slice never
+                // receives a `-` it could open as a file named `-` (#4780). The
+                // diagnostic names the flag; the registry is the audit, so a new
+                // slice cannot opt out by forgetting a declaration.
+                if routed.is_ok() {
                     failures.insert(format!("unlisted `-` routed: {}", display_args(&args)));
                 } else {
                     let run = spawn_toolkit(&args, &scratch.0);
@@ -983,6 +1073,206 @@ fn an_unlisted_bare_dash_is_a_usage_error_and_touches_no_file() {
         .collect();
     assert_eq!(entries.len(), 1, "unexpected files created: {entries:?}");
     assert!(failures.is_empty(), "{failures:?}");
+}
+
+#[cfg(unix)]
+fn make_fifo(path: &Path) {
+    let made = Command::new("mkfifo")
+        .arg(path)
+        .status()
+        .expect("run mkfifo");
+    assert!(made.success(), "mkfifo {}", path.display());
+}
+
+/// A `LITERAL_DASH` flag is a selector, never a path: with a FIFO named `-` in
+/// the working directory (any open for read or write blocks, so the run times
+/// out), every listed pair in both spellings terminates without a dash refusal
+/// and touches nothing in the directory (#4934).
+#[cfg(unix)]
+#[test]
+fn a_literal_dash_flag_never_reaches_the_filesystem() {
+    use std::os::unix::fs::FileTypeExt;
+    for (command, flag) in toolkit_cli::LITERAL_DASH {
+        let spec = COMMANDS
+            .iter()
+            .find(|spec| joined_path(spec) == *command)
+            .expect("registered command");
+        let base: Vec<String> = spec.path.iter().map(|word| (*word).to_string()).collect();
+        let mut spaced = base.clone();
+        spaced.extend([(*flag).to_string(), "-".to_string()]);
+        let mut attached = base;
+        attached.push(format!("{flag}=-"));
+        for args in [spaced, attached] {
+            let scratch = Scratch::new();
+            make_fifo(&scratch.0.join("-"));
+            let run = spawn_toolkit(&args, &scratch.0);
+            assert!(
+                run.status.is_some(),
+                "{}: blocked, a file named - was opened",
+                display_args(&args)
+            );
+            let stderr = String::from_utf8_lossy(&run.stderr);
+            assert!(
+                !stderr.contains("does not accept -"),
+                "{}: refused: {stderr}",
+                display_args(&args)
+            );
+            let entries: Vec<_> = fs::read_dir(&scratch.0)
+                .expect("read scratch")
+                .map(|entry| entry.expect("entry"))
+                .collect();
+            assert_eq!(entries.len(), 1, "{}: files created", display_args(&args));
+            assert!(
+                entries[0].file_type().expect("type").is_fifo(),
+                "{}: ./- replaced",
+                display_args(&args)
+            );
+        }
+    }
+}
+
+/// A schema-valid recommendation whose only workload is named `-`
+/// (decision_required, so no probe or network request is made).
+const DASH_WORKLOAD_RECOMMENDATION: &str = r#"{"schema_version":2,
+ "catalog":{"provider":"anthropic","verified_at":"2026-07-01","verified_region":"us-east-1","source":null},
+ "catalog_provenance":{"anthropic":{"provider":"anthropic","verified_at":"2026-07-01","verified_region":"us-east-1","source":null}},
+ "primary_unit":"-",
+ "workloads":{"-":{"workload_id":"-","provider_module":"anthropic","decision_status":"decision_required",
+  "source":{"provider":"anthropic","model_ids":["claude-3-7-sonnet-latest"],"sdk":"anthropic","api_surface":"messages","source_paths":["src/agent.py"]},
+  "source_analysis":{"detected_version":null,"target_version":null,"version_changed":null},
+  "feature_assessment":{},"primary_model":null,"model_identity":null,"api_path":null,"invocation_model_id":null,
+  "decision_options":[
+   {"model_key":"k","model":"m","api_path":"runtime_converse","invocation_model_id":null,"requires_cris":false,"reason":"r"},
+   {"model_key":"k","model":"m","api_path":"runtime_converse","invocation_model_id":null,"requires_cris":false,"reason":"r"}],
+  "alternatives":[],"rationale":["because"],"blocks":[],"tuning":[],
+  "compatibility":{"native":[],"portable":[],"rearchitecture":[],"unsupported":[]},
+  "architecture_impacts":[],"migration_deltas":[],
+  "evaluation":{"mode":"prompt","gates":["quality"]},
+  "rollout":{"strategy":"decision_required","gate":"g"},
+  "verification":{"region":"us-east-1","catalog_verified_at":"2026-07-01","verified_at":null,
+   "probe_status":"not_run","availability_claim":"provisional","invocation_model_id":null,"required_checks":["probe"]}}}}"#;
+
+/// The reviewer's #4934 reproduction as a positive test: a workload whose ID is
+/// the literal `-` is selected by `--workload -` and `--workload=-`, in both
+/// spellings, exactly like the comma-list control `--workload=-,`. `./-` (a FIFO
+/// here, so any open would block) is never opened and `./-` as the ID would be a
+/// different workload.
+#[cfg(unix)]
+#[test]
+fn verify_model_path_selects_a_workload_named_dash_in_both_spellings() {
+    let spellings: [&[&str]; 3] = [&["--workload", "-"], &["--workload=-"], &["--workload=-,"]];
+    for spelling in spellings {
+        let scratch = Scratch::new();
+        make_fifo(&scratch.0.join("-"));
+        fs::write(
+            scratch.0.join("recommendation.json"),
+            DASH_WORKLOAD_RECOMMENDATION,
+        )
+        .expect("write recommendation");
+        let mut args: Vec<String> = [
+            "startup",
+            "verify-model-path",
+            "recommendation.json",
+            "--output",
+            "verification.json",
+        ]
+        .iter()
+        .map(|word| (*word).to_string())
+        .collect();
+        args.extend(spelling.iter().map(|word| (*word).to_string()));
+        let run = spawn_toolkit(&args, &scratch.0);
+        let stdout = String::from_utf8_lossy(&run.stdout);
+        let stderr = String::from_utf8_lossy(&run.stderr);
+        assert_eq!(run.status, Some(0), "{args:?}: {stdout}{stderr}");
+        assert_eq!(stdout.trim_end(), "RESULT=ok WORKLOADS=1", "{args:?}");
+        let verification =
+            fs::read_to_string(scratch.0.join("verification.json")).expect("verification");
+        assert!(verification.contains("\"-\""), "{args:?}: {verification}");
+    }
+}
+
+/// Another audited literal, complete and offline: `bedrock-resolve identity` takes
+/// three strings and only compares them (`model_identity.py:51-53`), so `-` is an
+/// ordinary, unknown value (`same_model` false, exit 0). A file named `-` is a FIFO
+/// here and must not block the run.
+#[cfg(unix)]
+#[test]
+fn bedrock_resolve_identity_compares_literal_dash_ids() {
+    for spelling in [
+        vec!["--provider", "-", "--source", "-", "--target", "-"],
+        vec!["--provider=-", "--source=-", "--target=-"],
+    ] {
+        let scratch = Scratch::new();
+        make_fifo(&scratch.0.join("-"));
+        let mut args: Vec<String> = ["bedrock-resolve", "identity"]
+            .iter()
+            .map(|word| (*word).to_string())
+            .collect();
+        args.extend(spelling.iter().map(|word| (*word).to_string()));
+        let run = spawn_toolkit(&args, &scratch.0);
+        let stderr = String::from_utf8_lossy(&run.stderr);
+        assert!(
+            !stderr.contains("does not accept -"),
+            "{args:?} refused: {stderr}"
+        );
+        assert!(run.status.is_some(), "{args:?} blocked on ./-");
+        assert_eq!(run.status, Some(0), "{args:?}: {stderr}");
+        assert!(
+            String::from_utf8_lossy(&run.stdout).contains("same_model"),
+            "{args:?}: {:?}",
+            String::from_utf8_lossy(&run.stdout)
+        );
+    }
+}
+
+/// 64-bit FNV-1a, for pinning text without a dependency.
+fn fnv1a64(bytes: &[u8]) -> u64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
+}
+
+/// The global usage text is printed for every command's `--help` and appended to
+/// every usage error, so one slice's description edit changes the help bytes of
+/// every other command (#4936). Its length and FNV-1a hash are pinned to the
+/// text at the base f597a058 (round-14 head plus the #4576 registry): a
+/// deliberate usage change updates the pin in the same commit and says so in the
+/// Issue; an incidental one fails here.
+const USAGE_BASE_LEN: usize = 35200;
+const USAGE_BASE_FNV1A64: u64 = 0xa95b_3df5_10f4_8191;
+
+#[test]
+fn the_global_usage_text_is_byte_identical_to_the_base() {
+    let bytes = toolkit_cli::USAGE.as_bytes();
+    assert_eq!(
+        (bytes.len(), fnv1a64(bytes)),
+        (USAGE_BASE_LEN, USAGE_BASE_FNV1A64),
+        "the global usage text changed; len={} fnv1a64={:#018x}",
+        bytes.len(),
+        fnv1a64(bytes)
+    );
+}
+
+/// Every command's `--help` prints exactly the pinned global usage text, and so
+/// does the usage text of every usage error.
+#[test]
+fn every_command_help_is_the_global_usage_text() {
+    let scratch = Scratch::new();
+    // A passthrough command forwards `--help` to the program it runs.
+    for spec in COMMANDS.iter().filter(|spec| !spec.passthrough) {
+        let mut args: Vec<String> = spec.path.iter().map(|word| (*word).to_string()).collect();
+        args.push("--help".to_string());
+        let run = spawn_toolkit(&args, &scratch.0);
+        assert_eq!(run.status, Some(0), "{args:?}");
+        assert_eq!(
+            String::from_utf8_lossy(&run.stdout),
+            format!("{}\n", toolkit_cli::USAGE),
+            "{args:?}"
+        );
+    }
 }
 
 /// The #4780 reproductions with complete, valid companion arguments: the exact

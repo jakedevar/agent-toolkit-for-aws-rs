@@ -333,6 +333,9 @@ pub const STDIO_DASH: &[(&str, &str)] = &[
     ("cloudwatch snapshots", "--json-file"),
 ];
 
+/// Red-test stub (#4934): no literal `-` pair is listed yet.
+pub const LITERAL_DASH: &[(&str, &str)] = &[];
+
 /// Whether `-` is an accepted stdio marker for `flag` (a value flag name, or
 /// [`STDIO_DASH_POSITIONAL`]) of `spec` according to `allowed`.
 fn dash_listed(allowed: &[(&str, &str)], spec: &CommandSpec, flag: &str) -> bool {

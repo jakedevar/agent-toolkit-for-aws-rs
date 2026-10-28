@@ -312,10 +312,12 @@ fn create_uses_the_pinned_clock_for_expiry_and_creation_time() {
 }
 
 #[test]
-fn arguments_can_come_from_a_file() {
+fn arguments_can_come_from_a_file_but_not_from_stdin() {
     let root = temp_root("argsfile");
     let recorded = recorded_list(&root);
-    let file = write(&root, "args.json", LIST_ARGUMENTS);
+    let arguments =
+        r#"{"service": "svc", "environment": "prod", "instrumentation_type": "BREAKPOINT"}"#;
+    let file = write(&root, "args.json", arguments);
     let output = toolkit(&[
         "cloudwatch",
         "instrumentation",
@@ -326,143 +328,63 @@ fn arguments_can_come_from_a_file() {
         &recorded,
     ]);
     assert_eq!(status(&output), 0, "{}", text(&output.stderr));
+
+    // The router refuses a value that starts with `-`, so `-` (stdin) is a usage error.
+    let output = toolkit(&["cloudwatch", "instrumentation", "list", "--json", "-"]);
+    assert_eq!(status(&output), 2);
+    assert!(output.stdout.is_empty());
 }
 
-/// `toolkit` with `stdin` piped in and `root` as the working directory.
-fn toolkit_stdin(root: &Path, args: &[&str], stdin: &[u8]) -> Output {
+/// Stdin is not an argument source (#4935, PM ruling): `instrumentation` and
+/// `snapshots` refuse a bare `-` for `--json` and `--json-file` like every other
+/// path parameter, in both spellings, never read stdin (it holds a valid document
+/// here) and never open a file named `-`, which stays byte for byte.
+#[test]
+fn a_bare_dash_argument_is_refused_and_stdin_is_never_read() {
     use std::io::Write as _;
-    let mut child = command(args)
-        .current_dir(root)
-        .stdin(Stdio::piped())
-        .spawn()
-        .expect("spawn toolkit");
-    let mut pipe = child.stdin.take().expect("stdin pipe");
-    let input = stdin.to_vec();
-    // A command that stops reading early (the size cap) must not block the writer.
-    let writer = std::thread::spawn(move || {
-        let _ = pipe.write_all(&input);
-    });
-    let output = child.wait_with_output().expect("wait for toolkit");
-    writer.join().expect("writer thread");
-    output
-}
-
-const LIST_ARGUMENTS: &str =
-    r#"{"service": "svc", "environment": "prod", "instrumentation_type": "BREAKPOINT"}"#;
-
-/// The Python `di_instrumentation.py` / `di_snapshots.py` read `--json -` and
-/// `--json-file -` from stdin; so do these two commands (and only these, #4780).
-#[test]
-fn instrumentation_and_snapshots_read_a_dash_argument_from_stdin() {
-    let root = temp_root("stdin");
+    const DECOY: &str = "not json at all";
+    let root = temp_root("dash-refused");
     let recorded = recorded_list(&root);
-    // A decoy ./- that must never be read: stdin wins.
-    fs::write(root.join("-"), "not json at all").expect("write decoy");
-    for spelling in [
-        vec!["--json", "-"],
-        vec!["--json=-"],
-        vec!["--json-file", "-"],
-        vec!["--json-file=-"],
+    fs::write(root.join("-"), DECOY).expect("write ./-");
+    let arguments =
+        r#"{"service": "svc", "environment": "prod", "instrumentation_type": "BREAKPOINT"}"#;
+    for (command_path, op) in [
+        ("instrumentation", "list"),
+        ("snapshots", "sample"),
+        ("instrumentation", "create"),
     ] {
-        let mut args = vec!["cloudwatch", "instrumentation", "list"];
-        args.extend(spelling.iter());
-        args.extend(["--recorded", &recorded]);
-        let output = toolkit_stdin(&root, &args, LIST_ARGUMENTS.as_bytes());
-        assert_eq!(status(&output), 0, "{args:?}: {}", text(&output.stderr));
-        assert!(text(&output.stdout).contains("BREAKPOINT"), "{args:?}");
-        assert_eq!(
-            fs::read_to_string(root.join("-")).expect("decoy"),
-            "not json at all"
-        );
-    }
-    // `snapshots` takes it too: a non-object proves the stdin text was parsed.
-    for spelling in [["--json", "-"], ["--json-file", "-"]] {
-        let mut args = vec!["cloudwatch", "snapshots", "sample"];
-        args.extend(spelling.iter());
-        let output = toolkit_stdin(&root, &args, b"[1]");
-        assert_eq!(status(&output), 2, "{args:?}");
-        assert!(
-            text(&output.stderr).contains("arguments must be a JSON object"),
-            "{args:?}: {}",
-            text(&output.stderr)
-        );
-    }
-}
-
-#[test]
-fn stdin_arguments_are_bounded_utf8_and_a_usage_error_when_bad() {
-    let root = temp_root("stdin-bad");
-    let recorded = recorded_list(&root);
-    let run = |flag: &str, stdin: &[u8]| {
-        toolkit_stdin(
-            &root,
-            &[
-                "cloudwatch",
-                "instrumentation",
-                "list",
-                flag,
-                "-",
-                "--recorded",
-                &recorded,
-            ],
-            stdin,
-        )
-    };
-    let cap = 1024 * 1024;
-    for flag in ["--json", "--json-file"] {
-        // Exactly the cap is accepted (trailing whitespace pads the document).
-        let mut at_cap = LIST_ARGUMENTS.as_bytes().to_vec();
-        at_cap.resize(cap, b' ');
-        let output = run(flag, &at_cap);
-        assert_eq!(status(&output), 0, "{flag}: {}", text(&output.stderr));
-        // One byte more is refused before any parsing.
-        let mut over = at_cap.clone();
-        over.push(b' ');
-        let output = run(flag, &over);
-        assert_eq!(status(&output), 2, "{flag}");
-        assert!(output.stdout.is_empty());
-        let stderr = text(&output.stderr);
-        assert!(stderr.contains("stdin"), "{flag}: {stderr}");
-        assert!(stderr.contains("1048576"), "{flag}: {stderr}");
-        // Not UTF-8.
-        let output = run(flag, b"{\"service\": \"\xff\"}");
-        assert_eq!(status(&output), 2, "{flag}");
-        assert!(text(&output.stderr).contains("UTF-8"), "{flag}");
-        // Empty stdin is not a JSON document.
-        let output = run(flag, b"");
-        assert_eq!(status(&output), 2, "{flag}");
-        assert!(output.stdout.is_empty());
-    }
-}
-
-/// Everything else keeps refusing `-`: the other `cloudwatch` commands have no
-/// Python original that reads stdin, so they never open it and never a file `-`.
-#[test]
-fn other_cloudwatch_commands_still_refuse_a_dash_argument() {
-    let root = temp_root("stdin-refused");
-    fs::write(root.join("-"), LIST_ARGUMENTS).expect("write ./-");
-    let cases: [&[&str]; 6] = [
-        &["cloudwatch", "render", "location", "--json", "-"],
-        &["cloudwatch", "render", "location", "--json-file=-"],
-        &[
-            "cloudwatch",
-            "validate",
-            "instrumentation-type",
-            "--json-file",
-            "-",
-        ],
-        &["cloudwatch", "evaluate-traces", "--recorded", "-"],
-        &["cloudwatch", "capture-dataset", "--recorded=-"],
-        &["cloudwatch", "instrumentation", "list", "--recorded", "-"],
-    ];
-    for args in cases {
-        let output = toolkit_stdin(&root, args, LIST_ARGUMENTS.as_bytes());
-        assert_eq!(status(&output), 2, "{args:?}");
-        assert!(output.stdout.is_empty(), "{args:?}");
-        assert_eq!(
-            fs::read_to_string(root.join("-")).expect("./-"),
-            LIST_ARGUMENTS
-        );
+        for flag in ["--json", "--json-file"] {
+            for attached in [false, true] {
+                let mut args = vec!["cloudwatch", command_path, op];
+                let joined = format!("{flag}=-");
+                if attached {
+                    args.push(&joined);
+                } else {
+                    args.extend([flag, "-"]);
+                }
+                args.extend(["--recorded", &recorded]);
+                let mut child = command(&args)
+                    .current_dir(&*root)
+                    .stdin(Stdio::piped())
+                    .spawn()
+                    .expect("spawn toolkit");
+                let mut pipe = child.stdin.take().expect("stdin pipe");
+                let _ = pipe.write_all(arguments.as_bytes());
+                drop(pipe);
+                let output = child.wait_with_output().expect("wait for toolkit");
+                assert_eq!(status(&output), 2, "{args:?}: {}", text(&output.stderr));
+                assert!(output.stdout.is_empty(), "{args:?}");
+                let stderr = text(&output.stderr);
+                let first = stderr.lines().next().unwrap_or_default();
+                assert!(
+                    first.starts_with("error: invalid arguments: ")
+                        && first.contains(flag)
+                        && first.contains("./-"),
+                    "{args:?}: {first}"
+                );
+                assert_eq!(fs::read_to_string(root.join("-")).expect("./-"), DECOY);
+            }
+        }
     }
 }
 
