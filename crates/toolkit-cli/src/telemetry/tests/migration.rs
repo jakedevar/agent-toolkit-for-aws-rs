@@ -825,7 +825,11 @@ fn set_mode(path: &Path, mode: u32) {
 #[cfg(unix)]
 fn mode_of(path: &Path) -> u32 {
     use std::os::unix::fs::PermissionsExt;
-    fs::symlink_metadata(path).expect("stat").permissions().mode() & 0o777
+    fs::symlink_metadata(path)
+        .expect("stat")
+        .permissions()
+        .mode()
+        & 0o777
 }
 
 /// Records the lock directory's mode at every request, so the lock can be
@@ -850,7 +854,11 @@ fn no_temporaries(run_dir: &Path) {
         .expect("run dir")
         .filter_map(Result::ok)
         .map(|entry| entry.file_name().to_string_lossy().into_owned())
-        .filter(|name| name.ends_with(".tmp"))
+        .filter(|name| {
+            Path::new(name)
+                .extension()
+                .is_some_and(|extension| extension == "tmp")
+        })
         .collect();
     assert!(leftovers.is_empty(), "{leftovers:?}");
 }
@@ -881,7 +889,10 @@ fn a_rebuilt_snapshot_is_readable_and_writable_by_its_owner_only() {
     // Corrupt but private: only the rebuild branch can write the replacement.
     fs::write(p.snapshot_path(), "[1, 2]").expect("corrupt");
     set_mode(&p.snapshot_path(), 0o600);
-    assert!(p.reconcile(SESSION_ID).is_empty(), "a rebuild sends nothing");
+    assert!(
+        p.reconcile(SESSION_ID).is_empty(),
+        "a rebuild sends nothing"
+    );
     assert_eq!(p.snapshot()["runId"], RUN_ID);
     assert_eq!(mode_of(&p.snapshot_path()), 0o600);
     no_temporaries(&p.run_dir);

@@ -254,7 +254,9 @@ impl Lock {
         #[cfg(unix)]
         let owner = {
             use std::os::unix::fs::MetadataExt;
-            fs::symlink_metadata(&path).ok().map(|metadata| metadata.uid())
+            fs::symlink_metadata(&path)
+                .ok()
+                .map(|metadata| metadata.uid())
         };
         #[cfg(not(unix))]
         let owner = None;

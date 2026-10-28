@@ -358,8 +358,11 @@ fn snapshots_and_locks_stay_private_under_a_permissive_umask() {
     // snapshot rebuilt privately, not trusted) and the lock released.
     fs::create_dir(&lock).expect("lock");
     chmod(&lock, 0o777);
-    fs::write(&snapshot, "{\"runId\": \"0badf00d-1111-4222-8333-444444444444\", \"phases\": {}}")
-        .expect("forged");
+    fs::write(
+        &snapshot,
+        "{\"runId\": \"0badf00d-1111-4222-8333-444444444444\", \"phases\": {}}",
+    )
+    .expect("forged");
     chmod(&snapshot, 0o666);
     quiet(&reconcile_under_umask_000(&home, &project, &bundle));
     assert!(!lock.exists(), "the open lock was replaced and released");
