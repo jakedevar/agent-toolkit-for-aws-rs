@@ -357,3 +357,4 @@ Friction: #4727, Rsi #4694, Rsi #4704
   Unstarted slices left: #4382 #4390 #4393 #4396 #4397 #4410 #4411; follow-up #4886. Open P1 #4634 (CloudWatch raw controls) - verify vs #4380/#4662 status before next slot.
   Hygiene TODO: many InProgress slices landed in r13 b8204e9d but still InProgress (e.g. #4380 #4383 #4384 #4385 #4392 #4400-#4403 #4405-#4407 #4451) - verify ancestry and close with landed SHA.
   4/4 busy: 4f5ab2f8 (r15), d60a4063 (#4780), 3209a487 (#4398 repair 2), 6a65d533 (#4404).
+- 10-28 22:12Z: safety net: all 4 parked on daemon jobs (4f5ab2f8 r15, 3209a487 #4398 r2, d60a4063 #4780, 6a65d533 #4404); queue unchanged (GM-explained FIFO wait). Disk 124G, load 9.7. Net re-armed 23:12Z.
