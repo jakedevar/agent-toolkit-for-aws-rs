@@ -284,6 +284,13 @@ impl Tree {
         fs::remove_file(self.root.join(rel)).expect("remove from the copy");
     }
 
+    /// Replaces the file `rel` of the copy with a directory of the same name.
+    pub(super) fn replace_with_dir(&self, rel: &str) {
+        let path = self.root.join(rel);
+        fs::remove_file(&path).expect("remove from the copy");
+        fs::create_dir(&path).expect("make the directory in its place");
+    }
+
     /// Writes the file `rel` of the copy.
     pub(super) fn write(&self, rel: &str, content: &str) {
         let path = self.root.join(rel);

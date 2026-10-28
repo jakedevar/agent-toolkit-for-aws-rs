@@ -793,23 +793,24 @@ fn required_artifacts_and_verdicts(matrix: &Matrix) -> Result<(), String> {
         if !wants_ai && *ai != Json::Null {
             return Err(format!("{id}: AI outcome must be null"));
         }
-        let integration_present = matrix
+        let integration_path = matrix
             .root
             .join(&case.dir)
-            .join("integration-validation.json")
-            .exists();
+            .join("integration-validation.json");
         if mode == "combined" {
             if !same(integration, &integration_expected) {
                 return Err(format!("{id}: wrong integration outcome"));
             }
-            if !integration_present {
+            // `integration_path.is_file()`: a directory of that name is not the artifact.
+            if !integration_path.is_file() {
                 return Err(format!("{id}: integration-validation.json is missing"));
             }
         } else {
             if *integration != Json::Null {
                 return Err(format!("{id}: integration outcome must be null"));
             }
-            if integration_present {
+            // `not integration_path.exists()`: nothing of that name may exist.
+            if integration_path.exists() {
                 return Err(format!("{id}: unexpected integration-validation.json"));
             }
         }
@@ -861,6 +862,12 @@ fn test_required_artifacts_and_verdicts_match_each_mode() {
         "verdicts-integration-file",
         required_artifacts_and_verdicts,
         |copy| copy.remove("combined-gcp-gemini/integration-validation.json"),
+        "integration-validation.json is missing",
+    );
+    check_matrix(
+        "verdicts-integration-directory",
+        required_artifacts_and_verdicts,
+        |copy| copy.replace_with_dir("combined-gcp-gemini/integration-validation.json"),
         "integration-validation.json is missing",
     );
     check_matrix(
