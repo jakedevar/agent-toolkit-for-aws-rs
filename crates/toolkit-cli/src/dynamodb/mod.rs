@@ -42,8 +42,13 @@ use toolkit_core::{parse_json, read_regular_file, write_regular_file, Json, Tool
 
 use crate::{Invocation, Output};
 
+pub mod bench;
+pub mod bench_fmt;
+pub mod bench_rows;
 pub mod cost;
 pub mod iterate;
+pub mod perf_render;
+pub mod perf_report;
 pub mod pyfmt;
 
 pub use iterate::iterate_design_command;
