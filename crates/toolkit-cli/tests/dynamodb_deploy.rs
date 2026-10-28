@@ -671,7 +671,7 @@ fn production_identities_are_refused_by_arn_or_alias() {
             "xyz",
             "['live']",
         ),
-        ("arn:aws:iam::111122223333:user/dev", "mc-PRD", "['prd']"),
+        ("arn:aws:iam::111122223333:user/dev", "mc-prd", "['prd']"),
     ] {
         let recording = format!(
             r#"{{"calls": [

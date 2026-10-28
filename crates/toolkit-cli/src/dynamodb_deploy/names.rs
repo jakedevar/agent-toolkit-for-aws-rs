@@ -148,18 +148,19 @@ fn arn_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || "+=,.@_-/:".contains(c)
 }
 
-/// An IAM account alias: 3 to 63 letters, digits and hyphens. Real aliases are
-/// lowercase; any case passes so that a production marker is never skipped.
+/// An IAM account alias: 3 to 63 lowercase letters, digits and hyphens. A
+/// mixed-case value is not a real alias and is refused, so a credential-shaped
+/// string is never shown.
 pub(crate) fn check_alias(what: &str, alias: &str) -> Result<(), ToolkitError> {
     if (3..=63).contains(&alias.len())
         && alias
             .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
     {
         Ok(())
     } else {
         Err(die(format!(
-            "{what} must be 3 to 63 letters, digits and hyphens."
+            "{what} must be 3 to 63 lowercase letters, digits and hyphens."
         )))
     }
 }

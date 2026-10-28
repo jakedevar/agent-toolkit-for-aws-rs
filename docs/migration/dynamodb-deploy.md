@@ -189,7 +189,7 @@ Deleting commands appear once each, behind those guards.
     STS ARN (`arn:<aws|aws-cn|aws-us-gov>:<iam|sts>::<account>:<resource>`,
     resource characters `A-Za-z0-9+=,.@_-/:`) whose account equals the
     validated 12-digit `Account`; anything else refuses before any output. A
-    present alias must be 3 to 63 letters, digits and hyphens. Offline
+    present alias must be 3 to 63 lowercase letters, digits and hyphens (a mixed-case or credential-shaped value is refused and never shown). Offline
     recordings stay unauthenticated fixtures: this is structural validity only.
 12. **Diagnostics for recorded and manifest values never echo them (#4824).**
     `check_account`, `check_caller_arn`, `check_alias`, the prefix, table,
