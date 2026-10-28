@@ -192,7 +192,7 @@ fn test_both_branch_selects_guides_from_actual_provider_presence() {
         &[
             (
                 edit_replace!(GCP_DESIGN_AI, "ACTUALLY", "always"),
-                "ACTUALLY",
+                "actual provider presence",
             ),
             (
                 edit_replace!(GCP_DESIGN_AI, "ai-anthropic-to-bedrock.md", "ai-x.md"),

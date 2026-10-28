@@ -201,7 +201,13 @@ fn test_gcp_discover_checks_anthropic_row_status_not_bare_existence() {
                 "retry_pending",
             ),
             (
-                edit_replace!(GCP_DISCOVER, "status: \"ok\"", "status: ok"),
+                crate::common::Edit {
+                    file: GCP_DISCOVER,
+                    apply: |t| {
+                        t.replace("status: \"ok\"", "status: ok")
+                            .replace("status == \"ok\"", "status == ok")
+                    },
+                },
                 "no longer checks captures[] row status",
             ),
         ],

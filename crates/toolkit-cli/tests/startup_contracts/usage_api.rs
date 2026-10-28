@@ -184,7 +184,7 @@ fn test_anthropic_cost_report_uses_single_call_with_compound_group_by() {
                     "group_by[]=workspace_id&group_by[]=description",
                     "group_by[]=description"
                 ),
-                "compound",
+                "grouped by both workspace_id",
             ),
             (
                 edit_replace!(

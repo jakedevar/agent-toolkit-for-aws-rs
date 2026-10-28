@@ -302,3 +302,10 @@ for the manager under the "remote managed-service Python payloads" rule of AGENT
   Python as well; the port keeps the assertion and the harness proves the anchor itself is required.
 * The Python `tmp_path` goldens for the Azure clarify fast path are not copied; #4408's tests run
   the asserters on the committed trees and on edited copies.
+* Two Python assertions are implied by a stronger one in the same region and are not ported
+  separately, because mutating the weaker needle always trips the stronger rule first:
+  `"unavailable" in section.lower()` (implied by `"cost_unavailable" in section`, report-generator
+  §6.3) and the bare `"model_permaslug" in section` (implied by the longer
+  `join key is /activity's model_permaslug field` assertion). One design-mapping assertion
+  (`"resource_id"` inside the 1200-character `**Required fields**` window) is a substring of a
+  sibling assertion; its mutation must fail the rules but not for a specific reason (`Rule::loose`).

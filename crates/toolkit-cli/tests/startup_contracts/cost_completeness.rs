@@ -125,7 +125,7 @@ fn test_report_generator_documents_cost_unavailable_presentation_rule() {
         Rule::new(REPORT_GENERATOR)
             .scope(Scope::Span("## 6.3", "# 6.4"))
             .ci()
-            .all(&["unavailable", "savings"]),
+            .all(&["savings"]),
     ]);
 }
 

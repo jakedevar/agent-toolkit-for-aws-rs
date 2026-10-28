@@ -44,6 +44,9 @@ pub struct Rule {
     pub norm: bool,
     /// Match case-insensitively (`text.lower()`); needles must then be lower case.
     pub ci: bool,
+    /// Mutations of this rule only have to make the rules fail, for any reason (its
+    /// needle is a substring of another rule's, so the other rule may trip first).
+    pub loose: bool,
     pub all: Vec<&'static str>,
     /// Groups of alternatives: at least one of each group must be present.
     pub any: Vec<Vec<&'static str>>,
@@ -59,6 +62,7 @@ impl Rule {
             scope: Scope::Whole,
             norm: false,
             ci: false,
+            loose: false,
             all: Vec::new(),
             any: Vec::new(),
             none: Vec::new(),
@@ -71,6 +75,10 @@ impl Rule {
     }
     pub fn norm(mut self) -> Self {
         self.norm = true;
+        self
+    }
+    pub fn loose(mut self) -> Self {
+        self.loose = true;
         self
     }
     pub fn ci(mut self) -> Self {
@@ -324,7 +332,7 @@ pub fn check_rules(rules: &[Rule]) {
                     rule.file
                 ),
                 Err(reason) => assert!(
-                    reason.contains(&expected),
+                    rule.loose || reason.contains(&expected),
                     "copy of {} broken as [{expected}] failed for another reason: {reason}",
                     rule.file
                 ),

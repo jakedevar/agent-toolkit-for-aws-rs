@@ -16,6 +16,7 @@ fn test_design_mapping_deferred_entry_carries_resource_id() {
             .scope(Scope::From("### 2F: Specialist Gate"))
             .all(&["\"resource_id\"", "`resource_id`"]),
         Rule::new(DESIGN_MAPPING)
+            .loose()
             .scope(Scope::WindowIn(
                 "### 2F: Specialist Gate",
                 "**Required fields**",

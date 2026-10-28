@@ -36,7 +36,6 @@ fn test_cost_provenance_join_key_is_model_permaslug_not_model() {
         r.scope(scope)
             .all(&[
                 "join key is `/activity`'s `model_permaslug` field",
-                "model_permaslug",
                 "usage_by_model[].model` stays in whatever short form it already uses",
                 "never leaks into the output",
             ])

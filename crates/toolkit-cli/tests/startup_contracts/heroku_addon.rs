@@ -119,12 +119,22 @@ fn test_discover_terraform_resource_id_and_attribute_table_include_addon_name() 
                 "tf_resource_name_fallback",
             ),
             (
-                edit_replace!(
-                    TERRAFORM,
-                    "#### `heroku_formation`",
-                    "addon_name\n#### `heroku_formation`"
-                ),
-                "unchanged",
+                crate::common::Edit {
+                    file: TERRAFORM,
+                    apply: |t| {
+                        let s = t.find("#### `heroku_addon`").expect("heroku_addon heading");
+                        let e = t
+                            .find("#### `heroku_formation`")
+                            .expect("heroku_formation heading");
+                        format!(
+                            "{}{}{}",
+                            &t[..s],
+                            t[s..e].replace("addon_name", "name"),
+                            &t[e..]
+                        )
+                    },
+                },
+                "heroku_addon attribute table lost addon_name",
             ),
         ],
     );
