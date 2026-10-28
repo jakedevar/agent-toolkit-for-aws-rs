@@ -31,7 +31,9 @@
 
 use std::net::{Ipv4Addr, Ipv6Addr};
 
-use toolkit_aws::recorded::{list_value, nullable_list, object_members, optional_list};
+use toolkit_aws::recorded::{
+    list_value, nullable_list, object_members, optional_list, optional_member, optional_object,
+};
 use toolkit_core::Json;
 
 use crate::aurora::pyfmt::truthy;
@@ -347,18 +349,29 @@ fn audit_security_groups(describe: &Json, refs: GroupRefs) -> Vec<Finding> {
             return findings;
         }
     }
-    // A group nobody described was not inspected: never report it as safe.
-    let Some(records) = describe.get("security_groups").and_then(list_value) else {
-        let shown: Vec<String> = sg_ids.iter().map(|id| show(id)).collect();
-        findings.push(Finding::new(
-            "Security groups",
-            "ERROR",
-            format!(
-                "Could not inspect: no security group records were supplied for {}",
-                shown.join(", ")
-            ),
-        ));
-        return findings;
+    // A group nobody described was not inspected: never report it as safe. A
+    // `security_groups` that is present but not a list (`null` included) is
+    // named by its type, never a value (#4870).
+    let records = match optional_member(describe, "security_groups", "a list", list_value) {
+        Ok(Some(records)) => records,
+        absent_or_wrong => {
+            let detail = match absent_or_wrong {
+                Err(error) => error.to_string(),
+                Ok(_) => {
+                    let shown: Vec<String> = sg_ids.iter().map(|id| show(id)).collect();
+                    format!(
+                        "no security group records were supplied for {}",
+                        shown.join(", ")
+                    )
+                }
+            };
+            findings.push(Finding::new(
+                "Security groups",
+                "ERROR",
+                format!("Could not inspect: {detail}"),
+            ));
+            return findings;
+        }
     };
 
     for id in &sg_ids {
@@ -446,9 +459,10 @@ fn audit_security_groups(describe: &Json, refs: GroupRefs) -> Vec<Finding> {
 }
 
 /// The one recorded resource whose `key` is exactly `id`, or why there is none:
-/// no record, a record without that identifier, more than one record, or a
-/// `list` that is present but `null` or not a list (#4839; the message names
-/// the member and its type, never a value).
+/// no record, a record without that identifier, more than one record, a
+/// `list` that is present but `null` or not a list (#4839), or a describe file
+/// that is not an object (#4870). The message names the member and its type,
+/// never a value.
 fn resource_record<'a>(
     describe: &'a Json,
     list: &str,
@@ -457,6 +471,13 @@ fn resource_record<'a>(
 ) -> Result<&'a Json, String> {
     if id.trim().is_empty() {
         return Err("not found".to_string());
+    }
+    // A describe file that is not an object holds no recorded member (#4870).
+    if object_members(describe).is_none() {
+        return Err(format!(
+            "cannot be audited: the describe file must be an object (it is {})",
+            describe.type_name()
+        ));
     }
     let records =
         optional_list(describe, list).map_err(|error| format!("cannot be audited: {error}"))?;
@@ -470,6 +491,24 @@ fn resource_record<'a>(
         return Err("is recorded more than once".to_string());
     }
     Ok(record)
+}
+
+/// The `CacheUsageLimits.<limit>` object of a serverless cache: `None` when it
+/// or `CacheUsageLimits` is absent (no limit set), or why it cannot be read
+/// when either is present but not an object, `null` included (#4870). The
+/// reason names the member and its type, never a value.
+fn usage_limit<'a>(cache: &'a Json, limit: &str) -> Result<Option<&'a Json>, String> {
+    let Some(limits) = optional_object(cache, "CacheUsageLimits")? else {
+        return Ok(None);
+    };
+    optional_object(limits, limit).map_err(|error| format!("CacheUsageLimits.{error}"))
+}
+
+/// The recorded `describe_cache_clusters` answers by cluster id: `None` when
+/// absent, or why they cannot be read when `cache_clusters` is present but not
+/// an object, `null` included (#4870).
+fn cluster_records(describe: &Json) -> Result<Option<&Json>, String> {
+    Ok(optional_object(describe, "cache_clusters")?)
 }
 
 /// The security groups a serverless cache references.
@@ -627,52 +666,60 @@ pub fn audit_serverless(describe: &Json, cache_name: &str) -> Audit {
         }
     }
 
-    // Usage limits (cost control).
+    // Usage limits (cost control). An absent limit is unset; a limit object
+    // that is present but not an object (`null` included) is not inspected
+    // (#4870).
     let empty = Json::Object(Vec::new());
-    let limits = cache.get("CacheUsageLimits").unwrap_or(&empty);
-    let data_limit = limits.get("DataStorage").unwrap_or(&empty);
-    let ecpu_limit = limits.get("ECPUPerSecond").unwrap_or(&empty);
-    match data_limit.get("Maximum") {
-        Some(maximum) if positive_number(maximum) => {
-            info.push(kv("max_data_gb", maximum.clone()));
-            findings.push(Finding::new(
-                "Data storage limit",
-                "PASS",
-                format!(
-                    "{} {} max",
-                    show(&py_str(maximum)),
-                    describe_text(data_limit.get("Unit"), "GB")
-                ),
-            ));
+    match usage_limit(cache, "DataStorage") {
+        Err(why) => findings.push(not_inspected("Data storage limit", &why)),
+        Ok(limit) => {
+            let data_limit = limit.unwrap_or(&empty);
+            match data_limit.get("Maximum") {
+                Some(maximum) if positive_number(maximum) => {
+                    info.push(kv("max_data_gb", maximum.clone()));
+                    findings.push(Finding::new(
+                        "Data storage limit",
+                        "PASS",
+                        format!(
+                            "{} {} max",
+                            show(&py_str(maximum)),
+                            describe_text(data_limit.get("Unit"), "GB")
+                        ),
+                    ));
+                }
+                Some(maximum) if truthy(Some(maximum)) => findings.push(not_inspected(
+                    "Data storage limit",
+                    "CacheUsageLimits.DataStorage.Maximum is not a positive number",
+                )),
+                _ => findings.push(Finding::new(
+                    "Data storage limit",
+                    "WARN",
+                    "No data storage limit set — costs could grow unbounded",
+                )),
+            }
         }
-        Some(maximum) if truthy(Some(maximum)) => findings.push(not_inspected(
-            "Data storage limit",
-            "CacheUsageLimits.DataStorage.Maximum is not a positive number",
-        )),
-        _ => findings.push(Finding::new(
-            "Data storage limit",
-            "WARN",
-            "No data storage limit set — costs could grow unbounded",
-        )),
     }
-    match ecpu_limit.get("Maximum") {
-        Some(maximum) if positive_number(maximum) => {
-            info.push(kv("max_ecpu_per_sec", maximum.clone()));
-            findings.push(Finding::new(
+    match usage_limit(cache, "ECPUPerSecond") {
+        Err(why) => findings.push(not_inspected("ECPU limit", &why)),
+        Ok(limit) => match limit.unwrap_or(&empty).get("Maximum") {
+            Some(maximum) if positive_number(maximum) => {
+                info.push(kv("max_ecpu_per_sec", maximum.clone()));
+                findings.push(Finding::new(
+                    "ECPU limit",
+                    "PASS",
+                    format!("{} ECPUs/sec max", show(&py_str(maximum))),
+                ));
+            }
+            Some(maximum) if truthy(Some(maximum)) => findings.push(not_inspected(
                 "ECPU limit",
-                "PASS",
-                format!("{} ECPUs/sec max", show(&py_str(maximum))),
-            ));
-        }
-        Some(maximum) if truthy(Some(maximum)) => findings.push(not_inspected(
-            "ECPU limit",
-            "CacheUsageLimits.ECPUPerSecond.Maximum is not a positive number",
-        )),
-        _ => findings.push(Finding::new(
-            "ECPU limit",
-            "WARN",
-            "No ECPU limit set — costs could grow unbounded",
-        )),
+                "CacheUsageLimits.ECPUPerSecond.Maximum is not a positive number",
+            )),
+            _ => findings.push(Finding::new(
+                "ECPU limit",
+                "WARN",
+                "No ECPU limit set — costs could grow unbounded",
+            )),
+        },
     }
 
     // Security groups.
@@ -691,12 +738,15 @@ pub fn audit_serverless(describe: &Json, cache_name: &str) -> Audit {
 }
 
 /// The recorded `describe_cache_clusters` answer for `id` (an entry holding an
-/// `error` stands for a failed call). Only the engine details read this.
+/// `error` stands for a failed call). Only the engine details read this: a
+/// `cache_clusters` or cluster record that is not an object, like a missing
+/// one, leaves them unknown.
 fn cluster_of<'a>(describe: &'a Json, id: &str) -> Option<&'a Json> {
-    describe
-        .get("cache_clusters")
-        .and_then(|all| all.get(id))
-        .filter(|cluster| cluster.get("error").is_none())
+    cluster_records(describe)
+        .ok()
+        .flatten()?
+        .get(id)
+        .filter(|cluster| object_members(cluster).is_some() && cluster.get("error").is_none())
 }
 
 /// Adds the member-cluster ids of the `list` member of `owner` (absent or
@@ -771,10 +821,17 @@ fn replication_group_refs(describe: &Json, group: &Json) -> GroupRefs {
     }
     members.sort();
 
-    let clusters = describe.get("cache_clusters");
+    let clusters = cluster_records(describe);
     for id in &members {
         let check = format!("Security groups of cluster {}", show(id));
-        let Some(cluster) = clusters.and_then(|all| all.get(id)) else {
+        let records = match &clusters {
+            Ok(records) => *records,
+            Err(why) => {
+                refs.fail(check, why);
+                continue;
+            }
+        };
+        let Some(cluster) = records.and_then(|all| all.get(id)) else {
             refs.fail(
                 check,
                 "no describe_cache_clusters record for this member was supplied",
