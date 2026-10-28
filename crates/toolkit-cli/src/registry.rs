@@ -107,6 +107,7 @@ pub(crate) const SLICES: &[Slice] = &[
     crate::startup::skill_refs::SLICE,
     crate::startup::terraform::SLICE,
     crate::sync::SLICE,
+    crate::telemetry::SLICE,
 ];
 
 /// The slices that predate the registry, in the order their routes had in the
@@ -544,7 +545,7 @@ mod tests {
     /// The route paths of the old `COMMANDS` table (commit ce0eaf6a, before the
     /// registry), in table order: the public order of [`COMMANDS`]. The routes of
     /// slices added after the registry follow at the end, ordered by slice name.
-    const LEGACY_COMMAND_ORDER: [&str; 81] = [
+    const LEGACY_COMMAND_ORDER: [&str; 82] = [
         "skills list",
         "manifests validate",
         "spec validate",
@@ -628,6 +629,8 @@ mod tests {
         "documentdb wa-review",
         "neptune validate-input",
         "neptune seed",
+        // telemetry (#4398):
+        "telemetry",
     ];
 
     #[test]

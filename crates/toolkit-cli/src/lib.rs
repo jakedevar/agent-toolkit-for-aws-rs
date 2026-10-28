@@ -49,6 +49,7 @@ mod skills;
 pub mod spec;
 pub mod startup;
 mod sync;
+mod telemetry;
 
 pub use registry::{COMMANDS, USAGE};
 

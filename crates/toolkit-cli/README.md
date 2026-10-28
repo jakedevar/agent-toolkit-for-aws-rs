@@ -1416,3 +1416,46 @@ toolkit cloudwatch capture-dataset --trace-ids IDS [--mode create|add] [--datase
 Parity table, recorded format, intentional changes, the Python callers left for
 #4415 and the live-binding follow-up:
 [docs/migration/cw-api.md](../../docs/migration/cw-api.md).
+
+## telemetry (#4398)
+
+Plugin usage-data consent, persistence and emission: the Rust port of
+`plugins/aws-startup-advisor/scripts/telemetry`. The full contract, the intentional
+changes and the cutover notes are in `docs/migration/telemetry.md`.
+
+```
+toolkit telemetry consent show|status|accept|opt-out|session-start
+toolkit telemetry status | reconcile
+toolkit telemetry skill-invoked [--skill NAME]
+toolkit telemetry migration [--reconcile] [--session-end] [--via cli]
+toolkit telemetry bundles [--write | --check] [--plugin-root DIR]
+```
+
+Any of them also takes `--telemetry-dir DIR` (the directory with `version.json`: a skill
+bundle or `scripts/telemetry`; without it there is no plugin version and nothing is sent).
+
+- One registered command with `passthrough: true`: every word after `telemetry` reaches the
+  handler verbatim, so a host hook can never fail on a word it did not expect. The hook
+  subcommands (`skill-invoked`, `migration`, `consent session-start`) always exit 0 and are
+  silent (`session-start` prints the one instruction a host injects into the agent's context);
+  `consent`, `status`, `reconcile` and `bundles` exit 2 on an unknown word.
+- **Consent is fail-closed.** Only `~/.aws-startup-advisor/plugin-telemetry.json` with
+  `consentStatus` `ACCEPTED` and a UUID `installId` permits an event. A missing, unreadable,
+  malformed or oversized record, an unknown home directory and `OPT_OUT` all mean no emission;
+  there is no environment switch. `consent accept` and `opt-out` write atomically (mode 0600)
+  and exit 1 when they cannot; `show` prints the approved notice and records nothing.
+- **This build sends nothing.** Requests go through an injected sink; the shipped one reports
+  every request unreachable (no HTTP client), so `migration` holds its events rather than losing
+  them. Tests use a recording sink.
+- `migration` / `reconcile` diff `.migration/<id>/.phase-status.json` (and `.gate-failures.json`)
+  against `.telemetry-snapshot.json`, take a per-run lock, and send `RUN_STARTED`,
+  `PHASE_COMPLETED`, `GATE_FAILED`, `RUN_COMPLETED` (once per `runMode`). `reconcile` is
+  `migration --reconcile --via cli`, the route for hosts without plugin hooks; it does nothing
+  where the plugin's hooks are reachable.
+- `status` prints `{"source", "reportingMode", "consentStatus", "pluginVersion"}` and sends and
+  writes nothing.
+- `bundles` generates (`--write`) or checks (`--check`, the default) the vendored copies of the
+  telemetry runtime and the DSL interpreter in the four migration skills; unexpected bundle files
+  are reported, never deleted.
+- Diagnostics name paths and reason classes, never the contents of the record, a run file or a
+  manifest.

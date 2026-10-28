@@ -2129,6 +2129,10 @@ const INVENTORY: &[(&str, Class)] = &[
         "sync",
         Class::NotRecorded("synchronizes the vendored skill copies of the repository"),
     ),
+    (
+        "telemetry",
+        Class::NotRecorded("the consent record, migration run files and skill bundles on disk"),
+    ),
 ];
 
 /// The whole contract over the real sources, scoped by [`INVENTORY`].
