@@ -432,7 +432,9 @@ live once in `toolkit_aws::recorded`; use it instead of writing your own.
 
 `tests/recorded_contract.rs` enforces this without keying on any spelling you
 choose (a type name, a helper name, a way of nesting `match`). It parses every
-non-test file of `crates/toolkit-cli/src` with `syn` and decides the scope from
+non-test file of `crates/toolkit-cli/src` with `syn` (a test file is
+`tests.rs`, anything under `tests/`, or the file of a `#[cfg(test)] mod NAME;`
+and its submodules, whatever `NAME` is, #4869) and decides the scope from
 an **inventory** of every top-level module of `src` (#4752). A new module fails
 the contract until it is listed there, as one of:
 

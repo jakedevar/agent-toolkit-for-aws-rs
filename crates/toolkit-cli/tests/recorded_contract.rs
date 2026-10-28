@@ -83,9 +83,10 @@
 //! inventory entry that misstates what a module reads) is a review blocker.
 //! A further evasion blocks a review only when it falls in a class above.
 //!
-//! Test code (`tests.rs`, `tests/`, `#[cfg(test)]` items) is out of scope. The
-//! README section "Slices without a live AWS client" is the guide for slice
-//! authors.
+//! Test code (`tests.rs`, `tests/`, `#[cfg(test)]` items, and the file of an
+//! out-of-line `#[cfg(test)] mod NAME;` with its submodules, whatever its
+//! name, #4869) is out of scope. The README section "Slices without a live
+//! AWS client" is the guide for slice authors.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs;
@@ -1645,6 +1646,53 @@ fn classify(
     pending
 }
 
+/// The module paths (relative to `src`, `/`-separated, no extension) of every
+/// `#[cfg(test)] mod NAME;` and `#[cfg(test)] mod NAME { .. }` (#4869). An
+/// out-of-line test module lives in `NAME.rs` or `NAME/mod.rs` beside its
+/// parent module, whatever its name (`tests_core`, `cost_tests`), and its own
+/// submodules under `NAME/`: all of it is test code. A `#[path]` attribute is
+/// not followed.
+fn cfg_test_modules(files: &[Parsed]) -> Vec<String> {
+    fn walk(items: &[Item], dir: &str, out: &mut Vec<String>) {
+        for item in items {
+            let Item::Mod(module) = item else { continue };
+            let name = name_of(&module.ident);
+            let child = if dir.is_empty() {
+                name
+            } else {
+                format!("{dir}/{name}")
+            };
+            if is_cfg_test(&module.attrs) {
+                out.push(child);
+            } else if let Some((_, items)) = &module.content {
+                walk(items, &child, out);
+            }
+        }
+    }
+    let mut modules = Vec::new();
+    for file in files {
+        let Ok(ast) = &file.ast else { continue };
+        // The directory that holds the file's child modules: `a/mod.rs`,
+        // `lib.rs` and `main.rs` own their directory, `a/b.rs` owns `a/b/`.
+        let stem = file.relative.strip_suffix(".rs").unwrap_or(&file.relative);
+        let dir = match stem.rsplit_once('/') {
+            Some((parent, "mod")) => parent,
+            None if ROOTS.contains(&stem) || stem == "mod" => "",
+            _ => stem,
+        };
+        walk(&ast.items, dir, &mut modules);
+    }
+    modules
+}
+
+/// Whether the file `relative` is (inside) one of the test `modules`.
+fn is_in_test_module(relative: &str, modules: &[String]) -> bool {
+    modules.iter().any(|module| {
+        relative.strip_suffix(".rs") == Some(module.as_str())
+            || relative.starts_with(&format!("{module}/"))
+    })
+}
+
 /// The contract over `files`, scoped by the recording signals alone.
 fn analyse(files: &[SourceFile]) -> Report {
     analyse_with(files, None)
@@ -1653,7 +1701,9 @@ fn analyse(files: &[SourceFile]) -> Report {
 /// The contract over `files`; with an inventory, every slice must be
 /// classified and the classification decides the scope.
 fn analyse_with(files: &[SourceFile], inventory: Option<&[(&str, Class)]>) -> Report {
-    let parsed: Vec<Parsed> = files.iter().map(parse).collect();
+    let mut parsed: Vec<Parsed> = files.iter().map(parse).collect();
+    let test_modules = cfg_test_modules(&parsed);
+    parsed.retain(|file| !is_in_test_module(&file.relative, &test_modules));
     let constants = flag_constants(&parsed);
     let names = crate_names(&parsed);
     let mut report = Report::default();
@@ -3452,4 +3502,43 @@ fn a_read_added_beside_a_pending_read_fails_the_real_contract() {
         report.inventory[0].starts_with("pending slice bedrock_resolve (#4839) has "),
         "{report:?}"
     );
+}
+
+#[test]
+fn an_out_of_line_cfg_test_module_is_test_code_whatever_its_name() {
+    // #4869: `#[cfg(test)] mod tests_core;` brings in `tests_core.rs` (or
+    // `tests_core/mod.rs`) and its own submodules; none is production code.
+    let read = "fn items(r: &Json) -> &[Json] {\n    match r.get(\"Items\") { Some(Json::Array(v)) => v, _ => &[] }\n}";
+    let files = vec![
+        file(
+            "fresh/mod.rs",
+            "use toolkit_aws::recorded::Step;\n#[cfg(test)]\nmod tests_core;\n#[cfg(test)]\nmod fixtures;\nmod inner {\n    #[cfg(test)]\n    mod deep;\n}\nmod live;\nmod sub;",
+        ),
+        file("fresh/tests_core.rs", read),
+        file("fresh/fixtures/mod.rs", read),
+        file("fresh/fixtures/more.rs", read),
+        file("fresh/inner/deep.rs", read),
+        file("fresh/sub.rs", "#[cfg(test)]\nmod check;\npub fn run() {}"),
+        file("fresh/sub/check.rs", read),
+        // Production modules beside them still count.
+        file("fresh/live.rs", read),
+        file("fresh/tests_core_live.rs", read),
+        // A top-level test module of the crate root.
+        file("lib.rs", "pub mod fresh;\n#[cfg(test)]\nmod crate_checks;"),
+        file("crate_checks.rs", read),
+    ];
+    let report = analyse_with(&files, Some(&[("fresh", Class::Recorded)]));
+    let mut at: Vec<&str> = report
+        .reads
+        .iter()
+        .map(|read| read.split(':').next().expect("file"))
+        .collect();
+    at.sort_unstable();
+    assert_eq!(
+        at,
+        vec!["fresh/live.rs", "fresh/tests_core_live.rs"],
+        "{report:?}"
+    );
+    // `crate_checks` is test code, so it needs no inventory entry.
+    assert!(report.inventory.is_empty(), "{report:?}");
 }
