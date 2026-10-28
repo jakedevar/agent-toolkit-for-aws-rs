@@ -248,3 +248,7 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 02:05Z: #4381 repair r3 e9c83bd7e84ac3c382c8b23291f19cb2bb2d59c0 (955e5b50; #4816 #4817 #4818 fixed + mutation harness 48 scenarios/1641 runs, found+fixed 3 more shape gaps; parent-proof 62efc686 116 violations on d29a2585 files; scoped dec1b262 ok base 8f429632, aws 181 cli 2194). Rulings accepted: check-status service errors best-effort (Python parity); batch report may list ARNs/Code/Message on exit 1; null score = unscored.
   Round-4 FINAL re-review #4742 worker 36f263f8 (Codex sol high, pinned, op 7a5052ff), blocking limited to findings/harness coverage/allowlist/regression; other classes -> split scope.
   4/4 busy: 955d98b9 (#4391 repair), 8fdc14b5 (#4751 scanner), 658303dd (#4806), 36f263f8 (#4742 r4).
+- 02:10Z: #4391 repair baa7989e04eb9280313057a3d91eef6f159491d7 (955d98b9; #4822 any IAM failure refuses; #4823 check_caller_arn + account match + alias shape; #4824 field/shape-only diags incl. teardown manifest; parent-proof 8 integ + 4 unit fail on 2b60c3ee files; fmt be269860 clippy d929b146 ok; scoped 80ba07f6 only the 3 known relational reds, mis-flagged new because baseline_comparison incomplete -> harness kaizen Rsi #4835).
+  Re-review #4819 r2 worker 9d76e4eb (Codex sol high, pinned, op 0bed14d1).
+  NOTE for integration: #4391 at baa7989e will show 3 relational reds until combined with r13 (b8204e9d fixes them).
+  4/4 busy: 8fdc14b5 (#4751 scanner), 658303dd (#4806), 36f263f8 (#4742 r4), 9d76e4eb (#4819 r2).
