@@ -348,3 +348,5 @@ Friction: #4727, Rsi #4694, Rsi #4704
   4/4 busy: 15fa44f7 (#4398 repair), 4f5ab2f8 (r15), a338b5cb (#4395 repair), d60a4063 (#4780).
 - 10-28 21:37Z: #4398 repair 26ae66abdaed55f5e1d02f1165f95b2282cbb9cc (15fa44f7; snapshots 0600 via create_new+mode, lock dir 0700, untrusted snapshot -> silent private rebuild, open lock treated stale; 6 new tests red on d63c30f4 (54bc6eb8, b1598173); fmt cfe63425 clippy d9521e9c scoped 3cf6af9e ok cli 2462). Re-review #4893 r2 worker b4230421 (Codex sol, check 4 only).
   4/4 busy: 4f5ab2f8 (r15), a338b5cb (#4395 repair), d60a4063 (#4780), b4230421 (#4893 r2).
+- 10-28 21:38Z: #4395 repair c659ce745ebda94db79c9a7e2f1fa5d652afc026 (a338b5cb; COVERS #4905-#4908; 4 explicit neptune-db actions, template.rs rejects */?/NotAction; Snapshot + DeletionProtection param default true via LanguageExtensions; redact->truncate(120)->escape; 10 new tests red on old files f02794ed; scoped a60e80a4 ok). Re-review #4904 r2 worker 07db2e68 (Codex sol, pinned).
+  4/4 busy: 4f5ab2f8 (r15), d60a4063 (#4780), b4230421 (#4893 r2), 07db2e68 (#4904 r2).
