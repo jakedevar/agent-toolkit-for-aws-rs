@@ -401,7 +401,7 @@ mod tests {
         assert_eq!(general(2.5, 2), "2.5");
         assert_eq!(general(0.125, 2), "0.12");
         assert_eq!(general(99.5, 2), "1e+02");
-        assert_eq!(general(0.00001234, 2), "1.2e-05");
+        assert_eq!(general(0.000_012_34, 2), "1.2e-05");
         assert_eq!(general(0.0, 2), "0");
     }
 
@@ -413,7 +413,7 @@ mod tests {
         assert_eq!(percent(0.5, 0), "50%");
         assert_eq!(percent(0.125, 0), "12%");
         assert_eq!(fixed(2.5, 0), "2");
-        assert_eq!(commas(1234567.891, 2), "1,234,567.89");
+        assert_eq!(commas(1_234_567.891, 2), "1,234,567.89");
         assert_eq!(fixed(f64::INFINITY, 2), "inf");
     }
 

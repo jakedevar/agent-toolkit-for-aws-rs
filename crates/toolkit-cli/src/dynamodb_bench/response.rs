@@ -80,6 +80,7 @@ fn integer(object: &Json, key: &str) -> Parsed<Option<i64>> {
     .map_err(|error| member(&error))
 }
 
+#[allow(clippy::cast_precision_loss)]
 /// A number the Lambda may emit as `null` (`latency_ms`, `consumed_cu`, ...).
 fn nullable_number(object: &Json, key: &str) -> Parsed<Option<f64>> {
     optional_member(object, key, "a number or null", |value| match value {
@@ -92,6 +93,7 @@ fn nullable_number(object: &Json, key: &str) -> Parsed<Option<f64>> {
     .map_err(|error| member(&error))
 }
 
+#[allow(clippy::cast_precision_loss)]
 fn number_of(value: &Json) -> Option<f64> {
     match value {
         Json::Int(number) => Some(*number as f64),

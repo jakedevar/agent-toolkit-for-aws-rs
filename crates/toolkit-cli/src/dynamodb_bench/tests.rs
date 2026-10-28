@@ -92,7 +92,7 @@ fn error_steps_replay_their_kind() {
 #[test]
 fn malformed_recordings_are_rejected_naming_the_member() {
     for (text, needle) in [
-        (r#"{}"#, "needs a \"calls\" array"),
+        (r"{}", "needs a \"calls\" array"),
         (r#"{"calls": null}"#, "\"calls\" must be a list"),
         (
             r#"{"calls": [{"service": "sts", "operation": "GetCallerIdentity", "response": {}}]}"#,

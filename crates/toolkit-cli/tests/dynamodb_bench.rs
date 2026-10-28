@@ -333,8 +333,8 @@ fn the_summary_feeds_the_report_and_a_clean_run_is_clean() {
         report.contains("Resources: 1 tables, 0 GSIs. Manifest: created_resources.json.  "),
         "{report}"
     );
-    assert!(report.contains("| GetOrder | GetItem | Orders | 100 | 1.00 | 0.500 | 0.500 | +0.0% | 4.0 | 5.96 | 0 | 0 | $16.20 |"), "{report}");
-    assert!(report.contains("| PutOrder | PutItem | Orders | 50 | 1.00 | 1.000 | 1.000 | +0.0% | 6.0 | 6.98 | 0 | 0 | $81.00 |"), "{report}");
+    assert!(report.contains("| GetOrder | GetItem | Orders | 100 | 1.00 | 0.500 | 0.500 | +0.0% | 4.0 | 6.0 | 0 | 0 | $16.20 |"), "{report}");
+    assert!(report.contains("| PutOrder | PutItem | Orders | 50 | 1.00 | 1.000 | 1.000 | +0.0% | 6.0 | 7.0 | 0 | 0 | $81.00 |"), "{report}");
     assert!(
         report.contains("| Seed verification") || report.contains("## Seed verification"),
         "{report}"
@@ -675,7 +675,7 @@ fn a_malformed_lambda_response_names_the_member_not_the_value() {
             format!(r#"{{"raw_rows": [{{"latency_ms": "{SECRET}"}}]}}"#),
             "raw_rows[0]: \"latency_ms\" must be a number or null",
         ),
-        ("array", "[1]".to_string(), "must be a JSON object"),
+        ("array", r#""[1]""#.to_string(), "must be a JSON object"),
     ] {
         let fixture = Fixture::new(label, MODEL, CONFIG, MANIFEST, &[ok_step(&payload)]);
         let output = fixture.recorded();

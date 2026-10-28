@@ -133,9 +133,9 @@ fn invoke_lambda(
     })
     .map_err(|e| shape(e.to_string()))?
     .unwrap_or(0);
-    let as_object = optional_object(&resp, "Payload");
-    let as_text = optional_text(&resp, "Payload");
-    let parsed = match (as_object, as_text) {
+    let body_object = optional_object(&resp, "Payload");
+    let body_text = optional_text(&resp, "Payload");
+    let parsed = match (body_object, body_text) {
         (Ok(Some(body)), _) => body.clone(),
         (_, Ok(Some(body))) => parse_json(body).map_err(|_| {
             die(format!(
@@ -191,9 +191,6 @@ pub(super) fn run(
 
     validate(&model)?;
     let patterns = items(&model, "access_patterns", "the design")?;
-    if !matches!(manifest, Json::Object(_)) {
-        return Err(die("the manifest must be a JSON object"));
-    }
     let Some(lambda_block) = manifest.get("lambda") else {
         return Err(die(
             "manifest has no 'lambda' block — this benchmark_model.py expects a Lambda-based run. \
@@ -342,8 +339,8 @@ pub(super) fn run(
                 completed_all = false;
                 break;
             }
-            echo_mode = resp.mode.clone();
-            echo_key_sampling = resp.key_sampling.clone();
+            echo_mode.clone_from(&resp.mode);
+            echo_key_sampling.clone_from(&resp.key_sampling);
             echo_items_per_partition = resp.items_per_partition;
         }
 

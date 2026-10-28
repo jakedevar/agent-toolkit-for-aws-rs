@@ -198,10 +198,9 @@ pub fn render_report(model: &Json, summary: &Json, analysis: &Analysis<'_>) -> R
             "> ⚠️ **INCOMPLETE COVERAGE — do not trust these numbers as a full result.** ",
         );
         if !missing.is_empty() {
-            text.push_str(&format!(
-                "Patterns with no measurement: {}. ",
-                joined(&missing)
-            ));
+            text.push_str("Patterns with no measurement: ");
+            text.push_str(&joined(&missing));
+            text.push_str(". ");
         }
         if all_zero {
             text.push_str("Every measured pattern recorded zero calls. ");
@@ -261,10 +260,7 @@ pub fn render_report(model: &Json, summary: &Json, analysis: &Analysis<'_>) -> R
              column by design — it accounts for {} points of the delta above and is not a model \
              error. See **Vector capacity (measured)** below.*",
             fmt_money(vector_search_monthly),
-            format!(
-                "{}",
-                signed(vector_search_monthly / total_expected * 100.0, 1)
-            ),
+            signed(vector_search_monthly / total_expected * 100.0, 1),
         ));
     }
     doc.a(format!(
@@ -993,9 +989,9 @@ pub fn render_report(model: &Json, summary: &Json, analysis: &Analysis<'_>) -> R
             ev.get("top_error_code")
                 .map_or_else(|| "unknown".to_string(), |v| safe(&pyfmt::text(v))),
             ev.get("errors")
-                .map_or_else(|| "?".to_string(), |v| pyfmt::text(v)),
+                .map_or_else(|| "?".to_string(), pyfmt::text),
             ev.get("call_count")
-                .map_or_else(|| "?".to_string(), |v| pyfmt::text(v)),
+                .map_or_else(|| "?".to_string(), pyfmt::text),
         ));
     }
     doc.a("");

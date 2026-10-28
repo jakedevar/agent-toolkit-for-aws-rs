@@ -1027,7 +1027,8 @@ fn symlinked_inputs_are_refused() {
 fn unregistered_pipeline_steps_fail_before_any_cloud_action() {
     let mut buffer: Vec<u8> = Vec::new();
     let mut out = Output::new(&mut buffer);
-    for step in ["nonsense"] {
+    {
+        let step = "nonsense";
         let argv: Vec<String> = ["dynamodb", step, "--model", "m.json"]
             .map(String::from)
             .to_vec();

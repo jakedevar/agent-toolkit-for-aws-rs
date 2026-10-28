@@ -1078,10 +1078,10 @@ pub fn top_drivers(rows: &[Row<'_>]) -> Vec<Driver> {
         .map(|r| Driver {
             pattern_id: r.pattern_id.clone(),
             monthly: r.extrapolated_monthly,
-            share: if total != 0.0 {
-                r.extrapolated_monthly / total
-            } else {
+            share: if total == 0.0 {
                 0.0
+            } else {
+                r.extrapolated_monthly / total
             },
         })
         .collect()
