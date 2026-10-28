@@ -2102,8 +2102,16 @@ const INVENTORY: &[(&str, Class)] = &[
     ),
     ("relational", Class::Recorded),
     (
+        "registry",
+        Class::NotRecorded("the per-slice command routes and help text built at compile time"),
+    ),
+    (
         "safe_text",
         Class::NotRecorded("escapes untrusted text for diagnostics; reads nothing"),
+    ),
+    (
+        "skills",
+        Class::NotRecorded("registers `skills list`, which lists the repository skill directories"),
     ),
     (
         "spec",
