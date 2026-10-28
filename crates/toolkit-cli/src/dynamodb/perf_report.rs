@@ -1013,8 +1013,10 @@ pub fn seed_shortfall_findings(summary: &Json) -> Res<Vec<Finding>> {
                 if !matches!(sv, Json::Object(_)) {
                     return Err(die("each `seed_verification` entry must be an object"));
                 }
-                let passed = sv.get("passed").is_none_or(pyfmt::truthy);
-                let sampled = sv.get("sampled").is_some_and(pyfmt::truthy);
+                // Strict (Issue #4958): booleans only, `passed` required.
+                super::bench_rows::check_seed_entry(sv).map_err(die)?;
+                let passed = matches!(sv.get("passed"), Some(Json::Bool(true)));
+                let sampled = matches!(sv.get("sampled"), Some(Json::Bool(true)));
                 if !passed && !sampled {
                     out.push(Finding {
                         id: format!("seed-{name}"),

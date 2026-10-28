@@ -27,6 +27,7 @@ use toolkit_core::{parse_json, read_regular_file, Json, ToolkitError};
 
 use crate::dynamodb::bench_fmt::{diag, die, dumps_indent};
 use crate::dynamodb::{perf_render, perf_report};
+use crate::dynamodb_deploy::write::{write_private, PRIVATE_FILE};
 use crate::manifests::read_failure;
 use crate::safe_text::safe_path;
 use crate::{Invocation, Output};
@@ -135,14 +136,13 @@ fn load(path: &Path, what: &str) -> Result<Json, ToolkitError> {
     })
 }
 
+/// Publishes one export atomically through the shared private writer of
+/// `dynamodb-deploy`: a same-directory temporary file created exclusively with
+/// mode 0600, written and synced, then renamed over the destination. A
+/// destination that is a link or not a regular file is refused (never
+/// followed); a failed write leaves any existing destination untouched.
 fn write(path: &Path, contents: &str) -> Result<(), ToolkitError> {
-    crate::dynamodb::write_text(path, contents).map_err(|error| {
-        die(format!(
-            "cannot write {}: {}",
-            safe_path(&path.display().to_string()),
-            diag(error.message())
-        ))
-    })
+    write_private(path, contents, PRIVATE_FILE)
 }
 
 /// Handler of `toolkit dynamodb benchmark-model`.

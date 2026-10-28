@@ -16,7 +16,17 @@ use toolkit_core::Json;
 
 use super::shape::{list_items, map_entries};
 use crate::dynamodb::bench_fmt::Tally;
-use crate::dynamodb::bench_rows::{BenchRow, ExactAgg};
+use crate::dynamodb::bench_rows::{check_seed_entry, BenchRow, ExactAgg};
+
+/// The members of a `seed_verification` entry that the handler emits and the
+/// report reads.
+const SEED_MEMBERS: [&str; 5] = [
+    "expected",
+    "actual",
+    "sampled",
+    "passed",
+    "seed_shortfall_ratio",
+];
 
 /// One `(pattern_id, phase)` tally of `exact_counts`.
 pub(super) struct ExactCount {
@@ -237,12 +247,22 @@ pub(super) fn parse(payload: &Json) -> Parsed<LambdaResponse> {
         match optional_object(payload, "seed_verification").map_err(|e| member(&e))? {
             None => Json::Object(Vec::new()),
             Some(object) => {
-                for (_, entry) in map_entries(object).unwrap_or_default() {
+                let mut tables = Vec::new();
+                for (table, entry) in map_entries(object).unwrap_or_default() {
                     if map_entries(entry).is_none() {
                         return Err("\"seed_verification\" must map tables to objects".to_string());
                     }
+                    check_seed_entry(entry)?;
+                    // Only the five members `verify_seed` emits are kept.
+                    let kept: Vec<(String, Json)> = map_entries(entry)
+                        .unwrap_or_default()
+                        .iter()
+                        .filter(|(key, _)| SEED_MEMBERS.contains(&key.as_str()))
+                        .cloned()
+                        .collect();
+                    tables.push((table.clone(), Json::Object(kept)));
                 }
-                object.clone()
+                Json::Object(tables)
             }
         };
     let mut measurement_tainted = Vec::new();

@@ -205,10 +205,12 @@ pub fn apply_mode_preset(cfg: &Json, out: &mut Output<'_>) -> Res<Json> {
         }
     }
     let merged = Json::Object(merged);
+    // Ordinary numbers keep their Python rendering; every other value is caller
+    // text (not yet validated) and goes through redact -> bound -> escape.
     let show = |key: &str, default: &str| -> String {
         merged
             .get(key)
-            .map_or_else(|| default.to_string(), pyfmt::text)
+            .map_or_else(|| default.to_string(), banner_value)
     };
     if mode == "quick" {
         out.line(&format!(
@@ -235,6 +237,21 @@ pub fn apply_mode_preset(cfg: &Json, out: &mut Output<'_>) -> Res<Json> {
         ))?;
     }
     Ok(merged)
+}
+
+/// One config value inside a mode banner. Short numbers, booleans and null print
+/// as Python printed them; anything else is caller text and is redacted, bounded
+/// and escaped onto one line.
+fn banner_value(value: &Json) -> String {
+    let text = pyfmt::text(value);
+    match value {
+        Json::Int(_) | Json::Float(_) | Json::Bool(_) | Json::Null
+            if text.chars().count() <= 40 =>
+        {
+            text
+        }
+        _ => diag(&text),
+    }
 }
 
 fn unknown_mode(mode: &str) -> ToolkitError {

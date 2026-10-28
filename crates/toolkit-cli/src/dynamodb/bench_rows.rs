@@ -15,6 +15,64 @@ use super::bench_fmt::{die, py_sum, Tally};
 use super::cost::is_write_op;
 use super::pyfmt;
 
+/// One table of a `seed_verification` map, checked member by member (Issue
+/// #4958). The handler's `verify_seed` emits `expected` and `actual` as counts,
+/// `sampled` and `passed` as booleans and `seed_shortfall_ratio` as a number.
+/// The Python truthiness rules (`passed` read as true for a string, or when
+/// absent) are not kept: a present member of another type, `null` included, is
+/// refused, and so is a missing `passed`, because nothing may read as `ok`
+/// without an explicit `true`. The reason names the member, never a value or the
+/// table.
+///
+/// # Errors
+///
+/// The reason the entry is refused.
+pub fn check_seed_entry(entry: &Json) -> Result<(), String> {
+    use toolkit_aws::recorded::optional_member;
+    if !matches!(entry, Json::Object(_)) {
+        return Err("a `seed_verification` entry must be an object".to_string());
+    }
+    let describe = |error: &toolkit_aws::recorded::MemberError| {
+        format!(
+            "a `seed_verification` entry: \"{}\" must be {} when present (it is {})",
+            error.key(),
+            error.expected(),
+            error.found()
+        )
+    };
+    let boolean = |key: &str| {
+        optional_member(entry, key, "a boolean", |value| match value {
+            Json::Bool(flag) => Some(*flag),
+            _ => None,
+        })
+        .map_err(|error| describe(&error))
+    };
+    let count = |key: &str| {
+        optional_member(entry, key, "an integer", |value| match value {
+            Json::Int(number) => Some(*number),
+            _ => None,
+        })
+        .map_err(|error| describe(&error))
+    };
+    if boolean("passed")?.is_none() {
+        return Err("a `seed_verification` entry: \"passed\" is required (a boolean)".to_string());
+    }
+    boolean("sampled")?;
+    count("expected")?;
+    count("actual")?;
+    optional_member(
+        entry,
+        "seed_shortfall_ratio",
+        "a number",
+        |value| match value {
+            Json::Int(_) | Json::Float(_) => Some(()),
+            _ => None,
+        },
+    )
+    .map_err(|error| describe(&error))?;
+    Ok(())
+}
+
 /// One per-call row of the Lambda response, validated.
 #[derive(Debug, Clone, PartialEq)]
 pub struct BenchRow {

@@ -145,8 +145,16 @@ allowlist entry; the two container reads are the marked functions of
    `Payload` of the `Invoke` response is the parsed document (or a raw string).
 6. **Function name checked.** `manifest.lambda.function_name` must be a name or
    ARN of letters, digits, `-`, `_`, `:` (at most 170 characters).
-7. **Outputs** go through the shared regular-file writer: a symbolic link or a
-   non-regular file at an output path is refused (the script followed links).
+7. **Outputs are published atomically** (review #4954). Each of `--raw-out`,
+   `--summary-out`, `--output` and `--findings-out` goes through the private
+   writer of `dynamodb-deploy` (`write_private`): a same-directory temporary
+   file created with `create_new` and mode 0600, written, flushed and
+   `sync_all`-ed, then `rename`d over the destination. A reader sees the old or
+   the new complete file; a failed write removes its own temporary file and
+   leaves an existing output untouched. A symbolic link or a non-regular file at
+   an output path is refused, never followed (the script followed links), and a
+   rename replaces a link swapped in later instead of writing through it. The
+   files are now owner-only (0600) where the script wrote with the umask.
 8. **Calculator failures** (`pattern_monthly_cost` errors) abort the report with
    `the calculator refused the design: ...` (the script crashed); in the spend
    estimate they keep the script's fallback of 1.0 CU per call.
@@ -157,6 +165,20 @@ allowlist entry; the two container reads are the marked functions of
     interpreter can differ in the last bit of a mean.
 11. **`--now`, `--recorded`** are new (fixtures); the wall-clock banner and the
     foreground reminder are printed as before.
+12. **Mode banners escape caller text.** `quick` and `representative` print
+    the config values they show before the config is validated. A number prints
+    as before; every other value (a string, list or object) goes through
+    `bench_fmt::diag` (redact, bound to 120 characters, escape), so a banner is
+    one safe line. The script printed the value as Python `str()`.
+13. **Seed verification fails closed** (review #4954). Each table of the
+    response's `seed_verification` must carry `passed` (a boolean); `sampled`
+    (boolean), `expected` and `actual` (integers) and `seed_shortfall_ratio` (a
+    number) are checked when present, and a present `null` or other type is
+    refused with a message that names the member only. The script read `passed`
+    by truthiness and defaulted a missing `passed` to true, so the string
+    `"false"` or a missing member read as `ok`. Only those five members are
+    kept in `perf_summary.json`. `generate-perf-report` applies the same rule to
+    a hand-fed summary and renders only an explicit `true` as `ok`.
 
 ## Security surface
 

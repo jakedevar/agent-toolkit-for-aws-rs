@@ -321,8 +321,9 @@ pub fn render_report(model: &Json, summary: &Json, analysis: &Analysis<'_>) -> R
         for (tname, sv) in sv_map {
             let exp = sv.get("expected").filter(|v| !matches!(v, Json::Null));
             let act = sv.get("actual").filter(|v| !matches!(v, Json::Null));
-            let sampled = truthy_member(sv, "sampled");
-            let passed = sv.get("passed").is_none_or(pyfmt::truthy);
+            // Strict (Issue #4958): only an explicit `true` is ok or sampled.
+            let sampled = matches!(sv.get("sampled"), Some(Json::Bool(true)));
+            let passed = matches!(sv.get("passed"), Some(Json::Bool(true)));
             let status = if passed {
                 if sampled {
                     "ok (sampled to cap)"
