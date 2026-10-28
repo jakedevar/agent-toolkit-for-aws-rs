@@ -266,3 +266,4 @@ Friction: #4727, Rsi #4694, Rsi #4704
   Review #4852 worker 1d5e3f47 (Codex sol high, pinned, op dd181f9b).
   4/4 busy: 658303dd (#4806), 7e684f35 (#4381 r4), 68503650 (#4819 r3), 1d5e3f47 (#4852).
   NEXT high-value: #4839 (bedrock_resolve + elasticache onto toolkit_aws::recorded) once a slot frees.
+- 10-28 18:50Z: GM 17446779: entry 2a2dece6 is SKIPPED (queue checkout missing local rolling ref: missing_rolling), not HOL. Rsi P1 #4850 owned by Rsi PM. Leave entry; keep current with supersedes; do NOT create local rolling by hand.
