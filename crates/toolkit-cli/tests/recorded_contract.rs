@@ -41,13 +41,15 @@
 //!    `optional_list`, `optional_object`, `optional_text`, `same_json`, ...);
 //! 2. it reads no JSON shape: any pattern whose path ends in `Array` or
 //!    `Object` (tuple or brace form (#4774), through an alias, `Self`, an
-//!    imported or renamed variant), in any pattern position (`match`, `if let`,
+//!    imported variant, or a name any `use` in `src` renames one to, at any
+//!    path length (#4863)), in any pattern position (`match`, `if let`,
 //!    `while let`, `let .. else`, an annotated `let` (#4793), a guard, a field
 //!    of a struct pattern, behind `&`, `ref`, `@`, `Some` or a tuple), and any
 //!    call or path `as_array`, `as_object`, `as_array_mut`, `as_object_mut`.
-//!    `matches!` (any delimiter, #4794) and the standard expression macros are
-//!    parsed; any other macro body fails closed (a shape variant with a
-//!    payload counts, even when built). Building a value in code is not a read;
+//!    A raw identifier is the name it spells (`r#Array`, #4861). `matches!`
+//!    (any delimiter, #4794) and the standard expression macros are parsed;
+//!    any other macro body fails closed (a shape variant with a payload
+//!    counts, even when built). Building a value in code is not a read;
 //! 3. it does not alias the JSON value type (#4775): `type J = Json;`,
 //!    `type J = (Json);`, `type V = serde_json::Value;`, `use ..::Json as J`,
 //!    `use ..::Json::{self as J}`, a re-export, an alias of an alias. A marked
@@ -64,12 +66,22 @@
 //!    header) scope. The reason says why the value is not a response member
 //!    (a snapshot file, the command's own manifest, a value the slice built)
 //!    or why the member is required and every other shape is rejected;
-//! 5. it parses: a file `syn` cannot parse is a failure, never a pass.
+//! 5. it parses: a file `syn` cannot parse is a failure, never a pass;
+//! 6. it defines no `macro_rules!` and invokes no macro defined in `src`
+//!    unless that definition carries a marker (#4862): the scanner never
+//!    expands a macro, so a local one, even one named like a standard macro
+//!    (`vec`), is never given the standard grammar.
 //!
-//! This is a tripwire for the documented rule, not a proof: it has no type
-//! inference and a determined author can still hide a read. Review remains
-//! the defense against deliberate evasion, and evading the scanner (or an
+//! Every finding is counted at its own position; the report groups the
+//! findings of a line only to print them, and a `Pending` count is a count of
+//! occurrences (#4864).
+//!
+//! **Threat model.** The scanner guards honest code against an accidental
+//! raw read of a recorded response. It has no type inference and expands no
+//! macro, so deliberate obfuscation is out of its scope: review and the
+//! adoption of the shared module catch that, and evading the scanner (or an
 //! inventory entry that misstates what a module reads) is a review blocker.
+//! A further evasion blocks a review only when it falls in a class above.
 //!
 //! Test code (`tests.rs`, `tests/`, `#[cfg(test)]` items) is out of scope. The
 //! README section "Slices without a live AWS client" is the guide for slice
@@ -80,6 +92,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use proc_macro2::{Delimiter, Span, TokenStream, TokenTree};
+use syn::ext::IdentExt;
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
 use syn::visit::{self, Visit};
@@ -167,6 +180,15 @@ const PLACEHOLDER_WORDS: &[&str] = &[
     "exception",
     "marker",
     "code",
+];
+
+/// Keywords: their raw spelling (`r#fn`) is a plain name, never the keyword,
+/// so the tokenizer keeps it raw instead of normalising it (#4861).
+const RUST_KEYWORDS: &[&str] = &[
+    "as", "async", "await", "break", "const", "continue", "crate", "dyn", "else", "enum", "extern",
+    "false", "fn", "for", "if", "impl", "in", "let", "loop", "match", "mod", "move", "mut", "pub",
+    "ref", "return", "static", "struct", "super", "trait", "true", "type", "unsafe", "use",
+    "where", "while",
 ];
 
 struct SourceFile {
@@ -440,9 +462,30 @@ fn tokenize(lexed: &mut Lexed) -> Vec<Tok> {
         } else if c.is_whitespace() {
             i += 1;
         } else if is_ident_char(c) {
-            let start = i;
+            let mut start = i;
             while i < chars.len() && is_ident_char(chars[i]) {
                 i += 1;
+            }
+            // A raw identifier `r#name` is the name `name` (#4861); a raw
+            // keyword (`r#fn`) stays one token, so it never reads as the
+            // keyword.
+            let raw = i - start == 1
+                && c == 'r'
+                && chars.get(i) == Some(&'#')
+                && chars
+                    .get(i + 1)
+                    .is_some_and(|&n| n.is_alphabetic() || n == '_');
+            if raw {
+                let name_start = i + 1;
+                let mut end = name_start;
+                while end < chars.len() && is_ident_char(chars[end]) {
+                    end += 1;
+                }
+                let name: String = chars[name_start..end].iter().collect();
+                if !RUST_KEYWORDS.contains(&name.as_str()) {
+                    start = name_start;
+                }
+                i = end;
             }
             toks.push(Tok {
                 text: chars[start..i].iter().collect(),
@@ -908,58 +951,108 @@ fn trait_item_attrs(item: &TraitItem) -> &[Attribute] {
     }
 }
 
-/// The names a file gives a shape variant with `use ..::Array as List`.
-fn renamed_variants(ast: &syn::File) -> BTreeSet<String> {
-    struct Renames(BTreeSet<String>);
-    impl<'ast> Visit<'ast> for Renames {
-        fn visit_use_rename(&mut self, rename: &'ast syn::UseRename) {
-            if SHAPE_VARIANTS.iter().any(|variant| rename.ident == variant) {
-                self.0.insert(rename.rename.to_string());
-            }
-        }
-    }
-    let mut renames = Renames(BTreeSet::new());
-    renames.visit_file(ast);
-    renames.0
+/// An identifier as the compiler sees it: `r#Array` is `Array` (#4861). Every
+/// comparison of a name (a type, a variant, a method, an alias, a macro) goes
+/// through this.
+fn name_of(ident: &syn::Ident) -> String {
+    ident.unraw().to_string()
 }
 
-/// What the structure of one file shows: the 0-based lines that read a JSON
-/// shape, and the aliases of the JSON value type it defines.
+/// Where a finding is: `(0-based line, column)`. Each read is its own finding
+/// (#4864); reports group them by line only to print them.
+type Pos = (usize, usize);
+
+fn pos_of(span: Span) -> Pos {
+    let start = span.start();
+    (start.line.saturating_sub(1), start.column)
+}
+
+/// Whether `mac` is `macro_rules!` (a definition, not an invocation).
+fn is_macro_rules(mac: &Macro) -> bool {
+    mac.path.segments.len() == 1 && name_of(&mac.path.segments[0].ident) == "macro_rules"
+}
+
+/// The `macro_rules!` items of a parsed file outside test code, as `(name,
+/// 0-based line of the macro_rules path)`.
+fn macro_definitions(ast: &syn::File) -> Vec<(String, usize)> {
+    #[derive(Default)]
+    struct Definitions(Vec<(String, usize)>);
+    impl<'ast> Visit<'ast> for Definitions {
+        fn visit_item(&mut self, item: &'ast Item) {
+            if !is_cfg_test(item_attrs(item)) {
+                visit::visit_item(self, item);
+            }
+        }
+        fn visit_item_macro(&mut self, item: &'ast syn::ItemMacro) {
+            if let (true, Some(ident)) = (is_macro_rules(&item.mac), &item.ident) {
+                let line = line_of(item.mac.path.segments[0].ident.span());
+                self.0.push((name_of(ident), line));
+            }
+            visit::visit_item_macro(self, item);
+        }
+    }
+    let mut definitions = Definitions::default();
+    definitions.visit_file(ast);
+    definitions.0
+}
+
+/// The names that, crate-wide, resolve the scan (#4862, #4863, #4775).
+#[derive(Default)]
+struct Names {
+    /// The JSON value type: `Json`, `Value` and their aliases
+    /// ([`crate_names`]).
+    types: BTreeSet<String>,
+    /// `Array`, `Object` and every name a `use` anywhere in `src` gives one
+    /// (`use toolkit_core::Json::Array as List`, a re-export, a rename of a
+    /// rename): a pattern whose path ends in one is a read in any file, with
+    /// any number of segments (#4863).
+    variants: BTreeSet<String>,
+    /// Every `macro_rules!` name defined anywhere in `src` (#4862). Its
+    /// invocations are never parsed as a standard macro, even when it shadows
+    /// one (`vec`).
+    local_macros: BTreeSet<String>,
+    /// The local macros whose every definition carries an accepted
+    /// `// recorded-shape:` marker: invoking them is allowed.
+    marked_macros: BTreeSet<String>,
+}
+
+/// What the structure of one file shows, each finding at its own position
+/// (#4864): the shape reads, the aliases of the JSON value type and the local
+/// macros it defines or invokes.
 #[derive(Default)]
 struct Structure {
-    reads: BTreeSet<usize>,
-    /// `(0-based line, alias)` for each `type A = path::Json;` and each
-    /// `Json as A` in a `use` (#4775).
-    aliases: Vec<(usize, String)>,
+    reads: BTreeSet<Pos>,
+    /// `(position, alias)` for each `type A = path::Json;` and each `Json as
+    /// A` in a `use` (#4775).
+    aliases: Vec<(Pos, String)>,
+    /// Each `macro_rules!` definition and each invocation of a local macro
+    /// without a marked definition (#4862).
+    macros: BTreeSet<Pos>,
+    /// `(original, rename)` for each `use .. as ..` of the file.
+    renames: Vec<(String, String)>,
 }
 
 struct ShapeScan<'s> {
-    /// The names of the JSON value type ([`json_type_names`]).
-    types: &'s BTreeSet<String>,
-    /// Single names that stand for a shape variant ([`renamed_variants`]).
-    renamed: &'s BTreeSet<String>,
+    names: &'s Names,
     found: Structure,
 }
 
 impl ShapeScan<'_> {
     fn is_type(&self, ident: &syn::Ident) -> bool {
-        self.types.contains(&ident.to_string())
+        self.names.types.contains(&name_of(ident))
     }
 
     /// A pattern path: any path ending in `Array` or `Object` (`Json::Array`,
-    /// an alias `J::Array`, `Self::Object`, a bare imported `Array`), or a
-    /// single name that renames one. No type inference: every such pattern
-    /// counts, whatever the type it names.
+    /// an alias `J::Array`, `Self::Object`, a bare imported `Array`), or in a
+    /// name that renames one anywhere in `src` (`variants::List`, a bare
+    /// `List`). No type inference: every such pattern counts, whatever the
+    /// type it names.
     fn pattern_path(&mut self, path: &syn::Path) {
         let Some(last) = path.segments.last() else {
             return;
         };
-        let name = last.ident.to_string();
-        let renamed = path.segments.len() == 1 && self.renamed.contains(&name);
-        if SHAPE_VARIANTS.contains(&name.as_str()) || renamed {
-            self.found
-                .reads
-                .insert(line_of(path.segments[0].ident.span()));
+        if self.names.variants.contains(&name_of(&last.ident)) {
+            self.found.reads.insert(pos_of(last.ident.span()));
         }
     }
 
@@ -972,15 +1065,14 @@ impl ShapeScan<'_> {
             match tree {
                 TokenTree::Group(group) => self.opaque_tokens(group.stream()),
                 TokenTree::Ident(ident) => {
-                    let name = ident.to_string();
+                    let name = name_of(ident);
                     let payload = matches!(
                         trees.get(index + 1),
                         Some(TokenTree::Group(group)) if group.delimiter() != Delimiter::Bracket
                     );
-                    let variant =
-                        SHAPE_VARIANTS.contains(&name.as_str()) || self.renamed.contains(&name);
+                    let variant = self.names.variants.contains(&name);
                     if (variant && payload) || SHAPE_METHODS.contains(&name.as_str()) {
-                        self.found.reads.insert(line_of(ident.span()));
+                        self.found.reads.insert(pos_of(ident.span()));
                     }
                 }
                 _ => {}
@@ -1002,27 +1094,31 @@ impl ShapeScan<'_> {
             }
             UseTree::Glob(glob) => {
                 if parent_is_type {
-                    self.found.reads.insert(line_of(glob.star_token.span));
+                    self.found.reads.insert(pos_of(glob.star_token.span));
                 }
             }
             UseTree::Name(name) => {
-                if parent_is_type && SHAPE_VARIANTS.iter().any(|v| name.ident == v) {
-                    self.found.reads.insert(line_of(name.ident.span()));
+                let variant = SHAPE_VARIANTS.contains(&name_of(&name.ident).as_str());
+                if parent_is_type && variant {
+                    self.found.reads.insert(pos_of(name.ident.span()));
                 }
             }
             UseTree::Rename(rename) => {
-                if parent_is_type && SHAPE_VARIANTS.iter().any(|v| rename.ident == v) {
-                    self.found.reads.insert(line_of(rename.ident.span()));
+                let original = name_of(&rename.ident);
+                let renamed = name_of(&rename.rename);
+                self.found.renames.push((original.clone(), renamed.clone()));
+                if parent_is_type && SHAPE_VARIANTS.contains(&original.as_str()) {
+                    self.found.reads.insert(pos_of(rename.ident.span()));
                 }
-                let names_type = if rename.ident == "self" {
+                let names_type = if original == "self" {
                     parent_is_type
                 } else {
                     self.is_type(&rename.ident)
                 };
-                if names_type && rename.rename != "_" {
+                if names_type && renamed != "_" {
                     self.found
                         .aliases
-                        .push((line_of(rename.rename.span()), rename.rename.to_string()));
+                        .push((pos_of(rename.rename.span()), renamed));
                 }
             }
         }
@@ -1070,10 +1166,21 @@ impl<'ast> Visit<'ast> for ShapeScan<'_> {
             if path.qself.is_none() && names_type {
                 self.found
                     .aliases
-                    .push((line_of(item.type_token.span), item.ident.to_string()));
+                    .push((pos_of(item.type_token.span), name_of(&item.ident)));
             }
         }
         visit::visit_item_type(self, item);
+    }
+
+    fn visit_item_macro(&mut self, item: &'ast syn::ItemMacro) {
+        // A local `macro_rules!` in a recorded slice needs a marker (#4862):
+        // its expansion is never analysed.
+        if is_macro_rules(&item.mac) && item.ident.is_some() {
+            self.found
+                .macros
+                .insert(pos_of(item.mac.path.segments[0].ident.span()));
+        }
+        visit::visit_item_macro(self, item);
     }
 
     fn visit_pat(&mut self, pat: &'ast Pat) {
@@ -1083,9 +1190,7 @@ impl<'ast> Visit<'ast> for ShapeScan<'_> {
             Pat::Path(pattern) => self.pattern_path(&pattern.path),
             // A pattern a macro builds is not visible here: refused.
             Pat::Macro(pattern) => {
-                self.found
-                    .reads
-                    .insert(line_of(pattern.mac.bang_token.span));
+                self.found.reads.insert(pos_of(pattern.mac.bang_token.span));
             }
             _ => {}
         }
@@ -1093,8 +1198,8 @@ impl<'ast> Visit<'ast> for ShapeScan<'_> {
     }
 
     fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
-        if SHAPE_METHODS.iter().any(|method| call.method == method) {
-            self.found.reads.insert(line_of(call.method.span()));
+        if SHAPE_METHODS.contains(&name_of(&call.method).as_str()) {
+            self.found.reads.insert(pos_of(call.method.span()));
         }
         visit::visit_expr_method_call(self, call);
     }
@@ -1102,20 +1207,37 @@ impl<'ast> Visit<'ast> for ShapeScan<'_> {
     fn visit_path(&mut self, path: &'ast syn::Path) {
         // `Value::as_array` as a function value.
         if let Some(last) = path.segments.last() {
-            if SHAPE_METHODS.iter().any(|method| last.ident == method) {
-                self.found.reads.insert(line_of(last.ident.span()));
+            if SHAPE_METHODS.contains(&name_of(&last.ident).as_str()) {
+                self.found.reads.insert(pos_of(last.ident.span()));
             }
         }
         visit::visit_path(self, path);
     }
 
     fn visit_macro(&mut self, mac: &'ast Macro) {
-        let name = mac
-            .path
-            .segments
-            .last()
-            .map(|last| last.ident.to_string())
-            .unwrap_or_default();
+        let Some(last) = mac.path.segments.last() else {
+            return;
+        };
+        let name = name_of(&last.ident);
+        if self.names.local_macros.contains(&name) {
+            // A local macro, even one that shadows a standard name (`vec`):
+            // its body is opaque and its use needs a marked definition.
+            if !self.names.marked_macros.contains(&name) {
+                self.found.macros.insert(pos_of(last.ident.span()));
+            }
+            self.opaque_tokens(mac.tokens.clone());
+            return;
+        }
+        // The standard macros, by their plain or `std::`/`core::`/`alloc::`
+        // path.
+        let standard = mac.path.segments.len() == 1
+            || (mac.path.segments.len() == 2
+                && ["std", "core", "alloc"]
+                    .contains(&name_of(&mac.path.segments[0].ident).as_str()));
+        if !standard {
+            self.opaque_tokens(mac.tokens.clone());
+            return;
+        }
         if MATCHES_MACROS.contains(&name.as_str()) {
             if let Ok(args) = mac.parse_body::<MatchesArgs>() {
                 self.visit_expr(&args.value);
@@ -1144,58 +1266,84 @@ impl<'ast> Visit<'ast> for ShapeScan<'_> {
     }
 }
 
-/// The shape reads and JSON type aliases of a parsed file; `types` are the
-/// names of the JSON value type ([`json_type_names`]).
-fn structure(ast: &syn::File, types: &BTreeSet<String>) -> Structure {
-    let renamed = renamed_variants(ast);
+/// What the scan finds in a parsed file under `names`.
+fn structure(ast: &syn::File, names: &Names) -> Structure {
     let mut scan = ShapeScan {
-        types,
-        renamed: &renamed,
+        names,
         found: Structure::default(),
     };
     scan.visit_file(ast);
     scan.found
 }
 
-/// Every name of the JSON value type in `files`: `Json`, `Value` and their
-/// aliases, followed to a fixed point (an alias of an alias, a re-export in
-/// another module).
-fn json_type_names(files: &[Parsed]) -> BTreeSet<String> {
-    let mut types: BTreeSet<String> = SHAPE_TYPES.iter().map(ToString::to_string).collect();
+/// The crate-wide names of `files` ([`Names`]). The JSON type names and the
+/// variant names are followed to a fixed point: an alias of an alias, a rename
+/// of a renamed variant, a re-export in another module or file (#4775,
+/// #4863).
+fn crate_names(files: &[Parsed]) -> Names {
+    let mut names = Names {
+        types: SHAPE_TYPES.iter().map(ToString::to_string).collect(),
+        variants: SHAPE_VARIANTS.iter().map(ToString::to_string).collect(),
+        ..Names::default()
+    };
+    let parsed = || {
+        files
+            .iter()
+            .filter_map(|file| file.ast.as_ref().ok().map(|ast| (file, ast)))
+    };
     loop {
-        let before = types.len();
-        for ast in files.iter().filter_map(|file| file.ast.as_ref().ok()) {
-            for (_, alias) in structure(ast, &types.clone()).aliases {
-                types.insert(alias);
+        let before = (names.types.len(), names.variants.len());
+        for (_, ast) in parsed() {
+            let found = structure(ast, &names);
+            for (_, alias) in found.aliases {
+                names.types.insert(alias);
+            }
+            for (original, rename) in found.renames {
+                if names.variants.contains(&original) && rename != "_" {
+                    names.variants.insert(rename);
+                }
             }
         }
-        if types.len() == before {
-            return types;
+        if (names.types.len(), names.variants.len()) == before {
+            break;
         }
     }
+    // A macro is marked only when every definition of its name is.
+    let mut unmarked = BTreeSet::new();
+    for (file, ast) in parsed() {
+        let allowed = markers(file).allowed;
+        for (name, line) in macro_definitions(ast) {
+            if !allowed.contains(&line) {
+                unmarked.insert(name.clone());
+            }
+            names.local_macros.insert(name);
+        }
+    }
+    names.marked_macros = names.local_macros.difference(&unmarked).cloned().collect();
+    names
 }
 
 /// What the read rules find in one file of a recorded slice, each entry
-/// `file:line: source` (1-based line).
+/// `file:line: source` (1-based line). The entries group the findings of a
+/// line for the reader; `occurrences` counts each one (#4864).
 #[derive(Default)]
 struct FileFindings {
     /// Shape reads no marker allows.
     reads: Vec<String>,
     /// Aliases of the JSON value type no marker allows (#4775).
     aliases: Vec<String>,
+    /// Local macro definitions and invocations no marker allows (#4862).
+    macros: Vec<String>,
     /// Markers refused for a blank or placeholder reason (#4773).
     markers: Vec<String>,
     /// `file: why` when the file does not parse.
     unparsed: Vec<String>,
+    /// Every finding counted at its own position: two reads on one line are
+    /// two (#4864).
+    occurrences: usize,
 }
 
-impl FileFindings {
-    fn count(&self) -> usize {
-        self.reads.len() + self.aliases.len() + self.markers.len() + self.unparsed.len()
-    }
-}
-
-fn file_findings(file: &Parsed, types: &BTreeSet<String>) -> FileFindings {
+fn file_findings(file: &Parsed, names: &Names) -> FileFindings {
     let markers = markers(file);
     let source_lines: Vec<&str> = file.text.lines().collect();
     let entry = |line: usize| {
@@ -1206,27 +1354,43 @@ fn file_findings(file: &Parsed, types: &BTreeSet<String>) -> FileFindings {
             source_lines.get(line).unwrap_or(&"").trim()
         )
     };
-    let unmarked = |lines: BTreeSet<usize>| -> Vec<String> {
-        lines
+    let mut occurrences = 0;
+    let mut unmarked = |positions: Vec<Pos>| -> Vec<String> {
+        let mut per_line: BTreeMap<usize, usize> = BTreeMap::new();
+        for (line, _) in positions {
+            if !markers.allowed.contains(&line) {
+                *per_line.entry(line).or_default() += 1;
+                occurrences += 1;
+            }
+        }
+        per_line
             .into_iter()
-            .filter(|line| !markers.allowed.contains(line))
-            .map(entry)
+            .map(|(line, count)| match count {
+                1 => entry(line),
+                _ => format!("{} [{count} on this line]", entry(line)),
+            })
             .collect()
     };
     let found = match &file.ast {
-        Ok(ast) => structure(ast, types),
+        Ok(ast) => structure(ast, names),
         Err(why) => {
             return FileFindings {
                 unparsed: vec![format!("{}: does not parse: {why}", file.relative)],
+                occurrences: 1,
                 ..FileFindings::default()
             }
         }
     };
-    let alias_lines = found.aliases.into_iter().map(|(line, _)| line).collect();
+    let reads = unmarked(found.reads.into_iter().collect());
+    let aliases = unmarked(found.aliases.into_iter().map(|(pos, _)| pos).collect());
+    let macros = unmarked(found.macros.into_iter().collect());
+    let markers: Vec<String> = markers.refused.iter().copied().map(entry).collect();
     FileFindings {
-        reads: unmarked(found.reads),
-        aliases: unmarked(alias_lines),
-        markers: markers.refused.iter().copied().map(entry).collect(),
+        reads,
+        aliases,
+        macros,
+        occurrences: occurrences + markers.len(),
+        markers,
         unparsed: Vec::new(),
     }
 }
@@ -1397,6 +1561,10 @@ struct Report {
     /// `file:line: source` for an unmarked alias of the JSON value type in a
     /// recorded slice (#4775).
     aliases: Vec<String>,
+    /// `file:line: source` for an unmarked `macro_rules!` definition, or an
+    /// invocation of a local macro whose definition is unmarked, in a
+    /// recorded slice (#4862).
+    macros: Vec<String>,
     /// `file:line: source` for a marker with a blank or placeholder reason in
     /// a recorded slice (#4773).
     markers: Vec<String>,
@@ -1413,6 +1581,7 @@ impl Report {
             && self.helpers.is_empty()
             && self.reads.is_empty()
             && self.aliases.is_empty()
+            && self.macros.is_empty()
             && self.markers.is_empty()
             && self.unparsed.is_empty()
             && self.inventory.is_empty()
@@ -1486,7 +1655,7 @@ fn analyse(files: &[SourceFile]) -> Report {
 fn analyse_with(files: &[SourceFile], inventory: Option<&[(&str, Class)]>) -> Report {
     let parsed: Vec<Parsed> = files.iter().map(parse).collect();
     let constants = flag_constants(&parsed);
-    let types = json_type_names(&parsed);
+    let names = crate_names(&parsed);
     let mut report = Report::default();
     let add = |scope: &mut BTreeMap<String, BTreeSet<&'static str>>, slice: &str, signal| {
         scope.entry(slice.to_string()).or_default().insert(signal);
@@ -1516,12 +1685,11 @@ fn analyse_with(files: &[SourceFile], inventory: Option<&[(&str, Class)]>) -> Re
         None => Vec::new(),
     };
     let findings_of = |file: &Parsed| {
-        let mut findings = file_findings(file, &types);
         let helpers: Vec<String> = redefined_helpers(file)
             .into_iter()
             .map(|helper| format!("{}: fn {helper}", file.relative))
             .collect();
-        (std::mem::take(&mut findings.reads), helpers, findings)
+        (helpers, file_findings(file, &names))
     };
     let slices: Vec<String> = report.scope.keys().cloned().collect();
     for slice in slices {
@@ -1532,21 +1700,24 @@ fn analyse_with(files: &[SourceFile], inventory: Option<&[(&str, Class)]>) -> Re
             report.unadopted.push(slice.clone());
         }
         for file in in_slice() {
-            let (reads, helpers, findings) = findings_of(file);
-            report.reads.extend(reads);
+            let (helpers, findings) = findings_of(file);
             report.helpers.extend(helpers);
+            report.reads.extend(findings.reads);
             report.aliases.extend(findings.aliases);
+            report.macros.extend(findings.macros);
             report.markers.extend(findings.markers);
             report.unparsed.extend(findings.unparsed);
         }
     }
+    // The ratchet counts occurrences, never lines: a read added beside one
+    // already counted raises the count (#4864).
     for (slice, issue, expected) in pending {
         let found: usize = parsed
             .iter()
             .filter(|file| file.slice == slice)
             .map(|file| {
-                let (reads, helpers, findings) = findings_of(file);
-                reads.len() + helpers.len() + findings.count()
+                let (helpers, findings) = findings_of(file);
+                helpers.len() + findings.occurrences
             })
             .sum();
         if found != expected {
@@ -2133,6 +2304,17 @@ fn recorded_slices_alias_no_json_type_and_give_every_marker_a_reason() {
          and every `// {MARKER} <reason>` needs a specific reason (#4773):\n{}",
         report.aliases.join("\n"),
         report.markers.join("\n")
+    );
+}
+
+#[test]
+fn recorded_slices_define_and_invoke_no_unmarked_local_macro() {
+    let report = contract();
+    assert!(
+        report.macros.is_empty(),
+        "recorded slices (#4727) may not define or invoke a local `macro_rules!` whose \
+         definition has no `// {MARKER} <reason>` (#4862): the scanner never expands one\n{}",
+        report.macros.join("\n")
     );
 }
 
@@ -2908,4 +3090,366 @@ fn macro_bodies_are_parsed_when_their_grammar_is_known_and_fail_closed_otherwise
     );
     assert_eq!(report.unparsed.len(), 1, "{report:?}");
     assert!(!report.is_clean());
+}
+
+// ------------------------------------- #4861-#4864: cutting the classes
+
+/// The fixture of #4864: a pending slice whose one finding line gains a second
+/// read beside the first.
+const SAME_LINE_READS: &str = "fn items(r: &Json) -> usize {
+    match r.get(\"A\") { Some(Json::Object(p)) => { let _ = match r.get(\"Injected\") { Some(Json::Array(v)) => &v[..], _ => &[] }; p.len() } _ => 0 }
+}";
+
+/// Every reviewer reproduction of #4852 against 2d3904a1: each one passed
+/// that scanner's whole contract (scoped by `[("fresh", Class::Recorded)]`)
+/// and fails this one. `(finding, label, files)`.
+fn fifth_review_evasions() -> Vec<(&'static str, &'static str, Vec<SourceFile>)> {
+    let one = |text: &str| vec![file("fresh/mod.rs", text)];
+    vec![
+        (
+            "#4861",
+            "raw identifier variant, tuple form",
+            one(r##"use toolkit_aws::recorded::Step;
+fn response_items(r: &Json) -> &[Json] {
+    match r.get("Items") { Some(Json::r#Array(v)) => v, _ => &[] }
+}"##),
+        ),
+        (
+            "#4861",
+            "raw identifier variant, brace form",
+            one(r##"use toolkit_aws::recorded::Step;
+fn response_items(r: &Json) -> &[Json] {
+    match r.get("Items") { Some(Json::r#Array { 0: v }) => v, _ => &[] }
+}"##),
+        ),
+        (
+            "#4861",
+            "raw identifier shape method",
+            one(r##"use toolkit_aws::recorded::Step;
+use serde_json::Value;
+fn response_items(r: &Value) -> &[Value] {
+    r.get("Items").and_then(|v| v.r#as_array()).map(Vec::as_slice).unwrap_or(&[])
+}"##),
+        ),
+        (
+            "#4862",
+            "local macro taking the variant as an argument",
+            one(r##"use toolkit_aws::recorded::Step;
+macro_rules! extract {
+    ($variant:ident, $value:expr) => {
+        match $value {
+            Some(Json::$variant(items)) => items,
+            _ => &[],
+        }
+    };
+}
+fn response_items(r: &Json) -> &[Json] {
+    extract!(Array, r.get("Items"))
+}"##),
+        ),
+        (
+            "#4862",
+            "local macro shadowing vec",
+            one(r##"use toolkit_aws::recorded::Step;
+macro_rules! vec {
+    ($variant:ident, $value:expr) => {
+        match $value {
+            Some(Json::$variant(items)) => items,
+            _ => &[],
+        }
+    };
+}
+fn response_items(r: &Json) -> &[Json] {
+    vec!(Array, r.get("Items"))
+}"##),
+        ),
+        (
+            "#4863",
+            "qualified path to a marked variant re-export",
+            one(r##"use toolkit_aws::recorded::Step;
+mod variants {
+    // recorded-shape: exported variant used for construction
+    pub use toolkit_core::Json::Array as List;
+}
+fn response_items(r: &Json) -> &[Json] {
+    match r.get("Items") { Some(variants::List(v)) => v, _ => &[] }
+}"##),
+        ),
+        (
+            "#4863",
+            "variant renamed in another file",
+            vec![
+                file(
+                    "fresh/mod.rs",
+                    r##"use toolkit_aws::recorded::Step;
+use crate::fresh::variants::List;
+fn response_items(r: &Json) -> &[Json] {
+    match r.get("Items") { Some(List(v)) => v, _ => &[] }
+}"##,
+                ),
+                file(
+                    "fresh/variants.rs",
+                    "// recorded-shape: exported variant used for construction\npub use toolkit_core::Json::Array as List;",
+                ),
+            ],
+        ),
+    ]
+}
+
+fn fresh_recorded(files: &[SourceFile]) -> Report {
+    analyse_with(files, Some(&[("fresh", Class::Recorded)]))
+}
+
+#[test]
+fn every_round_five_evasion_fails_the_whole_contract() {
+    for (finding, label, files) in fifth_review_evasions() {
+        let report = fresh_recorded(&files);
+        assert!(
+            report.unadopted.is_empty() && report.inventory.is_empty(),
+            "{finding} {label}: {report:?}"
+        );
+        assert!(
+            !report.is_clean(),
+            "accepted: {finding} {label}\n{report:?}"
+        );
+    }
+}
+
+#[test]
+fn each_round_five_evasion_is_refused_for_what_it_hides() {
+    let at = |entries: &[String]| -> Vec<String> {
+        entries
+            .iter()
+            .map(|entry| entry.splitn(3, ':').take(2).collect::<Vec<_>>().join(":"))
+            .collect()
+    };
+    // (label, reads, macros) as `file:line`.
+    let expected: [(&str, &[&str], &[&str]); 7] = [
+        (
+            "raw identifier variant, tuple form",
+            &["fresh/mod.rs:3"],
+            &[],
+        ),
+        (
+            "raw identifier variant, brace form",
+            &["fresh/mod.rs:3"],
+            &[],
+        ),
+        ("raw identifier shape method", &["fresh/mod.rs:4"], &[]),
+        // The definition and the invocation; the scanner never expands it.
+        (
+            "local macro taking the variant as an argument",
+            &[],
+            &["fresh/mod.rs:2", "fresh/mod.rs:11"],
+        ),
+        (
+            "local macro shadowing vec",
+            &[],
+            &["fresh/mod.rs:2", "fresh/mod.rs:11"],
+        ),
+        // The marked re-export allows its own line, never the reader.
+        (
+            "qualified path to a marked variant re-export",
+            &["fresh/mod.rs:7"],
+            &[],
+        ),
+        ("variant renamed in another file", &["fresh/mod.rs:4"], &[]),
+    ];
+    let cases = fifth_review_evasions();
+    assert_eq!(cases.len(), expected.len());
+    for ((_, label, files), (want, reads, macros)) in cases.iter().zip(expected) {
+        assert_eq!(*label, want);
+        let report = fresh_recorded(files);
+        assert_eq!(at(&report.reads), reads, "{label}: {report:?}");
+        assert_eq!(at(&report.macros), macros, "{label}: {report:?}");
+        assert!(
+            report.aliases.is_empty() && report.markers.is_empty() && report.helpers.is_empty(),
+            "{label}: {report:?}"
+        );
+    }
+}
+
+#[test]
+fn raw_identifiers_are_the_names_they_spell() {
+    let report = fresh_recorded(&[file(
+        "fresh/mod.rs",
+        r##"use toolkit_aws::r#recorded::Step;
+use toolkit_core::r#Json as r#J;
+fn r#optional_list() {}
+fn f(r: &J) -> bool { matches!(r, J::r#Object(_)) || r.r#as_object().is_some() }
+fn r#match(r#fn: &Json) -> usize { r#fn.len() }"##,
+    )]);
+    assert!(report.scope["fresh"].contains("import"), "{report:?}");
+    assert_eq!(report.helpers, vec!["fresh/mod.rs: fn optional_list"]);
+    assert_eq!(report.aliases.len(), 1, "{report:?}");
+    assert_eq!(
+        report.reads,
+        vec![
+            "fresh/mod.rs:4: fn f(r: &J) -> bool { matches!(r, J::r#Object(_)) || \
+              r.r#as_object().is_some() } [2 on this line]"
+        ]
+    );
+}
+
+#[test]
+fn a_local_macro_needs_a_marked_definition_wherever_it_is_defined() {
+    let reader = "use toolkit_aws::recorded::Step;\nfn f(r: &Json) -> usize {\n    count!(r)\n}";
+    let defined = |marker: &str| {
+        file(
+            "other/mod.rs",
+            &format!("{marker}\nmacro_rules! count {{ ($v:expr) => {{ $v.len() }}; }}"),
+        )
+    };
+    let inventory = [
+        ("fresh", Class::Recorded),
+        (
+            "other",
+            Class::NotRecorded("the manifests of the repository"),
+        ),
+    ];
+    // Defined in a slice the contract does not scan: its use still counts.
+    let report = analyse_with(
+        &[file("fresh/mod.rs", reader), defined("")],
+        Some(&inventory),
+    );
+    assert_eq!(
+        report.macros,
+        vec!["fresh/mod.rs:3: count!(r)"],
+        "{report:?}"
+    );
+    // A marked definition allows every invocation.
+    let marked = defined("// recorded-shape: counts the members of a list the command built");
+    let report = analyse_with(&[file("fresh/mod.rs", reader), marked], Some(&inventory));
+    assert!(report.is_clean(), "{report:?}");
+    // A refused marker allows nothing.
+    let report = analyse_with(
+        &[
+            file("fresh/mod.rs", reader),
+            defined("// recorded-shape: todo"),
+        ],
+        Some(&inventory),
+    );
+    assert_eq!(report.macros.len(), 1, "{report:?}");
+    // A definition in a recorded slice is itself a finding, also inside a
+    // function, and a marker on it allows both.
+    let local = "use toolkit_aws::recorded::Step;\nfn f(r: &Json) -> usize {\n    macro_rules! count { ($v:expr) => { $v.len() }; }\n    count!(r)\n}";
+    let report = fresh_recorded(&[file("fresh/mod.rs", local)]);
+    assert_eq!(
+        report.macros,
+        vec![
+            "fresh/mod.rs:3: macro_rules! count { ($v:expr) => { $v.len() }; }",
+            "fresh/mod.rs:4: count!(r)"
+        ],
+        "{report:?}"
+    );
+    let marked = local.replace(
+        "    macro_rules!",
+        "    // recorded-shape: counts the members of a list the command built\n    macro_rules!",
+    );
+    assert!(fresh_recorded(&[file("fresh/mod.rs", &marked)]).is_clean());
+    // The standard macros keep their grammar by their plain or `std::` path;
+    // any other path is opaque.
+    let body = |call: &str| {
+        let text = format!(
+            "use toolkit_aws::recorded::Step;\nfn f(l: Vec<Json>) {{\n    let _ = {call};\n}}"
+        );
+        fresh_recorded(&[file("fresh/mod.rs", &text)]).reads.len()
+    };
+    assert_eq!(body("vec![Json::Array(l)]"), 0);
+    assert_eq!(body("std::vec![Json::Array(l)]"), 0);
+    assert_eq!(body("other::vec![Json::Array(l)]"), 1);
+}
+
+#[test]
+fn a_renamed_variant_is_followed_across_files_and_renames() {
+    let files = [
+        file(
+            "fresh/mod.rs",
+            "use toolkit_aws::recorded::Step;\nfn f(r: &Json) -> bool {\n    matches!(r, crate::other::Seq(_)) || matches!(r, Map { .. })\n}",
+        ),
+        file(
+            "other/mod.rs",
+            "pub use toolkit_core::Json::Array as List;\npub use self::List as Seq;\npub use serde_json::Value::r#Object as Map;",
+        ),
+    ];
+    let report = analyse_with(
+        &files,
+        Some(&[
+            ("fresh", Class::Recorded),
+            (
+                "other",
+                Class::NotRecorded("the manifests of the repository"),
+            ),
+        ]),
+    );
+    assert_eq!(
+        report.reads,
+        vec![
+            "fresh/mod.rs:3: matches!(r, crate::other::Seq(_)) || matches!(r, Map { .. }) \
+             [2 on this line]"
+        ],
+        "{report:?}"
+    );
+}
+
+#[test]
+fn the_pending_ratchet_counts_each_read_not_each_line() {
+    let pending = |findings| {
+        analyse_with(
+            &[file("fresh/mod.rs", SAME_LINE_READS)],
+            Some(&[(
+                "fresh",
+                Class::Pending {
+                    issue: "#1",
+                    findings,
+                },
+            )]),
+        )
+    };
+    // 2d3904a1 counted the line once and accepted 1.
+    let report = pending(1);
+    assert_eq!(report.inventory.len(), 1, "{report:?}");
+    assert!(report.inventory[0].starts_with("pending slice fresh (#1) has 2 findings"));
+    assert!(pending(2).is_clean(), "{:?}", pending(2));
+    // Recorded, the two reads print as one line that says how many it holds.
+    let report = fresh_recorded(&[file("fresh/mod.rs", SAME_LINE_READS)]);
+    assert_eq!(report.reads.len(), 1, "{report:?}");
+    assert!(report.reads[0].ends_with("[2 on this line]"), "{report:?}");
+    // Two aliases on one line are two findings as well.
+    let aliases = "type A = Json; type B = Json;";
+    let report = analyse_with(
+        &[file("fresh/mod.rs", aliases)],
+        Some(&[(
+            "fresh",
+            Class::Pending {
+                issue: "#1",
+                findings: 2,
+            },
+        )]),
+    );
+    assert!(report.is_clean(), "{report:?}");
+}
+
+#[test]
+fn a_read_added_beside_a_pending_read_fails_the_real_contract() {
+    // The reviewer mutation of #4864 over the real sources: an unmarked
+    // member read on the line of an existing `bedrock_resolve` finding.
+    let mut files = sources();
+    let pricing = files
+        .iter_mut()
+        .find(|file| file.relative == "bedrock_resolve/pricing.rs")
+        .expect("bedrock_resolve/pricing.rs");
+    let before = pricing.text.clone();
+    pricing.text = before.replacen(
+        "Some(Json::Object(pairs)) => {",
+        "Some(Json::Object(pairs)) => { let _ = match item.get(\"Injected\") { Some(Json::Array(v)) => &v[..], _ => &[] };",
+        1,
+    );
+    assert_ne!(pricing.text, before, "the mutation site moved");
+    let report = analyse_with(&files, Some(INVENTORY));
+    assert_eq!(report.inventory.len(), 1, "{report:?}");
+    assert!(
+        report.inventory[0].starts_with("pending slice bedrock_resolve (#4839) has "),
+        "{report:?}"
+    );
 }
