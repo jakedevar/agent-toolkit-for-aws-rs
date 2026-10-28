@@ -25,6 +25,34 @@ use crate::manifests::{
 };
 use crate::{Invocation, Output};
 
+/// Registration of the `startup-consent` slice: its routes and help text (see `crate::registry`).
+pub(crate) const SLICE: crate::registry::Slice = crate::registry::Slice {
+    name: "startup-consent",
+    commands: &[crate::CommandSpec {
+        path: &["startup", "consent-audit"],
+        flags: &[],
+        value_flags: &["--plugin-root"],
+        strict_values: false,
+        repeatable_flags: &[],
+        max_positionals: 0,
+        passthrough: false,
+        handler: crate::startup::consent_audit_command,
+    }],
+    synopsis: r"  toolkit startup consent-audit [--plugin-root DIR]
+",
+    description: r"  startup consent-audit
+                Fail when a discover-*-api.md usage-API discovery sub-file of the
+                plugin at --plugin-root DIR (default: the current directory)
+                carries a blanket GET-only claim although its Capture Endpoint
+                Table calls another HTTP method and the claim does not name
+                that method in an exception sentence.
+",
+    exit_notes: "",
+    doc: "docs/migration/startup-validators.md",
+    synopsis_rank: 90,
+    description_rank: 80,
+};
+
 /// Directory part of the glob that selects the discovery sub-files.
 const TARGET_DIR: &str = "references/phases/discover";
 /// The glob as the messages print it.

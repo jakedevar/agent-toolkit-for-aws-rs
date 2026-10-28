@@ -26,6 +26,101 @@ use toolkit_msk::sizing::{
 
 use crate::{Invocation, Output};
 
+/// Registration of the `msk` slice: its routes and help text (see `crate::registry`).
+pub(crate) const SLICE: crate::registry::Slice = crate::registry::Slice {
+    name: "msk",
+    commands: &[
+        crate::CommandSpec {
+            path: &["msk", "size"],
+            flags: SIZE_FLAGS,
+            value_flags: SIZE_VALUE_FLAGS,
+            strict_values: false,
+            repeatable_flags: &[],
+            max_positionals: 0,
+            passthrough: false,
+            handler: size,
+        },
+        crate::CommandSpec {
+            path: &["msk", "compat"],
+            flags: &[],
+            value_flags: COMPAT_VALUE_FLAGS,
+            strict_values: false,
+            repeatable_flags: &[],
+            max_positionals: 1,
+            passthrough: false,
+            handler: compat,
+        },
+        crate::CommandSpec {
+            path: &["msk", "sim", "compute"],
+            flags: &[],
+            value_flags: SIM_COMPUTE_VALUE_FLAGS,
+            strict_values: false,
+            repeatable_flags: &[],
+            max_positionals: 0,
+            passthrough: false,
+            handler: sim_compute,
+        },
+        crate::CommandSpec {
+            path: &["msk", "sim", "render"],
+            flags: &[],
+            value_flags: SIM_RENDER_VALUE_FLAGS,
+            strict_values: false,
+            repeatable_flags: &[],
+            max_positionals: 0,
+            passthrough: false,
+            handler: sim_render,
+        },
+        crate::CommandSpec {
+            path: &["msk", "sim", "validate"],
+            flags: &[],
+            value_flags: SIM_VALIDATE_VALUE_FLAGS,
+            strict_values: false,
+            repeatable_flags: &[],
+            max_positionals: 0,
+            passthrough: false,
+            handler: sim_validate,
+        },
+    ],
+    synopsis: r"  toolkit msk size [--emit-static-pricing] [--use-max-partitions]
+                   [--no-rack-affined-consumers] [--region REGION]
+                   [--pricing-source auto|api|static]
+                   [--avg-data-in-mbs N] [--peak-data-in-mbs N]
+                   [--avg-data-out-mbs N] [--peak-data-out-mbs N]
+                   [--num-partitions N] [--retention-hours N]
+                   [--primary-retention-hours N] [--replication-factor N]
+                   [--utilization-standard F] [--utilization-express F]
+                   [--pst-per-broker-mbs N] [--discount-pct PCT]
+                   [--broker-classes standard|express|standard,express]
+                   [--broker-quota N]
+  toolkit msk compat CLUSTER_CONFIG [--out-dir DIR]
+  toolkit msk sim compute [--instance-type T] [--broker-count N]
+                          [--kafka-version V]
+  toolkit msk sim render --instance-type T --broker-count N
+                         --kafka-version V --output PATH
+  toolkit msk sim validate --test e2e_latency|broker_restart --config JSON
+                           [--instance-type T] [--broker-count N]
+",
+    description: r"  msk size      MSK broker sizing and monthly cost report (MiB/s, GiB, USD).
+                The workload options are required unless
+                --emit-static-pricing is given. Only --pricing-source static
+                (us-east-1) prices offline; `auto` falls back to it, `api`
+                needs a build with an AWS Pricing API client.
+  msk compat    Five-pillar MSK Express compatibility assessment of a
+                discovery cluster-config.json. Writes
+                compatibility.<cluster_name>.json into --out-dir (default:
+                current directory) and reports the path and the overall
+                verdict on stderr.
+  msk sim       MSK Express load-test simulation: `compute` derives capacity
+                and fleet sizes, `render` writes a CloudFormation template
+                with the sizing baked in, `validate` returns PASS/REJECT with
+                warnings for a proposed test config.
+",
+    exit_notes: "",
+    doc: "docs/migration/msk-contracts.md",
+    synopsis_rank: 210,
+    description_rank: 210,
+};
+
 /// Boolean flags of `msk size`.
 pub(crate) const SIZE_FLAGS: &[&str] = &[
     "--emit-static-pricing",

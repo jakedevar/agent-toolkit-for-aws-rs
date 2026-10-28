@@ -35,6 +35,36 @@ use crate::{Invocation, Output};
 mod probe;
 mod verify;
 
+/// Registration of the `startup-model-path` slice: its routes and help text (see `crate::registry`).
+pub(crate) const SLICE: crate::registry::Slice = crate::registry::Slice {
+    name: "startup-model-path",
+    commands: &[crate::CommandSpec {
+        path: &["startup", "verify-model-path"],
+        flags: &[],
+        value_flags: &["--output", "--workload"],
+        strict_values: false,
+        repeatable_flags: &[],
+        max_positionals: 1,
+        passthrough: false,
+        handler: crate::startup::verify_model_path_command,
+    }],
+    synopsis: r"  toolkit startup verify-model-path RECOMMENDATION [--output FILE] [--workload ID[,ID...]]
+",
+    description: r"  startup verify-model-path RECOMMENDATION
+                Probe the model paths of a model-recommendation.json
+                (agent-advisor verify_model_path.py) and write
+                model-verification.json beside it (--output FILE overrides).
+                --workload ID[,ID...] probes only those workloads. Prints
+                RESULT=ok|failed WORKLOADS=<n>; exit 2 when a probe failed or
+                needs resolution. Probe errors are redacted. This build has no
+                live Bedrock client: a probe reports a RuntimeError.
+",
+    exit_notes: "",
+    doc: "docs/migration/startup-diagram.md",
+    synopsis_rank: 160,
+    description_rank: 160,
+};
+
 #[cfg(test)]
 mod tests;
 

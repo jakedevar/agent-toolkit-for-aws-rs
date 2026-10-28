@@ -27,6 +27,36 @@ use super::{is_regular_file, is_regular_file_under, read_text, read_text_under};
 use crate::manifests::{is_falsy, is_py_space, py_repr_opt, py_strip};
 use crate::{Invocation, Output};
 
+/// Registration of the `startup-plan` slice: its routes and help text (see `crate::registry`).
+pub(crate) const SLICE: crate::registry::Slice = crate::registry::Slice {
+    name: "startup-plan",
+    commands: &[crate::CommandSpec {
+        path: &["startup", "emit-plan"],
+        flags: &[],
+        value_flags: &["--migration-dir", "--plugin-root", "--plugin-json"],
+        strict_values: false,
+        repeatable_flags: &[],
+        max_positionals: 0,
+        passthrough: false,
+        handler: crate::startup::emit_plan_command,
+    }],
+    synopsis: r"  toolkit startup emit-plan --migration-dir DIR [--plugin-root DIR] [--plugin-json FILE]
+",
+    description: r"  startup emit-plan
+                Copy the validated cost figures of a finished GCP or Heroku
+                migration run in --migration-dir DIR into plan.json for the
+                AWS Startups Migrate web import (producerVersion from
+                --plugin-json FILE, default: .claude-plugin/plugin.json of
+                --plugin-root DIR). Fail-open: any missing or unreadable input
+                prints `PLAN_SKIP | reason=...`, writes no file and exits 0;
+                success prints `PLAN_OK | path=... | platform=... | scope=...`.
+",
+    exit_notes: "",
+    doc: "docs/migration/startup-validators.md",
+    synopsis_rank: 80,
+    description_rank: 70,
+};
+
 /// Highest `plan.json` schema the web import page understands.
 const SCHEMA_VERSION: i64 = 1;
 

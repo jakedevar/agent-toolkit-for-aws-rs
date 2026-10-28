@@ -46,6 +46,99 @@ mod search;
 mod snapshot;
 mod timeutil;
 
+/// Registration of the `ai-models` slice: its routes and help text (see `crate::registry`).
+pub(crate) const SLICE: crate::registry::Slice = crate::registry::Slice {
+    name: "ai-models",
+    commands: &[
+        crate::CommandSpec {
+            path: &["ai-models", "list-models"],
+            flags: LIST_MODELS_FLAGS,
+            value_flags: LIST_MODELS_VALUE_FLAGS,
+            strict_values: true,
+            repeatable_flags: &[],
+            max_positionals: 2,
+            passthrough: false,
+            handler: list_models_command,
+        },
+        crate::CommandSpec {
+            path: &["ai-models", "filter"],
+            flags: &[],
+            value_flags: &[],
+            strict_values: true,
+            repeatable_flags: &[],
+            max_positionals: MAX_CONSTRAINT_POSITIONALS,
+            passthrough: false,
+            handler: filter_command,
+        },
+        crate::CommandSpec {
+            path: &["ai-models", "search"],
+            flags: &[],
+            value_flags: SEARCH_VALUE_FLAGS,
+            strict_values: true,
+            repeatable_flags: &[],
+            max_positionals: MAX_CONSTRAINT_POSITIONALS,
+            passthrough: false,
+            handler: search_command,
+        },
+        crate::CommandSpec {
+            path: &["ai-models", "model-names"],
+            flags: &[],
+            value_flags: RECORDED_VALUE_FLAGS,
+            strict_values: true,
+            repeatable_flags: &[],
+            max_positionals: 2,
+            passthrough: false,
+            handler: model_names_command,
+        },
+        crate::CommandSpec {
+            path: &["ai-models", "recipes"],
+            flags: &[],
+            value_flags: RECORDED_VALUE_FLAGS,
+            strict_values: true,
+            repeatable_flags: &[],
+            max_positionals: 2,
+            passthrough: false,
+            handler: recipes_command,
+        },
+        crate::CommandSpec {
+            path: &["ai-models", "endpoint-diagnostics"],
+            flags: &[],
+            value_flags: DIAGNOSTICS_VALUE_FLAGS,
+            strict_values: true,
+            repeatable_flags: &[],
+            max_positionals: 2,
+            passthrough: false,
+            handler: endpoint_diagnostics_command,
+        },
+    ],
+    synopsis: r"  toolkit ai-models list-models HUB [REGION] [--list-values] [--create-snapshot]
+      [--snapshot-file FILE] [--recorded FILE]
+  toolkit ai-models filter MODELS_JSON [KEY:VALUE...]
+  toolkit ai-models search SageMakerPublicHub [KEY:VALUE...] [--region R]
+      [--snapshot-file FILE] [--recorded FILE]
+  toolkit ai-models model-names HUB [REGION] [--recorded FILE]
+  toolkit ai-models recipes MODEL HUB [--recorded FILE]
+  toolkit ai-models endpoint-diagnostics ENDPOINT REGION [--minutes N | --start TS [--end TS]]
+      [--now TS] [--recorded FILE]
+",
+    description: r"  ai-models     Model discovery and endpoint diagnostics of the AWS AI/ML skill
+                (#4384). list-models lists a SageMaker Hub's models (or their
+                distinct values, or a catalog snapshot), filter applies
+                KEY:VALUE constraints to a models file, search resolves them
+                against a snapshot and queries SageMaker Search (SageMakerPublicHub
+                only) with a visible ListHubContents fallback, model-names lists
+                the fine-tunable models, recipes the fine-tuning techniques of
+                one model, endpoint-diagnostics the status, metrics and recent
+                logs of an endpoint. This build has no live AWS client and sends
+                nothing: --recorded FILE replays recorded responses. See
+                docs/migration/ai-models.md.
+",
+    exit_notes: "",
+    doc: "docs/migration/ai-models.md",
+    synopsis_rank: 260,
+    description_rank: 260,
+};
+
 #[cfg(test)]
 mod tests;
 

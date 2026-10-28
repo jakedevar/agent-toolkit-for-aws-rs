@@ -1217,17 +1217,22 @@ fn the_routing_table_has_one_entry_per_command() {
             .count();
         assert_eq!(count, 1, "{command}");
     }
+    // The routes live in the slice's own registration (#4576), the module
+    // declaration stays in `lib.rs`.
+    let slice = include_str!("../bedrock_report.rs");
+    assert_eq!(
+        slice
+            .matches("path: &[\"bedrock-report\", \"render\"]")
+            .count(),
+        1
+    );
+    assert_eq!(
+        slice
+            .matches("path: &[\"bedrock-report\", \"validate\"]")
+            .count(),
+        1
+    );
     let lib = include_str!("../lib.rs");
-    assert_eq!(
-        lib.matches("path: &[\"bedrock-report\", \"render\"]")
-            .count(),
-        1
-    );
-    assert_eq!(
-        lib.matches("path: &[\"bedrock-report\", \"validate\"]")
-            .count(),
-        1
-    );
     assert_eq!(lib.matches("mod bedrock_report;").count(), 1);
     for spec in COMMANDS
         .iter()

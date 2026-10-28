@@ -35,6 +35,46 @@ pub(crate) mod pyjson;
 pub(crate) mod schema;
 pub(crate) mod shape;
 
+/// Registration of the `startup-artifacts` slice: its routes and help text (see `crate::registry`).
+pub(crate) const SLICE: crate::registry::Slice = crate::registry::Slice {
+    name: "startup-artifacts",
+    commands: &[crate::CommandSpec {
+        path: &["startup", "artifacts"],
+        flags: &["--self-check", "--fixtures", "--no-baseline", "--json"],
+        value_flags: &[
+            "--run-dir",
+            "--skill",
+            "--manifest",
+            "--baseline",
+            "--plugin-root",
+        ],
+        strict_values: false,
+        repeatable_flags: &[],
+        max_positionals: 0,
+        passthrough: false,
+        handler: crate::startup::artifacts_command,
+    }],
+    synopsis: r"  toolkit startup artifacts (--self-check | --fixtures | --run-dir DIR --skill NAME)
+                            [--plugin-root DIR] [--manifest FILE] [--baseline FILE]
+                            [--no-baseline] [--json]
+",
+    description: r"  startup artifacts
+                Validate migration artifacts against the contracts the skills
+                publish (JSON examples in the schema documents plus the JSON
+                Schemas) using the manifest scripts/artifact-contracts.json of
+                the plugin at --plugin-root DIR. --self-check parses every
+                contract document, --fixtures checks the fixture goldens with
+                the shipped baseline, --run-dir DIR --skill NAME checks one
+                run (--skill is gcp-to-aws, heroku-to-aws or azure-to-aws).
+                Findings and the PASS/FAIL summary go to stdout (--json for a
+                report object); exit status 1 when an error finding remains.
+",
+    exit_notes: "",
+    doc: "docs/migration/startup-validators.md",
+    synopsis_rank: 70,
+    description_rank: 120,
+};
+
 #[cfg(test)]
 mod tests;
 
