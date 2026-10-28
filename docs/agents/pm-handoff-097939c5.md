@@ -292,3 +292,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
   4/4 busy: c6b026ce (#4839), f77e05af (r14), fb8e2044 (#4751 repair), #4468 worker.
 - 10-28 19:50Z: #4839 impl e49f83ad4a3b583b8867e2201ff150c4ee6a529f (c6b026ce; base 2d3904a1; bedrock_resolve 17->0 no behaviour change; elasticache 30->0 with 3 documented malformed-input changes; +3 shared accessors nullable_list/list_value/object_members; recorded_contract 33/33, no Pending left; scoped db1f0f13 ok aws 182 cli 2310; fmt/clippy/ws ok). Review #4867 (Codex sol high, pinned). Needs #4751 repair merged before integration.
   4/4 busy: f77e05af (r14), fb8e2044 (#4751 repair), e5345267 (#4468 redaction), #4867 reviewer.
+- 10-28 19:58Z: #4468 cluster: all 6 already fixed on rolling (b897cd8 5902276 7aeeb31 6ba2ac9 7b2ce8f 5112a8b); worker e5345267 added regression table 1e7a8fb3094fd049de9d391ea9ee7e520c78228d (tests+docs; PM-inspected; scoped 32f12757 ok; check ok). ENQUEUED entry 5c529ed1 (seq 2915). On land close #4468 #4469 #4494 #4515 #4516 #4536; #4568 stays open.
+  Startup-artifacts cluster worker (Opus high, base rolling) bound #4584 covering #4585 #4586 #4587 #4596 #4603.
+  4/4 busy: f77e05af (r14), fb8e2044 (#4751 repair), 0326fbbf (#4867), #4584 worker.
