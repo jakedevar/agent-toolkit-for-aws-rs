@@ -310,3 +310,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
   Queue: 5c529ed1 (#4468, 2915), 78a019f9 (r14, 2916) both queued.
   4/4 busy: c621f43f (#4576), 10864034 (#4751 repair 2), 9652858a (#4873), #4398 worker.
   ROUND 15 candidates: #4751 final, #4839 506ccaca, #4584 e60717ac (if #4873 ACCEPT), #4576.
+- 10-28 21:00Z: #4873 on #4584 e60717ac: checks 2-4 PASS; finding #4875 (check/open TOCTOU via concurrent rename). RULING: out of toolkit-core threat model (no concurrent mutation; Python never had it); my brief over-reached. #4875 -> P3 hardening follow-up. ACCEPTED #4584 at e60717ac85a65e83f79f84a1f19f1a42bb391d98. Close on land: #4584 #4603 #4873.
+  New slice #4395 DocumentDB/Neptune worker (Sonnet high, base rolling).
+  4/4 busy: c621f43f (#4576), 10864034 (#4751 repair 2), 39bbfbb0 (#4398), #4395 worker.
