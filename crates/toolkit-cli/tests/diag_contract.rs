@@ -316,8 +316,7 @@ fn usage_variants(spec: &CommandSpec) -> Vec<Vec<String>> {
     }
     // The bare `-` stdio marker (#4743) as a value of every value flag, in both
     // spellings, and as a positional. The router refuses it except for pairs
-    // listed in `STDIO_DASH` (and for the value of a non-strict command, which
-    // takes any value), so the diagnostic or the command behind it must keep
+    // listed in `STDIO_DASH`, so the diagnostic or the command behind it must keep
     // its output safe (stdin is closed here). The semantic contract (usage
     // error, no file touched) is `an_unlisted_bare_dash_is_a_usage_error_*`.
     for flag in all_value_flags(spec) {
@@ -899,7 +898,23 @@ fn every_stdio_dash_entry_names_a_real_command_and_flag() {
 
 fn is_usage_error(run: &Run) -> bool {
     run.status == Some(2)
-        && String::from_utf8_lossy(&run.stderr).starts_with("error: invalid arguments\n")
+        && String::from_utf8_lossy(&run.stderr).starts_with("error: invalid arguments")
+}
+
+/// A refused `-` is a usage error whose first stderr line is a single escaped
+/// diagnostic naming `flag` (or the positional argument).
+fn is_dash_refusal(run: &Run, flag: &str) -> bool {
+    let stderr = String::from_utf8_lossy(&run.stderr);
+    let first = stderr.lines().next().unwrap_or_default();
+    let names = if flag == toolkit_cli::STDIO_DASH_POSITIONAL {
+        "a bare - argument"
+    } else {
+        flag
+    };
+    run.status == Some(2)
+        && first.starts_with("error: invalid arguments: ")
+        && first.contains(names)
+        && first.contains("./-")
 }
 
 /// Every command, every value flag and every positional: `-` is a plain usage
@@ -929,25 +944,33 @@ fn an_unlisted_bare_dash_is_a_usage_error_and_touches_no_file() {
             cases.push((toolkit_cli::STDIO_DASH_POSITIONAL.to_string(), dash));
         }
         for (flag, args) in cases {
-            let positional = flag == toolkit_cli::STDIO_DASH_POSITIONAL;
             let routed = toolkit_cli::route(COMMANDS, &args).is_ok();
             if dash_is_listed(spec, &flag) {
                 if !routed {
                     failures.insert(format!("listed pair refused: {}", display_args(&args)));
                 }
-            } else if positional || spec.strict_values {
-                // Refused by the router, with the pre-#4743 diagnostic.
+            } else {
+                // Refused by the router for EVERY registered value flag and
+                // positional, strict or not: a slice never receives a `-` it
+                // could open as a file named `-` (#4780). The diagnostic names
+                // the flag; the registry is the audit, so a new slice cannot
+                // opt out by forgetting a declaration.
                 if routed {
                     failures.insert(format!("unlisted `-` routed: {}", display_args(&args)));
                 } else {
                     let run = spawn_toolkit(&args, &scratch.0);
-                    if !is_usage_error(&run) {
-                        failures.insert(format!("not a usage error: {}", display_args(&args)));
+                    if !is_dash_refusal(&run, &flag) {
+                        failures.insert(format!(
+                            "not a dash refusal naming {flag}: {} -> {:?}",
+                            display_args(&args),
+                            String::from_utf8_lossy(&run.stderr)
+                                .lines()
+                                .next()
+                                .unwrap_or_default()
+                        ));
                     }
                 }
             }
-            // A non-strict command takes any value verbatim, as it did before
-            // #4743; that is outside this contract.
         }
     }
     assert_eq!(
@@ -1037,4 +1060,193 @@ fn the_4780_reproductions_fail_before_touching_a_file_named_dash() {
     let run = spawn_toolkit(&args, &scratch.0);
     assert!(is_usage_error(&run), "skills list -: {:?}", run.status);
     assert!(run.stdout.is_empty());
+}
+
+/// One of the reviewer's four #4780 reproductions: a complete, valid command
+/// whose only path argument is spelled `-`.
+struct Repro {
+    name: &'static str,
+    /// The complete valid command without its path argument.
+    command: &'static [&'static str],
+    /// The flag whose value is the path argument.
+    flag: &'static str,
+    /// Files made before the run: (path, contents).
+    fixtures: &'static [(&'static str, &'static str)],
+}
+
+const REPROS: &[Repro] = &[
+    Repro {
+        name: "elasticache dashboard --output",
+        command: &["elasticache", "dashboard", "--serverless", "demo"],
+        flag: "--output",
+        fixtures: &[],
+    },
+    Repro {
+        name: "startup terraform-policy --json",
+        command: &["startup", "terraform-policy", "terraform"],
+        flag: "--json",
+        fixtures: &[(
+            "terraform/main.tf",
+            "resource \"null_resource\" \"example\" {}\n",
+        )],
+    },
+    Repro {
+        name: "cloudwatch validate instrumentation-type --json-file",
+        command: &["cloudwatch", "validate", "instrumentation-type"],
+        flag: "--json-file",
+        fixtures: &[],
+    },
+];
+
+/// The same command with the path argument spelled in every way.
+fn repro_args(repro: &Repro, spelling: usize, path: &str) -> Vec<String> {
+    let mut args: Vec<String> = repro.command.iter().map(|w| (*w).to_string()).collect();
+    match spelling {
+        0 => args.extend([repro.flag.to_string(), path.to_string()]),
+        _ => args.push(format!("{}={path}", repro.flag)),
+    }
+    args
+}
+
+fn make_fixtures(scratch: &Scratch, repro: &Repro) {
+    for (path, contents) in repro.fixtures {
+        let full = scratch.0.join(path);
+        fs::create_dir_all(full.parent().expect("parent")).expect("create fixture dir");
+        fs::write(full, contents).expect("write fixture");
+    }
+}
+
+/// The reviewer's four reproductions, with complete valid companion arguments and
+/// both spellings: a pre-existing `./-` is preserved byte for byte, an absent
+/// `./-` is not created, and the exit status is the usage status 2 (#4780).
+#[test]
+fn the_4780_reproductions_refuse_dash_and_leave_a_file_named_dash_alone() {
+    const SENTINEL: &str = "KEEP-ORIGINAL\n";
+    const BREAKPOINT: &str = r#"{"instrumentation_type":"BREAKPOINT"}"#;
+    for repro in REPROS {
+        for spelling in 0..2 {
+            let args = repro_args(repro, spelling, "-");
+            // `./-` present: preserved (the read-side repro keeps its input there).
+            let scratch = Scratch::new();
+            make_fixtures(&scratch, repro);
+            let kept = if repro.flag == "--json-file" {
+                BREAKPOINT
+            } else {
+                SENTINEL
+            };
+            fs::write(scratch.0.join("-"), kept).expect("write sentinel");
+            let run = spawn_toolkit(&args, &scratch.0);
+            assert!(
+                is_dash_refusal(&run, repro.flag),
+                "{}: {args:?}: {:?} {:?}",
+                repro.name,
+                run.status,
+                String::from_utf8_lossy(&run.stderr)
+            );
+            assert!(run.stdout.is_empty(), "{}: {args:?}", repro.name);
+            assert_eq!(
+                fs::read(scratch.0.join("-")).expect("sentinel survives"),
+                kept.as_bytes(),
+                "{}: {args:?} changed ./-",
+                repro.name
+            );
+
+            // `./-` absent: not created.
+            let scratch = Scratch::new();
+            make_fixtures(&scratch, repro);
+            let run = spawn_toolkit(&args, &scratch.0);
+            assert!(
+                is_dash_refusal(&run, repro.flag),
+                "{}: {args:?}: {:?}",
+                repro.name,
+                run.status
+            );
+            assert!(
+                !scratch.0.join("-").exists(),
+                "{}: {args:?} created ./-",
+                repro.name
+            );
+        }
+    }
+
+    // `skills list -`: the positional root is not enumerated as ./-.
+    let scratch = Scratch::new();
+    fs::create_dir_all(scratch.0.join("-/example")).expect("create dir");
+    fs::write(
+        scratch.0.join("-/example/SKILL.md"),
+        "---\nname: example\n---\n",
+    )
+    .expect("write skill");
+    let args: Vec<String> = ["skills", "list", "-"]
+        .iter()
+        .map(|w| (*w).to_string())
+        .collect();
+    let run = spawn_toolkit(&args, &scratch.0);
+    assert!(
+        is_dash_refusal(&run, toolkit_cli::STDIO_DASH_POSITIONAL),
+        "skills list -: {:?} {:?}",
+        run.status,
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert!(run.stdout.is_empty());
+}
+
+/// `./-` stays a legal explicit literal path for the same four commands.
+#[test]
+fn an_explicit_dot_slash_dash_is_still_a_literal_path() {
+    // elasticache dashboard --output ./- writes the template to ./-.
+    let elasticache = &REPROS[0];
+    for spelling in 0..2 {
+        let scratch = Scratch::new();
+        let run = spawn_toolkit(&repro_args(elasticache, spelling, "./-"), &scratch.0);
+        assert_eq!(run.status, Some(0), "{:?}", String::from_utf8_lossy(&run.stderr));
+        assert!(
+            String::from_utf8_lossy(&run.stdout).starts_with("Written to ./-\n"),
+            "{:?}",
+            String::from_utf8_lossy(&run.stdout)
+        );
+        let written = fs::read_to_string(scratch.0.join("-")).expect("./- written");
+        assert!(written.starts_with('{'), "{written}");
+    }
+
+    // startup terraform-policy --json ./- writes the verdict to ./-.
+    let terraform = &REPROS[1];
+    for spelling in 0..2 {
+        let scratch = Scratch::new();
+        make_fixtures(&scratch, terraform);
+        let run = spawn_toolkit(&repro_args(terraform, spelling, "./-"), &scratch.0);
+        assert_eq!(run.status, Some(0), "{:?}", String::from_utf8_lossy(&run.stderr));
+        assert!(String::from_utf8_lossy(&run.stdout).starts_with("POLICY_OK"));
+        let verdict = fs::read_to_string(scratch.0.join("-")).expect("./- written");
+        assert!(verdict.starts_with('{'), "{verdict}");
+    }
+
+    // cloudwatch validate ... --json-file ./- reads ./-.
+    let cloudwatch = &REPROS[2];
+    for spelling in 0..2 {
+        let scratch = Scratch::new();
+        fs::write(
+            scratch.0.join("-"),
+            r#"{"instrumentation_type":"BREAKPOINT"}"#,
+        )
+        .expect("write ./-");
+        let run = spawn_toolkit(&repro_args(cloudwatch, spelling, "./-"), &scratch.0);
+        assert_eq!(run.status, Some(0), "{:?}", String::from_utf8_lossy(&run.stderr));
+    }
+
+    // skills list ./- lists ./-/example.
+    let scratch = Scratch::new();
+    fs::create_dir_all(scratch.0.join("-/example")).expect("create dir");
+    fs::write(
+        scratch.0.join("-/example/SKILL.md"),
+        "---\nname: example\n---\n",
+    )
+    .expect("write skill");
+    let args: Vec<String> = ["skills", "list", "./-"]
+        .iter()
+        .map(|w| (*w).to_string())
+        .collect();
+    let run = spawn_toolkit(&args, &scratch.0);
+    assert_eq!(run.status, Some(0), "{:?}", String::from_utf8_lossy(&run.stderr));
+    assert!(String::from_utf8_lossy(&run.stdout).contains("example"));
 }
