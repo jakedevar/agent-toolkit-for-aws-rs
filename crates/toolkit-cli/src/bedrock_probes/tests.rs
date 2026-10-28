@@ -3295,3 +3295,329 @@ fn an_unrecorded_request_is_an_error_row_that_names_no_request_value() {
         "error: ConnectionError: no recorded response for this request"
     );
 }
+
+// ---------------------------------------------------------------------------
+// review #4937: env-file configuration (#4938), the error-body cut (#4939) and
+// caller paths in diagnostics (#4940)
+
+const ANTHROPIC_URL: &str = "https://api.anthropic.com/v1/messages";
+
+fn pairs(items: &[(&str, &str)]) -> Vec<(String, String)> {
+    items
+        .iter()
+        .map(|(key, value)| ((*key).to_string(), (*value).to_string()))
+        .collect()
+}
+
+fn invocation(values: &[(&str, &str)]) -> crate::Invocation {
+    crate::Invocation {
+        positionals: vec!["source.env".to_string()],
+        flags: Vec::new(),
+        values: pairs(values),
+    }
+}
+
+/// An ambient environment that is never the process's own.
+fn ambient(items: &'static [(&'static str, &'static str)]) -> impl Fn(&str) -> Option<String> {
+    move |var: &str| {
+        items
+            .iter()
+            .find(|(name, _)| *name == var)
+            .map(|(_, value)| (*value).to_string())
+    }
+}
+
+#[test]
+fn source_baseline_reads_its_run_inputs_from_the_env_file() {
+    // source_baseline.py:42-55 installed every file pair before main read
+    // SOURCE_MODEL_ID, GOLDEN_DATASET_PATH and OUTPUT_PATH: a file that
+    // carries them needs no flag and no ambient variable.
+    let case = make_case("", &[r#"{"id": "a", "user_prompt": "hello"}"#]);
+    let env = case.dir.file(
+        "full.env",
+        &format!(
+            "OPENAI_API_KEY=offline-test-key\nSOURCE_MODEL_ID=file-model\nGOLDEN_DATASET_PATH={}\nOUTPUT_PATH={}\n",
+            case.dataset, case.output
+        ),
+    );
+    let recorded = recorded_openai(
+        &case,
+        &format!(
+            r#"{{"url": "{OPENAI_URL}",
+                "request": {{"model": "file-model", "max_completion_tokens": 4096,
+                            "messages": [{{"role": "user", "content": "hello"}}]}},
+                "response": {{"choices": [{{"message": {{"content": "hi"}}}}]}}}}"#
+        ),
+    );
+    let (status, out, err) = exec(&[
+        "bedrock-probes",
+        "source-baseline",
+        &env,
+        "--recorded",
+        &recorded,
+    ]);
+    assert_eq!(status, 0, "{err}");
+    assert_eq!(out, "live source baselines: 1/1\n");
+    assert_eq!(
+        output_rows(&case)[0],
+        json(r#"{"id": "a", "source_response": "hi", "status": "live"}"#)
+    );
+}
+
+#[test]
+fn source_baseline_takes_the_stated_provider_from_the_env_file() {
+    // Both keys in the file and SOURCE_PROVIDER=anthropic in the file: the
+    // script asked Anthropic, never the first key (OpenAI).
+    let case = make_case(
+        "OPENAI_API_KEY=openai-test-key\nANTHROPIC_API_KEY=anthropic-test-key\nSOURCE_PROVIDER=anthropic\n",
+        &[r#"{"id": "a", "user_prompt": "one"}"#],
+    );
+    let recorded = recorded_openai(
+        &case,
+        &format!(
+            r#"{{"url": "{ANTHROPIC_URL}",
+                "response": {{"content": [{{"type": "text", "text": "from anthropic"}}], "stop_reason": "end_turn"}}}}"#
+        ),
+    );
+    let (status, out, err) = baseline_cli(&case, &["--recorded", &recorded]);
+    assert_eq!(status, 0, "{err}");
+    assert_eq!(out, "live source baselines: 1/1\n");
+    assert_eq!(
+        output_rows(&case)[0]
+            .get("source_response")
+            .and_then(Json::as_str),
+        Some("from anthropic")
+    );
+}
+
+#[test]
+fn env_file_values_shadow_the_ambient_environment_and_flags_win() {
+    static AMBIENT: &[(&str, &str)] = &[
+        ("SOURCE_PROVIDER", "openai"),
+        ("SOURCE_MODEL_ID", "ambient-model"),
+        ("GOLDEN_DATASET_PATH", "ambient-dataset.jsonl"),
+        ("OUTPUT_PATH", "ambient-out.jsonl"),
+    ];
+    let file = pairs(&[
+        ("OPENAI_API_KEY", "openai-test-key"),
+        ("ANTHROPIC_API_KEY", "anthropic-test-key"),
+        ("SOURCE_PROVIDER", "Anthropic"),
+        ("SOURCE_MODEL_ID", "file-model"),
+        ("OUTPUT_PATH", "file-out.jsonl"),
+    ]);
+    // The file beats the ambient value; an input the file lacks falls back
+    // to the ambient one.
+    let inputs =
+        super::baseline_inputs(&invocation(&[]), &file, &ambient(AMBIENT)).expect("inputs resolve");
+    assert_eq!(inputs.provider, Provider::Anthropic);
+    assert_eq!(inputs.api_key, "anthropic-test-key");
+    assert_eq!(inputs.model, "file-model");
+    assert_eq!(inputs.output_path, "file-out.jsonl");
+    assert_eq!(inputs.dataset_path, "ambient-dataset.jsonl");
+    // A flag beats both.
+    let flags = invocation(&[
+        ("--source-provider", "openai"),
+        ("--source-model-id", "flag-model"),
+        ("--output", "flag-out.jsonl"),
+    ]);
+    let inputs = super::baseline_inputs(&flags, &file, &ambient(AMBIENT)).expect("inputs resolve");
+    assert_eq!(inputs.provider, Provider::OpenAi);
+    assert_eq!(inputs.model, "flag-model");
+    assert_eq!(inputs.output_path, "flag-out.jsonl");
+    // Nothing anywhere: the script's FAIL line.
+    let missing = super::baseline_inputs(&invocation(&[]), &file[..2], &ambient(&[]));
+    assert_eq!(
+        missing.err().as_deref(),
+        Some("FAIL: required env var 'SOURCE_MODEL_ID' not set")
+    );
+}
+
+#[test]
+fn an_empty_env_file_value_still_shadows_the_ambient_one() {
+    // os.environ[k] = "" hid the ambient value: an empty SOURCE_PROVIDER in
+    // the file means "not stated" (first key of the file), and an empty
+    // SOURCE_MODEL_ID is unset (migration divergence 10).
+    static AMBIENT: &[(&str, &str)] = &[
+        ("SOURCE_PROVIDER", "anthropic"),
+        ("SOURCE_MODEL_ID", "ambient-model"),
+        ("GOLDEN_DATASET_PATH", "d.jsonl"),
+        ("OUTPUT_PATH", "o.jsonl"),
+    ];
+    let file = pairs(&[
+        ("OPENAI_API_KEY", "openai-test-key"),
+        ("ANTHROPIC_API_KEY", "anthropic-test-key"),
+        ("SOURCE_PROVIDER", ""),
+    ]);
+    let flags = invocation(&[("--source-model-id", "m")]);
+    let inputs = super::baseline_inputs(&flags, &file, &ambient(AMBIENT)).expect("inputs resolve");
+    assert_eq!(inputs.provider, Provider::OpenAi);
+    let mut empty_model = file.clone();
+    empty_model.push(("SOURCE_MODEL_ID".to_string(), String::new()));
+    let missing = super::baseline_inputs(&invocation(&[]), &empty_model, &ambient(AMBIENT));
+    assert_eq!(
+        missing.err().as_deref(),
+        Some("FAIL: required env var 'SOURCE_MODEL_ID' not set")
+    );
+}
+
+#[test]
+fn a_key_crossing_the_200_character_cut_leaves_no_prefix() {
+    let secrets = vec!["offline-test-key".to_string()];
+    let body = format!("{}offline-test-key", "x".repeat(190));
+    let detail = baseline::error_detail(500, body.as_bytes(), &secrets);
+    assert!(!detail.contains("offline"), "{detail}");
+    assert!(detail.starts_with(&"x".repeat(190)), "{detail}");
+    // A key across the ERROR_BODY_CAP read leaves nothing either.
+    let body = format!(
+        r#"{{"error": {{"message": "{}offline-test-key"}}}}"#,
+        "y".repeat(baseline::ERROR_BODY_CAP - 30)
+    );
+    let detail = baseline::error_detail(500, body.as_bytes(), &secrets);
+    assert!(!detail.contains("offline"), "{detail}");
+    // A labelled credential across the cut is scrubbed by the shared redactor
+    // before the cut too.
+    let body = format!("{} password=hunter2-shared-secret", "z".repeat(170));
+    let detail = baseline::error_detail(500, body.as_bytes(), &[]);
+    assert!(!detail.contains("hunter2"), "{detail}");
+}
+
+#[test]
+fn a_recorded_error_body_never_leaks_a_key_prefix_into_the_row() {
+    let case = make_case(
+        "OPENAI_API_KEY=offline-test-key\n",
+        &[r#"{"id": "a", "user_prompt": "one"}"#],
+    );
+    let recorded = recorded_openai(
+        &case,
+        &format!(
+            r#"{{"url": "{OPENAI_URL}",
+                "error": {{"status": 500, "reason": "Internal Server Error",
+                          "body": "{}offline-test-key"}}}}"#,
+            "x".repeat(190)
+        ),
+    );
+    let (status, _, err) = baseline_cli(&case, &["--recorded", &recorded]);
+    assert_eq!(status, 0, "{err}");
+    let text = fs::read_to_string(&case.output).expect("rows");
+    assert!(!text.contains("offline"), "{text}");
+    assert!(
+        row_status(&output_rows(&case), 0).starts_with("http_500: Internal Server Error — xxx"),
+        "{text}"
+    );
+}
+
+/// A path whose rendering would expose a userinfo URL credential.
+const USERINFO: &str = "https://user:hunter2-userinfo@example.com/x";
+
+#[test]
+fn a_failed_read_path_is_redacted_and_bounded_in_the_diagnostic() {
+    let dir = TempDir::new("diag-path");
+    let missing = format!("{}/missing/{USERINFO}", dir.display());
+    let (status, _, err) = preflight_cli(&[
+        "--region",
+        REGION,
+        "--models",
+        "amazon.nova-lite-v1:0",
+        "--recorded",
+        &missing,
+    ]);
+    assert_eq!(status, 1);
+    assert!(err.contains("cannot read"), "{err}");
+    assert!(!err.contains("hunter2"), "{err}");
+    // An overlong path is cut, the failure reason stays visible.
+    let long = format!("{}/{}", dir.display(), "d/".repeat(400));
+    let (status, _, err) = preflight_cli(&[
+        "--region",
+        REGION,
+        "--models",
+        "amazon.nova-lite-v1:0",
+        "--recorded",
+        &format!("{long}absent.json"),
+    ]);
+    assert_eq!(status, 1);
+    assert!(err.contains("more chars]"), "{err}");
+    assert!(err.chars().count() < 400, "{}", err.chars().count());
+    assert!(err.trim_end().ends_with("file does not exist"), "{err}");
+}
+
+#[test]
+fn source_baseline_paths_never_show_an_env_file_key() {
+    let case = make_case(
+        "OPENAI_API_KEY=offline-test-key\n",
+        &[r#"{"id": "a", "user_prompt": "one"}"#],
+    );
+    let dataset = case.dir.path("offline-test-key-missing.jsonl");
+    let (status, _, err) = exec(&[
+        "bedrock-probes",
+        "source-baseline",
+        &case.env,
+        "--source-model-id",
+        "m",
+        "--dataset",
+        &dataset,
+        "--output",
+        &case.output,
+    ]);
+    assert_eq!(status, 1);
+    assert!(err.contains("cannot read"), "{err}");
+    assert!(!err.contains("offline-test-key"), "{err}");
+    // The output path: an unwritable one (a directory) names it scrubbed.
+    let output = case.dir.path(&format!("out-{}", "offline-test-key"));
+    fs::create_dir_all(&output).expect("dir");
+    let (status, _, err) = exec(&[
+        "bedrock-probes",
+        "source-baseline",
+        &case.env,
+        "--source-model-id",
+        "m",
+        "--dataset",
+        &case.dataset,
+        "--output",
+        &output,
+    ]);
+    assert_eq!(status, 1, "{err}");
+    assert!(!err.contains("offline-test-key"), "{err}");
+}
+
+#[test]
+fn the_policy_written_diagnostic_is_redacted_and_bounded() {
+    let dir = TempDir::new("iam-diag");
+    let out_path = format!("{}/{USERINFO}/policy.json", dir.display());
+    fs::create_dir_all(Path::new(&out_path).parent().expect("parent")).expect("dirs");
+    let (status, _, err) = exec(&[
+        "bedrock-probes",
+        "iam-policy",
+        "--models",
+        "amazon.nova-lite-v1:0",
+        "--region",
+        REGION,
+        "--account-id",
+        ACCOUNT,
+        "--output",
+        &out_path,
+    ]);
+    assert_eq!(status, 0, "{err}");
+    assert!(err.starts_with("Policy written to "), "{err}");
+    assert!(!err.contains("hunter2"), "{err}");
+    // The file itself is written where the caller asked.
+    assert!(Path::new(&out_path).is_file());
+    let deep = format!("{}/{}", dir.display(), "e/".repeat(150));
+    fs::create_dir_all(&deep).expect("dirs");
+    let long_path = format!("{deep}policy.json");
+    let (status, _, err) = exec(&[
+        "bedrock-probes",
+        "iam-policy",
+        "--models",
+        "amazon.nova-lite-v1:0",
+        "--region",
+        REGION,
+        "--account-id",
+        ACCOUNT,
+        "--output",
+        &long_path,
+    ]);
+    assert_eq!(status, 0, "{err}");
+    assert!(err.contains("more chars]"), "{err}");
+    assert!(err.chars().count() < 300, "{}", err.chars().count());
+    assert!(Path::new(&long_path).is_file());
+}

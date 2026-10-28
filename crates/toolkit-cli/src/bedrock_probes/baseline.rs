@@ -23,6 +23,7 @@ use std::io::Read as _;
 use std::path::Path;
 
 use toolkit_aws::recorded::{optional_list, optional_object_list, MemberError};
+use toolkit_aws::redact_text;
 use toolkit_core::{open_regular_file, Json, PathError};
 
 use super::diag;
@@ -407,16 +408,27 @@ pub(crate) fn error_detail(code: u16, body: &[u8], secrets: &[String]) -> String
             }
         }
     }
-    redact(&raw.chars().take(200).collect::<String>(), secrets)
+    raw_fallback(body, secrets)
+}
+
+/// The script's `redact(raw[:200], secrets)` in the safe order: the WHOLE body
+/// is scrubbed first (the env-file key values, then the shared redactor), and
+/// only then cut to 200 characters. The script cut first, so a key that
+/// crossed the cut (or the `ERROR_BODY_CAP` read) kept its first characters
+/// and no longer matched. Without a secret, the first 200 characters are the
+/// script's: 200 characters never reach past `ERROR_BODY_CAP` bytes.
+fn raw_fallback(body: &[u8], secrets: &[String]) -> String {
+    let full = String::from_utf8_lossy(body);
+    redact_text(&redact(&full, secrets))
+        .chars()
+        .take(200)
+        .collect()
 }
 
 /// The failure text a row keeps: redacted against the key values, truncated
 /// and escaped on one line, redacted again.
 fn row_text(text: &str, secrets: &[String]) -> String {
-    redact(
-        &diag::bounded(&redact(text, secrets), STATUS_MAX_CHARS),
-        secrets,
-    )
+    diag::scrubbed(text, secrets, STATUS_MAX_CHARS)
 }
 
 /// `status` of a row for a failed request.

@@ -47,8 +47,12 @@ toolkit bedrock-probes source-baseline ENV_FILE [--source-model-id ID] [--datase
 * `bedrock-probes source-baseline` is `python source_baseline.py ENV_FILE` with
   the script's inputs `SOURCE_MODEL_ID`, `GOLDEN_DATASET_PATH`, `OUTPUT_PATH` and
   `SOURCE_PROVIDER`, each also available as a flag (`--source-model-id`,
-  `--dataset`, `--output`, `--source-provider`; the flag wins). Output rows,
-  the `RESUME:` line and `live source baselines: N/M` are the script's.
+  `--dataset`, `--output`, `--source-provider`). Each input is resolved the
+  way the script saw it after `load_env_file` (`source_baseline.py:42-55`) put
+  every file pair into `os.environ`: the flag first, then the env file's pair
+  (an empty one included, so it hides the ambient value), then the ambient
+  environment. Output rows, the `RESUME:` line and `live source baselines: N/M`
+  are the script's.
 
 Every value flag refuses an empty value and one that starts with `-` (the router's
 `strict_values`). `STDIO_DASH` lists none of these commands, so a bare `-` is a
@@ -114,7 +118,11 @@ successful recorded run prints.
    the service message in every `detail`, the region in the malformed-region
    verdict, the recorded error code. Quotes and backslashes in such a message are
    escaped too, so a quoted message reads with `\"`. A message that held a
-   secret reads `[REDACTED]` for that part.
+   secret reads `[REDACTED]` for that part. A caller path in a diagnostic (`cannot
+   read ...`, `cannot write ...`, `not valid JSON: ...`, `Policy written to ...`)
+   goes through the same order, bounded at 200 characters, with the env file's key
+   values replaced by `***` first in `source-baseline`; the script printed it raw.
+   Only the rendering changes: the file is read or written at the path given.
 7. **A malformed region is `InvalidRegionError`** as botocore reports it, without
    the trailing-newline allowance of Python's `$`; nothing is probed.
 8. **A malformed recorded quota listing is an error.** The script's `fetch_bedrock_quotas`
@@ -133,7 +141,8 @@ successful recorded run prints.
     with exit 1 naming the line number only (the script crashed with a traceback,
     possibly after spending budget). An empty `SOURCE_MODEL_ID`/`GOLDEN_DATASET_PATH`/
     `OUTPUT_PATH` is treated as unset (`FAIL: required env var ... not set`,
-    exit 2).
+    exit 2); an empty value in the env file hides the ambient one, as the
+    script's `os.environ[k] = ""` did.
 11. **The output directory is created when missing and skipped when the path has no
     directory part**; the script's `os.makedirs(os.path.dirname(path))` raised
     for a bare file name after all requests were made.
@@ -151,11 +160,19 @@ successful recorded run prints.
 14. **A live response that contains an API key value is redacted** (the script
     only redacted failure text), and failure text in a row is redacted, truncated
     (600 characters) and escaped on one line, with the script's `http_<code>:
-    <reason>` prefix kept. Auth (401/403) bodies still carry no detail.
+    <reason>` prefix kept. Auth (401/403) bodies still carry no detail. The
+    non-JSON error body is redacted (the key values, then `toolkit_aws::redact_text`)
+    as a whole BEFORE the script's 200-character cut: the script cut first, so a
+    key crossing the cut kept its first characters. A body over 256 KiB reads
+    `[REDACTED]`.
 15. **The env file is parsed once and never exported**: the script copied its pairs
     into `os.environ` so the request builders could read them; the builders now take
     the key as an argument. The ambient environment never selects the provider (as
     before: the file is authoritative; `SOURCE_PROVIDER` decides when it is set).
+    The file's values still configure the run: `SOURCE_MODEL_ID`,
+    `GOLDEN_DATASET_PATH`, `OUTPUT_PATH` and `SOURCE_PROVIDER` come from one lookup
+    (flag, then file pair, then ambient variable), so a file-only configuration
+    runs and a file value beats a conflicting ambient one, as in the script.
 16. **`api-path` and `classify` are new commands** with no script entry point
     (the script's functions were imported). `classify` adds no behavior beyond the
     two `is_mantle_model` predicates and three other predicates of `iam_policy.py`.
@@ -202,7 +219,7 @@ list keeps the legacy shape (one statement with an empty `Resource`).
 | Baseline request shapes | OpenAI `max_completion_tokens`, Anthropic top-level `system`, Gemini header key | same | `the_openai_shape_...`, `the_gemini_key_is_a_header_...` |
 | Key hygiene | only to its official host, never in a URL or the output | same | `every_provider_url_is_an_official_host_...` |
 | Partial resume | live rows kept, failed rows retried | same | `live_rows_are_kept_and_failed_rows_are_retried` |
-| Error detail | message/param, 401/403 empty, raw body capped at 200 characters | same | `error_detail_extracts_...` |
+| Error detail | message/param, 401/403 empty, raw body capped at 200 characters | same, the body redacted before the cut | `error_detail_extracts_...`, `a_key_crossing_the_200_character_cut_leaves_no_prefix` |
 
 ## #4608 coverage
 

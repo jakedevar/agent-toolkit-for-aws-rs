@@ -29,7 +29,6 @@ use toolkit_core::{
 use crate::ai_data::parse_failure_text;
 use crate::bedrock_resolve::source;
 use crate::manifests::{read_failure, universal_newlines};
-use crate::safe_text::safe_path;
 use crate::startup::artifacts::pyjson::dumps;
 use crate::{Invocation, Output};
 
@@ -175,17 +174,21 @@ fn failure(code: &'static str, message: String) -> ToolkitError {
     ToolkitError::runtime(code, message)
 }
 
-fn path_failure(path: &str, error: &PathError) -> String {
-    format!("cannot read {}: {}", safe_path(path), read_failure(error))
+fn path_failure(path: &str, error: &PathError, secrets: &[String]) -> String {
+    format!(
+        "cannot read {}: {}",
+        diag::path(path, secrets),
+        read_failure(error)
+    )
 }
 
-fn read_json_file(path: &str, limit: u64) -> Result<Json, String> {
-    let text =
-        read_regular_file(Path::new(path), limit).map_err(|error| path_failure(path, &error))?;
+fn read_json_file(path: &str, limit: u64, secrets: &[String]) -> Result<Json, String> {
+    let text = read_regular_file(Path::new(path), limit)
+        .map_err(|error| path_failure(path, &error, secrets))?;
     parse_json(&text).map_err(|error| {
         format!(
             "not valid JSON: {}: {}",
-            safe_path(path),
+            diag::path(path, secrets),
             parse_failure_text(&error)
         )
     })
@@ -253,10 +256,14 @@ pub(crate) fn iam_policy_command(
             write_regular_file(Path::new(path), &text).map_err(|error| {
                 failure(
                     "output_unwritable",
-                    format!("cannot write {}: {}", safe_path(path), read_failure(&error)),
+                    format!(
+                        "cannot write {}: {}",
+                        diag::path(path, &[]),
+                        read_failure(&error)
+                    ),
                 )
             })?;
-            output.diagnostic(&format!("Policy written to {}", safe_path(path)));
+            output.diagnostic(&format!("Policy written to {}", diag::path(path, &[])));
             Ok(())
         }
         // `print(output)`: the text already ends in a newline.
@@ -295,7 +302,7 @@ fn probe_client(invocation: &Invocation) -> Result<Box<dyn client::ProbeClient>,
     let Some(path) = invocation.value("--recorded") else {
         return Ok(Box::new(client::NoLiveClient));
     };
-    let document = read_json_file(path, MAX_RECORDED_BYTES)
+    let document = read_json_file(path, MAX_RECORDED_BYTES, &[])
         .map_err(|message| failure("recorded_unreadable", message))?;
     recorded::RecordedClient::from_document(&document)
         .map(|client| Box::new(client) as Box<dyn client::ProbeClient>)
@@ -391,21 +398,48 @@ pub(crate) fn classify_command(
     )
 }
 
-/// A flag value, else a non-empty environment variable (the script's inputs).
-fn flag_or_env(invocation: &Invocation, flag: &str, var: &str) -> Option<String> {
-    invocation
-        .value(flag)
-        .map(str::to_string)
-        .or_else(|| std::env::var(var).ok().filter(|value| !value.is_empty()))
+/// The ambient environment variable `var`, as the script's `os.environ` saw it
+/// before the env file was loaded.
+fn ambient_env(var: &str) -> Option<String> {
+    std::env::var(var).ok()
+}
+
+/// One input of the script (`SOURCE_MODEL_ID`, `GOLDEN_DATASET_PATH`,
+/// `OUTPUT_PATH`, `SOURCE_PROVIDER`), resolved without touching the process
+/// environment.
+///
+/// `source_baseline.py:42-55` (`load_env_file`) wrote every file pair into
+/// `os.environ` (`:54`) at `main:247`, before `main` (`:250-252`) and
+/// `pick_provider_key` (`:138`) read these inputs, so a
+/// file pair shadows the ambient variable, an empty pair included. The port
+/// reads the same values from one lookup: the flag (new in the port) first,
+/// then the env-file pair, then the ambient environment. An empty value counts
+/// as unset (migration divergence 10; for `SOURCE_PROVIDER` the script's `""`
+/// meant the same).
+fn setting(
+    invocation: &Invocation,
+    pairs: &[(String, String)],
+    ambient: &dyn Fn(&str) -> Option<String>,
+    flag: &str,
+    var: &str,
+) -> Option<String> {
+    let value = match invocation.value(flag) {
+        Some(value) => Some(value.to_string()),
+        None => match pairs.iter().find(|(name, _)| name == var) {
+            Some((_, value)) => Some(value.clone()),
+            None => ambient(var),
+        },
+    };
+    value.filter(|value| !value.is_empty())
 }
 
 /// The text of a file that may be absent (a first run has no output file).
-fn read_optional(path: &str) -> Result<Option<String>, String> {
+fn read_optional(path: &str, secrets: &[String]) -> Result<Option<String>, String> {
     match std::fs::symlink_metadata(path) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
         _ => read_regular_file(Path::new(path), MAX_TEXT_FILE_BYTES)
             .map(Some)
-            .map_err(|error| path_failure(path, &error)),
+            .map_err(|error| path_failure(path, &error, secrets)),
     }
 }
 
@@ -425,16 +459,16 @@ struct BaselineInputs {
 fn baseline_inputs(
     invocation: &Invocation,
     pairs: &[(String, String)],
+    ambient: &dyn Fn(&str) -> Option<String>,
 ) -> Result<BaselineInputs, String> {
+    let lookup = |flag: &str, var: &str| setting(invocation, pairs, ambient, flag, var);
     let need = |flag: &str, var: &str| {
-        flag_or_env(invocation, flag, var)
-            .ok_or_else(|| format!("FAIL: required env var '{var}' not set"))
+        lookup(flag, var).ok_or_else(|| format!("FAIL: required env var '{var}' not set"))
     };
     let model = need("--source-model-id", "SOURCE_MODEL_ID")?;
     let dataset_path = need("--dataset", "GOLDEN_DATASET_PATH")?;
     let output_path = need("--output", "OUTPUT_PATH")?;
-    let stated =
-        flag_or_env(invocation, "--source-provider", "SOURCE_PROVIDER").unwrap_or_default();
+    let stated = lookup("--source-provider", "SOURCE_PROVIDER").unwrap_or_default();
     let no_key =
         || "FAIL: no usable provider key in the env file (check SOURCE_PROVIDER)".to_string();
     let key_name = source::pick_provider(pairs, &stated).ok_or_else(no_key)?;
@@ -462,8 +496,10 @@ fn baseline_inputs(
 }
 
 /// The `live` rows of an earlier output, if the file exists.
-fn previous_live_rows(output_path: &str) -> Result<Vec<Json>, ToolkitError> {
-    match read_optional(output_path).map_err(|message| failure("output_unreadable", message))? {
+fn previous_live_rows(output_path: &str, secrets: &[String]) -> Result<Vec<Json>, ToolkitError> {
+    match read_optional(output_path, secrets)
+        .map_err(|message| failure("output_unreadable", message))?
+    {
         None => Ok(Vec::new()),
         Some(text) => {
             baseline::parse_live_rows(&text).map_err(|message| failure("output_invalid", message))
@@ -497,11 +533,14 @@ fn announce_resume(
 }
 
 /// The recorded client of `--recorded FILE`, or the fail-closed no-live one.
-fn http_client(invocation: &Invocation) -> Result<Box<dyn http::HttpClient>, ToolkitError> {
+fn http_client(
+    invocation: &Invocation,
+    secrets: &[String],
+) -> Result<Box<dyn http::HttpClient>, ToolkitError> {
     let Some(path) = invocation.value("--recorded") else {
         return Ok(Box::new(http::NoLiveHttp));
     };
-    let document = read_json_file(path, MAX_RECORDED_BYTES)
+    let document = read_json_file(path, MAX_RECORDED_BYTES, secrets)
         .map_err(|message| failure("recorded_unreadable", message))?;
     let client = http::RecordedHttp::from_document(&document)
         .map_err(|message| failure("recorded_invalid", format!("invalid recording: {message}")))?;
@@ -511,11 +550,11 @@ fn http_client(invocation: &Invocation) -> Result<Box<dyn http::HttpClient>, Too
 /// Writes the rows. The script's `os.makedirs(os.path.dirname(path))` failed
 /// for a bare file name; a missing parent directory is created and an empty one
 /// is skipped.
-fn write_rows(output_path: &str, rows: &[Json]) -> Result<(), ToolkitError> {
+fn write_rows(output_path: &str, rows: &[Json], secrets: &[String]) -> Result<(), ToolkitError> {
     let unwritable = |what: &str, why: String| {
         failure(
             "output_unwritable",
-            format!("cannot {what} {}: {why}", safe_path(output_path)),
+            format!("cannot {what} {}: {why}", diag::path(output_path, secrets)),
         )
     };
     if let Some(parent) = Path::new(output_path)
@@ -539,9 +578,9 @@ pub(crate) fn source_baseline_command(
         _ => return Err(usage("source-baseline takes exactly one ENV_FILE argument")),
     };
     let text = read_regular_file(Path::new(env_path), MAX_TEXT_FILE_BYTES)
-        .map_err(|error| failure("env_file_unreadable", path_failure(env_path, &error)))?;
+        .map_err(|error| failure("env_file_unreadable", path_failure(env_path, &error, &[])))?;
     let pairs = source::parse_env_file(&universal_newlines(&text));
-    let inputs = match baseline_inputs(invocation, &pairs) {
+    let inputs = match baseline_inputs(invocation, &pairs, &ambient_env) {
         Ok(inputs) => inputs,
         Err(fail_line) => {
             output.diagnostic(&fail_line);
@@ -554,15 +593,15 @@ pub(crate) fn source_baseline_command(
         .map_err(|error| {
             failure(
                 "dataset_unreadable",
-                path_failure(&inputs.dataset_path, &error),
+                path_failure(&inputs.dataset_path, &error, &inputs.secrets),
             )
         })?;
     let prompts = baseline::parse_dataset(&dataset_text)
         .map_err(|message| failure("dataset_invalid", message))?;
-    let kept = previous_live_rows(&inputs.output_path)?;
+    let kept = previous_live_rows(&inputs.output_path, &inputs.secrets)?;
     announce_resume(output, &kept, &prompts)?;
 
-    let mut client = http_client(invocation)?;
+    let mut client = http_client(invocation, &inputs.secrets)?;
     let config = baseline::Run {
         provider: inputs.provider,
         model: &inputs.model,
@@ -570,7 +609,7 @@ pub(crate) fn source_baseline_command(
         secrets: &inputs.secrets,
     };
     let rows = baseline::run(&config, kept, &prompts, client.as_mut());
-    write_rows(&inputs.output_path, &rows)?;
+    write_rows(&inputs.output_path, &rows, &inputs.secrets)?;
     let live = rows
         .iter()
         .filter(|row| row.get("status").and_then(Json::as_str) == Some("live"))
