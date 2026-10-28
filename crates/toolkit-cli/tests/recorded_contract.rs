@@ -3273,11 +3273,11 @@ fn each_round_five_evasion_is_refused_for_what_it_hides() {
 fn raw_identifiers_are_the_names_they_spell() {
     let report = fresh_recorded(&[file(
         "fresh/mod.rs",
-        r#"use toolkit_aws::r#recorded::Step;
+        r"use toolkit_aws::r#recorded::Step;
 use toolkit_core::r#Json as r#J;
 fn r#optional_list() {}
 fn f(r: &J) -> bool { matches!(r, J::r#Object(_)) || r.r#as_object().is_some() }
-fn r#match(r#fn: &Json) -> usize { r#fn.len() }"#,
+fn r#match(r#fn: &Json) -> usize { r#fn.len() }",
     )]);
     assert!(report.scope["fresh"].contains("import"), "{report:?}");
     assert_eq!(report.helpers, vec!["fresh/mod.rs: fn optional_list"]);
