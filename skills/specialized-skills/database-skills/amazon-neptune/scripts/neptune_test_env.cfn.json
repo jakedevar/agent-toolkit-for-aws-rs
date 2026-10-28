@@ -1,0 +1,272 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Neptune skill test environment: a THROWAWAY Neptune Serverless cluster in a VPC for end-to-end skill evals (declarative replacement of cdk_test_env.py). Tear the stack down after the evals; the cluster has deletion protection off on purpose. Production clusters MUST set DeletionProtection to true.",
+  "Parameters": {
+    "GenerationModel": {
+      "Type": "String",
+      "Default": "unknown",
+      "Description": "Model that generated the evaluated output; applied as the generation_model tag."
+    },
+    "VpcCidr": {
+      "Type": "String",
+      "Default": "10.0.0.0/16",
+      "AllowedPattern": "^(10|172|192)\\.[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}/(1[6-9]|20)$",
+      "Description": "Private CIDR of the VPC. Port 8182 is opened to this range only."
+    }
+  },
+  "Resources": {
+    "NeptuneVpc": {
+      "Type": "AWS::EC2::VPC",
+      "Properties": {
+        "CidrBlock": { "Ref": "VpcCidr" },
+        "EnableDnsSupport": true,
+        "EnableDnsHostnames": true,
+        "Tags": [
+          { "Key": "Name", "Value": "NeptuneSkillTestVpc" },
+          { "Key": "created_by", "Value": "neptune-skill" }
+        ]
+      }
+    },
+    "InternetGateway": {
+      "Type": "AWS::EC2::InternetGateway",
+      "Properties": {
+        "Tags": [{ "Key": "created_by", "Value": "neptune-skill" }]
+      }
+    },
+    "GatewayAttachment": {
+      "Type": "AWS::EC2::VPCGatewayAttachment",
+      "Properties": {
+        "VpcId": { "Ref": "NeptuneVpc" },
+        "InternetGatewayId": { "Ref": "InternetGateway" }
+      }
+    },
+    "PublicSubnet1": {
+      "Type": "AWS::EC2::Subnet",
+      "Properties": {
+        "VpcId": { "Ref": "NeptuneVpc" },
+        "AvailabilityZone": { "Fn::Select": [0, { "Fn::GetAZs": "" }] },
+        "CidrBlock": { "Fn::Select": [2, { "Fn::Cidr": [{ "Ref": "VpcCidr" }, 4, 8] }] },
+        "MapPublicIpOnLaunch": true,
+        "Tags": [{ "Key": "Name", "Value": "NeptuneSkillTestPublic1" }]
+      }
+    },
+    "PublicSubnet2": {
+      "Type": "AWS::EC2::Subnet",
+      "Properties": {
+        "VpcId": { "Ref": "NeptuneVpc" },
+        "AvailabilityZone": { "Fn::Select": [1, { "Fn::GetAZs": "" }] },
+        "CidrBlock": { "Fn::Select": [3, { "Fn::Cidr": [{ "Ref": "VpcCidr" }, 4, 8] }] },
+        "MapPublicIpOnLaunch": true,
+        "Tags": [{ "Key": "Name", "Value": "NeptuneSkillTestPublic2" }]
+      }
+    },
+    "PrivateSubnet1": {
+      "Type": "AWS::EC2::Subnet",
+      "Properties": {
+        "VpcId": { "Ref": "NeptuneVpc" },
+        "AvailabilityZone": { "Fn::Select": [0, { "Fn::GetAZs": "" }] },
+        "CidrBlock": { "Fn::Select": [0, { "Fn::Cidr": [{ "Ref": "VpcCidr" }, 4, 8] }] },
+        "MapPublicIpOnLaunch": false,
+        "Tags": [{ "Key": "Name", "Value": "NeptuneSkillTestPrivate1" }]
+      }
+    },
+    "PrivateSubnet2": {
+      "Type": "AWS::EC2::Subnet",
+      "Properties": {
+        "VpcId": { "Ref": "NeptuneVpc" },
+        "AvailabilityZone": { "Fn::Select": [1, { "Fn::GetAZs": "" }] },
+        "CidrBlock": { "Fn::Select": [1, { "Fn::Cidr": [{ "Ref": "VpcCidr" }, 4, 8] }] },
+        "MapPublicIpOnLaunch": false,
+        "Tags": [{ "Key": "Name", "Value": "NeptuneSkillTestPrivate2" }]
+      }
+    },
+    "PublicRouteTable": {
+      "Type": "AWS::EC2::RouteTable",
+      "Properties": { "VpcId": { "Ref": "NeptuneVpc" } }
+    },
+    "PublicDefaultRoute": {
+      "Type": "AWS::EC2::Route",
+      "DependsOn": "GatewayAttachment",
+      "Properties": {
+        "RouteTableId": { "Ref": "PublicRouteTable" },
+        "DestinationCidrBlock": "0.0.0.0/0",
+        "GatewayId": { "Ref": "InternetGateway" }
+      }
+    },
+    "PublicRouteAssociation1": {
+      "Type": "AWS::EC2::SubnetRouteTableAssociation",
+      "Properties": {
+        "SubnetId": { "Ref": "PublicSubnet1" },
+        "RouteTableId": { "Ref": "PublicRouteTable" }
+      }
+    },
+    "PublicRouteAssociation2": {
+      "Type": "AWS::EC2::SubnetRouteTableAssociation",
+      "Properties": {
+        "SubnetId": { "Ref": "PublicSubnet2" },
+        "RouteTableId": { "Ref": "PublicRouteTable" }
+      }
+    },
+    "NatEip": {
+      "Type": "AWS::EC2::EIP",
+      "DependsOn": "GatewayAttachment",
+      "Properties": { "Domain": "vpc" }
+    },
+    "NatGateway": {
+      "Type": "AWS::EC2::NatGateway",
+      "Properties": {
+        "AllocationId": { "Fn::GetAtt": ["NatEip", "AllocationId"] },
+        "SubnetId": { "Ref": "PublicSubnet1" }
+      }
+    },
+    "PrivateRouteTable": {
+      "Type": "AWS::EC2::RouteTable",
+      "Properties": { "VpcId": { "Ref": "NeptuneVpc" } }
+    },
+    "PrivateDefaultRoute": {
+      "Type": "AWS::EC2::Route",
+      "Properties": {
+        "RouteTableId": { "Ref": "PrivateRouteTable" },
+        "DestinationCidrBlock": "0.0.0.0/0",
+        "NatGatewayId": { "Ref": "NatGateway" }
+      }
+    },
+    "PrivateRouteAssociation1": {
+      "Type": "AWS::EC2::SubnetRouteTableAssociation",
+      "Properties": {
+        "SubnetId": { "Ref": "PrivateSubnet1" },
+        "RouteTableId": { "Ref": "PrivateRouteTable" }
+      }
+    },
+    "PrivateRouteAssociation2": {
+      "Type": "AWS::EC2::SubnetRouteTableAssociation",
+      "Properties": {
+        "SubnetId": { "Ref": "PrivateSubnet2" },
+        "RouteTableId": { "Ref": "PrivateRouteTable" }
+      }
+    },
+    "NeptuneSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "Neptune skill test cluster",
+        "VpcId": { "Ref": "NeptuneVpc" },
+        "SecurityGroupIngress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 8182,
+            "ToPort": 8182,
+            "CidrIp": { "Ref": "VpcCidr" },
+            "Description": "Neptune from within VPC"
+          }
+        ],
+        "SecurityGroupEgress": [
+          {
+            "IpProtocol": "-1",
+            "CidrIp": "0.0.0.0/0",
+            "Description": "Allow all outbound traffic by default"
+          }
+        ],
+        "Tags": [{ "Key": "created_by", "Value": "neptune-skill" }]
+      }
+    },
+    "NeptuneSubnetGroup": {
+      "Type": "AWS::Neptune::DBSubnetGroup",
+      "Properties": {
+        "DBSubnetGroupDescription": "Neptune skill test cluster subnets (private)",
+        "SubnetIds": [{ "Ref": "PrivateSubnet1" }, { "Ref": "PrivateSubnet2" }],
+        "Tags": [{ "Key": "created_by", "Value": "neptune-skill" }]
+      }
+    },
+    "NeptuneCluster": {
+      "Type": "AWS::Neptune::DBCluster",
+      "DeletionPolicy": "Delete",
+      "UpdateReplacePolicy": "Delete",
+      "Properties": {
+        "DBSubnetGroupName": { "Ref": "NeptuneSubnetGroup" },
+        "VpcSecurityGroupIds": [{ "Ref": "NeptuneSecurityGroup" }],
+        "StorageEncrypted": true,
+        "IamAuthEnabled": true,
+        "DeletionProtection": false,
+        "ServerlessScalingConfiguration": { "MinCapacity": 1, "MaxCapacity": 4 },
+        "Tags": [
+          { "Key": "created_by", "Value": "neptune-skill" },
+          { "Key": "generation_model", "Value": { "Ref": "GenerationModel" } }
+        ]
+      }
+    },
+    "NeptuneInstance": {
+      "Type": "AWS::Neptune::DBInstance",
+      "DeletionPolicy": "Delete",
+      "UpdateReplacePolicy": "Delete",
+      "Properties": {
+        "DBClusterIdentifier": { "Ref": "NeptuneCluster" },
+        "DBInstanceClass": "db.serverless",
+        "Tags": [
+          { "Key": "created_by", "Value": "neptune-skill" },
+          { "Key": "generation_model", "Value": { "Ref": "GenerationModel" } }
+        ]
+      }
+    },
+    "SeedLambdaRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": { "Service": "lambda.amazonaws.com" },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        },
+        "ManagedPolicyArns": [
+          {
+            "Fn::Sub": "arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
+          }
+        ],
+        "Policies": [
+          {
+            "PolicyName": "NeptuneConnect",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": "neptune-db:*",
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:neptune-db:${AWS::Region}:${AWS::AccountId}:${NeptuneCluster.ClusterResourceId}/*"
+                  }
+                }
+              ]
+            }
+          }
+        ],
+        "Tags": [{ "Key": "created_by", "Value": "neptune-skill" }]
+      }
+    }
+  },
+  "Outputs": {
+    "NeptuneEndpoint": {
+      "Description": "Neptune cluster endpoint for eval scripts",
+      "Value": { "Fn::GetAtt": ["NeptuneCluster", "Endpoint"] },
+      "Export": { "Name": "NeptuneSkillTestEndpoint" }
+    },
+    "NeptunePort": {
+      "Description": "Neptune port (8182)",
+      "Value": { "Fn::GetAtt": ["NeptuneCluster", "Port"] }
+    },
+    "VpcId": {
+      "Description": "VPC ID - use when creating CloudShell VPC environment",
+      "Value": { "Ref": "NeptuneVpc" }
+    },
+    "PrivateSubnetId": {
+      "Description": "Subnet ID for CloudShell VPC environment",
+      "Value": { "Ref": "PrivateSubnet1" }
+    },
+    "NeptuneSecurityGroupId": {
+      "Description": "Security group - add client SGs as inbound sources",
+      "Value": { "Fn::GetAtt": ["NeptuneSecurityGroup", "GroupId"] }
+    }
+  }
+}

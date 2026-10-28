@@ -34,6 +34,7 @@ mod bedrock_agent;
 mod bedrock_report;
 mod bedrock_resolve;
 pub mod cloudwatch;
+pub mod docgraph;
 pub mod dynamodb;
 pub mod elasticache;
 pub mod manifests;
@@ -156,6 +157,10 @@ Usage:
       [--read-latency-threshold N] [--write-latency-threshold N]
       [--ecpu-threshold N] [--evictions-threshold N]
       [--new-connections-threshold N] [--output FILE]
+  toolkit documentdb wa-review --cluster-id ID --region R [--recorded FILE]
+      [--analysis-data FILE] [--output DIR] [--now TS]
+  toolkit neptune validate-input [KEY=VALUE...]
+  toolkit neptune seed [--confirm-wipe] [--endpoint HOST] [--recorded FILE | --dry-run]
   toolkit bedrock-resolve identity --provider anthropic|openai
       (--source MODEL --target BEDROCK_ID | --mappings FILE)
   toolkit bedrock-resolve image --emit format|mime|data-url|converse|responses|chat
@@ -441,6 +446,16 @@ Commands:
                 --pricing-csv / --pricing-json (the AWS bulk pricing file):
                 this build has no AWS or Redis client. See
                 docs/migration/elasticache.md.
+  documentdb    DocumentDB Well-Architected review (#4395). wa-review runs the 41
+                infrastructure and database checks over recorded AWS responses
+                (--recorded) and a pre-collected analysis (--analysis-data) and
+                writes wa_review_results.json and wa_review_report.md.
+  neptune       Neptune input validation and test-graph seeding (#4395).
+                validate-input checks identifiers before a write call; seed
+                wipes and seeds the test graphs only with --confirm-wipe (or
+                NEPTUNE_SEED_CONFIRM_WIPE=1), replays --recorded responses or
+                prints the statements with --dry-run: this build has no
+                Gremlin or AWS client. See docs/migration/docgraph.md.
   bedrock-resolve
                 Model identity, image, pricing and source-model resolution of
                 the llm-to-bedrock skill (#4403), offline. identity prints
@@ -1346,6 +1361,9 @@ pub const COMMANDS: &[CommandSpec] = &[
         passthrough: false,
         handler: cloudwatch::region_command,
     },
+    docgraph::WA_REVIEW,
+    docgraph::NEPTUNE_VALIDATE_INPUT,
+    docgraph::NEPTUNE_SEED,
     CommandSpec {
         path: &["elasticache", "price"],
         flags: elasticache::PRICE_FLAGS,

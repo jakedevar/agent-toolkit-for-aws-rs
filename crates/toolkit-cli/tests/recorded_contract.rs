@@ -1236,7 +1236,7 @@ fn analyse(files: &[SourceFile]) -> Report {
 #[test]
 fn the_known_recorded_slices_are_in_scope() {
     let report = analyse(&sources());
-    for slice in ["ai_models", "bedrock_agent"] {
+    for slice in ["ai_models", "bedrock_agent", "docgraph"] {
         let signals = report.scope.get(slice);
         assert!(
             signals.is_some_and(|s| s.contains("flag") && s.contains("import")),
