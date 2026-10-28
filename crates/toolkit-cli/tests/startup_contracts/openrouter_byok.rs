@@ -41,7 +41,7 @@ fn test_cost_provenance_join_key_is_model_permaslug_not_model() {
             ])
             .any(&["not its `model`\n  field", "not its `model` field"])
     });
-    rules.extend(each(|r| r.all(&[PROVENANCE])));
+    rules.extend(each(|r| r.loose().all(&[PROVENANCE])));
     check_rules(&rules);
 }
 
