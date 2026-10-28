@@ -374,3 +374,5 @@ Friction: #4727, Rsi #4694, Rsi #4704
   New slice #4396 (Marketplace) worker ff7ae0b8 (Sonnet high, base e77d1c18).
   4/4 busy: 12fe1c8e (#4390), d0b0d690 (#4927), 75ec4a1c (#4404 fix), ff7ae0b8 (#4396).
   ROUND 16 candidates: #4780 fd2e773b (if #4927 ACCEPT), #4404, #4390, #4396 (base e77d1c18 or f597a058).
+- 10-28 22:31Z: #4927 (d0b0d690) on #4780 fd2e773b: CHANGES_REQUESTED #4934 (verify-model-path --workload '-' is a legit id), #4935 (stdin hangs on TTY/held pipe), #4936 (cloudwatch help edit changes global USAGE). RULING: drop stdin (restore base "no stdin" divergence + help bytes, pin global USAGE); add audited LITERAL_DASH allowlist (non-path flags only) + contract test. Repair worker dc00af2d (Sonnet high, continue_from d60a4063). Then narrow re-review #4927.
+  4/4 busy: 12fe1c8e (#4390), 75ec4a1c (#4404 fix), ff7ae0b8 (#4396), dc00af2d (#4780 repair).
