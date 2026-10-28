@@ -2078,6 +2078,7 @@ const INVENTORY: &[(&str, Class)] = &[
         ),
     ),
     ("bedrock_agent", Class::Recorded),
+    ("bedrock_probes", Class::Recorded),
     (
         "bedrock_report",
         Class::NotRecorded("the skill's own report payloads and phase-result files"),
