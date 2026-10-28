@@ -15,24 +15,19 @@ runs), the CLI performs no network access and no live cloud activity.
 
 ## Commands
 
-```
-toolkit skills list [ROOT] [--json]
-toolkit sync plugin-skills [--root DIR] [--plugin NAME] [--check]
-toolkit sync vendored [--plugin-root DIR] [--check]
-toolkit msk size [options]
-toolkit msk compat CLUSTER_CONFIG [--out-dir DIR]
-toolkit msk sim compute|render|validate [options]
-toolkit dynamodb calculate-costs --model FILE [--requirements FILE] [--output FILE]
-toolkit dynamodb iterate-design --model FILE --config FILE --loop-state FILE [options]
-toolkit dynamodb deploy-model --model FILE --config FILE --manifest-out FILE --yes-deploy [--recorded FILE --plan-out FILE]
-toolkit dynamodb generate-teardown --manifest FILE --out FILE --yes-generate-teardown
-toolkit asm exec [--] COMMAND [ARG...]
-toolkit --version
-toolkit help
-```
+`toolkit help` (also `-h`, `--help`) prints the complete command list: one
+synopsis line per command, one description per command family, the options
+and the exit codes. The text is assembled at compile time from the
+registration that every command family ("slice") keeps in its own module, so
+this README holds no hand-maintained command list that every new slice would
+have to edit. `toolkit --version` (also `-V`, `version`) prints the version.
 
-`-h` / `--help` and `-V` / `--version` work in place of the last two lines.
-The `dynamodb` commands are described in their own section below.
+Each slice documents its commands in the file named by its registration
+(`Slice::doc`): the sections below for the slices documented here, otherwise a
+`docs/migration/*.md` file. A unit test (`registry::tests::every_slice_documents_its_commands`)
+fails when a registered command is no longer mentioned in that file. How to
+add a slice: [docs/migration/slice-registration.md](../../docs/migration/slice-registration.md).
+The `dynamodb` commands are described in their own sections below.
 
 ### skills list
 

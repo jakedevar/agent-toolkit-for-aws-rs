@@ -40,6 +40,48 @@ mod recorded;
 mod teardown;
 mod write;
 
+/// Registration of the `dynamodb-deploy` slice: its routes and help text (see `crate::registry`).
+pub(crate) const SLICE: crate::registry::Slice = crate::registry::Slice {
+    name: "dynamodb-deploy",
+    commands: &[
+        crate::CommandSpec {
+            path: &["dynamodb", "deploy-model"],
+            flags: DEPLOY_MODEL_FLAGS,
+            value_flags: DEPLOY_MODEL_VALUE_FLAGS,
+            strict_values: true,
+            repeatable_flags: &[],
+            max_positionals: 0,
+            passthrough: false,
+            handler: deploy_model_command,
+        },
+        crate::CommandSpec {
+            path: &["dynamodb", "generate-teardown"],
+            flags: GENERATE_TEARDOWN_FLAGS,
+            value_flags: GENERATE_TEARDOWN_VALUE_FLAGS,
+            strict_values: true,
+            repeatable_flags: &[],
+            max_positionals: 0,
+            passthrough: false,
+            handler: generate_teardown_command,
+        },
+    ],
+    synopsis: r"  toolkit dynamodb deploy-model --model FILE --config FILE --manifest-out FILE --yes-deploy
+      [--recorded FILE --plan-out FILE] [--created-at TS] [--run-id ID]
+  toolkit dynamodb generate-teardown --manifest FILE --out FILE --yes-generate-teardown
+",
+    description: r"  dynamodb deploy-model | generate-teardown
+                Offline plans of the DynamoDB benchmark deployment (#4391). deploy-model
+                writes the CreateTable, IAM and Lambda requests a live deploy would
+                send, from a recorded caller identity (--recorded); it creates nothing.
+                generate-teardown writes teardown.sh from a run manifest only with
+                --yes-generate-teardown; neither command runs a script or calls AWS.
+",
+    exit_notes: "",
+    doc: "docs/migration/dynamodb-deploy.md",
+    synopsis_rank: 230,
+    description_rank: 230,
+};
+
 #[cfg(test)]
 mod tests;
 

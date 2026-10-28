@@ -31,6 +31,52 @@ mod profiles;
 mod units;
 mod value;
 
+/// Registration of the `startup-scoring` slice: its routes and help text (see `crate::registry`).
+pub(crate) const SLICE: crate::registry::Slice = crate::registry::Slice {
+    name: "startup-scoring",
+    commands: &[
+        crate::CommandSpec {
+            path: &["startup", "score"],
+            flags: &[],
+            value_flags: &["--plugin-root", "--runtimes-dir"],
+            strict_values: false,
+            repeatable_flags: &[],
+            max_positionals: 1,
+            passthrough: false,
+            handler: crate::startup::score_command,
+        },
+        crate::CommandSpec {
+            path: &["startup", "score-units"],
+            flags: &[],
+            value_flags: &["--plugin-root", "--runtimes-dir"],
+            strict_values: false,
+            repeatable_flags: &[],
+            max_positionals: 1,
+            passthrough: false,
+            handler: crate::startup::score_units_command,
+        },
+    ],
+    synopsis: r"  toolkit startup score ANSWERS [--plugin-root DIR] [--runtimes-dir DIR]
+  toolkit startup score-units ANSWERS [--plugin-root DIR] [--runtimes-dir DIR]
+",
+    description: r"  startup score ANSWERS
+                Score the answers document ANSWERS (agent-advisor scoring.py)
+                against the runtime registry of the plugin at --plugin-root DIR
+                (default: the current directory; --runtimes-dir DIR names the
+                registry directly), write scoring-result.json beside ANSWERS and
+                print RESULT=ok VERDICT=<verdict>.
+  startup score-units ANSWERS
+                Score every agent_session unit of ANSWERS (agent-advisor
+                score_units.py), use the run evidence
+                current-run-verifications.json beside it when present, and
+                print the {units, <primary unit mirror>} JSON document.
+",
+    exit_notes: "",
+    doc: "docs/migration/startup-scoring.md",
+    synopsis_rank: 130,
+    description_rank: 130,
+};
+
 #[cfg(test)]
 pub(crate) mod fixtures;
 #[cfg(test)]

@@ -22,6 +22,32 @@ use crate::manifests::{
 };
 use crate::{Invocation, Output};
 
+/// Registration of the `startup-model-ids` slice: its routes and help text (see `crate::registry`).
+pub(crate) const SLICE: crate::registry::Slice = crate::registry::Slice {
+    name: "startup-model-ids",
+    commands: &[crate::CommandSpec {
+        path: &["startup", "model-id-lint"],
+        flags: &[],
+        value_flags: &["--plugin-root"],
+        strict_values: false,
+        repeatable_flags: &[],
+        max_positionals: 0,
+        passthrough: false,
+        handler: crate::startup::model_id_lint_command,
+    }],
+    synopsis: r"  toolkit startup model-id-lint [--plugin-root DIR]
+",
+    description: r"  startup model-id-lint
+                Fail when a file of the plugin at --plugin-root DIR (default: the current
+                directory) names a Bedrock model the lifecycle registry has
+                retired, outside the catalog files that record it.
+",
+    exit_notes: "",
+    doc: "docs/migration/startup-validators.md",
+    synopsis_rank: 60,
+    description_rank: 60,
+};
+
 const REGISTRY_REL: &str = "skills/shared/ai/ai-model-lifecycle.md";
 const EXTS: [&str; 8] = [
     ".md",

@@ -22,6 +22,57 @@ use crate::{Invocation, Output};
 mod render;
 mod validate;
 
+/// Registration of the `bedrock-report` slice: its routes and help text (see `crate::registry`).
+pub(crate) const SLICE: crate::registry::Slice = crate::registry::Slice {
+    name: "bedrock-report",
+    commands: &[
+        crate::CommandSpec {
+            path: &["bedrock-report", "render"],
+            flags: &[],
+            value_flags: RENDER_VALUE_FLAGS,
+            strict_values: true,
+            repeatable_flags: &[],
+            max_positionals: 1,
+            passthrough: false,
+            handler: render_command,
+        },
+        crate::CommandSpec {
+            path: &["bedrock-report", "validate"],
+            flags: &[],
+            value_flags: VALIDATE_VALUE_FLAGS,
+            strict_values: true,
+            repeatable_flags: &[],
+            max_positionals: 1,
+            passthrough: false,
+            handler: validate_command,
+        },
+    ],
+    synopsis: r"  toolkit bedrock-report render [PAYLOAD_JSON] [--phase-results DIR --repo DIR]
+      [--date-suffix YYYY-MM-DD] [--results-dir DIR]
+  toolkit bedrock-report validate (--schema analysis|ingestion|eval|rewrite|delta-decisions FILE
+      | --check-run-context SAVED_JSON --current CURRENT_JSON)
+",
+    description: r"  bedrock-report
+                Reports of the llm-to-bedrock skill (#4405). render prints the
+                in-chat summary of a finished run from the phase-result files
+                in --phase-results DIR (with --repo) or from one legacy
+                PAYLOAD_JSON, and copies the repository's newest
+                MIGRATION_REPORT_*.md to --results-dir (default
+                ~/saws-migrate-results). validate checks one phase-result
+                file against the schema analysis, ingestion, eval, rewrite or
+                delta-decisions (RESULT=valid CONTROL=ok|blocked|partial,
+                or RESULT=invalid and one line per finding, exit 1; exit 2
+                for an unreadable file) or compares a saved and a current
+                run context (RUN_CONTEXT=match, or mismatch and MISMATCH
+                lines, exit 1). Findings never print values of the checked
+                file. See docs/migration/bedrock-report.md.
+",
+    exit_notes: "",
+    doc: "docs/migration/bedrock-report.md",
+    synopsis_rank: 280,
+    description_rank: 280,
+};
+
 #[cfg(test)]
 mod contracts;
 #[cfg(test)]

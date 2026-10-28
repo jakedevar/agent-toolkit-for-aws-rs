@@ -48,6 +48,48 @@ pub mod pyfmt;
 
 pub use iterate::iterate_design_command;
 
+/// Registration of the `dynamodb` slice: its routes and help text (see `crate::registry`).
+pub(crate) const SLICE: crate::registry::Slice = crate::registry::Slice {
+    name: "dynamodb",
+    commands: &[
+        crate::CommandSpec {
+            path: &["dynamodb", "calculate-costs"],
+            flags: &[],
+            value_flags: CALCULATE_COSTS_VALUE_FLAGS,
+            strict_values: true,
+            repeatable_flags: &[],
+            max_positionals: 0,
+            passthrough: false,
+            handler: calculate_costs_command,
+        },
+        crate::CommandSpec {
+            path: &["dynamodb", "iterate-design"],
+            flags: ITERATE_DESIGN_FLAGS,
+            value_flags: ITERATE_DESIGN_VALUE_FLAGS,
+            strict_values: true,
+            repeatable_flags: &[],
+            max_positionals: 0,
+            passthrough: false,
+            handler: iterate_design_command,
+        },
+    ],
+    synopsis: r"  toolkit dynamodb calculate-costs --model FILE [--requirements FILE] [--output FILE]
+  toolkit dynamodb iterate-design --model FILE --config FILE --loop-state FILE
+      [--manifest FILE] [--apply-change FILE] [--mode MODE] [--timestamp TS]
+      [--yes-deploy] [--allow-spend] [--skip-deploy] [--calculator-only] [--dry-run]
+",
+    description: r"  dynamodb calculate-costs
+                Price a dynamodb_data_model.json (RRU/WRU, GSI amplification,
+                storage, vector indexes) and write a cost_report.md.
+  dynamodb iterate-design
+                Run ONE round of the human-driven DynamoDB design loop, then stop.
+",
+    exit_notes: "",
+    doc: "docs/migration/dynamo-cost.md",
+    synopsis_rank: 220,
+    description_rank: 220,
+};
+
 /// Upper bound for design, config, state and report JSON files (16 MiB).
 pub const MAX_INPUT_BYTES: u64 = 16 * 1024 * 1024;
 

@@ -32,6 +32,39 @@ mod client;
 mod fetch;
 mod recorded;
 
+/// Registration of the `bedrock-agent` slice: its routes and help text (see `crate::registry`).
+pub(crate) const SLICE: crate::registry::Slice = crate::registry::Slice {
+    name: "bedrock-agent",
+    commands: &[crate::CommandSpec {
+        path: &["bedrock-agent", "fetch"],
+        flags: FETCH_FLAGS,
+        value_flags: FETCH_VALUE_FLAGS,
+        strict_values: true,
+        repeatable_flags: &[],
+        max_positionals: 0,
+        passthrough: false,
+        handler: fetch_command,
+    }],
+    synopsis: r"  toolkit bedrock-agent fetch --agent-id ID --out FILE [--agent-version VERSION]
+      [--agent-alias-id ID] [--region REGION] [--profile PROFILE]
+      [--inline-s3-schemas] [--recorded FILE]
+",
+    description: r"  bedrock-agent fetch
+                Bedrock Agent discovery (#4383): fetch the agent, its action
+                groups, knowledge bases and data sources, collaborators,
+                aliases, versions and execution role into one manifest JSON file
+                (owner-only permissions, a link at --out is refused). This build
+                has no live AWS client: --recorded FILE replays recorded
+                responses, otherwise the first call fails with exit 1.
+                Prints Wrote FILE and one WARNING line per discovery warning;
+                no region exits 2. See docs/migration/bedrock-fetch.md.
+",
+    exit_notes: "",
+    doc: "docs/migration/bedrock-fetch.md",
+    synopsis_rank: 270,
+    description_rank: 270,
+};
+
 #[cfg(test)]
 mod tests;
 

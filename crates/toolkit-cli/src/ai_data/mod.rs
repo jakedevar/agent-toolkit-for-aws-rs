@@ -24,6 +24,86 @@ mod format;
 mod metrics;
 mod transform;
 
+/// Registration of the `ai-data` slice: its routes and help text (see `crate::registry`).
+pub(crate) const SLICE: crate::registry::Slice = crate::registry::Slice {
+    name: "ai-data",
+    commands: &[
+        crate::CommandSpec {
+            path: &["ai-data", "detect-format"],
+            flags: DETECT_FORMAT_FLAGS,
+            value_flags: DETECT_FORMAT_VALUE_FLAGS,
+            strict_values: true,
+            repeatable_flags: &[],
+            max_positionals: 1,
+            passthrough: false,
+            handler: detect_format_command,
+        },
+        crate::CommandSpec {
+            path: &["ai-data", "validate-metrics"],
+            flags: &[],
+            value_flags: &[],
+            strict_values: false,
+            repeatable_flags: &[],
+            max_positionals: 1,
+            passthrough: false,
+            handler: validate_metrics_command,
+        },
+        crate::CommandSpec {
+            path: &["ai-data", "transform", "plan"],
+            flags: &[],
+            value_flags: TRANSFORM_VALUE_FLAGS,
+            strict_values: true,
+            repeatable_flags: &[],
+            max_positionals: 0,
+            passthrough: false,
+            handler: transform_plan_command,
+        },
+        crate::CommandSpec {
+            path: &["ai-data", "transform", "submit"],
+            flags: &[],
+            value_flags: TRANSFORM_VALUE_FLAGS,
+            strict_values: true,
+            repeatable_flags: &[],
+            max_positionals: 0,
+            passthrough: false,
+            handler: transform_submit_command,
+        },
+        crate::CommandSpec {
+            path: &["ai-data", "transform", "describe"],
+            flags: &[],
+            value_flags: DESCRIBE_VALUE_FLAGS,
+            strict_values: true,
+            repeatable_flags: &[],
+            max_positionals: 1,
+            passthrough: false,
+            handler: transform_describe_command,
+        },
+    ],
+    synopsis: r"  toolkit ai-data detect-format PATH_OR_S3_URI [--sample-size BYTES] [--json]
+  toolkit ai-data validate-metrics [JSON_OR_FILE]
+  toolkit ai-data transform plan --script FILE --source-s3 URI --output-s3 URI
+      [--instance-type T] [--region R] [--execution-role ARN]
+      [--base-job-name N] [--image-uri URI]
+  toolkit ai-data transform submit (same options as plan)
+  toolkit ai-data transform describe JOB_NAME [--region R]
+",
+    description: r"  ai-data       Dataset and metric tools of the AWS AI/ML skill (#4385).
+                detect-format samples the first --sample-size bytes (default
+                1 MiB, at most 16 MiB) of a local JSONL file or s3:// object and
+                reports one of 11 training formats with its validation errors
+                (exit 1 when invalid). validate-metrics checks a custom-metric
+                JSON array (inline or a file). transform builds (plan) or
+                submits and describes (submit, describe) a SageMaker Processing
+                job; this build has no SageMaker or S3 client, so submit and
+                describe exit 1 and s3:// inputs are refused. See
+                docs/migration/ai-data.md.
+",
+    exit_notes: "",
+    doc: "docs/migration/ai-data.md",
+    synopsis_rank: 250,
+    description_rank: 250,
+};
+
 #[cfg(test)]
 mod tests;
 

@@ -61,6 +61,123 @@ use dashboards::{CacheType, TemplateOptions};
 use pricing::{PricingKind, PricingLoader, CSV_NOTE};
 use text::{escape_controls, kv, quoted, set_member, shell_quote, show, splitext};
 
+/// Registration of the `elasticache` slice: its routes and help text (see `crate::registry`).
+pub(crate) const SLICE: crate::registry::Slice = crate::registry::Slice {
+    name: "elasticache",
+    commands: &[
+        crate::CommandSpec {
+            path: &["elasticache", "price"],
+            flags: PRICE_FLAGS,
+            value_flags: PRICE_VALUE_FLAGS,
+            strict_values: false,
+            repeatable_flags: &[],
+            max_positionals: 0,
+            passthrough: false,
+            handler: price_command,
+        },
+        crate::CommandSpec {
+            path: &["elasticache", "estimate-serverless"],
+            flags: ESTIMATE_FLAGS,
+            value_flags: ESTIMATE_VALUE_FLAGS,
+            strict_values: false,
+            repeatable_flags: &[],
+            max_positionals: 0,
+            passthrough: false,
+            handler: estimate_serverless_command,
+        },
+        crate::CommandSpec {
+            path: &["elasticache", "validate-input"],
+            flags: &[],
+            value_flags: &[],
+            strict_values: false,
+            repeatable_flags: &[],
+            max_positionals: usize::MAX,
+            passthrough: false,
+            handler: validate_input_command,
+        },
+        crate::CommandSpec {
+            path: &["elasticache", "validate-references"],
+            flags: REFERENCES_FLAGS,
+            value_flags: REFERENCES_VALUE_FLAGS,
+            strict_values: true,
+            repeatable_flags: &[],
+            max_positionals: 0,
+            passthrough: false,
+            handler: validate_references_command,
+        },
+        crate::CommandSpec {
+            path: &["elasticache", "preflight"],
+            flags: PREFLIGHT_FLAGS,
+            value_flags: PREFLIGHT_VALUE_FLAGS,
+            strict_values: false,
+            repeatable_flags: &[],
+            max_positionals: 0,
+            passthrough: false,
+            handler: preflight_command,
+        },
+        crate::CommandSpec {
+            path: &["elasticache", "audit"],
+            flags: AUDIT_FLAGS,
+            value_flags: AUDIT_VALUE_FLAGS,
+            strict_values: false,
+            repeatable_flags: &[],
+            max_positionals: 0,
+            passthrough: false,
+            handler: audit_command,
+        },
+        crate::CommandSpec {
+            path: &["elasticache", "dashboard"],
+            flags: DASHBOARD_FLAGS,
+            value_flags: DASHBOARD_VALUE_FLAGS,
+            strict_values: false,
+            repeatable_flags: &[],
+            max_positionals: 0,
+            passthrough: false,
+            handler: dashboard_command,
+        },
+    ],
+    synopsis: r"  toolkit elasticache price [--engine valkey|redis|memcached] [--mode serverless|node]
+      [--region R] [--data-gb N] [--ecpu-millions N] [--ops-per-sec N]
+      [--node-type T] [--nodes N] [--ri-term TERM] [--avg-payload-kb N]
+      [--show-ri-options] [--extended-support] [--interactive]
+      (--pricing-csv FILE | --pricing-json FILE)
+  toolkit elasticache estimate-serverless --input FILE [--commandstats FILE]
+      [--output FILE] [--json] [--endpoint HOST]
+      (--pricing FILE | --pricing-json FILE)
+  toolkit elasticache validate-input [KEY=VALUE...]
+  toolkit elasticache validate-references [--skill-dir DIR] [--verbose] [--quiet]
+  toolkit elasticache preflight --host HOST [--port N] [--snapshot FILE] [--json]
+  toolkit elasticache audit (--serverless NAME | --replication-group ID)
+      [--describe FILE] [--json]
+  toolkit elasticache dashboard (--serverless NAME | --replication-group ID)
+      [--node-ids A,B] [--region R] [--sns-topic ARN] [--no-dashboard] [--no-alarms]
+      [--max-storage-gb N] [--storage-alarm-pct N] [--memory-threshold N]
+      [--engine-cpu-threshold N] [--replication-lag-threshold N]
+      [--hit-rate-threshold N] [--throttle-threshold N]
+      [--read-latency-threshold N] [--write-latency-threshold N]
+      [--ecpu-threshold N] [--evictions-threshold N]
+      [--new-connections-threshold N] [--output FILE]
+",
+    description: r"  elasticache   ElastiCache cost, validation, audit and dashboard tools
+                (#4392). `price` estimates serverless and node-based cost,
+                reserved options and Extended Support surcharges;
+                `estimate-serverless` prices provisioned clusters from a
+                cluster CSV (optionally per-command stats); `validate-input`
+                checks identifiers before they reach a CLI command;
+                `validate-references` checks the skill's reference files;
+                `preflight` checks a Redis/Valkey source snapshot and `audit`
+                recorded describe responses; `dashboard` writes a
+                CloudFormation observability template. Prices are read from
+                --pricing-csv / --pricing-json (the AWS bulk pricing file):
+                this build has no AWS or Redis client. See
+                docs/migration/elasticache.md.
+",
+    exit_notes: "",
+    doc: "docs/migration/elasticache.md",
+    synopsis_rank: 310,
+    description_rank: 310,
+};
+
 /// Upper bound for input CSV and JSON files (16 MiB).
 pub const MAX_INPUT_BYTES: u64 = 16 * 1024 * 1024;
 

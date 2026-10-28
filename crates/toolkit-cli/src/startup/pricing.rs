@@ -12,6 +12,33 @@ use super::MAX_ARTIFACT_BYTES;
 use crate::manifests::{py_repr, py_splitlines, py_strip, read_failure, universal_newlines};
 use crate::{Invocation, Output};
 
+/// Registration of the `startup-pricing` slice: its routes and help text (see `crate::registry`).
+pub(crate) const SLICE: crate::registry::Slice = crate::registry::Slice {
+    name: "startup-pricing",
+    commands: &[crate::CommandSpec {
+        path: &["startup", "model-pricing"],
+        flags: &[],
+        value_flags: &["--plugin-root"],
+        strict_values: false,
+        repeatable_flags: &[],
+        max_positionals: 0,
+        passthrough: false,
+        handler: crate::startup::pricing_command,
+    }],
+    synopsis: r"  toolkit startup model-pricing [--plugin-root DIR]
+",
+    description: r"  startup model-pricing
+                Require a numeric Active price row in the gcp-to-aws and
+                azure-to-aws Bedrock pricing caches for every default
+                Anthropic candidate model of the aws-startup-advisor plugin
+                at --plugin-root DIR (default: the current directory).
+",
+    exit_notes: "",
+    doc: "docs/migration/startup-validators.md",
+    synopsis_rank: 40,
+    description_rank: 40,
+};
+
 const SELECTOR: &str = "skills/agent-advisor/scripts/model_recommendation.py";
 const MODELS_DIR: &str = "skills/agent-advisor/references/models";
 const CLOUDS: [&str; 2] = ["gcp-to-aws", "azure-to-aws"];

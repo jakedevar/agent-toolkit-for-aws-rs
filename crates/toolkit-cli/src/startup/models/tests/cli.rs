@@ -568,7 +568,8 @@ fn a_linked_previous_result_is_not_trusted() {
 
 #[test]
 fn the_command_is_registered_once_in_the_router_the_readme_and_the_migration_notes() {
-    let lib = include_str!("../../../lib.rs");
+    // The route and the help text live in the slice's own registration (#4576).
+    let lib = include_str!("../mod.rs");
     assert_eq!(
         lib.matches(r#"path: &["startup", "model-recommend"]"#)
             .count(),

@@ -1493,18 +1493,20 @@ fn flag_constants(files: &[Parsed]) -> BTreeSet<String> {
     names
 }
 
-/// The slices a `COMMANDS` row of `lib.rs` routes to while naming a recording
-/// flag, inline or through a constant.
+/// The slices whose `CommandSpec` row names a recording flag, inline or
+/// through a constant. Since #4576 a slice registers its rows in its own
+/// module, so a row there counts for that slice; a row of `lib.rs` still counts
+/// for the slice its handler routes to.
 fn command_slices(files: &[Parsed], constants: &BTreeSet<String>) -> BTreeSet<String> {
     let known: BTreeSet<&str> = files.iter().map(|file| file.slice.as_str()).collect();
     let mut found = BTreeSet::new();
-    for file in files.iter().filter(|file| file.relative == "lib.rs") {
+    for file in files {
         let toks = &file.toks;
         for (i, tok) in toks.iter().enumerate() {
             let is_row = tok.is("CommandSpec")
                 && toks.get(i + 1).is_some_and(|t| t.is("{"))
                 && i > 0
-                && (toks[i - 1].is("[") || toks[i - 1].is(","));
+                && (toks[i - 1].is("[") || toks[i - 1].is(",") || toks[i - 1].is("::"));
             if !is_row {
                 continue;
             }
@@ -1512,6 +1514,13 @@ fn command_slices(files: &[Parsed], constants: &BTreeSet<String>) -> BTreeSet<St
             let names_flag = row
                 .iter()
                 .any(|t| is_recording_flag(t) || (t.is_ident() && constants.contains(&t.text)));
+            if !names_flag {
+                continue;
+            }
+            if file.relative != "lib.rs" {
+                found.insert(file.slice.clone());
+                continue;
+            }
             let handler = row
                 .windows(2)
                 .position(|pair| pair[0].is("handler") && pair[1].is(":"));
@@ -1520,7 +1529,7 @@ fn command_slices(files: &[Parsed], constants: &BTreeSet<String>) -> BTreeSet<St
                 .iter()
                 .take_while(|t| !t.is(","))
                 .find(|t| t.is_ident() && known.contains(t.text.as_str()));
-            if let (true, Some(slice)) = (names_flag, slice) {
+            if let Some(slice) = slice {
                 found.insert(slice.text.clone());
             }
         }
