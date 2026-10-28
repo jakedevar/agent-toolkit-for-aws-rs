@@ -148,7 +148,7 @@ fn test_both_estimators_carve_out_global_cris_parity() {
     let mut rules: Vec<Rule> = ESTIMATE_AI
         .iter()
         .map(|f| {
-            Rule::new(*f).all(&[
+            Rule::new(f).all(&[
                 "model_change: false",
                 "Global CRIS",
                 "computed Part 5 result, not a fixed premium",
@@ -159,7 +159,7 @@ fn test_both_estimators_carve_out_global_cris_parity() {
     rules.extend(
         ESTIMATE_AI
             .iter()
-            .map(|f| Rule::new(*f).norm().ci().all(&["parity"])),
+            .map(|f| Rule::new(f).norm().ci().all(&["parity"])),
     );
     check_rules(&rules);
 }

@@ -96,11 +96,6 @@ impl Plugin {
         self.root.join(rel)
     }
 
-    /// Absolute path of `rel` in this view.
-    pub fn path(&self, rel: &str) -> PathBuf {
-        self.resolve(rel)
-    }
-
     /// Read a UTF-8 file, as Python's `read_text(encoding="utf-8")` does.
     pub fn read(&self, rel: &str) -> Result<String, String> {
         let path = self.resolve(rel);
@@ -109,21 +104,6 @@ impl Plugin {
 
     pub fn is_file(&self, rel: &str) -> bool {
         self.resolve(rel).is_file()
-    }
-
-    /// Sorted sub-directory names of `rel` that satisfy `keep`.
-    pub fn dirs(&self, rel: &str, keep: impl Fn(&Path) -> bool) -> Vec<String> {
-        let mut out = Vec::new();
-        if let Ok(entries) = fs::read_dir(self.root.join(rel)) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_dir() && keep(&path) {
-                    out.push(entry.file_name().to_string_lossy().into_owned());
-                }
-            }
-        }
-        out.sort();
-        out
     }
 
     /// This view with `rel` replaced by `edit` applied to its text, the copy
@@ -233,11 +213,6 @@ pub fn has(pattern: &str, text: &str) -> bool {
         .expect("valid pattern")
         .is_match(text)
         .expect("match")
-}
-
-/// As [`has`], ignoring case (`re.IGNORECASE`).
-pub fn has_i(pattern: &str, text: &str) -> bool {
-    has(&format!("(?i){pattern}"), text)
 }
 
 /// `text[i:i + n]` with `i = text.index(anchor)`; indexes count characters as

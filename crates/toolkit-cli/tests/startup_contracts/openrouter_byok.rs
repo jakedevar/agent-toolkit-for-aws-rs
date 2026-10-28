@@ -24,7 +24,7 @@ const WRITE_PROFILE: &str = "Write `$MIGRATION_DIR/openrouter-usage-profile.json
 const STEP_1_5: &str = "## Step 1.5";
 
 fn each(make: impl Fn(Rule) -> Rule) -> Vec<Rule> {
-    OPENROUTER.iter().map(|f| make(Rule::new(*f))).collect()
+    OPENROUTER.iter().map(|f| make(Rule::new(f))).collect()
 }
 
 // ---- Finding 1: join key ---------------------------------------------------------

@@ -32,7 +32,7 @@ const BEHAVIOR_DELTA: &str =
 
 /// One rule per file of `files`, built by `make`.
 fn per_file(files: &[&'static str], make: impl Fn(Rule) -> Rule) -> Vec<Rule> {
-    files.iter().map(|f| make(Rule::new(*f))).collect()
+    files.iter().map(|f| make(Rule::new(f))).collect()
 }
 
 // ---- round 2 ----------------------------------------------------------------

@@ -22,7 +22,7 @@ const REPORT_GENERATOR: &str = "agents/llm2bedrock-report-generator.md";
 const STEP_1_5: Scope = Scope::Span("## Step 1.5", "## Phase A");
 
 fn each(files: &[&'static str], make: impl Fn(Rule) -> Rule) -> Vec<Rule> {
-    files.iter().map(|f| make(Rule::new(*f))).collect()
+    files.iter().map(|f| make(Rule::new(f))).collect()
 }
 
 #[test]

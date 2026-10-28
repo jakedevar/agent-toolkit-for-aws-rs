@@ -105,9 +105,9 @@ fn identical(copy: &PathBuf) -> bool {
 #[test]
 fn test_schema_has_no_unsupported_keywords() {
     assert!(unsupported_keywords(&schema(), "").is_empty());
-    // Non-vacuous: a schema using `oneOf` is reported.
+    // Non-vacuous: a schema using `contains` is reported.
     let mut bad = schema();
-    put(&mut bad, "", "oneOf", Json::Array(Vec::new()));
+    put(&mut bad, "", "contains", Json::object(Vec::new()));
     assert!(!unsupported_keywords(&bad, "").is_empty());
 }
 

@@ -260,7 +260,7 @@ Run: `cargo test -p toolkit-cli --test startup_contracts` (the daemon job `works
 `test_step_3a_does_not_emit_its_own_close` the edited copy of `estimate-assemble.md` gains the
 sentence `Your decision is saved at` inside Step 3a and the test requires the contract to fail
 with "emits its own close". The `catalog.rs` positive checks carry their own edited-copy
-assertions (a schema with `oneOf`, a duplicate provider, a claimed adapter, an edited vendored
+assertions (a schema with `contains`, a duplicate provider, a claimed adapter, an edited vendored
 copy), and the Python file's negative cases are kept as they were.
 
 ## Cases that executed Python

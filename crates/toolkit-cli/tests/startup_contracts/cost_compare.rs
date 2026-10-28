@@ -1,7 +1,7 @@
 //! `test_gpt6_source_breakpoint.py`, `test_report_generator_cost_pricing.py`
 //! and `test_report_generator_capture_warnings_gate.py`.
 //!
-//! The first two Python files extracted the one embedded ```python block of
+//! The first two Python files extracted the one embedded fenced python block of
 //! `agents/llm2bedrock-report-generator.md` (the `cost_compare.py` an agent
 //! writes and runs) and executed it. Running Python is outside this
 //! repository's rules and the block is shipped agent content, so the Rust
@@ -183,7 +183,7 @@ fn price(inputs: &Inputs) -> String {
     for pair in &inputs.pairs {
         let (src, tgt) = (pair.src, pair.tgt);
         let mut basis: String;
-        let (mut in_tok, mut out_tok) = (0.0, 0.0);
+        let (in_tok, out_tok): (f64, f64);
         let (mut source_cost, mut bedrock_cost);
         if let Some(buckets) = inputs.tiers.get(src) {
             basis = "tier-distribution".into();

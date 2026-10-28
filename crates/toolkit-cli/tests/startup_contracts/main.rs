@@ -6,6 +6,14 @@
 //! copy (see `common::check`). The one-to-one mapping from every Python test
 //! to its Rust test is in `docs/migration/startup-contracts.md`.
 
+#![allow(
+    // Rules and models mirror short Python names (`a`, `b`, `n`, `p`).
+    clippy::many_single_char_names,
+    clippy::similar_names,
+    // Doc comments cite Python identifiers and product names verbatim.
+    clippy::doc_markdown
+)]
+
 mod ai_phases;
 mod azure_clarify;
 mod common;

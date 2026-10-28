@@ -20,7 +20,7 @@ const CLOSE_SENTENCE: &str = "Your decision is saved at";
 fn skill_summary(p: &Plugin) -> Verdict {
     let text = p.read(AZURE_SKILL)?;
     // text.split("---", 2)[1]
-    let description = text.splitn(3, "---").nth(1).ok_or("no front matter")?;
+    let description = text.split("---").nth(1).ok_or("no front matter")?;
     let defaults = between(&text, "## Defaults", "## Scope Notes")?;
     ensure!(description.contains("RDfA"), "description never names RDfA");
     ensure!(
