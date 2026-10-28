@@ -352,3 +352,8 @@ Friction: #4727, Rsi #4694, Rsi #4704
   4/4 busy: 4f5ab2f8 (r15), d60a4063 (#4780), b4230421 (#4893 r2), 07db2e68 (#4904 r2).
 - 10-28 21:40Z: #4893 r2 (b4230421) on #4398 26ae66ab: CHANGES_REQUESTED #4917 (writable lock with pre-1970 mtime skips replacement -> reporting suppressed). Repair 2 worker 3209a487 (Opus, continue_from 15fa44f7): trust checks before timestamp conversion, bad mtime = stale. PM accepts on inspection (no r3).
   4/4 busy: 4f5ab2f8 (r15), d60a4063 (#4780), 07db2e68 (#4904 r2), 3209a487 (#4398 repair 2).
+- 10-28 21:43Z: #4904 r2 (07db2e68) ACCEPT #4395 at c659ce745ebda94db79c9a7e2f1fa5d652afc026. Follow-up #4918 (template validation). Close on land: #4904 #4905 #4906 #4907 #4908 (#4395 stays open for #4886 remainder). Mailed r15 worker 4f5ab2f8 (msg 697267e3): merge c659ce74 as step 5, move docgraph registration onto registry.
+  New slice #4404 (Bedrock baseline/preflight/IAM + #4608 contract tests) worker 6a65d533 (Sonnet high, base f597a058, registry form).
+  Unstarted slices left: #4382 #4390 #4393 #4396 #4397 #4410 #4411; follow-up #4886. Open P1 #4634 (CloudWatch raw controls) - verify vs #4380/#4662 status before next slot.
+  Hygiene TODO: many InProgress slices landed in r13 b8204e9d but still InProgress (e.g. #4380 #4383 #4384 #4385 #4392 #4400-#4403 #4405-#4407 #4451) - verify ancestry and close with landed SHA.
+  4/4 busy: 4f5ab2f8 (r15), d60a4063 (#4780), 3209a487 (#4398 repair 2), 6a65d533 (#4404).
