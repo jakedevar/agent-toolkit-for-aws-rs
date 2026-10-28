@@ -382,3 +382,7 @@ Friction: #4727, Rsi #4694, Rsi #4704
   4/4 busy: 12fe1c8e (#4390), ff7ae0b8 (#4396), dc00af2d (#4780 repair), 5275e644 (#4404 repair).
 - 10-28 22:44Z: #4404 repair 6f4e4af87db228051e21c955ef0a5ec33a01c530 (5275e644; COVERS #4938 #4939 #4940; one resolved lookup flag>file>env, full redact before 200-cut, slice diag::path; 9 tests, 7 red/2 non-compiling on 0c11dcab; fmt 11591b5f clippy 2db23cdb scoped 67a13880 ok cli 2932). Re-review #4937 r2 worker 7e9d4c71 (Codex sol, pinned).
   4/4 busy: 12fe1c8e (#4390), ff7ae0b8 (#4396), dc00af2d (#4780 repair), 7e9d4c71 (#4937 r2). Next free slot: kaizen #4941.
+- 10-28 22:46Z: #4937 r2 (7e9d4c71) ACCEPT #4404 at 6f4e4af87db228051e21c955ef0a5ec33a01c530. Close on land: #4404 #4937 #4938 #4939 #4940 (+ #4608 after checking its #4403 half). #4950 cancelled (dup #4865).
+  Kaizen #4941 worker f8244a11 (Opus high, base e77d1c18): shared redact->bound->escape in safe_path/diag helpers, migrate docgraph local helper; r16 integration migrates bedrock_probes diag::path.
+  ROUND 16 ready so far: #4404 6f4e4af8 (base f597a058). Pending: #4780 repair (dc00af2d), #4390 (12fe1c8e), #4396 (ff7ae0b8), #4941 (f8244a11).
+  4/4 busy: 12fe1c8e, ff7ae0b8, dc00af2d, f8244a11.
