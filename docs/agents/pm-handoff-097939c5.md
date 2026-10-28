@@ -300,3 +300,4 @@ Friction: #4727, Rsi #4694, Rsi #4704
   #4576 registration hotspot worker (Sonnet high, base ce0eaf6a).
   4/4 busy: fb8e2044 (#4751 repair +#4869), cf272dfd (#4584 cluster), 5393fd21 (#4839 repair), #4576 worker.
   Queue: 5c529ed1 (#4468 tests, seq 2915), 78a019f9 (r14, seq 2916).
+- 10-28 20:15Z: #4751 repair 63e4a11fb9eb5037499804a2c4431a83e90d48e9 (fb8e2044; COVERS #4861 #4862 #4863 #4864 #4869; tests+README only; threat model written; scoped bafb02b7 ok cli 2315; old-scanner witness 239386fe). Harness friction #4865 (at_commit exit 127). Re-review #4852 r2 (Codex sol high, pinned), obfuscation non-blocking. Mailed #4839 repair 5393fd21 to merge 63e4a11f.
