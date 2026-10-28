@@ -463,17 +463,36 @@ live once in `toolkit_aws::recorded`; use it instead of writing your own.
    recorded value.
 
 `tests/recorded_contract.rs` enforces this without keying on any spelling you
-choose (a type name, a helper name, a way of nesting `match`). It reads the
-token stream of every non-test file of `crates/toolkit-cli/src`, comments and
-string contents removed, and puts a top-level module of `src` in scope when it
-has **any** of these signals:
+choose (a type name, a helper name, a way of nesting `match`). It parses every
+non-test file of `crates/toolkit-cli/src` with `syn` (a test file is
+`tests.rs`, anything under `tests/`, or a file that only test-only module
+declarations load: the file of a `#[cfg(test)] mod NAME;` (its `#[path]` if
+given, else `NAME.rs` or `NAME/mod.rs`) and its submodules, whatever `NAME`
+is, #4869. An inline `#[cfg(test)] mod NAME { .. }` claims no file, and a file
+that any other declaration also loads, `#[cfg(not(test))]` included, stays
+scanned, #4872) and decides the scope from
+an **inventory** of every top-level module of `src` (#4752). A new module fails
+the contract until it is listed there, as one of:
+
+- `Class::Recorded`: it replays or reads recorded AWS calls. It must import
+  `toolkit_aws::recorded` and every rule below applies;
+- `Class::NotRecorded("<what it reads instead>")`: the reason must be specific.
+  The module must show no recording signal;
+- `Class::Pending { issue, findings }`: it reads recorded responses by hand
+  and has not moved onto the shared module yet. Its findings are counted and
+  must equal `findings`, so a new hand-written read fails the contract, and
+  a read that moves lowers the count in the same change.
+
+The recording signals cross-check the inventory. A module with any of them is
+in scope even without an entry:
 
 - a recording flag: the string `"--recorded"` (also `"--recording"`,
   `"--replay"`) in the module, or a `COMMANDS` row that names the flag, inline
   or through a constant, and routes to it;
-- a recorded replay type or trait: an identifier that mentions `Recorded` or
-  `Replay` together with `Client`, `Step`, `Queue` or `Replay`
-  (`RecordedClient`, `RecordedAwsClient`, `ReplayClient`, ...);
+- a recorded replay type, trait or constant: a name starting with a capital
+  that mentions `Recorded`, `Recording` or `Replay` (`RecordedClient`,
+  `RecordedAwsClient`, `ReplayQueue`, `RecordedPriceList`,
+  `MAX_RECORDED_BYTES`);
 - an import of `toolkit_aws::recorded` in any form: plain, grouped
   (`toolkit_aws::{recorded, ..}`), aliased (`recorded as r`,
   `toolkit_aws as aws` then `aws::recorded`), or in a nested module.
@@ -482,40 +501,61 @@ A module with a flag or a type signal must import `toolkit_aws::recorded`. Every
 module in scope must:
 
 - not define its own `optional_*`, `nullable_text` or `same_json` helper;
-- not **read a JSON shape**: any `Json::Array`, `Json::Object`, `Value::Array`
-  or `Value::Object` in a pattern (`match`, `if let`, `let ... else`,
-  `matches!` in any delimiter, a guard, behind `Some(..)` or a nested `match`,
-  a `let` with a type annotation (`let Some(Json::Array(v)): Option<&Json> = ..`), inside a
-  struct-field pattern; tuple form `Json::Array(v)` and brace form
-  `Json::Array { 0: v }` or `Json::Object { .. }` alike; through an alias or a
-  `use Json::{Array, Object}`), and any `as_array`, `as_object`,
-  `as_array_mut` or `as_object_mut`. Building a value (`Json::Array(items)` or
-  `Json::Array { 0: items }` as an expression) is not a read;
-- not **alias the JSON value type**: `type J = Json;`,
+- not **read a JSON shape**. That is any pattern whose path ends in `Array` or
+  `Object` (`Json::Array(v)`, `Json::Array { 0: v }`, `J::Object { .. }`,
+  `Self::Array(v)`, an imported variant), or in a name that any `use` in `src`
+  gives one (`use toolkit_core::Json::Array as List`, then `List(v)` or
+  `variants::List(v)` in any file; #4863), wherever the grammar puts it:
+  `match`, `if let`, `while let`, `let ... else`, an annotated `let`, a guard,
+  a struct-field pattern, behind `&`, `ref`, `@`, `Some` or a tuple. It is
+  also any `as_array`, `as_object`, `as_array_mut` or `as_object_mut`. A raw
+  identifier is the name it spells: `r#Array` is `Array` (#4861). `matches!`
+  and the standard expression macros (`assert!`, `vec!`, `format!`, ...) are
+  parsed with their grammar. Any other macro body (a pattern macro, a macro
+  from another crate) fails closed: a shape variant with a payload in it
+  counts, even in a construction. Building a value in code
+  (`Json::Array(items)` as an expression) is not a read. A file that does not
+  parse is a failure;
+- not **define or invoke a local macro** (#4862): a `macro_rules!` item, or
+  an invocation of a macro that `src` defines, is a failure unless the
+  definition carries a `// recorded-shape:` marker. The scanner never expands
+  a macro, so a local one named like a standard macro (`vec!`) does not get
+  the standard grammar either;
+- not **alias the JSON value type**: `type J = Json;`, `type J = (Json);`,
   `type V = serde_json::Value;`, `use toolkit_core::Json as J`,
-  `use serde_json::Value as V`, a re-export (`pub use .. as`) or an alias of
-  an alias. A marked alias is allowed, but reads through it still count, and
-  an alias defined elsewhere in `src` is followed into the slice.
+  `use toolkit_core::Json::{self as J}`, a re-export (`pub use .. as`) or an
+  alias of an alias. A marked alias is allowed, but reads through it still
+  count, and an alias defined elsewhere in `src` is followed into the slice.
 
 When the value is not a response (a snapshot file, the command's own manifest,
 a request or entry it built), or the member is required and every other shape
 is rejected, or the code classifies every JSON type on purpose, put
 `// recorded-shape: <reason>` on the line, or directly above it. The reason
-must be specific: at least three distinct words, placeholders such as `todo`,
-`x` or `<reason>` not counted; a blank or placeholder reason is itself a
-failure and allows nothing. A marker on a line allows that line. A marker above
-code allows the next code line, or the whole of the single function, method or
-closure-binding `let` that starts there. It never covers a `mod`, an `impl` or
-`trait` block, any other item, or a file header (inner attribute) scope: mark
-each function inside instead.
+must be specific: at least three distinct words. Placeholders (`todo`, `x`,
+`<reason>`) and filler (`this is fine, see above`) do not count. A blank,
+placeholder or filler reason is itself a failure and allows nothing. A marker
+on a line allows that line. A marker above code allows the next code line, or
+the whole of the single function, method or closure-binding `let` that starts
+there, **except** the items nested in its body (a function, `mod`, `impl`,
+`trait`, `const`, `static` or `macro_rules!`): mark each of those itself. A
+marker never covers a `mod`, an `impl` or `trait` block, any other item, or a
+file header (inner attribute) scope.
 
-**The scanner is a tripwire, not a proof.** It checks exactly the list above
-(scope signals, module adoption, helper definitions, shape reads, JSON type
-aliases and marker reasons) on tokens, with no type inference, so a determined
-author can still hide a read. Review is the defense against deliberate
-evasion: code written to get past the scanner (a renamed type, an indirection
-that hides a shape read, a marker whose reason does not match the code) is a
-review blocker even when the test passes.
+Every finding counts at its own position: two reads on one line are two
+findings, and a `Pending` count is a count of those occurrences (#4864). The
+report prints the findings of a line once, with how many it holds.
+
+**Threat model: a tripwire, not a proof.** The scanner guards honest code
+against an *accidental* raw read of a recorded response. It checks exactly
+the list above (inventory, scope signals, module adoption, helper
+definitions, shape reads, JSON type aliases, local macros and marker reasons)
+on the syntax tree, with no type inference and no macro expansion. Deliberate
+obfuscation is out of its scope: review and the adoption of the shared module
+catch it, and code written to get past the scanner is a review blocker even
+when the test passes (a renamed type, an indirection that hides a shape read,
+a marker whose reason does not match the code, or an inventory entry that
+misstates what a module reads). A further scanner evasion blocks a review only
+when it falls in one of the classes above.
 
 ## Frontmatter additions (#4374)
 
