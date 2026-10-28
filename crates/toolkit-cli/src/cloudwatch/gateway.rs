@@ -25,16 +25,11 @@ const CODE_LOCATION: &[Field] = &[
     ("LineNumber", Shape::Int),
 ];
 
-/// A `Location` union.
-const LOCATION: &[Field] = &[
-    ("CodeLocation", Shape::Object(CODE_LOCATION)),
-    ("Language", Shape::Text),
-    ("FilePath", Shape::Text),
-    ("CodeUnit", Shape::Text),
-    ("ClassName", Shape::Text),
-    ("MethodName", Shape::Text),
-    ("LineNumber", Shape::Int),
-];
+/// A `Location` union: a `CodeLocation`, or the same members at its top.
+const LOCATION: Shape = Shape::Union {
+    wrapper: "CodeLocation",
+    members: CODE_LOCATION,
+};
 
 const CAPTURE_LIMITS: &[Field] = &[
     ("MaxHits", Shape::Int),
@@ -55,15 +50,12 @@ const CODE_CAPTURE: &[Field] = &[
     ("CaptureLimits", Shape::Object(CAPTURE_LIMITS)),
 ];
 
-/// A `CaptureConfiguration` union.
-const CAPTURE: &[Field] = &[
-    ("CodeCapture", Shape::Object(CODE_CAPTURE)),
-    ("CaptureReturn", Shape::Bool),
-    ("CaptureStackTrace", Shape::Bool),
-    ("CaptureArguments", Shape::StringList),
-    ("CaptureLocals", Shape::StringList),
-    ("CaptureLimits", Shape::Object(CAPTURE_LIMITS)),
-];
+/// A `CaptureConfiguration` union: a `CodeCapture`, or the same members
+/// at its top.
+const CAPTURE: Shape = Shape::Union {
+    wrapper: "CodeCapture",
+    members: CODE_CAPTURE,
+};
 
 /// One instrumentation configuration (`Configuration`, an item of
 /// `LatestConfigurations`).
@@ -71,8 +63,8 @@ const CONFIGURATION: &[Field] = &[
     ("InstrumentationType", Shape::Text),
     ("SignalType", Shape::Text),
     ("LocationHash", Shape::Text),
-    ("Location", Shape::Object(LOCATION)),
-    ("CaptureConfiguration", Shape::Object(CAPTURE)),
+    ("Location", LOCATION),
+    ("CaptureConfiguration", CAPTURE),
     ("AttributeFilters", Shape::TextMapList),
     ("Description", Shape::Text),
     ("CreatedAt", Shape::Timestamp),
@@ -176,7 +168,7 @@ impl AppSignalsOp {
                 ("Environment", Shape::Text),
                 ("SignalType", Shape::Text),
                 ("Status", Shape::Text),
-                ("Location", Shape::Object(LOCATION)),
+                ("Location", LOCATION),
                 ("LocationHash", Shape::Text),
                 ("NextToken", Shape::NullableText),
             ],

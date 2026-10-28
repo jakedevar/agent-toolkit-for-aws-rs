@@ -22,6 +22,20 @@ pub const SPAN_ROW_LIMIT: usize = 1000;
 /// Polls of a query before giving up (each preceded by a 2 s wait).
 pub const QUERY_POLL_ATTEMPTS: usize = 150;
 
+/// The response members an Omni query reads (#4381 repair 4): the
+/// session's `sessionId`, the started query's `queryId`, and each results
+/// response's `status`, `rows` and `nextToken`. The columns of a row are the
+/// caller's (`evaluate::SPAN_ROW`, `dataset::SPAN_ROW`).
+pub const SESSION_ID: &str = "sessionId";
+/// See [`SESSION_ID`].
+pub const QUERY_ID: &str = "queryId";
+/// See [`SESSION_ID`].
+pub const STATUS: &str = "status";
+/// See [`SESSION_ID`].
+pub const ROWS: &str = "rows";
+/// See [`SESSION_ID`].
+pub const NEXT_TOKEN: &str = "nextToken";
+
 /// What to do when a page comes back empty but carries a token.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EmptyPage {
@@ -105,7 +119,7 @@ fn query_rows(
             failure_text(&failure)
         )
     })?;
-    let query_id = response_id(&started, "queryId", "start_telemetry_query")?;
+    let query_id = response_id(&started, QUERY_ID, "start_telemetry_query")?;
 
     // Phase 1: poll for completion (status only; rows are not stable until
     // Complete).
@@ -126,7 +140,7 @@ fn query_rows(
                 failure_text(&failure)
             )
         })?;
-        status = optional_text(&poll, "status")
+        status = optional_text(&poll, STATUS)
             .map_err(|error| {
                 format!("Omni get_telemetry_query_results failed: the response is invalid: {error}")
             })?
@@ -164,10 +178,10 @@ fn query_rows(
         )?;
         // Absent and `[]` are no rows; `null`, a non-list or a non-object row
         // is an invalid response, never an empty result (#4727).
-        let rows = optional_object_list(&page, "rows")
+        let rows = optional_object_list(&page, ROWS)
             .map_err(|error| AwsError::invalid_response(error.to_string()))?
             .to_vec();
-        let mut next_token = next_token_from(&page, "nextToken")?;
+        let mut next_token = next_token_from(&page, NEXT_TOKEN)?;
         collected += rows.len();
         if collected > SPAN_ROW_LIMIT || (empty_page == EmptyPage::Stop && rows.is_empty()) {
             next_token = None;
@@ -209,7 +223,7 @@ pub fn omni_query(
             failure_text(&failure)
         )
     })?;
-    let session_id = response_id(&session, "sessionId", "start_telemetry_query_session")?;
+    let session_id = response_id(&session, SESSION_ID, "start_telemetry_query_session")?;
 
     let rows = query_rows(client, pacer, &session_id, sql, incomplete_hint, empty_page);
     // Best effort, like the `except Exception: pass` of the scripts.

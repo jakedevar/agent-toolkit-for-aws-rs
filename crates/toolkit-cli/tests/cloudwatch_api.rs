@@ -4,12 +4,15 @@
 //! stdout/stderr. Every AWS answer is a recorded fixture or absent: no test
 //! reaches the network, reads credentials or changes a resource.
 
+use std::collections::BTreeSet;
 use std::fs;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use toolkit_cli::cloudwatch::response_reads::response_reads;
+use toolkit_cli::cloudwatch::response_shape::{member_paths as read_paths, MemberPath, Shape};
 use toolkit_core::{parse_json, Json};
 
 const BIN: &str = env!("CARGO_BIN_EXE_toolkit");
@@ -1285,7 +1288,43 @@ fn add_recording(count: i64) -> String {
     )
 }
 
+/// Span rows that take the fallback branches (#4837): no `input_value` or
+/// `output_value`, so the `gen_ai.*` values are the ones read; an agent
+/// root and a `TOOL` child (kind and name), with every other attribute
+/// column, so a column read only on those branches is mutated too.
+const FALLBACK_ROWS: &str = r#"{"traceId":"aa","spanId":"0000000000000001","name":"agent","kind":"SPAN_KIND_SERVER",
+    "startTimeUnixNano":"1738608120000000000","svc_name":"svc","session_id_attr":"session-1",
+    "oi_span_kind":"AGENT","aws_genai_span_kind":"AGENT","gen_ai_op_name":"invoke_agent",
+    "gen_ai_input_value":"question","gen_ai_output_value":"answer",
+    "gen_ai_input_messages":"[]","gen_ai_output_messages":"[]","llm_input_messages":"[]","llm_output_messages":"[]",
+    "gen_ai_req_model":"m","gen_ai_resp_model":"m","gen_ai_system":"aws.bedrock",
+    "usage_input_tokens":3,"usage_output_tokens":4,"prompt_tokens":3,"completion_tokens":4},
+  {"traceId":"aa","spanId":"0000000000000002","parentSpanId":"0000000000000001","name":"tool","kind":3,
+    "startTimeUnixNano":"1738608120500000000","svc_name":"svc","session_id_attr":"session-1",
+    "oi_span_kind":"TOOL","aws_genai_span_kind":"TOOL","gen_ai_op_name":"execute_tool",
+    "tool_name":"lookup","gen_ai_tool_name":"lookup","gen_ai_tool_call_id":"call-1",
+    "gen_ai_input_value":"{\"q\":1}","gen_ai_output_value":"42"}"#;
+
+/// The evaluation of the fallback rows, scored once.
+fn fallback_evaluate_recording() -> String {
+    format!(
+        r#"{{"calls":[{},
+{{"service":"bedrock-agentcore","operation":"Evaluate","response":{{"evaluationResults":[{{"evaluatorId":"Builtin.Helpfulness","value":1,"label":"Helpful"}}]}}}}]}}"#,
+        omni_paged(FALLBACK_ROWS)
+    )
+}
+
+/// The capture of the fallback rows into a new dataset.
+fn fallback_capture_recording() -> String {
+    format!(
+        r#"{{"calls":[{},
+{{"service":"bedrock-agentcore-control","operation":"CreateDataset","response":{{"datasetId":"ds-1","status":"CREATING"}}}}]}}"#,
+        omni_paged(FALLBACK_ROWS)
+    )
+}
+
 /// One command run over one recording.
+#[derive(Clone)]
 struct Scenario {
     /// The command as `HARNESS_ALLOWED` names it.
     command: &'static str,
@@ -1297,6 +1336,9 @@ struct Scenario {
     /// For a malformed fixture (`expect` 1): the generic paths whose
     /// mutation may legitimately repair it, so the run succeeds.
     repairs: Vec<&'static str>,
+    /// Empty for a written fixture; `complete` or `flat` for a variant the
+    /// harness synthesised from the read set (see [`synthesised`]).
+    variant: &'static str,
 }
 
 fn scenario(command: &'static str, argv: &[&str], recording: impl Into<String>) -> Scenario {
@@ -1306,6 +1348,7 @@ fn scenario(command: &'static str, argv: &[&str], recording: impl Into<String>) 
         recording: recording.into(),
         expect: 0,
         repairs: Vec::new(),
+        variant: "",
     }
 }
 
@@ -1429,6 +1472,20 @@ fn harness_scenarios() -> Vec<Scenario> {
         "aa",
         "--no-writeback",
         "--include-explanations",
+        "--recorded",
+        "@REC",
+        "--now",
+        "2025-02-03T18:42:00Z",
+    ];
+    let tool_calls = [
+        "evaluate-traces",
+        "--trace-id",
+        "aa",
+        "--level",
+        "TOOL_CALL",
+        "--evaluator-id",
+        "Builtin.ToolSelectionAccuracy",
+        "--no-writeback",
         "--recorded",
         "@REC",
         "--now",
@@ -1622,6 +1679,18 @@ fn harness_scenarios() -> Vec<Scenario> {
             &writeback,
             writeback_recording(false),
         ),
+        // #4837: the fallback and TOOL branches of both span readers.
+        scenario("evaluate-traces", &evaluate, fallback_evaluate_recording()),
+        scenario(
+            "evaluate-traces --level TOOL_CALL",
+            &tool_calls,
+            fallback_evaluate_recording(),
+        ),
+        scenario(
+            "capture-dataset create",
+            &capture,
+            fallback_capture_recording(),
+        ),
         scenario("capture-dataset add", &add, add_recording(10)),
         // #4816: the cap refusal of a dataset resolved by name.
         scenario("capture-dataset add", &add, add_recording(1000)).failing(),
@@ -1696,6 +1765,7 @@ const EVALUATE: &[&str] = &[
     "evaluate-traces",
     "evaluate-traces --include-explanations",
     "evaluate-traces --kms-key-id",
+    "evaluate-traces --level TOOL_CALL",
 ];
 
 const fn allow(
@@ -1934,13 +2004,14 @@ const HARNESS_ALLOWED: &[Allowed] = &[
         SHOWN,
         "the record's field names are part of the printed record",
     ),
-    allow(
-        SNAPSHOTS,
-        "GetQueryResults",
-        "messages[*].**",
-        SHOWN,
-        "the service's query messages are passed through, as in Python",
-    ),
+    Allowed {
+        commands: SNAPSHOTS,
+        operation: "GetQueryResults",
+        path: "messages[*].**",
+        kinds: SHOWN,
+        on_failure: true,
+        why: "the service's query messages are passed through on every terminal status, Failed included, as in Python (#4381 repair 4)",
+    },
     Allowed {
         commands: SNAPSHOTS,
         operation: "StartQuery",
@@ -1991,6 +2062,13 @@ const HARNESS_ALLOWED: &[Allowed] = &[
         "evaluationResults[*].explanation",
         SHOWN,
         "--include-explanations asks for the judge's explanation",
+    ),
+    allow(
+        EVALUATE,
+        "Evaluate",
+        "evaluationResults[*].explanation",
+        SHOWN,
+        "hasExplanation is bool(explanation), as in Python: an empty explanation becomes a present one, never its text (#4381 repair 4)",
     ),
     allow(
         &["capture-dataset create"],
@@ -2179,13 +2257,293 @@ fn run_scenario(scenario: &Scenario, recording: &Path) -> Run {
     }
 }
 
+// ---- coverage by construction (#4381 repair 4, #4837, #4838) -------------
+//
+// `member_paths` above only visits members a fixture already holds, so a
+// read member no fixture carries would never be mutated. The read set is
+// therefore derived from the tables the read sites use
+// (`toolkit_cli::cloudwatch::response_reads`), and every written scenario
+// gets synthesised variants in which each derived member it lacks is
+// present: `complete` (every absent member, a union in its wrapped form)
+// and `flat` (the same, with each union's members written flat instead of
+// in its wrapper). A variant must replay with its scenario's declared exit;
+// it is then mutated like any other. `every_derived_response_member_path_is_mutated`
+// fails when a derived path is mutated by no scenario.
+
+/// The command whose read set a harness command label belongs to.
+fn reader(command: &str) -> &str {
+    command.split(' ').next().unwrap_or(command)
+}
+
+/// One step of a generic member path.
+enum Step<'a> {
+    Key(&'a str),
+    Each,
+}
+
+fn steps(path: &str) -> Vec<Step<'_>> {
+    let mut out = Vec::new();
+    for part in path.split('.') {
+        let (key, mut rest) = part
+            .split_once('[')
+            .map_or((part, ""), |(key, rest)| (key, rest));
+        out.push(Step::Key(key));
+        while let Some(after) = rest.strip_prefix("*]") {
+            out.push(Step::Each);
+            rest = after.strip_prefix('[').unwrap_or(after);
+        }
+    }
+    out
+}
+
+/// A present value of `shape` that reads as close to absent as the shape
+/// allows (empty text, zero, false, `null` where a null is valid), so the
+/// variant keeps its scenario's outcome. An absent list gets one item, so
+/// the members of its items are synthesised too.
+fn synthetic(shape: Shape) -> Json {
+    match shape {
+        Shape::Text | Shape::Data => Json::string(""),
+        Shape::NullableText | Shape::NullableNumber => Json::Null,
+        Shape::Int => Json::Int(0),
+        Shape::Bool => Json::Bool(false),
+        Shape::Timestamp => Json::string("2025-02-03T18:00:00Z"),
+        Shape::Object(_) | Shape::Union { .. } => Json::Object(Vec::new()),
+        Shape::ObjectList(_) | Shape::TextMapList => Json::Array(vec![Json::Object(Vec::new())]),
+        Shape::StringList => Json::Array(vec![Json::string("")]),
+        Shape::Rows(_) => Json::Array(vec![Json::Array(vec![Json::Object(Vec::new())])]),
+        Shape::List => Json::Array(Vec::new()),
+    }
+}
+
+/// Adds the member at `path` where it is absent, under every item of each
+/// list on the way. A present member (or a present empty list, a choice of
+/// the fixture) is left as it is, and so is a malformed parent.
+fn insert(value: &mut Json, path: &[Step<'_>], shape: Shape) {
+    match (path.first(), value) {
+        (Some(Step::Key(key)), Json::Object(members)) => {
+            let rest = &path[1..];
+            if !members.iter().any(|(name, _)| name == key) {
+                if !rest.is_empty() {
+                    return;
+                }
+                members.push(((*key).to_string(), synthetic(shape)));
+                return;
+            }
+            let member = &mut members
+                .iter_mut()
+                .find(|(name, _)| name == key)
+                .expect("present")
+                .1;
+            insert(member, rest, shape);
+        }
+        (Some(Step::Each), Json::Array(items)) => {
+            for item in items {
+                insert(item, &path[1..], shape);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Removes the `wrapper` member of the union object at `path`.
+fn unwrap_union(value: &mut Json, path: &[Step<'_>], wrapper: &str) {
+    match (path.first(), value) {
+        (None, Json::Object(members)) => members.retain(|(name, _)| name != wrapper),
+        (Some(Step::Key(key)), Json::Object(members)) => {
+            if let Some((_, member)) = members.iter_mut().find(|(name, _)| name == key) {
+                unwrap_union(member, &path[1..], wrapper);
+            }
+        }
+        (Some(Step::Each), Json::Array(items)) => {
+            for item in items {
+                unwrap_union(item, &path[1..], wrapper);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// The derived member paths of one response.
+fn reads_of(command: &str, service: &str, operation: &str) -> Vec<MemberPath> {
+    response_reads()
+        .into_iter()
+        .filter(|read| {
+            read.command == reader(command)
+                && read.service == service
+                && read.operation == operation
+        })
+        .flat_map(|read| read_paths(read.fields))
+        .collect()
+}
+
+/// The recording of `scenario` with every derived member present: unions
+/// wrapped, or (`flat`) written flat.
+fn synthesised(scenario: &Scenario, flat: bool) -> Json {
+    let mut document = parse_json(&scenario.recording).expect("recording is JSON");
+    let Some(Json::Array(calls)) = document_calls(&mut document) else {
+        return document;
+    };
+    for call in calls.iter_mut() {
+        let (Some(service), Some(operation)) = (
+            call.get("service")
+                .and_then(Json::as_str)
+                .map(str::to_string),
+            call.get("operation")
+                .and_then(Json::as_str)
+                .map(str::to_string),
+        ) else {
+            continue;
+        };
+        let Json::Object(members) = call else {
+            continue;
+        };
+        let Some((_, response)) = members.iter_mut().find(|(key, _)| key == "response") else {
+            continue;
+        };
+        let reads = reads_of(scenario.command, &service, &operation);
+        if flat {
+            for side in reads.iter().filter_map(|read| read.union.as_ref()) {
+                unwrap_union(response, &steps(&side.at), side.wrapper);
+            }
+        }
+        for read in &reads {
+            if read.union.as_ref().is_some_and(|side| side.flat != flat) {
+                continue;
+            }
+            insert(response, &steps(&read.path), read.shape);
+        }
+    }
+    document
+}
+
+/// The written scenarios and their synthesised variants (each distinct
+/// from the written recording and from each other).
+fn all_scenarios() -> Vec<Scenario> {
+    let written = harness_scenarios();
+    let mut out = written.clone();
+    for scenario in &written {
+        let original = parse_json(&scenario.recording).expect("recording is JSON");
+        let mut seen = vec![original];
+        for (flat, label) in [(false, "complete"), (true, "flat")] {
+            let document = synthesised(scenario, flat);
+            if seen.contains(&document) {
+                continue;
+            }
+            out.push(Scenario {
+                recording: document.to_compact_string(),
+                variant: label,
+                ..scenario.clone()
+            });
+            seen.push(document);
+        }
+    }
+    out
+}
+
 /// One mutated run to make: scenario, call index, operation, path, kind.
 struct Case {
     scenario: usize,
     call: usize,
+    service: String,
     operation: String,
     path: Vec<Seg>,
     kind: Mutation,
+}
+
+/// Every mutated run of `scenarios`: each member path of each recorded
+/// response, three times.
+fn mutation_cases(scenarios: &[Scenario]) -> Vec<Case> {
+    let mut cases = Vec::new();
+    for (index, scenario) in scenarios.iter().enumerate() {
+        let document = parse_json(&scenario.recording).expect("recording is JSON");
+        let Some(Json::Array(steps)) = document.get("calls") else {
+            panic!("scenario {index}: no calls");
+        };
+        for (call, step) in steps.iter().enumerate() {
+            let Some(response) = step.get("response") else {
+                continue;
+            };
+            let text = |key: &str| {
+                step.get(key)
+                    .and_then(Json::as_str)
+                    .expect("service and operation")
+                    .to_string()
+            };
+            let mut paths = Vec::new();
+            member_paths(response, &mut Vec::new(), &mut paths);
+            for path in paths {
+                for kind in [MSentinel, MNull, MWrongType] {
+                    cases.push(Case {
+                        scenario: index,
+                        call,
+                        service: text("service"),
+                        operation: text("operation"),
+                        path: path.clone(),
+                        kind,
+                    });
+                }
+            }
+        }
+    }
+    cases
+}
+
+/// The derived read set: (command, service, operation, member path).
+fn derived_paths() -> Vec<(String, String, String, String)> {
+    response_reads()
+        .into_iter()
+        .flat_map(|read| {
+            read_paths(read.fields).into_iter().map(move |member| {
+                (
+                    read.command.to_string(),
+                    read.service.to_string(),
+                    read.operation.to_string(),
+                    member.path,
+                )
+            })
+        })
+        .collect()
+}
+
+/// Every member the read set derives from the slice's tables is mutated by
+/// at least one scenario (#4837, #4838). A new table member, column or
+/// operation fails this test until a fixture, or a synthesised variant,
+/// carries it.
+#[test]
+fn every_derived_response_member_path_is_mutated() {
+    let scenarios = all_scenarios();
+    let mutated: BTreeSet<(String, String, String, String)> = mutation_cases(&scenarios)
+        .iter()
+        .map(|case| {
+            (
+                reader(scenarios[case.scenario].command).to_string(),
+                case.service.clone(),
+                case.operation.clone(),
+                generic_path(&show_path(&case.path)),
+            )
+        })
+        .collect();
+    let derived: BTreeSet<_> = derived_paths().into_iter().collect();
+    let missing: Vec<String> = derived
+        .iter()
+        .filter(|path| !mutated.contains(*path))
+        .map(|(command, service, operation, path)| {
+            format!("{command} | {service} {operation} | {path}")
+        })
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "{} of {} derived response member paths are never mutated:\n{}",
+        missing.len(),
+        derived.len(),
+        missing.join("\n")
+    );
+    // The read set is not empty by accident (an emptied table).
+    assert!(
+        derived.len() > 200,
+        "the read set has {} paths only",
+        derived.len()
+    );
 }
 
 /// The violations of one mutated run, if any.
@@ -2198,8 +2556,8 @@ fn judge(
 ) -> Vec<String> {
     let path = show_path(&case.path);
     let at = format!(
-        "{} | {} {} | {:?}",
-        scenario.command, case.operation, path, case.kind
+        "{} {}| {} {} | {:?}",
+        scenario.command, scenario.variant, case.operation, path, case.kind
     );
     let mut problems = Vec::new();
     let shows = |text: &str| text.to_lowercase().contains(&sentinel.to_lowercase());
@@ -2260,59 +2618,32 @@ fn judge(
 #[allow(clippy::too_many_lines)]
 fn every_recorded_response_member_fails_closed_or_is_documented() {
     let root = temp_root("mutation");
-    let scenarios = harness_scenarios();
+    let scenarios = all_scenarios();
 
     // The unmutated runs, twice, so the comparison is against stable output.
     let mut baselines = Vec::new();
-    let mut cases = Vec::new();
     let mut unfit = Vec::new();
     for (index, scenario) in scenarios.iter().enumerate() {
         let file = root.join(format!("base-{index}.json"));
         fs::write(&file, &scenario.recording).expect("write baseline");
         let first = run_scenario(scenario, &file);
         let second = run_scenario(scenario, &file);
+        let label = format!(
+            "scenario {index} ({} {})",
+            scenario.command, scenario.variant
+        );
         if (first.code, &first.stdout) != (second.code, &second.stdout) {
-            unfit.push(format!(
-                "scenario {index} ({}) is not deterministic",
-                scenario.command
-            ));
+            unfit.push(format!("{label} is not deterministic"));
         }
         if first.code != scenario.expect || first.stdout.contains("no recorded response") {
             unfit.push(format!(
-                "scenario {index} ({}) exits {} unmutated (expected {}): {}{}",
-                scenario.command, first.code, scenario.expect, first.stdout, first.stderr
+                "{label} exits {} unmutated (expected {}): {}{}",
+                first.code, scenario.expect, first.stdout, first.stderr
             ));
         }
         baselines.push(first);
-
-        let document = parse_json(&scenario.recording).expect("recording is JSON");
-        let Some(Json::Array(steps)) = document.get("calls") else {
-            panic!("scenario {index}: no calls");
-        };
-        for (call, step) in steps.iter().enumerate() {
-            let Some(response) = step.get("response") else {
-                continue;
-            };
-            let operation = step
-                .get("operation")
-                .and_then(Json::as_str)
-                .expect("operation")
-                .to_string();
-            let mut paths = Vec::new();
-            member_paths(response, &mut Vec::new(), &mut paths);
-            for path in paths {
-                for kind in [MSentinel, MNull, MWrongType] {
-                    cases.push(Case {
-                        scenario: index,
-                        call,
-                        operation: operation.clone(),
-                        path: path.clone(),
-                        kind,
-                    });
-                }
-            }
-        }
     }
+    let cases = mutation_cases(&scenarios);
     assert!(
         unfit.is_empty(),
         "fixtures that do not replay as declared:\n\n{}",

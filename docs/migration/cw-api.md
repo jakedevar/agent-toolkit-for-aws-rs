@@ -344,6 +344,59 @@ resource are gated anyway, so the live binding inherits the rule:
       (exit 1 when any item failed). It lists the deleted and failed ARNs
       with the service's own per-item code and message. The query receipt
       also keeps its `queryId` on failure, as in Python.
+24. **Harness coverage by construction (repair round 4, #4837, #4838).** The
+    harness of item 23 mutated only members a fixture already held. Its
+    coverage now comes from the read sites' own tables:
+    - **The read set.** `cloudwatch::response_reads` lists every response
+      each command reads, by command, service and operation. Each entry
+      names the table its read site uses:
+      - `AppSignalsOp::response_fields` and `LogsOp::response_fields`;
+      - `EVALUATE_RESPONSE` and the dataset `control_fields`, which now
+        include `GetDataset.exampleCount`;
+      - the Omni envelope keys of `omni_sql`;
+      - the span-row tables `evaluate::SPAN_ROW` and `dataset::SPAN_ROW`,
+        built at compile time from each reader's base columns and its
+        `ATTR_COLS`.
+
+      `response_shape::member_paths` derives the member paths from these
+      tables: 241 today.
+    - **New shapes.** Three shapes make this possible, and none changes
+      what a response check accepts:
+      - `Shape::Union` (wrapper or flat members, wrapper first) replaces
+        the hand-written `Location`/`CaptureConfiguration` tables.
+      - `Shape::Rows` names the Logs Insights `results[*][*].field/value`
+        members that `result_row` checks.
+      - `Shape::Data` marks an Omni span column, which is passed on
+        unchecked as in Python.
+    - **Reviewed exclusions** (listed in the module): the JSON inside an
+      `@message` string; the data keys of an `AttributeFilters` group; the
+      `error` of a recorded failure step; and the responses no member of
+      which is read (Logs writeback calls, `DeleteInstrumentationConfiguration`,
+      `StopTelemetryQuerySession`).
+    - **Synthesised variants.** Every written scenario gets two variants,
+      `complete` and `flat`:
+      - Each derived member the fixture lacks is added with a near-absent
+        value: empty text, `0`, `false`, or `null` where null is valid. An
+        absent list gets one item.
+      - In the `flat` variant each union's wrapper is removed and its
+        members are written flat.
+      - A variant must replay with its scenario's declared exit, and is then
+        mutated like any other fixture.
+    - **Hand-written fallback rows.** These cover the `gen_ai.*` input and
+      output fallback and the `TOOL` kind and name, for evaluation (TRACE and
+      TOOL_CALL) and for capture.
+    - **The coverage test.** `every_derived_response_member_path_is_mutated`
+      fails when any derived (command, service, operation, path) is mutated
+      by no scenario.
+
+    The expanded harness, 9504 mutated runs, found no value echo, false
+    success or null-default defect. It added two allowlist entries, both
+    Python behaviour:
+    - A Failed Logs Insights query's `messages` are part of its result, as
+      in `di_snapshot_queries.py`'s terminal-status dict (`on_failure`).
+    - `hasExplanation` is `bool(explanation)`, so changing an empty
+      explanation to text flips that flag. The explanation text itself is
+      never printed without `--include-explanations`.
 
 ## Python callers left for #4415
 

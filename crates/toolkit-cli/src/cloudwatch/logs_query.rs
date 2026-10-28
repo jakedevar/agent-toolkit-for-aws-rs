@@ -74,15 +74,21 @@ const START_QUERY: &[Field] = &[("queryId", Shape::Text)];
 /// is `null` or not a list is an invalid response, never an empty result.
 const QUERY_RESULTS: &[Field] = &[
     ("status", Shape::Text),
-    ("results", Shape::List),
+    ("results", Shape::Rows(RESULT_FIELD)),
     ("messages", Shape::ObjectList(QUERY_MESSAGE)),
 ];
+
+/// One field of a result row: both members strings, each read as `""` when
+/// absent ([`result_row`] checks them and rejects a malformed row).
+const RESULT_FIELD: &[Field] = &[("field", Shape::Text), ("value", Shape::Text)];
 
 /// A Logs Insights query message (`QueryInfo` text): both members strings.
 const QUERY_MESSAGE: &[Field] = &[("queryId", Shape::Text), ("text", Shape::Text)];
 
 impl LogsOp {
-    fn response_fields(self) -> &'static [Field] {
+    /// The response members the snapshot tools read from this operation.
+    #[must_use]
+    pub fn response_fields(self) -> &'static [Field] {
         match self {
             Self::StartQuery => START_QUERY,
             Self::GetQueryResults => QUERY_RESULTS,

@@ -26,7 +26,7 @@ use super::errors::AwsFailure;
 use super::logs_query::Pacer;
 use super::omni_sql::{omni_query, EmptyPage, SPAN_ROW_LIMIT};
 use super::pytext::strip;
-use super::response_shape::{check, Field, Shape};
+use super::response_shape::{check, data_columns, Field, Shape};
 use super::timefmt::UtcTime;
 use crate::dynamodb::pyfmt;
 
@@ -112,6 +112,29 @@ const ATTR_COLS: [(&str, &str); 22] = [
     ("llm.token_count.prompt", "prompt_tokens"),
     ("llm.token_count.completion", "completion_tokens"),
 ];
+
+/// The plain columns a span row is read for: those `fetch_spans` selects
+/// and [`row_to_span`] reads, and the `session_id` of the session lookup.
+const BASE_COLUMNS: [&str; 11] = [
+    "traceId",
+    "spanId",
+    "parentSpanId",
+    "name",
+    "kind",
+    "startTimeUnixNano",
+    "endTimeUnixNano",
+    "svc_name",
+    "scope_name",
+    "status_code",
+    "session_id",
+];
+
+const SPAN_ROW_FIELDS: [Field; 33] = data_columns(BASE_COLUMNS, ATTR_COLS);
+
+/// Every column of an Omni row the evaluation reads (#4381 repair 4): the
+/// base columns and every [`ATTR_COLS`] alias. A column is data passed to
+/// the evaluator, so it has no type check.
+pub const SPAN_ROW: &[Field] = &SPAN_ROW_FIELDS;
 
 /// The evaluation level.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -561,7 +584,9 @@ const EVALUATION_RESULT: &[Field] = &[
 ];
 
 /// The `Evaluate` response members read.
-const EVALUATE_RESPONSE: &[Field] = &[("evaluationResults", Shape::ObjectList(EVALUATION_RESULT))];
+/// (Public for the read-set inventory, #4381 repair 4.)
+pub const EVALUATE_RESPONSE: &[Field] =
+    &[("evaluationResults", Shape::ObjectList(EVALUATION_RESULT))];
 
 fn summarize(
     response: &Json,

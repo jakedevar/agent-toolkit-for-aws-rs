@@ -28,7 +28,7 @@ use super::evaluate::is_trace_id;
 use super::logs_query::Pacer;
 use super::omni_sql::{omni_query, EmptyPage, SPAN_ROW_LIMIT};
 use super::pytext::strip;
-use super::response_shape::{check, Field, Shape};
+use super::response_shape::{check, data_columns, Field, Shape};
 use crate::dynamodb::pyfmt;
 
 const INPUT_KEYS: [&str; 2] = ["input.value", "gen_ai.input_value"];
@@ -55,6 +55,15 @@ const ATTR_COLS: [(&str, &str); 8] = [
     ("gen_ai.output_value", "gen_ai_output_value"),
     ("session.id", "session_id_attr"),
 ];
+
+/// The plain columns the capture selects and reads from a span row.
+const BASE_COLUMNS: [&str; 4] = ["traceId", "spanId", "parentSpanId", "startTimeUnixNano"];
+
+const SPAN_ROW_FIELDS: [Field; 12] = data_columns(BASE_COLUMNS, ATTR_COLS);
+
+/// Every column of an Omni row the capture reads (#4381 repair 4): the
+/// base columns and every [`ATTR_COLS`] alias, passed on as data.
+pub const SPAN_ROW: &[Field] = &SPAN_ROW_FIELDS;
 
 /// `--mode`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -331,7 +340,8 @@ const DATASET_SUMMARY: &[Field] = &[("datasetId", Shape::Text), ("datasetName", 
 /// The response members each control-plane operation reads (#4755): a
 /// present `null` or wrong-typed one is an invalid response, so a malformed
 /// write never becomes a receipt or a write count.
-fn control_fields(operation: &str) -> &'static [Field] {
+#[must_use]
+pub fn control_fields(operation: &str) -> &'static [Field] {
     match operation {
         "ListDatasets" => &[
             ("datasets", Shape::ObjectList(DATASET_SUMMARY)),
@@ -339,9 +349,14 @@ fn control_fields(operation: &str) -> &'static [Field] {
         ],
         "CreateDataset" => &[("datasetId", Shape::Text), ("status", Shape::Text)],
         "AddDatasetExamples" => &[("exampleIds", Shape::StringList)],
+        "GetDataset" => GET_DATASET,
         _ => &[],
     }
 }
+
+/// The `GetDataset` member [`count_examples`] reads.
+const EXAMPLE_COUNT: &str = "exampleCount";
+const GET_DATASET: &[Field] = &[(EXAMPLE_COUNT, Shape::Int)];
 
 fn control_call(
     client: &mut dyn AwsCalls,
@@ -422,7 +437,7 @@ fn count_examples(client: &mut dyn AwsCalls, dataset_id: &str) -> Result<Option<
     }
     optional_member(
         &response,
-        "exampleCount",
+        EXAMPLE_COUNT,
         "an integer",
         |member| match member {
             Json::Int(count) => Some(*count),
