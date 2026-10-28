@@ -126,14 +126,28 @@ pub(crate) fn resolve_identity(
     let response = client
         .list_account_aliases()
         .map_err(|error| iam_failure(&error))?;
-    let alias = optional_string_list(&response, "AccountAliases")
-        .map_err(|error| invalid_response("iam list-account-aliases", &error))?
+    let aliases = optional_string_list(&response, "AccountAliases")
+        .map_err(|error| invalid_response("iam list-account-aliases", &error))?;
+    // Every entry is checked before one is chosen: an empty or malformed entry
+    // is a present-but-unusable alias, never "no alias". Only an absent member
+    // or an empty list means no alias.
+    for (index, alias) in aliases.iter().enumerate() {
+        check_alias(
+            &format!("iam list-account-aliases \"AccountAliases\"[{index}]"),
+            alias,
+        )?;
+    }
+    if aliases.len() > 1 {
+        return Err(die(
+            "iam list-account-aliases \"AccountAliases\" must hold at most one alias (AWS allows \
+             one per account); a longer list is ambiguous, so this run is REFUSED."
+                .to_string(),
+        ));
+    }
+    let alias = aliases
         .first()
         .map(|alias| (*alias).to_string())
         .unwrap_or_default();
-    if !alias.is_empty() {
-        check_alias("iam list-account-aliases \"AccountAliases\"[0]", &alias)?;
-    }
     let unused = client.unconsumed();
     if unused > 0 {
         return Err(die(format!(

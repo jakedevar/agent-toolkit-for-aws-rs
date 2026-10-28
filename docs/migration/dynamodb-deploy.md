@@ -189,7 +189,13 @@ Deleting commands appear once each, behind those guards.
     STS ARN (`arn:<aws|aws-cn|aws-us-gov>:<iam|sts>::<account>:<resource>`,
     resource characters `A-Za-z0-9+=,.@_-/:`) whose account equals the
     validated 12-digit `Account`; anything else refuses before any output. A
-    present alias must be 3 to 63 lowercase letters, digits and hyphens (a mixed-case or credential-shaped value is refused and never shown). Offline
+    present alias must be 3 to 63 lowercase letters, digits and hyphens (a mixed-case or credential-shaped value is refused and never shown). An absent `AccountAliases` or `[]`
+    means no alias (supported). Otherwise every entry is validated against that
+    shape before one is chosen, so `[""]` is refused rather than read as no
+    alias, and a list of more than one entry is refused as ambiguous (AWS allows
+    one alias per account, and a later production alias must not be discarded
+    behind a valid first one). Diagnostics name the field and shape, never a
+    value (#4840). Offline
     recordings stay unauthenticated fixtures: this is structural validity only.
 12. **Diagnostics for recorded and manifest values never echo them (#4824).**
     `check_account`, `check_caller_arn`, `check_alias`, the prefix, table,

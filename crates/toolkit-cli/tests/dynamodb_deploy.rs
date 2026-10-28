@@ -697,6 +697,35 @@ fn production_identities_are_refused_by_arn_or_alias() {
 }
 
 #[test]
+fn review_4840_a_present_empty_or_extra_alias_entry_refuses_the_run() {
+    // #4840: [""] was read as "no alias" and only the first entry was checked,
+    // so a later production alias was discarded. Every entry is validated and
+    // a list of more than one is ambiguous; absent and [] stay supported.
+    let sts = r#"{"service": "sts", "operation": "GetCallerIdentity",
+        "response": {"Account": "111122223333", "Arn": "arn:aws:iam::111122223333:user/dev"}}"#;
+    for aliases in [
+        r#"[""]"#,
+        r#"["acme-sandbox", "acme-production"]"#,
+        r#"["acme-sandbox", ""]"#,
+        r#"["", "acme-sandbox"]"#,
+        r#"["acme-sandbox", "Acme-Production"]"#,
+    ] {
+        let recording = format!(
+            r#"{{"calls": [{sts},
+              {{"service": "iam", "operation": "ListAccountAliases", "response": {{"AccountAliases": {aliases}}}}}]}}"#
+        );
+        let run = deploy_with(MODEL, CONFIG, &recording, &[]);
+        let stderr = refused(&run);
+        assert!(stderr.contains("AccountAliases"), "{aliases}: {stderr}");
+        assert!(
+            !stderr.to_lowercase().contains("acme-"),
+            "{aliases}: {stderr}"
+        );
+        assert!(text(&run.output.stdout).is_empty(), "{aliases}");
+    }
+}
+
+#[test]
 fn every_failed_or_unusable_alias_lookup_refuses_the_run() {
     // #4822: the alias is part of the production proof, so a recorded service
     // error, a missing step and a malformed answer all refuse; none degrades

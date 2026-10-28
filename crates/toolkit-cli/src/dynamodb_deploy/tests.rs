@@ -140,7 +140,7 @@ fn the_identity_preflight_reads_account_alias_and_arn() {
         caller: Some(Ok(json(&format!(
             r#"{{"Account": "111122223333", "Arn": "{ARN}", "UserId": "u"}}"#
         )))),
-        aliases: Some(Ok(json(r#"{"AccountAliases": ["one-box", "two"]}"#))),
+        aliases: Some(Ok(json(r#"{"AccountAliases": ["one-box"]}"#))),
         unused: 0,
     };
     let found = resolve_identity(&mut client, "p").expect("identity");
@@ -418,5 +418,26 @@ fn wrong_typed_design_members_are_diagnosed_not_crashed_on() {
     ] {
         let error = validate_design(&json(&model)).expect_err(label);
         assert_eq!(error.exit_code(), 2, "{label}");
+    }
+}
+
+#[test]
+fn every_alias_entry_is_validated_and_a_list_holds_at_most_one() {
+    // #4840: an empty entry is not "no alias", and a later entry must not be
+    // discarded behind a valid first one.
+    for body in [
+        r#"{"AccountAliases": [""]}"#,
+        r#"{"AccountAliases": ["acme-sandbox", "acme-production"]}"#,
+        r#"{"AccountAliases": ["acme-sandbox", ""]}"#,
+        r#"{"AccountAliases": ["", "acme-sandbox"]}"#,
+        r#"{"AccountAliases": ["acme-sandbox", "AKIAIOSFODNN7EXAMPLE"]}"#,
+    ] {
+        let mut client = scripted(caller("111122223333", ARN), Ok(json(body)));
+        let error = resolve_identity(&mut client, "p").expect_err(body);
+        assert_eq!(error.exit_code(), 2, "{body}");
+        let shown = error.to_string();
+        assert!(shown.contains("AccountAliases"), "{shown}");
+        assert!(!shown.contains("acme-"), "{shown}");
+        assert!(!shown.contains("AKIA"), "{shown}");
     }
 }
