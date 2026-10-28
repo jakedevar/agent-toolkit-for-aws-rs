@@ -245,3 +245,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
   #4806 worker 658303dd (Sonnet high, base 29a96720, op ae0cd5b8): remaining 107 schema-driven startup tests.
   4/4 busy: 955e5b50 (#4381 r3), 955d98b9 (#4391 repair), 8fdc14b5 (#4751 scanner), 658303dd (#4806).
   ROUND 14 candidates (after r13 lands): #4409 29a96720, #4381 (if r3 accepted), #4391 (if repair accepted), #4751 scanner (base b8204e9d), #4806.
+- 02:05Z: #4381 repair r3 e9c83bd7e84ac3c382c8b23291f19cb2bb2d59c0 (955e5b50; #4816 #4817 #4818 fixed + mutation harness 48 scenarios/1641 runs, found+fixed 3 more shape gaps; parent-proof 62efc686 116 violations on d29a2585 files; scoped dec1b262 ok base 8f429632, aws 181 cli 2194). Rulings accepted: check-status service errors best-effort (Python parity); batch report may list ARNs/Code/Message on exit 1; null score = unscored.
+  Round-4 FINAL re-review #4742 worker 36f263f8 (Codex sol high, pinned, op 7a5052ff), blocking limited to findings/harness coverage/allowlist/regression; other classes -> split scope.
+  4/4 busy: 955d98b9 (#4391 repair), 8fdc14b5 (#4751 scanner), 658303dd (#4806), 36f263f8 (#4742 r4).
