@@ -43,6 +43,7 @@ mod safe_text;
 pub mod spec;
 pub mod startup;
 mod sync;
+mod telemetry;
 
 /// Usage text printed by `help` (stdout) and after usage errors (stderr).
 pub const USAGE: &str = "\
@@ -174,6 +175,10 @@ Usage:
   toolkit timestream-influxdb validate-input [KEY=VALUE...]
   toolkit timestream-influxdb instance-types [recommend WRITES QUERIES DAYS]
   toolkit asm exec [--] COMMAND [ARG...]
+  toolkit telemetry (consent show|status|accept|opt-out|session-start | status | reconcile
+                    | skill-invoked [--skill NAME] | migration [--reconcile] [--session-end]
+                    [--via cli] | bundles [--write | --check] [--plugin-root DIR])
+                    [--telemetry-dir DIR]
   toolkit --version
   toolkit help
 
@@ -465,6 +470,17 @@ Commands:
                 COMMAND's status; 1 when a reference cannot be resolved or
                 COMMAND cannot be started (nothing is run then). See
                 docs/migration/asm-exec.md.
+  telemetry     Plugin usage-data consent, persistence and emission (#4398), the
+                Rust port of aws-startup-advisor scripts/telemetry. Words are taken
+                verbatim so a hook can never fail on a bad word. consent shows the
+                approved notice, reports the setting, records an acknowledgement
+                (accept) or an opt-out, or prints the SessionStart instruction;
+                status prints the host source, reporting mode, consent and plugin
+                version as JSON and sends nothing; reconcile and migration report
+                `.migration/<id>/` progress; skill-invoked reports a skill use;
+                bundles generates or checks the vendored runtime copies. Nothing
+                is sent without an ACCEPTED record, and this build has no HTTP
+                client, so nothing leaves the process. See docs/migration/telemetry.md.
   dsql selftest | tenant-sql | tenant-query
                 Aurora DSQL safe SQL helpers (#4394). selftest runs the
                 safe_query checks; tenant-sql prints the SELECT for a tenant
@@ -1465,6 +1481,16 @@ pub const COMMANDS: &[CommandSpec] = &[
         max_positionals: usize::MAX,
         passthrough: true,
         handler: asm_exec::exec_command,
+    },
+    CommandSpec {
+        path: &["telemetry"],
+        flags: &[],
+        value_flags: &[],
+        strict_values: false,
+        repeatable_flags: &[],
+        max_positionals: usize::MAX,
+        passthrough: true,
+        handler: telemetry::telemetry_command,
     },
     CommandSpec {
         path: &["dsql", "selftest"],
