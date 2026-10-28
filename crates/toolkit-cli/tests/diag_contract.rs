@@ -1151,7 +1151,7 @@ fn a_literal_dash_flag_never_reaches_the_filesystem() {
 }
 
 /// A schema-valid recommendation whose only workload is named `-`
-/// (decision_required, so no probe or network request is made).
+/// (`decision_required`, so no probe or network request is made).
 const DASH_WORKLOAD_RECOMMENDATION: &str = r#"{"schema_version":2,
  "catalog":{"provider":"anthropic","verified_at":"2026-07-01","verified_region":"us-east-1","source":null},
  "catalog_provenance":{"anthropic":{"provider":"anthropic","verified_at":"2026-07-01","verified_region":"us-east-1","source":null}},
