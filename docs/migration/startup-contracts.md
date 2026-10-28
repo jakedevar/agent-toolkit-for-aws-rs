@@ -15,7 +15,7 @@ Checked with `git log -S` and the Rust test names before writing anything:
 | `test_azure_clarify_fast_path_contracts.py` goldens and Q-D2 boundary (`test_clarify_goldens_pass`, `test_db_cutover_rule_boundary`) | the three clarify goldens run through `toolkit startup check-expected azure-clarify*` and are asserted, with failing neighbours, by `startup/fixtures/tests/azure.rs` (#4408, merged here from `e54d43ee`); the seven Q-D2 cases are asserted by `fixtures/azure/clarify.rs::unit::the_q_d2_rule_has_an_inclusive_100_gib_boundary`, which gained the three cases #4408 lacked (64 GiB, no server, 64 GiB + unmeasured) |
 | `test_ai_capability_catalog_contracts.py` (12) | ported in-crate, table below |
 | the 26 markdown/workflow files in the table below (196 tests) | ported here |
-| `test_ai_migration_matrix_contracts.py`, `test_ai_workload_profile_contracts.py`, `test_aws_design_ai_contracts.py`, `test_estimation_ai_contracts.py`, `test_generation_ai_contracts.py`, `test_azure_rdfa_discover_contracts.py` (107) | **not ported here.** They call `validate_json_schema` of `validate-artifacts.py` against fixtures; split into follow-up #4806 (AC3). The pattern for them is `startup/artifacts/tests/catalog.rs` |
+| `test_ai_migration_matrix_contracts.py` (21), `test_ai_workload_profile_contracts.py` (15), `test_aws_design_ai_contracts.py` (23), `test_estimation_ai_contracts.py` (19), `test_generation_ai_contracts.py` (17), `test_azure_rdfa_discover_contracts.py` (20) | ported by #4806 (115 test functions; the split issue counted 107), table "schema-driven AI contracts" below. The fixtures run through `startup/artifacts/tests/{matrix,workload,design_ai,estimation_ai,generation_ai,rdfa}.rs` and the shared `support.rs` (the pattern of `catalog.rs`); the RDfA prose contracts and helper simulations are `tests/startup_contracts/rdfa.rs` |
 
 ## Design
 
@@ -254,6 +254,139 @@ Run: `cargo test -p toolkit-cli --test startup_contracts` (the daemon job `works
 | `test_ai_capability_catalog_contracts` | `test_missing_required_field_is_rejected` | `artifacts::tests::catalog::test_missing_required_field_is_rejected` (in-crate) |
 | `test_ai_capability_catalog_contracts` | `test_gateway_upstream_provider_absent_from_providers_is_rejected_semantically` | `artifacts::tests::catalog::test_gateway_upstream_provider_absent_from_providers_is_rejected_semantically` (in-crate) |
 
+
+## One-to-one mapping (schema-driven AI contracts, #4806)
+
+The six files the first slice split off. The Python files hold 115 test functions (the issue
+text counted 107; the difference of 8 is two tests in each of four files, the schema self-validity pair); every one has a
+Rust test of the same name. The in-crate tests (`artifacts::tests::<module>`) run through the
+crate-private `SubsetValidator` (the Rust `validate_json_schema`), `build_contracts`,
+`validate_shape` and the `startup artifacts` command; the `startup_contracts::rdfa` tests are
+prose contracts (`check_rules` / `check`) and Rust models of the Python helper simulations.
+
+| Python file | Python test | Rust test |
+| --- | --- | --- |
+| `test_ai_migration_matrix_contracts` | `test_combined_validation_references_both_tracks_and_all_categories` | `artifacts::tests::matrix::test_combined_validation_references_both_tracks_and_all_categories` (in-crate) |
+| `test_ai_migration_matrix_contracts` | `test_duplicate_or_overlapping_ai_sources_are_rejected` | `artifacts::tests::matrix::test_duplicate_or_overlapping_ai_sources_are_rejected` (in-crate) |
+| `test_ai_migration_matrix_contracts` | `test_duplicate_or_overlapping_gateway_upstreams_are_rejected` | `artifacts::tests::matrix::test_duplicate_or_overlapping_gateway_upstreams_are_rejected` (in-crate) |
+| `test_ai_migration_matrix_contracts` | `test_each_case_shared_artifacts_validate_directly` | `artifacts::tests::matrix::test_each_case_shared_artifacts_validate_directly` (in-crate) |
+| `test_ai_migration_matrix_contracts` | `test_every_snapshot_validates_against_scenario_schema` | `artifacts::tests::matrix::test_every_snapshot_validates_against_scenario_schema` (in-crate) |
+| `test_ai_migration_matrix_contracts` | `test_future_structural_identity_does_not_claim_runtime_support` | `artifacts::tests::matrix::test_future_structural_identity_does_not_claim_runtime_support` (in-crate) |
+| `test_ai_migration_matrix_contracts` | `test_gateway_upstreams_cannot_omit_source_model_details` | `artifacts::tests::matrix::test_gateway_upstreams_cannot_omit_source_model_details` (in-crate) |
+| `test_ai_migration_matrix_contracts` | `test_gateway_upstreams_must_match_retained_ai_sources_exactly` | `artifacts::tests::matrix::test_gateway_upstreams_must_match_retained_ai_sources_exactly` (in-crate) |
+| `test_ai_migration_matrix_contracts` | `test_heroku_composes_with_each_direct_ai_provider` | `artifacts::tests::matrix::test_heroku_composes_with_each_direct_ai_provider` (in-crate) |
+| `test_ai_migration_matrix_contracts` | `test_integration_validation_accepts_uppercase_and_lowercase_run_ids` | `artifacts::tests::matrix::test_integration_validation_accepts_uppercase_and_lowercase_run_ids` (in-crate) |
+| `test_ai_migration_matrix_contracts` | `test_manifest_has_fourteen_representative_scenarios_and_all_modes` | `artifacts::tests::matrix::test_manifest_has_fourteen_representative_scenarios_and_all_modes` (in-crate) |
+| `test_ai_migration_matrix_contracts` | `test_multi_cardinality_openrouter_preserves_exact_associations` | `artifacts::tests::matrix::test_multi_cardinality_openrouter_preserves_exact_associations` (in-crate) |
+| `test_ai_migration_matrix_contracts` | `test_openai_provider_preserves_direct_and_azure_endpoint_provenance` | `artifacts::tests::matrix::test_openai_provider_preserves_direct_and_azure_endpoint_provenance` (in-crate) |
+| `test_ai_migration_matrix_contracts` | `test_openrouter_dimensions_compose_with_each_infrastructure_source` | `artifacts::tests::matrix::test_openrouter_dimensions_compose_with_each_infrastructure_source` (in-crate) |
+| `test_ai_migration_matrix_contracts` | `test_overlapping_explicit_and_service_less_upstream_for_one_retained_source_is_rejected` | `artifacts::tests::matrix::test_overlapping_explicit_and_service_less_upstream_for_one_retained_source_is_rejected` (in-crate) |
+| `test_ai_migration_matrix_contracts` | `test_required_artifacts_and_verdicts_match_each_mode` | `artifacts::tests::matrix::test_required_artifacts_and_verdicts_match_each_mode` (in-crate) |
+| `test_ai_migration_matrix_contracts` | `test_schema_rejects_invalid_modes_ids_cardinality_and_sentinels` | `artifacts::tests::matrix::test_schema_rejects_invalid_modes_ids_cardinality_and_sentinels` (in-crate) |
+| `test_ai_migration_matrix_contracts` | `test_success_verdict_rejects_any_failed_child` | `artifacts::tests::matrix::test_success_verdict_rejects_any_failed_child` (in-crate) |
+| `test_ai_migration_matrix_contracts` | `test_success_verdict_rejects_empty_references` | `artifacts::tests::matrix::test_success_verdict_rejects_empty_references` (in-crate) |
+| `test_ai_migration_matrix_contracts` | `test_supported_axes_have_independent_representatives` | `artifacts::tests::matrix::test_supported_axes_have_independent_representatives` (in-crate) |
+| `test_ai_migration_matrix_contracts` | `test_unresolved_gateway_upstreams_are_explicit_and_unambiguous` | `artifacts::tests::matrix::test_unresolved_gateway_upstreams_are_explicit_and_unambiguous` (in-crate) |
+| `test_ai_workload_profile_contracts` | `test_dropped_model_under_a_resolved_upstream_is_rejected` | `artifacts::tests::workload::test_dropped_model_under_a_resolved_upstream_is_rejected` (in-crate) |
+| `test_ai_workload_profile_contracts` | `test_duplicate_ai_source_identity_is_rejected` | `artifacts::tests::workload::test_duplicate_ai_source_identity_is_rejected` (in-crate) |
+| `test_ai_workload_profile_contracts` | `test_empty_model_observations_on_an_observed_source_is_rejected` | `artifacts::tests::workload::test_empty_model_observations_on_an_observed_source_is_rejected` (in-crate) |
+| `test_ai_workload_profile_contracts` | `test_empty_upstreams_on_an_observed_gateway_is_rejected` | `artifacts::tests::workload::test_empty_upstreams_on_an_observed_gateway_is_rejected` (in-crate) |
+| `test_ai_workload_profile_contracts` | `test_fabricated_unknown_model_id_is_rejected` | `artifacts::tests::workload::test_fabricated_unknown_model_id_is_rejected` (in-crate) |
+| `test_ai_workload_profile_contracts` | `test_invented_upstream_on_an_unresolved_gateway_is_rejected` | `artifacts::tests::workload::test_invented_upstream_on_an_unresolved_gateway_is_rejected` (in-crate) |
+| `test_ai_workload_profile_contracts` | `test_openai_direct_and_azure_fixture_preserves_distinct_provenance` | `artifacts::tests::workload::test_openai_direct_and_azure_fixture_preserves_distinct_provenance` (in-crate) |
+| `test_ai_workload_profile_contracts` | `test_openrouter_as_a_direct_provider_is_rejected` | `artifacts::tests::workload::test_openrouter_as_a_direct_provider_is_rejected` (in-crate) |
+| `test_ai_workload_profile_contracts` | `test_openrouter_multi_upstream_fixture_has_two_models_in_one_family` | `artifacts::tests::workload::test_openrouter_multi_upstream_fixture_has_two_models_in_one_family` (in-crate) |
+| `test_ai_workload_profile_contracts` | `test_positive_fixtures_project_exactly_into_pr410_semantics` | `artifacts::tests::workload::test_positive_fixtures_project_exactly_into_pr410_semantics` (in-crate) |
+| `test_ai_workload_profile_contracts` | `test_positive_fixtures_satisfy_semantic_invariants` | `artifacts::tests::workload::test_positive_fixtures_satisfy_semantic_invariants` (in-crate) |
+| `test_ai_workload_profile_contracts` | `test_positive_fixtures_validate_against_profile_schema` | `artifacts::tests::workload::test_positive_fixtures_validate_against_profile_schema` (in-crate) |
+| `test_ai_workload_profile_contracts` | `test_schema_has_no_unsupported_keywords` | `artifacts::tests::workload::test_schema_has_no_unsupported_keywords` (in-crate) |
+| `test_ai_workload_profile_contracts` | `test_schema_is_valid_json_and_draft07_shaped` | `artifacts::tests::workload::test_schema_is_valid_json_and_draft07_shaped` (in-crate) |
+| `test_ai_workload_profile_contracts` | `test_unresolved_gateway_fixture_has_empty_upstreams` | `artifacts::tests::workload::test_unresolved_gateway_fixture_has_empty_upstreams` (in-crate) |
+| `test_aws_design_ai_contracts` | `test_azure_scalar_ai_source_fails_the_target_only_schema_with_no_skill` | `artifacts::tests::design_ai::test_azure_scalar_ai_source_fails_the_target_only_schema_with_no_skill` (in-crate) |
+| `test_aws_design_ai_contracts` | `test_azure_scalar_ai_source_validates_under_the_restored_azure_shape_contract` | `artifacts::tests::design_ai::test_azure_scalar_ai_source_validates_under_the_restored_azure_shape_contract` (in-crate) |
+| `test_aws_design_ai_contracts` | `test_design_block_naming_an_untraceable_model_is_rejected` | `artifacts::tests::design_ai::test_design_block_naming_an_untraceable_model_is_rejected` (in-crate) |
+| `test_aws_design_ai_contracts` | `test_design_block_without_exactly_one_target_is_rejected` | `artifacts::tests::design_ai::test_design_block_without_exactly_one_target_is_rejected` (in-crate) |
+| `test_aws_design_ai_contracts` | `test_dropped_model_under_a_resolved_gateway_upstream_is_rejected` | `artifacts::tests::design_ai::test_dropped_model_under_a_resolved_gateway_upstream_is_rejected` (in-crate) |
+| `test_aws_design_ai_contracts` | `test_duplicate_ai_source_identity_is_rejected` | `artifacts::tests::design_ai::test_duplicate_ai_source_identity_is_rejected` (in-crate) |
+| `test_aws_design_ai_contracts` | `test_fabricated_unknown_model_in_metadata_is_rejected` | `artifacts::tests::design_ai::test_fabricated_unknown_model_in_metadata_is_rejected` (in-crate) |
+| `test_aws_design_ai_contracts` | `test_gateway_fixture_carries_multi_upstream_openrouter_fronting_two_providers` | `artifacts::tests::design_ai::test_gateway_fixture_carries_multi_upstream_openrouter_fronting_two_providers` (in-crate) |
+| `test_aws_design_ai_contracts` | `test_gcp_scalar_ai_source_fails_the_target_only_schema_with_no_skill` | `artifacts::tests::design_ai::test_gcp_scalar_ai_source_fails_the_target_only_schema_with_no_skill` (in-crate) |
+| `test_aws_design_ai_contracts` | `test_gcp_scalar_ai_source_validates_under_the_gcp_shape_contract` | `artifacts::tests::design_ai::test_gcp_scalar_ai_source_validates_under_the_gcp_shape_contract` (in-crate) |
+| `test_aws_design_ai_contracts` | `test_metadata_rejects_the_retired_single_scalar_ai_source` | `artifacts::tests::design_ai::test_metadata_rejects_the_retired_single_scalar_ai_source` (in-crate) |
+| `test_aws_design_ai_contracts` | `test_model_reachable_only_through_gateway_upstream_passes_traceability` | `artifacts::tests::design_ai::test_model_reachable_only_through_gateway_upstream_passes_traceability` (in-crate) |
+| `test_aws_design_ai_contracts` | `test_model_removed_from_both_source_and_gateway_upstream_fails_traceability` | `artifacts::tests::design_ai::test_model_removed_from_both_source_and_gateway_upstream_fails_traceability` (in-crate) |
+| `test_aws_design_ai_contracts` | `test_multi_provider_fixture_carries_two_simultaneous_direct_sources` | `artifacts::tests::design_ai::test_multi_provider_fixture_carries_two_simultaneous_direct_sources` (in-crate) |
+| `test_aws_design_ai_contracts` | `test_observed_source_with_empty_model_observations_is_rejected_by_profile_semantics` | `artifacts::tests::design_ai::test_observed_source_with_empty_model_observations_is_rejected_by_profile_semantics` (in-crate) |
+| `test_aws_design_ai_contracts` | `test_old_single_scalar_ai_source_shape_is_rejected` | `artifacts::tests::design_ai::test_old_single_scalar_ai_source_shape_is_rejected` (in-crate) |
+| `test_aws_design_ai_contracts` | `test_old_single_scalar_ai_source_with_one_provider_is_also_rejected` | `artifacts::tests::design_ai::test_old_single_scalar_ai_source_with_one_provider_is_also_rejected` (in-crate) |
+| `test_aws_design_ai_contracts` | `test_openrouter_as_a_direct_provider_is_rejected` | `artifacts::tests::design_ai::test_openrouter_as_a_direct_provider_is_rejected` (in-crate) |
+| `test_aws_design_ai_contracts` | `test_positive_fixtures_have_traceable_design_block_models` | `artifacts::tests::design_ai::test_positive_fixtures_have_traceable_design_block_models` (in-crate) |
+| `test_aws_design_ai_contracts` | `test_positive_fixtures_project_exactly_into_pr415_semantics` | `artifacts::tests::design_ai::test_positive_fixtures_project_exactly_into_pr415_semantics` (in-crate) |
+| `test_aws_design_ai_contracts` | `test_positive_fixtures_validate_against_design_ai_schema` | `artifacts::tests::design_ai::test_positive_fixtures_validate_against_design_ai_schema` (in-crate) |
+| `test_aws_design_ai_contracts` | `test_schema_has_no_unsupported_keywords` | `artifacts::tests::design_ai::test_schema_has_no_unsupported_keywords` (in-crate) |
+| `test_aws_design_ai_contracts` | `test_schema_is_valid_json_and_draft07_shaped` | `artifacts::tests::design_ai::test_schema_is_valid_json_and_draft07_shaped` (in-crate) |
+| `test_estimation_ai_contracts` | `test_dropped_model_under_a_resolved_gateway_upstream_is_rejected` | `artifacts::tests::estimation_ai::test_dropped_model_under_a_resolved_gateway_upstream_is_rejected` (in-crate) |
+| `test_estimation_ai_contracts` | `test_duplicate_cost_by_source_identity_is_rejected` | `artifacts::tests::estimation_ai::test_duplicate_cost_by_source_identity_is_rejected` (in-crate) |
+| `test_estimation_ai_contracts` | `test_gateway_fixture_carries_multi_upstream_openrouter_fronting_two_providers` | `artifacts::tests::estimation_ai::test_gateway_fixture_carries_multi_upstream_openrouter_fronting_two_providers` (in-crate) |
+| `test_estimation_ai_contracts` | `test_malformed_cost_by_source_entry_missing_models_is_rejected` | `artifacts::tests::estimation_ai::test_malformed_cost_by_source_entry_missing_models_is_rejected` (in-crate) |
+| `test_estimation_ai_contracts` | `test_multi_provider_fixture_carries_two_simultaneous_direct_sources` | `artifacts::tests::estimation_ai::test_multi_provider_fixture_carries_two_simultaneous_direct_sources` (in-crate) |
+| `test_estimation_ai_contracts` | `test_openrouter_as_a_direct_cost_by_source_provider_is_rejected` | `artifacts::tests::estimation_ai::test_openrouter_as_a_direct_cost_by_source_provider_is_rejected` (in-crate) |
+| `test_estimation_ai_contracts` | `test_optimization_opportunity_missing_type_is_rejected` | `artifacts::tests::estimation_ai::test_optimization_opportunity_missing_type_is_rejected` (in-crate) |
+| `test_estimation_ai_contracts` | `test_overlapping_cost_by_source_identity_is_rejected` | `artifacts::tests::estimation_ai::test_overlapping_cost_by_source_identity_is_rejected` (in-crate) |
+| `test_estimation_ai_contracts` | `test_positive_fixtures_have_unique_cost_by_source_identity` | `artifacts::tests::estimation_ai::test_positive_fixtures_have_unique_cost_by_source_identity` (in-crate) |
+| `test_estimation_ai_contracts` | `test_positive_fixtures_project_into_matching_design_source` | `artifacts::tests::estimation_ai::test_positive_fixtures_project_into_matching_design_source` (in-crate) |
+| `test_estimation_ai_contracts` | `test_positive_fixtures_validate_against_estimation_ai_schema` | `artifacts::tests::estimation_ai::test_positive_fixtures_validate_against_estimation_ai_schema` (in-crate) |
+| `test_estimation_ai_contracts` | `test_recommendation_requires_a_valid_path_enum` | `artifacts::tests::estimation_ai::test_recommendation_requires_a_valid_path_enum` (in-crate) |
+| `test_estimation_ai_contracts` | `test_schema_has_no_unsupported_keywords` | `artifacts::tests::estimation_ai::test_schema_has_no_unsupported_keywords` (in-crate) |
+| `test_estimation_ai_contracts` | `test_schema_is_valid_json_and_draft07_shaped` | `artifacts::tests::estimation_ai::test_schema_is_valid_json_and_draft07_shaped` (in-crate) |
+| `test_estimation_ai_contracts` | `test_services_not_estimated_entry_requires_not_token_priced_reason` | `artifacts::tests::estimation_ai::test_services_not_estimated_entry_requires_not_token_priced_reason` (in-crate) |
+| `test_estimation_ai_contracts` | `test_unavailable_target_pricing_preserves_unknown_costs_as_null` | `artifacts::tests::estimation_ai::test_unavailable_target_pricing_preserves_unknown_costs_as_null` (in-crate) |
+| `test_estimation_ai_contracts` | `test_unknown_source_baseline_propagates_null_to_dependent_deltas` | `artifacts::tests::estimation_ai::test_unknown_source_baseline_propagates_null_to_dependent_deltas` (in-crate) |
+| `test_estimation_ai_contracts` | `test_untraceable_model_under_resolved_design_source_is_rejected` | `artifacts::tests::estimation_ai::test_untraceable_model_under_resolved_design_source_is_rejected` (in-crate) |
+| `test_estimation_ai_contracts` | `test_vendored_copies_are_byte_identical` | `artifacts::tests::estimation_ai::test_vendored_copies_are_byte_identical` (in-crate) |
+| `test_generation_ai_contracts` | `test_dropped_model_under_a_resolved_gateway_upstream_is_rejected` | `artifacts::tests::generation_ai::test_dropped_model_under_a_resolved_gateway_upstream_is_rejected` (in-crate) |
+| `test_generation_ai_contracts` | `test_duplicate_artifacts_by_source_identity_is_rejected` | `artifacts::tests::generation_ai::test_duplicate_artifacts_by_source_identity_is_rejected` (in-crate) |
+| `test_generation_ai_contracts` | `test_gateway_fixture_carries_multi_upstream_openrouter_fronting_two_providers` | `artifacts::tests::generation_ai::test_gateway_fixture_carries_multi_upstream_openrouter_fronting_two_providers` (in-crate) |
+| `test_generation_ai_contracts` | `test_generated_files_entry_requires_at_least_one_file` | `artifacts::tests::generation_ai::test_generated_files_entry_requires_at_least_one_file` (in-crate) |
+| `test_generation_ai_contracts` | `test_malformed_artifacts_by_source_entry_missing_models_is_rejected` | `artifacts::tests::generation_ai::test_malformed_artifacts_by_source_entry_missing_models_is_rejected` (in-crate) |
+| `test_generation_ai_contracts` | `test_multi_provider_fixture_carries_two_simultaneous_direct_sources` | `artifacts::tests::generation_ai::test_multi_provider_fixture_carries_two_simultaneous_direct_sources` (in-crate) |
+| `test_generation_ai_contracts` | `test_openrouter_as_a_direct_artifacts_by_source_provider_is_rejected` | `artifacts::tests::generation_ai::test_openrouter_as_a_direct_artifacts_by_source_provider_is_rejected` (in-crate) |
+| `test_generation_ai_contracts` | `test_overlapping_artifacts_by_source_identity_is_rejected` | `artifacts::tests::generation_ai::test_overlapping_artifacts_by_source_identity_is_rejected` (in-crate) |
+| `test_generation_ai_contracts` | `test_positive_fixtures_have_unique_artifacts_by_source_identity` | `artifacts::tests::generation_ai::test_positive_fixtures_have_unique_artifacts_by_source_identity` (in-crate) |
+| `test_generation_ai_contracts` | `test_positive_fixtures_project_into_matching_estimation_source` | `artifacts::tests::generation_ai::test_positive_fixtures_project_into_matching_estimation_source` (in-crate) |
+| `test_generation_ai_contracts` | `test_positive_fixtures_validate_against_generation_ai_schema` | `artifacts::tests::generation_ai::test_positive_fixtures_validate_against_generation_ai_schema` (in-crate) |
+| `test_generation_ai_contracts` | `test_production_readiness_checklist_requires_at_least_five_items` | `artifacts::tests::generation_ai::test_production_readiness_checklist_requires_at_least_five_items` (in-crate) |
+| `test_generation_ai_contracts` | `test_rollback_plan_mechanism_must_be_feature_flag` | `artifacts::tests::generation_ai::test_rollback_plan_mechanism_must_be_feature_flag` (in-crate) |
+| `test_generation_ai_contracts` | `test_schema_has_no_unsupported_keywords` | `artifacts::tests::generation_ai::test_schema_has_no_unsupported_keywords` (in-crate) |
+| `test_generation_ai_contracts` | `test_schema_is_valid_json_and_draft07_shaped` | `artifacts::tests::generation_ai::test_schema_is_valid_json_and_draft07_shaped` (in-crate) |
+| `test_generation_ai_contracts` | `test_untraceable_model_under_resolved_estimation_source_is_rejected` | `artifacts::tests::generation_ai::test_untraceable_model_under_resolved_estimation_source_is_rejected` (in-crate) |
+| `test_generation_ai_contracts` | `test_vendored_copies_are_byte_identical` | `artifacts::tests::generation_ai::test_vendored_copies_are_byte_identical` (in-crate) |
+| `test_azure_rdfa_discover_contracts` | `test_absent_report_guidance_is_reachable_before_trigger` | `startup_contracts::rdfa::test_absent_report_guidance_is_reachable_before_trigger` |
+| `test_azure_rdfa_discover_contracts` | `test_confidence_contract_requires_samples_and_known_window` | `startup_contracts::rdfa::test_confidence_contract_requires_samples_and_known_window` |
+| `test_azure_rdfa_discover_contracts` | `test_corrupt_selected_report_records_preparation_warning` | `startup_contracts::rdfa::test_corrupt_selected_report_records_preparation_warning` |
+| `test_azure_rdfa_discover_contracts` | `test_discover_and_assembler_include_rdfa_everywhere` | `startup_contracts::rdfa::test_discover_and_assembler_include_rdfa_everywhere` |
+| `test_azure_rdfa_discover_contracts` | `test_error_empty_and_sampled_zero_have_distinct_eligibility` | `startup_contracts::rdfa::test_error_empty_and_sampled_zero_have_distinct_eligibility` |
+| `test_azure_rdfa_discover_contracts` | `test_external_directory_reentry_seeds_recorded_source_without_new_input` | `startup_contracts::rdfa::test_external_directory_reentry_seeds_recorded_source_without_new_input` |
+| `test_azure_rdfa_discover_contracts` | `test_final_rdfa_inventory_passes_real_artifact_validator` | `artifacts::tests::rdfa::test_final_rdfa_inventory_passes_real_artifact_validator (in-crate)` |
+| `test_azure_rdfa_discover_contracts` | `test_fixed_and_autoscaled_aks_bounds_are_valid` | `startup_contracts::rdfa::test_fixed_and_autoscaled_aks_bounds_are_valid` |
+| `test_azure_rdfa_discover_contracts` | `test_fixture_corrupt_zip_is_invalid_and_tie_break_is_deterministic` | `startup_contracts::rdfa::test_fixture_corrupt_zip_is_invalid_and_tie_break_is_deterministic` |
+| `test_azure_rdfa_discover_contracts` | `test_live_and_rdfa_use_same_node_pool_key` | `startup_contracts::rdfa::test_live_and_rdfa_use_same_node_pool_key` |
+| `test_azure_rdfa_discover_contracts` | `test_main_window_owns_reentry_and_preparation_failure_contracts` | `startup_contracts::rdfa::test_main_window_owns_reentry_and_preparation_failure_contracts` |
+| `test_azure_rdfa_discover_contracts` | `test_metrics_batches_flatten_real_envelopes_and_accept_empty_batch` | `startup_contracts::rdfa::test_metrics_batches_flatten_real_envelopes_and_accept_empty_batch` |
+| `test_azure_rdfa_discover_contracts` | `test_partial_nested_report_keeps_valid_inner_and_warns_for_bad_inner` | `startup_contracts::rdfa::test_partial_nested_report_keeps_valid_inner_and_warns_for_bad_inner` |
+| `test_azure_rdfa_discover_contracts` | `test_rdfa_ml_workspace_contributes_and_mixed_identity_reconciles` | `startup_contracts::rdfa::test_rdfa_ml_workspace_contributes_and_mixed_identity_reconciles` |
+| `test_azure_rdfa_discover_contracts` | `test_report_only_and_app_code_plus_report_are_admitted` | `startup_contracts::rdfa::test_report_only_and_app_code_plus_report_are_admitted` |
+| `test_azure_rdfa_discover_contracts` | `test_rw_fragment_owns_no_executable_preparation` | `startup_contracts::rdfa::test_rw_fragment_owns_no_executable_preparation` |
+| `test_azure_rdfa_discover_contracts` | `test_schema_registers_rdfa_inventory_and_ai_provenance` | `startup_contracts::rdfa::test_schema_registers_rdfa_inventory_and_ai_provenance` |
+| `test_azure_rdfa_discover_contracts` | `test_source_identity_reuses_only_exact_source_and_replacement_wins` | `startup_contracts::rdfa::test_source_identity_reuses_only_exact_source_and_replacement_wins` |
+| `test_azure_rdfa_discover_contracts` | `test_vm_os_disk_maps_to_canonical_nested_shape` | `startup_contracts::rdfa::test_vm_os_disk_maps_to_canonical_nested_shape` |
+| `test_azure_rdfa_discover_contracts` | `test_zero_node_aks_pool_gets_eks_valid_max_size` | `startup_contracts::rdfa::test_zero_node_aks_pool_gets_eks_valid_max_size` |
+
+`test_an_exact_duplicate_snapshot_source_is_refused_by_the_schema` (matrix) has no Python
+counterpart: the Python `test_every_snapshot_validates_against_scenario_schema` has no negative
+case, and the mutation for its semantic half (an overlapping, non-identical source) is refused by
+the schema's `uniqueItems` when the source is a byte-identical duplicate, so both mutations are kept.
+
 ## Non-vacuity
 
 `check_rules` / `check` execute the mutation proof inside every test. For example, in
@@ -309,3 +442,36 @@ for the manager under the "remote managed-service Python payloads" rule of AGENT
   `join key is /activity's model_permaslug field` assertion). One design-mapping assertion
   (`"resource_id"` inside the 1200-character `**Required fields**` window) is a substring of a
   sibling assertion; its mutation must fail the rules but not for a specific reason (`Rule::loose`).
+
+### #4806 notes
+
+* **Non-vacuity of the schema-driven ports.** Each positive check runs on the committed fixture and
+  on an edited copy: in-memory for a single document (`support::assert_rejected` also requires the
+  unedited document to be accepted, so a negative mutation is always tied to an accepted control) and
+  in a scratch copy of the fixture tree (`support::Tree`) for the matrix, whose contracts read the
+  manifest, snapshots, state files and `integration-validation.json` from disk. Contracts that the
+  Python wrote as helper `assert`s (`_assert_scenario_semantics`, `_assert_profile_semantics`, the
+  model-traceability and projection helpers) are `Result`-returning functions so that both the
+  positive and the negative direction are asserted.
+* **Python `if not findings: pytest.raises ... else: assert findings`** (three matrix tests, the
+  workload and the design duplicate-source tests) is kept as "the schema findings are non-empty or
+  the semantic check fails" (`refused`); the duplicate/overlap cases additionally assert which half
+  refuses where it is deterministic.
+* **`sync-vendored.py --check`** (estimation and generation) is `toolkit_core::sync_vendored(plugin,
+  check = true)`, the library behind `toolkit sync vendored --check`; the non-vacuity case drifts one
+  vendored file in a scratch copy of `skills/`.
+* **`build_contracts` / `load_manifest` / `validate_shape`** (design, Azure and GCP) run the
+  crate's own `build_contracts` and `validate_shape` on the committed manifest and shape documents.
+* **`subprocess` runs of `validate-artifacts.py`** (matrix integration-validation, RDfA final
+  inventory) call `toolkit startup artifacts` in process with `--no-baseline --json`.
+  The Python passed `--manifest` explicitly; the Rust command reads the same manifest from
+  `--plugin-root`.
+* **RDfA simulations.** The Python helpers defined inside the test file (`_eligible`,
+  `_normalize_pool`, `_map_vm`, the fingerprint, the candidate discovery, the ZIP preparation and the
+  reconcile model) are Rust functions with the same fixtures, like the other model tests above. No
+  zip crate is in the workspace, so the tests carry a stored-entry zip writer and reader and an
+  `is_zipfile` that looks for the end-of-central-directory record. Deflated entries and the unsafe
+  member name sanitising of `extractall` are not modelled; no test depends on either.
+* No Python assertion was dropped. Assertions are only strengthened: `_cases()` and the manifest
+  loader return errors instead of asserting, set equalities are exact, the bad-inner-ZIP test also
+  asserts exactly one warning.

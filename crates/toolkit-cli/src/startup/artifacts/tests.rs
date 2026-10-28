@@ -1783,7 +1783,14 @@ fn find_artifacts_sorts_by_path_components() {
 }
 
 mod catalog;
+mod design_ai;
 mod documents;
+mod estimation_ai;
+mod generation_ai;
+mod matrix;
+mod rdfa;
+mod support;
+mod workload;
 
 #[test]
 fn an_invalid_skill_is_a_usage_error_in_every_mode() {
