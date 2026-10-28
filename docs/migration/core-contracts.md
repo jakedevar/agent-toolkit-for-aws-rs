@@ -102,6 +102,42 @@ Extensions of the shared interfaces, each with unit tests, no new dependency:
 - `toolkit_core::sha256_hex`: FIPS 180-4 SHA-256 for stable content
   fingerprints (not for secrets).
 
+## Caller text in diagnostics: redact, bound, escape (#4941)
+
+Two slice reviews in a row (#4907/#4908 docgraph, #4939/#4940 bedrock-probes)
+blocked on caller paths printed through `toolkit-cli` `safe_text::safe_path`
+(escape only) and on values cut before redaction. The shared helpers now apply
+one order for every slice:
+
+1. **redact** the whole value (`toolkit_aws::redact_text`);
+2. **bound** the redacted text on a character boundary, then `...`: 200
+   characters for `safe_path` and the sinks, 120 for `safe_text` (unchanged);
+   `safe_prefix(text, n)` is the unmarked `text[:n]` form;
+3. **escape** control, bidirectional and invisible characters.
+
+The sinks apply the same rule to the command-line values (`CallerText`, replacing
+`neutralize_text_knowing` in `toolkit-cli`): the `error:` report and
+`Output::diagnostic` show a credential-shaped or overlong argument value that
+they echo verbatim redacted, bounded and on one line, and `Output::line`
+(stdout) hides the credential fragment of an argument value (URL userinfo, a
+labelled credential), whole or cut after 8 characters. Only displayed text
+changes; files are still read and written at the exact path given.
+
+Deliberate behaviour change, only for credential-shaped text (anything the
+shared redactor changes, so for example a `secretsmanager:` ARN segment too) or
+text over the bound: such a path is shown redacted and a path over 200
+characters ends in `...` (it used to be shown in full). Ordinary values of at most 200
+characters are byte-identical; the unchanged `diag_contract` and help tests pin
+that. `tests/diag_contract.rs`
+(`every_registered_path_value_is_shown_without_its_credential`) runs every
+registered command with each value flag and positional set to
+`https://user:FAKE_SECRET@example.invalid/x.json`, a 300-character path ending
+in `password=FAKE_SECRET` and a 300-character userinfo URL whose `@host` lies
+past the bound, and fails on any 10-character prefix of the secret in stdout or
+stderr. The docgraph slice-local helpers were removed for the shared ones. The
+bedrock-probes slice-local `diag::path` (#4404, commit 6f4e4af8, not on this
+base) is migrated by the round-16 integration.
+
 ## Not in scope
 
 No domain command beyond `skills list` and the `dynamodb` commands (#4389); no AWS SDK dependency; no change to

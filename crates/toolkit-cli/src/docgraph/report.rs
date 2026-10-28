@@ -5,7 +5,8 @@ use std::path::Path;
 
 use toolkit_core::{write_regular_file, Json};
 
-use super::checks::{clean, icon, Check};
+use super::checks::{icon, Check};
+use crate::safe_text::safe_path;
 
 /// File names written under the output directory.
 pub(super) const RESULTS_FILE: &str = "wa_review_results.json";
@@ -51,7 +52,7 @@ pub(super) fn results_json(checks: &[Check], cluster_id: &str, timestamp: &str) 
 pub(super) fn markdown(checks: &[Check], cluster_id: &str, date: &str) -> String {
     let [pass, warn, fail, info] = counts(checks);
     let mut lines = vec![
-        format!("# Well-Architected Review: {}\n", clean(cluster_id)),
+        format!("# Well-Architected Review: {}\n", safe_path(cluster_id)),
         format!("**Date:** {date} UTC\n"),
         format!("**Summary:** {pass} pass, {warn} warnings, {fail} failures, {info} info\n"),
     ];
