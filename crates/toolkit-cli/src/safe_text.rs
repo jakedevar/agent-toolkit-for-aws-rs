@@ -14,7 +14,7 @@
 //!    ([`MAX_PATH_CHARS`] for a caller path or value, [`MAX_SHOWN_CHARS`] for
 //!    other text), marking a cut with `...`;
 //! 3. **escape** control, bidirectional and invisible characters the way
-//!    Python's `repr` does (`\x1b`, `‮`, `\U000e0001`).
+//!    Python's `repr` does (`\x1b`, `\u202e`, `\U000e0001`).
 //!
 //! Redacting first is the point: a cut made first can drop the `@host` that
 //! marks URL userinfo or split an access-key id, so the redactor no longer
@@ -432,7 +432,8 @@ mod tests {
         let url = userinfo(0);
         let past = userinfo(250);
         let known = caller(&["seed", "--recorded", &url, &format!("--out={past}")]);
-        let shown = known.diagnostic(&format!("error: cannot read {url}: missing"));
+        let message = format!("error: cannot read {url}: missing");
+        let shown = known.diagnostic(&message);
         assert_eq!(
             shown,
             "error: cannot read https://[REDACTED]@example.invalid/x.json: missing"
