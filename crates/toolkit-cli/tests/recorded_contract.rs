@@ -1215,15 +1215,15 @@ impl<'ast> Visit<'ast> for ShapeScan<'_> {
     }
 
     fn visit_macro(&mut self, mac: &'ast Macro) {
-        let Some(last) = mac.path.segments.last() else {
+        let Some(segment) = mac.path.segments.last() else {
             return;
         };
-        let name = name_of(&last.ident);
+        let name = name_of(&segment.ident);
         if self.names.local_macros.contains(&name) {
             // A local macro, even one that shadows a standard name (`vec`):
             // its body is opaque and its use needs a marked definition.
             if !self.names.marked_macros.contains(&name) {
-                self.found.macros.insert(pos_of(last.ident.span()));
+                self.found.macros.insert(pos_of(segment.ident.span()));
             }
             self.opaque_tokens(mac.tokens.clone());
             return;
@@ -3109,32 +3109,32 @@ fn fifth_review_evasions() -> Vec<(&'static str, &'static str, Vec<SourceFile>)>
         (
             "#4861",
             "raw identifier variant, tuple form",
-            one(r##"use toolkit_aws::recorded::Step;
+            one(r#"use toolkit_aws::recorded::Step;
 fn response_items(r: &Json) -> &[Json] {
     match r.get("Items") { Some(Json::r#Array(v)) => v, _ => &[] }
-}"##),
+}"#),
         ),
         (
             "#4861",
             "raw identifier variant, brace form",
-            one(r##"use toolkit_aws::recorded::Step;
+            one(r#"use toolkit_aws::recorded::Step;
 fn response_items(r: &Json) -> &[Json] {
     match r.get("Items") { Some(Json::r#Array { 0: v }) => v, _ => &[] }
-}"##),
+}"#),
         ),
         (
             "#4861",
             "raw identifier shape method",
-            one(r##"use toolkit_aws::recorded::Step;
+            one(r#"use toolkit_aws::recorded::Step;
 use serde_json::Value;
 fn response_items(r: &Value) -> &[Value] {
     r.get("Items").and_then(|v| v.r#as_array()).map(Vec::as_slice).unwrap_or(&[])
-}"##),
+}"#),
         ),
         (
             "#4862",
             "local macro taking the variant as an argument",
-            one(r##"use toolkit_aws::recorded::Step;
+            one(r#"use toolkit_aws::recorded::Step;
 macro_rules! extract {
     ($variant:ident, $value:expr) => {
         match $value {
@@ -3145,12 +3145,12 @@ macro_rules! extract {
 }
 fn response_items(r: &Json) -> &[Json] {
     extract!(Array, r.get("Items"))
-}"##),
+}"#),
         ),
         (
             "#4862",
             "local macro shadowing vec",
-            one(r##"use toolkit_aws::recorded::Step;
+            one(r#"use toolkit_aws::recorded::Step;
 macro_rules! vec {
     ($variant:ident, $value:expr) => {
         match $value {
@@ -3161,19 +3161,19 @@ macro_rules! vec {
 }
 fn response_items(r: &Json) -> &[Json] {
     vec!(Array, r.get("Items"))
-}"##),
+}"#),
         ),
         (
             "#4863",
             "qualified path to a marked variant re-export",
-            one(r##"use toolkit_aws::recorded::Step;
+            one(r#"use toolkit_aws::recorded::Step;
 mod variants {
     // recorded-shape: exported variant used for construction
     pub use toolkit_core::Json::Array as List;
 }
 fn response_items(r: &Json) -> &[Json] {
     match r.get("Items") { Some(variants::List(v)) => v, _ => &[] }
-}"##),
+}"#),
         ),
         (
             "#4863",
@@ -3181,11 +3181,11 @@ fn response_items(r: &Json) -> &[Json] {
             vec![
                 file(
                     "fresh/mod.rs",
-                    r##"use toolkit_aws::recorded::Step;
+                    r#"use toolkit_aws::recorded::Step;
 use crate::fresh::variants::List;
 fn response_items(r: &Json) -> &[Json] {
     match r.get("Items") { Some(List(v)) => v, _ => &[] }
-}"##,
+}"#,
                 ),
                 file(
                     "fresh/variants.rs",
@@ -3273,11 +3273,11 @@ fn each_round_five_evasion_is_refused_for_what_it_hides() {
 fn raw_identifiers_are_the_names_they_spell() {
     let report = fresh_recorded(&[file(
         "fresh/mod.rs",
-        r##"use toolkit_aws::r#recorded::Step;
+        r#"use toolkit_aws::r#recorded::Step;
 use toolkit_core::r#Json as r#J;
 fn r#optional_list() {}
 fn f(r: &J) -> bool { matches!(r, J::r#Object(_)) || r.r#as_object().is_some() }
-fn r#match(r#fn: &Json) -> usize { r#fn.len() }"##,
+fn r#match(r#fn: &Json) -> usize { r#fn.len() }"#,
     )]);
     assert!(report.scope["fresh"].contains("import"), "{report:?}");
     assert_eq!(report.helpers, vec!["fresh/mod.rs: fn optional_list"]);
