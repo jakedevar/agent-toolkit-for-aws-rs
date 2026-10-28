@@ -841,6 +841,21 @@ mod unit {
             expected_db_cutover_default(&[None, Some(204_800.0)]),
             ("dms", "partial")
         );
+        // The remaining parametrised cases of the legacy
+        // `test_db_cutover_rule_boundary` (#4409): a measured 64 GiB server,
+        // no server at all, and a 64 GiB server beside an unmeasured one.
+        assert_eq!(
+            expected_db_cutover_default(&[Some(65_536.0)]),
+            ("dump_restore", "complete")
+        );
+        assert_eq!(
+            expected_db_cutover_default(&[]),
+            ("dump_restore", "unknown")
+        );
+        assert_eq!(
+            expected_db_cutover_default(&[Some(65_536.0), None]),
+            ("dump_restore", "partial")
+        );
     }
 
     #[test]
