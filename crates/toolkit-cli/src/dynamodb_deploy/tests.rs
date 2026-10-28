@@ -120,36 +120,39 @@ impl IdentityClient for Scripted {
     }
 }
 
+const ARN: &str = "arn:aws:iam::111122223333:user/dev";
+
+fn caller(account: &str, arn: &str) -> Json {
+    json(&format!(r#"{{"Account": "{account}", "Arn": "{arn}"}}"#))
+}
+
+fn scripted(caller: Json, aliases: Result<Json, AwsError>) -> Scripted {
+    Scripted {
+        caller: Some(Ok(caller)),
+        aliases: Some(aliases),
+        unused: 0,
+    }
+}
+
 #[test]
 fn the_identity_preflight_reads_account_alias_and_arn() {
     let mut client = Scripted {
-        caller: Some(Ok(json(
-            r#"{"Account": "111122223333", "Arn": "arn:x", "UserId": "u"}"#,
-        ))),
-        aliases: Some(Ok(json(r#"{"AccountAliases": ["one", "two"]}"#))),
+        caller: Some(Ok(json(&format!(
+            r#"{{"Account": "111122223333", "Arn": "{ARN}", "UserId": "u"}}"#
+        )))),
+        aliases: Some(Ok(json(r#"{"AccountAliases": ["one-box", "two"]}"#))),
         unused: 0,
     };
     let found = resolve_identity(&mut client, "p").expect("identity");
-    assert_eq!(found, identity("arn:x", "one"));
+    assert_eq!(found, identity(ARN, "one-box"));
     // An empty list and an absent member are both "no alias".
     for body in ["{}", r#"{"AccountAliases": []}"#] {
-        let mut client = Scripted {
-            caller: Some(Ok(json(r#"{"Account": "111122223333"}"#))),
-            aliases: Some(Ok(json(body))),
-            unused: 0,
-        };
+        let mut client = scripted(caller("111122223333", ARN), Ok(json(body)));
         assert_eq!(
             resolve_identity(&mut client, "p").expect("identity").alias,
             ""
         );
     }
-    // A failed IAM call is tolerated; a failed STS call is not.
-    let mut client = Scripted {
-        caller: Some(Ok(json(r#"{"Account": "111122223333"}"#))),
-        aliases: Some(Err(AwsError::NoCredentials)),
-        unused: 0,
-    };
-    assert!(resolve_identity(&mut client, "p").is_ok());
     let mut client = Scripted {
         caller: Some(Err(AwsError::NoCredentials)),
         aliases: None,
@@ -157,12 +160,147 @@ fn the_identity_preflight_reads_account_alias_and_arn() {
     };
     assert!(resolve_identity(&mut client, "p").is_err());
     let mut client = Scripted {
-        caller: Some(Ok(json(r#"{"Account": "111122223333"}"#))),
-        aliases: Some(Ok(json("{}"))),
         unused: 2,
+        ..scripted(caller("111122223333", ARN), Ok(json("{}")))
     };
     let error = resolve_identity(&mut client, "p").expect_err("unused steps");
     assert!(error.message().contains("2 step(s) this run never used"));
+}
+
+/// #4822: a failed alias lookup cannot be told from a production alias, so it
+/// refuses (the script degraded to an empty alias).
+#[test]
+fn a_failed_alias_lookup_refuses_the_run() {
+    for failure in [
+        AwsError::NoCredentials,
+        AwsError::connect("recorded request differs"),
+    ] {
+        let mut client = scripted(caller("111122223333", ARN), Err(failure));
+        let error = resolve_identity(&mut client, "p").expect_err("iam failure");
+        assert_eq!(error.exit_code(), 2);
+        assert!(error.message().contains("list-account-aliases"));
+    }
+}
+
+/// #4823: the caller ARN is required, non-empty, an IAM or STS ARN of a known
+/// partition, and in the caller's own account.
+#[test]
+fn the_caller_arn_must_be_a_usable_identity_arn() {
+    let good = [
+        ARN,
+        "arn:aws:sts::111122223333:assumed-role/Dev/session",
+        "arn:aws-cn:iam::111122223333:root",
+        "arn:aws-us-gov:iam::111122223333:user/path/dev",
+    ];
+    for arn in good {
+        let mut client = scripted(caller("111122223333", arn), Ok(json("{}")));
+        assert!(resolve_identity(&mut client, "p").is_ok(), "{arn}");
+    }
+    let bad = [
+        "",
+        "x",
+        "arn:x",
+        "arn:aws:iam::111122223333:",
+        "arn:aws:iam::999999999999:user/dev",
+        "arn:aws:iam:us-east-1:111122223333:user/dev",
+        "arn:aws:s3:::bucket",
+        "arn:azure:iam::111122223333:user/dev",
+        "ARN:aws:iam::111122223333:user/dev",
+        "arn:aws:iam::111122223333:user/de v",
+        "arn:aws:iam::111122223333:user/dev\\u001b[2J",
+    ];
+    for arn in bad {
+        let mut client = scripted(caller("111122223333", arn), Ok(json("{}")));
+        let error = resolve_identity(&mut client, "p").expect_err(arn);
+        assert_eq!(error.exit_code(), 2, "{arn}");
+    }
+    let mut client = scripted(json(r#"{"Account": "111122223333"}"#), Ok(json("{}")));
+    assert!(resolve_identity(&mut client, "p").is_err(), "absent Arn");
+    // The failed alias lookup does not rescue a missing ARN.
+    let mut client = scripted(
+        json(r#"{"Account": "111122223333"}"#),
+        Err(AwsError::NoCredentials),
+    );
+    assert!(resolve_identity(&mut client, "p").is_err());
+}
+
+/// #4824: an invalid recorded Account, ARN or alias is named, never echoed.
+#[test]
+fn identity_diagnostics_never_echo_recorded_values() {
+    let marker = "AKIAZZZZZZZZZZZZZZZZ";
+    let mut client = scripted(caller(marker, ARN), Ok(json("{}")));
+    let error = resolve_identity(&mut client, "p").expect_err("account");
+    assert!(!error.message().contains(marker), "{}", error.message());
+    assert!(error.message().contains("\"Account\""));
+    let mut client = scripted(caller("111122223333", marker), Ok(json("{}")));
+    let error = resolve_identity(&mut client, "p").expect_err("arn");
+    assert!(!error.message().contains(marker), "{}", error.message());
+    let aliases = json(&format!(r#"{{"AccountAliases": ["{marker}"]}}"#));
+    let mut client = scripted(caller("111122223333", ARN), Ok(aliases));
+    let error = resolve_identity(&mut client, "p").expect_err("alias");
+    assert!(!error.message().contains(marker), "{}", error.message());
+}
+
+fn recorded(calls: &str) -> RecordedClient {
+    RecordedClient::from_document(&json(&format!(r#"{{"calls": [{calls}]}}"#))).expect("recording")
+}
+
+const STS_STEP: &str = r#"{"service": "sts", "operation": "GetCallerIdentity", "request": {},
+  "response": {"Account": "111122223333", "Arn": "arn:aws:iam::111122223333:user/dev"}}"#;
+
+/// #4822: every replay problem of the IAM step stops the run, so none can
+/// replace an alias with "none".
+#[test]
+fn iam_replay_problems_stop_the_run() {
+    let aliases = r#""service": "iam", "operation": "ListAccountAliases""#;
+    for (label, step) in [
+        (
+            "mismatching response step",
+            format!(
+                r#"{{{aliases}, "request": {{"unexpected": true}}, "response": {{"AccountAliases": ["acme-production"]}}}}"#
+            ),
+        ),
+        (
+            "mismatching error step",
+            format!(
+                r#"{{{aliases}, "request": {{"unexpected": true}}, "error": {{"code": "AccessDenied", "message": "no"}}}}"#
+            ),
+        ),
+        (
+            "recorded service error",
+            format!(r#"{{{aliases}, "error": {{"code": "AccessDenied", "message": "no"}}}}"#),
+        ),
+        (
+            "recorded connect error",
+            format!(r#"{{{aliases}, "error": {{"kind": "connect", "message": "down"}}}}"#),
+        ),
+        ("missing step", String::new()),
+        (
+            "wrong-typed aliases",
+            format!(r#"{{{aliases}, "response": {{"AccountAliases": null}}}}"#),
+        ),
+        (
+            "wrong-typed alias item",
+            format!(r#"{{{aliases}, "response": {{"AccountAliases": [7]}}}}"#),
+        ),
+    ] {
+        let calls = if step.is_empty() {
+            STS_STEP.to_string()
+        } else {
+            format!("{STS_STEP}, {step}")
+        };
+        let error = resolve_identity(&mut recorded(&calls), "p").expect_err(label);
+        assert_eq!(error.exit_code(), 2, "{label}");
+    }
+}
+
+/// #4822: the same replay checks on the STS step.
+#[test]
+fn sts_replay_problems_stop_the_run() {
+    let mismatch = r#"{"service": "sts", "operation": "GetCallerIdentity", "request": {"x": 1},
+      "response": {"Account": "111122223333", "Arn": "arn:aws:iam::111122223333:user/dev"}}"#;
+    assert!(resolve_identity(&mut recorded(mismatch), "p").is_err());
+    assert!(resolve_identity(&mut recorded(""), "p").is_err());
 }
 
 #[test]

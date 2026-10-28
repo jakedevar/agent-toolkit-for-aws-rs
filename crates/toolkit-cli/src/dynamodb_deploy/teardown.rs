@@ -14,14 +14,13 @@
 
 use std::path::Path;
 
-use toolkit_core::{quote_untrusted, Json, ToolkitError};
+use toolkit_core::{Json, ToolkitError};
 
 use super::model::{die, first_text, list, object, require_objects, text};
 use super::names::{
     check_account, check_plain, check_policy_name, check_region, check_resource_name,
     check_table_name, REQUIRED_PREFIX,
 };
-use crate::dynamodb::pyfmt;
 
 const TEMPLATE: &str = include_str!("teardown_template.txt");
 
@@ -44,11 +43,10 @@ pub(crate) fn sh_quote(text: &str) -> String {
     format!("'{}'", text.replace('\'', "'\\''"))
 }
 
-fn refuse_prefix(prefix: Option<&Json>) -> ToolkitError {
-    let shown = prefix.map_or_else(|| "None".to_string(), |p| quote_untrusted(&pyfmt::text(p)));
+fn refuse_prefix() -> ToolkitError {
     die(format!(
-        "manifest prefix {shown} is missing or does not start with '{REQUIRED_PREFIX}'. Refusing \
-         to generate teardown."
+        "manifest \"prefix\" is missing, is not a string or does not start with '{REQUIRED_PREFIX}'. \
+         Refusing to generate teardown."
     ))
 }
 
@@ -63,7 +61,7 @@ pub(crate) fn from_manifest(manifest: &Json) -> Result<Teardown, ToolkitError> {
     }
     let prefix = match manifest.get("prefix") {
         Some(Json::String(prefix)) if prefix.starts_with(REQUIRED_PREFIX) => prefix.clone(),
-        other => return Err(refuse_prefix(other)),
+        _ => return Err(refuse_prefix()),
     };
     super::names::check_prefix(&prefix)?;
 
@@ -75,21 +73,18 @@ pub(crate) fn from_manifest(manifest: &Json) -> Result<Teardown, ToolkitError> {
             tables.push(name.to_string());
         }
     }
-    let bad: Vec<String> = tables
+    let bad = tables
         .iter()
         .filter(|name| !name.starts_with(&prefix))
-        .map(|name| quote_untrusted(name))
-        .collect();
-    if !bad.is_empty() {
+        .count();
+    if bad > 0 {
         return Err(die(format!(
-            "manifest contains tables whose names don't match prefix {}: [{}]. Refusing to \
-             generate teardown.",
-            quote_untrusted(&prefix),
-            bad.join(", ")
+            "manifest tables[].name: {bad} name(s) do not start with the manifest prefix. \
+             Refusing to generate teardown."
         )));
     }
     for name in &tables {
-        check_table_name(name)?;
+        check_table_name("manifest tables[].name", name)?;
     }
 
     let lambda = object(manifest, "lambda")?;
@@ -103,24 +98,20 @@ pub(crate) fn from_manifest(manifest: &Json) -> Result<Teardown, ToolkitError> {
     let lambda_role = member("role_name")?;
     let lambda_policy = member("policy_name")?;
     if !lambda_fn.is_empty() && !lambda_fn.starts_with(&prefix) {
-        return Err(die(format!(
-            "manifest lambda function_name {} does not start with prefix {}. Refusing.",
-            quote_untrusted(&lambda_fn),
-            quote_untrusted(&prefix)
-        )));
+        return Err(die(
+            "manifest lambda function_name does not start with the manifest prefix. Refusing.",
+        ));
     }
     if !lambda_role.is_empty() && !lambda_role.starts_with(&prefix) {
-        return Err(die(format!(
-            "manifest lambda role_name {} does not start with prefix {}. Refusing.",
-            quote_untrusted(&lambda_role),
-            quote_untrusted(&prefix)
-        )));
+        return Err(die(
+            "manifest lambda role_name does not start with the manifest prefix. Refusing.",
+        ));
     }
     if !lambda_fn.is_empty() {
-        check_resource_name("lambda function_name", &lambda_fn)?;
+        check_resource_name("manifest lambda function_name", &lambda_fn)?;
     }
     if !lambda_role.is_empty() {
-        check_resource_name("lambda role_name", &lambda_role)?;
+        check_resource_name("manifest lambda role_name", &lambda_role)?;
     }
     if !lambda_policy.is_empty() {
         check_policy_name(&lambda_policy)?;
@@ -129,13 +120,13 @@ pub(crate) fn from_manifest(manifest: &Json) -> Result<Teardown, ToolkitError> {
     // The identity guard of the script compares the live account with this one:
     // an empty or malformed value would make the guard meaningless.
     let account = text(manifest, "account")?.unwrap_or_default();
-    check_account(account)?;
+    check_account("manifest \"account\"", account)?;
     let region = text(manifest, "region")?.unwrap_or_default();
     check_region(region)?;
     let run_id = text(manifest, "run_id")?.unwrap_or_default();
-    check_plain("run_id", run_id, 64)?;
+    check_plain("manifest \"run_id\"", run_id, 64)?;
     let profile_hint = first_text(manifest, &["aws_profile", "alias"])?.unwrap_or_default();
-    check_plain("aws_profile", profile_hint, 128)?;
+    check_plain("manifest \"aws_profile\" (or \"alias\")", profile_hint, 128)?;
     Ok(Teardown {
         account: account.to_string(),
         region: region.to_string(),

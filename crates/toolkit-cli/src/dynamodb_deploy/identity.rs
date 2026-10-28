@@ -11,7 +11,7 @@ use toolkit_aws::AwsError;
 use toolkit_core::{quote_untrusted, Json, ToolkitError};
 
 use super::model::die;
-use super::names::{check_account, PROD_MARKERS};
+use super::names::{check_account, check_alias, check_caller_arn, PROD_MARKERS};
 use crate::dynamodb::pyfmt;
 
 /// The two AWS reads of the preflight.
@@ -78,15 +78,34 @@ fn sts_failure(error: &AwsError, profile: &str) -> ToolkitError {
     }
 }
 
-/// Asks the client who the caller is. A failed alias lookup (for example no
-/// permission) leaves the alias empty and the production check runs on the ARN
-/// alone, like the script; a response of the wrong shape is refused instead,
-/// because an alias silently dropped would weaken that check.
+fn iam_failure(error: &AwsError) -> ToolkitError {
+    let reason = match error {
+        AwsError::Service(service) => format!(
+            "iam list-account-aliases failed ({}): {}",
+            quote_untrusted(service.code().unwrap_or("Unknown")),
+            quote_untrusted(service.message())
+        ),
+        other => format!(
+            "iam list-account-aliases could not be answered: {}",
+            quote_untrusted(&other.to_string())
+        ),
+    };
+    die(format!(
+        "{reason}. The production check needs the account alias, so this run is REFUSED."
+    ))
+}
+
+/// Asks the client who the caller is. Every failure stops the run: a failed STS
+/// or IAM call (recorded or not), a request that differs from the recorded one,
+/// a call with no recorded step left and a response of the wrong shape. The
+/// script let a failed alias lookup through and ran the production check on the
+/// ARN alone; that hid a production alias, so it is refused here.
 ///
 /// # Errors
 ///
-/// Exit status 2 for a failed or malformed STS call, an account id that is not
-/// 12 digits, or a recording with steps the run never used.
+/// Exit status 2 for a failed or malformed STS or IAM call, an account id, ARN
+/// or alias of the wrong shape, or a recording with steps the run never used.
+/// A diagnostic names the member and its expected shape, never its value.
 pub(crate) fn resolve_identity(
     client: &mut dyn IdentityClient,
     profile: &str,
@@ -102,17 +121,19 @@ pub(crate) fn resolve_identity(
         .map_err(|error| invalid_response("sts get-caller-identity", &error))?
         .unwrap_or_default()
         .to_string();
-    check_account(&account)?;
-    let alias = match client.list_account_aliases() {
-        Ok(response) => optional_string_list(&response, "AccountAliases")
-            .map_err(|error| invalid_response("iam list-account-aliases", &error))?
-            .first()
-            .map(|alias| (*alias).to_string())
-            .unwrap_or_default(),
-        // list_account_aliases can fail without permission; the production
-        // check still works off the ARN alone.
-        Err(_) => String::new(),
-    };
+    check_account("sts get-caller-identity \"Account\"", &account)?;
+    check_caller_arn("sts get-caller-identity \"Arn\"", &arn, &account)?;
+    let response = client
+        .list_account_aliases()
+        .map_err(|error| iam_failure(&error))?;
+    let alias = optional_string_list(&response, "AccountAliases")
+        .map_err(|error| invalid_response("iam list-account-aliases", &error))?
+        .first()
+        .map(|alias| (*alias).to_string())
+        .unwrap_or_default();
+    if !alias.is_empty() {
+        check_alias("iam list-account-aliases \"AccountAliases\"[0]", &alias)?;
+    }
     let unused = client.unconsumed();
     if unused > 0 {
         return Err(die(format!(

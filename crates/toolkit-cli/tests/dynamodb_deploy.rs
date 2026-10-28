@@ -618,12 +618,12 @@ fn config_problems_are_refused_and_names_cannot_widen_the_policy() {
         (
             "foreign prefix",
             r#"{"aws_profile": "b", "region": "us-east-1", "resource_prefix": "prod-"}"#,
-            "resource_prefix must start with 'ddb-skill-bench-' so teardown can scope deletions safely. Got: \"prod-\".",
+            "resource_prefix must start with 'ddb-skill-bench-' so teardown can scope deletions safely.",
         ),
         (
             "wildcard prefix",
             r#"{"aws_profile": "b", "region": "us-east-1", "resource_prefix": "ddb-skill-bench-*"}"#,
-            "resource_prefix \"ddb-skill-bench-*\" must be at most 48 characters of letters, digits, '-' and '_'",
+            "resource_prefix must be at most 48 characters of letters, digits, '-' and '_'",
         ),
         (
             "long prefix",
@@ -666,7 +666,11 @@ fn production_identities_are_refused_by_arn_or_alias() {
             "acme-production",
             "['prod', 'production']",
         ),
-        ("arn:aws:iam::111122223333:user/Live-Admin", "x", "['live']"),
+        (
+            "arn:aws:iam::111122223333:user/Live-Admin",
+            "xyz",
+            "['live']",
+        ),
         ("arn:aws:iam::111122223333:user/dev", "mc-PRD", "['prd']"),
     ] {
         let recording = format!(
@@ -693,29 +697,33 @@ fn production_identities_are_refused_by_arn_or_alias() {
 }
 
 #[test]
-fn an_unreadable_alias_falls_back_to_the_arn_but_a_malformed_one_is_refused() {
-    // No permission to list aliases: tolerated (no iam step, or an error step).
+fn every_failed_or_unusable_alias_lookup_refuses_the_run() {
+    // #4822: the alias is part of the production proof, so a recorded service
+    // error, a missing step and a malformed answer all refuse; none degrades
+    // to "no alias" (the script did).
+    let sts = r#"{"service": "sts", "operation": "GetCallerIdentity",
+        "response": {"Account": "111122223333", "Arn": "arn:aws:iam::111122223333:user/dev"}}"#;
     for iam_step in [
         String::new(),
         r#",{"service": "iam", "operation": "ListAccountAliases",
             "error": {"code": "AccessDenied", "message": "no"}}"#
             .to_string(),
+        r#",{"service": "iam", "operation": "ListAccountAliases",
+            "error": {"kind": "no_credentials"}}"#
+            .to_string(),
     ] {
-        let recording = format!(
-            r#"{{"calls": [{{"service": "sts", "operation": "GetCallerIdentity",
-              "response": {{"Account": "111122223333", "Arn": "arn:aws:iam::111122223333:user/dev"}}}}{iam_step}]}}"#
-        );
+        let recording = format!(r#"{{"calls": [{sts}{iam_step}]}}"#);
         let run = deploy_with(MODEL, CONFIG, &recording, &[]);
-        assert_eq!(status(&run.output), 0, "{}", text(&run.output.stderr));
-        assert!(text(&run.output.stdout).contains("  Alias:   <none>\n"));
-        assert_eq!(str_at(&plan_of(&run), &["alias"]), "");
+        let stderr = refused(&run);
+        assert!(stderr.contains("list-account-aliases"), "{stderr}");
+        assert!(stderr.contains("REFUSED"), "{stderr}");
+        assert!(text(&run.output.stdout).is_empty());
     }
     // A present AccountAliases that is null or not a list of strings would
     // silently hide an alias from the production check: refused.
     for aliases in ["null", "\"acme\"", "[1]", "{}"] {
         let recording = format!(
-            r#"{{"calls": [
-              {{"service": "sts", "operation": "GetCallerIdentity", "response": {{"Account": "111122223333", "Arn": "a"}}}},
+            r#"{{"calls": [{sts},
               {{"service": "iam", "operation": "ListAccountAliases", "response": {{"AccountAliases": {aliases}}}}}]}}"#
         );
         let run = deploy_with(MODEL, CONFIG, &recording, &[]);
@@ -732,6 +740,150 @@ fn an_unreadable_alias_falls_back_to_the_arn_but_a_malformed_one_is_refused() {
                 }
                 + ")\n",
             "{aliases}"
+        );
+    }
+}
+
+const REVIEW_MISMATCH: &str = include_str!("data/dynamodb_deploy/review4819-mismatch.json");
+const REVIEW_MISMATCH_ERROR: &str =
+    include_str!("data/dynamodb_deploy/review4819-mismatch-error.json");
+const REVIEW_MISSING_ARN: &str = include_str!("data/dynamodb_deploy/review4819-missing-arn.json");
+const REVIEW_EMPTY_ARN: &str = include_str!("data/dynamodb_deploy/review4819-empty-arn.json");
+const REVIEW_INVALID_ACCOUNT: &str =
+    include_str!("data/dynamodb_deploy/review4819-invalid-account.json");
+const REVIEW_SECRET_MANIFEST: &str =
+    include_str!("data/dynamodb_deploy/review4819-manifest-secret-account.json");
+const REVIEW_CONFIG: &str = r#"{"aws_profile":"bench","region":"us-east-1","resource_prefix":"ddb-skill-bench-review4819"}"#;
+const REVIEW_MODEL: &str = r#"{"tables":[{"table_name":"Orders","key_schema":{"partition_key":"pk"}}],"access_patterns":[{"pattern_id":"P1","table":"Orders","operation":"Query","peak_rps":1}]}"#;
+
+/// #4822: the reviewer's fixture. An IAM request that does not match the call
+/// made used to be swallowed into "no alias" (exit 0, a plan with alias "").
+#[test]
+fn review_4822_an_iam_request_mismatch_is_fatal_not_an_empty_alias() {
+    for (label, recording) in [
+        ("response step", REVIEW_MISMATCH),
+        ("error step", REVIEW_MISMATCH_ERROR),
+    ] {
+        let run = deploy_with(REVIEW_MODEL, REVIEW_CONFIG, recording, &[]);
+        let stderr = refused(&run);
+        assert!(stderr.contains("list-account-aliases"), "{label}: {stderr}");
+        assert!(!stderr.contains("Plan written"), "{label}");
+        assert!(text(&run.output.stdout).is_empty(), "{label}");
+    }
+    // The same recording with a matching request is refused as production.
+    let matching = REVIEW_MISMATCH.replace("{\"unexpected\":true}", "{}");
+    let run = deploy_with(REVIEW_MODEL, REVIEW_CONFIG, &matching, &[]);
+    assert!(refused(&run).contains("appears to be production"));
+}
+
+/// #4823: the caller ARN is required, non-empty and in the caller's account,
+/// even when the alias answer is empty or a recorded denial.
+#[test]
+fn review_4823_a_missing_empty_or_foreign_arn_is_refused() {
+    let foreign = REVIEW_INVALID_ACCOUNT.replace("AKIAZZZZZZZZZZZZZZZZ", "999999999999");
+    let malformed = REVIEW_MISSING_ARN.replace(
+        "\"Account\":\"111122223333\"",
+        "\"Account\":\"111122223333\",\"Arn\":\"arn:aws:iam::111122223333:\"",
+    );
+    for (label, recording) in [
+        ("absent Arn", REVIEW_MISSING_ARN.to_string()),
+        (
+            "empty Arn with a denied alias lookup",
+            REVIEW_EMPTY_ARN.to_string(),
+        ),
+        ("Arn of another account", foreign),
+        ("Arn without a resource", malformed),
+    ] {
+        let run = deploy_with(REVIEW_MODEL, REVIEW_CONFIG, &recording, &[]);
+        let stderr = refused(&run);
+        assert!(stderr.contains("\"Arn\""), "{label}: {stderr}");
+        assert!(text(&run.output.stdout).is_empty(), "{label}");
+    }
+}
+
+/// #4824: an invalid recorded Account is named, never shown, on either stream,
+/// and nothing is written.
+#[test]
+fn review_4824_an_invalid_account_is_not_echoed() {
+    let run = deploy_with(REVIEW_MODEL, REVIEW_CONFIG, REVIEW_INVALID_ACCOUNT, &[]);
+    let stderr = refused(&run);
+    let stdout = text(&run.output.stdout);
+    for stream in [&stderr, &stdout] {
+        assert!(!stream.contains("AKIA"), "{stream}");
+    }
+    assert!(stderr.contains("\"Account\" must be a 12-digit AWS account id"));
+    // A secret-shaped caller ARN and alias are not echoed either.
+    let secret_arn = REVIEW_INVALID_ACCOUNT
+        .replace("AKIAZZZZZZZZZZZZZZZZ", "111122223333")
+        .replace("arn:aws:iam::111122223333:user/dev", "AKIAZZZZZZZZZZZZZZZZ");
+    let run = deploy_with(REVIEW_MODEL, REVIEW_CONFIG, &secret_arn, &[]);
+    let stderr = refused(&run);
+    assert!(!stderr.contains("AKIA") && !text(&run.output.stdout).contains("AKIA"));
+    let secret_alias = REVIEW_INVALID_ACCOUNT
+        .replace("AKIAZZZZZZZZZZZZZZZZ", "111122223333")
+        .replace(
+            "\"AccountAliases\":[]",
+            "\"AccountAliases\":[\"AKIA/secret key\"]",
+        );
+    let run = deploy_with(REVIEW_MODEL, REVIEW_CONFIG, &secret_alias, &[]);
+    let stderr = refused(&run);
+    assert!(!stderr.contains("AKIA") && !text(&run.output.stdout).contains("AKIA"));
+}
+
+/// #4824: the teardown manifest takes the same rule for its account, and every
+/// other rejected manifest value is named, not shown.
+#[test]
+fn review_4824_manifest_values_are_not_echoed() {
+    let secret = "AKIAZZZZZZZZZZZZZZZZ";
+    let mut cases = vec![("account", REVIEW_SECRET_MANIFEST.to_string())];
+    for (label, from, to) in [
+        (
+            "prefix",
+            "\"ddb-skill-bench-r1-\"",
+            "\"AKIAZZZZZZZZZZZZZZZZ\"",
+        ),
+        (
+            "prefix charset",
+            "\"ddb-skill-bench-r1-\"",
+            "\"ddb-skill-bench-AKIA*\"",
+        ),
+        ("table", "ddb-skill-bench-r1-Orders", "AKIAZZZZZZZZZZZZZZZZ"),
+        (
+            "table charset",
+            "ddb-skill-bench-r1-Orders",
+            "ddb-skill-bench-r1-AKIA$(x)",
+        ),
+        ("region", "us-east-1", "AKIAZZZZZZZZZZZZZZZZ"),
+        ("run_id", "\"r1\"", "\"AKIA\\u001b[2J\""),
+        (
+            "function",
+            "\"lambda\":{}",
+            "\"lambda\":{\"function_name\":\"AKIAZZZZ\"}",
+        ),
+        (
+            "role",
+            "\"lambda\":{}",
+            "\"lambda\":{\"function_name\":\"ddb-skill-bench-r1-f\",\"role_name\":\"AKIAZZZZ\"}",
+        ),
+        (
+            "policy",
+            "\"lambda\":{}",
+            "\"lambda\":{\"policy_name\":\"AKIA'ZZZZ\"}",
+        ),
+    ] {
+        let base = REVIEW_SECRET_MANIFEST.replace(secret, "111122223333");
+        cases.push((label, base.replace(from, to)));
+    }
+    for (label, manifest) in cases {
+        let dir = temp_root("teardown-secret");
+        let output = teardown_in(&dir, &manifest, &["--yes-generate-teardown"]);
+        assert_eq!(status(&output), 2, "{label}: {}", text(&output.stderr));
+        for stream in [text(&output.stderr), text(&output.stdout)] {
+            assert!(!stream.contains("AKIA"), "{label}: {stream}");
+        }
+        assert!(
+            !dir.join("teardown.sh").exists(),
+            "{label}: nothing written"
         );
     }
 }
@@ -764,14 +916,19 @@ fn the_caller_account_must_be_twelve_digits_before_it_reaches_a_trust_policy() {
         );
         let run = deploy_with(MODEL, CONFIG, &recording, &[]);
         let stderr = refused(&run);
-        assert!(stderr.contains("is not 12 digits"), "{account}: {stderr}");
+        assert!(
+            stderr.contains("\"Account\" must be a 12-digit AWS account id"),
+            "{account}: {stderr}"
+        );
+        assert!(account.is_empty() || !stderr.contains(account), "{stderr}");
     }
 }
 
 #[test]
 fn malformed_recordings_are_rejected_not_defaulted() {
+    let ok_iam = r#"{"service": "iam", "operation": "ListAccountAliases", "response": {}}"#;
     let ok_sts = r#"{"service": "sts", "operation": "GetCallerIdentity",
-        "response": {"Account": "111122223333", "Arn": "a"}}"#;
+        "response": {"Account": "111122223333", "Arn": "arn:aws:iam::111122223333:user/dev"}}"#;
     let cases: [(&str, String, &str); 14] = [
         ("no calls", "{}".to_string(), "needs a \"calls\" array"),
         ("calls null", r#"{"calls": null}"#.to_string(), "\"calls\" must be a list when present (it is null)"),
@@ -793,7 +950,7 @@ fn malformed_recordings_are_rejected_not_defaulted() {
         ),
         (
             "unused step",
-            format!(r#"{{"calls": [{ok_sts}, {ok_sts}]}}"#),
+            format!(r#"{{"calls": [{ok_sts}, {ok_iam}, {ok_sts}]}}"#),
             "the recorded document has 1 step(s) this run never used",
         ),
     ];
@@ -807,7 +964,7 @@ fn malformed_recordings_are_rejected_not_defaulted() {
 #[test]
 fn a_recorded_request_that_differs_from_the_call_made_is_refused_for_responses_too() {
     let recording = r#"{"calls": [{"service": "sts", "operation": "GetCallerIdentity",
-        "request": {"unexpected": true}, "response": {"Account": "111122223333", "Arn": "a"}}]}"#;
+        "request": {"unexpected": true}, "response": {"Account": "111122223333", "Arn": "arn:aws:iam::111122223333:user/dev"}}]}"#;
     let run = deploy_with(MODEL, CONFIG, recording, &[]);
     let stderr = refused(&run);
     assert!(
@@ -1148,19 +1305,19 @@ fn hostile_manifest_text_is_quoted_not_executed() {
 #[test]
 fn manifests_that_do_not_belong_to_one_run_prefix_are_refused() {
     let cases: [(&str, String, &str); 14] = [
-        ("no prefix", MANIFEST.replace("\"prefix\": \"ddb-skill-bench-test-\",", ""), "manifest prefix None is missing or does not start with 'ddb-skill-bench-'. Refusing to generate teardown."),
-        ("foreign prefix", MANIFEST.replace("\"prefix\": \"ddb-skill-bench-test-\"", "\"prefix\": \"prod-\""), "manifest prefix \"prod-\" is missing or does not start with"),
-        ("null prefix", MANIFEST.replace("\"prefix\": \"ddb-skill-bench-test-\"", "\"prefix\": null"), "manifest prefix \"None\" is missing"),
-        ("table outside the prefix", MANIFEST.replace("ddb-skill-bench-test-Docs", "Users"), "manifest contains tables whose names don't match prefix \"ddb-skill-bench-test-\": [\"Users\"]. Refusing to generate teardown."),
-        ("lambda outside the prefix", MANIFEST.replace("\"function_name\": \"ddb-skill-bench-test-bench\"", "\"function_name\": \"other\""), "manifest lambda function_name \"other\" does not start with prefix"),
-        ("role outside the prefix", MANIFEST.replace("\"role_name\": \"ddb-skill-bench-test-bench-role\"", "\"role_name\": \"admin\""), "manifest lambda role_name \"admin\" does not start with prefix"),
-        ("shell in a table name", MANIFEST.replace("ddb-skill-bench-test-Docs", "ddb-skill-bench-test-$(id)"), "table name \"ddb-skill-bench-test-$(id)\" must be 1 to 255 characters"),
+        ("no prefix", MANIFEST.replace("\"prefix\": \"ddb-skill-bench-test-\",", ""), "manifest \"prefix\" is missing, is not a string or does not start with 'ddb-skill-bench-'. Refusing to generate teardown."),
+        ("foreign prefix", MANIFEST.replace("\"prefix\": \"ddb-skill-bench-test-\"", "\"prefix\": \"prod-\""), "manifest \"prefix\" is missing, is not a string or does not start with"),
+        ("null prefix", MANIFEST.replace("\"prefix\": \"ddb-skill-bench-test-\"", "\"prefix\": null"), "manifest \"prefix\" is missing, is not a string"),
+        ("table outside the prefix", MANIFEST.replace("ddb-skill-bench-test-Docs", "Users"), "manifest tables[].name: 1 name(s) do not start with the manifest prefix. Refusing to generate teardown."),
+        ("lambda outside the prefix", MANIFEST.replace("\"function_name\": \"ddb-skill-bench-test-bench\"", "\"function_name\": \"other\""), "manifest lambda function_name does not start with the manifest prefix"),
+        ("role outside the prefix", MANIFEST.replace("\"role_name\": \"ddb-skill-bench-test-bench-role\"", "\"role_name\": \"admin\""), "manifest lambda role_name does not start with the manifest prefix"),
+        ("shell in a table name", MANIFEST.replace("ddb-skill-bench-test-Docs", "ddb-skill-bench-test-$(id)"), "manifest tables[].name must be 1 to 255 characters"),
         ("wildcard prefix", MANIFEST.replace("\"prefix\": \"ddb-skill-bench-test-\"", "\"prefix\": \"ddb-skill-bench-*\""), "must be at most 48 characters of letters, digits, '-' and '_'"),
-        ("no account", MANIFEST.replace("\"account\": \"111122223333\",", ""), "the account id \"\" is not 12 digits."),
+        ("no account", MANIFEST.replace("\"account\": \"111122223333\",", ""), "manifest \"account\" must be a 12-digit AWS account id."),
         ("bad region", MANIFEST.replace("us-east-1", "us east 1"), "is not an AWS region name"),
         ("tables wrong type", MANIFEST.replace("\"tables\": [{\"name\": \"ddb-skill-bench-test-Orders\", \"original_name\": \"Orders\", \"arn\": null},\n             {\"name\": \"ddb-skill-bench-test-Docs\"}]", "\"tables\": \"x\""), "\"tables\" must be an array (it is string)"),
         ("lambda wrong type", MANIFEST.replace("\"lambda\": {", "\"lambda\": [1], \"x\": {"), "\"lambda\" must be an object (it is array)"),
-        ("policy with a quote", MANIFEST.replace("ddb-skill-bench-test-bench-policy", "p'q"), "policy name \"p'q\" must be 1 to 128 characters"),
+        ("policy with a quote", MANIFEST.replace("ddb-skill-bench-test-bench-policy", "p'q"), "policy name must be 1 to 128 characters"),
         ("not an object", "[]".to_string(), "the manifest must be a JSON object"),
     ];
     for (label, manifest, expected) in cases {
@@ -1302,4 +1459,18 @@ fn hostile_paths_and_values_never_reach_the_terminal_raw() {
         "{:?}",
         text(&refused.stderr)
     );
+}
+
+/// #4824: a recorded IAM error with credential-shaped text is redacted by the
+/// shared AWS error type before it reaches the diagnostic.
+#[test]
+fn a_credential_shaped_iam_error_is_redacted() {
+    let recording = r#"{"calls": [{"service": "sts", "operation": "GetCallerIdentity",
+        "response": {"Account": "111122223333", "Arn": "arn:aws:iam::111122223333:user/dev"}},
+      {"service": "iam", "operation": "ListAccountAliases",
+       "error": {"code": "AKIAZZZZZZZZZZZZZZZZ", "message": "Authorization: AWS4 AKIAZZZZZZ"}}]}"#;
+    let run = deploy_with(MODEL, CONFIG, recording, &[]);
+    let stderr = refused(&run);
+    assert!(stderr.contains("[REDACTED]"), "{stderr}");
+    assert!(!stderr.contains("AKIA"), "{stderr}");
 }

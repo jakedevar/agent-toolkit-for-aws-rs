@@ -1,0 +1,1 @@
+{"calls":[{"service":"sts","operation":"GetCallerIdentity","response":{"Account":"111122223333","Arn":""}},{"service":"iam","operation":"ListAccountAliases","error":{"code":"AccessDenied","message":"no"}}]}

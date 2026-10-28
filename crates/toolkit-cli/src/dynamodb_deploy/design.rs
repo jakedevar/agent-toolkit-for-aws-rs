@@ -75,7 +75,7 @@ pub(crate) fn validate_design(model: &Json) -> Result<(), ToolkitError> {
             )));
         }
         match text(table, "table_name")? {
-            Some(name) => check_table_name(name)?,
+            Some(name) => check_table_name("table_name", name)?,
             None => return Err(die("every table needs a table_name")),
         }
     }
@@ -451,7 +451,7 @@ pub(crate) fn build_create_table(
         .ok_or_else(|| die("table has no key_schema.partition_key"))?;
     let sort = text(key_schema, "sort_key")?;
 
-    check_table_name(&format!("{prefix}{table_name}"))?;
+    check_table_name("table_name", &format!("{prefix}{table_name}"))?;
     let mut referenced = BTreeMap::new();
     referenced.insert(partition.to_string(), attr_type(&types, partition));
     let mut keys = vec![key_element(partition, "HASH")];

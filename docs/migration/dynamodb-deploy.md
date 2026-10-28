@@ -82,9 +82,11 @@ Format and rules follow `toolkit_aws::recorded` (#4727, README rule):
 - Response reads use the shared accessors: `Arn` and `Account` are
   `optional_text` (null → `sts get-caller-identity returned an invalid
   response`), `AccountAliases` is `optional_string_list` (null, a string, a
-  number list → invalid response, **not** "no alias"). A failed IAM call (no
-  permission, or no recorded IAM step) leaves the alias empty and the
-  production check runs on the ARN alone, as the script did.
+  number list → invalid response, **not** "no alias"). **Every** replay or
+  service problem on the STS or the IAM step stops the run (exit 2, no plan):
+  a request that differs from the recorded one, a call with no step left (a
+  recording without an IAM step), a recorded `error` step and a response of
+  the wrong shape. See intentional changes 10–12.
 - Every remaining JSON shape read in the module is either through these
   accessors or marked `// recorded-shape:` (design/config reads, which are
   caller input, not responses). `tests/recorded_contract.rs` passes for this
@@ -171,6 +173,36 @@ Deleting commands appear once each, behind those guards.
    as `["a", "b"]`. `tests/diag_contract.rs` passes for both commands.
 9. **Alias response shape.** A malformed `AccountAliases` is a refusal, not an
    empty alias (it would hide an alias from the production check).
+10. **A failed alias lookup refuses (#4822).** The script treated a failed
+    `iam list-account-aliases` (for example `AccessDenied`) as "no alias" and
+    ran the production check on the ARN alone. The production preflight cannot
+    be proven without the alias, so a recorded IAM service error, a missing
+    IAM step, a request mismatch and an exhausted recording all refuse with
+    exit 2 and no output. The mismatch case matters most: before this change
+    a mismatching IAM step was consumed and swallowed, which dropped an
+    `acme-production` alias and let the run through. Two tests that encoded
+    the old degrade-to-empty-alias behaviour were rewritten for this rule
+    (`every_failed_or_unusable_alias_lookup_refuses_the_run`, unit
+    `a_failed_alias_lookup_refuses_the_run`).
+11. **The caller ARN is required and checked (#4823).** The script defaulted a
+    missing `Arn` to `""`. Now `Arn` must be present, non-empty and an IAM or
+    STS ARN (`arn:<aws|aws-cn|aws-us-gov>:<iam|sts>::<account>:<resource>`,
+    resource characters `A-Za-z0-9+=,.@_-/:`) whose account equals the
+    validated 12-digit `Account`; anything else refuses before any output. A
+    present alias must be 3 to 63 letters, digits and hyphens. Offline
+    recordings stay unauthenticated fixtures: this is structural validity only.
+12. **Diagnostics for recorded and manifest values never echo them (#4824).**
+    `check_account`, `check_caller_arn`, `check_alias`, the prefix, table,
+    Lambda, policy, region, run id and profile checks name the field and the
+    expected shape only; escaping (`quote_untrusted`) is not redaction. The
+    teardown manifest takes the same rule, including the "table/function/role
+    does not start with the prefix" refusals (a table count replaces the name
+    list). Values that already passed validation (the account, the ARN and the
+    alias in the production refusal and the banner) are still shown. Design
+    and config values (the model's table names, config numbers) keep their
+    escaped echo: they are the operator's own input, not a recording or a
+    manifest. AWS error codes and messages of a recorded `error` step go
+    through the shared AWS redactor (`[REDACTED]` for credential-shaped text).
 
 ## Security surface (for the security pre-review)
 
@@ -203,9 +235,10 @@ re-checks the caller account against the manifest, restricts every delete to
 the manifest prefix, and (new) holds only validated, quoted values. It is
 written `0700` and never executed by the toolkit.
 
-**Fail-open behavior kept from the script** (documented, not widened): a failed
-`iam list-account-aliases` (for example `AccessDenied`) leaves the alias empty
-and the production check relies on the ARN alone.
+**Fail-closed identity (changed from the script)**: a failed
+`iam list-account-aliases`, any replay mismatch, a missing or malformed
+caller ARN and a malformed account or alias all refuse (see intentional
+changes 10–12).
 
 **Files**: plan and script are created exclusively, owner-only, renamed into
 place; symlink destinations are refused; a failed write removes its temp file
@@ -213,7 +246,7 @@ and leaves an existing destination intact.
 
 ## Tests
 
-`crates/toolkit-cli/tests/dynamodb_deploy.rs` (29 process tests, offline): plan
+`crates/toolkit-cli/tests/dynamodb_deploy.rs` (34 process tests, offline; the `review_*` tests replay the #4819 reviewer reproductions from `tests/data/dynamodb_deploy/`): plan
 golden values for tables/GSI/vector/streams/provisioned, the IAM documents,
 every design/config/identity refusal, prod markers, recorded-input rejection
 (null, wrong type, missing, mismatch on success and failure steps, unused and

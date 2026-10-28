@@ -14,7 +14,9 @@
 //! same request check as a response step. Every optional member is absent or of
 //! its type; a present member of another type, `null` included, rejects the
 //! recording (`toolkit_aws::recorded`, #4727). A call with no step left, a
-//! request that differs from the recorded one and a step no call used all fail.
+//! request that differs from the recorded one and a step no call used all fail,
+//! and so does a recording without the `iam` step or with a failed one: the
+//! production check needs the account alias (#4822).
 
 use toolkit_aws::recorded::{
     optional_text, step_fields, KeyOrder, MemberError, RecordedOutcome, ReplayError, Step,
