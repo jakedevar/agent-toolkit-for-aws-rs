@@ -1823,7 +1823,8 @@ fn test_only_files(files: &[Parsed]) -> BTreeSet<String> {
         }
         let next: BTreeSet<String> = by_target
             .into_iter()
-            .filter_map(|(target, only_test)| only_test.then(|| target.to_string()))
+            .filter(|&(_, only_test)| only_test)
+            .map(|(target, _)| target.to_string())
             .collect();
         if next == test_only {
             return test_only;
@@ -3715,7 +3716,11 @@ fn an_inline_test_mock_does_not_exclude_the_production_module() {
     ];
     let report = analyse_with(&files, Some(&[("fresh", Class::Recorded)]));
     assert!(!report.is_clean(), "{report:?}");
-    assert_eq!(read_files(&report), vec!["fresh/transport.rs"], "{report:?}");
+    assert_eq!(
+        read_files(&report),
+        vec!["fresh/transport.rs"],
+        "{report:?}"
+    );
 }
 
 #[test]
@@ -3732,7 +3737,11 @@ fn a_path_selected_test_mock_does_not_exclude_the_production_module() {
     ];
     let report = analyse_with(&files, Some(&[("fresh", Class::Recorded)]));
     assert!(!report.is_clean(), "{report:?}");
-    assert_eq!(read_files(&report), vec!["fresh/transport.rs"], "{report:?}");
+    assert_eq!(
+        read_files(&report),
+        vec!["fresh/transport.rs"],
+        "{report:?}"
+    );
 }
 
 #[test]
@@ -3748,7 +3757,9 @@ fn a_file_any_non_test_declaration_loads_stays_scanned() {
         let files = vec![
             file(
                 "fresh/mod.rs",
-                &format!("use toolkit_aws::recorded::Step;\n#[cfg(test)]\nmod shared;\n{production}"),
+                &format!(
+                    "use toolkit_aws::recorded::Step;\n#[cfg(test)]\nmod shared;\n{production}"
+                ),
             ),
             file("fresh/shared.rs", TEST_MODULE_READ),
         ];
