@@ -29,6 +29,7 @@ mod heroku_deferred;
 mod heroku_pricing;
 mod openrouter_byok;
 mod option_c;
+mod rdfa;
 mod rules;
 mod run_state;
 mod usage_api;
