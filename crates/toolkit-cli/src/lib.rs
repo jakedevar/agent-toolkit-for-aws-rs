@@ -41,6 +41,7 @@ pub mod dynamodb;
 mod dynamodb_deploy;
 pub mod elasticache;
 pub mod manifests;
+mod marketplace;
 mod msk;
 mod registry;
 mod relational;

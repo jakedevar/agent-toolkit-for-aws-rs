@@ -1,0 +1,325 @@
+//! The submitter Lambda: reads, batching, dry-run, outcomes and write-back.
+
+use super::*;
+
+const DEP_LICENSE: &str = "arn:aws:license-manager:us-east-1:111122223333:license:l-dep";
+
+fn agg_item(license: &str, dimension: &str, bucket: &str, quantity: i64) -> String {
+    format!(
+        r#"{{"licenseArn": "{license}", "account_dimension_hour": "{ACCOUNT}#{dimension}#{bucket}", "customerAWSAccountId": "{ACCOUNT}", "dimension": "{dimension}", "hourBucket": "{bucket}", "quantity": {quantity}, "meteringPending": "{bucket}"}}"#
+    )
+}
+
+fn items(list: &[String]) -> String {
+    format!(r#"{{"Items": [{}]}}"#, list.join(","))
+}
+
+/// The 23 queries of the ordinary pass (oldest first); `at` maps a position
+/// (0 is now-23h, 22 is now-1h) to its items.
+fn ordinary_pass(at: &[(usize, Vec<String>)]) -> Vec<String> {
+    (0..23)
+        .map(|position| {
+            let found = at.iter().find(|(p, _)| *p == position);
+            query(&found.map_or_else(|| r#"{"Items": []}"#.to_string(), |(_, list)| items(list)))
+        })
+        .collect()
+}
+
+fn empty_subscribers() -> String {
+    query(r#"{"Items": []}"#)
+}
+
+fn metering(response: &str) -> String {
+    step("meteringmarketplace", "BatchMeterUsage", None, response)
+}
+
+fn config_with(extra: &[(&'static str, &'static str)]) -> Vec<(&'static str, &'static str)> {
+    let mut config: Vec<(&str, &str)> = CFG.to_vec();
+    config.extend_from_slice(extra);
+    config
+}
+
+fn result_record(dimension: &str, status: &str, id: &str) -> String {
+    format!(
+        r#"{{"MeteringRecordId": "{id}", "Status": "{status}", "UsageRecord": {{"Timestamp": 1769857200, "Dimension": "{dimension}", "Quantity": 5, "CustomerAWSAccountId": "{ACCOUNT}", "LicenseArn": "{LICENSE}"}}}}"#
+    )
+}
+
+#[test]
+fn dry_run_never_calls_batch_meter_usage() {
+    let mut calls = vec![empty_subscribers()];
+    calls.extend(ordinary_pass(&[(
+        22,
+        vec![agg_item(LICENSE, "Requests", "2026-01-31T11", 5)],
+    )]));
+    calls.push(update());
+    let config = config_with(&[("METERING_MODE", "dry-run")]);
+    let ran = run_with("submitter", &config, "{}", &calls, NOW);
+    assert_eq!(ran.ok().to_compact_string(), r#"{"submitted":1}"#);
+    assert!(ran
+        .requests("meteringmarketplace:BatchMeterUsage")
+        .is_empty());
+    let write = ran.requests("dynamodb:UpdateItem")[0];
+    assert_eq!(
+        write.get("UpdateExpression").and_then(Json::as_str),
+        Some("REMOVE meteringPending SET meteringStatus = :st, createdAt = if_not_exists(createdAt, :now), updatedAt = :now")
+    );
+    assert_eq!(
+        write
+            .get("ExpressionAttributeValues")
+            .map(Json::to_compact_string)
+            .as_deref(),
+        Some(r#"{":st":"DryRunSubmitted",":now":"2026-01-31T12:30:00Z"}"#)
+    );
+    assert!(ran.logged("DRY-RUN (MeteringMode=dry-run) - would submit UsageRecord: license=arn***123 account=111***333 dimension=Requests quantity=5 (use_product_code=False); NOT calling BatchMeterUsage"));
+    assert!(ran.log.iter().any(|l| l.contains(r#""DryRunSubmitted": 1"#)
+        && l.contains(r#""Dimensions": [["ProductCode"]]"#)));
+    assert_eq!(ran.unused, 0);
+}
+
+#[test]
+fn a_live_run_submits_concurrent_agreement_and_legacy_records_separately() {
+    let legacy = r#"{"licenseArn": "legacy-lic", "account_dimension_hour": "acct#L#2026-01-31T11", "customerIdentifier": "cust-1", "dimension": "L", "hourBucket": "2026-01-31T11", "quantity": "1", "meteringPending": "2026-01-31T11"}"#;
+    let tagged = format!(
+        r#"{{"licenseArn": "{LICENSE}", "account_dimension_hour": "{ACCOUNT}#T#2026-01-31T11", "customerAWSAccountId": "{ACCOUNT}", "dimension": "T", "hourBucket": "2026-01-31T11", "quantity": 5, "usageAllocations": [{{"AllocatedUsageQuantity": "5", "Tags": [{{"Key": "team", "Value": "a"}}]}}], "meteringPending": "2026-01-31T11"}}"#
+    );
+    let mut calls = vec![empty_subscribers()];
+    calls.extend(ordinary_pass(&[(
+        22,
+        vec![
+            agg_item(LICENSE, "Requests", "2026-01-31T11", 5),
+            tagged,
+            legacy.to_string(),
+        ],
+    )]));
+    calls.push(metering(&format!(
+        r#"{{"Results": [{}, {}]}}"#,
+        result_record("Requests", "Success", "mrec-1"),
+        result_record("T", "CustomerNotSubscribed", "mrec-2")
+    )));
+    calls.push(metering(
+        r#"{"Results": [{"MeteringRecordId": "mrec-3", "Status": "Success", "UsageRecord": {"Timestamp": 1769857200, "Dimension": "L", "Quantity": 1, "CustomerIdentifier": "cust-1"}}]}"#,
+    ));
+    calls.extend([update(), update(), update()]);
+    let config = config_with(&[("AGGREGATED_USAGE_TTL_DAYS", "2")]);
+    let ran = run_with("submitter", &config, "{}", &calls, NOW);
+    assert_eq!(ran.ok().to_compact_string(), r#"{"submitted":3}"#);
+
+    let batches = ran.requests("meteringmarketplace:BatchMeterUsage");
+    assert_eq!(batches.len(), 2);
+    assert_eq!(
+        batches[0].to_compact_string(),
+        format!(
+            r#"{{"UsageRecords":[{{"Timestamp":1769857200,"Dimension":"Requests","Quantity":5,"CustomerAWSAccountId":"{ACCOUNT}","LicenseArn":"{LICENSE}"}},{{"Timestamp":1769857200,"Dimension":"T","Quantity":5,"UsageAllocations":[{{"AllocatedUsageQuantity":5,"Tags":[{{"Key":"team","Value":"a"}}]}}],"CustomerAWSAccountId":"{ACCOUNT}","LicenseArn":"{LICENSE}"}}]}}"#
+        )
+    );
+    assert_eq!(
+        batches[1].to_compact_string(),
+        r#"{"UsageRecords":[{"Timestamp":1769857200,"Dimension":"L","Quantity":1,"CustomerIdentifier":"cust-1"}],"ProductCode":"prod123"}"#
+    );
+
+    let writes = ran.requests("dynamodb:UpdateItem");
+    assert_eq!(writes.len(), 3);
+    // Success: the id and a ttl of now + 2 days.
+    assert_eq!(
+        writes[0].get("UpdateExpression").and_then(Json::as_str),
+        Some("REMOVE meteringPending SET meteringStatus = :st, meteringRecordId = :mid, #ttl = :ttl, createdAt = if_not_exists(createdAt, :now), updatedAt = :now")
+    );
+    assert_eq!(
+        writes[0]
+            .get("ExpressionAttributeValues")
+            .map(Json::to_compact_string)
+            .as_deref(),
+        Some(
+            r#"{":st":"Success",":mid":"mrec-1",":ttl":1770035400,":now":"2026-01-31T12:30:00Z"}"#
+        )
+    );
+    assert_eq!(
+        writes[0]
+            .get("ExpressionAttributeNames")
+            .map(Json::to_compact_string)
+            .as_deref(),
+        Some(r##"{"#ttl":"ttl"}"##)
+    );
+    assert_eq!(
+        writes[0].get("Key").map(Json::to_compact_string),
+        Some(format!(
+            r#"{{"licenseArn":"{LICENSE}","account_dimension_hour":"{ACCOUNT}#Requests#2026-01-31T11"}}"#
+        ))
+    );
+    // A non-success status never gets a ttl.
+    assert!(writes[1].get("ExpressionAttributeNames").is_none());
+    assert!(writes[1]
+        .get("ExpressionAttributeValues")
+        .map(Json::to_compact_string)
+        .is_some_and(|v| v.contains("CustomerNotSubscribed") && !v.contains("ttl")));
+    assert!(ran.logged("Submitted 3 aggregated record(s) across 2 license(s)"));
+    assert_eq!(ran.unused, 0);
+}
+
+#[test]
+fn deprovisioning_licenses_go_first_and_batches_hold_at_most_25() {
+    let ordinary: Vec<String> = (0..25)
+        .map(|n| agg_item(LICENSE, &format!("D{n}"), "2026-01-31T11", 1))
+        .collect();
+    let subscribers = query(&format!(
+        r#"{{"Items": [{{"licenseArn": "{DEP_LICENSE}", "deprovisioningExpiry": "2026-01-31T13:00:00Z"}}]}}"#
+    ));
+    let mut calls = vec![subscribers];
+    // Deprovisioning pass: now-23h .. now (24 queries), the record sits at now-1h.
+    for hours_back in (0..=23).rev() {
+        calls.push(query(&if hours_back == 1 {
+            items(&[agg_item(DEP_LICENSE, "Dep", "2026-01-31T11", 1)])
+        } else {
+            r#"{"Items": []}"#.to_string()
+        }));
+    }
+    calls.extend(ordinary_pass(&[(22, ordinary)]));
+    calls.extend([metering("{}"), metering("{}")]);
+    let ran = run("submitter", "{}", &calls);
+    assert_eq!(ran.ok().to_compact_string(), r#"{"submitted":0}"#);
+    let batches = ran.requests("meteringmarketplace:BatchMeterUsage");
+    let records = |n: usize| {
+        batches[n]
+            .get("UsageRecords")
+            .map(Json::to_compact_string)
+            .unwrap_or_default()
+    };
+    assert_eq!(records(0).matches(r#""Timestamp""#).count(), 25);
+    assert_eq!(records(1).matches(r#""Timestamp""#).count(), 1);
+    assert!(records(0).starts_with(&format!(r#"[{{"Timestamp":1769857200,"Dimension":"Dep","Quantity":1,"CustomerAWSAccountId":"{ACCOUNT}","LicenseArn":"{DEP_LICENSE}"}}"#)));
+    // The deprovisioning pass reads per license, the current hour included.
+    let queries = ran.requests("dynamodb:Query");
+    assert_eq!(
+        queries[1]
+            .get("KeyConditionExpression")
+            .and_then(Json::as_str),
+        Some("meteringPending = :hb AND licenseArn = :la")
+    );
+    assert_eq!(queries.len(), 1 + 24 + 23);
+    assert_eq!(ran.unused, 0);
+}
+
+#[test]
+fn the_per_run_cap_stops_reading() {
+    let three = vec![
+        agg_item(LICENSE, "A", "2026-01-30T13", 1),
+        agg_item(LICENSE, "B", "2026-01-30T13", 1),
+        agg_item(LICENSE, "C", "2026-01-30T13", 1),
+    ];
+    let mut calls = vec![empty_subscribers()];
+    calls.extend(ordinary_pass(&[(0, three)]));
+    calls.push(metering("{}"));
+    let config = config_with(&[("MAX_RECORDS_PER_RUN", "2")]);
+    let ran = run_with("submitter", &config, "{}", &calls, NOW);
+    assert_eq!(ran.ok().to_compact_string(), r#"{"submitted":0}"#);
+    assert_eq!(
+        ran.requests("dynamodb:Query").len(),
+        2,
+        "no bucket is read after the cap"
+    );
+    let batch = ran.requests("meteringmarketplace:BatchMeterUsage")[0];
+    assert_eq!(
+        batch
+            .get("UsageRecords")
+            .map(Json::to_compact_string)
+            .unwrap_or_default()
+            .matches(r#""Timestamp""#)
+            .count(),
+        2
+    );
+}
+
+#[test]
+fn a_failed_deprovisioning_lookup_does_not_block_ordinary_metering() {
+    let mut calls = vec![fail("dynamodb", "Query", "AccessDeniedException")];
+    calls.extend(ordinary_pass(&[]));
+    let ran = run("submitter", "{}", &calls);
+    assert_eq!(ran.ok().to_compact_string(), r#"{"submitted":0}"#);
+    assert!(ran.logged(
+        "deprovisioning_licenses() lookup failed (aws_service_error (AccessDeniedException))"
+    ));
+    assert!(ran.logged("No pending aggregated usage to submit"));
+}
+
+#[test]
+fn a_poison_record_is_stamped_error_with_its_exception() {
+    let mut calls = vec![empty_subscribers()];
+    calls.extend(ordinary_pass(&[(
+        22,
+        vec![agg_item(LICENSE, "Bad", "2026-01-31T11", 3)],
+    )]));
+    calls.push(fail(
+        "meteringmarketplace",
+        "BatchMeterUsage",
+        "InvalidUsageDimensionException",
+    ));
+    calls.push(update());
+    let ran = run("submitter", "{}", &calls);
+    assert_eq!(ran.ok().to_compact_string(), r#"{"submitted":1}"#);
+    let write = ran.requests("dynamodb:UpdateItem")[0];
+    assert_eq!(
+        write.get("UpdateExpression").and_then(Json::as_str),
+        Some("REMOVE meteringPending SET meteringStatus = :st, meteringStatusReason = :rsn, createdAt = if_not_exists(createdAt, :now), updatedAt = :now")
+    );
+    assert_eq!(
+        write
+            .get("ExpressionAttributeValues")
+            .map(Json::to_compact_string)
+            .as_deref(),
+        Some(
+            r#"{":st":"Error",":rsn":"InvalidUsageDimensionException",":now":"2026-01-31T12:30:00Z"}"#
+        )
+    );
+}
+
+#[test]
+fn a_transient_error_fails_the_run_and_keeps_the_pending_markers() {
+    let mut calls = vec![empty_subscribers()];
+    calls.extend(ordinary_pass(&[(
+        22,
+        vec![agg_item(LICENSE, "Requests", "2026-01-31T11", 3)],
+    )]));
+    calls.push(fail(
+        "meteringmarketplace",
+        "BatchMeterUsage",
+        "ThrottlingException",
+    ));
+    let ran = run("submitter", "{}", &calls);
+    assert_eq!(ran.err(), "aws_service_error (ThrottlingException)");
+    assert!(ran.requests("dynamodb:UpdateItem").is_empty());
+}
+
+#[test]
+fn unprocessed_records_fail_the_run_after_the_write_back() {
+    let unprocessed = format!(
+        r#"{{"Results": [{}], "UnprocessedRecords": [{{"Timestamp": 1769857200, "Dimension": "B", "Quantity": 1, "CustomerAWSAccountId": "{ACCOUNT}", "LicenseArn": "{LICENSE}"}}]}}"#,
+        result_record("A", "Success", "mrec-a")
+    );
+    let mut calls = vec![empty_subscribers()];
+    calls.extend(ordinary_pass(&[(
+        22,
+        vec![
+            agg_item(LICENSE, "A", "2026-01-31T11", 5),
+            agg_item(LICENSE, "B", "2026-01-31T11", 1),
+        ],
+    )]));
+    calls.extend([metering(&unprocessed), metering(&unprocessed), update()]);
+    let ran = run("submitter", "{}", &calls);
+    assert!(ran
+        .err()
+        .starts_with("One or more UsageRecords remained unprocessed after retry"));
+    // The record that did succeed was written back before the run failed.
+    assert_eq!(ran.requests("dynamodb:UpdateItem").len(), 1);
+}
+
+#[test]
+fn the_submitter_needs_the_aggregated_table() {
+    let cfg: Vec<(&str, &str)> = CFG
+        .iter()
+        .copied()
+        .filter(|(k, _)| *k != "AGGREGATED_USAGE_TABLE")
+        .collect();
+    let ran = run_with("submitter", &cfg, "{}", &[], NOW);
+    assert_eq!(ran.err(), "AGGREGATED_USAGE_TABLE is not configured");
+}
