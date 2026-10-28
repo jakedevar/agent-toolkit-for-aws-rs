@@ -444,7 +444,13 @@ fn other_cloudwatch_commands_still_refuse_a_dash_argument() {
     let cases: [&[&str]; 6] = [
         &["cloudwatch", "render", "location", "--json", "-"],
         &["cloudwatch", "render", "location", "--json-file=-"],
-        &["cloudwatch", "validate", "instrumentation-type", "--json-file", "-"],
+        &[
+            "cloudwatch",
+            "validate",
+            "instrumentation-type",
+            "--json-file",
+            "-",
+        ],
         &["cloudwatch", "evaluate-traces", "--recorded", "-"],
         &["cloudwatch", "capture-dataset", "--recorded=-"],
         &["cloudwatch", "instrumentation", "list", "--recorded", "-"],

@@ -1199,7 +1199,12 @@ fn an_explicit_dot_slash_dash_is_still_a_literal_path() {
     for spelling in 0..2 {
         let scratch = Scratch::new();
         let run = spawn_toolkit(&repro_args(elasticache, spelling, "./-"), &scratch.0);
-        assert_eq!(run.status, Some(0), "{:?}", String::from_utf8_lossy(&run.stderr));
+        assert_eq!(
+            run.status,
+            Some(0),
+            "{:?}",
+            String::from_utf8_lossy(&run.stderr)
+        );
         assert!(
             String::from_utf8_lossy(&run.stdout).starts_with("Written to ./-\n"),
             "{:?}",
@@ -1215,7 +1220,12 @@ fn an_explicit_dot_slash_dash_is_still_a_literal_path() {
         let scratch = Scratch::new();
         make_fixtures(&scratch, terraform);
         let run = spawn_toolkit(&repro_args(terraform, spelling, "./-"), &scratch.0);
-        assert_eq!(run.status, Some(0), "{:?}", String::from_utf8_lossy(&run.stderr));
+        assert_eq!(
+            run.status,
+            Some(0),
+            "{:?}",
+            String::from_utf8_lossy(&run.stderr)
+        );
         assert!(String::from_utf8_lossy(&run.stdout).starts_with("POLICY_OK"));
         let verdict = fs::read_to_string(scratch.0.join("-")).expect("./- written");
         assert!(verdict.starts_with('{'), "{verdict}");
@@ -1231,7 +1241,12 @@ fn an_explicit_dot_slash_dash_is_still_a_literal_path() {
         )
         .expect("write ./-");
         let run = spawn_toolkit(&repro_args(cloudwatch, spelling, "./-"), &scratch.0);
-        assert_eq!(run.status, Some(0), "{:?}", String::from_utf8_lossy(&run.stderr));
+        assert_eq!(
+            run.status,
+            Some(0),
+            "{:?}",
+            String::from_utf8_lossy(&run.stderr)
+        );
     }
 
     // skills list ./- lists ./-/example.
@@ -1247,6 +1262,11 @@ fn an_explicit_dot_slash_dash_is_still_a_literal_path() {
         .map(|w| (*w).to_string())
         .collect();
     let run = spawn_toolkit(&args, &scratch.0);
-    assert_eq!(run.status, Some(0), "{:?}", String::from_utf8_lossy(&run.stderr));
+    assert_eq!(
+        run.status,
+        Some(0),
+        "{:?}",
+        String::from_utf8_lossy(&run.stderr)
+    );
     assert!(String::from_utf8_lossy(&run.stdout).contains("example"));
 }

@@ -232,7 +232,7 @@ re-parse `argv`.
   over everything after them. Inside a command, `-h`/`--help` selects help; any
   other `-`-prefixed word must be one of the command's flags or it is a usage
   error; a flag repeated is accepted once. A bare `-` is refused the same way
-  unless the command opts in (see "The bare `-` stdio marker").
+  unless the command opts in (see "The bare `-` argument").
 - Handlers return `Result<(), ToolkitError>`. `ToolkitError` has a class (usage
   = exit 2, runtime = exit 1), a stable machine code (for example
   `root_not_found`, `invalid_arguments`, `stdout_write`, `parse_error`,
@@ -291,32 +291,39 @@ let workloads: Vec<&str> = invocation.values_of("--workload").collect();
   (or `Output::diagnostic`) before they reach a message, as for any other value flag
   (see "Untrusted text in diagnostics").
 
-### The bare `-` stdio marker (#4743, #4780)
+### The bare `-` argument (#4743, #4780)
 
-argparse treats a lone `-` as an ordinary value, and scripts use it to mean
-"standard input" (`--json -`). Most slices turn a path argument straight into a
-filesystem path, where a `-` would read or overwrite a file literally named `-`
-(`dynamodb calculate-costs --output -` truncated `./-`). So the router fails
-closed: a command receives `-` only if it opts in.
+argparse treats a lone `-` as an ordinary value, and a few scripts use it to mean
+"standard input" (`--json -`). Almost every slice turns a path argument straight
+into a filesystem path, where a `-` would read or overwrite a file literally named
+`-` (`elasticache dashboard --output -` truncated `./-`). So the router fails
+closed, before any handler and so before any filesystem access, for EVERY
+registered value flag and positional: a command receives `-` only if it opts in.
+`./-` stays a legal explicit literal path. The full policy, the parameters that
+keep `-` and the reproductions are in `docs/migration/cli-bare-dash.md`.
 
 - The allowlist is `STDIO_DASH` in `src/lib.rs`, a list of `(command path, flag)`
   pairs: the space-joined `CommandSpec::path` and either a value flag name
-  (`"--json"`) or `STDIO_DASH_POSITIONAL` (`"<positional>"`). It ships empty. There
-  is no field on `CommandSpec`, so adding a pair never touches a command row.
+  (`"--json"`) or `STDIO_DASH_POSITIONAL` (`"<positional>"`). There is no field on
+  `CommandSpec`, so adding a pair never touches a command row. It lists exactly
+  `--json` and `--json-file` of `cloudwatch instrumentation` and `cloudwatch
+  snapshots`, whose Python originals read stdin.
 - For a listed pair the exact token `-` is a value of that flag, spaced
   (`--json -`) or attached (`--json=-`), plain or repeatable, even on a
   `strict_values` command; or, for `<positional>`, a positional that counts against
   `max_positionals`. Every other `-`-prefixed value (`-x`, `--foo`, `--`) and the
-  empty value are still refused.
-- For every other pair `-` is refused exactly as before #4743: a positional `-` is
-  an unknown flag, and on a `strict_values` command a value of `-` is the usual
-  `invalid arguments` usage error (exit 2, before the handler runs). A command
-  without `strict_values` keeps taking any value verbatim, as it always did.
-- A slice requests stdin/stdout support by adding its pair in the same change that
-  makes its handler treat `-` explicitly: bounded, UTF-8 checked, diagnostics
-  escaped like its other inputs, and no fallback to a file named `-` (`./-` is
-  how a caller names that file). `tests/diag_contract.rs` checks that every entry
-  names a real command and flag.
+  empty value keep their previous handling.
+- For every other pair `-` is a usage error (exit 2, before the handler runs):
+  `error: invalid arguments: --output does not accept - (standard input/output);
+  use ./- for a file named -`, one line naming the flag, then the usage text. A
+  positional `-` gets the same error without a flag name. This holds for
+  `strict_values` and non-strict commands alike, so a new slice cannot forget it.
+- A slice requests stdin support by adding its pair in the same change that makes
+  its handler treat `-` explicitly: bounded (`stdin::read_bounded`, 1 MiB), UTF-8
+  checked, diagnostics escaped like its other inputs, and no fallback to a file
+  named `-`. `tests/diag_contract.rs` enumerates every registered value flag and
+  positional from `COMMANDS` (`an_unlisted_bare_dash_is_a_usage_error_and_touches_no_file`)
+  and checks that every entry names a real command and flag.
 - The router never reads stdin itself.
 
 ## Shared library contracts (`toolkit-core`)
@@ -1248,7 +1255,8 @@ toolkit cloudwatch region [--region REGION]
   exactly one of `--json` (short, trusted payloads) and `--json-file` (keeps
   values off the command line). Value flags use the shared router
   (`strict_values: true`: `--name value` or `--name=value`, no empty value and
-  none starting with `-`), so stdin (`-`) is not accepted.
+  none starting with `-`), and a bare `-` is refused (`render`, `validate` and
+  `region` have no Python original that reads stdin; see `docs/migration/cli-bare-dash.md`).
 - `RENDERER` is one of `location`, `create-success`, `list`, `get`,
   `batch-delete`, `status-history`, `status-assessment`, `snapshot-search`,
   `snapshot-sample`, `snapshot-fields`, `failure`. The text is printed
@@ -1343,7 +1351,9 @@ toolkit cloudwatch capture-dataset --trace-ids IDS [--mode create|add] [--datase
   `batch-delete-by-scope`, `batch-delete-by-arns`, `get-status` or
   `check-status`; `snapshots OP` is `sample` or `search`. The arguments are one
   JSON object with the legacy parameter names (`--print-contract` prints the
-  schema). An unknown or mistyped argument exits 2; a failed operation prints
+  schema). `--json -` and `--json-file -` read the JSON object from stdin (at most
+  1 MiB of UTF-8, as the Python originals do; larger, invalid or empty input exits 2).
+  An unknown or mistyped argument exits 2; a failed operation prints
   its report on stdout and exits 1. Caller values are escaped to one line
   before they reach a request or a diagnostic, and AWS text is escaped by the
   final output pass.

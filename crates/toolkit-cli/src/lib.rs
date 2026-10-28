@@ -47,6 +47,7 @@ mod safe_text;
 mod skills;
 pub mod spec;
 pub mod startup;
+mod stdin;
 mod sync;
 
 pub use registry::{COMMANDS, USAGE};
@@ -309,27 +310,28 @@ fn usage_error() -> ToolkitError {
 pub const STDIO_DASH_POSITIONAL: &str = "<positional>";
 
 /// The (command path, flag) pairs that accept the exact token `-` as the
-/// argparse stdin/stdout marker (`--json -`, #4743, #4780).
+/// argparse stdin marker (`--json -`, #4743, #4780).
 ///
 /// Fail closed: `-` is accepted ONLY where a pair is listed here, as the value
 /// of the named value flag (`--f -` and `--f=-`) or, for the pseudo-flag
 /// [`STDIO_DASH_POSITIONAL`], as a positional. The command path is the
-/// space-joined [`CommandSpec::path`] (for example
-/// `"cloudwatch validate instrumentation-type"`). Everywhere else `-` is
-/// refused exactly as it was before #4743: a positional `-` is an unknown
-/// flag, and on a `strict_values` command `-` is a refused dash-prefixed
-/// value (a command without `strict_values` keeps taking any value verbatim,
-/// as it always did).
+/// space-joined [`CommandSpec::path`] (for example `"cloudwatch snapshots"`).
+/// Everywhere else `-` is a usage error (exit 2) naming the flag, for EVERY
+/// value flag and positional of every command, `strict_values` or not (#4780):
+/// most slices turn a path argument straight into a filesystem path, where an
+/// accepted `-` would silently read or overwrite a file named `-`. `./-` stays
+/// a legal explicit literal path.
 ///
-/// A command that is not listed never receives a `-` it could mistake for a
-/// stream: most slices turn a path argument straight into a filesystem path,
-/// where an accepted `-` would silently read or overwrite a file named `-`.
-/// A slice that wants stdin/stdout support adds its pair here in the same
-/// change that makes its handler treat `-` explicitly (bounded, UTF-8 checked,
-/// with the same diagnostic escaping as any other input). The list ships
-/// empty because no slice reads stdin yet; the cloudwatch `--json` entry is
-/// added when that slice is integrated.
-pub const STDIO_DASH: &[(&str, &str)] = &[];
+/// A slice that wants stdin support adds its pair here in the same change that
+/// makes its handler read stdin deliberately (bounded and UTF-8 checked, see
+/// `stdin::read_bounded`) and lists it in `docs/migration/cli-bare-dash.md`.
+/// Only parameters whose Python original reads `-` as stdin are listed.
+pub const STDIO_DASH: &[(&str, &str)] = &[
+    ("cloudwatch instrumentation", "--json"),
+    ("cloudwatch instrumentation", "--json-file"),
+    ("cloudwatch snapshots", "--json"),
+    ("cloudwatch snapshots", "--json-file"),
+];
 
 /// Whether `-` is an accepted stdio marker for `flag` (a value flag name, or
 /// [`STDIO_DASH_POSITIONAL`]) of `spec` according to `allowed`.
@@ -341,12 +343,46 @@ fn dash_listed(allowed: &[(&str, &str)], spec: &CommandSpec, flag: &str) -> bool
 }
 
 /// Whether `value` may follow the value flag `flag` of `spec` (see
-/// [`CommandSpec::strict_values`]). The exact token `-` additionally needs
-/// the pair to be listed in `allowed` ([`STDIO_DASH`]).
-fn value_allowed(spec: &CommandSpec, allowed: &[(&str, &str)], flag: &str, value: &str) -> bool {
-    !spec.strict_values
-        || !(value.is_empty() || value.starts_with('-'))
-        || (value == "-" && dash_listed(allowed, spec, flag))
+/// [`CommandSpec::strict_values`]). The exact token `-` is refused for every
+/// command unless the pair is listed in `allowed` ([`STDIO_DASH`]).
+fn value_allowed(
+    spec: &CommandSpec,
+    allowed: &[(&str, &str)],
+    flag: &str,
+    value: &str,
+) -> Result<(), ToolkitError> {
+    if value == "-" {
+        return if dash_listed(allowed, spec, flag) {
+            Ok(())
+        } else {
+            Err(dash_value_error(flag))
+        };
+    }
+    if spec.strict_values && (value.is_empty() || value.starts_with('-')) {
+        return Err(usage_error());
+    }
+    Ok(())
+}
+
+/// The usage error for a bare `-` given to `flag`: one line naming the flag
+/// (always a registered flag name, never caller text).
+fn dash_value_error(flag: &str) -> ToolkitError {
+    ToolkitError::usage(
+        "invalid_arguments",
+        format!(
+            "invalid arguments: {flag} does not accept - (standard input/output); \
+             use ./- for a file named -"
+        ),
+    )
+}
+
+/// The usage error for a bare `-` positional argument.
+fn dash_positional_error() -> ToolkitError {
+    ToolkitError::usage(
+        "invalid_arguments",
+        "invalid arguments: a bare - argument is not accepted (standard input/output); \
+         use ./- for a file named -",
+    )
 }
 
 /// Whether `name` is a value flag of `spec`, plain or repeatable.
@@ -420,18 +456,16 @@ fn route_with<'a>(
                 let Some(value) = rest.next() else {
                     return Err(usage_error());
                 };
-                if !value_allowed(spec, stdio_dash, word, value) {
-                    return Err(usage_error());
-                }
+                value_allowed(spec, stdio_dash, word, value)?;
                 invocation.store_value(spec, word, value);
             } else if let Some((name, value)) = word
                 .split_once('=')
                 .filter(|(name, _)| is_value_flag(spec, name))
             {
-                if !value_allowed(spec, stdio_dash, name, value) {
-                    return Err(usage_error());
-                }
+                value_allowed(spec, stdio_dash, name, value)?;
                 invocation.store_value(spec, name, value);
+            } else if word == "-" {
+                return Err(dash_positional_error());
             } else if !spec.flags.contains(&word) {
                 return Err(usage_error());
             } else if !invocation.has_flag(word) {
@@ -823,8 +857,18 @@ mod tests {
     }
 
     #[test]
-    fn the_shipped_stdio_dash_list_is_empty_until_a_slice_reads_stdin() {
-        assert!(STDIO_DASH.is_empty(), "{STDIO_DASH:?}");
+    fn the_shipped_stdio_dash_list_is_the_python_stdin_parameters_only() {
+        // Each pair has a Python original that reads `-` as stdin and a handler
+        // that reads it bounded (docs/migration/cli-bare-dash.md).
+        assert_eq!(
+            STDIO_DASH,
+            [
+                ("cloudwatch instrumentation", "--json"),
+                ("cloudwatch instrumentation", "--json-file"),
+                ("cloudwatch snapshots", "--json"),
+                ("cloudwatch snapshots", "--json-file"),
+            ]
+        );
     }
 
     #[test]
@@ -843,7 +887,12 @@ mod tests {
             };
             assert_eq!(error.kind(), ErrorKind::Usage, "{values:?}");
             assert_eq!(error.code(), "invalid_arguments", "{values:?}");
-            assert_eq!(error.message(), "invalid arguments", "{values:?}");
+            assert!(
+                error.message().starts_with("invalid arguments: "),
+                "{values:?}: {}",
+                error.message()
+            );
+            assert!(!error.message().contains('\n'), "single line");
         }
         // A listed pair does not open its neighbours: another flag on the same
         // command, the same flag on another command, or the positional.
@@ -862,12 +911,43 @@ mod tests {
     }
 
     #[test]
-    fn a_non_strict_command_keeps_taking_any_value_unlisted() {
-        // Unchanged by #4743: only `strict_values` commands ever refused values.
-        let invocation = route_repeatable(&["loose", "--mode", "-"]).expect("routes");
-        assert_eq!(invocation.value("--mode"), Some("-"));
-        // But a positional `-` was always an unknown flag, listed or not.
-        assert!(route_repeatable(&["loose", "-"]).is_err());
+    fn a_non_strict_command_refuses_a_bare_dash_value_too() {
+        // #4780: `loose` takes any other value verbatim, but a lone `-` reaches a
+        // handler only through STDIO_DASH, in both spellings, plain or repeatable.
+        for values in [
+            ["loose", "--mode", "-"].as_slice(),
+            &["loose", "--mode=-"],
+            &["loose", "--both", "-"],
+            &["loose", "--workload=-"],
+            &["loose", "-"],
+        ] {
+            let Err(error) = route_repeatable(values) else {
+                panic!("{values:?} must be a usage error");
+            };
+            assert_eq!(error.kind(), ErrorKind::Usage, "{values:?}");
+            assert_eq!(error.exit_code(), 2, "{values:?}");
+            assert!(
+                error.message().starts_with("invalid arguments: "),
+                "{values:?}: {}",
+                error.message()
+            );
+        }
+        // The message names the flag.
+        let error = route_repeatable(&["loose", "--mode=-"]).expect_err("refused");
+        assert!(error.message().contains("--mode"), "{}", error.message());
+        // Every other value is still taken verbatim, dashes included.
+        let invocation = route_repeatable(&["loose", "--mode", "-x"]).expect("routes");
+        assert_eq!(invocation.value("--mode"), Some("-x"));
+        let invocation = route_repeatable(&["loose", "--mode", ""]).expect("routes");
+        assert_eq!(invocation.value("--mode"), Some(""));
+        // `./-` is an ordinary literal.
+        let invocation = route_repeatable(&["loose", "--mode", "./-", "./-"]).expect("routes");
+        assert_eq!(invocation.value("--mode"), Some("./-"));
+        assert_eq!(invocation.positionals, ["./-"]);
+        // A listed pair opens only itself.
+        let allowed = [("loose", "--mode")];
+        assert!(route_dash(&allowed, &["loose", "--mode", "-"]).is_ok());
+        assert!(route_dash(&allowed, &["loose", "--both", "-"]).is_err());
     }
 
     #[test]
