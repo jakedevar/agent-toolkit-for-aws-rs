@@ -422,8 +422,12 @@ live once in `toolkit_aws::recorded`; use it instead of writing your own.
    `optional_object_list`, `optional_string_list`, `optional_object` or
    `optional_text`: absent or `[]` is empty; `null` or another type is an
    `aws_invalid_response`, never an empty listing. A legitimately nullable
-   scalar is an explicit opt-in: `nullable_text`, and `toolkit_aws::next_token_from`
-   for a pagination token (absent, `null` and `""` end paging).
+   scalar is an explicit opt-in: `nullable_text`, `nullable_list` for a list
+   whose `null` the slice documents as "none", and `toolkit_aws::next_token_from`
+   for a pagination token (absent, `null` and `""` end paging). A whole value
+   that must be a list or an object (the recorded document, a list entry, a
+   required member already looked up) is read with `list_value` or
+   `object_members`.
 4. **Diagnostics.** A `MemberError` carries the member name, the expected
    type and the type found, never a value; render it with its `Display`
    (`<key> must be <expected> when present (it is <found>)`) or from its

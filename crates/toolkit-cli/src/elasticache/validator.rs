@@ -296,6 +296,8 @@ fn validator_for(key: &str) -> Option<fn(&str) -> Check> {
 }
 
 /// Python type name of a JSON value, for the "expected a string" message.
+// recorded-shape: names the Python type of a `validate-input` value the user typed;
+// every JSON type is named, nothing is read or defaulted.
 fn python_type_name(value: &Json) -> &'static str {
     match value {
         Json::Null => "NoneType",

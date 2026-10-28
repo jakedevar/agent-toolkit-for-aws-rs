@@ -1590,13 +1590,7 @@ const INVENTORY: &[(&str, Class)] = &[
         "bedrock_report",
         Class::NotRecorded("the skill's own report payloads and phase-result files"),
     ),
-    (
-        "bedrock_resolve",
-        Class::Pending {
-            issue: "#4839",
-            findings: 17,
-        },
-    ),
+    ("bedrock_resolve", Class::Recorded),
     (
         "cloudwatch",
         Class::NotRecorded(
@@ -1610,13 +1604,7 @@ const INVENTORY: &[(&str, Class)] = &[
             "a pure cost calculator and a design loop over the skill's own state files",
         ),
     ),
-    (
-        "elasticache",
-        Class::Pending {
-            issue: "#4839",
-            findings: 30,
-        },
-    ),
+    ("elasticache", Class::Recorded),
     (
         "manifests",
         Class::NotRecorded("the repository's marketplace and plugin manifests"),

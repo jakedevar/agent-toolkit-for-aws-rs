@@ -227,6 +227,38 @@ output, missing/duplicate/unknown options and malformed files.
       entries);
     - a `security_groups_error` that is present, not `null` and not a string is
       still an inspection error.
+18. **The describe file is read through `toolkit_aws::recorded` (#4839).**
+    Every list and object of the recorded responses is read with the shared
+    accessors (`optional_list`, `nullable_list`, `list_value`,
+    `object_members`), and `tests/recorded_contract.rs` now holds the slice to
+    them (`Class::Recorded`). The members documented as "absent or `null` is
+    none" (`tags`, `SecurityGroupIds`, `MemberClusters`, `NodeGroups`,
+    `NodeGroupMembers`, `UserGroupIds`, a cluster's missing `SecurityGroups`)
+    keep that meaning through the explicit `nullable_list` opt-in, and every
+    verdict on a valid or already-refused input is unchanged. Three malformed
+    inputs used to read as an empty list and now refuse:
+    - a `serverless_caches` / `replication_groups` member that is present but
+      `null` or not a list was "not found". The audit now refuses with exit
+      status 1 and names the member and the type it holds, never a value:
+      `ERROR: Serverless cache '<name>' cannot be audited: serverless_caches
+      must be a list when present (it is null)` (the same text is the `error`
+      member of `--json`). An absent or empty list is still "not found";
+    - a `NodeGroups` that is present and neither a list nor `null` reported
+      `num_node_groups: 0` next to its `ERROR` finding. The count is now
+      `"unknown"` (the text report shows `Node groups:     unknown`);
+    - a `MemberClusters` that is present and neither a list nor `null` left
+      out `engine_version` and `node_type`, as if there were no members. Both
+      are now `"unknown"`, as for a member with no recorded cluster.
+    Regressions: `a_null_or_wrong_typed_resource_list_refuses_the_audit`,
+    `the_audit_command_refuses_a_null_resource_list`,
+    `a_wrong_typed_node_group_list_has_no_count` and
+    `a_wrong_typed_member_cluster_list_leaves_the_engine_unknown` fail on the
+    earlier `audit.rs` and pass now.
+
+    `preflight` reads a Redis/Valkey snapshot, `price`/`--pricing-json` a
+    price table file, and `validate-input` the values the user types. None
+    of them is an AWS response, so their reads carry a
+    `// recorded-shape:` marker and their behaviour is unchanged.
 
 ### Audit `PASS` paths and the evidence each one needs
 
@@ -236,7 +268,7 @@ gives the `WARN`/`FAIL` the script gave, or the not-inspected `ERROR`. No
 
 | Mode | Check | `PASS` requires | Missing / off | Malformed but "on" |
 | --- | --- | --- | --- | --- |
-| both | (resource record) | exactly one record in `serverless_caches` / `replication_groups` whose name string equals the requested non-blank name | not found, exit 1 | not found / "recorded more than once", exit 1 |
+| both | (resource record) | exactly one record in `serverless_caches` / `replication_groups` whose name string equals the requested non-blank name | not found, exit 1 | not found / "recorded more than once" / "cannot be audited" (the list is present but `null` or not a list, item 18), exit 1 |
 | serverless | TLS in-transit encryption | the identified record (a property of the service) | - | - |
 | serverless | Multi-AZ | the identified record (a property of the service) | - | - |
 | serverless | Authentication | `UserGroupId` a usable identifier | `WARN` (absent, `null`, falsy) | `ERROR` (other truthy value) |

@@ -187,6 +187,8 @@ fn version_tuple(version: &str) -> (i64, i64) {
     }
 }
 
+// recorded-shape: one MODULE LIST entry of the Redis/Valkey snapshot file, not an AWS
+// response; every JSON type renders as the script printed it.
 fn module_name(entry: &Json) -> String {
     match entry {
         Json::Array(items) if items.len() > 1 => py_str(&items[1]),
@@ -306,6 +308,8 @@ pub fn run_preflight(
         });
     }
     let server_info = match snapshot.get("info") {
+        // recorded-shape: the required INFO reply of the Redis/Valkey snapshot file, not an
+        // AWS response; any shape but an object is refused.
         Some(object @ Json::Object(_)) => object,
         _ => {
             return Err(ToolkitError::runtime(
@@ -431,6 +435,8 @@ pub fn run_preflight(
     })
 }
 
+// recorded-shape: the `db*` keyspace sections of the INFO reply in the Redis/Valkey
+// snapshot file, not an AWS response; a section of another type counts no keys.
 fn key_count_findings(
     server_info: &Json,
     info: &mut Vec<(String, Json)>,
@@ -496,6 +502,8 @@ fn module_findings(snapshot: &Json, info: &mut Vec<(String, Json)>, findings: &m
             ));
             return;
         }
+        // recorded-shape: the MODULE LIST reply of the Redis/Valkey snapshot file, not an
+        // AWS response; `null` is the documented refused command.
         Some(Json::Array(items)) => items.iter().map(module_name).collect::<Vec<_>>(),
         _ => Vec::new(),
     };
@@ -541,6 +549,8 @@ fn command_findings(snapshot: &Json, info: &mut Vec<(String, Json)>, findings: &
             ));
             None
         }
+        // recorded-shape: the INFO COMMANDSTATS reply of the Redis/Valkey snapshot file,
+        // not an AWS response; `null` is the documented refused command.
         Some(object @ Json::Object(_)) => Some(object),
         _ => None,
     };
@@ -572,6 +582,8 @@ fn command_findings(snapshot: &Json, info: &mut Vec<(String, Json)>, findings: &
 }
 
 fn large_key_findings(snapshot: &Json, findings: &mut Vec<Finding>) {
+    // recorded-shape: the sampled keys of the Redis/Valkey snapshot file, not an AWS
+    // response; a list that is absent or of another type samples nothing.
     let Some(Json::Array(samples)) = snapshot.get("sample_keys") else {
         return;
     };
@@ -628,6 +640,8 @@ fn eviction_findings(
         ));
         return;
     }
+    // recorded-shape: the CONFIG GET reply of the Redis/Valkey snapshot file, not an
+    // AWS response; `null` is the documented refused command.
     let Some(config @ Json::Object(_)) = snapshot.get("config") else {
         set_member(info, "maxmemory_policy", js("unknown"));
         return;
@@ -699,6 +713,8 @@ pub fn format_report(result: &Preflight) -> String {
         .find(|(name, _)| name == "cluster_mode")
         .is_some_and(|(_, value)| truthy(Some(value)));
     let modules = match info.iter().find(|(name, _)| name == "modules") {
+        // recorded-shape: the `modules` member of the preflight result this command built
+        // from the snapshot, not an AWS response.
         Some((_, Json::Array(items))) if !items.is_empty() => items
             .iter()
             .map(|item| show(&py_str(item)))

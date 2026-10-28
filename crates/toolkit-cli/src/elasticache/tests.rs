@@ -5143,3 +5143,123 @@ fn audit_command_does_not_pass_unidentified_or_partial_discovery() {
         }
     }
 }
+
+// #4839: the audit reads the describe file through `toolkit_aws::recorded`. A
+// resource list, `NodeGroups` or `MemberClusters` that is present but not a
+// list used to read as empty; each now refuses or reports the value unknown.
+
+#[test]
+fn a_null_or_wrong_typed_resource_list_refuses_the_audit() {
+    for (list, found) in [
+        ("null", "null"),
+        (r#""cache1""#, "string"),
+        (r#"{"ServerlessCacheName": "cache1"}"#, "object"),
+        ("7", "integer"),
+    ] {
+        let describe = json(&format!(r#"{{"serverless_caches": {list}}}"#));
+        let serverless = audit::audit_serverless(&describe, "cache1");
+        let message = format!(
+            "Serverless cache 'cache1' cannot be audited: serverless_caches must be a list when present (it is {found})"
+        );
+        assert!(serverless.failed(), "{list}");
+        assert_eq!(serverless, Audit::NotFound(message.clone()), "{list}");
+        assert_eq!(
+            audit::format_report(&serverless),
+            format!("ERROR: {message}")
+        );
+
+        let describe = json(&format!(r#"{{"replication_groups": {list}}}"#));
+        let replication = audit::audit_replication_group(&describe, "rg1");
+        assert_eq!(
+            replication,
+            Audit::NotFound(format!(
+                "Replication group 'rg1' cannot be audited: replication_groups must be a list when present (it is {found})"
+            )),
+            "{list}"
+        );
+    }
+    // An absent or empty list is still "not found".
+    for describe in ["{}", r#"{"serverless_caches": []}"#] {
+        assert_eq!(
+            audit::audit_serverless(&json(describe), "cache1"),
+            Audit::NotFound("Serverless cache 'cache1' not found".to_string()),
+            "{describe}"
+        );
+    }
+}
+
+#[test]
+fn the_audit_command_refuses_a_null_resource_list() {
+    let dir = TempDir::new("audit-null-list");
+    let path = dir.file("describe.json", r#"{"replication_groups": null}"#);
+    for (flags, stdout) in [
+        (
+            &[][..],
+            "ERROR: Replication group 'rg1' cannot be audited: replication_groups must be a list when present (it is null)\n",
+        ),
+        (
+            &["--json"][..],
+            "{\n  \"error\": \"Replication group 'rg1' cannot be audited: replication_groups must be a list when present (it is null)\"\n}\n",
+        ),
+    ] {
+        let mut args = vec![
+            "elasticache",
+            "audit",
+            "--replication-group",
+            "rg1",
+            "--describe",
+            &path,
+        ];
+        args.extend_from_slice(flags);
+        assert_eq!(
+            exec(&args),
+            (1, stdout.to_string(), String::new()),
+            "{flags:?}"
+        );
+    }
+}
+
+#[test]
+fn a_wrong_typed_node_group_list_has_no_count() {
+    for node_groups in [r#""x""#, "{}", "7"] {
+        let result = replication_audit(&format!(r#", "NodeGroups": {node_groups}"#), "");
+        assert_eq!(
+            member(&audit_info(&result), "num_node_groups"),
+            &Json::string("unknown"),
+            "{node_groups}"
+        );
+        assert_eq!(statuses_of(&result, "Security groups"), ["ERROR"]);
+        assert!(audit::format_report(&result).contains("  Node groups:     unknown\n"));
+    }
+    // Absent and `null` (documented as none) still count zero node groups.
+    for group in ["", r#", "NodeGroups": null"#, r#", "NodeGroups": []"#] {
+        let result = replication_audit(group, "");
+        assert_eq!(
+            member(&audit_info(&result), "num_node_groups"),
+            &Json::Int(0),
+            "{group}"
+        );
+    }
+}
+
+#[test]
+fn a_wrong_typed_member_cluster_list_leaves_the_engine_unknown() {
+    for clusters in [r#""a""#, r#"{"a": 1}"#, "7"] {
+        let result = replication_audit(&format!(r#", "MemberClusters": {clusters}"#), "");
+        let info = audit_info(&result);
+        assert_eq!(member(&info, "engine"), &Json::string("unknown"));
+        assert_eq!(member(&info, "engine_version"), &Json::string("unknown"));
+        assert_eq!(member(&info, "node_type"), &Json::string("unknown"));
+        assert_eq!(statuses_of(&result, "Security groups"), ["ERROR"]);
+    }
+    // Absent, `null` and `[]` name no first member: no engine details, as before.
+    for group in [
+        "",
+        r#", "MemberClusters": null"#,
+        r#", "MemberClusters": []"#,
+    ] {
+        let info = audit_info(&replication_audit(group, ""));
+        assert!(info.get("engine_version").is_none(), "{group}");
+        assert!(info.get("node_type").is_none(), "{group}");
+    }
+}

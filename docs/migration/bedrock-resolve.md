@@ -214,6 +214,18 @@ Rust tests, command output re-deferred**.
     the same in either catalog order. Tests:
     `tied_snapshots_are_ambiguous_in_either_catalog_order`,
     `a_duplicated_catalog_id_is_one_candidate_not_a_tie`.
+12. **Recorded reads go through `toolkit_aws::recorded` (#4839, no behaviour
+    change).** The `--price-list` document and its `get_products` items, and
+    the `--catalog` listing pages, are read with the shared accessors
+    (`optional_object`, `optional_text`, `optional_list`, `list_value`,
+    `object_members`), and `tests/recorded_contract.rs` now holds the slice to
+    them (`Class::Recorded`). Every one of these reads already refused a
+    present `null` or a wrong type with the fixed messages above, so the
+    outputs, notes and exit statuses are unchanged. The `--mappings` file
+    (written by the user), the walk that escapes the `source-model` answer,
+    and the truthiness of a provider page's `has_more` / `nextPageToken` (an
+    OpenAI, Anthropic or Gemini page, not an AWS response) carry a
+    `// recorded-shape:` marker instead.
 
 ## Superseded parity quirks (#4676)
 
