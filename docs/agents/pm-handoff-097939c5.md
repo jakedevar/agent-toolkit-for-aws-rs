@@ -225,3 +225,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 01:10Z: #4742 round 3 on d29a2585: CHANGES_REQUESTED #4816 (cap error echoes id), #4817 (writeback diag echoes data), #4818 (malformed status -> exit 0 PENDING). Reviewer friction #4813.
   RULING: remove cause — repair round 3 (Opus) 955e5b50 continue_from 16f724e9 (op 3df1bd17) adds a table-driven mutation harness (sentinel/null/wrong-type per read path; no echo, no false success) and fixes all it finds. Next re-review checks the harness covers every read path; if it still finds defects outside the harness's reach, narrow scope (split commands) rather than loop.
 - 01:10Z: safety net: 5060cb2e still queued (HOL). Disk recovered to 131G free (83%). Workers: 955e5b50 running (#4381 r3); a7277981, 36d6de30, 8fba463c parked on jobs. Net re-armed 02:10Z.
+- 01:25Z: #4391 impl 2b60c3eeebf3a2fbe361c4e828ca09a662026ff0 (a7277981; deploy-model + generate-teardown offline plans; merged ec2740ed as 30cb293d; scoped 5fe61856 ok except 3 pre-existing relational recorded_contract reds). Follow-up #4801 (live path). #4809 cancelled as dup of #4799.
+  Security pre-review #4819 worker 98ce3af8 (Codex sol high, pinned, op 73a3b333).
+  4/4 busy: 955e5b50 (#4381 r3), 36d6de30 (#4799), 8fba463c (#4409), 98ce3af8 (#4819).
