@@ -313,3 +313,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 10-28 21:00Z: #4873 on #4584 e60717ac: checks 2-4 PASS; finding #4875 (check/open TOCTOU via concurrent rename). RULING: out of toolkit-core threat model (no concurrent mutation; Python never had it); my brief over-reached. #4875 -> P3 hardening follow-up. ACCEPTED #4584 at e60717ac85a65e83f79f84a1f19f1a42bb391d98. Close on land: #4584 #4603 #4873.
   New slice #4395 DocumentDB/Neptune worker (Sonnet high, base rolling).
   4/4 busy: c621f43f (#4576), 10864034 (#4751 repair 2), 39bbfbb0 (#4398), #4395 worker.
+- 10-28 21:10Z: #4751 repair 2 0b0fbb320efabe61496ccae80ec59ae27b185e55 (10864034; COVERS #4872; test_only_files: exclude only files every loader declares test-only). Final re-review #4852 r3 (Codex sol, pinned).
+  #4576 impl 084fa8b302d1d788980135b57009dff6480efee7 (c621f43f; registry.rs SLICES one sorted line per slice, per-slice SLICE consts, compile-time COMMANDS/USAGE; help cmp-identical; scoped 5c347e9f ok cli 2817; base ce0eaf6a). Review #4876 (Codex sol, pinned).
+  4/4 busy: 39bbfbb0 (#4398), fc21470d (#4395), #4852 r3, #4876.
