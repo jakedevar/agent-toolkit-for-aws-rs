@@ -8,16 +8,18 @@
 //!
 //! [`SLICES`] is the one shared list. It holds one line per slice and is kept
 //! in strictly ascending order of the slice name, so two slices added
-//! concurrently touch different lines and merge without a conflict (a test
+//! concurrently touch different lines unless they land in the same alphabetical
+//! gap, where the conflict is trivial: keep both lines in sorted order (a test
 //! fails if the list is unsorted, holds a duplicate name or a duplicate route).
 //!
 //! [`COMMANDS`] and [`USAGE`] are built from [`SLICES`] at compile time:
 //!
-//! - [`COMMANDS`] concatenates the routes of every slice, ordered by
-//!   [`Slice::description_rank`] and then the slice name. Inside a slice the
-//!   routes keep their declared order, which matters because the first
-//!   matching route wins (`aurora acu` follows the longer `aurora acu ...`
-//!   routes).
+//! - [`COMMANDS`] concatenates the routes of every slice in the legacy routing
+//!   order ([`LEGACY_ROUTING_ORDER`]: the order of the pre-registry table, which
+//!   is independent of the help order); a slice that is not listed there follows
+//!   the listed ones, ordered by name. Inside a slice the routes keep their
+//!   declared order, which matters because the first matching route wins
+//!   (`aurora acu` follows the longer `aurora acu ...` routes).
 //! - [`USAGE`] is [`USAGE_HEAD`], the synopses ordered by
 //!   [`Slice::synopsis_rank`], [`USAGE_MIDDLE`], the descriptions ordered by
 //!   [`Slice::description_rank`], [`USAGE_TAIL`] and the exit-code notes ordered
@@ -66,8 +68,8 @@ pub(crate) struct Slice {
     pub doc: &'static str,
     /// Position of the synopsis lines in `Usage:` (see [`NEW_RANK`]).
     pub synopsis_rank: u16,
-    /// Position of the description (and exit notes) in `Commands:` and of the
-    /// routes in [`COMMANDS`] (see [`NEW_RANK`]).
+    /// Position of the description (and exit notes) in `Commands:` (see
+    /// [`NEW_RANK`]). The routes of [`COMMANDS`] have their own order.
     pub description_rank: u16,
 }
 
@@ -108,6 +110,47 @@ pub(crate) const SLICES: &[Slice] = &[
     crate::startup::skill_refs::SLICE,
     crate::startup::terraform::SLICE,
     crate::sync::SLICE,
+];
+
+/// The slices that predate the registry, in the order their routes had in the
+/// old `COMMANDS` table. It fixes the public order of [`COMMANDS`] (the test
+/// `the_public_route_order_is_pinned` pins every route). A new slice is not
+/// listed here: its routes follow these, ordered by slice name.
+const LEGACY_ROUTING_ORDER: &[&str] = &[
+    "skills",
+    "manifests",
+    "spec",
+    "startup-pricing",
+    "startup-program",
+    "startup-model-ids",
+    "startup-artifacts",
+    "startup-plan",
+    "startup-consent",
+    "startup-parity",
+    "startup-terraform",
+    "startup-report",
+    "startup-scoring",
+    "startup-models",
+    "startup-diagram",
+    "startup-model-path",
+    "startup-skill-refs",
+    "startup-model-staleness",
+    "startup-fixtures",
+    "sync",
+    "msk",
+    "dynamodb",
+    "dynamodb-deploy",
+    "aurora",
+    "ai-data",
+    "ai-models",
+    "bedrock-agent",
+    "bedrock-report",
+    "cloudwatch-domain",
+    "cloudwatch-api",
+    "elasticache",
+    "bedrock-resolve",
+    "asm-exec",
+    "relational",
 ];
 
 /// The start of the usage text, up to the first synopsis line.
@@ -161,12 +204,51 @@ Exit codes:
 
 const SLICE_COUNT: usize = SLICES.len();
 
-/// Whether `a` sorts before `b` by the chosen rank and then the name.
-const fn comes_first(left: &Slice, right: &Slice, by_synopsis: bool) -> bool {
-    let (rank_left, rank_right) = if by_synopsis {
-        (left.synopsis_rank, right.synopsis_rank)
-    } else {
-        (left.description_rank, right.description_rank)
+/// Which order [`slice_order`] computes.
+#[derive(Clone, Copy)]
+enum Order {
+    Synopsis,
+    Description,
+    Routing,
+}
+
+/// Whether two names are equal (`==` on `str` is not `const`).
+const fn same_name(left: &str, right: &str) -> bool {
+    let (left, right) = (left.as_bytes(), right.as_bytes());
+    if left.len() != right.len() {
+        return false;
+    }
+    let mut at = 0;
+    while at < left.len() {
+        if left[at] != right[at] {
+            return false;
+        }
+        at += 1;
+    }
+    true
+}
+
+/// The position of a slice in [`LEGACY_ROUTING_ORDER`], or past its end.
+const fn routing_position(slice: &Slice) -> usize {
+    let mut at = 0;
+    while at < LEGACY_ROUTING_ORDER.len() {
+        if same_name(LEGACY_ROUTING_ORDER[at], slice.name) {
+            return at;
+        }
+        at += 1;
+    }
+    LEGACY_ROUTING_ORDER.len()
+}
+
+/// Whether `a` sorts before `b` by the chosen key and then the name.
+const fn comes_first(left: &Slice, right: &Slice, order: Order) -> bool {
+    let (rank_left, rank_right) = match order {
+        Order::Synopsis => (left.synopsis_rank as usize, right.synopsis_rank as usize),
+        Order::Description => (
+            left.description_rank as usize,
+            right.description_rank as usize,
+        ),
+        Order::Routing => (routing_position(left), routing_position(right)),
     };
     if rank_left != rank_right {
         return rank_left < rank_right;
@@ -182,14 +264,14 @@ const fn comes_first(left: &Slice, right: &Slice, by_synopsis: bool) -> bool {
     name_left.len() < name_right.len()
 }
 
-/// The indices of [`SLICES`] in help order (an insertion sort: the list is
+/// The indices of [`SLICES`] in the given order (an insertion sort: the list is
 /// short and `const` evaluation has no `sort`).
-const fn help_order(by_synopsis: bool) -> [usize; SLICE_COUNT] {
+const fn slice_order(kind: Order) -> [usize; SLICE_COUNT] {
     let mut order = [0usize; SLICE_COUNT];
     let mut i = 0;
     while i < SLICE_COUNT {
         let mut at = i;
-        while at > 0 && comes_first(&SLICES[i], &SLICES[order[at - 1]], by_synopsis) {
+        while at > 0 && comes_first(&SLICES[i], &SLICES[order[at - 1]], kind) {
             order[at] = order[at - 1];
             at -= 1;
         }
@@ -199,8 +281,9 @@ const fn help_order(by_synopsis: bool) -> [usize; SLICE_COUNT] {
     order
 }
 
-const SYNOPSIS_ORDER: [usize; SLICE_COUNT] = help_order(true);
-const DESCRIPTION_ORDER: [usize; SLICE_COUNT] = help_order(false);
+const SYNOPSIS_ORDER: [usize; SLICE_COUNT] = slice_order(Order::Synopsis);
+const DESCRIPTION_ORDER: [usize; SLICE_COUNT] = slice_order(Order::Description);
+const ROUTING_ORDER: [usize; SLICE_COUNT] = slice_order(Order::Routing);
 
 const COMMAND_COUNT: usize = {
     let mut count = 0;
@@ -218,7 +301,7 @@ const fn command_table() -> [CommandSpec; COMMAND_COUNT] {
     let mut at = 0;
     let mut i = 0;
     while i < SLICE_COUNT {
-        let commands = SLICES[DESCRIPTION_ORDER[i]].commands;
+        let commands = SLICES[ROUTING_ORDER[i]].commands;
         let mut j = 0;
         while j < commands.len() {
             table[at] = commands[j];
@@ -461,14 +544,270 @@ mod tests {
         );
     }
 
+    /// The route paths of the old `COMMANDS` table (commit ce0eaf6a, before the
+    /// registry), in table order: the public order of [`COMMANDS`].
+    const LEGACY_COMMAND_ORDER: [&str; 78] = [
+        "skills list",
+        "manifests validate",
+        "spec validate",
+        "startup model-pricing",
+        "startup program-artifacts",
+        "startup model-id-lint",
+        "startup artifacts",
+        "startup emit-plan",
+        "startup consent-audit",
+        "startup pricing-parity",
+        "startup terraform-policy",
+        "startup migration-report",
+        "startup heroku-report",
+        "startup score",
+        "startup score-units",
+        "startup model-recommend",
+        "startup build-diagram",
+        "startup verify-model-path",
+        "startup skill-refs",
+        "startup model-staleness",
+        "startup check-expected",
+        "sync plugin-skills",
+        "sync vendored",
+        "msk size",
+        "msk compat",
+        "msk sim compute",
+        "msk sim render",
+        "msk sim validate",
+        "dynamodb calculate-costs",
+        "dynamodb iterate-design",
+        "dynamodb deploy-model",
+        "dynamodb generate-teardown",
+        "aurora acu estimate",
+        "aurora acu list-instances",
+        "aurora acu pricing-source",
+        "aurora acu",
+        "aurora commitment",
+        "aurora io",
+        "ai-data detect-format",
+        "ai-data validate-metrics",
+        "ai-data transform plan",
+        "ai-data transform submit",
+        "ai-data transform describe",
+        "ai-models list-models",
+        "ai-models filter",
+        "ai-models search",
+        "ai-models model-names",
+        "ai-models recipes",
+        "ai-models endpoint-diagnostics",
+        "bedrock-agent fetch",
+        "bedrock-report render",
+        "bedrock-report validate",
+        "cloudwatch render",
+        "cloudwatch validate",
+        "cloudwatch region",
+        "cloudwatch instrumentation",
+        "cloudwatch snapshots",
+        "cloudwatch evaluate-traces",
+        "cloudwatch capture-dataset",
+        "elasticache price",
+        "elasticache estimate-serverless",
+        "elasticache validate-input",
+        "elasticache validate-references",
+        "elasticache preflight",
+        "elasticache audit",
+        "elasticache dashboard",
+        "bedrock-resolve identity",
+        "bedrock-resolve image",
+        "bedrock-resolve pricing",
+        "bedrock-resolve source-model",
+        "asm exec",
+        "dsql selftest",
+        "dsql tenant-sql",
+        "dsql tenant-query",
+        "rds commitment",
+        "rds-oracle test-connection",
+        "timestream-influxdb validate-input",
+        "timestream-influxdb instance-types",
+    ];
+
+    #[test]
+    fn the_public_route_order_is_pinned() {
+        let order: Vec<String> = COMMANDS.iter().map(|spec| spec.path.join(" ")).collect();
+        assert!(order.len() >= LEGACY_COMMAND_ORDER.len());
+        assert_eq!(
+            order[..LEGACY_COMMAND_ORDER.len()],
+            LEGACY_COMMAND_ORDER,
+            "COMMANDS must keep the legacy routing order; routes of new slices follow it"
+        );
+    }
+
+    #[test]
+    fn the_legacy_routing_order_names_registered_slices_once() {
+        let names: HashSet<&str> = SLICES.iter().map(|slice| slice.name).collect();
+        let listed: HashSet<&str> = LEGACY_ROUTING_ORDER.iter().copied().collect();
+        assert_eq!(
+            listed.len(),
+            LEGACY_ROUTING_ORDER.len(),
+            "a name is listed twice"
+        );
+        assert!(listed.is_subset(&names), "an unknown slice is listed");
+    }
+
+    /// The first word after `toolkit` when `line` starts a command (a fenced
+    /// or plain line, optionally behind a prompt, a list marker or a backtick).
+    /// `toolkit help` and `toolkit --version` are not slice commands.
+    fn command_word(line: &str) -> Option<String> {
+        let mut text = line.trim_start();
+        for marker in ["$ ", "- ", "* "] {
+            text = text.strip_prefix(marker).unwrap_or(text).trim_start();
+        }
+        let text = text.trim_start_matches('`');
+        let rest = text.strip_prefix("toolkit ")?.trim_start();
+        let word: String = rest
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == '-')
+            .collect();
+        (word.starts_with(|c: char| c.is_ascii_lowercase()) && word != "help").then_some(word)
+    }
+
+    /// Why `readme` holds a hand-maintained command index, if it does.
+    ///
+    /// Allowed: the single `## Commands` pointer section (prose only: no code
+    /// fence and no command line), and per-slice sections whose commands are
+    /// examples of the slice the section introduces. Rejected: a second
+    /// `Commands`/`Usage`-style heading, a fence or command line inside the
+    /// pointer section, and a run of command lines (blank lines between them
+    /// do not break the run) naming two or more command families that the
+    /// section's introduction does not mention (an index across slices).
+    fn command_index_problem(readme: &str) -> Option<String> {
+        let mut in_fence = false;
+        let mut heading = String::new();
+        let mut commands_headings = 0;
+        let mut intro = String::new(); // prose of the section before the run
+        let mut run: Vec<String> = Vec::new();
+        let mut run_intro = String::new();
+        let flush = |run: &mut Vec<String>, run_intro: &str, heading: &str| {
+            let mut words = std::mem::take(run);
+            words.sort_unstable();
+            words.dedup();
+            if words.len() < 2 {
+                return None;
+            }
+            let known = format!("{heading}\n{run_intro}").to_lowercase();
+            let strangers: Vec<&String> = words
+                .iter()
+                .filter(|word| !known.contains(word.as_str()))
+                .collect();
+            (!strangers.is_empty())
+                .then(|| format!("a command list across slices {words:?} under `{heading}`"))
+        };
+        for line in readme.lines() {
+            let fence = line.trim_start().starts_with("```");
+            let word = command_word(line);
+            if !in_fence && !fence {
+                if let Some(text) = line.strip_prefix('#') {
+                    if let Some(problem) = flush(&mut run, &run_intro, &heading) {
+                        return Some(problem);
+                    }
+                    heading = text.trim_start_matches('#').trim().to_lowercase();
+                    intro.clear();
+                    match heading.as_str() {
+                        "commands" => commands_headings += 1,
+                        "command list" | "commands list" | "command index" | "usage"
+                        | "synopsis" => return Some(format!("a `{heading}` section")),
+                        _ => {}
+                    }
+                    continue;
+                }
+            }
+            if heading == "commands" && (fence || word.is_some()) {
+                return Some(format!(
+                    "a fence or command line under `## Commands`: {line}"
+                ));
+            }
+            match word {
+                Some(word) => {
+                    if run.is_empty() {
+                        run_intro = intro.clone();
+                    }
+                    run.push(word);
+                }
+                None if line.trim().is_empty() => {}
+                None => {
+                    if let Some(problem) = flush(&mut run, &run_intro, &heading) {
+                        return Some(problem);
+                    }
+                    if !fence {
+                        intro.push_str(line);
+                        intro.push('\n');
+                    }
+                }
+            }
+            if fence {
+                in_fence = !in_fence;
+            }
+        }
+        if let Some(problem) = flush(&mut run, &run_intro, &heading) {
+            return Some(problem);
+        }
+        (commands_headings != 1)
+            .then(|| format!("{commands_headings} `Commands` headings (exactly one pointer)"))
+    }
+
+    fn readme() -> String {
+        fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md"))
+            .expect("README.md")
+    }
+
     #[test]
     fn the_readme_has_no_hand_maintained_command_list() {
-        let readme = fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md"))
-            .expect("README.md");
-        assert!(
-            !readme.contains("\ntoolkit skills list [ROOT] [--json]\n"),
+        let readme = readme();
+        assert_eq!(
+            command_index_problem(&readme),
+            None,
             "the command list is generated: `toolkit help` prints it from the slice registrations"
         );
         assert!(readme.contains("`toolkit help`"));
+    }
+
+    #[test]
+    fn the_readme_guard_rejects_a_new_command_index() {
+        let readme = readme();
+        // A second Commands heading with a fenced list of two new slices.
+        let table = format!(
+            "{readme}\n## Commands\n\n```\ntoolkit analytics run INPUT\ntoolkit archive run INPUT\n```\n"
+        );
+        assert!(command_index_problem(&table).is_some());
+        // The same list under another heading, blank lines between the rows.
+        let index = format!(
+            "{readme}\n## Everything\n\n```\ntoolkit analytics run INPUT\n\ntoolkit archive run INPUT\n```\n"
+        );
+        assert!(command_index_problem(&index).is_some());
+        // Unfenced, behind a prompt, with a spacing change.
+        let plain = format!(
+            "{readme}\n## Index\n\n$ toolkit  analytics run INPUT\n- toolkit archive run\n"
+        );
+        assert!(command_index_problem(&plain).is_some());
+        // The old table, put back into the pointer section.
+        let old = readme.replacen(
+            "## Commands\n",
+            "## Commands\n\n```\ntoolkit skills list [ROOT] [--json]\ntoolkit sync  plugin-skills\n```\n",
+            1,
+        );
+        assert!(command_index_problem(&old).is_some());
+        // A Usage-style heading.
+        assert!(command_index_problem(&format!("{readme}\n## Usage\n")).is_some());
+    }
+
+    #[test]
+    fn the_readme_guard_allows_per_slice_examples() {
+        let readme = readme();
+        // One family, one section.
+        let one = format!(
+            "{readme}\n## analytics (#1)\n\n```\ntoolkit analytics run INPUT\ntoolkit analytics list\n```\n"
+        );
+        assert_eq!(command_index_problem(&one), None);
+        // A section that introduces several families of one slice.
+        let several = format!(
+            "{readme}\n## analytics (#1)\n\nHelpers of `analytics` and `archive`.\n\n```\ntoolkit analytics run INPUT\ntoolkit archive run INPUT\n```\n"
+        );
+        assert_eq!(command_index_problem(&several), None);
     }
 }

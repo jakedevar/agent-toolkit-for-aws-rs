@@ -32,6 +32,9 @@ one line per slice, in sorted order.
 2. Add `mod my_slice;` to `lib.rs` (or `pub(crate) mod` inside `startup.rs`).
 3. Add one line `crate::my_slice::SLICE,` to `SLICES` in
    `crates/toolkit-cli/src/registry.rs`, at its alphabetical place by `name`.
+   If another slice was added in the same alphabetical gap and the merge
+   conflicts on adjacent inserts, keep both lines in sorted order (the same
+   goes for the two `mod` lines).
 4. Write the documentation in your own file, `docs/migration/my-slice.md`, and
    name it in `doc`. Do not append to the README command list (there is none).
 
@@ -44,11 +47,15 @@ keep their help text in its historical order.
 ## What the tests enforce (`registry.rs`)
 
 - `SLICES` is strictly ascending by `name` (so concurrent additions touch
-  different lines and a mis-sorted or duplicated entry fails the build);
+  different lines unless they share a gap, and a mis-sorted or duplicated entry fails the build);
 - no route is registered twice and none is shadowed by an earlier route;
-- each slice keeps its declared route order, lists every route in its own
-  synopsis, and its help fragments are well formed;
+- `COMMANDS` keeps the legacy routing order (pinned route by route; routes of
+  new slices follow it, by slice name), each slice keeps its declared route
+  order, lists every route in its own synopsis, and its help fragments are
+  well formed;
 - `USAGE` is the ordered fragments;
+- the README holds one `Commands` pointer section and no command index (a
+  negative fixture proves a new index is rejected);
 - every command path is mentioned in the slice's `doc` file (drift between
   the registration and the documentation fails the test).
 
