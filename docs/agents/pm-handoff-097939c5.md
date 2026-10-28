@@ -358,3 +358,8 @@ Friction: #4727, Rsi #4694, Rsi #4704
   Hygiene TODO: many InProgress slices landed in r13 b8204e9d but still InProgress (e.g. #4380 #4383 #4384 #4385 #4392 #4400-#4403 #4405-#4407 #4451) - verify ancestry and close with landed SHA.
   4/4 busy: 4f5ab2f8 (r15), d60a4063 (#4780), 3209a487 (#4398 repair 2), 6a65d533 (#4404).
 - 10-28 22:12Z: safety net: all 4 parked on daemon jobs (4f5ab2f8 r15, 3209a487 #4398 r2, d60a4063 #4780, 6a65d533 #4404); queue unchanged (GM-explained FIFO wait). Disk 124G, load 9.7. Net re-armed 23:12Z.
+- 10-28 22:25Z: #4398 ACCEPTED at 03f0950964b632643ce0e2160f41b97f0f468fe9 (3209a487, COVERS #4917; PM inspection: trust check before mtime, symmetric LOCK_STALE_SECONDS window; red 30b62ec8; fmt 95f4d8e5 clippy 692b1926 scoped 91ad3926 ok cli 2464). Close on land: #4398 #4893 #4894 #4917. Mailed r15 4f5ab2f8 (msg b9d48fd2): merge 03f09509 as step 6 (registry form) -> completes round 15.
+  New slice #4390 (DynamoDB benchmark/reporting) worker 12fe1c8e (Sonnet high, base f597a058).
+  HYGIENE DONE: closed 70 Issues already landed via r1-13 (b8204e9d) from pre-r13 close-on-land lists (via rsi-rpc loop, keys pm-b14ee35f-close-landed-N): 4371 4373-4378 4380 4383-4385 4392 4400-4403 4405-4407 4451 4463 4467 4470 4539-4543 4577 4593 4594 4602 4624 4625 4632 4634 4636 4637 4639 4644 4652 4655 4656 4660 4662 4665 4666 4670 4674 4676 4679 4682 4684 4685 4696-4698 4708 4709 4711-4714 4721 4722 4724-4726 4734 4745.
+  Left open on purpose: #4468 cluster (#4469 #4494 #4515 #4516 #4536; close when entry 5c529ed1 publishes), r14 set (#4381 #4391 #4409 #4806 + reviews), r15 set, #4412 #4418 #4369 #4370 #4372 (programme/unverified).
+  4/4 busy: 4f5ab2f8 (r15), d60a4063 (#4780), 6a65d533 (#4404), 12fe1c8e (#4390).
