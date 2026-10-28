@@ -139,7 +139,7 @@ fn a_complete_response_is_read_member_by_member() {
             "raw_rows": [{"pattern_id": "P", "phase": "measure", "latency_ms": 1.5, "consumed_cu": null,
                           "gsi_cu": {"G": 2.0}, "throttled": false, "error": "", "key_idx": 3,
                           "vector_search_bytes": 10, "vector_write_bytes": {"V": 5.5}}],
-            "seed_verification": {"T": {"expected": 1, "actual": 1}},
+            "seed_verification": {"T": {"expected": 1, "actual": 1, "passed": true}},
             "seed_verification_failed": false,
             "measurement_tainted": {"P": "ramp:throttle_rate=0.30"},
             "coverage": {"measured_patterns": ["P"]},
@@ -214,6 +214,34 @@ fn wrong_typed_or_null_members_reject_the_response_without_echoing_values() {
         (
             r#"{"seed_verification": {"T": 1}}"#,
             "must map tables to objects",
+        ),
+        (
+            r#"{"seed_verification": {"T": {"passed": "false"}}}"#,
+            "\"passed\" must be a boolean",
+        ),
+        (
+            r#"{"seed_verification": {"T": {"passed": null}}}"#,
+            "\"passed\" must be a boolean",
+        ),
+        (
+            r#"{"seed_verification": {"T": {"actual": 1}}}"#,
+            "\"passed\" is required",
+        ),
+        (
+            r#"{"seed_verification": {"T": {"passed": true, "sampled": 1}}}"#,
+            "\"sampled\" must be a boolean",
+        ),
+        (
+            r#"{"seed_verification": {"T": {"passed": true, "expected": []}}}"#,
+            "\"expected\" must be an integer",
+        ),
+        (
+            r#"{"seed_verification": {"T": {"passed": true, "actual": null}}}"#,
+            "\"actual\" must be an integer",
+        ),
+        (
+            r#"{"seed_verification": {"T": {"passed": true, "seed_shortfall_ratio": {}}}}"#,
+            "\"seed_shortfall_ratio\" must be a number",
         ),
         (
             r#"{"measurement_tainted": {"P": 1}}"#,

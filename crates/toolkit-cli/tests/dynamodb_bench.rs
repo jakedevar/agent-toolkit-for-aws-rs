@@ -1255,3 +1255,241 @@ fn the_report_default_findings_path_is_design_findings_json() {
     assert!(text(&output.stdout).contains("Findings: design_findings.json"));
     assert!(fixture.root.join("design_findings.json").exists());
 }
+
+// ---------------------------------------------------------------------------
+// Review #4954 repairs: banner diagnostics (#4956), atomic outputs (#4957),
+// fail-closed seed verification (#4958)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn mode_banners_redact_bound_and_escape_valid_config_text() {
+    const TOKEN: &str = "AKIAIOSFODNN7EXAMPLE";
+    let long = "x".repeat(20_000);
+    for (label, config) in [
+        (
+            "quick",
+            format!(
+                r#"{{"aws_profile": "bench", "region": "us-east-1", "mode": "quick",
+                    "duration_seconds": "\u001b[31m\nFORGED {TOKEN}",
+                    "warmup_seconds": "{long}", "table_settle_seconds": ["a\nFORGED2"]}}"#
+            ),
+        ),
+        (
+            "representative",
+            format!(
+                r#"{{"aws_profile": "bench", "region": "us-east-1", "mode": "representative",
+                    "scale_factor": "\u001b[31m\nFORGED {TOKEN}",
+                    "max_rps_per_pattern": "{long}", "items_per_partition": {{"k\n": "FORGED2"}}}}"#
+            ),
+        ),
+    ] {
+        let fixture = Fixture::new(label, MODEL, &config, MANIFEST, &[]);
+        let output = fixture.bench(&[]);
+        // The numeric knob is refused afterwards; the banner has already printed.
+        assert_eq!(status(&output), 2, "{label}");
+        let stdout = text(&output.stdout);
+        assert!(
+            stdout.contains("mode:"),
+            "{label}: banner printed: {stdout}"
+        );
+        assert!(!stdout.contains('\u{1b}'), "{label}: {stdout:?}");
+        assert!(!stdout.contains(TOKEN), "{label}: {stdout}");
+        assert!(
+            !stdout.lines().any(|line| line.starts_with("FORGED")),
+            "{label}: {stdout}"
+        );
+        assert!(stdout.lines().count() == 1, "{label}: {stdout}");
+        assert!(stdout.len() < 2_000, "{label}: {} bytes", stdout.len());
+        assert!(!text(&output.stderr).contains(TOKEN), "{label}");
+    }
+}
+
+#[test]
+fn ordinary_numbers_still_print_plainly_in_the_banner() {
+    let fixture = Fixture::standard("plainbanner");
+    let output = fixture.bench(&[]);
+    let stdout = text(&output.stdout);
+    assert!(
+        stdout.contains("Quick mode: running a short per-pattern window (settle="),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("settle=\""), "{stdout}");
+}
+
+#[cfg(unix)]
+#[test]
+fn outputs_are_published_atomically_and_privately() {
+    use std::os::unix::fs::PermissionsExt;
+    let fixture = Fixture::standard("atomic");
+    // An existing, longer destination is replaced whole, never truncated in place.
+    fs::write(fixture.root.join("perf_summary.json"), "old".repeat(50_000)).expect("old");
+    let before = fs::metadata(fixture.root.join("perf_summary.json")).expect("meta");
+    assert_eq!(status(&fixture.recorded()), 0);
+    let summary = fixture.root.join("perf_summary.json");
+    assert!(parse_json(&fixture.read("perf_summary.json")).is_ok());
+    for name in ["perf_summary.json", "perf_raw.jsonl"] {
+        let mode = fs::metadata(fixture.root.join(name))
+            .expect("meta")
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o600, "{name}");
+    }
+    // Rename replaced the directory entry: a new inode, not the old file rewritten.
+    let after = fs::metadata(&summary).expect("meta");
+    {
+        use std::os::unix::fs::MetadataExt;
+        assert_ne!(before.ino(), after.ino());
+    }
+    // The report and findings go the same way, and no temporary file is left.
+    assert_eq!(
+        status(&fixture.report(&fixture.read("perf_summary.json"))),
+        0
+    );
+    for name in ["report.md", "findings.json"] {
+        let mode = fs::metadata(fixture.root.join(name))
+            .expect("meta")
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o600, "{name}");
+    }
+    let leftovers: Vec<String> = fs::read_dir(&*fixture.root)
+        .expect("dir")
+        .map(|entry| {
+            entry
+                .expect("entry")
+                .file_name()
+                .to_string_lossy()
+                .to_string()
+        })
+        .filter(|name| name.ends_with(".tmp"))
+        .collect();
+    assert!(leftovers.is_empty(), "{leftovers:?}");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_failed_publication_leaves_the_existing_output_and_no_temporary_file() {
+    let fixture = Fixture::standard("atomicfail");
+    // A destination directory that cannot take a new entry: the temporary file
+    // cannot be created, so the existing content must survive untouched.
+    let locked = fixture.root.join("locked");
+    fs::create_dir(&locked).expect("dir");
+    fs::write(locked.join("report.md"), "KEEP").expect("keep");
+    let summary_text = {
+        assert_eq!(status(&fixture.recorded()), 0);
+        fixture.read("perf_summary.json")
+    };
+    fs::write(fixture.root.join("summary_in.json"), &summary_text).expect("in");
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o555)).expect("lock");
+    }
+    // Root bypasses directory permissions; skip the assertion then.
+    let writable = fs::write(locked.join("probe"), "x").is_ok();
+    let output = toolkit(
+        &[
+            "dynamodb",
+            "generate-perf-report",
+            "--model",
+            "model.json",
+            "--summary",
+            "summary_in.json",
+            "--output",
+            "locked/report.md",
+            "--findings-out",
+            "findings.json",
+        ],
+        &fixture.root,
+    );
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).expect("unlock");
+    }
+    if !writable {
+        assert_eq!(status(&output), 2);
+        assert_eq!(
+            fs::read_to_string(locked.join("report.md")).expect("keep"),
+            "KEEP"
+        );
+        assert!(!fixture.root.join("findings.json").exists());
+    }
+    let leftovers: Vec<_> = fs::read_dir(&locked)
+        .expect("dir")
+        .map(|entry| {
+            entry
+                .expect("entry")
+                .file_name()
+                .to_string_lossy()
+                .to_string()
+        })
+        .filter(|name| name.ends_with(".tmp"))
+        .collect();
+    assert!(leftovers.is_empty(), "{leftovers:?}");
+}
+
+#[test]
+fn malformed_seed_verification_fails_closed_in_the_run_and_the_report() {
+    let good = r#""Orders": {"expected": 100, "actual": 100, "sampled": false, "passed": true, "seed_shortfall_ratio": 0.0}"#;
+    for (label, entry, needle) in [
+        (
+            "passedstring",
+            r#"{"expected": 100, "actual": 0, "passed": "false", "sampled": false, "seed_shortfall_ratio": 1.0}"#,
+            "\"passed\" must be a boolean",
+        ),
+        (
+            "passednull",
+            r#"{"expected": 100, "actual": 0, "passed": null, "sampled": false, "seed_shortfall_ratio": 1.0}"#,
+            "\"passed\" must be a boolean",
+        ),
+        (
+            "passedmissing",
+            r#"{"expected": 100, "actual": 0, "sampled": false, "seed_shortfall_ratio": 1.0}"#,
+            "\"passed\" is required",
+        ),
+        (
+            "sampledstring",
+            r#"{"expected": 100, "actual": 0, "passed": false, "sampled": "true", "seed_shortfall_ratio": 1.0}"#,
+            "\"sampled\" must be a boolean",
+        ),
+        (
+            "actuallist",
+            r#"{"expected": 100, "actual": [], "passed": true, "sampled": false, "seed_shortfall_ratio": 1.0}"#,
+            "\"actual\" must be an integer",
+        ),
+        (
+            "expectedobject",
+            r#"{"expected": {}, "actual": 1, "passed": true, "sampled": false, "seed_shortfall_ratio": 1.0}"#,
+            "\"expected\" must be an integer",
+        ),
+        (
+            "ratiostring",
+            r#"{"expected": 100, "actual": 0, "passed": false, "sampled": false, "seed_shortfall_ratio": "1.0"}"#,
+            "\"seed_shortfall_ratio\" must be a number",
+        ),
+    ] {
+        // The run refuses the response and writes nothing.
+        let payload = GOOD_PAYLOAD.replace(good, &format!(r#""T": {entry}"#));
+        let fixture = Fixture::new(label, MODEL, CONFIG, MANIFEST, &[ok_step(&payload)]);
+        let output = fixture.recorded();
+        assert_eq!(status(&output), 2, "{label}: {}", text(&output.stderr));
+        assert!(
+            text(&output.stderr).contains(needle),
+            "{label}: {}",
+            text(&output.stderr)
+        );
+        assert!(!fixture.root.join("perf_summary.json").exists(), "{label}");
+        // A hand-fed summary with the same entry is refused by the report too.
+        let summary = summary_of(
+            &[pattern("GetOrder", &steady(0.5, ""), COLD_OK, "")],
+            &format!(r#", "seed_verification": {{"T": {entry}}}"#),
+        );
+        let report = fixture.report(&summary);
+        assert_eq!(status(&report), 2, "{label}");
+        assert!(
+            text(&report.stderr).contains(needle),
+            "{label}: {}",
+            text(&report.stderr)
+        );
+        assert!(!fixture.root.join("report.md").exists(), "{label}");
+    }
+}
