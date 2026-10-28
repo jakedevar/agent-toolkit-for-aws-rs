@@ -290,3 +290,5 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 10-28 19:45Z: #4806 ACCEPTED at c960392150f09619924eda7d752bce81ee32f02e (PM-inspected 2-file test-only fix for #4859 + scoped d83c59d3 ok). Mailed r14 worker f77e05af to merge c9603921 (msg a6e672b7). Close on land: #4806 #4409 #4832 #4854 #4859.
   Redaction cluster worker (Opus high, base rolling) bound #4468 covering P1 #4469 #4494 #4515 #4516 + P2 #4536: one span-collect-then-replace pass.
   4/4 busy: c6b026ce (#4839), f77e05af (r14), fb8e2044 (#4751 repair), #4468 worker.
+- 10-28 19:50Z: #4839 impl e49f83ad4a3b583b8867e2201ff150c4ee6a529f (c6b026ce; base 2d3904a1; bedrock_resolve 17->0 no behaviour change; elasticache 30->0 with 3 documented malformed-input changes; +3 shared accessors nullable_list/list_value/object_members; recorded_contract 33/33, no Pending left; scoped db1f0f13 ok aws 182 cli 2310; fmt/clippy/ws ok). Review #4867 (Codex sol high, pinned). Needs #4751 repair merged before integration.
+  4/4 busy: f77e05af (r14), fb8e2044 (#4751 repair), e5345267 (#4468 redaction), #4867 reviewer.
