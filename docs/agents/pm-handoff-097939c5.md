@@ -330,3 +330,8 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 10-28 20:20Z: #4893 (7587433b) on #4398 d63c30f4: CHANGES_REQUESTED, one blocker #4894 (snapshot temp files/lock dir default perms; no insecure-state rejection). Checks 1,2,3,5 PASS. Repair worker 15fa44f7 (Opus high, continue_from 39bbfbb0). Then narrow re-review on #4893 (check 4 only).
   4/4 busy: fc21470d (#4395), 6951a548 (#4751 r3), bef791ca (#4576 repair), 15fa44f7 (#4398 repair).
 - 10-28 20:34Z: safety net: queue 5c529ed1 + 78a019f9 queued ~84 min (report-up threshold 2h = 21:10Z). Jobs progressing (fc21470d scoped b539b15f aws+cli complete; bef791ca f5bda419 running). Disk 122G (85%), load 8.8. 6951a548 running (scoped 7d41acf1 ok at cc098344). Net re-armed 21:14Z.
+- 10-28 20:36Z: #4751 ACCEPTED at cc09834470d0dfb4196f0157e532230c0d081065 (6951a548; PM diff+fixture inspection per ruling; scoped 7d41acf1 ok cli 2320, fmt f83a808a, clippy 3d1f80ee, witness c0cfd28d). Close on land: #4751 #4852 #4861 #4862 #4863 #4864 #4869 #4872 #4880.
+  #4576 repair 5e7a3da1d18c14bf05a10ffe26b8fec52d1e47f3 (bef791ca; COVERS #4879 #4881; scoped f5bda419 ok cli 2821; fmt 82a47fb1 clippy aec7bfd6). Re-review #4876 r2 worker 8f6e1b47 (Codex sol, pinned).
+  ROUND 15: new integration Issue #4898 (#4575 closed). Worker 4f5ab2f8 (Opus high, base ce0eaf6a r14): merge #4751 cc098344, #4839 506ccaca, #4584 e60717ac. Mail #4576 / #4398 SHAs when accepted (#4398 must move to registry after #4576).
+  If r14 entry 78a019f9 lands first, r15 still descends from it: enqueue r15 normally after.
+  4/4 busy: fc21470d (#4395), 15fa44f7 (#4398 repair), 4f5ab2f8 (r15), 8f6e1b47 (#4876 r2).
