@@ -178,7 +178,7 @@ output, missing/duplicate/unknown options and malformed files.
     when every requested group has a record with a valid `IpPermissions` array
     (an explicitly empty array is a pass). A missing or wrong-type
     `security_groups` list gives an `ERROR` finding `Security groups` ("Could not
-    inspect: no security group records were supplied for ..."); a requested group
+    inspect: no security group records were supplied for ...", or, for a present list of the wrong type, its type: item 18); a requested group
     with no record, or with a missing/wrong-type `IpPermissions` (or `IpRanges` /
     `Ipv6Ranges`, or a non-object rule), gives an `ERROR` finding
     `Security group <id>` ("Not inspected: ..."). `ERROR` is not `FAIL`: like the
@@ -227,6 +227,69 @@ output, missing/duplicate/unknown options and malformed files.
       entries);
     - a `security_groups_error` that is present, not `null` and not a string is
       still an inspection error.
+18. **The describe file is read through `toolkit_aws::recorded` (#4839).**
+    Every list and object of the recorded responses is read with the shared
+    accessors (`optional_list`, `nullable_list`, `list_value`,
+    `object_members`), and `tests/recorded_contract.rs` now holds the slice to
+    them (`Class::Recorded`). The members documented as "absent or `null` is
+    none" (`tags`, `SecurityGroupIds`, `MemberClusters`, `NodeGroups`,
+    `NodeGroupMembers`, `UserGroupIds`, a cluster's missing `SecurityGroups`)
+    keep that meaning through the explicit `nullable_list` opt-in, and every
+    verdict on a valid or already-refused input is unchanged. Three malformed
+    inputs used to read as an empty list and now refuse:
+    - a `serverless_caches` / `replication_groups` member that is present but
+      `null` or not a list was "not found". The audit now refuses with exit
+      status 1 and names the member and the type it holds, never a value:
+      `ERROR: Serverless cache '<name>' cannot be audited: serverless_caches
+      must be a list when present (it is null)` (the same text is the `error`
+      member of `--json`). An absent or empty list is still "not found";
+    - a `NodeGroups` that is present and neither a list nor `null` reported
+      `num_node_groups: 0` next to its `ERROR` finding. The count is now
+      `"unknown"` (the text report shows `Node groups:     unknown`);
+    - a `MemberClusters` that is present and neither a list nor `null` left
+      out `engine_version` and `node_type`, as if there were no members. Both
+      are now `"unknown"`, as for a member with no recorded cluster.
+    Regressions: `a_null_or_wrong_typed_resource_list_refuses_the_audit`,
+    `the_audit_command_refuses_a_null_resource_list`,
+    `a_wrong_typed_node_group_list_has_no_count` and
+    `a_wrong_typed_member_cluster_list_leaves_the_engine_unknown` fail on the
+    earlier `audit.rs` and pass now.
+
+    **Object containers (#4870).** The object members of the describe file
+    are read through the same accessors (`optional_object`, `optional_member`,
+    `object_members`). Absent keeps its meaning; one that is present but not
+    an object (or, for `security_groups`, not a list), `null` included, used
+    to read as missing and is now named by its type, never a value:
+    - a describe file that is not an object was "not found"; the audit now
+      refuses with exit status 1:
+      `ERROR: Serverless cache '<name>' cannot be audited: the describe file
+      must be an object (it is array)`;
+    - a `CacheUsageLimits` that is not an object gave both "No ... limit set"
+      `WARN`s; both limits are now not inspected (`ERROR`, "Not inspected:
+      CacheUsageLimits must be an object when present (it is string)"). A
+      `DataStorage` / `ECPUPerSecond` that is not an object makes that limit
+      `ERROR` ("CacheUsageLimits.DataStorage must be an object when present
+      (it is null)") and leaves the other limit read. Absent limits, or an
+      empty limits object, are still the `WARN`;
+    - a `cache_clusters` that is not an object already gave an `ERROR` per
+      member cluster; its detail now says why ("Not inspected: cache_clusters
+      must be an object when present (it is array)") instead of "no
+      describe_cache_clusters record for this member was supplied". The engine
+      details stay `"unknown"`;
+    - a `security_groups` that is not a list already gave the `Security
+      groups` `ERROR`; its detail is now "Could not inspect: security_groups
+      must be a list when present (it is null)" instead of "no security group
+      records were supplied for ...", which an absent list still gives.
+    Regressions: `a_wrong_typed_usage_limit_object_is_not_inspected`,
+    `a_wrong_typed_cluster_record_map_is_named_by_its_type`,
+    `a_wrong_typed_security_group_list_is_named_by_its_type` and
+    `a_describe_file_that_is_not_an_object_cannot_be_audited` fail on the
+    earlier `audit.rs` and pass now.
+
+    `preflight` reads a Redis/Valkey snapshot, `price`/`--pricing-json` a
+    price table file, and `validate-input` the values the user types. None
+    of them is an AWS response, so their reads carry a
+    `// recorded-shape:` marker and their behaviour is unchanged.
 
 ### Audit `PASS` paths and the evidence each one needs
 
@@ -236,13 +299,13 @@ gives the `WARN`/`FAIL` the script gave, or the not-inspected `ERROR`. No
 
 | Mode | Check | `PASS` requires | Missing / off | Malformed but "on" |
 | --- | --- | --- | --- | --- |
-| both | (resource record) | exactly one record in `serverless_caches` / `replication_groups` whose name string equals the requested non-blank name | not found, exit 1 | not found / "recorded more than once", exit 1 |
+| both | (resource record) | exactly one record in `serverless_caches` / `replication_groups` whose name string equals the requested non-blank name | not found, exit 1 | not found / "recorded more than once" / "cannot be audited" (the list is present but `null` or not a list, or the describe file is not an object, item 18), exit 1 |
 | serverless | TLS in-transit encryption | the identified record (a property of the service) | - | - |
 | serverless | Multi-AZ | the identified record (a property of the service) | - | - |
 | serverless | Authentication | `UserGroupId` a usable identifier | `WARN` (absent, `null`, falsy) | `ERROR` (other truthy value) |
 | serverless | Encryption at rest | `KmsKeyId` a usable identifier, or absent/`null`/falsy (always encrypted, AWS-managed key) | - | `ERROR` (other truthy value) |
 | serverless | Automatic backups | `SnapshotRetentionLimit` a JSON integer >= 1 | `FAIL` (absent, `null`, <= 0, non-number) | `ERROR` (positive non-integer, including `7.0`) |
-| serverless | Data storage limit / ECPU limit | `CacheUsageLimits.<limit>.Maximum` a finite number > 0 | `WARN` (absent, `null`, falsy) | `ERROR` (other truthy value, negative included) |
+| serverless | Data storage limit / ECPU limit | `CacheUsageLimits.<limit>.Maximum` a finite number > 0 | `WARN` (absent, `null`, falsy) | `ERROR` (other truthy value, negative included; or a present `CacheUsageLimits` / `<limit>` that is not an object, `null` included, item 18) |
 | node-based | TLS in-transit encryption | `TransitEncryptionEnabled` is the boolean `true` | `FAIL` (absent, falsy) | `ERROR` (other truthy value) |
 | node-based | Encryption at rest | `AtRestEncryptionEnabled` is `true` and `KmsKeyId` absent/`null` or a usable identifier | `FAIL` (absent, falsy) | `ERROR` (other truthy value, or a malformed `KmsKeyId`) |
 | node-based | Authentication | `UserGroupIds` a non-empty list of usable identifiers | `WARN` (AUTH token) or `FAIL` (empty, absent, falsy) | `ERROR` (any bad entry, or a truthy non-list) |
@@ -250,7 +313,7 @@ gives the `WARN`/`FAIL` the script gave, or the not-inspected `ERROR`. No
 | node-based | Automatic backups | as serverless | `FAIL` | `ERROR` |
 | both | Security groups | every reference read (below), at least one group, no `security_groups_error` (absent or `null`), a `security_groups` list, and for each referenced id at least one record whose `GroupId` equals it, every such record inspectable (item 16), and no broad-rule `WARN` | `WARN` "No security groups found" only when every reference was read and none exist | `ERROR` per unread reference, member or group. Inspected groups keep their `WARN`s |
 | serverless | (security group references) | `SecurityGroupIds` absent/`null` or a list of usable identifiers | - | `ERROR` `Security groups` per bad entry, or a non-list |
-| node-based | (security group references) | `MemberClusters` and each `NodeGroupMembers` absent/`null` or lists of usable cluster ids (`CacheClusterId` objects for node groups), each node group an object. For every member, `cache_clusters.<id>` is an object with no `error` member and a `SecurityGroups` list whose entries are objects with a usable `SecurityGroupId` (an empty list is read) | - | `ERROR` `Security groups` (bad list or entry) or `Security groups of cluster <id>` (no record, failed call, non-object, missing/`null`/non-list `SecurityGroups`, bad entry) |
+| node-based | (security group references) | `MemberClusters` and each `NodeGroupMembers` absent/`null` or lists of usable cluster ids (`CacheClusterId` objects for node groups), each node group an object. For every member, `cache_clusters.<id>` is an object with no `error` member and a `SecurityGroups` list whose entries are objects with a usable `SecurityGroupId` (an empty list is read) | - | `ERROR` `Security groups` (bad list or entry) or `Security groups of cluster <id>` (no record, a `cache_clusters` that is present but not an object, failed call, non-object, missing/`null`/non-list `SecurityGroups`, bad entry) |
 | both | Resource tags | `tags` absent/`null` (no tags) or a list of objects with a string `Key` and a string `Value`, and each of `Environment`, `managed_by`, `Application` and `Owner` with a non-blank value | `WARN` (missing or blank recommended tag) | `ERROR` (non-list, or a bad entry) |
 
 `FromPort`/`ToPort`, `DailySnapshotTime`, `Unit`, `Engine`, `EngineVersion`,

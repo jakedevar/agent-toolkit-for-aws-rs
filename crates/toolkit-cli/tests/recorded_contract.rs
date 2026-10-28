@@ -2073,13 +2073,7 @@ const INVENTORY: &[(&str, Class)] = &[
         "bedrock_report",
         Class::NotRecorded("the skill's own report payloads and phase-result files"),
     ),
-    (
-        "bedrock_resolve",
-        Class::Pending {
-            issue: "#4839",
-            findings: 17,
-        },
-    ),
+    ("bedrock_resolve", Class::Recorded),
     (
         "cloudwatch",
         Class::NotRecorded(
@@ -2093,13 +2087,7 @@ const INVENTORY: &[(&str, Class)] = &[
             "a pure cost calculator and a design loop over the skill's own state files",
         ),
     ),
-    (
-        "elasticache",
-        Class::Pending {
-            issue: "#4839",
-            findings: 30,
-        },
-    ),
+    ("elasticache", Class::Recorded),
     (
         "manifests",
         Class::NotRecorded("the repository's marketplace and plugin manifests"),
@@ -3743,9 +3731,11 @@ fn the_pending_ratchet_counts_each_read_not_each_line() {
 }
 
 #[test]
-fn a_read_added_beside_a_pending_read_fails_the_real_contract() {
+fn a_read_added_beside_an_accessor_read_fails_the_real_contract() {
     // The reviewer mutation of #4864 over the real sources: an unmarked
-    // member read on the line of an existing `bedrock_resolve` finding.
+    // member read on the line of an existing `bedrock_resolve` read. #4839
+    // moved that slice from `Pending` to `Recorded`, so the added read is
+    // now reported by itself instead of raising the pending count.
     let mut files = sources();
     let pricing = files
         .iter_mut()
@@ -3753,15 +3743,17 @@ fn a_read_added_beside_a_pending_read_fails_the_real_contract() {
         .expect("bedrock_resolve/pricing.rs");
     let before = pricing.text.clone();
     pricing.text = before.replacen(
-        "Some(Json::Object(pairs)) => {",
-        "Some(Json::Object(pairs)) => { let _ = match item.get(\"Injected\") { Some(Json::Array(v)) => &v[..], _ => &[] };",
+        "if object_members(item).is_none() {",
+        "if object_members(item).is_none() { let _ = match item.get(\"Injected\") { Some(Json::Array(v)) => &v[..], _ => &[] };",
         1,
     );
     assert_ne!(pricing.text, before, "the mutation site moved");
     let report = analyse_with(&files, Some(INVENTORY));
-    assert_eq!(report.inventory.len(), 1, "{report:?}");
+    assert!(report.inventory.is_empty(), "{report:?}");
+    assert_eq!(report.reads.len(), 1, "{report:?}");
     assert!(
-        report.inventory[0].starts_with("pending slice bedrock_resolve (#4839) has "),
+        report.reads[0].starts_with("bedrock_resolve/pricing.rs:")
+            && report.reads[0].contains("Injected"),
         "{report:?}"
     );
 }

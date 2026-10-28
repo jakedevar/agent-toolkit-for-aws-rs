@@ -119,6 +119,8 @@ pub(crate) fn identity_command(
         (Some(path), (None, None)) => {
             let document = read_json_file(path, MAX_TEXT_FILE_BYTES)
                 .map_err(|message| failure("mappings_unreadable", message))?;
+            // recorded-shape: the `--mappings` file the user writes (model id
+            // pairs), not an AWS response; any shape but a JSON array is refused.
             let Json::Array(rows) = document else {
                 return Err(failure(
                     "mappings_not_a_list",
@@ -316,6 +318,8 @@ pub(crate) fn pricing_command(
 
 /// Replaces every string of `value` (object keys are fixed names) by its
 /// display form.
+// recorded-shape: a total walk over the output document this command built;
+// every JSON type is copied, no member is read, typed or defaulted.
 fn shown_json(value: &Json, secrets: &[String]) -> Json {
     match value {
         Json::String(text) => Json::string(source::shown(text, secrets)),

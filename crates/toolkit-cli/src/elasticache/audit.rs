@@ -31,6 +31,9 @@
 
 use std::net::{Ipv4Addr, Ipv6Addr};
 
+use toolkit_aws::recorded::{
+    list_value, nullable_list, object_members, optional_list, optional_member, optional_object,
+};
 use toolkit_core::Json;
 
 use crate::aurora::pyfmt::truthy;
@@ -110,13 +113,6 @@ fn str_of<'a>(value: &'a Json, key: &str, default: &'a str) -> &'a str {
     value.get(key).and_then(Json::as_str).unwrap_or(default)
 }
 
-fn items(value: Option<&Json>) -> &[Json] {
-    match value {
-        Some(Json::Array(list)) => list,
-        _ => &[],
-    }
-}
-
 fn value_or(value: &Json, key: &str, default: Json) -> Json {
     value.get(key).cloned().unwrap_or(default)
 }
@@ -174,10 +170,10 @@ fn retention_of(value: &Json) -> Retention {
 /// The recorded tags, or why the tag list could not be read. An absent or
 /// `null` list is no tags (the script's answer to a failed tag call).
 fn tags_of(describe: &Json) -> Result<Json, &'static str> {
-    let list = match present(describe, "tags") {
-        None => return Ok(Json::Object(Vec::new())),
-        Some(Json::Array(list)) => list,
-        Some(_) => return Err("the tag list is not a list"),
+    let list = match nullable_list(describe, "tags") {
+        Ok(None) => return Ok(Json::Object(Vec::new())),
+        Ok(Some(list)) => list,
+        Err(_) => return Err("the tag list is not a list"),
     };
     let mut tags: Vec<(String, Json)> = Vec::new();
     for tag in list {
@@ -251,35 +247,46 @@ fn parsed_cidr(text: &str, ipv6: bool) -> Option<u8> {
 
 /// Whether a range entry is an object whose required CIDR member is a well-formed string.
 fn range_inspectable(range: &Json, key: &str, ipv6: bool) -> bool {
-    matches!(range, Json::Object(_))
+    object_members(range).is_some()
         && range
             .get(key)
             .and_then(Json::as_str)
             .is_some_and(|cidr| parsed_cidr(cidr, ipv6).is_some())
 }
 
-/// Whether every entry of a rule's range list (absent means none) is inspectable.
-fn ranges_inspectable(rule: &Json, list: &str, key: &str, ipv6: bool) -> bool {
-    match rule.get(list) {
-        None => true,
-        Some(Json::Array(ranges)) => ranges
-            .iter()
-            .all(|range| range_inspectable(range, key, ipv6)),
-        Some(_) => false,
-    }
+/// A rule's range list (absent means none) when every entry is inspectable;
+/// `None` for a list that is `null`, not a list, or holds a bad entry.
+fn inspectable_ranges<'a>(rule: &'a Json, list: &str, key: &str, ipv6: bool) -> Option<&'a [Json]> {
+    let ranges = optional_list(rule, list).ok()?;
+    ranges
+        .iter()
+        .all(|range| range_inspectable(range, key, ipv6))
+        .then_some(ranges)
 }
 
-/// Whether a recorded security group carries a complete, correctly typed rule list:
-/// every rule an object and every IPv4/IPv6 range entry an object with a well-formed CIDR.
-fn rules_inspectable(group: &Json) -> bool {
-    let Some(Json::Array(rules)) = group.get("IpPermissions") else {
-        return false;
-    };
-    rules.iter().all(|rule| {
-        matches!(rule, Json::Object(_))
-            && ranges_inspectable(rule, "IpRanges", "CidrIp", false)
-            && ranges_inspectable(rule, "Ipv6Ranges", "CidrIpv6", true)
-    })
+/// One inspectable inbound rule with its IPv4 and IPv6 range lists.
+struct InspectableRule<'a> {
+    rule: &'a Json,
+    ipv4: &'a [Json],
+    ipv6: &'a [Json],
+}
+
+/// The rules of a recorded security group when it carries a complete, correctly
+/// typed rule list: a required `IpPermissions` list, every rule an object and
+/// every IPv4/IPv6 range entry an object with a well-formed CIDR.
+fn inspectable_rules(group: &Json) -> Option<Vec<InspectableRule<'_>>> {
+    let rules = group.get("IpPermissions").and_then(list_value)?;
+    rules
+        .iter()
+        .map(|rule| {
+            object_members(rule)?;
+            Some(InspectableRule {
+                rule,
+                ipv4: inspectable_ranges(rule, "IpRanges", "CidrIp", false)?,
+                ipv6: inspectable_ranges(rule, "Ipv6Ranges", "CidrIpv6", true)?,
+            })
+        })
+        .collect()
 }
 
 /// The `GroupId` of a recorded security group, when it is a usable identifier
@@ -342,18 +349,29 @@ fn audit_security_groups(describe: &Json, refs: GroupRefs) -> Vec<Finding> {
             return findings;
         }
     }
-    // A group nobody described was not inspected: never report it as safe.
-    let Some(Json::Array(records)) = describe.get("security_groups") else {
-        let shown: Vec<String> = sg_ids.iter().map(|id| show(id)).collect();
-        findings.push(Finding::new(
-            "Security groups",
-            "ERROR",
-            format!(
-                "Could not inspect: no security group records were supplied for {}",
-                shown.join(", ")
-            ),
-        ));
-        return findings;
+    // A group nobody described was not inspected: never report it as safe. A
+    // `security_groups` that is present but not a list (`null` included) is
+    // named by its type, never a value (#4870).
+    let records = match optional_member(describe, "security_groups", "a list", list_value) {
+        Ok(Some(records)) => records,
+        absent_or_wrong => {
+            let detail = match absent_or_wrong {
+                Err(error) => error.to_string(),
+                Ok(_) => {
+                    let shown: Vec<String> = sg_ids.iter().map(|id| show(id)).collect();
+                    format!(
+                        "no security group records were supplied for {}",
+                        shown.join(", ")
+                    )
+                }
+            };
+            findings.push(Finding::new(
+                "Security groups",
+                "ERROR",
+                format!("Could not inspect: {detail}"),
+            ));
+            return findings;
+        }
     };
 
     for id in &sg_ids {
@@ -366,7 +384,10 @@ fn audit_security_groups(describe: &Json, refs: GroupRefs) -> Vec<Finding> {
                 format!("Security group {}", show(id)),
                 "no record for this security group was supplied",
             ));
-        } else if !matching.iter().all(|group| rules_inspectable(group)) {
+        } else if !matching
+            .iter()
+            .all(|group| inspectable_rules(group).is_some())
+        {
             findings.push(not_inspected(
                 format!("Security group {}", show(id)),
                 "IpPermissions is missing or malformed",
@@ -378,14 +399,17 @@ fn audit_security_groups(describe: &Json, refs: GroupRefs) -> Vec<Finding> {
         let Some(id) = group_id(group) else {
             continue;
         };
-        if !sg_ids.iter().any(|wanted| wanted == id) || !rules_inspectable(group) {
+        if !sg_ids.iter().any(|wanted| wanted == id) {
             continue;
         }
+        let Some(rules) = inspectable_rules(group) else {
+            continue;
+        };
         let sg_id = show(id);
-        for rule in items(group.get("IpPermissions")) {
+        for InspectableRule { rule, ipv4, ipv6 } in rules {
             let from_port = describe_text(rule.get("FromPort"), "0");
             let to_port = describe_text(rule.get("ToPort"), "0");
-            for range in items(rule.get("IpRanges")) {
+            for range in ipv4 {
                 let cidr = str_of(range, "CidrIp", "");
                 let shown = show(cidr);
                 if cidr == "0.0.0.0/0" {
@@ -402,7 +426,7 @@ fn audit_security_groups(describe: &Json, refs: GroupRefs) -> Vec<Finding> {
                     ));
                 }
             }
-            for range in items(rule.get("Ipv6Ranges")) {
+            for range in ipv6 {
                 let cidr = str_of(range, "CidrIpv6", "");
                 if cidr == "::/0" {
                     findings.push(Finding::new(
@@ -435,34 +459,64 @@ fn audit_security_groups(describe: &Json, refs: GroupRefs) -> Vec<Finding> {
 }
 
 /// The one recorded resource whose `key` is exactly `id`, or why there is none:
-/// no record, a record without that identifier, or more than one record.
+/// no record, a record without that identifier, more than one record, a
+/// `list` that is present but `null` or not a list (#4839), or a describe file
+/// that is not an object (#4870). The message names the member and its type,
+/// never a value.
 fn resource_record<'a>(
     describe: &'a Json,
     list: &str,
     key: &str,
     id: &str,
-) -> Result<&'a Json, &'static str> {
+) -> Result<&'a Json, String> {
     if id.trim().is_empty() {
-        return Err("not found");
+        return Err("not found".to_string());
     }
-    let mut matching = items(describe.get(list))
+    // A describe file that is not an object holds no recorded member (#4870).
+    if object_members(describe).is_none() {
+        return Err(format!(
+            "cannot be audited: the describe file must be an object (it is {})",
+            describe.type_name()
+        ));
+    }
+    let records =
+        optional_list(describe, list).map_err(|error| format!("cannot be audited: {error}"))?;
+    let mut matching = records
         .iter()
         .filter(|record| record.get(key).and_then(identifier) == Some(id));
     let Some(record) = matching.next() else {
-        return Err("not found");
+        return Err("not found".to_string());
     };
     if matching.next().is_some() {
-        return Err("is recorded more than once");
+        return Err("is recorded more than once".to_string());
     }
     Ok(record)
+}
+
+/// The `CacheUsageLimits.<limit>` object of a serverless cache: `None` when it
+/// or `CacheUsageLimits` is absent (no limit set), or why it cannot be read
+/// when either is present but not an object, `null` included (#4870). The
+/// reason names the member and its type, never a value.
+fn usage_limit<'a>(cache: &'a Json, limit: &str) -> Result<Option<&'a Json>, String> {
+    let Some(limits) = optional_object(cache, "CacheUsageLimits")? else {
+        return Ok(None);
+    };
+    optional_object(limits, limit).map_err(|error| format!("CacheUsageLimits.{error}"))
+}
+
+/// The recorded `describe_cache_clusters` answers by cluster id: `None` when
+/// absent, or why they cannot be read when `cache_clusters` is present but not
+/// an object, `null` included (#4870).
+fn cluster_records(describe: &Json) -> Result<Option<&Json>, String> {
+    Ok(optional_object(describe, "cache_clusters")?)
 }
 
 /// The security groups a serverless cache references.
 fn serverless_group_refs(cache: &Json) -> GroupRefs {
     let mut refs = GroupRefs::default();
-    match present(cache, "SecurityGroupIds") {
-        None => {}
-        Some(Json::Array(list)) => {
+    match nullable_list(cache, "SecurityGroupIds") {
+        Ok(None) => {}
+        Ok(Some(list)) => {
             for (index, entry) in list.iter().enumerate() {
                 match identifier(entry) {
                     Some(id) => refs.add(id),
@@ -476,7 +530,7 @@ fn serverless_group_refs(cache: &Json) -> GroupRefs {
                 }
             }
         }
-        Some(_) => refs.fail("Security groups", "SecurityGroupIds is not a list"),
+        Err(_) => refs.fail("Security groups", "SecurityGroupIds is not a list"),
     }
     refs
 }
@@ -612,52 +666,60 @@ pub fn audit_serverless(describe: &Json, cache_name: &str) -> Audit {
         }
     }
 
-    // Usage limits (cost control).
+    // Usage limits (cost control). An absent limit is unset; a limit object
+    // that is present but not an object (`null` included) is not inspected
+    // (#4870).
     let empty = Json::Object(Vec::new());
-    let limits = cache.get("CacheUsageLimits").unwrap_or(&empty);
-    let data_limit = limits.get("DataStorage").unwrap_or(&empty);
-    let ecpu_limit = limits.get("ECPUPerSecond").unwrap_or(&empty);
-    match data_limit.get("Maximum") {
-        Some(maximum) if positive_number(maximum) => {
-            info.push(kv("max_data_gb", maximum.clone()));
-            findings.push(Finding::new(
-                "Data storage limit",
-                "PASS",
-                format!(
-                    "{} {} max",
-                    show(&py_str(maximum)),
-                    describe_text(data_limit.get("Unit"), "GB")
-                ),
-            ));
+    match usage_limit(cache, "DataStorage") {
+        Err(why) => findings.push(not_inspected("Data storage limit", &why)),
+        Ok(limit) => {
+            let data_limit = limit.unwrap_or(&empty);
+            match data_limit.get("Maximum") {
+                Some(maximum) if positive_number(maximum) => {
+                    info.push(kv("max_data_gb", maximum.clone()));
+                    findings.push(Finding::new(
+                        "Data storage limit",
+                        "PASS",
+                        format!(
+                            "{} {} max",
+                            show(&py_str(maximum)),
+                            describe_text(data_limit.get("Unit"), "GB")
+                        ),
+                    ));
+                }
+                Some(maximum) if truthy(Some(maximum)) => findings.push(not_inspected(
+                    "Data storage limit",
+                    "CacheUsageLimits.DataStorage.Maximum is not a positive number",
+                )),
+                _ => findings.push(Finding::new(
+                    "Data storage limit",
+                    "WARN",
+                    "No data storage limit set — costs could grow unbounded",
+                )),
+            }
         }
-        Some(maximum) if truthy(Some(maximum)) => findings.push(not_inspected(
-            "Data storage limit",
-            "CacheUsageLimits.DataStorage.Maximum is not a positive number",
-        )),
-        _ => findings.push(Finding::new(
-            "Data storage limit",
-            "WARN",
-            "No data storage limit set — costs could grow unbounded",
-        )),
     }
-    match ecpu_limit.get("Maximum") {
-        Some(maximum) if positive_number(maximum) => {
-            info.push(kv("max_ecpu_per_sec", maximum.clone()));
-            findings.push(Finding::new(
+    match usage_limit(cache, "ECPUPerSecond") {
+        Err(why) => findings.push(not_inspected("ECPU limit", &why)),
+        Ok(limit) => match limit.unwrap_or(&empty).get("Maximum") {
+            Some(maximum) if positive_number(maximum) => {
+                info.push(kv("max_ecpu_per_sec", maximum.clone()));
+                findings.push(Finding::new(
+                    "ECPU limit",
+                    "PASS",
+                    format!("{} ECPUs/sec max", show(&py_str(maximum))),
+                ));
+            }
+            Some(maximum) if truthy(Some(maximum)) => findings.push(not_inspected(
                 "ECPU limit",
-                "PASS",
-                format!("{} ECPUs/sec max", show(&py_str(maximum))),
-            ));
-        }
-        Some(maximum) if truthy(Some(maximum)) => findings.push(not_inspected(
-            "ECPU limit",
-            "CacheUsageLimits.ECPUPerSecond.Maximum is not a positive number",
-        )),
-        _ => findings.push(Finding::new(
-            "ECPU limit",
-            "WARN",
-            "No ECPU limit set — costs could grow unbounded",
-        )),
+                "CacheUsageLimits.ECPUPerSecond.Maximum is not a positive number",
+            )),
+            _ => findings.push(Finding::new(
+                "ECPU limit",
+                "WARN",
+                "No ECPU limit set — costs could grow unbounded",
+            )),
+        },
     }
 
     // Security groups.
@@ -676,27 +738,31 @@ pub fn audit_serverless(describe: &Json, cache_name: &str) -> Audit {
 }
 
 /// The recorded `describe_cache_clusters` answer for `id` (an entry holding an
-/// `error` stands for a failed call). Only the engine details read this.
+/// `error` stands for a failed call). Only the engine details read this: a
+/// `cache_clusters` or cluster record that is not an object, like a missing
+/// one, leaves them unknown.
 fn cluster_of<'a>(describe: &'a Json, id: &str) -> Option<&'a Json> {
-    describe
-        .get("cache_clusters")
-        .and_then(|all| all.get(id))
-        .filter(|cluster| cluster.get("error").is_none())
+    cluster_records(describe)
+        .ok()
+        .flatten()?
+        .get(id)
+        .filter(|cluster| object_members(cluster).is_some() && cluster.get("error").is_none())
 }
 
-/// Adds the member-cluster ids of `list` (absent or `null` is none) to
-/// `members`: plain strings, or objects carrying the id under `key`. An entry
-/// naming no usable id, or a `list` that is not a list, is recorded in `refs`.
+/// Adds the member-cluster ids of the `list` member of `owner` (absent or
+/// `null` is none) to `members`: plain strings, or objects carrying the id
+/// under `key`. An entry naming no usable id, or a `list` that is not a list,
+/// is recorded in `refs`.
 fn add_member_ids(
     members: &mut Vec<String>,
     refs: &mut GroupRefs,
-    list: Option<&Json>,
+    (owner, list): (&Json, &str),
     key: Option<&str>,
     what: &str,
 ) {
-    match list {
-        None | Some(Json::Null) => {}
-        Some(Json::Array(entries)) => {
+    match nullable_list(owner, list) {
+        Ok(None) => {}
+        Ok(Some(entries)) => {
             for (index, entry) in entries.iter().enumerate() {
                 let id = match key {
                     None => identifier(entry),
@@ -715,7 +781,7 @@ fn add_member_ids(
                 }
             }
         }
-        Some(_) => refs.fail("Security groups", &format!("{what} is not a list")),
+        Err(_) => refs.fail("Security groups", &format!("{what} is not a list")),
     }
 }
 
@@ -729,20 +795,20 @@ fn replication_group_refs(describe: &Json, group: &Json) -> GroupRefs {
     add_member_ids(
         &mut members,
         &mut refs,
-        group.get("MemberClusters"),
+        (group, "MemberClusters"),
         None,
         "MemberClusters",
     );
-    match present(group, "NodeGroups") {
-        None => {}
-        Some(Json::Array(node_groups)) => {
+    match nullable_list(group, "NodeGroups") {
+        Ok(None) => {}
+        Ok(Some(node_groups)) => {
             for (index, node_group) in node_groups.iter().enumerate() {
                 let what = format!("NodeGroups entry {}", index + 1);
-                if matches!(node_group, Json::Object(_)) {
+                if object_members(node_group).is_some() {
                     add_member_ids(
                         &mut members,
                         &mut refs,
-                        node_group.get("NodeGroupMembers"),
+                        (node_group, "NodeGroupMembers"),
                         Some("CacheClusterId"),
                         &format!("{what} NodeGroupMembers"),
                     );
@@ -751,21 +817,28 @@ fn replication_group_refs(describe: &Json, group: &Json) -> GroupRefs {
                 }
             }
         }
-        Some(_) => refs.fail("Security groups", "NodeGroups is not a list"),
+        Err(_) => refs.fail("Security groups", "NodeGroups is not a list"),
     }
     members.sort();
 
-    let clusters = describe.get("cache_clusters");
+    let clusters = cluster_records(describe);
     for id in &members {
         let check = format!("Security groups of cluster {}", show(id));
-        let Some(cluster) = clusters.and_then(|all| all.get(id)) else {
+        let records = match &clusters {
+            Ok(records) => *records,
+            Err(why) => {
+                refs.fail(check, why);
+                continue;
+            }
+        };
+        let Some(cluster) = records.and_then(|all| all.get(id)) else {
             refs.fail(
                 check,
                 "no describe_cache_clusters record for this member was supplied",
             );
             continue;
         };
-        if !matches!(cluster, Json::Object(_)) {
+        if object_members(cluster).is_none() {
             refs.fail(check, "the recorded cluster is not an object");
             continue;
         }
@@ -779,8 +852,8 @@ fn replication_group_refs(describe: &Json, group: &Json) -> GroupRefs {
             );
             continue;
         }
-        match cluster.get("SecurityGroups") {
-            Some(Json::Array(list)) => {
+        match nullable_list(cluster, "SecurityGroups") {
+            Ok(Some(list)) => {
                 for (index, entry) in list.iter().enumerate() {
                     match entry.get("SecurityGroupId").and_then(identifier) {
                         Some(sg) => refs.add(sg),
@@ -794,10 +867,10 @@ fn replication_group_refs(describe: &Json, group: &Json) -> GroupRefs {
                     }
                 }
             }
-            None | Some(Json::Null) => {
+            Ok(None) => {
                 refs.fail(check, "the recorded cluster has no SecurityGroups list");
             }
-            Some(_) => refs.fail(check, "SecurityGroups is not a list"),
+            Err(_) => refs.fail(check, "SecurityGroups is not a list"),
         }
     }
     refs.ids.sort();
@@ -813,7 +886,13 @@ pub fn audit_replication_group(describe: &Json, rg_id: &str) -> Audit {
     };
 
     let mut findings = Vec::new();
-    let node_groups = items(group.get("NodeGroups"));
+    // A `NodeGroups` that is not a list (nor `null`) has no count (#4839).
+    let num_node_groups = match nullable_list(group, "NodeGroups") {
+        Ok(node_groups) => {
+            Json::Int(i64::try_from(node_groups.map_or(0, <[Json]>::len)).unwrap_or(i64::MAX))
+        }
+        Err(_) => js("unknown"),
+    };
     let mut info = vec![
         kv("cache_type", js("node-based")),
         kv("replication_group_id", js(rg_id)),
@@ -824,14 +903,18 @@ pub fn audit_replication_group(describe: &Json, rg_id: &str) -> Audit {
             "cluster_enabled",
             value_or(group, "ClusterEnabled", Json::Bool(false)),
         ),
-        kv(
-            "num_node_groups",
-            Json::Int(i64::try_from(node_groups.len()).unwrap_or(i64::MAX)),
-        ),
+        kv("num_node_groups", num_node_groups),
     ];
 
-    // Engine version from the first member cluster (display only).
-    if let Some(first) = items(group.get("MemberClusters")).first() {
+    // Engine version from the first member cluster (display only). A
+    // `MemberClusters` that is not a list (nor `null`) names no first member,
+    // so the engine details are unknown (#4839).
+    let member_clusters = nullable_list(group, "MemberClusters");
+    if member_clusters.is_err() {
+        info.push(kv("engine_version", js("unknown")));
+        info.push(kv("node_type", js("unknown")));
+    }
+    if let Some(first) = member_clusters.ok().flatten().and_then(<[Json]>::first) {
         match cluster_of(describe, &py_str(first)) {
             Some(cluster) => {
                 set_member(
@@ -917,15 +1000,15 @@ pub fn audit_replication_group(describe: &Json, rg_id: &str) -> Audit {
     }
 
     // Authentication.
-    match group.get("UserGroupIds") {
-        Some(Json::Array(user_groups)) if !user_groups.is_empty() => {
+    match nullable_list(group, "UserGroupIds") {
+        Ok(Some(user_groups)) if !user_groups.is_empty() => {
             let names: Option<Vec<String>> = user_groups
                 .iter()
                 .map(|g| identifier(g).map(show))
                 .collect();
             if let Some(names) = names {
                 info.push(kv("auth_mode", js("RBAC")));
-                info.push(kv("user_groups", Json::Array(user_groups.clone())));
+                info.push(kv("user_groups", Json::Array(user_groups.to_vec())));
                 findings.push(Finding::new(
                     "Authentication",
                     "PASS",
@@ -939,7 +1022,7 @@ pub fn audit_replication_group(describe: &Json, rg_id: &str) -> Audit {
                 ));
             }
         }
-        Some(value) if !matches!(value, Json::Array(_)) && truthy(Some(value)) => {
+        Err(_) if truthy(group.get("UserGroupIds")) => {
             info.push(kv("auth_mode", js("unknown")));
             findings.push(not_inspected(
                 "Authentication",
