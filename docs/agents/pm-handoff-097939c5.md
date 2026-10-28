@@ -316,3 +316,4 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 10-28 21:10Z: #4751 repair 2 0b0fbb320efabe61496ccae80ec59ae27b185e55 (10864034; COVERS #4872; test_only_files: exclude only files every loader declares test-only). Final re-review #4852 r3 (Codex sol, pinned).
   #4576 impl 084fa8b302d1d788980135b57009dff6480efee7 (c621f43f; registry.rs SLICES one sorted line per slice, per-slice SLICE consts, compile-time COMMANDS/USAGE; help cmp-identical; scoped 5c347e9f ok cli 2817; base ce0eaf6a). Review #4876 (Codex sol, pinned).
   4/4 busy: 39bbfbb0 (#4398), fc21470d (#4395), #4852 r3, #4876.
+- 10-28 19:33Z (wall clock; earlier log stamps after 18:40Z ran ahead, ignore): safety net: queue 5c529ed1 + 78a019f9 queued ~22 min; no failed workers; disk 134G (83%), load 7.2. Net re-armed 20:33Z.
