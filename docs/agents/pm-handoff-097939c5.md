@@ -257,3 +257,4 @@ Friction: #4727, Rsi #4694, Rsi #4704
   4/4 busy: 8fdc14b5 (#4751), 658303dd (#4806), 9d76e4eb (#4819 r2), 7e684f35 (#4381 r4).
 - 02:30Z: #4819 r2 (9d76e4eb) on baa7989e: #4822-4 FIXED, round-1 controls intact; CHANGES_REQUESTED on one P2 #4840 (AccountAliases [""] / multi-entry first-only). RULING: validate every entry; >1 alias refuses as ambiguous (AWS max 1). Repair r2 worker ad920419 (Sonnet high, continue_from 955d98b9, op 2aa2e686), narrow. Then #4819 r3 limited to #4840 + regressions.
   4/4 busy: 8fdc14b5 (#4751), 658303dd (#4806), 7e684f35 (#4381 r4), ad920419 (#4391 r2).
+- 02:11Z: safety net: 2a2dece6 still queued (HOL). Workers healthy: 7e684f35/658303dd running, 8fdc14b5/ad920419 parked on jobs. Disk 118G (85%), load 7.6. Old failed 4fd54783 (#4538, Interrupted 10-27, #4387 already accepted) ignored. Net re-armed 03:11Z.
