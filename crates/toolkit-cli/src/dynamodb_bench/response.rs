@@ -16,7 +16,7 @@ use toolkit_core::Json;
 
 use super::shape::{list_items, map_entries};
 use crate::dynamodb::bench_fmt::Tally;
-use crate::dynamodb::bench_rows::{check_seed_entry, BenchRow, ExactAgg};
+use crate::dynamodb::bench_rows::{BenchRow, ExactAgg};
 
 /// The members of a `seed_verification` entry that the handler emits and the
 /// report reads.
@@ -88,6 +88,49 @@ fn integer(object: &Json, key: &str) -> Parsed<Option<i64>> {
         _ => None,
     })
     .map_err(|error| member(&error))
+}
+
+/// One table of a `seed_verification` map, checked member by member (review
+/// #4954, Issue #4958). The handler's `verify_seed` emits `expected` and
+/// `actual` as counts, `sampled` and `passed` as booleans and
+/// `seed_shortfall_ratio` as a number. The Python truthiness rules (`passed`
+/// read as true for a string, or when absent) are not kept: a present member of
+/// another type, `null` included, is refused, and so is a missing `passed`,
+/// because nothing may read as `ok` without an explicit `true`. The reason
+/// names the member, never a value or the table. `generate-perf-report` applies
+/// the same check to a hand-fed summary.
+///
+/// # Errors
+///
+/// The reason the entry is refused.
+pub(crate) fn check_seed_entry(entry: &Json) -> Parsed<()> {
+    if map_entries(entry).is_none() {
+        return Err("a `seed_verification` entry must be an object".to_string());
+    }
+    let describe = |error: &MemberError| format!("a `seed_verification` entry: {}", member(error));
+    let boolean = |key: &str| {
+        optional_member(entry, key, "a boolean", |value| match value {
+            Json::Bool(flag) => Some(*flag),
+            _ => None,
+        })
+        .map_err(|error| describe(&error))
+    };
+    let count = |key: &str| {
+        optional_member(entry, key, "an integer", |value| match value {
+            Json::Int(number) => Some(*number),
+            _ => None,
+        })
+        .map_err(|error| describe(&error))
+    };
+    if boolean("passed")?.is_none() {
+        return Err("a `seed_verification` entry: \"passed\" is required (a boolean)".to_string());
+    }
+    boolean("sampled")?;
+    count("expected")?;
+    count("actual")?;
+    optional_member(entry, "seed_shortfall_ratio", "a number", number_of)
+        .map_err(|error| describe(&error))?;
+    Ok(())
 }
 
 #[allow(clippy::cast_precision_loss)]

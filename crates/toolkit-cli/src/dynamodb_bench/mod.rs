@@ -40,6 +40,7 @@ mod shape;
 mod tests;
 
 use recorded::{NoLiveClient, RecordedClient};
+pub(crate) use response::check_seed_entry;
 
 /// Registration of the `dynamodb-bench` slice: its routes and help text (see `crate::registry`).
 pub(crate) const SLICE: crate::registry::Slice = crate::registry::Slice {

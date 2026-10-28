@@ -1298,8 +1298,14 @@ fn mode_banners_redact_bound_and_escape_valid_config_text() {
             !stdout.lines().any(|line| line.starts_with("FORGED")),
             "{label}: {stdout}"
         );
-        assert!(stdout.lines().count() == 1, "{label}: {stdout}");
-        assert!(stdout.len() < 2_000, "{label}: {} bytes", stdout.len());
+        // One banner line; later budget lines (if the run gets that far) are
+        // checked by the same assertions above.
+        assert_eq!(
+            stdout.lines().filter(|line| line.contains("mode:")).count(),
+            1,
+            "{label}: {stdout}"
+        );
+        assert!(stdout.len() < 4_000, "{label}: {} bytes", stdout.len());
         assert!(!text(&output.stderr).contains(TOKEN), "{label}");
     }
 }

@@ -1014,7 +1014,7 @@ pub fn seed_shortfall_findings(summary: &Json) -> Res<Vec<Finding>> {
                     return Err(die("each `seed_verification` entry must be an object"));
                 }
                 // Strict (Issue #4958): booleans only, `passed` required.
-                super::bench_rows::check_seed_entry(sv).map_err(die)?;
+                crate::dynamodb_bench::check_seed_entry(sv).map_err(die)?;
                 let passed = matches!(sv.get("passed"), Some(Json::Bool(true)));
                 let sampled = matches!(sv.get("sampled"), Some(Json::Bool(true)));
                 if !passed && !sampled {
