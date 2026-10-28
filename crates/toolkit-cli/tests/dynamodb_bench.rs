@@ -4,6 +4,8 @@
 //! "Lambda" is a recording of the handler's response contract. Nothing contacts
 //! AWS and no load is generated.
 
+#![allow(clippy::too_many_lines)]
+
 use std::fs;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
