@@ -81,6 +81,7 @@ pub(crate) const SLICES: &[Slice] = &[
     crate::asm_exec::SLICE,
     crate::aurora::SLICE,
     crate::bedrock_agent::SLICE,
+    crate::bedrock_probes::SLICE,
     crate::bedrock_report::SLICE,
     crate::bedrock_resolve::SLICE,
     crate::cloudwatch::API_SLICE,

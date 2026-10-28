@@ -33,6 +33,7 @@ mod ai_models;
 pub mod asm_exec;
 mod aurora;
 mod bedrock_agent;
+mod bedrock_probes;
 mod bedrock_report;
 mod bedrock_resolve;
 pub mod cloudwatch;
