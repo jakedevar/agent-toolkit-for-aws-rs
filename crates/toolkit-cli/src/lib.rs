@@ -408,8 +408,7 @@ fn value_allowed(
     value: &str,
 ) -> Result<(), ToolkitError> {
     if value == "-" {
-        return if dash_listed(lists.stdio, spec, flag) || dash_listed(lists.literal, spec, flag)
-        {
+        return if dash_listed(lists.stdio, spec, flag) || dash_listed(lists.literal, spec, flag) {
             Ok(())
         } else {
             Err(dash_value_error(flag))
@@ -963,7 +962,10 @@ mod tests {
         literal: &[(&str, &str)],
         values: &[&str],
     ) -> Result<Invocation, ToolkitError> {
-        let lists = DashLists { stdio: &[], literal };
+        let lists = DashLists {
+            stdio: &[],
+            literal,
+        };
         match route_lists(REPEATABLE_SPECS, lists, &words(values))? {
             Routed::Run(_, invocation) => Ok(invocation),
             other => panic!("expected a runnable route, got {other:?}"),
