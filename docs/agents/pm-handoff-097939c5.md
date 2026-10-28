@@ -219,3 +219,4 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 23:18Z: #4793 ACCEPT 362c237d (#4805, 72d2e61e). Close-on-land additions: #4793 #4794 #4805. Mailed #4799 worker 36d6de30 to merge 362c237d before final verification (msg 5d3be873).
   New slice #4409 (startup contract tests -> Rust) worker 8fba463c (Sonnet) from f6fac27d (op 7dcf18e5).
   4/4 busy: 16f724e9 (#4381 r2), a7277981 (#4391), 36d6de30 (#4799), 8fba463c (#4409).
+- 00:09Z: safety net: 5060cb2e still queued (HOL). 4 workers parked on jobs (disk_floor holds). HUB DISK 81G free (90%, was 142G at 20:18Z); sandboxes 139G/435 dirs; nothing settle-eligible (no landings). Net re-armed 01:09Z with <50G escalation.
