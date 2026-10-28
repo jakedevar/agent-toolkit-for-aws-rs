@@ -329,3 +329,4 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 4/4 busy: 7587433b (#4893 review, running), fc21470d (#4395, parked on jobs), 6951a548 (#4751 r3 repair, parked), bef791ca (#4576 repair, parked).
 - 10-28 20:20Z: #4893 (7587433b) on #4398 d63c30f4: CHANGES_REQUESTED, one blocker #4894 (snapshot temp files/lock dir default perms; no insecure-state rejection). Checks 1,2,3,5 PASS. Repair worker 15fa44f7 (Opus high, continue_from 39bbfbb0). Then narrow re-review on #4893 (check 4 only).
   4/4 busy: fc21470d (#4395), 6951a548 (#4751 r3), bef791ca (#4576 repair), 15fa44f7 (#4398 repair).
+- 10-28 20:34Z: safety net: queue 5c529ed1 + 78a019f9 queued ~84 min (report-up threshold 2h = 21:10Z). Jobs progressing (fc21470d scoped b539b15f aws+cli complete; bef791ca f5bda419 running). Disk 122G (85%), load 8.8. 6951a548 running (scoped 7d41acf1 ok at cc098344). Net re-armed 21:14Z.
