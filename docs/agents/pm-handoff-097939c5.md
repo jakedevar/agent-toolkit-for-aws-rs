@@ -394,3 +394,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
   4/4 busy: ff7ae0b8 (#4396), f8244a11 (#4941), 44992d7f (#4954), bfa8c133 (#4780 repair 2).
 - 10-28 22:52Z: #4954 (44992d7f) on #4390 824aadc7: CHANGES_REQUESTED #4956 (banner config text unsanitized), #4957 (non-atomic outputs), #4958 (malformed seed-verification -> ok). Repair worker b7e56ccf (Sonnet high, continue_from 12fe1c8e). Then narrow re-review #4954.
   4/4 busy: ff7ae0b8 (#4396), f8244a11 (#4941), bfa8c133 (#4780 repair 2), b7e56ccf (#4390 repair).
+- 10-28 22:57Z: #4780 ACCEPTED at 2d4adaa3922e1d2fb1431b9a9f5382cd80204b82 (bfa8c133, COVERS #4955; --date-suffix removed from LITERAL_DASH (29 left, re-audited); fmt 7c2174ba clippy 3fac0b51 scoped 5139044a ok cli 2836). Close on land: #4780 #4927 #4934 #4935 #4936 #4955.
+  ROUND 16: integration Issue #4960, worker 092f281f (Opus high, base e77d1c18 r15): merge #4780 2d4adaa3 then #4404 6f4e4af8; extend #4780 contract to docgraph/telemetry flags, recompute USAGE pin. Mail #4390/#4396/#4941 SHAs when accepted (#4941 must migrate bedrock_probes diag::path). Enqueue r16 normally after r15 lands (or with supersedes=92e0b509 if r15 still queued).
+  4/4 busy: ff7ae0b8 (#4396), f8244a11 (#4941), b7e56ccf (#4390 repair), 092f281f (r16).
