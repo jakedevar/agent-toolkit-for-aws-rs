@@ -398,3 +398,4 @@ Friction: #4727, Rsi #4694, Rsi #4704
   ROUND 16: integration Issue #4960, worker 092f281f (Opus high, base e77d1c18 r15): merge #4780 2d4adaa3 then #4404 6f4e4af8; extend #4780 contract to docgraph/telemetry flags, recompute USAGE pin. Mail #4390/#4396/#4941 SHAs when accepted (#4941 must migrate bedrock_probes diag::path). Enqueue r16 normally after r15 lands (or with supersedes=92e0b509 if r15 still queued).
   4/4 busy: ff7ae0b8 (#4396), f8244a11 (#4941), b7e56ccf (#4390 repair), 092f281f (r16).
 - 10-28 23:13Z: safety net: all 4 parked on daemon jobs (092f281f r16, ff7ae0b8 #4396, f8244a11 #4941, b7e56ccf #4390 repair). Queue 5c529ed1 + 92e0b509 still queued. Net re-armed 00:13Z.
+- 10-28 23:3xZ: *** LANDED *** entry 5c529ed1: #4468 regression table 1e7a8fb3094fd049de9d391ea9ee7e520c78228d on origin/rolling (ancestry verified). #4468 auto-closed; closed #4469 #4494 #4515 #4516 #4536 by hand. #4568 stays open. r15 entry 92e0b509 (seq 2916) next.
