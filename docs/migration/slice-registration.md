@@ -54,7 +54,9 @@ keep their help text in its historical order.
   order, lists every route in its own synopsis, and its help fragments are
   well formed;
 - `USAGE` is the ordered fragments;
-- the README holds one `Commands` pointer section and no command index (a
+- the README holds one `Commands` pointer section and no command index: every
+  README section whose command lines are the examples of ONE registered slice
+  (all their families belong to it) is fine, prose never authorizes more (a
   negative fixture proves a new index is rejected);
 - every command path is mentioned in the slice's `doc` file (drift between
   the registration and the documentation fails the test).

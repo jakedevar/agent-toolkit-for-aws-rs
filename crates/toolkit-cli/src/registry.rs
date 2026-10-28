@@ -393,7 +393,7 @@ pub const USAGE: &str = usage_text();
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashSet;
+    use std::collections::{BTreeSet, HashSet};
     use std::fs;
     use std::path::Path;
 
@@ -667,47 +667,58 @@ mod tests {
         (word.starts_with(|c: char| c.is_ascii_lowercase()) && word != "help").then_some(word)
     }
 
+    /// The command families (first path word) of every registered slice, one
+    /// set per slice. A family can belong to several slices (`startup`,
+    /// `cloudwatch`, `dynamodb`), and one slice can own several families (the
+    /// relational slice owns `dsql`, `rds`, `rds-oracle` and
+    /// `timestream-influxdb`).
+    fn slice_families() -> Vec<HashSet<&'static str>> {
+        SLICES
+            .iter()
+            .map(|slice| {
+                slice
+                    .commands
+                    .iter()
+                    .filter_map(|spec| spec.path.first().copied())
+                    .collect()
+            })
+            .collect()
+    }
+
     /// Why `readme` holds a hand-maintained command index, if it does.
     ///
     /// Allowed: the single `## Commands` pointer section (prose only: no code
-    /// fence and no command line), and per-slice sections whose commands are
-    /// examples of the slice the section introduces. Rejected: a second
-    /// `Commands`/`Usage`-style heading, a fence or command line inside the
-    /// pointer section, and a run of command lines (blank lines between them
-    /// do not break the run) naming two or more command families that the
-    /// section's introduction does not mention (an index across slices).
+    /// fence and no command line), and per-slice sections whose command lines
+    /// (fenced or not, however much prose or blank lines separate them) all
+    /// belong to ONE registered slice, see [`slice_families`]. Rejected: a
+    /// second `Commands`/`Usage`-style heading, a fence or command line inside
+    /// the pointer section, and a section whose commands name a family that no
+    /// registered slice owns or families of two or more slices (an index across
+    /// slices). Prose never authorizes a section: an introduction or heading
+    /// that names the families changes nothing.
     fn command_index_problem(readme: &str) -> Option<String> {
+        let slices = slice_families();
         let mut in_fence = false;
         let mut heading = String::new();
         let mut commands_headings = 0;
-        let mut intro = String::new(); // prose of the section before the run
-        let mut run: Vec<String> = Vec::new();
-        let mut run_intro = String::new();
-        let flush = |run: &mut Vec<String>, run_intro: &str, heading: &str| {
-            let mut words = std::mem::take(run);
-            words.sort_unstable();
-            words.dedup();
-            if words.len() < 2 {
-                return None;
-            }
-            let known = format!("{heading}\n{run_intro}").to_lowercase();
-            let strangers: Vec<&String> = words
+        let mut families: BTreeSet<String> = BTreeSet::new();
+        let section_problem = |families: &mut BTreeSet<String>, heading: &str| {
+            let found = std::mem::take(families);
+            let one_slice = slices
                 .iter()
-                .filter(|word| !known.contains(word.as_str()))
-                .collect();
-            (!strangers.is_empty())
-                .then(|| format!("a command list across slices {words:?} under `{heading}`"))
+                .any(|owned| found.iter().all(|family| owned.contains(family.as_str())));
+            (!one_slice).then(|| {
+                format!("commands of {found:?} under `{heading}` do not belong to one slice")
+            })
         };
         for line in readme.lines() {
             let fence = line.trim_start().starts_with("```");
-            let word = command_word(line);
             if !in_fence && !fence {
                 if let Some(text) = line.strip_prefix('#') {
-                    if let Some(problem) = flush(&mut run, &run_intro, &heading) {
+                    if let Some(problem) = section_problem(&mut families, &heading) {
                         return Some(problem);
                     }
                     heading = text.trim_start_matches('#').trim().to_lowercase();
-                    intro.clear();
                     match heading.as_str() {
                         "commands" => commands_headings += 1,
                         "command list" | "commands list" | "command index" | "usage"
@@ -717,34 +728,18 @@ mod tests {
                     continue;
                 }
             }
+            let word = command_word(line);
             if heading == "commands" && (fence || word.is_some()) {
                 return Some(format!(
                     "a fence or command line under `## Commands`: {line}"
                 ));
             }
-            match word {
-                Some(word) => {
-                    if run.is_empty() {
-                        run_intro = intro.clone();
-                    }
-                    run.push(word);
-                }
-                None if line.trim().is_empty() => {}
-                None => {
-                    if let Some(problem) = flush(&mut run, &run_intro, &heading) {
-                        return Some(problem);
-                    }
-                    if !fence {
-                        intro.push_str(line);
-                        intro.push('\n');
-                    }
-                }
-            }
+            families.extend(word);
             if fence {
                 in_fence = !in_fence;
             }
         }
-        if let Some(problem) = flush(&mut run, &run_intro, &heading) {
+        if let Some(problem) = section_problem(&mut families, &heading) {
             return Some(problem);
         }
         (commands_headings != 1)
@@ -832,15 +827,21 @@ mod tests {
     #[test]
     fn the_readme_guard_allows_per_slice_examples() {
         let readme = readme();
-        // One family, one section.
+        // One family, one slice.
         let one = format!(
-            "{readme}\n## analytics (#1)\n\n```\ntoolkit analytics run INPUT\ntoolkit analytics list\n```\n"
+            "{readme}\n## aurora\n\n```\ntoolkit aurora acu\ntoolkit aurora acu\n```\n"
         );
         assert_eq!(command_index_problem(&one), None);
-        // A section that introduces several families of one slice.
-        let several = format!(
-            "{readme}\n## analytics (#1)\n\nHelpers of `analytics` and `archive`.\n\n```\ntoolkit analytics run INPUT\ntoolkit archive run INPUT\n```\n"
+        // The relational slice owns four families, so its examples pass together
+        // (without any prose that names them).
+        let relational = format!(
+            "{readme}\n## relational\n\n```\ntoolkit dsql selftest\ntoolkit rds commitment\ntoolkit rds-oracle test-connection\ntoolkit timestream-influxdb instance-types\n```\n"
         );
-        assert_eq!(command_index_problem(&several), None);
+        assert_eq!(command_index_problem(&relational), None);
+        // One family spread over two slices of that family.
+        let startup = format!(
+            "{readme}\n## startup\n\n```\ntoolkit startup artifacts\ntoolkit startup emit-plan\n```\n"
+        );
+        assert_eq!(command_index_problem(&startup), None);
     }
 }
