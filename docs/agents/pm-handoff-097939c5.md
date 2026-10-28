@@ -241,3 +241,7 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 01:55Z: #4409 impl PARTIAL 29a96720aa4c59e2a4bd581a13bec71591fc2a5e (8fba463c; 26/32 files, 196 tests -> tests/startup_contracts; 107 schema-driven tests split to #4806; merged #4408 e54d43ee as b2c59e55; scoped 1a75e23e ok base b2c59e55, cli 2473). Embedded-python cost compare -> noted on #4609.
   Review #4832 worker f450c1d3 (Codex sol high, pinned, op 83f0c2da).
   4/4 busy: 955e5b50 (#4381 r3), 955d98b9 (#4391 repair), 8fdc14b5 (#4751 scanner), f450c1d3 (#4832 review).
+- 02:00Z: #4832 ACCEPT #4409 partial at 29a96720 (f450c1d3; reviewer friction harness #4834 recipe-receipt read scope). #4409 -> next integration round after r13 lands (close #4832 on land; #4409 stays open for #4806).
+  #4806 worker 658303dd (Sonnet high, base 29a96720, op ae0cd5b8): remaining 107 schema-driven startup tests.
+  4/4 busy: 955e5b50 (#4381 r3), 955d98b9 (#4391 repair), 8fdc14b5 (#4751 scanner), 658303dd (#4806).
+  ROUND 14 candidates (after r13 lands): #4409 29a96720, #4381 (if r3 accepted), #4391 (if repair accepted), #4751 scanner (base b8204e9d), #4806.
