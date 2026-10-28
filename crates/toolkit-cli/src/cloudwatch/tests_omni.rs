@@ -754,7 +754,9 @@ fn writeback_failures_are_notes_and_never_fail_the_run() {
         &opts,
     );
     assert!(
-        notes(&receipt)[0].contains("could not create /aws/cloudwatch/evaluations/results/svc with kmsKeyId k (does the key policy allow"),
+        notes(&receipt)[0].contains(
+            "could not create the results log group with kmsKeyId k (does the key policy allow"
+        ) && !notes(&receipt)[0].contains("/svc"),
         "{:?}",
         notes(&receipt)
     );
@@ -780,9 +782,8 @@ fn writeback_failures_are_notes_and_never_fail_the_run() {
         1,
         "the group exists, only retention failed"
     );
-    assert!(notes(&receipt)[0].starts_with(
-        "created /aws/cloudwatch/evaluations/results/svc but could not set 30-day retention"
-    ));
+    assert!(notes(&receipt)[0]
+        .starts_with("created the results log group but could not set 30-day retention"));
 }
 
 #[test]
@@ -1451,7 +1452,7 @@ fn add_resolves_the_dataset_by_name_across_pages_and_enforces_the_cap() {
         .get("error")
         .and_then(Json::as_str)
         .unwrap()
-        .starts_with("dataset ds-b already holds 1000 examples; adding 1 would exceed"));
+        .starts_with("the dataset is too full to take these examples: adding 1 would exceed"));
     assert!(!control_calls(&full).contains(&"AddDatasetExamples"));
 
     let mut unknown_count = capture_client(rows.clone(), datasets.clone(), None);

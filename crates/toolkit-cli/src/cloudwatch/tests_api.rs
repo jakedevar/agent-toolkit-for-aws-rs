@@ -1061,6 +1061,64 @@ fn check_status_reports_a_status_query_failure_as_an_api_error_line() {
     );
 }
 
+/// #4818: an invalid status response fails the consolidated check. It never
+/// reads as "no events" and never concludes PENDING (or READY/ERROR from
+/// later valid data); no further status query is sent after it.
+#[test]
+fn check_status_fails_on_an_invalid_status_response() {
+    // (malformed status, events the other statuses return, calls expected)
+    let cases: [(&str, &'static [(&'static str, &'static str)], usize); 4] = [
+        ("ACTIVE", &[("ACTIVE", "null")], 2),
+        (
+            "ACTIVE",
+            &[
+                ("ACTIVE", r#"[{"Time": true}]"#),
+                ("READY", r#"[{"Time": "2025-02-03T18:40:00Z"}]"#),
+            ],
+            2,
+        ),
+        (
+            "READY",
+            &[
+                ("READY", r#"{"x": 1}"#),
+                ("ERROR", r#"[{"Time": "2025-02-03T18:40:00Z"}]"#),
+            ],
+            3,
+        ),
+        ("ERROR", &[("ERROR", r#""SYNTHETIC_STATUS""#)], 4),
+    ];
+    for (status, events, calls) in cases {
+        let mut fake = status_script("2025-02-03T17:00:00Z", events);
+        let result = check_status(
+            &format!(
+                r#"{{{CHECK_ARGS}, "start_time": "2025-02-03T18:00:00Z", "end_time": "2025-02-03T19:00:00Z"}}"#
+            ),
+            &mut fake,
+        );
+        assert!(!result.ok, "{status}: {}", result.text);
+        assert!(
+            result.text.starts_with(&format!(
+                "ERROR: Failed to check {status} status: the GetInstrumentationConfigurationStatus \
+                 response is invalid: the member `Events"
+            )),
+            "{status}: {}",
+            result.text
+        );
+        for forbidden in ["PENDING", "OVERALL STATUS", "SYNTHETIC"] {
+            assert!(
+                !result.text.contains(forbidden),
+                "{status}: {}",
+                result.text
+            );
+        }
+        assert_eq!(
+            fake.calls.len(),
+            calls,
+            "{status}: no query after the invalid one"
+        );
+    }
+}
+
 #[test]
 fn check_status_input_and_created_at_failures() {
     let window = r#""start_time": "2025-02-03T18:00:00Z", "end_time": "2025-02-03T19:00:00Z""#;
@@ -1092,13 +1150,16 @@ fn check_status_input_and_created_at_failures() {
     );
 
     // #4784: a CreatedAt string that is not a timestamp fails without the
-    // response value in the diagnostic.
+    // response value in the diagnostic. Since repair 3 the gateway's shape
+    // check rejects it before the tool reads it.
     let mut fake = status_script("SYNTHETIC_CREATED_SENTINEL", &[]);
     let not_iso = check_status(&format!("{{{CHECK_ARGS}, {window}}}"), &mut fake);
+    assert!(!not_iso.ok);
     assert_eq!(
         not_iso.text,
-        "ERROR: Failed to fetch created_at: CreatedAt is not a timestamp: expected an ISO 8601 \
-         string or epoch seconds, got a string that is not ISO 8601"
+        "ERROR: Failed to fetch created_at: Exception: the GetInstrumentationConfiguration \
+         response is invalid: the member `Configuration.CreatedAt` of the response is not a \
+         timestamp (it is string)"
     );
 
     let mut fake = Fake::new(|_, _, _| Err(service_error("ResourceNotFoundException", "gone")));
