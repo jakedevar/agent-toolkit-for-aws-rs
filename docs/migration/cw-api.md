@@ -287,6 +287,63 @@ resource are gated anyway, so the live binding inherits the rule:
     [...]}`, naming the listing failure and every conversion error. Item 15's
     guarantee now holds on every `capture-dataset` path that runs after
     conversion.
+23. **Response-mutation harness and its fixes (repair round 3, #4816, #4817,
+    #4818).** `tests/cloudwatch_api.rs::every_recorded_response_member_fails_closed_or_is_documented`
+    replays every recording the command tests use, plus rich fixtures that
+    hold every response member the slice reads. For each response step and
+    member path it reruns the command three times: once with a unique
+    sentinel string, once with `null` and once with a value of another type.
+    A run must exit non-zero, print exactly what the unmutated run printed,
+    or match the commented `HARNESS_ALLOWED` table. It must never print the
+    sentinel on stderr or on the stdout of a failing run, and it must never
+    report a new non-terminal state (PENDING, Running) with exit 0. Changes
+    made in this round:
+    - **#4816:** the dataset-cap refusal no longer names the resolved dataset
+      id or its stored count. Both are response values, and a name-only add
+      never supplied the id. The refusal names only this run's example
+      count and the service cap.
+    - **#4817:** the writeback notes say "the results log group". They no
+      longer give the group name, which comes from the span's `svc_name`.
+      The caller's `--kms-key-id`, the retention days and the service error
+      text are still shown, escaped. A retention warning shared by several
+      traces is now shown once.
+    - **#4818:** `check-status` fails on an invalid
+      `GetInstrumentationConfigurationStatus` response. The message is
+      "ERROR: Failed to check <STATUS> status: <value-free shape error>",
+      and the command exits 1. No further status query is sent, and no
+      ACTIVE, READY, ERROR or PENDING verdict is drawn. `GatewayError`
+      carries `invalid_response` to tell this case apart. A service error
+      stays the best-effort "API error:" line inside the verdict, as in
+      Python.
+    - Found by the harness:
+      - A timestamp member (`CreatedAt`, `ExpiresAt`, `SyncedAt`, `Events[].Time`)
+        must be an ISO 8601 string or epoch seconds in range. Any other
+        string used to pass the shape check and be printed as a time; it is
+        now an invalid response.
+      - Each `AttributeFilters` group must be an object of strings (the
+        Python type).
+      - Each Logs Insights `messages` item must be an object whose `queryId`
+        and `text` are strings when present.
+    - **Allowlisted, with the reason in each entry:** values the command
+      exists to print. These are:
+      - rendered configurations (`list`, `get`), the create receipt, the
+        `get-status` report header, its events' `ErrorCause`, and the
+        check-status ERROR cause;
+      - snapshot records, field names and query messages;
+      - the query receipt's `queryId`;
+      - evaluation rows (`evaluatorId`, `label`, and the service's per-row
+        `errorCode`/`errorMessage`);
+      - `--include-explanations` explanations;
+      - dataset receipts, including the resolved `datasetId` of a
+        *successful* add.
+
+      Also allowlisted, as documented absent-defaults: epoch-second
+      timestamps, a `null` `NextToken` (no further page), and a `null` score
+      (an unscored row; the receipt counts `pairsScored: 0`, as in Python).
+      The batch-delete report is the only output allowed on a failing run
+      (exit 1 when any item failed). It lists the deleted and failed ARNs
+      with the service's own per-item code and message. The query receipt
+      also keeps its `queryId` on failure, as in Python.
 
 ## Python callers left for #4415
 

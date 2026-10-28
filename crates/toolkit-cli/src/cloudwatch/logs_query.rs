@@ -75,8 +75,11 @@ const START_QUERY: &[Field] = &[("queryId", Shape::Text)];
 const QUERY_RESULTS: &[Field] = &[
     ("status", Shape::Text),
     ("results", Shape::List),
-    ("messages", Shape::List),
+    ("messages", Shape::ObjectList(QUERY_MESSAGE)),
 ];
+
+/// A Logs Insights query message (`QueryInfo` text): both members strings.
+const QUERY_MESSAGE: &[Field] = &[("queryId", Shape::Text), ("text", Shape::Text)];
 
 impl LogsOp {
     fn response_fields(self) -> &'static [Field] {

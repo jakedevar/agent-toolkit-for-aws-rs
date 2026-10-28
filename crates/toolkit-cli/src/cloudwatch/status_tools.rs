@@ -56,34 +56,37 @@ fn invalid_time(field: &str, message: &str) -> OpResult {
 
 /// `_check_status_with_time_range`: whether status events exist for the
 /// configuration in a time range.
+///
+/// A service error stays a best-effort `error` note, as in Python, but an
+/// invalid response is `Err` (#4818): the consolidated check fails instead of
+/// reading it as "no events" and concluding PENDING.
 fn check_status_with_time_range(
     gateway: &mut Gateway<'_>,
     request: Vec<(String, Json)>,
-) -> StatusCheckResult {
+) -> Result<StatusCheckResult, String> {
     let response = match gateway.call(AppSignalsOp::GetStatus, &Json::Object(request)) {
         Ok(response) => response,
+        Err(error) if error.invalid_response => {
+            return Err(failure_text(&error.failure).to_string());
+        }
         Err(error) => {
-            return StatusCheckResult {
+            return Ok(StatusCheckResult {
                 has_events: false,
                 events: Vec::new(),
                 error: Some(format!("API error: {}", failure_text(&error.failure))),
-            };
+            });
         }
     };
     // `Gateway::call` has checked `Events` already (#4749); read it through
     // the shared accessor all the same.
-    match optional_object_list(&response, "Events") {
-        Ok(events) => StatusCheckResult {
-            has_events: !events.is_empty(),
-            events: events.to_vec(),
-            error: None,
-        },
-        Err(error) => StatusCheckResult {
-            has_events: false,
-            events: Vec::new(),
-            error: Some(format!("API error: {error}")),
-        },
-    }
+    let events = optional_object_list(&response, "Events").map_err(|error| {
+        format!("the GetInstrumentationConfigurationStatus response is invalid: {error}")
+    })?;
+    Ok(StatusCheckResult {
+        has_events: !events.is_empty(),
+        events: events.to_vec(),
+        error: None,
+    })
 }
 
 /// `get_instrumentation_configuration_status`.
@@ -301,11 +304,17 @@ pub(super) fn check_status(
         ));
     }
 
+    // The first invalid status response ends the check (#4818): no further
+    // query is sent and no verdict (PENDING, READY, ...) is rendered from it.
+    let mut invalid: Option<(String, String)> = None;
     let (verdict, window) = assess(
         created_at,
         start,
         query_end,
         &mut |status, status_start, status_end| {
+            if invalid.is_some() {
+                return StatusCheckResult::default();
+            }
             let request = vec![
                 (
                     "InstrumentationType".to_string(),
@@ -325,9 +334,19 @@ pub(super) fn check_status(
                 ),
                 ("EndTime".to_string(), str_json(&status_end.isoformat_z())),
             ];
-            check_status_with_time_range(gateway, request)
+            check_status_with_time_range(gateway, request).unwrap_or_else(|message| {
+                invalid = Some((status.to_string(), message));
+                StatusCheckResult::default()
+            })
         },
     );
+    if let Some((status, message)) = invalid {
+        return Ok(OpResult::failure(format!(
+            "ERROR: Failed to check {status} status: {}\n\nNo status was concluded; the \
+             instrumentation state is unknown.",
+            safe_text(&message)
+        )));
+    }
     let subject = StatusSubject {
         location_hash,
         service,

@@ -73,7 +73,7 @@ const CONFIGURATION: &[Field] = &[
     ("LocationHash", Shape::Text),
     ("Location", Shape::Object(LOCATION)),
     ("CaptureConfiguration", Shape::Object(CAPTURE)),
-    ("AttributeFilters", Shape::ObjectList(&[])),
+    ("AttributeFilters", Shape::TextMapList),
     ("Description", Shape::Text),
     ("CreatedAt", Shape::Timestamp),
     ("ExpiresAt", Shape::Timestamp),
@@ -190,6 +190,10 @@ impl AppSignalsOp {
 pub struct GatewayError {
     /// The classified failure.
     pub failure: AwsFailure,
+    /// True when the call answered but its response failed the shape check
+    /// (#4818): a caller may treat a service error as best effort, but never
+    /// an invalid response.
+    pub invalid_response: bool,
 }
 
 /// The gateway over an injected client.
@@ -218,6 +222,7 @@ impl<'a> Gateway<'a> {
                 Ok(()) => Ok(response),
                 Err(shape) => Err(GatewayError {
                     failure: AwsFailure::Other(format!("the {name} response is invalid: {shape}")),
+                    invalid_response: true,
                 }),
             },
             Ok(other) => Err(GatewayError {
@@ -225,9 +230,11 @@ impl<'a> Gateway<'a> {
                     "the {name} response is not an object (it is {})",
                     other.type_name()
                 )),
+                invalid_response: true,
             }),
             Err(error) => Err(GatewayError {
                 failure: failure_of(name, &error),
+                invalid_response: false,
             }),
         }
     }

@@ -824,7 +824,8 @@ fn provision_group(
             {
                 return (
                     Some(Writeback::Failed(format!(
-                        "could not create {group} with kmsKeyId {} (does the key policy allow \
+                        "could not create the results log group with kmsKeyId {} (does the \
+                         key policy allow \
                          the CloudWatch Logs service principal to use it?): {}",
                         kms_key_id.unwrap_or_default(),
                         failure_text(&failure)
@@ -844,7 +845,8 @@ fn provision_group(
         ]);
         if let Err(failure) = logs_call(client, "PutRetentionPolicy", &request) {
             warning = Some(format!(
-                "created {group} but could not set {retention_days}-day retention (needs \
+                "created the results log group but could not set {retention_days}-day \
+                 retention (needs \
                  logs:PutRetentionPolicy), so it keeps the account default retention \u{2014} \
                  which may be 'never expire', and these records carry the evaluator's \
                  explanation: {}",

@@ -674,11 +674,14 @@ pub fn run(
         if let Some(existing) = counted {
             if existing + added > MAX_DATASET_EXAMPLES {
                 return Err(error_with(
+                    // The resolved id and the stored count are response
+                    // values, so the refusal names neither (#4816): only
+                    // this run's `added` and the fixed cap.
                     format!(
-                        "dataset {dataset_id} already holds {existing} examples; adding {added} \
-                         would exceed the service cap of {MAX_DATASET_EXAMPLES} examples per \
-                         dataset (the write would fail with 402 ServiceQuotaExceededException). \
-                         Create a new dataset (--mode create) for the remainder."
+                        "the dataset is too full to take these examples: adding {added} would \
+                         exceed the service cap of {MAX_DATASET_EXAMPLES} examples per dataset \
+                         (the write would fail with 402 ServiceQuotaExceededException). Create \
+                         a new dataset (--mode create) for the remainder."
                     ),
                     "conversionErrors",
                     Json::Array(conversion_errors),

@@ -20,6 +20,8 @@ use toolkit_aws::recorded::{
 };
 use toolkit_core::Json;
 
+use super::timefmt::time_from_json;
+
 /// The expected type of one member.
 #[derive(Debug, Clone, Copy)]
 pub enum Shape {
@@ -35,8 +37,13 @@ pub enum Shape {
     NullableNumber,
     /// A boolean.
     Bool,
-    /// A timestamp: an ISO string or epoch seconds.
+    /// A timestamp: an ISO 8601 string or epoch seconds in range. Any other
+    /// string is not a timestamp (#4381 repair 3), so a renderer never
+    /// prints one as a time.
     Timestamp,
+    /// A list of objects whose members are all strings (attribute-filter
+    /// groups). Their member names are data, so an error names the item.
+    TextMapList,
     /// An object whose listed members have the listed shapes; other members
     /// are not read and not checked.
     Object(&'static [Field]),
@@ -142,9 +149,28 @@ fn check_member(object: &Json, key: &str, shape: Shape, prefix: &str) -> Result<
         })
         .map_err(wrap),
         Shape::Timestamp => typed(object, key, "a timestamp", |member| {
-            matches!(member, Json::String(_) | Json::Int(_) | Json::Float(_))
+            time_from_json(member).is_ok()
         })
         .map_err(wrap),
+        Shape::TextMapList => {
+            let items = optional_object_list(object, key).map_err(wrap)?;
+            for (index, item) in items.iter().enumerate() {
+                let Json::Object(members) = item else {
+                    continue;
+                };
+                if let Some((_, value)) = members
+                    .iter()
+                    .find(|(_, value)| !matches!(value, Json::String(_)))
+                {
+                    return Err(ShapeError {
+                        path: format!("{}[{index}]", join(prefix, key)),
+                        expected: "an object of strings",
+                        found: value.type_name(),
+                    });
+                }
+            }
+            Ok(())
+        }
         Shape::Object(fields) => match optional_object(object, key).map_err(wrap)? {
             Some(inner) => check_at(inner, fields, &join(prefix, key)),
             None => Ok(()),
