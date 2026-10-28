@@ -1482,11 +1482,13 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
 /// The global usage text is printed for every command's `--help` and appended to
 /// every usage error, so one slice's description edit changes the help bytes of
 /// every other command (#4936). Its length and FNV-1a hash are pinned to the
-/// text at the base f597a058 (round-14 head plus the #4576 registry): a
-/// deliberate usage change updates the pin in the same commit and says so in the
-/// Issue; an incidental one fails here.
-const USAGE_BASE_LEN: usize = 35200;
-const USAGE_BASE_FNV1A64: u64 = 0xa95b_3df5_10f4_8191;
+/// text at the round-16 integration head (#4960): the f597a058 text (35200
+/// bytes, 0xa95b_3df5_10f4_8191) plus the synopsis and description of the
+/// three slices registered since, bedrock-probes (#4404), docgraph (#4395) and
+/// telemetry (#4398). A deliberate usage change updates the pin in the same
+/// commit and says so in the Issue; an incidental one fails here.
+const USAGE_BASE_LEN: usize = 39130;
+const USAGE_BASE_FNV1A64: u64 = 0xefe6_62a1_2a0a_07aa;
 
 #[test]
 fn the_global_usage_text_is_byte_identical_to_the_base() {
