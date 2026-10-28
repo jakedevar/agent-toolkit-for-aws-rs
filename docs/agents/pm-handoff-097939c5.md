@@ -380,3 +380,5 @@ Friction: #4727, Rsi #4694, Rsi #4704
   4/4 busy: 12fe1c8e (#4390), ff7ae0b8 (#4396), dc00af2d (#4780 repair), 55275ba0 (#4937).
 - 10-28 22:34Z: #4937 (55275ba0) on #4404 0c11dcab: CHANGES_REQUESTED #4938 (env-file precedence for source-baseline inputs), #4939 (truncate-before-redact in baseline error_detail), #4940 (caller paths unredacted/unbounded). IAM/no-live/bedrock_resolve PASS. Repair worker 5275e644 (Opus high, continue_from 75ec4a1c), slice-local helper. Kaizen #4941 filed (P2): shared safe_path should redact+bound -> next free slot after r16 candidates. Then narrow re-review #4937.
   4/4 busy: 12fe1c8e (#4390), ff7ae0b8 (#4396), dc00af2d (#4780 repair), 5275e644 (#4404 repair).
+- 10-28 22:44Z: #4404 repair 6f4e4af87db228051e21c955ef0a5ec33a01c530 (5275e644; COVERS #4938 #4939 #4940; one resolved lookup flag>file>env, full redact before 200-cut, slice diag::path; 9 tests, 7 red/2 non-compiling on 0c11dcab; fmt 11591b5f clippy 2db23cdb scoped 67a13880 ok cli 2932). Re-review #4937 r2 worker 7e9d4c71 (Codex sol, pinned).
+  4/4 busy: 12fe1c8e (#4390), ff7ae0b8 (#4396), dc00af2d (#4780 repair), 7e9d4c71 (#4937 r2). Next free slot: kaizen #4941.
