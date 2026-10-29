@@ -393,7 +393,27 @@ mod tests {
                     Err(BridgeError::Input)
                 );
             }
-            for key in ["unexpected", "payload", "client_token"] {
+            for key in [
+                "unexpected",
+                "payload",
+                "client_token",
+                "payment_instrument_id",
+                "version",
+                "request_url",
+                "accepted",
+                "resource",
+                "policy",
+                "region",
+                "payment_manager_arn",
+                "payment_session_id",
+                "user_id",
+                "agent_name",
+                "candidate",
+                "secrets",
+            ] {
+                if fields.iter().any(|(existing, _)| existing == key) {
+                    continue;
+                }
                 let mut extra = fields.clone();
                 extra.push((key.into(), Json::Null));
                 assert_eq!(

@@ -436,5 +436,66 @@ mod tests {
             gate(challenge, &any_policy, &resolver).unwrap().amount(),
             "1"
         );
+        // Under allowAnyRecipient the other five controls remain in force.
+        let any_profile = Json::object(vec![
+            (
+                "maxPaymentAmountAtomic",
+                config.get("maxPaymentAmountAtomic").unwrap().clone(),
+            ),
+            ("allowAnyRecipient", Json::Bool(true)),
+            (
+                "networkPreferences",
+                config.get("networkPreferences").unwrap().clone(),
+            ),
+            (
+                "allowedAssetsByNetwork",
+                config.get("allowedAssetsByNetwork").unwrap().clone(),
+            ),
+            (
+                "allowedOrigins",
+                config.get("allowedOrigins").unwrap().clone(),
+            ),
+        ]);
+        let any_policy = from_openclaw(&any_profile).unwrap();
+        let Json::Array(entries) = challenge.get("accepts").unwrap() else {
+            unreachable!()
+        };
+        let single = |entry: Json| {
+            let Json::Object(mut fields) = challenge.clone() else {
+                unreachable!()
+            };
+            fields
+                .iter_mut()
+                .find(|(key, _)| key == "accepts")
+                .unwrap()
+                .1 = Json::Array(vec![entry]);
+            Json::Object(fields)
+        };
+        let first = &entries[0];
+        assert!(gate(&single(first.clone()), &any_policy, &resolver).is_ok());
+        for (key, value) in [
+            ("amount", "100001"),
+            ("asset", "other"),
+            ("scheme", "upto"),
+            ("network", "eip155:1"),
+        ] {
+            let Json::Object(mut fields) = first.clone() else {
+                unreachable!()
+            };
+            fields.iter_mut().find(|(k, _)| k == key).unwrap().1 = Json::string(value);
+            assert!(
+                gate(&single(Json::Object(fields)), &any_policy, &resolver).is_err(),
+                "{key}"
+            );
+        }
+        let mut altered = single(first.clone());
+        if let Json::Object(fields) = &mut altered {
+            fields.iter_mut().find(|(k, _)| k == "resource").unwrap().1 = Json::object(vec![(
+                "url",
+                Json::string("https://evil.example/pay/weather"),
+            )]);
+        }
+        assert!(gate(&altered, &any_policy, &resolver).is_err());
+        assert!(gate(&single(first.clone()), &wrong_origin, &resolver).is_err());
     }
 }
