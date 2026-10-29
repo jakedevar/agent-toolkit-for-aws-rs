@@ -228,7 +228,7 @@ impl WaitTracker {
         dir: &Path,
         pid: u32,
         now: i64,
-        report: impl FnOnce(Observation, Option<String>) -> R,
+        report: impl FnOnce(Observation, Option<String>) -> (R, bool),
     ) -> R {
         let elapsed = i64::try_from(self.start.elapsed().as_secs()).unwrap_or(i64::MAX);
         self.finish_at_with(dir, pid, now, elapsed, report)
@@ -252,7 +252,7 @@ impl WaitTracker {
         elapsed: i64,
     ) -> (Observation, Option<String>) {
         self.finish_at_with(state_dir, pid, now, elapsed, |observation, reason| {
-            (observation, reason)
+            ((observation, reason), true)
         })
     }
 
@@ -262,7 +262,7 @@ impl WaitTracker {
         pid: u32,
         now: i64,
         elapsed: i64,
-        report: impl FnOnce(Observation, Option<String>) -> R,
+        report: impl FnOnce(Observation, Option<String>) -> (R, bool),
     ) -> R {
         let path = state_dir.join("pending").join(format!("{pid}.json"));
         let mut record = read_record(state_dir, pid);
@@ -270,7 +270,7 @@ impl WaitTracker {
             && !self.seen
             && matches!(std::fs::symlink_metadata(&path), Err(ref e) if e.kind() == io::ErrorKind::NotFound)
         {
-            return report(Observation::Missing, None);
+            return report(Observation::Missing, None).0;
         }
         self.seen = true;
         if let Some(ref value) = record {
@@ -297,11 +297,12 @@ impl WaitTracker {
             decision_now,
             cutoff,
         );
-        let reported = report(
+        let (reported, delivered) = report(
             Observation::Decision(decision),
             record.and_then(|r| r.reason),
         );
-        if lock.is_some()
+        if delivered
+            && lock.is_some()
             && decision != super::WaitDecision::Poll
             && decision != super::WaitDecision::HelperBlocked
         {

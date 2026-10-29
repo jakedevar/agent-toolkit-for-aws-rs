@@ -590,8 +590,51 @@ fn terminal_record_remains_until_result_is_reported() {
     WaitTracker::default().finish_after_report(scratch.path(), 91, 99, |_, _| {
         assert!(path.exists());
         assert!(super::pending::acquire_if_free(scratch.path(), 91).is_none());
+        ((), true)
     });
     assert!(!path.exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn failed_report_preserves_final_record_for_retry() {
+    use super::{
+        pending::{Custody, WaitTracker},
+        PendingStatus,
+    };
+    use crate::launch::{clock::SeededRandom, tests_support::Scratch};
+    let scratch = Scratch::new("wait-report-failure");
+    let custody = Custody::acquire(scratch.path(), 91).unwrap();
+    custody
+        .write(
+            1234,
+            40,
+            100,
+            PendingStatus::Failed,
+            Some("invalid_code"),
+            &SeededRandom::new(1),
+        )
+        .unwrap();
+    drop(custody);
+    let path = scratch.join("pending/91.json");
+    struct Broken;
+    impl std::io::Write for Broken {
+        fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::ErrorKind::BrokenPipe.into())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut stdout = Vec::new();
+    let mut stderr = Broken;
+    let mut output = crate::Output::with_diagnostics(&mut stdout, &mut stderr);
+    let result = WaitTracker::default().finish_after_report(scratch.path(), 91, 99, |_, _| {
+        super::wait::report_failure(&mut output, "Sign-in failed.")
+    });
+    assert!(result.unwrap().is_ok());
+    assert_eq!(output.exit_status(), 1);
+    assert!(path.exists());
 }
 
 #[cfg(unix)]

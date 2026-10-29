@@ -55,18 +55,22 @@ pub fn command(invocation: &Invocation, output: &mut Output<'_>) -> Result<(), T
                 .and_then(|v| i64::try_from(v.as_secs()).ok())
                 .unwrap_or(0);
             let result = tracker.finish_after_report(&dir, pid, now, |observation, reason| match observation {
-                Observation::Missing => Some(failure(output, &format!("No sign-in is in progress for pid {pid}. Run auth-start again."))),
-                Observation::Decision(WaitDecision::Authenticated) => Some(output.line(&serde_json::json!({"authenticated":true,"baseUrl":base}).to_string())),
-                Observation::Decision(WaitDecision::Poll) => None,
-                Observation::Decision(WaitDecision::HelperBlocked) => Some(failure(output, "Sign-in has not finished: the sign-in helper is still blocked. Run session-status in a minute; if it does not report a session, run auth-start again.")),
-                Observation::Decision(WaitDecision::TimedOut) => Some(failure(output, "Sign-in did not finish in time. Run auth-start again.")),
-                Observation::Decision(WaitDecision::Ended) => Some(failure(output, "Sign-in ended without completing authentication. Run auth-start again.")),
-                Observation::Decision(WaitDecision::Failed) => Some(failure(output, match reason.as_deref() {
+                Observation::Missing => report_failure(output, &format!("No sign-in is in progress for pid {pid}. Run auth-start again.")),
+                Observation::Decision(WaitDecision::Authenticated) => {
+                    let result = output.line(&serde_json::json!({"authenticated":true,"baseUrl":base}).to_string());
+                    let delivered = result.is_ok() && !output.is_closed();
+                    (Some(result), delivered)
+                },
+                Observation::Decision(WaitDecision::Poll) => (None, false),
+                Observation::Decision(WaitDecision::HelperBlocked) => report_failure(output, "Sign-in has not finished: the sign-in helper is still blocked. Run session-status in a minute; if it does not report a session, run auth-start again."),
+                Observation::Decision(WaitDecision::TimedOut) => report_failure(output, "Sign-in did not finish in time. Run auth-start again."),
+                Observation::Decision(WaitDecision::Ended) => report_failure(output, "Sign-in ended without completing authentication. Run auth-start again."),
+                Observation::Decision(WaitDecision::Failed) => report_failure(output, match reason.as_deref() {
                     Some("authorization_denied") => "Sign-in was denied. Run auth-start again.",
                     Some("invalid_code") => "Sign-in returned an invalid authorization code. Run auth-start again.",
                     Some("transport_unavailable") => "The sign-in service transport is unavailable.",
                     _ => "Sign-in failed. Run auth-start again.",
-                })),
+                }),
             });
             if let Some(result) = result {
                 return result;
@@ -79,6 +83,23 @@ pub fn command(invocation: &Invocation, output: &mut Output<'_>) -> Result<(), T
         let _ = invocation;
         failure(output, "This command is not supported on this platform.")
     }
+}
+
+#[cfg(unix)]
+pub(super) fn report_failure(
+    output: &mut Output<'_>,
+    message: &str,
+) -> (Option<Result<(), ToolkitError>>, bool) {
+    let text = serde_json::json!({"error":message}).to_string();
+    let text = output.caller.diagnostic(&text);
+    let delivered = output.diagnostics.as_mut().is_some_and(|writer| {
+        writer
+            .write_all(text.as_bytes())
+            .and_then(|()| writer.write_all(b"\n"))
+            .is_ok()
+    });
+    output.set_exit_status(1);
+    (Some(Ok(())), delivered)
 }
 
 #[allow(clippy::unnecessary_wraps)]
