@@ -44,33 +44,33 @@ other_os=',"node_modules/far":{"version":"1.0.0","resolved":"https://registry.np
 # Usage and a missing cache fail closed with the operator command.
 sh "$script" bogus >"$tmp/out" 2>&1
 check "unknown mode is a usage error (exit 2)" "$([ $? -eq 2 ] && echo 0 || echo 1)"
-make_pkg "$tmp/pkg" 'node -e 1' ''
-route "$tmp/pkg" "$tmp/no-cache" check
+make_pkg "$tmp/s/pkg/packages/p" 'node -e 1' ''
+route "$tmp/s/pkg/packages/p" "$tmp/no-cache" check
 st=$?
 check "missing cache: check exits 3" "$([ $st -eq 3 ] && echo 0 || echo 1)"
 grep -q "make openclaw-npm-cache" "$tmp/out"
 check "missing cache names the operator command" $?
-route "$tmp/pkg" "$tmp/no-cache" run
+route "$tmp/s/pkg/packages/p" "$tmp/no-cache" run
 check "missing cache: run exits 3 before npm" "$([ $? -eq 3 ] && echo 0 || echo 1)"
-env -u HOME -u OPENCLAW_NPM_CACHE OPENCLAW_PACKAGE_DIR="$tmp/pkg" sh "$script" check >"$tmp/out" 2>&1
+env -u HOME -u OPENCLAW_NPM_CACHE OPENCLAW_PACKAGE_DIR="$tmp/s/pkg/packages/p" sh "$script" check >"$tmp/out" 2>&1
 check "no HOME and no override: exit 3" "$([ $? -eq 3 ] && echo 0 || echo 1)"
 
 # A complete cache passes; another platform's optional tarball is not needed.
 seed_cache "$tmp/cache"
-make_pkg "$tmp/pkg-os" 'node -e 1' "$other_os"
-route "$tmp/pkg-os" "$tmp/cache" check
+make_pkg "$tmp/s/pkg-os/packages/p" 'node -e 1' "$other_os"
+route "$tmp/s/pkg-os/packages/p" "$tmp/cache" check
 check "complete cache passes; other-platform entries skipped" $?
 
 # A missing or tampered tarball fails closed.
 mkdir -p "$tmp/empty/_cacache/content-v2"
-route "$tmp/pkg" "$tmp/empty" check
+route "$tmp/s/pkg/packages/p" "$tmp/empty" check
 st=$?
 check "missing tarball: exit 3" "$([ $st -eq 3 ] && echo 0 || echo 1)"
 grep -q "fake-dep@1.0.0: missing from the offline cache" "$tmp/out"
 check "missing tarball is named" $?
 cp -R "$tmp/cache" "$tmp/tampered"
 find "$tmp/tampered/_cacache/content-v2" -type f -exec sh -c 'echo x >>"$1"' _ {} \;
-route "$tmp/pkg" "$tmp/tampered" run
+route "$tmp/s/pkg/packages/p" "$tmp/tampered" run
 st=$?
 check "tampered tarball: run exits 3" "$([ $st -eq 3 ] && echo 0 || echo 1)"
 grep -q "do not match the lock integrity" "$tmp/out"
@@ -84,8 +84,10 @@ socket.on("connect", () => { console.error("NETWORK REACHABLE"); process.exit(1)
 socket.on("timeout", () => { console.error("NETWORK TIMEOUT (not isolated)"); process.exit(1); });
 socket.on("error", (e) => { console.log(`network refused: ${e.code}`); process.exit(0); });
 EOF
-make_pkg "$tmp/run" "node -e \\\"require('fake-dep/package.json')\\\" && python3 -m unittest discover && node $tmp/net.mjs && touch ran-last" ''
-route "$tmp/run" "$tmp/cache" run
+make_pkg "$tmp/s/run/packages/p" "node -e \\\"require('fake-dep/package.json')\\\" && python3 -m unittest discover && node $tmp/net.mjs && test ! -e dist/stale && touch $tmp/ran-last" ''
+printf 'node_modules/\ndist/\n' >"$tmp/s/run/packages/p/.gitignore"
+mkdir -p "$tmp/s/run/packages/p/dist" && : >"$tmp/s/run/packages/p/dist/stale"
+route "$tmp/s/run/packages/p" "$tmp/cache" run
 st=$?
 check "run: offline install and node steps pass" "$st"
 [ $st -eq 0 ] || cat "$tmp/out"
@@ -93,15 +95,15 @@ grep -q "skipped Python step: python3 -m unittest discover" "$tmp/out"
 check "run: the Python step is skipped and logged" $?
 grep -q "network refused: ENETUNREACH" "$tmp/out"
 check "run: the network is unreachable inside the route" $?
-[ -f "$tmp/run/ran-last" ] && [ -d "$tmp/run/node_modules/fake-dep" ]
-check "run: steps after the Python step ran" $?
+[ -f "$tmp/ran-last" ] && [ ! -e "$tmp/s/run/packages/p/node_modules" ] && [ -f "$tmp/s/run/packages/p/dist/stale" ]
+check "run: later steps ran in a scratch copy without stale ignored output; the package dir is untouched" $?
 [ ! -e "$tmp/cache/_logs" ] && [ ! -e "$tmp/cache/_cacache/index-v5" ]
 check "run: the shared cache is not written" $?
 
 # A Python-free script runs as npm test; Python reached indirectly is refused.
 printf 'python3 -c "print(1)"\n' >"$tmp/indirect.sh"
-make_pkg "$tmp/py" "sh $tmp/indirect.sh" ''
-route "$tmp/py" "$tmp/cache" run
+make_pkg "$tmp/s/py/packages/p" "sh $tmp/indirect.sh" ''
+route "$tmp/s/py/packages/p" "$tmp/cache" run
 st=$?
 check "run: Python reached through PATH fails the route" "$([ $st -ne 0 ] && echo 0 || echo 1)"
 grep -q "Python is not allowed in this route" "$tmp/out"
@@ -110,8 +112,8 @@ grep -q "test steps: npm test" "$tmp/out"
 check "run: a Python-free script runs as npm test" $?
 
 # A test script the route cannot split safely is refused.
-make_pkg "$tmp/bad" "node -e 1; python3 -V" ''
-route "$tmp/bad" "$tmp/cache" run
+make_pkg "$tmp/s/bad/packages/p" "node -e 1; python3 -V" ''
+route "$tmp/s/bad/packages/p" "$tmp/cache" run
 check "run: a script with ; and Python is refused (exit 5)" "$([ $? -eq 5 ] && echo 0 || echo 1)"
 
 if [ "$fails" -ne 0 ]; then

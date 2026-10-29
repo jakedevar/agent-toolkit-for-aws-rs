@@ -69,8 +69,12 @@ AgentSubmitJob `{"kind":"test","params":{"recipe":"openclaw-node-test"}}`).
    the offline npm cache, and that each one's sha512 equals the lock
    `integrity`. A missing cache, a missing tarball or wrong bytes fail closed
    (exit 3) and name the operator command below.
-2. It copies the cache to a private temporary directory, so the shared cache is
-   never written. It gives npm empty user and global npmrc files and `offline=true`.
+2. It copies the cache and the skill root (the package plus the canonical skill
+   that `stage-skill` bundles, minus what the package `.gitignore` names) to a
+   private temporary directory and runs there. The shared cache and the
+   worktree are never written, so no `node_modules`, `dist` or staged skill is
+   left for the real-tree validators (`spec validate`, `manifests validate`).
+   It gives npm empty user and global npmrc files and `offline=true`.
 3. In a fresh network namespace (`unshare --user --map-current-user --net`: one
    loopback, down) it runs `npm ci --offline --ignore-scripts`, then
    `npm test`. If the namespace cannot be created it exits 4 rather than run
@@ -84,8 +88,8 @@ AgentSubmitJob `{"kind":"test","params":{"recipe":"openclaw-node-test"}}`).
 The recipe first runs `scripts/openclaw-node-test.selftest.sh`, which uses a
 throwaway package and cache. It checks the fail-closed cases (missing cache,
 missing or tampered tarball, unset `HOME`), the skipped Python step, the Python
-shim, that the network is unreachable and that the shared cache stays
-untouched. `make test-scripts` also runs the self-test.
+shim, that the network is unreachable, and that the shared cache and the
+package directory stay untouched. `make test-scripts` also runs the self-test.
 
 **Where the dependencies come from.** The cache lives outside the repository at
 `$HOME/.cache/rsi/openclaw-npm-cache` (`OPENCLAW_NPM_CACHE` overrides it). The

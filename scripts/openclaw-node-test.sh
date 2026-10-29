@@ -10,8 +10,11 @@
 #   1. `check`: every package-lock.json tarball this platform installs must be in
 #      the offline npm cache, and its bytes must match the lock's integrity. A
 #      missing cache, a missing tarball or a tampered tarball fails closed (exit 3).
-#   2. The cache is copied to a private temporary directory, so a run never
-#      mutates the shared cache and the user's npmrc is never read.
+#   2. The cache and the skill root (the package plus the canonical skill that
+#      stage-skill bundles, minus what the package .gitignore names) are copied
+#      to a private temporary directory. A run never writes the shared cache or
+#      the worktree (no node_modules, dist or staged skill is left behind), and
+#      the user's npmrc is never read.
 #   3. Inside a fresh network namespace (unshare --net: no interface but a
 #      down loopback), `npm ci --offline --ignore-scripts`, then the package's
 #      `npm test` script. Exit 4 when the namespace cannot be created; there
@@ -142,11 +145,32 @@ run() {
   done
   script="$(node_test_script)" || die 5 "cannot derive a Python-free test script from $pkg/package.json"
 
-  echo "openclaw-node-test: package $pkg"
+  # Work on a scratch copy of the skill root (the package and the canonical
+  # skill that stage-skill bundles), so the worktree is never written: no
+  # node_modules, dist or staged skill is left behind for the real-tree
+  # validators. The copy drops what the package .gitignore names, so stale
+  # build output in the worktree is never used.
+  root="$(cd "$pkg/../.." && pwd -P)"
+  rel="$(basename "$(dirname "$pkg")")/$(basename "$pkg")"
+  mkdir -p "$tmp/tree"
+  cp -R "$root" "$tmp/tree/"
+  work="$tmp/tree/$(basename "$root")/$rel"
+  [ -f "$work/package.json" ] || die 3 "scratch copy has no package.json at $work"
+  if [ -f "$work/.gitignore" ]; then
+    while IFS= read -r line || [ -n "$line" ]; do
+      case "$line" in "" | "#"* | "!"*) continue ;; esac
+      line="${line#/}"
+      line="${line%/}"
+      case "$line" in "" | */* | *..*) continue ;; esac
+      (cd "$work" && for match in $line; do if [ -e "$match" ]; then rm -rf "./$match"; fi; done)
+    done <"$work/.gitignore"
+  fi
+
+  echo "openclaw-node-test: package $pkg (run in a scratch copy: $work)"
   echo "openclaw-node-test: node $(node --version), npm $(npm --version), $(uname -sm)"
   echo "openclaw-node-test: network namespace: unshare --net (loopback down, no other interface)"
   echo "openclaw-node-test: test steps: $script"
-  cd "$pkg"
+  cd "$work"
   env \
     PATH="$tmp/shim:$PATH" \
     npm_config_cache="$tmp/cache" \
