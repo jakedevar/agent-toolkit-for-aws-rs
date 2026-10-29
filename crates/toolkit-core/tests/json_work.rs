@@ -341,3 +341,81 @@ fn limits_do_not_change_the_duplicate_key_error() {
     let limited = parse_json_with_limits(input, &limits(10, 100)).expect_err("duplicate");
     assert_eq!(plain, limited);
 }
+
+// #5026: an exhausted node budget must refuse a member at its opening quote,
+// before the key is scanned, decoded or allocated.
+
+const NODE_CAP_MESSAGE: &str = "too many JSON values";
+
+#[test]
+fn exhausted_budget_refuses_a_long_first_key_at_its_opening_quote() {
+    // Only the root object fits; the member is over budget. The key is valid,
+    // so the old order scanned and copied all of it and failed at the colon.
+    let input = format!("{{\"{}\":0}}", "k".repeat(5_000));
+    let error = parse_json_with_limits(&input, &limits(MAX_JSON_DEPTH, 1)).expect_err("cap");
+    assert_eq!(error.message, NODE_CAP_MESSAGE);
+    assert_eq!(error.format, "JSON");
+    assert_eq!(error.line, 1);
+    assert_eq!(error.column, 2, "the opening quote of the first member");
+}
+
+#[test]
+fn exhausted_budget_is_reported_before_a_bad_escape_in_the_first_key() {
+    let error =
+        parse_json_with_limits("{\"\\q\":0}", &limits(MAX_JSON_DEPTH, 1)).expect_err("cap");
+    assert_eq!(error.message, NODE_CAP_MESSAGE);
+    assert_eq!((error.line, error.column), (1, 2));
+}
+
+#[test]
+fn over_budget_later_member_stops_before_its_key_is_decoded() {
+    // Root, first member and its value fit (3 nodes). The second member is
+    // over budget; its key is moderately long and ends in an invalid escape,
+    // which would be the error if the key were decoded first.
+    let input = format!("{{\"a\":1,\"{}\\q\":2}}", "x".repeat(64));
+    let error = parse_json_with_limits(&input, &limits(MAX_JSON_DEPTH, 3)).expect_err("cap");
+    assert_eq!(error.message, NODE_CAP_MESSAGE);
+    assert_eq!(error.line, 1);
+    assert_eq!(error.column, 8, "the opening quote of the second member");
+}
+
+#[test]
+fn over_budget_later_member_is_refused_after_a_newline_at_its_quote() {
+    let input = format!("{{\n  \"a\": 1,\n  \"{}\\q\": 2\n}}", "y".repeat(64));
+    let error = parse_json_with_limits(&input, &limits(MAX_JSON_DEPTH, 3)).expect_err("cap");
+    assert_eq!(error.message, NODE_CAP_MESSAGE);
+    assert_eq!((error.line, error.column), (3, 3));
+}
+
+#[test]
+fn within_budget_bad_escape_in_a_key_keeps_its_decoding_error() {
+    let input = format!("{{\"{}\\q\":0}}", "x".repeat(64));
+    let capped = parse_json_with_limits(&input, &limits(MAX_JSON_DEPTH, 2)).expect_err("escape");
+    let plain = parse_json(&input).expect_err("escape");
+    assert_eq!(capped.message, "invalid escape sequence");
+    assert_eq!(capped, plain);
+}
+
+#[test]
+fn default_parse_reports_a_bad_key_escape_where_it_always_did() {
+    let error = parse_json("{\"\\q\":0}").expect_err("escape");
+    assert_eq!(error.message, "invalid escape sequence");
+}
+
+#[test]
+fn exhausted_budget_refuses_an_array_element_before_reading_it() {
+    // The array uses the whole budget; the long element is refused at its
+    // first byte, and a bad escape inside it is never reached.
+    let input = format!("[\"{}\\q\"]", "z".repeat(5_000));
+    let error = parse_json_with_limits(&input, &limits(MAX_JSON_DEPTH, 1)).expect_err("cap");
+    assert_eq!(error.message, NODE_CAP_MESSAGE);
+    assert_eq!((error.line, error.column), (1, 2));
+}
+
+#[test]
+fn over_budget_later_array_element_is_refused_at_its_start() {
+    let input = format!("[1, \"{}\\q\"]", "z".repeat(64));
+    let error = parse_json_with_limits(&input, &limits(MAX_JSON_DEPTH, 2)).expect_err("cap");
+    assert_eq!(error.message, NODE_CAP_MESSAGE);
+    assert_eq!((error.line, error.column), (1, 5));
+}
