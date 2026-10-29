@@ -9,6 +9,7 @@ pub enum Outcome {
     InvalidCode,
 }
 
+pub mod gate;
 pub mod listener;
 
 const MAX_HEAD: usize = 8192;
