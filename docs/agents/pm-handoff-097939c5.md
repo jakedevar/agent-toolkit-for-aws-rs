@@ -945,3 +945,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 10-29 10:56Z: L6 #5317 (56c78333, Opus) COMPLETE at 0330c8857c78e6ac09489d3c426729d501bb52cd (merge of rolling 07a4b4ec); scoped e25befa5 ok 4304, merges clean. 113 tests; decision 2 (moved-descriptor DFS walk replaces design order) flagged for review. Follow-up #5335 (interim GetLaunch -> L5).
   Review #5336 -> Codex sol 17932ae8 (pinned 0330c885; mutations identity check, ledger cleanup, 3xx, non-public DNS). On ACCEPT: check (job e25befa5, source_session 56c78333) + enqueue; close #5317 #5336 on land.
   4/4 busy: e1de11f0 (#5327), acde8672 (#5306), 3c1e60a0 (#5181 repair 1), 17932ae8 (#5336). #5329 still waits.
+- 10-29 11:10Z: #5181 repair 1 (3c1e60a0, Codex terra) at 424fe18337134f18b75de555a39cc592e54c7e23 (request.rs privacy module; B1 tests); worker scoped ad2997cd 4119 ok but check refused candidate_job_not_green/generic_cargo_commit_mismatch (#5265 pattern). Manager scoped df521a91 (worktree 3c1e60a0, base origin/rolling 07a4b4ec, rolling_tool) running.
+  Re-review #5339 -> Claude Sonnet 23e9cf0d (pinned 424fe183; B1 mut b, B2 mut d/e). On ACCEPT + df521a91 ok: check (job df521a91) + enqueue (source_session 3c1e60a0); close #5181 #5326 #5339 on land; then x402 S5 + OpenClaw B1.
+  4/4 busy: e1de11f0 (#5327), acde8672 (#5306), 17932ae8 (#5336 L6 review), 23e9cf0d (#5339). #5329 still waits.
