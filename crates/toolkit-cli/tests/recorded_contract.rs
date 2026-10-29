@@ -2076,8 +2076,8 @@ const INVENTORY: &[(&str, Class)] = &[
     (
         "ai_payloads",
         Class::NotRecorded(
-            "the skill's own code_templates files, read-only from the repository tree; no AWS \
-             response is read",
+            "the skill's template files and user-supplied reward event and response files; \
+             no AWS service is called",
         ),
     ),
     (

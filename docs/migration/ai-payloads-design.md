@@ -973,6 +973,23 @@ writing. The command then gives exit 1.
    target `render` gives exit 1, `publish_unsupported_platform`, before
    writing; `--dry-run` still works. A Windows primitive is out of scope.
 
+**D-6 (S2a repair, #5207–#5209).** The primitive rejects empty names, `.` and
+`..`, and names containing `/` or NUL with `publish_invalid_path`. It checks
+directory components statically, rejecting symlinks, non-directories and `..`;
+concurrent ancestor replacement remains outside the threat model (§6). Other
+filesystem errors use `publish_io`. Only raw `EPERM`, `ENOTSUP` and
+`EOPNOTSUPP` from the link operation map to `publish_no_atomic_noreplace`;
+its user-facing detail is the operating system's error text (for example,
+`Operation not permitted (os error 1)`). `EACCES` uses `publish_io`.
+
+`Published` contains `leftover_temp: Option<PathBuf>` for a failed unlink after
+commit. `PublishError` contains `code`, `detail`, and optional
+`cleanup_failure`; the latter contains `code` (`publish_cleanup_failed`),
+`detail`, and `leftover_temp: PathBuf`. On a pre-commit cleanup failure the
+original code remains primary, the detail includes the cleanup diagnostic,
+and the secondary field identifies the failure and residue. Thus a caller can
+still distinguish `destination_exists` for its retry or refusal decision.
+
 **Test seam.** `publish_new` takes `&mut dyn PublishHooks`. The trait is
 `pub(crate)`, and production passes `NoHooks`, so tests and production run the
 same code path. Its callbacks are:
@@ -981,7 +998,7 @@ same code path. Its callbacks are:
 - `before_commit`;
 - `after_commit_before_unlink`;
 - `fault(stage) -> Option<io::Error>`, at stages `temp_create`, `write`,
-  `sync`, `link` and `unlink`. (r1's `rename` stage is gone with the
+  `sync`, `link`, `cleanup` and `unlink`. (r1's `rename` stage is gone with the
   operation.)
 
 The interleaving fixtures in R18 and R24 use these hooks to run a competing
@@ -1271,6 +1288,10 @@ docs, on one RSI branch. Verification is daemon recipe jobs plus a
 | S3r `ai-payloads-reward-templates` (r2) | The GM-approved #5120 fix: the minimal response-format edit of T09 (D-1: `body` becomes a JSON string) and T06 (D-2: the empty-batch and failing-sample paths return a documented envelope with one result per input), canonical and `plugins/` mirror byte-identical. No new `.py` file. Verified **only** by the Rust checker and Rust tests over the file text; no Python is run anywhere, and no Python tooling or CI step is added. AC3 counts are unchanged: the rows stay retained Python. | AP-RWT-01..05 | S3 landed on rolling |
 | S4 `ai-payloads-callers` | Edit the canonical skill prose: the four `code_output_guide.md` files, training/processing `configuration.md`, the `overview.md` and reference pages in §1.2 that describe hand rendering, `create-reward-function.md` and `rlvr_reward_function.md` (testing step). Also: the EULA consent step now names `--consent ACCEPT_EULA`; the append step asks the user to save the notebook, runs `--append`, then tells the user to open the `open:` path (B-12); dataset-transformation Step 9 passes `--cell 2=<project-dir>/scripts/transform_fn.py`; the manual edit points stay as prose (§4.4.3). Mirrors are regenerated with `toolkit sync plugin-skills`. Templates are not edited by S4. | AP-DOC-* | S2b, S3 |
 | S5 `ai-payloads-inventory` | `python-inventory.json`: dispositions, OD-7 reclassification, `status` values; this document's status line; `docs/migration/README.md` row note | AP-INV-* | S4, S3r |
+
+AP-PUB-03's eight-contention retry loop and AP-PUB-15's dry-run behavior are
+command-level acceptance cases for S2b; S2a covers the primitive's conflict and
+platform refusal paths (#5202).
 
 S1–S3 are small enough for one implementer each. r1 splits S2 so that
 publication safety (S2a) is reviewed alone, before any command uses it. r2

@@ -21,6 +21,8 @@ use toolkit_core::{
 use crate::safe_text::safe_path;
 use crate::{Invocation, Output};
 
+mod place;
+mod reward;
 mod template;
 
 use template::Template;
@@ -29,6 +31,10 @@ use template::Template;
 pub(crate) const SLICE: crate::registry::Slice = crate::registry::Slice {
     name: "ai-payloads",
     commands: &[crate::CommandSpec {
+        path: &["ai-payloads", "reward", "sample"], flags: &[], value_flags: &["--format"], strict_values: true, repeatable_flags: &[], max_positionals: 0, passthrough: false, handler: reward::sample_command,
+    }, crate::CommandSpec {
+        path: &["ai-payloads", "reward", "check"], flags: &["--batch"], value_flags: &["--format", "--event", "--response"], strict_values: true, repeatable_flags: &[], max_positionals: 0, passthrough: false, handler: reward::check_command,
+    }, crate::CommandSpec {
         path: &["ai-payloads", "templates"],
         flags: TEMPLATES_FLAGS,
         value_flags: TEMPLATES_VALUE_FLAGS,
@@ -38,7 +44,7 @@ pub(crate) const SLICE: crate::registry::Slice = crate::registry::Slice {
         passthrough: false,
         handler: templates_command,
     }],
-    synopsis: "  toolkit ai-payloads templates [--root DIR] [--json] [--check]\n",
+    synopsis: "  toolkit ai-payloads templates [--root DIR] [--json] [--check]\n  toolkit ai-payloads reward sample --format FORMAT\n  toolkit ai-payloads reward check --format FORMAT --event FILE --response FILE [--batch]\n",
     description: r"  ai-payloads   Payload templates of the AWS AI/ML skill (#4386).
                 templates lists the code_templates/*.py files under
                 ROOT/references (default: skills/core-skills/aws-ai-ml) with
