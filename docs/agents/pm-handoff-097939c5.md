@@ -758,3 +758,8 @@ Friction: #4727, Rsi #4694, Rsi #4704
   Review #5220 -> Codex gpt-6.1-sol f4cfc6dd (pinned 5f2c60c; rules each gap BLOCKER vs test-only). gpt-6-luna NOT in allowed_launches (refused) -> use sol for reviews.
   On ACCEPT: enqueue 5f2c60c (#5214); else ONE repair continue_from a9e0d997 covering findings + #5218.
   4/4 busy: 1d17674d (#5181 S4), a78c3b01 (#5210 S3 cont), 573278a7 (#5216 L4), f4cfc6dd (#5220).
+- 10-29 06:10Z: x402 S3 cont (a78c3b01) BLOCKED at 7acd257b1175096589e321d59c35a42c321a4c5a: smithy http-client 1.5.1 has no public TCP->TLS hook (wrap_connector pub(crate)).
+  RULING 2 on #5217 (handoff seq 2): no custom connector. Pre-send = pre-connect gates (require_public_host literals + GuardedResolver; proxy ignored); check_peer backstop.
+  Required: check_peer refuses captured-conn with no remote_addr; zero-accept loopback tests (literals + name->127.0.0.1); prod client guarded-only test; MCP proxy green.
+  Continuation 6f31c7c9 (Codex terra, continue_from a78c3b01). Then review (Codex sol; cross-check MCP proxy impact).
+  4/4 busy: 1d17674d (#5181 S4), 573278a7 (#5216 L4), f4cfc6dd (#5220 review), 6f31c7c9 (#5210 S3 cont2).
