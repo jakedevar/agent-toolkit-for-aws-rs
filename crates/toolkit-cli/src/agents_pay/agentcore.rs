@@ -1006,15 +1006,49 @@ impl Authorized {
 pub struct FakePaymentsApi {
     calls: std::cell::Cell<usize>,
     proof: Option<Json>,
+    session: Option<Json>,
+    instrument: Option<Json>,
+    session_reads: std::cell::Cell<usize>,
+    session_creates: std::cell::Cell<usize>,
+    instrument_creates: std::cell::Cell<usize>,
 }
 impl FakePaymentsApi {
     /// Return a supplied proof document for fixture-account requests.
     #[must_use]
     pub fn with_proof(proof: Json) -> Self {
         Self {
-            calls: std::cell::Cell::new(0),
             proof: Some(proof),
+            ..Self::default()
         }
+    }
+    /// Supply a deterministic session response for read and create calls.
+    #[must_use]
+    pub fn with_session(session: Json) -> Self {
+        Self {
+            session: Some(session),
+            ..Self::default()
+        }
+    }
+    /// Supply a deterministic instrument response.
+    #[must_use]
+    pub fn with_instrument(mut self, instrument: Json) -> Self {
+        self.instrument = Some(instrument);
+        self
+    }
+    /// Number of session reads observed by this fake.
+    #[must_use]
+    pub fn session_calls(&self) -> usize {
+        self.session_reads.get()
+    }
+    /// Number of session creations observed by this fake.
+    #[must_use]
+    pub fn session_create_calls(&self) -> usize {
+        self.session_creates.get()
+    }
+    /// Number of instrument creations observed by this fake.
+    #[must_use]
+    pub fn instrument_create_calls(&self) -> usize {
+        self.instrument_creates.get()
     }
     /// Number of logical calls observed by this fake.
     #[must_use]
@@ -1024,6 +1058,27 @@ impl FakePaymentsApi {
 }
 /// Payment operation interface; requests can only originate from `Approved`.
 pub trait PaymentsApi {
+    /// Read a session. Returns a sanitized error on failure.
+    fn get_session(&self, manager: &str, session: &str, user: &str) -> Result<Json, PaymentError>;
+    /// Create a session. Returns a sanitized error on failure.
+    fn create_session(
+        &self,
+        manager: &str,
+        user: &str,
+        budget: &str,
+        expiry: i64,
+        token: &str,
+    ) -> Result<Json, PaymentError>;
+    /// Create an instrument. Returns a sanitized error on failure.
+    fn create_instrument(
+        &self,
+        manager: &str,
+        user: &str,
+        connector: &str,
+        network: &str,
+        email: &str,
+        token: &str,
+    ) -> Result<Json, PaymentError>;
     /// Execute a single logical payment request.
     ///
     /// # Errors
@@ -1033,16 +1088,54 @@ pub trait PaymentsApi {
         request: &ProcessPaymentRequest,
     ) -> Result<PaymentProof, PaymentError>;
 }
+fn assert_fixture_account(manager: &str) {
+    assert!(
+        manager.starts_with("arn:") && manager.split(':').nth(4) == Some("111111111111"),
+        "fake payments require fixture account"
+    );
+}
 impl PaymentsApi for FakePaymentsApi {
+    fn get_session(
+        &self,
+        manager: &str,
+        _session: &str,
+        _user: &str,
+    ) -> Result<Json, PaymentError> {
+        assert_fixture_account(manager);
+        self.session_reads.set(self.session_reads.get() + 1);
+        self.session.clone().ok_or(PaymentError::InvalidResponse)
+    }
+    fn create_session(
+        &self,
+        manager: &str,
+        _user: &str,
+        _budget: &str,
+        _expiry: i64,
+        _token: &str,
+    ) -> Result<Json, PaymentError> {
+        assert_fixture_account(manager);
+        self.session_creates.set(self.session_creates.get() + 1);
+        self.session.clone().ok_or(PaymentError::InvalidResponse)
+    }
+    fn create_instrument(
+        &self,
+        manager: &str,
+        _user: &str,
+        _connector: &str,
+        _network: &str,
+        _email: &str,
+        _token: &str,
+    ) -> Result<Json, PaymentError> {
+        assert_fixture_account(manager);
+        self.instrument_creates
+            .set(self.instrument_creates.get() + 1);
+        self.instrument.clone().ok_or(PaymentError::InvalidResponse)
+    }
     fn process_payment(
         &self,
         request: &ProcessPaymentRequest,
     ) -> Result<PaymentProof, PaymentError> {
-        assert!(
-            request.manager.starts_with("arn:")
-                && request.manager.split(':').nth(4) == Some("111111111111"),
-            "fake payments require fixture account"
-        );
+        assert_fixture_account(&request.manager);
         self.calls.set(self.calls.get() + 1);
         Ok(PaymentProof(
             self.proof.clone().unwrap_or_else(|| Json::object(vec![])),
@@ -1529,6 +1622,30 @@ impl<'a> PaymentClient<'a> {
 }
 
 impl PaymentsApi for PaymentClient<'_> {
+    fn get_session(&self, manager: &str, session: &str, user: &str) -> Result<Json, PaymentError> {
+        PaymentClient::get_session(self, manager, session, user)
+    }
+    fn create_session(
+        &self,
+        manager: &str,
+        user: &str,
+        budget: &str,
+        expiry: i64,
+        token: &str,
+    ) -> Result<Json, PaymentError> {
+        PaymentClient::create_session(self, manager, user, budget, expiry, token)
+    }
+    fn create_instrument(
+        &self,
+        manager: &str,
+        user: &str,
+        connector: &str,
+        network: &str,
+        email: &str,
+        token: &str,
+    ) -> Result<Json, PaymentError> {
+        PaymentClient::create_instrument(self, manager, user, connector, network, email, token)
+    }
     fn process_payment(
         &self,
         request: &ProcessPaymentRequest,
@@ -1560,6 +1677,70 @@ mod wire_contracts {
             fixture
         );
         assert_eq!(api.session_calls(), 1);
+        assert_eq!(
+            payments
+                .create_session(manager, "user", "10", 15, "token")
+                .unwrap(),
+            fixture
+        );
+        assert_eq!(api.session_create_calls(), 1);
+        assert_eq!(
+            payments.create_instrument(
+                manager,
+                "user",
+                "connector",
+                "ETHEREUM",
+                "test@example.invalid",
+                "token"
+            ),
+            Err(PaymentError::InvalidResponse)
+        );
+        assert_eq!(api.instrument_create_calls(), 1);
+        let instrument = Json::object(vec![("id", Json::string("instrument"))]);
+        let api = api.with_instrument(instrument.clone());
+        assert_eq!(
+            api.create_instrument(
+                manager,
+                "user",
+                "connector",
+                "ETHEREUM",
+                "test@example.invalid",
+                "token"
+            )
+            .unwrap(),
+            instrument
+        );
+        assert_eq!(api.instrument_create_calls(), 2);
+    }
+
+    #[test]
+    fn fake_admin_and_reads_reject_other_accounts_before_recording() {
+        let api = FakePaymentsApi::default();
+        let manager = "arn:aws:bedrock-agentcore:us-east-1:123456789012:payment-manager/test";
+        for operation in 0..3 {
+            let result =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match operation {
+                    0 => api.get_session(manager, "session", "user"),
+                    1 => api.create_session(manager, "user", "10", 15, "token"),
+                    _ => api.create_instrument(
+                        manager,
+                        "user",
+                        "connector",
+                        "ETHEREUM",
+                        "test@example.invalid",
+                        "token",
+                    ),
+                }));
+            assert!(result.is_err());
+        }
+        assert_eq!(
+            (
+                api.session_calls(),
+                api.session_create_calls(),
+                api.instrument_create_calls()
+            ),
+            (0, 0, 0)
+        );
     }
 
     #[test]
