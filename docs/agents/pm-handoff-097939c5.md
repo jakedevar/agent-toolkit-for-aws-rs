@@ -886,3 +886,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 10-29 09:05Z: #5295 (80111bba, Sonnet) CHANGES_REQUESTED #4886 item 1 885b2223: BLOCKER replay-mismatch untested (mutation c survived, job d5f2f765); (a) escape and (b) deletionProtection mutations killed. Parity + injection OK. Nonblocking #5298 (request-less step lenient; silent int defaults; undocumented diffs).
   Repair 1 -> Codex terra e70ae060 (continue_from 0740a0b0), incl. #5298 (PM RULING: request-less recorded step rejected at load). Then narrow re-review (Sonnet, pinned) -> land.
   4/4 busy: cd65d0a9 (#5181 S4 cont3), f4e513e0 (#5273), d2668841 (#5261 repair 1), e70ae060 (#4886 repair 1). Next slot: AP S5 #5296.
+- 10-29 09:05Z: #5261 repair 1 (d2668841) DONE at f3ab564ce8b2ba77e198b014e7d1e1836c2372d9 (merged rolling 00509958; #5290-#5294 fixed, red jobs listed; scoped 7f7625bf 4199 ok, clean; base = current rolling so check should pass directly).
+  Re-review #5300 -> Claude Opus fc4764dd (pinned f3ab564c; mutations #5290-#5292). On ACCEPT: check + enqueue (source_session d2668841); close #5261 #5286 #5300 #5255-#5260 #5290-#5294 on land.
+  4/4 busy: cd65d0a9 (#5181 S4 cont3), f4e513e0 (#5273), e70ae060 (#4886 repair 1), fc4764dd (#5300). Next slot: AP S5 #5296.
