@@ -618,3 +618,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 10-29 04:50Z: S4 r2 (27c4a78f) on 05a51ad9: all 8 originals CLOSED; new P1 #5136 (retire holds pending/session lock across credential I/O -> supervisor stall), P2 #5137 (retired GET delivery survives stdout backpressure), #5138 (cancel sent after deadline when signing slow).
   Repair 2 -> 8c9c4a04 (Opus high, continue_from 869fe7ce). Then S4 r3 narrow (#5136-#5138 only).
   4/4 busy: 4cbe8435 (#5118), f698fe4e (#5085 repair 1), 58279180 (#5119 r2), 8c9c4a04 (#5079 repair 2).
+- 10-29 04:55Z: #5119 r2 (58279180) CHANGES_REQUESTED on #4386 3e46f485: #5122 typed slots closed except new P1 #5139 (--allow-unresolved leaves bare ACCEPT_EULA expr -> truthy [False] in existing kernel); #5123 still P1 for append (check-then-rename); new P2 #5140 (conflict preservation failure). #5124 import gap stays carried P2.
+  RULINGS: consent/bool slots never unresolved; --append never modifies in place -> new versioned file via no-replace publish (B-12); drop CAS/.conflict machinery. Repair 2 -> e8c32b72 (Opus high, continue_from 094ad6cf). Then r3 narrow (#5139, #5123 append, #5140 moot).
+  4/4 busy: 4cbe8435 (#5118), f698fe4e (#5085 repair 1), 8c9c4a04 (#5079 repair 2), e8c32b72 (#4386 repair 2).
