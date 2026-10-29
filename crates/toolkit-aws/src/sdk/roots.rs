@@ -163,6 +163,8 @@ pub enum RootMode {
     Configured,
     /// From the platform store.
     Platform,
+    /// From the payment platform store, without caller overrides.
+    PaymentPlatform,
 }
 
 /// A non-empty, validated set of trust roots (de-duplicated by DER, sorted).
@@ -176,7 +178,7 @@ pub struct ValidatedRoots {
 
 impl ValidatedRoots {
     /// The only constructor: `None` for an empty set.
-    fn new(
+    pub(super) fn new(
         mut certs: Vec<CertificateDer<'static>>,
         mode: RootMode,
         tolerated_errors: usize,
@@ -284,7 +286,9 @@ fn pem_encode(der: &CertificateDer<'_>) -> Vec<u8> {
 }
 
 /// Split certificates into those rustls accepts and a count of the others.
-fn parsable(certs: Vec<CertificateDer<'static>>) -> (Vec<CertificateDer<'static>>, usize) {
+pub(super) fn parsable(
+    certs: Vec<CertificateDer<'static>>,
+) -> (Vec<CertificateDer<'static>>, usize) {
     let mut accepted = Vec::with_capacity(certs.len());
     let mut rejected = 0;
     for cert in certs {
