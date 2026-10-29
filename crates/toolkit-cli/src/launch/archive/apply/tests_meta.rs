@@ -287,8 +287,10 @@ fn t_apply_15_nested_admin_dirs_bare_repos_and_shaped_snapshot_dirs() {
 }
 
 fn fake_git(dir: &Scratch, body: &str) -> GitRunner {
-    let path = dir.write("fake-git", format!("#!/bin/sh\n{body}\n").as_bytes());
-    fs::set_permissions(&path, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    let path = crate::launch::tests_support::write_executable(
+        &dir.join("fake-git"),
+        format!("#!/bin/sh\n{body}\n").as_bytes(),
+    );
     GitRunner {
         program: path,
         ..test_git()

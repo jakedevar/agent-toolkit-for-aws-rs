@@ -3,7 +3,6 @@
 
 use std::collections::HashSet;
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::Command;
 use std::time::{Duration, Instant};
@@ -54,9 +53,7 @@ fn set(names: &[&str]) -> HashSet<String> {
 }
 
 fn script(dir: &Scratch, name: &str, body: &str) -> std::path::PathBuf {
-    let path = dir.write(name, body.as_bytes());
-    fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).expect("chmod");
-    path
+    crate::launch::tests_support::write_executable(&dir.join(name), body.as_bytes())
 }
 
 #[test]
