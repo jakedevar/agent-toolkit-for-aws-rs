@@ -926,3 +926,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 10-29 10:11Z: x402 S4 cont3 (cd65d0a9, 47.7% ctx) "incomplete" at 27a523bada6f6684fed7482e76f9f5a17a8a35f0 (all checks green; scoped 83b925f5 4872 ok on f3ab564c). Remaining = audits. PM RULING: reviewable now; audits become review scope. Review #5326 -> Claude Opus 75a7e4a6 (pinned 27a523ba; invariants no-spend, construction gate, idempotency, model, R-ERR; 4 mutations). Evidence added to kaizen #5226.
   On ACCEPT: check (base is current rolling -> direct) + enqueue (source_session cd65d0a9); close #5181 #5326 on land; then x402 S5 + OpenClaw B1 unblock.
   4/4 busy: acde8672 (#5306), 56c78333 (#5317 L6), d8a791f9 (#5318 repair), 75a7e4a6 (#5326).
+- 10-29 10:14Z: #5318 design repair (d8a791f9) at 98675de9104b32dc9f064f2147a3f51fd1c649ac. PM VERIFIED #5322 fix in diff (argv-only --live/--confirm-*; env wipe alias ignored live; T-DG-01d/01e/05d) -> design ACCEPTED (no extra reviewer, creation cap). Manager scoped 962c825b (worktree d8a791f9, docs-only) queued (disk hold). On ok: check + enqueue (source_session d8a791f9); close #5318 #5321 #5322 #5324 #5325 on land.
+  docgraph S5 #5327 (collection recipe + offline normalization, T-DG-08) -> Claude Sonnet e1de11f0, sandbox_source 98675de9.
+  4/4 busy: acde8672 (#5306), 56c78333 (#5317 L6), 75a7e4a6 (#5326 x402 S4 review), e1de11f0 (#5327).
