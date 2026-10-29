@@ -279,7 +279,8 @@ fn child_entry() {
         "us-east-1",
         cli_profile.as_deref(),
         ProviderHttp::injected(recorder.clone()),
-    );
+    )
+    .with_build_recording();
     if std::env::var("MUTATE").is_ok() {
         guarded = guarded.with_selector(|_| Selection::Build(SourceKind::DefaultChain));
     }
@@ -784,4 +785,29 @@ fn the_provider_plane_client_trusts_exactly_the_validated_roots() {
     assert!(transport.roots().expect("roots").same_allocation(&roots));
     assert!(ProviderHttp::SdkDefault.roots().is_none());
     assert_eq!(format!("{http:?}"), "ProviderHttp::Validated");
+}
+
+/// #5112: the build history is a bounded, opt-in test instrument; the
+/// production default keeps nothing.
+#[test]
+fn the_build_log_is_off_by_default_and_bounded_when_enabled() {
+    let mut off = BuildLog::default();
+    for _ in 0..1000 {
+        off.record(SourceKind::DefaultChain);
+    }
+    assert!(off.entries().is_empty(), "production records nothing");
+    let mut on = BuildLog::enabled();
+    for _ in 0..1000 {
+        on.record(SourceKind::Env);
+    }
+    assert_eq!(on.entries().len(), BUILD_LOG_CAP);
+    let runtime = SdkRuntime::new().expect("runtime");
+    let guarded = GuardedCredentials::new(
+        &runtime,
+        "us-east-1",
+        None,
+        ProviderHttp::injected(recorder()),
+    );
+    assert!(!guarded.lock().log.enabled);
+    assert!(guarded.with_build_recording().lock().log.enabled);
 }

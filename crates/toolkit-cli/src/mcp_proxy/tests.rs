@@ -8,6 +8,7 @@ mod errors;
 mod frame;
 mod harness;
 mod process;
+mod repair;
 mod s3core;
 #[cfg(feature = "aws-sdk")]
 mod sdk;

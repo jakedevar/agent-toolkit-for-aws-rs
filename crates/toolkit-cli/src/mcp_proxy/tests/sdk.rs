@@ -266,6 +266,7 @@ fn child_entry() {
     };
     let recorder = recorder();
     let mut backend = SdkBackend::new()
+        .with_build_recording()
         .with_resolver(Arc::new(PublicDns))
         .with_transport(upstream)
         .with_provider_http(recorder.provider_http());

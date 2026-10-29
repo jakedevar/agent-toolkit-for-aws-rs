@@ -333,6 +333,7 @@ mod sdk_backend {
         transport: Option<Arc<dyn StreamingTransport + Send + Sync>>,
         provider_http: Option<ProviderHttp>,
         credentials: Option<Arc<GuardedCredentials>>,
+        record_builds: bool,
     }
 
     impl Default for SdkBackend {
@@ -351,6 +352,7 @@ mod sdk_backend {
                 transport: None,
                 provider_http: None,
                 credentials: None,
+                record_builds: false,
             }
         }
 
@@ -375,6 +377,14 @@ mod sdk_backend {
         #[must_use]
         pub fn with_provider_http(mut self, http: ProviderHttp) -> Self {
             self.provider_http = Some(http);
+            self
+        }
+
+        /// Record the guarded credentials' provider builds (a bounded test
+        /// instrument, #5112; production never sets it).
+        #[must_use]
+        pub fn with_build_recording(mut self) -> Self {
+            self.record_builds = true;
             self
         }
 
@@ -485,10 +495,13 @@ mod sdk_backend {
                 None => ProviderHttp::validated(&roots).map_err(refused)?,
             };
             let runtime = SdkRuntime::new().map_err(refused)?;
-            let credentials = Arc::new(
+            let mut guarded =
                 GuardedCredentials::new(&runtime, &scope.region, args.profile.as_deref(), http)
-                    .with_null_stdin(null_stdin),
-            );
+                    .with_null_stdin(null_stdin);
+            if self.record_builds {
+                guarded = guarded.with_build_recording();
+            }
+            let credentials = Arc::new(guarded);
             self.credentials = Some(Arc::clone(&credentials));
             let auth = SourceAuth::new(
                 Box::new(GuardedSource(credentials)),

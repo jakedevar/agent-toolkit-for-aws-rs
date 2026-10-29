@@ -94,6 +94,13 @@ pub enum ProxyEvent {
     /// The proxy's own deadline fired for a request and a
     /// `notifications/cancelled` was sent upstream for it (#4413 S3).
     TimeoutCancelForwarded,
+    /// A `notifications/cancelled` for the proxy's own deadline was dropped:
+    /// the bounded control queue was full, its budget was exhausted, its
+    /// deadline passed or its worker could not start (#5107).
+    TimeoutCancelDropped,
+    /// `--read-only`: a listing would pass the retained-catalogue cap or the
+    /// budget; every approval was revoked (fail closed, #5111).
+    ReadOnlyCatalogueRefused,
 }
 
 impl ProxyEvent {
@@ -115,6 +122,8 @@ impl ProxyEvent {
             Self::StdoutClosed => line.write_str("stdout-closed"),
             Self::ReadOnlyToolRefused => line.write_str("read-only-tool-refused"),
             Self::TimeoutCancelForwarded => line.write_str("timeout-cancel-forwarded"),
+            Self::TimeoutCancelDropped => line.write_str("timeout-cancel-dropped"),
+            Self::ReadOnlyCatalogueRefused => line.write_str("read-only-catalogue-refused"),
         }
     }
 }

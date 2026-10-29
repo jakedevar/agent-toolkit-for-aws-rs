@@ -45,6 +45,10 @@ use super::session::{valid_protocol_version, valid_session_id, Session};
 use super::sse::SseParser;
 use super::templates::{self, Failure, INVALID_REQUEST, PARSE_ERROR};
 
+/// The budget charge of one retained read-only approval beyond its name's
+/// bytes: the set entry and the string header (#5111).
+pub(crate) const APPROVED_NAME_OVERHEAD: usize = 64;
+
 /// What the proxy is configured with (S3 builds it from the command line).
 #[derive(Debug, Clone)]
 pub struct ProxyConfig {

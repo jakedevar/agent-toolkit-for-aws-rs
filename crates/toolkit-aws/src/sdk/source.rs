@@ -214,9 +214,43 @@ type Selector = fn(&Preflight) -> Selection;
 #[cfg(test)]
 type BetweenAttempts = Box<dyn Fn() + Send + Sync>;
 
+/// The most provider builds [`GuardedCredentials::build_log`] keeps when
+/// recording is enabled (#5112).
+pub const BUILD_LOG_CAP: usize = 64;
+
+/// The provider build history (#5112): a test instrument. Off by default,
+/// so production storage is constant; when enabled
+/// ([`GuardedCredentials::with_build_recording`]) it keeps at most
+/// [`BUILD_LOG_CAP`] entries.
+#[derive(Debug, Default)]
+pub(crate) struct BuildLog {
+    enabled: bool,
+    entries: Vec<SourceKind>,
+}
+
+impl BuildLog {
+    /// A log that records.
+    pub(crate) fn enabled() -> Self {
+        Self {
+            enabled: true,
+            entries: Vec::new(),
+        }
+    }
+
+    pub(crate) fn record(&mut self, kind: SourceKind) {
+        // STUB(#5112 red): records every build, whatever `enabled` says.
+        let _ = self.enabled;
+        self.entries.push(kind);
+    }
+
+    pub(crate) fn entries(&self) -> &[SourceKind] {
+        &self.entries
+    }
+}
+
 struct State {
     built: Option<(SourceKind, SdkCredentialsProvider)>,
-    log: Vec<SourceKind>,
+    log: BuildLog,
     session: SessionAuth,
 }
 
@@ -260,7 +294,7 @@ impl GuardedCredentials {
             between_attempts: None,
             state: Mutex::new(State {
                 built: None,
-                log: Vec::new(),
+                log: BuildLog::default(),
                 session: SessionAuth::new(),
             }),
         }
@@ -294,10 +328,19 @@ impl GuardedCredentials {
         self
     }
 
-    /// The providers built so far, in order (never any value).
+    /// Record provider builds for [`Self::build_log`] (a test instrument,
+    /// bounded by [`BUILD_LOG_CAP`]; production never enables it).
+    #[must_use]
+    pub fn with_build_recording(self) -> Self {
+        self.lock().log = BuildLog::enabled();
+        self
+    }
+
+    /// The providers built so far, in order (never any value); empty unless
+    /// [`Self::with_build_recording`] was set.
     #[must_use]
     pub fn build_log(&self) -> Vec<SourceKind> {
-        self.lock().log.clone()
+        self.lock().log.entries().to_vec()
     }
 
     /// The MCP session ended: a new session may start unsigned (R-STICKY).
@@ -329,7 +372,7 @@ impl GuardedCredentials {
                 .is_some_and(|(built, _)| *built == kind);
         if !reuse {
             let provider = build_source(&self.runtime, kind, &self.region, &profile, &self.http);
-            state.log.push(kind);
+            state.log.record(kind);
             state.built = Some((kind, provider));
         }
         let Some((_, provider)) = state.built.as_ref() else {
