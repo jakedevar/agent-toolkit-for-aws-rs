@@ -303,12 +303,17 @@ fn replay_matches_response_requests_in_library_and_cli() {
 }
 
 #[test]
-fn recording_requires_request_and_creation_numbers_are_integers() {
-    use crate::docgraph::memory::{plan, RecordedMemory};
+fn recording_requires_request() {
+    use crate::docgraph::memory::RecordedMemory;
     assert!(
         RecordedMemory::from_document(&json(r#"{"calls":[{"response":{"results":[]}}]}"#)).is_err()
     );
     assert!(RecordedMemory::from_document(&json(r#"{"calls":[{"error":{}}]}"#)).is_err());
+}
+
+#[test]
+fn creation_numbers_are_integers() {
+    use crate::docgraph::memory::plan;
     for op in ["create-memory", "create-graphrag"] {
         for key in ["memory_gb", "embedding_dimension"] {
             for value in [r#""32""#, "1.5", "null", "true"] {
