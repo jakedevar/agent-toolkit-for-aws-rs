@@ -145,22 +145,36 @@ fn screened(secrets: Secrets, text: &str) -> (String, String, u8) {
     )
 }
 
+/// The forms #5426 requires, listed here and not taken from [`ESCAPES`] and
+/// [`LAYERS`], so removing one from the sink turns this test red.
+const REQUIRED_ESCAPES: [Escape; 8] = [
+    Escape::Raw,
+    Escape::Shown,
+    Escape::ReprSingle,
+    Escape::ReprDouble,
+    Escape::PercentUpper,
+    Escape::PercentLower,
+    Escape::FormUpper,
+    Escape::FormLower,
+];
+const REQUIRED_LAYERS: [Layer; 3] = [Layer::Bare, Layer::PyJson, Layer::SerdeJson];
+
 fn registered(escapes: &[Escape], layers: &[Layer]) -> Secrets {
     let mut secrets = Secrets::default();
     secrets.add_forms(RENDERED, escapes, layers);
     secrets
 }
 
-/// #5426: every escape inside every JSON layer of a registered secret is
-/// refused; and each escape and each layer is needed: with it left out, the
-/// form only it covers is written (so removing any one from [`ESCAPES`] or
-/// [`LAYERS`] turns the first half of this test red). Assertion messages
-/// name the form, never the inspected text.
+/// #5426: every required escape inside every required JSON layer of a
+/// secret registered with [`Secrets::add`] is refused (removing any one from
+/// [`ESCAPES`] or [`LAYERS`] turns this red); and each is needed: with it
+/// left out, the form only it covers is written. Assertion messages name the
+/// form, never the inspected text.
 #[test]
 fn t_tok_sink_refuses_every_rendered_form_and_each_form_is_needed() {
     let mut missed = Vec::new();
-    for escape in ESCAPES {
-        for layer in LAYERS {
+    for escape in REQUIRED_ESCAPES {
+        for layer in REQUIRED_LAYERS {
             let form = layer.render(&escape.render(RENDERED));
             let mut secrets = Secrets::default();
             secrets.add(RENDERED);
@@ -174,17 +188,23 @@ fn t_tok_sink_refuses_every_rendered_form_and_each_form_is_needed() {
         let (stdout, stderr, status) = screened(secrets, form);
         !stdout.is_empty() && stderr.is_empty() && status == 0
     };
-    for escape in ESCAPES {
-        let others: Vec<Escape> = ESCAPES.into_iter().filter(|e| *e != escape).collect();
+    for escape in REQUIRED_ESCAPES {
+        let others: Vec<Escape> = REQUIRED_ESCAPES
+            .into_iter()
+            .filter(|e| *e != escape)
+            .collect();
         assert!(
-            leaks(registered(&others, &LAYERS), &escape.render(RENDERED)),
+            leaks(registered(&others, &REQUIRED_LAYERS), &escape.render(RENDERED)),
             "{escape:?} is covered without itself"
         );
     }
-    for layer in LAYERS {
-        let others: Vec<Layer> = LAYERS.into_iter().filter(|l| *l != layer).collect();
+    for layer in REQUIRED_LAYERS {
+        let others: Vec<Layer> = REQUIRED_LAYERS
+            .into_iter()
+            .filter(|l| *l != layer)
+            .collect();
         assert!(
-            leaks(registered(&ESCAPES, &others), &layer.render(RENDERED)),
+            leaks(registered(&REQUIRED_ESCAPES, &others), &layer.render(RENDERED)),
             "{layer:?} is covered without itself"
         );
     }
