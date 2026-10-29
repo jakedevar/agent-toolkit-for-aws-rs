@@ -49,6 +49,7 @@ pub(crate) enum ApiError {
     InvalidResponse,
     Unreachable,
     InvalidRequest,
+    InvalidLaunchId,
     Status { status: u16, code: &'static str },
     PutStatus(u16),
 }
@@ -58,6 +59,7 @@ impl std::fmt::Display for ApiError {
             Self::InvalidResponse => f.write_str("The Launch with AWS service returned an invalid response."),
             Self::Unreachable => f.write_str("Could not reach Launch with AWS."),
             Self::InvalidRequest => f.write_str("The operation failed. Re-run with logging enabled for details."),
+            Self::InvalidLaunchId => f.write_str("Invalid launch id: it must be 1 to 2048 characters."),
             Self::Status { status, code } => write!(f, "Launch API request failed ({status}): {code}"),
             Self::PutStatus(status) => write!(f, "PUT (presigned S3 upload) failed ({status})"),
         }
@@ -76,6 +78,12 @@ pub(crate) struct Client<'a> {
 }
 impl Client<'_> {
     pub fn call(&self, operation: ApiOperation, id: &str, include: &[&str], body: Option<Value>) -> Result<Value, ApiError> {
+        if matches!(operation, ApiOperation::GetLaunch | ApiOperation::Delete | ApiOperation::StartExecution)
+            && !(1..=2048).contains(&id.chars().count()) {
+            return Err(ApiError::InvalidLaunchId);
+        }
+        let retry = matches!(operation, ApiOperation::CreateUploadUrl | ApiOperation::CreateLaunch | ApiOperation::StartExecution)
+            && body.as_ref().and_then(|v| v.get("clientToken")).and_then(Value::as_str).is_some_and(|s| !s.is_empty());
         let (method, path, stream_op) = match operation {
             ApiOperation::CreateUploadUrl => (Method::Post, "/api/uploads".to_owned(), Operation::ApiJson),
             ApiOperation::CreateLaunch => (Method::Post, "/api/launches".to_owned(), Operation::ApiJson),
@@ -100,7 +108,7 @@ impl Client<'_> {
         let request = HttpRequest { method, url, headers, body: body.map_or_else(Vec::new, |v| v.to_string().into_bytes()), timeouts: Timeouts::new(timeout, timeout).map_err(|_| ApiError::InvalidRequest)? };
         let put = matches!(operation, ApiOperation::Put);
         let deadline = self.clock.now() + Duration::from_secs(if put { 300 } else { 360 });
-        let response = http::run(self.transport, &request, stream_op, deadline, if put { Duration::from_secs(300) } else { timeout }, put, self.clock, self.sleeper, self.jitter, &self.policy).map_err(|e| match e {
+        let response = http::run(self.transport, &request, stream_op, deadline, if put { Duration::from_secs(300) } else { timeout }, !retry, self.clock, self.sleeper, self.jitter, &self.policy).map_err(|e| match e {
             http::BodyError::Deadline | http::BodyError::Transport { .. } => ApiError::Unreachable,
             _ => ApiError::InvalidResponse,
         })?;
