@@ -134,6 +134,19 @@ fn ap_pub_15_dry_run_creates_no_output() {
 }
 
 #[test]
+fn ap_con_06_normalized_and_fstring_consent_identifiers_are_guarded() {
+    for code in ["ＡCCEPT_EULA = True\n", "print(f\"{(ACCEPT_EULA := True)}\")\n"] {
+        let f = Fixture::new();
+        let template = f.write("template.py", "# Cell 0 [markdown]: Example\n# Description\n# Cell 1: Code\npass\n");
+        let cell = f.write("cell.py", code);
+        let arg = format!("1={}", cell.display());
+        let result = f.render(&template, "script", &["--cell", &arg]);
+        assert_eq!(result.status.code(), Some(1), "{code}");
+        assert!(String::from_utf8_lossy(&result.stderr).contains("cell_binds_consent"));
+    }
+}
+
+#[test]
 fn ap_con_06_cell_consent_identifier_guard() {
     let f = Fixture::new();
     let template = f.write(
