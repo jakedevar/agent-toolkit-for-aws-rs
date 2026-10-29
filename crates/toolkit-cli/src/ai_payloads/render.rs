@@ -91,8 +91,16 @@ fn source_ok(text: &str) -> Result<String, ToolkitError> {
     Ok(normalized)
 }
 
-#[allow(clippy::too_many_lines, clippy::if_not_else)]
 pub(crate) fn command(inv: &Invocation, out: &mut Output<'_>) -> Result<(), ToolkitError> {
+    command_with_hooks(inv, out, &mut place::NoHooks)
+}
+
+#[allow(clippy::too_many_lines, clippy::if_not_else)]
+fn command_with_hooks(
+    inv: &Invocation,
+    out: &mut Output<'_>,
+    hooks: &mut dyn place::PublishHooks,
+) -> Result<(), ToolkitError> {
     let path = Path::new(
         inv.positional(0)
             .ok_or_else(|| usage("TEMPLATE is required"))?,
@@ -220,6 +228,9 @@ pub(crate) fn command(inv: &Invocation, out: &mut Output<'_>) -> Result<(), Tool
         }
         if let Some((_, _, module_path, _)) = module_spec.filter(|(_, number, _, _)| n == *number) {
             let expected = project.join(module_path);
+            if fs::symlink_metadata(file).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
+                return Err(fail("module_missing", "module is symlinked"));
+            }
             let resolved =
                 fs::canonicalize(file).map_err(|_| fail("module_missing", "module missing"))?;
             if resolved != expected {
@@ -398,37 +409,45 @@ pub(crate) fn command(inv: &Invocation, out: &mut Output<'_>) -> Result<(), Tool
             },
         )?;
         let (actual, published) = if mode == "script" {
-            script::publish(&directory, name, &bytes, &mut place::NoHooks)
+            script::publish(&directory, name, &bytes, hooks)
                 .map_err(|e| fail(e, "script publication failed"))?
         } else {
-            let result = place::publish_new(&directory, &filename, &bytes, &mut place::NoHooks)
-                .map_err(|e| {
-                    fail(
-                        if e.code == "destination_exists" && inv.has_flag("--append") {
-                            "notebook_version_taken"
-                        } else {
-                            e.code
-                        },
-                        "notebook publication failed",
-                    )
-                })?;
+            let result = place::publish_new(&directory, &filename, &bytes, hooks).map_err(|e| {
+                fail(
+                    if e.code == "destination_exists" && inv.has_flag("--append") {
+                        "notebook_version_taken"
+                    } else {
+                        e.code
+                    },
+                    "notebook publication failed",
+                )
+            })?;
             (filename.clone(), result)
         };
         if let Some(temp) = published.leftover_temp {
             out.line(&format!(
                 "warning: leftover temporary file {}",
-                temp.display()
+                crate::safe_text::safe_path(&temp.display().to_string())
             ))?;
         }
-        out.line(&format!("output: {}", directory.join(&actual).display()))?;
+        out.line(&format!(
+            "output: {}",
+            crate::safe_text::safe_path(&directory.join(&actual).display().to_string())
+        ))?;
         if let Some((source, hash)) = source_report {
-            out.line(&format!("source: {} (sha256 {hash})", source.display()))?;
-            out.line(&format!("open: {}", directory.join(actual).display()))?;
+            out.line(&format!(
+                "source: {} (sha256 {hash})",
+                crate::safe_text::safe_path(&source.display().to_string())
+            ))?;
+            out.line(&format!(
+                "open: {}",
+                crate::safe_text::safe_path(&directory.join(actual).display().to_string())
+            ))?;
         }
     } else {
         out.line(&format!(
             "output: {} ({} bytes)",
-            directory.join(filename).display(),
+            crate::safe_text::safe_path(&directory.join(filename).display().to_string()),
             bytes.len()
         ))?;
     }
@@ -442,3 +461,7 @@ pub(crate) fn command(inv: &Invocation, out: &mut Output<'_>) -> Result<(), Tool
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "render_tests.rs"]
+mod tests;
