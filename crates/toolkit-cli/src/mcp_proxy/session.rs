@@ -19,15 +19,22 @@ pub(crate) fn valid_protocol_version(value: &str) -> bool {
         })
 }
 
-/// The session the proxy holds.
+/// The session the proxy holds: one generation at a time (#5106). A new
+/// `initialize` retires the current generation atomically and starts the
+/// next one with no id; work bound to a retired generation is never sent.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub(crate) struct Session {
+    /// The generation: 0 before any `initialize`, then one more per
+    /// `initialize` dispatched.
+    pub generation: u64,
     /// The validated `Mcp-Session-Id`, if the server issued one.
     pub id: Option<String>,
     /// The validated negotiated protocol version.
     pub protocol_version: Option<String>,
-    /// The `GET` stream has been started for this session.
+    /// The `GET` stream is wanted for this generation.
     pub get_started: bool,
+    /// The server offers no `GET` stream for this generation (405).
+    pub get_ended: bool,
 }
 
 #[cfg(test)]

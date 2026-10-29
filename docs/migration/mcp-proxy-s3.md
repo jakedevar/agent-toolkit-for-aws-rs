@@ -46,22 +46,72 @@ proxy writes through private duplicates of descriptors 1 and 2 (std's safe
 ## Behaviour added in S3
 
 - **`--read-only`** (T-RO): a `tools/list` result keeps only tools whose
-  `annotations.readOnlyHint` is JSON `true`; every listed name is remembered
-  with its hint. A `tools/call` for any other tool (including one never listed)
-  is answered locally with upstream's text, `Tool '<name>' is not available in
-  read-only mode.`, as a `CallToolResult` with `isError: true`, and never sent.
-  A batch holding such a call is refused whole (its other requests get
-  `-32600`), so nothing of it is sent. The filter trusts annotations: it is a
-  convenience filter, not authorization (IAM is).
+  `annotations.readOnlyHint` is JSON `true`. A `tools/call` for any tool the
+  current session has not approved (including one never listed) is answered
+  locally with upstream's text, `Tool '<name>' is not available in read-only
+  mode.`, as a `CallToolResult` with `isError: true`, and never sent. Every
+  `tools/call` object is gated, whatever its framing: one without an id
+  cannot be answered, so it is dropped (never forwarded) with
+  `read-only-tool-refused`. A batch holding a refused call is refused whole
+  (its other requests get `-32600`), so nothing of it is sent. The filter
+  trusts annotations: it is a convenience filter, not authorization (IAM is).
+  Approvals (repair 1, #5110/#5111):
+  - they belong to one session: a new `initialize` clears them, and a
+    listing sent in an earlier session never approves anything later;
+  - a **fresh listing** (`tools/list` without `params.cursor`) replaces the
+    approved set, so names it omits are revoked; a **page** (with
+    `params.cursor`) extends the current set. Every listing is numbered at
+    dispatch, and a listing older than the one that started the current
+    snapshot is ignored, so a late response cannot restore approvals;
+  - a listing changes approvals only after its response is claimed (a
+    response that already timed out or was cancelled changes nothing);
+  - only approved names are kept, charged to the R-MEM budget at
+    `name bytes + 64` each, and capped at one message (`max_message`) in
+    total. A listing that would pass the cap, or that the budget cannot
+    hold, revokes every approval (fail closed) with
+    `read-only-catalogue-refused`; the charge is released on replacement and
+    on a new session.
 - **D1 on 401/403**: `SourceAuth::refresh` runs one forced rebuild
   (`GuardedCredentials::resolve(skip_auth, true)`), then the core re-signs and
-  resends once. Every attempt resolves credentials once (T-CRED-1).
-- **R-STICKY session boundary**: the core calls `Auth::initialize_started`
-  before it signs an `initialize`, so the new session starts unsigned-capable
-  and the `initialize` itself counts for it.
+  resends once; a second 401/403 fails with the credentials text. Every
+  attempt resolves credentials once (T-CRED-1). This applies to every MCP
+  request the proxy owns (repair 1, #5113): the `POST`s, the `GET` stream
+  open (after a second refusal the stream is retried at the next reopen
+  interval) and the session `DELETE`. **Method-specific contract**: the
+  proxy's own `notifications/cancelled` (below) is best effort: signed once,
+  no D1 refresh, no retry, its response unread.
+- **R-STICKY session boundary** (repair 1, #5106): sessions are numbered
+  generations. When an `initialize` is dispatched, the current session is
+  retired and the next generation starts atomically: no session id, no
+  protocol version, `Auth::initialize_started` (R-STICKY forgets the old
+  session's signing, so the `initialize` itself counts for the new one), no
+  read-only approvals. The fresh `initialize` never carries the old
+  `Mcp-Session-Id`. Work bound to a retired generation is never (re)sent:
+  each attempt checks its generation when the request is built and again
+  after signing, and a retry of an old-session request fails with the
+  session-expired text. So no request into a signed session is ever sent
+  unsigned, even when the re-`initialize` fails. A late `initialize`
+  response of a retired generation commits nothing. The retired session is
+  not sent a `DELETE` (it simply ends; the server expires it).
+- **The `GET` stream** (repair 1, #5108): one worker serves every
+  generation in turn, so at most one `GET` stream is ever open. When its
+  session is retired the stream stops at its next chunk (or its idle read
+  timeout), its messages are dropped, it is never reopened, and the worker
+  then opens the new session's stream.
 - **The proxy's own deadline** (tool or request timeout): besides answering
-  the client, the core sends one signed `notifications/cancelled` with the
-  request id and reason `request timed out`; its response is not read.
+  the client, the core queues one signed `notifications/cancelled` with the
+  request id and reason `request timed out`. Repair 1 (#5107) bounds this
+  control work: one control worker sends the queue in order; the queue
+  holds at most the request cap (`max_in_flight`), each queued body is
+  charged to the R-MEM budget, and a cancel waits at most the request
+  timeout. A full queue, an exhausted budget, a passed deadline, a retired
+  session or a worker thread the system refuses drops the cancel with
+  `timeout-cancel-dropped`; the supervisor never blocks or panics on it.
+- **Admission** (repair 1, #5107): each request of a message takes one
+  concurrency slot (a message without requests takes one), so a batch holds
+  at most `max_in_flight` requests; a message whose requests do not fit is
+  refused whole (each request gets the too-many-requests error) and nothing
+  of it is sent.
 - **`User-Agent`** (Q3): the fixed token `agent-toolkit-mcp-proxy/<version>`;
   the client's name and version are never added.
 - **`AWS_REGION` metadata**: `AWS_DEFAULT_REGION`, then the selected profile's
@@ -130,3 +180,20 @@ platform flag.
 
 `mcp-proxy` lists no pair in `STDIO_DASH` or `LITERAL_DASH`: a bare `-` is
 refused for the endpoint and every value flag (see `cli-bare-dash.md`).
+
+## Repair 1 (S4 review #5105)
+
+The S4 security review requested changes at `9696df86`; all eight findings
+are fixed before the stack lands (PM ruling, no carry). Tests are in
+`crates/toolkit-cli/src/mcp_proxy/tests/repair.rs` unless named otherwise.
+
+| Finding | Fix | Regression |
+| --- | --- | --- |
+| #5106 (P1) R-STICKY across sessions | generations, retirement at `initialize` dispatch, generation checks before and after signing | `r_sticky_a_failed_reinitialize_never_sends_the_signed_session_unsigned`, `r_sticky_an_old_session_request_is_not_resent_after_its_session_is_retired` |
+| #5107 (P1) unbounded cancel threads | one control worker, queue capped at `max_in_flight`, budget-charged, deadline; per-request admission | `bounded_control_a_batch_needs_one_slot_per_request`, `bounded_control_timeout_cancellations_use_one_bounded_queue` |
+| #5108 (P2) `GET` workers across sessions | one `GET` worker, generation-owned streams | `get_stream_one_stream_per_session_generation_and_old_messages_are_dropped` |
+| #5109 (P2) id-less `tools/call` | gate every `tools/call` object | `read_only_a_tools_call_without_an_id_is_never_forwarded` |
+| #5110 (P2) approvals survive sessions | per-session, versioned snapshots, claim first | `read_only_approvals_do_not_survive_a_new_session`, `read_only_a_fresh_listing_replaces_pages_extend_and_late_listings_are_ignored` |
+| #5111 (P2) unbounded retained names | approved names only, charged and capped, fail closed | `read_only_retained_approvals_are_charged_capped_and_released` |
+| #5113 (P2) D1 for `GET`/`DELETE` | one shared `open_signed` with D1 for every method; cancels documented best effort | `d1_a_refused_get_is_rebuilt_and_reopened_once`, `d1_a_refused_session_delete_is_rebuilt_and_resent_once` |
+| #5112 (P3) unbounded build log | `BuildLog` off by default, opt-in (`with_build_recording`) and capped at 64 | `toolkit-aws` `sdk::source::tests::the_build_log_is_off_by_default_and_bounded_when_enabled` |

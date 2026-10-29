@@ -238,9 +238,9 @@ impl BuildLog {
     }
 
     pub(crate) fn record(&mut self, kind: SourceKind) {
-        // STUB(#5112 red): records every build, whatever `enabled` says.
-        let _ = self.enabled;
-        self.entries.push(kind);
+        if self.enabled && self.entries.len() < BUILD_LOG_CAP {
+            self.entries.push(kind);
+        }
     }
 
     pub(crate) fn entries(&self) -> &[SourceKind] {

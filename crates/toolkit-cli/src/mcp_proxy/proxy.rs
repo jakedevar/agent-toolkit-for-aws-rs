@@ -18,9 +18,9 @@
 //! (after the session `DELETE`) and a stdout failure, then aborts every
 //! task: reservations are released as each one notices.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{Read, Write};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
@@ -184,13 +184,19 @@ impl Proxy {
             pending: Mutex::new(Pending::default()),
             pending_changed: Condvar::new(),
             session: Mutex::new(Session::default()),
+            session_changed: Condvar::new(),
+            generation: AtomicU64::new(0),
+            get_worker: AtomicBool::new(false),
+            cancels: Mutex::new(CancelQueue::default()),
+            cancels_changed: Condvar::new(),
             shutdown: AtomicBool::new(false),
             exit: Mutex::new(None),
             exit_changed: Condvar::new(),
             jitter: FullJitter::new(),
             retry,
             workers: AtomicUsize::new(0),
-            read_only_tools: Mutex::new(HashMap::new()),
+            list_seq: AtomicU64::new(0),
+            approvals: Mutex::new(Approvals::default()),
         });
 
         let writer = {
@@ -221,10 +227,18 @@ impl Proxy {
 }
 
 fn spawn(name: &str, body: impl FnOnce() + Send + 'static) -> std::thread::JoinHandle<()> {
+    try_spawn(name, body).expect("the proxy can start a thread")
+}
+
+/// Start a thread; an error (the operating system refused) is the caller's
+/// to degrade on.
+fn try_spawn(
+    name: &str,
+    body: impl FnOnce() + Send + 'static,
+) -> std::io::Result<std::thread::JoinHandle<()>> {
     std::thread::Builder::new()
         .name(name.to_string())
         .spawn(body)
-        .expect("the proxy can start a thread")
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -255,16 +269,68 @@ struct Entry {
     timeout_seconds: u64,
     task: Arc<Task>,
     finished: bool,
+    /// The session generation the request was dispatched in.
+    generation: u64,
     /// This request is a `tools/list` (its result is filtered in read-only
     /// mode).
-    lists_tools: bool,
+    listing: Option<Listing>,
+}
+
+/// A `tools/list` request, for the read-only approvals (#5110).
+#[derive(Debug, Clone, Copy)]
+struct Listing {
+    /// Its dispatch order among listings: an older listing never replaces a
+    /// newer snapshot.
+    seq: u64,
+    /// No `params.cursor`: a complete fresh listing starts a new snapshot;
+    /// a continuation page extends the current one.
+    fresh: bool,
 }
 
 #[derive(Debug, Default)]
 struct Pending {
     entries: HashMap<String, Entry>,
-    /// Workers holding a concurrency slot.
+    /// Concurrency slots held: one per request in a message, or one for a
+    /// message without requests (#5107).
     slots: usize,
+}
+
+/// `--read-only` approvals of the current session (#5110, #5111): the names
+/// a listing marked `readOnlyHint: true`, charged to the budget.
+#[derive(Debug, Default)]
+struct Approvals {
+    /// The session generation they belong to.
+    generation: u64,
+    /// The listing that started the current snapshot.
+    snapshot_seq: u64,
+    names: HashSet<String>,
+    /// `Σ (name bytes + APPROVED_NAME_OVERHEAD)`, released on replacement.
+    hold: Option<Reservation>,
+}
+
+/// The proxy's own `notifications/cancelled`, queued for the one control
+/// worker (#5107).
+struct Cancel {
+    body: Vec<u8>,
+    _hold: Reservation,
+    deadline: Duration,
+    generation: u64,
+}
+
+#[derive(Default)]
+struct CancelQueue {
+    items: VecDeque<Cancel>,
+    /// The control worker is running.
+    worker: bool,
+}
+
+/// What a `tools/list` result would approve, applied only after its
+/// response is claimed (#5110).
+struct ListUpdate {
+    key: String,
+    listing: Listing,
+    generation: u64,
+    names: Vec<String>,
 }
 
 struct Shared {
@@ -280,15 +346,22 @@ struct Shared {
     pending: Mutex<Pending>,
     pending_changed: Condvar,
     session: Mutex<Session>,
+    session_changed: Condvar,
+    /// `session.generation`, readable without the lock.
+    generation: AtomicU64,
+    /// The one `GET` worker is running (#5108).
+    get_worker: AtomicBool,
+    cancels: Mutex<CancelQueue>,
+    cancels_changed: Condvar,
     shutdown: AtomicBool,
     exit: Mutex<Option<Exit>>,
     exit_changed: Condvar,
     jitter: FullJitter,
     retry: RetryPolicy,
     workers: AtomicUsize,
-    /// `--read-only`: each tool name from the latest `tools/list` that named
-    /// it, and whether its `readOnlyHint` was `true`.
-    read_only_tools: Mutex<HashMap<String, bool>>,
+    /// Dispatch order of `tools/list` requests.
+    list_seq: AtomicU64,
+    approvals: Mutex<Approvals>,
 }
 
 /// How a worker step ended early.
@@ -317,12 +390,21 @@ struct Job {
     keys: Vec<String>,
     initialize: bool,
     initialized: bool,
+    /// The session generation (set at dispatch).
+    generation: u64,
+    /// Concurrency slots held (set at dispatch).
+    slots: usize,
 }
 
 /// Per-response context while delivering upstream messages.
 struct Delivery<'a> {
     task: &'a Task,
     keys: &'a [String],
+    /// The session generation of the request (or stream).
+    generation: u64,
+    /// A `GET` stream: its messages are dropped once its generation is
+    /// retired (#5108).
+    stream_owned: bool,
     /// This answers `initialize`: its session is committed with the result.
     initialize: bool,
     /// For `initialize`: the validated session id from the response head.
@@ -388,7 +470,40 @@ impl Shared {
         self.budget.close();
         self.control.close();
         self.output.close();
+        lock(&self.cancels).items.clear();
         self.pending_changed.notify_all();
+        self.session_changed.notify_all();
+        self.cancels_changed.notify_all();
+    }
+
+    fn current_generation(&self) -> u64 {
+        self.generation.load(Ordering::SeqCst)
+    }
+
+    /// `initialize` is dispatched: retire the current session and start the
+    /// next generation, atomically (#5106). The new generation has no
+    /// session id, signing state (R-STICKY) and read-only approvals; work
+    /// of the old one is never (re)sent, its `GET` stream stops and its
+    /// late listings are ignored.
+    fn retire_session(&self) -> u64 {
+        let generation = {
+            let mut session = lock(&self.session);
+            let generation = session.generation + 1;
+            *session = Session {
+                generation,
+                ..Session::default()
+            };
+            self.generation.store(generation, Ordering::SeqCst);
+            self.auth.initialize_started();
+            *lock(&self.approvals) = Approvals {
+                generation,
+                ..Approvals::default()
+            };
+            generation
+        };
+        self.session_changed.notify_all();
+        self.wake_waiters();
+        generation
     }
 
     fn wake_waiters(&self) {
@@ -485,12 +600,12 @@ impl Shared {
         }
     }
 
-    fn release_slot(&self, keys: &[String]) {
+    fn release_slot(&self, keys: &[String], slots: usize) {
         let mut pending = lock(&self.pending);
         for key in keys {
             pending.entries.remove(key);
         }
-        pending.slots = pending.slots.saturating_sub(1);
+        pending.slots = pending.slots.saturating_sub(slots);
         drop(pending);
         self.pending_changed.notify_all();
     }
@@ -511,16 +626,21 @@ impl Shared {
                 .map(|(key, _)| key.clone())
                 .collect();
             if !expired.is_empty() {
-                let ids: Vec<Json> = expired
+                let ids: Vec<(Json, u64)> = expired
                     .iter()
-                    .filter_map(|key| pending.entries.get(key).map(|e| e.id.clone()))
+                    .filter_map(|key| {
+                        pending
+                            .entries
+                            .get(key)
+                            .map(|e| (e.id.clone(), e.generation))
+                    })
                     .collect();
                 drop(pending);
                 for key in &expired {
                     self.fail_entry(key, Failure::TimedOut { seconds: 0 });
                 }
-                for id in ids {
-                    self.forward_cancel(id);
+                for (id, generation) in ids {
+                    self.forward_cancel(id, generation);
                 }
                 pending = lock(&self.pending);
                 for key in &expired {
@@ -670,6 +790,7 @@ impl Shared {
         if self.config.read_only && self.refuse_read_only(&messages) {
             return;
         }
+        let paged = paged_listings(&value);
 
         // `_meta` injection: the body is the client's bytes unless it changed.
         let injected = inject(&mut value, &self.config.metadata);
@@ -703,21 +824,30 @@ impl Shared {
                     messages.first(),
                     Some(ClientMessage::Notification { method }) if method == "notifications/initialized"
                 ),
+            generation: 0,
+            slots: 0,
         };
-        self.dispatch(&requests, job);
+        self.dispatch(&requests, &paged, job);
     }
 
-    /// The concurrency cap, then registration and the worker: a message
-    /// with requests beyond the cap is refused; other messages wait for a
-    /// slot.
-    fn dispatch(self: &Arc<Self>, requests: &[(Json, Option<String>, String)], job: Job) {
+    /// The concurrency cap, then registration and the worker. Each request
+    /// of a message takes a slot (a message without requests takes one): a
+    /// message whose requests do not fit is refused whole, so a batch can
+    /// never hold more than the cap (#5107); other messages wait for a slot.
+    fn dispatch(
+        self: &Arc<Self>,
+        requests: &[(Json, Option<String>, String)],
+        paged: &[String],
+        mut job: Job,
+    ) {
         let limits = &self.config.limits;
+        let needed = requests.len().max(1);
         let mut pending = lock(&self.pending);
         loop {
             if self.is_shutdown() {
                 return;
             }
-            if pending.slots < limits.max_in_flight {
+            if pending.slots + needed <= limits.max_in_flight {
                 break;
             }
             if !requests.is_empty() {
@@ -738,7 +868,13 @@ impl Shared {
                 .unwrap_or_else(PoisonError::into_inner)
                 .0;
         }
-        pending.slots += 1;
+        pending.slots += needed;
+        job.slots = needed;
+        job.generation = if job.initialize {
+            self.retire_session()
+        } else {
+            self.current_generation()
+        };
         let now = self.clock.now();
         let mut task_deadline = now + limits.request_timeout;
         let mut entries = Vec::new();
@@ -754,14 +890,18 @@ impl Shared {
                 tool.clone(),
                 now + timeout,
                 timeout.as_secs(),
-                method == "tools/list",
+                (method == "tools/list").then(|| Listing {
+                    seq: self.list_seq.fetch_add(1, Ordering::SeqCst) + 1,
+                    fresh: !paged.contains(&key_of(id)),
+                }),
             ));
         }
         let task = Arc::new(Task {
             aborted: AtomicBool::new(false),
             deadline: task_deadline,
         });
-        for (id, tool, deadline, timeout_seconds, lists_tools) in entries {
+        let generation = job.generation;
+        for (id, tool, deadline, timeout_seconds, listing) in entries {
             pending.entries.insert(
                 key_of(&id),
                 Entry {
@@ -771,7 +911,8 @@ impl Shared {
                     timeout_seconds,
                     task: Arc::clone(&task),
                     finished: false,
-                    lists_tools,
+                    generation,
+                    listing,
                 },
             );
         }
@@ -786,33 +927,49 @@ impl Shared {
 
     // ----------------------------------------------------------- requests
 
-    fn build_request(&self, method: Method, body: Vec<u8>) -> Result<HttpRequest, AwsError> {
+    /// The request for `generation`, with its session headers; refused
+    /// (the session expired) when that generation was retired (#5106).
+    fn build_request(
+        &self,
+        method: Method,
+        body: Vec<u8>,
+        generation: u64,
+    ) -> Result<HttpRequest, Stop> {
+        let header = |_| Stop::Fail(Failure::Connect);
         let mut headers = Headers::new();
         for (name, value) in self.config.headers.entries() {
             if self.config.headers.is_sensitive(name) {
-                headers.insert_sensitive(name, value)?;
+                headers.insert_sensitive(name, value).map_err(header)?;
             } else {
-                headers.insert(name, value)?;
+                headers.insert(name, value).map_err(header)?;
             }
         }
         match method {
-            Method::Get => headers.insert("accept", "text/event-stream")?,
-            _ => headers.insert("accept", "application/json, text/event-stream")?,
+            Method::Get => headers.insert("accept", "text/event-stream"),
+            _ => headers.insert("accept", "application/json, text/event-stream"),
         }
+        .map_err(header)?;
         if method == Method::Post {
-            headers.insert("content-type", "application/json")?;
+            headers
+                .insert("content-type", "application/json")
+                .map_err(header)?;
         }
         {
             let session = lock(&self.session);
+            if session.generation != generation {
+                return Err(Stop::Fail(Failure::SessionExpired));
+            }
             if let Some(id) = &session.id {
-                headers.insert("mcp-session-id", id)?;
+                headers.insert("mcp-session-id", id).map_err(header)?;
             }
             if let Some(version) = &session.protocol_version {
-                headers.insert("mcp-protocol-version", version)?;
+                headers
+                    .insert("mcp-protocol-version", version)
+                    .map_err(header)?;
             }
         }
         if let Some(agent) = &self.config.user_agent {
-            headers.insert("user-agent", agent)?;
+            headers.insert("user-agent", agent).map_err(header)?;
         }
         Ok(HttpRequest {
             method,
@@ -827,30 +984,39 @@ impl Shared {
         self.clock.sleep(self.retry.delay(retry, &self.jitter));
     }
 
-    /// Send `body` with retries and the one D1 resend; the accepted stream.
-    fn open_post<'a>(
+    /// Send one MCP request of `generation`: each attempt is built and
+    /// signed afresh; after signing, the generation is checked again, so a
+    /// request of a retired session is never sent (R-STICKY across sessions,
+    /// #5106). Connect failures, timeouts, 5xx and 429 are retried up to
+    /// `retries`; a 401/403 gets D1's one rebuild and resend (every method,
+    /// #5113), a second 401/403 fails with the credentials text.
+    fn open_signed<'a>(
         &'a self,
-        task: &Task,
+        method: Method,
         body: &[u8],
+        generation: u64,
+        task: &Task,
+        retries: u32,
     ) -> Result<Box<dyn ResponseStream + 'a>, Stop> {
-        let mut retries = 0;
+        let mut attempt = 0;
         let mut refreshed = false;
         loop {
             if task.aborted() || self.is_shutdown() {
                 return Err(Stop::Abort);
             }
-            let mut request = self
-                .build_request(Method::Post, body.to_vec())
-                .map_err(|_| Stop::Fail(Failure::Connect))?;
+            let mut request = self.build_request(method, body.to_vec(), generation)?;
             if let Err(error) = self.auth.sign(&mut request) {
                 self.emit_event(DiagEvent::TransportFailure { code: error.code() });
                 return Err(Stop::Fail(Failure::Credentials));
             }
+            if self.current_generation() != generation {
+                return Err(Stop::Fail(Failure::SessionExpired));
+            }
             match self.transport.open(&request, &self.stream_limits) {
                 Err(error) => {
-                    if error.is_retryable() && retries < self.retry.max_retries() {
-                        retries += 1;
-                        self.backoff(retries);
+                    if error.is_retryable() && attempt < retries {
+                        attempt += 1;
+                        self.backoff(attempt);
                         continue;
                     }
                     self.emit_event(DiagEvent::TransportFailure { code: error.code() });
@@ -867,12 +1033,10 @@ impl Shared {
                         self.emit_event(DiagEvent::HttpStatus { status });
                         return Err(Stop::Fail(Failure::Credentials));
                     }
-                    if (status == 429 || (500..600).contains(&status))
-                        && retries < self.retry.max_retries()
-                    {
+                    if (status == 429 || (500..600).contains(&status)) && attempt < retries {
                         drop(stream);
-                        retries += 1;
-                        self.backoff(retries);
+                        attempt += 1;
+                        self.backoff(attempt);
                         continue;
                     }
                     return Ok(stream);
@@ -882,14 +1046,9 @@ impl Shared {
     }
 
     fn work(self: &Arc<Self>, task: &Arc<Task>, job: Job) {
-        let Job {
-            body,
-            body_hold,
-            keys,
-            initialize,
-            initialized,
-        } = job;
-        let outcome = self.exchange(task, body, body_hold, &keys, initialize, initialized);
+        let keys = job.keys.clone();
+        let slots = job.slots;
+        let outcome = self.exchange(task, job);
         match outcome {
             Ok(()) => {
                 for key in &keys {
@@ -909,27 +1068,34 @@ impl Shared {
             }
             Err(Stop::Abort) => {}
         }
-        self.release_slot(&keys);
+        self.release_slot(&keys, slots);
     }
 
-    fn exchange(
-        self: &Arc<Self>,
-        task: &Task,
-        body: Vec<u8>,
-        body_hold: Reservation,
-        keys: &[String],
-        initialize: bool,
-        initialized: bool,
-    ) -> Result<(), Stop> {
-        if initialize {
-            // R-STICKY: a new session begins with this request.
-            self.auth.initialize_started();
-        }
-        let mut stream = self.open_post(task, &body)?;
+    fn exchange(self: &Arc<Self>, task: &Task, job: Job) -> Result<(), Stop> {
+        let Job {
+            body,
+            body_hold,
+            keys,
+            initialize,
+            initialized,
+            generation,
+            slots: _,
+        } = job;
+        let keys = keys.as_slice();
+        let mut stream = self.open_signed(
+            Method::Post,
+            &body,
+            generation,
+            task,
+            self.retry.max_retries(),
+        )?;
         drop(body);
         drop(body_hold);
         let status = stream.status();
-        let has_session = lock(&self.session).id.is_some();
+        let has_session = {
+            let session = lock(&self.session);
+            session.generation == generation && session.id.is_some()
+        };
         if status == 404 && has_session {
             self.emit_event(DiagEvent::HttpStatus { status });
             return Err(Stop::Fail(Failure::SessionExpired));
@@ -940,6 +1106,8 @@ impl Shared {
             let delivery = Delivery {
                 task,
                 keys,
+                generation,
+                stream_owned: false,
                 initialize: false,
                 session_id: None,
                 errors_only: true,
@@ -956,6 +1124,8 @@ impl Shared {
         let mut delivery = Delivery {
             task,
             keys,
+            generation,
+            stream_owned: false,
             initialize: false,
             session_id: None,
             errors_only: false,
@@ -978,7 +1148,7 @@ impl Shared {
             self.read_events(&mut *stream, &delivery)?;
         }
         if initialized {
-            self.start_get_stream();
+            self.start_get_stream(generation);
         }
         Ok(())
     }
@@ -1025,7 +1195,7 @@ impl Shared {
     ) -> Result<(), Stop> {
         let limits = &self.config.limits;
         let task = delivery.task;
-        let cancelled = || task.aborted() || self.is_shutdown();
+        let cancelled = || task.aborted() || self.is_shutdown() || self.retired(delivery);
         let mut parser = SseParser::new(limits.max_sse_line, limits.max_message);
         let mut hold = self.budget.empty();
         loop {
@@ -1050,6 +1220,12 @@ impl Shared {
             }
             hold.shrink_to(parser.buffered());
         }
+    }
+
+    /// A `GET` stream's generation was retired: its messages are dropped
+    /// and it stops (#5108).
+    fn retired(&self, delivery: &Delivery<'_>) -> bool {
+        delivery.stream_owned && self.current_generation() != delivery.generation
     }
 
     /// Parse, check, re-serialise and queue one upstream message; `true` when
@@ -1081,9 +1257,11 @@ impl Shared {
                 return Ok(false);
             }
         };
-        if self.config.read_only {
-            self.filter_tool_lists(&mut value, delivery.keys);
-        }
+        let updates = if self.config.read_only {
+            self.filter_tool_lists(&mut value, delivery.keys)
+        } else {
+            Vec::new()
+        };
         let line_hold = self
             .budget
             .reserve(compact_len(&value) + 1, &self.budget_wait(&cancelled))?;
@@ -1099,7 +1277,7 @@ impl Shared {
             return Ok(false);
         }
         if let (true, [key]) = (delivery.initialize, answered.as_slice()) {
-            if !self.commit_session(delivery.session_id.clone(), &value) {
+            if !self.commit_session(delivery.generation, delivery.session_id.clone(), &value) {
                 self.fail_entry(key, Failure::SessionRefused);
                 return Ok(false);
             }
@@ -1107,12 +1285,18 @@ impl Shared {
         drop(value);
         drop(charge);
         if !answered.is_empty() {
-            let claimed: Vec<bool> = answered.iter().map(|key| self.claim(key)).collect();
-            if !claimed.iter().any(|c| *c) {
+            let claimed: Vec<&String> = answered.iter().filter(|key| self.claim(key)).collect();
+            if claimed.is_empty() {
                 return Ok(false); // already answered: timed out or cancelled
             }
+            // Approvals change only for a listing this delivery answers.
+            for update in updates {
+                if claimed.contains(&&update.key) {
+                    self.apply_listing(update);
+                }
+            }
         }
-        if task.aborted() {
+        if task.aborted() || self.retired(delivery) {
             return Err(Stop::Abort);
         }
         match self.output.push_data(
@@ -1129,8 +1313,9 @@ impl Shared {
 
     // ------------------------------------------------------------ session
 
-    /// Store the session from an `initialize` response; `false` refuses it.
-    fn commit_session(&self, session_id: Option<String>, response: &Json) -> bool {
+    /// Store the session from an `initialize` response of `generation`;
+    /// `false` refuses it (an invalid version, or a retired generation).
+    fn commit_session(&self, generation: u64, session_id: Option<String>, response: &Json) -> bool {
         let Some(result) = response.get("result") else {
             return true; // an error response starts no session
         };
@@ -1143,34 +1328,51 @@ impl Shared {
             }
         };
         let started = session_id.is_some();
-        *lock(&self.session) = Session {
-            id: session_id,
-            protocol_version: version,
-            get_started: false,
-        };
+        {
+            let mut session = lock(&self.session);
+            if session.generation != generation {
+                return false; // a later initialize retired this one
+            }
+            *session = Session {
+                generation,
+                id: session_id,
+                protocol_version: version,
+                get_started: false,
+                get_ended: false,
+            };
+        }
         if started {
             self.auth.session_started();
         }
         true
     }
 
-    fn start_get_stream(self: &Arc<Self>) {
+    /// `notifications/initialized` of `generation` was sent: the `GET`
+    /// stream is wanted for it. One worker serves every generation in turn,
+    /// so at most one `GET` stream is ever open (#5108).
+    fn start_get_stream(self: &Arc<Self>, generation: u64) {
         {
             let mut session = lock(&self.session);
-            if session.id.is_none() || session.get_started {
+            if session.generation != generation || session.id.is_none() || session.get_started {
                 return;
             }
             session.get_started = true;
         }
-        let shared = Arc::clone(self);
-        spawn("mcp-proxy-get", move || shared.get_loop());
+        self.session_changed.notify_all();
+        if !self.get_worker.swap(true, Ordering::SeqCst) {
+            let shared = Arc::clone(self);
+            if try_spawn("mcp-proxy-get", move || shared.get_loop()).is_err() {
+                self.get_worker.store(false, Ordering::SeqCst);
+            }
+        }
     }
 
-    /// Sleep on the clock until `at`; `false` on shutdown.
-    fn sleep_until(&self, at: Duration) -> bool {
+    /// Sleep on the clock until `at`; `false` on shutdown or when
+    /// `generation` is retired.
+    fn sleep_until(&self, at: Duration, generation: u64) -> bool {
         let mut pending = lock(&self.pending);
         loop {
-            if self.is_shutdown() {
+            if self.is_shutdown() || self.current_generation() != generation {
                 return false;
             }
             let now = self.clock.now();
@@ -1186,9 +1388,40 @@ impl Shared {
         }
     }
 
-    /// The server-initiated stream: reopened at most once per interval; a
-    /// 405 (no stream offered) ends it silently.
+    /// The one `GET` worker: waits for a generation that wants a stream and
+    /// serves it until it is retired, then serves the next.
     fn get_loop(self: &Arc<Self>) {
+        loop {
+            let generation = {
+                let mut session = lock(&self.session);
+                loop {
+                    if self.is_shutdown() {
+                        return;
+                    }
+                    if session.get_started && !session.get_ended && session.id.is_some() {
+                        break session.generation;
+                    }
+                    let slice = self.clock.wait_slice(Duration::from_secs(1));
+                    session = self
+                        .session_changed
+                        .wait_timeout(session, slice)
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .0;
+                }
+            };
+            if !self.serve_get(generation) {
+                let mut session = lock(&self.session);
+                if session.generation == generation {
+                    session.get_ended = true;
+                }
+            }
+        }
+    }
+
+    /// The server-initiated stream of `generation`: reopened at most once
+    /// per interval while the generation is current. `false` when it ended
+    /// for good (405: no stream offered, or the request cannot be built).
+    fn serve_get(&self, generation: u64) -> bool {
         let task = Task {
             aborted: AtomicBool::new(false),
             deadline: Duration::MAX,
@@ -1196,31 +1429,22 @@ impl Shared {
         let mut last_open: Option<Duration> = None;
         loop {
             if let Some(at) = last_open {
-                if !self.sleep_until(at + self.config.limits.get_reopen_interval) {
-                    return;
+                if !self.sleep_until(at + self.config.limits.get_reopen_interval, generation) {
+                    return true;
                 }
             }
-            if self.is_shutdown() {
-                return;
+            if self.is_shutdown() || self.current_generation() != generation {
+                return true;
             }
             last_open = Some(self.clock.now());
-            let Ok(mut request) = self.build_request(Method::Get, Vec::new()) else {
-                return;
-            };
-            if let Err(error) = self.auth.sign(&mut request) {
-                self.emit_event(DiagEvent::TransportFailure { code: error.code() });
-                continue;
-            }
-            let mut stream = match self.transport.open(&request, &self.stream_limits) {
+            let mut stream = match self.open_signed(Method::Get, &[], generation, &task, 0) {
                 Ok(stream) => stream,
-                Err(error) => {
-                    self.emit_event(DiagEvent::TransportFailure { code: error.code() });
-                    continue;
-                }
+                Err(Stop::Fail(Failure::SessionExpired) | Stop::Abort) => return true,
+                Err(Stop::Fail(_)) => continue, // reported; reopen later
             };
             let status = stream.status();
             if status == 405 {
-                return;
+                return false;
             }
             if !(200..300).contains(&status) {
                 self.emit_event(DiagEvent::HttpStatus { status });
@@ -1230,6 +1454,8 @@ impl Shared {
                 let delivery = Delivery {
                     task: &task,
                     keys: &[],
+                    generation,
+                    stream_owned: true,
                     initialize: false,
                     session_id: None,
                     errors_only: false,
@@ -1246,17 +1472,23 @@ impl Shared {
     // ---------------------------------------------------------- read-only
 
     /// `--read-only`: answer locally (never forward) a line holding a
-    /// `tools/call` for a tool the latest `tools/list` did not mark
-    /// `readOnlyHint: true` (before any listing, every tool). In a batch, the
+    /// `tools/call` for a tool the current session's approvals do not hold
+    /// (before any listing, every tool), and any `tools/call` without an id
+    /// (it cannot be answered, so it is dropped, #5109). In a batch, the
     /// other requests are refused too, so nothing of it is sent. `true` when
     /// the line was refused.
     fn refuse_read_only(&self, messages: &[ClientMessage]) -> bool {
         let lines: Vec<String> = {
-            let allowed = lock(&self.read_only_tools);
-            let refused = |message: &ClientMessage| {
-                matches!(message, ClientMessage::Request { method, tool, .. }
-                    if method == "tools/call"
-                        && tool.as_ref().is_none_or(|name| allowed.get(name) != Some(&true)))
+            let approvals = lock(&self.approvals);
+            let refused = |message: &ClientMessage| match message {
+                ClientMessage::Request { method, tool, .. } => {
+                    method == "tools/call"
+                        && tool
+                            .as_ref()
+                            .is_none_or(|name| !approvals.names.contains(name))
+                }
+                ClientMessage::Notification { method } => method == "tools/call",
+                ClientMessage::Response => false,
             };
             if !messages.iter().any(refused) {
                 return false;
@@ -1284,26 +1516,31 @@ impl Shared {
     }
 
     /// `--read-only`: keep only `readOnlyHint: true` tools in the results of
-    /// this message's `tools/list` requests, and remember every listed name.
-    fn filter_tool_lists(&self, value: &mut Json, keys: &[String]) {
-        let list_keys: Vec<String> = {
+    /// this message's `tools/list` requests. The approvals they would make
+    /// are returned, to be applied once the response is claimed.
+    fn filter_tool_lists(&self, value: &mut Json, keys: &[String]) -> Vec<ListUpdate> {
+        let lists: Vec<(String, Listing, u64)> = {
             let pending = lock(&self.pending);
             keys.iter()
-                .filter(|key| pending.entries.get(*key).is_some_and(|e| e.lists_tools))
-                .cloned()
+                .filter_map(|key| {
+                    let entry = pending.entries.get(key)?;
+                    entry.listing.map(|l| (key.clone(), l, entry.generation))
+                })
                 .collect()
         };
-        if list_keys.is_empty() {
-            return;
+        if lists.is_empty() {
+            return Vec::new();
         }
-        let mut listed: Vec<(String, bool)> = Vec::new();
+        let mut updates = Vec::new();
         let mut filter = |item: &mut Json| {
-            if !item
+            let Some((key, listing, generation)) = item
                 .get("id")
-                .is_some_and(|id| list_keys.contains(&key_of(id)))
-            {
+                .map(key_of)
+                .and_then(|key| lists.iter().find(|(k, _, _)| *k == key))
+                .cloned()
+            else {
                 return;
-            }
+            };
             let Json::Object(members) = item else {
                 return;
             };
@@ -1315,27 +1552,80 @@ impl Shared {
             else {
                 return;
             };
+            let mut names = Vec::new();
             tools.retain(|tool| {
                 let read_only = tool
                     .get("annotations")
                     .and_then(|annotations| annotations.get("readOnlyHint"))
                     == Some(&Json::Bool(true));
-                if let Some(name) = tool.get("name").and_then(Json::as_str) {
-                    listed.push((name.to_string(), read_only));
+                if read_only {
+                    if let Some(name) = tool.get("name").and_then(Json::as_str) {
+                        names.push(name.to_string());
+                    }
                 }
                 read_only
+            });
+            updates.push(ListUpdate {
+                key,
+                listing,
+                generation,
+                names,
             });
         };
         match value {
             Json::Array(items) => items.iter_mut().for_each(&mut filter),
             other => filter(other),
         }
-        lock(&self.read_only_tools).extend(listed);
+        updates
     }
 
-    /// The proxy's own deadline fired for request `id`: tell the server with
-    /// a `notifications/cancelled` (sent once, signed, its response unread).
-    fn forward_cancel(self: &Arc<Self>, id: Json) {
+    /// Apply a claimed listing's approvals (#5110, #5111): only for the
+    /// current session and only when no newer fresh listing replaced the
+    /// snapshot; a fresh listing replaces the set, a page extends it. The
+    /// retained names are charged to the budget and capped at one message;
+    /// past the cap, or when the budget cannot hold them, every approval is
+    /// revoked (fail closed).
+    fn apply_listing(&self, update: ListUpdate) {
+        let mut approvals = lock(&self.approvals);
+        if approvals.generation != update.generation || update.listing.seq <= approvals.snapshot_seq
+        {
+            return;
+        }
+        let mut names = if update.listing.fresh {
+            approvals.snapshot_seq = update.listing.seq;
+            HashSet::new()
+        } else {
+            std::mem::take(&mut approvals.names)
+        };
+        names.extend(update.names);
+        approvals.names = HashSet::new();
+        approvals.hold = None;
+        let bytes: usize = names
+            .iter()
+            .map(|name| name.len() + APPROVED_NAME_OVERHEAD)
+            .sum();
+        let hold = (bytes <= self.config.limits.max_message)
+            .then(|| self.budget.try_reserve(bytes))
+            .flatten();
+        let Some(hold) = hold else {
+            approvals.snapshot_seq = update.listing.seq;
+            drop(approvals);
+            self.emit(ProxyEvent::ReadOnlyCatalogueRefused);
+            return;
+        };
+        approvals.names = names;
+        approvals.hold = Some(hold);
+    }
+
+    // ------------------------------------------------------- cancellation
+
+    /// The proxy's own deadline fired for request `id`: queue one
+    /// `notifications/cancelled` for the control worker (#5107). The queue
+    /// holds at most the request cap, each body is charged to the budget,
+    /// and the supervisor never blocks or panics here: a full queue, an
+    /// exhausted budget or a worker that cannot start drops the cancel with
+    /// `timeout-cancel-dropped`.
+    fn forward_cancel(self: &Arc<Self>, id: Json, generation: u64) {
         let body = to_line(&Json::object(vec![
             ("jsonrpc", Json::string("2.0")),
             ("method", Json::string("notifications/cancelled")),
@@ -1348,44 +1638,102 @@ impl Shared {
             ),
         ]))
         .into_bytes();
-        let shared = Arc::clone(self);
-        spawn("mcp-proxy-cancel", move || {
-            if shared.is_shutdown() {
-                return;
-            }
-            let Ok(mut request) = shared.build_request(Method::Post, body) else {
-                return;
-            };
-            if shared.auth.sign(&mut request).is_err() {
-                return;
-            }
-            match shared.transport.open(&request, &shared.stream_limits) {
-                Ok(_stream) => shared.emit(ProxyEvent::TimeoutCancelForwarded),
-                Err(error) => shared.emit_event(DiagEvent::TransportFailure { code: error.code() }),
-            }
-        });
-    }
-
-    /// stdin EOF: end the session with exactly one `DELETE`.
-    fn end_session(&self) {
-        if lock(&self.session).id.is_none() {
-            return;
-        }
-        let Ok(mut request) = self.build_request(Method::Delete, Vec::new()) else {
+        let Some(hold) = self.budget.try_reserve(body.len()) else {
+            self.emit(ProxyEvent::TimeoutCancelDropped);
             return;
         };
-        if let Err(error) = self.auth.sign(&mut request) {
-            self.emit_event(DiagEvent::TransportFailure { code: error.code() });
+        let mut queue = lock(&self.cancels);
+        if self.is_shutdown() || queue.items.len() >= self.config.limits.max_in_flight {
+            drop(queue);
+            self.emit(ProxyEvent::TimeoutCancelDropped);
             return;
         }
-        match self.transport.open(&request, &self.stream_limits) {
-            Ok(stream) => {
-                let status = stream.status();
-                if !(200..300).contains(&status) && status != 405 {
-                    self.emit_event(DiagEvent::HttpStatus { status });
-                }
+        queue.items.push_back(Cancel {
+            body,
+            _hold: hold,
+            deadline: self.clock.now() + self.config.limits.request_timeout,
+            generation,
+        });
+        if !queue.worker {
+            let shared = Arc::clone(self);
+            if try_spawn("mcp-proxy-cancel", move || shared.cancel_loop()).is_ok() {
+                queue.worker = true;
+            } else {
+                queue.items.pop_back();
+                drop(queue);
+                self.emit(ProxyEvent::TimeoutCancelDropped);
+                return;
             }
-            Err(error) => self.emit_event(DiagEvent::TransportFailure { code: error.code() }),
+        }
+        drop(queue);
+        self.cancels_changed.notify_all();
+    }
+
+    /// The control worker: sends queued cancels one at a time, best effort
+    /// (signed once, no D1 refresh, response unread). A cancel past its
+    /// deadline, or of a retired session, is dropped.
+    fn cancel_loop(&self) {
+        loop {
+            let cancel = {
+                let mut queue = lock(&self.cancels);
+                loop {
+                    if self.is_shutdown() {
+                        queue.items.clear();
+                        queue.worker = false;
+                        return;
+                    }
+                    if let Some(cancel) = queue.items.pop_front() {
+                        break cancel;
+                    }
+                    let slice = self.clock.wait_slice(Duration::from_secs(1));
+                    queue = self
+                        .cancels_changed
+                        .wait_timeout(queue, slice)
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .0;
+                }
+            };
+            if self.clock.now() >= cancel.deadline {
+                self.emit(ProxyEvent::TimeoutCancelDropped);
+                continue;
+            }
+            let Ok(mut request) = self.build_request(Method::Post, cancel.body, cancel.generation)
+            else {
+                self.emit(ProxyEvent::TimeoutCancelDropped);
+                continue;
+            };
+            if self.auth.sign(&mut request).is_err()
+                || self.current_generation() != cancel.generation
+            {
+                continue;
+            }
+            match self.transport.open(&request, &self.stream_limits) {
+                Ok(_stream) => self.emit(ProxyEvent::TimeoutCancelForwarded),
+                Err(error) => self.emit_event(DiagEvent::TransportFailure { code: error.code() }),
+            }
+        }
+    }
+
+    /// stdin EOF: end the session with one `DELETE` (D1: one rebuild and
+    /// resend after a 401/403, #5113).
+    fn end_session(&self) {
+        let generation = {
+            let session = lock(&self.session);
+            if session.id.is_none() {
+                return;
+            }
+            session.generation
+        };
+        let task = Task {
+            aborted: AtomicBool::new(false),
+            deadline: Duration::MAX,
+        };
+        // Failures are reported by `open_signed`.
+        if let Ok(stream) = self.open_signed(Method::Delete, &[], generation, &task, 0) {
+            let status = stream.status();
+            if !(200..300).contains(&status) && status != 405 {
+                self.emit_event(DiagEvent::HttpStatus { status });
+            }
         }
     }
 }
@@ -1446,6 +1794,21 @@ fn cancelled_ids(value: &Json) -> Vec<Json> {
         (item.get("method").and_then(Json::as_str) == Some("notifications/cancelled"))
             .then(|| item.get("params").and_then(|p| p.get("requestId")).cloned())
             .flatten()
+    };
+    match value {
+        Json::Array(items) => items.iter().filter_map(one).collect(),
+        other => one(other).into_iter().collect(),
+    }
+}
+
+/// Keys of the `tools/list` requests in a client line that continue a
+/// listing (`params.cursor` present): pages extend the current approvals.
+fn paged_listings(value: &Json) -> Vec<String> {
+    let one = |item: &Json| -> Option<String> {
+        (item.get("method").and_then(Json::as_str) == Some("tools/list")
+            && item.get("params").and_then(|p| p.get("cursor")).is_some())
+        .then(|| item.get("id").map(key_of))
+        .flatten()
     };
     match value {
         Json::Array(items) => items.iter().filter_map(one).collect(),
