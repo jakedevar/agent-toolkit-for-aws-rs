@@ -8,7 +8,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use super::tests_apply::{assert_no_marker, marker_helper, snapshot};
+use super::tests_apply::{assert_no_marker, leftovers, marker_helper, snapshot};
 use super::*;
 use crate::launch::archive::meta::{discovery_message, metadata_message, reason};
 use crate::launch::archive::tests_snapshot::{run_git, sha_tree, tree};
@@ -369,42 +369,79 @@ fn t_apply_16_discovery_fails_closed_before_the_snapshot_is_read() {
     }
 }
 
-#[test]
-fn t_apply_17_git_dir_moved_into_a_planned_directory_after_planning_stops() {
-    struct Swap(PathBuf);
-    impl ApplyHook for Swap {
-        fn between_phases(&mut self) {
-            fs::rename(self.0.join("docs"), self.0.join("docs-away")).unwrap();
-            fs::rename(self.0.join(".git"), self.0.join("docs")).unwrap();
-        }
+/// Moves the planned `docs` away and the repository's `.git` into its place
+/// between the phases.
+struct GitIntoDocs(PathBuf);
+
+impl ApplyHook for GitIntoDocs {
+    fn between_phases(&mut self) {
+        fs::rename(self.0.join("docs"), self.0.join("docs-away")).unwrap();
+        fs::rename(self.0.join(".git"), self.0.join("docs")).unwrap();
     }
-    let ordinary = crate::launch::archive::tests_snapshot::repo("apply17");
+}
+
+/// Apply `files` to a repository whose existing `docs` holds `old.md` plus
+/// every directory in `precreate`, swapping `.git` into `docs` after
+/// planning. The only defense left is the Navigator's downward identity
+/// check: the swapped-in `.git` is a real directory (O_NOFOLLOW passes) and
+/// every path below it the walk needs already exists, so a missing check
+/// writes into the metadata. The walk stops at `docs`, the first planned
+/// directory it enters.
+fn git_into_docs(label: &str, precreate: &[&str], files: &[(&str, &[u8], u32)]) {
+    let ordinary = crate::launch::archive::tests_snapshot::repo(label);
     let target = ordinary.dir.path().to_path_buf();
     ordinary.dir.write("docs/old.md", b"old\n");
+    for dir in precreate {
+        fs::create_dir_all(target.join("docs").join(dir)).unwrap();
+        fs::create_dir_all(target.join(".git").join(dir)).unwrap();
+    }
     let metadata = sha_tree(&target.join(".git"));
-    let source = snapshot(
-        "apply17-snap",
-        &[("docs/hooks/post-checkout", b"#!/bin/sh\n", 0o755)],
-    );
+    let source = snapshot(&format!("{label}-snap"), files);
     let error = apply_opts(
         source.path(),
         &target,
         &test_git(),
         &MapEnv::new(),
         MetaRules::PRODUCTION,
-        &mut Swap(target.clone()),
+        &mut GitIntoDocs(target.clone()),
     )
     .expect_err("stopped");
-    assert!(
-        error
-            .message()
-            .starts_with("Applying the snapshot stopped after 0 files: "),
-        "{error:?}"
+    let expected = stopped(
+        0,
+        &format!(
+            "a target directory changed after planning: {}",
+            shown(&target.join("docs").to_string_lossy())
+        ),
     );
+    assert_eq!(error.message(), expected.message());
     assert_eq!(
         sha_tree(&target.join("docs")),
         metadata,
         "metadata unchanged"
     );
+    assert!(leftovers(&target.join("docs")).is_empty(), "no temporary");
     assert!(tree(&target.join("docs-away")).contains(&"old.md".to_string()));
+}
+
+#[test]
+fn t_apply_17_git_dir_moved_into_a_planned_directory_after_planning_stops() {
+    // `docs/config` is a new file in a planned directory: without the
+    // identity check its rename would replace `.git/config`.
+    git_into_docs(
+        "apply17",
+        &[],
+        &[("docs/config", b"[core]\n\tfsmonitor = x\n", 0o644)],
+    );
+}
+
+#[test]
+fn t_apply_17_git_dir_moved_into_a_planned_directory_with_existing_hooks_stops() {
+    // `docs/hooks` exists at planning (a recorded directory) and `.git/hooks`
+    // exists too, so without the identity check the walk would enter both
+    // and plant an executable hook.
+    git_into_docs(
+        "apply17h",
+        &["hooks"],
+        &[("docs/hooks/post-checkout", b"#!/bin/sh\n", 0o755)],
+    );
 }

@@ -145,3 +145,6 @@ impl Navigator {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests_nav;

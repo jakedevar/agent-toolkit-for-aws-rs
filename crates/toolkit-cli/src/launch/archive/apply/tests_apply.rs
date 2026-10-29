@@ -382,6 +382,46 @@ fn t_apply_9_directory_swapped_for_a_symlink_after_planning_stops_that_write() {
     assert!(leftovers(target.path()).is_empty());
 }
 
+#[test]
+fn t_apply_9_directory_swapped_for_another_directory_after_planning_stops_that_write() {
+    // A real directory, not a symlink, replaces the planned `docs`:
+    // O_NOFOLLOW lets the walk in, so only the recorded identity stops it.
+    let Repo { dir: target } = repo("apply9d");
+    target.write("docs/old.md", b"old");
+    let outside = Scratch::new("apply9d-outside");
+    outside.write("impostor/kept.md", b"kept");
+    let source = snapshot(
+        "apply9d-snap",
+        &[("a.txt", b"a", 0o644), ("docs/x.md", b"x", 0o644)],
+    );
+    let docs = target.join("docs");
+    let away = target.join("docs-away");
+    let impostor = outside.join("impostor");
+    let mut hook = Between(|| {
+        fs::rename(&docs, &away).unwrap();
+        fs::rename(&impostor, &docs).unwrap();
+    });
+    let error = apply_with(
+        source.path(),
+        target.path(),
+        ApplyLimits::PRODUCTION,
+        &mut hook,
+    )
+    .expect_err("stopped");
+    let expected = stopped(
+        1,
+        &format!(
+            "a target directory changed after planning: {}",
+            shown(&target.join("docs").to_string_lossy())
+        ),
+    );
+    assert_eq!(error.message(), expected.message());
+    assert_eq!(tree(&target.join("docs")), vec!["kept.md".to_string()]);
+    assert_eq!(tree(&away), vec!["old.md".to_string()]);
+    assert_eq!(fs::read(target.join("a.txt")).unwrap(), b"a");
+    assert!(leftovers(target.path()).is_empty());
+}
+
 /// Fails before the rename of file `at`.
 struct FailAt(usize);
 
