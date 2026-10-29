@@ -847,6 +847,34 @@ mod operation_contracts {
     }
 
     #[test]
+    fn session_response_rejects_non_model_resource_identifiers_even_when_echoed() {
+        let manager =
+            "arn:aws:bedrock-agentcore:us-east-1:111111111111:payment-manager/test-abcdefghij";
+        let session = "payment-session-TEST12345678901";
+        let good = format!(
+            r#"{{"paymentSession":{{"paymentSessionId":"{session}","paymentManagerArn":"{manager}","userId":"user","expiryTimeInMinutes":60,"createdAt":1,"updatedAt":1}}}}"#
+        );
+        assert!(valid_session_response(
+            &good,
+            manager,
+            Some(session),
+            "user"
+        ));
+        assert!(!valid_session_response(
+            &good.replace(session, "ps"),
+            manager,
+            Some("ps"),
+            "user"
+        ));
+        assert!(!valid_session_response(
+            &good.replace(manager, "arn"),
+            "arn",
+            Some(session),
+            "user"
+        ));
+    }
+
+    #[test]
     fn session_response_requires_model_members_and_matching_resources() {
         let good = r#"{"paymentSession":{"paymentSessionId":"ps","paymentManagerArn":"arn","userId":"user","expiryTimeInMinutes":60,"createdAt":"2026-10-28T12:00:00Z","updatedAt":"2026-10-28T12:00:00Z","limits":{"maxSpendAmount":{"value":"10","currency":"USD"}},"availableLimits":{"availableSpendAmount":{"value":"9","currency":"USD"},"updatedAt":"2026-10-28T12:00:00Z"}}}"#;
         assert!(valid_session_response(good, "arn", Some("ps"), "user"));
