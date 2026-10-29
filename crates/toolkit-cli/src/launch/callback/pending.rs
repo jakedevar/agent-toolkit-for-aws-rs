@@ -266,6 +266,17 @@ impl WaitTracker {
         pid: u32,
         now: i64,
     ) -> (Observation, Option<String>) {
+        let elapsed = i64::try_from(self.start.elapsed().as_secs()).unwrap_or(i64::MAX);
+        self.finish_at(state_dir, pid, now, elapsed)
+    }
+
+    pub(super) fn finish_at(
+        &mut self,
+        state_dir: &Path,
+        pid: u32,
+        now: i64,
+        elapsed: i64,
+    ) -> (Observation, Option<String>) {
         self.finish_at_with(state_dir, pid, now, elapsed, |observation, reason| {
             (observation, reason)
         })
@@ -279,17 +290,6 @@ impl WaitTracker {
         elapsed: i64,
         report: impl FnOnce(Observation, Option<String>) -> R,
     ) -> R {
-        let elapsed = i64::try_from(self.start.elapsed().as_secs()).unwrap_or(i64::MAX);
-        self.finish_at(state_dir, pid, now, elapsed)
-    }
-
-    pub(super) fn finish_at(
-        &mut self,
-        state_dir: &Path,
-        pid: u32,
-        now: i64,
-        elapsed: i64,
-    ) -> (Observation, Option<String>) {
         let path = state_dir.join("pending").join(format!("{pid}.json"));
         let mut record = read_record(state_dir, pid);
         if record.is_none()
