@@ -1130,3 +1130,4 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - Rehydrated: 4/4 slots (0c08b166 L5 r2 parked on jobs, f59917b1 S1 r1 parked, e02b0f23 B2 running, 7a727801 #5344 running).
 - Scoped 4dad1a2c (#5394 c69895d1) running, owner now this seat (wake owner). On ok: AgentCheckLandingCandidate + enqueue (source_session_id c35bc7f4, issue 5394, derive_filters).
 - Wakes carried: health, safety-net, mcp-proxy todo, 5 terminal watches. Queue empty. Load ~14, disk 88%.
+- 17:50Z: safety net (stale f233e271 text) handled; re-armed pm-safety-net 18:48Z. CLOSED #5330 #5332 (verified fixed on rolling by S5: FakePaymentsApi scripting/recording; into_parts/payload pub(in agents_pay) + compile_fail).
