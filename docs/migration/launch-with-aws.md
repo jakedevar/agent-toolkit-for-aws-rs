@@ -45,6 +45,18 @@ stdout, stderr, the pending record, child argv, child environment or `Debug`. Er
 codes are allowlisted constants; a rendered result or error that still contains a live
 secret is replaced by the generic failure message.
 
+That last check is structural (#5406). Every launch route except the `auth-callback`
+helper first reads the stored session record locally, with no refresh or network, and
+arms its output with the access token, refresh token and client secret. From then on,
+any stdout line or diagnostic carrying one of them is not written. The route writes
+`{"error": "The operation failed. Re-run with logging enabled for details."}` once
+instead and exits 1. This holds whichever branch produced the text, including the
+early refusals that echo a caller or environment value (`--region`,
+`LAUNCH_WITH_AWS_REGION`, `LAUNCH_WITH_AWS_BASE_URL`, a repository URL). A missing or
+unreadable session record means an empty set: output and exit status are unchanged.
+The API commands also seed their own scrub set from the stored session before any
+check; it then grows with a refreshed token, each `clientToken` and the upload URL.
+
 Order of work in every API command: argument checks (missing argument, repository URL,
 name 1..128, id 1..2048), then region and `LAUNCH_WITH_AWS_BASE_URL` validation
 (including its DNS check), then the single access-token fetch (and refresh), then the

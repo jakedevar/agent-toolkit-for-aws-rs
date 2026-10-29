@@ -352,7 +352,10 @@ fn t_tok_early_refusals_with_a_stored_session_never_echo_its_secrets() {
         }
         command.output().unwrap()
     };
-    for secret in SECRETS {
+    // Every leaking case is named (route, label, secret index; never the
+    // text), so a red run shows the whole matrix.
+    let mut leaked = Vec::new();
+    for (number, secret) in SECRETS.into_iter().enumerate() {
         let no_host = format!("https:///{secret}");
         let repository = format!("https://github.com/o/{secret}");
         let mut cases: Vec<(&str, Vec<&str>, Vec<(&str, &str)>)> = Vec::new();
@@ -399,14 +402,14 @@ fn t_tok_early_refusals_with_a_stored_session_never_echo_its_secrets() {
         for (label, args, env) in &cases {
             let output = run(args, env);
             let route = args[1];
-            for (index, text) in [&output.stdout, &output.stderr].into_iter().enumerate() {
-                let text = String::from_utf8_lossy(text);
-                for (seeded, value) in SECRETS.iter().enumerate() {
-                    assert!(
-                        !text.contains(value),
-                        "{route} {label}: seeded secret #{seeded} leaked on stream {index}"
-                    );
-                }
+            let shown = [&output.stdout, &output.stderr]
+                .map(|text| String::from_utf8_lossy(text).into_owned());
+            if shown
+                .iter()
+                .any(|text| SECRETS.iter().any(|s| text.contains(s)))
+            {
+                leaked.push(format!("{route} {label} (secret #{number})"));
+                continue;
             }
             assert!(
                 output.status.code() == Some(1)
@@ -422,4 +425,9 @@ fn t_tok_early_refusals_with_a_stored_session_never_echo_its_secrets() {
         }
     }
     std::fs::remove_dir_all(home).unwrap();
+    assert!(
+        leaked.is_empty(),
+        "{} early refusals leaked a seeded secret: {leaked:?}",
+        leaked.len()
+    );
 }

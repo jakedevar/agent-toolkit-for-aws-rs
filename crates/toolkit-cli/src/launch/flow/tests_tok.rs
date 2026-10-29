@@ -409,7 +409,10 @@ fn early_cases<'a>(command: &'a str, secret: &'a str, owned: &'a [String; 4]) ->
 
 #[test]
 fn t_tok_7_early_refusals_never_echo_stored_session_secrets() {
-    for secret in SEEDED {
+    // Every leaking case is named (label and secret index, never the text),
+    // so a red run shows the whole matrix, not only its first case.
+    let mut leaked = Vec::new();
+    for (number, secret) in SEEDED.into_iter().enumerate() {
         let owned = [
             format!("https:///{secret}"),
             format!("https://{secret}.example.com"),
@@ -423,7 +426,13 @@ fn t_tok_7_early_refusals_never_echo_stored_session_secrets() {
                     ..Harness::new(&[])
                 };
                 let (stdout, stderr, status, debug) = harness.golden_debug(&case.request);
-                assert_clean(&case.label, &[&stdout, &stderr, &debug], &SEEDED);
+                if [&stdout, &stderr, &debug]
+                    .iter()
+                    .any(|text| SEEDED.iter().any(|s| text.contains(s)))
+                {
+                    leaked.push(format!("{} (secret #{number})", case.label));
+                    continue;
+                }
                 assert!(
                     stdout.is_empty() && status == 1 && stderr.starts_with("{\"error\": \""),
                     "{}: expected a refusal",
@@ -450,6 +459,11 @@ fn t_tok_7_early_refusals_never_echo_stored_session_secrets() {
             }
         }
     }
+    assert!(
+        leaked.is_empty(),
+        "{} early refusals leaked a seeded secret: {leaked:?}",
+        leaked.len()
+    );
 }
 
 #[test]
