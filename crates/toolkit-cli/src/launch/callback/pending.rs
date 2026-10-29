@@ -24,11 +24,48 @@ mod custody_tests {
         assert!(rustix::io::fcntl_getfd(&custody._lock)
             .unwrap()
             .contains(rustix::io::FdFlags::CLOEXEC));
-        drop(custody);
+        custody.release_settled();
         let lock = acquire_if_free(scratch.path(), 81).unwrap();
         assert!(rustix::io::fcntl_getfd(&lock)
             .unwrap()
             .contains(rustix::io::FdFlags::CLOEXEC));
+    }
+
+    /// A descriptor copy made while the lock was open (as `fork` makes in a
+    /// concurrently spawning test, until its `exec` closes the CLOEXEC copy)
+    /// shares the open file description, so the lock stays held after the
+    /// owner drops it. `release_settled` waits that copy out instead of
+    /// letting an unrelated test's spawn decide this test's outcome.
+    #[test]
+    #[allow(clippy::used_underscore_binding)]
+    fn release_settled_waits_out_inherited_descriptor_copies() {
+        let scratch = crate::launch::tests_support::Scratch::new("lock-inherited-copy");
+        let custody = Custody::acquire(scratch.path(), 81).unwrap();
+        let copy = custody._lock.try_clone().unwrap();
+        let closer = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            drop(copy);
+        });
+        let dir = scratch.path().to_path_buf();
+        let pid = custody.pid;
+        drop(custody);
+        // The mechanism: the owner dropped its lock, yet a copy still holds it.
+        assert!(acquire_if_free(&dir, pid).is_none());
+        let started = std::time::Instant::now();
+        let custody = Custody::acquire(&dir, pid);
+        assert!(custody.is_err(), "copy still holds the lock");
+        wait_until_free(&dir, pid);
+        assert!(started.elapsed() >= std::time::Duration::from_millis(100));
+        assert!(acquire_if_free(&dir, pid).is_some());
+        closer.join().unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "never released")]
+    fn wait_until_free_fails_when_the_lock_stays_held() {
+        let scratch = crate::launch::tests_support::Scratch::new("lock-still-held");
+        let _held = Custody::acquire(scratch.path(), 81).unwrap();
+        wait_until_free_within(scratch.path(), 81, std::time::Duration::from_millis(50));
     }
 }
 
@@ -60,6 +97,19 @@ impl Custody {
             dir,
             pid,
         })
+    }
+
+    /// Drop the lock, then wait until it is observably free (test fixtures only).
+    #[cfg(all(test, unix))]
+    pub(super) fn release_settled(self) {
+        let state_dir = self
+            .dir
+            .parent()
+            .expect("pending dir has a parent")
+            .to_path_buf();
+        let pid = self.pid;
+        drop(self);
+        wait_until_free(&state_dir, pid);
     }
 
     /// Write one record atomically, without secrets.
@@ -216,6 +266,29 @@ pub fn acquire_if_free(state_dir: &Path, pid: u32) -> Option<File> {
     Some(file)
 }
 
+/// Wait until a dropped helper lock is free (test fixtures only).
+///
+/// A concurrently spawning test holds a transient `fork` copy of every open
+/// CLOEXEC descriptor until its `exec`; such a copy shares the open file
+/// description and so keeps an already dropped lock held. Production never
+/// forks while holding custody. Panics if the lock never frees.
+#[cfg(all(test, unix))]
+pub(super) fn wait_until_free(state_dir: &Path, pid: u32) {
+    wait_until_free_within(state_dir, pid, std::time::Duration::from_secs(30));
+}
+
+#[cfg(all(test, unix))]
+pub(super) fn wait_until_free_within(state_dir: &Path, pid: u32, limit: std::time::Duration) {
+    let deadline = std::time::Instant::now() + limit;
+    while acquire_if_free(state_dir, pid).is_none() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "pending lock {pid} was never released"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+}
+
 /// One auth-wait observation; `Poll` and `HelperBlocked` are non-final.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Observation {
@@ -253,7 +326,8 @@ impl WaitTracker {
         self.finish_at_with(dir, pid, now, elapsed, report)
     }
     /// Evaluate one observation, retaining the last trusted cutoff across reads.
-    pub fn finish(
+    #[cfg(test)]
+    pub(super) fn finish(
         &mut self,
         state_dir: &Path,
         pid: u32,
@@ -263,6 +337,7 @@ impl WaitTracker {
         self.finish_at(state_dir, pid, now, elapsed)
     }
 
+    #[cfg(test)]
     pub(super) fn finish_at(
         &mut self,
         state_dir: &Path,

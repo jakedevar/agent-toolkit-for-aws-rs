@@ -323,6 +323,82 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn admitted_publication_drives_real_wait_evaluator() {
+        use crate::launch::{
+            callback::{
+                pending::{Custody, Observation, WaitTracker},
+                PendingStatus, WaitDecision,
+            },
+            clock::SeededRandom,
+            tests_support::Scratch,
+        };
+        for succeeds in [true, false] {
+            let scratch = Scratch::new("real-wait-publication");
+            let custody = Custody::acquire(scratch.path(), 81).unwrap();
+            custody
+                .write(
+                    1234,
+                    40,
+                    100,
+                    PendingStatus::Exchanging,
+                    None,
+                    &SeededRandom::new(1),
+                )
+                .unwrap();
+            let gate = CommitGate::default();
+            assert!(gate.start_exchange());
+            let cutoff = Instant::now();
+            let session = serde_json::json!({"client_id":"c","client_secret":"s","client_expires_at":9999,"authorize_endpoint":"https://example.com","token_endpoint":"https://example.com","scopes":["launch:access"],"access_token":"a","refresh_token":"r","token_expires_at":9999}).to_string();
+            let mut tracker = WaitTracker::default();
+            let result = publish_with(
+                &gate,
+                cutoff,
+                scratch.path(),
+                session.as_bytes(),
+                &SeededRandom::new(2),
+                || cutoff.checked_sub(Duration::from_millis(1)).unwrap(),
+                || {
+                    assert_eq!(
+                        tracker.finish_at(scratch.path(), 81, 100, 0).0,
+                        Observation::Decision(WaitDecision::Poll)
+                    );
+                    watchdog_step(
+                        &gate,
+                        || panic!("committing must not write"),
+                        |code| assert_eq!(code, 1),
+                    );
+                    assert_eq!(
+                        tracker.finish_at(scratch.path(), 81, 102, 0).0,
+                        Observation::Decision(WaitDecision::Poll)
+                    );
+                    assert_eq!(
+                        tracker.finish_at(scratch.path(), 81, 105, 0).0,
+                        Observation::Decision(WaitDecision::HelperBlocked)
+                    );
+                },
+                |from, to| {
+                    if succeeds {
+                        std::fs::rename(from, to)
+                    } else {
+                        Err(std::io::Error::other("rename failed"))
+                    }
+                },
+            );
+            assert_eq!(result.is_ok(), succeeds);
+            drop(custody);
+            assert_eq!(
+                tracker.finish_at(scratch.path(), 81, 105, 0).0,
+                Observation::Decision(if succeeds {
+                    WaitDecision::Authenticated
+                } else {
+                    WaitDecision::TimedOut
+                })
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn failed_admitted_rename_preserves_timeout_decision() {
         use crate::launch::{
             callback::{
@@ -365,7 +441,7 @@ mod tests {
         );
         assert!(result.is_err());
         assert!(!scratch.join("session.json").exists());
-        drop(custody);
+        custody.release_settled();
         assert!(acquire_if_free(scratch.path(), 81).is_some());
         assert_eq!(
             wait_decision(PendingStatus::Exchanging, false, false, 105, 100),
@@ -471,7 +547,7 @@ mod tests {
             release_tx.send(()).unwrap();
             worker.join().unwrap().unwrap();
         });
-        drop(custody);
+        custody.release_settled();
         assert!(acquire_if_free(scratch.path(), 81).is_some());
         assert_eq!(
             wait_decision(PendingStatus::Exchanging, false, true, 105, 100),
@@ -596,7 +672,7 @@ mod tests {
             release_tx.send(()).unwrap();
             worker.join().unwrap();
         });
-        drop(custody);
+        custody.release_settled();
         assert!(acquire_if_free(scratch.path(), 82).is_some());
         assert_eq!(
             wait_decision(PendingStatus::Listening, false, false, 105, 100),

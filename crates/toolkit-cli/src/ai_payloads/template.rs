@@ -415,15 +415,28 @@ fn magic_slot_violations(
         })
         .collect();
 
+    // IPython joins backslash-continued escape lines into one shell command
+    // (#5301), so a continuation line belongs to the escape line before it.
+    let mut magic_lines: BTreeSet<usize> = BTreeSet::new();
+    for (index, line) in lines.iter().enumerate() {
+        let number = index + 1;
+        let continues = index > 0
+            && magic_lines.contains(&index)
+            && lines[index - 1].trim_end().ends_with('\\');
+        if continues
+            || assigned_magic_lines.contains(&number)
+            || line.trim_start().starts_with(['!', '%'])
+        {
+            magic_lines.insert(number);
+        }
+    }
+
     for occurrence in occurrences {
         if occurrence.context != Context::Comment
             && (magic_cells
                 .iter()
                 .any(|(start, end)| (*start..=*end).contains(&occurrence.line))
-                || assigned_magic_lines.contains(&occurrence.line)
-                || lines
-                    .get(occurrence.line - 1)
-                    .is_some_and(|line| line.trim_start().starts_with(['!', '%'])))
+                || magic_lines.contains(&occurrence.line))
         {
             violations.push(Violation {
                 code: "magic_line_slot",

@@ -2196,3 +2196,57 @@ fn ap_asn_01_sub_10_assignment_and_slot_on_same_line() {
         .unwrap()
         .contains("A = 12345; x = \"ok\""));
 }
+
+/// #5301: backslash-continued `!`/`%` lines are one shell command for `IPython`,
+/// so a quoted slot on a continuation line reaches the shell.
+#[test]
+fn review_5301_backslash_continued_magic_lines_reject_slots() {
+    for source in [
+        "!echo a \\\n  \"[S3_URI]\"",
+        "%run job.py \\\n  --uri \"[S3_URI]\"",
+        "files = !ls \\\n  \"[S3_URI]\"",
+        "!echo a \\\n  b \\\n  \"[S3_URI]\"",
+        "  !echo a \\  \n  \"[S3_URI]\"",
+    ] {
+        let f = Fixture::new();
+        let template = f.write(
+            "template.py",
+            &format!("# Cell 0 [markdown]: Example\n# Description\n# Cell 1: Code\n{source}\n"),
+        );
+        let values = f.write("values.json", r#"{"values":{"S3_URI":"$(id)"}}"#);
+        let result = f.render(
+            &template,
+            "notebook",
+            &["--values", values.to_str().unwrap()],
+        );
+        assert_eq!(result.status.code(), Some(1), "{source}");
+        assert!(
+            String::from_utf8_lossy(&result.stderr).contains("magic_line_slot"),
+            "{source}"
+        );
+        assert!(!f.0.join("notebooks/example.ipynb").exists(), "{source}");
+    }
+}
+
+/// A line that merely ends in a backslash outside an escape line is Python
+/// source, not a shell continuation, and a slot on the next line stays legal.
+#[test]
+fn review_5301_python_backslash_continuation_is_not_a_magic_line() {
+    let f = Fixture::new();
+    let template = f.write(
+        "template.py",
+        "# Cell 0 [markdown]: Example\n# Description\n# Cell 1: Code\nvalue = \\\n  \"[S3_URI]\"\n!echo done\n",
+    );
+    let values = f.write("values.json", r#"{"values":{"S3_URI":"s3://b/k"}}"#);
+    let result = f.render(
+        &template,
+        "notebook",
+        &["--values", values.to_str().unwrap()],
+    );
+    assert_eq!(
+        result.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+}

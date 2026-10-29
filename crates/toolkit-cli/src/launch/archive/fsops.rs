@@ -258,5 +258,180 @@ pub fn kill_process_group(child: &Child) {
     let _ = rustix::process::kill_process_group(Pid::from_child(child), Signal::KILL);
 }
 
+// ---------------------------------------------------------------------------
+// Creation, publication and removal (R-AR-STAGE, R-AR-APPLY, R-AR-META).
+// Every call is relative to a held descriptor; nothing resolves a path twice.
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+thread_local! {
+    static CREATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Test instrumentation (the "recording fsops" of T-PLAN-7): how many
+/// `mkdirat` and `openat(O_CREAT)` calls this thread has made.
+#[cfg(test)]
+#[must_use]
+pub fn creation_calls() -> usize {
+    CREATIONS.with(std::cell::Cell::get)
+}
+
+fn record_creation() {
+    #[cfg(test)]
+    CREATIONS.with(|count| count.set(count.get() + 1));
+}
+
+/// The effective user id.
+#[must_use]
+pub fn euid() -> u32 {
+    rustix::process::geteuid().as_raw()
+}
+
+/// `(st_uid, st_mode)` of a held directory.
+///
+/// # Errors
+/// The `fstat` failure.
+#[allow(clippy::unnecessary_cast)]
+pub fn owner_and_mode(dir: &DirHandle) -> io::Result<(u32, u32)> {
+    let stat = fstat(&dir.fd)?;
+    Ok((stat.st_uid as u32, stat.st_mode as u32))
+}
+
+/// `mkdirat(dir, name, mode)`.
+///
+/// # Errors
+/// The `mkdirat` failure (`EEXIST` when the name is taken).
+pub fn mkdir_at(dir: &DirHandle, name: &CStr, mode: u32) -> io::Result<()> {
+    record_creation();
+    rustix::fs::mkdirat(&dir.fd, name, Mode::from_raw_mode(mode as RawMode))?;
+    Ok(())
+}
+
+/// Enter `name` (or `..`, or `.`) with `O_DIRECTORY | O_NOFOLLOW`, whatever
+/// its identity; the caller compares [`DirHandle::identity`].
+///
+/// # Errors
+/// [`OpenError::Changed`] for a symlink, a non-directory or a vanished name.
+pub fn enter_dir(dir: &DirHandle, name: &CStr) -> Result<DirHandle, OpenError> {
+    let fd = openat(
+        &dir.fd,
+        name,
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::empty(),
+    )
+    .map_err(open_error)?;
+    let stat = facts(&fstat(&fd).map_err(open_error)?);
+    if stat.kind != EntryType::Directory {
+        return Err(OpenError::Changed);
+    }
+    Ok(DirHandle {
+        fd,
+        dev: stat.dev,
+        ino: stat.ino,
+    })
+}
+
+/// Create the regular file `name` in `dir` with `O_CREAT | O_EXCL |
+/// O_NOFOLLOW`, then set exactly `mode` on the new descriptor. Returns the
+/// file and its identity.
+///
+/// # Errors
+/// The `openat` (`EEXIST` for any existing name, symlinks included) or
+/// `fchmod` failure.
+pub fn create_file_at(dir: &DirHandle, name: &CStr, mode: u32) -> io::Result<(File, (u64, u64))> {
+    record_creation();
+    let fd = openat(
+        &dir.fd,
+        name,
+        OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::from_raw_mode(mode as RawMode),
+    )?;
+    rustix::fs::fchmod(&fd, Mode::from_raw_mode(mode as RawMode))?;
+    let stat = facts(&fstat(&fd)?);
+    Ok((File::from(fd), (stat.dev, stat.ino)))
+}
+
+/// Set exactly `mode` on a held directory.
+///
+/// # Errors
+/// The `fchmod` failure.
+pub fn chmod_dir(dir: &DirHandle, mode: u32) -> io::Result<()> {
+    rustix::fs::fchmod(&dir.fd, Mode::from_raw_mode(mode as RawMode))?;
+    Ok(())
+}
+
+/// Whether this platform has the exclusive rename R-AR-STAGE publishes with.
+pub const HAS_EXCLUSIVE_RENAME: bool = cfg!(any(
+    target_os = "linux",
+    target_os = "android",
+    target_vendor = "apple"
+));
+
+/// `renameat2(RENAME_NOREPLACE)` (macOS `renameatx_np(RENAME_EXCL)`).
+///
+/// # Errors
+/// The rename failure; `Unsupported` without an exclusive rename.
+pub fn rename_noreplace(
+    from_dir: &DirHandle,
+    from: &CStr,
+    to_dir: &DirHandle,
+    to: &CStr,
+) -> io::Result<()> {
+    #[cfg(any(target_os = "linux", target_os = "android", target_vendor = "apple"))]
+    {
+        rustix::fs::renameat_with(
+            &from_dir.fd,
+            from,
+            &to_dir.fd,
+            to,
+            rustix::fs::RenameFlags::NOREPLACE,
+        )?;
+        Ok(())
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "android", target_vendor = "apple")))]
+    {
+        let _ = (from_dir, from, to_dir, to);
+        Err(io::Error::from(io::ErrorKind::Unsupported))
+    }
+}
+
+/// `renameat(dir, from, dir, to)`: atomically replaces `to` (a symlink at
+/// `to` is replaced itself, never written through).
+///
+/// # Errors
+/// The rename failure.
+pub fn rename_in(dir: &DirHandle, from: &CStr, to: &CStr) -> io::Result<()> {
+    rustix::fs::renameat(&dir.fd, from, &dir.fd, to)?;
+    Ok(())
+}
+
+/// `unlinkat(dir, name)`, with `AT_REMOVEDIR` for a directory.
+///
+/// # Errors
+/// The `unlinkat` failure.
+pub fn remove_at(dir: &DirHandle, name: &CStr, directory: bool) -> io::Result<()> {
+    let flags = if directory {
+        AtFlags::REMOVEDIR
+    } else {
+        AtFlags::empty()
+    };
+    rustix::fs::unlinkat(&dir.fd, name, flags)?;
+    Ok(())
+}
+
+/// Whether an I/O error is `EEXIST` or `ENOTEMPTY` (a taken rename target).
+#[must_use]
+pub fn is_taken(error: &io::Error) -> bool {
+    error.raw_os_error().is_some_and(|code| {
+        code == Errno::EXIST.raw_os_error() || code == Errno::NOTEMPTY.raw_os_error()
+    })
+}
+
+/// Whether an I/O error is `EINVAL` (no exclusive rename on this file system).
+#[must_use]
+pub fn is_invalid(error: &io::Error) -> bool {
+    error.raw_os_error() == Some(Errno::INVAL.raw_os_error())
+}
+
 #[cfg(test)]
 mod tests_fsops;

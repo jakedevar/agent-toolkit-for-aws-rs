@@ -1,0 +1,45 @@
+{
+  "format": "toolkit-docdb-collection-capture",
+  "version": 1,
+  "dialect": "mongosh-ejson-canonical",
+  "shell": {"name": "mongosh", "version": "2.3.1"},
+  "engine": {"name": "documentdb", "version": "5.0"},
+  "databases": [
+    {"ordinal": 1, "name": "admin"},
+    {"ordinal": 2, "name": "app", "collections": [
+      {"ordinal": 1, "name": "users",
+       "collStats": {
+         "ns": "app.users", "count": {"$numberInt": "1000"},
+         "size": {"$numberLong": "2048000"}, "avgObjSize": {"$numberInt": "2048"},
+         "storageSize": {"$numberLong": "4096000"}, "capped": false,
+         "nindexes": {"$numberInt": "3"}, "totalIndexSize": {"$numberLong": "245760"},
+         "indexSizes": {"_id_": {"$numberLong": "81920"}, "email_1_created_-1": {"$numberLong": "81920"}, "expire_1": {"$numberLong": "81920"}},
+         "compression": {"enable": true},
+         "ok": {"$numberDouble": "1.0"}},
+       "indexStats": [
+         {"name": "_id_", "key": {"_id": {"$numberInt": "1"}}, "host": "node-1:27017", "accesses": {"ops": {"$numberLong": "17"}, "since": {"$date": {"$numberLong": "1767225600000"}}}},
+         {"name": "email_1_created_-1", "key": {"email": {"$numberInt": "1"}, "created": {"$numberInt": "-1"}}, "host": "node-1:27017", "accesses": {"ops": {"$numberLong": "0"}, "since": {"$date": {"$numberLong": "1767225600000"}}}},
+         {"name": "expire_1", "key": {"expireAt": {"$numberInt": "1"}}, "host": "node-1:27017", "accesses": {"ops": {"$numberLong": "5"}, "since": {"$date": {"$numberLong": "1767225600000"}}}}
+       ],
+       "indexes": [
+         {"v": {"$numberInt": "4"}, "key": {"_id": {"$numberInt": "1"}}, "name": "_id_"},
+         {"v": {"$numberInt": "4"}, "key": {"email": {"$numberInt": "1"}, "created": {"$numberInt": "-1"}}, "name": "email_1_created_-1"},
+         {"v": {"$numberInt": "4"}, "key": {"expireAt": {"$numberInt": "1"}}, "name": "expire_1", "expireAfterSeconds": {"$numberInt": "0"}}
+       ]},
+      {"ordinal": 2, "name": "system.profile"},
+      {"ordinal": 3, "name": "empty",
+       "collStats": {"ns": "app.empty", "count": {"$numberInt": "0"}, "size": {"$numberInt": "0"}, "avgObjSize": {"$numberInt": "0"}, "storageSize": {"$numberInt": "0"}, "totalIndexSize": {"$numberInt": "0"}, "indexSizes": {}, "ok": {"$numberDouble": "1.0"}},
+       "indexStats": [],
+       "indexes": [{"v": {"$numberInt": "4"}, "key": {"_id": {"$numberInt": "1"}}, "name": "_id_"}]},
+      {"ordinal": 4, "name": "denied", "error": "unauthorized"}
+    ]},
+    {"ordinal": 3, "name": "archive", "collections": [
+      {"ordinal": 1, "name": "old",
+       "collStats": {"count": {"$numberDouble": "2500.0"}, "size": {"$numberLong": "9007199254740993"}, "avgObjSize": {"$numberDouble": "12.5"}, "storageSize": {"$numberLong": "1000"}, "totalIndexSize": {"$numberLong": "64"}, "indexSizes": {"_id_": {"$numberLong": "64"}}},
+       "indexStats": [{"name": "_id_", "accesses": {"ops": {"$numberLong": "0"}}}],
+       "indexes": [{"key": {"_id": {"$numberInt": "1"}}, "name": "_id_"}]}
+    ]},
+    {"ordinal": 4, "name": "local"},
+    {"ordinal": 5, "name": "config"}
+  ]
+}

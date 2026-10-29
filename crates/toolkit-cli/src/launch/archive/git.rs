@@ -215,6 +215,39 @@ fn run(runner: &GitRunner, cwd: &Path, args: &[&OsStr]) -> Result<GitOutput, Git
     }
 }
 
+/// The outcome of one hardened Git call for other archive modules
+/// (R-AR-META's discovery).
+pub(crate) enum GitCall {
+    /// Git ran to the end.
+    Done {
+        /// Exit status 0.
+        success: bool,
+        /// Captured stdout (at most the runner's cap).
+        stdout: Vec<u8>,
+    },
+    /// Git could not be started.
+    Spawn,
+    /// The call passed the time limit.
+    Timeout,
+    /// The output passed the cap.
+    TooLarge,
+}
+
+/// Run `git -c core.fsmonitor=false <args>` in `cwd` with the runner's
+/// hardening (null stdin, discarded stderr, capped stdout, time limit,
+/// repository-redirecting variables removed).
+pub(crate) fn call(runner: &GitRunner, cwd: &Path, args: &[&OsStr]) -> GitCall {
+    match run(runner, cwd, args) {
+        Ok(output) => GitCall::Done {
+            success: output.success,
+            stdout: output.stdout,
+        },
+        Err(GitFailure::Spawn) => GitCall::Spawn,
+        Err(GitFailure::Timeout) => GitCall::Timeout,
+        Err(GitFailure::TooLarge) => GitCall::TooLarge,
+    }
+}
+
 /// NUL-separated paths as UTF-8 strings.
 fn decode_paths(stdout: &[u8]) -> Result<HashSet<String>, LaunchError> {
     stdout

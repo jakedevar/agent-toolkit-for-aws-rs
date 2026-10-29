@@ -2,14 +2,15 @@
 //! Rust per the accepted design `docs/migration/launch-with-aws-design.md`
 //! (#4382, revision 3 at `e03640d1`, pre-review #5038).
 //!
-//! This module holds slices L0-L2 (#5085): configuration and local state
+//! This module holds slices L0-L2 (#5085), L3-L4 and L6 (#5317: the snapshot
+//! download, extraction and apply of [`download`], [`snapshot`] and
+//! `archive::{extract, apply, meta}`). L0-L2 are: configuration and local state
 //! ([`config`], [`state`]), the bounded byte collector of #5082 ([`buffer`])
 //! and the archive boundary ([`archive`]: rooted race-free source walk, Git
 //! ignore rules, the strict ZIP writer and reader, version-control name
-//! policy and the materialisation planner). The routes, the OIDC flow, the
-//! callback helper and the API client arrive in L3-L5; until L5 registers the
-//! slice in `registry.rs` nothing outside the unit tests calls this code, so
-//! dead-code analysis is silenced for the module as a whole.
+//! policy and the materialisation planner). The API client and its commands
+//! arrive in L5; until then parts of this code are reached only by the unit
+//! tests, so dead-code analysis is silenced for the module as a whole.
 #![allow(dead_code)]
 
 pub mod archive;
@@ -17,8 +18,11 @@ pub mod buffer;
 pub mod callback;
 pub mod clock;
 pub mod config;
+#[cfg(unix)]
+pub mod download;
 pub mod http;
 pub mod oidc;
+pub mod snapshot;
 pub mod state;
 pub mod text;
 
@@ -37,6 +41,9 @@ pub enum LaunchError {
     Config(String),
     /// The Python `ArchiveError`: the source tree or an archive was refused.
     Archive(String),
+    /// A launch lookup or the snapshot download failed (never naming the
+    /// URL).
+    Download(String),
     /// A command that needs the Unix file-system boundary on another
     /// platform ([`PLATFORM_MESSAGE`]).
     Platform,
@@ -47,7 +54,7 @@ impl LaunchError {
     #[must_use]
     pub fn message(&self) -> &str {
         match self {
-            Self::Config(message) | Self::Archive(message) => message,
+            Self::Config(message) | Self::Archive(message) | Self::Download(message) => message,
             Self::Platform => PLATFORM_MESSAGE,
         }
     }
@@ -64,6 +71,7 @@ impl fmt::Debug for LaunchError {
         let kind = match self {
             Self::Config(_) => "Config",
             Self::Archive(_) => "Archive",
+            Self::Download(_) => "Download",
             Self::Platform => "Platform",
         };
         write!(f, "LaunchError::{kind}({:?})", self.message())
@@ -97,7 +105,8 @@ mod tests_mod;
 #[cfg(test)]
 pub mod tests_support;
 
-/// Internal callback route; the remaining launch commands arrive in L5.
+/// The sign-in routes (L4) and the snapshot routes (L6); the remaining launch
+/// commands arrive in L5.
 pub(crate) const SLICE: crate::registry::Slice = crate::registry::Slice {
     name: "launch",
     commands: &[crate::CommandSpec {
@@ -127,10 +136,28 @@ pub(crate) const SLICE: crate::registry::Slice = crate::registry::Slice {
         max_positionals: 1,
         passthrough: false,
         handler: callback::wait::command,
+    }, crate::CommandSpec {
+        path: &["launch", "download-snapshot"],
+        flags: &[],
+        value_flags: &["--region", "--output"],
+        strict_values: true,
+        repeatable_flags: &[],
+        max_positionals: 1,
+        passthrough: false,
+        handler: snapshot::download_command,
+    }, crate::CommandSpec {
+        path: &["launch", "apply-snapshot"],
+        flags: &[],
+        value_flags: &["--into"],
+        strict_values: true,
+        repeatable_flags: &[],
+        max_positionals: 1,
+        passthrough: false,
+        handler: snapshot::apply_command,
     }],
-    synopsis: "  toolkit launch auth-callback\n  toolkit launch auth-start [--region REGION] [--aws-mcp-url URL]\n  toolkit launch auth-wait PID [--region REGION] [--aws-mcp-url URL]\n",
+    synopsis: "  toolkit launch auth-callback\n  toolkit launch auth-start [--region REGION] [--aws-mcp-url URL]\n  toolkit launch auth-wait PID [--region REGION] [--aws-mcp-url URL]\n  toolkit launch download-snapshot LAUNCH_ID [--output DIR] [--region REGION]\n  toolkit launch apply-snapshot SNAPSHOT_DIR [--into DIR]\n",
     description:
-        "  launch auth-callback  Internal sign-in helper; reads configuration from stdin.\n  launch auth-start     Start sign-in.\n  launch auth-wait      Wait for a sign-in helper to finish.\n",
+        "  launch auth-callback  Internal sign-in helper; reads configuration from stdin.\n  launch auth-start     Start sign-in.\n  launch auth-wait      Wait for a sign-in helper to finish.\n  launch download-snapshot  Download and safely extract a launch's migrated snapshot.\n  launch apply-snapshot     Apply an extracted snapshot to the Git work tree.\n",
     exit_notes: "",
     doc: "docs/migration/launch-with-aws-design.md",
     synopsis_rank: crate::registry::NEW_RANK,
