@@ -1287,11 +1287,7 @@ impl SecureOpener {
     ) -> Result<tokio_rustls::client::TlsStream<Box<dyn Stream>>, AwsError> {
         self.0.secure_stream(deadline).await.map_err(|error| {
             crate::binding::find_guard_rejection(&error).map_or_else(
-                || {
-                    AwsError::connect(
-                        "the TLS connection to the database could not be established",
-                    )
-                },
+                || AwsError::connect("the TLS connection to the database could not be established"),
                 |rejection| rejection.error().clone(),
             )
         })

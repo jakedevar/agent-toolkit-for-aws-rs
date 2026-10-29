@@ -211,7 +211,8 @@ fn decode_typed(kind: &str, value: &Json, depth: usize) -> Result<Json, AwsError
     match (kind, value) {
         ("g:Int32", Json::Int(n)) if i32::try_from(*n).is_ok() => Ok(Json::Int(*n)),
         ("g:Int64" | "g:Date" | "g:Timestamp", Json::Int(n)) => Ok(Json::Int(*n)),
-        ("g:Float" | "g:Double", Json::Int(n)) => {
+        ("g:Float" | "g:Double", Json::Int(n)) =>
+        {
             #[allow(clippy::cast_precision_loss)]
             Ok(Json::Float(*n as f64))
         }
@@ -264,9 +265,11 @@ impl Results {
     fn push(&mut self, item: &Json) -> Result<(), AwsError> {
         if let Json::Object(pairs) = item {
             if let Some(("g:Traverser", Json::Object(fields))) = typed(pairs)? {
-                let (Some(count), Some(value), 2) =
-                    (member(fields, "bulk"), member(fields, "value"), fields.len())
-                else {
+                let (Some(count), Some(value), 2) = (
+                    member(fields, "bulk"),
+                    member(fields, "value"),
+                    fields.len(),
+                ) else {
                     return Err(malformed("holds a malformed traverser"));
                 };
                 let count = bulk(count)?;
@@ -299,7 +302,11 @@ impl Results {
     /// `InvalidResponse` for malformed JSON or GraphSON, a foreign request
     /// id, an unexpected status or a broken bound; `Service` (status only, no
     /// server text) for a Gremlin error status.
-    pub(crate) fn add_message(&mut self, text: &[u8], request_id: &str) -> Result<Status, AwsError> {
+    pub(crate) fn add_message(
+        &mut self,
+        text: &[u8],
+        request_id: &str,
+    ) -> Result<Status, AwsError> {
         // RED STUB (#5515): no decoder yet.
         if !text.is_empty() || request_id.is_empty() {
             return Err(malformed("decoding is not implemented"));

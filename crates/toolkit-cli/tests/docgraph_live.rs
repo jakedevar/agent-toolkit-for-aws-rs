@@ -237,7 +237,12 @@ fn live_seed_refuses_policy_mismatches_before_credentials_or_dns() {
     let other_host = "db.cluster-xyz.us-east-1.neptune.amazonaws.com";
     let base = ["neptune", "seed", "--live", "--confirm-wipe", "--endpoint"];
     for (case, tail, code, expected) in [
-        ("no policy", vec![SEED_HOST], 2, "--network-policy is required"),
+        (
+            "no policy",
+            vec![SEED_HOST],
+            2,
+            "--network-policy is required",
+        ),
         (
             "unreadable policy",
             vec![SEED_HOST, "--network-policy", "/does/not/exist"],

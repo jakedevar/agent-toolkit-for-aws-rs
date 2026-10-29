@@ -51,7 +51,6 @@ mod tests;
 
 use std::fmt;
 
-
 use futures_util::{SinkExt, StreamExt};
 use tokio::time::Instant;
 use tokio_tungstenite::tungstenite::{
@@ -80,7 +79,8 @@ pub const MAX_FRAME_BYTES: usize = 1 << 20;
 type Socket = WebSocketStream<tokio_rustls::client::TlsStream<Box<dyn Stream>>>;
 
 /// Why `submit` refuses on a spent connection.
-const SPENT: &str = "the Gremlin connection ended after an earlier failure; no later statement is sent";
+const SPENT: &str =
+    "the Gremlin connection ended after an earlier failure; no later statement is sent";
 
 /// One signed, admitted Gremlin WebSocket connection.
 pub struct GremlinConnection {
@@ -351,7 +351,11 @@ impl GremlinConnection {
     /// # Errors
     /// The statement's failure; afterwards the connection is spent and every
     /// later call fails without sending.
-    pub fn submit(&mut self, gremlin: &str, bindings: Option<&Json>) -> Result<Vec<Json>, AwsError> {
+    pub fn submit(
+        &mut self,
+        gremlin: &str,
+        bindings: Option<&Json>,
+    ) -> Result<Vec<Json>, AwsError> {
         let Some(socket) = self.socket.as_mut() else {
             return Err(AwsError::connect(SPENT));
         };

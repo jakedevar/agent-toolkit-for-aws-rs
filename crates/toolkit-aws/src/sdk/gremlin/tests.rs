@@ -471,11 +471,15 @@ impl Fixture {
 }
 
 fn ok(data: &str) -> String {
-    format!(r#"{{"requestId":"{{id}}","status":{{"message":"","code":200,"attributes":{{}}}},"result":{{"data":{data},"meta":{{}}}}}}"#)
+    format!(
+        r#"{{"requestId":"{{id}}","status":{{"message":"","code":200,"attributes":{{}}}},"result":{{"data":{data},"meta":{{}}}}}}"#
+    )
 }
 
 fn status(code: u16, data: &str) -> String {
-    format!(r#"{{"requestId":"{{id}}","status":{{"message":"server text canary","code":{code},"attributes":{{}}}},"result":{{"data":{data},"meta":{{}}}}}}"#)
+    format!(
+        r#"{{"requestId":"{{id}}","status":{{"message":"server text canary","code":{code},"attributes":{{}}}},"result":{{"data":{data},"meta":{{}}}}}}"#
+    )
 }
 
 fn text(error: &AwsError) -> String {
@@ -532,7 +536,11 @@ fn every_connection_is_signed_afresh() {
     drop(second);
     let heads = wire.heads();
     assert_eq!(heads.len(), 2);
-    assert_eq!(wire.dials(), 2, "each connection is dialed and admitted anew");
+    assert_eq!(
+        wire.dials(),
+        2,
+        "each connection is dialed and admitted anew"
+    );
     assert_eq!(heads[0].header("x-amz-date"), Some("20261029T120000Z"));
     assert_eq!(heads[1].header("x-amz-date"), Some("20261029T120500Z"));
     assert_ne!(
@@ -562,7 +570,10 @@ fn a_refused_upgrade_sends_no_statement() {
     let message = text(&error);
     assert!(message.contains("HTTP 403"), "{message}");
     assert!(message.contains("no statement was sent"), "{message}");
-    assert!(!message.contains("signature mismatch"), "server text leaked: {message}");
+    assert!(
+        !message.contains("signature mismatch"),
+        "server text leaked: {message}"
+    );
     assert_eq!(wire.heads().len(), 1);
     assert!(wire.statements().is_empty(), "a Gremlin frame was sent");
     assert!(wire.released());
@@ -654,7 +665,12 @@ fn untrusted_and_wrong_host_certificates_get_no_upgrade() {
     let stranger = Pki::new("another CA");
     let cases = [
         ("untrusted", stranger.server(HOST)),
-        ("wrong host", fixture.pki.server("db.cluster-other.us-east-1.neptune.amazonaws.com")),
+        (
+            "wrong host",
+            fixture
+                .pki
+                .server("db.cluster-other.us-east-1.neptune.amazonaws.com"),
+        ),
         ("expired", fixture.pki.expired_server(HOST)),
     ];
     for (case, (chain, key)) in cases {
@@ -695,7 +711,9 @@ fn the_request_is_a_graphson_v2_eval_with_bound_values_and_unique_ids() {
     ]);
     let statement = "g.addV('Person').property('id', uid).property('age', age)";
     assert_eq!(
-        connection.submit(statement, Some(&bindings)).expect("first"),
+        connection
+            .submit(statement, Some(&bindings))
+            .expect("first"),
         vec![Json::Int(1)]
     );
     assert_eq!(
@@ -707,8 +725,8 @@ fn the_request_is_a_graphson_v2_eval_with_bound_values_and_unique_ids() {
     let first = &statements[0];
     assert_eq!(usize::from(first[0]), MIME.len());
     assert_eq!(&first[1..=MIME.len()], MIME.as_bytes());
-    let message = parse_json(std::str::from_utf8(&first[1 + MIME.len()..]).expect("utf-8"))
-        .expect("JSON");
+    let message =
+        parse_json(std::str::from_utf8(&first[1 + MIME.len()..]).expect("utf-8")).expect("JSON");
     assert_eq!(message.get("op"), Some(&Json::string("eval")));
     let args = message.get("args").expect("args");
     assert_eq!(args.get("gremlin"), Some(&Json::string(statement)));
@@ -749,7 +767,9 @@ fn partial_batches_are_collected_in_order_through_the_final_status() {
         Reply::Batches(vec![status(204, "null")]),
     ]));
     let mut connection = fixture.connect(&wire, &signer(clock_a)).expect("open");
-    let results = connection.submit("g.V().values('id')", None).expect("batches");
+    let results = connection
+        .submit("g.V().values('id')", None)
+        .expect("batches");
     let rendered: Vec<String> = results.iter().map(Json::to_compact_string).collect();
     assert_eq!(
         rendered,
@@ -772,14 +792,26 @@ fn partial_batches_are_collected_in_order_through_the_final_status() {
 fn foreign_ids_server_errors_and_invalid_types_fail_and_spend_the_connection() {
     let foreign = r#"{"requestId":"00000000-0000-4000-8000-000000000000","status":{"code":200},"result":{"data":[1]}}"#;
     let cases: [(&str, Reply, &str); 4] = [
-        ("foreign id", Reply::Batches(vec![foreign.to_string()]), "names another request"),
-        ("server error", Reply::Batches(vec![status(597, "null")]), "597"),
+        (
+            "foreign id",
+            Reply::Batches(vec![foreign.to_string()]),
+            "names another request",
+        ),
+        (
+            "server error",
+            Reply::Batches(vec![status(597, "null")]),
+            "597",
+        ),
         (
             "unsupported type",
             Reply::Batches(vec![ok(r#"[{"@type":"g:Vertex","@value":{"id":1}}]"#)]),
             "unsupported GraphSON type",
         ),
-        ("binary garbage", Reply::Batches(vec!["not json".to_string()]), "not valid JSON"),
+        (
+            "binary garbage",
+            Reply::Batches(vec!["not json".to_string()]),
+            "not valid JSON",
+        ),
     ];
     for (case, reply, expected) in cases {
         let fixture = Fixture::new();
@@ -797,7 +829,11 @@ fn foreign_ids_server_errors_and_invalid_types_fail_and_spend_the_connection() {
             .submit("g.V().count()", None)
             .expect_err("a spent connection sends nothing");
         assert_eq!(text(&error), SPENT, "{case}");
-        assert_eq!(wire.statements().len(), 1, "{case}: a later statement was sent");
+        assert_eq!(
+            wire.statements().len(),
+            1,
+            "{case}: a later statement was sent"
+        );
     }
 }
 
@@ -908,7 +944,8 @@ fn a_tiny_frame_declaring_a_huge_length_fails_at_its_header() {
 
 fn decode(data: &str) -> Result<Vec<Json>, AwsError> {
     let mut results = Results::default();
-    let message = format!(r#"{{"requestId":"r","status":{{"code":200}},"result":{{"data":{data}}}}}"#);
+    let message =
+        format!(r#"{{"requestId":"r","status":{{"code":200}},"result":{{"data":{data}}}}}"#);
     results.add_message(message.as_bytes(), "r").map(|status| {
         assert_eq!(status, Status::Complete);
         results.items
@@ -954,12 +991,18 @@ fn bulk_expansion_is_admitted_at_100000_results_and_refused_at_100001() {
     for (case, data) in [
         ("one bulk past", format!("[{}]", traverser(limit + 1, "1"))),
         ("huge bulk", format!("[{}]", traverser(i64::MAX, "1"))),
-        ("plain plus bulk", format!(r#"["a",{}]"#, traverser(limit, "1"))),
+        (
+            "plain plus bulk",
+            format!(r#"["a",{}]"#, traverser(limit, "1")),
+        ),
     ] {
         let start = std::time::Instant::now();
         let error = decode(&data).expect_err(case);
         assert!(text(&error).contains("100000"), "{case}: {}", text(&error));
-        assert!(start.elapsed() < Duration::from_secs(1), "{case}: copies were made");
+        assert!(
+            start.elapsed() < Duration::from_secs(1),
+            "{case}: copies were made"
+        );
     }
     // Across batches of one operation.
     let mut results = Results::default();
@@ -970,7 +1013,9 @@ fn bulk_expansion_is_admitted_at_100000_results_and_refused_at_100001() {
         )
     };
     assert_eq!(
-        results.add_message(batch(206, 50_000).as_bytes(), "r").expect("first half"),
+        results
+            .add_message(batch(206, 50_000).as_bytes(), "r")
+            .expect("first half"),
         Status::Partial
     );
     let error = results
