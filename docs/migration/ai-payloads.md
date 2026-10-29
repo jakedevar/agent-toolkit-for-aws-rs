@@ -37,6 +37,16 @@ appends by publishing a versioned copy. `--cell` checks consent identifiers as
 a syntactic guard; it is not a sandbox. `--dry-run` writes nothing. The reward
 command is specified in design section 4.6.
 
+Render accepts a single template path, a project directory and optional JSON
+with `values` and `assign` objects. Typed bare slots must always be resolved;
+`--allow-unresolved` applies only to quoted slots. Consent-typed true values
+require `--consent ACCEPT_EULA`. Secret values accept `null`, `"None"`, or a
+Secrets Manager ARN, never a literal token. `--append` reads the latest
+notebook version and publishes a new numbered copy, retaining the original.
+T28 requires the caller-owned `scripts/transform_fn.py` via `--cell 2=FILE`;
+the command does not modify that module. Notebook mode retains the template's
+existing Cell 3 import and its documented D-5/P-8 limitation.
+
 ### `toolkit ai-payloads templates`
 
 Lists every `ROOT/references/*/code_templates/*.py` file, sorted by relative

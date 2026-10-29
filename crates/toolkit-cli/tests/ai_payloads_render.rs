@@ -756,6 +756,45 @@ fn ap_nb_01_02_03_04_and_scr_01_02_output_shape() {
     let result = f.render(&template, "notebook", &[]);
     assert!(result.status.success());
     let text = fs::read_to_string(f.0.join("notebooks/example.ipynb")).unwrap();
+    let golden = r#"{
+  "cells": [
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "Heading\n",
+        "\n",
+        "Text"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {},
+      "outputs": [],
+      "source": [
+        "x = 1\n",
+        "\n",
+        "show() # NOTEBOOK_ONLY\n",
+        "last()"
+      ]
+    }
+  ],
+  "metadata": {
+    "kernelspec": {
+      "display_name": "Python 3",
+      "language": "python",
+      "name": "python3"
+    },
+    "language_info": {
+      "name": "python"
+    }
+  },
+  "nbformat": 4,
+  "nbformat_minor": 4
+}
+"#;
+    assert_eq!(text, golden);
     let notebook = parse_json(&text).unwrap();
     assert_eq!(notebook.get("nbformat"), Some(&Json::Int(4)));
     assert_eq!(notebook.get("nbformat_minor"), Some(&Json::Int(4)));
@@ -889,4 +928,33 @@ fn ap_app_09_production_sources_do_not_modify_existing_files() {
             assert!(!source.contains("OpenOptions::new()"), "{}", path.display());
         }
     }
+}
+
+#[test]
+fn ap_asn_04_07_08_invalid_targets_and_replaced_cells() {
+    let source = "# Cell 0 [markdown]: Example\n# Desc\n# Cell 1: Config\nVALUE = 1\nDUP = 1\nDUP = 2\na, TUPLE = 1, 2\nFSTRING = f'no'\nNONE = None\nEXPR = other + 1\n";
+    for name in ["DUP", "TUPLE", "FSTRING", "NONE", "EXPR", "UNKNOWN"] {
+        let f = Fixture::new();
+        let template = f.write("template.py", source);
+        let values = f.write("values.json", &format!("{{\"assign\":{{\"{name}\":1}}}}"));
+        let result = f.render(&template, "script", &["--values", values.to_str().unwrap()]);
+        assert_eq!(result.status.code(), Some(1));
+        assert!(
+            String::from_utf8_lossy(&result.stderr).contains("assign_target_invalid"),
+            "{name}"
+        );
+    }
+    let f = Fixture::new();
+    let template = f.write("template.py", source);
+    let values = f.write("values.json", r#"{"assign":{"VALUE":2}}"#);
+    let cell = f.write("cell.py", "pass\n");
+    let arg = format!("1={}", cell.display());
+    let result = f.render(
+        &template,
+        "script",
+        &["--values", values.to_str().unwrap(), "--cell", &arg],
+    );
+    assert!(String::from_utf8_lossy(&result.stderr).contains("assign_target_replaced"));
+    let result = f.render(&template, "script", &["--cell", &arg, "--cell", &arg]);
+    assert_eq!(result.status.code(), Some(2));
 }

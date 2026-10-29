@@ -257,7 +257,7 @@ other slice's help text, `USAGE_HEAD` or the assembly in `registry.rs`. Round 22
 (#5147) adds mcp-proxy and pins 43490 bytes, `0xe8bae3964772eac2`. Round 23
 (#5194) also adds the ai-payloads synopsis and description (#5143, S1 of #4386);
 the merged binary's usage is 44013 bytes, `0x169fada3871a54b6`. ai-payloads has
-empty exit notes. Its only path flag, `ai-payloads templates --root`, is a
+empty exit notes. The `ai-payloads templates --root` path flag is a
 directory and has no `LITERAL_DASH` or `STDIO_DASH` entry: `-` and `--root=-`
 are refused with exit 2 by the router (`ap_cli_03_exit_codes_and_usage_errors`).
 
