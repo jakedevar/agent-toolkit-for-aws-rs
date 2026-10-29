@@ -128,12 +128,16 @@ fn the_payload_carries_every_required_field_and_the_fixed_headers() {
     fx.set_clock(1_759_276_800.123_9);
     assert!(post(&fx, &consent_event(), Some(INSTALL_ID)));
     let body = &fx.sink.bodies_from(0)[0];
-    let keys: Vec<&str> = body
+    // The key SET is the contract. A `Value` object iterates sorted in a
+    // per-package build and in insertion order in a workspace build (serde_json
+    // `preserve_order` is feature-unified), so sort before comparing (#5469).
+    let mut keys: Vec<&str> = body
         .as_object()
         .expect("object")
         .keys()
         .map(String::as_str)
         .collect();
+    keys.sort_unstable();
     assert_eq!(
         keys,
         vec![
