@@ -162,3 +162,35 @@ fn loopback_ignores_bad_state_and_closes_listener_on_success() {
     assert_eq!(thread.join().unwrap(), Some(Outcome::Code("abc".into())));
     assert!(TcpStream::connect_timeout(&address, Duration::from_secs(1)).is_err());
 }
+
+#[test]
+fn session_publication_requires_admission_before_cutoff() {
+    use super::gate::{publish_session, CommitGate};
+    use crate::launch::{clock::SeededRandom, tests_support::Scratch};
+    use std::time::{Duration, Instant};
+    let scratch = Scratch::new("callback-gate");
+    let gate = CommitGate::default();
+    assert!(gate.start_exchange());
+    assert!(publish_session(
+        &gate,
+        Instant::now(),
+        scratch.path(),
+        b"secret",
+        &SeededRandom::new(1)
+    )
+    .is_err());
+    assert!(!scratch.join("session.json").exists());
+    assert_eq!(std::fs::read_dir(scratch.path()).unwrap().count(), 0);
+    publish_session(
+        &gate,
+        Instant::now() + Duration::from_secs(2),
+        scratch.path(),
+        b"secret",
+        &SeededRandom::new(2),
+    )
+    .unwrap();
+    assert_eq!(
+        std::fs::read(scratch.join("session.json")).unwrap(),
+        b"secret"
+    );
+}

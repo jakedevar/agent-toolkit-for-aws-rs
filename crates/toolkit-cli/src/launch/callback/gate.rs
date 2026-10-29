@@ -94,8 +94,8 @@ mod tests {
         assert!(gate.start_exchange());
         assert!(gate.admit(cutoff - Duration::from_millis(1), cutoff));
         assert_eq!(gate.watchdog(), WatchdogAction::ExitFailure);
-        assert!(gate.committed());
-        assert_eq!(gate.watchdog(), WatchdogAction::ExitSuccess);
+        // Production exits immediately on this action; a returning test stub must
+        // not simulate subsequent publication.
     }
 }
 

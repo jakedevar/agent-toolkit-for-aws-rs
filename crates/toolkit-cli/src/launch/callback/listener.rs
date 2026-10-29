@@ -115,6 +115,9 @@ pub fn serve(listener: TcpListener, state: &str, flow_end: Instant) -> io::Resul
                         busy = true;
                         slot.head.extend_from_slice(&buf[..n]);
                         if let Some(end) = slot.head.windows(4).position(|w| w == b"\r\n\r\n") {
+                            if Instant::now() >= flow_end {
+                                return Ok(None);
+                            }
                             let outcome = parse_request(&slot.head[..end + 4], port, state);
                             match outcome {
                                 Outcome::Ignore(status) => slot.queue(status, now, flow_end),
