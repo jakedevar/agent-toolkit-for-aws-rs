@@ -409,3 +409,5 @@ Friction: #4727, Rsi #4694, Rsi #4704
   Closed #4749 #4750 #4755 #4757 #4758 (CloudWatch r1 findings fixed in #4381, landed). #4865 recurrence noted (at_commit exit 127, 5th report).
   #4653 worker 504a76ba (Sonnet high, rolling; op 607ad51d). Rolling already has cd80d723 "fix (#4652, #4653)", so the worker verifies first and may report it already fixed.
   4/4 busy: 092f281f (r16), ff7ae0b8 (#4396), f8244a11 (#4941), 504a76ba (#4653).
+- 10-29 00:09Z: #4396 impl f2e3826bc9228919d6d2bc1747e0cfecc50901b6 (ff7ae0b8; marketplace slice: handler NAME x9, query-metering, test-events; offline only, BatchMeterUsage unreachable; 12 divergences; scoped 304ab1bd ok cli 3178, fmt f52b2a4e, clippy 0e23821c; follow-up #4962). Review #4969 worker 1416bcca (Codex sol high, pinned, op 632b1059). On ACCEPT mail r16.
+  4/4 busy: 092f281f (r16), f8244a11 (#4941), 504a76ba (#4653), 1416bcca (#4969).
