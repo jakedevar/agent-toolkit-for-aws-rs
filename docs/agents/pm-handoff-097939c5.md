@@ -825,3 +825,7 @@ Friction: #4727, Rsi #4694, Rsi #4704
   4/4 busy: 0dcdafea (#5181 S4 cont), 8ea9ce8e (#5216 L4 cont2), f008eb74 (#5252 review S2b), 2a78b5ff (#5244 tests).
 - 10-29 07:12Z: reward test f/u LANDED (3d43898d published, ef23beda245f1e363a7f11792c629feb71d38427). #5218 auto-closed; CLOSED #5221 #5222 #5247 #5248 #5249 #5250 #5251. Queue empty.
   (Tip: rsi-rpc prints the socket line on stderr; use 2>/dev/null before jq.)
+- 10-29 07:12Z: #5252 (f008eb74, Opus) ACCEPT S2b 79ecfcd1: all 4 invariants hold (escape probes job 9ac1b2f4). Nonblocking #5255-#5260 (P3 --cell NFKC/f-string, quoted consent slot, IPython !/% slots, float assign -> int; P4 x2). Long uncovered-requirement list.
+  DECISION: land S2b now; follow-up slice #5261 (findings + coverage) -> Codex terra 9de1fd5d (base 79ecfcd1).
+  AgentCheckLandingCandidate on worker job 11022cc2 refused candidate_job_not_green detail generic_cargo_commit_mismatch (base c8bcc072, rolling since moved). Manager scoped a71d4f19 (worktree da98439f sandbox, base origin/rolling, head 79ecfcd1) running; on ok: check with job_id a71d4f19 + enqueue (source_session da98439f), close #5223 #5252 on land.
+  4/4 busy: 0dcdafea (#5181 S4 cont), 8ea9ce8e (#5216 L4 cont2), 2a78b5ff (#5244 tests), 9de1fd5d (#5261 S2b f/u).
