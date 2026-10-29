@@ -696,3 +696,5 @@ Friction: #4727, Rsi #4694, Rsi #4704
   4/4 busy: be4f9592 (#5181), a5b5b4a6 (#5166 repair 1), 3b996393 (#5190), fb278451 (#5143 repair 2).
 - 10-29 05:19Z: x402 S2 repair 1 (a5b5b4a6) at 410632999acd22082b760048b90d5b3ec6ba441a, status incomplete: D37, D36/s9, #5183, #5184, tests done (fmt 5ac33c8b, clippy b6ceb5d8, scoped 6277e8db 4536 ok); gap: foreign-owned FILE refusal untested on non-root. RULING: injectable expected-uid test seam (doc(hidden), like load_config_with_hook). Continuation 6e32d0b4 (Codex terra). Then narrow re-review (Sonnet) of 121c233e..final.
   4/4 busy: be4f9592 (#5181), 3b996393 (#5190), fb278451 (#5143 repair 2), 6e32d0b4 (#5166 repair 1b).
+- 10-29 05:21Z: ai-payloads S1 repair 2 (fb278451) at bd072151a2ae19cea6824bfd325958696f1cbeef (deny-list; red 2fe0e167; fmt 55f5bfc2, clippy 62882265, scoped 76683af8 3731 ok, clean onto rolling). r3 re-review #5193 -> Claude Sonnet 2d7f0a1b (pinned bd07215). On ACCEPT: enqueue bd07215; close #5143 #5167 #5187 #5193 #5170 #5171 #5189 on landing.
+  4/4 busy: be4f9592 (#5181), 3b996393 (#5190), 6e32d0b4 (#5166 repair 1b), 2d7f0a1b (#5193).
