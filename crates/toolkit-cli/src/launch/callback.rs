@@ -1,12 +1,25 @@
 //! Loopback OAuth callback request boundary.
 
 /// Result of parsing one complete request head. Ignored requests do not end sign-in.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(PartialEq, Eq)]
 pub enum Outcome {
     Ignore(u16),
+    /// The authorization code: a single-use secret, never shown by `Debug`
+    /// (R-TOK-MEM, T-TOK-6, #5504).
     Code(String),
     Denied(String),
     InvalidCode,
+}
+
+impl std::fmt::Debug for Outcome {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Ignore(status) => f.debug_tuple("Ignore").field(status).finish(),
+            Self::Code(_) => f.debug_tuple("Code").field(&"<redacted>").finish(),
+            Self::Denied(error) => f.debug_tuple("Denied").field(error).finish(),
+            Self::InvalidCode => f.write_str("InvalidCode"),
+        }
+    }
 }
 
 pub mod command;
