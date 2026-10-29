@@ -2336,6 +2336,40 @@ mod wire_contracts {
     }
 
     #[test]
+    fn instrument_response_rejects_invalid_identifiers() {
+        let manager =
+            "arn:aws:bedrock-agentcore:us-east-1:123456789012:payment-manager/test-abcdefghij";
+        let connector = "connector-abcdefghij";
+        let good = format!(
+            r#"{{"paymentInstrument":{{"paymentInstrumentId":"payment-instrument-TEST12345678901","paymentManagerArn":"{manager}","paymentConnectorId":"{connector}","userId":"user","paymentInstrumentType":"EMBEDDED_CRYPTO_WALLET","paymentInstrumentDetails":{{"embeddedCryptoWallet":{{"network":"ETHEREUM","linkedAccounts":[{{"email":{{"emailAddress":"user@example.com"}}}}]}}}},"createdAt":1,"status":"ACTIVE","updatedAt":1}}}}"#
+        );
+        for (body, supplied) in [
+            (good.clone(), connector),
+            (
+                good.replace("payment-instrument-TEST12345678901", "pi"),
+                connector,
+            ),
+            (good.replace(connector, "connector"), "connector"),
+        ] {
+            let transport = FakeStreamingTransport::new().respond(
+                201,
+                &[],
+                vec![FakeChunk::data(body.as_bytes())],
+            );
+            let client = PaymentClient::new("us-east-1", &transport, &NoSigner).unwrap();
+            let result = client.create_instrument(
+                manager,
+                "user",
+                supplied,
+                "ETHEREUM",
+                "user@example.com",
+                "token",
+            );
+            assert_eq!(result.is_ok(), body == good);
+        }
+    }
+
+    #[test]
     fn instrument_response_rejects_invalid_unions_and_enums() {
         let good = r#"{"paymentInstrument":{"paymentInstrumentId":"payment-instrument-TEST12345678901","paymentManagerArn":"arn:aws:bedrock-agentcore:us-east-1:123456789012:payment-manager/test-abcdefghij","paymentConnectorId":"connector","userId":"user","paymentInstrumentType":"EMBEDDED_CRYPTO_WALLET","paymentInstrumentDetails":{"embeddedCryptoWallet":{"network":"ETHEREUM","linkedAccounts":[{"email":{"emailAddress":"user@example.com"}}]}},"createdAt":1,"status":"ACTIVE","updatedAt":1}}"#;
         for bad in [
