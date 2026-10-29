@@ -1,7 +1,7 @@
 # Rust workspace entry points. These targets never override the daemon-stamped
 # build environment (CARGO_TARGET_DIR, RUSTC_WRAPPER/sccache); they rely on it
 # being present in the invoking environment.
-.PHONY: build fmt clippy test clippy-sdk test-sdk plugin-binaries plugin-binaries-check
+.PHONY: build fmt clippy test test-scripts clippy-sdk test-sdk plugin-binaries plugin-binaries-check
 
 build:
 	cargo build --workspace --locked
@@ -38,3 +38,8 @@ plugin-binaries:
 
 plugin-binaries-check:
 	cargo run --locked --package plugin-stage -- check
+
+# Shell-level self-test of scripts/at-commit-test.sh (#4865): the runner the
+# daemon invokes for AgentSubmitJob test jobs with params.at_commit.
+test-scripts:
+	sh scripts/at-commit-test.selftest.sh
