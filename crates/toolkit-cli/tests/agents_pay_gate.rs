@@ -608,3 +608,51 @@ fn t_order_ctor_catches_randomness_in_the_pure_policy_modules() {
     );
     assert!(found.is_empty(), "{found:?}");
 }
+
+#[test]
+fn process_request_has_private_fields_and_only_approved_constructor() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/agents_pay/agentcore.rs");
+    let source = fs::read_to_string(path).unwrap();
+    let file = syn::parse_file(&source).unwrap();
+    let structs: Vec<_> = file
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            syn::Item::Struct(s) if s.ident == "ProcessPaymentRequest" => Some(s),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        structs.len(),
+        1,
+        "one immutable payment request boundary is required"
+    );
+    assert!(structs[0]
+        .fields
+        .iter()
+        .all(|field| matches!(field.vis, Visibility::Inherited)));
+    let implementations: Vec<_> = file.items.iter().filter_map(|item| match item {
+        syn::Item::Impl(i) if matches!(&*i.self_ty, Type::Path(p) if p.path.is_ident("ProcessPaymentRequest")) => Some(i),
+        _ => None,
+    }).collect();
+    assert_eq!(implementations.len(), 1);
+    let methods: Vec<_> = implementations[0]
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            syn::ImplItem::Fn(f) => Some(f),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(methods.len(), 1);
+    assert_eq!(methods[0].sig.ident, "from_approved");
+    assert!(matches!(methods[0].vis, Visibility::Inherited));
+    assert_eq!(methods[0].sig.inputs.len(), 1);
+    let syn::FnArg::Typed(arg) = &methods[0].sig.inputs[0] else {
+        panic!("constructor must take Approved");
+    };
+    let Type::Reference(reference) = &*arg.ty else {
+        panic!("constructor must borrow Approved");
+    };
+    assert!(matches!(&*reference.elem, Type::Path(p) if p.path.is_ident("Approved")));
+}
