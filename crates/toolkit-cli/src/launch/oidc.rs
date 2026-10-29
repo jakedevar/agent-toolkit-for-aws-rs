@@ -413,6 +413,280 @@ mod tests {
             !scrub("failure FAKE-ACCESS", &[&Secret::new("FAKE-ACCESS")]).contains("FAKE-ACCESS")
         );
     }
+
+    #[test]
+    fn service_errors_do_not_expose_request_id_or_long_secret_codes() {
+        let secrets = [
+            "FAKE-ACCESS",
+            "FAKE-REFRESH",
+            "FAKE-CLIENT-SECRET",
+            "FAKE-VERIFIER",
+            "FAKE-CODE",
+        ];
+        for secret in secrets {
+            let code = format!("{}{secret}", "InvalidGrantException".repeat(6));
+            let fake = FakeStreamingTransport::new().respond(
+                400,
+                &[("x-amzn-errortype", &code), ("x-amzn-requestid", secret)],
+                vec![response(&json!({"error_description": secret}).to_string())],
+            );
+            let sleeper = RecordingSleeper::new();
+            let oidc = Oidc {
+                transport: &fake,
+                clock: &SystemClock,
+                sleeper: &sleeper,
+                jitter: &NoJitter,
+                policy: RetryPolicy::none(),
+            };
+            let error = oidc
+                .register(
+                    "https://example.awsapps.com/start",
+                    &[],
+                    0,
+                    Instant::now() + Duration::from_secs(30),
+                )
+                .unwrap_err();
+            assert_eq!(
+                error,
+                OidcError::Service {
+                    status: 400,
+                    code: "UnrecognizedError"
+                }
+            );
+            let rendered = format!("{error} {error:?} {:?}", fake.requests());
+            for hidden in secrets {
+                assert!(!rendered.contains(hidden));
+            }
+        }
+    }
+
+    #[test]
+    fn oidc_error_results_hide_each_seeded_secret_in_header_and_body() {
+        let secrets = [
+            "FAKE-ACCESS",
+            "FAKE-REFRESH",
+            "FAKE-CLIENT-SECRET",
+            "FAKE-VERIFIER",
+            "FAKE-CODE",
+        ];
+        for secret in secrets {
+            for key in ["__type", "code", "Code", "errorCode", "error"] {
+                for in_header in [false, true] {
+                    let headers = if in_header {
+                        vec![("x-amzn-errortype", secret), ("x-amzn-requestid", secret)]
+                    } else {
+                        vec![("x-amzn-requestid", secret)]
+                    };
+                    let body = json!({key: secret, "error_description": secret}).to_string();
+                    let fake =
+                        FakeStreamingTransport::new().respond(400, &headers, vec![response(&body)]);
+                    let sleeper = RecordingSleeper::new();
+                    let oidc = Oidc {
+                        transport: &fake,
+                        clock: &SystemClock,
+                        sleeper: &sleeper,
+                        jitter: &NoJitter,
+                        policy: RetryPolicy::none(),
+                    };
+                    let err = oidc
+                        .register(
+                            "https://example.awsapps.com/start",
+                            &[],
+                            0,
+                            Instant::now() + Duration::from_secs(30),
+                        )
+                        .unwrap_err();
+                    assert_eq!(
+                        err,
+                        OidcError::Service {
+                            status: 400,
+                            code: "UnrecognizedError"
+                        }
+                    );
+                    let rendered = format!("{err} {err:?}");
+                    for hidden in secrets {
+                        assert!(!rendered.contains(hidden));
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn invalid_registration_and_exchange_responses_are_rejected() {
+        let client = Client {
+            id: "id".into(),
+            secret: Secret::new("FAKE-CLIENT-SECRET"),
+            expires_at: 1,
+            scopes: vec![],
+        };
+        for body in [
+            "null",
+            "[]",
+            "{",
+            "{}",
+            r#"{"clientId":"id"}"#,
+            r#"{"clientId":"","clientSecret":"s"}"#,
+        ] {
+            let fake = FakeStreamingTransport::new().respond(200, &[], vec![response(body)]);
+            let sleeper = RecordingSleeper::new();
+            let oidc = Oidc {
+                transport: &fake,
+                clock: &SystemClock,
+                sleeper: &sleeper,
+                jitter: &NoJitter,
+                policy: RetryPolicy::none(),
+            };
+            assert_eq!(
+                oidc.register("issuer", &[], 0, Instant::now() + Duration::from_secs(30))
+                    .unwrap_err(),
+                OidcError::InvalidResponse
+            );
+        }
+        for body in [
+            "null",
+            "[]",
+            "{",
+            "{}",
+            r#"{"accessToken":"a"}"#,
+            r#"{"accessToken":"","refreshToken":"r"}"#,
+        ] {
+            let fake = FakeStreamingTransport::new().respond(200, &[], vec![response(body)]);
+            let sleeper = RecordingSleeper::new();
+            let oidc = Oidc {
+                transport: &fake,
+                clock: &SystemClock,
+                sleeper: &sleeper,
+                jitter: &NoJitter,
+                policy: RetryPolicy::none(),
+            };
+            assert_eq!(
+                oidc.exchange(
+                    &client,
+                    &Secret::new("FAKE-CODE"),
+                    &Secret::new("FAKE-VERIFIER"),
+                    "http://127.0.0.1",
+                    0,
+                    Instant::now() + Duration::from_secs(30)
+                )
+                .unwrap_err(),
+                OidcError::InvalidResponse
+            );
+        }
+    }
+
+    #[test]
+    fn oversized_exchange_fails_without_a_session_and_is_not_retried() {
+        let fake = FakeStreamingTransport::new()
+            .respond(
+                200,
+                &[],
+                vec![FakeChunk::Data(vec![
+                    b'x';
+                    super::super::http::SMALL_CAP + 1
+                ])],
+            )
+            .respond(
+                200,
+                &[],
+                vec![response(r#"{"accessToken":"a","refreshToken":"r"}"#)],
+            );
+        let sleeper = RecordingSleeper::new();
+        let oidc = Oidc {
+            transport: &fake,
+            clock: &SystemClock,
+            sleeper: &sleeper,
+            jitter: &NoJitter,
+            policy: RetryPolicy::default(),
+        };
+        let client = Client {
+            id: "id".into(),
+            secret: Secret::new("FAKE-CLIENT-SECRET"),
+            expires_at: 100,
+            scopes: vec![],
+        };
+        let scratch = super::super::tests_support::Scratch::new("oversized-exchange");
+        assert_eq!(
+            oidc.exchange(
+                &client,
+                &Secret::new("FAKE-CODE"),
+                &Secret::new("FAKE-VERIFIER"),
+                "http://127.0.0.1",
+                0,
+                Instant::now() + Duration::from_secs(30)
+            )
+            .unwrap_err(),
+            OidcError::InvalidResponse
+        );
+        assert!(super::super::state::load_session(scratch.path()).is_none());
+        assert_eq!(fake.requests().len(), 1);
+        assert!(sleeper.sleeps().is_empty());
+    }
+
+    #[test]
+    fn aws_endpoint_overrides_in_injected_environment_do_not_change_oidc_target() {
+        let env = toolkit_aws::env::MapEnv::new()
+            .with("AWS_ENDPOINT_URL", "https://attacker.example")
+            .with("AWS_ENDPOINT_URL_SSO_OIDC", "https://attacker.example");
+        let (issuer, _) = super::super::config::resolve_issuer_url(&env).unwrap();
+        let fake = FakeStreamingTransport::new().respond(
+            200,
+            &[],
+            vec![response(r#"{"clientId":"id","clientSecret":"s"}"#)],
+        );
+        let sleeper = RecordingSleeper::new();
+        let oidc = Oidc {
+            transport: &fake,
+            clock: &SystemClock,
+            sleeper: &sleeper,
+            jitter: &NoJitter,
+            policy: RetryPolicy::none(),
+        };
+        oidc.register(&issuer, &[], 0, Instant::now() + Duration::from_secs(30))
+            .unwrap();
+        assert_eq!(
+            fake.requests()[0].url,
+            format!("{ENDPOINT}/client/register")
+        );
+    }
+
+    #[test]
+    fn secret_holding_l3_values_have_safe_debug_output() {
+        let session = StoredSession {
+            client_id: "id".into(),
+            client_secret: Secret::new("FAKE-CLIENT-SECRET"),
+            client_expires_at: 10,
+            authorize_endpoint: format!("{ENDPOINT}/authorize"),
+            token_endpoint: format!("{ENDPOINT}/token"),
+            scopes: vec![],
+            access_token: Secret::new("FAKE-ACCESS"),
+            refresh_token: Secret::new("FAKE-REFRESH"),
+            token_expires_at: 10,
+        };
+        let pkce = Pkce {
+            verifier: Secret::new("FAKE-VERIFIER"),
+            state: Secret::new("FAKE-STATE"),
+            challenge: "challenge".into(),
+        };
+        let response = super::super::http::Response {
+            status: 400,
+            body: b"FAKE-CODE".to_vec(),
+            error_header: Some("FAKE-ACCESS".into()),
+            collector_capacity: 9,
+            collector_peak: 9,
+        };
+        let shown = format!("{session:?} {pkce:?} {response:?}");
+        for secret in [
+            "FAKE-CLIENT-SECRET",
+            "FAKE-ACCESS",
+            "FAKE-REFRESH",
+            "FAKE-VERIFIER",
+            "FAKE-STATE",
+            "FAKE-CODE",
+        ] {
+            assert!(!shown.contains(secret));
+        }
+    }
 }
 
 #[cfg(test)]

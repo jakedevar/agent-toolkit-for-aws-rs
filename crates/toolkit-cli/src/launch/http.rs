@@ -91,6 +91,25 @@ fn collect_with_ceiling(
     deadline: Instant,
     ceiling: usize,
 ) -> Result<Response, BodyError> {
+    collect_observed(
+        transport,
+        request,
+        operation,
+        deadline,
+        ceiling,
+        &mut |_, _, _| {},
+    )
+}
+
+#[allow(clippy::too_many_lines, clippy::too_many_arguments)]
+fn collect_observed(
+    transport: &dyn StreamingTransport,
+    request: &HttpRequest,
+    operation: Operation,
+    deadline: Instant,
+    ceiling: usize,
+    observe: &mut dyn FnMut(usize, usize, usize),
+) -> Result<Response, BodyError> {
     let limits = StreamLimits::new(
         ceiling as u64,
         if operation == Operation::Put {
@@ -182,6 +201,7 @@ fn collect_with_ceiling(
             super::buffer::BufError::Limit { .. } => BodyError::TooLarge,
             super::buffer::BufError::Alloc => BodyError::Allocation,
         })?;
+        observe(buf.capacity(), buf.peak(), chunk.capacity());
     }
     let collector_capacity = buf.capacity();
     let collector_peak = buf.peak();
@@ -263,6 +283,224 @@ mod tests {
             headers: Headers::new(),
             body: Vec::new(),
             timeouts: Timeouts::default(),
+        }
+    }
+
+    #[test]
+    fn production_limits_are_positive_for_every_operation() {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        for (op, cap, chunk) in [
+            (Operation::Oidc, super::SMALL_CAP, super::SMALL_CAP),
+            (Operation::ApiJson, super::API_CAP, super::SMALL_CAP),
+            (Operation::Delete, super::SMALL_CAP, super::SMALL_CAP),
+            (Operation::Put, 1, 1),
+            (Operation::Download, super::DOWNLOAD_CAP, super::SMALL_CAP),
+        ] {
+            let limits = super::limits_for(op, deadline);
+            assert_eq!(limits.max_body_bytes(), cap as u64);
+            assert_eq!(limits.max_chunk_bytes(), chunk);
+            assert_eq!(limits.deadline(), Some(deadline));
+        }
+    }
+
+    #[test]
+    fn launch_sources_do_not_use_unbounded_transport_calls() {
+        fn scan(path: &std::path::Path) {
+            for entry in std::fs::read_dir(path).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    scan(&path);
+                    continue;
+                }
+                if path.extension().and_then(|s| s.to_str()) != Some("rs") {
+                    continue;
+                }
+                let source = std::fs::read_to_string(&path).unwrap();
+                for forbidden in [concat!("Api", "Client"), concat!("Transport", "::send")] {
+                    assert!(
+                        !source.contains(forbidden),
+                        "{} names {forbidden}",
+                        path.display()
+                    );
+                }
+                for line in source.lines() {
+                    if line.contains(concat!(".", "send(")) {
+                        let channel_call = path.ends_with("archive/git.rs")
+                            && line.trim()
+                                == concat!(
+                                    "let _ = sender",
+                                    ".",
+                                    "send(read_capped(&mut stdout, cap));"
+                                )
+                            || path.ends_with("archive/select/tests_select.rs")
+                                && line.trim() == concat!("let _ = sender", ".", "send(f());");
+                        assert!(channel_call, "{}: {line}", path.display());
+                    }
+                }
+            }
+        }
+        scan(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/launch"));
+        let _: fn(
+            &dyn toolkit_aws::stream::StreamingTransport,
+            &HttpRequest,
+            Operation,
+            Instant,
+        ) -> Result<super::Response, BodyError> = collect_response;
+    }
+
+    #[test]
+    fn oversized_error_length_keeps_header_and_never_pulls() {
+        let fake = FakeStreamingTransport::new().respond(
+            500,
+            &[
+                ("content-length", "65537"),
+                ("x-amzn-errortype", "InvalidGrantException"),
+            ],
+            vec![FakeChunk::Data(vec![0])],
+        );
+        let result = collect_response(
+            &fake,
+            &request(),
+            Operation::ApiJson,
+            Instant::now() + Duration::from_secs(30),
+        )
+        .unwrap();
+        assert_eq!(result.status, 500);
+        assert!(result.body.is_empty());
+        assert_eq!(
+            super::super::oidc::error_code(result.error_header.as_deref(), &result.body),
+            "InvalidGrantException"
+        );
+        assert_eq!(fake.narrow_calls(), vec![super::SMALL_CAP as u64]);
+        assert_eq!(fake.frames_pulled(), 0);
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn streams_are_dropped_on_success_and_all_collector_failures() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use toolkit_aws::{
+            stream::{ResponseStream, StreamError, StreamLimits, StreamingTransport},
+            AwsError,
+        };
+        struct Tracked<'a> {
+            fake: &'a FakeStreamingTransport,
+            dropped: &'a AtomicBool,
+        }
+        struct Stream<'a> {
+            inner: Box<dyn ResponseStream + 'a>,
+            dropped: &'a AtomicBool,
+        }
+        impl Drop for Stream<'_> {
+            fn drop(&mut self) {
+                self.dropped.store(true, Ordering::SeqCst);
+            }
+        }
+        impl ResponseStream for Stream<'_> {
+            fn status(&self) -> u16 {
+                self.inner.status()
+            }
+            fn headers(&self) -> &Headers {
+                self.inner.headers()
+            }
+            fn narrow_body_limit(&mut self, cap: u64) {
+                self.inner.narrow_body_limit(cap);
+            }
+            fn next_chunk(&mut self) -> Result<Option<Vec<u8>>, StreamError> {
+                self.inner.next_chunk()
+            }
+        }
+        impl StreamingTransport for Tracked<'_> {
+            fn open<'a>(
+                &'a self,
+                request: &HttpRequest,
+                limits: &StreamLimits,
+            ) -> Result<Box<dyn ResponseStream + 'a>, AwsError> {
+                Ok(Box::new(Stream {
+                    inner: self.fake.open(request, limits)?,
+                    dropped: self.dropped,
+                }))
+            }
+        }
+        for (status, headers, chunks, op, expected) in [
+            (
+                200,
+                vec![],
+                vec![FakeChunk::Data(b"ok".to_vec())],
+                Operation::Oidc,
+                None,
+            ),
+            (
+                200,
+                vec![("content-length", "bad")],
+                vec![],
+                Operation::Oidc,
+                Some(BodyError::InvalidResponse),
+            ),
+            (
+                200,
+                vec![("content-length", "1,1")],
+                vec![],
+                Operation::Oidc,
+                Some(BodyError::InvalidResponse),
+            ),
+            (
+                200,
+                vec![("content-length", "1")],
+                vec![FakeChunk::Data(b"ab".to_vec())],
+                Operation::Oidc,
+                Some(BodyError::InvalidResponse),
+            ),
+            (
+                200,
+                vec![],
+                vec![FakeChunk::Data(vec![0; super::SMALL_CAP + 1])],
+                Operation::Oidc,
+                Some(BodyError::TooLarge),
+            ),
+            (
+                200,
+                vec![],
+                vec![FakeChunk::Stall],
+                Operation::Oidc,
+                Some(BodyError::Deadline),
+            ),
+            (
+                200,
+                vec![],
+                vec![FakeChunk::IdleTimeout],
+                Operation::Oidc,
+                Some(BodyError::Transport { retryable: true }),
+            ),
+            (
+                403,
+                vec![("content-length", "bad")],
+                vec![FakeChunk::Data(vec![0])],
+                Operation::Put,
+                None,
+            ),
+            (
+                500,
+                vec![("content-length", "65537")],
+                vec![],
+                Operation::ApiJson,
+                None,
+            ),
+        ] {
+            let fake = FakeStreamingTransport::new().respond(status, &headers, chunks);
+            let dropped = AtomicBool::new(false);
+            let tracked = Tracked {
+                fake: &fake,
+                dropped: &dropped,
+            };
+            let result = collect_response(
+                &tracked,
+                &request(),
+                op,
+                Instant::now() + Duration::from_secs(30),
+            );
+            assert_eq!(result.err(), expected);
+            assert!(dropped.load(Ordering::SeqCst));
         }
     }
 
@@ -474,6 +712,106 @@ mod tests {
     }
 
     #[test]
+    fn pending_frame_and_collector_growth_share_a_bounded_peak_and_drop() {
+        use std::sync::{
+            atomic::{AtomicBool, AtomicUsize, Ordering},
+            Arc,
+        };
+        use toolkit_aws::{
+            stream::{ChunkLimiter, ResponseStream, StreamError, StreamLimits, StreamingTransport},
+            AwsError,
+        };
+
+        struct Generator {
+            pending: Arc<AtomicUsize>,
+            dropped: Arc<AtomicBool>,
+            declared: bool,
+        }
+        struct Stream {
+            limiter: ChunkLimiter,
+            pending: Arc<AtomicUsize>,
+            dropped: Arc<AtomicBool>,
+            headers: Headers,
+            frame: usize,
+        }
+        impl Drop for Stream {
+            fn drop(&mut self) {
+                self.dropped.store(true, Ordering::SeqCst);
+                self.pending.store(0, Ordering::SeqCst);
+            }
+        }
+        impl ResponseStream for Stream {
+            fn status(&self) -> u16 {
+                200
+            }
+            fn headers(&self) -> &Headers {
+                &self.headers
+            }
+            fn narrow_body_limit(&mut self, cap: u64) {
+                self.limiter.narrow(cap);
+            }
+            fn next_chunk(&mut self) -> Result<Option<Vec<u8>>, StreamError> {
+                self.limiter.next(|| {
+                    let size = match self.frame {
+                        0 => 70_000,
+                        1 => 30_003,
+                        _ => 1,
+                    };
+                    self.frame += 1;
+                    self.pending.store(size, Ordering::SeqCst);
+                    Ok(Some(vec![7; size]))
+                })
+            }
+        }
+        impl StreamingTransport for Generator {
+            fn open<'a>(
+                &'a self,
+                _: &HttpRequest,
+                limits: &StreamLimits,
+            ) -> Result<Box<dyn ResponseStream + 'a>, AwsError> {
+                let mut headers = Headers::new();
+                if self.declared {
+                    headers.insert("content-length", "100003").unwrap();
+                }
+                Ok(Box::new(Stream {
+                    limiter: ChunkLimiter::new(*limits),
+                    pending: self.pending.clone(),
+                    dropped: self.dropped.clone(),
+                    headers,
+                    frame: 0,
+                }))
+            }
+        }
+        for declared in [false, true] {
+            let fake = Generator {
+                pending: Arc::new(AtomicUsize::new(0)),
+                dropped: Arc::new(AtomicBool::new(false)),
+                declared,
+            };
+            let mut combined_peak = 0;
+            let mut collector_peak = 0;
+            let result = super::collect_observed(
+                &fake,
+                &request(),
+                Operation::Download,
+                Instant::now() + Duration::from_secs(30),
+                100_003,
+                &mut |capacity, peak, chunk| {
+                    assert!(capacity <= 100_003);
+                    collector_peak = collector_peak.max(peak);
+                    combined_peak =
+                        combined_peak.max(peak + fake.pending.load(Ordering::SeqCst) + chunk);
+                },
+            );
+            assert_eq!(result.unwrap_err(), BodyError::TooLarge);
+            assert!(collector_peak > 100_003);
+            assert!(combined_peak < 2 * 100_003 + 512 * 1024 + 64 * 1024);
+            assert!(fake.dropped.load(Ordering::SeqCst));
+            assert_eq!(fake.pending.load(Ordering::SeqCst), 0);
+        }
+    }
+
+    #[test]
     fn retry_backoff_advances_clock_and_clamps_the_next_attempt() {
         use super::{run, MonotonicClock};
         use std::cell::Cell;
@@ -526,6 +864,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn endless_generated_body_is_bounded_and_stream_dropped() {
         use std::sync::{
             atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -538,12 +877,14 @@ mod tests {
         struct Generator {
             pulls: Arc<AtomicUsize>,
             dropped: Arc<AtomicBool>,
+            status: u16,
         }
         struct Stream {
             pulls: Arc<AtomicUsize>,
             dropped: Arc<AtomicBool>,
             limiter: ChunkLimiter,
             headers: Headers,
+            status: u16,
         }
         impl Drop for Stream {
             fn drop(&mut self) {
@@ -552,7 +893,7 @@ mod tests {
         }
         impl ResponseStream for Stream {
             fn status(&self) -> u16 {
-                200
+                self.status
             }
             fn headers(&self) -> &Headers {
                 &self.headers
@@ -573,17 +914,23 @@ mod tests {
                 _: &HttpRequest,
                 limits: &StreamLimits,
             ) -> Result<Box<dyn ResponseStream + 'a>, AwsError> {
+                let mut headers = Headers::new();
+                headers
+                    .insert("x-amzn-errortype", "InternalServerException")
+                    .unwrap();
                 Ok(Box::new(Stream {
                     pulls: self.pulls.clone(),
                     dropped: self.dropped.clone(),
                     limiter: ChunkLimiter::new(*limits),
-                    headers: Headers::new(),
+                    headers,
+                    status: self.status,
                 }))
             }
         }
         let fake = Generator {
             pulls: Arc::new(AtomicUsize::new(0)),
             dropped: Arc::new(AtomicBool::new(false)),
+            status: 200,
         };
         assert_eq!(
             super::collect_with_ceiling(
@@ -598,6 +945,61 @@ mod tests {
         );
         assert_eq!(fake.pulls.load(Ordering::SeqCst), 11);
         assert!(fake.dropped.load(Ordering::SeqCst));
+        let oidc_stream = Generator {
+            pulls: Arc::new(AtomicUsize::new(0)),
+            dropped: Arc::new(AtomicBool::new(false)),
+            status: 200,
+        };
+        let sleeper = toolkit_aws::testing::RecordingSleeper::new();
+        let oidc = super::super::oidc::Oidc {
+            transport: &oidc_stream,
+            clock: &super::SystemClock,
+            sleeper: &sleeper,
+            jitter: &toolkit_aws::retry::NoJitter,
+            policy: toolkit_aws::retry::RetryPolicy::none(),
+        };
+        let client = super::super::oidc::Client {
+            id: "id".into(),
+            secret: toolkit_aws::Secret::new("FAKE-CLIENT-SECRET"),
+            expires_at: 100,
+            scopes: vec![],
+        };
+        let scratch = super::super::tests_support::Scratch::new("endless-oidc");
+        assert_eq!(
+            oidc.exchange(
+                &client,
+                &toolkit_aws::Secret::new("FAKE-CODE"),
+                &toolkit_aws::Secret::new("FAKE-VERIFIER"),
+                "http://127.0.0.1",
+                0,
+                Instant::now() + Duration::from_secs(30)
+            )
+            .unwrap_err(),
+            super::super::oidc::OidcError::InvalidResponse
+        );
+        assert!(super::super::state::load_session(scratch.path()).is_none());
+        assert_eq!(oidc_stream.pulls.load(Ordering::SeqCst), 66);
+        assert!(oidc_stream.dropped.load(Ordering::SeqCst));
+        let error = Generator {
+            pulls: Arc::new(AtomicUsize::new(0)),
+            dropped: Arc::new(AtomicBool::new(false)),
+            status: 500,
+        };
+        let response = collect_response(
+            &error,
+            &request(),
+            Operation::ApiJson,
+            Instant::now() + Duration::from_secs(30),
+        )
+        .unwrap();
+        assert_eq!(response.status, 500);
+        assert!(response.body.is_empty());
+        assert_eq!(
+            super::super::oidc::error_code(response.error_header.as_deref(), &response.body),
+            "InternalServerException"
+        );
+        assert_eq!(error.pulls.load(Ordering::SeqCst), 66);
+        assert!(error.dropped.load(Ordering::SeqCst));
     }
 
     #[test]
