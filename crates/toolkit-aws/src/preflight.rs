@@ -482,7 +482,7 @@ pub fn guard_credential_process(
 ) -> Selection {
     match (selection, files) {
         (Selection::Build(SourceKind::Profile), ProfileView::Loaded(facts))
-            if false && !null_stdin && facts.credential_process_reachable =>
+            if !null_stdin && facts.credential_process_reachable =>
         {
             Selection::Refuse(InvalidReason::CredentialProcessNeedsNullStdin)
         }

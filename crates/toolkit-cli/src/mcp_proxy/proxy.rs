@@ -216,9 +216,6 @@ impl Proxy {
     }
 }
 
-/// S3 tests-first stub switch (red commit only).
-const STUB: bool = true;
-
 fn spawn(name: &str, body: impl FnOnce() + Send + 'static) -> std::thread::JoinHandle<()> {
     std::thread::Builder::new()
         .name(name.to_string())
@@ -920,7 +917,7 @@ impl Shared {
         initialize: bool,
         initialized: bool,
     ) -> Result<(), Stop> {
-        if initialize && !STUB {
+        if initialize {
             // R-STICKY: a new session begins with this request.
             self.auth.initialize_started();
         }
@@ -1250,9 +1247,6 @@ impl Shared {
     /// other requests are refused too, so nothing of it is sent. `true` when
     /// the line was refused.
     fn refuse_read_only(&self, messages: &[ClientMessage]) -> bool {
-        if STUB {
-            return false;
-        }
         let lines: Vec<String> = {
             let allowed = lock(&self.read_only_tools);
             let refused = |message: &ClientMessage| {
@@ -1288,9 +1282,6 @@ impl Shared {
     /// `--read-only`: keep only `readOnlyHint: true` tools in the results of
     /// this message's `tools/list` requests, and remember every listed name.
     fn filter_tool_lists(&self, value: &mut Json, keys: &[String]) {
-        if STUB {
-            return;
-        }
         let list_keys: Vec<String> = {
             let pending = lock(&self.pending);
             keys.iter()
@@ -1341,9 +1332,6 @@ impl Shared {
     /// The proxy's own deadline fired for request `id`: tell the server with
     /// a `notifications/cancelled` (sent once, signed, its response unread).
     fn forward_cancel(self: &Arc<Self>, id: Json) {
-        if STUB {
-            return;
-        }
         let body = to_line(&Json::object(vec![
             ("jsonrpc", Json::string("2.0")),
             ("method", Json::string("notifications/cancelled")),

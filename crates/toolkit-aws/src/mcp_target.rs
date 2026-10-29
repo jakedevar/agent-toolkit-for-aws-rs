@@ -75,8 +75,7 @@ impl McpTarget {
             .map(|(_, rest)| rest)
             .ok_or(TargetError::NotAllowed)?;
         let path_start = rest.find('/').unwrap_or(rest.len());
-        let path = checked.path();
-        let _ = (rest, path_start);
+        let path = &rest[path_start..];
         let host = checked.host().to_string();
         let authority = match checked.port() {
             None | Some(443) => host.clone(),

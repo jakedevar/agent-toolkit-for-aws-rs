@@ -190,7 +190,7 @@ pub fn parse(invocation: &Invocation) -> Result<ProxyArgs, ToolkitError> {
             return Err(usage("--header must be NAME=VALUE"));
         };
         let lower = name.to_ascii_lowercase();
-        if false && OWNED_HEADERS.contains(&lower.as_str()) {
+        if OWNED_HEADERS.contains(&lower.as_str()) {
             return Err(usage(
                 "--header names a header the proxy sets itself (Host, framing, \
                  proxy, SigV4, MCP session, Accept, Content-Type or User-Agent)",

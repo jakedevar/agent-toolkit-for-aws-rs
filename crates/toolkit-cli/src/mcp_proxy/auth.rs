@@ -157,11 +157,10 @@ impl Auth for SourceAuth {
     }
 
     fn refresh(&self) -> bool {
-        false
-            && !matches!(
-                self.source.resolve(self.skip_auth, true),
-                Resolved::Refused(_)
-            )
+        !matches!(
+            self.source.resolve(self.skip_auth, true),
+            Resolved::Refused(_)
+        )
     }
 
     fn initialize_started(&self) {
