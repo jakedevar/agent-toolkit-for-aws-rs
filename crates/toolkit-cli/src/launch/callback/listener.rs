@@ -326,6 +326,36 @@ mod scripted_tests {
     }
 
     #[test]
+    fn real_socket_bind_is_loopback_only_and_fake_clock_expires() {
+        use std::net::{Ipv6Addr, SocketAddrV6};
+        let listener = bind().unwrap();
+        let addr = listener.local_addr().unwrap();
+        assert_eq!(addr.ip(), Ipv4Addr::LOCALHOST);
+        assert_ne!(addr.port(), 0);
+        assert!(TcpStream::connect((Ipv4Addr::new(127, 0, 0, 2), addr.port())).is_err());
+        if std::net::TcpListener::bind((Ipv6Addr::LOCALHOST, 0)).is_ok() {
+            assert!(
+                TcpStream::connect(SocketAddrV6::new(Ipv6Addr::LOCALHOST, addr.port(), 0, 0))
+                    .is_err()
+            );
+        }
+        let start = Instant::now();
+        let clock = FakeClock(Cell::new(start));
+        assert_eq!(
+            serve_with(
+                listener,
+                addr.port(),
+                "s",
+                start + Duration::from_millis(25),
+                &clock
+            )
+            .unwrap(),
+            None
+        );
+        assert_eq!(clock.now(), start + Duration::from_millis(25));
+    }
+
+    #[test]
     fn denied_and_invalid_code_use_authorization_failed_page() {
         struct Once(std::cell::RefCell<Option<Stream>>);
         struct Stream {
