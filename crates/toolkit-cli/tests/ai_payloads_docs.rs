@@ -39,7 +39,7 @@
 //!   `ap_doc_10_templates_match_their_mirrors_and_tests_never_launch_python`
 //! - AP-DOC-11 (#5283): one values/assign/manual paragraph per configuration page:
 //!   `ap_doc_11_configuration_pages_keep_one_values_paragraph`
-//! - AP-DOC-12 (#5284): the HuggingFace guide collects an ARN, never a token:
+//! - AP-DOC-12 (#5284): the `HuggingFace` guide collects an ARN, never a token:
 //!   `ap_doc_12_huggingface_guide_collects_an_arn_never_a_token`
 use std::{
     fs,
@@ -834,7 +834,7 @@ fn ap_doc_11_configuration_pages_keep_one_values_paragraph() {
     }
 }
 
-/// #5284: the HuggingFace download guide collects the Secrets Manager secret ARN
+/// #5284: the `HuggingFace` download guide collects the Secrets Manager secret ARN
 /// (or `null` for a public model) and never asks the agent for a token.
 #[test]
 fn ap_doc_12_huggingface_guide_collects_an_arn_never_a_token() {

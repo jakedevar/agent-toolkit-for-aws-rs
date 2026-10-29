@@ -39,7 +39,7 @@ const LAMBDA: [&str; 4] = [
     "model-evaluation/scripts/reward_function_source_template.py",
     "model-evaluation/scripts/nova_reward_function_source_template.py",
 ];
-/// T10: the MLflow reference pattern (C13, role REF).
+/// T10: the `MLflow` reference pattern (C13, role REF).
 const REF: [&str; 1] = ["finetuning/scripts/mlflow_reference.py"];
 
 fn root() -> PathBuf {
