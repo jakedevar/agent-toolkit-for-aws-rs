@@ -8,7 +8,7 @@ pub fn command(invocation: &Invocation, output: &mut Output<'_>) -> Result<(), T
     #[cfg(unix)]
     {
         use super::{
-            pending::{finish_if_final, Observation},
+            pending::{Observation, WaitTracker},
             WaitDecision,
         };
         use crate::launch::{
@@ -47,13 +47,14 @@ pub fn command(invocation: &Invocation, output: &mut Output<'_>) -> Result<(), T
             Ok(value) => value,
             Err(error) => return failure(output, error.message()),
         };
+        let mut tracker = WaitTracker::default();
         loop {
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .ok()
                 .and_then(|v| i64::try_from(v.as_secs()).ok())
                 .unwrap_or(0);
-            let (observation, reason) = finish_if_final(&dir, pid, now);
+            let (observation, reason) = tracker.finish(&dir, pid, now);
             match observation {
                 Observation::Missing => return failure(output, &format!("No sign-in is in progress for pid {pid}. Run auth-start again.")),
                 Observation::Decision(WaitDecision::Authenticated) => return output.line(&serde_json::json!({"authenticated":true,"baseUrl":base}).to_string()),

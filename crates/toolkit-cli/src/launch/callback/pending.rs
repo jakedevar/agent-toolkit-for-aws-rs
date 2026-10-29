@@ -204,6 +204,23 @@ pub enum Observation {
     Decision(super::WaitDecision),
 }
 
+/// Per-wait history, including a monotonic fallback for an unreadable record.
+pub struct WaitTracker {
+    seen: bool,
+    cutoff: Option<i64>,
+    start: std::time::Instant,
+}
+
+impl Default for WaitTracker {
+    fn default() -> Self {
+        Self {
+            seen: false,
+            cutoff: None,
+            start: std::time::Instant::now(),
+        }
+    }
+}
+
 /// Observe a record while holding the free lock, if available. An unreadable
 /// lock is treated as held so it cannot produce a false final failure.
 #[cfg(unix)]
@@ -227,26 +244,68 @@ pub fn observe(state_dir: &Path, pid: u32, now: i64) -> Observation {
 /// Evaluate a wait and remove a final record only while the lock is held here.
 #[cfg(unix)]
 pub fn finish_if_final(state_dir: &Path, pid: u32, now: i64) -> (Observation, Option<String>) {
-    let Some(mut record) = read_record(state_dir, pid) else {
-        return (Observation::Missing, None);
-    };
-    let lock = acquire_if_free(state_dir, pid);
-    if lock.is_some() {
-        let Some(final_record) = read_record(state_dir, pid) else {
+    WaitTracker::default().finish(state_dir, pid, now)
+}
+
+#[cfg(unix)]
+impl WaitTracker {
+    /// Evaluate one observation, retaining the last trusted cutoff across reads.
+    pub fn finish(
+        &mut self,
+        state_dir: &Path,
+        pid: u32,
+        now: i64,
+    ) -> (Observation, Option<String>) {
+        let path = state_dir.join("pending").join(format!("{pid}.json"));
+        let mut record = read_record(state_dir, pid);
+        if record.is_none()
+            && !self.seen
+            && matches!(std::fs::symlink_metadata(&path), Err(ref e) if e.kind() == io::ErrorKind::NotFound)
+        {
             return (Observation::Missing, None);
-        };
-        record = final_record;
+        }
+        self.seen = true;
+        if let Some(ref value) = record {
+            self.cutoff = Some(value.cutoff);
+        }
+        let lock = acquire_if_free(state_dir, pid);
+        if lock.is_some() {
+            record = read_record(state_dir, pid);
+            if let Some(ref value) = record {
+                self.cutoff = Some(value.cutoff);
+            }
+        }
+        let valid = state::load_session(state_dir)
+            .is_some_and(|session| session.token_expires_at > now.saturating_add(300));
+        let (decision_now, cutoff) = self.cutoff.map_or_else(
+            || {
+                (
+                    i64::try_from(self.start.elapsed().as_secs()).unwrap_or(i64::MAX),
+                    660,
+                )
+            },
+            |cutoff| (now, cutoff),
+        );
+        let decision = super::wait_decision(
+            record
+                .as_ref()
+                .map_or(PendingStatus::Listening, |r| r.status),
+            lock.is_none(),
+            valid,
+            decision_now,
+            cutoff,
+        );
+        if lock.is_some()
+            && decision != super::WaitDecision::Poll
+            && decision != super::WaitDecision::HelperBlocked
+        {
+            let _ = state::remove_state_file(&state_dir.join("pending"), &format!("{pid}.json"));
+        }
+        (
+            Observation::Decision(decision),
+            record.and_then(|r| r.reason),
+        )
     }
-    let valid = state::load_session(state_dir)
-        .is_some_and(|session| session.token_expires_at > now.saturating_add(300));
-    let decision = super::wait_decision(record.status, lock.is_none(), valid, now, record.cutoff);
-    if lock.is_some()
-        && decision != super::WaitDecision::Poll
-        && decision != super::WaitDecision::HelperBlocked
-    {
-        let _ = state::remove_state_file(&state_dir.join("pending"), &format!("{pid}.json"));
-    }
-    (Observation::Decision(decision), record.reason)
 }
 
 /// Remove stale records with free locks and old temporary session files.
