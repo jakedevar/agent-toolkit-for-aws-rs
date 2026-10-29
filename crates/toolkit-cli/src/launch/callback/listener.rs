@@ -778,6 +778,89 @@ mod scripted_tests {
     }
 
     #[test]
+    fn staggered_trickle_expires_during_always_ready_admission() {
+        struct Flood {
+            now: Rc<Cell<Instant>>,
+            next: Cell<usize>,
+            dropped: Rc<Cell<Option<Instant>>>,
+            reads: Rc<Cell<usize>>,
+        }
+        struct Stream {
+            now: Rc<Cell<Instant>>,
+            dropped: Rc<Cell<Option<Instant>>>,
+            reads: Rc<Cell<usize>>,
+            special: bool,
+            next_byte: Instant,
+        }
+        impl ListenerIo for Flood {
+            type Stream = Stream;
+            fn accept_stream(&self) -> io::Result<Stream> {
+                let special = self.next.get() == 0;
+                self.next.set(self.next.get() + 1);
+                self.now.set(self.now.get() + Duration::from_millis(1));
+                Ok(Stream {
+                    now: self.now.clone(),
+                    dropped: self.dropped.clone(),
+                    reads: self.reads.clone(),
+                    special,
+                    next_byte: self.now.get(),
+                })
+            }
+        }
+        impl Drop for Stream {
+            fn drop(&mut self) {
+                if self.special {
+                    self.dropped.set(Some(self.now.get()));
+                }
+            }
+        }
+        impl Read for Stream {
+            fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+                if !self.special || self.now.get() < self.next_byte {
+                    return Err(io::ErrorKind::WouldBlock.into());
+                }
+                self.reads.set(self.reads.get() + 1);
+                self.next_byte = self.now.get() + Duration::from_millis(500);
+                bytes[0] = b'x';
+                Ok(1)
+            }
+        }
+        impl Write for Stream {
+            fn write(&mut self, _: &[u8]) -> io::Result<usize> {
+                Err(io::ErrorKind::WouldBlock.into())
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        let start = Instant::now();
+        let now = Rc::new(Cell::new(start));
+        let dropped = Rc::new(Cell::new(None));
+        let reads = Rc::new(Cell::new(0));
+        let listener = Flood {
+            now: now.clone(),
+            next: Cell::new(0),
+            dropped: dropped.clone(),
+            reads: reads.clone(),
+        };
+        assert_eq!(
+            serve_with(
+                listener,
+                1234,
+                "s",
+                start + Duration::from_millis(2100),
+                &TimedClock(now)
+            )
+            .unwrap(),
+            None
+        );
+        assert!(reads.get() >= 3);
+        let expiry = start + SLOT_TIMEOUT;
+        let at = dropped.get().unwrap();
+        assert!(at >= expiry && at <= expiry + Duration::from_millis(1));
+    }
+
+    #[test]
     fn malformed_and_wrong_state_flood_never_ends_flow() {
         struct Requests {
             next: Cell<usize>,
