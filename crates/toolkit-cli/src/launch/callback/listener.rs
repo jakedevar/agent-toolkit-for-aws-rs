@@ -168,11 +168,11 @@ fn serve_with<L: ListenerIo>(
                             match outcome {
                                 Outcome::Ignore(status) => slot.queue(status, now, flow_end),
                                 terminal => {
-                                    let page = response(if matches!(terminal, Outcome::Code(_)) {
-                                        200
+                                    let page = if matches!(terminal, Outcome::Code(_)) {
+                                        response(200)
                                     } else {
-                                        400
-                                    });
+                                        super::authorization_failed_response()
+                                    };
                                     let mut stream =
                                         slots[index].take().expect("occupied slot").stream;
                                     drop(slots);
@@ -323,6 +323,62 @@ mod scripted_tests {
     }
     fn valid_head() -> Vec<u8> {
         b"GET /?state=s&code=ok HTTP/1.1\r\nHost: 127.0.0.1:1234\r\n\r\n".to_vec()
+    }
+
+    #[test]
+    fn denied_and_invalid_code_use_authorization_failed_page() {
+        struct Once(std::cell::RefCell<Option<Stream>>);
+        struct Stream {
+            head: std::io::Cursor<Vec<u8>>,
+            output: Rc<std::cell::RefCell<Vec<u8>>>,
+        }
+        impl ListenerIo for Once {
+            type Stream = Stream;
+            fn accept_stream(&self) -> io::Result<Stream> {
+                self.0
+                    .borrow_mut()
+                    .take()
+                    .ok_or_else(|| io::ErrorKind::WouldBlock.into())
+            }
+        }
+        impl Read for Stream {
+            fn read(&mut self, b: &mut [u8]) -> io::Result<usize> {
+                self.head.read(b)
+            }
+        }
+        impl Write for Stream {
+            fn write(&mut self, b: &[u8]) -> io::Result<usize> {
+                self.output.borrow_mut().extend_from_slice(b);
+                Ok(b.len())
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        for query in ["state=s&error=access_denied", "state=s&code="] {
+            let start = Instant::now();
+            let output = Rc::new(std::cell::RefCell::new(Vec::new()));
+            let head = format!("GET /?{query} HTTP/1.1\r\nHost: 127.0.0.1:1234\r\n\r\n");
+            let listener = Once(std::cell::RefCell::new(Some(Stream {
+                head: std::io::Cursor::new(head.into_bytes()),
+                output: output.clone(),
+            })));
+            let result = serve_with(
+                listener,
+                1234,
+                "s",
+                start + Duration::from_secs(5),
+                &FakeClock(Cell::new(start)),
+            )
+            .unwrap();
+            assert!(matches!(
+                result,
+                Some(Outcome::Denied(_) | Outcome::InvalidCode)
+            ));
+            assert!(String::from_utf8(output.borrow().clone())
+                .unwrap()
+                .contains("Authorization failed"));
+        }
     }
 
     #[test]

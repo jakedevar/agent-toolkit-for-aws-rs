@@ -94,12 +94,28 @@ fn request_head_rules() {
 
 #[test]
 fn response_has_fixed_security_headers_and_exact_length() {
-    let bytes = super::response(400);
-    let response = std::str::from_utf8(&bytes).unwrap();
-    let (headers, body) = response.split_once("\r\n\r\n").unwrap();
-    assert!(headers.contains("Cache-Control: no-store\r\n"));
-    assert!(headers.contains("Content-Security-Policy: default-src 'none'\r\n"));
-    assert!(headers.contains(&format!("Content-Length: {}", body.len())));
+    for bytes in [
+        super::response(200),
+        super::response(400),
+        super::response(404),
+        super::response(405),
+        super::authorization_failed_response(),
+    ] {
+        let response = std::str::from_utf8(&bytes).unwrap();
+        let (headers, body) = response.split_once("\r\n\r\n").unwrap();
+        assert!(headers.contains("Cache-Control: no-store\r\n"));
+        assert!(headers.contains("Content-Security-Policy: default-src 'none'\r\n"));
+        assert!(headers.contains("Content-Type: text/html; charset=utf-8\r\n"));
+        assert!(headers.contains("Referrer-Policy: no-referrer\r\n"));
+        assert!(headers.contains("X-Content-Type-Options: nosniff\r\n"));
+        assert!(headers.contains("Connection: close\r\n"));
+        assert_eq!(
+            headers
+                .lines()
+                .find(|line| line.starts_with("Content-Length:")),
+            Some(format!("Content-Length: {}", body.len()).as_str())
+        );
+    }
 }
 
 #[test]
