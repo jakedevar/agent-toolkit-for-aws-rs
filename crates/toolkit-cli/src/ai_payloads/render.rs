@@ -205,9 +205,11 @@ fn command_with_hooks(
             return Err(fail("consent_name_invalid", name));
         }
     }
+    let normalized_template = std::fs::canonicalize(path)
+        .map_err(|_| fail("template_invalid", "cannot resolve template path"))?;
     let module_spec = template::MODULE_CELLS
         .iter()
-        .find(|(suffix, _, _, _)| path.ends_with(suffix));
+        .find(|(suffix, _, _, _)| normalized_template.ends_with(suffix));
     let module = module_spec.is_some();
     let mut replacements = BTreeMap::new();
     for arg in inv.values_of("--cell") {
