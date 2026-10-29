@@ -96,3 +96,25 @@ mod tests_mod;
 
 #[cfg(test)]
 pub mod tests_support;
+
+/// Internal callback route; the remaining launch commands arrive in L5.
+pub(crate) const SLICE: crate::registry::Slice = crate::registry::Slice {
+    name: "launch",
+    commands: &[crate::CommandSpec {
+        path: &["launch", "auth-callback"],
+        flags: &[],
+        value_flags: &[],
+        strict_values: false,
+        repeatable_flags: &[],
+        max_positionals: 0,
+        passthrough: false,
+        handler: callback::command::callback,
+    }],
+    synopsis: "  toolkit launch auth-callback\n",
+    description:
+        "  launch auth-callback  Internal sign-in helper; reads configuration from stdin.\n",
+    exit_notes: "",
+    doc: "docs/migration/launch-with-aws-design.md",
+    synopsis_rank: crate::registry::NEW_RANK,
+    description_rank: crate::registry::NEW_RANK,
+};

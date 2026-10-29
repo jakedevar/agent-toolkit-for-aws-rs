@@ -34,10 +34,18 @@ pub fn run(
     state: &str,
     wall_deadline: i64,
     announce: impl FnOnce(u16) -> io::Result<()>,
-    exchange: impl FnOnce(&str, &str, Instant) -> Result<Vec<u8>, ()>,
+    exchange: impl FnOnce(&str, &str, Instant) -> Result<Vec<u8>, &'static str>,
 ) -> io::Result<HelperResult> {
     let start = Instant::now();
-    let flow_end = start + Duration::from_secs(600);
+    let wall_now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|_| io::Error::other("clock unavailable"))?
+        .as_secs();
+    let remaining = u64::try_from(wall_deadline)
+        .unwrap_or(0)
+        .saturating_sub(wall_now)
+        .min(600);
+    let flow_end = start + Duration::from_secs(remaining);
     let cutoff = flow_end + Duration::from_secs(60);
     let wall_cutoff = wall_deadline.saturating_add(60);
     let custody = Arc::new(Custody::acquire(dir, std::process::id())?);
@@ -103,12 +111,8 @@ pub fn run(
                     }
                     Err(e) => return Err(e),
                 },
-                Err(()) if !gate.fail_exchange() => return Ok(HelperResult::TimedOut),
-                Err(()) => (
-                    PendingStatus::Failed,
-                    Some("exchange_failed"),
-                    HelperResult::Failed,
-                ),
+                Err(_) if !gate.fail_exchange() => return Ok(HelperResult::TimedOut),
+                Err(reason) => (PendingStatus::Failed, Some(reason), HelperResult::Failed),
             }
         }
     };

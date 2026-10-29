@@ -133,7 +133,10 @@ pub fn read_record(state_dir: &Path, pid: u32) -> Option<Record> {
         Json::String(value)
             if matches!(
                 value.as_str(),
-                "authorization_denied" | "invalid_code" | "exchange_failed"
+                "authorization_denied"
+                    | "invalid_code"
+                    | "exchange_failed"
+                    | "transport_unavailable"
             ) =>
         {
             Some(value.clone())

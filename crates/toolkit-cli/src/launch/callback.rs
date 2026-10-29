@@ -9,6 +9,7 @@ pub enum Outcome {
     InvalidCode,
 }
 
+pub mod command;
 pub mod gate;
 pub mod lifecycle;
 pub mod listener;

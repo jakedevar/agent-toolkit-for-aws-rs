@@ -89,6 +89,7 @@ pub(crate) const SLICES: &[Slice] = &[
     crate::dynamodb_deploy::SLICE,
     crate::elasticache::SLICE,
     crate::elasticache::tunnel::SLICE,
+    crate::launch::SLICE,
     crate::manifests::SLICE,
     crate::marketplace::SLICE,
     crate::mcp_proxy::command::SLICE,
