@@ -1,7 +1,8 @@
 # Launch with AWS: Rust port design and boundary pre-review (#4382, phase 1)
 
-Status: design, revision 2 (pre-review #5038 at `87a5543` answered; table "Pre-review r1
-resolutions" below). No code changes. Programme #4369, slice key `launch`, wave 2,
+Status: design, revision 3 (pre-review #5038 round 1 at `87a5543` and round 2 at `4d6f61c`
+answered; tables "Pre-review r1 resolutions" and "Pre-review r2 resolutions" below). No code
+changes. Programme #4369, slice key `launch`, wave 2,
 dependency #4379 (aws-core boundaries, integrated). AC1 of #4382 requires that the OAuth callback
 and archive boundaries are reviewed **before** implementation; sections 3-6 are the material for
 that pre-review and every requirement there has an ID (`R-...`) and a test (`T-...`) so a reviewer
@@ -41,6 +42,18 @@ Evidence base, all read and never executed (no Python, network or AWS call was r
   `fstat`, `mkdirat`, `unlinkat`, `Dir` and `renameat_with` (`cfg(any(apple, linux_kernel))`);
 - revision 2 only: the PM rulings on #4382 (sequence 2, and the sequence-3 amendment putting a
   strict ZIP64 subset in scope for writer and reader) and the ten #5038 findings #5039-#5047, #5051.
+- revision 3 only: the #5038 round-2 verdict and its six findings #5061-#5066; the PM rulings on
+  revision 2 (Q21 yes, D18 yes, Unix-only accepted with `rustix =1.1.5`, L3 after S1, live-run ZIP
+  construction record); and, again from the local Git object `be0a06df` (read, not built),
+  `toolkit-aws` `stream.rs` (`StreamLimits::new` refuses a zero bound; limits are taken by
+  `open` before the status exists; `ChunkLimiter` keeps the raw frame it admitted),
+  `sdk.rs` (`SdkStream` captures `request.timeouts.read()` once at `open` and uses it for every
+  `body.next()`; `connector_for` caches one connector per distinct `Timeouts`; `GuardedResolver`
+  resolves with a blocking `to_socket_addrs` inside `DnsFuture::ready`), `transport.rs`
+  (`Timeouts::new` refuses zero and values over one hour), `error.rs` (`TimeoutPhase` is
+  `Connect | Read`) and `testing.rs` (`FakeStreamingTransport`, `FakeChunk`). The only
+  `ResponseStream` implementations at that commit are `SdkStream` and the fake, both in
+  `toolkit-aws`.
 
 ## Pre-review r1 resolutions
 
@@ -51,15 +64,31 @@ slices, section 9 records the resulting divergences and residuals.
 | Finding | Requirement (section) | Offline tests |
 | --- | --- | --- |
 | #5039 P1 post-open checks cannot stop a FIFO hang or symlink disclosure | R-AR-OPEN (5): descriptor-relative walk from a held root fd, `openat(O_NOFOLLOW \| O_NONBLOCK \| O_NOCTTY)` on every component, `fstat` type and `(dev, ino)` identity on the opened handle before any read, read bounded by the walked size; Unix only, other targets refused (D16) | T-AR-OPEN-1..9 (injected swap to FIFO, same-size outside symlink, symlinked ancestor, directory swapped after listing, file grown or shrunk, FIFO and socket present at walk time, ordinary tree, root symlink parity, non-Unix platform refusal; every swap case asserts zero upload requests) |
-| #5040 P1 overlay can install `.git` control files | R-AR-VCS (5): VCS denylist on normalised components (NFC, case fold, HFS ignorables, trailing dot/space, `:` stream suffix, `GIT~1`) refuses the snapshot before extraction; R-AR-APPLY (5): new `launch apply-snapshot` replaces `rsync -a`, re-walks the tree with the same denylist, never writes through a link, refuses before the first write | T-AR-VCS-1..8, T-APPLY-1..10 |
-| #5041 P2 per-read timeouts do not bound the callback lifetime | R-CB-TIME (3): monotonic flow deadline F, per-connection head and write deadlines, every blocking call capped by the remaining time, exchange grace to a fixed cutoff T = F + 60 s, commit gate and watchdog so no session write after T, terminal status kept for `auth-wait` | T-CB-TIME-1..8 |
-| #5042 P2 accept cap lets unauthenticated traffic cancel sign-in | R-CB-LOAD (3): no traffic counter of any kind ends the flow; bounded slots (16), per-slot buffers and deadlines; only a state-matching callback, the deadline or helper failure are terminal; residual R-CB-DOS (delay, never abort) | T-CB-LOAD-1..5 |
+| #5040 P1 overlay can install `.git` control files | R-AR-VCS (5): VCS denylist on normalised components (NFC, case fold, HFS ignorables, trailing dot/space, `:` stream suffix, `GIT~1`) refuses the snapshot before extraction; R-AR-APPLY (5): new `launch apply-snapshot` replaces `rsync -a`, re-walks the tree with the same denylist, never writes through a link, refuses before the first write | T-AR-VCS-1..8, T-APPLY-1..10 (r3: completed by R-AR-META for the actual Git directory, #5061, T-APPLY-11..17) |
+| #5041 P2 per-read timeouts do not bound the callback lifetime | R-CB-TIME (3): monotonic flow deadline F, per-connection head and write deadlines, every blocking call capped by the remaining time, exchange grace to a fixed cutoff T = F + 60 s, commit gate and watchdog, terminal status kept for `auth-wait` (r3: "no session write after T" withdrawn; admission vs publication, never-waiting watchdog and lock-based `auth-wait` per #5062; every blocking network call bounded by TA-STREAM-DL per #5065) | T-CB-TIME-1..8 (r3: 7 replaced, 9..14 added) |
+| #5042 P2 accept cap lets unauthenticated traffic cancel sign-in | R-CB-LOAD (3): no traffic counter of any kind ends the flow; bounded slots (16), per-slot buffers and deadlines; only a state-matching callback, the deadline or helper failure are terminal; residual R-CB-DOS (delay, never abort) (r3: drain-all accept replaced by a fixed per-turn quantum, #5063) | T-CB-LOAD-1..5 (r3: 4 replaced, 6..10 added) |
 | #5043 P2 ZIP framing and exact consumption unspecified | R-ZIP-FRAME (5): checked u64 arithmetic, unique EOCD, exact central count and span, byte-contiguous layout, flag/version/method allowlists, extra-field framing, local/central and data-descriptor consistency, exact stored/deflate consumption with a terminal decoder state, directory syntax and mode reconciliation | T-ZIP-FRAME-1..34 (invariant table in R-ZIP-FRAME) |
-| #5044 P2 caps need a bounded transport seam | R-API-BODY (6): every network body read goes through #5017 S1 `StreamingTransport` (`be0a06df`) and a launch `BoundedBody` collector with a per-operation cap, Content-Length pre-check, cumulative count, lifetime deadline and cancellation by drop; `Transport::send` is never used by the slice | T-BODY-1..10 |
+| #5044 P2 caps need a bounded transport seam | R-API-BODY (6): every network body read goes through #5017 S1 `StreamingTransport` (`be0a06df`) and a launch `BoundedBody` collector with a per-operation cap, Content-Length pre-check, cumulative count, lifetime deadline and cancellation by drop; `Transport::send` is never used by the slice (r3: positive transport ceilings, status-time narrowing and absolute deadlines through TA-STREAM-DL, #5064/#5065) | T-BODY-1..10 (r3: 9 replaced, 11..16 added; T-SDL-1..8) |
 | #5045 P2 error code can echo an opaque bearer token | R-API-CODE (6): codes allowlisted per service (model exceptions plus a fixed AWS protocol list); the printed code is our constant, unknown → `UnrecognizedError`; request id and service message never passed; a final known-secret scrub replaces any message containing a live secret | T-CODE-1..8 |
 | #5046 P2 ZIP64 versus 100 000-entry upload parity | R-ZIP-FRAME ZIP64 rules per the PM amendment (seq 3): strict ZIP64 in writer and both reader profiles; the writer emits the ZIP64 EOCD record and locator only at 65 535 entries or more (a classic count field equal to `0xFFFF` is always a sentinel); the 100 000 limit is unchanged | T-ZIP-64-1..10 |
 | #5047 P1 staging path replaceable through a writable parent | R-AR-STAGE (5): parent opened once and held, parent ownership/permission policy (refuse group/other-writable without sticky), all creation `mkdirat`/`openat(O_EXCL \| O_NOFOLLOW)` relative to held fds, identity checks, publication by `renameat_with(RENAME_NOREPLACE)` of the held staging tree with before/after identity checks, fd-relative cleanup | T-STAGE-1..9 |
 | #5051 P2 DeleteLaunch 204 | R-API-OPS (6): per-operation status and body table from the embedded model; `DeleteLaunch` 2xx with an empty body is success and prints the existing JSON; presigned PUT success never parses a body | T-OPS-1..7 |
+
+## Pre-review r2 resolutions
+
+Pre-review #5038 round 2 (Codex, CHANGES_REQUESTED at `4d6f61c`) accepted the round-1 directions
+and filed six findings. Revision 3 changes only what they require. Q21, D18, the Unix-only scope
+with `rustix =1.1.5`, the strict ZIP64 amendment, the live-run ZIP construction record and every
+round-1 resolution above stand. The round-1 rows above are amended only where a row below says so.
+
+| Finding | Requirement (section) | Offline tests |
+| --- | --- | --- |
+| #5061 P1 apply denylist misses the repository's actual separate Git directory | R-AR-META (5, new): before any write, `apply-snapshot` discovers the target's real Git directory and common directory with one hardened `git rev-parse`, pins their `(dev, ino)` identities and refuses a target root inside them. It also refuses any planned path whose existing directory has a protected identity or looks like a Git directory to Git itself (`commondir`, or `HEAD` with `objects`/`refs`), and any snapshot directory with that shape. It fails closed when discovery fails, when the target is not a Git work tree, or when `GIT_DIR`-style variables are set. The literal/alias denylist of R-AR-VCS is kept | T-APPLY-11..17 (separate-git-dir under a non-denied in-tree name with `config` `core.fsmonitor` and hook payloads: refused before any change, metadata bytes unchanged, no marker on the following `git status`; common-dir indirection; a normal separate-git-dir overlay succeeds; a target root inside metadata; nested in-tree admin directories and Git-shaped snapshot directories; every fail-closed discovery case; a swap after planning) |
+| #5062 P2 commit gate authorises before the cutoff but can publish after it and stall the watchdog | R-CB-TIME (3), commit protocol rewritten: the session bytes are written and synced to a temporary file *before* admission. Admission (CAS `Exchanging → Committing` while `now < T`) is distinguished from publication (one `rename`). The watchdog at `W = T + 2 s` never waits: it either aborts an un-admitted flow or exits at once. A late outcome is made accountable, not denied: `auth-wait` treats the helper's lock as the only proof that publication is over. It never reports a final timeout while the lock is held, and reports a distinct `helper_blocked` outcome instead. The residual filesystem assumption R-CB-FS is recorded | T-CB-TIME-7 (replaced), T-CB-TIME-9..14 (pause after a successful CAS and before `rename` with the clock past `T`, `W` and `cutoff + 5 s`; blocked publication; watchdog record-write failure and block; the CAS race at `T`; the `auth-wait` decision table; no helper child inherits the lock) |
+| #5063 P2 drain-all accept loop can starve slots and deadline checks | R-CB-LOAD (3), scheduler rewritten: a turn has at most 8 `accept` calls (accepted or closed, stopping at `WouldBlock`) and then exactly one non-blocking operation per occupied slot in rotating order. The monotonic clock is read before every `accept` and every slot operation, so `F` and slot deadlines are observed at most one non-blocking call late. Each turn lasts at least 2 ms (10 ms when idle). That gives at most 500 turns, 4 000 accepts and 8 000 slot operations per second. No counter ends the flow | T-CB-LOAD-4 (replaced), T-CB-LOAD-6..10 (always-ready scripted listener with a fake clock that advances on every operation: bounded accepts per turn, an already admitted valid callback completes, `F` and head expiry observed within one operation, rate ceilings, rotation fairness) |
+| #5064 P2 zero limits are unsupported and status caps are chosen before the status exists | R-API-BODY (6), call sequence rewritten against the pinned S1 API plus prerequisite TA-STREAM-DL: every `open` uses a positive *transport ceiling* (`StreamLimits::new` never sees 0). The status is inspected before any pull. Zero-read outcomes (PUT, `DeleteLaunch` 2xx, every 3xx, download errors) drop the stream with zero pulls and never look at `Content-Length`. Error statuses narrow the limit to 64 KiB through TA-STREAM-DL's `narrow_body_limit` before the first pull. Retained bytes are accounted on both sides of the seam | T-BODY-11..15 (production limit construction for every row; PUT 200/403 and `DeleteLaunch` 204/200-with-body with zero pulls; `DeleteLaunch` 404 collected under 64 KiB; one operation receiving 500 then 200 with the right limit each time; an oversized first raw frame refused before any copy, with retained bytes asserted); T-SDL-4..6 (`toolkit-aws`) |
+| #5065 P2 an in-flight S1 read cannot be shortened to the absolute deadline | Named prerequisite **TA-STREAM-DL** in `toolkit-aws` (section 7.2, before L3): `StreamLimits::with_deadline(Instant)`. `SdkTransport::open` runs connect, TLS, request write and head wait under `tokio::time::timeout_at(deadline)`. `SdkStream::next_chunk` waits `min(idle, deadline − now)` and cancels the in-flight `body.next()` by dropping it, returning `StreamError::DeadlineExceeded`. No thread is created. The launch runner gives every attempt `min(attempt start + 120 s, operation deadline)` and stops backoff that would cross it. The one non-cancellable step, the blocking system DNS lookup inside `GuardedResolver`, is recorded as residual R-DNS with its bound rather than claimed | T-SDL-1..3, T-SDL-7..8 (loopback TLS harness: a body read stalled just before the cutoff, a server that never sends the head, a stalled TLS handshake, each returning at the deadline within a slack bound, the connection dropped); T-BODY-9 (replaced) and T-BODY-16 (retries and backoff near the operation bound) |
+| #5066 P2 extraction entry limit omits implicit parent directories | R-AR-PLAN (5, new): after validation and before the first `mkdirat`, a materialisation plan is derived from the central directory. It holds one node per unique path (files, explicit directories and every implicit ancestor, merged), with nodes referencing name bytes in the archive buffer. Derivation stops at the first node over the budget of **200 000 nodes** (files are still at most 100 000 by the entry limit). Staging creates only plan nodes, and the cleanup ledger is pre-sized to the plan. `apply-snapshot`'s walk uses the same budget | T-PLAN-1..8 (byte-built valid archives: the #5066 shape refused under an injected budget and under the production budget with zero filesystem calls and planner memory bounded; boundary success; shared-prefix deduplication; explicit/implicit merge; ledger bound on a late failure; apply walk limits) |
 
 ## 1. Inventory: entry points, arguments, outputs
 
@@ -321,11 +350,38 @@ without sockets) and `launch/flow.rs` (process lifecycle).
   **16 connection slots** (`TcpStream::set_nonblocking(true)`). Each slot owns an 8 KiB head buffer,
   a head deadline and, once a response is queued, a write deadline (R-CB-TIME). Memory is bounded
   by 16 × (8 KiB + one fixed page of at most 1 KiB) whatever the traffic.
-- Each turn: accept every pending connection; a connection arriving while all 16 slots are busy is
-  closed at once (no bytes read, no response) and **not counted**. Then each slot makes whatever
-  non-blocking progress is available; a slot past its deadline is dropped (closed without a
-  response). When no slot made progress the loop sleeps 10 ms (`std::thread::sleep`), so an idle or
-  flooded listener costs at most about 100 wake-ups per second.
+- **Turn structure (revision 3, #5063).** Revision 2's "accept every pending connection" is
+  withdrawn: an accept queue that a flooder keeps refilling never reaches `WouldBlock`, so that
+  drain had no finite work quantum. Each turn is now a fixed, finite sequence:
+  1. **Clock check.** Read the monotonic clock. At or past `F` the loop ends (`timed_out`).
+  2. **Admission quantum.** At most `A = 8` calls to `accept` per turn, stopping early at
+     `WouldBlock`. Each accepted connection is set non-blocking and put in a free slot with its
+     head deadline. If all 16 slots are busy it is closed at once (no bytes read, no response) and
+     **not counted**. Accepted-and-closed connections use the same quantum, so a flood costs at
+     most 8 `accept` + 8 `close` calls per turn. The clock is read before every `accept`. Reaching
+     `F` ends the turn and the loop.
+  3. **Slot service, fair.** Each occupied slot gets **exactly one** non-blocking operation per
+     turn: one `read` of at most the free space of its 8 KiB head buffer, or one `write` of the
+     rest of its page. Slots are visited in round-robin order starting one slot later each turn,
+     so no slot waits more than one turn behind another. Before each slot operation the clock is
+     read. A slot past its own deadline is dropped (closed without a response) instead of being
+     served, and reaching `F` ends the loop. A slot that completes a state-matching callback ends
+     the loop through R-CB-ONCE.
+  4. **Pacing.** The turn then sleeps through the injected `Sleeper` until `turn start + 2 ms`
+     when any accept or slot operation transferred data or changed a slot. Otherwise it sleeps
+     until `turn start + 10 ms`. A sleep never extends past `F` or the earliest slot deadline.
+- **What this bounds.** At most 500 turns per second. Per turn at most 8 `accept`, 8 `close`,
+  16 slot operations and 25 clock reads. So at most 4 000 accepts and 8 000 slot operations per
+  second, whatever the traffic, and about 100 turns per second when idle. Every syscall in a turn
+  is non-blocking, so a deadline (`F`, a head deadline or a write deadline) is observed at most
+  **one non-blocking call** after it passes, never after a drain. A valid callback already in a
+  slot gets one read in every turn (each turn at most 2 ms of pacing plus its bounded work) while
+  the listener is flooded, and a
+  browser head is normally read in one call. A flood can still keep all 16 slots occupied, and
+  then a new browser connection waits for a free slot. That delay (not abort) is residual R-CB-DOS.
+- No rate, count or ratio of any traffic is ever a terminal condition. The quantum and pacing
+  limit work per unit of time. They never count towards ending the flow, and they keep no
+  per-peer state.
 - A slot is never kept beyond its head deadline (2 s from accept) plus its write deadline (2 s), so
   a slot frees within 4 s; a peer must keep reconnecting to hold slots.
 - Terminal transitions, the complete list: a state-matching callback (`code` → exchange; `error` →
@@ -337,7 +393,8 @@ without sockets) and `launch/flow.rs` (process lifecycle).
 - Residual R-CB-DOS (section 9): a local process that can connect to `127.0.0.1:<port>` can keep
   the 16 slots busy and so delay the browser's callback, possibly until the deadline, which ends the
   flow as `timed_out`. It cannot end the flow early, learn the code or state, or make the child use
-  more memory or CPU than the bounds above. The same local process could equally kill the user's
+  more memory or do more work per second than the bounds above. The same local process could
+  equally kill the user's
   browser connection; no loopback design prevents that.
 
 ### R-CB-STATE. State and PKCE validation
@@ -385,25 +442,74 @@ the pending record only for `auth-wait`.
 - **Exchange cutoff** `T = F + 60 s`, fixed at start. Engineering decision: a callback accepted
   before `F` gets a bounded grace period for the token exchange instead of being discarded, because
   the IdP has already issued a single-use code and discarding it near the deadline forces a second
-  sign-in. The exchange runs with `Timeouts` connect/read set to `min(30 s, T − now)` on every
-  attempt, the shared `RetryPolicy` gives up when the next backoff would end after `T`, and no
-  attempt starts after `T`.
-- **Commit gate**: the session file is published by the atomic rename of R-TOK-MODE only after a
-  compare-and-swap of an `AtomicU8` from `Exchanging` to `Committing`, done only while
-  `now < T`. A **watchdog thread** started with the helper sleeps until `T + 2 s` and then swaps
-  `Exchanging`/`Listening` to `Aborted`, writes status `timed_out` to the pending record and calls
-  `std::process::exit(1)`; if it finds `Committing` it waits for the commit to finish (one
-  `rename`) and exits after it. Either the commit happened before the cutoff or no session is ever
-  written; a DNS lookup or TLS handshake that ignores its timeout cannot extend the helper's life
-  past `T + 2 s`.
-- **Terminal status kept**: after `succeeded`, `failed` (any reason) or `timed_out`
-  the child rewrites the pending record with the status and reason, releases its lock and exits;
-  it does **not** delete the record. `auth-wait` deletes it after reporting; `auth-start` deletes
-  records whose recorded cutoff is more than one hour old and whose lock is free.
+  sign-in. The exchange goes through R-API-BODY's runner. Every attempt carries the absolute
+  deadline `min(attempt start + 30 s, T)` in its `StreamLimits` (TA-STREAM-DL, revision 3) with
+  fixed `Timeouts` of 30 s/30 s. The runner gives up when the next backoff would end after `T`, and
+  no attempt starts after `T`. The blocking DNS lookup that TA-STREAM-DL cannot cancel (R-DNS) is
+  covered here by the watchdog, which does not wait for the main thread.
+- **Commit protocol (revision 3, #5062).** Revision 2 claimed that a CAS before `T` meant the
+  session was published before `T`, and its watchdog waited for `Committing`. Both claims are
+  withdrawn. An atomic state change is not an atomic clock-check-plus-rename: a thread can pass the
+  CAS and then be descheduled or blocked inside the file system. Revision 3 separates three events
+  and states what each one guarantees.
+  1. **Prepare** (state `Exchanging`, no admission yet): after a successful exchange, the complete
+     `session.json` bytes are written to the temporary file of R-TOK-MODE and `sync_all`ed. Slow
+     I/O happens here, before admission, where the watchdog can still abort the flow.
+  2. **Admission**: one compare-and-swap of an `AtomicU8` from `Exchanging` to `Committing`,
+     attempted only while `now < T`. If `now ≥ T`, or the CAS fails because the watchdog set
+     `Aborted`, the temporary file is removed and nothing is published.
+  3. **Publication**: exactly one `rename(temp, session.json)` (atomic replace). Then the state
+     moves `Committing → Committed`, the record is rewritten `succeeded` and the helper exits 0.
+     Admission guarantees that publication *started* before `T`. It does not guarantee that the
+     `rename` *returns* before any instant. Revision 3 does not claim that.
+- **Watchdog, never waiting.** A watchdog thread started with the helper sleeps until
+  `W = T + 2 s`, then:
+  - state `Listening` or `Exchanging`: CAS to `Aborted` (from then on admission is impossible),
+    one attempt to write status `timed_out` to the pending record, then `Exit(1)`;
+  - state `Committing` (admitted, `rename` in flight): `Exit(1)` at once with **no** record write.
+    The rename is atomic, so the session file is either the old one or the new one, never partial;
+  - state `Committed`: `Exit(0)` at once. The record write of step 3 is itself temp-plus-rename,
+    so the record is either `exchanging` or `succeeded`.
+  The watchdog never joins, waits for or signals the main thread.
+- **Lifetime claim, as far as it can be made.** After `W` the helper starts no new operation:
+  `Exit` is called at `W`, or right after the single `timed_out` record attempt in the first case.
+  Process exit finishes when the kernel returns from any system call that a thread is blocked in.
+  On a local file system a `rename` or a small write returns in milliseconds. On a network or FUSE
+  file system it may block without limit, and no user-space design can end such a thread. That is
+  residual **R-CB-FS** (section 9). The design does not claim a hard bound in that case; it makes
+  the outcome observable (next bullets). A DNS lookup or TLS handshake in the exchange cannot
+  extend the helper's life past `W`, because `Exit` does not wait for the main thread.
+- **Publication is over only when the lock is free.** The helper holds its exclusive lock
+  (R-CB-WAIT) from start to process exit and never closes the lock file early. It spawns no child
+  process and opens every file `O_CLOEXEC`, so nothing inherits the lock. The lock is released
+  only when the process is gone, and that happens after any in-flight `rename` has returned.
+  Therefore **lock free ⇒ this helper can never publish again**, and the session file at that
+  moment is final for this flow.
+- **Terminal status kept**: after `succeeded`, `failed` (any reason) or `timed_out` the child
+  rewrites the pending record with the status and reason, releases its lock and exits; it does
+  **not** delete the record. `auth-wait` deletes it after reporting; `auth-start` deletes
+  records whose recorded cutoff is more than one hour old and whose lock is free, and stale
+  `session.json.<hex>.tmp` files of its own pattern older than one hour.
 - The pending record carries `deadline` (wall-clock of `F`) and `cutoff` (wall-clock of `T`).
-  `auth-wait` polls until `cutoff + 5 s`; a terminal status wins whenever it appears; past that
-  instant with no terminal status it reports "Sign-in did not finish in time. Run auth-start
-  again." (the watchdog guarantees the helper is gone by then on a sane clock).
+  **`auth-wait` decision table** (polled every second; "valid session" = R-TOK-STORE parse plus a
+  token valid for more than the 300 s buffer; the first matching row wins):
+
+  | Record status | Helper lock | Valid session | Time | `auth-wait` result |
+  | --- | --- | --- | --- | --- |
+  | any | any | yes | any | `{authenticated:true, baseUrl}` (exit 0) |
+  | `failed` | free | no | any | the fixed message for the reason (exit 1) |
+  | `timed_out` | free | no | any | "Sign-in did not finish in time. Run auth-start again." (exit 1) |
+  | `listening`, `exchanging`, `succeeded` (session since removed or expired) | free | no | any | "Sign-in did not finish in time. Run auth-start again." when the cutoff has passed, else "Sign-in ended without completing authentication. Run auth-start again." (exit 1) |
+  | any | held | no | before `cutoff + 5 s` | keep polling |
+  | any | held | no | at or after `cutoff + 5 s` | **`helper_blocked`**: "Sign-in has not finished: the sign-in helper is still blocked. Run session-status in a minute; if it does not report a session, run auth-start again." (exit 1). This is not a final timeout |
+
+  A **final** timeout or "ended" result is reported only when the lock is free, so it is never
+  followed by a session that this helper publishes later. The one late-publication case (admitted
+  before `T`, `rename` blocked past `W`) is reported as `helper_blocked`. The user's later
+  `session-status` or `auth-start` then sees the session, if it arrives, as a normal valid session
+  that the user did sign in for. A failed or blocked `timed_out` record write does not change any
+  row, because the lock is the deciding fact. A wall-clock jump can move *when* `auth-wait` gives
+  up waiting, but it cannot turn `helper_blocked` into a final result.
 - The child never needs a signal from the parent.
 
 ### R-CB-WAIT. Parent/child handshake without signalling a pid
@@ -415,11 +521,9 @@ the pending record only for `auth-wait`.
   since Rust 1.89; the toolchain is 1.94.1).
 - `auth-wait <pid>` (positional kept for compatibility) reads `pending/<pid>.json`. Missing →
   `{"error": "No sign-in is in progress for pid <pid>. Run auth-start again."}`. Then it polls every
-  second until the recorded `cutoff` + 5 s (R-CB-TIME): a valid session →
-  `{authenticated:true, baseUrl}`; status
-  `failed`/`timed_out` → a fixed message per reason; the lock can be taken (the child is gone)
-  without a valid session → "Sign-in ended without completing authentication. Run auth-start
-  again.".
+  second and answers by R-CB-TIME's decision table (revision 3): a valid session →
+  `{authenticated:true, baseUrl}`. A final failure or timeout is reported only once the helper's
+  lock is free. A lock still held at `cutoff + 5 s` → the non-final `helper_blocked` message.
 - `auth-wait` **never sends a signal**. The Python's `SIGTERM` to a bare pid could hit an unrelated
   process after pid reuse; in Rust it would also need `unsafe` (`libc::kill`), which the workspace
   forbids. The child's own deadline replaces it.
@@ -897,9 +1001,15 @@ carrying VCS metadata is refused as a whole, not filtered, so nothing disappears
   and again independently in R-AR-APPLY's walk of the extracted tree. A validated extraction is not
   approval to overwrite repository metadata.
 - **Not denied** (ordinary tracked content; Git runs nothing from them without configuration in
-  `.git/config`, which cannot be written; `.gitmodules` `update = !command` is refused by Git
-  itself): `.gitignore`, `.gitattributes`, `.gitmodules`, `.github/`, and names that only contain
-  `git` (`git/`, `my.git/`).
+  the repository's metadata, which cannot be written (R-AR-META); `.gitmodules`
+  `update = !command` is refused by Git itself): `.gitignore`, `.gitattributes`, `.gitmodules`,
+  `.github/`, and names that only contain `git` (`git/`, `my.git/`).
+- **The denylist is necessary, not sufficient (revision 3, #5061).** A repository's administrative
+  directory need not be named `.git`. With `git init --separate-git-dir` (or a linked worktree, or
+  `core.worktree`), `.git` is a one-line file `gitdir: <path>`, and the real directory, possibly
+  inside the work tree under any name, holds `config`, `hooks/` and the common directory. Names
+  cannot identify it. R-AR-META protects the actual directories by identity at the place where the
+  repository is written.
 - Tests T-AR-VCS-1..8: (1) `.git/config` with `core.fsmonitor = ./helper` plus `helper` and
   `.git/hooks/post-checkout` → refused, nothing created at the destination; (2) nested `sub/.git`
   as a file and as a directory; (3) case aliases `.GIT/config`, `.Git/hooks/x`; (4) HFS ignorable
@@ -922,10 +1032,11 @@ carrying VCS metadata is refused as a whole, not filtered, so nothing disappears
      printed in an error.
   3. The archive stays in memory under that cap (bounded like the upload archive). **No temporary
      archive file exists**, so there is no `/tmp` name to race.
-  4. Full validation with the Snapshot profile: R-ZIP-FRAME steps 1-7, R-AR-READ entry policy and
-     R-AR-VCS. All of it completes **before** anything is created on disk.
-  5. Extraction into held-descriptor staging, then exclusive publication, per R-AR-STAGE; data
-     decoded per R-ZIP-FRAME step 8. Files 0644, or 0755 when the entry's Unix mode has the
+  4. Full validation with the Snapshot profile: R-ZIP-FRAME steps 1-7, R-AR-READ entry policy,
+     R-AR-VCS and the materialisation plan with its node budget (R-AR-PLAN, revision 3). All of
+     it completes **before** anything is created on disk.
+  5. Extraction into held-descriptor staging, then exclusive publication, per R-AR-STAGE, creating
+     exactly the nodes of the plan; data decoded per R-ZIP-FRAME step 8. Files 0644, or 0755 when the entry's Unix mode has the
      owner-exec bit; directories 0755 inside a 0700 output root; no setuid, setgid, sticky or
      world-writable bit, no ownership change, no timestamps restored.
   6. Default destination: `launch-snapshot-<id-safe>-<random>` under `std::env::temp_dir()`, a
@@ -939,6 +1050,65 @@ carrying VCS metadata is refused as a whole, not filtered, so nothing disappears
   <outputDir>` (R-AR-APPLY) instead of `rsync -a <outputDir>/ .`. The user-consent step before
   applying and the `git status`/`git diff --stat` review after it are kept unchanged. The prose
   rewrite ships in the cutover slice.
+
+### R-AR-PLAN. Materialisation plan and node budget (revision 3, #5066)
+
+Threat: the record, byte and ratio limits count ZIP records. They do not count what extraction
+creates. One file record can name about 2 000 path components (4 096 bytes, one-byte segments),
+and every missing ancestor becomes a `mkdirat`. 16 000 tiny records with disjoint deep chains fit
+every archive limit and still ask for over 31 million directories, plus a cleanup ledger entry
+for each. Requirement: the number of filesystem nodes extraction may create, including implicit
+parents, is fixed and checked **before the first creation**. Deriving that number must itself run
+in bounded memory.
+
+- **Budget.** `MAX_SNAPSHOT_NODES = 200 000` materialised nodes below the output root: every file,
+  every explicit directory entry and every implicit ancestor directory, each unique path counted
+  once. Files remain at most 100 000 through the entry limit. So up to 100 000 directories can
+  accompany a full-size tree. That is compatible with every snapshot of a tree the upload side
+  accepts: the writer emits only file records (at most 100 000), and a real source tree has fewer
+  directories than files. Recorded as D22 and Q23.
+- **Derivation, in bounded memory.** After R-ZIP-FRAME steps 1-7, R-AR-READ and R-AR-VCS have
+  accepted the central directory, and before R-AR-STAGE creates staging, the planner walks the
+  central records in order. For each name it walks its `/`-separated segments from the root.
+  A segment is looked up under its parent node in a hash index keyed by `(parent node id, raw
+  segment bytes)`, and a missing node is appended. Nodes are fixed-size, `{parent: u32,
+  name_offset: u32, name_len: u16, kind}`, and the name bytes are *referenced* in the in-memory
+  archive buffer, never copied. The index reserves at most `MAX_SNAPSHOT_NODES` slots. The planner
+  stops with a refusal at the first node that would be number 200 001, so planning memory is at
+  most about 200 000 × 32 bytes (node plus index slot, about 6.4 MiB) whatever the archive says.
+  Raw-byte keying never undercounts the nodes a case-sensitive file system creates. Case and NFC
+  collisions between *entries* stay R-AR-READ's duplicate rule, unchanged.
+- **Merging.** An explicit directory entry (`a/b/`) and the implicit ancestor produced by a deeper
+  name (`a/b/c`) are the same node, counted once, whichever comes first in central order. A file
+  node that another name needs as a directory is already refused by R-AR-READ's file/directory
+  conflict rule. The planner asserts it again as an internal invariant.
+- **Refusal**, before anything exists on disk (no staging directory, no `mkdirat`): "The snapshot
+  would create more than 200000 files and directories and was not extracted."
+- **Use by R-AR-STAGE.** Creation iterates the plan (directories in node order, which is
+  parents-first by construction, then files). Every `mkdirat` and file `openat(O_CREAT)` names a
+  plan node. A creation request for a path outside the plan is an internal error and fails the
+  extraction. The cleanup ledger is a `Vec` allocated once with capacity = plan length and holds
+  `(node id, dev, ino)`, about 20 bytes each. It cannot grow past the plan. The output's `files`
+  and `directories` counts come from the plan.
+- **Use by R-AR-APPLY.** The apply walk of the extracted tree applies the same constants: at most
+  100 000 files and at most 200 000 nodes in total, counted while walking and refused at the first
+  excess, before any write. A snapshot that extracts can therefore always be planned by apply.
+- Tests T-PLAN-1..8, archives built byte by byte in the test (valid stored framing, so every
+  earlier rule passes; 1-5 run on the planner, a pure function over the archive bytes with no
+  file-system access, and 6-8 run end to end with the recording `fsops`): (1) 3 file records each
+  under its own 40-component chain, injected budget 100 → refused; the planner's instrumented
+  peak node count is ≤ 101 and its index never reserved more than the budget. (2) The production
+  constant: 101 records, each a unique top component followed by 1 990 one-character segments and
+  a leaf (each name < 4 096 bytes, archive under about 1 MiB, 101 bytes of file data): over
+  200 000 nodes → refused; peak node count 200 001; asserts `MAX_SNAPSHOT_NODES == 200_000`. (3) Exactly the injected budget → extracts; budget + 1 →
+  refused. (4) 1 000 files under `src/a/b/` → 1 003 nodes. (5) Explicit `a/` and `a/b/` records
+  before, and in another fixture after, `a/b/c` → 3 nodes; output `directories` 2, `files` 1.
+  (6) A CRC failure in the last file → the ledger length equals the nodes created so far, its
+  capacity equals the plan length and never grows; cleanup removes exactly the ledger. (7) The
+  fixtures of (1) and (2) through the full `download-snapshot` path → refused after download; the
+  recording `fsops` shows zero `mkdirat` and `openat(O_CREAT)` calls, and no staging name and
+  nothing at the destination exist. (8) Apply walk: 100 001 files refused; 200 001 nodes with
+  injected constants refused; both before any write.
 
 ### R-AR-STAGE. Held-descriptor staging and publication (#5047)
 
@@ -961,7 +1131,8 @@ published, and cleanup removes only what this process created.
   `openat(P, S, O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)`. `fstat` must show a directory owned by the
   euid with no group or other bits, and its identity `(dev, ino)` is recorded. Inside it,
   `mkdirat(S, "tree", 0o700)` is opened and checked the same way. All entries go under `tree`.
-- **Creation inside the tree**, entries in name order (parents before children): each path is
+- **Creation inside the tree**, in R-AR-PLAN order (parents before children, only plan nodes,
+  revision 3): each path is
   walked from the held `tree` descriptor one component at a time with `openat(O_DIRECTORY |
   O_NOFOLLOW)`. A missing directory is created with `mkdirat(parent, seg, 0o755)`, then opened
   `O_NOFOLLOW` and checked (`fstat`: directory, euid owner, and the identity of the inode just
@@ -980,8 +1151,9 @@ published, and cleanup removes only what this process created.
   REMOVEDIR)` after an identity check. A symlink can never be published as `outputDir`: the only
   rename source is the `tree` entry inside our private `S`. This also removes revision 1's
   residual R-1 (rename over a racing empty directory).
-- **Cleanup**, descriptor-relative only. The extractor records each entry it created (parent path
-  inside `tree`, name, identity). On failure it removes them deepest first with `unlinkat` relative
+- **Cleanup**, descriptor-relative only. The extractor records each entry it created in the
+  pre-sized ledger of R-AR-PLAN (plan node id, identity), so the ledger is bounded by the node
+  budget. On failure it removes them deepest first with `unlinkat` relative
   to re-opened `O_NOFOLLOW` parents inside `S`, then `tree` and `S` after identity checks. An entry
   whose identity no longer matches is left alone and reported. `remove_dir_all` on a path is never
   used.
@@ -1001,20 +1173,99 @@ published, and cleanup removes only what this process created.
   symlink is followed once and succeeds; `--output` with a final `.`, `..` or empty component is
   refused.
 
+### R-AR-META. The target repository's actual Git metadata (revision 3, #5061)
+
+Threat: the target's administrative directory may sit inside the work tree under a name that no
+denylist knows. Examples: `git init --separate-git-dir=<T>/repo-admin <T>`, a linked worktree whose
+per-worktree directory or common directory was placed in the tree, or a nested repository whose
+`.git` file points at an in-tree directory. A snapshot carrying `repo-admin/config` with
+`core.fsmonitor = ./helper` would then run its helper at the prescribed `git status`. Requirement:
+`apply-snapshot` writes nothing into the directories Git actually uses as metadata for the target,
+for any valid layout, and it refuses before the first write when it cannot establish where they
+are. This is the PM's Q21 rule ("a snapshot never writes repository metadata") applied to the real
+Git admin store, as the #5038 round-2 interpretation requires.
+
+- **Environment precondition.** If the caller's environment sets any of `GIT_DIR`, `GIT_WORK_TREE`,
+  `GIT_COMMON_DIR`, `GIT_INDEX_FILE`, `GIT_OBJECT_DIRECTORY`, `GIT_ALTERNATE_OBJECT_DIRECTORIES`,
+  `GIT_CONFIG_PARAMETERS` or `GIT_CONFIG_COUNT` (non-empty), `apply-snapshot` refuses: "apply-snapshot
+  does not run with <NAME> set; unset it and re-run." These variables change which metadata the
+  user's later `git` commands use, so a discovery without them could protect the wrong directory,
+  and a discovery with them would follow caller-controlled redirection.
+- **Discovery: one hardened Git call** (Git is the authority on its own layout; hand-parsing
+  `gitdir:` files, `commondir` and `core.worktree` would re-implement and drift from it). Same
+  hardening as R-AR-GIT: `git` from `PATH`, `current_dir` = the caller's `--into` path, `stdin`
+  null, stdout capped at 64 KiB, stderr discarded, 30 s limit, `-c core.fsmonitor=false`, the
+  inherited `GIT_*` variables of R-AR-GIT removed. Command: `git rev-parse --path-format=absolute
+  --is-inside-work-tree --is-inside-git-dir --is-bare-repository --show-toplevel --git-dir
+  --git-common-dir`. `rev-parse` runs no hook and no fsmonitor and makes no network access.
+  Accepted output: exactly six LF-terminated lines `true`, `false`, `false` and three absolute
+  paths (a path containing a newline yields a different line count and is refused). Anything else
+  fails closed **before the snapshot is read**: Git missing, a non-zero exit (not a repository, a
+  `safe.directory` refusal), a timeout, the wrong line count, a relative path, or `--path-format`
+  echoed back (Git older than 2.31). The message is "apply-snapshot could not locate the target
+  repository's Git metadata (<fixed reason code>); nothing was written.". A target that is not a
+  Git work tree is refused the same way (D20). `SKILL.md` step C always applies inside the
+  migration branch of a Git repository.
+- **Pinning by identity.** The reported Git directory and common directory are opened once
+  (`openat(CWD, path, O_RDONLY | O_DIRECTORY | O_CLOEXEC)`, following symlinks as Git does) and
+  `fstat`ed. Their `(dev, ino)` pairs form the protected set `M`. A linked worktree's per-worktree
+  directory and the shared common directory are both in `M`. Submodule metadata under
+  `<common>/modules/` is inside the common directory. The top-level directory's identity `K` is
+  recorded too.
+- **Target root not inside metadata.** From the held `--into` descriptor, walk upward with
+  `openat(fd, "..", O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)` until the identity equals `K`. Every
+  directory visited, `--into` included, must be outside `M` and not Git-shaped (next bullet).
+  Reaching the file-system root (`..` is itself) without meeting `K`, or more than 2 048 steps,
+  is refused. So `--into .git`, `--into <T>/repo-admin/hooks` or a directory outside the reported
+  work tree is refused before any write, without trusting a path a second time.
+- **Git-shaped directories** (a superset of Git's own `is_git_directory` test, so anything Git
+  could treat as a repository directory is caught, including ones not linked from this target):
+  a directory is Git-shaped if it contains an entry named `commondir`, or an entry named `HEAD`
+  together with an entry named `objects` or `refs` (any types, `statat(AT_SYMLINK_NOFOLLOW)` on
+  the held descriptor).
+- **Where it is enforced.**
+  1. *Target side, R-AR-APPLY phase 1:* every existing target directory the plan enters is opened
+     `O_NOFOLLOW` and `fstat`ed already. Its identity must not be in `M`, and it must not be
+     Git-shaped. Otherwise the apply is refused before the first write: "The snapshot would
+     write into Git metadata at <shown_path> and was not applied." This catches an in-tree
+     separate Git directory and an in-tree common or worktree directory under any name, as well as
+     nested repositories' in-tree admin directories and bare repositories in the tree. The
+     identity of every entered directory is recorded.
+  2. *Target side, phase 2:* each directory is re-entered `O_NOFOLLOW` and must show the identity
+     recorded in phase 1. A mismatch stops the apply before that write (R-AR-APPLY's failure rule).
+  3. *Snapshot side, phase 1:* every directory of the snapshot tree is checked with the
+     Git-shaped rule. A hit refuses the apply: "The snapshot contains a directory shaped like Git
+     metadata: <shown_value(path)>.". An existing `.git` file (here or in a nested repository) may
+     name a directory that does not exist yet, and the snapshot must not be able to supply it.
+- **What stays as before.** R-AR-VCS's literal/alias denylist runs unchanged on both sides, the
+  extraction side is unchanged, and the existing `.git` entry itself is never written. A Git
+  directory outside the work tree is never reachable, because apply only writes beneath `--into`
+  through no-follow traversal.
+- **Over-refusal, accepted.** A source directory that happens to contain `HEAD` next to `refs` or
+  `objects`, or a file named `commondir`, is refused with the message above. The user can apply
+  such content by hand. Recorded in D20.
+
 ### R-AR-APPLY. Applying a snapshot to the repository (new `launch apply-snapshot`, #5040)
 
 `toolkit launch apply-snapshot <snapshot-dir> [--into DIR]` (default `--into .`; Unix only)
 replaces `rsync -a <outputDir>/ .`:
 
-- **Phase 1, plan; nothing is written.** `<snapshot-dir>` and `DIR` are opened as roots (R-AR-OPEN:
-  followed once at the caller-named path, held afterwards). The snapshot is walked with R-AR-OPEN's
+- **Phase 0, metadata discovery (revision 3, #5061).** `DIR` is opened as a root (R-AR-OPEN:
+  followed once at the caller-named path, held afterwards). R-AR-META's environment check,
+  discovery, pinning and root-containment walk then run before the snapshot is read. Any failure
+  refuses with nothing written.
+- **Phase 1, plan; nothing is written.** `<snapshot-dir>` is opened as a root the same way. The
+  snapshot is walked with R-AR-OPEN's
   descriptor-relative, no-follow machinery. Only directories and regular files are allowed.
   Refused: a symlink, a special file, a non-UTF-8 name, an R-AR-READ name-rule violation, an
-  R-AR-VCS hit, more than 100 000 entries or more than 2 GiB in total. On the target side each
+  R-AR-VCS hit, a Git-shaped snapshot directory (R-AR-META), more than 100 000 files or 200 000
+  nodes (R-AR-PLAN, counted while walking), or more than 2 GiB in total. On the target side each
   planned path is checked with `statat(AT_SYMLINK_NOFOLLOW)` along its components. An existing
   symlink at any component, a non-directory where a directory is needed, a directory where a file
-  goes, or a special file → refused (D17: `rsync -a` would have replaced user symlinks). Any
-  refusal happens before the first write.
+  goes, or a special file → refused (D17: `rsync -a` would have replaced user symlinks). Every
+  existing target directory the plan enters must pass R-AR-META (identity not in `M`, not
+  Git-shaped), and its identity is recorded for phase 2. Any refusal happens before the first
+  write.
 - **Phase 2, write.** Missing directories: `mkdirat(parent, seg, 0o755)`, then opened `O_NOFOLLOW`
   and checked. Files: a temporary `.<name>.launch-<8 hex>.tmp` created with `openat(O_CREAT |
   O_EXCL | O_NOFOLLOW)` in the held target parent, `fchmod` 0644/0755 (owner-exec bit of the
@@ -1023,7 +1274,9 @@ replaces `rsync -a <outputDir>/ .`:
   `renameat(parent, tmp, parent, name)`. That atomically replaces an existing regular file. If a
   symlink appears there after phase 1, the rename replaces the link itself and never writes through
   it. Target directories are entered only with `openat(O_DIRECTORY | O_NOFOLLOW)`, so a component
-  swapped for a symlink after planning fails the write instead of escaping.
+  swapped for a symlink after planning fails the write instead of escaping. An entered existing
+  directory whose identity differs from the one recorded in phase 1 stops the apply before that
+  write (R-AR-META).
 - Never deletes target files (parity: `rsync -a` without `--delete`). Existing directories keep
   their modes and timestamps are not preserved (D17).
 - A failure in phase 2 stops at once, removes the current temporary file and reports "Applying the
@@ -1043,6 +1296,35 @@ replaces `rsync -a <outputDir>/ .`:
   (9) hook after planning swaps a target directory for a symlink → that write fails `ELOOP`, outside
   untouched, temporary file removed; (10) an injected write failure halfway → stops, reports the
   count, temporary file removed.
+- Tests T-APPLY-11..17 (revision 3, R-AR-META; temporary repositories built with the `git`
+  binary. Each layout is first asserted with `git rev-parse --git-dir --git-common-dir`. "Unchanged"
+  means the SHA-256 of every file under the target, metadata included, is identical before and
+  after. The marker check runs the test `git status` with the repository's own configuration):
+  (11) `git init --separate-git-dir=<T>/repo-admin <T>` with one commit; the snapshot carries
+  `repo-admin/config` (the real config plus `core.fsmonitor = ./helper`), a marker-writing
+  `helper` and `repo-admin/hooks/pre-commit` → refused before any change, target unchanged, no
+  marker after `git status`. Run twice with a test-only switch disabling first the identity rule,
+  then the Git-shaped rule, so that each rule is shown to refuse on its own. (12) Common-dir
+  indirection: a linked worktree `<T>` made with `git worktree add`, whose per-worktree
+  directory and common directory are then moved into `<T>` as `wt-admin/` and `common-admin/`
+  and re-linked with `git worktree repair`. A snapshot with `common-admin/config` (fsmonitor) →
+  refused; one with `wt-admin/config.worktree` → refused; unchanged; no marker. (13) Normal
+  separate-git-dir overlay: Git directory outside `<T>`; an ordinary snapshot applies byte-exact
+  and the external Git directory is unchanged. (14) Target root inside metadata: `--into
+  <T>/repo-admin`, `--into <T>/repo-admin/hooks` and, in an ordinary layout, `--into <T>/.git` →
+  refused before any write; `--into <T>/sub` → applies. (15) Nested and shaped directories: an
+  untracked nested repository `vendor/x` whose `.git` file points to in-tree `vendor/x-admin`, and
+  a snapshot writing `vendor/x-admin/config` → refused; a bare repository `tools/lib.git/` in the
+  target and a snapshot writing `tools/lib.git/hooks/x` → refused; a snapshot directory `newmeta/`
+  with `HEAD`, `objects/` and `refs/`, and one with a `commondir` file → refused; a snapshot
+  directory holding only a file named `HEAD` → applies. (16) Fail closed, each before the snapshot
+  is read, with zero writes and its own fixed reason: Git missing (non-existent program path), a
+  target outside any repository (exit 128), a fake `git` printing five lines, a relative path, the
+  echoed `--path-format=absolute` of an old Git, or sleeping past an injected short limit; and
+  `GIT_DIR`, `GIT_WORK_TREE`, `GIT_COMMON_DIR`, `GIT_CONFIG_COUNT` each set in `MapEnv`. (17) Swap after
+  planning: an `ApplyHook` between phases renames a planned target directory away and moves the
+  in-tree Git directory to its name → the phase-2 identity check stops before that write, and the
+  metadata is unchanged.
 
 ### R-AR-PERM. Permissions summary
 
@@ -1066,7 +1348,9 @@ in safe `std`). Create modes can only be narrowed by it, and `fchmod` then sets 
   shared `RetryPolicy` default makes the retry decision and backoff (3 retries,
   throttling/5xx/connect/timeout; `Adaptive` label as documented) inside a small launch runner
   (`launch/http.rs`), because `ApiClient` sends through the collected `Transport::send`. Each
-  attempt's `Timeouts` are 120 s/120 s, capped by the remaining operation deadline (R-API-BODY).
+  attempt's `Timeouts` are a fixed 120 s/120 s. The remaining operation deadline is enforced by
+  the absolute deadline in its `StreamLimits` (R-API-BODY, TA-STREAM-DL), not by shrinking
+  `Timeouts`.
 - Paths: `/api/uploads`, `/api/launches`, `/api/launches/{id}`, `/api/launches/{id}/start`; `{id}`
   is `toolkit_aws::transport::percent_encode`d (so `/` becomes `%2F`, as botocore's non-greedy
   label). `include` is sent as repeated `include=<value>` query members, values split on `,` and
@@ -1095,40 +1379,138 @@ refuses the first frame that would pass `max_body_bytes` (`StreamError::TooLarge
 the cap is handed over) and each chunk is at most `max_chunk_bytes`. On top of that seam, a
 launch `BoundedBody` collector:
 
-- **Per-operation cap**, passed as `StreamLimits::new(cap, 64 KiB)` **at open time**, so the
-  limiter applies before any byte is collected:
+- **Revision 3 call sequence (#5064).** Revision 2 passed a cap of 0 for bodies that are never
+  read and chose success-versus-error caps "at open time". Neither is possible with the pinned S1
+  API: `StreamLimits::new` refuses a zero bound (`InvalidConfig`), and the limits are taken by
+  `open` before the status exists. The sequence for every network operation is now:
+  1. `open(request, &StreamLimits::new(ceiling, 64 KiB)?.with_deadline(attempt_deadline))`, where
+     `ceiling` is the operation's positive **transport ceiling** from the table below and
+     `with_deadline` comes from TA-STREAM-DL. Every row's `StreamLimits::new` call is a
+     compile-time-known positive pair, and T-BODY-11 constructs each one with the production
+     function.
+  2. Read `status()` and `headers()`. **No `next_chunk` call happens before the status is
+     classified.**
+  3. Classify by the operation's outcome table: *zero-read* → drop the stream at once, with zero
+     pulls; *collect* → set the effective cap, narrowing the stream with
+     `narrow_body_limit(cap)` (TA-STREAM-DL) when the cap is below the ceiling, then collect.
 
-  | Body | Cap | Destination |
-  | --- | --- | --- |
-  | Launch API success (`GetLaunch`, `ListLaunches`, ...) | 64 MiB (Q12) | `Vec`, then JSON |
-  | Launch API error status | 64 KiB | `Vec`, only to read the error code (R-API-CODE) |
-  | OIDC `RegisterClient`/`CreateToken`, success or error | 64 KiB | `Vec`, then JSON |
-  | presigned PUT, any status | 0: the body is never read; the stream is dropped after the status | none |
-  | snapshot download (R-AR-EXT) | 500 MiB | `Vec` (the in-memory archive) |
-  | `DeleteLaunch` success | 0: never read (R-API-OPS) | none |
+  | Operation | Transport ceiling at `open` | Status 2xx | 3xx | ≥ 400 |
+  | --- | --- | --- | --- | --- |
+  | Launch API JSON operations (`GetLaunch`, `ListLaunches`, `CreateUploadUrl`, `CreateLaunch`, `StartLaunchExecution`) | 64 MiB (Q12) | collect, cap 64 MiB, then JSON | zero-read; error naming the status | narrow to 64 KiB, collect for the code (R-API-CODE) |
+  | `DeleteLaunch` | 64 KiB | zero-read; success JSON of R-API-OPS | zero-read; error naming the status | collect, cap 64 KiB, for the code |
+  | OIDC `RegisterClient`/`CreateToken` | 64 KiB | collect, cap 64 KiB, then JSON | zero-read; failed | collect, cap 64 KiB, for the code |
+  | presigned PUT | `NO_READ = StreamLimits::new(1, 1)` | zero-read; success | zero-read; fixed PUT failure text | zero-read; fixed PUT failure text |
+  | snapshot download (R-AR-EXT) | 500 MiB | collect, cap 500 MiB, into the in-memory archive | zero-read; error naming the status | zero-read; error naming the status (the S3 error body is never needed) |
 
-- **Content-Length**: when the header parses as an integer greater than the cap, the stream is
-  dropped before the first `next_chunk` (`TooLarge`). A declared length within the cap is used only
-  to pre-allocate `min(length, 64 KiB)`. It is never trusted: if more bytes arrive than declared,
-  the collector stops at the first extra byte with `InvalidResponse` (the SDK transport also
-  enforces the framing; the collector does not rely on it). A malformed or duplicated
-  Content-Length is `InvalidResponse`.
-- **Cumulative count**: the collector keeps its own running total next to the limiter's and never
-  holds more than `cap` bytes plus one chunk of at most 64 KiB.
-- **Lifetime**: every operation has an absolute monotonic deadline (API 120 s per attempt and
-  360 s for all attempts, OIDC 30 s (inside R-CB-TIME's cutoff for the callback exchange), PUT
-  300 s, download 300 s). The collector checks the deadline before each `next_chunk`, and the
-  request's read timeout is set to `min(configured, remaining)`, so a trickling server is cut off
-  at the deadline plus at most one read timeout.
-- **Cancellation**: on `TooLarge`, deadline, excess bytes or any error, the `ResponseStream` is
-  dropped at once, which closes the connection (`SdkStream` owns the hyper body). No retry follows
-  a cap violation (it is not a transient condition).
+  `NO_READ` makes the "never read" rule hold even if a future code path pulled by mistake: such a
+  pull could hand over at most one byte before `TooLarge`.
+- **Content-Length.** A zero-read outcome **never inspects** `Content-Length` (parity: urllib's
+  PUT never read the body, and botocore did not read a 204). A huge, malformed or duplicated value
+  there is ignored, and the connection is closed by dropping the stream, never drained. For a
+  collect outcome: a value greater than the *effective* cap → `TooLarge` before the first pull. On
+  a ≥ 400 status that means "no code from the body": the error still carries the status and the
+  allowlisted header code (T-BODY-5). A value within the cap is used only to pre-allocate
+  `min(length, 64 KiB)` and is never trusted. If more bytes arrive than declared, the collector
+  stops at the first extra byte with `InvalidResponse`. A malformed or duplicated value on a
+  collect outcome is `InvalidResponse`.
+- **Retained bytes, both sides of the seam.** The collector's `Vec` holds at most the effective cap
+  `C`, counted by the collector itself next to the limiter. Inside the stream, `ChunkLimiter`
+  keeps the raw frame it admitted until the frame has been handed over in chunks. With
+  TA-STREAM-DL, a frame is admitted only when `delivered + frame ≤ C` after narrowing. The length
+  is checked *before* the frame is copied out of the transport's buffer, so an oversized frame is
+  refused without a copy. So: retained ≤ `C` (collector) + `R` (the admitted raw frame, `R ≤ C −`
+  bytes delivered before it) + one 64 KiB chunk in flight. Analytically that is at most
+  `2·C + 64 KiB`. For the pinned SDK stack, `R` is also bounded by hyper's read buffer, and
+  TA-STREAM-DL's T-SDL-7 pins `R ≤ 512 KiB` (the test fails if a dependency update raises it). The
+  bound used for budgeting is therefore `C + 512 KiB + 64 KiB`: 64 KiB-class bodies stay under
+  1 MiB, API success under 64.6 MiB, download under 500.6 MiB. The hyper connection buffer itself
+  sits below the seam and is the same for every SDK user.
+- **Lifetime (revision 3, #5065).** Revision 2 checked the clock before each `next_chunk` and set
+  the read timeout to `min(configured, remaining)`. The pinned `SdkStream` captures its idle
+  timeout once at `open` and has no per-call deadline, so a read started just before the cutoff
+  could overrun it by a whole read timeout. That design is withdrawn. Every operation has an
+  absolute monotonic **operation deadline** `D_op`: API 360 s for all attempts; OIDC
+  `RegisterClient` and refresh 30 s; the callback's code exchange R-CB-TIME's `T`; PUT 300 s;
+  download 300 s. Each attempt has `attempt_deadline = min(attempt start + per-attempt limit,
+  D_op)`, with per-attempt limits of 120 s for the API, 30 s for OIDC, and `D_op` itself for PUT
+  and download. That instant goes into `StreamLimits::with_deadline`. TA-STREAM-DL then enforces it
+  inside the transport, where the blocking happens: on `open` (connect, TLS, request write and
+  response head) and on every `next_chunk`. A read in flight at the deadline is cancelled by
+  dropping its future, and the call returns `StreamError::DeadlineExceeded` (or `AwsError` timeout
+  phase `Deadline` from `open`). No thread is created to abandon a read. `Timeouts` stay fixed per
+  operation class (120 s/120 s, OIDC 30 s/30 s, PUT and download 300 s/300 s), so `SdkTransport`'s
+  per-`Timeouts` connector cache keeps one entry per class instead of one per attempt.
+- **Retries and backoff under the same bound.** The runner starts an attempt only while
+  `now < D_op`. Before sleeping a backoff `b` it checks `now + b < D_op`, otherwise it stops with
+  the last attempt's error. The sleep itself goes through the injected `Sleeper`, and the attempt
+  after it gets the remaining deadline. A deadline failure is never retried.
+- **What is not cut: residual R-DNS.** `GuardedResolver` resolves with the blocking
+  `to_socket_addrs` inside `DnsFuture::ready`, which runs on the runtime thread before any timer
+  can fire. One in-flight system DNS lookup can therefore overrun `D_op` by the system resolver's
+  own limits from its configuration (with glibc's defaults of 5 s per attempt, 2 attempts and at
+  most 3 name servers, about 30 s per name tried; search-list expansion can try more names). The
+  design states the bound as "`D_op` plus at most one system DNS lookup"; it does
+  not claim an absolute cutoff for that phase. The callback helper is covered anyway by its
+  watchdog (R-CB-TIME). Making DNS cancellable (an async resolver) is a `toolkit-aws` question for
+  #5056, not a launch requirement.
+- **Cancellation**: on `TooLarge`, deadline, excess bytes, a zero-read outcome or any error, the
+  `ResponseStream` is dropped at once, which closes the connection (`SdkStream` owns the hyper
+  body). No retry follows a cap violation (it is not a transient condition).
 - **Default build**: without the `aws-sdk` feature the slice's `StreamingTransport` is an
   `Unavailable` implementation that returns the Q20 message from `open`. There is no unbounded
   fallback.
 - **Dependency**: production network use of L3-L6 waits until S1 is on rolling (Q20). The offline
   tests need `StreamingTransport` and `FakeStreamingTransport` from the same commit, so L3 starts
-  after S1 is integrated (section 7.2).
+  after S1 is integrated (section 7.2) **and** after TA-STREAM-DL (below) has landed on top of it.
+- **Named prerequisite TA-STREAM-DL (toolkit-aws, revision 3).** A launch-local wrapper cannot
+  provide the deadline. `ResponseStream::next_chunk` blocks inside `SdkStream`'s private
+  `block_on` with the idle timeout captured at `open`, and the only way to stop it from outside
+  would be a thread that abandons the read, which #5065 rules out. So the addition goes into
+  `toolkit-aws`, additive and small. The only implementations of the trait are `SdkStream` and
+  the fake, both in that crate.
+  1. `StreamLimits::with_deadline(self, deadline: std::time::Instant) -> Self` and
+     `deadline(&self) -> Option<Instant>`. `StreamLimits` stays `Copy`, and `new` still refuses
+     zero bounds. Without a deadline every behaviour is exactly S1's.
+  2. `SdkTransport::open`: a deadline already passed → `AwsError::timeout(TimeoutPhase::Deadline,
+     ...)` before the connector is called (no byte sent). Otherwise the existing
+     `self.call(connector, request)` future runs under `tokio::time::timeout_at(deadline)`.
+     Expiry drops the future, which cancels connect, TLS, request write and the head wait, and
+     returns the same `Deadline` timeout. `TimeoutPhase` gains `Deadline` (`Display` "deadline").
+  3. `SdkStream::next_chunk`: `wait = min(idle, deadline − now)`. A passed deadline returns
+     `StreamError::DeadlineExceeded` without polling. Otherwise `tokio::time::timeout(wait,
+     body.next())`; expiry while the deadline was the binding bound → `DeadlineExceeded`, else
+     `IdleTimeout` as today. The pending `body.next()` future is dropped, so the read in flight is
+     cancelled. After `DeadlineExceeded` the stream is terminal (every later call returns it).
+     `StreamError` gains `DeadlineExceeded`.
+  4. `ResponseStream::narrow_body_limit(&mut self, max_body_bytes: u64)`: lowers the stream's cap
+     to `min(current, max_body_bytes)` and never raises it. If more has already been delivered,
+     the stream becomes `TooLarge`-terminal. Both implementations delegate to the new
+     `ChunkLimiter::narrow` and `ChunkLimiter::remaining() -> u64`.
+  5. `SdkStream`'s pull compares the frame's length with `limiter.remaining()` *before*
+     `bytes.to_vec()`. A frame over the remainder is refused as `TooLarge` without a copy.
+  6. `FakeStreamingTransport`: records the `StreamLimits` (with deadline) of every `open` and
+     every `narrow_body_limit` call. A new `FakeChunk::Stall` returns `DeadlineExceeded` when the
+     stream has a deadline and `IdleTimeout` otherwise. The fake is a unit seam; the cut of a real
+     blocked read is proven on `SdkTransport` (T-SDL-1..3).
+  - Tests T-SDL-1..8 (in `toolkit-aws`, offline; the loopback TLS harness of S1's `tls_tests.rs`
+    with the test resolver, real time with short deadlines and a slack bound of 250 ms, no
+    external network): (1) the server sends the head and one body byte, then stalls with the
+    connection open. Idle timeout 120 s, deadline `now + 300 ms` → `next_chunk` returns
+    `DeadlineExceeded` within 300 ms + slack, the server observes the connection closed after the
+    stream is dropped, and the call never waits for the idle timeout. (2) The server accepts and
+    never sends a head → `open` returns the `Deadline` timeout within the bound. (3) The server
+    accepts TCP and stalls the TLS handshake → the same. (4) `narrow_body_limit`: narrowing below
+    what was delivered → `TooLarge`; raising is a no-op; narrowing then a frame over the
+    remainder → `TooLarge`, and nothing past the remainder is handed over. (5) `StreamLimits`:
+    `new(0, _)`/`new(_, 0)` still refused; `with_deadline` round-trips; no deadline gives S1
+    behaviour byte for byte (the S1 stream tests re-run unchanged). (6) A deadline already passed
+    at `open` → no connection is accepted by the harness. (7) Frame bound: the server writes an
+    8 MiB body in one `write`; every raw frame `SdkStream` admits is ≤ 512 KiB (pins `R` for
+    R-API-BODY's retention bound). (8) The fake: recorded limits and narrows, and `Stall` with and
+    without a deadline.
+  - Ownership: filed as #5080 (`toolkit-aws`), related to #5056 (promoting
+    the bounded body reader into `toolkit-aws`). L3 depends on it. If the PM prefers, it can be
+    landed as the first commit of L3, touching `toolkit-aws` only, with T-SDL-1..8.
 - Tests T-BODY-1..10: (1) a launch `GeneratingStream` test double that synthesises chunks lazily,
   without end, and counts pulls; on an API success without Content-Length the collector stops at
   cap + 1 with `TooLarge`, keeps ≤ cap + 64 KiB, pulls at most `cap / 64 KiB + 1` chunks and drops
@@ -1140,11 +1522,36 @@ launch `BoundedBody` collector:
   (`invalid_response`), no session written; (7) a PUT answered 200 with an endless body → success
   with zero pulls, and answered 403 → fixed text with zero pulls; (8) an endless download, with the
   cap injected small in the unit and the production constant asserted separately → stopped at cap
-  + 1, nothing on disk; (9) one byte per read timeout minus epsilon (fake clock) → stopped at the
-  operation deadline with the timeout error; (10) a source gate in the style of `r_log_gate`: no
+  + 1, nothing on disk; (9) (replaced in revision 3) the runner passes
+  `min(attempt start + 120 s, D_op)` to `StreamLimits::with_deadline` on every attempt (asserted
+  from the limits the fake records), and a fake stream answering `DeadlineExceeded` ends the
+  operation with "Could not reach Launch with AWS in {region}." and no retry. That the production
+  transport really cuts a blocked read is proven by T-SDL-1..3 below, not by a fake clock between
+  immediately returning chunks; (10) a source gate in the style of `r_log_gate`: no
   file under `src/launch/` names `Transport::send`, `.send(` on a `Transport`, or `ApiClient`, and
   the network constructors take `&dyn StreamingTransport`. None of these tests uses a prebuilt
   oversized `Vec` as evidence; only the collector's retained bytes and pull counts are asserted.
+- Tests T-BODY-11..16 (revision 3, #5064 and #5065; over `FakeStreamingTransport` as extended by
+  TA-STREAM-DL. The fake applies `StreamLimits` and `narrow_body_limit` through the real
+  `ChunkLimiter` and records the limits of every `open`. A fake that accepted a zero cap or knew the
+  status before `open` would not be valid evidence, and none does): (11) the production
+  `limits_for(operation)` constructs `StreamLimits::new` for every table row without error, with
+  the values of the table, `NO_READ == (1, 1)` and no zero anywhere; (12) PUT answered 200 and
+  403, `DeleteLaunch` answered 204 and 200 with an arbitrary body and a `Content-Length` of
+  `2^63`: `frames_pulled() == 0` each time, the correct output or fixed text, and no
+  `Content-Length` error; `DeleteLaunch` answered 404 with an error body → narrowed to 64 KiB,
+  the allowlisted code read; (13) one `GetLaunch` operation whose first attempt is 500 with a
+  64 KiB + 1 body (narrowed limit → `TooLarge`, no body code, retry decided from the status) and
+  whose second attempt is 200 with a 1 MiB body → success. The fake's records show ceiling
+  64 MiB for both opens and a narrow call only on the 500; (14) an oversized first raw frame:
+  a 500 status whose single raw frame is 1 MiB → refused at admission after narrowing, zero bytes
+  handed to the collector. A 200 status whose single raw frame is ceiling + 1 → refused at
+  admission. The instrumented peak of collector bytes plus limiter pending stays within
+  `C + R + 64 KiB` in each case; (15) the download path: 403 and 307 → zero pulls, error naming the
+  status, nothing on disk; (16) retries near the bound: with a fake clock at `D_op − 1 s` and a
+  scripted 503, a backoff of 2 s is not slept and the operation ends with the 503's error; with a
+  backoff of 0.5 s the next attempt's deadline is exactly `D_op`; no attempt opens at or after
+  `D_op`.
 
 ### R-API-OPS. Expected status and body per operation (#5051)
 
@@ -1269,14 +1676,17 @@ in L5).
 | `launch/api.rs` | `BearerSigner`, the six operations, per-operation status/body table, presigned PUT, error-code allowlists, known-secret scrub, error mapping and hints (R-API-OPS, R-API-CODE) |
 | `launch/shape.rs` | embedded-model response shaping |
 | `launch/archive/fsops.rs` | the only `rustix` user: held-descriptor root/walk/open (R-AR-OPEN), staging, creation, exclusive publication and cleanup (R-AR-STAGE), apply writes (R-AR-APPLY), parent policy; `WalkHook`/`ExtractHook` seams |
-| `launch/archive/select.rs`, `git.rs`, `zip_write.rs`, `zip_read.rs` (R-ZIP-FRAME and the profiles), `vcs.rs` (R-AR-VCS), `extract.rs`, `apply.rs`, `crc32.rs` | R-AR-* |
+| `launch/archive/select.rs`, `git.rs`, `zip_write.rs`, `zip_read.rs` (R-ZIP-FRAME and the profiles), `vcs.rs` (R-AR-VCS), `plan.rs` (R-AR-PLAN, revision 3), `meta.rs` (R-AR-META, revision 3), `extract.rs`, `apply.rs`, `crc32.rs` | R-AR-* |
 | `launch/clock.rs` | `Clock`, `Random`, `Exit` seams (production: monotonic and system time, `getrandom`, `process::exit`) |
 
 Seams for offline tests: `StreamingTransport` (`toolkit_aws::testing::FakeStreamingTransport`
 from S1, plus the launch `GeneratingStream` double), `HostResolver` (`FixedResolver`), `Env`
 (`MapEnv`), `Clock`, `Random` (seeded fake), `Exit` (watchdog), the callback slot I/O (`SlotIo`,
 so trickling and blocked peers are scripted without real timing), state directory, `git` program
-path, a `Spawner` for the helper, and the `WalkHook`/`ExtractHook` race seams.
+path, a `Spawner` for the helper, and the `WalkHook`/`ExtractHook` race seams. Revision 3 adds a
+`ListenerIo` (scripted `accept`) and the `Sleeper` for R-CB-LOAD pacing; the `CommitHook`, the
+`rename` and the pending-record write seams for R-CB-TIME; an `ApplyHook` between R-AR-APPLY's
+phases; the recording `fsops` used by T-PLAN; and TA-STREAM-DL's fake recording of limits.
 
 Router facts the port must live with (recorded divergences D1-D4):
 
@@ -1346,10 +1756,18 @@ Each slice is one verified commit set: tests written first, then code, then the 
     `C:x`, `a\..\x`, NUL, control characters, `.` segments, empty segments, overlong names,
     duplicates by case and by NFC, symlink/FIFO/device modes, declared-size and ratio bombs, upload
     single-root rule, Snapshot profile without it); T-ZIP-FRAME-1..34 (the R-ZIP-FRAME invariant
-    table, including exact deflate consumption through `miniz_oxide`); T-AR-VCS-1..8 (R-AR-VCS).
-- **L3. OIDC and token lifecycle** (starts once #5017 S1 is on rolling: its `StreamingTransport`
-  and `FakeStreamingTransport` are the test seam)
-  - Tests: T-BODY-1..10 (R-API-BODY, `launch/http.rs`); T-CODE-1..8 (R-API-CODE; the OIDC half
+    table, including exact deflate consumption through `miniz_oxide`); T-AR-VCS-1..8 (R-AR-VCS);
+    T-PLAN-1..5 (R-AR-PLAN's planner over byte-built archives, pure: no file system).
+- **TA-STREAM-DL. `toolkit-aws` stream deadline and narrowing** (revision 3, #5064/#5065; named
+  prerequisite of L3, on top of S1; specification in R-API-BODY)
+  - Tests first: T-SDL-1..8. Code: `StreamLimits::with_deadline`, `TimeoutPhase::Deadline`,
+    `StreamError::DeadlineExceeded`, `ResponseStream::narrow_body_limit`, `ChunkLimiter::narrow`
+    and `remaining`, the `SdkTransport`/`SdkStream` deadline paths, the pre-copy frame check, the
+    fake's recording and `FakeChunk::Stall`. Touches `toolkit-aws` only.
+- **L3. OIDC and token lifecycle** (starts once #5017 S1 is on rolling and TA-STREAM-DL has landed
+  on top of it: S1's `StreamingTransport` and `FakeStreamingTransport`, with TA-STREAM-DL's
+  deadline and narrowing, are the test seam)
+  - Tests: T-BODY-1..16 (R-API-BODY, `launch/http.rs`; 9 replaced in revision 3); T-CODE-1..8 (R-API-CODE; the OIDC half
     here, the Launch API half re-run in L5); T-OIDC-1..10 over `FakeStreamingTransport` (exact
     `RegisterClient` and `CreateToken` request
     bodies and paths; no `authorization` header; response missing tokens; client-lifetime cap;
@@ -1369,24 +1787,61 @@ Each slice is one verified commit set: tests written first, then code, then the 
     loopback listener (bound address is `127.0.0.1`, port non-zero; a second callback after success
     is refused at TCP level; a silent client dropped at its head deadline; deadline expiry with a
     test clock; pending record states; lock held while alive and free after exit; stale record
-    cleanup); T-CB-TIME-1..8 (R-CB-TIME, injected `Clock`, `SlotIo` and `Exit`: (1) one byte every
+    cleanup); T-CB-TIME-1..14 (R-CB-TIME, injected `Clock`, `SlotIo`, `Exit` and, from revision 3,
+    a `CommitHook` between admission and `rename`, a `rename` seam and a record-write seam;
+    7 replaced, 9-14 added in revision 3: (1) one byte every
     1.9 s keeps no slot past its 2 s head deadline; (2) a valid head trickled over more than 2 s is
     dropped and the flow stays `listening`; (3) a callback complete just before `F` is eligible and
     one completing at `F` is not (`timed_out`); (4) a peer that never reads the page: the slot is
     dropped at its write deadline and a state-matching callback's exchange still proceeds; (5) the
     exchange through a fake transport whose attempts cross `T`: no attempt starts after `T`,
     `timed_out`, no session file; (6) the exchange response arriving at `T` + ε: the commit gate
-    refuses, no session file; (7) the main thread blocked forever in the transport: the watchdog
-    writes `timed_out` and calls `Exit` at `T + 2 s`, and a commit in progress at that moment
-    completes first; (8) `auth-wait` reports a kept terminal record and deletes it, reports "did not
-    finish in time" after `cutoff + 5 s`, and `auth-start` removes records older than one hour);
-    T-CB-LOAD-1..5 (R-CB-LOAD: (1) 300 malformed plus 300 wrong-state requests (with `code` and with
+    refuses, no session file; (7) (replaced) the main thread blocked forever in the transport in
+    state `Exchanging`: at `W` the watchdog CASes to `Aborted`, makes one `timed_out` record write
+    and calls `Exit(1)` without waiting. The main thread, released afterwards, finds `Aborted`,
+    calls no `rename` and writes no record; (8) `auth-wait` reports a kept terminal record and
+    deletes it, reports "did not finish in time" once the lock is free after the cutoff, and
+    `auth-start` removes records older than one hour and its own stale `.tmp` files;
+    (9) `CommitHook` pauses right after a successful CAS at `T − 1 ms`, before `rename`. The clock
+    is advanced to `T`, `W` and `cutoff + 5 s`. At `W` the watchdog calls `Exit(1)` at once with no
+    record write. With the lock held and no session, the `auth-wait` evaluator keeps polling before
+    `cutoff + 5 s` and returns `helper_blocked` at it, never the final timeout. Then the hook is
+    released and the rename publishes; once the lock is free the evaluator returns success. In a
+    variant where the released rename fails, lock free and no session → "did not finish in time";
+    (10) a `rename` seam that never returns: `Exit(1)` at exactly `W`, no record write after `W`,
+    the evaluator answers `helper_blocked` at `cutoff + 5 s` and at `cutoff + 1 h`; (11) record
+    seams: the watchdog's `timed_out` write fails → `Exit(1)` still at `W`. The write blocks →
+    exactly one write attempt and no other operation; the evaluator reports `helper_blocked`
+    while the lock is held and "did not finish in time" once it is free; (12) the CAS at `T − ε`
+    is admitted and at exactly `T` refused (no `rename` call, temporary file removed). A watchdog
+    winning `Exchanging → Aborted` first makes the main CAS fail with no `rename` and no record
+    write. The seam call order shows the temporary write and `sync_all` strictly before the CAS;
+    (13) the decision table: every combination of record status (none, `listening`,
+    `exchanging`, `succeeded`, `failed`, `timed_out`, unreadable), lock held or free, session valid
+    or absent, and time (before or after `cutoff`, before or after `cutoff + 5 s`) gives its row.
+    No combination with the lock held yields a final failure or timeout; (14) lock custody: the
+    helper's `Spawner` records zero spawns, every file it opens is `O_CLOEXEC`, and in T-FLOW a
+    real helper's lock becomes free only after `Child::wait` has reaped the process);
+    T-CB-LOAD-1..10 (R-CB-LOAD; 4 replaced, 6-10 added in revision 3, with a scripted `ListenerIo`
+    and a fake clock: (1) 300 malformed plus 300 wrong-state requests (with `code` and with
     `error`), then a state-matching callback → success; (2) 16 idle connections hold every slot, a
     17th is closed unread and the callback is served after a slot frees; (3) a continuous flood
     until `F` → `timed_out` and no other status; an exhaustive `match` shows the status enum has no
-    traffic-driven member; (4) instrumented bounds: never more than 16 slots or 8 KiB per buffer, and
-    the loop sleeps when idle; (5) closed-unread and malformed connections leave the flow state
-    byte-identical in the pending record); T-FLOW-1..8 at binary level using
+    traffic-driven member; (4) (replaced) instrumented bounds: never more than 16 slots or 8 KiB
+    per buffer, per turn at most 8 `accept` and 16 slot operations, busy turns paced to 2 ms and
+    idle turns to 10 ms; (5) closed-unread and malformed connections leave the flow state
+    byte-identical in the pending record; (6) `accept` always ready (an endless flood), with a
+    valid callback already admitted in slot 5 whose head arrives in 3 reads: at most 8 accepts per
+    turn, slot 5 read once every turn, success within 3 turns; (7) the clock advances 1 ms per
+    operation and `F` falls inside a turn's admission quantum: the loop stops at most one
+    operation after `F`, status `timed_out`; (8) a trickling slot's head deadline passes in the
+    middle of a turn while `accept` is always ready: the slot is dropped at most one operation
+    late and is never served after its deadline; (9) one simulated second (the clock moves by
+    sleeps plus 1 µs per operation) with `accept` always ready and all 16 slots always
+    progressing: at most 500 turns, 4 000 accepts and 8 000 slot operations, status still
+    `listening`; with no traffic at most 100 turns; (10) fairness: 16 readable slots are each
+    served exactly once per turn, the starting slot rotates, and no slot waits more than one turn
+    between services); T-FLOW-1..8 at binary level using
     `CARGO_BIN_EXE_toolkit` (`auth-callback` with
     valid stdin prints one port line and serves; empty, oversized, invalid stdin → exit 1 without
     binding; helper argv contains no secret (read from `/proc/<pid>/cmdline` on Linux, skipped
@@ -1408,10 +1863,11 @@ Each slice is one verified commit set: tests written first, then code, then the 
     T-CLI-1..6 (routes registered and documented, `every_slice_documents_its_commands`, usage
     re-pin, bare `-` refusals, missing-argument JSON, `#4751` inventory entry, #4941
     `diag_contract` cases).
-  - Docs: `docs/migration/launch-with-aws.md` (commands, divergences D1-D18, residuals), the
+  - Docs: `docs/migration/launch-with-aws.md` (commands, divergences D1-D22, residuals), the
     `docs/migration/README.md` row.
 - **L6. Snapshot download, extraction and apply** (Q1 accepted)
-  - Tests: T-STAGE-1..9 (R-AR-STAGE); T-APPLY-1..10 (R-AR-APPLY); T-EXT-1..14 (every
+  - Tests: T-STAGE-1..9 (R-AR-STAGE); T-APPLY-1..17 (R-AR-APPLY, and R-AR-META from revision 3);
+    T-PLAN-6..8 (R-AR-PLAN through staging, `download-snapshot` and the apply walk); T-EXT-1..14 (every
     T-ZIP-FRAME, T-ZIP-64, T-AR-READ and T-AR-VCS refusal run end to end through
     `download-snapshot` **with nothing created** at the destination and no `.partial` left; a
     valid snapshot lands atomically with the exact modes; destination exists → refused before
@@ -1442,6 +1898,7 @@ Prefer what the workspace compiles already; every addition is pinned with `=`.
 | `miniz_oxide` (exact version fixed at implementation, 0.8.x or 0.9.x already in the local registry) | **new**, pure Rust, one transitive crate (`adler2`) | raw deflate/inflate through `inflate::core` with a bounded wrapping output buffer and an exact-consumption check (R-ZIP-FRAME step 8); hand-writing deflate is out of the question (Q2) |
 | `rustix` `=1.1.5`, features `std`, `fs`, `process`, `cfg(unix)` only | **new to the default build**; the same version #5017 S1 already pins as an optional `cfg(unix)` dependency of `toolkit-aws` (`std`, `stdio`). Its dependencies `bitflags`, `errno` and `libc` are already in `Cargo.lock`; `linux-raw-sys` arrives with S1 | safe `openat`/`statat`/`fstat`/`mkdirat`/`unlinkat`/`fchmod`/`Dir`/`renameat_with(NOREPLACE)` and `geteuid` for R-AR-OPEN, R-AR-STAGE and R-AR-APPLY (#5039, #5047); safe `std` has no descriptor-relative file API, and the workspace forbids `unsafe`. Used only in `launch/archive/fsops.rs` |
 | `toolkit-aws` `stream` module and `testing::FakeStreamingTransport` | from #5017 S1 (`be0a06df`), ungated (not behind `sdk`) | the bounded body seam of R-API-BODY (#5044) |
+| `toolkit-aws` TA-STREAM-DL additions | **new prerequisite** (revision 3), additive to S1, no new crate (`tokio::time::timeout_at` is already in S1's tokio features through `tokio::time::timeout`) | absolute per-attempt deadlines on `open` and `next_chunk`, and status-time narrowing of the body cap (#5064, #5065) |
 | `toolkit-cli` feature `aws-sdk` | from #4413 S1 (accepted design `fd7e7ffd`, implementation #5017) | the real HTTPS `SdkTransport` (`Transport` and `StreamingTransport`) with R-ROOTS; the default build uses an `Unavailable` streaming transport like `asm exec` |
 
 Not added: an HTTP server crate (the callback needs one request line; `std::net` is enough and
@@ -1468,11 +1925,19 @@ sockets by the Unix-only T-AR-SEL, T-AR-OPEN and T-APPLY cases; the race tests s
 temporary directories through the `WalkHook`/`ExtractHook` seams. Nothing reads the real `HOME`,
 `~/.aws` or environment (injected seams, `MapEnv`), and nothing touches a real user repository.
 The pre-review resolution tests (T-AR-OPEN, T-AR-VCS, T-APPLY, T-CB-TIME, T-CB-LOAD,
-T-ZIP-FRAME, T-ZIP-64, T-BODY, T-CODE, T-STAGE, T-OPS) are all offline.
+T-ZIP-FRAME, T-ZIP-64, T-BODY, T-CODE, T-STAGE, T-OPS) are all offline. So are the revision-3
+tests: T-PLAN and T-CB-LOAD-6..10 (fake clock, scripted listener), T-CB-TIME-9..14 (fake clock and
+seams; 14 uses a real helper process), T-APPLY-11..17 (temporary repositories built with the
+`git` binary; `git worktree add`/`repair` need no network), and T-SDL-1..8. T-SDL runs in
+`toolkit-aws` on S1's loopback TLS harness with real time, deadlines of a few hundred
+milliseconds and a 250 ms slack bound, never an external host.
 
 Live-run additions from revision 2: record the snapshot ZIP's version-made-by host, flags and
 whether it uses data descriptors or ZIP64 (R-ZIP-FRAME may only be widened from that evidence,
-through a new Issue); run `apply-snapshot` on the sample app's migration branch.
+through a new Issue); run `apply-snapshot` on the sample app's migration branch. Revision 3 adds:
+record the snapshot's file and directory counts against R-AR-PLAN's budget, and run
+`apply-snapshot` once in an ordinary `.git` layout (R-AR-META's discovery on the operator's Git
+version).
 
 Needs the operator's live run (an operator to-do filed by the PM after L5, a disposable sample app,
 never CI):
@@ -1501,7 +1966,8 @@ at no cost to the user, but any spend or data upload stays an operator decision.
 - D6: callback accepts only `/`, checks `Host`, ignores wrong-state requests including `error`, never
   reflects `error_description`, extra security headers (R-CB-REQ, R-CB-PAGE).
 - D7: `auth-wait` never signals; specific timeout/exit messages instead of the generic one
-  (R-CB-WAIT).
+  (R-CB-WAIT). Revision 3 adds the non-final `helper_blocked` message when the helper's lock is
+  still held at `cutoff + 5 s` (R-CB-TIME decision table).
 - D8: OIDC endpoint fixed, `AWS_ENDPOINT_URL*` ignored; issuer URL rejects userinfo (R-TOK-OIDC).
 - D9: local id/name validation and token check before the upload work (R-API-HTTP).
 - D10: `null` required members are invalid responses (R-API-SHAPE).
@@ -1523,9 +1989,23 @@ at no cost to the user, but any spend or data upload stays an operator decision.
 - D18: `download-snapshot --output` refuses a parent directory that other users can modify
   without the sticky bit, or that another non-root user owns (R-AR-STAGE). The Python had no
   `--output`; its fixed `/tmp` names were the weakness this replaces.
-- D19: the callback serves at most 16 connections at a time with 2 s head and write deadlines,
-  and a token exchange started before the deadline may finish up to 60 s after it (R-CB-LOAD,
-  R-CB-TIME). The Python served one connection at a time with no per-connection timeout.
+- D19: the callback serves at most 16 connections at a time with 2 s head and write deadlines, a
+  fixed per-turn work quantum and pacing (at most 8 accepts and 16 slot operations per turn, at
+  most 500 turns per second; revision 3), and a token exchange started before the deadline may
+  finish up to 60 s after it (R-CB-LOAD, R-CB-TIME). The Python served one connection at a time
+  with no per-connection timeout.
+- D20 (revision 3): `apply-snapshot` runs only inside a Git work tree whose metadata one hardened
+  `git rev-parse` (Git 2.31 or later) can locate. It refuses to run with `GIT_DIR`-style variables
+  set, refuses to write into the repository's actual Git and common directories under any name,
+  and refuses directories that look like Git metadata on either side, including the rare ordinary
+  directory holding `HEAD` next to `objects` or `refs` (R-AR-META). `rsync -a` wrote anywhere,
+  including the metadata.
+- D21 (revision 3): network operations end at their absolute deadline, plus at most one system
+  DNS lookup (R-DNS), instead of after a per-read timeout (R-API-BODY, TA-STREAM-DL). Zero-read
+  outcomes ignore `Content-Length` entirely, as the Python did.
+- D22 (revision 3): `download-snapshot` refuses a snapshot that would create more than 200 000
+  files and directories, implicit parents included, and `apply-snapshot`'s walk uses the same
+  budget (R-AR-PLAN). `unzip` had no such bound.
 
 Residuals: W-1 Windows file permissions (R-TOK-MODE; tokens only, since the archive commands are
 Unix-only); R-2 one non-blocking `open` of a device node that a writer with `CAP_MKNOD` swaps into
@@ -1533,7 +2013,13 @@ the source tree (R-AR-OPEN); R-CB-DOS a local process can keep the callback's 16
 delay sign-in until the deadline, never end it early (R-CB-LOAD); L-1 advisory locks on network
 home directories (NFS) may not reflect liveness, in which case `auth-wait` falls back to the
 recorded cutoff; S-1 the bearer token and secrets live in process memory as ordinary strings until
-dropped. Revision 1's R-1 (rename over an empty racing directory) is closed by
+dropped. Revision 3: **R-CB-FS** a helper whose `rename` (or `timed_out` record write) blocks in
+the kernel, typically on a network or FUSE home directory, outlives `W` until that system call
+returns. No new operation starts after `W`, the session file is never partial, and `auth-wait`
+reports `helper_blocked` rather than a final result while the lock shows the helper alive
+(R-CB-TIME); on NFS, residual L-1 can weaken that lock signal. **R-DNS** one blocking system DNS
+lookup can overrun an operation deadline by the resolver's own configured limits
+(R-API-BODY), pending an async resolver in `toolkit-aws` (#5056's area). Revision 1's R-1 (rename over an empty racing directory) is closed by
 `renameat_with(NOREPLACE)` (R-AR-STAGE).
 
 ## 10. Open questions, each with the recommended answer
@@ -1595,7 +2081,9 @@ dropped. Revision 1's R-1 (rename over an empty racing directory) is closed by
   **PM ruling (seq 2), refined in revision 2:** L0-L2 proceed now. L3-L6 offline work starts once
   #5017 S1 (`be0a06df` or its landed successor) is on rolling, because R-API-BODY and its tests
   are built on S1's `StreamingTransport` and `FakeStreamingTransport`. Production network use
-  needs the `aws-sdk` build.
+  needs the `aws-sdk` build. Revision 3: L3 additionally waits for the `toolkit-aws` prerequisite
+  TA-STREAM-DL (R-API-BODY), because the pinned S1 stream cannot carry an absolute deadline or a
+  status-time cap; L0-L2 are unaffected.
 - **Q21. `apply-snapshot` instead of `rsync -a` (revision 2, #5040).** Recommended: **yes**. A
   denylist in the extractor alone would leave the apply step trusting whatever is in `outputDir` at
   apply time. The command enforces the same denylist where the repository is written and refuses
@@ -1607,3 +2095,17 @@ dropped. Revision 1's R-1 (rename over an empty racing directory) is closed by
   Unix-only archive commands through `rustix` (D16), rather than claiming a guarantee that safe
   `std` cannot give. No supported caller runs the toolkit on Windows today; a Windows port would
   need its own handle-relative design and review.
+- **Q23. Snapshot node budget (revision 3, #5066).** Recommended: 200 000 materialised nodes
+  (files plus every explicit or implicit directory), with files still at most 100 000, enforced
+  before the first creation and reused by `apply-snapshot`'s walk (R-AR-PLAN, D22). It admits
+  every snapshot of a tree the upload side accepts that has no more directories than files.
+  The alternative of counting directories against the 100 000 entry limit would refuse real
+  repositories near the upload limit. Engineering decision; the PM may change the constant
+  without changing the mechanism.
+- **Q24. `apply-snapshot` only inside a Git work tree (revision 3, #5061).** Recommended: **yes**
+  (R-AR-META, D20). Metadata protection needs Git to say where the metadata is. `SKILL.md` step C
+  always applies on a migration branch, and the review after applying uses `git status`, so a
+  target without Git is outside the supported workflow. If the discovery cannot be established,
+  the command refuses rather than writing unprotected (the #5038 round-2 engineering
+  interpretation). Product choice for the PM only if a non-Git target must be supported; that
+  would need its own reviewed path.
