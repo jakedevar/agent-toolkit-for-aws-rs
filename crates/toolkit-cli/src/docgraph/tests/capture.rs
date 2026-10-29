@@ -1358,6 +1358,148 @@ fn t08e_secret_bearing_envelopes_fail_without_echo_or_snapshot() {
     }
 }
 
+/// #5348: a secret-shaped key is refused as a class, never echoed. Every
+/// location below holds a key that is secret-shaped (it carries a credential
+/// word) and also carries a unique canary, so any message that quotes the
+/// offending key is visible. The complete stderr is pinned.
+#[test]
+fn t08e_secret_shaped_keys_are_refused_without_echoing_the_key() {
+    const KEY_CANARY: &str = "KEYCANARY5348";
+    const FIXED_STDERR: &str = "error: capture refused (secret_field): the capture contains a connection, credential or secret-shaped field or value\n";
+    let good = r#"{"ordinal":1,"name":"c","collStats":{},"indexStats":[],"indexes":[]}"#;
+    let coll = |body: &str| capture_of(&format!(r#"{{"ordinal":1,"name":"c",{body}}}"#));
+    // (location, builder from the offending key to the whole capture text)
+    let cases: Vec<(&str, Box<dyn Fn(&str) -> String>)> = vec![
+        (
+            "envelope",
+            Box::new(|k| format!(r#"{{{HEAD},"{k}":"x","databases":[]}}"#)),
+        ),
+        (
+            "envelope shell",
+            Box::new(|k| {
+                format!(r#"{{{HEAD},"shell":{{"name":"mongosh","{k}":"x"}},"databases":[]}}"#)
+            }),
+        ),
+        (
+            "envelope engine",
+            Box::new(|k| {
+                format!(r#"{{{HEAD},"engine":{{"name":"mongodb","{k}":"x"}},"databases":[]}}"#)
+            }),
+        ),
+        (
+            "database",
+            Box::new(move |k| {
+                format!(
+                    r#"{{{HEAD},"databases":[{{"ordinal":1,"name":"app","{k}":"x","collections":[{good}]}}]}}"#
+                )
+            }),
+        ),
+        (
+            "collection",
+            Box::new(|k| {
+                coll(&format!(
+                    r#""collStats":{{}},"indexStats":[],"indexes":[],"{k}":"x""#
+                ))
+            }),
+        ),
+        (
+            "collStats",
+            Box::new(|k| {
+                coll(&format!(
+                    r#""collStats":{{"{k}":1}},"indexStats":[],"indexes":[]"#
+                ))
+            }),
+        ),
+        (
+            "collStats compression",
+            Box::new(|k| {
+                coll(&format!(
+                    r#""collStats":{{"compression":{{"{k}":true}}}},"indexStats":[],"indexes":[]"#
+                ))
+            }),
+        ),
+        (
+            "collStats ignored member, nested",
+            Box::new(|k| {
+                coll(&format!(
+                    r#""collStats":{{"ns":{{"a":[{{"{k}":"x"}}]}}}},"indexStats":[],"indexes":[]"#
+                ))
+            }),
+        ),
+        (
+            "indexStats item",
+            Box::new(|k| {
+                coll(&format!(
+                    r#""collStats":{{}},"indexStats":[{{"name":"_id_","{k}":"x"}}],"indexes":[]"#
+                ))
+            }),
+        ),
+        (
+            "indexStats accesses",
+            Box::new(|k| {
+                coll(&format!(
+                    r#""collStats":{{}},"indexStats":[{{"name":"_id_","accesses":{{"ops":{{"$numberInt":"1"}},"{k}":"x"}}}}],"indexes":[]"#
+                ))
+            }),
+        ),
+        (
+            "indexStats ignored member, nested",
+            Box::new(|k| {
+                coll(&format!(
+                    r#""collStats":{{}},"indexStats":[{{"name":"_id_","spec":{{"deep":{{"{k}":"x"}}}}}}],"indexes":[]"#
+                ))
+            }),
+        ),
+        (
+            "index item",
+            Box::new(|k| {
+                coll(&format!(
+                    r#""collStats":{{}},"indexStats":[],"indexes":[{{"key":{{}},"name":"i","{k}":"x"}}]"#
+                ))
+            }),
+        ),
+        (
+            "index ignored member, nested",
+            Box::new(|k| {
+                coll(&format!(
+                    r#""collStats":{{}},"indexStats":[],"indexes":[{{"key":{{}},"name":"i","v":{{"x":{{"{k}":"x"}}}}}}]"#
+                ))
+            }),
+        ),
+    ];
+    // Secret-shaped spellings: the credential word is the whole key, a
+    // suffix, a prefix, or split by case and punctuation.
+    let spellings = [
+        format!("password{KEY_CANARY}"),
+        format!("{KEY_CANARY}_token"),
+        format!("{KEY_CANARY}.apiKey"),
+        format!("{KEY_CANARY}-Secret-{KEY_CANARY}"),
+        format!("authorization{KEY_CANARY}"),
+    ];
+    let dir = TempDir::new("capture-key-echo");
+    for (location, build) in &cases {
+        for key in &spellings {
+            let text = build(key);
+            assert_eq!(refused(&text), "secret_field", "{location}: {key}");
+            let capture = write_private(&dir, "capture.json", &text);
+            let output = dir.join("out.json").to_string_lossy().into_owned();
+            let ran = run(&[
+                "documentdb",
+                "normalize-capture",
+                "--capture",
+                &capture,
+                "--output",
+                &output,
+            ]);
+            assert_eq!(ran.status, 1, "{location}: {key}: {}", ran.stderr);
+            assert_eq!(ran.stdout, "", "{location}: {key}");
+            assert_eq!(ran.stderr, FIXED_STDERR, "{location}: {key}");
+            assert!(!ran.stderr.contains(KEY_CANARY), "{location}");
+            assert!(!Path::new(&output).exists(), "{location}: no snapshot");
+        }
+    }
+}
+
 #[test]
 fn t08e_a_shell_transcript_or_script_is_not_an_envelope() {
     for text in [
