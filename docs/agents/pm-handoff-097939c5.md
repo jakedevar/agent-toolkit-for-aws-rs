@@ -418,3 +418,9 @@ Friction: #4727, Rsi #4694, Rsi #4704
   4/4 busy: 092f281f (r16), 1416bcca (#4969), 160f8b97 (#4393), c5dd6313 (#4971).
 - 10-29 00:2xZ: #4969 (1416bcca) on #4396 f2e3826b: CHANGES_REQUESTED #4973 P1 (out-of-range qty -> 0 submitted/finalized), #4974 P1 (EMF raw caller strings), #4972 P2 (saturating_add allocations), #4976 P2 (f64 ranking). Repair worker 8dc00bed (Sonnet high, continue_from ff7ae0b8, op 60c17d2d). Then narrow re-review #4969.
   4/4 busy: 092f281f (r16), 160f8b97 (#4393), c5dd6313 (#4971), 8dc00bed (#4396 repair).
+- 10-29 00:20Z: ROUND 16 DONE head e312d92394cb8fc1813dbfacff7e59653604a9bc (092f281f; merges #4780 2d4adaa3, #4404 6f4e4af8, #4390 3d96dd1e; integration commits = registration/route pin/inventory/USAGE re-pin 39862 0x586799b8d88de137 + bare-dash audit rows, PM-inspected; fmt bf49b15b clippy 1afad00d scoped 6e917fed ok cli 3252; check ok). ENQUEUED entry af05573a (seq 2937, derive_filters, issue 4960). Queue wakes me once.
+  ON LAND close: #4960; #4780 #4927 #4934 #4935 #4936 #4955 (check #4787 vs #4780: non-strict cmds); #4404 #4937 #4938 #4939 #4940; #4390 #4954 #4956 #4957 #4958.
+  #4941 and #4396 go to ROUND 17 (new integration Issue once accepted; base e312d923 or rolling after land). #4941 must move bedrock_probes diag::path onto the shared helper (keep the #4939 env scrub).
+  #4961 RULING recorded (interactive refuse '-', hook treats '-' as absent, contract test covers telemetry). Worker 9b10f7cf (Sonnet high, pinned e312d923, op ab672b62).
+  #4977 cancelled as dup of #4874.
+  4/4 busy: 160f8b97 (#4393), c5dd6313 (#4971), 8dc00bed (#4396 repair), 9b10f7cf (#4961).
