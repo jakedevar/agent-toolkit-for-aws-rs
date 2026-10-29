@@ -71,6 +71,19 @@ fn helper_announces_loopback_and_retains_transport_failure() {
     assert!(lock.try_lock().is_err());
     let record_path = home.join(format!(".launch-with-aws/pending/{pid}.json"));
     let before = std::fs::read(&record_path).unwrap();
+    {
+        let closed = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        drop(closed);
+        let mut malformed = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        malformed
+            .set_read_timeout(Some(Duration::from_secs(3)))
+            .unwrap();
+        malformed.write_all(b"INVALID\r\n\r\n").unwrap();
+        let mut response = String::new();
+        malformed.read_to_string(&mut response).unwrap();
+        assert!(response.starts_with("HTTP/1.1 400"));
+        assert_eq!(std::fs::read(&record_path).unwrap(), before);
+    }
     for query in ["state=wrong&code=abc", "state=wrong&error=denied"] {
         let mut bad = TcpStream::connect(("127.0.0.1", port)).unwrap();
         bad.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
