@@ -556,6 +556,104 @@ mod scripted_tests {
     }
 
     #[test]
+    fn flow_deadline_inside_admission_quantum_stops_within_one_operation() {
+        struct AdvancingListener {
+            now: Rc<Cell<Instant>>,
+            accepts: Rc<Cell<usize>>,
+        }
+        impl ListenerIo for AdvancingListener {
+            type Stream = FakeStream;
+            fn accept_stream(&self) -> io::Result<FakeStream> {
+                self.now.set(self.now.get() + Duration::from_millis(1));
+                self.accepts.set(self.accepts.get() + 1);
+                Ok(FakeStream {
+                    callback: false,
+                    part: 0,
+                    reads: Rc::new(Cell::new(0)),
+                })
+            }
+        }
+        let start = Instant::now();
+        let now = Rc::new(Cell::new(start));
+        let accepts = Rc::new(Cell::new(0));
+        let listener = AdvancingListener {
+            now: now.clone(),
+            accepts: accepts.clone(),
+        };
+        assert_eq!(
+            serve_with(
+                listener,
+                1234,
+                "s",
+                start + Duration::from_micros(3500),
+                &TimedClock(now.clone())
+            )
+            .unwrap(),
+            None
+        );
+        assert_eq!(accepts.get(), 4);
+        assert_eq!(now.get().duration_since(start), Duration::from_millis(4));
+    }
+
+    #[test]
+    fn admission_expires_slot_before_it_can_be_serviced() {
+        struct AdvancingListener {
+            now: Rc<Cell<Instant>>,
+            accepts: Cell<usize>,
+            reads: Rc<Cell<usize>>,
+        }
+        struct CountStream(Rc<Cell<usize>>);
+        impl ListenerIo for AdvancingListener {
+            type Stream = CountStream;
+            fn accept_stream(&self) -> io::Result<CountStream> {
+                let n = self.accepts.get();
+                self.accepts.set(n + 1);
+                if n == 0 {
+                    return Ok(CountStream(self.reads.clone()));
+                }
+                if n == 1 {
+                    self.now.set(self.now.get() + SLOT_TIMEOUT);
+                }
+                Err(io::ErrorKind::WouldBlock.into())
+            }
+        }
+        impl Read for CountStream {
+            fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
+                self.0.set(self.0.get() + 1);
+                Err(io::ErrorKind::WouldBlock.into())
+            }
+        }
+        impl Write for CountStream {
+            fn write(&mut self, _: &[u8]) -> io::Result<usize> {
+                Err(io::ErrorKind::WouldBlock.into())
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        let start = Instant::now();
+        let now = Rc::new(Cell::new(start));
+        let reads = Rc::new(Cell::new(0));
+        let listener = AdvancingListener {
+            now: now.clone(),
+            accepts: Cell::new(0),
+            reads: reads.clone(),
+        };
+        assert_eq!(
+            serve_with(
+                listener,
+                1234,
+                "s",
+                start + Duration::from_millis(2010),
+                &TimedClock(now)
+            )
+            .unwrap(),
+            None
+        );
+        assert_eq!(reads.get(), 0);
+    }
+
+    #[test]
     fn head_finishing_at_slot_deadline_is_not_accepted() {
         struct SlowListener {
             now: Rc<Cell<Instant>>,
