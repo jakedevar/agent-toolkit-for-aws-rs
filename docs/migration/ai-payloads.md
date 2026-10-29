@@ -19,7 +19,7 @@ reference pattern (design sections 1 to 3). Nothing here removes Python rows
 | S1 `ai-payloads-model` (#5143) | `template.rs` (grammar, lexer, classification), `toolkit ai-payloads templates` with `--json` and `--check`, registry line, this document | implemented |
 | S2a `ai-payloads-publish` | `place.rs`: no-replace publication | implemented |
 | S2b `ai-payloads-render` | typed substitution, `assign`, notebook and script output, `render` | in progress |
-| S3 `ai-payloads-reward` | `reward sample` and `reward check` | not started |
+| S3 `ai-payloads-reward` | `reward sample` and `reward check` | implemented |
 | S3r, S4, S5 | reward-template fix, caller prose, inventory | not started |
 
 ## Commands
@@ -27,6 +27,8 @@ reference pattern (design sections 1 to 3). Nothing here removes Python rows
 ```text
 toolkit ai-payloads templates [--root DIR] [--json] [--check]
 toolkit ai-payloads render TEMPLATE --mode notebook|script --project-dir DIR [--name NAME] [--values FILE] [--cell N=FILE]... [--append | --new] [--consent NAME]... [--allow-unresolved] [--dry-run]
+toolkit ai-payloads reward sample --format FORMAT
+toolkit ai-payloads reward check --format FORMAT --event FILE --response FILE [--batch]
 ```
 
 `render` accepts typed values and literal assignments from a JSON file, writes
@@ -207,3 +209,19 @@ the later slices bring (B-1 to B-16).
 - **Not in `templates`.** The four Lambda reward templates and `mlflow_reference.py`
   (T06 to T10) live outside `code_templates/` and are not listed; the reward
   checker is slice S3.
+
+### Reward contracts
+
+`toolkit ai-payloads reward sample --format FORMAT` prints a documented event.
+`toolkit ai-payloads reward check --format FORMAT --event FILE --response FILE
+[--batch]` validates captured JSON offline; it does not execute a template or
+invoke AWS. Formats are `openai`, `verl`, `hf-prompt-completion`,
+`hf-preference`, `sagemaker-eval`, and `nova`. SageMaker sends one sample per
+invocation; `--batch` enables a local test extension. Nova accepts either an
+object or an array. Responses must be a result list or a 200 wrapper with a
+JSON-string list body. A non-200 wrapper fails, as SageMaker counts that sample
+in `byoc_failure_count` and drops its custom metrics. Verl samples without an
+id cannot have their id compared. Diagnostics identify positions without
+printing payload values. Input files are bounded regular files and symlinks are
+refused. Success exits 0, contract or file errors exit 1, and usage errors
+exit 2. The existing T06 and T09 response defects remain for #5120.

@@ -2415,8 +2415,8 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
 /// telemetry (#4398), then mcp-proxy (#5079) and ai-payloads (#5143).
 /// A deliberate usage change updates the pin in the same
 /// commit and says so in the Issue; an incidental one fails here.
-const USAGE_BASE_LEN: usize = 44013;
-const USAGE_BASE_FNV1A64: u64 = 0x169f_ada3_871a_54b6;
+const USAGE_BASE_LEN: usize = 44155;
+const USAGE_BASE_FNV1A64: u64 = 0xea11_e5a1_e031_b87f;
 
 #[test]
 fn the_global_usage_text_is_byte_identical_to_the_base() {
