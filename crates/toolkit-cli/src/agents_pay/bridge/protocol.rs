@@ -112,4 +112,20 @@ mod tests {
         assert_eq!(read_request(&mut large), Err(BridgeError::Input));
         assert_eq!(large.position(), 131073);
     }
+
+    // T-BR-REQ-PAY, T-BR-REQ-LEG, T-OC-FINAL-BOUND (pure shapes).
+    #[test]
+    fn t_br_req_pay_and_final_bound() {
+        let payment = VALID.replace("get_payment_session", "process_payment").replace(
+            "\"user_id\":", "\"payment_instrument_id\":\"iiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii\",\"version\":\"2\",\"request_url\":\"https://merchant.test\",\"accepted\":{},\"resource\":{\"url\":\"https://merchant.test\"},\"policy\":{\"maxPaymentAmountAtomic\":\"1\",\"allowAnyRecipient\":true},\"user_id\":");
+        assert!(read_request(&mut Cursor::new(&payment)).is_ok());
+        for bad in [payment.replace("\"version\":\"2\"", "\"version\":2"), payment.replace("\"accepted\":{}", "\"accepted\":[]"), payment.replace("\"resource\":{\"url\":\"https://merchant.test\"}", "\"resource\":{}"), payment.replace("\"version\":\"2\"", "\"payload\":{},\"client_token\":\"x\"")] {
+            assert_eq!(read_request(&mut Cursor::new(bad)), Err(BridgeError::Input));
+        }
+        let clean = r#"{"operation":"sanitize_output","candidate":{"content":[{"type":"text","text":"{\"paid\":false}"}],"details":{"paid":false}},"secrets":["abcdefgh"]}"#;
+        assert!(read_request(&mut Cursor::new(clean)).is_ok());
+        for bad in [clean.replace("\"paid\":false}", "\"paid\":true}"), clean.replace("\"secrets\":[\"abcdefgh\"]", "\"secrets\":[1]"), clean.replace("\"type\":\"text\"", "\"type\":\"image\"")] {
+            assert_eq!(read_request(&mut Cursor::new(bad)), Err(BridgeError::Input));
+        }
+    }
 }
