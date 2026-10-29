@@ -364,6 +364,22 @@ fn valid_process_response(body: &str, manager: &str, session: &str, instrument: 
     if !has_required("ProcessPaymentResponse", &value) {
         return false;
     }
+    let Ok(model) = parse_json(PAYMENT_SERVICE_MODEL) else {
+        return false;
+    };
+    for (key, shape) in [
+        ("processPaymentId", "ProcessPaymentId"),
+        ("paymentManagerArn", "PaymentManagerArn"),
+        ("paymentSessionId", "PaymentSessionId"),
+        ("paymentInstrumentId", "PaymentInstrumentId"),
+    ] {
+        if !value
+            .get(key)
+            .is_some_and(|v| valid_wallet_shape(&model, shape, v))
+        {
+            return false;
+        }
+    }
     let text = |key| {
         toolkit_aws::recorded::optional_text(&value, key)
             .ok()
@@ -374,11 +390,6 @@ fn valid_process_response(body: &str, manager: &str, session: &str, instrument: 
         || text("paymentInstrumentId") != Some(instrument)
         || text("paymentType") != Some("CRYPTO_X402")
         || text("status") != Some("PROOF_GENERATED")
-        || !text("processPaymentId").is_some_and(|id| {
-            parse_json(PAYMENT_SERVICE_MODEL).is_ok_and(|model| {
-                valid_wallet_shape(&model, "ProcessPaymentId", &Json::string(id))
-            })
-        })
     {
         return false;
     }
@@ -717,7 +728,7 @@ mod operation_contracts {
         let challenge = parse_json(r#"{"x402Version":2,"accepts":[{"scheme":"exact","network":"eip155:84532","asset":"0xA","payTo":"0xB","amount":"100000"}]}"#).unwrap();
         let resources = Resources {
             payment_manager_arn: Some(manager.into()),
-            payment_instrument_id: Some("pi".into()),
+            payment_instrument_id: Some("payment-instrument-TEST12345678901".into()),
             payment_session_id: Some("payment-session-TEST12345678901".into()),
             user_id: Some("user".into()),
         };
@@ -742,7 +753,7 @@ mod operation_contracts {
         assert_eq!(
             body,
             format!(
-                r#"{{"paymentManagerArn":"arn:aws:bedrock-agentcore:us-east-1:123456789012:payment-manager/test-abcdefghij","paymentSessionId":"payment-session-TEST12345678901","paymentInstrumentId":"pi","paymentType":"CRYPTO_X402","paymentInput":{{"cryptoX402":{{"version":"2","payload":{{"scheme":"exact","network":"eip155:84532","asset":"0xA","payTo":"0xB","amount":"100000"}}}}}},"clientToken":"{token}"}}"#
+                r#"{{"paymentManagerArn":"arn:aws:bedrock-agentcore:us-east-1:123456789012:payment-manager/test-abcdefghij","paymentSessionId":"payment-session-TEST12345678901","paymentInstrumentId":"payment-instrument-TEST12345678901","paymentType":"CRYPTO_X402","paymentInput":{{"cryptoX402":{{"version":"2","payload":{{"scheme":"exact","network":"eip155:84532","asset":"0xA","payTo":"0xB","amount":"100000"}}}}}},"clientToken":"{token}"}}"#
             )
         );
     }
@@ -803,88 +814,88 @@ mod operation_contracts {
 
     #[test]
     fn process_response_requires_status_echo_and_object_payload() {
-        let ok = r#"{"processPaymentId":"12345678-abcd-1234-abcd-123456789abc","paymentManagerArn":"arn:aws:bedrock-agentcore:us-east-1:123456789012:payment-manager/test-abcdefghij","paymentSessionId":"payment-session-TEST12345678901","paymentInstrumentId":"pi","paymentType":"CRYPTO_X402","status":"PROOF_GENERATED","paymentOutput":{"cryptoX402":{"version":"2","payload":{"signature":"secret"}}},"createdAt":1,"updatedAt":1}"#;
+        let ok = r#"{"processPaymentId":"12345678-abcd-1234-abcd-123456789abc","paymentManagerArn":"arn:aws:bedrock-agentcore:us-east-1:123456789012:payment-manager/test-abcdefghij","paymentSessionId":"payment-session-TEST12345678901","paymentInstrumentId":"payment-instrument-TEST12345678901","paymentType":"CRYPTO_X402","status":"PROOF_GENERATED","paymentOutput":{"cryptoX402":{"version":"2","payload":{"signature":"secret"}}},"createdAt":1,"updatedAt":1}"#;
         assert!(valid_process_response(
             ok,
             "arn:aws:bedrock-agentcore:us-east-1:123456789012:payment-manager/test-abcdefghij",
             "payment-session-TEST12345678901",
-            "pi"
+            "payment-instrument-TEST12345678901"
         ));
         assert!(!valid_process_response(
             &ok.replace("PROOF_GENERATED", "OTHER"),
             "arn:aws:bedrock-agentcore:us-east-1:123456789012:payment-manager/test-abcdefghij",
             "payment-session-TEST12345678901",
-            "pi"
+            "payment-instrument-TEST12345678901"
         ));
         assert!(!valid_process_response(
             ok,
             "arn:aws:bedrock-agentcore:us-east-1:123456789012:payment-manager/test-abcdefghij",
             "other",
-            "pi"
+            "payment-instrument-TEST12345678901"
         ));
         assert!(!valid_process_response(
             &ok.replace(r#"{"signature":"secret"}"#, "[]"),
             "arn:aws:bedrock-agentcore:us-east-1:123456789012:payment-manager/test-abcdefghij",
             "payment-session-TEST12345678901",
-            "pi"
+            "payment-instrument-TEST12345678901"
         ));
         assert!(!valid_process_response(
             &ok.replace(r#","createdAt":1"#, ""),
             "arn:aws:bedrock-agentcore:us-east-1:123456789012:payment-manager/test-abcdefghij",
             "payment-session-TEST12345678901",
-            "pi"
+            "payment-instrument-TEST12345678901"
         ));
         let huge = "x".repeat(16_385);
         assert!(!valid_process_response(
             &ok.replace("secret", &huge),
             "arn:aws:bedrock-agentcore:us-east-1:123456789012:payment-manager/test-abcdefghij",
             "payment-session-TEST12345678901",
-            "pi"
+            "payment-instrument-TEST12345678901"
         ));
     }
 
     #[test]
     fn process_response_accepts_iso8601_model_timestamps() {
-        let body = r#"{"processPaymentId":"12345678-abcd-1234-abcd-123456789abc","paymentManagerArn":"arn:aws:bedrock-agentcore:us-east-1:123456789012:payment-manager/test-abcdefghij","paymentSessionId":"payment-session-TEST12345678901","paymentInstrumentId":"pi","paymentType":"CRYPTO_X402","status":"PROOF_GENERATED","paymentOutput":{"cryptoX402":{"version":"2","payload":{"signature":"secret"}}},"createdAt":"2026-10-28T12:00:00Z","updatedAt":"2026-10-28T12:00:00Z"}"#;
+        let body = r#"{"processPaymentId":"12345678-abcd-1234-abcd-123456789abc","paymentManagerArn":"arn:aws:bedrock-agentcore:us-east-1:123456789012:payment-manager/test-abcdefghij","paymentSessionId":"payment-session-TEST12345678901","paymentInstrumentId":"payment-instrument-TEST12345678901","paymentType":"CRYPTO_X402","status":"PROOF_GENERATED","paymentOutput":{"cryptoX402":{"version":"2","payload":{"signature":"secret"}}},"createdAt":"2026-10-28T12:00:00Z","updatedAt":"2026-10-28T12:00:00Z"}"#;
         assert!(valid_process_response(
             body,
             "arn:aws:bedrock-agentcore:us-east-1:123456789012:payment-manager/test-abcdefghij",
             "payment-session-TEST12345678901",
-            "pi"
+            "payment-instrument-TEST12345678901"
         ));
         assert!(!valid_process_response(
             &body.replace("2026-10-28T12:00:00Z", "not-a-timestamp"),
             "arn:aws:bedrock-agentcore:us-east-1:123456789012:payment-manager/test-abcdefghij",
             "payment-session-TEST12345678901",
-            "pi"
+            "payment-instrument-TEST12345678901"
         ));
     }
 
     #[test]
     fn process_response_rejects_multiple_or_unknown_union_arms() {
-        let body = r#"{"processPaymentId":"12345678-abcd-1234-abcd-123456789abc","paymentManagerArn":"arn:aws:bedrock-agentcore:us-east-1:123456789012:payment-manager/test-abcdefghij","paymentSessionId":"payment-session-TEST12345678901","paymentInstrumentId":"pi","paymentType":"CRYPTO_X402","status":"PROOF_GENERATED","paymentOutput":{"cryptoX402":{"version":"2","payload":{}},"future":{}},"createdAt":1,"updatedAt":1}"#;
+        let body = r#"{"processPaymentId":"12345678-abcd-1234-abcd-123456789abc","paymentManagerArn":"arn:aws:bedrock-agentcore:us-east-1:123456789012:payment-manager/test-abcdefghij","paymentSessionId":"payment-session-TEST12345678901","paymentInstrumentId":"payment-instrument-TEST12345678901","paymentType":"CRYPTO_X402","status":"PROOF_GENERATED","paymentOutput":{"cryptoX402":{"version":"2","payload":{}},"future":{}},"createdAt":1,"updatedAt":1}"#;
         assert!(!valid_process_response(
             body,
             "arn:aws:bedrock-agentcore:us-east-1:123456789012:payment-manager/test-abcdefghij",
             "payment-session-TEST12345678901",
-            "pi"
+            "payment-instrument-TEST12345678901"
         ));
     }
 
     #[test]
     fn process_response_rejects_malformed_process_identifier() {
-        let good = r#"{"processPaymentId":"12345678-abcd-1234-abcd-123456789abc","paymentManagerArn":"arn:aws:bedrock-agentcore:us-east-1:123456789012:payment-manager/test-abcdefghij","paymentSessionId":"payment-session-TEST12345678901","paymentInstrumentId":"pi","paymentType":"CRYPTO_X402","status":"PROOF_GENERATED","paymentOutput":{"cryptoX402":{"version":"2","payload":{}}},"createdAt":1,"updatedAt":1}"#;
+        let good = r#"{"processPaymentId":"12345678-abcd-1234-abcd-123456789abc","paymentManagerArn":"arn:aws:bedrock-agentcore:us-east-1:123456789012:payment-manager/test-abcdefghij","paymentSessionId":"payment-session-TEST12345678901","paymentInstrumentId":"payment-instrument-TEST12345678901","paymentType":"CRYPTO_X402","status":"PROOF_GENERATED","paymentOutput":{"cryptoX402":{"version":"2","payload":{}}},"createdAt":1,"updatedAt":1}"#;
         assert!(valid_process_response(
             good,
             "arn:aws:bedrock-agentcore:us-east-1:123456789012:payment-manager/test-abcdefghij",
             "payment-session-TEST12345678901",
-            "pi"
+            "payment-instrument-TEST12345678901"
         ));
         assert!(!valid_process_response(
             &good.replace("12345678-abcd-1234-abcd-123456789abc", "id"),
             "arn:aws:bedrock-agentcore:us-east-1:123456789012:payment-manager/test-abcdefghij",
             "payment-session-TEST12345678901",
-            "pi"
+            "payment-instrument-TEST12345678901"
         ));
     }
 
@@ -2174,7 +2185,7 @@ mod wire_contracts {
     #[test]
     fn other_payment_operations_have_golden_wires() {
         let session = br#"{"paymentSession":{"paymentSessionId":"payment-session-TEST12345678901","paymentManagerArn":"arn:aws:bedrock-agentcore:us-east-1:123456789012:payment-manager/test-abcdefghij","userId":"user","expiryTimeInMinutes":60,"createdAt":1,"updatedAt":1}}"#;
-        let instrument = br#"{"paymentInstrument":{"paymentInstrumentId":"pi","paymentManagerArn":"arn:aws:bedrock-agentcore:us-east-1:123456789012:payment-manager/test-abcdefghij","paymentConnectorId":"connector","userId":"user","paymentInstrumentType":"EMBEDDED_CRYPTO_WALLET","paymentInstrumentDetails":{"embeddedCryptoWallet":{"network":"ETHEREUM","linkedAccounts":[{"email":{"emailAddress":"user@example.com"}}]}},"createdAt":1,"status":"ACTIVE","updatedAt":1}}"#;
+        let instrument = br#"{"paymentInstrument":{"paymentInstrumentId":"payment-instrument-TEST12345678901","paymentManagerArn":"arn:aws:bedrock-agentcore:us-east-1:123456789012:payment-manager/test-abcdefghij","paymentConnectorId":"connector","userId":"user","paymentInstrumentType":"EMBEDDED_CRYPTO_WALLET","paymentInstrumentDetails":{"embeddedCryptoWallet":{"network":"ETHEREUM","linkedAccounts":[{"email":{"emailAddress":"user@example.com"}}]}},"createdAt":1,"status":"ACTIVE","updatedAt":1}}"#;
         let transport = FakeStreamingTransport::new()
             .respond(200, &[], vec![FakeChunk::data(session)])
             .respond(201, &[], vec![FakeChunk::data(session)])
@@ -2286,10 +2297,10 @@ mod wire_contracts {
 
     #[test]
     fn instrument_response_rejects_invalid_nested_and_required_members() {
-        let good = r#"{"paymentInstrument":{"paymentInstrumentId":"pi","paymentManagerArn":"arn:aws:bedrock-agentcore:us-east-1:123456789012:payment-manager/test-abcdefghij","paymentConnectorId":"connector","userId":"user","paymentInstrumentType":"EMBEDDED_CRYPTO_WALLET","paymentInstrumentDetails":{"embeddedCryptoWallet":{"network":"ETHEREUM","linkedAccounts":[{"email":{"emailAddress":"user@example.com"}}]}},"createdAt":1,"status":"ACTIVE","updatedAt":1}}"#;
+        let good = r#"{"paymentInstrument":{"paymentInstrumentId":"payment-instrument-TEST12345678901","paymentManagerArn":"arn:aws:bedrock-agentcore:us-east-1:123456789012:payment-manager/test-abcdefghij","paymentConnectorId":"connector","userId":"user","paymentInstrumentType":"EMBEDDED_CRYPTO_WALLET","paymentInstrumentDetails":{"embeddedCryptoWallet":{"network":"ETHEREUM","linkedAccounts":[{"email":{"emailAddress":"user@example.com"}}]}},"createdAt":1,"status":"ACTIVE","updatedAt":1}}"#;
         for bad in [
             good.replace(
-                r#""paymentInstrumentId":"pi""#,
+                r#""paymentInstrumentId":"payment-instrument-TEST12345678901""#,
                 r#""paymentInstrumentId":null"#,
             ),
             good.replace(r#""createdAt":1"#, r#""createdAt":"invalid""#),
@@ -2326,7 +2337,7 @@ mod wire_contracts {
 
     #[test]
     fn instrument_response_rejects_invalid_unions_and_enums() {
-        let good = r#"{"paymentInstrument":{"paymentInstrumentId":"pi","paymentManagerArn":"arn:aws:bedrock-agentcore:us-east-1:123456789012:payment-manager/test-abcdefghij","paymentConnectorId":"connector","userId":"user","paymentInstrumentType":"EMBEDDED_CRYPTO_WALLET","paymentInstrumentDetails":{"embeddedCryptoWallet":{"network":"ETHEREUM","linkedAccounts":[{"email":{"emailAddress":"user@example.com"}}]}},"createdAt":1,"status":"ACTIVE","updatedAt":1}}"#;
+        let good = r#"{"paymentInstrument":{"paymentInstrumentId":"payment-instrument-TEST12345678901","paymentManagerArn":"arn:aws:bedrock-agentcore:us-east-1:123456789012:payment-manager/test-abcdefghij","paymentConnectorId":"connector","userId":"user","paymentInstrumentType":"EMBEDDED_CRYPTO_WALLET","paymentInstrumentDetails":{"embeddedCryptoWallet":{"network":"ETHEREUM","linkedAccounts":[{"email":{"emailAddress":"user@example.com"}}]}},"createdAt":1,"status":"ACTIVE","updatedAt":1}}"#;
         for bad in [
             good.replace("\"status\":\"ACTIVE\"", "\"status\":\"OTHER\""),
             good.replace("{\"email\":{\"emailAddress\":\"user@example.com\"}}", "{}"),
@@ -2465,7 +2476,7 @@ mod wire_contracts {
 
     #[test]
     fn read_timeout_retries_identical_payment_bytes() {
-        let response = br#"{"processPaymentId":"12345678-abcd-1234-abcd-123456789abc","paymentManagerArn":"arn:aws:bedrock-agentcore:us-east-1:123456789012:payment-manager/test-abcdefghij","paymentSessionId":"payment-session-TEST12345678901","paymentInstrumentId":"pi","paymentType":"CRYPTO_X402","status":"PROOF_GENERATED","paymentOutput":{"cryptoX402":{"version":"2","payload":{"signature":"secret"}}},"createdAt":1,"updatedAt":1}"#;
+        let response = br#"{"processPaymentId":"12345678-abcd-1234-abcd-123456789abc","paymentManagerArn":"arn:aws:bedrock-agentcore:us-east-1:123456789012:payment-manager/test-abcdefghij","paymentSessionId":"payment-session-TEST12345678901","paymentInstrumentId":"payment-instrument-TEST12345678901","paymentType":"CRYPTO_X402","status":"PROOF_GENERATED","paymentOutput":{"cryptoX402":{"version":"2","payload":{"signature":"secret"}}},"createdAt":1,"updatedAt":1}"#;
         let transport = FakeStreamingTransport::new()
             .respond(200, &[], vec![FakeChunk::IdleTimeout])
             .respond(200, &[], vec![FakeChunk::data(response)]);
@@ -2486,7 +2497,7 @@ mod wire_contracts {
 
     #[test]
     fn oversized_error_uses_header_and_retries_without_reading_it() {
-        let response = br#"{"processPaymentId":"12345678-abcd-1234-abcd-123456789abc","paymentManagerArn":"arn:aws:bedrock-agentcore:us-east-1:123456789012:payment-manager/test-abcdefghij","paymentSessionId":"payment-session-TEST12345678901","paymentInstrumentId":"pi","paymentType":"CRYPTO_X402","status":"PROOF_GENERATED","paymentOutput":{"cryptoX402":{"version":"2","payload":{"signature":"secret"}}},"createdAt":1,"updatedAt":1}"#;
+        let response = br#"{"processPaymentId":"12345678-abcd-1234-abcd-123456789abc","paymentManagerArn":"arn:aws:bedrock-agentcore:us-east-1:123456789012:payment-manager/test-abcdefghij","paymentSessionId":"payment-session-TEST12345678901","paymentInstrumentId":"payment-instrument-TEST12345678901","paymentType":"CRYPTO_X402","status":"PROOF_GENERATED","paymentOutput":{"cryptoX402":{"version":"2","payload":{"signature":"secret"}}},"createdAt":1,"updatedAt":1}"#;
         let transport = FakeStreamingTransport::new()
             .respond(
                 503,
@@ -2554,7 +2565,7 @@ mod wire_contracts {
 
     #[test]
     fn declared_short_length_is_not_trusted() {
-        let response = br#"{"processPaymentId":"12345678-abcd-1234-abcd-123456789abc","paymentManagerArn":"arn:aws:bedrock-agentcore:us-east-1:123456789012:payment-manager/test-abcdefghij","paymentSessionId":"payment-session-TEST12345678901","paymentInstrumentId":"pi","paymentType":"CRYPTO_X402","status":"PROOF_GENERATED","paymentOutput":{"cryptoX402":{"version":"2","payload":{"signature":"secret"}}},"createdAt":1,"updatedAt":1}"#;
+        let response = br#"{"processPaymentId":"12345678-abcd-1234-abcd-123456789abc","paymentManagerArn":"arn:aws:bedrock-agentcore:us-east-1:123456789012:payment-manager/test-abcdefghij","paymentSessionId":"payment-session-TEST12345678901","paymentInstrumentId":"payment-instrument-TEST12345678901","paymentType":"CRYPTO_X402","status":"PROOF_GENERATED","paymentOutput":{"cryptoX402":{"version":"2","payload":{"signature":"secret"}}},"createdAt":1,"updatedAt":1}"#;
         let transport = FakeStreamingTransport::new().respond(
             200,
             &[("content-length", "1")],
@@ -2569,7 +2580,7 @@ mod wire_contracts {
 
     #[test]
     fn t_aws_process_wire_and_response() {
-        let response = br#"{"processPaymentId":"12345678-abcd-1234-abcd-123456789abc","paymentManagerArn":"arn:aws:bedrock-agentcore:us-east-1:123456789012:payment-manager/test-abcdefghij","paymentSessionId":"payment-session-TEST12345678901","paymentInstrumentId":"pi","paymentType":"CRYPTO_X402","status":"PROOF_GENERATED","paymentOutput":{"cryptoX402":{"version":"2","payload":{"signature":"secret"}}},"createdAt":1,"updatedAt":1}"#;
+        let response = br#"{"processPaymentId":"12345678-abcd-1234-abcd-123456789abc","paymentManagerArn":"arn:aws:bedrock-agentcore:us-east-1:123456789012:payment-manager/test-abcdefghij","paymentSessionId":"payment-session-TEST12345678901","paymentInstrumentId":"payment-instrument-TEST12345678901","paymentType":"CRYPTO_X402","status":"PROOF_GENERATED","paymentOutput":{"cryptoX402":{"version":"2","payload":{"signature":"secret"}}},"createdAt":1,"updatedAt":1}"#;
         let transport =
             FakeStreamingTransport::new().respond(200, &[], vec![FakeChunk::data(response)]);
         let client = PaymentClient::new("us-east-1", &transport, &NoSigner).unwrap();
@@ -2599,7 +2610,7 @@ mod wire_contracts {
 
     #[test]
     fn unexpected_success_status_is_an_invalid_response() {
-        let response = br#"{"processPaymentId":"12345678-abcd-1234-abcd-123456789abc","paymentManagerArn":"arn:aws:bedrock-agentcore:us-east-1:123456789012:payment-manager/test-abcdefghij","paymentSessionId":"payment-session-TEST12345678901","paymentInstrumentId":"pi","paymentType":"CRYPTO_X402","status":"PROOF_GENERATED","paymentOutput":{"cryptoX402":{"version":"2","payload":{}}},"createdAt":1,"updatedAt":1}"#;
+        let response = br#"{"processPaymentId":"12345678-abcd-1234-abcd-123456789abc","paymentManagerArn":"arn:aws:bedrock-agentcore:us-east-1:123456789012:payment-manager/test-abcdefghij","paymentSessionId":"payment-session-TEST12345678901","paymentInstrumentId":"payment-instrument-TEST12345678901","paymentType":"CRYPTO_X402","status":"PROOF_GENERATED","paymentOutput":{"cryptoX402":{"version":"2","payload":{}}},"createdAt":1,"updatedAt":1}"#;
         let transport =
             FakeStreamingTransport::new().respond(201, &[], vec![FakeChunk::data(response)]);
         let client = PaymentClient::new("us-east-1", &transport, &NoSigner).unwrap();
