@@ -789,3 +789,4 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 10-29 06:27Z: L4 #5216 (573278a7, 48% ctx) PARTIAL at 9afde41e2e8e58cd452f13f3c49ee417bb9081ef (listener, validation, pending custody, watchdog, helper, routes; scoped 4032 ok). Gaps #5228 (timing/load matrix + seams), #5229 (stdout close, OAuth error code retention, unreadable-record table) = accepted design, no ruling.
   Continuation 78d863e6 (Codex terra, continue_from 573278a7). Close #5228 #5229 with L4 landing.
   4/4 busy: 0dcdafea (#5181 S4 cont), da98439f (#5223 S2b cont), 23ccf6b5 (#5203 P-ROOTS f/u), 78d863e6 (#5216 L4 cont).
+- 10-29 06:30Z: GM mail: RATIONING LIFTED (operator: backup Claude + Codex accounts). Codex-first directive withdrawn; route by normal directives (impl Codex terra / Claude Sonnet; cross-family review: Claude Sonnet for Codex impl; Opus for security/hard). Provider window exhaustion -> report fault up once, keep going.
