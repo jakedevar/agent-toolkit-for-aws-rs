@@ -245,6 +245,123 @@ mod scripted_tests {
     use super::*;
     use std::{cell::Cell, rc::Rc};
 
+    struct TimedClock(Rc<Cell<Instant>>);
+    impl Clock for TimedClock {
+        fn now(&self) -> Instant {
+            self.0.get()
+        }
+        fn sleep(&self, duration: Duration) {
+            self.0.set(self.0.get() + duration);
+        }
+    }
+    struct TimedListener {
+        stream: std::cell::RefCell<Option<TimedStream>>,
+    }
+    struct TimedStream {
+        now: Rc<Cell<Instant>>,
+        start: Instant,
+        chunks: std::collections::VecDeque<(Duration, Vec<u8>)>,
+        write_blocked: bool,
+    }
+    impl ListenerIo for TimedListener {
+        type Stream = TimedStream;
+        fn accept_stream(&self) -> io::Result<TimedStream> {
+            self.stream
+                .borrow_mut()
+                .take()
+                .ok_or_else(|| io::ErrorKind::WouldBlock.into())
+        }
+    }
+    impl Read for TimedStream {
+        fn read(&mut self, dest: &mut [u8]) -> io::Result<usize> {
+            let Some((at, _)) = self.chunks.front() else {
+                return Err(io::ErrorKind::WouldBlock.into());
+            };
+            if self.now.get().duration_since(self.start) < *at {
+                return Err(io::ErrorKind::WouldBlock.into());
+            }
+            let (_, chunk) = self.chunks.pop_front().unwrap();
+            dest[..chunk.len()].copy_from_slice(&chunk);
+            Ok(chunk.len())
+        }
+    }
+    impl Write for TimedStream {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            if self.write_blocked {
+                Err(io::ErrorKind::WouldBlock.into())
+            } else {
+                Ok(bytes.len())
+            }
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+    fn timed_callback(
+        chunks: Vec<(Duration, Vec<u8>)>,
+        flow: Duration,
+        write_blocked: bool,
+    ) -> (Option<Outcome>, Duration) {
+        let start = Instant::now();
+        let now = Rc::new(Cell::new(start));
+        let listener = TimedListener {
+            stream: std::cell::RefCell::new(Some(TimedStream {
+                now: now.clone(),
+                start,
+                chunks: chunks.into(),
+                write_blocked,
+            })),
+        };
+        let result =
+            serve_with(listener, 1234, "s", start + flow, &TimedClock(now.clone())).unwrap();
+        (result, now.get().duration_since(start))
+    }
+    fn valid_head() -> Vec<u8> {
+        b"GET /?state=s&code=ok HTTP/1.1\r\nHost: 127.0.0.1:1234\r\n\r\n".to_vec()
+    }
+
+    #[test]
+    fn trickling_head_does_not_extend_two_second_deadline() {
+        let head = valid_head();
+        let chunks = vec![
+            (Duration::ZERO, head[..1].to_vec()),
+            (Duration::from_millis(1900), head[1..2].to_vec()),
+            (Duration::from_millis(2100), head[2..].to_vec()),
+        ];
+        let (result, elapsed) = timed_callback(chunks, Duration::from_secs(3), false);
+        assert_eq!(result, None);
+        assert_eq!(elapsed, Duration::from_secs(3));
+    }
+
+    #[test]
+    fn callback_head_before_flow_deadline_is_eligible_at_deadline_is_not() {
+        let flow = Duration::from_secs(1);
+        assert_eq!(
+            timed_callback(
+                vec![(Duration::from_millis(990), valid_head())],
+                flow,
+                false
+            )
+            .0,
+            Some(Outcome::Code("ok".into()))
+        );
+        assert_eq!(
+            timed_callback(vec![(flow, valid_head())], flow, false).0,
+            None
+        );
+    }
+
+    #[test]
+    fn blocked_response_write_does_not_prevent_exchange() {
+        let (result, elapsed) = timed_callback(
+            vec![(Duration::ZERO, valid_head())],
+            Duration::from_secs(5),
+            true,
+        );
+        assert_eq!(result, Some(Outcome::Code("ok".into())));
+        assert_eq!(elapsed, Duration::from_secs(2));
+    }
+
     struct FakeClock(Cell<Instant>);
     impl Clock for FakeClock {
         fn now(&self) -> Instant {
