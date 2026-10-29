@@ -62,6 +62,13 @@ fn helper_announces_loopback_and_retains_transport_failure() {
     let mut line = String::new();
     stdout.read_line(&mut line).unwrap();
     let port: u16 = line.trim().parse().unwrap();
+    let lock_path = home.join(format!(".launch-with-aws/pending/{pid}.lock"));
+    let lock = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(lock_path)
+        .unwrap();
+    assert!(lock.try_lock().is_err());
     let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
     stream
         .set_read_timeout(Some(Duration::from_secs(3)))
@@ -74,6 +81,19 @@ fn helper_announces_loopback_and_retains_transport_failure() {
     let mut response = String::new();
     stream.read_to_string(&mut response).unwrap();
     assert!(response.starts_with("HTTP/1.1 200"));
+    #[cfg(target_os = "linux")]
+    {
+        use rustix::process::{waitid, WaitId, WaitIdOptions};
+        let child_pid = rustix::process::Pid::from_raw(i32::try_from(pid).unwrap()).unwrap();
+        assert!(waitid(
+            WaitId::Pid(child_pid),
+            WaitIdOptions::EXITED | WaitIdOptions::NOWAIT
+        )
+        .unwrap()
+        .is_some());
+        assert!(lock.try_lock().is_ok());
+        lock.unlock().unwrap();
+    }
     assert!(!child.wait().unwrap().success());
     let record =
         std::fs::read_to_string(home.join(format!(".launch-with-aws/pending/{pid}.json"))).unwrap();
