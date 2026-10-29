@@ -207,7 +207,14 @@ own review before it may run against a real table.
    no `meteringPending` marker is removed; the script kept the exact integer,
    and a substituted `0` would have lost the usage and finalized it as a
    success (#4973). A missing or non-integer member is still the script's
-   `strict_int(...) or 0`, and a legitimate `0` is submitted as before.
+   `strict_int(...) or 0`, and a legitimate `0` is submitted as before. The range is judged on the integer literal as written in
+   the recording: the shared JSON reader turns a literal it cannot hold in an
+   `i64` into a float, and `-9223372036854775809` rounds to exactly
+   `i64::MIN`, so the recording reader (`marketplace/exact.rs`, `--recorded`
+   only) keeps such a literal as its digits, which the existing string path
+   already reports as `QuantityOutOfRange`; `i64::MIN` and `i64::MAX` as
+   literals are in range and unchanged (#4984). A float form (`.` or an
+   exponent) is still the reader's float.
 6. **Wrong-typed members are invalid, not passed through.** An item member, a
    queue message field or an event section of another type (a number where a
    string is expected, a list where an object is) is an invalid response or a

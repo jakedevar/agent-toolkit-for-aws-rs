@@ -1033,3 +1033,71 @@ fn row_updates_carry_the_audit_stamps() {
         )
     );
 }
+
+// ---- integer literals beyond i64 keep their digits (#4984) ----------------------------
+
+#[test]
+fn a_wide_integer_literal_is_kept_as_its_digits_and_the_rest_is_untouched() {
+    use crate::marketplace::exact::parse_recorded;
+    let parsed = parse_recorded(
+        r#"{"low": -9223372036854775809, "high": 9223372036854775808, "huge": [-99999999999999999999, 18446744073709551616],
+            "min": -9223372036854775808, "max": 9223372036854775807, "zero": 0, "negzero": -0,
+            "float": -9223372036854775809.0, "exp": 1e19, "frac": 1.5, "small": -5,
+            "text": "-9223372036854775809 \" 9223372036854775808", "escaped\"key": 7}"#,
+    )
+    .expect("valid JSON");
+    assert_eq!(
+        parsed.get("low").and_then(Json::as_str),
+        Some("-9223372036854775809")
+    );
+    assert_eq!(
+        parsed.get("high").and_then(Json::as_str),
+        Some("9223372036854775808")
+    );
+    assert_eq!(
+        parsed.get("huge").map(Json::to_compact_string).as_deref(),
+        Some(r#"["-99999999999999999999","18446744073709551616"]"#)
+    );
+    // In-range integers stay integers; i64::MIN is not mistaken for MIN-1.
+    assert_eq!(parsed.get("min"), Some(&Json::Int(i64::MIN)));
+    assert_eq!(parsed.get("max"), Some(&Json::Int(i64::MAX)));
+    assert_eq!(parsed.get("zero"), Some(&Json::Int(0)));
+    assert_eq!(parsed.get("small"), Some(&Json::Int(-5)));
+    // Float forms are the reader's floats, as before.
+    assert!(matches!(parsed.get("float"), Some(Json::Float(_))));
+    assert!(matches!(parsed.get("exp"), Some(Json::Float(_))));
+    assert_eq!(parsed.get("frac"), Some(&Json::Float(1.5)));
+    // Text inside a string, escapes included, is never rewritten.
+    assert_eq!(
+        parsed.get("text").and_then(Json::as_str),
+        Some("-9223372036854775809 \" 9223372036854775808")
+    );
+    assert_eq!(parsed.get("escaped\"key"), Some(&Json::Int(7)));
+}
+
+#[test]
+fn a_wide_literal_reaches_the_quantity_checks_as_out_of_range() {
+    use crate::marketplace::exact::parse_recorded;
+    for literal in ["-9223372036854775809", "9223372036854775808"] {
+        let parsed = parse_recorded(&format!(r#"{{"quantity": {literal}}}"#)).expect("JSON");
+        let raw = parsed.get("quantity").expect("member");
+        assert_eq!(strict_int(raw), None, "{literal}");
+        assert_eq!(quantity_reason(raw), "QuantityOutOfRange", "{literal}");
+    }
+}
+
+#[test]
+fn text_that_is_not_json_still_fails_in_the_reader_not_the_rewrite() {
+    use crate::marketplace::exact::parse_recorded;
+    for text in [
+        "",
+        "{",
+        r#"{"a": -9223372036854775809"#,
+        r#"{"a": 09223372036854775809}"#,
+        r#"{"a": 99999999999999999999x}"#,
+        r#"{"a": "unterminated -9223372036854775809"#,
+        "-",
+    ] {
+        assert!(parse_recorded(text).is_err(), "{text}");
+    }
+}

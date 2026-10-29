@@ -41,6 +41,7 @@ mod clock;
 mod core;
 mod ddb;
 mod events;
+mod exact;
 mod pipeline;
 mod query;
 mod submitter;
@@ -157,10 +158,22 @@ fn shown_path(path: &str) -> String {
 /// Reads and parses a JSON file named by the caller. The error names the file
 /// as [`shown_path`] does and the failure, never a value of the document.
 fn read_document(path: &str) -> Result<Json, String> {
+    read_parsed(path, parse_json)
+}
+
+/// [`read_document`] for a recording, whose integer literals beyond 64 bits are
+/// kept as digits rather than rounded to a float (`exact`, #4984).
+fn read_recording(path: &str) -> Result<Json, String> {
+    read_parsed(path, exact::parse_recorded)
+}
+
+fn read_parsed(
+    path: &str,
+    parse: fn(&str) -> Result<Json, toolkit_core::ParseError>,
+) -> Result<Json, String> {
     let label = shown_path(path);
     let text = read_text(Path::new(path), &label)?;
-    parse_json(&text)
-        .map_err(|error| format!("{label}: invalid JSON ({})", parse_failure_text(&error)))
+    parse(&text).map_err(|error| format!("{label}: invalid JSON ({})", parse_failure_text(&error)))
 }
 
 fn system_now() -> UtcTime {
@@ -194,7 +207,7 @@ fn recorded_client(invocation: &Invocation) -> Result<Option<RecordedClient>, To
     let Some(path) = invocation.value("--recorded") else {
         return Ok(None);
     };
-    let document = read_document(path)
+    let document = read_recording(path)
         .map_err(|reason| ToolkitError::runtime("marketplace_recorded", reason))?;
     RecordedClient::from_document(&document)
         .map(Some)
