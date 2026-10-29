@@ -37,6 +37,9 @@ const ENTRY: &str = r##"{"package_root": "pkgs/demo", "name": "toolkit", "packag
 
 const COMMIT: &str = "0123456789abcdef0123456789abcdef01234567";
 
+/// A fixture mutation for a negative case.
+type Edit = Box<dyn Fn(&Fixture)>;
+
 fn declaration_text(entries: &[&str]) -> String {
     format!(
         "{{\n  \"schema\": 1,\n  {PLATFORMS},\n  \"binaries\": [\n    {}\n  ]\n}}\n",
@@ -274,7 +277,7 @@ fn t_pkg_decl_the_destination_must_be_a_real_npm_package_ignoring_bin() {
         check_package_root(&ok.dir, ROOT)
     );
 
-    let cases: Vec<(&str, Box<dyn Fn(&Fixture)>, &str)> = vec![
+    let cases: Vec<(&str, Edit, &str)> = vec![
         (
             "no package.json",
             Box::new(|f: &Fixture| fs::remove_file(f.package().join("package.json")).expect("rm")),
@@ -636,8 +639,8 @@ fn t_pkg_pack_a_clean_complete_package_passes_offline() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)] // One table of refusal cases.
 fn t_pkg_pack_negatives_fail_and_agree_with_verify_complete() {
-    type Edit = Box<dyn Fn(&Fixture)>;
     let mut cases: Vec<(&str, Edit, &str)> = vec![
         (
             "missing manifest",
@@ -652,7 +655,7 @@ fn t_pkg_pack_negatives_fail_and_agree_with_verify_complete() {
         (
             "dirty manifest",
             Box::new(|f: &Fixture| {
-                f.edit_manifest("\"source_dirty\": false", "\"source_dirty\": true")
+                f.edit_manifest("\"source_dirty\": false", "\"source_dirty\": true");
             }),
             "dirty tree",
         ),
@@ -662,14 +665,14 @@ fn t_pkg_pack_negatives_fail_and_agree_with_verify_complete() {
                 f.edit_manifest(
                     "\"package_root\": \"pkgs/demo\"",
                     "\"package_root\": \"pkgs/other\"",
-                )
+                );
             }),
             "names package_root",
         ),
         (
             "manifest of a plugin",
             Box::new(|f: &Fixture| {
-                f.edit_manifest("\"package_root\": \"pkgs/demo\"", "\"plugin\": \"demo\"")
+                f.edit_manifest("\"package_root\": \"pkgs/demo\"", "\"plugin\": \"demo\"");
             }),
             "names plugin",
         ),
@@ -729,7 +732,7 @@ fn t_pkg_pack_negatives_fail_and_agree_with_verify_complete() {
                 f.edit_manifest(
                     "\"path\": \"linux-x86_64/toolkit\"",
                     "\"path\": \"linux-x86_64/toolkit2\"",
-                )
+                );
             }),
             "expected layout path",
         ),
@@ -739,7 +742,7 @@ fn t_pkg_pack_negatives_fail_and_agree_with_verify_complete() {
                 f.edit_manifest(
                     "\"triple\": \"x86_64-apple-darwin\"",
                     "\"triple\": \"x86_64-apple-ios\"",
-                )
+                );
             }),
             "but the declaration says",
         ),
@@ -749,7 +752,7 @@ fn t_pkg_pack_negatives_fail_and_agree_with_verify_complete() {
                 f.edit_manifest(
                     "\"platform\": \"macos-x86_64\"",
                     "\"platform\": \"plan9-x86_64\"",
-                )
+                );
             }),
             "unknown platform",
         ),
@@ -761,7 +764,7 @@ fn t_pkg_pack_negatives_fail_and_agree_with_verify_complete() {
         (
             "wrong package",
             Box::new(|f: &Fixture| {
-                f.edit_manifest("\"package\": \"toolkit-cli\"", "\"package\": \"other\"")
+                f.edit_manifest("\"package\": \"toolkit-cli\"", "\"package\": \"other\"");
             }),
             "but the declaration says",
         ),
