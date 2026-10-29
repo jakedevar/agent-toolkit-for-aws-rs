@@ -1104,3 +1104,8 @@ Friction: #4727, Rsi #4694, Rsi #4704
   S1 reviewer 51b3c3c9 filed P1 #5428 (listed ULA range admits IPv6 instance metadata before TLS) while still running -> S1 repair after its verdict.
   Kaizen worker c35bc7f4 (Sonnet) on #5394 (preserve_order build-scope dependence; told not to touch launch/ or the toolkit-cli serde_json line).
   Queue: 3022 B1, 3023 #4865, 3025 #5344. 4/4: 0c08b166 L5 r2, 51b3c3c9 #5425, c4766db7 x402 r4, c35bc7f4 #5394.
+- 17:03Z: x402 S5 repair 4 (c4766db7, Opus) DONE at 1c27e78536ce592542394489b6fda3f283466fb7: gate-test + doc only (verified diff), #5421/#5423 fixed (20 fixtures red fdf0290d, green 2606cf80), #5422 documented residual. PM ACCEPT recorded on #5352. Scoped 3f26ee67 ok 5256; check ok.
+  LANDING ORDER: enqueued x402 (3026) then WITHDREW it: conflicts with queued B1 (agents_pay/mod.rs) and #4865 (Makefile). Also WITHDREW #5344 (3025): its new tests/docgraph_review_private.rs would fail S5's T-AC3-GUARD; the guard can't be added before S5 (unknown feature cfg).
+  Merge worker 1d185138 (Sonnet, continue_from c4766db7): merge b9e7980b (B1) + 67154493 (#4865) into x402, registrations only, re-verify. Enqueue the merge head after B1 + #4865 land.
+  Then #5344: relaunch continue_from 1a36fb6d to merge rolling (with S5) + add guard to docgraph_review_private.rs; same for L5 tests/launch_l5.rs (#5372).
+  Queue: 3022 B1, 3023 #4865. 4/4: 0c08b166 L5 r2, 51b3c3c9 #5425, c35bc7f4 #5394, 1d185138 x402 merge.
