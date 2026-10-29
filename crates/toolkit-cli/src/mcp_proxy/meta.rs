@@ -46,7 +46,8 @@ fn inject_one(message: &mut Json, metadata: &[(String, String)]) -> Injected {
     let Json::Object(members) = message else {
         return outcome;
     };
-    let Some((_, Json::Object(params))) = members.iter_mut().find(|(key, _)| key == "params") else {
+    let Some((_, Json::Object(params))) = members.iter_mut().find(|(key, _)| key == "params")
+    else {
         return outcome;
     };
     let meta = match params.iter_mut().find(|(key, _)| key == "_meta") {
@@ -82,7 +83,10 @@ mod tests {
 
     fn run(text: &str) -> (String, Injected) {
         let mut value = parse_json(text).unwrap();
-        let meta = vec![("A".to_string(), "1".to_string()), ("B".to_string(), "2".to_string())];
+        let meta = vec![
+            ("A".to_string(), "1".to_string()),
+            ("B".to_string(), "2".to_string()),
+        ];
         let outcome = inject(&mut value, &meta);
         (value.to_compact_string(), outcome)
     }
@@ -103,7 +107,11 @@ mod tests {
 
     #[test]
     fn leaves_messages_without_a_params_object_alone() {
-        for text in [r#"{"id":1}"#, r#"{"params":[1]}"#, r#"{"params":{"_meta":3}}"#] {
+        for text in [
+            r#"{"id":1}"#,
+            r#"{"params":[1]}"#,
+            r#"{"params":{"_meta":3}}"#,
+        ] {
             let (out, outcome) = run(text);
             assert_eq!(out, parse_json(text).unwrap().to_compact_string());
             assert!(!outcome.changed);

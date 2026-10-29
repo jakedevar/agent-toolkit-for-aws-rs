@@ -116,7 +116,10 @@ fn a_session_id_of_256_visible_characters_is_accepted() {
     assert!(h.next().get("result").is_some());
     h.send(&request(1, "ping", "{}"));
     h.next();
-    assert_eq!(upstream.seen_rpc("ping")[0].header("mcp-session-id"), Some(id));
+    assert_eq!(
+        upstream.seen_rpc("ping")[0].header("mcp-session-id"),
+        Some(id)
+    );
     h.finish();
 }
 
@@ -253,8 +256,9 @@ fn server_messages_on_the_get_stream_reach_the_client_and_it_reopens_at_most_eve
 #[test]
 fn a_404_on_a_later_post_is_a_session_expired_error() {
     let upstream = Upstream::new(|seen| match seen.rpc_method() {
-        Some("initialize") => Reply::json(&result(seen.id().unwrap(), INIT_RESULT))
-            .header("Mcp-Session-Id", "sess-x"),
+        Some("initialize") => {
+            Reply::json(&result(seen.id().unwrap(), INIT_RESULT)).header("Mcp-Session-Id", "sess-x")
+        }
         Some("tools/call") => Reply::status(404),
         _ => Reply::status(404),
     });
@@ -298,6 +302,7 @@ fn a_new_initialize_replaces_the_session_and_tells_the_auth_seam() {
     let n = Arc::new(AtomicUsize::new(0));
     let counter = Arc::clone(&n);
     let upstream = Upstream::new(move |seen| match seen.rpc_method() {
+        None => Reply::status(200), // the DELETE at EOF
         Some("initialize") => {
             let k = counter.fetch_add(1, Ordering::SeqCst);
             let session: &'static str = if k == 0 { "first" } else { "second" };

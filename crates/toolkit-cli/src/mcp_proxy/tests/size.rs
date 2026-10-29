@@ -54,18 +54,29 @@ fn stdin_line_at_the_limit_is_served_and_one_byte_more_is_refused_with_its_id() 
     );
     h.send(&request(3, "ping", "{}"));
     assert_eq!(id_of(&h.next()), Json::Int(3));
-    assert_eq!(upstream.seen().len(), 2, "the oversize line never went upstream");
+    assert_eq!(
+        upstream.seen().len(),
+        2,
+        "the oversize line never went upstream"
+    );
     h.finish();
 }
 
 #[test]
 fn an_oversize_line_without_a_recoverable_id_gets_a_diagnostic_only() {
     let mut h = start(with_limits(small_limits()), echo());
-    h.send(&format!(r#"{{"jsonrpc":"2.0","method":"x","params":"{}"}}"#, "q".repeat(2000)));
+    h.send(&format!(
+        r#"{{"jsonrpc":"2.0","method":"x","params":"{}"}}"#,
+        "q".repeat(2000)
+    ));
     h.send(&request(3, "ping", "{}"));
     assert_eq!(id_of(&h.next()), Json::Int(3));
     h.no_more_output();
-    assert!(h.diag_text().contains("stdin-line-too-large id=false"), "{}", h.diag_text());
+    assert!(
+        h.diag_text().contains("stdin-line-too-large id=false"),
+        "{}",
+        h.diag_text()
+    );
     h.wait_budget_zero();
     h.finish();
 }
@@ -74,14 +85,23 @@ fn an_oversize_line_without_a_recoverable_id_gets_a_diagnostic_only() {
 fn an_upstream_json_body_at_the_limit_is_delivered_and_one_byte_more_is_refused() {
     let upstream = Upstream::new(|seen| {
         let id = seen.id().unwrap();
-        let len = if id == &Json::Int(1) { 1024 } else if id == &Json::Int(2) { 1025 } else { 50 };
+        let len = if id == &Json::Int(1) {
+            1024
+        } else if id == &Json::Int(2) {
+            1025
+        } else {
+            50
+        };
         Reply::json(&padded_result(id, len))
     });
     let mut h = start(with_limits(small_limits()), upstream);
     h.send(&request(1, "ping", "{}"));
     assert_eq!(h.next_text().len(), 1024);
     h.send(&request(2, "ping", "{}"));
-    assert_eq!(error_message(&h.next()), (-32603, "response too large".to_string()));
+    assert_eq!(
+        error_message(&h.next()),
+        (-32603, "response too large".to_string())
+    );
     h.send(&request(3, "ping", "{}"));
     assert_eq!(id_of(&h.next()), Json::Int(3));
     h.wait_budget_zero();
@@ -92,7 +112,13 @@ fn an_upstream_json_body_at_the_limit_is_delivered_and_one_byte_more_is_refused(
 fn an_sse_event_at_the_limit_is_delivered_and_one_byte_more_is_refused() {
     let upstream = Upstream::new(|seen| {
         let id = seen.id().unwrap();
-        let len = if id == &Json::Int(1) { 1024 } else if id == &Json::Int(2) { 1025 } else { 50 };
+        let len = if id == &Json::Int(1) {
+            1024
+        } else if id == &Json::Int(2) {
+            1025
+        } else {
+            50
+        };
         let event = padded_result(id, len);
         Reply::sse(&[event.as_str()])
     });
@@ -107,7 +133,10 @@ fn an_sse_event_at_the_limit_is_delivered_and_one_byte_more_is_refused() {
     h.send(&tool_call(1, "a"));
     assert_eq!(h.next_text().len(), 1024);
     h.send(&tool_call(2, "a"));
-    assert_eq!(error_message(&h.next()), (-32603, "response too large".to_string()));
+    assert_eq!(
+        error_message(&h.next()),
+        (-32603, "response too large".to_string())
+    );
     h.send(&tool_call(3, "a"));
     assert_eq!(id_of(&h.next()), Json::Int(3));
     h.finish();
@@ -127,7 +156,10 @@ fn an_sse_line_at_the_limit_is_accepted_and_one_byte_more_is_refused() {
     h.send(&request(1, "ping", "{}"));
     assert_eq!(id_of(&h.next()), Json::Int(1));
     h.send(&request(2, "ping", "{}"));
-    assert_eq!(error_message(&h.next()), (-32603, "response too large".to_string()));
+    assert_eq!(
+        error_message(&h.next()),
+        (-32603, "response too large".to_string())
+    );
     h.finish();
 }
 
@@ -229,7 +261,9 @@ fn the_seventeenth_concurrent_request_is_refused_and_a_later_one_is_served() {
 #[test]
 fn the_data_queue_holds_at_most_its_line_bound_and_the_stream_is_not_read_ahead() {
     let events: Vec<String> = (0..12)
-        .map(|n| format!(r#"{{"jsonrpc":"2.0","method":"notifications/progress","params":{{"n":{n}}}}}"#))
+        .map(|n| {
+            format!(r#"{{"jsonrpc":"2.0","method":"notifications/progress","params":{{"n":{n}}}}}"#)
+        })
         .collect();
     let upstream = Upstream::new(move |seen| {
         let mut reply = Reply::status(200).header("content-type", "text/event-stream");
@@ -251,7 +285,10 @@ fn the_data_queue_holds_at_most_its_line_bound_and_the_stream_is_not_read_ahead(
     // queue room: at most 5 frames pulled of 13.
     settle();
     let pulled = upstream.pulled();
-    assert!(pulled <= 5, "pulled {pulled} frames while the sink was paused");
+    assert!(
+        pulled <= 5,
+        "pulled {pulled} frames while the sink was paused"
+    );
     h.stdout.resume();
     for n in 0..12 {
         assert_eq!(
@@ -265,10 +302,7 @@ fn the_data_queue_holds_at_most_its_line_bound_and_the_stream_is_not_read_ahead(
 
 #[test]
 fn a_full_control_queue_pauses_the_stdin_reader() {
-    let mut h = start(
-        with_limits(limits(|s| s.control_queue_lines = 2)),
-        echo(),
-    );
+    let mut h = start(with_limits(limits(|s| s.control_queue_lines = 2)), echo());
     h.stdout.pause();
     for _ in 0..10 {
         h.send("not json");
@@ -277,7 +311,10 @@ fn a_full_control_queue_pauses_the_stdin_reader() {
     // One error is in the paused write, two are queued, and the reader is
     // blocked queueing the fourth: it has read at most 4 of the 10 lines.
     let reads = h.stdin_reads.load(std::sync::atomic::Ordering::SeqCst);
-    assert!(reads <= 4, "the reader read {reads} lines past a full control queue");
+    assert!(
+        reads <= 4,
+        "the reader read {reads} lines past a full control queue"
+    );
     h.stdout.resume();
     for _ in 0..10 {
         assert_eq!(error_message(&h.next()).0, -32700);

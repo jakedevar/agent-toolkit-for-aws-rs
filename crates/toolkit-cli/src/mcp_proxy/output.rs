@@ -99,7 +99,11 @@ impl Output {
     }
 
     /// Queue a data line, waiting while the data queue is full.
-    pub(crate) fn push_data(&self, mut line: OutLine, cancelled: &dyn Fn() -> bool) -> Result<(), PushError> {
+    pub(crate) fn push_data(
+        &self,
+        mut line: OutLine,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<(), PushError> {
         let mut state = self.state();
         loop {
             if state.closed {
@@ -150,7 +154,8 @@ impl Output {
                     if state.closed {
                         return WriterEnd::Closed;
                     }
-                    if let Some(line) = state.control.pop_front().or_else(|| state.data.pop_front()) {
+                    if let Some(line) = state.control.pop_front().or_else(|| state.data.pop_front())
+                    {
                         break line;
                     }
                     state = self

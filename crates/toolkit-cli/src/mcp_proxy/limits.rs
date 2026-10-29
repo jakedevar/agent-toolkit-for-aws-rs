@@ -22,9 +22,6 @@ pub const MAX_CONTROL_LINE: usize = 1024;
 /// bytes. Bounding it keeps every control line within [`MAX_CONTROL_LINE`].
 pub const MAX_ID_BYTES: usize = 256;
 
-/// Longest tool name quoted in an error template, in characters.
-pub const MAX_TOOL_NAME_CHARS: usize = 128;
-
 /// Bytes of an oversize stdin line kept to recover its `id`.
 pub const ID_RECOVERY_PREFIX: usize = 4096;
 
@@ -170,10 +167,14 @@ impl Limits {
             return Err(LimitsError("every proxy limit must be positive"));
         }
         if spec.max_depth > MAX_JSON_DEPTH {
-            return Err(LimitsError("the JSON depth limit is above the parser's maximum"));
+            return Err(LimitsError(
+                "the JSON depth limit is above the parser's maximum",
+            ));
         }
         if spec.control_reserve < MAX_CONTROL_LINE + 1 {
-            return Err(LimitsError("the control reserve cannot hold one control line"));
+            return Err(LimitsError(
+                "the control reserve cannot hold one control line",
+            ));
         }
         let limits = Self {
             max_line: spec.max_line,

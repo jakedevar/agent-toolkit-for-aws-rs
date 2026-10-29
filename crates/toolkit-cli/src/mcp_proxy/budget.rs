@@ -134,7 +134,11 @@ impl Budget {
     }
 
     /// Reserve `bytes`, waiting as the module documentation describes.
-    pub(crate) fn reserve(&self, bytes: usize, wait: &Wait<'_>) -> Result<Reservation, BudgetError> {
+    pub(crate) fn reserve(
+        &self,
+        bytes: usize,
+        wait: &Wait<'_>,
+    ) -> Result<Reservation, BudgetError> {
         self.acquire(bytes, wait)?;
         Ok(Reservation {
             budget: self.clone(),
@@ -200,7 +204,9 @@ impl Budget {
 }
 
 fn fits(limit: usize, in_use: usize, bytes: usize) -> bool {
-    in_use.checked_add(bytes).is_some_and(|total| total <= limit)
+    in_use
+        .checked_add(bytes)
+        .is_some_and(|total| total <= limit)
 }
 
 fn take(state: &mut State, bytes: usize) {
@@ -242,6 +248,20 @@ impl Reservation {
             let excess = self.bytes - bytes;
             self.bytes = bytes;
             self.budget.release(excess, self.queued);
+        }
+    }
+
+    /// Move `bytes` (at most all held) into a new reservation, without
+    /// touching the budget: an SSE event leaving the parser's buffer keeps
+    /// the bytes it already held.
+    pub(crate) fn split(&mut self, bytes: usize) -> Reservation {
+        debug_assert!(!self.queued, "queued bytes are never split");
+        let moved = bytes.min(self.bytes);
+        self.bytes -= moved;
+        Reservation {
+            budget: self.budget.clone(),
+            bytes: moved,
+            queued: false,
         }
     }
 
@@ -294,7 +314,10 @@ mod tests {
             deadline: Some(Duration::from_secs(120)),
             cancelled: &never,
         };
-        assert_eq!(budget.reserve(1, &wait).unwrap_err(), BudgetError::Exhausted);
+        assert_eq!(
+            budget.reserve(1, &wait).unwrap_err(),
+            BudgetError::Exhausted
+        );
     }
 
     #[test]

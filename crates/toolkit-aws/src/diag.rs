@@ -11,8 +11,9 @@
 //! [`crate::redact_text`] as a second line of defence (not the control).
 //! Lines go only to the writer given (stderr in production), never stdout.
 //!
-//! Later slices (S2, S3) add variants here; each variant must keep to the
-//! allowlisted field kinds.
+//! Later slices add variants here; each variant must keep to the allowlisted
+//! field kinds. S2 added [`ProxyEvent`]: the proxy's protocol events, as
+//! fixed kinds plus counts and booleans.
 
 use std::fmt::Write as _;
 use std::io::Write;
@@ -47,6 +48,67 @@ pub enum DiagEvent {
         /// The status code.
         status: u16,
     },
+    /// An MCP proxy protocol event (#4413 S2).
+    Proxy(ProxyEvent),
+}
+
+/// MCP proxy protocol events (#4413 S2): fixed kinds and counts only. None
+/// carries a message body, a key or value from a message, a header value or
+/// any error text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProxyEvent {
+    /// A stdin line passed the line bound and was discarded.
+    StdinLineTooLarge {
+        /// Whether its id was recovered (and answered).
+        id_recovered: bool,
+    },
+    /// A stdin line was not UTF-8, not JSON or not a JSON-RPC message.
+    StdinLineInvalid,
+    /// An upstream message was not UTF-8 or not JSON, or passed the depth or
+    /// node bound; it was dropped.
+    UpstreamMessageMalformed,
+    /// An upstream message was JSON but not an object or a batch; dropped.
+    UpstreamMessageNotRpc,
+    /// An upstream body, SSE line or SSE event passed its size bound.
+    UpstreamResponseTooLarge,
+    /// A request failed because the byte budget could not be reserved.
+    BudgetExhausted,
+    /// The server's `Mcp-Session-Id` was refused.
+    SessionIdRefused,
+    /// The server's negotiated protocol version was refused.
+    ProtocolVersionRefused,
+    /// Configured `_meta` keys the client's own values kept.
+    MetaKeysKept {
+        /// How many.
+        count: usize,
+    },
+    /// A client `params._meta` was not an object; nothing was injected.
+    MetaNotObject,
+    /// A client notification or response could not be delivered upstream.
+    NotificationFailed,
+    /// stdout could not be written.
+    StdoutClosed,
+}
+
+impl ProxyEvent {
+    fn render(self, line: &mut String) -> std::fmt::Result {
+        match self {
+            Self::StdinLineTooLarge { id_recovered } => {
+                write!(line, "stdin-line-too-large id={id_recovered}")
+            }
+            Self::StdinLineInvalid => line.write_str("stdin-line-invalid"),
+            Self::UpstreamMessageMalformed => line.write_str("upstream-message-malformed"),
+            Self::UpstreamMessageNotRpc => line.write_str("upstream-message-not-rpc"),
+            Self::UpstreamResponseTooLarge => line.write_str("upstream-response-too-large"),
+            Self::BudgetExhausted => line.write_str("budget-exhausted"),
+            Self::SessionIdRefused => line.write_str("session-id-refused"),
+            Self::ProtocolVersionRefused => line.write_str("protocol-version-refused"),
+            Self::MetaKeysKept { count } => write!(line, "meta-keys-kept count={count}"),
+            Self::MetaNotObject => line.write_str("meta-not-object"),
+            Self::NotificationFailed => line.write_str("notification-failed"),
+            Self::StdoutClosed => line.write_str("stdout-closed"),
+        }
+    }
 }
 
 impl DiagEvent {
@@ -62,6 +124,7 @@ impl DiagEvent {
             }
             Self::TransportFailure { code } => write!(line, "transport-failure code={code}"),
             Self::HttpStatus { status } => write!(line, "http-status status={status}"),
+            Self::Proxy(event) => event.render(&mut line),
         };
         line
     }
@@ -158,6 +221,11 @@ mod tests {
                 code: "aws_connect",
             },
             DiagEvent::HttpStatus { status: 503 },
+            DiagEvent::Proxy(ProxyEvent::StdinLineTooLarge {
+                id_recovered: false,
+            }),
+            DiagEvent::Proxy(ProxyEvent::MetaKeysKept { count: 2 }),
+            DiagEvent::Proxy(ProxyEvent::UpstreamMessageMalformed),
         ] {
             diag.emit(event);
         }
@@ -168,7 +236,10 @@ mod tests {
              toolkit mcp-proxy: credential-failure kind=invalid-configuration\n\
              toolkit mcp-proxy: credential-failure kind=signed-session-lost-credentials\n\
              toolkit mcp-proxy: transport-failure code=aws_connect\n\
-             toolkit mcp-proxy: http-status status=503\n"
+             toolkit mcp-proxy: http-status status=503\n\
+             toolkit mcp-proxy: stdin-line-too-large id=false\n\
+             toolkit mcp-proxy: meta-keys-kept count=2\n\
+             toolkit mcp-proxy: upstream-message-malformed\n"
         );
     }
 

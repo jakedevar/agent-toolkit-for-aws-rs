@@ -85,7 +85,9 @@ impl Failure {
     /// The JSON-RPC error message.
     fn rpc_message(self) -> String {
         match self {
-            Self::Credentials => format!("AWS credentials are expired or invalid. {CREDENTIALS_TAIL}"),
+            Self::Credentials => {
+                format!("AWS credentials are expired or invalid. {CREDENTIALS_TAIL}")
+            }
             Self::Http(status) => format!("upstream {}", http_text(status)),
             Self::Connect => "the MCP endpoint could not be reached".to_string(),
             Self::Unresponsive => "the MCP endpoint did not respond in time".to_string(),
@@ -154,7 +156,10 @@ pub(crate) fn failure(id: &Json, tool: Option<&str>, failure: Failure) -> String
             let text = if failure == Failure::Credentials {
                 format!("Tool call '{name}' failed due to expired or invalid AWS credentials. {CREDENTIALS_TAIL}")
             } else {
-                format!("Tool call '{name}' failed: {}. Please retry.", failure.tool_reason())
+                format!(
+                    "Tool call '{name}' failed: {}. Please retry.",
+                    failure.tool_reason()
+                )
             };
             tool_error(id, &text)
         }
@@ -169,7 +174,10 @@ pub(crate) fn rpc_error(id: &Json, code: i64, message: &str) -> String {
         ("id", id.clone()),
         (
             "error",
-            Json::object(vec![("code", Json::Int(code)), ("message", Json::string(message))]),
+            Json::object(vec![
+                ("code", Json::Int(code)),
+                ("message", Json::string(message)),
+            ]),
         ),
     ]));
     debug_assert!(line.len() <= MAX_CONTROL_LINE);
@@ -225,7 +233,11 @@ mod tests {
         for failure_kind in ALL {
             for tool in [None, Some(name.as_str())] {
                 let line = failure(&id, tool, failure_kind);
-                assert!(line.len() <= MAX_CONTROL_LINE, "{} bytes: {line}", line.len());
+                assert!(
+                    line.len() <= MAX_CONTROL_LINE,
+                    "{} bytes: {line}",
+                    line.len()
+                );
                 assert!(toolkit_core::parse_json(&line).is_ok());
             }
         }

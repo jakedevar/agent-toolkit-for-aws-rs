@@ -20,7 +20,10 @@ fn assert_framed(h: &Harness) {
             matches!(value, Json::Object(_) | Json::Array(_)),
             "not a message: {line}"
         );
-        assert!(!line.contains('\u{2028}') && !line.contains('\u{2029}'), "{line}");
+        assert!(
+            !line.contains('\u{2028}') && !line.contains('\u{2029}'),
+            "{line}"
+        );
     }
 }
 
@@ -36,7 +39,9 @@ fn an_sse_event_with_newline_escapes_and_u2028_is_one_line() {
     assert!(raw.contains("\\u2028") && raw.contains("\\u2029"), "{raw}");
     let line = parse_json(&raw).unwrap();
     assert_eq!(
-        line.get("result").and_then(|r| r.get("text")).and_then(Json::as_str),
+        line.get("result")
+            .and_then(|r| r.get("text"))
+            .and_then(Json::as_str),
         Some("a\nb\u{2028}c\u{2029}d")
     );
     assert_framed(&h);
@@ -68,7 +73,9 @@ fn an_event_split_across_chunks_including_inside_a_character() {
     h.send(&request(1, "ping", "{}"));
     let line = h.next();
     assert_eq!(
-        line.get("result").and_then(|r| r.get("t")).and_then(Json::as_str),
+        line.get("result")
+            .and_then(|r| r.get("t"))
+            .and_then(Json::as_str),
         Some("é€😀")
     );
     h.finish();
@@ -79,8 +86,7 @@ fn a_batch_array_from_upstream_is_one_line() {
     let transport = Upstream::new(|seen| {
         if seen.rpc_method() == Some("ping") {
             Reply::sse(&[
-                r#"[{"jsonrpc":"2.0","method":"notifications/message","params":{"level":"info"}},
-                    {"jsonrpc":"2.0","id":1,"result":{}}]"#,
+                r#"[{"jsonrpc":"2.0","method":"notifications/message","params":{"level":"info"}},{"jsonrpc":"2.0","id":1,"result":{}}]"#,
             ])
         } else {
             Reply::accepted()
@@ -114,7 +120,10 @@ fn a_non_json_event_is_dropped_and_the_next_event_is_delivered() {
     let diag = h.diag_text();
     assert!(diag.contains("upstream-message-malformed"), "{diag}");
     assert!(diag.contains("upstream-message-not-rpc"), "{diag}");
-    assert!(!diag.contains("not json"), "no body text in diagnostics: {diag}");
+    assert!(
+        !diag.contains("not json"),
+        "no body text in diagnostics: {diag}"
+    );
     h.finish();
 }
 
@@ -179,11 +188,17 @@ fn client_lines_that_are_not_json_rpc_get_standard_errors_and_the_loop_continues
     assert_eq!(line.get("id"), Some(&Json::Null));
     assert_eq!(error_message(&line), (-32700, "Parse error".to_string()));
     h.send("[1,2]");
-    assert_eq!(error_message(&h.next()), (-32600, "Invalid Request".to_string()));
+    assert_eq!(
+        error_message(&h.next()),
+        (-32600, "Invalid Request".to_string())
+    );
     h.send(r#"{"jsonrpc":"2.0","id":{"x":1},"method":"ping"}"#);
     let line = h.next();
     assert_eq!(line.get("id"), Some(&Json::Null));
-    assert_eq!(error_message(&line), (-32600, "Invalid Request".to_string()));
+    assert_eq!(
+        error_message(&line),
+        (-32600, "Invalid Request".to_string())
+    );
     h.send("");
     h.send("   \r");
     h.send(&request(9, "ping", "{}"));

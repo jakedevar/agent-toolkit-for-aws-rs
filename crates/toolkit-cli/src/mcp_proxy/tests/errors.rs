@@ -11,7 +11,8 @@ use toolkit_core::Json;
 use super::harness::*;
 use crate::mcp_proxy::{Auth, SignerAuth, MAX_CONTROL_LINE};
 
-const CREDENTIALS_TEXT: &str = "Tool call 'echo' failed due to expired or invalid AWS credentials. \
+const CREDENTIALS_TEXT: &str =
+    "Tool call 'echo' failed due to expired or invalid AWS credentials. \
 Please refresh your credentials and retry. The proxy will automatically use the new credentials on \
 the next request.";
 
@@ -110,7 +111,10 @@ fn an_auth_that_refreshes_gets_one_resend_after_401() {
     });
     let mut h = start_with(config(), upstream.clone(), auth.clone());
     h.send(&tool_call(1, "echo"));
-    assert_eq!(h.next().get("result"), Some(&Json::object(vec![("ok", Json::Bool(true))])));
+    assert_eq!(
+        h.next().get("result"),
+        Some(&Json::object(vec![("ok", Json::Bool(true))]))
+    );
     assert_eq!(calls.load(Ordering::SeqCst), 2);
     let seen = upstream.seen();
     assert_eq!(seen[0].header("authorization"), Some("SIG-0"));
@@ -193,9 +197,9 @@ fn the_tool_timeout_fires_at_the_configured_duration() {
     let gate = Gate::new();
     let held = gate.clone();
     let upstream = Upstream::new(move |seen| {
-        Reply::sse(&[]).step(Step::Gate(held.clone())).data(
-            format!("data: {}\n\n", ok_result(seen)).as_bytes(),
-        )
+        Reply::sse(&[])
+            .step(Step::Gate(held.clone()))
+            .data(format!("data: {}\n\n", ok_result(seen)).as_bytes())
     });
     let mut h = start(config(), upstream);
     h.send(&tool_call(1, "slow"));
@@ -313,7 +317,9 @@ fn a_4xx_is_not_retried_and_without_retries_nothing_is() {
 #[test]
 fn a_signing_failure_sends_nothing_and_gives_the_credentials_text() {
     let upstream = Upstream::new(|seen| Reply::json(&ok_result(seen)));
-    let signer = Arc::new(Mutex::new(FakeSigner::failing(AwsError::CredentialsExpired)));
+    let signer = Arc::new(Mutex::new(FakeSigner::failing(
+        AwsError::CredentialsExpired,
+    )));
     let auth = Arc::new(SignerAuth::new(signer, scope()));
     let mut h = start_with(config(), upstream.clone(), auth);
     h.send(&tool_call(1, "echo"));
@@ -358,7 +364,10 @@ fn control_lines_stay_within_one_kib_with_the_longest_id_and_tool_name() {
     ));
     let line = h.next();
     assert_eq!(line.get("id"), Some(&Json::Null));
-    assert_eq!(error_message(&line), (-32600, "Invalid Request".to_string()));
+    assert_eq!(
+        error_message(&line),
+        (-32600, "Invalid Request".to_string())
+    );
     h.finish();
 }
 
@@ -382,5 +391,33 @@ fn a_duplicate_in_flight_id_is_refused() {
     gate.open();
     assert_eq!(id_of(&h.next()), Json::Int(1));
     assert_eq!(upstream.seen().len(), 1);
+    h.finish();
+}
+
+#[test]
+fn an_idle_read_timeout_or_a_failure_mid_stream_gives_a_fixed_error() {
+    let upstream = Upstream::new(|seen| {
+        let step = if seen.id() == Some(&Json::Int(1)) {
+            Step::IdleTimeout
+        } else {
+            Step::Fail(AwsError::Connect {
+                message: "CANARY-RESET".to_string(),
+            })
+        };
+        Reply::sse_raw(&[b"data: {\"jsonrpc\":"]).step(step)
+    });
+    let mut h = start(config(), upstream);
+    h.send(&tool_call(1, "echo"));
+    assert_eq!(
+        tool_error_text(&h.next()),
+        "Tool call 'echo' failed: the MCP endpoint did not respond in time. Please retry."
+    );
+    h.send(&request(2, "ping", "{}"));
+    assert_eq!(
+        error_message(&h.next()),
+        (-32603, "the MCP endpoint could not be reached".to_string())
+    );
+    assert!(!h.stdout.text().contains("CANARY") && !h.diag_text().contains("CANARY"));
+    h.wait_budget_zero();
     h.finish();
 }

@@ -48,7 +48,14 @@ mod tests {
     #[test]
     fn protocol_versions() {
         assert!(valid_protocol_version("2025-06-18"));
-        for bad in ["2025-6-18", "2025-06-18 ", "2025/06/18", "", "abcd-ef-gh", "2025-06-1８"] {
+        for bad in [
+            "2025-6-18",
+            "2025-06-18 ",
+            "2025/06/18",
+            "",
+            "abcd-ef-gh",
+            "2025-06-1８",
+        ] {
             assert!(!valid_protocol_version(bad), "{bad:?}");
         }
     }

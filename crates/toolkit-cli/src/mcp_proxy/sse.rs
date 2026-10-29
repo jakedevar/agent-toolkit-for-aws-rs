@@ -216,7 +216,9 @@ mod tests {
             vec!["x"]
         );
         // An event with no data field is not dispatched.
-        assert!(parse_chunks(&[b"event: message\nid: 9\n\n"]).unwrap().is_empty());
+        assert!(parse_chunks(&[b"event: message\nid: 9\n\n"])
+            .unwrap()
+            .is_empty());
     }
 
     #[test]
@@ -255,7 +257,10 @@ mod tests {
             parser.feed(b"data: abcde", &mut events),
             Err(SseError::LineTooLong)
         );
-        assert_eq!(parser.feed(b"\n\n", &mut events), Err(SseError::LineTooLong));
+        assert_eq!(
+            parser.feed(b"\n\n", &mut events),
+            Err(SseError::LineTooLong)
+        );
         assert_eq!(parser.buffered(), 0);
     }
 

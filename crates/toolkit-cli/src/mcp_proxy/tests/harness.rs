@@ -240,11 +240,6 @@ impl Reply {
         self.steps.push(step);
         self
     }
-
-    pub fn gated_head(mut self, gate: &Gate) -> Self {
-        self.head_gate = Some(gate.clone());
-        self
-    }
 }
 
 /// What the upstream received.
@@ -523,7 +518,9 @@ impl Harness {
     }
 
     pub fn wait_for_in_use(&self, bytes: usize) {
-        eventually(&format!("in_use == {bytes}"), || self.budget.in_use() == bytes);
+        eventually(&format!("in_use == {bytes}"), || {
+            self.budget.in_use() == bytes
+        });
     }
 
     pub fn wait_budget_zero(&self) {
@@ -556,7 +553,11 @@ pub fn request(id: i64, method: &str, params: &str) -> String {
 }
 
 pub fn tool_call(id: i64, name: &str) -> String {
-    request(id, "tools/call", &format!(r#"{{"name":"{name}","arguments":{{}}}}"#))
+    request(
+        id,
+        "tools/call",
+        &format!(r#"{{"name":"{name}","arguments":{{}}}}"#),
+    )
 }
 
 pub fn result(id: &Json, body: &str) -> String {
@@ -576,7 +577,10 @@ pub fn error_message(line: &Json) -> (i64, String) {
         Some(Json::Int(code)) => *code,
         other => panic!("error code {other:?}"),
     };
-    let message = error.get("message").and_then(Json::as_str).expect("message");
+    let message = error
+        .get("message")
+        .and_then(Json::as_str)
+        .expect("message");
     (code, message.to_string())
 }
 

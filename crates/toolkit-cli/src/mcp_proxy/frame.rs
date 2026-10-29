@@ -2,7 +2,6 @@
 //! classification, oversize-line id recovery, and the compact serialiser
 //! whose output length is known (and reserved) before it is allocated.
 
-use std::fmt::Write as _;
 use std::io::{self, Read};
 
 use toolkit_core::{escape_json_string, parse_json_with_limits, Json};
@@ -182,7 +181,9 @@ pub(crate) fn parse_upstream(bytes: &[u8], limits: &Limits) -> Result<Json, Drop
 pub(crate) fn is_message(value: &Json) -> bool {
     match value {
         Json::Object(_) => true,
-        Json::Array(items) => !items.is_empty() && items.iter().all(|i| matches!(i, Json::Object(_))),
+        Json::Array(items) => {
+            !items.is_empty() && items.iter().all(|i| matches!(i, Json::Object(_)))
+        }
         _ => false,
     }
 }
@@ -255,12 +256,9 @@ pub(crate) fn classify(value: &Json) -> Result<Vec<ClientMessage>, Option<Json>>
             .map(classify_one)
             .collect::<Option<Vec<_>>>()
             .ok_or(None),
-        Json::Object(_) => classify_one(value).map(|m| vec![m]).ok_or_else(|| {
-            value
-                .get("id")
-                .filter(|id| is_valid_id(id))
-                .cloned()
-        }),
+        Json::Object(_) => classify_one(value)
+            .map(|m| vec![m])
+            .ok_or_else(|| value.get("id").filter(|id| is_valid_id(id)).cloned()),
         _ => Err(None),
     }
 }
@@ -270,7 +268,10 @@ pub(crate) fn classify(value: &Json) -> Result<Vec<ClientMessage>, Option<Json>>
 /// Recover the top-level `"id"` of a line from its first bytes (an oversize
 /// line is never parsed whole). Only a valid id is returned.
 pub(crate) fn recover_id(prefix: &[u8]) -> Option<Json> {
-    let mut scan = Scanner { bytes: prefix, pos: 0 };
+    let mut scan = Scanner {
+        bytes: prefix,
+        pos: 0,
+    };
     scan.ws();
     scan.eat(b'{')?;
     loop {
@@ -405,7 +406,11 @@ impl<R: Read> LineReader<R> {
     }
 
     /// The next line. A budget error (shutdown) ends reading.
-    pub(crate) fn next(&mut self, held: Reservation, wait: &Wait<'_>) -> io::Result<Result<Line, BudgetError>> {
+    pub(crate) fn next(
+        &mut self,
+        held: Reservation,
+        wait: &Wait<'_>,
+    ) -> io::Result<Result<Line, BudgetError>> {
         let mut held = held;
         let mut line: Vec<u8> = Vec::new();
         let mut oversize: Option<Vec<u8>> = None;
@@ -500,7 +505,10 @@ mod tests {
     #[test]
     fn ids_are_recovered_from_a_prefix() {
         let id = |text: &str| recover_id(text.as_bytes());
-        assert_eq!(id(r#"{"jsonrpc":"2.0","id":7,"method":"x","params":{"a":"#), Some(Json::Int(7)));
+        assert_eq!(
+            id(r#"{"jsonrpc":"2.0","id":7,"method":"x","params":{"a":"#),
+            Some(Json::Int(7))
+        );
         assert_eq!(
             id(r#"{"params":{"id":1,"x":[{"}":"]"}]},"id":"abc","more"#),
             Some(Json::string("abc"))
@@ -535,7 +543,10 @@ mod tests {
             one(r#"{"jsonrpc":"2.0","method":"n"}"#),
             Ok(vec![ClientMessage::Notification { method: "n".into() }])
         );
-        assert_eq!(one(r#"{"jsonrpc":"2.0","id":"s","result":{}}"#), Ok(vec![ClientMessage::Response]));
+        assert_eq!(
+            one(r#"{"jsonrpc":"2.0","id":"s","result":{}}"#),
+            Ok(vec![ClientMessage::Response])
+        );
         assert_eq!(one(r#"{"jsonrpc":"2.0","id":3}"#), Err(Some(Json::Int(3))));
         assert_eq!(one(r#"{"id":null,"method":"x"}"#), Err(None));
         assert_eq!(one(r#"{"method":5,"id":2}"#), Err(Some(Json::Int(2))));

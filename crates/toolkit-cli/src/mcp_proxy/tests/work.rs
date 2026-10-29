@@ -18,7 +18,8 @@ fn wide_object(n: usize, duplicate_last: bool) -> String {
 
 #[test]
 fn a_wide_object_is_delivered_with_its_key_order_and_parsed_off_the_protocol_threads() {
-    let upstream = Upstream::new(|seen| Reply::json(&result(seen.id().unwrap(), &wide_object(20_000, false))));
+    let upstream =
+        Upstream::new(|seen| Reply::json(&result(seen.id().unwrap(), &wide_object(20_000, false))));
     let mut h = start(config(), upstream);
     h.send(&request(1, "resources/read", "{}"));
     let line = h.next();
@@ -43,7 +44,8 @@ fn a_wide_object_is_delivered_with_its_key_order_and_parsed_off_the_protocol_thr
 
 #[test]
 fn a_wide_object_with_a_duplicate_last_key_is_dropped_as_malformed() {
-    let upstream = Upstream::new(|seen| Reply::json(&result(seen.id().unwrap(), &wide_object(20_000, true))));
+    let upstream =
+        Upstream::new(|seen| Reply::json(&result(seen.id().unwrap(), &wide_object(20_000, true))));
     let mut h = start(config(), upstream);
     h.send(&request(1, "resources/read", "{}"));
     assert_eq!(
@@ -58,7 +60,10 @@ fn a_wide_object_with_a_duplicate_last_key_is_dropped_as_malformed() {
 fn meta_config() -> crate::mcp_proxy::ProxyConfig {
     let mut cfg = config();
     cfg.metadata = vec![
-        ("INSTALL_SOURCE".to_string(), "agent-toolkit-aws-core".to_string()),
+        (
+            "INSTALL_SOURCE".to_string(),
+            "agent-toolkit-aws-core".to_string(),
+        ),
         ("AWS_REGION".to_string(), "us-east-1".to_string()),
     ];
     cfg
@@ -84,7 +89,11 @@ fn metadata_is_merged_into_params_meta_and_upstream_keys_win() {
         upstream.seen_rpc("tools/call")[0].body_text(),
         r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"x","_meta":{"AWS_REGION":"eu-west-1","progressToken":7,"INSTALL_SOURCE":"agent-toolkit-aws-core"}}}"#
     );
-    assert!(h.diag_text().contains("meta-keys-kept count=1"), "{}", h.diag_text());
+    assert!(
+        h.diag_text().contains("meta-keys-kept count=1"),
+        "{}",
+        h.diag_text()
+    );
     h.finish();
 }
 
@@ -101,7 +110,11 @@ fn metadata_creates_meta_when_absent_and_skips_messages_without_a_params_object(
     h.send(r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"_meta":"not an object"}}"#);
     h.next();
     eventually("all five upstream", || upstream.seen().len() == 5);
-    let bodies: Vec<String> = upstream.seen().iter().map(|s| s.body_text().to_string()).collect();
+    let bodies: Vec<String> = upstream
+        .seen()
+        .iter()
+        .map(|s| s.body_text().to_string())
+        .collect();
     let find = |needle: &str| {
         bodies
             .iter()
@@ -113,12 +126,18 @@ fn metadata_creates_meta_when_absent_and_skips_messages_without_a_params_object(
         find("tools/list"),
         r#"{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"_meta":{"INSTALL_SOURCE":"agent-toolkit-aws-core","AWS_REGION":"us-east-1"}}}"#
     );
-    assert_eq!(find("\"ping\""), r#"{"jsonrpc":"2.0","id":2,"method":"ping"}"#);
+    assert_eq!(
+        find("\"ping\""),
+        r#"{"jsonrpc":"2.0","id":2,"method":"ping"}"#
+    );
     assert_eq!(
         find("notifications/initialized"),
         r#"{"jsonrpc":"2.0","method":"notifications/initialized","params":{"_meta":{"INSTALL_SOURCE":"agent-toolkit-aws-core","AWS_REGION":"us-east-1"}}}"#
     );
-    assert_eq!(find("srv-1"), r#"{"jsonrpc":"2.0","id":"srv-1","result":{"x":1}}"#);
+    assert_eq!(
+        find("srv-1"),
+        r#"{"jsonrpc":"2.0","id":"srv-1","result":{"x":1}}"#
+    );
     assert_eq!(
         find("not an object"),
         r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"_meta":"not an object"}}"#
@@ -130,7 +149,9 @@ fn metadata_creates_meta_when_absent_and_skips_messages_without_a_params_object(
 #[test]
 fn a_client_batch_is_forwarded_once_with_meta_in_each_element() {
     let upstream = Upstream::new(|_| {
-        Reply::json(r#"[{"jsonrpc":"2.0","id":1,"result":{}},{"jsonrpc":"2.0","id":2,"result":{}}]"#)
+        Reply::json(
+            r#"[{"jsonrpc":"2.0","id":1,"result":{}},{"jsonrpc":"2.0","id":2,"result":{}}]"#,
+        )
     });
     let mut h = start(meta_config(), upstream.clone());
     h.send(r#"[{"jsonrpc":"2.0","id":1,"method":"ping","params":{}},{"jsonrpc":"2.0","id":2,"method":"ping","params":{}}]"#);
@@ -181,7 +202,7 @@ fn cancellation_is_forwarded_and_the_late_response_dropped_and_the_slot_freed() 
 #[test]
 fn a_cancel_for_an_unknown_id_is_only_forwarded() {
     let upstream = echo();
-    let mut h = start(config(), upstream.clone());
+    let h = start(config(), upstream.clone());
     h.send(r#"{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":"nope"}}"#);
     eventually("the cancel upstream", || upstream.seen().len() == 1);
     h.no_more_output();
