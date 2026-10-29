@@ -10,7 +10,6 @@
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::ffi::OsString;
-use std::fmt::Write as _;
 use std::fs;
 use std::net::IpAddr;
 use std::path::PathBuf;
@@ -20,12 +19,12 @@ use std::time::Duration;
 use toolkit_aws::{AwsError, Secret, ServiceError};
 use toolkit_core::{Json, ToolkitError};
 
-use super::clean::{clean, clean_to};
+use super::clean::{clean, clean_to, SecretGate, GATE_MAX_BYTES};
 use super::connect::{self, is_private, ConnectArgs};
 use super::discover::{self, DiscoverArgs};
 use super::recorded::Recording;
 use super::seams::{
-    CacheConnection, CacheEnvironment, ConnectPlan, IamTokenRequest, Operation, PingFailure,
+    CacheConnection, CacheEnvironment, CacheErrorKind, ConnectPlan, IamTokenRequest, Operation,
     ProcessEvent, Resolution, Seam, SeamError, ServerInfo, TunnelAws, TunnelHost, TunnelProcess,
     UnavailableAws, UnavailableCache, UnavailableHost,
 };
@@ -1189,13 +1188,13 @@ fn start_tunnel_without_a_recording_refuses_every_seam_with_a_typed_error() {
 // ------------------------------------------------------ test_connection
 
 struct MockConnection {
-    ping: Result<f64, PingFailure>,
+    ping: Result<f64, CacheErrorKind>,
     info: Option<ServerInfo>,
     log: Log,
 }
 
 impl CacheConnection for MockConnection {
-    fn ping(&mut self) -> Result<f64, PingFailure> {
+    fn ping(&mut self) -> Result<f64, CacheErrorKind> {
         self.log.borrow_mut().push("ping".to_string());
         self.ping.clone()
     }
@@ -1212,8 +1211,8 @@ impl CacheConnection for MockConnection {
 
 struct MockCache {
     resolution: Resolution,
-    init_error: Option<String>,
-    ping: Result<f64, PingFailure>,
+    init_error: Option<CacheErrorKind>,
+    ping: Result<f64, CacheErrorKind>,
     info: Option<ServerInfo>,
     iam: Option<&'static str>,
     plans: Vec<ConnectPlan>,
@@ -1257,10 +1256,10 @@ impl CacheEnvironment for MockCache {
     fn connect(
         &mut self,
         plan: &ConnectPlan,
-    ) -> Result<Result<Box<dyn CacheConnection>, String>, SeamError> {
+    ) -> Result<Result<Box<dyn CacheConnection>, CacheErrorKind>, SeamError> {
         self.plans.push(plan.clone());
-        if let Some(message) = self.init_error.take() {
-            return Ok(Err(message));
+        if let Some(kind) = self.init_error.take() {
+            return Ok(Err(kind));
         }
         Ok(Ok(Box::new(MockConnection {
             ping: self.ping.clone(),
@@ -1323,12 +1322,9 @@ fn test_connection_reports_ping_server_tls_and_success() {
 #[test]
 fn test_connection_never_prints_the_password_or_token() {
     let secret = "hunter2-PASSWORD";
-    for failure in [
-        Ok(1.0),
-        Err(PingFailure::Authentication("bad credentials".to_string())),
-        Err(PingFailure::Connection("SSL: handshake".to_string())),
-        Err(PingFailure::Other("boom".to_string())),
-    ] {
+    let mut outcomes = vec![Ok(1.0)];
+    outcomes.extend(ALL_KINDS.map(Err));
+    for failure in outcomes {
         let mut cache = MockCache::healthy();
         cache.ping = failure;
         let run = run_connect(&connect_args(NODE_HOST), &mut cache);
@@ -1365,30 +1361,26 @@ fn test_connection_never_prints_the_password_or_token() {
 }
 
 #[test]
-fn test_connection_an_error_message_with_a_credential_is_redacted() {
+fn test_connection_an_other_failure_prints_only_its_fixed_text() {
     let mut cache = MockCache::healthy();
-    cache.ping = Err(PingFailure::Other(
-        "denied for AKIAIOSFODNN7EXAMPLE\u{1b}[0m".to_string(),
-    ));
+    cache.ping = Err(CacheErrorKind::Other);
     let run = run_connect(&connect_args(NODE_HOST), &mut cache);
     assert_eq!(run.status, 1);
-    assert!(
-        !run.stderr.contains("AKIAIOSFODNN7EXAMPLE") && !run.stderr.contains('\u{1b}'),
-        "{}",
-        run.stderr
+    assert_eq!(
+        run.stderr,
+        "  PING FAILED: client error (details withheld)\n"
     );
-    assert!(run.stderr.starts_with("  PING FAILED: "));
 }
 
 #[test]
 fn test_connection_authentication_failure_hints_at_the_rbac_user() {
     let mut cache = MockCache::healthy();
-    cache.ping = Err(PingFailure::Authentication("WRONGPASS".to_string()));
+    cache.ping = Err(CacheErrorKind::AuthenticationFailed);
     let run = run_connect(&connect_args(NODE_HOST), &mut cache);
     assert_eq!(run.status, 1);
     assert_eq!(
         run.stderr,
-        "  PING FAILED: Authentication error -- WRONGPASS\n  Hint: Check username/password or ensure the RBAC user exists and is active.\n"
+        "  PING FAILED: Authentication error -- authentication failed\n  Hint: Check username/password or ensure the RBAC user exists and is active.\n"
     );
     assert!(!run.stdout.contains("CONNECTION SUCCESSFUL"));
     assert!(!logged(&cache.log).contains(&"info".to_string()));
@@ -1396,9 +1388,9 @@ fn test_connection_authentication_failure_hints_at_the_rbac_user() {
 
 #[test]
 fn test_connection_connection_failures_pick_the_tls_or_network_hint() {
-    let hint = |message: &str, no_tls: bool| {
+    let hint = |kind: CacheErrorKind, no_tls: bool| {
         let mut cache = MockCache::healthy();
-        cache.ping = Err(PingFailure::Connection(message.to_string()));
+        cache.ping = Err(kind);
         let args = ConnectArgs {
             no_tls,
             ..connect_args(NODE_HOST)
@@ -1408,18 +1400,20 @@ fn test_connection_connection_failures_pick_the_tls_or_network_hint() {
         run.stderr.lines().nth(1).expect("a hint").to_string()
     };
     assert_eq!(
-        hint("SSL handshake failed", false),
+        hint(CacheErrorKind::TlsHandshakeFailed, false),
         "  Hint: TLS handshake failed. Verify the endpoint supports in-transit encryption."
     );
     assert_eq!(
-        hint("tls error", false),
-        "  Hint: TLS handshake failed. Verify the endpoint supports in-transit encryption."
-    );
-    assert_eq!(
-        hint("SSL handshake failed", true),
+        hint(CacheErrorKind::TlsHandshakeFailed, true),
         "  Hint: This endpoint may require TLS. Retry without --no-tls (TLS is default)."
     );
-    assert_eq!(hint("timed out", false), "  Hint: Check security group rules, VPC placement, and whether you need a tunnel or jump host.");
+    for kind in [
+        CacheErrorKind::ConnectionRefused,
+        CacheErrorKind::Timeout,
+        CacheErrorKind::DnsFailed,
+    ] {
+        assert_eq!(hint(kind, false), "  Hint: Check security group rules, VPC placement, and whether you need a tunnel or jump host.");
+    }
 }
 
 #[test]
@@ -1445,10 +1439,13 @@ fn test_connection_missing_info_is_a_warning_and_plaintext_is_flagged() {
 #[test]
 fn test_connection_client_init_failure_exits_1() {
     let mut cache = MockCache::healthy();
-    cache.init_error = Some("bad config".to_string());
+    cache.init_error = Some(CacheErrorKind::Other);
     let run = run_connect(&connect_args(NODE_HOST), &mut cache);
     assert_eq!(run.status, 1);
-    assert_eq!(run.stderr, "  Client init FAILED: bad config\n");
+    assert_eq!(
+        run.stderr,
+        "  Client init FAILED: client error (details withheld)\n"
+    );
 }
 
 #[test]
@@ -2192,7 +2189,7 @@ fn test_connection_replays_a_recorded_connection_without_the_password() {
     assert!(!stderr.contains("hunter2"));
 
     let failing = write_recording(
-        r#"{"cache":{"address":"10.0.0.9","ping_error":{"kind":"authentication","message":"WRONGPASS"}}}"#,
+        r#"{"cache":{"address":"10.0.0.9","ping_error":{"kind":"authentication_failed"}}}"#,
     );
     let (status, stdout, stderr) = exec(&[
         "elasticache",
@@ -2205,7 +2202,7 @@ fn test_connection_replays_a_recorded_connection_without_the_password() {
     ]);
     assert_eq!(status, 1);
     assert!(stderr.contains("resolves to private IP 10.0.0.9."));
-    assert!(stderr.contains("Authentication error -- WRONGPASS"));
+    assert!(stderr.contains("Authentication error -- authentication failed"));
     assert!(!format!("{stdout}{stderr}").contains("hunter2"));
 }
 
@@ -2227,246 +2224,193 @@ fn recording_parse_errors_never_carry_a_value() {
     }
 }
 
-// ------------------------------------------- #4986 secrets in client text
+// ------------------- #4986 #5004 #5005 #5007 injected-client typed diagnostics
 
-/// Percent-encoding of every byte but the unreserved ones (RFC 3986), the
-/// way a client puts a credential into a URL.
-fn percent_encoded(text: &str, upper: bool) -> String {
-    let mut out = String::new();
-    for byte in text.bytes() {
-        if byte.is_ascii_alphanumeric() || b"-._~".contains(&byte) {
-            out.push(char::from(byte));
-        } else if upper {
-            let _ = write!(out, "%{byte:02X}");
-        } else {
-            let _ = write!(out, "%{byte:02x}");
-        }
-    }
-    out
-}
+/// Every kind a client can fail with, and the fixed text it prints.
+const ALL_KINDS: [CacheErrorKind; 6] = CacheErrorKind::ALL;
 
-fn hex_encoded(text: &str) -> String {
-    text.bytes().fold(String::new(), |mut acc, byte| {
-        let _ = write!(acc, "{byte:02x}");
-        acc
-    })
-}
+/// A password with the characters the reviewers' reproductions used.
+const FORM_PASSWORD: &str = "marmalade 742/synthetic+value";
 
-/// The renderings of a credential in client error text that a scrubber must
-/// know: raw, quoted, escaped for JSON, percent-encoded, hex.
-fn renderings(secret: &str) -> Vec<String> {
-    vec![
-        secret.to_string(),
-        format!("{secret:?}"),
-        toolkit_core::escape_json_string(secret),
-        percent_encoded(secret, true),
-        percent_encoded(secret, false),
-        hex_encoded(secret),
-    ]
-}
-
-/// Every error text a cache client can hand back, with `form` inside it.
-fn client_errors(form: &str) -> Vec<(&'static str, String)> {
-    vec![
-        ("init", format!("cannot build client for {form} here")),
-        ("authentication", format!("WRONGPASS {form} rejected")),
-        ("connection", format!("Error connecting with {form}")),
-        (
-            "connection (tls)",
-            format!("SSL handshake with {form} failed"),
-        ),
-        ("other", format!("unexpected {form} reply")),
-    ]
-}
-
-fn failing_cache(kind: &str, message: String) -> MockCache {
+fn failing_cache(kind: &str, error: CacheErrorKind) -> MockCache {
     let mut cache = MockCache::healthy();
-    match kind {
-        "init" => cache.init_error = Some(message),
-        "authentication" => cache.ping = Err(PingFailure::Authentication(message)),
-        "connection" | "connection (tls)" => cache.ping = Err(PingFailure::Connection(message)),
-        _ => cache.ping = Err(PingFailure::Other(message)),
+    if kind == "init" {
+        cache.init_error = Some(error);
+    } else {
+        cache.ping = Err(error);
     }
     cache
 }
 
-fn assert_no_leak(run: &Captured, forms: &[String], context: &str) {
+fn assert_no_secret(run: &Captured, parts: &[&str], context: &str) {
     let all = format!("{}{}", run.stdout, run.stderr);
-    for form in forms {
+    for part in parts {
         assert!(
-            !all.contains(form.as_str()),
-            "{context}: {form:?} leaked into:\n{all}"
+            !all.contains(part),
+            "{context}: {part:?} leaked into:\n{all}"
         );
     }
     if let Err(error) = &run.result {
         let text = format!("{error:?}{error}");
-        for form in forms {
-            assert!(
-                !text.contains(form.as_str()),
-                "{context}: error leaked {form:?}"
-            );
+        for part in parts {
+            assert!(!text.contains(part), "{context}: error leaked {part:?}");
         }
     }
 }
 
 #[test]
-fn test_connection_removes_the_active_password_from_every_client_error() {
-    for password in [
-        "hunter2-PASSWORD",
-        "p@ss/w0rd+=&\"q",
-        "a b\\c'd",
-        "0123456789abcdef0123456789",
-    ] {
-        let forms = renderings(password);
-        for form in &forms {
-            for (kind, message) in client_errors(form) {
-                let mut cache = failing_cache(kind, message);
+fn a_client_error_kind_prints_only_its_fixed_text_in_every_auth_flow() {
+    let token =
+        "mycache.use1.cache.amazonaws.com/?Action=connect&User=iamuser&X-Amz-Signature=Wd8zXk33";
+    let parts = [
+        "marmalade",
+        "742",
+        "synthetic",
+        "Wd8zXk33",
+        "iamuser",
+        "mycache.use1",
+    ];
+    for kind in ALL_KINDS {
+        for stage in ["init", "ping"] {
+            for flow in ["rbac", "password", "iam"] {
+                let mut cache = failing_cache(stage, kind);
+                cache.iam = Some(token);
                 let args = ConnectArgs {
-                    password: Some(password),
+                    username: (flow == "rbac").then_some("app"),
+                    password: Some(FORM_PASSWORD),
+                    iam_auth: flow == "iam",
+                    iam_user: Some("iam-user"),
+                    cache_name: Some("My-Cache"),
                     ..connect_args(NODE_HOST)
                 };
+                let context = format!("{stage}/{flow}/{kind:?}");
                 let run = run_connect(&args, &mut cache);
-                assert_eq!(run.status, 1, "{kind}");
-                assert!(run.stderr.contains("[REDACTED]"), "{kind}: {}", run.stderr);
-                assert_no_leak(&run, &forms, kind);
+                assert_eq!(run.status, 1, "{context}");
+                assert_no_secret(&run, &parts, &context);
+                let first = run.stderr.lines().next().expect("a diagnostic");
+                assert!(first.ends_with(kind.text()), "{context}: {first}");
+                if stage == "init" {
+                    assert_eq!(
+                        run.stderr,
+                        format!("  Client init FAILED: {}\n", kind.text())
+                    );
+                }
             }
         }
     }
 }
 
 #[test]
-fn test_connection_the_password_in_the_password_auth_flow_is_scrubbed_too() {
-    let password = "unlabelled-S3CRET-0042";
-    for (kind, message) in client_errors(password) {
-        let mut cache = failing_cache(kind, message);
-        let args = ConnectArgs {
-            username: None,
-            password: Some(password),
-            ..connect_args(NODE_HOST)
-        };
-        let run = run_connect(&args, &mut cache);
-        assert_eq!(run.status, 1, "{kind}");
-        assert_no_leak(&run, &renderings(password), kind);
-    }
-}
-
-#[test]
-fn test_connection_scrubs_before_bounding_and_escaping() {
-    let password = "hunter2-PASSWORD";
-    // The bound (200 characters) would cut the password in two and leak the
-    // front half.
-    let near_the_bound = format!("{}{password}{}", "x".repeat(196), "y".repeat(50));
-    // A control character inside the password is escaped by the last step.
-    let hostile = "tab\there-9X\u{7}";
-    let with_controls = format!("a\u{1b}[31m{hostile}\r\nForged: line {hostile}");
-    for (secret, text) in [(password, near_the_bound), (hostile, with_controls)] {
-        for (kind, _) in client_errors("") {
-            let mut cache = failing_cache(kind, text.clone());
-            let args = ConnectArgs {
-                password: Some(secret),
-                ..connect_args(NODE_HOST)
-            };
-            let run = run_connect(&args, &mut cache);
-            let mut forms = renderings(secret);
-            forms.push(secret[..5].to_string());
-            forms.push(crate::safe_text::safe_path(secret));
-            assert_no_leak(&run, &forms, kind);
-            assert!(!run.stderr.contains('\u{1b}'), "{}", run.stderr);
-        }
-    }
-}
-
-#[test]
-fn test_connection_the_tls_hint_does_not_depend_on_the_password() {
-    // A password "tls" must not flip the hint of an unrelated failure.
-    let mut cache = MockCache::healthy();
-    cache.ping = Err(PingFailure::Connection("refused for tls".to_string()));
-    let args = ConnectArgs {
-        password: Some("tls"),
-        no_tls: true,
-        ..connect_args(NODE_HOST)
-    };
-    let run = run_connect(&args, &mut cache);
-    assert!(
-        run.stderr.contains("Hint: Check security group rules"),
-        "{}",
-        run.stderr
+fn the_text_of_a_kind_is_first_party_and_pinned() {
+    let texts: Vec<(&str, &str)> = ALL_KINDS
+        .iter()
+        .map(|kind| (kind.key(), kind.text()))
+        .collect();
+    assert_eq!(
+        texts,
+        [
+            ("authentication_failed", "authentication failed"),
+            ("connection_refused", "connection refused"),
+            ("tls_handshake_failed", "TLS handshake failed"),
+            ("timeout", "timed out"),
+            ("dns_failed", "host name lookup failed"),
+            ("other", "client error (details withheld)"),
+        ]
     );
+    for kind in ALL_KINDS {
+        assert_eq!(CacheErrorKind::from_key(kind.key()), Some(kind));
+    }
+    assert_eq!(CacheErrorKind::from_key("authentication"), None);
+    assert_eq!(CacheErrorKind::from_key(""), None);
 }
 
 #[test]
-fn test_connection_removes_server_info_that_echoes_the_password() {
-    let password = "unlabelled-S3CRET-0042";
+fn an_injected_server_info_is_printed_through_the_gate_only() {
+    let hostile = ServerInfo {
+        version: format!("7.1 {FORM_PASSWORD}"),
+        mode: "marmalade+742%2Fsynthetic%2Bvalue".to_string(),
+    };
     let mut cache = MockCache::healthy();
-    cache.info = Some(ServerInfo {
-        version: format!("7.1 {password}"),
-        mode: percent_encoded(password, true),
-    });
+    cache.info = Some(hostile);
     let args = ConnectArgs {
-        password: Some(password),
+        password: Some(FORM_PASSWORD),
         ..connect_args(NODE_HOST)
     };
-    let run = run_connect(&args, &mut cache);
+    let run = capture(|out| connect::run(&args, &mut cache, out));
     assert_eq!(run.status, 0);
-    assert_no_leak(&run, &renderings(password), "server info");
+    assert!(
+        run.stdout
+            .contains("  Server: engine version unknown, mode=unknown\n"),
+        "{}",
+        run.stdout
+    );
+    assert_no_secret(&run, &["marmalade", "742", "synthetic"], "server info");
+}
+
+// ----------------------------------------------- the SecretGate itself
+
+#[test]
+fn the_gate_refuses_a_value_holding_a_secret_and_fails_closed_above_the_cap() {
+    let gate = SecretGate::new(&["pre-rec", "recorded-token", ""]);
+    assert_eq!(gate.version("7.1.0"), "7.1.0");
+    // Overlapping exact values: either one anywhere in the value refuses it.
+    assert_eq!(gate.version("pre-recorded-token"), "unknown");
+    assert_eq!(gate.version("7-pre-rec"), "unknown");
+    assert_eq!(gate.version("x-recorded-token"), "unknown");
+    assert_eq!(gate.mode("cluster"), "cluster");
+
+    let self_overlap = SecretGate::new(&["ababababababa"]);
+    assert_eq!(self_overlap.version("ababababababababa"), "unknown");
+    assert_eq!(self_overlap.version("abababababab"), "abababababab");
+
+    // The gate is the secret check; the empty secret holds nothing.
+    assert_eq!(SecretGate::new(&[""]).version("7.1.0"), "7.1.0");
+
+    // A secret as long as the cap or longer cannot be inside a value of at
+    // most 32 characters; a value over the cap is refused unread.
+    let long_secret = "a".repeat(GATE_MAX_BYTES + 1);
+    assert_eq!(
+        SecretGate::new(&[long_secret.as_str()]).version("aaaa"),
+        "aaaa"
+    );
+    let near_match = format!("{}b", "a".repeat(5000));
+    let big_value = "a".repeat(1 << 20);
+    let gate = SecretGate::new(&[near_match.as_str()]);
+    assert_eq!(gate.version(&big_value), "unknown");
+    assert_eq!(gate.mode(&big_value), "unknown");
+    assert!(big_value.len() > GATE_MAX_BYTES);
 }
 
 #[test]
-fn test_connection_removes_the_iam_token_from_every_client_error() {
-    let token =
-        "mycache.use1.cache.amazonaws.com/?Action=connect&User=iamuser&Zq9=Wd8zXk33&Ab=Cd/Ef+Gh";
-    let supplied = "also-supplied-PW-77";
-    let mut forms = renderings(token);
-    forms.extend(renderings(supplied));
-    for form in forms.clone() {
-        for (kind, message) in client_errors(&form) {
-            let mut cache = failing_cache(kind, message);
-            cache.iam = Some(token);
-            let args = ConnectArgs {
-                username: None,
-                password: Some(supplied),
-                iam_auth: true,
-                iam_user: Some("iam-user"),
-                cache_name: Some("My-Cache"),
-                ..connect_args(NODE_HOST)
-            };
-            let run = run_connect(&args, &mut cache);
-            assert_eq!(run.status, 1, "{kind}");
-            assert_eq!(cache.iam_requests.len(), 1, "{kind}");
-            assert_no_leak(&run, &forms, kind);
-            assert!(run.stderr.contains("[REDACTED]"), "{kind}: {}", run.stderr);
-        }
+fn the_gate_allowlist_for_a_version_is_exact() {
+    let gate = SecretGate::new(&[]);
+    let max = format!("a{}", "-".repeat(31));
+    assert_eq!(max.len(), 32);
+    assert_eq!(gate.version(&max), max);
+    assert_eq!(gate.version(&format!("{max}x")), "unknown");
+    for ok in ["7", "7.1", "7.2.4-rc1+b5", "a", "Z.-+9"] {
+        assert_eq!(gate.version(ok), ok, "{ok}");
     }
-}
-
-#[test]
-fn test_connection_cli_replay_never_prints_a_password_a_recording_echoes() {
-    let password = "unlabelled-S3CRET-0042";
-    for recording in [
-        format!(r#"{{"cache":{{"connect":{{"init_error":"cannot use {password}"}}}}}}"#),
-        format!(
-            r#"{{"cache":{{"ping_error":{{"kind":"authentication","message":"WRONGPASS {password}"}}}}}}"#
-        ),
-        format!(
-            r#"{{"cache":{{"ping_error":{{"kind":"connection","message":"closed {password}"}}}}}}"#
-        ),
-        format!(r#"{{"cache":{{"ping_error":{{"message":"odd {password}"}}}}}}"#),
+    for bad in [
+        "",
+        ".7",
+        "-7",
+        "+7",
+        "7 1",
+        "7_1",
+        "7/1",
+        "7:1",
+        "7\n",
+        "\u{e9}",
+        "7\u{200b}",
     ] {
-        let file = write_recording(&recording);
-        let (status, stdout, stderr) = exec(&[
-            "elasticache",
-            "test-connection",
-            "127.0.0.1",
-            "--password",
-            password,
-            "--recorded",
-            file.path(),
-        ]);
-        assert_eq!(status, 1, "{recording}");
-        assert!(
-            !format!("{stdout}{stderr}").contains(password),
-            "{recording}: {stdout}{stderr}"
-        );
+        assert_eq!(gate.version(bad), "unknown", "{bad:?}");
+    }
+    for mode in ["standalone", "cluster", "sentinel"] {
+        assert_eq!(gate.mode(mode), mode);
+    }
+    for bad in ["", "Cluster", "cluster ", "master", "7.1"] {
+        assert_eq!(gate.mode(bad), "unknown", "{bad:?}");
     }
 }
 
@@ -2487,11 +2431,11 @@ fn a_recorded_cache_needs_exactly_one_ping_outcome() {
         (r#"{"cache":{}}"#, "no outcome"),
         (r#"{"cache":{"server":{"version":"7"}}}"#, "only server"),
         (
-            r#"{"cache":{"ping_ms":1.0,"ping_error":{"message":"x"}}}"#,
+            r#"{"cache":{"ping_ms":1.0,"ping_error":{"kind":"other"}}}"#,
             "both",
         ),
         (
-            r#"{"cache":{"ping_ms":1.0,"ping_error":{"kind":"connection","message":"x"}}}"#,
+            r#"{"cache":{"ping_ms":1.0,"ping_error":{"kind":"connection_refused"}}}"#,
             "both, explicit kind",
         ),
     ] {
@@ -2527,18 +2471,18 @@ fn a_recorded_explicit_ping_outcome_replays_and_an_init_error_needs_none() {
     assert!(stdout.contains("  PING: OK (2.5 ms)\n"));
 
     let (status, stdout, stderr) = replay_connection(
-        r#"{"cache":{"ping_error":{"kind":"connection","message":"reset"}}}"#,
+        r#"{"cache":{"ping_error":{"kind":"connection_refused"}}}"#,
         &[],
     );
     assert_eq!(status, 1, "{stdout}{stderr}");
-    assert!(stderr.contains("PING FAILED: Connection error -- reset"));
+    assert!(stderr.contains("PING FAILED: Connection error -- connection refused"));
 
     // A client that never gets built never reaches PING.
     let (status, stdout, stderr) =
-        replay_connection(r#"{"cache":{"connect":{"init_error":"no client"}}}"#, &[]);
+        replay_connection(r#"{"cache":{"connect":{"init_error":"other"}}}"#, &[]);
     assert_eq!(status, 1, "{stdout}{stderr}");
     assert!(
-        stderr.starts_with("  Client init FAILED: no client\n"),
+        stderr.starts_with("  Client init FAILED: client error (details withheld)\n"),
         "{stderr}"
     );
     assert!(!stderr.contains("recorded"), "{stderr}");
@@ -2577,17 +2521,17 @@ fn a_recorded_cache_step_no_call_used_fails_the_run() {
 #[test]
 fn a_recorded_result_after_an_earlier_failure_is_unused() {
     assert_unused(
-        r#"{"cache":{"connect":{"init_error":"no client"},"ping_ms":1.0}}"#,
+        r#"{"cache":{"connect":{"init_error":"other"},"ping_ms":1.0}}"#,
         &[],
         "ping after init_error",
     );
     assert_unused(
-        r#"{"cache":{"connect":{"init_error":"no client"},"server":{"version":"7"}}}"#,
+        r#"{"cache":{"connect":{"init_error":"other"},"server":{"version":"7"}}}"#,
         &[],
         "info after init_error",
     );
     assert_unused(
-        r#"{"cache":{"ping_error":{"message":"reset"},"server":{"version":"7"}}}"#,
+        r#"{"cache":{"ping_error":{"kind":"other"},"server":{"version":"7"}}}"#,
         &[],
         "info after a failed ping",
     );

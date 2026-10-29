@@ -17,7 +17,7 @@
 //!              "exit_code": 0, "stops_gracefully": true},
 //!   "cache": {"address": "10.0.1.5", "iam_token": true,
 //!             "connect": {"request": {"host": "..."}, "init_error": null},
-//!             "ping_ms": 1.5, "ping_error": {"kind": "connection", "message": "..."},
+//!             "ping_ms": 1.5, "ping_error": {"kind": "connection_refused"},
 //!             "server": {"version": "7.1.0", "mode": "standalone"}}
 //! }
 //! ```
@@ -39,7 +39,12 @@
 //!   connect plan without the credentials. A run that builds a client needs
 //!   exactly one of `ping_ms` and `ping_error`. Each of `address`, `iam_token`,
 //!   `connect`, the PING outcome and `server` is consumed by its own call, and
-//!   one no call used fails the run.
+//!   one no call used fails the run. `init_error` and `ping_error.kind` name a
+//!   kind of a closed set (`authentication_failed`, `connection_refused`,
+//!   `tls_handshake_failed`, `timeout`, `dns_failed`, `other`): a client's own
+//!   error text is never recorded, and a recording that holds any is refused.
+//!   `server.version` and `server.mode` are printed only through the allowlist
+//!   and secret gate of `clean::SecretGate`.
 //!
 //! Every optional member is absent or of its type (`null` rejects the
 //! recording) except where this list says `null`. A call, probe or process
@@ -63,7 +68,7 @@ use toolkit_aws::{AwsError, ServiceError};
 use toolkit_core::Json;
 
 use super::seams::{
-    CacheConnection, CacheEnvironment, ConnectPlan, IamTokenRequest, Operation, PingFailure,
+    CacheConnection, CacheEnvironment, CacheErrorKind, ConnectPlan, IamTokenRequest, Operation,
     ProcessEvent, Resolution, Seam, SeamError, ServerInfo, TunnelAws, TunnelHost, TunnelProcess,
 };
 
@@ -124,6 +129,29 @@ fn text_member<'j>(object: &'j Json, key: &str) -> Result<Option<&'j str>, Strin
 
 fn object_member<'j>(object: &'j Json, key: &str) -> Result<Option<&'j Json>, String> {
     optional_object(object, key).map_err(|error| quoted(&error))
+}
+
+fn kind_names() -> String {
+    CacheErrorKind::ALL
+        .iter()
+        .map(|kind| kind.key())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// A cache error kind named in the recording. Any other text is refused by the
+/// list of accepted names; the recorded text is never echoed, and a client's
+/// own error message has no place in a recording.
+fn kind_member(object: &Json, key: &str) -> Result<Option<CacheErrorKind>, String> {
+    match text_member(object, key)? {
+        None => Ok(None),
+        Some(text) => CacheErrorKind::from_key(text).map(Some).ok_or_else(|| {
+            format!(
+                "\"{key}\" must be one of {} (a client error message is not recorded)",
+                kind_names()
+            )
+        }),
+    }
 }
 
 fn exit_code(object: &Json, key: &str) -> Result<Option<i32>, String> {
@@ -450,7 +478,7 @@ impl TunnelHost for RecordedHost {
 /// The one recorded result of `PING`.
 enum PingOutcome {
     Pong(f64),
-    Failed(PingFailure),
+    Failed(CacheErrorKind),
 }
 
 /// The recorded cache steps no call has used yet. Each is taken by the call it
@@ -462,7 +490,7 @@ struct Pending {
     address: Option<IpAddr>,
     iam_token: bool,
     expected_plan: Option<Json>,
-    init_error: Option<String>,
+    init_error: Option<CacheErrorKind>,
     ping: Option<PingOutcome>,
     server: Option<ServerInfo>,
 }
@@ -522,27 +550,16 @@ impl RecordedCache {
             pending.expected_plan = object_member(connect, "request")?.cloned();
             pending.init_error = match connect.get("init_error") {
                 Some(Json::Null) | None => None,
-                Some(_) => text_member(connect, "init_error")?.map(str::to_string),
+                Some(_) => kind_member(connect, "init_error")?,
             };
         }
         let failure = match object_member(section, "ping_error")? {
             None => None,
             Some(error) => {
-                only_members(error, &["kind", "message"], "\"ping_error\"")?;
-                let message = text_member(error, "message")?
-                    .unwrap_or_default()
-                    .to_string();
-                Some(match text_member(error, "kind")?.unwrap_or("other") {
-                    "authentication" => PingFailure::Authentication(message),
-                    "connection" => PingFailure::Connection(message),
-                    "other" => PingFailure::Other(message),
-                    _ => {
-                        return Err(
-                            "\"ping_error.kind\" must be authentication, connection or other"
-                                .to_string(),
-                        )
-                    }
-                })
+                only_members(error, &["kind"], "\"ping_error\"")?;
+                Some(kind_member(error, "kind")?.ok_or_else(|| {
+                    format!("\"ping_error\" needs a \"kind\": one of {}", kind_names())
+                })?)
             }
         };
         let ping_ms = number_member(section, "ping_ms")?;
@@ -610,15 +627,13 @@ struct RecordedConnection {
 }
 
 impl CacheConnection for RecordedConnection {
-    fn ping(&mut self) -> Result<f64, PingFailure> {
+    fn ping(&mut self) -> Result<f64, CacheErrorKind> {
         match self.pending.borrow_mut().ping.take() {
             Some(PingOutcome::Pong(ms)) => Ok(ms),
             Some(PingOutcome::Failed(failure)) => Err(failure),
             // `connect` checks that the outcome is recorded; a second PING
             // has none.
-            None => Err(PingFailure::Other(
-                "no recorded PING outcome is left".to_string(),
-            )),
+            None => Err(CacheErrorKind::Other),
         }
     }
 
@@ -656,7 +671,7 @@ impl CacheEnvironment for RecordedCache {
     fn connect(
         &mut self,
         plan: &ConnectPlan,
-    ) -> Result<Result<Box<dyn CacheConnection>, String>, SeamError> {
+    ) -> Result<Result<Box<dyn CacheConnection>, CacheErrorKind>, SeamError> {
         if !self.present {
             return Err(SeamError::Replay("no recorded cache".to_string()));
         }
@@ -668,8 +683,8 @@ impl CacheEnvironment for RecordedCache {
                 ));
             }
         }
-        if let Some(message) = pending.init_error.take() {
-            return Ok(Err(message));
+        if let Some(kind) = pending.init_error.take() {
+            return Ok(Err(kind));
         }
         // A client that is built is pinged: the outcome must be recorded, never
         // assumed.

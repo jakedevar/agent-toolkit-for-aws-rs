@@ -8,8 +8,6 @@
 //! control, bidirectional and invisible characters are escaped last, so an
 //! escape never grows past the bound it was cut for.
 
-use std::fmt::Write as _;
-
 use toolkit_aws::redact_text;
 
 use crate::safe_text::safe_path;
@@ -32,145 +30,77 @@ pub(super) fn clean_to(text: &str, limit: usize) -> String {
     safe_path(&bounded)
 }
 
-/// Removes known credentials from text a cache client hands back (#4986).
+/// Longest server value (or secret) the containment check looks at, in bytes.
+/// A longer value is refused before any scan (fail closed).
+pub(super) const GATE_MAX_BYTES: usize = 1024;
+
+/// Printed instead of a server value that fails the allowlist or the gate.
+pub(super) const UNKNOWN: &str = "unknown";
+
+/// The engine modes of `INFO server` that are printed (`redis_mode`).
+const MODES: [&str; 3] = ["standalone", "cluster", "sentinel"];
+
+/// `^[0-9A-Za-z][0-9A-Za-z.+-]{0,31}$`: a version such as `7.1.0`.
+fn is_version(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    (1..=32).contains(&bytes.len())
+        && bytes[0].is_ascii_alphanumeric()
+        && bytes[1..]
+            .iter()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'+' | b'-'))
+}
+
+/// The gate for text a cache server reports (PM ruling for #5004, #5005 and
+/// #5007).
 ///
-/// The generic [`redact_text`] cannot recognize an arbitrary, unlabelled
-/// password, so the active password and IAM token are removed by value first,
-/// in their common renderings: raw, quoted, escaped for JSON or a shell,
-/// percent-encoded, hex and base64 (plain, URL-safe, with or without padding,
-/// and as the `user:secret` of Basic auth). Only then is the text redacted,
-/// bounded and escaped, so a bound can never cut a credential in two and an
-/// escape can never hide one.
-pub(super) struct Scrubber {
-    /// Needles, longest first.
-    needles: Vec<String>,
+/// No client or server string is echoed. A server value is printed only when
+/// it matches a strict allowlist *and* holds none of the active secrets
+/// (password, IAM token) as a substring; otherwise `unknown` is printed. The
+/// containment check is one exact-value pass, bounded: a value above
+/// [`GATE_MAX_BYTES`] is refused unread, and a secret longer than the value
+/// cannot occur in it, so no scan runs for it.
+pub(super) struct SecretGate {
+    secrets: Vec<String>,
 }
 
-const BASE64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
-fn base64(bytes: &[u8], url_safe: bool, pad: bool) -> String {
-    let mut out = String::new();
-    for chunk in bytes.chunks(3) {
-        let n = (u32::from(chunk[0]) << 16)
-            | (u32::from(*chunk.get(1).unwrap_or(&0)) << 8)
-            | u32::from(*chunk.get(2).unwrap_or(&0));
-        for index in 0..=chunk.len() {
-            let value = ((n >> (18 - 6 * index)) & 63) as usize;
-            let symbol = char::from(BASE64[value]);
-            out.push(match (url_safe, symbol) {
-                (true, '+') => '-',
-                (true, '/') => '_',
-                _ => symbol,
-            });
-        }
-        if pad {
-            for _ in chunk.len()..3 {
-                out.push('=');
-            }
+impl SecretGate {
+    /// A gate for `secrets` (empty ones are ignored).
+    pub(super) fn new(secrets: &[&str]) -> Self {
+        Self {
+            secrets: secrets
+                .iter()
+                .filter(|secret| !secret.is_empty())
+                .map(|secret| (*secret).to_string())
+                .collect(),
         }
     }
-    out
-}
 
-fn percent(text: &str, upper: bool) -> String {
-    let mut out = String::new();
-    for byte in text.bytes() {
-        if byte.is_ascii_alphanumeric() || b"-._~".contains(&byte) {
-            out.push(char::from(byte));
-        } else if upper {
-            let _ = write!(out, "%{byte:02X}");
+    /// Whether `value` holds a secret, or is too long to be checked (fail
+    /// closed).
+    fn holds_secret(&self, value: &str) -> bool {
+        if value.len() > GATE_MAX_BYTES {
+            return true;
+        }
+        self.secrets
+            .iter()
+            .any(|secret| secret.len() <= value.len() && value.contains(secret.as_str()))
+    }
+
+    /// The engine version, or `unknown`.
+    pub(super) fn version<'a>(&self, version: &'a str) -> &'a str {
+        if is_version(version) && !self.holds_secret(version) {
+            version
         } else {
-            let _ = write!(out, "%{byte:02x}");
+            UNKNOWN
         }
     }
-    out
-}
 
-fn renderings(secret: &str, out: &mut Vec<String>) {
-    out.push(secret.to_string());
-    let quoted = format!("{secret:?}");
-    out.push(quoted[1..quoted.len() - 1].to_string());
-    out.push(secret.escape_default().to_string());
-    out.push(toolkit_core::escape_json_string(secret));
-    out.push(secret.replace('\'', "'\\''"));
-    out.push(percent(secret, true));
-    out.push(percent(secret, false));
-    out.push(secret.replace(' ', "+"));
-    let hex = secret.bytes().fold(String::new(), |mut acc, byte| {
-        let _ = write!(acc, "{byte:02x}");
-        acc
-    });
-    out.push(hex.to_uppercase());
-    out.push(hex);
-    for url_safe in [false, true] {
-        for pad in [true, false] {
-            out.push(base64(secret.as_bytes(), url_safe, pad));
+    /// The engine mode, or `unknown`.
+    pub(super) fn mode<'a>(&self, mode: &'a str) -> &'a str {
+        if MODES.contains(&mode) && !self.holds_secret(mode) {
+            mode
+        } else {
+            UNKNOWN
         }
-    }
-}
-
-impl Scrubber {
-    /// A scrubber for `secrets` (empty ones are ignored) and, for the Basic
-    /// auth rendering, the user name they go with.
-    pub(super) fn new(secrets: &[&str], user: Option<&str>) -> Self {
-        let mut needles = Vec::new();
-        for secret in secrets.iter().filter(|secret| !secret.is_empty()) {
-            renderings(secret, &mut needles);
-            if let Some(user) = user {
-                let basic = format!("{user}:{secret}");
-                for url_safe in [false, true] {
-                    for pad in [true, false] {
-                        needles.push(base64(basic.as_bytes(), url_safe, pad));
-                    }
-                }
-            }
-            // The values of a pre-signed IAM token that identify the caller.
-            for (_, value) in secret
-                .split(['?', '&'])
-                .filter_map(|part| part.split_once('='))
-                .filter(|(key, value)| {
-                    let key = key.to_ascii_lowercase();
-                    !value.is_empty()
-                        && [
-                            "x-amz-signature",
-                            "x-amz-credential",
-                            "x-amz-security-token",
-                        ]
-                        .contains(&key.as_str())
-                })
-            {
-                renderings(value, &mut needles);
-            }
-        }
-        needles.retain(|needle| !needle.is_empty());
-        needles.sort_by(|a, b| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
-        needles.dedup();
-        Self { needles }
-    }
-
-    /// `text` with every known credential replaced by `[REDACTED]`.
-    pub(super) fn remove(&self, text: &str) -> String {
-        if self.needles.is_empty() {
-            return text.to_string();
-        }
-        let mut out = String::with_capacity(text.len());
-        let mut rest = text;
-        'scan: while let Some(first) = rest.chars().next() {
-            for needle in &self.needles {
-                if rest.starts_with(needle.as_str()) {
-                    out.push_str(toolkit_aws::REDACTED);
-                    rest = &rest[needle.len()..];
-                    continue 'scan;
-                }
-            }
-            out.push(first);
-            rest = &rest[first.len_utf8()..];
-        }
-        out
-    }
-
-    /// Credentials removed, then [`clean`].
-    pub(super) fn clean(&self, text: &str) -> String {
-        clean(&self.remove(text))
     }
 }

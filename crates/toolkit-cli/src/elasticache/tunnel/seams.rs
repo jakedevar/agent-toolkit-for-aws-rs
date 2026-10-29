@@ -306,18 +306,68 @@ pub(crate) struct ConnectPlan {
     pub password: Option<toolkit_aws::Secret>,
 }
 
-/// Why `PING` failed.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum PingFailure {
-    /// `AuthenticationError`.
-    Authentication(String),
-    /// `ConnectionError`.
-    Connection(String),
+/// Why a cache client call failed: a closed set. The client's own error text
+/// is never carried, printed or recorded (PM ruling for #5004, #5005, #5007);
+/// each kind prints [`CacheErrorKind::text`] and nothing else.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CacheErrorKind {
+    /// The server refused the credentials (`AuthenticationError`).
+    AuthenticationFailed,
+    /// The connection was refused or reset.
+    ConnectionRefused,
+    /// The TLS handshake failed.
+    TlsHandshakeFailed,
+    /// The call timed out.
+    Timeout,
+    /// The host name did not resolve.
+    DnsFailed,
     /// Anything else.
-    Other(String),
+    Other,
 }
 
-/// The `INFO server` fields the script prints.
+impl CacheErrorKind {
+    /// Every kind, in the order the recording format lists them.
+    pub(crate) const ALL: [Self; 6] = [
+        Self::AuthenticationFailed,
+        Self::ConnectionRefused,
+        Self::TlsHandshakeFailed,
+        Self::Timeout,
+        Self::DnsFailed,
+        Self::Other,
+    ];
+
+    /// The name of the kind in a recording.
+    pub(crate) fn key(self) -> &'static str {
+        match self {
+            Self::AuthenticationFailed => "authentication_failed",
+            Self::ConnectionRefused => "connection_refused",
+            Self::TlsHandshakeFailed => "tls_handshake_failed",
+            Self::Timeout => "timeout",
+            Self::DnsFailed => "dns_failed",
+            Self::Other => "other",
+        }
+    }
+
+    /// The kind named `key` in a recording.
+    pub(crate) fn from_key(key: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|kind| kind.key() == key)
+    }
+
+    /// The fixed, first-party text printed for the kind.
+    pub(crate) fn text(self) -> &'static str {
+        match self {
+            Self::AuthenticationFailed => "authentication failed",
+            Self::ConnectionRefused => "connection refused",
+            Self::TlsHandshakeFailed => "TLS handshake failed",
+            Self::Timeout => "timed out",
+            Self::DnsFailed => "host name lookup failed",
+            Self::Other => "client error (details withheld)",
+        }
+    }
+}
+
+/// The `INFO server` fields the script prints. The text is the server's own:
+/// it is printed only through [`super::clean::SecretGate`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ServerInfo {
     pub version: String,
@@ -327,7 +377,7 @@ pub(crate) struct ServerInfo {
 /// An open cache connection.
 pub(crate) trait CacheConnection {
     /// `PING`; the round trip in milliseconds.
-    fn ping(&mut self) -> Result<f64, PingFailure>;
+    fn ping(&mut self) -> Result<f64, CacheErrorKind>;
     /// `INFO server`; `None` when the ACL refuses it.
     fn info_server(&mut self) -> Option<ServerInfo>;
     /// Closes the connection.
@@ -350,11 +400,11 @@ pub(crate) trait CacheEnvironment {
     fn resolve(&mut self, host: &str) -> Result<Resolution, SeamError>;
     /// A short-lived IAM auth token (15 minutes).
     fn iam_token(&mut self, request: &IamTokenRequest) -> Result<toolkit_aws::Secret, SeamError>;
-    /// Builds the client. `Err(message)` is the script's `Client init FAILED`.
+    /// Builds the client. `Err(kind)` is the script's `Client init FAILED`.
     fn connect(
         &mut self,
         plan: &ConnectPlan,
-    ) -> Result<Result<Box<dyn CacheConnection>, String>, SeamError>;
+    ) -> Result<Result<Box<dyn CacheConnection>, CacheErrorKind>, SeamError>;
     /// The client name printed in the connecting line.
     fn client_name(&self) -> &'static str;
     /// Recorded facts a run never used.
@@ -376,7 +426,7 @@ impl CacheEnvironment for UnavailableCache {
     fn connect(
         &mut self,
         _plan: &ConnectPlan,
-    ) -> Result<Result<Box<dyn CacheConnection>, String>, SeamError> {
+    ) -> Result<Result<Box<dyn CacheConnection>, CacheErrorKind>, SeamError> {
         Err(SeamError::Unavailable(Seam::CacheClient))
     }
 

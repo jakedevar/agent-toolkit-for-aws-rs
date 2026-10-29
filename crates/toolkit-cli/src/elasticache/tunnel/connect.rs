@@ -12,9 +12,9 @@ use std::net::IpAddr;
 use toolkit_aws::Secret;
 use toolkit_core::ToolkitError;
 
-use super::clean::{clean, Scrubber};
+use super::clean::{clean, SecretGate};
 use super::seams::{
-    CacheEnvironment, ConnectPlan, IamTokenRequest, PingFailure, Resolution, SeamError,
+    CacheEnvironment, CacheErrorKind, ConnectPlan, IamTokenRequest, Resolution, SeamError,
 };
 use crate::aurora::args::usage;
 use crate::Output;
@@ -153,15 +153,14 @@ fn connection_succeeds(
     out: &mut Output<'_>,
 ) -> Result<bool, ToolkitError> {
     check_dns(args.host, env, out)?;
-    // The supplied password and the active password or IAM token are removed
-    // by value from everything the client says (#4986).
-    let scrub = Scrubber::new(
-        &[
-            args.password.unwrap_or_default(),
-            password.as_ref().map_or("", Secret::expose),
-        ],
-        username.as_deref(),
-    );
+    // No client or server string is printed. A failure is a typed kind with
+    // fixed text; the server's version and mode pass an allowlist and a check
+    // that they hold neither the supplied password nor the active password or
+    // IAM token (#5004, #5005, #5007).
+    let gate = SecretGate::new(&[
+        args.password.unwrap_or_default(),
+        password.as_ref().map_or("", Secret::expose),
+    ]);
     let host = clean(args.host);
     let mut tls_label = if use_tls { "TLS" } else { "plaintext" }.to_string();
     if args.tunnel_mode {
@@ -206,8 +205,8 @@ fn connection_succeeds(
     };
     let mut connection = match env.connect(&plan)? {
         Ok(connection) => connection,
-        Err(message) => {
-            out.diagnostic(&format!("  Client init FAILED: {}", scrub.clean(&message)));
+        Err(kind) => {
+            out.diagnostic(&format!("  Client init FAILED: {}", kind.text()));
             return Ok(false);
         }
     };
@@ -218,39 +217,33 @@ fn connection_succeeds(
 
     match connection.ping() {
         Ok(elapsed_ms) => out.line(&format!("  PING: OK ({elapsed_ms:.1} ms)"))?,
-        Err(PingFailure::Authentication(message)) => {
+        Err(CacheErrorKind::AuthenticationFailed) => {
             out.diagnostic(&format!(
                 "  PING FAILED: Authentication error -- {}",
-                scrub.clean(&message)
+                CacheErrorKind::AuthenticationFailed.text()
             ));
             out.diagnostic(
                 "  Hint: Check username/password or ensure the RBAC user exists and is active.",
             );
             return Ok(false);
         }
-        Err(PingFailure::Connection(message)) => {
-            out.diagnostic(&format!(
-                "  PING FAILED: Connection error -- {}",
-                scrub.clean(&message)
-            ));
-            // The hint reads the text without credentials, so a password such as
-            // "tls" cannot steer it.
-            let known = scrub.remove(&message);
-            if known.contains("SSL") || known.to_lowercase().contains("tls") {
-                out.diagnostic(if use_tls {
-                    "  Hint: TLS handshake failed. Verify the endpoint supports in-transit encryption."
-                } else {
-                    "  Hint: This endpoint may require TLS. Retry without --no-tls (TLS is default)."
-                });
-            } else {
-                out.diagnostic(
-                    "  Hint: Check security group rules, VPC placement, and whether you need a tunnel or jump host.",
-                );
-            }
+        Err(CacheErrorKind::Other) => {
+            out.diagnostic(&format!("  PING FAILED: {}", CacheErrorKind::Other.text()));
             return Ok(false);
         }
-        Err(PingFailure::Other(message)) => {
-            out.diagnostic(&format!("  PING FAILED: {}", scrub.clean(&message)));
+        Err(kind) => {
+            out.diagnostic(&format!(
+                "  PING FAILED: Connection error -- {}",
+                kind.text()
+            ));
+            // The hint follows the typed kind, never any text.
+            out.diagnostic(if kind != CacheErrorKind::TlsHandshakeFailed {
+                "  Hint: Check security group rules, VPC placement, and whether you need a tunnel or jump host."
+            } else if use_tls {
+                "  Hint: TLS handshake failed. Verify the endpoint supports in-transit encryption."
+            } else {
+                "  Hint: This endpoint may require TLS. Retry without --no-tls (TLS is default)."
+            });
             return Ok(false);
         }
     }
@@ -258,8 +251,8 @@ fn connection_succeeds(
     match connection.info_server() {
         Some(info) => out.line(&format!(
             "  Server: engine version {}, mode={}",
-            scrub.clean(&info.version),
-            scrub.clean(&info.mode)
+            gate.version(&info.version),
+            gate.mode(&info.mode)
         ))?,
         // INFO may be blocked by an ACL; that is fine.
         None => out.diagnostic("  Server info: not available (ACL may restrict INFO command)"),

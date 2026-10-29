@@ -46,14 +46,23 @@ to 200 characters (`...`), then escape of control, bidirectional and invisible
 characters (`safe_path`). The order matters: a credential that crosses the
 bound is still recognized, and an escape never grows past the cut.
 
-Text a cache client returns (client-init, `PING` and server-info text) first has
-the active credentials removed by value (`Scrubber` in `tunnel/clean.rs`), before
-the steps above: the supplied password and the active password or IAM token in
-their common renderings (raw, quoted, JSON- or shell-escaped, percent-encoded,
-hex, base64 and the Basic auth `user:secret` form, plus the signature and
-credential values of a pre-signed token), replaced by `[REDACTED]`. The generic
-scrubber cannot recognize an unlabelled credential, so the value itself is the
-only reliable key (#4986). The TLS hint reads the scrubbed text.
+No cache client or server string is ever printed, recorded or put in an error
+(PM ruling for #5004, #5005 and #5007, which replaced the by-value scrubber of
+#4986; scrubbing every encoding of a secret out of free text is an arms race).
+A client-init, auth, `PING` or connection failure is a `CacheErrorKind`, a
+closed set (`authentication_failed`, `connection_refused`,
+`tls_handshake_failed`, `timeout`, `dns_failed`, `other`), and prints fixed
+first-party text only (`authentication failed`, `connection refused`,
+`TLS handshake failed`, `timed out`, `host name lookup failed`, `client error
+(details withheld)`). The TLS hint follows the kind and `--no-tls`, never any
+text. The only server text printed is `engine version` and `mode`, through
+`SecretGate` in `tunnel/clean.rs`: the version must match
+`^[0-9A-Za-z][0-9A-Za-z.+-]{0,31}$`, the mode must be `standalone`, `cluster`
+or `sentinel`, and neither may contain the supplied password or the active
+password or IAM token as a substring; otherwise `unknown` is printed. The
+containment check is one exact-value pass with capped input: a value over
+1 KiB is refused unread (`unknown`), and a secret longer than the value cannot
+occur in it. The encoding enumeration of the former scrubber is gone.
 
 No command writes a file: the scripts only print, so there is no output to
 write privately or atomically (the `write_private` helper of `dynamodb_deploy`
@@ -79,8 +88,10 @@ the full example.
   `{idle: true}`, `{interrupt: true}`), `exit_code`, `stops_gracefully`,
   optional `command` that must equal the command built.
 - `cache`: `address` (DNS answer; absent is a failed lookup), `iam_token`,
-  `connect.request` (the plan without credentials; compared), `connect.init_error`,
-  `ping_ms` or `ping_error {kind: authentication|connection|other, message}`
+  `connect.request` (the plan without credentials; compared), `connect.init_error`
+  (a kind name, see above; free text is refused),
+  `ping_ms` or `ping_error {kind}` (a kind name; a `message` or an unknown kind
+  rejects the recording without echoing it)
   (exactly one when the run builds a client and so reaches PING; both, or
   neither, is a recording error and is never read as success; `ping_ms` is
   finite and not negative),
@@ -179,7 +190,16 @@ and the durations; none starts a process.
     is filled outside its `try`); the warning or access-denied text is printed
     and the hosts known to be managed are still ordered first and recommended.
     A replay mismatch is never a service error and stays fatal (#4989).
-13. **Python tests.** The skill has no Python tests for these scripts
+13. **Typed cache diagnostics (#5004, #5005, #5007).** Python printed the
+    `redis-py` exception text (`Client init FAILED: {e}`, `PING FAILED:
+    Authentication error -- {e}`, and so on) and the raw `redis_version` and
+    `redis_mode`. Rust prints a fixed text per error kind, with the same
+    headings, hints and exit status, and a server version or mode only through
+    the allowlist and secret gate (`unknown` otherwise). A recording names the
+    kind (`init_error: "timeout"`, `ping_error: {"kind": "tls_handshake_failed"}`)
+    and holds no client text. The live client of #4982 maps its errors to the
+    kinds; text it cannot map is `other`.
+14. **Python tests.** The skill has no Python tests for these scripts
     (`test_connection.py` is a script, not a test). The Rust tests are named
     after the script functions they port: `find_tunnel_hosts_*`,
     `check_instance_running_*`, `check_instance_ssm_status_*`,
