@@ -670,3 +670,5 @@ Friction: #4727, Rsi #4694, Rsi #4704
   4/4 busy: f43fddbd (#5143), 3819aea9 (#5080), d4591cd7 (#5166), af98d414 (#4411 design repair 1).
 - 10-29 04:53Z: ai-payloads S1 #5143 (f43fddbd, Sonnet) at 6af8790570a07cd33b2b77e3c8a82536527d2cb0 (red 463126e5 at 3d39156; fmt 1ae4e00f, clippy 2f463fb9, scoped ec7c07fe ok, clean onto rolling). Review #5167 -> Codex sol high cbfc944e (pinned 6af8790, carry #5142). On ACCEPT: enqueue 6af8790; then S2a publish / S3 reward.
   4/4 busy: 3819aea9 (#5080), d4591cd7 (#5166), af98d414 (#4411 design repair 1), cbfc944e (#5167).
+- 10-29 04:55Z: #5080 TA-STREAM-DL (3819aea9, Codex terra) at 1f7b4f8ffe79c425118c561429b2e5af79a48685 (on r22 07e945e5; red a338313d at 73348d8; fmt 2d1a66a5, clippy 95c51458, clippy-sdk 8df81028, test-sdk 752af6ac, scoped e9dd047f ok). Review #5169 -> Claude Sonnet high d2a29ea6 (pinned 1f7b4f8, delta from 07e945e5). On ACCEPT + r22 landed: enqueue 1f7b4f8; then #4382 L3, x402 S3.
+  4/4 busy: d4591cd7 (#5166), af98d414 (#4411 design repair 1), cbfc944e (#5167), d2a29ea6 (#5169).
