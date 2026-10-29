@@ -1069,3 +1069,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
   Review #5403 -> Codex sol 63347ce4 pinned 6716f6ff. On ACCEPT: enqueue 6716f6ff (source_session_id fbc33b5e, derive_filters, issue 5345); close #5345 #5335 #5358?(check) #5403. Then L7 security review of all of #4382 at the landed SHA (opposite family), then L8 cutover.
   Note #5372: tests/launch_l5.rs needs the agents-pay-live guard if x402 S5 lands first (whichever lands second must add it at merge).
   4/4: 63347ce4 #5403, 33d730c3 S1, 5fd44a0d x402 r3, ca36147e #5401.
+- 15:13Z: review #5401 (ca36147e, Opus) CHANGES_REQUESTED B1 4424a662: 23 mutations, 16 caught; 4 test-gap BLOCKERS #5409 (allowAnyRecipient:false w/o list), #5410 (Base Sepolia asset list), #5411 (session w/o createdAt), #5412 (sanitize_output candidate shape); note #5413 (timestamp divergence row). Code correct; tests don't bite. Friction #4865 #5414 (reviewer; no typed receipt: no review assignment bound).
+  B1 repair 1 -> Claude Sonnet a0bcd5cc (continue_from dd250991): tests only, red via reviewer's mutation, green. Then narrow re-review (Claude).
+  4/4: 63347ce4 #5403 L5 review, 33d730c3 S1, 5fd44a0d x402 r3, a0bcd5cc B1 r1.
