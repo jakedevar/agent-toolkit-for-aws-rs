@@ -1133,3 +1133,4 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 17:50Z: safety net (stale f233e271 text) handled; re-armed pm-safety-net 18:48Z. CLOSED #5330 #5332 (verified fixed on rolling by S5: FakePaymentsApi scripting/recording; into_parts/payload pub(in agents_pay) + compile_fail).
 - 18:04Z: scoped 4dad1a2c OK (5179 tests); check ok; #5394 c69895d1 ENQUEUED seq 3031 (entry 4760cd75). On land: close #5394.
 - 18:27Z: #5394 LANDED (landed_sha 2a97704d9702299c6a4b4020ffb72351f6cae872); auto-closed. Queue empty. 7a727801 #5344 jobs held on disk_floor (77G free, 68G reserved) — daemon admission handles it.
+- 18:52Z: safety net. Queue empty. 4 workers parked on jobs; disk_floor holds (88% used, 94G avail, 32G floor). 7a727801 job 307baa7c job_admission_timed_out (worker resumes when its batch ends). Reclaim dry-run (op dcd775b3): 0 reclaimable (52 target_absent). Safety net re-armed 19:52Z.
