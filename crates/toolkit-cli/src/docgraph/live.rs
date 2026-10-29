@@ -302,9 +302,11 @@ impl<'a> LiveAwsClient<'a> {
             ));
         }
         let exchange = Exchange::default();
-        let outcome = drive(send(prepared, &self.region, exchange.http_client()), &exchange, |request| {
-            self.serve(op, &request, deadline)
-        })?;
+        let outcome = drive(
+            send(prepared, &self.region, exchange.http_client()),
+            &exchange,
+            |request| self.serve(op, &request, deadline),
+        )?;
         match outcome {
             Ok(json) => Ok(json),
             // A bridge failure reaches the SDK as a dispatch failure; the
@@ -414,7 +416,11 @@ fn stream_error(error: StreamError) -> AwsError {
     }
 }
 
-fn sdk_response(status: u16, headers: &Headers, body: Vec<u8>) -> Result<SdkHttpResponse, AwsError> {
+fn sdk_response(
+    status: u16,
+    headers: &Headers,
+    body: Vec<u8>,
+) -> Result<SdkHttpResponse, AwsError> {
     let invalid = || AwsError::invalid_response("the service response head could not be read");
     let status = StatusCode::try_from(status).map_err(|_| invalid())?;
     let mut response = SdkHttpResponse::new(status, SdkBody::from(body));
@@ -604,7 +610,9 @@ pub(crate) fn refuse_credential_identity(identity: &Identity) -> Result<(), BoxE
         .data::<aws_credential_types::Credentials>()
         .is_some()
     {
-        return Err("an SDK credential identity was resolved; only the toolkit resolves credentials".into());
+        return Err(
+            "an SDK credential identity was resolved; only the toolkit resolves credentials".into(),
+        );
     }
     Ok(())
 }
@@ -628,27 +636,32 @@ impl ResolveCachedIdentity for RefuseCredentials {
 macro_rules! sdk_client {
     ($krate:ident, $region:expr, $http:expr) => {
         $krate::Client::from_conf(
-            $krate::Config::builder()
-                .behavior_version_latest()
-                .region($krate::config::Region::new($region.to_string()))
-                .http_client($http)
-                .identity_cache(RefuseCredentials)
-                .allow_no_auth()
-                .auth_scheme_preference([AuthSchemeId::new("noAuth")])
-                .retry_config(RetryConfig::disabled())
-                .timeout_config(TimeoutConfig::disabled())
-                .stalled_stream_protection(
-                    $krate::config::StalledStreamProtectionConfig::disabled(),
+                    $krate::Config::builder()
+                        .behavior_version_latest()
+                        .region($krate::config::Region::new($region.to_string()))
+                        .http_client($http)
+                        .identity_cache(RefuseCredentials)
+                        .allow_no_auth()
+                        .auth_scheme_preference([AuthSchemeId::new("noAuth")])
+                        .retry_config(RetryConfig::disabled())
+                        .timeout_config(TimeoutConfig::disabled())
+                        .stalled_stream_protection(
+                            $krate::config::StalledStreamProtectionConfig::disabled(),
+                        )
+                        .build(),
                 )
-                .build(),
-        )
     };
 }
 
 /// An SDK failure as a fixed toolkit error: a service error keeps its
-/// status and sanitized code only.
+/// status and sanitized code only. The Query and JSON decoders report a
+/// successful (2xx) response they cannot decode as an unhandled *service*
+/// error; that is a malformed response, never a service verdict.
 fn classify<E: ProvideErrorMetadata>(error: &SdkError<E, SdkHttpResponse>) -> AwsError {
     match error {
+        SdkError::ServiceError(context) if context.raw().status().is_success() => {
+            AwsError::invalid_response("a successful service response could not be decoded")
+        }
         SdkError::ServiceError(context) => {
             let status = context.raw().status().as_u16();
             AwsError::service(ServiceError::new(
@@ -826,7 +839,13 @@ impl Prepared {
             "DescribeEvents" => {
                 let pairs = members(
                     request,
-                    &["SourceIdentifier", "SourceType", "StartTime", "EndTime", "Marker"],
+                    &[
+                        "SourceIdentifier",
+                        "SourceType",
+                        "StartTime",
+                        "EndTime",
+                        "Marker",
+                    ],
                 )?;
                 Self::Events {
                     source_identifier: text(pairs, "SourceIdentifier")?,
@@ -1085,7 +1104,10 @@ mod fields {
         }
 
         fn list<T>(self, key: &str, items: Option<&Vec<T>>, map: impl Fn(&T) -> Json) -> Self {
-            self.put(key, items.map(|items| Json::Array(items.iter().map(map).collect())))
+            self.put(
+                key,
+                items.map(|items| Json::Array(items.iter().map(map).collect())),
+            )
         }
 
         fn strings(self, key: &str, items: Option<&Vec<String>>) -> Self {
@@ -1150,7 +1172,10 @@ mod fields {
         object()
             .list("DBInstances", output.db_instances.as_ref(), |instance| {
                 object()
-                    .text("DBInstanceIdentifier", instance.db_instance_identifier.as_ref())
+                    .text(
+                        "DBInstanceIdentifier",
+                        instance.db_instance_identifier.as_ref(),
+                    )
                     .text("DBInstanceClass", instance.db_instance_class.as_ref())
                     .text("AvailabilityZone", instance.availability_zone.as_ref())
                     .build()
@@ -1189,20 +1214,24 @@ mod fields {
         output: &aws_sdk_docdb::operation::describe_db_subnet_groups::DescribeDbSubnetGroupsOutput,
     ) -> Json {
         object()
-            .list("DBSubnetGroups", output.db_subnet_groups.as_ref(), |group| {
-                object()
-                    .list("Subnets", group.subnets.as_ref(), |subnet| {
-                        object()
-                            .object(
-                                "SubnetAvailabilityZone",
-                                subnet.subnet_availability_zone.as_ref().map(|zone| {
-                                    object().text("Name", zone.name.as_ref()).build()
-                                }),
-                            )
-                            .build()
-                    })
-                    .build()
-            })
+            .list(
+                "DBSubnetGroups",
+                output.db_subnet_groups.as_ref(),
+                |group| {
+                    object()
+                        .list("Subnets", group.subnets.as_ref(), |subnet| {
+                            object()
+                                .object(
+                                    "SubnetAvailabilityZone",
+                                    subnet.subnet_availability_zone.as_ref().map(|zone| {
+                                        object().text("Name", zone.name.as_ref()).build()
+                                    }),
+                                )
+                                .build()
+                        })
+                        .build()
+                },
+            )
             .build()
     }
 
@@ -1257,7 +1286,9 @@ mod fields {
     ) -> Json {
         object()
             .list("MetricAlarms", output.metric_alarms.as_ref(), |alarm| {
-                object().text("AlarmName", alarm.alarm_name.as_ref()).build()
+                object()
+                    .text("AlarmName", alarm.alarm_name.as_ref())
+                    .build()
             })
             .build()
     }
@@ -1309,9 +1340,13 @@ pub(crate) fn generated_request(
     let prepared = Prepared::parse(op, request)?;
     let exchange = Exchange::default();
     let mut captured = None;
-    let _ = drive(send(&prepared, region, exchange.http_client()), &exchange, |request| {
-        captured = Some(request);
-        Err(AwsError::connect("captured; not sent"))
-    })?;
+    let _ = drive(
+        send(&prepared, region, exchange.http_client()),
+        &exchange,
+        |request| {
+            captured = Some(request);
+            Err(AwsError::connect("captured; not sent"))
+        },
+    )?;
     captured.ok_or_else(|| AwsError::invalid_config("request", "the SDK generated no request"))
 }

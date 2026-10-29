@@ -4,7 +4,11 @@
 //! signer is the real toolkit SigV4 signer over fixture keys, and the SDK
 //! service crates only encode requests and decode the scripted responses.
 
-#![allow(clippy::similar_names, clippy::type_complexity, clippy::unnecessary_wraps)]
+#![allow(
+    clippy::similar_names,
+    clippy::type_complexity,
+    clippy::unnecessary_wraps
+)]
 
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
@@ -68,16 +72,16 @@ mod cbor {
         if n < 24 {
             out.push(major | n as u8);
         } else if n < 256 {
-            out.push(major | 24);
+            out.push(major | 0x18);
             out.push(n as u8);
         } else if n < 65_536 {
-            out.push(major | 25);
+            out.push(major | 0x19);
             out.extend((n as u16).to_be_bytes());
         } else if n < (1 << 32) {
-            out.push(major | 26);
+            out.push(major | 0x1a);
             out.extend((n as u32).to_be_bytes());
         } else {
-            out.push(major | 27);
+            out.push(major | 0x1b);
             out.extend(n.to_be_bytes());
         }
     }
@@ -280,7 +284,12 @@ struct FailingSigner {
 }
 
 impl DeadlineSigner for FailingSigner {
-    fn sign_until(&self, _: &mut HttpRequest, _: &SigningScope, _: Instant) -> Result<(), AwsError> {
+    fn sign_until(
+        &self,
+        _: &mut HttpRequest,
+        _: &SigningScope,
+        _: Instant,
+    ) -> Result<(), AwsError> {
         self.calls.set(self.calls.get() + 1);
         Err(self.error.clone())
     }
@@ -372,7 +381,11 @@ fn action(request: &HttpRequest) -> String {
 }
 
 fn xml(body: &str) -> Reply {
-    Ok((200, vec![("content-type", "text/xml".into())], body.as_bytes().to_vec()))
+    Ok((
+        200,
+        vec![("content-type", "text/xml".into())],
+        body.as_bytes().to_vec(),
+    ))
 }
 
 fn query_ok(op: &str, result: &str) -> Reply {
@@ -616,7 +629,12 @@ struct Seen<'c, C> {
 }
 
 impl<C: AwsClient> AwsClient for Seen<'_, C> {
-    fn call(&mut self, service: Service, operation: &str, request: &Json) -> Result<Json, AwsError> {
+    fn call(
+        &mut self,
+        service: Service,
+        operation: &str,
+        request: &Json,
+    ) -> Result<Json, AwsError> {
         let result = self.inner.call(service, operation, request);
         self.calls.push((
             service,
@@ -632,7 +650,15 @@ impl<C: AwsClient> AwsClient for Seen<'_, C> {
 
 /// `(service, operation, seam request, URL, signing name, content type,
 /// expected final body bytes)` for every allowed pair.
-fn encodings() -> Vec<(Service, &'static str, String, String, &'static str, &'static str, Vec<u8>)> {
+fn encodings() -> Vec<(
+    Service,
+    &'static str,
+    String,
+    String,
+    &'static str,
+    &'static str,
+    Vec<u8>,
+)> {
     let query = |text: &str| text.as_bytes().to_vec();
     let rds = "https://rds.us-east-1.amazonaws.com/".to_string();
     let metric = cbor::map(vec![
@@ -753,7 +779,8 @@ fn t_dg_04a_all_ten_encodings_reach_the_injected_transport_signed() {
     assert_eq!(cases.len(), 10);
     assert_eq!(OPERATIONS.len(), 10, "exactly the ten allowed pairs");
     for (service, operation, request, url, signing_name, content_type, body) in cases {
-        let transport = Wire::new(|_: &HttpRequest, _| Err(AwsError::connect("fixture: stop here")));
+        let transport =
+            Wire::new(|_: &HttpRequest, _| Err(AwsError::connect("fixture: stop here")));
         let signer = ToolkitSigner::new();
         let sleeper = RecordingSleeper::new();
         let before = Instant::now();
@@ -761,12 +788,16 @@ fn t_dg_04a_all_ten_encodings_reach_the_injected_transport_signed() {
         let _ = live.call(service, operation, &json(&request));
         let after = Instant::now();
         let sent = transport.sent.borrow();
-        assert!(!sent.is_empty(), "{operation}: nothing reached the transport");
+        assert!(
+            !sent.is_empty(),
+            "{operation}: nothing reached the transport"
+        );
         let (first, limits) = &sent[0];
         assert_eq!(first.url, url, "{operation}: endpoint");
         assert_eq!(first.method.as_str(), "POST", "{operation}: method");
         assert_eq!(
-            first.body, body,
+            first.body,
+            body,
             "{operation}: final body bytes\n got: {:?}\nwant: {:?}",
             String::from_utf8_lossy(&first.body),
             String::from_utf8_lossy(&body)
@@ -789,19 +820,34 @@ fn t_dg_04a_all_ten_encodings_reach_the_injected_transport_signed() {
         assert_eq!(log.len(), sent.len(), "{operation}: one signing per send");
         let signing = &log[0];
         assert_eq!(signing.scope.region, REGION);
-        assert_eq!(signing.scope.service, signing_name, "{operation}: signing name");
+        assert_eq!(
+            signing.scope.service, signing_name,
+            "{operation}: signing name"
+        );
         assert_eq!(&signing.after, first, "{operation}: sent != signed");
-        assert_eq!(signing.before.body, body, "{operation}: body changed by signing");
+        assert_eq!(
+            signing.before.body, body,
+            "{operation}: body changed by signing"
+        );
         for name in FRAMING_HEADERS {
-            assert!(signing.before.headers.get(name).is_none(), "{operation}: {name} signed");
-            assert!(first.headers.get(name).is_none(), "{operation}: {name} sent");
+            assert!(
+                signing.before.headers.get(name).is_none(),
+                "{operation}: {name} signed"
+            );
+            assert!(
+                first.headers.get(name).is_none(),
+                "{operation}: {name} sent"
+            );
         }
         for name in ["authorization", "x-amz-date"] {
             assert!(
                 signing.before.headers.get(name).is_none(),
                 "{operation}: the SDK prepared {name}"
             );
-            assert!(first.headers.get(name).is_some(), "{operation}: {name} missing");
+            assert!(
+                first.headers.get(name).is_some(),
+                "{operation}: {name} missing"
+            );
         }
         let authorization = first.headers.get("authorization").unwrap();
         assert!(
@@ -832,14 +878,38 @@ fn t_dg_04a_unknown_pairs_and_unmapped_request_members_fail_before_the_transport
         (Service::Docdb, "ModifyDBCluster", "{}"),
         (Service::Ec2, "DescribeDBClusters", "{}"),
         (Service::CloudWatch, "PutMetricAlarm", "{}"),
-        (Service::SecretsManager, "GetSecretValue", r#"{"SecretId": "x"}"#),
+        (
+            Service::SecretsManager,
+            "GetSecretValue",
+            r#"{"SecretId": "x"}"#,
+        ),
         (Service::SecretsManager, "BatchGetSecretValue", "{}"),
         (Service::SecretsManager, "DescribeSecret", "{}"),
-        (Service::Docdb, "DescribeDBClusters", r#"{"DBClusterIdentifier": "x", "Filters": []}"#),
-        (Service::Docdb, "DescribeDBClusters", r#"{"DBClusterIdentifier": 5}"#),
-        (Service::Docdb, "DescribeEvents", r#"{"StartTime": "yesterday"}"#),
-        (Service::CloudWatch, "GetMetricStatistics", r#"{"Period": "3600"}"#),
-        (Service::Ec2, "DescribeSecurityGroups", r#"{"GroupIds": "sg-1"}"#),
+        (
+            Service::Docdb,
+            "DescribeDBClusters",
+            r#"{"DBClusterIdentifier": "x", "Filters": []}"#,
+        ),
+        (
+            Service::Docdb,
+            "DescribeDBClusters",
+            r#"{"DBClusterIdentifier": 5}"#,
+        ),
+        (
+            Service::Docdb,
+            "DescribeEvents",
+            r#"{"StartTime": "yesterday"}"#,
+        ),
+        (
+            Service::CloudWatch,
+            "GetMetricStatistics",
+            r#"{"Period": "3600"}"#,
+        ),
+        (
+            Service::Ec2,
+            "DescribeSecurityGroups",
+            r#"{"GroupIds": "sg-1"}"#,
+        ),
         (Service::SecretsManager, "ListSecrets", r#"{"Filters": []}"#),
     ] {
         let error = live
@@ -871,15 +941,26 @@ fn t_dg_04b_a_live_review_equals_the_seam_fixture_review() {
     let from_wire = run_infra_checks(&mut seen, "prod-docdb", NOW_SECONDS);
     let mut fixture = SeamFixture;
     let from_seam = run_infra_checks(&mut fixture, "prod-docdb", NOW_SECONDS);
-    assert_eq!(from_wire.checks, from_seam.checks, "{:?}", summary(&from_wire));
+    assert_eq!(
+        from_wire.checks,
+        from_seam.checks,
+        "{:?}",
+        summary(&from_wire)
+    );
     // Every seam object equals the fixture's, call by call.
     let mut fixture = SeamFixture;
     for (service, operation, request, result) in &seen.calls {
-        let got = result.as_ref().unwrap_or_else(|e| panic!("{operation}: {e:?}"));
+        let got = result
+            .as_ref()
+            .unwrap_or_else(|e| panic!("{operation}: {e:?}"));
         let want = fixture.call(*service, operation, request).unwrap();
         assert_eq!(canonical(got), canonical(&want), "{operation}");
     }
-    assert_eq!(seen.calls.len(), transport.sends(), "one send per seam call");
+    assert_eq!(
+        seen.calls.len(),
+        transport.sends(),
+        "one send per seam call"
+    );
     assert!(sleeper.sleeps().is_empty());
     // The healthy cluster passes (the live mapping, like boto3, has no
     // instance-level IsClusterWriter, so the writer-only check is skipped).
@@ -898,7 +979,10 @@ fn t_dg_04b_a_live_review_equals_the_seam_fixture_review() {
         "Storage type: iopt1",
         "CPU for i-writer (avg 40.0%, P95 60.0%)",
     ] {
-        assert!(labels.iter().any(|l| l == label), "missing {label}: {labels:?}");
+        assert!(
+            labels.iter().any(|l| l == label),
+            "missing {label}: {labels:?}"
+        );
     }
     assert!(!from_wire.checks.iter().any(|c| c.id == "REL9"));
     let rendered = format!("{:?}", from_wire.checks);
@@ -916,7 +1000,10 @@ fn t_dg_04b_zero_and_false_stay_distinct_from_absent() {
                 "<DBClusters><DBCluster><BackupRetentionPeriod>0</BackupRetentionPeriod><DeletionProtection>false</DeletionProtection><VpcSecurityGroups/></DBCluster></DBClusters>",
             )
         } else {
-            query_ok("DescribeDBClusters", "<DBClusters><DBCluster></DBCluster></DBClusters>")
+            query_ok(
+                "DescribeDBClusters",
+                "<DBClusters><DBCluster></DBCluster></DBClusters>",
+            )
         }
     };
     let transport = Wire::new(wire);
@@ -924,12 +1011,16 @@ fn t_dg_04b_zero_and_false_stay_distinct_from_absent() {
     let sleeper = RecordingSleeper::new();
     let mut live = client(&transport, &signer, &sleeper);
     let request = json(r#"{"DBClusterIdentifier": "prod-docdb"}"#);
-    let zero = live.call(Service::Docdb, "DescribeDBClusters", &request).unwrap();
+    let zero = live
+        .call(Service::Docdb, "DescribeDBClusters", &request)
+        .unwrap();
     assert_seam(
         &zero,
         r#"{"DBClusters": [{"BackupRetentionPeriod": 0, "DeletionProtection": false, "VpcSecurityGroups": []}]}"#,
     );
-    let absent = live.call(Service::Docdb, "DescribeDBClusters", &request).unwrap();
+    let absent = live
+        .call(Service::Docdb, "DescribeDBClusters", &request)
+        .unwrap();
     assert_seam(&absent, r#"{"DBClusters": [{}]}"#);
 
     // Datapoints: a zero statistic is kept, a missing one stays missing.
@@ -987,7 +1078,11 @@ fn t_dg_04b_pagination_tokens_pass_through_one_page_per_call() {
         r#""SourceIdentifier": "prod-docdb", "SourceType": "db-cluster", "StartTime": "{EVENTS_START}", "EndTime": "{NOW}""#
     );
     let first = live
-        .call(Service::Docdb, "DescribeEvents", &json(&format!("{{{base}}}")))
+        .call(
+            Service::Docdb,
+            "DescribeEvents",
+            &json(&format!("{{{base}}}")),
+        )
         .unwrap();
     assert_seam(
         &first,
@@ -1005,7 +1100,11 @@ fn t_dg_04b_pagination_tokens_pass_through_one_page_per_call() {
         .call(Service::SecretsManager, "ListSecrets", &json("{}"))
         .unwrap();
     assert_seam(&secrets, r#"{"SecretList": [], "NextToken": "t-2"}"#);
-    assert_eq!(transport.sends(), 3, "a generated paginator would send more");
+    assert_eq!(
+        transport.sends(),
+        3,
+        "a generated paginator would send more"
+    );
 }
 
 #[test]
@@ -1088,7 +1187,8 @@ fn t_dg_04b_truncation_wrong_types_and_service_errors_never_succeed() {
     ];
     for (index, (service, operation, request, reply)) in cases.into_iter().enumerate() {
         let reply = std::cell::RefCell::new(Some(reply));
-        let transport = Wire::new(|_: &HttpRequest, _| reply.borrow_mut().take().expect("one send"));
+        let transport =
+            Wire::new(|_: &HttpRequest, _| reply.borrow_mut().take().expect("one send"));
         let signer = ToolkitSigner::new();
         let sleeper = RecordingSleeper::new();
         let mut live = client(&transport, &signer, &sleeper);
@@ -1098,7 +1198,11 @@ fn t_dg_04b_truncation_wrong_types_and_service_errors_never_succeed() {
             matches!(error, AwsError::InvalidResponse { .. }),
             "case {index} {operation}: {error:?}"
         );
-        assert_eq!(transport.sends(), 1, "case {index}: malformed responses are not retried");
+        assert_eq!(
+            transport.sends(),
+            1,
+            "case {index}: malformed responses are not retried"
+        );
     }
 
     // Service errors are typed with a safe code and status; the service's
@@ -1147,7 +1251,8 @@ fn t_dg_04b_truncation_wrong_types_and_service_errors_never_succeed() {
     ];
     for (service, operation, request, reply, status, code) in errors {
         let reply = std::cell::RefCell::new(Some(reply));
-        let transport = Wire::new(|_: &HttpRequest, _| reply.borrow_mut().take().expect("one send"));
+        let transport =
+            Wire::new(|_: &HttpRequest, _| reply.borrow_mut().take().expect("one send"));
         let signer = ToolkitSigner::new();
         let sleeper = RecordingSleeper::new();
         let mut live = client(&transport, &signer, &sleeper);
@@ -1159,7 +1264,11 @@ fn t_dg_04b_truncation_wrong_types_and_service_errors_never_succeed() {
         };
         assert_eq!(detail.status(), status, "{operation}");
         assert_eq!(detail.code(), Some(code), "{operation}");
-        for shown in [format!("{error:?}"), error.to_string(), detail.message().to_string()] {
+        for shown in [
+            format!("{error:?}"),
+            error.to_string(),
+            detail.message().to_string(),
+        ] {
             assert!(!shown.contains(SECRET), "{operation}: {shown}");
         }
         assert_eq!(transport.sends(), 1, "{operation}: a denial is not retried");
@@ -1218,7 +1327,11 @@ fn t_dg_04c_transient_failures_recover_or_exhaust_at_four_sends() {
     assert_seam(&got, CLUSTER_SEAM);
     assert_eq!(transport.sends(), 4);
     assert_eq!(signer.count(), 4, "a fresh signature per attempt");
-    assert_eq!(sleeper.sleeps(), secs(&[2, 4, 8]), "only the toolkit backs off");
+    assert_eq!(
+        sleeper.sleeps(),
+        secs(&[2, 4, 8]),
+        "only the toolkit backs off"
+    );
     let signatures: std::collections::HashSet<String> = transport
         .requests()
         .iter()
@@ -1227,14 +1340,16 @@ fn t_dg_04c_transient_failures_recover_or_exhaust_at_four_sends() {
     assert_eq!(signatures.len(), 4, "every attempt is signed afresh");
 
     for (name, route) in [
-        ("5xx", Box::new(exhaust_5xx) as Box<dyn Fn(&HttpRequest, usize) -> Reply>),
+        (
+            "5xx",
+            Box::new(exhaust_5xx) as Box<dyn Fn(&HttpRequest, usize) -> Reply>,
+        ),
         ("timeout", Box::new(exhaust_timeout)),
     ] {
         let transport = Wire::new(route);
         let signer = ToolkitSigner::new();
         let sleeper = RecordingSleeper::new();
-        let error = describe_cluster(&mut client(&transport, &signer, &sleeper))
-            .expect_err(name);
+        let error = describe_cluster(&mut client(&transport, &signer, &sleeper)).expect_err(name);
         assert!(error.is_retryable(), "{name}: {error:?}");
         assert_eq!(transport.sends(), 4, "{name}: exhausted at four sends");
         assert_eq!(signer.count(), 4, "{name}");
@@ -1315,11 +1430,18 @@ fn t_dg_04c_the_operation_deadline_stops_retries() {
         "{error:?}"
     );
     assert_eq!(transport.sends(), 1, "the backoff ran into the deadline");
-    assert!(started.elapsed() < Duration::from_secs(2), "{:?}", started.elapsed());
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "{:?}",
+        started.elapsed()
+    );
     let (_, limits) = &transport.sent.borrow()[0];
     let deadline = limits.deadline().expect("deadline");
     assert!(deadline >= started + Duration::from_millis(200));
-    assert!(deadline <= Instant::now(), "the error came before the deadline");
+    assert!(
+        deadline <= Instant::now(),
+        "the error came before the deadline"
+    );
 }
 
 // ---- T-DG-04d: Secrets Manager metadata only ----
@@ -1360,7 +1482,11 @@ fn t_dg_04d_repeated_tokens_and_the_page_cap_still_fail_the_check() {
     let endless =
         |_: &HttpRequest, n: usize| json_ok(&format!(r#"{{{unmatched}, "NextToken": "t-{n}"}}"#));
     for (name, route, sends) in [
-        ("repeated", Box::new(repeat) as Box<dyn Fn(&HttpRequest, usize) -> Reply>, 2),
+        (
+            "repeated",
+            Box::new(repeat) as Box<dyn Fn(&HttpRequest, usize) -> Reply>,
+            2,
+        ),
         ("page cap", Box::new(endless), 1000),
     ] {
         let transport = Wire::new(move |request: &HttpRequest, n| {
@@ -1410,18 +1536,27 @@ fn t_dg_04e_generated_framing_is_removed_and_the_url_and_body_kept() {
             names.iter().any(|n| n == "content-length"),
             "{operation}: the SDK generated no content-length to remove: {names:?}"
         );
-        let bridged = live::toolkit_request(op, REGION, &generated, toolkit_aws::Timeouts::default())
-            .expect("bridged");
+        let bridged =
+            live::toolkit_request(op, REGION, &generated, toolkit_aws::Timeouts::default())
+                .expect("bridged");
         assert_eq!(bridged.url, url, "{operation}");
         assert_eq!(bridged.body, body, "{operation}");
-        assert_eq!(generated.body().bytes(), Some(body.as_slice()), "{operation}");
+        assert_eq!(
+            generated.body().bytes(),
+            Some(body.as_slice()),
+            "{operation}"
+        );
         for name in FRAMING_HEADERS {
             assert!(bridged.headers.get(name).is_none(), "{operation}: {name}");
         }
         // Every semantic header the SDK generated is kept unchanged.
         for (name, value) in generated.headers() {
             if !FRAMING_HEADERS.contains(&name.to_ascii_lowercase().as_str()) {
-                assert_eq!(bridged.headers.get(name), Some(value), "{operation}: {name}");
+                assert_eq!(
+                    bridged.headers.get(name),
+                    Some(value),
+                    "{operation}: {name}"
+                );
             }
         }
     }
@@ -1445,12 +1580,20 @@ fn t_dg_04e_the_bridge_refuses_sdk_signing_streaming_bodies_and_foreign_urls() {
     let body = || SdkBody::from("Action=DescribeDBClusters&Version=2014-10-31");
     let ok = generated(
         "https://rds.us-east-1.amazonaws.com/",
-        &[("content-type", "application/x-www-form-urlencoded"), ("content-length", "44")],
+        &[
+            ("content-type", "application/x-www-form-urlencoded"),
+            ("content-length", "44"),
+        ],
         body(),
     );
     live::toolkit_request(op, REGION, &ok, toolkit_aws::Timeouts::default()).expect("baseline");
     // An SDK-prepared signature means noAuth was not selected: fail closed.
-    for header in ["authorization", "x-amz-date", "x-amz-security-token", "x-amz-content-sha256"] {
+    for header in [
+        "authorization",
+        "x-amz-date",
+        "x-amz-security-token",
+        "x-amz-content-sha256",
+    ] {
         let signed = generated(
             "https://rds.us-east-1.amazonaws.com/",
             &[(header, "FAKE-SDK-SIGNATURE")],
@@ -1477,11 +1620,19 @@ fn t_dg_04e_the_bridge_refuses_sdk_signing_streaming_bodies_and_foreign_urls() {
         assert!(!format!("{error:?}").contains("FAKE-PASS"), "{url}");
     }
     // A streaming body cannot be signed as final bytes: refused.
-    let streaming_request =
-        generated("https://rds.us-east-1.amazonaws.com/", &[], SdkBody::taken());
+    let streaming_request = generated(
+        "https://rds.us-east-1.amazonaws.com/",
+        &[],
+        SdkBody::taken(),
+    );
     assert!(streaming_request.body().bytes().is_none());
-    live::toolkit_request(op, REGION, &streaming_request, toolkit_aws::Timeouts::default())
-        .expect_err("streaming body");
+    live::toolkit_request(
+        op,
+        REGION,
+        &streaming_request,
+        toolkit_aws::Timeouts::default(),
+    )
+    .expect_err("streaming body");
 }
 
 #[test]
@@ -1516,7 +1667,11 @@ fn t_dg_04e_only_toolkit_signing_and_retries_run_for_every_operation() {
             panic!("{operation}: {error:?}")
         };
         assert_eq!(detail.status(), 503, "{operation}");
-        assert_eq!(transport.sends(), 4, "{operation}: SDK retries would add sends");
+        assert_eq!(
+            transport.sends(),
+            4,
+            "{operation}: SDK retries would add sends"
+        );
         assert_eq!(signer.count(), 4, "{operation}");
         assert_eq!(sleeper.sleeps(), secs(&[2, 4, 8]), "{operation}");
     }

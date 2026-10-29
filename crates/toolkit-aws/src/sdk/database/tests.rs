@@ -1690,9 +1690,12 @@ fn body_fails_and_releases(
 #[test]
 fn a_bounded_body_releases_its_socket_on_every_terminal_failure() {
     let fixture = Fixture::new();
-    let shown = with_retained_body(&fixture, fixture.tls_far(stalled_body()), quick(), |d, b| {
-        body_fails_and_releases(&fixture, d, b, "idle")
-    });
+    let shown = with_retained_body(
+        &fixture,
+        fixture.tls_far(stalled_body()),
+        quick(),
+        |d, b| body_fails_and_releases(&fixture, d, b, "idle"),
+    );
     assert!(shown.contains("stalled"), "{shown}");
     let bounds = DatabaseBounds {
         idle: Duration::from_secs(10),
@@ -1726,7 +1729,10 @@ fn a_bounded_body_releases_its_socket_at_its_end() {
     // The server keeps the connection open after a complete body.
     with_retained_body(
         &fixture,
-        fixture.tls_far(vec![sized_reply(10, 10), Act::Sleep(Duration::from_secs(30))]),
+        fixture.tls_far(vec![
+            sized_reply(10, 10),
+            Act::Sleep(Duration::from_secs(30)),
+        ]),
         quick(),
         |dialer, body| {
             let mut read = Vec::new();
@@ -1734,7 +1740,10 @@ fn a_bounded_body_releases_its_socket_at_its_end() {
                 read.extend(chunk.expect("chunk"));
             }
             assert_eq!(read, vec![b'a'; 10]);
-            assert!(dialer.released(), "the end of the body left the socket open");
+            assert!(
+                dialer.released(),
+                "the end of the body left the socket open"
+            );
             assert!(poll_body(&fixture, body).is_none(), "the end repeats");
         },
     );
