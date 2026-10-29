@@ -513,3 +513,5 @@ Friction: #4727, Rsi #4694, Rsi #4704
   Round 21: #4487 after #5018 r2 + the #4412 activation step (hooks.json -> plugin-stage launcher).
   3/4 busy: 41854b6c (#5017 S1), 9c9ccc2e (#4487 repair), fbfd341e (#4382 design).
   #4397 (serverless examples, wave 3) impl worker e91f616e (Sonnet high, rolling). 4/4 busy: 41854b6c (#5017), 9c9ccc2e (#4487 repair), fbfd341e (#4382 design), e91f616e (#4397).
+- 10-29 01:56Z: #4382 DESIGN 87a5543ae4d5360da915fa4acc5cf43bf6287ad5 (fbfd341e; docs/migration/launch-with-aws-design.md; slices L0-L8; launch/ module in toolkit-cli; new dep miniz_oxide; network needs #4413 S1 aws-sdk feature). RULINGS on #4382 (seq 2): Q1 download-snapshot YES; Q2 miniz_oxide + own strict ZIP (stored+deflate, no zip crate); Q3 Recorded; Q7 no proxy/CA, follow #4413; Q12 64 MiB; Q19 allowlist; Q20 offline slices now. AC1 pre-review #5038 worker 44215d87 (Codex sol high, build_free, pinned). On ACCEPT: L0-L2 worker. Friction #5037 (unread).
+  4/4 busy: 41854b6c (#5017), 9c9ccc2e (#4487 repair), e91f616e (#4397), 44215d87 (#5038).
