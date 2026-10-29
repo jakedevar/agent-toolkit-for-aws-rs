@@ -847,6 +847,81 @@ fn ap_sub_04_grouped_operands_and_expression_components() {
 }
 
 #[test]
+fn ap_sub_04_sentinel_expression_boundaries() {
+    let template = catalog_of(&demo(concat!(
+        "ok = \"[ASSIGN_LEFT]\" == tok\nright = tok == \"[ASSIGN_RIGHT]\"\n",
+        "def f():\n    return \"[RETURN_LEFT]\" == tok\n    return tok == \"[RETURN_RIGHT]\"\n",
+        "assert \"[ASSERT_LEFT]\" == tok\nassert tok == \"[ASSERT_RIGHT]\"\n",
+        "x = 1 if \"[IF_LEFT]\" == tok else 2\ny = 1 if tok == \"[IF_RIGHT]\" else 2\n",
+        "x = 1 if c else \"[ELSE_LEFT]\" == tok\ny = 1 if c else tok == \"[ELSE_RIGHT]\"\n",
+        "x = [1 for t in xs if \"[COMP_LEFT]\" == t for q in z]\n",
+        "y = [1 for t in xs if t == \"[COMP_RIGHT]\" for q in z]\n",
+        "yield \"[YIELD_LEFT]\" == tok\nyield tok == \"[YIELD_RIGHT]\"\n",
+        "await \"[AWAIT_LEFT]\" == tok\nawait tok == \"[AWAIT_RIGHT]\"\n",
+        "del \"[DEL_LEFT]\" == tok\ndel tok == \"[DEL_RIGHT]\"\n",
+        "raise \"[RAISE_LEFT]\" == tok\nraise tok == \"[RAISE_RIGHT]\"\n",
+        "x = \"[IS_LEFT]\" == tok is other\nx = tok == \"[IS_RIGHT]\" is other\n",
+        "x += \"[AUG_LEFT]\" == tok\nx += tok == \"[AUG_RIGHT]\"\n",
+        "if tok == ((\"[GROUP_RIGHT]\")): pass\nif ((\"[GROUP_LEFT]\")) != tok: pass\n",
+        "if tok in ((\"[GROUP_MEMBER]\"),): pass\n",
+        "if tok == \"[ADD_RIGHT]\" + suffix: pass\nif prefix + \"[ADD_LEFT]\" == tok: pass\n",
+        "if tok in (\"[ADD_MEMBER]\" + suffix,): pass\n",
+        "if tok == (\"[INDEX]\")[0]: pass\nif (\"[ATTR]\").lower() == tok: pass\n",
+        "if tok == \"[CONCAT_RIGHT]\" 'x': pass\nif 'x' \"[CONCAT_LEFT]\" == tok: pass\n",
+    )));
+    for name in [
+        "ASSIGN_LEFT",
+        "ASSIGN_RIGHT",
+        "RETURN_LEFT",
+        "RETURN_RIGHT",
+        "ASSERT_LEFT",
+        "ASSERT_RIGHT",
+        "IF_LEFT",
+        "IF_RIGHT",
+        "ELSE_LEFT",
+        "ELSE_RIGHT",
+        "COMP_LEFT",
+        "COMP_RIGHT",
+        "YIELD_LEFT",
+        "YIELD_RIGHT",
+        "AWAIT_LEFT",
+        "AWAIT_RIGHT",
+        "DEL_LEFT",
+        "DEL_RIGHT",
+        "RAISE_LEFT",
+        "RAISE_RIGHT",
+        "IS_LEFT",
+        "IS_RIGHT",
+        "AUG_LEFT",
+        "AUG_RIGHT",
+        "GROUP_RIGHT",
+        "GROUP_LEFT",
+        "GROUP_MEMBER",
+    ] {
+        assert_eq!(
+            contexts(&occurrences_of(&template, name)),
+            vec!["sentinel"],
+            "{name}"
+        );
+    }
+    for name in [
+        "ADD_RIGHT",
+        "ADD_LEFT",
+        "ADD_MEMBER",
+        "INDEX",
+        "ATTR",
+        "CONCAT_RIGHT",
+        "CONCAT_LEFT",
+    ] {
+        assert_eq!(
+            contexts(&occurrences_of(&template, name)),
+            vec!["quoted"],
+            "{name}"
+        );
+    }
+}
+
+#[test]
 fn ap_cat_06_inline_case_assignments_and_soft_keyword_names() {
     let template = catalog_of(&demo(concat!(
         "COUNT = 1\nAUG = 1\nLEFT = 1\nRIGHT = 1\nNESTED = 1\n",
