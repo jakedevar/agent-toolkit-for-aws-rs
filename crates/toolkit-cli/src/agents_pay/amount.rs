@@ -198,6 +198,89 @@ impl CapDecimal {
     pub fn is_positive(&self) -> bool {
         !self.negative && self.digits != "0"
     }
+
+    /// Exact decimal subtraction for session spending arithmetic.
+    #[must_use]
+    pub fn subtract(&self, other: &Self) -> String {
+        let exponent = self.exponent.min(other.exponent);
+        let left = format!(
+            "{}{}",
+            self.digits,
+            "0".repeat(usize::try_from(self.exponent - exponent).unwrap_or_default())
+        );
+        let right = format!(
+            "{}{}",
+            other.digits,
+            "0".repeat(usize::try_from(other.exponent - exponent).unwrap_or_default())
+        );
+        let left_negative = self.negative && self.digits != "0";
+        let right_negative = !other.negative && other.digits != "0";
+        let (digits, negative) = if left_negative == right_negative {
+            (add_digits(&left, &right), left_negative)
+        } else {
+            match compare_digits(&left, &right) {
+                Ordering::Less => (subtract_digits(&right, &left), right_negative),
+                Ordering::Equal => ("0".to_owned(), false),
+                Ordering::Greater => (subtract_digits(&left, &right), left_negative),
+            }
+        };
+        let rendered = decimal_str(&digits, i64::from(exponent));
+        if negative && digits != "0" {
+            format!("-{rendered}")
+        } else {
+            rendered
+        }
+    }
+}
+
+fn add_digits(left: &str, right: &str) -> String {
+    let mut a = left.bytes().rev();
+    let mut b = right.bytes().rev();
+    let mut carry = 0_u8;
+    let mut out = Vec::with_capacity(left.len().max(right.len()) + 1);
+    loop {
+        let x = a.next().map(|v| v - b'0');
+        let y = b.next().map(|v| v - b'0');
+        if x.is_none() && y.is_none() && carry == 0 {
+            break;
+        }
+        let sum = x.unwrap_or(0) + y.unwrap_or(0) + carry;
+        out.push(b'0' + sum % 10);
+        carry = sum / 10;
+    }
+    out.reverse();
+    let result = String::from_utf8(out).expect("decimal digits");
+    let stripped = result.trim_start_matches('0');
+    if stripped.is_empty() {
+        "0".to_owned()
+    } else {
+        stripped.to_owned()
+    }
+}
+
+// `left >= right`, with both arguments containing only ASCII digits.
+fn subtract_digits(left: &str, right: &str) -> String {
+    let mut b = right.bytes().rev();
+    let mut borrow = 0_i16;
+    let mut out = Vec::with_capacity(left.len());
+    for x in left.bytes().rev() {
+        let mut digit = i16::from(x - b'0') - borrow - i16::from(b.next().map_or(0, |v| v - b'0'));
+        if digit < 0 {
+            digit += 10;
+            borrow = 1;
+        } else {
+            borrow = 0;
+        }
+        out.push(b'0' + u8::try_from(digit).expect("decimal digit"));
+    }
+    out.reverse();
+    let result = String::from_utf8(out).expect("decimal digits");
+    let stripped = result.trim_start_matches('0');
+    if stripped.is_empty() {
+        "0".to_owned()
+    } else {
+        stripped.to_owned()
+    }
 }
 
 /// `text` with `_` between digits removed; every other character must be an
@@ -350,4 +433,43 @@ fn decimal_str(digits: &str, exponent: i64) -> String {
     };
     let sign = if adjusted < 0 { '-' } else { '+' };
     format!("{mantissa}E{sign}{}", adjusted.unsigned_abs())
+}
+
+#[cfg(test)]
+mod subtraction_tests {
+    use super::CapDecimal;
+
+    #[test]
+    fn session_spend_decimal_subtraction_is_exact() {
+        for (budget, available, expected) in [
+            ("1.00", "0.25", "0.75"),
+            (
+                "1000000000000000000000000000000",
+                "0.000001",
+                "999999999999999999999999999999.999999",
+            ),
+            ("1", "2", "-1"),
+            ("1e2", "1e2", "0E+2"),
+            ("-1", "-2", "1"),
+        ] {
+            let left = CapDecimal::parse(budget).unwrap();
+            let right = CapDecimal::parse(available).unwrap();
+            assert_eq!(left.subtract(&right), expected, "{budget} - {available}");
+        }
+    }
+
+    #[test]
+    fn decimal_subtraction_agrees_with_integer_arithmetic_across_signs() {
+        for left in -50_i64..=50 {
+            for right in -50_i64..=50 {
+                let a = CapDecimal::parse(&left.to_string()).unwrap();
+                let b = CapDecimal::parse(&right.to_string()).unwrap();
+                assert_eq!(
+                    a.subtract(&b),
+                    (left - right).to_string(),
+                    "{left} - {right}"
+                );
+            }
+        }
+    }
 }

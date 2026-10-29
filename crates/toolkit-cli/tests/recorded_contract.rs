@@ -2058,13 +2058,7 @@ fn analyse_with(files: &[SourceFile], inventory: Option<&[(&str, Class)]>) -> Re
 /// until it is listed here; a slice listed as not recorded fails as soon as
 /// it shows a recording signal.
 const INVENTORY: &[(&str, Class)] = &[
-    (
-        "agents_pay",
-        Class::NotRecorded(
-            "the x402 payment policy over the operator's policy and the merchant's challenge; \
-             no AWS call is read or replayed",
-        ),
-    ),
+    ("agents_pay", Class::Recorded),
     (
         "ai_data",
         Class::NotRecorded(
