@@ -129,12 +129,14 @@ impl fmt::Display for SkillsError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::RootNotFound(path) => {
-                write!(f, "root does not exist: {}", path.display())
+                write!(f, "root does not exist: {}", crate::paths::shown(path))
             }
             Self::RootNotDirectory(path) => {
-                write!(f, "root is not a directory: {}", path.display())
+                write!(f, "root is not a directory: {}", crate::paths::shown(path))
             }
-            Self::Io(error, path) => write!(f, "cannot read {}: {error}", path.display()),
+            Self::Io(error, path) => {
+                write!(f, "cannot read {}: {error}", crate::paths::shown(path))
+            }
             Self::SkillFile(error) => write!(f, "{error}"),
         }
     }

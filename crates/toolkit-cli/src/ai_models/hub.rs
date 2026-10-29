@@ -253,7 +253,8 @@ pub(super) fn finetuning_techniques(
     ))
 }
 
-/// The one-line, escaped text of a service code or message for a diagnostic.
+/// The one-line, escaped text of a service code or message for a diagnostic,
+/// redacted first (#4941).
 pub(super) fn shown(text: &str) -> String {
-    escape_untrusted(text, 400)
+    escape_untrusted(&toolkit_aws::redact_text(text), 400)
 }

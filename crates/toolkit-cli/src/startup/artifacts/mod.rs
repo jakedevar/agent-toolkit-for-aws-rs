@@ -353,7 +353,8 @@ fn mode_of(invocation: &Invocation) -> Result<Mode, ToolkitError> {
     let skill = invocation.value("--skill");
     if let Some(skill) = skill.filter(|skill| !SKILLS.contains(skill)) {
         return Err(usage(&format!(
-            "argument --skill: invalid choice: '{skill}' (choose from 'gcp-to-aws', 'heroku-to-aws', 'azure-to-aws')"
+            "argument --skill: invalid choice: '{}' (choose from 'gcp-to-aws', 'heroku-to-aws', 'azure-to-aws')",
+            crate::safe_text::shown_value(skill)
         )));
     }
     let self_check = invocation.has_flag("--self-check");

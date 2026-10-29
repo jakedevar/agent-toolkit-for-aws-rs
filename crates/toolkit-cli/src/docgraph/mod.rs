@@ -56,7 +56,7 @@ mod tables;
 #[cfg(test)]
 mod tests;
 
-use checks::clean;
+use crate::safe_text::{safe_path, safe_text};
 use client::{AwsClient, NoLiveClient, RecordedClient};
 use seed::{GremlinSession, NoLiveSession, RecordedSession, SeedError};
 
@@ -144,19 +144,11 @@ fn now_seconds() -> i64 {
         .unwrap_or(0)
 }
 
-/// A caller path as this slice shows it (#4907): the whole path is passed
-/// through the shared redactor (URL userinfo, labelled credentials, key ids),
-/// then its control, bidirectional and invisible characters are escaped. A
-/// path is never shortened, so the file name stays visible.
-fn shown_path(path: &str) -> String {
-    clean(path)
-}
-
 /// Reads and parses a JSON file named by the caller. The error text names the
-/// file as [`shown_path`] does and the failure, never a value of the document
+/// file as [`safe_path`] does and the failure, never a value of the document
 /// (`startup::read_json_document` with a redacted label).
 fn read_document(path: &str) -> Result<Json, String> {
-    let label = shown_path(path);
+    let label = safe_path(path);
     let text = read_text(Path::new(path), &label)?;
     parse_json(&text)
         .map_err(|error| format!("{label}: invalid JSON ({})", parse_failure_text(&error)))
@@ -165,7 +157,7 @@ fn read_document(path: &str) -> Result<Json, String> {
 fn recorded_error(path: &str, reason: &str) -> ToolkitError {
     ToolkitError::runtime(
         "docgraph_recorded",
-        format!("{}: {reason}", shown_path(path)),
+        format!("{}: {reason}", safe_path(path)),
     )
 }
 
@@ -237,7 +229,7 @@ pub fn wa_review_command(
     if let Some(path) = invocation.value("--analysis-data") {
         out.line(&format!(
             "  Loading database stats from {}...",
-            shown_path(path)
+            safe_path(path)
         ))?;
         let document = read_document(path)
             .map_err(|reason| ToolkitError::runtime("docgraph_analysis", reason))?;
@@ -267,8 +259,8 @@ pub fn wa_review_command(
     )
     .map_err(|reason| ToolkitError::runtime("docgraph_report", reason))?;
     out.line("")?;
-    out.line(&format!("  Results: {}", shown_path(&json_path)))?;
-    out.line(&format!("  Report:  {}", shown_path(&md_path)))?;
+    out.line(&format!("  Results: {}", safe_path(&json_path)))?;
+    out.line(&format!("  Report:  {}", safe_path(&md_path)))?;
 
     let [pass, warn, fail, info] = report::counts(&results);
     out.line("")?;
@@ -293,7 +285,7 @@ pub fn validate_input_command(
         let Some((key, value)) = argument.split_once('=') else {
             out.line(&format!(
                 "Invalid argument: {}. Use key=value format.",
-                neptune_input::shown(argument)
+                safe_text(argument)
             ))?;
             out.set_exit_status(1);
             return Ok(());

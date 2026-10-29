@@ -18,10 +18,11 @@ use toolkit_aws::AwsError;
 use toolkit_core::Json;
 
 use super::access::{optional_bool, optional_int, optional_number};
-use super::checks::{clean, clean_prefix, Findings, Status};
+use super::checks::{Findings, Status};
 use super::client::{AwsClient, Service};
 use super::snapshot::group;
 use super::tables::{connection_limit, ram_gib, GRAVITON_FAMILIES};
+use crate::safe_text::{safe_path, safe_prefix};
 
 const PAGE_LIMIT: usize = 1000;
 const SEVEN_DAYS: i64 = 7 * 86_400;
@@ -421,7 +422,7 @@ fn reliability(
         status_of(zones.len() >= 2, Status::Fail),
         detail_if(zones.len() < 2, "Single AZ -- no failover protection"),
     );
-    let version = clean(&cluster.engine_version);
+    let version = safe_path(&cluster.engine_version);
     let major = if cluster.engine_version == "unknown" {
         ""
     } else {
@@ -514,7 +515,7 @@ fn failover_events(
             "REL7",
             format!("{} failover event(s) in last 13 days", failovers.len()),
             Status::Warn,
-            format!("Most recent: {}", clean_prefix(&last.message, 120)),
+            format!("Most recent: {}", safe_prefix(&last.message, 120)),
         );
     } else {
         findings.add(
@@ -558,7 +559,7 @@ fn security(
                         tls_value = value.unwrap_or_else(|| "enabled".to_string());
                     } else if name == "tls_version" {
                         let version = value.unwrap_or_default();
-                        let label = format!("TLS minimum version: {}", clean(&version));
+                        let label = format!("TLS minimum version: {}", safe_path(&version));
                         if !version.is_empty()
                             && version.contains("1.2")
                             && !version.contains("1.0")
@@ -595,7 +596,7 @@ fn security(
             "Could not determine tls_version parameter",
         );
     }
-    let tls_label = format!("TLS ({})", clean(&tls_value));
+    let tls_label = format!("TLS ({})", safe_path(&tls_value));
     let (tls_status, tls_detail) = match tls_value.as_str() {
         "enabled" => (Status::Pass, ""),
         "unknown" => (Status::Warn, "Could not determine TLS status"),
@@ -670,7 +671,7 @@ fn security_groups(client: &mut dyn AwsClient, findings: &mut Findings, cluster:
     let mut checked = 0_usize;
     for id in cluster.security_groups.iter().filter(|id| !id.is_empty()) {
         let request = Json::object(vec![("GroupIds", Json::Array(vec![text(id)]))]);
-        let shown = clean(id);
+        let shown = safe_path(id);
         let described = call(client, Service::Ec2, "DescribeSecurityGroups", &request)
             .and_then(|response| {
                 optional_object_list(&response, "SecurityGroups")?
@@ -818,7 +819,7 @@ fn operations(
     findings.add(
         pillar,
         "OPS5c",
-        format!("Parameter group: {}", clean(&cluster.parameter_group)),
+        format!("Parameter group: {}", safe_path(&cluster.parameter_group)),
         if default_group {
             Status::Warn
         } else {
@@ -832,7 +833,10 @@ fn operations(
     findings.add(
         pillar,
         "OPS7",
-        format!("Maintenance window: {}", clean(&cluster.maintenance_window)),
+        format!(
+            "Maintenance window: {}",
+            safe_path(&cluster.maintenance_window)
+        ),
         Status::Info,
         "Verify this window aligns with your lowest-traffic period",
     );
@@ -896,7 +900,7 @@ fn cost(client: &mut dyn AwsClient, findings: &mut Findings, cluster: &Cluster) 
     findings.add(
         pillar,
         "COST7",
-        format!("Storage type: {}", clean(&cluster.storage_type)),
+        format!("Storage type: {}", safe_path(&cluster.storage_type)),
         Status::Info,
         if io_optimized {
             "I/O-Optimized active -- no per-I/O charges"
@@ -924,8 +928,8 @@ fn instance_checks(
     window: &Window,
     instance: &Instance,
 ) {
-    let iid = clean(&instance.id);
-    let class = clean(&instance.class);
+    let iid = safe_path(&instance.id);
+    let class = safe_path(&instance.class);
     let family = instance
         .class
         .strip_prefix("db.")

@@ -15,6 +15,8 @@ use toolkit_core::{parse_json, read_regular_file, Json, PathError, ToolkitError}
 use toolkit_msk::compat::{assess, format_utc_date, format_utc_timestamp, output_file_name};
 use toolkit_msk::pricing::{UnlinkedPricingApi, PRICING_SOURCES};
 use toolkit_msk::pyfmt::{error_json, json_dumps, py_float_parse, py_int_parse, py_str_repr};
+
+use crate::safe_text::{redacted_value, shown_path, shown_value};
 use toolkit_msk::simulation::{
     compute, render_result_json, render_template, validate, DEFAULT_BROKER_COUNT,
     DEFAULT_INSTANCE_TYPE, SOURCE_TEMPLATE,
@@ -194,7 +196,7 @@ fn float_option(invocation: &Invocation, name: &str) -> Result<Option<f64>, Tool
             py_float_parse(text).ok_or_else(|| {
                 arg_error(format!(
                     "argument {name}: invalid float value: {}",
-                    py_str_repr(text)
+                    py_str_repr(&shown_value(text))
                 ))
             })
         })
@@ -210,7 +212,7 @@ fn int_option(invocation: &Invocation, name: &str) -> Result<Option<i64>, Toolki
                 .ok_or_else(|| {
                     arg_error(format!(
                         "argument {name}: invalid int value: {}",
-                        py_str_repr(text)
+                        py_str_repr(&shown_value(text))
                     ))
                 })
         })
@@ -247,7 +249,7 @@ fn size_options(invocation: &Invocation) -> Result<SizeOptions, ToolkitError> {
             .collect();
         return Err(arg_error(format!(
             "argument --pricing-source: invalid choice: {} (choose from {})",
-            py_str_repr(pricing_source),
+            py_str_repr(&shown_value(pricing_source)),
             choices.join(", ")
         )));
     }
@@ -266,16 +268,18 @@ fn size_options(invocation: &Invocation) -> Result<SizeOptions, ToolkitError> {
     let discount_pct = invocation
         .value("--discount-pct")
         .map(|text| {
-            parse_discount_pct(text)
+            // A credential-shaped value is never valid here: the parser is
+            // given the redacted value, so its message cannot quote it (#4941).
+            parse_discount_pct(&redacted_value(text))
                 .map_err(|message| arg_error(format!("argument --discount-pct: {message}")))
         })
         .transpose()?
         .unwrap_or(0.0);
-    let broker_classes = parse_broker_classes(
+    let broker_classes = parse_broker_classes(&redacted_value(
         invocation
             .value("--broker-classes")
             .unwrap_or("standard,express"),
-    )
+    ))
     .map_err(|message| arg_error(format!("argument --broker-classes: {message}")))?;
     let broker_quota = int_option(invocation, "--broker-quota")?.unwrap_or(DEFAULT_BROKER_QUOTA);
 
@@ -431,10 +435,14 @@ fn sim_error(output: &mut Output<'_>, message: &str) -> Result<(), ToolkitError>
 
 fn sim_instance_and_count(invocation: &Invocation) -> Result<(String, i64), ToolkitError> {
     Ok((
-        invocation
-            .value("--instance-type")
-            .unwrap_or(DEFAULT_INSTANCE_TYPE)
-            .to_string(),
+        // Caller text that reaches messages and stdout: redacted at the value
+        // (a credential-shaped value is never an instance type, #4941).
+        redacted_value(
+            invocation
+                .value("--instance-type")
+                .unwrap_or(DEFAULT_INSTANCE_TYPE),
+        )
+        .into_owned(),
         int_option(invocation, "--broker-count")?.unwrap_or(DEFAULT_BROKER_COUNT),
     ))
 }
@@ -448,7 +456,10 @@ pub(crate) fn sim_compute(
     match compute(
         &instance_type,
         broker_count,
-        invocation.value("--kafka-version"),
+        invocation
+            .value("--kafka-version")
+            .map(redacted_value)
+            .as_deref(),
     ) {
         Ok(caps) => output.line(&json_dumps(&caps.to_json())),
         Err(message) => sim_error(output, &message),
@@ -514,14 +525,17 @@ fn resolve_output_path(raw: &str) -> Result<PathBuf, String> {
                 match fs::symlink_metadata(&candidate) {
                     Ok(_) => {
                         resolved = fs::canonicalize(&candidate).map_err(|error| {
-                            format!("cannot resolve {}: {error}", candidate.display())
+                            format!("cannot resolve {}: {error}", shown_path(&candidate))
                         })?;
                     }
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                         tail.push(name.to_os_string());
                     }
                     Err(error) => {
-                        return Err(format!("cannot resolve {}: {error}", candidate.display()));
+                        return Err(format!(
+                            "cannot resolve {}: {error}",
+                            shown_path(&candidate)
+                        ));
                     }
                 }
             }
@@ -529,7 +543,7 @@ fn resolve_output_path(raw: &str) -> Result<PathBuf, String> {
     }
     resolved.extend(tail);
     if resolved.file_name().is_none() {
-        return Err(format!("{} is not a file path", resolved.display()));
+        return Err(format!("{} is not a file path", shown_path(&resolved)));
     }
     Ok(resolved)
 }
@@ -569,11 +583,20 @@ pub(crate) fn sim_render(
         return Err(arg_error("missing required arguments"));
     };
 
-    let rendered =
-        match render_template(SOURCE_TEMPLATE, instance_type, broker_count, kafka_version) {
-            Ok(rendered) => rendered,
-            Err(message) => return sim_error(output, &message),
-        };
+    // Redacted before strict parsing, as `sim compute` does (#5011): a
+    // credential-shaped value is never a valid instance type or Kafka version,
+    // and the parser error quotes the value it was given.
+    let (instance_type, kafka_version) =
+        (redacted_value(instance_type), redacted_value(kafka_version));
+    let rendered = match render_template(
+        SOURCE_TEMPLATE,
+        &instance_type,
+        broker_count,
+        &kafka_version,
+    ) {
+        Ok(rendered) => rendered,
+        Err(message) => return sim_error(output, &message),
+    };
     let out = match resolve_output_path(raw_output) {
         Ok(path) => path,
         Err(message) => return sim_error(output, &message),
@@ -589,7 +612,7 @@ pub(crate) fn sim_render(
                  ({}); choose an output path under the customer's working \
                  directory instead, e.g. \
                  $(pwd)/migrate-to-msk-skill-artifacts/simulation/simulation-stack.yaml",
-                package.display()
+                shown_path(&package)
             ),
         );
     }
@@ -597,14 +620,24 @@ pub(crate) fn sim_render(
         if let Err(error) = fs::create_dir_all(parent) {
             return sim_error(
                 output,
-                &format!("cannot create {}: {error}", parent.display()),
+                &format!("cannot create {}: {error}", shown_path(parent)),
             );
         }
     }
     if let Err(error) = write_text_file(&out, &rendered.template) {
         return sim_error(output, error.message());
     }
-    let result = render_result_json(&rendered, &out.display().to_string());
+    // The report shows the path redacted; the file was written at the real
+    // path (#5010). Resolving the path collapses `//`, which hides URL
+    // userinfo from the redactor, so a credential-shaped `--output` is shown
+    // as given, redacted whole, instead of resolved.
+    let given = redacted_value(raw_output);
+    let shown = if given == raw_output {
+        redacted_value(&out.display().to_string()).into_owned()
+    } else {
+        given.into_owned()
+    };
+    let result = render_result_json(&rendered, &shown);
     output.line(&json_dumps(&result))
 }
 
@@ -623,7 +656,7 @@ pub(crate) fn sim_validate(
     if test != "e2e_latency" && test != "broker_restart" {
         return Err(arg_error(format!(
             "argument --test: invalid choice: {} (choose from 'e2e_latency', 'broker_restart')",
-            py_str_repr(test)
+            py_str_repr(&shown_value(test))
         )));
     }
     let caps = match compute(&instance_type, broker_count, None) {

@@ -176,15 +176,20 @@ name or value of the file.
    `GenerationModel` parameter. The template has not been deployed in this
    slice (no paid environment); a reviewer can lint it with `cfn-lint` or
    `aws cloudformation validate-template`.
-10. **Caller paths are redacted before they are shown** (#4907). Every path this
-    slice prints (`--recorded`, `--analysis-data`, in the progress line and in
-    read or parse errors, and the `Results:` / `Report:` banners under
-    `--output`) goes through the shared redactor (`toolkit_aws::redact_text`:
-    URL userinfo, labelled credentials, key ids) and then has control,
-    bidirectional and invisible characters escaped; paths are never shortened.
+10. **Caller paths are redacted before they are shown** (#4907, #4941). Every
+    path this slice prints (`--recorded`, `--analysis-data`, in the progress
+    line and in read or parse errors, and the `Results:` / `Report:` banners
+    under `--output`) goes through the shared `safe_text::safe_path`: redacted
+    in full (`toolkit_aws::redact_text`: URL userinfo, labelled credentials,
+    key ids), then bounded to 200 characters with `...`, then escaped. Response
+    text in labels uses the same helper, validator values `safe_text::safe_text`
+    and the failover message `safe_text::safe_prefix` (120 characters, no mark).
+    The slice-local `clean`, `clean_prefix`, `first_chars`, `shown_path` and
+    `neptune_input::shown` helpers were removed for these shared ones (#4941).
     The file reader is `startup::read_text` with that redacted label (the
     shared `read_json_document` escapes but does not redact its label). A path
-    without credential-shaped text is shown as given.
+    without credential-shaped text and of at most 200 characters is shown as
+    given.
 
 ## Not in this slice
 

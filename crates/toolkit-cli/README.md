@@ -401,9 +401,18 @@ escaping, so there is now one helper and one contract test.
    keeps only the first 120 characters and ends with `...[N more chars]` when it
    cut something. `quote_untrusted_bounded` takes your own limit and
    `escape_untrusted` omits the quotes.
-3. **Escaping is not redaction.** The helper never recognises secrets. Payload
-   contents that may hold credentials must be left out of the diagnostic or
-   redacted first (`toolkit_aws::redact`); do not quote them.
+3. **Escaping is not redaction.** `quote_untrusted` never recognises secrets.
+   Payload contents that may hold credentials must be left out of the
+   diagnostic or redacted first (`toolkit_aws::redact`); do not quote them.
+   For a caller path or value inside `toolkit-cli`, use `safe_text::safe_path`
+   (or `safe_text` / `safe_prefix` for other text): it redacts the whole value,
+   then bounds it (200 characters for a path, then `...`), then escapes it, in
+   that order, so a credential that crosses the bound is still recognized
+   (#4941). A renderer that quotes or escapes on its own (a `repr`, a quoted
+   choice) is given `safe_text::shown_value(value)`, never the raw value, and
+   a value written into stdout data (JSON, a template) is given
+   `safe_text::redacted_value(value)` (#4971). Do not write a slice-local
+   redact/bound/escape helper.
 4. **Do not flatten or hand-roll.** Replacing controls with spaces (as
    `skills list` and `asm exec` do for their pinned output) hides the damage
    instead of showing it and each copy drifts; new code uses the helper. Those
@@ -411,7 +420,11 @@ escaping, so there is now one helper and one contract test.
    flattens into a tab-separated line and `asm exec` flattens after redaction,
    so the helper would change bytes tests already pin.
 5. **Safety net at the sinks.** `Output::diagnostic` and the final `error:`
-   report pass their text through `toolkit_core::neutralize_text_knowing`, which
+   report pass their text through `safe_text::CallerText::diagnostic` (#4941:
+   a credential-shaped or overlong argument value echoed verbatim is shown
+   redacted, bounded to 200 characters and on one line, and a credential
+   fragment of an argument value is hidden whole or cut, every match found
+   before any is replaced; stdout is never rewritten), which, like `toolkit_core::neutralize_text_knowing` before it,
    writes every control character (tab and carriage return included),
    bidirectional override and similar invisible character as `\r`, `\t` or
    `\uXXXX` and changes nothing else. Newlines are kept because several
@@ -427,8 +440,9 @@ escaping, so there is now one helper and one contract test.
    `toolkit_core::neutralize_line(&value)` also escapes newlines and keeps
    benign output byte-identical (used for the `startup program-artifacts` and
    `startup terraform-policy` not-a-directory diagnostics); `quote_untrusted`
-   adds quotes and a bound. Stdout lines are not rewritten: a handler that
-   prints untrusted text on stdout must escape it itself.
+   adds quotes and a bound. Stdout lines are not escaped (only argument
+   credentials are hidden there): a handler that prints untrusted text on
+   stdout must escape it itself.
 
 `tests/diag_contract.rs` runs every entry of `COMMANDS` through the real binary
 with hostile argv (ESC, BEL, CR, LF, U+202E and a marker in every value flag

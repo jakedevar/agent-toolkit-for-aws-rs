@@ -889,11 +889,14 @@ fn an_unknown_workload_is_reported_by_count_not_by_value() {
         "{message}"
     );
     assert!(!message.contains("nope"), "{message}");
-    assert_clean(&message.replace("FAKESECRET4402", ""));
+    assert_clean(&message);
+    // Known ids are listed escaped, and since #4941 the shared helper redacts
+    // the labelled credential before it bounds and escapes the id.
     assert!(
-        message.contains("x\\x1b[31m\\x07\\x0d\\x0ab\\u202ey token=FAKESECRET4402"),
-        "known ids are listed escaped: {message}"
+        message.contains("x\\x1b[31m\\x07\\x0d\\x0ab\\u202ey token=[REDACTED]"),
+        "known ids are listed redacted and escaped: {message}"
     );
+    assert!(!message.contains("FAKESECRET4402"), "{message}");
     assert!(!message.contains('\n'));
 }
 

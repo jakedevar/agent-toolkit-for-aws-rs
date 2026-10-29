@@ -11,7 +11,7 @@
 //! redactor. The region rule is the shared `toolkit_aws::is_valid_region` (it
 //! also bounds the length at 32).
 
-use toolkit_aws::{is_valid_region, redact_text};
+use toolkit_aws::is_valid_region;
 
 use crate::aurora::args::parse_py_int;
 use crate::safe_text::safe_text;
@@ -44,13 +44,6 @@ pub(super) fn valid_keys_repr() -> String {
     keys.sort_unstable();
     let quoted: Vec<String> = keys.iter().map(|key| format!("'{key}'")).collect();
     format!("[{}]", quoted.join(", "))
-}
-
-/// A value of the command line as a message shows it: the whole value is
-/// redacted first, then bounded and escaped, so userinfo whose `@host` lies
-/// past the bound is still recognized (#4908).
-pub(super) fn shown(value: &str) -> String {
-    safe_text(&redact_text(value))
 }
 
 fn all(value: &str, test: impl Fn(char) -> bool) -> bool {
@@ -153,7 +146,7 @@ fn s3_uri(value: &str) -> bool {
 }
 
 fn scalar_error(key: &str, value: &str) -> Option<String> {
-    let v = shown(value);
+    let v = safe_text(value);
     match key {
         "cluster_id" => (!identifier(value, 63)).then(|| {
             format!("cluster_id '{v}' invalid. Must start with letter, alphanumeric + hyphens, max 63 chars.")
@@ -209,7 +202,7 @@ fn list_errors(key: &str, value: &str) -> Vec<String> {
         .map(|item| {
             format!(
                 "{label} '{}' invalid. Expected format: {example}.",
-                shown(item)
+                safe_text(item)
             )
         })
         .collect()
@@ -226,7 +219,7 @@ pub(super) fn validate_all(pairs: &[(String, String)]) -> Vec<String> {
         } else {
             errors.push(format!(
                 "Unknown validator key: '{}'. Valid keys: {}",
-                shown(key),
+                safe_text(key),
                 valid_keys_repr()
             ));
         }
