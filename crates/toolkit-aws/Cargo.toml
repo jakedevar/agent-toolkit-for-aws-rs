@@ -66,6 +66,9 @@ rustix = { version = "=1.1.5", optional = true, default-features = false, featur
 # files on disk beyond temp dirs) and a loopback rustls server; the DPoP key
 # for T-LOGIN.
 [dev-dependencies]
+syn = { version = "2", features = ["full"] }
+quote = "1"
+proc-macro2 = "1"
 rcgen = { version = "=0.14.10", default-features = false, features = ["aws_lc_rs", "pem"] }
 rustls = { version = "=0.23.46", default-features = false, features = ["std", "aws_lc_rs"] }
 p256 = { version = "=0.13.2", default-features = false, features = ["arithmetic", "pem"] }
