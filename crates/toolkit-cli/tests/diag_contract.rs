@@ -1101,6 +1101,117 @@ fn every_value_flag_and_positional_dash_is_refused_or_in_exactly_one_list() {
     assert!(failures.is_empty(), "{failures:?}");
 }
 
+/// The passthrough commands that parse their own words (#4961). The router skips
+/// a passthrough command's words, so the loop above cannot see them; each one
+/// declares its path value flags in `value_flags` (the router never reads them
+/// for a passthrough command, this test does) and lists here a subcommand
+/// prefix per kind: an `interactive` one refuses a bare `-` (exit 2, the
+/// flag-naming diagnostic) and a `hook` one must never fail, so it treats the
+/// flag as absent (exit 0, output identical to the run without the flag).
+/// `asm exec` is the only exemption: it forwards argv to another program.
+struct PassthroughProbe {
+    command: &'static str,
+    interactive: &'static [&'static [&'static str]],
+    hook: &'static [&'static [&'static str]],
+}
+
+const PASSTHROUGH_PROBES: &[PassthroughProbe] = &[PassthroughProbe {
+    command: "telemetry",
+    interactive: &[
+        &["status"],
+        &["reconcile"],
+        &["consent", "show"],
+        &["consent", "accept"],
+        &["consent", "opt-out"],
+        &["bundles", "--check"],
+    ],
+    hook: &[
+        &["skill-invoked"],
+        &["migration"],
+        &["consent", "session-start"],
+    ],
+}];
+
+const FORWARDING_PASSTHROUGH: &[&str] = &["asm exec"];
+
+#[test]
+fn passthrough_commands_declare_their_value_flags_and_refuse_dash_unless_a_hook() {
+    let scratch = Scratch::new();
+    let sentinel = scratch.0.join("-");
+    fs::write(&sentinel, "KEEP-ORIGINAL\n").expect("write sentinel");
+    let mut failures = BTreeSet::new();
+    for spec in COMMANDS.iter().filter(|spec| spec.passthrough) {
+        let command = joined_path(spec);
+        if FORWARDING_PASSTHROUGH.contains(&command.as_str()) {
+            continue;
+        }
+        let Some(probe) = PASSTHROUGH_PROBES
+            .iter()
+            .find(|probe| probe.command == command)
+        else {
+            failures.insert(format!("passthrough `{command}` has no probe"));
+            continue;
+        };
+        let flags = all_value_flags(spec);
+        if flags.is_empty() {
+            failures.insert(format!("passthrough `{command}` declares no value flags"));
+        }
+        for flag in flags {
+            for spelling in [
+                vec![flag.to_string(), "-".to_string()],
+                vec![format!("{flag}=-")],
+            ] {
+                for prefix in probe.interactive {
+                    let mut args: Vec<String> =
+                        spec.path.iter().map(|word| (*word).to_string()).collect();
+                    args.extend(prefix.iter().map(|word| (*word).to_string()));
+                    args.extend(spelling.clone());
+                    let run = spawn_toolkit(&args, &scratch.0);
+                    if !is_dash_refusal(&run, flag) {
+                        failures.insert(format!(
+                            "interactive not a dash refusal naming {flag}: {} -> {:?}",
+                            display_args(&args),
+                            String::from_utf8_lossy(&run.stderr)
+                                .lines()
+                                .next()
+                                .unwrap_or_default()
+                        ));
+                    }
+                }
+                for prefix in probe.hook {
+                    let mut base: Vec<String> =
+                        spec.path.iter().map(|word| (*word).to_string()).collect();
+                    base.extend(prefix.iter().map(|word| (*word).to_string()));
+                    let mut args = base.clone();
+                    args.extend(spelling.clone());
+                    let plain = spawn_toolkit(&base, &scratch.0);
+                    let run = spawn_toolkit(&args, &scratch.0);
+                    if run.status != Some(0)
+                        || run.status != plain.status
+                        || run.stdout != plain.stdout
+                        || run.stderr != plain.stderr
+                    {
+                        failures.insert(format!(
+                            "hook does not treat {flag} - as absent: {}",
+                            display_args(&args)
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    assert_eq!(
+        fs::read_to_string(&sentinel).expect("sentinel survives"),
+        "KEEP-ORIGINAL\n"
+    );
+    let entries: Vec<_> = fs::read_dir(&scratch.0)
+        .expect("read scratch")
+        .map(|entry| entry.expect("entry").file_name())
+        .collect();
+    assert_eq!(entries.len(), 1, "unexpected files created: {entries:?}");
+    assert!(failures.is_empty(), "{failures:?}");
+}
+
 #[cfg(unix)]
 fn make_fifo(path: &Path) {
     let made = Command::new("mkfifo")

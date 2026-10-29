@@ -440,3 +440,236 @@ fn the_telemetry_sources_open_no_socket_and_start_no_process() {
         }
     }
 }
+
+// ------------------------------------------------- bare `-` path flags (#4961)
+
+/// Every file and directory under `root`, as `(relative path, bytes)` pairs in
+/// path order (directories carry no bytes): what a canary must keep exactly.
+fn tree(root: &Path) -> Vec<(String, Option<Vec<u8>>)> {
+    fn walk(dir: &Path, root: &Path, found: &mut Vec<(String, Option<Vec<u8>>)>) {
+        let mut entries: Vec<_> = fs::read_dir(dir)
+            .expect("read dir")
+            .map(|entry| entry.expect("entry").path())
+            .collect();
+        entries.sort();
+        for path in entries {
+            let rel = path
+                .strip_prefix(root)
+                .expect("under root")
+                .display()
+                .to_string();
+            if path.is_dir() {
+                found.push((rel, None));
+                walk(&path, root, found);
+            } else {
+                found.push((rel, Some(fs::read(&path).expect("read file"))));
+            }
+        }
+    }
+    let mut found = Vec::new();
+    walk(root, root, &mut found);
+    found
+}
+
+/// A `./-` canary directory in the home (also the cwd) shaped so that reading it
+/// as a telemetry directory (`version.json`) or as a plugin root (`plugin.json`,
+/// `skills/`) would succeed, and writing a bundle into it would change it.
+fn canary(home: &Home) -> PathBuf {
+    let dash = home.0.join("-");
+    fs::create_dir_all(dash.join("skills")).expect("canary dirs");
+    fs::write(dash.join("version.json"), "{\"version\":\"9.9.9\"}").expect("canary version");
+    fs::write(dash.join("plugin.json"), "{\"version\":\"9.9.9\"}").expect("canary manifest");
+    fs::write(dash.join("KEEP"), "KEEP-ORIGINAL\n").expect("canary file");
+    dash
+}
+
+/// Both spellings of a path flag given the value `-`.
+fn dash_spellings(flag: &str) -> [Vec<String>; 2] {
+    [
+        vec![flag.to_string(), "-".to_string()],
+        vec![format!("{flag}=-")],
+    ]
+}
+
+fn spawn_words(home: &Home, words: &[String]) -> Output {
+    let args: Vec<&str> = words.iter().map(String::as_str).collect();
+    home.run(&args)
+}
+
+/// What a refused `-` must look like: the router's usage error naming the flag.
+fn assert_dash_refusal(output: &Output, flag: &str, label: &str) {
+    let stderr = text(&output.stderr);
+    let first = stderr.lines().next().unwrap_or_default();
+    assert_eq!(output.status.code(), Some(2), "{label}: {stderr}");
+    assert!(
+        first.starts_with("error: invalid arguments: ")
+            && first.contains(flag)
+            && first.contains("./-"),
+        "{label}: {first:?}"
+    );
+    assert_eq!(text(&output.stdout), "", "{label}: stdout");
+}
+
+const PATH_FLAGS: [&str; 2] = ["--telemetry-dir", "--plugin-root"];
+
+/// Interactive subcommands: each path flag, both spellings, is a usage error that
+/// reads and writes nothing (a pre-existing `./-` keeps its bytes and no consent
+/// record appears).
+#[test]
+fn interactive_subcommands_refuse_a_bare_dash_path_flag_in_both_spellings() {
+    let interactive: [&[&str]; 8] = [
+        &["status"],
+        &["reconcile"],
+        &["consent", "show"],
+        &["consent", "status"],
+        &["consent", "accept"],
+        &["consent", "opt-out"],
+        &["bundles", "--check"],
+        &["bundles", "--write"],
+    ];
+    for flag in PATH_FLAGS {
+        for words in interactive {
+            for spelling in dash_spellings(flag) {
+                let home = Home::new("dash-interactive");
+                let dash = canary(&home);
+                let before = tree(&dash);
+                let mut args = vec!["telemetry".to_string()];
+                args.extend(words.iter().map(|word| (*word).to_string()));
+                args.extend(spelling.clone());
+                let label = args.join(" ");
+                let output = spawn_words(&home, &args);
+                assert_dash_refusal(&output, flag, &label);
+                assert_eq!(tree(&dash), before, "{label}: ./- changed");
+                assert!(!home.record().exists(), "{label}: wrote a consent record");
+                assert_eq!(
+                    tree(&home.0)
+                        .iter()
+                        .filter(|(rel, _)| !rel.starts_with('-'))
+                        .count(),
+                    0,
+                    "{label}: created files outside the canary"
+                );
+            }
+        }
+    }
+}
+
+/// The flag may precede the subcommand: still refused, still nothing touched.
+#[test]
+fn a_leading_bare_dash_path_flag_is_refused_before_any_subcommand_runs() {
+    for flag in PATH_FLAGS {
+        for spelling in dash_spellings(flag) {
+            let home = Home::new("dash-leading");
+            let dash = canary(&home);
+            let before = tree(&dash);
+            let mut args = vec!["telemetry".to_string()];
+            args.extend(spelling);
+            args.push("status".to_string());
+            let label = args.join(" ");
+            let output = spawn_words(&home, &args);
+            assert_dash_refusal(&output, flag, &label);
+            assert_eq!(tree(&dash), before, "{label}: ./- changed");
+        }
+    }
+}
+
+/// A bare `-` word to an interactive subcommand is refused like the router's
+/// positional message.
+#[test]
+fn interactive_subcommands_refuse_a_bare_dash_positional() {
+    for words in [
+        vec!["status", "-"],
+        vec!["reconcile", "-"],
+        vec!["consent", "show", "-"],
+        vec!["bundles", "-"],
+        vec!["bundles", "--check", "-"],
+    ] {
+        let home = Home::new("dash-positional");
+        let dash = canary(&home);
+        let before = tree(&dash);
+        let mut args = vec!["telemetry"];
+        args.extend(words.iter().copied());
+        let output = home.run(&args);
+        let stderr = text(&output.stderr);
+        let first = stderr.lines().next().unwrap_or_default();
+        assert_eq!(output.status.code(), Some(2), "{args:?}: {stderr}");
+        assert!(
+            first.starts_with("error: invalid arguments: a bare - argument")
+                && first.contains("./-"),
+            "{args:?}: {first:?}"
+        );
+        assert_eq!(tree(&dash), before, "{args:?}: ./- changed");
+    }
+}
+
+/// `./-` stays an explicit literal path for the interactive commands.
+#[test]
+fn dot_slash_dash_remains_an_explicit_literal_path() {
+    let home = Home::new("dash-literal");
+    canary(&home);
+    let output = home.run(&["telemetry", "status", "--telemetry-dir", "./-"]);
+    assert_eq!(output.status.code(), Some(0), "{}", text(&output.stderr));
+    assert!(
+        text(&output.stdout).contains("\"pluginVersion\": \"9.9.9\""),
+        "{}",
+        text(&output.stdout)
+    );
+}
+
+/// Hook entry points never fail: a bare `-` path flag is treated as absent, so
+/// the output is exactly that of the same hook without the flag (nothing
+/// emitted), the exit is 0 and `./-` is untouched, with and without consent.
+#[test]
+fn hook_entry_points_treat_a_bare_dash_path_flag_as_absent() {
+    let hooks: [&[&str]; 5] = [
+        &["skill-invoked"],
+        &["skill-invoked", "--skill", "migrate"],
+        &["migration"],
+        &["migration", "--session-end", "--via", "cli"],
+        &["consent", "session-start"],
+    ];
+    for accepted in [false, true] {
+        for flag in PATH_FLAGS {
+            for words in hooks {
+                for spelling in dash_spellings(flag) {
+                    let home = Home::new("dash-hook");
+                    if accepted {
+                        home.accept();
+                    }
+                    let dash = canary(&home);
+                    let before = tree(&dash);
+                    let mut base = vec!["telemetry".to_string()];
+                    base.extend(words.iter().map(|word| (*word).to_string()));
+                    let mut with_dash = base.clone();
+                    with_dash.extend(spelling);
+                    let label = with_dash.join(" ");
+                    let expected = spawn_words(&home, &base);
+                    let record_before = fs::read(home.record()).ok();
+                    let output = spawn_words(&home, &with_dash);
+                    assert_eq!(output.status.code(), Some(0), "{label}");
+                    assert_eq!(output.stdout, expected.stdout, "{label}: stdout");
+                    assert_eq!(output.stderr, expected.stderr, "{label}: stderr");
+                    assert_eq!(tree(&dash), before, "{label}: ./- changed");
+                    assert_eq!(fs::read(home.record()).ok(), record_before, "{label}");
+                }
+            }
+        }
+    }
+}
+
+/// A hook given the flag before the subcommand is still a hook.
+#[test]
+fn a_hook_with_a_leading_bare_dash_flag_still_exits_zero() {
+    for spelling in dash_spellings("--telemetry-dir") {
+        let home = Home::new("dash-hook-leading");
+        let dash = canary(&home);
+        let before = tree(&dash);
+        let mut args = vec!["telemetry".to_string()];
+        args.extend(spelling);
+        args.extend(["skill-invoked".to_string()]);
+        let output = spawn_words(&home, &args);
+        assert_eq!(output.status.code(), Some(0), "{args:?}");
+        assert_eq!(text(&output.stdout), "", "{args:?}");
+        assert_eq!(tree(&dash), before, "{args:?}: ./- changed");
+    }
+}
