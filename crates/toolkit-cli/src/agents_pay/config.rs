@@ -51,7 +51,10 @@ pub fn load_config_with_hook(path: &Path, hook: impl FnOnce()) -> Result<Json, S
     use rustix::fs::{fstat, open, openat, FileType, Mode, OFlags};
     use std::io::Read;
     let display = shown_path(path);
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let parent = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
     let name = path
         .file_name()
         .ok_or_else(|| format!("Cannot stat the directory containing {display}."))?;
@@ -147,7 +150,24 @@ fn filemode(mode: u32) -> String {
         .into_iter()
         .enumerate()
     {
-        s.push(if mode & (1 << (8 - i)) != 0 { c } else { '-' });
+        let executable = mode & (1 << (8 - i)) != 0;
+        let special = match i {
+            2 => Some((0o4000, 's', 'S')),
+            5 => Some((0o2000, 's', 'S')),
+            8 => Some((0o1000, 't', 'T')),
+            _ => None,
+        };
+        s.push(match special {
+            Some((bit, lower, upper)) if mode & bit != 0 => {
+                if executable {
+                    lower
+                } else {
+                    upper
+                }
+            }
+            _ if executable => c,
+            _ => '-',
+        });
     }
     s
 }
