@@ -288,3 +288,8 @@ name, number or `KEY=VALUE` pair that never names a file, so the exact value
 `-` is refused (exit 2) by the router before the handler runs. The command
 reads only its own stdin stream (the MCP client) and writes only its own
 stdout; neither is selected by an argument.
+
+The `launch auth-start` and `launch auth-wait` `--region` value is passed to
+`resolve_region` and validated against the supported region names; it is never
+used to construct a filesystem path. The router refuses a bare `-` for both
+commands (#5216).

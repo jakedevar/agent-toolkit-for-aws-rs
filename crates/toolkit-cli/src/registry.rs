@@ -651,6 +651,10 @@ mod tests {
         "elasticache find-tunnel-host",
         "elasticache start-tunnel",
         "elasticache test-connection",
+        // launch callback and sign-in lifecycle (#5216):
+        "launch auth-callback",
+        "launch auth-start",
+        "launch auth-wait",
         // marketplace (#4396):
         "marketplace handler",
         "marketplace query-metering",
