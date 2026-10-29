@@ -950,17 +950,22 @@ fn every_value_flag_on_a_success_path_hides_a_credential_in_a_file_name_or_list(
                 .cloned();
             let probe_dir = scratch.0.join(format!("probe-{index}-{number}"));
             for value in credential_probes(original.as_deref(), &probe_dir) {
-                let probed = with_value(&args, flag, &value);
-                let run = spawn_toolkit(&probed, &scratch.0);
+                let command_line = with_value(&args, flag, &value);
+                let run = spawn_toolkit(&command_line, &scratch.0);
                 probes += 1;
                 if run.status.is_none() {
                     found.insert(format!(
                         "timed out or killed by signal: {}",
-                        display_args(&probed)
+                        display_args(&command_line)
                     ));
                 }
                 for (label, bytes) in [("stdout", &run.stdout), ("stderr", &run.stderr)] {
-                    secret_leaks(&String::from_utf8_lossy(bytes), label, &probed, &mut found);
+                    secret_leaks(
+                        &String::from_utf8_lossy(bytes),
+                        label,
+                        &command_line,
+                        &mut found,
+                    );
                 }
             }
         }
