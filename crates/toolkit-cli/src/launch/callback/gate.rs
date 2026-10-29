@@ -89,15 +89,20 @@ pub fn start_watchdog(
 ) {
     std::thread::spawn(move || {
         std::thread::sleep(deadline.saturating_duration_since(Instant::now()));
-        match gate.watchdog() {
-            WatchdogAction::RecordTimeoutAndExit => {
-                record_timeout();
-                std::process::exit(1);
-            }
-            WatchdogAction::ExitFailure => std::process::exit(1),
-            WatchdogAction::ExitSuccess => std::process::exit(0),
-        }
+        watchdog_step(&gate, record_timeout, |code| std::process::exit(code));
     });
+}
+
+fn watchdog_step(gate: &CommitGate, record_timeout: impl FnOnce(), exit: impl FnOnce(i32)) {
+    let code = match gate.watchdog() {
+        WatchdogAction::RecordTimeoutAndExit => {
+            record_timeout();
+            1
+        }
+        WatchdogAction::ExitFailure => 1,
+        WatchdogAction::ExitSuccess => 0,
+    };
+    exit(code);
 }
 
 /// Prepare the private session file, sync it, and authorize one rename.
@@ -153,9 +158,15 @@ mod tests {
     fn watchdog_attempts_timeout_record_once_before_failure_exit() {
         let gate = CommitGate::default();
         let calls = std::cell::RefCell::new(Vec::new());
-        // Stub until the watchdog exposes its record and exit boundaries.
-        let _ = gate.watchdog();
-        assert_eq!(*calls.borrow_mut(), vec!["record", "exit:1"]);
+        watchdog_step(
+            &gate,
+            || calls.borrow_mut().push("record"),
+            |code| {
+                assert_eq!(code, 1);
+                calls.borrow_mut().push("exit:1");
+            },
+        );
+        assert_eq!(*calls.borrow(), vec!["record", "exit:1"]);
     }
 
     #[test]
