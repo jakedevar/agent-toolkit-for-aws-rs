@@ -25,6 +25,16 @@ fn callback_validates_state_and_never_reflects_error_description() {
 }
 
 #[test]
+fn state_comparison_visits_all_equal_length_bytes_after_mismatch() {
+    for actual in ["x2345678", "1234567x", "12345678"] {
+        let mut visits = 0;
+        let equal = super::state_matches_counted(actual, "12345678", || visits += 1);
+        assert_eq!(visits, 8);
+        assert_eq!(equal, actual == "12345678");
+    }
+}
+
+#[test]
 fn callback_rejects_duplicate_parameters_and_invalid_code() {
     assert_eq!(
         parse_request(&request("state=secret&code=a&code=b"), 1234, "secret"),

@@ -43,12 +43,15 @@ fn decode(input: &str) -> Option<String> {
 /// Compare equal-length state bytes without an early exit on differing content.
 #[must_use]
 pub fn state_matches(actual: &str, expected: &str) -> bool {
+    state_matches_counted(actual, expected, || {})
+}
+
+fn state_matches_counted(actual: &str, expected: &str, mut visit: impl FnMut()) -> bool {
     actual.len() == expected.len()
-        && actual
-            .bytes()
-            .zip(expected.bytes())
-            .fold(0, |acc, (a, b)| acc | (a ^ b))
-            == 0
+        && actual.bytes().zip(expected.bytes()).fold(0, |acc, (a, b)| {
+            visit();
+            acc | (a ^ b)
+        }) == 0
 }
 
 fn valid_oauth_error(error: &str) -> bool {
