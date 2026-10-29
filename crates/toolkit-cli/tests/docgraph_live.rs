@@ -373,6 +373,33 @@ impl Drop for ForbiddenNetwork {
     }
 }
 
+/// Run the toolkit with canary credentials, the acceptance flag and every
+/// proxy, endpoint and metadata variable aimed at the forbidden network.
+fn run_hostile(args: &[&str], dir: &std::path::Path, fake: &str) -> std::process::Output {
+    Command::new(env!("CARGO_BIN_EXE_toolkit"))
+        .current_dir(dir)
+        .env_clear()
+        .env(concat!("TOOLKIT_DOCGRAPH_", "LIVE_TESTS"), "1")
+        .env("AWS_ACCESS_KEY_ID", "AKIAFORBIDDENCANARY0")
+        .env("AWS_SECRET_ACCESS_KEY", "forbidden-secret-canary")
+        .env("AWS_REGION", "us-east-1")
+        .env("HTTPS_PROXY", format!("http://{fake}"))
+        .env("HTTP_PROXY", format!("http://{fake}"))
+        .env("ALL_PROXY", format!("http://{fake}"))
+        .env("AWS_ENDPOINT_URL", format!("https://{fake}"))
+        .env(
+            "AWS_EC2_METADATA_SERVICE_ENDPOINT",
+            format!("http://{fake}"),
+        )
+        .env(
+            "AWS_CONTAINER_CREDENTIALS_FULL_URI",
+            format!("http://{fake}/creds"),
+        )
+        .args(args)
+        .output()
+        .unwrap()
+}
+
 #[test]
 fn ordinary_and_live_shaped_runs_never_reach_the_network() {
     let network = ForbiddenNetwork::start();
@@ -444,28 +471,7 @@ fn ordinary_and_live_shaped_runs_never_reach_the_network() {
         ],
     ];
     for args in &invocations {
-        let out = Command::new(env!("CARGO_BIN_EXE_toolkit"))
-            .current_dir(&dir)
-            .env_clear()
-            .env(concat!("TOOLKIT_DOCGRAPH_", "LIVE_TESTS"), "1")
-            .env("AWS_ACCESS_KEY_ID", "AKIAFORBIDDENCANARY0")
-            .env("AWS_SECRET_ACCESS_KEY", "forbidden-secret-canary")
-            .env("AWS_REGION", "us-east-1")
-            .env("HTTPS_PROXY", format!("http://{fake}"))
-            .env("HTTP_PROXY", format!("http://{fake}"))
-            .env("ALL_PROXY", format!("http://{fake}"))
-            .env("AWS_ENDPOINT_URL", format!("https://{fake}"))
-            .env(
-                "AWS_EC2_METADATA_SERVICE_ENDPOINT",
-                format!("http://{fake}"),
-            )
-            .env(
-                "AWS_CONTAINER_CREDENTIALS_FULL_URI",
-                format!("http://{fake}/creds"),
-            )
-            .args(args)
-            .output()
-            .unwrap();
+        let out = run_hostile(args, &dir, &fake);
         let stderr = String::from_utf8_lossy(&out.stderr);
         let stdout = String::from_utf8_lossy(&out.stdout);
         if args.contains(&"--live") {
