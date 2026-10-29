@@ -362,6 +362,47 @@ fn parse_platform(value: &Json) -> Result<PlatformSpec, String> {
     })
 }
 
+/// R-PKG-1: an entry names exactly one of `plugin` or `package_root`.
+fn parse_destination(value: &Json) -> Result<Destination, String> {
+    match (value.get("plugin"), value.get("package_root")) {
+        (Some(_), None) => {
+            let plugin = required_str(value, "plugin", "binary")?;
+            if !is_name(plugin) {
+                return Err(format!(
+                    "binary in plugin {}: plugin must be lower-case ASCII letters, digits, `-` or `_`, starting with a letter or digit",
+                    quote_untrusted(plugin)
+                ));
+            }
+            Ok(Destination::Plugin(plugin.to_string()))
+        }
+        (None, Some(_)) => {
+            let root = required_str(value, "package_root", "binary")?;
+            check_package_root_path(root)?;
+            Ok(Destination::PackageRoot(root.to_string()))
+        }
+        _ => Err("binary: an entry names exactly one of `plugin` or `package_root`".to_string()),
+    }
+}
+
+/// R-PKG-2: a package destination has no launcher files, so its binaries
+/// are spawned by code; a plugin binary always has a launcher role.
+fn check_role_destination(
+    label: &str,
+    destination: &Destination,
+    role: &Role,
+) -> Result<(), String> {
+    match (destination, role) {
+        (Destination::PackageRoot(_), Role::Subprocess)
+        | (Destination::Plugin(_), Role::GuardHook { .. } | Role::McpServer | Role::Hook) => Ok(()),
+        (Destination::PackageRoot(_), _) => Err(format!(
+            "{label}: a package_root binary must have role subprocess (code spawns it; no launcher can reach a package bin/)"
+        )),
+        (Destination::Plugin(_), Role::Subprocess) => Err(format!(
+            "{label}: role subprocess is only valid for a package_root destination"
+        )),
+    }
+}
+
 fn parse_binary(value: &Json) -> Result<BinarySpec, String> {
     let pairs = object(value, "binary")?;
     reject_unknown(
@@ -379,28 +420,7 @@ fn parse_binary(value: &Json) -> Result<BinarySpec, String> {
         ],
         "binary",
     )?;
-    let destination = match (value.get("plugin"), value.get("package_root")) {
-        (Some(_), None) => {
-            let plugin = required_str(value, "plugin", "binary")?;
-            if !is_name(plugin) {
-                return Err(format!(
-                    "binary in plugin {}: plugin must be lower-case ASCII letters, digits, `-` or `_`, starting with a letter or digit",
-                    quote_untrusted(plugin)
-                ));
-            }
-            Destination::Plugin(plugin.to_string())
-        }
-        (None, Some(_)) => {
-            let root = required_str(value, "package_root", "binary")?;
-            check_package_root_path(root)?;
-            Destination::PackageRoot(root.to_string())
-        }
-        _ => {
-            return Err(
-                "binary: an entry names exactly one of `plugin` or `package_root`".to_string(),
-            )
-        }
-    };
+    let destination = parse_destination(value)?;
     let name = required_str(value, "name", "binary")?;
     let label = format!(
         "binary {}/{}",
@@ -468,22 +488,7 @@ fn parse_binary(value: &Json) -> Result<BinarySpec, String> {
             }
         }
     };
-    // R-PKG-2: a package destination has no launcher files, so its binaries
-    // are spawned by code; a plugin binary always has a launcher role.
-    match (&destination, &role) {
-        (Destination::PackageRoot(_), Role::Subprocess)
-        | (Destination::Plugin(_), Role::GuardHook { .. } | Role::McpServer | Role::Hook) => {}
-        (Destination::PackageRoot(_), _) => {
-            return Err(format!(
-                "{label}: a package_root binary must have role subprocess (code spawns it; no launcher can reach a package bin/)"
-            ))
-        }
-        (Destination::Plugin(_), Role::Subprocess) => {
-            return Err(format!(
-                "{label}: role subprocess is only valid for a package_root destination"
-            ))
-        }
-    }
+    check_role_destination(&label, &destination, &role)?;
     let consumer = required_str(value, "consumer", &label)?;
     Ok(BinarySpec {
         destination,

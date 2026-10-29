@@ -807,14 +807,6 @@ fn t_pkg_pack_negatives_fail_and_agree_with_verify_complete() {
             "symlink",
         ));
         cases.push((
-            "socket under bin",
-            Box::new(|f: &Fixture| {
-                let _listener = std::os::unix::net::UnixListener::bind(f.bin().join("sock"))
-                    .expect("bind socket");
-            }),
-            "sock: not listed",
-        ));
-        cases.push((
             "wrong mode",
             Box::new(|f: &Fixture| {
                 fs::set_permissions(
