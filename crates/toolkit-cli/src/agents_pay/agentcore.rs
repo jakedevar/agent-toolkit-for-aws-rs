@@ -849,6 +849,21 @@ mod operation_contracts {
             "user"
         ));
     }
+
+    #[test]
+    fn session_response_rejects_unknown_currency_in_either_amount() {
+        let good = r#"{"paymentSession":{"paymentSessionId":"ps","paymentManagerArn":"arn","userId":"user","expiryTimeInMinutes":60,"createdAt":1,"updatedAt":1,"limits":{"maxSpendAmount":{"value":"10","currency":"USD"}},"availableLimits":{"availableSpendAmount":{"value":"9","currency":"USD"}}}}"#;
+        assert!(valid_session_response(good, "arn", Some("ps"), "user"));
+        for bad in [
+            good.replacen("\"currency\":\"USD\"", "\"currency\":\"EUR\"", 1),
+            good.replace(
+                "\"value\":\"9\",\"currency\":\"USD\"",
+                "\"value\":\"9\",\"currency\":\"EUR\"",
+            ),
+        ] {
+            assert!(!valid_session_response(&bad, "arn", Some("ps"), "user"));
+        }
+    }
 }
 
 /// `AgentCore` call failure, containing no server-supplied text.
