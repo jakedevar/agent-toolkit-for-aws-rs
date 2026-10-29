@@ -987,6 +987,10 @@ pub struct FakePaymentsApi {
     calls: std::cell::Cell<usize>,
 }
 impl FakePaymentsApi {
+    #[cfg(test)]
+    fn with_proof(_proof: Json) -> Self {
+        Self::default()
+    }
     /// Number of logical calls observed by this fake.
     #[must_use]
     pub fn calls(&self) -> usize {
@@ -1621,6 +1625,18 @@ mod wire_contracts {
         assert!(!shown.contains("100000"));
         assert!(!shown.contains("user"));
         assert!(!shown.contains("0xB"));
+    }
+
+    #[test]
+    fn fake_returns_configured_proof_for_fixture_approval() {
+        let proof = parse_json(r#"{"authorization":{"to":"0xB","value":"100000"}}"#).unwrap();
+        let api = FakePaymentsApi::with_proof(proof.clone());
+        let approved = super::operation_contracts::approved_for(
+            "arn:aws:bedrock-agentcore:us-east-1:111111111111:payment-manager/test",
+        );
+        let authorized = process_payment(&api, approved).unwrap();
+        assert_eq!(authorized.proof.payload(), &proof);
+        assert_eq!(api.calls(), 1);
     }
 
     #[test]
