@@ -553,3 +553,4 @@ Friction: #4727, Rsi #4694, Rsi #4704
   r21 continuation (374cf704) later: #4487 + #4412 activation -> becomes round 22 if r21 is admitted first.
   3/4 busy: 8bd99aa0 (#4487 repair 3), de9907bc (S3), e056e5a2 (#5038 r3). 1 free slot.
   #4410 (x402 payments, wave 3) DESIGN worker 4150e82f (Opus high, build_free, rolling): docs/migration/x402-payments-design.md; then AC1 pre-review (Codex, defensive wording). Any live run spends money = operator gate. 4/4 busy: 8bd99aa0 (#4487 r3), de9907bc (S3), e056e5a2 (#5038 r3), 4150e82f (#4410 design).
+- 10-29 02:5xZ: GM reply: seq 2937 is being passed by Rsi batches (#4850 symptom; fix 0d281572 on rolling, not yet deployed); GM routed it to the Rsi PM. Keep the entry; superseding in place with later rounds is fine. No reply needed.
