@@ -694,6 +694,7 @@ pub struct PaymentClient<'a> {
     signer: &'a dyn toolkit_aws::Signer,
     region: String,
     clock: &'a dyn PaymentClock,
+    jitter: Option<&'a dyn toolkit_aws::Jitter>,
 }
 
 #[cfg(test)]
@@ -862,6 +863,7 @@ impl<'a> PaymentClient<'a> {
             signer,
             region: region.to_owned(),
             clock: &SystemPaymentClock,
+            jitter: None,
         })
     }
 
@@ -1045,7 +1047,7 @@ impl<'a> PaymentClient<'a> {
             if !retry || attempt == policy.total_attempts() {
                 return Err(error);
             }
-            let delay = policy.delay(attempt, &jitter);
+            let delay = policy.delay(attempt, self.jitter.unwrap_or(&jitter));
             if delay >= deadline.saturating_duration_since(self.clock.now()) {
                 return Err(error);
             }
@@ -1219,6 +1221,25 @@ mod wire_contracts {
         );
         assert_eq!(stalled_transport.requests().len(), 1);
         assert_eq!(stalled_transport.open_limits()[0].deadline(), Some(cutoff));
+    }
+
+    #[test]
+    fn retry_backoff_that_reaches_deadline_is_not_slept() {
+        let now = Instant::now();
+        let clock = FakeClock(Cell::new(now));
+        let transport = FakeStreamingTransport::new().open_error(AwsError::connect("offline"));
+        let mut client = PaymentClient::new("us-east-1", &transport, &NoSigner).unwrap();
+        client.clock = &clock;
+        client.jitter = Some(&toolkit_aws::NoJitter);
+        assert_eq!(
+            client.process_payment_until(
+                super::operation_contracts::approved(),
+                now + Duration::from_secs(2)
+            ),
+            Err(PaymentError::Transport)
+        );
+        assert_eq!(transport.requests().len(), 1);
+        assert_eq!(clock.now(), now);
     }
 
     #[test]
