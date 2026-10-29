@@ -784,3 +784,5 @@ Friction: #4727, Rsi #4694, Rsi #4704
   Check ok (d4f321ed, 4177). ENQUEUED aa9eba69 (seq 2966, #5210). On landing close #5210 #5225 #5217; keep #5224 (S5) #5227 (S4).
   P-ROOTS follow-ups: worker 23ccf6b5 (Codex terra) bound #5203 + related #5199 #5204 (test-only). On accept/land close all three.
   4/4 busy: 573278a7 (#5216 L4), 0dcdafea (#5181 S4 cont), da98439f (#5223 S2b cont), 23ccf6b5 (#5203 P-ROOTS f/u).
+- 10-29 06:25Z: x402 S3 LANDED (aa9eba69 published, f39cba270ad26662454fd13c5d48313d1f1d045d). #5210 auto-closed; CLOSED #5225 #5217. Open: #5224 (S5 prod wiring test), #5227 (S4). Queue empty.
+  NOTE: S4 cont (0dcdafea) branched before S3 landed; it must merge rolling (S3 touched toolkit-aws sdk.rs/binding.rs).
