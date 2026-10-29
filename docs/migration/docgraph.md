@@ -1058,7 +1058,9 @@ earlier of the operation budget and a caller deadline (the streaming
 `StreamLimits` deadline). All waits are async and dropped at the deadline,
 and the HTTP connection is never spawned: it is owned and driven by the
 exchange and then the response body, so dropping either drops the socket
-synchronously (#5429). A declared `content-length` above the limit fails before any body
+synchronously (#5429). A streamed read that ends the response (end of body,
+any terminal error or limit refusal) releases the socket before it returns,
+even while the caller keeps the stream (#5465). A declared `content-length` above the limit fails before any body
 byte is read; undeclared bodies fail at the first frame that would exceed the
 remaining allowance. A deadline after the request was handed to the
 connection is a non-retryable `Timeout(Deadline)` that says the outcome is
@@ -1297,6 +1299,51 @@ and never drive the runtime again.
 |---|---|---|
 | #5428 | `08f160f7-a385-4fde-8810-bff71ea15f7e`: `fd00:ec2::/48` accepted by `new`; `fd00:ec2::254` admitted; dialed and reached TLS | `78567375-fcaf-426b-9f89-d46d32da4a44` (fix `35126dc5`: `sdk::database` 32 passed, 0 failed) |
 | #5429 | `08f160f7-a385-4fde-8810-bff71ea15f7e`: "success left the socket open", "dropping the stream left the socket open" | `78567375-fcaf-426b-9f89-d46d32da4a44` (fix `35126dc5`: `sdk::database` 32 passed, 0 failed) |
+
+#### S1 repair 2: re-review #5458 blocker #5465
+
+**#5465, a terminal streamed read kept its socket.** Repair 1 made the body
+own the connection, but `BoundedBody` returned its deadline, byte-limit and
+idle errors with the `Driver` still in place, and `SdkStream::next_chunk`
+keeps its body after an error, so a caller that retained the stream after a
+failed read held the socket until it dropped the stream. Two layers now
+release it before the read returns:
+
+- `BoundedBody` releases its `Driver` (connection, TLS stream, socket) at
+  the end of the body and on every terminal failure (operation deadline,
+  byte limit, idle time, connection error), and repeats the failure on any
+  later poll; a failed body never reports a clean end.
+- The database transport wraps its `SdkStream` in `ReleasingStream`, which
+  drops the whole stream the moment `next_chunk` ends the response: end of
+  body, or any error from the database body or the outer `StreamLimits`
+  (deadline, idle time, byte cap, a caller deadline that had already passed
+  before the body was read). A `narrow_body_limit` that refuses the stream
+  releases it too. Later reads repeat the outcome (`Ok(None)` after the end,
+  the same error after a failure). Decision: on the database plane every
+  `StreamError`, `IdleTimeout` included, is terminal.
+
+`SdkStream` itself is unchanged; only the database transport sets the new
+`release_ended_streams` flag, so the public and payment streams behave as
+before. Successful end of body (audit): the red run already released the
+socket when the body ended, because hyper's connection finishes once the
+body is complete and its sender is gone; both layers now release it
+explicitly at that point as well.
+
+Regression tests (`sdk::database::tests`), each with the stream retained and
+the client-stream drop counter read right after the call returns, with no
+runtime poll in between:
+`a_terminal_database_body_error_releases_the_socket_before_it_returns`
+(the reviewer's idle, operation-deadline and 64-byte-cap cases),
+`a_terminal_stream_limit_refusal_releases_the_socket_before_it_returns`
+(stream byte cap, already-expired caller deadline, caller deadline while
+reading, refusing `narrow_body_limit`),
+`a_completed_stream_releases_its_socket_at_the_end_of_the_body`, and, with
+the fix, `the_releasing_stream_drops_its_inner_stream_on_every_terminal_read`
+(a scripted inner stream: every `StreamError` kind, end of body, narrowing).
+
+| Blocker | Red (tests at `3379cc20`, fix absent) | Green (fix `60499087`) |
+|---|---|---|
+| #5465 | `4e9a4a29-3486-474c-988e-b16535d0bdef`: "idle: the read returned Failed(.. stalled ..) with the socket still open"; "stream cap: the read returned TooLarge with the socket still open" (33 passed, 2 failed) | `be0e45aa-b245-4a41-b49d-5eb009458202` (`sdk::database` 36 passed, 0 failed) |
 
 
 Implementation slices remain Rust, use scoped optional service dependencies,
