@@ -13,6 +13,7 @@ landed on `origin/rolling` (`b8204e9d`).
 | Command | Replaces |
 | --- | --- |
 | `toolkit documentdb wa-review --cluster-id ID --region R [--recorded FILE] [--analysis-data FILE] [--output DIR] [--now TS]` | `amazon-documentdb/scripts/wa_review.py` |
+| `toolkit documentdb normalize-capture --capture FILE --output FILE` | the `--uri` collection of `amazon-documentdb/scripts/wa_review.py` (user-run shell recipe + offline normalizer, #5327) |
 | `toolkit neptune validate-input [KEY=VALUE...]` | `amazon-neptune/scripts/input_validator.py` |
 | `toolkit neptune seed [--confirm-wipe] [--endpoint HOST] [--recorded FILE \| --dry-run]` | `amazon-neptune/scripts/seed_test_data.py` |
 | `neptune_test_env.cfn.json` (declarative, no command) | `amazon-neptune/scripts/cdk_test_env.py` |
@@ -99,6 +100,13 @@ name or value of the file.
    belong to the `pymongo` collection of `collStats`/`$indexStats`; a
    secret-bearing option that does nothing would only mislead. Use
    `--analysis-data`. The script's text `(no --uri or --analysis-data)` is kept.
+   The collection itself is replaced by a two-step workflow (S5, #5327, PM-accepted Q1):
+   the user runs the read-only commands of
+   `amazon-documentdb/references/collection-recipe.md` in their own authenticated
+   `mongosh`, assembles a private capture envelope by hand (cost proportional to the
+   number of collections), and `toolkit documentdb normalize-capture` validates it
+   offline and writes the `--analysis-data` file. See "Collection capture (S5)"
+   below.
 3. **Failure text.** A failed AWS call names its class, `aws_service_error
    (AccessDenied)` or `aws_connect`, never the service's message or any response
    value (the script printed `{e}`). A response member of the wrong type fails
@@ -194,10 +202,63 @@ name or value of the file.
 ## Not in this slice
 
 Tracked in #4886: `graphrag_pipeline.py` and `agentic_memory.py` (helper
-libraries), the live AWS / Gremlin / MongoDB bindings, and retiring the Python
+libraries), the live AWS / Gremlin bindings (the MongoDB collection is the user-run recipe of S5, below), and retiring the Python
 files and updating `SKILL.md` / `references/well-architected.md` callers. The
 Python stays in place until then: the Rust commands cannot reach AWS or a
 database yet, so replacing the callers now would remove a working path.
+
+## Collection capture (S5, #5327; R-DG-08)
+
+Delivered: `toolkit documentdb normalize-capture --capture FILE --output FILE`, the
+manual recipe `skills/specialized-skills/database-skills/amazon-documentdb/references/collection-recipe.md`
+and its allowlist `references/collection-manifest.json`. No database driver, shell
+launcher, connection, environment read or socket was added (`docgraph/tests/capture.rs`
+scans the module sources and `Cargo.toml` for them). `--uri`, `--tls-ca-file` and
+`--tls-allow-invalid-certs` remain unregistered flags on both commands (usage error,
+exit 2, value never echoed).
+
+Decisions recorded by this slice:
+
+- **Dialect.** Only canonical Extended JSON from `mongosh` 1.x/2.x
+  (`EJSON.stringify(v, { relaxed: false })`) is supported. The legacy `mongo` shell
+  and relaxed Extended JSON (bare numbers) are refused with `unsupported_format`, so
+  64-bit counts are never rounded through a double. `$numberDecimal` is refused
+  (`invalid_number`); the snapshot has no decimal.
+- **Envelope.** `toolkit-docdb-collection-capture` version 1: databases and collections
+  carry explicit contiguous ordinals; `admin`/`local`/`config` and `system.*` are
+  excluded by the normalizer; a per-collection `error` is one of six fixed codes and
+  becomes the existing `{"error": code}` skip marker plus a visible
+  "N of M collection(s) incomplete" line; a top-level or database `error` exits 1 and
+  publishes nothing; a capture with no usable collection is refused (`empty`), a
+  deliberate difference from the script, which treated an empty collection as "no
+  data".
+- **Strictness.** Every level of the envelope is a key allowlist; pasted replies keep
+  only the manifest's read fields plus a short list of ignored harmless scalars.
+  A secret-shaped key (`password`, `token`, `uri`, `connectionString`, ...) or a
+  string value that looks like a connection URI is `secret_field`; any other unknown
+  key is `unknown_field`. Error text is a fixed sentence per class and never carries
+  a capture value or name.
+- **Custody.** The capture must be owner-only before it is parsed (Unix mode `& 0o077
+  == 0`; other platforms fail closed, `permissions`). The output is created `0600` with
+  `create_new` (no overwrite, no link following). `wa-review` report files are
+  unchanged by this slice; they keep their existing `--output` behaviour.
+- **Number fidelity.** Integers stay exact `i64`; unused storage is computed in
+  integers when both operands are integers, else as `f64`; the percentage is
+  `bytes / storageSize * 100` in `f64` (the script's Python int division is correctly
+  rounded and can differ in the last bit above 2^53).
+- **Unverified here.** No `mongosh` is installed in the build environment and no
+  database is reachable, so the exact shell prompt and `EJSON.stringify` forms are taken
+  from the vendor documentation and are not executed. Fixtures are reconstructed from
+  documented reply shapes. T-DG-09d (operator live) must confirm both against real
+  DocumentDB and MongoDB before the Python `--uri` path is retired (S6).
+
+| Case | Offline tests (`docgraph::tests::capture`) |
+| --- | --- |
+| T-DG-08a | `t08a_*` (golden snapshot, exclusions, legacy-fixture check parity, shell/engine variants, MongoDB fixture, compound order/zero values/missing usage, compression aliases, exact unused storage, end-to-end `normalize-capture` + `wa-review`) |
+| T-DG-08b | `t08b_*` (integer boundaries, non-finite and out-of-range numbers, malformed table, top-level/database failures, per-collection markers, empty capture, arbitrary error text, fixed error text, size/count limits, oversized file) |
+| T-DG-08c | `t08c_*` (three refused flags on both commands with credential-shaped and newline values; no shell/driver/socket/env in sources or manifest) |
+| T-DG-08d | `t08d_*` (manifest equals code allowlist and schema, read-only single-expression commands, recipe rows equal manifest, no loop/helper/secret form, unsupported dialects) |
+| T-DG-08e | `t08e_*` (access policy table, group/world-readable refused before parsing, private 0600 output without overwrite, secret-bearing and unknown fields without echo, transcripts) |
 
 ## Live adapter design (#5318; #4886 item 2)
 
@@ -702,7 +763,7 @@ does not grant either. No run is part of this design change.
 | S2 — AWS review client | Offline bridge spike runs in the first implementation slice; live client depends on S1 and spike acceptance. Modeled ten-operation codecs, field map, bridge and one retry owner. | All spike exit criteria below, T-DG-04 including 04e; existing report/error/recorded goldens. |
 | S3 — Gremlin | Depends on S1; optional WebSocket/GraphSON adapter, signed upgrade, consent and close/cancellation. | T-DG-05 plus adversarial bounds/TLS cases; seed guard remains enforced before connect. |
 | S4 — memory live dispatch | Depends on S1/S3 and integrated item-1 helpers; Analytics, secure gated creation and DynamoDB conversions. | T-DG-06 and all ordered replay/expansion fixtures; no unsupported partial-live plan. |
-| S5 — collection recipe | Q1 accepted; per-command manual manifest/docs, private capture custody and Rust offline normalization. Can proceed independently of network adapters. | T-DG-08 including 08d/e; explicit manual-work cost and supported engine/shell/export matrix. |
+| S5 — collection recipe | DELIVERED in #5327 (see "Collection capture (S5)"). Q1 accepted; per-command manual manifest/docs, private capture custody and Rust offline normalization. Can proceed independently of network adapters. | T-DG-08 including 08d/e; explicit manual-work cost and supported engine/shell/export matrix. |
 | S6 — acceptance/callers/retirement | Depends on S2..S5, exact-source review and the relevant operator grants. | T-DG-09, recorded evidence of unverified live cases, caller/mirror verification before Python retirement. |
 
 **S2 offline bridge spike exit criteria (#5325).** Complete and record these

@@ -344,7 +344,7 @@ fn int_case(wrapper: &str, value: &str) -> Result<Json, &'static str> {
     let stats = format!(r#"{{"count":{{"{wrapper}":"{value}"}}}}"#);
     norm(&one(&stats, "[]", "[]"))
         .map(|n| at(&n.snapshot, &["app", "c", "count"]).clone())
-        .map_err(|e| e.class())
+        .map_err(super::super::capture::CaptureError::class)
 }
 
 #[test]
@@ -424,15 +424,11 @@ fn t08b_malformed_captures_are_refused_with_fixed_classes() {
         ("[]".to_string(), "malformed"),
         ("{}".to_string(), "malformed"),
         (
-            format!(
-                r#"{{"format":"other","version":1,"dialect":"mongosh-ejson-canonical","databases":[]}}"#
-            ),
+            (r#"{"format":"other","version":1,"dialect":"mongosh-ejson-canonical","databases":[]}"#).to_string(),
             "unsupported_format",
         ),
         (
-            format!(
-                r#"{{"format":"toolkit-docdb-collection-capture","version":2,"dialect":"mongosh-ejson-canonical","databases":[]}}"#
-            ),
+            (r#"{"format":"toolkit-docdb-collection-capture","version":2,"dialect":"mongosh-ejson-canonical","databases":[]}"#).to_string(),
             "unsupported_format",
         ),
         (format!(r#"{{{HEAD}}}"#), "malformed"),
@@ -960,6 +956,7 @@ fn t08d_the_manifest_commands_are_a_read_only_allowlist_of_single_expressions() 
         "listCollections",
         "collStats",
         "$indexStats",
+        "getIndexes",
     ];
     let write_verbs = [
         "insert",

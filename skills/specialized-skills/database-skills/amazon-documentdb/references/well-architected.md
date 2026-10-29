@@ -30,6 +30,23 @@ python3 scripts/wa_review.py \
 
 If connection via URI fails, retry without `--uri` — infrastructure-only checks still run.
 
+### Step 1 (Rust toolkit, no database driver)
+
+The Rust command `toolkit documentdb wa-review` takes no URI and never connects to
+the database. To include the database-level checks, collect statistics by hand in
+your own authenticated `mongosh` (interactive password prompt; no connection string
+in any argument or file) and normalize them offline, following
+[collection-recipe.md](collection-recipe.md):
+
+```bash
+toolkit documentdb normalize-capture --capture <private-capture.json> --output <analysis.json>
+toolkit documentdb wa-review --cluster-id <cluster-id> --region <region> --analysis-data <analysis.json> --output artifacts/<cluster-id>/
+```
+
+The collection costs one set of read-only commands per collection. Without
+`--analysis-data` only the infrastructure checks run. The Python script above remains
+until the live bindings land (#4886).
+
 ### Step 2: Read the results
 
 Read `artifacts/<cluster-id>/wa_review_results.json`. Categorize findings:

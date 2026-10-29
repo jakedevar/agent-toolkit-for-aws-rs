@@ -1,1 +1,68 @@
-{}
+{
+  "manifest_version": 1,
+  "description": "Read-only allowlist of the manual mongo-shell commands whose canonical Extended JSON replies are pasted into a collection capture envelope for `toolkit documentdb normalize-capture` (#5327). Mirrors crates/toolkit-cli/src/docgraph/capture.rs; a Rust test keeps them equal.",
+  "envelope": {
+    "format": "toolkit-docdb-collection-capture",
+    "version": 1,
+    "dialect": "mongosh-ejson-canonical",
+    "envelope_keys": ["format", "version", "dialect", "shell", "engine", "error", "databases"],
+    "database_keys": ["ordinal", "name", "error", "collections"],
+    "collection_keys": ["ordinal", "name", "error", "collStats", "indexStats", "indexes"],
+    "error_codes": [
+      "connection_failed",
+      "authentication_failed",
+      "unauthorized",
+      "command_failed",
+      "unsupported_command",
+      "timeout"
+    ],
+    "excluded_databases": ["admin", "local", "config"],
+    "excluded_collection_prefix": "system."
+  },
+  "shells": [
+    {"name": "mongosh", "versions": ["1.x", "2.x"], "support": "supported", "export": "canonical Extended JSON via EJSON.stringify(value, { relaxed: false })"},
+    {"name": "mongo", "versions": ["legacy"], "support": "unsupported", "reason": "no canonical Extended JSON export; tojson output is refused"}
+  ],
+  "commands": [
+    {
+      "id": "list_databases",
+      "slot": "databases[].name",
+      "command": "db.adminCommand({ listDatabases: 1, nameOnly: true })",
+      "fields": ["databases[].name"],
+      "ignored": [],
+      "read_only": true
+    },
+    {
+      "id": "list_collections",
+      "slot": "databases[].collections[].name",
+      "command": "db.getSiblingDB(\"DATABASE\").runCommand({ listCollections: 1, nameOnly: true })",
+      "fields": ["cursor.firstBatch[].name"],
+      "ignored": [],
+      "read_only": true
+    },
+    {
+      "id": "coll_stats",
+      "slot": "databases[].collections[].collStats",
+      "command": "EJSON.stringify(db.getSiblingDB(\"DATABASE\").runCommand({ collStats: \"COLLECTION\" }), { relaxed: false })",
+      "fields": ["count", "size", "avgObjSize", "storageSize", "totalIndexSize", "indexSizes", "compression.enabled", "compression.enable"],
+      "ignored": ["ns", "ok", "capped", "nindexes", "scaleFactor", "totalSize", "freeStorageSize", "sharded"],
+      "read_only": true
+    },
+    {
+      "id": "index_stats",
+      "slot": "databases[].collections[].indexStats",
+      "command": "EJSON.stringify(db.getSiblingDB(\"DATABASE\").getCollection(\"COLLECTION\").aggregate([{ $indexStats: {} }]).toArray(), { relaxed: false })",
+      "fields": ["name", "accesses.ops"],
+      "ignored": ["key", "host", "spec", "shard"],
+      "read_only": true
+    },
+    {
+      "id": "list_indexes",
+      "slot": "databases[].collections[].indexes",
+      "command": "EJSON.stringify(db.getSiblingDB(\"DATABASE\").getCollection(\"COLLECTION\").getIndexes(), { relaxed: false })",
+      "fields": ["name", "key", "expireAfterSeconds"],
+      "ignored": ["v", "ns", "unique", "sparse", "background", "hidden"],
+      "read_only": true
+    }
+  ]
+}
