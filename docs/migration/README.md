@@ -88,6 +88,17 @@ Each slice preserves tested public behavior, migrates callers and covered tests,
 
 No bulk deletion before replacements pass. No Python wrappers counted as Rust ports. No paid/live AWS workloads in ordinary tests. Record compatibility changes and unknowns in Issue evidence.
 
+Launch with AWS L3 (#5190) adds an offline streaming and OIDC foundation;
+its API and callback consumers remain in L5 and L4 respectively. The collector
+uses `CappedBuf`: steady allocation is at most the effective cap C, while a
+moving growth may transiently hold old plus new allocations below 2C. Including
+the pinned SDK's at-most 512 KiB admitted frame and one 64 KiB returned chunk,
+the conservative peak is below 2C + 576 KiB, not the original design's
+C + 576 KiB. Single-use code exchanges do not retry ambiguous connection
+failures because the transport cannot prove whether request bytes were sent.
+Duplicate Content-Length values now remain detectable at the shared response
+header boundary. Live network use still waits for the S1 integration gate.
+
 ## Manager continuity
 
 Durable Issues and manager ledger carry assignments/dependencies. [issues.json](issues.json) freezes initial map; daemon state is current. Manager notebook: docs/agents/manager-handoff.md (maintain with Bash cat/tail). Preserve active jobs, topology revisions, exact source/base SHAs, review/queue outcomes and genuine gates during succession. Update active workers explicitly when plan changes.

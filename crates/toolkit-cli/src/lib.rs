@@ -31,6 +31,7 @@ use safe_text::CallerText;
 pub mod agents_pay;
 mod ai_data;
 mod ai_models;
+mod ai_payloads;
 pub mod asm_exec;
 mod aurora;
 mod bedrock_agent;
