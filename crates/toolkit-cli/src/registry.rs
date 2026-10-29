@@ -552,7 +552,7 @@ mod tests {
     /// The route paths of the old `COMMANDS` table (commit ce0eaf6a, before the
     /// registry), in table order: the public order of [`COMMANDS`]. The routes of
     /// slices added after the registry follow at the end, ordered by slice name.
-    const LEGACY_COMMAND_ORDER: [&str; 102] = [
+    const LEGACY_COMMAND_ORDER: [&str; 103] = [
         "skills list",
         "manifests validate",
         "spec validate",
@@ -636,6 +636,7 @@ mod tests {
         "ai-payloads reward sample",
         "ai-payloads reward check",
         "ai-payloads templates",
+        "ai-payloads render",
         // bedrock-probes (#4404):
         "bedrock-probes iam-policy",
         "bedrock-probes preflight",
