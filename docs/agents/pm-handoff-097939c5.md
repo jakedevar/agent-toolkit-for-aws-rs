@@ -1184,3 +1184,4 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 22:15Z: docgraph S1 LANDED (e04f364b, landed_sha 233902a613d2a3b9b3718779e273998f6e73f29b); #5366 auto-closed. CLOSED #5428 #5429 #5465 #5482. #4886 open: S2 #5489 in flight, then S3/S4/S6; P3 #5484.
   S6+B2 integration -> Claude Sonnet ce95436a (continue_from be2767ad on #5462; action 7016abd8 QUEUED for a slot, 4/4 busy). Produces A (S6 on rolling) then B (B2 on A). Enqueue A (issue 5462, source ce95436a), then B (issue 5443). On land close #5462 #5474 #5475 #5487 / #5443 #5483.
   Queue empty.
+- 22:12Z: L7 reviewer cfb95bf6 hit worker context cap (290k/285k), parked on probe job 45873070 (wake l7-upload-probe). Findings only in its context -> mailed it (58ab0951) to publish a complete INTERIM handoff on #5479 first thing on resume. When its turn ends after that: if no final verdict, relaunch continue_from cfb95bf6 (Codex sol xhigh) to finish from the record.
