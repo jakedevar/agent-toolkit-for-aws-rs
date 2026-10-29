@@ -1777,14 +1777,247 @@ fn no_payment_decl() -> String {
     format!("#[cfg(not(feature = \"{LIVE_FEATURE}\"))]\nmod no_payment;")
 }
 
-/// The registry's `handler:` entries in `mod.rs`, in order.
+/// The registry's `handler:` entries in `mod.rs`, in order: `fetch`, then
+/// `bridge` (`OpenClaw` B2, #5443), each split on the live feature.
 fn registry_handlers() -> Vec<String> {
     vec![
         format!("#[cfg(feature = \"{LIVE_FEATURE}\")]\nhandler: fetch_command,"),
         format!(
             "#[cfg(not(feature = \"{LIVE_FEATURE}\"))]\nhandler: self::no_payment::fetch_command,"
         ),
+        format!("#[cfg(feature = \"{LIVE_FEATURE}\")]\nhandler: self::bridge::live_command,"),
+        format!(
+            "#[cfg(not(feature = \"{LIVE_FEATURE}\"))]\nhandler: self::bridge::no_payment::bridge_command,"
+        ),
     ]
+}
+
+// ------------------------------- the bridge route (OpenClaw B2, #5443)
+//
+// `toolkit agents-pay bridge` is the second command of the payment table.
+// It reads its stdin request in every build (design 4.8, the G1c
+// refinement), so its default-build route is not "print a literal": it is
+// the pinned file module `bridge/no_payment.rs`, which hands the process
+// stdin to the pure pipe `bridge::serve` with the pinned D32 refusal as the
+// only service. `serve` answers `sanitize_output` without a world and gives
+// every valid service request to that refusal. The same structural rules as
+// `fetch` apply: the whole file is pinned token for token, its declaration
+// is pinned, its registry entry is bound to the compiled `SLICE` literal,
+// the names it resolves are bound once in `bridge/mod.rs`, and the D32
+// frame is one byte-string literal. The live entry `live_command` is pinned
+// too, so the process world is built only inside its service closure,
+// after the pure route ([`bridge_world_findings`]).
+
+const BRIDGE_FILE: &str = "agents_pay/bridge/mod.rs";
+const BRIDGE_NO_PAYMENT_FILE: &str = "agents_pay/bridge/no_payment.rs";
+
+/// The whole of `bridge/no_payment.rs`, compared token for token.
+const BRIDGE_NO_PAYMENT_PIN: &str = r"
+pub(in crate::agents_pay) fn bridge_command(
+    _invocation: &crate::Invocation,
+    out: &mut crate::Output<'_>,
+) -> ::core::result::Result<(), ::toolkit_core::ToolkitError> {
+    super::serve(
+        &mut ::std::io::stdin().lock(),
+        out,
+        &self::refuse_without_payment_support,
+    )
+}
+
+fn refuse_without_payment_support(
+    _request: &::toolkit_core::Json,
+) -> (::std::vec::Vec<u8>, i32) {
+    (::std::vec::Vec::from(super::UNAVAILABLE_FRAME), 1)
+}
+";
+
+/// The live entry of the bridge in `bridge/mod.rs`, without its attributes:
+/// the process world is built only inside the service closure, so the pure
+/// `sanitize_output` route returns before it.
+const BRIDGE_LIVE_PIN: &str = r"
+pub(in crate::agents_pay) fn live_command(
+    _invocation: &crate::Invocation,
+    out: &mut crate::Output<'_>,
+) -> ::core::result::Result<(), ::toolkit_core::ToolkitError> {
+    self::serve(
+        &mut ::std::io::stdin().lock(),
+        out,
+        &|request| match super::deps::Deps::for_process() {
+            ::core::result::Result::Ok(world) => self::handle_service(&world.deps(), request),
+            ::core::result::Result::Err(_) => {
+                self::render::error_frame(self::protocol::BridgeError::AgentCore)
+            }
+        },
+    )
+}
+";
+
+/// The rendered R-BR-D32 frame.
+const BRIDGE_UNAVAILABLE: &[u8] = b"{\"ok\":false,\"error\":\"payment support unavailable\"}\n";
+
+/// The bridge's `no_payment` declaration, with no other attribute.
+fn bridge_no_payment_decl() -> String {
+    format!("#[cfg(not(feature = \"{LIVE_FEATURE}\"))]\npub(super) mod no_payment;")
+}
+
+/// What may bind a name the pinned bridge file resolves: one item each.
+const BRIDGE_SURFACE_ITEMS: &[(&str, &str)] = &[
+    ("no_payment", "mod"),
+    ("serve", "fn"),
+    ("UNAVAILABLE_FRAME", "const"),
+];
+
+/// The value of `const UNAVAILABLE_FRAME: &[u8] = b"..";` when it is exactly
+/// a byte-string literal of type `&[u8]` with no attribute but its docs.
+fn unavailable_literal(file: &syn::File) -> Option<Vec<u8>> {
+    let consts: Vec<&syn::ItemConst> = file
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            syn::Item::Const(c) if c.ident == "UNAVAILABLE_FRAME" => Some(c),
+            _ => None,
+        })
+        .collect();
+    let [item] = consts.as_slice() else {
+        return None;
+    };
+    let is_bytes = matches!(&*item.ty, Type::Reference(r)
+        if r.lifetime.is_none() && r.mutability.is_none()
+            && matches!(&*r.elem, Type::Slice(s)
+                if matches!(&*s.elem, Type::Path(p) if p.qself.is_none() && p.path.is_ident("u8"))));
+    let docs_only = item.attrs.iter().all(|a| a.path().is_ident("doc"));
+    match &*item.expr {
+        syn::Expr::Lit(syn::ExprLit {
+            lit: syn::Lit::ByteStr(lit),
+            attrs,
+        }) if is_bytes && docs_only && attrs.is_empty() => Some(lit.value()),
+        _ => None,
+    }
+}
+
+/// The pinned tokens of one file, or a finding naming the first difference.
+fn pinned_file_findings(sources: &[Source], path: &str, pin: &str) -> Vec<String> {
+    let text = sources.iter().find(|s| s.path == path).map(|s| &s.text);
+    match text.map(String::as_str).map(tokens) {
+        None => vec![format!("{path}: is missing")],
+        Some(Err(_)) => vec![format!("{path}: does not tokenize")],
+        Some(Ok(stream)) => {
+            let mut actual = Vec::new();
+            token_list(stream, &mut actual);
+            let pinned = list_of_text(pin);
+            if actual == pinned {
+                return Vec::new();
+            }
+            let at = actual
+                .iter()
+                .zip(&pinned)
+                .position(|(a, p)| a != p)
+                .unwrap_or(actual.len().min(pinned.len()));
+            vec![format!(
+                "{path}: differs from its pin at token {at}: `{}` where the pin has `{}`",
+                actual[at.min(actual.len())..]
+                    .iter()
+                    .take(8)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(" "),
+                pinned[at.min(pinned.len())..]
+                    .iter()
+                    .take(8)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            )]
+        }
+    }
+}
+
+/// The bridge's default-build route and live entry (see the section note).
+fn bridge_route_findings(sources: &[Source]) -> Vec<String> {
+    let mut found = pinned_file_findings(sources, BRIDGE_NO_PAYMENT_FILE, BRIDGE_NO_PAYMENT_PIN);
+    let Some(text) = sources
+        .iter()
+        .find(|s| s.path == BRIDGE_FILE)
+        .map(|s| s.text.as_str())
+    else {
+        found.push(format!("{BRIDGE_FILE}: is missing"));
+        return found;
+    };
+    let (Ok(stream), Ok(file)) = (tokens(text), parse_source(text)) else {
+        found.push(format!("{BRIDGE_FILE}: does not parse"));
+        return found;
+    };
+    let trees: Vec<TokenTree> = stream.into_iter().collect();
+    let decls: Vec<Vec<String>> = trees
+        .windows(2)
+        .enumerate()
+        .filter(|(_, w)| {
+            matches!((&w[0], &w[1]), (TokenTree::Ident(m), TokenTree::Ident(n)) if m == "mod" && n == "no_payment")
+        })
+        .map(|(at, _)| {
+            // Step back over a `pub(..)` visibility, then the attributes.
+            let mut start = at;
+            if start >= 2
+                && matches!(&trees[start - 1], TokenTree::Group(g) if g.delimiter() == proc_macro2::Delimiter::Parenthesis)
+                && matches!(&trees[start - 2], TokenTree::Ident(p) if p == "pub")
+            {
+                start -= 2;
+            }
+            list_of_trees(&trees[attr_start(&trees, start)..(at + 3).min(trees.len())])
+        })
+        .collect();
+    if decls != [list_of_text(&bridge_no_payment_decl())] {
+        found.push(format!(
+            "{BRIDGE_FILE}: the `no_payment` module must be declared once, exactly `{}`; found {decls:?}",
+            bridge_no_payment_decl()
+        ));
+    }
+    found.extend(surface_bindings(&file, BRIDGE_FILE, BRIDGE_SURFACE_ITEMS));
+    if unavailable_literal(&file).as_deref() != Some(BRIDGE_UNAVAILABLE) {
+        found.push(format!(
+            "{BRIDGE_FILE}: `UNAVAILABLE_FRAME` is not one `const UNAVAILABLE_FRAME: &[u8] = b\"..\";` literal of the R-BR-D32 frame"
+        ));
+    }
+    let lives: Vec<usize> = trees
+        .windows(2)
+        .enumerate()
+        .filter(|(_, w)| {
+            matches!((&w[0], &w[1]), (TokenTree::Ident(f), TokenTree::Ident(n)) if f == "fn" && n == "live_command")
+        })
+        .map(|(at, _)| at)
+        .collect();
+    let live_ok = match lives.as_slice() {
+        [at] => {
+            let mut start = *at;
+            if start >= 2
+                && matches!(&trees[start - 1], TokenTree::Group(g) if g.delimiter() == proc_macro2::Delimiter::Parenthesis)
+                && matches!(&trees[start - 2], TokenTree::Ident(p) if p == "pub")
+            {
+                start -= 2;
+            }
+            let attrs: Vec<String> = trees[attr_start(&trees, start)..start]
+                .iter()
+                .filter_map(|t| match t {
+                    TokenTree::Group(g) => Some(compact(&g.stream())),
+                    _ => None,
+                })
+                .filter(|attr| !attr.starts_with("doc="))
+                .collect();
+            let end = trees[*at..]
+                .iter()
+                .position(|t| matches!(t, TokenTree::Group(g) if g.delimiter() == proc_macro2::Delimiter::Brace))
+                .map_or(trees.len(), |p| at + p + 1);
+            attrs == [format!("cfg(feature=\"{LIVE_FEATURE}\")")]
+                && list_of_trees(&trees[start..end]) == list_of_text(BRIDGE_LIVE_PIN)
+        }
+        _ => false,
+    };
+    if !live_ok {
+        found.push(format!(
+            "{BRIDGE_FILE}: `live_command` must be one `#[cfg(feature = \"{LIVE_FEATURE}\")]` fn, exactly the pinned live entry"
+        ));
+    }
+    found
 }
 
 /// What may bind a name at the top of `mod.rs`: `no_payment` and
@@ -1939,6 +2172,15 @@ fn item_binding(item: &syn::Item) -> Option<(String, &'static str)> {
 
 /// What may bind a surface or prelude name at the top of `mod.rs`.
 fn binding_findings(file: &syn::File) -> Vec<String> {
+    surface_bindings(file, ROUTE_FILE, SURFACE_ITEMS)
+}
+
+/// What may bind one of `surface` or a prelude name at the top of `path`.
+fn surface_bindings(
+    file: &syn::File,
+    file_path: &str,
+    surface: &[(&str, &'static str)],
+) -> Vec<String> {
     let mut found = Vec::new();
     let mut items: Vec<(String, &'static str)> = Vec::new();
     let mut imports: Vec<(String, String)> = Vec::new();
@@ -1946,16 +2188,16 @@ fn binding_findings(file: &syn::File) -> Vec<String> {
         match item {
             syn::Item::Use(item) => use_leaves("", &item.tree, &mut imports),
             syn::Item::Macro(item) => found.push(format!(
-                "{ROUTE_FILE}: a top-level macro item `{}!` can define any name",
+                "{file_path}: a top-level macro item `{}!` can define any name",
                 path_text(&item.mac.path)
             )),
             other => items.extend(item_binding(other)),
         }
     }
-    for (name, path) in &imports {
+    for (name, import) in &imports {
         if name == "*" {
             found.push(format!(
-                "{ROUTE_FILE}: glob import `{path}` can shadow a surface name"
+                "{file_path}: glob import `{import}` can shadow a surface name"
             ));
         }
     }
@@ -1963,18 +2205,18 @@ fn binding_findings(file: &syn::File) -> Vec<String> {
         items.iter().filter(|(n, _)| n == name).count()
             + imports.iter().filter(|(n, _)| n == name).count()
     };
-    for (name, kind) in SURFACE_ITEMS {
+    for (name, kind) in surface {
         let of_kind = items.iter().filter(|(n, k)| n == name && k == kind).count();
         if of_kind != 1 || bound(name) != 1 {
             found.push(format!(
-                "{ROUTE_FILE}: `{name}` must be bound by exactly one top-level {kind} item, found {} binding(s)",
+                "{file_path}: `{name}` must be bound by exactly one top-level {kind} item, found {} binding(s)",
                 bound(name)
             ));
         }
     }
     for name in PRELUDE_NAMES {
         if bound(name) != 0 {
-            found.push(format!("{ROUTE_FILE}: `{name}` is shadowed"));
+            found.push(format!("{file_path}: `{name}` is shadowed"));
         }
     }
     found
@@ -2422,25 +2664,63 @@ fn slice_findings(sources: &[Source]) -> Vec<String> {
         [expr] => array_ref(expr),
         _ => None,
     };
-    let Some(spec) = specs
-        .filter(|elems| elems.len() == 1)
-        .and_then(|elems| elems.first())
-    else {
+    let elems: Vec<&syn::Expr> = specs.map(|e| e.iter().collect()).unwrap_or_default();
+    let [fetch, bridge] = elems.as_slice() else {
         found.push(format!(
-            "{ROUTE_FILE}: `SLICE.commands` must be `&[crate::CommandSpec {{ .. }}]`, one literal for `agents-pay fetch`"
+            "{ROUTE_FILE}: `SLICE.commands` must be `&[crate::CommandSpec {{ .. }}, crate::CommandSpec {{ .. }}]`, one literal for `agents-pay fetch` and one for `agents-pay bridge`"
         ));
         return found;
     };
-    let Some(spec) = full_literal(spec, "crate::CommandSpec", &mut found) else {
-        return found;
-    };
-    let pinned = [
+    let fetch_handlers = [
         (format!("feature=\"{LIVE_FEATURE}\""), "fetch_command"),
         (
             format!("not(feature=\"{LIVE_FEATURE}\")"),
             "self::no_payment::fetch_command",
         ),
     ];
+    spec_findings(fetch, "fetch", &fetch_handlers, &[], &mut found);
+    let bridge_handlers = [
+        (
+            format!("feature=\"{LIVE_FEATURE}\""),
+            "self::bridge::live_command",
+        ),
+        (
+            format!("not(feature=\"{LIVE_FEATURE}\")"),
+            "self::bridge::no_payment::bridge_command",
+        ),
+    ];
+    // R-BR-ROUTE: no flag, no value flag and no positional.
+    let bridge_fields = [
+        ("flags", "&[]"),
+        ("value_flags", "&[]"),
+        ("repeatable_flags", "&[]"),
+        ("max_positionals", "0"),
+        ("passthrough", "false"),
+    ];
+    spec_findings(
+        bridge,
+        "bridge",
+        &bridge_handlers,
+        &bridge_fields,
+        &mut found,
+    );
+    found
+}
+
+/// One `crate::CommandSpec` literal of the payment table: every field named
+/// in full, `path: &["agents-pay", word]`, no attribute but the two pinned
+/// `cfg`s on the two pinned `handler` fields, and each of `fixed` exactly
+/// as given (whitespace-free).
+fn spec_findings(
+    spec: &syn::Expr,
+    word: &str,
+    pinned: &[(String, &str)],
+    fixed: &[(&str, &str)],
+    found: &mut Vec<String>,
+) {
+    let Some(spec) = full_literal(spec, "crate::CommandSpec", found) else {
+        return;
+    };
     let mut handlers = Vec::new();
     let mut paths = Vec::new();
     for field in &spec.fields {
@@ -2449,13 +2729,33 @@ fn slice_findings(sources: &[Source]) -> Vec<String> {
             name => {
                 if !field.attrs.is_empty() {
                     found.push(format!(
-                        "{ROUTE_FILE}: the fetch `CommandSpec` field `{name}` has an attribute"
+                        "{ROUTE_FILE}: the {word} `CommandSpec` field `{name}` has an attribute"
                     ));
                 }
                 if name == "path" {
                     paths.push(&field.expr);
                 }
+                if let Some((_, value)) = fixed.iter().find(|(key, _)| *key == name) {
+                    if expr_text(&field.expr).as_deref() != Some(*value) {
+                        found.push(format!(
+                            "{ROUTE_FILE}: the {word} `CommandSpec` must have `{name}: {value}`"
+                        ));
+                    }
+                }
             }
+        }
+    }
+    for (name, value) in fixed {
+        if spec
+            .fields
+            .iter()
+            .filter(|f| field_name(f) == *name)
+            .count()
+            != 1
+        {
+            found.push(format!(
+                "{ROUTE_FILE}: the {word} `CommandSpec` must have `{name}: {value}`"
+            ));
         }
     }
     let path_words: Option<Vec<String>> = match paths.as_slice() {
@@ -2473,13 +2773,13 @@ fn slice_findings(sources: &[Source]) -> Vec<String> {
         }),
         _ => None,
     };
-    if path_words.as_deref() != Some(&["agents-pay".to_owned(), "fetch".to_owned()][..]) {
+    if path_words.as_deref() != Some(&["agents-pay".to_owned(), word.to_owned()][..]) {
         found.push(format!(
-            "{ROUTE_FILE}: the one `CommandSpec` must have `path: &[\"agents-pay\", \"fetch\"]`"
+            "{ROUTE_FILE}: the {word} `CommandSpec` must have `path: &[\"agents-pay\", \"{word}\"]`"
         ));
     }
     let bound = handlers.len() == pinned.len()
-        && handlers.iter().zip(&pinned).all(|(field, (cfg, handler))| {
+        && handlers.iter().zip(pinned).all(|(field, (cfg, handler))| {
             matches!(field.attrs.as_slice(), [attr] if is_cfg(attr, cfg))
                 && matches!(&field.expr, syn::Expr::Path(p)
                     if p.attrs.is_empty() && p.qself.is_none()
@@ -2487,8 +2787,301 @@ fn slice_findings(sources: &[Source]) -> Vec<String> {
         });
     if !bound {
         found.push(format!(
-            "{ROUTE_FILE}: the fetch `CommandSpec` must hold exactly the two pinned `handler` entries {:?}",
+            "{ROUTE_FILE}: the {word} `CommandSpec` must hold exactly the two pinned `handler` entries {:?}",
             registry_handlers()
+        ));
+    }
+}
+
+/// The text of a `&[]`, an integer or a boolean literal field value.
+fn expr_text(expr: &syn::Expr) -> Option<String> {
+    if let Some(elems) = array_ref(expr) {
+        return elems.is_empty().then(|| "&[]".to_owned());
+    }
+    match expr {
+        syn::Expr::Lit(syn::ExprLit { lit, attrs }) if attrs.is_empty() => match lit {
+            syn::Lit::Int(int) if int.suffix().is_empty() => Some(int.base10_digits().to_owned()),
+            syn::Lit::Bool(flag) => Some(flag.value.to_string()),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+// ------------------- R-BR-WORLD / T-OC-FINAL-ROUTE and T-BR-ONE-1..4
+//
+// The bridge's pure route (the pinned default entry, `serve`,
+// `serve_frame`, `serve_quiet`, the protocol, render and scrub modules)
+// names no world, no process world constructor and no payment step, so
+// `sanitize_output` and every refusal are decided before `Deps` exists.
+// The bridge reaches spending only through `flow::prove` (R-BR-ONE-1);
+// `prove` is the only caller of `agentcore::process_payment` (R-BR-ONE-2);
+// `live.rs` keeps its public items (R-BR-ONE-3); and
+// `VerifiedProof::into_trusted_glue` has one caller, in `bridge/render.rs`
+// (R-BR-ONE-4). The bridge's in-crate test files are fakes of those traits
+// and are not production sources.
+
+/// The bridge's production files that hold the pure route whole.
+const BRIDGE_PURE_FILES: &[&str] = &[
+    "agents_pay/bridge/no_payment.rs",
+    "agents_pay/bridge/protocol.rs",
+    "agents_pay/bridge/render.rs",
+    "agents_pay/bridge/output_scrub.rs",
+];
+
+/// The pure-route functions of `bridge/mod.rs`.
+const BRIDGE_PURE_FNS: &[&str] = &["serve", "serve_frame", "serve_quiet"];
+
+/// Names the pure route never spells: the world, its constructors, the
+/// payment steps and the process environment.
+const WORLD_NAMES: &[&str] = &[
+    "Deps",
+    "for_process",
+    "World",
+    "live",
+    "handle_service",
+    "prove",
+    "flow",
+    "agentcore",
+    "PaymentsConnector",
+    "PaymentsApi",
+    "ConfigStore",
+    "MerchantHttp",
+    "HostResolver",
+    "PayClock",
+    "env",
+    "var",
+    "var_os",
+    "fs",
+    "File",
+    "OpenOptions",
+    "net",
+    "TcpStream",
+    "UdpSocket",
+    "Command",
+    "home_dir",
+];
+
+/// Names no bridge production file spells (R-BR-ONE-1).
+const SPEND_NAMES: &[&str] = &[
+    "Approved",
+    "ProcessPaymentRequest",
+    "process_payment",
+    "derive_client_token",
+    "from_approved",
+];
+
+fn is_bridge_production(path: &str) -> bool {
+    path.starts_with("agents_pay/bridge/") && !path.ends_with("tests.rs")
+}
+
+fn bridge_world_findings(sources: &[Source]) -> Vec<String> {
+    let mut found = Vec::new();
+    for source in sources {
+        if !is_bridge_production(&source.path) {
+            continue;
+        }
+        let Ok(stream) = tokens(&source.text) else {
+            found.push(format!("{}: does not tokenize", source.path));
+            continue;
+        };
+        let mut words = Vec::new();
+        idents(stream.clone(), &mut words);
+        for word in &words {
+            if SPEND_NAMES.contains(&word.as_str()) {
+                found.push(format!(
+                    "{}: names `{word}`; the bridge spends only through flow::prove",
+                    source.path
+                ));
+            }
+        }
+        let mut pure = Vec::new();
+        if BRIDGE_PURE_FILES.contains(&source.path.as_str()) {
+            pure = words;
+        } else if source.path == BRIDGE_FILE {
+            for name in BRIDGE_PURE_FNS {
+                let before = pure.len();
+                fn_bodies(stream.clone(), name, &mut pure);
+                if pure.len() == before {
+                    found.push(format!(
+                        "{BRIDGE_FILE}: the pure route `fn {name}` is missing"
+                    ));
+                }
+            }
+        }
+        for word in pure {
+            if WORLD_NAMES.contains(&word.as_str()) {
+                found.push(format!(
+                    "{}: the pure bridge route names `{word}`",
+                    source.path
+                ));
+            }
+        }
+    }
+    for path in BRIDGE_PURE_FILES {
+        if !sources.iter().any(|s| s.path == *path) {
+            found.push(format!("{path}: is missing"));
+        }
+    }
+    // The handler reaches spending through `flow::prove`, once.
+    let prove_calls = sources
+        .iter()
+        .filter(|s| s.path == BRIDGE_FILE)
+        .filter_map(|s| tokens(&s.text).ok())
+        .map(|stream| {
+            let mut words = Vec::new();
+            idents(stream, &mut words);
+            words
+                .windows(4)
+                .filter(|w| w[0] == "flow" && w[1] == ":" && w[2] == ":" && w[3] == "prove")
+                .count()
+        })
+        .sum::<usize>();
+    if prove_calls != 1 {
+        found.push(format!(
+            "{BRIDGE_FILE}: must call `flow::prove` exactly once, found {prove_calls}"
+        ));
+    }
+    found
+}
+
+/// R-BR-ONE-2: outside `agentcore.rs` (the definition, the fakes and the
+/// client) and `live.rs` (the live client), `process_payment` is only a
+/// trait method definition or the one path call in `flow.rs`'s `prove`.
+fn one_path_findings(sources: &[Source]) -> Vec<String> {
+    let mut found = Vec::new();
+    let mut prove_calls = 0;
+    for source in sources {
+        if matches!(
+            source.path.as_str(),
+            "agents_pay/agentcore.rs" | "agents_pay/live.rs"
+        ) {
+            continue;
+        }
+        let Ok(stream) = tokens(&source.text) else {
+            continue;
+        };
+        let mut words = Vec::new();
+        idents(stream.clone(), &mut words);
+        let uses = words
+            .iter()
+            .enumerate()
+            .filter(|(at, w)| *w == "process_payment" && (*at == 0 || words[at - 1] != "fn"))
+            .count();
+        if uses == 0 {
+            continue;
+        }
+        if source.path == "agents_pay/flow.rs" {
+            let mut body = Vec::new();
+            fn_bodies(stream, "prove", &mut body);
+            let in_prove = body
+                .windows(4)
+                .filter(|w| {
+                    w[0] == "agentcore" && w[1] == ":" && w[2] == ":" && w[3] == "process_payment"
+                })
+                .count();
+            prove_calls += in_prove;
+            if uses != in_prove {
+                found.push(format!(
+                    "agents_pay/flow.rs: `process_payment` is used outside `fn prove`"
+                ));
+            }
+        } else {
+            found.push(format!(
+                "{}: uses `process_payment`; only flow::prove may",
+                source.path
+            ));
+        }
+    }
+    if prove_calls != 1 {
+        found.push(format!(
+            "agents_pay/flow.rs: `fn prove` must call `agentcore::process_payment` exactly once, found {prove_calls}"
+        ));
+    }
+    found
+}
+
+/// R-BR-ONE-3: the public items of `live.rs`, in order.
+const LIVE_PUBLIC_ITEMS: &[&str] = &["World", "for_process", "deps"];
+
+fn live_items_findings(sources: &[Source]) -> Vec<String> {
+    let Some(Ok(file)) = sources
+        .iter()
+        .find(|s| s.path == "agents_pay/live.rs")
+        .map(|s| parse_source(&s.text))
+    else {
+        return vec!["agents_pay/live.rs: is missing or does not parse".to_owned()];
+    };
+    struct Public(Vec<String>);
+    impl<'ast> Visit<'ast> for Public {
+        fn visit_item(&mut self, item: &'ast syn::Item) {
+            let named = match item {
+                syn::Item::Fn(i) => Some((&i.vis, i.sig.ident.to_string())),
+                syn::Item::Struct(i) => Some((&i.vis, i.ident.to_string())),
+                syn::Item::Enum(i) => Some((&i.vis, i.ident.to_string())),
+                syn::Item::Const(i) => Some((&i.vis, i.ident.to_string())),
+                syn::Item::Static(i) => Some((&i.vis, i.ident.to_string())),
+                syn::Item::Type(i) => Some((&i.vis, i.ident.to_string())),
+                syn::Item::Trait(i) => Some((&i.vis, i.ident.to_string())),
+                syn::Item::Mod(i) => Some((&i.vis, i.ident.to_string())),
+                syn::Item::Use(i) => Some((&i.vis, "use".to_owned())),
+                _ => None,
+            };
+            if let Some((vis, name)) = named {
+                if !matches!(vis, Visibility::Inherited) {
+                    self.0.push(name);
+                }
+            }
+            visit::visit_item(self, item);
+        }
+        fn visit_impl_item_fn(&mut self, item: &'ast syn::ImplItemFn) {
+            if !matches!(item.vis, Visibility::Inherited) {
+                self.0.push(item.sig.ident.to_string());
+            }
+            visit::visit_impl_item_fn(self, item);
+        }
+    }
+    let mut public = Public(Vec::new());
+    public.visit_file(&file);
+    if public.0 == LIVE_PUBLIC_ITEMS {
+        Vec::new()
+    } else {
+        vec![format!(
+            "agents_pay/live.rs: the public items must stay {LIVE_PUBLIC_ITEMS:?}; found {:?}",
+            public.0
+        )]
+    }
+}
+
+/// R-BR-ONE-4: `into_trusted_glue` is defined in `proof.rs` and called once,
+/// in `bridge/render.rs`.
+fn glue_findings(sources: &[Source]) -> Vec<String> {
+    let mut found = Vec::new();
+    let (mut defined, mut called) = (0, 0);
+    for source in sources {
+        let Ok(stream) = tokens(&source.text) else {
+            continue;
+        };
+        let mut words = Vec::new();
+        idents(stream, &mut words);
+        for (at, word) in words.iter().enumerate() {
+            if word != "into_trusted_glue" {
+                continue;
+            }
+            let prev = at.checked_sub(1).map(|i| words[i].as_str());
+            match (prev, source.path.as_str()) {
+                (Some("fn"), PROOF_FILE) => defined += 1,
+                (Some("."), "agents_pay/bridge/render.rs") => called += 1,
+                _ => found.push(format!(
+                    "{}: names `into_trusted_glue`; its one caller is bridge/render.rs",
+                    source.path
+                )),
+            }
+        }
+    }
+    if (defined, called) != (1, 1) {
+        found.push(format!(
+            "into_trusted_glue must be defined once in proof.rs and called once in bridge/render.rs; found {defined} and {called}"
         ));
     }
     found
@@ -2640,6 +3233,8 @@ fn full_gate(sources: &[Source], manifest: &str, workspace: &str) -> Vec<String>
     d32_findings(sources)
         .into_iter()
         .chain(slice_findings(sources))
+        .chain(bridge_route_findings(sources))
+        .chain(bridge_world_findings(sources))
         .chain(pay_dir_findings(sources))
         .chain(premain_findings(sources))
         .chain(root_crate_findings(sources, manifest))
@@ -3367,4 +3962,320 @@ fn t_ac3_noread_catches_the_review_5419_mutations() {
         }
     }
     assert!(survived.is_empty(), "survived the gate: {survived:#?}");
+}
+
+// ------------------------------------------- OpenClaw B2 bridge (#5443)
+
+/// The real sources with `text` appended to `path`.
+fn appended(path: &str, text: &str) -> Vec<Source> {
+    let mut sources = real_sources();
+    let at = sources
+        .iter()
+        .position(|s| s.path == path)
+        .unwrap_or_else(|| panic!("{path} is missing"));
+    sources[at].text.push_str(text);
+    sources
+}
+
+/// T-BR-D32 (structural part): the bridge route is in the compiled table,
+/// its default-build entry is the pinned file, its live entry is pinned,
+/// and its pure route names no world.
+#[test]
+fn t_br_d32_the_bridge_route_is_pinned_and_bound() {
+    let sources = real_sources();
+    let found: Vec<String> = bridge_route_findings(&sources)
+        .into_iter()
+        .chain(bridge_world_findings(&sources))
+        .chain(slice_findings(&sources))
+        .collect();
+    assert!(found.is_empty(), "{found:#?}");
+    let pinned = list_of_text(BRIDGE_NO_PAYMENT_PIN);
+    assert!(pinned.contains(&"refuse_without_payment_support".to_owned()));
+    assert!(pinned.contains(&"UNAVAILABLE_FRAME".to_owned()));
+    assert!(list_of_text(BRIDGE_LIVE_PIN).contains(&"for_process".to_owned()));
+    assert_eq!(
+        toolkit_cli::agents_pay::bridge::UNAVAILABLE_FRAME,
+        BRIDGE_UNAVAILABLE
+    );
+}
+
+#[test]
+#[allow(clippy::too_many_lines)] // A table of mutations, each reported by label.
+fn t_br_d32_catches_bridge_route_mutations() {
+    let np = BRIDGE_NO_PAYMENT_FILE;
+    let mutations: Vec<(&str, Vec<Source>)> = vec![
+        (
+            "env read in the default bridge entry",
+            sources_with(np, "    super::serve(\n", |a| {
+                format!("    let _ = ::std::env::var_os(\"PAYMENT_SESSION_ID\");\n{a}")
+            }),
+        ),
+        (
+            "the default refusal is not the literal",
+            sources_with(np, "super::UNAVAILABLE_FRAME", |_| {
+                "::std::env::var(\"X\").unwrap_or_default().as_bytes()".to_owned()
+            }),
+        ),
+        (
+            "a doc comment in the pinned bridge file",
+            sources_with(np, "fn refuse_without_payment_support(", |a| {
+                format!("/// Refuses.\n{a}")
+            }),
+        ),
+        (
+            "an extra item in the pinned bridge file",
+            appended(np, "\nconst _: () = ();\n"),
+        ),
+        (
+            "the bridge D32 frame becomes an expression",
+            sources_with(BRIDGE_FILE, "pub const UNAVAILABLE_FRAME: &[u8] = ", |a| {
+                format!("{a}env!(\"HOME\").as_bytes();\nconst UNUSED: &[u8] = ")
+            }),
+        ),
+        (
+            "the bridge D32 frame changes",
+            sources_with(BRIDGE_FILE, "payment support unavailable", |_| {
+                "payment support missing".to_owned()
+            }),
+        ),
+        (
+            "the bridge no_payment declaration loses its cfg",
+            sources_with(
+                BRIDGE_FILE,
+                &format!("#[cfg(not(feature = \"{LIVE_FEATURE}\"))]\npub(super) mod no_payment;"),
+                |_| "pub(super) mod no_payment;".to_owned(),
+            ),
+        ),
+        (
+            "a second serve binding in bridge/mod.rs",
+            appended(BRIDGE_FILE, "\nuse self::render::frame as serve;\n"),
+        ),
+        (
+            "a shadowed Ok in bridge/mod.rs",
+            appended(BRIDGE_FILE, "\nfn Ok() {}\n"),
+        ),
+        (
+            "the live entry answers before the pure route",
+            sources_with(
+                BRIDGE_FILE,
+                "self::handle_service(&world.deps(), request)",
+                |_| "self::render::error_frame(self::protocol::BridgeError::Input)".to_owned(),
+            ),
+        ),
+        (
+            "a second live entry",
+            appended(BRIDGE_FILE, "\nmod again { pub fn live_command() {} }\n"),
+        ),
+        (
+            "the default registry entry dispatches elsewhere",
+            sources_with(
+                ROUTE_FILE,
+                "handler: self::bridge::no_payment::bridge_command,",
+                |_| "handler: self::bridge::live_command,".to_owned(),
+            ),
+        ),
+        (
+            "the bridge takes a positional",
+            sources_with(ROUTE_FILE, "max_positionals: 0,", |_| {
+                "max_positionals: 1,".to_owned()
+            }),
+        ),
+        (
+            "the bridge takes a flag",
+            sources_with(
+                ROUTE_FILE,
+                "path: &[\"agents-pay\", \"bridge\"],\n        flags: &[],",
+                |a| a.replace("flags: &[]", "flags: &[\"--debug\"]"),
+            ),
+        ),
+        (
+            "the bridge command is renamed",
+            sources_with(ROUTE_FILE, "&[\"agents-pay\", \"bridge\"]", |_| {
+                "&[\"agents-pay\", \"glue\"]".to_owned()
+            }),
+        ),
+        (
+            "the pure route reads the environment",
+            appended(
+                "agents_pay/bridge/output_scrub.rs",
+                "\nfn smuggle() { let _ = ::std::env::var(\"HOME\"); }\n",
+            ),
+        ),
+        (
+            "the protocol builds a world",
+            appended(
+                "agents_pay/bridge/protocol.rs",
+                "\nfn smuggle() { let _ = super::super::deps::Deps::for_process(); }\n",
+            ),
+        ),
+        (
+            "the scrub reaches a payment step",
+            appended(
+                "agents_pay/bridge/output_scrub.rs",
+                "\nfn smuggle() { let _ = crate::agents_pay::flow::prove; }\n",
+            ),
+        ),
+    ];
+    let mut survivors = Vec::new();
+    for (label, sources) in &mutations {
+        if route_gate(sources).is_empty() {
+            survivors.push(*label);
+        }
+    }
+    assert!(survivors.is_empty(), "survived: {survivors:#?}");
+}
+
+#[test]
+fn t_oc_final_route_the_pure_route_names_no_world() {
+    let bridge = |serve_frame: &str| {
+        format!(
+            "pub fn serve() {{}}\npub fn serve_quiet() {{}}\npub fn serve_frame() {{ {serve_frame} }}\nfn f() {{ flow::prove(); }}\n"
+        )
+    };
+    let clean = [
+        (BRIDGE_FILE, bridge("render::frame()")),
+        ("agents_pay/bridge/no_payment.rs", String::new()),
+        ("agents_pay/bridge/protocol.rs", String::new()),
+        ("agents_pay/bridge/render.rs", String::new()),
+        ("agents_pay/bridge/output_scrub.rs", String::new()),
+    ];
+    let seeded_set = |files: &[(&str, String)]| {
+        seeded(
+            &files
+                .iter()
+                .map(|(p, t)| (*p, t.as_str()))
+                .collect::<Vec<_>>(),
+        )
+    };
+    assert!(bridge_world_findings(&seeded_set(&clean)).is_empty());
+    for (path, text) in [
+        (BRIDGE_FILE, bridge("let _ = Deps::for_process();")),
+        (BRIDGE_FILE, bridge("handle_service(deps, request)")),
+        (BRIDGE_FILE, bridge("::std::fs::read(\"x\")")),
+        (
+            "agents_pay/bridge/render.rs",
+            "fn f() { std::env::var(\"X\"); }".to_owned(),
+        ),
+        (
+            "agents_pay/bridge/protocol.rs",
+            "fn f(c: &dyn ConfigStore) {}".to_owned(),
+        ),
+        (
+            "agents_pay/bridge/output_scrub.rs",
+            "fn f() { std::net::TcpStream::connect(\"x\"); }".to_owned(),
+        ),
+        (
+            "agents_pay/bridge/mod.rs",
+            "pub fn serve() {}\npub fn serve_quiet() {}\nfn f() { flow::prove(); }".to_owned(),
+        ),
+    ] {
+        let mut files = clean.to_vec();
+        files.retain(|(p, _)| *p != path);
+        files.push((path, text.clone()));
+        assert!(
+            !bridge_world_findings(&seeded_set(&files)).is_empty(),
+            "{path}: {text}"
+        );
+    }
+}
+
+#[test]
+fn t_br_one_1_the_bridge_names_no_spending_constructor() {
+    let found = bridge_world_findings(&real_sources());
+    assert!(found.is_empty(), "{found:#?}");
+    for bad in [
+        "fn f(a: Approved) {}",
+        "fn f() { let _ = Approved::new; }",
+        "fn f(r: &ProcessPaymentRequest) {}",
+        "fn f(api: &dyn PaymentsApi) { api.process_payment(r); }",
+        "fn f() { agentcore::process_payment(api, a); }",
+        "fn f() { policy::derive_client_token(s, u, a, None); }",
+    ] {
+        let sources = appended("agents_pay/bridge/mod.rs", &format!("\n{bad}\n"));
+        assert!(!bridge_world_findings(&sources).is_empty(), "{bad}");
+    }
+    // A second route to spending: prove called twice, or not at all.
+    let twice = appended(BRIDGE_FILE, "\nfn again() { super::flow::prove(); }\n");
+    assert!(!bridge_world_findings(&twice).is_empty());
+}
+
+#[test]
+fn t_br_one_2_prove_is_the_only_caller_of_process_payment() {
+    let found = one_path_findings(&real_sources());
+    assert!(found.is_empty(), "{found:#?}");
+    for (path, bad) in [
+        (
+            "agents_pay/flow.rs",
+            "\nfn shortcut() { let _ = agentcore::process_payment(api, approved); }\n",
+        ),
+        (
+            "agents_pay/mod.rs",
+            "\nfn shortcut() { let _ = agentcore::process_payment(api, approved); }\n",
+        ),
+        (
+            "agents_pay/vault.rs",
+            "\nfn shortcut() { api.process_payment(&request); }\n",
+        ),
+        (
+            "agents_pay/bridge/mod.rs",
+            "\nfn shortcut() { process_payment(api, approved); }\n",
+        ),
+    ] {
+        assert!(
+            !one_path_findings(&appended(path, bad)).is_empty(),
+            "{path}: {bad}"
+        );
+    }
+    // A trait method definition in a fake is not a call.
+    let fake = appended(
+        "agents_pay/vault.rs",
+        "\nimpl X for Y { fn process_payment(&self) {} }\n",
+    );
+    assert!(one_path_findings(&fake).is_empty());
+}
+
+#[test]
+fn t_br_one_3_live_rs_gains_no_public_item() {
+    let found = live_items_findings(&real_sources());
+    assert!(found.is_empty(), "{found:#?}");
+    for bad in [
+        "\npub fn bridge_world() {}\n",
+        "\nimpl World { pub fn for_bridge() -> Self { todo!() } }\n",
+        "\npub struct BridgeWorld;\n",
+        "\npub use super::deps::Deps as Exported;\n",
+    ] {
+        assert!(
+            !live_items_findings(&appended("agents_pay/live.rs", bad)).is_empty(),
+            "{bad}"
+        );
+    }
+}
+
+#[test]
+fn t_br_one_4_into_trusted_glue_has_one_caller() {
+    let found = glue_findings(&real_sources());
+    assert!(found.is_empty(), "{found:#?}");
+    for (path, bad) in [
+        (
+            "agents_pay/bridge/mod.rs",
+            "\nfn f(p: VerifiedProof) { let _ = p.into_trusted_glue(); }\n",
+        ),
+        (
+            "agents_pay/flow.rs",
+            "\nfn f(p: VerifiedProof) { let _ = p.into_trusted_glue(); }\n",
+        ),
+        (
+            "agents_pay/bridge/render.rs",
+            "\nfn g(p: VerifiedProof) { let _ = p.into_trusted_glue(); }\n",
+        ),
+        (
+            "agents_pay/vault.rs",
+            "\nfn f() { let _ = VerifiedProof::into_trusted_glue; }\n",
+        ),
+    ] {
+        assert!(
+            !glue_findings(&appended(path, bad)).is_empty(),
+            "{path}: {bad}"
+        );
+    }
 }
