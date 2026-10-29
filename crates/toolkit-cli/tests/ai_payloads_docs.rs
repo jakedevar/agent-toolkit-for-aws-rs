@@ -330,10 +330,16 @@ fn ap_doc_04_documented_command_lines_parse_against_the_real_cli() {
     );
     for (rel, line) in commands {
         assert!(
-            !line.contains('|') && !line.contains('[') && !line.contains(']') && !line.contains("..."),
+            !line.contains('|')
+                && !line.contains('[')
+                && !line.contains(']')
+                && !line.contains("..."),
             "{rel}: `{line}` is a synopsis, not a concrete command line"
         );
-        assert!(!line.contains('\'') && !line.contains('"'), "{rel}: `{line}`");
+        assert!(
+            !line.contains('\'') && !line.contains('"'),
+            "{rel}: `{line}`"
+        );
         let scratch = std::env::temp_dir().join(format!(
             "ap-doc-04-{}-{}",
             std::process::id(),
@@ -423,8 +429,11 @@ fn ap_doc_05_no_page_instructs_hand_rendering() {
         let body = page(rel);
         for line in body.lines() {
             let lower = line.to_lowercase();
+            let negated = lower.contains("do not") || lower.contains("never");
             assert!(
-                !(lower.contains("write the cells") || lower.contains("write the notebook cells")),
+                negated
+                    || !(lower.contains("write the cells")
+                        || lower.contains("write the notebook cells")),
                 "{rel}: `{line}`"
             );
         }
@@ -435,10 +444,13 @@ fn ap_doc_05_no_page_instructs_hand_rendering() {
 
 #[test]
 fn ap_doc_06_eula_consent_step_names_the_consent_flag() {
-    for rel in GUIDES
-        .iter()
-        .chain(["model-deployment/references/deploy-oss-sagemaker.md", "finetuning/overview.md"].iter())
-    {
+    for rel in GUIDES.iter().chain(
+        [
+            "model-deployment/references/deploy-oss-sagemaker.md",
+            "finetuning/overview.md",
+        ]
+        .iter(),
+    ) {
         let body = page(rel);
         assert!(
             body.contains("--consent ACCEPT_EULA"),
@@ -533,7 +545,11 @@ fn ap_doc_09_manual_edit_points_stay_prose() {
         );
     }
     let finetuning = page("finetuning/overview.md");
-    for needle in ["accept_eula=ACCEPT_EULA,", "max_epochs", "lr_warmup_steps_ratio"] {
+    for needle in [
+        "accept_eula=ACCEPT_EULA,",
+        "max_epochs",
+        "lr_warmup_steps_ratio",
+    ] {
         assert!(
             finetuning.contains(needle),
             "finetuning/overview.md lost the manual edit instruction mentioning `{needle}`"
@@ -572,7 +588,8 @@ fn ap_doc_10_templates_match_their_mirrors_and_tests_never_launch_python() {
         }
     }
     assert_eq!(checked, 23, "the 23 TPL templates");
-    let source = fs::read_to_string(root().join("crates/toolkit-cli/tests/ai_payloads_docs.rs")).unwrap();
+    let source =
+        fs::read_to_string(root().join("crates/toolkit-cli/tests/ai_payloads_docs.rs")).unwrap();
     // The needles are escaped in this source, so the test does not match itself.
     for needle in ["Command::new(\"py", "Command::new(\"python"] {
         assert_eq!(source.matches(needle).count(), 0, "{needle}");

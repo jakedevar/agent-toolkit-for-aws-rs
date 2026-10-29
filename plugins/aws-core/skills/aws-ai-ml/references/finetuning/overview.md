@@ -43,6 +43,7 @@ The following are supported by SageMaker and AWS but do not have a validated wor
 
 ### Code Generation Rules
 
+- ✅ Generate code only with `toolkit ai-payloads render`; never write a notebook or script from a template by hand
 - ✅ Use EXACTLY the imports shown in each code template
 - ❌ Do NOT add additional imports even if they seem helpful
 - ❌ Do NOT create variables before they're needed in that section
@@ -75,7 +76,7 @@ The following are supported by SageMaker and AWS but do not have a validated wor
 
 #### 1.2 Select Code Template
 
-Read `references/code_output_guide.md` for output format rules, then read the code template matching the finetuning strategy:
+Read `references/code_output_guide.md` for the output format rules and the render command, then pick the code template matching the finetuning strategy:
 
 - SFT → `code_templates/sft.py`
 - DPO → `code_templates/dpo.py`
@@ -83,7 +84,7 @@ Read `references/code_output_guide.md` for output format rules, then read the co
 - RLAIF with built-in rewards → `code_templates/rlaif_builtin.py`
 - RLAIF with custom prompt → `code_templates/rlaif_custom_prompt.py`
 
-The template is a Python file where each `# Cell N: Label` comment marks the start of a new section. Split on these markers — everything between one marker and the next becomes one unit of output.
+The template is a Python file where each `# Cell N: Label` comment marks the start of a new section. Do not split or copy it by hand: `toolkit ai-payloads render` reads it. Run `toolkit ai-payloads templates --root <skill-dir>` to list the template's placeholders (`slot` lines, filled through `values`), literal fields (`target` lines, filled through `assign`) and manual edit points.
 
 #### 1.2.1 Validate Hyperparameter Names
 
@@ -111,17 +112,24 @@ This prevents breakage when recipe schemas rename parameters upstream.
 
 #### 1.3 Generate Code
 
-1. Write the code from the template following the rules in `code_output_guide.md`
-2. Use same order, dependencies, and imports as the template
-3. DO NOT improvise or add extra code
-4. If the model is **NOT** a Meta/Llama model (model ID does NOT start with `meta-`):
+`toolkit ai-payloads render` writes a file once and never rewrites it, so collect every input before running it: the values of 1.4, the reward function for RLVR (Section 2), the RLAIF choices (Section 3) and the EULA decision (Section 4).
+
+1. Write the values file and run the render command from the rules in `code_output_guide.md`, for example (SFT, notebook mode):
+
+   ```bash
+   toolkit ai-payloads render <skill-dir>/references/finetuning/code_templates/sft.py --mode notebook --project-dir <project-dir> --values <scratch-dir>/values.json
+   ```
+
+   Use the template chosen in 1.2, and `--mode script` for a script. The command keeps the template's order, dependencies, and imports.
+2. DO NOT improvise or add extra code. The only edits to the rendered file are the manual edit points that `render` prints as `manual:` lines. These are the usual ones:
+3. If the model is **NOT** a Meta/Llama model (model ID does NOT start with `meta-`), edit the rendered file:
    - Omit the `ACCEPT_EULA = False` line from the config cell
    - Omit the `accept_eula=ACCEPT_EULA,` line from the trainer call
-5. If the model is from the Nova family, omit any code containing `max_epochs` or `lr_warmup_steps_ratio` from the Configure Trainer section and the Hyperparameter Overrides section
+4. If the model is from the Nova family, edit the rendered file: omit any code containing `max_epochs` or `lr_warmup_steps_ratio` from the Configure Trainer section and the Hyperparameter Overrides section
 
 #### 1.4 Auto-Generate Configuration Values
 
-**In the 'Setup & Credentials' cell, populate:**
+**In the 'Setup & Credentials' cell, populate (under `assign` in the values file; `BASE_MODEL` and `MODEL_PACKAGE_GROUP_NAME` are literal fields):**
 
 1. **BASE_MODEL**
    - Use the exact SageMakerHub model name from context
@@ -134,7 +142,7 @@ This prevents breakage when recipe schemas rename parameters upstream.
      - Pattern: `[a-zA-Z0-9](-*[a-zA-Z0-9]){0,62}`
      - Example: "Customer Support Chatbot" → `customer-support-chatbot-v1`
 
-3. Save notebook
+3. Render once, after all inputs are collected (1.3). If you then make manual edits, save the notebook.
 
 ### 2. RLVR Reward Function (for RLVR only, skip this section if technique is SFT or DPO)
 
@@ -161,7 +169,7 @@ Read `references/rlaif_guide.md` and follow its instructions.
 1. Look up the official license link for the selected base model from references/eula_links.md
 2. Display the license to the user following the phrasing in references/eula_links.md. For OSS models: "This model is licensed under **{License}**. Please review the license terms here: {URL}." For Nova models: "This model is subject to the AWS Service Terms: {URL}."
 3. Check if the selected base model is a Meta/Llama model (model ID starts with `meta-`)
-   - **If Meta/Llama**: Tell the user they must read and agree to the EULA before using this model. Ask: "Do you accept the license terms? (yes/no)". If the user confirms, set `ACCEPT_EULA = True` and uncomment `accept_eula=ACCEPT_EULA` in the generated notebook. If the user declines, leave `ACCEPT_EULA = False` and warn that training will fail without acceptance.
+   - **If Meta/Llama**: Tell the user they must read and agree to the EULA before using this model. Ask: "Do you accept the license terms? (yes/no)". If the user confirms, put `"ACCEPT_EULA": true` under `assign` in the values file and render with `--consent ACCEPT_EULA`, then uncomment `accept_eula=ACCEPT_EULA` in the rendered notebook (a `manual:` edit point). If the user declines, put `"ACCEPT_EULA": false`, leave out `--consent`, and warn that training will fail without acceptance. Ask this question before rendering, because `render` does not rewrite a file.
    - **If non-Meta**: Inform the user of the license for their awareness. No code-level action needed — the `ACCEPT_EULA` variable and `accept_eula` parameter should already be omitted from the notebook (see Step 1.3).
 
 ### 5. Post-Generation

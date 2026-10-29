@@ -164,13 +164,17 @@ the **directory-management** skill to set one up.
 
 ### Markdown Header
 
-Begin the notebook with a markdown cell whose only content is the title
-`# Deploy a JumpStart Foundation Model to SageMaker`.
+The notebook begins with a markdown cell whose only content is the title `# Deploy a JumpStart Foundation Model to SageMaker`. It is Cell 0 of the template, and `toolkit ai-payloads render` writes it.
 
 ### Cells
 
-Each cell's content comes from `../code_templates/deploy-jumpstart-sagemaker.py`, split on the
-`# Cell N:` comments. Each marker starts a new notebook cell.
+`toolkit ai-payloads render` builds the notebook from `../code_templates/deploy-jumpstart-sagemaker.py`, one cell per `# Cell N:` marker; do not assemble the cells by hand. Render it with the values file described under Placeholders:
+
+```bash
+toolkit ai-payloads render <skill-dir>/references/model-deployment/code_templates/deploy-jumpstart-sagemaker.py --mode notebook --project-dir <project-dir> --values <scratch-dir>/values.json
+```
+
+(`<skill-dir>` is the directory that holds this skill's `references/`; the output rules and the append step are in `../references/code_output_guide.md`.) The cells are:
 
 - **Cell 1**: Setup (pip install)
 - **Cell 2**: Configuration and validation (the config dict from model-selection + deployment-owned
@@ -181,6 +185,8 @@ Each cell's content comes from `../code_templates/deploy-jumpstart-sagemaker.py`
 - **Cell 6**: Save Manifest
 
 ### Placeholders
+
+Put these in the values file under `values`, with the names written without brackets (for example `"REGION": "us-east-1"`). `[PROJECT_DIR]` defaults to the project directory.
 
 The `CONFIG` dict fields (from model-selection):
 
@@ -198,7 +204,7 @@ Deployment-owned fields:
 - `[MODEL_NAME]` → name for the model resource (agent generates a reasonable default)
 - `[PROJECT_DIR]` → project directory (for the manifest)
 
-`accept_eula` is a config field (not a `[...]` placeholder): it defaults to `False`, which is the
+`accept_eula` is a config field (not a `[...]` placeholder, and a dict member, so it is a manual edit point on the rendered notebook that `render` lists; `--consent` does not apply to it): it defaults to `False`, which is the
 safe default and correct for non-gated models — leave it as-is for them. Set it to `True` ONLY
 after the user explicitly accepted a gated model's license in Step 4 of the main workflow. A model
 is gated when its **Gated (EULA)** column in `model-licenses.md` is `Yes` (Meta/Llama, Gemma,

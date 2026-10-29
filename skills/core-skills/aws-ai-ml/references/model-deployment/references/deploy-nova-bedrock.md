@@ -74,20 +74,17 @@ If a project directory already exists (from earlier in the workflow), use it. Ot
 
 ### Markdown Header
 
-```json
-{
-  "cell_type": "markdown",
-  "metadata": {},
-  "source": [
-    "# Deploy Nova to Bedrock"
-  ]
-}
-
-```
+The notebook begins with a markdown cell whose only content is the title `# Deploy Nova to Bedrock`. It is Cell 0 of the template, and `toolkit ai-payloads render` writes it.
 
 ### Cells
 
-Each cell's content comes from `../code_templates/deploy-nova-bedrock.py`, split on the `# Cell N:` comments. Each marker starts a new notebook cell — everything between one marker and the next becomes that cell's content.
+`toolkit ai-payloads render` builds the notebook from `../code_templates/deploy-nova-bedrock.py`, one cell per `# Cell N:` marker; do not assemble the cells by hand. Render it with the values file described under Placeholders:
+
+```bash
+toolkit ai-payloads render <skill-dir>/references/model-deployment/code_templates/deploy-nova-bedrock.py --mode notebook --project-dir <project-dir> --values <scratch-dir>/values.json
+```
+
+(`<skill-dir>` is the directory that holds this skill's `references/`; the output rules and the append step are in `../references/code_output_guide.md`.) The cells are:
 
 - **Cell 1**: Setup (pip install)
 - **Cell 2**: Configuration (env vars, imports, placeholders)
@@ -96,6 +93,8 @@ Each cell's content comes from `../code_templates/deploy-nova-bedrock.py`, split
 - **Cell 5**: Save Manifest
 
 ### Placeholders
+
+Put these in the values file under `values`, with the names written without brackets (for example `"REGION": "us-east-1"`). `[PROJECT_DIR]` defaults to the project directory:
 
 Cell 2:
 
