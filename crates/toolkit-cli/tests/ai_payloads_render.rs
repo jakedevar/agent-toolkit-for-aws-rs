@@ -1137,3 +1137,61 @@ fn ap_app_02_07_latest_symlink_and_over_cap_source_are_refused() {
     assert!(String::from_utf8_lossy(&result.stderr).contains("append_source_invalid"));
     assert!(!f.0.join("notebooks/example-09.ipynb").exists());
 }
+
+#[test]
+fn ap_con_05_consent_slot_and_assignment_emissions() {
+    for mode in ["notebook", "script"] {
+        for (source, json, consent, emitted) in [
+            (
+                "ACCEPT_EULA = [ACCEPT_EULA]",
+                r#"{"values":{"ACCEPT_EULA":false}}"#,
+                false,
+                "False",
+            ),
+            (
+                "ACCEPT_EULA = [ACCEPT_EULA]",
+                r#"{"values":{"ACCEPT_EULA":true}}"#,
+                true,
+                "True",
+            ),
+            (
+                "ACCEPT_EULA = False",
+                r#"{"assign":{"ACCEPT_EULA":false}}"#,
+                false,
+                "False",
+            ),
+            (
+                "ACCEPT_EULA = False",
+                r#"{"assign":{"ACCEPT_EULA":true}}"#,
+                true,
+                "True",
+            ),
+            ("ACCEPT_EULA = False", "{}", false, "False"),
+        ] {
+            let f = Fixture::new();
+            let template = f.write(
+                "template.py",
+                &format!("# Cell 0 [markdown]: Example\n# Desc\n# Cell 1: Code\n{source}\n"),
+            );
+            let values = f.write("values.json", json);
+            let mut args = vec!["--values", values.to_str().unwrap()];
+            if consent {
+                args.extend(["--consent", "ACCEPT_EULA"]);
+            }
+            let result = f.render(&template, mode, &args);
+            assert!(
+                result.status.success(),
+                "{}",
+                String::from_utf8_lossy(&result.stderr)
+            );
+            let output = fs::read_to_string(f.0.join(if mode == "script" {
+                "scripts/01_example.py"
+            } else {
+                "notebooks/example.ipynb"
+            }))
+            .unwrap();
+            assert!(output.contains(&format!("ACCEPT_EULA = {emitted}")));
+            assert!(!output.contains("[ACCEPT_EULA]"));
+        }
+    }
+}

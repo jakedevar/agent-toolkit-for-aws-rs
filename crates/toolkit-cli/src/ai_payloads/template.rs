@@ -1525,6 +1525,32 @@ mod tests {
     use super::*;
 
     #[test]
+    fn ap_cat_11_module_table_matches_template() {
+        assert_eq!(MODULE_CELLS.len(), 1);
+        let (path, cell, module, definition) = MODULE_CELLS[0];
+        assert_eq!(
+            (cell, module, definition),
+            (2, "scripts/transform_fn.py", "def transform_dataset(")
+        );
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../skills/core-skills/aws-ai-ml/references")
+                .join(path),
+        )
+        .unwrap();
+        let parsed = parse(&source);
+        let lines: Vec<_> = source.lines().collect();
+        let two = &parsed.cells[2];
+        let three = &parsed.cells[3];
+        assert!(lines[two.line..three.line - 1]
+            .iter()
+            .any(|line| line.contains("transform_fn.py")));
+        assert!(lines[three.line..]
+            .iter()
+            .any(|line| *line == "from transform_fn import transform_dataset"));
+    }
+
+    #[test]
     fn hostile_text_never_panics_and_is_reported() {
         for text in [
             "",
