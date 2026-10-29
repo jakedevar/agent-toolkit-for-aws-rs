@@ -213,3 +213,71 @@ pub fn finish_if_final(state_dir: &Path, pid: u32, now: i64) -> (Observation, Op
     }
     (Observation::Decision(decision), record.reason)
 }
+
+/// Remove stale records with free locks and old temporary session files.
+/// Unreadable, held or unrecognized entries are left alone.
+#[cfg(unix)]
+pub fn cleanup_stale(state_dir: &Path, now: i64) {
+    let pending = state_dir.join("pending");
+    if let Ok(entries) = std::fs::read_dir(&pending) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else { continue };
+            let Some(pid) = name
+                .strip_suffix(".json")
+                .and_then(|v| v.parse::<u32>().ok())
+            else {
+                continue;
+            };
+            if name != format!("{pid}.json") {
+                continue;
+            }
+            let Some(record) = read_record(state_dir, pid) else {
+                continue;
+            };
+            if now <= record.cutoff.saturating_add(3600) {
+                continue;
+            }
+            if let Some(_lock) = acquire_if_free(state_dir, pid) {
+                let _ = state::remove_state_file(&pending, name);
+            }
+        }
+    }
+    if let Ok(entries) = std::fs::read_dir(state_dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else { continue };
+            let Some(nonce) = name
+                .strip_prefix("session.json.")
+                .and_then(|s| s.strip_suffix(".tmp"))
+            else {
+                continue;
+            };
+            if nonce.len() != 16
+                || !nonce
+                    .bytes()
+                    .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+            {
+                continue;
+            }
+            let Ok(meta) = std::fs::symlink_metadata(entry.path()) else {
+                continue;
+            };
+            if !meta.is_file() {
+                continue;
+            }
+            let Ok(modified) = meta.modified().and_then(|t| {
+                t.duration_since(std::time::UNIX_EPOCH)
+                    .map_err(std::io::Error::other)
+            }) else {
+                continue;
+            };
+            let Ok(modified) = i64::try_from(modified.as_secs()) else {
+                continue;
+            };
+            if now > modified.saturating_add(3600) {
+                let _ = state::remove_state_file(state_dir, name);
+            }
+        }
+    }
+}

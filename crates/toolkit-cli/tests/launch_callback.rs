@@ -130,7 +130,7 @@ fn auth_start_spawns_helper_without_secrets_in_argv() {
     );
     let response: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     let pid = response["pid"].as_u64().unwrap();
-    let port = response["port"].as_u64().unwrap() as u16;
+    let port = u16::try_from(response["port"].as_u64().unwrap()).unwrap();
     let url = response["signInUrl"].as_str().unwrap();
     assert!(!url.contains("private-client-secret"));
     #[cfg(target_os = "linux")]

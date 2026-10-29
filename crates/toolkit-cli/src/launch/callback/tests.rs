@@ -304,3 +304,45 @@ fn child_configuration_is_strict_and_bounded() {
     assert!(HelperConfig::read(&vec![b' '; 65537][..]).is_err());
     assert!(HelperConfig::read(&b"{}"[..]).is_err());
 }
+
+#[cfg(unix)]
+#[test]
+fn stale_cleanup_preserves_held_records_and_unrelated_files() {
+    use super::{
+        pending::{cleanup_stale, Custody},
+        PendingStatus,
+    };
+    use crate::launch::{clock::SeededRandom, tests_support::Scratch};
+    let scratch = Scratch::new("pending-cleanup");
+    let held = Custody::acquire(scratch.path(), 80).unwrap();
+    held.write(
+        1234,
+        100,
+        160,
+        PendingStatus::Listening,
+        None,
+        &SeededRandom::new(1),
+    )
+    .unwrap();
+    let free = Custody::acquire(scratch.path(), 81).unwrap();
+    free.write(
+        1234,
+        100,
+        160,
+        PendingStatus::TimedOut,
+        None,
+        &SeededRandom::new(2),
+    )
+    .unwrap();
+    drop(free);
+    let temp = scratch.write("session.json.0123456789abcdef.tmp", b"x");
+    let file = std::fs::OpenOptions::new().write(true).open(&temp).unwrap();
+    file.set_times(std::fs::FileTimes::new().set_modified(std::time::UNIX_EPOCH))
+        .unwrap();
+    scratch.write("session.json.not-owned.tmp", b"x");
+    cleanup_stale(scratch.path(), 4000);
+    assert!(scratch.join("pending/80.json").exists());
+    assert!(!scratch.join("pending/81.json").exists());
+    assert!(!temp.exists());
+    assert!(scratch.join("session.json.not-owned.tmp").exists());
+}

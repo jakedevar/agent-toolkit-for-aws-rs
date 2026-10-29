@@ -50,6 +50,7 @@ pub fn command(invocation: &Invocation, output: &mut Output<'_>) -> Result<(), T
         else {
             return failure(output, "The system clock is unavailable.");
         };
+        super::pending::cleanup_stale(&dir, now);
         let session = state::load_session(&dir);
         if session
             .as_ref()
