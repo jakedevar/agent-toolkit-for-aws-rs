@@ -907,3 +907,4 @@ Friction: #4727, Rsi #4694, Rsi #4704
   Manager scoped fa82eb30 (worktree f4e513e0, base origin/rolling f3ab564c, head da31e030) running. On ok: check job_id fa82eb30 + enqueue (source_session f4e513e0); close #5273 #5307 #5269 #5270 #5271 #5272 on land.
   L4 gaps #5306 (+#5312 #5314) -> Codex terra acde8672, sandbox_source da31e030.
   4/4 busy: cd65d0a9 (#5181), 4d05f4a4 (#5308), 4f851dba (#5310), acde8672 (#5306). Pending: manager scoped fa82eb30 (#5273), AP S5 scoped 4895f2bf ok awaiting #5310.
+- 10-29 09:51Z: manager scoped fa82eb30 (#5273 da31e030 on f3ab564c) OK 4182; check ok. ENQUEUED 38151494 (seq 2986, #5273). On land close #5273 #5307 #5269 #5270 #5271 #5272.
