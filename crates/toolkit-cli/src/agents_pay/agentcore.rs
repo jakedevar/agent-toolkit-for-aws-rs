@@ -1434,6 +1434,21 @@ mod wire_contracts {
     }
 
     #[test]
+    fn streamed_oversized_error_keeps_allowlisted_header() {
+        let transport = FakeStreamingTransport::new().respond(
+            409,
+            &[("x-amzn-ErrorType", "ConflictException")],
+            vec![FakeChunk::data(&vec![b'x'; 65_537])],
+        );
+        let client = PaymentClient::new("us-east-1", &transport, &NoSigner).unwrap();
+        assert_eq!(
+            client.process_payment(super::operation_contracts::approved()),
+            Err(PaymentError::Service("ConflictException"))
+        );
+        assert_eq!(transport.requests().len(), 1);
+    }
+
+    #[test]
     fn declared_oversize_is_refused_before_pulling() {
         let transport = FakeStreamingTransport::new().respond(
             200,
