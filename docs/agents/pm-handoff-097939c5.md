@@ -1145,3 +1145,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
   4/4: 9cee2c94 #5468, 805089a2 #5458, e02b0f23 B2, 1a973465 S6.
 - 19:35Z: re-review #5458 (805089a2) CHANGES_REQUESTED: #5428/#5429 fixed (3/3 guard reverts caught); new BLOCKER #5465 (terminal stream-read errors keep socket until caller drop). Repair 2 -> Claude Opus 0311ca3f (continue_from f59917b1). Then narrow re-review of #5465 (Codex, reuse #5458 reproducer).
   4/4: 9cee2c94 #5468, 0311ca3f S1 r2, e02b0f23 B2, 1a973465 S6.
+- 19:47Z: re-review #5468 (9cee2c94) ACCEPT 4100ff04 (4/4 guard reverts caught; launch goldens pass in both build scopes). check ok (7b2ccf13). L5 ENQUEUED seq 3036 (34df36a3). On land close #5345 #5403 #5406 #5424 #5426 #5427 #5468; #4382 stays open (check remaining L-slices).
+  Reviewer friction #5469 (telemetry test assumes sorted keys; fails only workspace-wide) -> Claude Sonnet d1131e30 (rolling; sweep other order-dependent asserts, prove both scopes).
+  4/4: d1131e30 #5469, 0311ca3f S1 r2, e02b0f23 B2, 1a973465 S6.
