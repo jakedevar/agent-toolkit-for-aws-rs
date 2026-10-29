@@ -689,6 +689,72 @@ fn ap_con_06_cell_consent_identifier_guard() {
 }
 
 #[test]
+fn ap_con_06_exec_caller_code_boundary_is_syntactic() {
+    let f = Fixture::new();
+    let template = f.write(
+        "template.py",
+        "# Cell 0 [markdown]: Example\n# Description\n# Cell 1: Code\npass\n",
+    );
+    // The guard does not execute or interpret strings passed to exec. Caller
+    // code remains trusted and the rendered bytes demonstrate that boundary.
+    let body = "exec('ACCEPT_EULA = True')\n";
+    let cell = f.write("cell.py", body);
+    let arg = format!("1={}", cell.display());
+    let result = f.render(&template, "script", &["--cell", &arg]);
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert!(fs::read_to_string(f.0.join("scripts/01_example.py"))
+        .unwrap()
+        .contains(body));
+}
+
+#[test]
+fn ap_con_05_parenthesized_and_training_assignments_emit_booleans() {
+    for source in [
+        "ACCEPT_EULA = (\n    False  # license\n)",
+        "ACCEPT_EULA = False\nmodel = train(accept_eula=ACCEPT_EULA)",
+    ] {
+        for (value, consent, expected) in [(false, false, "False"), (true, true, "True")] {
+            for mode in ["script", "notebook"] {
+                let f = Fixture::new();
+                let template = f.write(
+                    "template.py",
+                    &format!("# Cell 0 [markdown]: Example\n# Desc\n# Cell 1: Code\n{source}\n"),
+                );
+                let values = f.write(
+                    "values.json",
+                    &format!("{{\"assign\":{{\"ACCEPT_EULA\":{value}}}}}"),
+                );
+                let mut args = vec!["--values", values.to_str().unwrap()];
+                if consent {
+                    args.extend(["--consent", "ACCEPT_EULA"]);
+                }
+                let result = f.render(&template, mode, &args);
+                assert!(
+                    result.status.success(),
+                    "{}",
+                    String::from_utf8_lossy(&result.stderr)
+                );
+                let path = if mode == "script" {
+                    "scripts/01_example.py"
+                } else {
+                    "notebooks/example.ipynb"
+                };
+                let output = fs::read_to_string(f.0.join(path)).unwrap();
+                assert!(
+                    output.contains(&format!("{expected}  # license"))
+                        || output.contains(&format!("ACCEPT_EULA = {expected}")),
+                    "{mode}: {output}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn ap_cat_10_all_real_templates_render_in_both_modes() {
     use toolkit_core::{parse_json, Json};
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../skills/core-skills/aws-ai-ml");
