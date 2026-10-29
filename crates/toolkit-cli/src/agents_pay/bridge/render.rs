@@ -76,10 +76,33 @@ fn timestamp(value: &Json) -> Result<Json, BridgeError> {
         }
         let minute = digits.get(2..4).unwrap_or("00");
         let second = digits.get(4..6).unwrap_or("00");
+        let (minute, second, fraction) = if !fraction.is_empty() && digits.len() < 6 {
+            let raw = &fraction[1..];
+            if raw.is_empty() || !raw.bytes().all(|byte| byte.is_ascii_digit()) {
+                return Err(BridgeError::AgentCore);
+            }
+            let mut padded: String = raw.chars().take(6).collect();
+            while padded.len() < 6 {
+                padded.push('0');
+            }
+            let part: u32 = padded.parse().map_err(|_| BridgeError::AgentCore)?;
+            let converted = format!("{:02}", part * 60 / 1_000_000);
+            if digits.len() == 2 {
+                (converted, "00".to_owned(), String::new())
+            } else {
+                (minute.to_owned(), converted, String::new())
+            }
+        } else {
+            (
+                minute.to_owned(),
+                second.to_owned(),
+                fraction.replace(',', "."),
+            )
+        };
         format!(
             "{}:{minute}:{second}{}{}",
             &digits[..2],
-            fraction.replace(',', "."),
+            fraction,
             zone.replace('z', "Z")
         )
     };
