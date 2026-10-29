@@ -134,6 +134,16 @@ fn ap_pub_15_dry_run_creates_no_output() {
 }
 
 #[test]
+fn ap_t28_03_normalized_template_path_requires_module_cell() {
+    let f = Fixture::new();
+    f.write("dataset-transformation/code_templates/transformation.py", "# Cell 0 [markdown]: Example\n# Description\n# Cell 1: Code\npass\n# Cell 2: Module\npass\n");
+    let template = f.0.join("dataset-transformation/code_templates/../code_templates/transformation.py");
+    let result = f.render(&template, "script", &[]);
+    assert_eq!(result.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&result.stderr).contains("module_cell_required"));
+}
+
+#[test]
 fn ap_scr_04_nonregular_destination_has_specific_error() {
     let f = Fixture::new();
     let template = f.write("template.py", "# Cell 0 [markdown]: Example\n# Description\n# Cell 1: Code\npass\n");
