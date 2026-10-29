@@ -66,6 +66,9 @@ docgraph-database-peer:
 docgraph-database-admission:
 	cargo test -p toolkit-aws --features sdk --locked --lib sdk::database::tests::forbidden_or_mixed_answers_are_never_dialed -- --exact
 
+docgraph-review-client:
+	cargo test -p toolkit-cli --features docgraph-live --locked --lib docgraph::tests::live
+
 docgraph-live-suite:
 	cargo test -p toolkit-cli --locked --test docgraph_live
 	cargo test -p toolkit-cli --features docgraph-live --locked --test docgraph_live
