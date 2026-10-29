@@ -153,7 +153,7 @@ fn ap_rwt_02_t06_empty_batch_returns_documented_envelope() {
     // documented Option B with an empty JSON-string list.
     let empty = json!({"statusCode":200,"body":json!([]).to_string()});
     let one = check("openai", OPENAI_EVENT, &empty.to_string());
-    assert_flagged(&one, "result_count");
+    assert_flagged(&one, "result count differs");
     let out = check("openai", "[]", &empty.to_string());
     assert!(
         !text(&out).contains("matches neither documented envelope"),
