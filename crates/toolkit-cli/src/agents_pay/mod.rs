@@ -23,3 +23,4 @@ pub mod pyval;
 pub mod urlparse;
 
 pub mod agentcore;
+pub mod net;

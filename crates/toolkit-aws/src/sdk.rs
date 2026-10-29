@@ -306,6 +306,7 @@ impl<P: CredentialsProvider> Signer for SigV4Signer<P> {
 #[derive(Clone)]
 struct GuardedResolver {
     inner: Arc<dyn HostResolver + Send + Sync>,
+    deadline: Option<std::time::Instant>,
 }
 
 impl fmt::Debug for GuardedResolver {
@@ -316,7 +317,25 @@ impl fmt::Debug for GuardedResolver {
 
 impl ResolveDns for GuardedResolver {
     fn resolve_dns<'a>(&'a self, name: &'a str) -> DnsFuture<'a> {
-        DnsFuture::ready(guarded_addresses(name, self.inner.as_ref()).map_err(ResolveDnsError::new))
+        let expired = || {
+            self.deadline
+                .is_some_and(|d| std::time::Instant::now() >= d)
+        };
+        let result = if expired() {
+            Err(ResolveDnsError::new(std::io::Error::other(
+                "DNS deadline elapsed",
+            )))
+        } else {
+            let result = guarded_addresses(name, self.inner.as_ref()).map_err(ResolveDnsError::new);
+            if expired() {
+                Err(ResolveDnsError::new(std::io::Error::other(
+                    "DNS deadline elapsed",
+                )))
+            } else {
+                result
+            }
+        };
+        DnsFuture::ready(result)
     }
 }
 
@@ -346,7 +365,8 @@ impl ResolveDns for UnguardedResolver {
     }
 }
 
-type ConnectorFactory = dyn Fn(&Timeouts) -> SharedHttpConnector + Send + Sync;
+type ConnectorFactory =
+    dyn Fn(&Timeouts, Option<std::time::Instant>) -> SharedHttpConnector + Send + Sync;
 
 /// [`Transport`] and [`StreamingTransport`] over the smithy hyper HTTP client.
 pub struct SdkTransport {
@@ -406,11 +426,16 @@ impl SdkTransport {
         roots: &ValidatedRoots,
         resolver: Arc<dyn HostResolver + Send + Sync>,
     ) -> Result<Self, AwsError> {
-        let guard = GuardedResolver { inner: resolver };
+        let guard = GuardedResolver {
+            inner: resolver,
+            deadline: None,
+        };
         let ctx = roots.tls_context()?;
         let factory_runtime = runtime.clone();
-        let factory = move |timeouts: &Timeouts| {
-            build_connector(&factory_runtime, timeouts, &ctx, guard.clone())
+        let factory = move |timeouts: &Timeouts, deadline| {
+            let mut guard = guard.clone();
+            guard.deadline = deadline;
+            build_connector(&factory_runtime, timeouts, &ctx, guard)
         };
         Ok(Self {
             runtime: runtime.clone(),
@@ -435,7 +460,7 @@ impl SdkTransport {
         let unguarded = UnguardedResolver { inner: resolver };
         let ctx = roots.tls_context()?;
         let factory_runtime = runtime.clone();
-        transport.factory = Box::new(move |timeouts: &Timeouts| {
+        transport.factory = Box::new(move |timeouts: &Timeouts, _deadline| {
             build_connector(&factory_runtime, timeouts, &ctx, unguarded.clone())
         });
         transport.peer_check = false;
@@ -450,7 +475,7 @@ impl SdkTransport {
         let shared = SharedHttpConnector::new(connector);
         Self {
             runtime: runtime.clone(),
-            factory: Box::new(move |_: &Timeouts| shared.clone()),
+            factory: Box::new(move |_: &Timeouts, _deadline| shared.clone()),
             connectors: Mutex::new(Vec::new()),
             roots: None,
             peer_check: true,
@@ -472,7 +497,7 @@ impl SdkTransport {
         if let Some((_, connector)) = cache.iter().find(|(key, _)| key == timeouts) {
             return connector.clone();
         }
-        let connector = (self.factory)(timeouts);
+        let connector = (self.factory)(timeouts, None);
         cache.push((*timeouts, connector.clone()));
         connector
     }
@@ -576,7 +601,11 @@ fn check_peer(capture: &CaptureSmithyConnection) -> Result<(), AwsError> {
         return Ok(());
     };
     let Some(peer) = connection.remote_addr() else {
-        return Ok(());
+        connection.poison();
+        return Err(AwsError::invalid_config(
+            "endpoint",
+            "the connection did not report a remote address",
+        ));
     };
     require_public_peer(peer.ip()).inspect_err(|_| connection.poison())
 }
@@ -725,7 +754,10 @@ impl StreamingTransport for SdkTransport {
             return Err(deadline_error());
         }
         let sdk_request = Self::admit(request)?;
-        let connector = self.connector_for(&request.timeouts);
+        let connector = match limits.deadline() {
+            Some(deadline) => (self.factory)(&request.timeouts, Some(deadline)),
+            None => self.connector_for(&request.timeouts),
+        };
         let response = self.runtime.block_on(async {
             if let Some(deadline) = limits.deadline() {
                 tokio::time::timeout_at(deadline.into(), self.call(connector, sdk_request))
@@ -734,7 +766,14 @@ impl StreamingTransport for SdkTransport {
             } else {
                 self.call(connector, sdk_request).await
             }
-        })?;
+        });
+        if limits
+            .deadline()
+            .is_some_and(|d| std::time::Instant::now() >= d)
+        {
+            return Err(deadline_error());
+        }
+        let response = response?;
         Ok(Box::new(SdkStream {
             runtime: self.runtime.clone(),
             status: response.status().as_u16(),
@@ -1612,6 +1651,69 @@ mod tests {
     }
 
     #[test]
+    fn production_guard_refuses_nonpublic_destinations_before_connecting() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let transport = SdkTransport::with_resolver(
+            &runtime(),
+            &test_roots(),
+            Arc::new(StaticResolver("127.0.0.1")),
+        )
+        .unwrap();
+        for host in [
+            "127.0.0.1",
+            "[::1]",
+            "0x7f.1",
+            "10.0.0.1",
+            "merchant.example",
+        ] {
+            let mut request = vanilla_request();
+            request.url = format!("https://{host}:{port}/");
+            let error = transport.send(&request).unwrap_err();
+            assert_eq!(error.code(), "aws_invalid_config", "{host}: {error}");
+            assert_eq!(
+                listener.accept().unwrap_err().kind(),
+                std::io::ErrorKind::WouldBlock,
+                "{host}"
+            );
+        }
+        // Merchant streaming opens with a deadline, which creates a fresh
+        // connector through the production factory rather than the cache.
+        let mut request = vanilla_request();
+        request.url = format!("https://merchant.example:{port}/");
+        let limits = StreamLimits::new(1024, 64)
+            .unwrap()
+            .with_deadline(std::time::Instant::now() + Duration::from_secs(5));
+        let error = transport.open(&request, &limits).err().expect("refused");
+        assert_eq!(error.code(), "aws_invalid_config");
+        assert_eq!(
+            listener.accept().unwrap_err().kind(),
+            std::io::ErrorKind::WouldBlock
+        );
+    }
+
+    #[test]
+    fn captured_connection_without_remote_address_is_refused_and_poisoned() {
+        let capture = CaptureSmithyConnection::new();
+        let poisoned = Arc::new(AtomicBool::new(false));
+        let marker = Arc::clone(&poisoned);
+        capture.set_connection_retriever(move || {
+            let marker = Arc::clone(&marker);
+            Some(
+                ConnectionMetadata::builder()
+                    .proxied(false)
+                    .poison_fn(move || marker.store(true, Ordering::SeqCst))
+                    .build(),
+            )
+        });
+        let error = check_peer(&capture).unwrap_err();
+        assert_eq!(error.code(), "aws_invalid_config");
+        assert!(poisoned.load(Ordering::SeqCst));
+        assert!(check_peer(&CaptureSmithyConnection::new()).is_ok());
+    }
+
+    #[test]
     fn a_response_from_a_non_public_socket_peer_is_refused_and_the_connection_poisoned() {
         for peer in [
             "127.0.0.1:443",
@@ -1695,6 +1797,7 @@ mod tests {
         let rt = runtime();
         let public = GuardedResolver {
             inner: Arc::new(StaticResolver("52.94.0.10")),
+            deadline: None,
         };
         let addresses = rt
             .block_on(public.resolve_dns("logs.us-east-1.amazonaws.com"))
@@ -1702,6 +1805,7 @@ mod tests {
         assert_eq!(addresses, vec!["52.94.0.10".parse::<IpAddr>().unwrap()]);
         let private = GuardedResolver {
             inner: Arc::new(StaticResolver("10.1.2.3")),
+            deadline: None,
         };
         let error = rt
             .block_on(private.resolve_dns("logs.us-east-1.amazonaws.com"))
@@ -1709,6 +1813,68 @@ mod tests {
         let rejection = find_guard_rejection(&error).expect("guard rejection in the chain");
         assert!(rejection.to_string().contains("10.1.2.3"));
         assert!(!format!("{private:?}").contains("10.1.2.3"));
+    }
+
+    #[test]
+    fn rebinding_private_connect_time_answer_is_refused() {
+        struct Rebinding(std::sync::atomic::AtomicUsize);
+        impl HostResolver for Rebinding {
+            fn resolve(&self, _: &str) -> Result<Vec<IpAddr>, String> {
+                let address = if self.0.fetch_add(1, Ordering::SeqCst) == 0 {
+                    "8.8.8.8"
+                } else {
+                    "127.0.0.1"
+                };
+                Ok(vec![address.parse().unwrap()])
+            }
+        }
+        let resolver = Arc::new(Rebinding(std::sync::atomic::AtomicUsize::new(0)));
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        assert_eq!(
+            guarded_addresses("merchant.example", resolver.as_ref()).unwrap(),
+            vec!["8.8.8.8".parse::<IpAddr>().unwrap()]
+        );
+        let transport =
+            SdkTransport::with_resolver(&runtime(), &test_roots(), resolver.clone()).unwrap();
+        let mut request = vanilla_request();
+        request.url = format!(
+            "https://merchant.example:{}/",
+            listener.local_addr().unwrap().port()
+        );
+        let error = transport.send(&request).unwrap_err();
+        assert_eq!(error.code(), "aws_invalid_config");
+        assert!(error.to_string().contains("127.0.0.1"));
+        assert_eq!(resolver.0.load(Ordering::SeqCst), 2);
+        assert_eq!(
+            listener.accept().unwrap_err().kind(),
+            std::io::ErrorKind::WouldBlock
+        );
+    }
+
+    #[test]
+    fn guarded_dns_refuses_answers_returned_after_deadline() {
+        struct SlowResolver(std::sync::atomic::AtomicUsize);
+        impl HostResolver for SlowResolver {
+            fn resolve(&self, _: &str) -> Result<Vec<IpAddr>, String> {
+                self.0.fetch_add(1, Ordering::SeqCst);
+                std::thread::sleep(Duration::from_millis(40));
+                Ok(vec!["8.8.8.8".parse().unwrap()])
+            }
+        }
+        let inner = Arc::new(SlowResolver(std::sync::atomic::AtomicUsize::new(0)));
+        let guard = GuardedResolver {
+            inner: inner.clone(),
+            deadline: Some(std::time::Instant::now() + Duration::from_millis(10)),
+        };
+        assert!(runtime()
+            .block_on(guard.resolve_dns("merchant.example"))
+            .is_err());
+        assert_eq!(inner.0.load(Ordering::SeqCst), 1);
+        assert!(runtime()
+            .block_on(guard.resolve_dns("merchant.example"))
+            .is_err());
+        assert_eq!(inner.0.load(Ordering::SeqCst), 1);
     }
 
     #[test]

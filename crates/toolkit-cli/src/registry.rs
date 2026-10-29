@@ -551,7 +551,7 @@ mod tests {
     /// The route paths of the old `COMMANDS` table (commit ce0eaf6a, before the
     /// registry), in table order: the public order of [`COMMANDS`]. The routes of
     /// slices added after the registry follow at the end, ordered by slice name.
-    const LEGACY_COMMAND_ORDER: [&str; 97] = [
+    const LEGACY_COMMAND_ORDER: [&str; 99] = [
         "skills list",
         "manifests validate",
         "spec validate",
@@ -632,6 +632,8 @@ mod tests {
         "timestream-influxdb instance-types",
         // Slices added after the registry (NEW_RANK), by slice name.
         // ai-payloads (#4386, slice S1 #5143):
+        "ai-payloads reward sample",
+        "ai-payloads reward check",
         "ai-payloads templates",
         // bedrock-probes (#4404):
         "bedrock-probes iam-policy",
