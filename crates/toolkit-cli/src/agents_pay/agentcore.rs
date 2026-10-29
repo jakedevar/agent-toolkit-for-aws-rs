@@ -799,11 +799,38 @@ struct FakePaymentsApi {
     calls: std::cell::Cell<usize>,
 }
 #[cfg(test)]
-fn process_approved(
-    _api: &FakePaymentsApi,
-    _approved: Approved,
-) -> Result<Authorized, PaymentError> {
-    Err(PaymentError::InvalidResponse)
+trait PaymentsApi {
+    fn process_payment(
+        &self,
+        request: &ProcessPaymentRequest,
+    ) -> Result<PaymentProof, PaymentError>;
+}
+#[cfg(test)]
+impl PaymentsApi for FakePaymentsApi {
+    fn process_payment(
+        &self,
+        _request: &ProcessPaymentRequest,
+    ) -> Result<PaymentProof, PaymentError> {
+        self.calls.set(self.calls.get() + 1);
+        Ok(PaymentProof(Json::object(vec![])))
+    }
+}
+#[cfg(test)]
+fn process_approved(api: &dyn PaymentsApi, approved: Approved) -> Result<Authorized, PaymentError> {
+    let recipient = toolkit_aws::recorded::optional_text(approved.entry(), "payTo")
+        .map_err(|_| PaymentError::InvalidResponse)?
+        .ok_or(PaymentError::InvalidResponse)?
+        .to_owned();
+    let amount = approved.amount().to_owned();
+    let version = approved.version();
+    let request = ProcessPaymentRequest::from_approved(&approved);
+    let proof = api.process_payment(&request)?;
+    Ok(Authorized {
+        proof,
+        amount,
+        version,
+        recipient,
+    })
 }
 
 #[cfg(test)]
