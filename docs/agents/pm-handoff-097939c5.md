@@ -930,3 +930,4 @@ Friction: #4727, Rsi #4694, Rsi #4704
   docgraph S5 #5327 (collection recipe + offline normalization, T-DG-08) -> Claude Sonnet e1de11f0, sandbox_source 98675de9.
   4/4 busy: acde8672 (#5306), 56c78333 (#5317 L6), 75a7e4a6 (#5326 x402 S4 review), e1de11f0 (#5327).
 - 10-29 10:14Z: design 98675de9 check ok (962c825b, docs-only) but enqueue warned conflict with d7346462 (#4886 item 1) on docgraph.md. CANCELLED entry 6cec4c35. DECISION: design lands inside docgraph S5 #5327 (descends from 98675de9). Mailed e1de11f0 (msg 7157a562, expires 16:14Z): merge rolling before final scoped, keep both docgraph sections. Close #5318 #5321 #5322 #5324 #5325 when #5327 lands.
+- 10-29 10:2xZ: L4 f/u #5273 LANDED (38151494 published, 2b757416289962c35ed92fb2c50bc65ee9b0749e). #5273 auto-closed; CLOSED #5307 #5269 #5270 #5271 #5272. Queue: bbbd22bc (#5296), d7346462 (#4886). #5306 (acde8672) based on da31e030 = now ancestor of rolling.
