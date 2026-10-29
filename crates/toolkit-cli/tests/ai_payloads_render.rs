@@ -641,20 +641,23 @@ fn ap_sub_magic_lines_reject_quoted_slots() {
             &["--values", values.to_str().unwrap()],
         );
         assert_eq!(result.status.code(), Some(1), "{line}");
+        assert!(String::from_utf8_lossy(&result.stderr).contains("magic_line_slot"));
         assert!(!f.0.join("notebooks/example.ipynb").exists());
     }
 }
 
 #[test]
 fn ap_con_05_quoted_and_lowercase_consent_are_refused() {
-    for (source, values) in [
+    for (source, values, code) in [
         (
             "model.accept_eula = \"[ACCEPT_EULA]\"\n",
             r#"{"values":{"ACCEPT_EULA":"true"}}"#,
+            "consent_slot_not_bare",
         ),
         (
             "accept_eula = False\n",
             r#"{"assign":{"accept_eula":true}}"#,
+            "consent_not_given",
         ),
     ] {
         let f = Fixture::new();
@@ -665,8 +668,104 @@ fn ap_con_05_quoted_and_lowercase_consent_are_refused() {
         let values = f.write("values.json", values);
         let result = f.render(&template, "script", &["--values", values.to_str().unwrap()]);
         assert_eq!(result.status.code(), Some(1), "{source}");
+        assert!(String::from_utf8_lossy(&result.stderr).contains(code));
         assert!(!f.0.join("scripts/01_example.py").exists());
     }
+    let f = Fixture::new();
+    let template = f.write(
+        "template.py",
+        "# Cell 0 [markdown]: Example\n# Description\n# Cell 1: Code\naccept_eula = False\n",
+    );
+    let values = f.write("values.json", r#"{"assign":{"accept_eula":true}}"#);
+    let result = f.render(
+        &template,
+        "script",
+        &[
+            "--values",
+            values.to_str().unwrap(),
+            "--consent",
+            "ACCEPT_EULA",
+        ],
+    );
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert!(fs::read_to_string(f.0.join("scripts/01_example.py"))
+        .unwrap()
+        .contains("accept_eula = True"));
+}
+
+#[test]
+fn review_5290_fullwidth_quote_does_not_hide_consent() {
+    assert_cell_consent_refused("x = \"\u{ff02}\"\nACCEPT_EULA = True\n");
+}
+
+#[test]
+fn review_5291_interpolated_quote_reuse_and_template_strings() {
+    for code in [
+        "print(f\"{\"x\" if (ACCEPT_EULA := True) else \"y\"}\")\n",
+        "print(t\"{(ACCEPT_EULA := True)}\")\n",
+        "print(tr\"{(ACCEPT_EULA := True)}\")\n",
+    ] {
+        assert_cell_consent_refused(code);
+    }
+}
+
+fn assert_cell_consent_refused(code: &str) {
+    let f = Fixture::new();
+    let template = f.write(
+        "template.py",
+        "# Cell 0 [markdown]: Example\n# Description\n# Cell 1: Code\npass\n",
+    );
+    let cell = f.write("cell.py", code);
+    let arg = format!("1={}", cell.display());
+    let result = f.render(&template, "script", &["--cell", &arg]);
+    assert_eq!(result.status.code(), Some(1), "{code}");
+    assert!(String::from_utf8_lossy(&result.stderr).contains("cell_binds_consent"));
+}
+
+#[test]
+fn review_5292_cell_magic_and_assigned_escape_reject_slots() {
+    for source in [
+        "%%bash\necho \"[S3_URI]\"",
+        "files = !ls \"[S3_URI]\"",
+        "files = %run \"[S3_URI]\"",
+    ] {
+        let f = Fixture::new();
+        let template = f.write(
+            "template.py",
+            &format!("# Cell 0 [markdown]: Example\n# Description\n# Cell 1: Code\n{source}\n"),
+        );
+        let values = f.write("values.json", r#"{"values":{"S3_URI":"$(id)"}}"#);
+        let result = f.render(
+            &template,
+            "notebook",
+            &["--values", values.to_str().unwrap()],
+        );
+        assert_eq!(result.status.code(), Some(1), "{source}");
+        assert!(String::from_utf8_lossy(&result.stderr).contains("magic_line_slot"));
+    }
+}
+
+#[test]
+fn review_5293_consent_flag_is_exact_case() {
+    let f = Fixture::new();
+    let template = f.write("template.py", "# Cell 0 [markdown]: Example\n# Description\n# Cell 1: Code\nACCEPT_EULA = [ACCEPT_EULA]\n");
+    let values = f.write("values.json", r#"{"values":{"ACCEPT_EULA":true}}"#);
+    let result = f.render(
+        &template,
+        "script",
+        &[
+            "--values",
+            values.to_str().unwrap(),
+            "--consent",
+            "accept_eula",
+        ],
+    );
+    assert_eq!(result.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&result.stderr).contains("consent_name_invalid"));
 }
 
 #[test]
@@ -1052,7 +1151,14 @@ fn ap_cell_04_08_multiline_normalization_and_unsafe_characters() {
     ] {
         let f = Fixture::new();
         let template = f.write("template.py", template_text);
-        let cell = f.write("cell.py", &format!("x{ch}y"));
+        let cell = f.write(
+            "cell.py",
+            &if ch == '\u{feff}' {
+                format!("{ch}xy")
+            } else {
+                format!("x{ch}y")
+            },
+        );
         let arg = format!("1={}", cell.display());
         let result = f.render(&template, "script", &["--cell", &arg]);
         assert_eq!(result.status.code(), Some(1));
