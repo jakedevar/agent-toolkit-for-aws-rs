@@ -593,3 +593,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
   x402 slices: P-ROOTS (toolkit-aws, needs S1 #5017 on rolling) | S1 pure policy (now) | S2 config (S1) | S3 net (S1, #5017, #5080) | S4 AgentCore (S1, #5017) | S5 flow (P-ROOTS) | S6 admin | S7 cutover.
   x402 S1 = #5118 -> 4cbe8435 (Opus high, sandbox 07d6a0b9 on fa3fa137). Carry #5097/#5102 into its review.
   4/4 busy: f38bc05f (#5085), b5103711 (#4386 design), 869fe7ce (#5079 repair 1), 4cbe8435 (#5118 x402 S1).
+- 10-29 04:00Z: #4386 DESIGN (b5103711) at 779a8ec0a8dabdfb6ead64a6293d934e734bc95f, docs/migration/ai-payloads-design.md: 23/25 payloads are customer notebook/script templates (SageMaker SDK v3, Python-only); 4 reward templates = Lambda payloads; mlflow_reference.py stays Python. 56 rows all stay Python (AC3: none counted removed). Rust part: `toolkit ai-payloads` (templates, render, reward sample/check), no new deps, 5 slices, B-1..B-10, OD-1..10.
+  RULINGS: P-1/OD-1 no serverless Rust training mode; P-2 -> follow-up #5121; P-4 -> #5120 needs-operator (fix shipped Python template content?), reward check flags both. Pre-review #5119 -> Codex 285b0aad pinned 779a8ec0.
+  4/4 busy: f38bc05f (#5085), 869fe7ce (#5079 repair 1), 4cbe8435 (#5118 x402 S1), 285b0aad (#5119).
