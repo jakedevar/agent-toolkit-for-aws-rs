@@ -827,6 +827,37 @@ open; these fixtures alone do not satisfy the support-matrix exit criterion.
 No network, DNS, credentials, live database or SDK bridge test was used for
 this record. S1 implementation must not proceed on the strength of it.
 
+#### Spike continuation: resolved dependency graph fails the stated gate
+
+The PM clarified that fetching crates for resolution is permitted; offline
+means no AWS, DNS or database work by the spike code. A temporary, uncommitted
+`docgraph-live` feature implying `aws-sdk` and four optional service crates
+resolved successfully with defaults disabled and no explicit service features:
+docdb 1.126.0, cloudwatch 1.138.0, ec2 1.271.0, secretsmanager 1.123.0.
+Each reports Apache-2.0 and Rust 1.94.1. The newer attempted cloudwatch 1.139.0
+requires smithy-runtime-api 1.19.2 and conflicts with the shared exact 1.19.1
+pin; the selected versions resolve with the current shared pins. These are
+exploratory pins, not a supported service matrix or committed dependencies.
+
+`cargo tree -p toolkit-cli --features docgraph-live -i ring` reported no
+dependency; `-i webpki-roots` reported no matching package. The lockfile delta
+added the four SDK crates, aws-smithy-cbor, aws-smithy-compression, bigdecimal,
+flate2, libm, minicbor, miniz_oxide 0.9.1, simd-adler32 and zlib-rs; no new
+TLS, root or cryptography package was identified. However the explicitly
+required empty `-i hyper-rustls` check failed: it reports hyper-rustls 0.27.10.
+The feature tree also includes `aws-smithy-runtime/default-https-client`.
+Both occur already in `--features aws-sdk`: `toolkit-aws` enables
+`aws-smithy-http-client/rustls-aws-lc`, and its `aws-config/rustls` enables
+`client-hyper` and `default-https-client`. Graph presence alone does not prove
+a default connector is constructed; no construction spy was run.
+
+The stated feature-graph gate therefore conflicts with the requirement that
+`docgraph-live` imply the existing `aws-sdk` feature. The temporary manifest
+and lockfile changes were discarded; no service client or bridge was added.
+The spike and Q4/Q5 remain unresolved, including the auth, framing, retry and
+endpoint/version demonstrations. Stop S1 pending resolution of #5368; do not
+weaken the signer or infer approval to change shared transport policy.
+
 Implementation slices remain Rust, use scoped optional service dependencies,
 daemon-owned jobs and independent exact-SHA review. Each owns a requirement/test
 matrix and deliberate CLI/output changes; no worker may treat this proposal as
