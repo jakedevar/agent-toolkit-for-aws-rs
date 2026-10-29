@@ -22,6 +22,7 @@ use crate::safe_text::safe_path;
 use crate::{Invocation, Output};
 
 mod template;
+mod place;
 
 use template::Template;
 
