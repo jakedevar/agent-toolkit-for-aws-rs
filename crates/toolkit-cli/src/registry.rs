@@ -630,6 +630,10 @@ mod tests {
         "documentdb wa-review",
         "neptune validate-input",
         "neptune seed",
+        // marketplace (#4396):
+        "marketplace handler",
+        "marketplace query-metering",
+        "marketplace test-events",
         // telemetry (#4398):
         "telemetry",
     ];
