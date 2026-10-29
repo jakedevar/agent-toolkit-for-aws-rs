@@ -1,8 +1,10 @@
 //! Safe `AgentCore` error classification and endpoint construction.
 
+#[cfg(test)]
 use crate::agents_pay::policy::Approved;
 use toolkit_aws::{AwsError, Endpoint};
 use toolkit_core::parse_json;
+#[cfg(test)]
 use toolkit_core::Json;
 
 const CODES: &[&str] = &[
@@ -79,6 +81,7 @@ pub fn endpoint(region: &str) -> Result<String, AwsError> {
     Endpoint::for_service("bedrock-agentcore", region).map(|endpoint| endpoint.url())
 }
 
+#[cfg(test)]
 fn process_body(approved: &Approved) -> String {
     let mut payload = match approved.entry() {
         Json::Object(entries) => entries.clone(),
@@ -187,6 +190,7 @@ fn runtime_region(
     toolkit_aws::is_valid_region(region).then(|| region.to_owned())
 }
 
+#[cfg(test)]
 fn valid_process_response(body: &str, manager: &str, session: &str, instrument: &str) -> bool {
     if body.len() > 65_536 {
         return false;
@@ -395,6 +399,7 @@ mod operation_contracts {
 
 /// AgentCore call failure, containing no server-supplied text.
 #[derive(Debug, PartialEq, Eq)]
+#[cfg(test)]
 pub enum PaymentError {
     /// A service error, reduced to a fixed code.
     Service(&'static str),
@@ -405,6 +410,7 @@ pub enum PaymentError {
 }
 
 /// An adapter over a caller-supplied transport and signer.
+#[cfg(test)]
 pub struct PaymentClient<'a> {
     transport: &'a dyn toolkit_aws::StreamingTransport,
     signer: &'a dyn toolkit_aws::Signer,
@@ -414,14 +420,17 @@ pub struct PaymentClient<'a> {
 /// A sensitive authorization returned by the service; it has not yet been
 /// checked against the approved terms by the proof verifier.
 #[derive(PartialEq)]
+#[cfg(test)]
 pub struct PaymentProof(Json);
 
+#[cfg(test)]
 impl std::fmt::Debug for PaymentProof {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("PaymentProof([REDACTED])")
     }
 }
 
+#[cfg(test)]
 impl PaymentProof {
     /// Inspect the sensitive document for verification. Never log this value.
     #[must_use]
@@ -430,6 +439,7 @@ impl PaymentProof {
     }
 }
 
+#[cfg(test)]
 impl<'a> PaymentClient<'a> {
     /// Build an adapter using the conventional endpoint.
     ///
