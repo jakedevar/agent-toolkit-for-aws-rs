@@ -639,3 +639,5 @@ Friction: #4727, Rsi #4694, Rsi #4704
   4/4 busy: 4cbe8435 (#5118), bc70b368 (#4411 design), f43fddbd (#5143), d09ae2af (#5105 r3).
 - 10-29 05:35Z: LANDED L0-L2 (#5085) at ce7bf4885597dd37cf6fdb4035806abb3fef484d (entry 608c2693). Closed #5085 (auto), #5131, #5132-#5135. #5082 reopened (owes L3/L6 + #5080). Carry #5141 (P3) + #5081/#5083 (L4) into later L reviews.
   Next #4382: #5080 TA-STREAM-DL after S1 #5017 lands (mcp-proxy integration round 22); then L3; L4-L6 per design.
+- 10-29 05:40Z: S4 r3 (d09ae2af) ACCEPT mcp-proxy stack at 1f8dd6e66fc7d2aac8e660908ffa988a255c9254 (#5136-#5138 closed; lock audit clean). Integration round 22 = #5147 -> 454d9ca4 (Opus high, from 1f8dd6e6, merge rolling ce7bf488, resolve Cargo.lock/Makefile). On handoff: enqueue; on landing close #5017 #5052 #5079 #5105 #5106-#5113 #5136-#5138 #5147; then #5080 TA-STREAM-DL + x402 P-ROOTS/S4 + operator signed-run to-do + mcp-proxy S5.
+  4/4 busy: 4cbe8435 (#5118), bc70b368 (#4411 design), f43fddbd (#5143), 454d9ca4 (#5147 r22).
