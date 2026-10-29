@@ -2373,9 +2373,10 @@ fn slice_findings(sources: &[Source]) -> Vec<String> {
                     .collect()
             })
         });
-    if listed.as_deref() != Some(&["crate::agents_pay::SLICE".to_owned()][..]) {
+    let tables: Vec<String> = PAYMENT_TABLES.iter().map(|t| (*t).to_owned()).collect();
+    if listed.as_deref() != Some(&tables[..]) {
         found.push(format!(
-            "registry.rs: `SLICES` must list `crate::agents_pay::SLICE` as the one payment table; found {listed:?}"
+            "registry.rs: `SLICES` must list exactly the payment tables {PAYMENT_TABLES:?}, in that order; found {listed:?}"
         ));
     }
 
@@ -2640,6 +2641,7 @@ fn full_gate(sources: &[Source], manifest: &str, workspace: &str) -> Vec<String>
     d32_findings(sources)
         .into_iter()
         .chain(slice_findings(sources))
+        .chain(admin_findings(sources))
         .chain(pay_dir_findings(sources))
         .chain(premain_findings(sources))
         .chain(root_crate_findings(sources, manifest))
@@ -3367,4 +3369,403 @@ fn t_ac3_noread_catches_the_review_5419_mutations() {
         }
     }
     assert!(survived.is_empty(), "survived the gate: {survived:#?}");
+}
+
+// ------------ D32 for the admin routes (x402 S6, #5462, AC3)
+//
+// Every `agents-pay admin *` route and `agents-build setup-payment-user`
+// follow the fetch route's structure: in a build without the live feature
+// each registry entry is `self::no_payment::admin_command` in
+// `admin/mod.rs`, a file module whose whole token stream is pinned, which
+// prints `D32_ADMIN_REFUSAL` on stderr and sets exit 1. Both admin tables
+// live in `admin/mod.rs` (`SLICE` and `BUILD_SLICE`), so one file holds
+// every admin registry entry.
+
+/// The payment tables `crate::registry::SLICES` lists, in its (name) order.
+const PAYMENT_TABLES: &[&str] = &[
+    "crate::agents_pay::admin::BUILD_SLICE",
+    "crate::agents_pay::SLICE",
+    "crate::agents_pay::admin::SLICE",
+];
+
+const ADMIN_FILE: &str = "agents_pay/admin/mod.rs";
+const ADMIN_NO_PAYMENT_FILE: &str = "agents_pay/admin/no_payment.rs";
+
+/// The whole of `admin/no_payment.rs`, compared token for token.
+const ADMIN_NO_PAYMENT_PIN: &str = r"
+pub(super) fn admin_command(
+    _invocation: &crate::Invocation,
+    out: &mut crate::Output<'_>,
+) -> ::core::result::Result<(), ::toolkit_core::ToolkitError> {
+    self::refuse_without_payment_support(out)
+}
+
+fn refuse_without_payment_support(
+    out: &mut crate::Output<'_>,
+) -> ::core::result::Result<(), ::toolkit_core::ToolkitError> {
+    out.diagnostic(super::D32_ADMIN_REFUSAL);
+    out.set_exit_status(1);
+    ::core::result::Result::Ok(())
+}
+";
+
+/// The admin tables and the routes of each, in order.
+const ADMIN_TABLES: &[(&str, &[&[&str]])] = &[
+    (
+        "SLICE",
+        &[
+            &["agents-pay", "admin", "init-config"],
+            &["agents-pay", "admin", "show-config"],
+            &["agents-pay", "admin", "create-instrument"],
+            &["agents-pay", "admin", "new-session"],
+            &["agents-pay", "admin", "preflight"],
+            &["agents-pay", "admin", "setup-openclaw"],
+        ],
+    ),
+    ("BUILD_SLICE", &[&["agents-build", "setup-payment-user"]]),
+];
+
+const ADMIN_D32_TEXT: &str =
+    "This toolkit build has no payment support; install a release build of toolkit.";
+
+/// The value of `const NAME: &str = "..";` when it is exactly one string
+/// literal with no attribute but its docs.
+fn const_literal(file: &syn::File, name: &str) -> Option<String> {
+    let consts: Vec<&syn::ItemConst> = file
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            syn::Item::Const(c) if c.ident == name => Some(c),
+            _ => None,
+        })
+        .collect();
+    let [item] = consts.as_slice() else {
+        return None;
+    };
+    let is_str = matches!(&*item.ty, Type::Reference(r)
+        if r.lifetime.is_none() && r.mutability.is_none()
+            && matches!(&*r.elem, Type::Path(p) if p.qself.is_none() && p.path.is_ident("str")));
+    let docs_only = item.attrs.iter().all(|a| a.path().is_ident("doc"));
+    match &*item.expr {
+        syn::Expr::Lit(syn::ExprLit {
+            lit: syn::Lit::Str(lit),
+            attrs,
+        }) if is_str && docs_only && attrs.is_empty() => Some(lit.value()),
+        _ => None,
+    }
+}
+
+/// The string-literal words of `path: &["a", "b"]`.
+fn path_words(expr: &syn::Expr) -> Option<Vec<String>> {
+    array_ref(expr).and_then(|elems| {
+        elems
+            .iter()
+            .map(|e| match e {
+                syn::Expr::Lit(syn::ExprLit {
+                    lit: syn::Lit::Str(s),
+                    attrs,
+                }) if attrs.is_empty() => Some(s.value()),
+                _ => None,
+            })
+            .collect()
+    })
+}
+
+/// One admin `CommandSpec` literal: its path and exactly the two cfg-split
+/// handlers, the second the pinned D32 route.
+fn admin_spec_findings(table: &str, spec: &syn::Expr, route: &[&str], found: &mut Vec<String>) {
+    let Some(spec) = full_literal(spec, "crate::CommandSpec", found) else {
+        return;
+    };
+    let mut handlers = Vec::new();
+    let mut paths = Vec::new();
+    for field in &spec.fields {
+        match field_name(field).as_str() {
+            "handler" => handlers.push(field),
+            name => {
+                if !field.attrs.is_empty() {
+                    found.push(format!(
+                        "{ADMIN_FILE}: the {table} `CommandSpec` field `{name}` has an attribute"
+                    ));
+                }
+                if name == "path" {
+                    paths.push(&field.expr);
+                }
+            }
+        }
+    }
+    let words = match paths.as_slice() {
+        [expr] => path_words(expr),
+        _ => None,
+    };
+    let expected: Vec<String> = route.iter().map(|w| (*w).to_owned()).collect();
+    if words.as_deref() != Some(&expected[..]) {
+        found.push(format!(
+            "{ADMIN_FILE}: a {table} `CommandSpec` must have `path: &{route:?}`; found {words:?}"
+        ));
+    }
+    let live = format!("feature=\"{LIVE_FEATURE}\"");
+    let disabled = format!("not(feature=\"{LIVE_FEATURE}\")");
+    let bound = match handlers.as_slice() {
+        [first, second] => {
+            matches!(first.attrs.as_slice(), [attr] if is_cfg(attr, &live))
+                && matches!(&first.expr, syn::Expr::Path(p)
+                    if p.attrs.is_empty() && p.qself.is_none() && p.path.segments.len() == 1
+                        && p.path.leading_colon.is_none())
+                && matches!(second.attrs.as_slice(), [attr] if is_cfg(attr, &disabled))
+                && matches!(&second.expr, syn::Expr::Path(p)
+                    if p.attrs.is_empty() && p.qself.is_none()
+                        && plain_path(&p.path).as_deref() == Some("self::no_payment::admin_command"))
+        }
+        _ => false,
+    };
+    if !bound {
+        found.push(format!(
+            "{ADMIN_FILE}: the `{}` `CommandSpec` must hold exactly a live-only handler then `#[cfg(not(feature = \"{LIVE_FEATURE}\"))] handler: self::no_payment::admin_command`",
+            route.join(" ")
+        ));
+    }
+}
+
+/// The admin routes: the pinned file module, its one declaration, the two
+/// tables and every route's two handlers, the D32 literal, and no binding
+/// that could shadow `no_payment`, `D32_ADMIN_REFUSAL` or a prelude name.
+#[allow(clippy::too_many_lines)] // One pass over the pinned file and the tables.
+fn admin_findings(sources: &[Source]) -> Vec<String> {
+    let text = |path: &str| {
+        sources
+            .iter()
+            .find(|s| s.path == path)
+            .map(|s| s.text.as_str())
+    };
+    let mut found = Vec::new();
+    match text(ADMIN_NO_PAYMENT_FILE).map(tokens) {
+        None => found.push(format!("{ADMIN_NO_PAYMENT_FILE}: is missing")),
+        Some(Err(_)) => found.push(format!("{ADMIN_NO_PAYMENT_FILE}: does not tokenize")),
+        Some(Ok(stream)) => {
+            let mut actual = Vec::new();
+            token_list(stream, &mut actual);
+            if actual != list_of_text(ADMIN_NO_PAYMENT_PIN) {
+                found.push(format!(
+                    "{ADMIN_NO_PAYMENT_FILE}: differs from the pinned admin D32 route"
+                ));
+            }
+        }
+    }
+    let Some(admin) = text(ADMIN_FILE) else {
+        found.push(format!("{ADMIN_FILE}: is missing"));
+        return found;
+    };
+    let (Ok(stream), Ok(file)) = (tokens(admin), parse_source(admin)) else {
+        found.push(format!("{ADMIN_FILE}: does not parse"));
+        return found;
+    };
+    let trees: Vec<TokenTree> = stream.into_iter().collect();
+    let decls: Vec<Vec<String>> = trees
+        .windows(2)
+        .enumerate()
+        .filter(|(_, w)| {
+            matches!((&w[0], &w[1]), (TokenTree::Ident(m), TokenTree::Ident(n)) if m == "mod" && n == "no_payment")
+        })
+        .map(|(at, _)| list_of_trees(&trees[attr_start(&trees, at)..(at + 3).min(trees.len())]))
+        .collect();
+    if decls != [list_of_text(&no_payment_decl())] {
+        found.push(format!(
+            "{ADMIN_FILE}: the `no_payment` module must be declared once, exactly `{}`; found {decls:?}",
+            no_payment_decl()
+        ));
+    }
+    let mut handlers = Vec::new();
+    handler_fields(&trees, &mut handlers);
+    let routes: usize = ADMIN_TABLES.iter().map(|(_, r)| r.len()).sum();
+    let disabled = list_of_text(&format!(
+        "#[cfg(not(feature = \"{LIVE_FEATURE}\"))]\nhandler: self::no_payment::admin_command,"
+    ));
+    let disabled_count = handlers.iter().filter(|h| **h == disabled).count();
+    if handlers.len() != 2 * routes || disabled_count != routes {
+        found.push(format!(
+            "{ADMIN_FILE}: expected {routes} live and {routes} pinned D32 `handler:` entries; found {} entries, {disabled_count} pinned",
+            handlers.len()
+        ));
+    }
+    if const_literal(&file, "D32_ADMIN_REFUSAL").as_deref() != Some(ADMIN_D32_TEXT) {
+        found.push(format!(
+            "{ADMIN_FILE}: `D32_ADMIN_REFUSAL` is not one `const D32_ADMIN_REFUSAL: &str = \"{ADMIN_D32_TEXT}\";`"
+        ));
+    }
+    for (table, routes) in ADMIN_TABLES {
+        let consts: Vec<&syn::ItemConst> = file
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                syn::Item::Const(c) if c.ident == table => Some(c),
+                _ => None,
+            })
+            .collect();
+        let [slice] = consts.as_slice() else {
+            found.push(format!(
+                "{ADMIN_FILE}: needs exactly one top-level `const {table}`, found {}",
+                consts.len()
+            ));
+            continue;
+        };
+        if !slice.attrs.iter().all(|a| a.path().is_ident("doc")) {
+            found.push(format!(
+                "{ADMIN_FILE}: `{table}` has an attribute other than docs"
+            ));
+        }
+        let Some(literal) = full_literal(&slice.expr, "crate::registry::Slice", &mut found) else {
+            continue;
+        };
+        let mut commands = Vec::new();
+        for field in &literal.fields {
+            if !field.attrs.is_empty() {
+                found.push(format!(
+                    "{ADMIN_FILE}: the `{table}` field `{}` has an attribute",
+                    field_name(field)
+                ));
+            }
+            if field_name(field) == "commands" {
+                commands.push(&field.expr);
+            }
+        }
+        let specs = match commands.as_slice() {
+            [expr] => array_ref(expr),
+            _ => None,
+        };
+        match specs {
+            Some(specs) if specs.len() == routes.len() => {
+                for (spec, route) in specs.iter().zip(routes.iter()) {
+                    admin_spec_findings(table, spec, route, &mut found);
+                }
+            }
+            _ => found.push(format!(
+                "{ADMIN_FILE}: `{table}.commands` must be `&[..]` of {} `crate::CommandSpec` literals",
+                routes.len()
+            )),
+        }
+    }
+    // Bindings: the surface names are bound by their own items only.
+    let mut items: Vec<(String, &'static str)> = Vec::new();
+    let mut imports: Vec<(String, String)> = Vec::new();
+    for item in &file.items {
+        match item {
+            syn::Item::Use(item) => use_leaves("", &item.tree, &mut imports),
+            syn::Item::Macro(item) => found.push(format!(
+                "{ADMIN_FILE}: a top-level macro item `{}!` can define any name",
+                path_text(&item.mac.path)
+            )),
+            other => items.extend(item_binding(other)),
+        }
+    }
+    if imports.iter().any(|(name, _)| name == "*") {
+        found.push(format!("{ADMIN_FILE}: a glob import can shadow a surface name"));
+    }
+    let bound = |name: &str| {
+        items.iter().filter(|(n, _)| n == name).count()
+            + imports.iter().filter(|(n, _)| n == name).count()
+    };
+    for (name, kind) in [("no_payment", "mod"), ("D32_ADMIN_REFUSAL", "const")] {
+        let of_kind = items.iter().filter(|(n, k)| n == name && *k == kind).count();
+        if of_kind != 1 || bound(name) != 1 {
+            found.push(format!(
+                "{ADMIN_FILE}: `{name}` must be bound by exactly one top-level {kind} item, found {} binding(s)",
+                bound(name)
+            ));
+        }
+    }
+    for name in PRELUDE_NAMES {
+        if bound(name) != 0 {
+            found.push(format!("{ADMIN_FILE}: `{name}` is shadowed"));
+        }
+    }
+    found
+}
+
+#[test]
+fn t_ac3_admin_routes_the_real_sources_keep_every_d32_pin() {
+    let sources = real_sources();
+    let found = admin_findings(&sources);
+    assert!(found.is_empty(), "{found:#?}");
+    let pinned = list_of_text(ADMIN_NO_PAYMENT_PIN);
+    assert!(pinned.len() > 60, "{}", pinned.len());
+    assert_eq!(
+        ADMIN_D32_TEXT,
+        toolkit_cli::agents_pay::deps::NO_PAYMENT_SUPPORT
+    );
+    assert_eq!(
+        ADMIN_D32_TEXT,
+        toolkit_cli::agents_pay::admin::D32_ADMIN_REFUSAL
+    );
+}
+
+#[test]
+fn t_ac3_admin_routes_catch_every_seeded_violation() {
+    let admin = |anchor: &str, edit: &dyn Fn(&str) -> String| sources_with(ADMIN_FILE, anchor, edit);
+    let refusal = "    out.diagnostic(super::D32_ADMIN_REFUSAL);\n";
+    let disabled = format!(
+        "            #[cfg(not(feature = \"{LIVE_FEATURE}\"))]\n            handler: self::no_payment::admin_command,\n"
+    );
+    let mutations: Vec<(&str, Vec<Source>)> = vec![
+        (
+            "env read before the admin refusal",
+            sources_with(ADMIN_NO_PAYMENT_FILE, refusal, |a| {
+                format!("    let _ = ::std::env::var_os(\"HOME\");\n{a}")
+            }),
+        ),
+        (
+            "admin refusal exits 0",
+            sources_with(ADMIN_NO_PAYMENT_FILE, "    out.set_exit_status(1);\n", |_| {
+                "    out.set_exit_status(0);\n".to_owned()
+            }),
+        ),
+        (
+            "a disabled handler that runs the live route",
+            admin(&disabled, &|_| {
+                format!(
+                    "            #[cfg(not(feature = \"{LIVE_FEATURE}\"))]\n            handler: init_config_command,\n"
+                )
+            }),
+        ),
+        (
+            "a handler without its cfg split",
+            admin(&disabled, &|_| String::new()),
+        ),
+        (
+            "the D32 text changed",
+            admin("install a release build of toolkit.\";", &|_| {
+                "install a release build.\";".to_owned()
+            }),
+        ),
+        (
+            "a second declaration of no_payment",
+            admin("mod no_payment;\n", &|a| format!("{a}#[cfg(any())]\nmod no_payment;\n")),
+        ),
+        (
+            "an import that shadows the D32 text",
+            admin("use std::path::{Path, PathBuf};\n", &|a| {
+                format!("{a}use crate::agents_pay::D32_REFUSAL as D32_ADMIN_REFUSAL;\n")
+            }),
+        ),
+        (
+            "a route moved out of its table",
+            admin("            path: &[\"agents-pay\", \"admin\", \"preflight\"],", &|_| {
+                "            path: &[\"agents-pay\", \"admin\", \"preflight-x\"],".to_owned()
+            }),
+        ),
+        (
+            "an attribute on the build table",
+            admin("pub(crate) const BUILD_SLICE", &|a| format!("#[cfg_attr(all(), cfg(any()))]\n{a}")),
+        ),
+        (
+            "an admin table missing from the registry",
+            sources_with("registry.rs", "    crate::agents_pay::admin::BUILD_SLICE,\n", |_| {
+                String::new()
+            }),
+        ),
+    ];
+    for (label, sources) in mutations {
+        let found = route_gate(&sources);
+        assert!(!found.is_empty(), "{label}: the gate found nothing");
+    }
 }

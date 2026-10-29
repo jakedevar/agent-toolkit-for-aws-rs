@@ -1,4 +1,6 @@
-//! T-AC3-INH (x402 S5 #5352, design section 7 G1c) for the `fetch` routes.
+//! T-AC3-INH (x402 S5 #5352, design section 7 G1c) for the `fetch` routes,
+//! and (S6 #5462) for every `agents-pay admin` route and
+//! `agents-build setup-payment-user`.
 //!
 //! Every route runs once in process through `toolkit_cli::run` and once as
 //! the built binary under a hostile, non-fixture environment whose endpoint
@@ -203,6 +205,144 @@ fn t_ac3_inh_fetch_routes_as_a_child_under_a_hostile_environment() {
             "{route:?}"
         );
         assert!(out.stderr.is_empty(), "{route:?}");
+        assert_no_connection(&listener);
+    }
+    assert_eq!(snapshot(&root.0), before, "a file changed or was created");
+}
+
+/// Every admin and `agents-build` route (S6), with arguments that would
+/// create a wallet user, a session or a config file in a live build.
+const ADMIN_ROUTES: &[&[&str]] = &[
+    &[
+        "agents-pay",
+        "admin",
+        "init-config",
+        "--allow-any-recipient",
+        "--force",
+    ],
+    &["agents-pay", "admin", "init-config", "--recipient", "0xabc"],
+    &["agents-pay", "admin", "show-config"],
+    &[
+        "agents-pay",
+        "admin",
+        "create-instrument",
+        "--email",
+        "user@example.com",
+    ],
+    // No required argument: D32 still wins.
+    &["agents-pay", "admin", "create-instrument"],
+    &[
+        "agents-pay",
+        "admin",
+        "new-session",
+        "--budget",
+        "1.00",
+        "--expiry-minutes",
+        "30",
+    ],
+    &["agents-pay", "admin", "new-session"],
+    &["agents-pay", "admin", "preflight"],
+    &["agents-pay", "admin", "setup-openclaw"],
+    &[
+        "agents-pay",
+        "admin",
+        "setup-openclaw",
+        "--project-dir",
+        "../project",
+    ],
+    &[
+        "agents-build",
+        "setup-payment-user",
+        "--user-id",
+        "alice",
+        "--email",
+        "alice@example.com",
+        "--budget",
+        "5",
+    ],
+    &["agents-build", "setup-payment-user"],
+];
+
+/// The D32 text of an admin route, on stderr (exit 1).
+fn admin_expected() -> String {
+    format!(
+        "{}\n",
+        toolkit_cli::agents_pay::admin::D32_ADMIN_REFUSAL
+    )
+}
+
+#[test]
+fn t_ac3_inh_admin_routes_in_process_make_no_connection_and_touch_no_file() {
+    assert_eq!(
+        toolkit_cli::agents_pay::admin::D32_ADMIN_REFUSAL,
+        NO_PAYMENT_SUPPORT
+    );
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    for route in ADMIN_ROUTES {
+        let args: Vec<OsString> = route.iter().map(OsString::from).collect();
+        let (mut out, mut err) = (Vec::new(), Vec::new());
+        let code = toolkit_cli::run(&args, &mut out, &mut err);
+        assert_eq!(code, 1, "{route:?}");
+        assert!(out.is_empty(), "{route:?}");
+        assert_eq!(
+            String::from_utf8(err).unwrap(),
+            admin_expected(),
+            "{route:?}"
+        );
+        assert_no_connection(&listener);
+    }
+}
+
+#[test]
+fn t_ac3_inh_admin_routes_as_a_child_under_a_hostile_environment() {
+    let root = scratch();
+    let (home, cwd) = hostile_home(&root.0);
+    // A deploy record the working-directory discovery would find.
+    write(
+        &cwd.join("agentcore/.cli/deployed-state.json"),
+        r#"{"payments":[{"managerArn":"arn:aws:bedrock-agentcore:us-east-1:444455556666:payment-manager/prod-abcdefghij","connectors":[{"connectorId":"connector-PRODabcdef"}]}]}"#,
+        0o644,
+    );
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let recorder = format!("http://{}", listener.local_addr().unwrap());
+    let before = snapshot(&root.0);
+    for route in ADMIN_ROUTES {
+        let out = Command::new(env!("CARGO_BIN_EXE_toolkit"))
+            .args(*route)
+            .current_dir(&cwd)
+            .env("HOME", &home)
+            .env("AWS_PROFILE", "hostile")
+            .env("AWS_ACCESS_KEY_ID", "AKIAYYYYYYYYYYYYYYYY")
+            .env(
+                "AWS_SECRET_ACCESS_KEY",
+                "hostileEnvSecrethostileEnvSecrethostile0",
+            )
+            .env("AWS_REGION", "us-east-1")
+            .env(
+                "PAYMENT_MANAGER_ARN",
+                "arn:aws:bedrock-agentcore:us-east-1:444455556666:payment-manager/prod-abcdefghij",
+            )
+            .env("PAYMENT_CONNECTOR_ID", "connector-PRODabcdef")
+            .env("PAYMENT_USER_ID", "agents-pay-a1b2c3d4e5f6")
+            .env("AWS_ENDPOINT_URL", &recorder)
+            .env("AWS_ENDPOINT_URL_BEDROCK_AGENTCORE", &recorder)
+            .env("AWS_ENDPOINT_URL_STS", &recorder)
+            .env("AWS_EC2_METADATA_SERVICE_ENDPOINT", &recorder)
+            .env("AWS_CONTAINER_CREDENTIALS_FULL_URI", &recorder)
+            .env("AGENTCORE_PROJECT_DIR", root.0.join("project"))
+            .env("AGENTS_PAY_CONFIG", home.join(".agents-pay/config.json"))
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(1), "{route:?}");
+        assert!(out.stdout.is_empty(), "{route:?}");
+        assert_eq!(
+            String::from_utf8(out.stderr).unwrap(),
+            admin_expected(),
+            "{route:?}"
+        );
         assert_no_connection(&listener);
     }
     assert_eq!(snapshot(&root.0), before, "a file changed or was created");
