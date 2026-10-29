@@ -236,7 +236,7 @@ fn t_stage_8_directory_created_at_the_destination_before_publication() {
 }
 
 /// T-STAGE-8 with an *empty* intruding directory (#5504): an ordinary
-/// `rename(2)` would replace an empty directory, so only RENAME_NOREPLACE
+/// `rename(2)` would replace an empty directory, so only `RENAME_NOREPLACE`
 /// refuses this. The intruder is preserved and nothing partial remains.
 #[test]
 fn t_stage_8b_empty_directory_created_at_the_destination_before_publication() {

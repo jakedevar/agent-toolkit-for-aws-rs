@@ -403,7 +403,9 @@ fn t_ar_sel_7_non_utf8_names_are_refused() {
 #[test]
 fn t_ar_sel_8_order_is_deterministic_by_name_bytes() {
     let tree = Scratch::new("sel8");
-    for name in ["b", "a.txt", "a/x", "B", "a-b", "\u{e9}", "_u", "0"] {
+    // Upper case `C`, not `B`: `B` beside `b` is a case collision that the
+    // Upload self-check refuses (#5504, asserted below).
+    for name in ["b", "a.txt", "a/x", "C", "a-b", "\u{e9}", "_u", "0"] {
         tree.write(name, name.as_bytes());
     }
     let first = build(tree.path()).expect("build");
@@ -412,7 +414,7 @@ fn t_ar_sel_8_order_is_deterministic_by_name_bytes() {
         names(&first),
         vec![
             "app/0",
-            "app/B",
+            "app/C",
             "app/_u",
             "app/a/x",
             "app/a-b",
@@ -423,6 +425,17 @@ fn t_ar_sel_8_order_is_deterministic_by_name_bytes() {
     );
     let second = build(tree.path()).expect("build");
     assert_eq!(first.bytes, second.bytes, "byte-identical rebuild");
+    // A case pair in the source tree is refused by the Upload self-check
+    // before anything is uploaded (R-AR-READ under both profiles, #5504).
+    tree.write("B", b"B");
+    assert_eq!(
+        build(tree.path()).map(|_| ()),
+        Err(LaunchError::Archive(
+            "Archive contains entries whose names collide after case folding or Unicode \
+             normalisation: 'app/b'"
+                .to_string()
+        ))
+    );
 }
 
 #[test]
