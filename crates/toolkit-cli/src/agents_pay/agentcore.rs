@@ -931,6 +931,10 @@ pub fn process_payment(
 
 impl<'a> PaymentClient<'a> {
     #[cfg(test)]
+    fn sts_check(&self) -> Result<(), PaymentError> {
+        Err(PaymentError::InvalidResponse)
+    }
+    #[cfg(test)]
     fn process_payment_until(
         &self,
         approved: Approved,
@@ -1361,6 +1365,37 @@ mod wire_contracts {
             ))
         );
         assert_eq!(transport.requests().len(), 1);
+    }
+
+    #[test]
+    fn sts_identity_has_fixed_endpoint_signing_and_valid_response() {
+        let body = br#"<GetCallerIdentityResponse xmlns="https://sts.amazonaws.com/doc/2011-06-15/"><GetCallerIdentityResult><Arn>arn:aws:iam::111111111111:role/test</Arn><UserId>TEST</UserId><Account>111111111111</Account></GetCallerIdentityResult><ResponseMetadata><RequestId>test</RequestId></ResponseMetadata></GetCallerIdentityResponse>"#;
+        let transport =
+            FakeStreamingTransport::new().respond(200, &[], vec![FakeChunk::data(body)]);
+        let signer = toolkit_aws::testing::FakeSigner::new();
+        let client = PaymentClient::new("us-east-1", &transport, &signer).unwrap();
+        assert_eq!(client.sts_check(), Ok(()));
+        let calls = transport.requests();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].url, "https://sts.us-east-1.amazonaws.com/");
+        assert_eq!(
+            calls[0].body,
+            b"Action=GetCallerIdentity&Version=2011-06-15"
+        );
+        assert_eq!(
+            calls[0].headers.get("authorization"),
+            Some("FAKE-SIGNED us-east-1/sts")
+        );
+        assert_eq!(
+            calls[0].headers.get("content-type"),
+            Some("application/x-www-form-urlencoded")
+        );
+        assert_eq!(
+            calls[0]
+                .headers
+                .get("x-amzn-bedrock-agentcore-payments-user-id"),
+            None
+        );
     }
 
     #[test]
