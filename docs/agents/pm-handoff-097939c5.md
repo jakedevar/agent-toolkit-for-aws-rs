@@ -1159,3 +1159,5 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 21:11Z: #5472 (f962147b) DONE at 665200f92022176444466967bd671d0ca3953205 (scripts/run-rsid-test-shards.sh + selftest + Makefile; red 31ca4559 exit 127, green b9ce8fca). check ok (a93c1bba). ENQUEUED seq 3042 (58fcd064). On land close #5472. Friction #5478 (flaky launch callback gate test, HelperBlocked vs TimedOut) -> next free slot (gate-flake risk).
   Filed L7 #5479 (security review of L0-L6 at rolling 289fadc1) -> Codex sol xhigh cfb95bf6. After ACCEPT + operator live run (design section 9) -> L8 cutover.
   4/4: cfb95bf6 L7, 6d3a33dc #5474, 0311ca3f S1 r2, e02b0f23 B2.
+- 21:14Z: review #5474 (6d3a33dc) CHANGES_REQUESTED S6: BLOCKER #5475 (live AdminWorld built before TTY check). RULED nonblocker: setup-openclaw instrument step w/o approve (D33 keeps per-step approvals); deviations accepted. 6/6 guard reverts caught. Also: 31f6d96e does NOT merge cleanly (registry.rs, diag_contract.rs) despite worker prose; kaizen #5476. Repair 1 -> Claude Opus be2767ad (continue_from 1a973465). Then narrow re-review of #5475 + merge.
+  4/4: be2767ad S6 r1, cfb95bf6 L7, 0311ca3f S1 r2, e02b0f23 B2. Waiting for slot: #5478 flake.
