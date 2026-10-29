@@ -1283,6 +1283,16 @@ mod wire_contracts {
     }
 
     #[test]
+    #[should_panic(expected = "fake payments require fixture account")]
+    fn fake_payments_rejects_non_fixture_manager_account() {
+        let api = FakePaymentsApi {
+            calls: Cell::new(0),
+        };
+        let request = ProcessPaymentRequest::from_approved(&super::operation_contracts::approved());
+        let _ = api.process_payment(&request);
+    }
+
+    #[test]
     fn approved_payment_is_consumed_once_and_retains_verified_terms() {
         let api = FakePaymentsApi {
             calls: Cell::new(0),
