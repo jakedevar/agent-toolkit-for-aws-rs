@@ -134,6 +134,17 @@ fn ap_pub_15_dry_run_creates_no_output() {
 }
 
 #[test]
+fn ap_scr_04_nonregular_destination_has_specific_error() {
+    let f = Fixture::new();
+    let template = f.write("template.py", "# Cell 0 [markdown]: Example\n# Description\n# Cell 1: Code\npass\n");
+    fs::create_dir_all(f.0.join("scripts/01_example.py")).unwrap();
+    let result = f.render(&template, "script", &[]);
+    assert_eq!(result.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&result.stderr).contains("script_destination_not_regular"));
+    assert!(f.0.join("scripts/01_example.py").is_dir());
+}
+
+#[test]
 fn ap_asn_01_float_assignments_keep_float_literals() {
     for (value, expected) in [("1", "1.0"), ("1.0", "1.0"), ("1e300", "1e300"), ("1e-7", "1e-7")] {
         let f = Fixture::new();
