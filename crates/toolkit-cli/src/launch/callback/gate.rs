@@ -260,6 +260,73 @@ mod tests {
         assert_eq!(std::fs::read_dir(scratch.path()).unwrap().count(), 0);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn stalled_rename_keeps_custody_and_watchdog_returns_without_waiting() {
+        use crate::launch::{
+            callback::{
+                pending::{acquire_if_free, Custody},
+                wait_decision, PendingStatus, WaitDecision,
+            },
+            clock::SeededRandom,
+            tests_support::Scratch,
+        };
+        let scratch = Scratch::new("stalled-rename");
+        let custody = Custody::acquire(scratch.path(), 81).unwrap();
+        let gate = CommitGate::default();
+        assert!(gate.start_exchange());
+        let cutoff = Instant::now() + Duration::from_secs(1);
+        let (entered_tx, entered_rx) = std::sync::mpsc::sync_channel(0);
+        let (release_tx, release_rx) = std::sync::mpsc::sync_channel(0);
+        std::thread::scope(|scope| {
+            let gate_ref = &gate;
+            let path = scratch.path();
+            let worker = scope.spawn(move || {
+                publish_with(
+                    gate_ref,
+                    cutoff,
+                    path,
+                    b"session",
+                    &SeededRandom::new(1),
+                    || cutoff.checked_sub(Duration::from_millis(1)).unwrap(),
+                    || {},
+                    |from, to| {
+                        entered_tx.send(()).unwrap();
+                        release_rx.recv().unwrap();
+                        std::fs::rename(from, to)
+                    },
+                )
+            });
+            entered_rx.recv().unwrap();
+            watchdog_step(
+                &gate,
+                || panic!("committing must not write record"),
+                |code| assert_eq!(code, 1),
+            );
+            assert!(acquire_if_free(scratch.path(), 81).is_none());
+            assert_eq!(
+                wait_decision(PendingStatus::Exchanging, true, false, 104, 100),
+                WaitDecision::Poll
+            );
+            assert_eq!(
+                wait_decision(PendingStatus::Exchanging, true, false, 105, 100),
+                WaitDecision::HelperBlocked
+            );
+            assert_eq!(
+                wait_decision(PendingStatus::Exchanging, true, false, 3700, 100),
+                WaitDecision::HelperBlocked
+            );
+            release_tx.send(()).unwrap();
+            worker.join().unwrap().unwrap();
+        });
+        drop(custody);
+        assert!(acquire_if_free(scratch.path(), 81).is_some());
+        assert_eq!(
+            std::fs::read(scratch.join("session.json")).unwrap(),
+            b"session"
+        );
+    }
+
     #[test]
     fn cutoff_and_watchdog_close_admission() {
         let cutoff = Instant::now() + Duration::from_secs(1);
