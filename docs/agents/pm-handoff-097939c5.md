@@ -786,3 +786,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
   4/4 busy: 573278a7 (#5216 L4), 0dcdafea (#5181 S4 cont), da98439f (#5223 S2b cont), 23ccf6b5 (#5203 P-ROOTS f/u).
 - 10-29 06:25Z: x402 S3 LANDED (aa9eba69 published, f39cba270ad26662454fd13c5d48313d1f1d045d). #5210 auto-closed; CLOSED #5225 #5217. Open: #5224 (S5 prod wiring test), #5227 (S4). Queue empty.
   NOTE: S4 cont (0dcdafea) branched before S3 landed; it must merge rolling (S3 touched toolkit-aws sdk.rs/binding.rs).
+- 10-29 06:27Z: L4 #5216 (573278a7, 48% ctx) PARTIAL at 9afde41e2e8e58cd452f13f3c49ee417bb9081ef (listener, validation, pending custody, watchdog, helper, routes; scoped 4032 ok). Gaps #5228 (timing/load matrix + seams), #5229 (stdout close, OAuth error code retention, unreadable-record table) = accepted design, no ruling.
+  Continuation 78d863e6 (Codex terra, continue_from 573278a7). Close #5228 #5229 with L4 landing.
+  4/4 busy: 0dcdafea (#5181 S4 cont), da98439f (#5223 S2b cont), 23ccf6b5 (#5203 P-ROOTS f/u), 78d863e6 (#5216 L4 cont).
