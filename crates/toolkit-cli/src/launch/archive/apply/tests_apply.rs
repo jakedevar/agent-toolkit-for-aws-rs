@@ -336,6 +336,22 @@ fn t_apply_8_file_directory_conflicts_are_refused_before_writes() {
     }
 }
 
+/// The fixture's `git commit` must not start Git's detached auto
+/// maintenance (`git maintenance run --auto --detach`, which `commit` runs by
+/// default): that background process holds `.git/objects/maintenance.lock`
+/// for a moment, so a `sha_tree` taken while it runs differs from one taken
+/// after it ends (#5370, the merge-gate reds of T-APPLY-8 and T-PLAN-8).
+#[test]
+fn fixture_repositories_never_start_background_git_maintenance() {
+    let Repo { dir } = repo("no-maintenance");
+    assert_eq!(
+        run_git(dir.path(), &["config", "--get", "maintenance.auto"]),
+        "false\n"
+    );
+    assert_eq!(run_git(dir.path(), &["config", "--get", "gc.auto"]), "0\n");
+    assert!(!dir.join(".git/objects/maintenance.lock").exists());
+}
+
 /// Runs `action` between the phases.
 struct Between<F: FnMut()>(F);
 

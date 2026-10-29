@@ -122,6 +122,8 @@ fn git(dir: &Path, args: &[&str]) {
     let status = Command::new("git")
         .args(["-c", "user.name=t", "-c", "user.email=t@example.invalid"])
         .args(["-c", "init.defaultBranch=main"])
+        // No detached auto maintenance after `commit` (#5370).
+        .args(["-c", "maintenance.auto=false", "-c", "gc.auto=0"])
         .args(args)
         .current_dir(dir)
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
