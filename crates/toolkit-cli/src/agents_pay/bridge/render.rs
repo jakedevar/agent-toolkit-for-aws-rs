@@ -178,6 +178,22 @@ mod tests {
     use super::*;
     use toolkit_core::Json;
 
+    // T-BR-OUT-2: dateutil accepts ISO date-only and shortened time forms.
+    #[test]
+    fn t_br_out_timestamp_iso_forms() {
+        for (input, expected) in [
+            ("2026-08-07", "2026-08-07T00:00:00"),
+            ("2026-08-07 12:34", "2026-08-07T12:34:00"),
+            ("2026-08-07T12:34Z", "2026-08-07T12:34:00+00:00"),
+            ("20260807T123456+0530", "2026-08-07T12:34:56+05:30"),
+        ] {
+            assert_eq!(timestamp(&Json::string(input)).unwrap().as_str(), Some(expected), "{input}");
+        }
+        for input in ["2026-02-30", "2026-08-07T25:00:00Z", "2026-08-07T12:34:60Z", "not-a-date"] {
+            assert!(timestamp(&Json::string(input)).is_err(), "{input}");
+        }
+    }
+
     // T-BR-OUT-CAP: the encoded document and the final LF share the cap.
     #[test]
     fn t_br_out_cap_ascii_and_escapes() {
