@@ -821,6 +821,38 @@ if tok <= \"[X_EIGHT]\":\n    pass\n",
     }
 }
 
+#[test]
+fn ap_sub_04_grouped_operands_and_expression_components() {
+    let template = catalog_of(&demo(concat!(
+        "if tok == ((\"[GROUPED_RIGHT]\")):\n    pass\n",
+        "if ((\"[GROUPED_LEFT]\")) != tok:\n    pass\n",
+        "if tok in (\"[ADDED_MEMBER]\" + suffix,):\n    pass\n",
+        "if tok == \"[ADDED_EQUALITY]\" + suffix:\n    pass\n",
+        "if tok in ((\"[GROUPED_MEMBER]\"),):\n    pass\n",
+    )));
+    for name in ["GROUPED_RIGHT", "GROUPED_LEFT", "GROUPED_MEMBER"] {
+        assert_eq!(contexts(&occurrences_of(&template, name)), vec!["sentinel"], "{name}");
+    }
+    for name in ["ADDED_MEMBER", "ADDED_EQUALITY"] {
+        assert_eq!(contexts(&occurrences_of(&template, name)), vec!["quoted"], "{name}");
+    }
+}
+
+#[test]
+fn ap_cat_06_inline_case_assignments_and_soft_keyword_names() {
+    let template = catalog_of(&demo(concat!(
+        "COUNT = 1\nAUG = 1\nLEFT = 1\nRIGHT = 1\n",
+        "case = 1\nmatch = 2\n",
+        "match value:\n    case 0: COUNT = 2\n    case 1: AUG += 1\n",
+        "    case 2: LEFT, RIGHT = 3, 4\n",
+    )));
+    let names: Vec<String> = items(field(&template, "targets"))
+        .iter()
+        .map(|target| string(field(target, "name")).to_string())
+        .collect();
+    assert_eq!(names, vec!["case", "match"]);
+}
+
 /// AP-SUB-05: a regex such as `"[^A-Za-z0-9-]"` (T25-T27), `[markdown]` and
 /// other bracketed text that is not `[` + A-Z + `[A-Z0-9_ ]*` + `]` are not
 /// placeholders.
