@@ -627,3 +627,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 10-29 05:10Z: L0-L2 repair 1 (f698fe4e) at d8bc813910355095794625ccbb601348268406cf: #5132 CaseFolding C+S table, #5133 RawConfigParser indent, #5134 ensure_ascii, #5135 bounded skipped ledger. Red e0c1cb6b (0/17); fmt 4a9e6613, clippy a937918b, scoped fd4666eb ok, merges clean.
   #5131 r2 (narrow) -> Codex bcf134de pinned d8bc8139. On ACCEPT: enqueue d8bc8139 directly (merges clean onto rolling c27549a6) as #5085 landing.
   4/4 busy: 4cbe8435 (#5118), 8c9c4a04 (#5079 repair 2), 2dcbc9ca (#5119 r3), bcf134de (#5131 r2).
+- 10-29 05:20Z: #5131 r2 (bcf134de) ACCEPT L0-L2 at d8bc813910355095794625ccbb601348268406cf (CaseFolding 17.0.0 verified exact; P3 #5141 carried to L3+). ENQUEUED 608c2693 (seq 2952, #5085). Wake = this seat. On landing: close #5085, #5131, #5132-#5135, #5082.
+  #4411 openclaw-bridge DESIGN -> bc70b368 (Opus high, build_free, sandbox 07d6a0b9 x402 design).
+  4/4 busy: 4cbe8435 (#5118), 8c9c4a04 (#5079 repair 2), 2dcbc9ca (#5119 r3), bc70b368 (#4411 design).
