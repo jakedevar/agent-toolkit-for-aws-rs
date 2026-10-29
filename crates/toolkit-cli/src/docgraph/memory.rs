@@ -152,13 +152,14 @@ pub fn plan(op: &str, input: &Json) -> Result<Vec<Json>, String> {
                 .unwrap_or("agent-memory")
         };
         let number = |key: &str, default| match input.get(key) {
-            Some(Json::Int(n)) => *n,
-            _ => default,
+            Some(Json::Int(n)) => Ok(*n),
+            None => Ok(default),
+            Some(_) => Err(format!("{key} must be an integer")),
         };
         return Ok(vec![create_graph(
             name,
-            number("memory_gb", if rag { 32 } else { 16 }),
-            number("embedding_dimension", 1536),
+            number("memory_gb", if rag { 32 } else { 16 })?,
+            number("embedding_dimension", 1536)?,
             input
                 .get("generation_model")
                 .and_then(Json::as_str)
@@ -374,7 +375,12 @@ impl RecordedMemory {
         for (index, call) in calls.iter().enumerate() {
             let fields =
                 step_fields(call).map_err(|_| format!("recorded call {index}: invalid step"))?;
-            let request = fields.request.cloned();
+            let request = Some(
+                fields
+                    .request
+                    .cloned()
+                    .ok_or_else(|| format!("recorded call {index}: missing request"))?,
+            );
             let step = match fields.outcome {
                 RecordedOutcome::Response(response) => {
                     for key in ["results", "Items"] {

@@ -218,8 +218,11 @@ GraphRAG document/chunk/entity/link ingestion, embedding and vector search;
 **M8** analytics memory embedding, semantic and hybrid recall; **M9**
 consolidation decays facts older than 90 days by 0.9 and deletes below 0.1;
 **M10** deterministic dry-run and recorded replay, including malformed results.
-Invalid chunk sizes or overlaps are rejected to avoid the original infinite
-loop; dynamic Gremlin property names are bound rather than interpolated.
+Invalid chunk sizes and overlaps greater than or equal to the size are rejected
+to avoid the original infinite loop. Compared with the Python helpers, graph IDs
+are validated for every openCypher request, dynamic Gremlin property keys are
+bound rather than interpolated, and vertex_filter JSON is compact rather than
+using json.dumps spacing.
 Live AWS, DynamoDB and Gremlin clients, driver selection and Python retirement
 are outside this item; the legacy helpers remain until the live follow-up.
 
@@ -229,8 +232,8 @@ are outside this item; the legacy helpers remain until the live follow-up.
 one of `--dry-run` and `--recorded` is needed. Request arrays contain the AWS
 API arguments, Gremlin `gremlin`/`bindings`, or DynamoDB operation and arguments.
 `--recorded` accepts `{"calls":[{"request":{...},"response":{"results":[]}}]}`:
-requests are optional, matched in order ignoring object key order, including on
-error steps. Unused or exhausted calls and malformed typed members fail. A
+each step requires a request object, matched in order ignoring object key order,
+including on error steps. Unused or exhausted calls and malformed typed members fail. A
 create response uses `{"id":"g-..."}`, a DynamoDB query response uses
 `{"Items":[...]}`, and query/Gremlin responses use `{"results":[...]}`.
 `retrieve` returns the expanded context array; `recent-messages` returns items

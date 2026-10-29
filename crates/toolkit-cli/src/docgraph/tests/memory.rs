@@ -3,6 +3,48 @@ use super::{json, run, TempDir};
 use crate::docgraph::memory::{
     chunk_document, consolidate, create_graph, entity_id, escape_cypher_string, gremlin, query,
 };
+use toolkit_core::Json;
+
+fn recording(requests: &[Json], responses: &[Json]) -> Json {
+    assert_eq!(requests.len(), responses.len());
+    Json::object(vec![(
+        "calls",
+        Json::Array(
+            requests
+                .iter()
+                .zip(responses)
+                .map(|(request, response)| {
+                    Json::object(vec![
+                        ("request", request.clone()),
+                        ("response", response.clone()),
+                    ])
+                })
+                .collect(),
+        ),
+    )])
+}
+
+fn retrieval_recording(first: &Json, responses: Vec<Json>) -> Json {
+    use crate::docgraph::memory::{retrieve, MemoryClient};
+    struct Capture {
+        requests: Vec<Json>,
+        responses: std::vec::IntoIter<Json>,
+    }
+    impl MemoryClient for Capture {
+        fn submit(&mut self, request: &Json) -> Result<Json, String> {
+            self.requests.push(request.clone());
+            self.responses
+                .next()
+                .ok_or_else(|| "missing response".into())
+        }
+    }
+    let mut capture = Capture {
+        requests: vec![],
+        responses: responses.clone().into_iter(),
+    };
+    retrieve(&mut capture, "g-abc123def4", first).unwrap();
+    recording(&capture.requests, &responses)
+}
 
 #[test]
 fn chunks_and_identifiers() {
@@ -80,13 +122,14 @@ fn retrieve_replays_search_then_three_expansions_per_chunk() {
     use crate::docgraph::memory::{plan, retrieve, RecordedMemory};
     let input = json(r#"{"graph_id":"g-abc123def4","embedding":[0.2],"top_k":2}"#);
     let first = plan("retrieve", &input).unwrap().remove(0);
-    let recording = json(
-        r#"{"calls":[
-      {"response":{"results":[{"id":"c1","text":"first","score":0.9}]}},
-      {"response":{"results":[{"name":"Alice"}]}},
-      {"response":{"results":[{"name":"Bob"}]}},
-      {"response":{"results":[{"id":"c2","text":"neighbor"}]}}
-    ]}"#,
+    let recording = retrieval_recording(
+        &first,
+        vec![
+            json(r#"{"results":[{"id":"c1","text":"first","score":0.9}]}"#),
+            json(r#"{"results":[{"name":"Alice"}]}"#),
+            json(r#"{"results":[{"name":"Bob"}]}"#),
+            json(r#"{"results":[{"id":"c2","text":"neighbor"}]}"#),
+        ],
     );
     let mut client = RecordedMemory::from_document(&recording).unwrap();
     let result = retrieve(&mut client, "g-abc123def4", &first).unwrap();
@@ -131,18 +174,19 @@ fn memory_requests_preserve_bindings_ttl_and_response_order() {
         Some(&json("86401"))
     );
     let requests = plan("recent-messages", &json(r#"{"session_id":"s"}"#)).unwrap();
-    let mut client = RecordedMemory::from_document(&json(
-        r#"{"calls":[{"response":{"Items":[{"timestamp":2},{"timestamp":1}]}}]}"#,
+    let mut client = RecordedMemory::from_document(&recording(
+        &requests,
+        &[json(r#"{"Items":[{"timestamp":2},{"timestamp":1}]}"#)],
     ))
     .unwrap();
     assert_eq!(
         execute(&mut client, "recent-messages", &requests).unwrap(),
         json(r#"[{"timestamp":1},{"timestamp":2}]"#)
     );
-    let mut client =
-        RecordedMemory::from_document(&json(r#"{"calls":[{"response":{"id":"g-abc123def4"}}]}"#))
-            .unwrap();
     let create = plan("create-memory", &json("{}")).unwrap();
+    let mut client =
+        RecordedMemory::from_document(&recording(&create, &[json(r#"{"id":"g-abc123def4"}"#)]))
+            .unwrap();
     assert_eq!(
         execute(&mut client, "create-memory", &create).unwrap(),
         json(r#""g-abc123def4""#)
@@ -182,7 +226,22 @@ fn recorded_cli_replays_ordered_requests_and_rejects_mismatch() {
         "input.json",
         r#"{"graph_id":"g-abc123def4","embedding":[0.1]}"#,
     );
-    let recorded = dir.write("calls.json", r#"{"calls":[{"response":{"results":[{"id":"c1","text":"hello","score":0.5}]}},{"response":{"results":[]}},{"response":{"results":[]}},{"response":{"results":[{"text":"next"}]}}]}"#);
+    let first = crate::docgraph::memory::plan(
+        "retrieve",
+        &json(r#"{"graph_id":"g-abc123def4","embedding":[0.1]}"#),
+    )
+    .unwrap()
+    .remove(0);
+    let calls = retrieval_recording(
+        &first,
+        vec![
+            json(r#"{"results":[{"id":"c1","text":"hello","score":0.5}]}"#),
+            json(r#"{"results":[]}"#),
+            json(r#"{"results":[]}"#),
+            json(r#"{"results":[{"text":"next"}]}"#),
+        ],
+    );
+    let recorded = dir.write("calls.json", &calls.to_compact_string());
     let result = run(&[
         "neptune",
         "memory",
@@ -200,10 +259,11 @@ fn recorded_cli_replays_ordered_requests_and_rejects_mismatch() {
             r#"[{"chunk_text":"hello","score":0.5,"entities":[],"related_entities":[],"neighboring_chunks":["next"]}]"#
         )
     );
-    let extra = dir.write(
-        "extra.json",
-        r#"{"calls":[{"response":{"results":[]}},{"response":{"results":[]}}]}"#,
+    let extra_calls = recording(
+        &[first.clone(), first],
+        &[json(r#"{"results":[]}"#), json(r#"{"results":[]}"#)],
     );
+    let extra = dir.write("extra.json", &extra_calls.to_compact_string());
     assert_ne!(
         run(&[
             "neptune",
