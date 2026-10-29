@@ -57,6 +57,30 @@ After copying the template and generating the notebook cell, inform the user tha
 - If the user wants you to do it: customize the helper functions, reward logic, input parsing, score computation, and return statement based on the task context. Then present the result and warn: "Please review the Lambda code before running — especially the scoring logic. I may have made incorrect assumptions about your requirements."
 - If the user wants to do it: direct them to edit `lambda_function.py` directly and wait for their acknowledgment before proceeding.
 
+### Step 4: Test the Lambda Response Format
+
+Before the user registers the evaluator, check that `lambda_function.py` returns a response SageMaker accepts. Use `--format sagemaker-eval` for the open-weights template and `--format nova` for the Nova 2.0 Lite template.
+
+1. Print the documented event and use it as the starting point for a test event (fill in realistic values; SageMaker sends one sample per invocation):
+
+   ```bash
+   toolkit ai-payloads reward sample --format sagemaker-eval
+   toolkit ai-payloads reward sample --format nova
+   ```
+
+2. Save the event to a temp file (e.g., `/tmp/test_reward_event.json`), run the customized `lambda_handler` on it in the user's environment, and save what it returns to `/tmp/test_reward_response.json`.
+
+3. Check the response against the documented contract. The checker reads both files offline; it does not run the Lambda or call AWS:
+
+   ```bash
+   toolkit ai-payloads reward check --format sagemaker-eval --event /tmp/test_reward_event.json --response /tmp/test_reward_response.json
+   toolkit ai-payloads reward check --format nova --event /tmp/test_reward_event.json --response /tmp/test_reward_response.json
+   ```
+
+   Run the line that matches the template. Exit 0 means the response is one of the two documented envelopes with one result per sample. On exit 1, the output names the position that is wrong (never the value); fix the return statement in `lambda_function.py` and test again.
+
+4. Show the user the test event, the response and the result of the check.
+
 ## Output
 
 The output of this workflow is a reference to `evaluator.arn`. Embed the `Evaluator.create` cell as the first cell of the evaluation notebook so that subsequent cells can reference `evaluator.arn` directly as a variable.

@@ -1,6 +1,17 @@
 # Processing Template Configuration
 
-All templates support notebook and script mode. Notebook-only dependency lines are marked `# NOTEBOOK_ONLY`. Fill every bracketed placeholder before running.
+All templates support notebook and script mode. Do not fill them by hand: render the selected template with the Rust command `toolkit ai-payloads render`. `<skill-dir>` is the directory that holds this skill's `references/` directory, and the values file is written outside the project directory:
+
+```bash
+toolkit ai-payloads templates --root <skill-dir>
+toolkit ai-payloads render <skill-dir>/references/processing-jobs/code_templates/script_processing.py --mode notebook --project-dir <project-dir> --values <scratch-dir>/values.json
+```
+
+Use `--mode script` for a script. Mode choice, appending to an existing notebook, consent and manual edit points follow the code output guide, `../../finetuning/references/code_output_guide.md`.
+
+Every bracketed placeholder below is a key under `values` in the values file, written without the brackets (for example `{"values": {"INSTANCE_TYPE": "ml.m5.xlarge"}}`); `[PROJECT_DIR]` defaults to the project directory, so leave it out. Settings without brackets, such as `WAIT_FOR_COMPLETION` or `MAX_RUNTIME_SECONDS`, are literal fields: `toolkit ai-payloads templates` lists them as `target` lines and they go under `assign`. Each `manual:` line that `render` prints is an edit you make on the rendered file. Notebook-only dependency lines are marked `# NOTEBOOK_ONLY`; script mode drops them. A missing value stops the render before any file is written.
+
+Every bracketed placeholder below is a key under `values` in that file, written without the brackets (for example `"INSTANCE_TYPE": "ml.m5.xlarge"`); `[PROJECT_DIR]` defaults to the project directory, so leave it out. Settings without brackets, such as `WAIT_FOR_COMPLETION` or `MAX_RUNTIME_SECONDS`, are literal fields: `toolkit ai-payloads templates --root <skill-dir>` lists them as `target` lines, and they go under `assign`. Anything it prints as `manual:` is an edit you make on the rendered file. Notebook-only dependency lines are marked `# NOTEBOOK_ONLY`; script mode drops them. A missing value stops the render before any file is written.
 
 ## Common values
 
