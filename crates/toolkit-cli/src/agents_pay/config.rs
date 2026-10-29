@@ -48,6 +48,23 @@ pub fn load_config(path: &Path) -> Result<Json, String> {
 #[cfg(unix)]
 #[doc(hidden)]
 pub fn load_config_with_hook(path: &Path, hook: impl FnOnce()) -> Result<Json, String> {
+    let mut uid = None;
+    load_config_with_owner(path, hook, || {
+        *uid.get_or_insert_with(|| rustix::process::getuid().as_raw())
+    })
+}
+
+/// Load a config with an injected expected owner for each ownership check.
+///
+/// # Errors
+/// Returns an error if the file or policy fails validation.
+#[cfg(unix)]
+#[doc(hidden)]
+pub fn load_config_with_owner(
+    path: &Path,
+    hook: impl FnOnce(),
+    mut expected_owner: impl FnMut() -> u32,
+) -> Result<Json, String> {
     use rustix::fs::{fstat, open, openat, FileType, Mode, OFlags};
     use std::io::Read;
     let display = shown_path(path);
@@ -71,8 +88,7 @@ pub fn load_config_with_hook(path: &Path, hook: impl FnOnce()) -> Result<Json, S
         }
     })?;
     let ds = fstat(&dir).map_err(|_| format!("Cannot stat the directory containing {display}."))?;
-    let uid = rustix::process::getuid().as_raw();
-    if ds.st_uid != uid {
+    if ds.st_uid != expected_owner() {
         return Err(format!(
             "Directory {} is not owned by the current user.",
             shown_path(parent)
@@ -101,7 +117,7 @@ pub fn load_config_with_hook(path: &Path, hook: impl FnOnce()) -> Result<Json, S
     if FileType::from_raw_mode(st.st_mode) != FileType::RegularFile {
         return Err(format!("Payment config {display} is not a regular file."));
     }
-    if st.st_uid != uid {
+    if st.st_uid != expected_owner() {
         return Err(format!(
             "Payment config {display} is not owned by the current user."
         ));

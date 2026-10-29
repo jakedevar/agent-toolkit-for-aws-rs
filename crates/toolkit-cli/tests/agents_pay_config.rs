@@ -1,12 +1,12 @@
 #![cfg(unix)]
 
 use std::fs;
-use std::os::unix::fs::{symlink, PermissionsExt};
+use std::os::unix::fs::{symlink, MetadataExt, PermissionsExt};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use toolkit_cli::agents_pay::config::{
-    bounded_env, load_config, load_config_with_hook, require_resource, resolve_resource,
-    runtime_config_path, Tunables,
+    bounded_env, load_config, load_config_with_hook, load_config_with_owner, require_resource,
+    resolve_resource, runtime_config_path, Tunables,
 };
 use toolkit_core::{parse_json, Json};
 
@@ -53,18 +53,33 @@ fn policy_file_and_directory_protections() {
         assert!(load_config(&p).unwrap_err().contains("writable"));
     }
     fs::set_permissions(&f.0, fs::Permissions::from_mode(0o700)).unwrap();
-    // Changing ownership needs privilege; exercise the file-owner branch when available.
-    if std::os::unix::fs::chown(&p, Some(0), None).is_ok()
-        && rustix::process::getuid().as_raw() != 0
-    {
-        assert!(load_config(&p)
-            .unwrap_err()
-            .contains("not owned by the current user"));
-    }
     fs::remove_file(&p).unwrap();
     assert!(load_config(&p).unwrap_err().contains("No payment config"));
     symlink("missing", &p).unwrap();
     assert!(load_config(&p).unwrap_err().contains("symlink"));
+}
+
+#[test]
+fn owner_refusals_are_exact() {
+    let f = Fixture::new();
+    let p = f.write(r#"{"max_per_payment_usd":"1"}"#);
+    let dir_owner = fs::metadata(&f.0).unwrap().uid();
+    let file_owner = fs::metadata(&p).unwrap().uid();
+    assert_eq!(
+        load_config_with_owner(&p, || {}, || dir_owner.wrapping_add(1)).unwrap_err(),
+        format!(
+            "Directory {} is not owned by the current user.",
+            f.0.display()
+        )
+    );
+    let mut owners = [dir_owner, file_owner.wrapping_add(1)].into_iter();
+    assert_eq!(
+        load_config_with_owner(&p, || {}, || owners.next().unwrap()).unwrap_err(),
+        format!(
+            "Payment config {} is not owned by the current user.",
+            p.display()
+        )
+    );
 }
 
 #[test]
