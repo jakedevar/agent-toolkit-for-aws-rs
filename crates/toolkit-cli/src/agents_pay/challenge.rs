@@ -17,7 +17,7 @@
 //! (S3). Duplicate object keys and `NaN`/`Infinity` literals never parse
 //! (D1, through `toolkit_core::json::parse_json`).
 
-use toolkit_core::base64::decode_validate;
+use toolkit_core::encoding::base64_standard_decode;
 use toolkit_core::{parse_json, Json};
 
 use super::policy::PolicyError;
@@ -54,7 +54,7 @@ fn header_candidate(text: &str) -> Option<Json> {
 }
 
 fn from_header(header: &str) -> Option<Json> {
-    decode_validate(header)
+    base64_standard_decode(header)
         .and_then(|bytes| String::from_utf8(bytes).ok())
         .and_then(|text| header_candidate(&text))
         .or_else(|| header_candidate(header))

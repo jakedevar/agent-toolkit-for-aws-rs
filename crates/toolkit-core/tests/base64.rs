@@ -1,12 +1,14 @@
 //! The shared base64 helpers (x402 S1, #5118; design section 9).
 //!
-//! `encode` is the standard padded encoder moved from `bedrock_resolve`.
-//! `decode_validate` reproduces Python's `base64.b64decode(s, validate=True)`,
-//! which the x402 challenge reader (R-CH step 2) relies on. Since Python
+//! `base64_standard` (`encode` here) is the standard padded encoder moved
+//! from `bedrock_resolve`. `base64_standard_decode` (`decode_validate` here)
+//! reproduces Python's `base64.b64decode(s, validate=True)`, which the x402 challenge reader (R-CH step 2) relies on. Since Python
 //! 3.11 that is `binascii.a2b_base64(s, strict_mode=True)`: the standard
 //! alphabet only, correct padding, nothing after it and no leading padding.
 
-use toolkit_core::base64::{decode_validate, encode};
+use toolkit_core::encoding::{
+    base64_standard as encode, base64_standard_decode as decode_validate,
+};
 
 #[test]
 fn encode_matches_the_standard_vectors() {

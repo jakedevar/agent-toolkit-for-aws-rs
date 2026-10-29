@@ -21,7 +21,7 @@ use toolkit_cli::agents_pay::challenge::{extract, MAX_HEADER_JSON_BYTES};
 use toolkit_cli::agents_pay::policy::PolicyError;
 use toolkit_cli::agents_pay::pyval::{float_repr, py_int, py_str, truthy};
 use toolkit_cli::agents_pay::urlparse::{canonical_origin, urlparse};
-use toolkit_core::base64::encode;
+use toolkit_core::encoding::base64_standard as encode;
 use toolkit_core::{parse_json, Json};
 
 fn json(text: &str) -> Json {

@@ -66,8 +66,8 @@ pub(crate) fn mime_type(image_path: &str) -> Result<String, String> {
     converse_format(image_path).map(|format| format!("image/{format}"))
 }
 
-/// Standard base64 with padding (moved to `toolkit_core::base64`, #5118).
-pub(crate) use toolkit_core::base64::encode as base64_encode;
+/// Standard base64 with padding (moved to `toolkit_core::encoding`, #5118).
+pub(crate) use toolkit_core::encoding::base64_standard as base64_encode;
 
 /// Base64 data URL for the Responses `input_image.image_url` field.
 pub(crate) fn data_url(image_path: &str, raw: &[u8]) -> Result<String, String> {
