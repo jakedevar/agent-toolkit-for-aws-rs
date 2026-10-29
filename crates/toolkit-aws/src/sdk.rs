@@ -83,6 +83,7 @@ use roots::ValidatedRoots;
 pub mod profile;
 pub mod recorder;
 pub mod roots;
+pub mod roots_payment;
 #[cfg(test)]
 mod s3_tests;
 pub mod source;
