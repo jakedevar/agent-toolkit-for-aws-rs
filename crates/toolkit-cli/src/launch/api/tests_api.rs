@@ -77,3 +77,23 @@ fn t_api_put_validates_url_and_never_echoes_signature() {
     assert_eq!(fake.requests()[0].headers.get("authorization"), None);
     assert_eq!(fake.requests()[0].body, b"archive");
 }
+
+#[test]
+fn t_api_snapshot_lookup_uses_launch_envelope_and_error_hints() {
+    let sleeper = RecordingSleeper::new();
+    let token = Secret::new("FAKE-ACCESS-TOKEN");
+    let fake = reply(200, r#"{"launch":{"downloadUrl":"https://b.amazonaws.com/x?signature=FAKE-SIGNATURE"}}"#);
+    let client = Client { transport: &fake, base: "https://launch-with-aws.us-east-1.api.aws", region: "us-east-1", token: &token, clock: &SystemClock, sleeper: &sleeper, jitter: &NoJitter, policy: RetryPolicy::default() };
+    assert_eq!(client.download_url("l/1", false).unwrap().as_deref(), Some("https://b.amazonaws.com/x?signature=FAKE-SIGNATURE"));
+    assert_eq!(fake.requests()[0].url, "https://launch-with-aws.us-east-1.api.aws/api/launches/l%2F1?include=download_url");
+    for (status, hint) in [(401, "backend rejected the Bearer token"), (404, "no launch with this ID exists in us-east-1")] {
+        let fake = reply(status, r#"{"code":"ResourceNotFoundException","message":"FAKE-ACCESS-TOKEN"}"#);
+        let client = Client { transport: &fake, base: "https://launch-with-aws.us-east-1.api.aws", region: "us-east-1", token: &token, clock: &SystemClock, sleeper: &sleeper, jitter: &NoJitter, policy: RetryPolicy::default() };
+        let error = client.download_url("l-1", false).unwrap_err();
+        let text = format!("{error} {error:?}");
+        assert!(text.contains(hint));
+        assert!(text.contains("GET /api/launches/<id> failed"));
+        assert!(!text.contains("FAKE-ACCESS-TOKEN"));
+        if status == 404 { assert!(!client.download_url("l-1", true).unwrap_err().to_string().contains(hint)); }
+    }
+}
