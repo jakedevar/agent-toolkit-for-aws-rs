@@ -996,3 +996,5 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 10-29 12:20Z: flake #5362 (59d6d2c2, Sonnet) FIXED test-only at 070098b155753012c125ed66d7052ffa4869c028. Cause: a forked child of other tests inherits the flock fd until exec, so a dropped custody still reads as held under load. It was not the pid. Repro 7ac0eb8d (3/20 red); fix with Custody::release_settled (test-only); 7ad826a8 20/20 green; scoped ec930f83 ok. ENQUEUED 6ed49cd6 (seq 3004).
   #5365 baseline red elasticache `a_recording_refuses_free_text_error...`: PM root cause, an env-dependent false red (it asserts !contains("742") while the job tmp path uuid contains 742). Fix -> Claude Sonnet d44d5957 (rolling, test-only).
   4/4 busy: 4ca3337b (#5345 L5), f6287c21 (#5352 x402 S5), 59add103 (#5363 B1), d44d5957 (#5365). Queue: 1a3750bd #5329, 9cb38026 #5317, 9c5d9d91 #5327, c7baf1b2 #5306, 6ed49cd6 #5362.
+- 10-29 12:3xZ: AP close-out #5329 LANDED (1a3750bd published, a0c08c7e4b31905e40da40aa620e40551ab6ef84). CLOSED #5301 #5316 #5119 and the parent #4386 (ai-payloads DONE). Remaining follow-ups: #5121 (P-2), P-8.
+  Queue: 9cb38026 #5317 L6, 9c5d9d91 #5327, c7baf1b2 #5306, 6ed49cd6 #5362.
