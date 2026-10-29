@@ -353,6 +353,10 @@ fn ap_con_05_template_consent_literal_must_be_false() {
     let result = f.render(&template, "script", &[]);
     assert_eq!(result.status.code(), Some(1));
     assert!(!f.0.join("scripts").exists());
+    let duplicate = f.write("duplicate.py", "# Cell 0 [markdown]: Example\n# Description\n# Cell 1: Code\nACCEPT_EULA = False\nACCEPT_EULA = True\n");
+    let result = f.render(&duplicate, "script", &[]);
+    assert_eq!(result.status.code(), Some(1));
+    assert!(!f.0.join("scripts").exists());
 }
 
 #[test]

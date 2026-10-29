@@ -150,10 +150,7 @@ fn command_with_hooks(
             format!("template line {} column {}", v.line, v.column),
         ));
     }
-    if original.targets.iter().any(|target| {
-        types::slot_type(&target.name) == Some(types::SlotType::Consent)
-            && target.literal != "False"
-    }) {
+    if template::invalid_consent_binding(&text) {
         return Err(fail(
             "consent_template_invalid",
             "consent template literals must be False",

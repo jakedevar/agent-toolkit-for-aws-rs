@@ -215,6 +215,62 @@ pub(crate) fn contains_consent_identifier(text: &str) -> bool {
     lexed.occurrences.iter().any(|occurrence| occurrence.context == Context::Bare && super::types::slot_type(&occurrence.name) == Some(super::types::SlotType::Consent)) || lexed.tokens.iter().any(|token| matches!(&token.kind, Kind::Name(name) if super::types::slot_type(name) == Some(super::types::SlotType::Consent)))
 }
 
+/// Reject a consent binding other than a false literal or its typed slot.
+pub(crate) fn invalid_consent_binding(text: &str) -> bool {
+    let lexed = lex(text);
+    for statement in statements(&lexed.tokens) {
+        let mut names = BTreeMap::new();
+        let mut start = 0;
+        for (index, at) in statement.iter().enumerate() {
+            let token = &lexed.tokens[*at];
+            if token.depth == 0
+                && matches!(&token.kind, Kind::Op(op) if op == "=" || AUGMENTED.contains(&op.as_str()))
+            {
+                bound_names(&lexed.tokens, &statement[start..index], &mut names);
+                start = index + 1;
+            }
+        }
+        if !names
+            .keys()
+            .any(|name| super::types::slot_type(name) == Some(super::types::SlotType::Consent))
+        {
+            continue;
+        }
+        if candidate_of(&lexed.tokens, &statement).is_some_and(|candidate| {
+            super::types::slot_type(&candidate.name) == Some(super::types::SlotType::Consent)
+                && candidate.literal == "False"
+        }) {
+            continue;
+        }
+        let bare_slot = match statement.as_slice() {
+            [name, equal, slot] => match (
+                &lexed.tokens[*name].kind,
+                &lexed.tokens[*equal].kind,
+                &lexed.tokens[*slot].kind,
+            ) {
+                (Kind::Name(name), Kind::Op(op), Kind::Slot)
+                    if op == "="
+                        && super::types::slot_type(name)
+                            == Some(super::types::SlotType::Consent) =>
+                {
+                    lexed.occurrences.iter().any(|occurrence| {
+                        occurrence.context == Context::Bare
+                            && occurrence.name == *name
+                            && occurrence.line == lexed.tokens[*slot].line
+                            && occurrence.column == lexed.tokens[*slot].column
+                    })
+                }
+                _ => false,
+            },
+            _ => false,
+        };
+        if !bare_slot {
+            return true;
+        }
+    }
+    false
+}
+
 /// Reads one template. Never fails: every problem is a [`Violation`].
 pub(crate) fn parse(text: &str) -> Template {
     let mut template = Template::default();
