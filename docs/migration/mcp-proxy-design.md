@@ -1,6 +1,8 @@
 # MCP proxy replacement: research and design (#4413, phase 1)
 
-Status: design, revision 2. It answers AC4 security pre-review #4994 (CHANGES_REQUESTED at
+Status: design, revision 3. Revision 3 answers the round-2 findings #5013 and #5014 of
+pre-review #4994 (CHANGES_REQUESTED at `d650113`) under the PM rulings recorded on #4413.
+Revision 2 answered AC4 security pre-review #4994 (CHANGES_REQUESTED at
 `1cf22ef`; findings #4995 to #5003, resolved in section 4 and mapped in section 7) and records
 the PM and GM rulings from #4413 (section 6). No code changes. Programme #4369,
 slice `mcp`, dependencies #4379 (aws-core boundaries) and #4374 (core). Related: #4582 (real
@@ -17,7 +19,8 @@ Evidence base, all read and never executed (no Python, `uvx`, proxy or live AWS 
   #4994 re-read both at v1.7.0 and confirmed the behaviour recorded here.
 - for revision 2: the pinned dependency sources in the local cargo registry (aws-config 1.13.0,
   aws-smithy-http-client 1.5.1, rustls-native-certs 0.8.5, tokio 1.54.1) at the lines the
-  findings cite, all re-checked.
+  findings cite, all re-checked. For revision 3 also openssl-probe 0.2.2 and rustls-pki-types
+  1.15.1 (TLS), and the aws-config profile, ECS, web-identity and environment provider builders.
 - AWS documentation: *Setting up the AWS MCP Server* and *OAuth 2.1 authentication for AWS MCP
   Server* (Agent Toolkit user guide); the July 2026 "OAuth support for the AWS MCP Server"
   announcement.
@@ -349,7 +352,9 @@ input and output. It **listens on no socket**.
 
 Revision 2 answers pre-review #4994 (CHANGES_REQUESTED at `1cf22ef`). Each of its nine
 findings, #4995 to #5003, is resolved by a named requirement (`R-…`) below. Section 7 maps each
-finding to its requirement, its tests and the slice that owns it.
+finding to its requirement, its tests and the slice that owns it. Revision 3 resolves round-2
+findings #5013 (R-SRC, 4.1.1) and #5014 (R-ROOTS, 4.3) without changing the other
+requirements.
 
 ### 4.0 Two planes, and which guarantees apply to each (#5003)
 
@@ -371,7 +376,7 @@ The guarantees in this section belong to one of two planes. They are not process
 
 | Source | How | Notes |
 | --- | --- | --- |
-| SDK default chain (`SdkCredentialsProvider::default_chain`, `sdk.rs:144-151`) | env (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`); shared `config`/`credentials` (profile from `--profile` or `AWS_PROFILE`, validated, #4473); the SSO token cache; the `aws login` session (`login_session`, which needs aws-config's `credentials-login` feature, enabled in S1 by R-LOGIN, #4997); `credential_process`; assume-role; web identity; ECS/EKS container role; IMDS | Same sources as botocore. The chain is built only from the startup environment and files (R-PROV). The profile selects **credentials only**; the signing region follows the section 2.3 rules |
+| SDK default chain (`SdkCredentialsProvider::default_chain`, `sdk.rs:144-151`) | env (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`); shared `config`/`credentials` (profile from `--profile` or `AWS_PROFILE`, validated, #4473); the SSO token cache; the `aws login` session (`login_session`, which needs aws-config's `credentials-login` feature, enabled in S1 by R-LOGIN, #4997); `credential_process`; assume-role; web identity; ECS/EKS container role; IMDS | Same sources as botocore. The default chain is built only for the Absent class; a configured source gets only its own provider (R-SRC, 4.1.1). Providers are built only from the startup environment and files (R-PROV). The profile selects **credentials only**; the signing region follows the section 2.3 rules |
 | `--header K=V` values | argv | Treated as secrets: the agentaccess streaming URL is a bearer credential |
 | nothing else | — | No flag accepts a key or token (`reject_credential_arguments`) |
 
@@ -432,13 +437,23 @@ The SDK's `CredentialsNotLoaded` does not mean "nothing is configured". At aws-c
 is returned in three cases that do not mean absence:
 
 - an access key without a secret (`environment/credentials.rs:27-39,111-115`);
-- a missing named profile (`profile/credentials.rs:186-188`);
-- an incomplete SSO token configuration (`TokenProviderConfig`, same lines).
+- a missing profile (`MissingProfile`, `profile/credentials.rs:186-188`). This covers the
+  selected profile and also a profile that the selected profile names as its
+  `source_profile` (`profile/credentials/repr.rs:148-159`);
+- an incomplete SSO configuration (`TokenProviderConfig`, same lines). One example is a
+  profile whose `sso_session` names an existing `[sso-session]` section with `sso_region` and
+  `sso_start_url`, but which has no `sso_account_id`/`sso_role_name`
+  (`profile/credentials/exec.rs:178-181`).
 
-After any of these the default chain tries the next provider (`meta/credentials/chain.rs:104-116`).
-It can then end with **a different identity**, such as an instance role, or with `NotLoaded`.
-`toolkit-aws` maps `NotLoaded` to `AwsError::NoCredentials` (`sdk.rs:120-128`,
-`binding.rs:72-80`). The SDK result alone therefore cannot decide whether to send unsigned.
+After any of these the default chain tries the next provider (`meta/credentials/chain.rs:99-116`;
+the order is Environment, Profile, WebIdentityToken, EcsContainer, Ec2InstanceMetadata,
+`default_provider/credentials.rs:189-193`). It can then end with **a different identity**, such
+as a container or instance role, or with `NotLoaded`. `toolkit-aws` maps `NotLoaded` to
+`AwsError::NoCredentials` (`sdk.rs:120-128`, `binding.rs:72-80`). So the SDK result alone cannot
+decide whether to send unsigned. Worse, under the default chain, a configured profile whose
+reference is broken can be **signed as a different identity** (#5013). Revision 3 therefore has
+two parts: the preflight (R-ABS) decides what is configured, and guarded provider composition
+(R-SRC, PM ruling on #5013) makes sure that only the configured source can produce an identity.
 
 **R-ABS. Credential-source preflight.** Before every credential load (each attempt, including
 the D1 rebuild), the proxy classifies the configuration. The preflight reads only:
@@ -449,14 +464,23 @@ the D1 rebuild), the proxy classifies the configuration. The preflight reads onl
   `credentials` files.
 
 The files are parsed with aws-config's own public profile parser (`aws_config::profile::load`),
-so file semantics match the chain. It never reads, matches or logs provider error text. It gives
-one of three classes:
+so file semantics match the chain. It never reads, matches or logs provider error text.
+
+**What the preflight does not do (revision 3).** The preflight is presence-only. It does
+**not** validate references: whether a `source_profile` target exists, whether an
+`[sso-session]` section is complete, whether a `credential_process` command runs, or whether a
+cache file is valid. Reading key names cannot establish those (#5013), and the design does not
+try to. Reference validity is left to the one provider R-SRC builds for the configured source,
+and R-SRC makes **every** failure of that provider terminal. The preflight's only job is to say
+which source is configured, or that none is.
+
+It gives one of three classes:
 
 | Preflight class | Condition | Credential result → action |
 | --- | --- | --- |
 | **Invalid** | Any of: exactly one of `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` (or `SECRET_ACCESS_KEY`) is non-blank; `AWS_SESSION_TOKEN` is set without both; exactly one of `AWS_WEB_IDENTITY_TOKEN_FILE` and `AWS_ROLE_ARN` is set; an **explicitly selected** profile (`--profile`, else non-blank `AWS_PROFILE`) exists in neither file; `AWS_CONFIG_FILE` or `AWS_SHARED_CREDENTIALS_FILE` names a path that does not exist; a profile file exists but cannot be read or parsed | **Fail closed** with the fixed credentials message. The chain is **not called**, so it cannot fall through to another identity. This applies with and without `--skip-auth` |
-| **Configured** | Not Invalid, and any of: a complete static env pair; both web-identity variables; `AWS_CONTAINER_CREDENTIALS_RELATIVE_URI` or `AWS_CONTAINER_CREDENTIALS_FULL_URI`; the selected profile has any credential-bearing key (`aws_access_key_id`, `aws_secret_access_key`, `aws_session_token`, `role_arn`, `source_profile`, `credential_source`, `credential_process`, `web_identity_token_file`, `sso_session`, `sso_start_url`, `sso_account_id`, `sso_role_name`, `login_session`) | Chain success: sign. **Any** chain error, `NotLoaded` included, fails closed (D1 rebuild first). Never unsigned |
-| **Absent** | Neither of the above. No credential environment variable is set, and the selected profile is either the implicit `default` and missing, or exists (default or explicit) with no credential-bearing key | Chain success (IMDS on an EC2 host): sign. `NotLoaded`: with `--skip-auth` send **unsigned**, otherwise the `NoCredentials` message. Any other error: fail closed |
+| **Configured** | Not Invalid, and any of: a complete static env pair; both web-identity variables; `AWS_CONTAINER_CREDENTIALS_RELATIVE_URI` or `AWS_CONTAINER_CREDENTIALS_FULL_URI`; the selected profile has any credential-bearing key (`aws_access_key_id`, `aws_secret_access_key`, `aws_session_token`, `role_arn`, `source_profile`, `credential_source`, `credential_process`, `web_identity_token_file`, `sso_session`, `sso_start_url`, `sso_account_id`, `sso_role_name`, `login_session`) | R-SRC builds **only** the configured source's provider; the default chain is **not built**. That provider succeeds: sign. **Any** error from it, `NotLoaded` included, is a hard credential error (D1 rebuild first). It is never unsigned, even with `--skip-auth`, and no other provider is ever consulted |
+| **Absent** | Neither of the above. No credential environment variable is set, and the selected profile is either the implicit `default` and missing, or exists (default or explicit) with no credential-bearing key | The **default chain** (`default_chain_with_http`, 4.1.2). Success (IMDS on an EC2 host): sign. `NotLoaded`: with `--skip-auth` send **unsigned**, otherwise the `NoCredentials` message. Any other error: fail closed. This is the only class that builds the default chain, and the only class in which `--skip-auth` can send unsigned |
 
 **Parity with upstream.** botocore raises on an access key without a secret
 (`PartialCredentialsError`) and on a missing named profile (`ProfileNotFound`). It returns no
@@ -471,14 +495,73 @@ stricter than botocore in four cases that botocore ignores and falls through:
 These are refused, as the review requires for partial configuration. Proposed ruling R-1
 (section 6).
 
+**R-SRC. Guarded provider composition (#5013, PM ruling).** On every credential attempt,
+including the D1 rebuild, the proxy builds the provider from the preflight's result. It never
+builds the default chain and then filters its result. The configured source is the **first**
+row of this table whose condition holds. The order is the SDK chain's own order
+(`default_provider/credentials.rs:189-193`), so deliberate SDK source precedence is unchanged:
+
+| Order | Configured source (preflight condition) | Provider built, and nothing else |
+| --- | --- | --- |
+| 1 | A complete static environment pair (`AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`/`SECRET_ACCESS_KEY`, with optional `AWS_SESSION_TOKEN`) | `aws_config::environment::EnvironmentVariableCredentialsProvider::new()` |
+| 2 | The selected profile (`--profile`, else non-blank `AWS_PROFILE`, else `default`) has any credential-bearing key. This includes the implicit `default` profile, a non-default profile, and every profile/SSO/login key in the R-ABS list | `aws_config::profile::ProfileFileCredentialsProvider::builder().configure(&pc).profile_name(<selected>).build()` |
+| 3 | Both `AWS_WEB_IDENTITY_TOKEN_FILE` and `AWS_ROLE_ARN` | `aws_config::web_identity_token::WebIdentityTokenCredentialsProvider::builder().configure(&pc).build()` |
+| 4 | `AWS_CONTAINER_CREDENTIALS_RELATIVE_URI` or `AWS_CONTAINER_CREDENTIALS_FULL_URI` | `aws_config::ecs::EcsCredentialsProvider::builder().configure(&pc).build()` |
+| — | Absent (no row holds) | `DefaultCredentialsChain` through `SdkCredentialsProvider::default_chain_with_http` (4.1.2) |
+
+How the guarded provider is built and used:
+
+- **One shared configuration.** `pc` is `ProviderConfig::default().with_region(Some(<resolved
+  region>)).with_http_client(<provider-plane client>)`. That is the same region and HTTP client
+  the default chain receives today: the region override at `sdk.rs:144-151`, and the client
+  through the R-PROV seam. Every builder above is public in aws-config 1.13.0, and every
+  `configure` takes a `&ProviderConfig`. The environment provider makes no HTTP call.
+- **Same wrapper.** The provider is wrapped by `SdkCredentialsProvider::from_sdk`, so error
+  mapping by variant only (`sdk.rs:120-128`), redacting `Debug` and D1's rebuild behaviour are
+  unchanged. Assume-role, SSO and login caching stay inside the profile provider as before.
+- **Inside the profile provider.** Row 2's provider still runs the profile's own declared chain:
+  `source_profile` hops, `credential_source`, `credential_process`, SSO, login and profile web
+  identity. A `credential_source = Ec2InstanceMetadata` or `EcsContainer` is the profile's own
+  declared source, not a fall-through, so that is how it reaches IMDS or ECS.
+- **Terminal failure.** No later row and no IMDS provider is constructed, so nothing can run
+  after the configured source fails. A `MissingProfile` for a `source_profile` target, or a
+  `TokenProviderConfig` for an SSO session without account and role, comes back from the
+  profile provider as `NotLoaded` (`profile/credentials.rs:186-188`). R-PREC treats that as
+  level 3: a hard credential error, never unsigned. The same holds for
+  `ProfileDidNotContainCredentials`, which the profile provider also reports as `NotLoaded`
+  (`profile/credentials.rs:179-185,597`).
+- **No classification by text.** The design never inspects the error's text, `Display` or
+  source chain. Terminality comes from **which provider was built**, not from what the error
+  says.
+- **Source gate (extends T-PROV's gate).** These calls appear only in the one toolkit-aws module
+  that holds `default_chain_with_http`, and each is given the shared `pc`:
+  - `DefaultCredentialsChain::builder`;
+  - `ProfileFileCredentialsProvider::builder`;
+  - `WebIdentityTokenCredentialsProvider::builder`;
+  - `EcsCredentialsProvider::builder`;
+  - `imds::credentials::ImdsCredentialsProvider::builder`;
+  - `EnvironmentVariableCredentialsProvider::new`.
+
+  A test also checks that the proxy constructs the default chain only for the Absent class.
+
+**Differences this creates (accepted by the PM ruling).** The resulting identity always matches
+what the SDK chain would have chosen whenever the configured source succeeds. The difference is
+only in the failure path: where the SDK chain would continue after the configured source's
+`NotLoaded`, the proxy stops. For example, a broken `source_profile` reference, or an SSO
+session without account and role, fails closed, while the Rust SDK's
+default chain would go on to web identity, the container or IMDS. This is deliberate:
+the user configured a source, so a failure of that source must not be answered by a different
+identity.
+
 **R-PREC. Error precedence.** Each MCP request makes at most two credential attempts: the
 load, then D1's one rebuild. Precedence, highest first:
 
 1. an Invalid preflight;
 2. a non-`NotLoaded` SDK error (`ProviderTimedOut`, `ProviderError`, `InvalidConfiguration`,
    unhandled), or `CredentialsExpired`/`PartialCredentials` from `adopt_credentials`;
-3. `NotLoaded` under a Configured preflight;
-4. `NotLoaded` under an Absent preflight.
+3. `NotLoaded` under a Configured preflight, which can only come from the R-SRC source
+   provider;
+4. `NotLoaded` under an Absent preflight, which can only come from the default chain.
 
 How a request resolves:
 
@@ -509,28 +592,63 @@ up as follows:
 - one subprocess per case, because the SDK reads the process environment;
 - `env_clear()`, with `HOME`, `AWS_CONFIG_FILE` and `AWS_SHARED_CREDENTIALS_FILE` pointing at
   synthetic files in a temp dir;
-- `AWS_EC2_METADATA_DISABLED=true`, except in the IMDS case;
-- the T-PROV recorder as the provider HTTP client.
+- `AWS_EC2_METADATA_DISABLED=true`, except in the IMDS cases and the IMDS fallback variants;
+- the T-PROV recorder as the provider HTTP client;
+- a test-visible **build log** from the R-SRC module. It records which builder ran on each
+  attempt (`Env`, `Profile`, `WebIdentity`, `Ecs` or `DefaultChain`), never any value.
+
+**Valid fallback fixtures (#5013).** These provide a lower-priority identity that **would**
+succeed, so that "never contacted" is a meaningful assertion rather than a vacuous one. Both use
+the access key id `AKIAFALLBACKCANARY0`.
+
+- **ECS fallback:** `AWS_CONTAINER_CREDENTIALS_RELATIVE_URI=/fallback-creds`. The recorder
+  answers `GET http://169.254.170.2/fallback-creds` with a valid credentials document.
+- **IMDS fallback:** metadata enabled. The recorder answers the IMDSv2 token `PUT`, the role
+  list `GET` and the role credentials `GET` with valid fixtures.
+
+Two **control cases** prove each fixture works on its own. Without them, the "never contacted"
+assertions below could pass because a fixture was broken.
 
 | Case | Expected |
 | --- | --- |
-| Genuine absence: no env, no files | One request to the fake MCP transport, unsigned (no `authorization`) |
-| Absence with a `default` profile that holds only `region` | Unsigned |
+| Genuine absence: no env, no files | One request to the fake MCP transport, unsigned (no `authorization`); build log `[DefaultChain]` |
+| Absence with a `default` profile that holds only `region` | Unsigned; build log `[DefaultChain]` |
 | IMDS enabled; the recorder refuses the IMDSv2 token `PUT` as a dispatch failure | `NotLoaded`, unsigned; the recorder saw only the IMDS token request |
-| `--profile` typo, `AWS_PROFILE` typo | No MCP transport call; credentials message |
+| **Control, IMDS fixture:** Absent configuration plus the IMDS fallback fixture | Signed with `AKIAFALLBACKCANARY0`; build log `[DefaultChain]` |
+| **Control, ECS fixture:** only the ECS fallback variable set (Configured, row 4) | Signed with `AKIAFALLBACKCANARY0`; build log `[Ecs]` |
+| **#5013-a:** the selected profile (once through `--profile`, once through `AWS_PROFILE`) has `role_arn` + `source_profile = missing`, and no `[profile missing]` exists. Run once with the ECS fallback and once with the IMDS fallback | No MCP transport call; the credentials message. The recorder saw **no request at all**: no fallback destination, and no STS call, because `MissingProfile` is raised before any call. The build log is `[Profile, Profile]` (load, then the D1 rebuild), never `Ecs`, `DefaultChain` or IMDS. `AKIAFALLBACKCANARY0` appears in no `authorization` header and nowhere in any output |
+| **#5013-b:** the selected profile has `sso_session = dev` and no `sso_account_id`/`sso_role_name`; a valid `[sso-session dev]` section has `sso_region` and `sso_start_url` (`TokenProviderConfig` → `NotLoaded`). Run once with the ECS fallback and once with the IMDS fallback | The same as #5013-a: no transport call, no recorder request (no SSO portal, no OIDC, no fallback), build log `[Profile, Profile]`, the fallback key id absent |
+| **#5013-c:** the same as #5013-a under the implicit `default` profile (no `--profile`, no `AWS_PROFILE`) | The same as #5013-a |
+| `--profile` typo, `AWS_PROFILE` typo | No MCP transport call; credentials message; build log empty (Invalid, no provider built) |
 | Access key without secret **while a valid static `default` profile exists** | No transport call. This proves there is no fall-through to the profile identity |
 | Session token alone; secret alone; web-identity half pair; `AWS_CONFIG_FILE` naming a missing file | No transport call |
-| Profile `sso_session` naming a missing section (`TokenProviderConfig`) | No transport call |
+| Profile `sso_session` naming a **missing** `[sso-session]` section (`MissingSsoSession`, `profile/credentials/repr.rs:377-384`, which `profile/credentials.rs:190-193` maps to `InvalidConfiguration`: level 2) | No transport call; build log `[Profile, Profile]` |
 | Profile `credential_process` fixture that exits 1 | No transport call |
 | `credential_process` fixture returning an `Expiration` in the past | `CredentialsExpired`; no transport call |
 | `role_arn` + `source_profile` profile whose STS call the recorder answers with a timeout connector error | Provider failure; no transport call |
+| Source order: a complete env pair **and** a valid static `default` profile with a different key id | Signed with the env key id; build log `[Env]` |
+| Source order: a valid static `default` profile **and** both web-identity variables | Signed with the profile key id; build log `[Profile]`; the recorder saw no STS `AssumeRoleWithWebIdentity` |
 | Precedence: first attempt Configured with a provider error, then the rebuild finds Absent | Fails closed, not unsigned |
 | Precedence: first attempt Configured `NotLoaded`, then the rebuild succeeds | Signed |
 | R-STICKY: a signed request, then the configuration is removed, then a level-4 outcome | Fails closed |
 
-Every case runs with `--skip-auth`, and the fail-closed cases also run without it. A bare stderr
-canary is asserted absent (T-LEAK-SDK). The fake `NotLoaded`/`Provider` variant tests from
-revision 1 remain as unit tests only. They are not evidence for this property.
+Every case runs with `--skip-auth`, and the fail-closed cases also run without it. The #5013
+cases assert the same outcome in all four combinations: with and without `--skip-auth`, and on
+the first attempt and the D1 rebuild. A bare stderr canary is asserted absent (T-LEAK-SDK). The
+fake `NotLoaded`/`Provider` variant tests from revision 1 remain as unit tests only. They are
+not evidence for this property.
+
+**Verification criteria for R-SRC (S4 checks these against the code):**
+
+- the Configured class never reaches `DefaultCredentialsChain::builder`;
+- each R-SRC row builds exactly the provider named in its row, with the shared `pc`;
+- no provider error's `Display`, `Debug` or source chain is read on the decision path;
+- the #5013 cases fail if the default chain is substituted for the row-2 provider. As a
+  mutation check, the R-SRC selector is a pure function that the tests can replace through a
+  test-only constructor. One test runs #5013-a/b/c with a selector that always answers
+  `DefaultChain`, and asserts that those cases then **fail**: the fallback is contacted and
+  `AKIAFALLBACKCANARY0` signs. That proves the cases detect the revision-2 defect. The
+  production binary has no such switch.
 
 #### 4.1.2 Credential provider plane: egress and trust (#5003)
 
@@ -550,9 +668,10 @@ revision 1 remain as unit tests only. They are not evidence for this property.
 - These requests use aws-config's own clients. They do **not** go through `SdkTransport`. They
   are not subject to the MCP plane's AWS-suffix policy, public-address DNS guard or peer check,
   and they cannot be: IMDS and the container endpoints are link-local.
-- HTTPS calls on this plane are verified by the SDK's default rustls client (aws-config's
-  `rustls` feature turns on `default-https-client`). Its native-root behaviour is the same as in
-  4.3.
+- HTTPS calls on this plane are verified by rustls with the aws-lc provider. In the proxy, the
+  client passed through the R-PROV seam is built from the same R-ROOTS validated trust store as
+  the MCP plane, with native roots disabled (4.3, revision 3). `default_chain`, which asm exec
+  uses, keeps the SDK default HTTPS client.
 - Provider-plane token exchanges send tokens to their own AWS endpoints, as the SDK designs.
   This is outside the "credentials leave only as signed headers" guarantee, which is scoped to
   the MCP plane (4.2).
@@ -591,7 +710,9 @@ revision 1 remain as unit tests only. They are not evidence for this property.
   - STS for assume-role;
   - Sign-in for a login refresh.
 - **Source gate.** `DefaultCredentialsChain::builder` is called only inside
-  `default_chain_with_http`, which always calls `.configure(…with_http_client(…))`.
+  `default_chain_with_http`, which always calls `.configure(…with_http_client(…))`. Revision 3
+  extends the gate to R-SRC's single-source builders (4.1.1). They live in the same module and
+  take the same `ProviderConfig`.
 - **R-PROV case.** Client messages and server responses carry `AWS_PROFILE`, `AWS_REGION`,
   `role_arn` and URLs in `_meta`, in headers and in SSE fields. The test then forces a D1
   rebuild. It asserts that the chain-builder inputs (profile name, region) equal the startup
@@ -700,28 +821,41 @@ scrub-after-format is not a control. The rules:
   `HTTP_PROXY`, `ALL_PROXY` and `NO_PROXY` have no effect. This is a separate, verified property
   (T-TLS-8).
 
-**Trust anchors (corrects revision 1).** Revision 1 said "the platform trust store". That was
-inaccurate:
+**Trust anchors (corrects revisions 1 and 2).** Revision 1 said "the platform trust store", and
+revision 2 said that broken root configuration always fails closed. Neither is true of the
+unchanged pinned stack (#5014):
 
-- Smithy loads the roots once per process into a `LazyLock` (`rustls_provider.rs:117-129`)
-  through `rustls_native_certs::load_native_certs()`.
-- In rustls-native-certs 0.8.5 (`lib.rs:48-57,118-123`), when `SSL_CERT_FILE` or `SSL_CERT_DIR`
-  is set, roots come **only** from those locations, and the platform store is not consulted.
+- Smithy loads the roots once per process into a `LazyLock` (`rustls_provider.rs:117-130`)
+  through `rustls_native_certs::load_native_certs()`. It traces the loading errors and **keeps
+  every root that did load**.
+- rustls-native-certs 0.8.5 `load_native_certs` (`lib.rs:118-125`) uses only the environment
+  locations when `SSL_CERT_DIR` yields at least one non-empty entry, or when `SSL_CERT_FILE` is
+  present (`CertPaths::from_env`, `lib.rs:197-210`). It collects certificates and errors
+  separately across the file and each directory (`lib.rs:250-272`). So a broken
+  `SSL_CERT_FILE` next to a valid `SSL_CERT_DIR` still verifies a matching server.
+- `SSL_CERT_DIR=""` (or `":"`) is filtered to no directories. On its own it falls through to
+  platform loading. `SSL_CERT_FILE=""`, on the other hand, counts as a configured, unreadable
+  file.
+- With native roots enabled and nothing loaded, `rustls_root_certs` hits
+  `debug_assert!(valid > 0)` (`rustls_provider.rs:159-163`). That panics in debug and test
+  builds, and in release builds it gives an empty store.
+
+Revision 3 therefore does **not** use Smithy's native-root path at all. It validates the roots
+itself, once, and hands the connectors an explicit trust store (R-ROOTS, PM ruling on #5014).
 
 **R-TLS. v1 behaviour, consistent with the PM's Q4 ruling:**
 
 - **`SSL_CERT_FILE` and `SSL_CERT_DIR` are honoured** as inherited, trusted launch
-  configuration. They replace the platform roots, exactly as rustls-native-certs defines; they
-  do not add to them.
+  configuration. When either is set to a non-empty value, they **replace** the platform roots;
+  they do not add to them.
   - This matches upstream, whose `httpx` honours the same two variables (`trust_env`).
   - Anyone who can set the proxy's environment can already choose its credentials and its
     binary, so this adds no new trust.
-  - The proxy never reads, unsets or mutates these variables. Environment mutation is unsound in
-    a threaded process (R-PROV gate).
-- **Empty or broken root configuration fails closed.** A configured file or directory that is
-  empty, missing or unreadable gives an empty or partial root set. Every handshake then fails
-  with the fixed TLS connect error. There is no fallback to the platform store and no unverified
-  mode.
+  - The proxy reads these variables with `std::env::var_os` and never unsets or mutates them.
+    Environment mutation is unsound in a threaded process (R-PROV gate).
+- **Root configuration is validated before use, and every failure is terminal** (R-ROOTS
+  below). Partial roots are never silently accepted. There is no fallback to the platform store
+  when the variables are configured, and there is no unverified mode.
 - **`AWS_CA_BUNDLE` and the profile `ca_bundle` key are not honoured.** Neither aws-config 1.13.0
   nor aws-smithy-http-client 1.5.1 references them; checked in both sources. Upstream's `httpx`
   also ignores them for MCP traffic, and only botocore's own calls use them. This is a documented
@@ -734,21 +868,114 @@ inaccurate:
 
   So the deferral costs only intercepting-proxy users, who fail closed. Proposed ruling R-5
   records the corrected premise.
-- **Provider plane:** the SDK's default HTTPS client loads roots the same way, so the same
-  variables apply to STS, SSO and Sign-in calls.
+- **Provider plane:** the proxy builds the HTTP client it passes through the R-PROV seam from
+  the same validated trust store (4.1.2). So the same roots apply to STS, SSO, SSO-OIDC and
+  Sign-in calls.
 
-**Offline verification, T-TLS (S1).** These tests run through the **production rustls
-verification layer**.
+**R-ROOTS. Explicit root validation (#5014, PM ruling).** This runs once, at startup, after
+argument parsing. It runs **before** stdin is read, before any credential provider or
+connector is built and before any DNS lookup. It is a pure function over an environment view
+and injected loaders, so every branch can be unit-tested. Production passes the real loaders.
+
+1. **Effective variables.** A variable that is unset, or set to the empty string, is treated
+   as **unset**. This is documented in `--help` and in the plugin README. A non-empty
+   `SSL_CERT_DIR` is split with `std::env::split_paths`, and empty entries are dropped, as
+   rustls-native-certs does. If no entry remains (for example `SSL_CERT_DIR=":"`), that is a
+   configuration error (`dir-list-empty`), not platform mode.
+2. **Configured mode** (either variable non-empty). Each location is loaded **separately**:
+   - the file with `rustls_native_certs::load_certs_from_paths(Some(file), None)`;
+   - each directory with `load_certs_from_paths(None, Some(dir))`.
+
+   The proxy fails closed if **any** of these holds:
+   - any location reports any error (its `CertificateResult::errors` is non-empty). This
+     covers a missing or unreadable file, a missing directory, an unreadable entry, an entry
+     whose metadata fails other than with `NotFound` (for example a symlink loop), and a
+     malformed PEM certificate section such as bad base64 or a missing end marker;
+   - any location contributes zero certificates (`configured-location-empty`). An empty file
+     or an empty directory therefore fails closed even when another location is valid;
+   - any loaded certificate is rejected by `rustls::RootCertStore::add_parsable_certificates`,
+     meaning the `invalid` count is non-zero (`configured-invalid-certificate`).
+
+   The platform store is never consulted in this mode. Certificates are de-duplicated by DER.
+3. **Platform mode** (neither variable non-empty).
+   - **No `SSL_CERT_FILE` present** (unset, or only `SSL_CERT_DIR=""`): call
+     `rustls_native_certs::load_native_certs()`. With no file and no directory entries, that
+     takes the platform branch (`lib.rs:118-125`).
+   - **`SSL_CERT_FILE=""` present, on Linux and other non-macOS Unix:** load the same
+     locations the crate's Unix platform loader uses: `openssl_probe::probe()`
+     (`unix.rs:3-10`), with each location loaded through `load_certs_from_paths`.
+     `openssl-probe` 0.2.2 is already in `Cargo.lock`; S1 adds it as a direct,
+     target-specific dependency of the same version. `probe()` ignores a variable whose path
+     does not exist (`openssl-probe` `lib.rs:119-128`, `ProbeResult::from_env`), so the empty
+     value is ignored there too.
+   - **`SSL_CERT_FILE=""` on macOS and Windows:** rustls-native-certs 0.8.5 exposes no public
+     platform loader that skips the variable. The macOS and Windows platform modules are
+     private, and `load_native_certs` would treat `""` as a file path. Rather than mutate the
+     environment or vendor trust-store code, the proxy **refuses to start** with
+     `empty-file-var-unsupported`. This is narrower than the PM's "treated as unset" ruling on
+     those two targets. It fails closed, and proposed ruling R-7 records it.
+
+   In platform mode, loading errors are tolerated **only if at least one root loaded**,
+   because platform stores routinely hold entries that fail to load. The count of tolerated
+   errors goes to `Diag` as a count only: no path and no error `Display`. **Zero usable roots**
+   from platform loading is the fixed error (`no-roots`), in every build profile.
+4. **The fixed diagnostic.** The proxy writes one stderr line, then exits with the same
+   non-zero status as the other startup refusals (R-URL, R-HDR):
+   `toolkit mcp-proxy: TLS trust roots are unusable (<reason>); fix or unset SSL_CERT_FILE/SSL_CERT_DIR`.
+   - `<reason>` comes from the closed set `configured-location-error`,
+     `configured-location-empty`, `configured-invalid-certificate`, `dir-list-empty`,
+     `no-roots` and `empty-file-var-unsupported`.
+   - The line contains no path and no `io::Error` or PEM error text.
+   - Nothing is written to stdout, and no socket is opened.
+5. **Use.** Validation returns a `ValidatedRoots` value whose only constructor requires at least
+   one root, so an empty trust store cannot be represented. Both planes use it:
+   - **MCP plane:** the `SdkTransport` connector (`sdk.rs:336-342`) gains
+     `.tls_context(ctx)` after `.tls_provider(Rustls(AwsLc))`;
+   - **provider plane:** `aws_smithy_http_client::Builder::new()`, then
+     `.tls_provider(Rustls(AwsLc))`, `.tls_context(ctx)` and `.build_https()`. The result is
+     passed to `default_chain_with_http` and into R-SRC's `pc`.
+
+   `ctx` is `TlsContext::builder().with_trust_store(store).build()`, where `store` is
+   `TrustStore::empty()` with one `with_pem_certificate` per validated root. These are public in
+   aws-smithy-http-client 1.5.1 (`client.rs:195,892,954,987,1129`;
+   `client/tls.rs:63,78,109,119,129`). `TrustStore::empty()` has native roots disabled. So:
+   - Smithy's `NATIVE_ROOTS` `LazyLock` is never initialised, and its `debug_assert!`
+     (`rustls_provider.rs:159-163`) cannot be reached in any build profile.
+   - The root set is fixed at validation time. There is no second, later read of the
+     certificate files whose result could differ, so no check-then-use gap exists.
+   - Smithy's custom-certificate path calls `expect` on PEM parsing and `RootCertStore::add`
+     (`rustls_provider.rs:166-172`). The PEM comes from DER the validator has already passed
+     through `add_parsable_certificates` with the same rustls 0.23.46, so those `expect`s cannot
+     fire. A unit test asserts this for every validated root.
+6. **Residual, documented behaviour.** These are inherited from the PEM grammar and from
+   rustls-native-certs. Neither can add a root that was not in a configured location.
+   - Text outside certificate markers, and non-certificate PEM sections, are ignored without
+     an error (`lib.rs:226-229`).
+   - A dangling symlink in a certificate directory is skipped without an error (`lib.rs:328-333`,
+     for `openssl rehash` directories).
+
+**Offline verification, T-TLS (S1).** The handshake cases run through the **production rustls
+verification layer**, with the trust store built by the production R-ROOTS path.
 
 **Harness:**
 
-- `SdkTransport` gains a test-only constructor that uses the same `Connector` builder and TLS
-  provider as production. It replaces only the DNS resolver, so that a synthetic hostname
-  resolves to a loopback TLS server. The public-address guard is tested separately (T-EP).
+- `SdkTransport` gains a test-only constructor that uses the same `Connector` builder, TLS
+  provider and `ValidatedRoots` as production. It replaces only the DNS resolver, so that a
+  synthetic hostname resolves to a loopback TLS server. The public-address guard is tested
+  separately (T-EP).
 - Certificates are minted at test time (`rcgen` as a dev-dependency).
-- **Each case runs in its own subprocess**, because the root list is a process-wide `LazyLock`.
-  The test binary re-executes itself with a case argument, and the environment is set with
-  `Command::env`, never `set_var`.
+- **Each case runs in its own subprocess**, because roots are validated once per process from
+  the process environment. The test binary re-executes itself with a case argument, and the
+  environment is set with `Command::env`/`env_remove`, never `set_var`.
+- The default (debug) test profile is used. For every refusal case the parent asserts four
+  things:
+  - the exact fixed stderr line with the expected `<reason>`;
+  - the startup-refusal exit status;
+  - no `panicked at` and no `debug_assert` text on stderr;
+  - the loopback server **accepted no connection**, which is stronger than "read no request
+    bytes".
+- R-ROOTS's pure function is also unit-tested over a fake environment and fake loaders, for
+  every row below and for the platform tolerated-errors rule.
 
 **Cases:**
 
@@ -758,8 +985,20 @@ verification layer**.
 | T-TLS-2: trusted CA (via `SSL_CERT_FILE`), certificate for another hostname | Failure |
 | T-TLS-3: `SSL_CERT_FILE` holding the synthetic CA | Success |
 | T-TLS-4: `SSL_CERT_DIR` holding the synthetic CA file | Success |
-| T-TLS-5: `SSL_CERT_FILE` empty file; T-TLS-6: nonexistent path; T-TLS-7: `SSL_CERT_DIR` empty directory | Handshake failure; the server reads no request bytes |
-| T-TLS-11 (replacement, not addition): in a subprocess with `SSL_CERT_FILE` set to the synthetic CA, read the root set the production path loads (`load_native_certs`, the same call Smithy's `LazyLock` makes) | It equals exactly the configured file's certificates (same count and DER). This proves the platform store is not merged in, which a handshake against a synthetic-CA server alone cannot show |
+| T-TLS-5: `SSL_CERT_FILE` names an empty file | Refused at start, `configured-location-empty`; no panic; no connection |
+| T-TLS-6: `SSL_CERT_FILE` names a nonexistent path | Refused at start, `configured-location-error`; no panic; no connection |
+| T-TLS-7: `SSL_CERT_DIR` names an empty directory | Refused at start, `configured-location-empty`; no panic; no connection |
+| T-TLS-12 (#5014 mixed): `SSL_CERT_DIR` holds the synthetic CA, `SSL_CERT_FILE` names a missing file | Refused at start, `configured-location-error`, **although** the server's certificate would verify under the valid directory. This is the case the unchanged stack accepted |
+| T-TLS-13 (#5014 mixed): `SSL_CERT_FILE` holds the synthetic CA; `SSL_CERT_DIR` is (a) a nonexistent directory, (b) a directory whose only entry is a symlink loop, (c) a directory holding a file with a malformed PEM certificate section | Each refused at start, `configured-location-error`; no connection |
+| T-TLS-14: `SSL_CERT_FILE` holds the synthetic CA; `SSL_CERT_DIR` holds a well-formed PEM section whose DER is not a parsable certificate | Refused at start, `configured-invalid-certificate` |
+| T-TLS-15: `SSL_CERT_DIR=valid-dir:empty-dir` | Refused at start, `configured-location-empty` |
+| T-TLS-16 (#5014 empty value): `SSL_CERT_DIR=""` with `SSL_CERT_FILE` absent | Platform mode. The validated set equals `load_native_certs()` run in a sibling subprocess with both variables removed. The synthetic-CA server then fails verification (T-TLS-1 behaviour), which shows the empty value did not make anything trusted. If the CI image's platform store is empty, the case asserts `no-roots` instead, with no panic |
+| T-TLS-17 (#5014 empty value): `SSL_CERT_FILE=""` | On Linux: the same as T-TLS-16, through the `openssl_probe` path. On macOS and Windows (`cfg`-selected): refused, `empty-file-var-unsupported` |
+| T-TLS-18: `SSL_CERT_DIR=":"` | Refused at start, `dir-list-empty` |
+| T-TLS-19 (zero platform roots): R-ROOTS's function with a platform loader returning no certificates, with and without errors | `no-roots`. The binary-level guarantee for every profile is structural: `ValidatedRoots` cannot be empty, and native roots are disabled (T-TLS-20) |
+| T-TLS-20 (no native-root path): a source gate over `toolkit-aws` and the proxy module | It fails if any of these appears: `TrustStore::default()`, `with_native_roots(true)`, a `Connector`/`Builder` chain with `.tls_provider(` but no `.tls_context(` from `ValidatedRoots`, or `build_https()` without a validated context. It also asserts that the in-process `ValidatedRoots` is the context both planes received |
+| T-TLS-11 (replacement, not addition): `SSL_CERT_FILE` set to the synthetic CA | The `ValidatedRoots` handed to both planes equals exactly the configured file's certificates (same count and DER). This proves the platform store is not merged in, which a handshake against a synthetic-CA server alone cannot show |
+| T-TLS-21 (provider plane, S3): a `role_arn` + static `source_profile` profile with `AWS_ENDPOINT_URL_STS=https://localhost:<port>`, and a loopback STS fixture whose certificate is issued by the synthetic CA | With `SSL_CERT_FILE` holding that CA, `AssumeRole` succeeds. With `SSL_CERT_FILE` holding a different valid CA, the handshake fails and the request is not signed. This shows the provider plane uses the validated roots |
 | T-TLS-8: `HTTPS_PROXY=http://127.0.0.1:<recorder>` set | The recorder sees no connection; the request reaches the server directly |
 | T-TLS-9: `http://` endpoint | Refused at start |
 | T-TLS-10: 301/307 response | Not followed; exactly one request recorded |
@@ -1044,7 +1283,7 @@ user reads.
 | Prompt injection in tool results | Out of scope for a transport. The proxy passes content unchanged, as upstream does |
 | Leak secrets through error text the proxy prints | R-LOG: no tracing subscriber; allowlisted `Diag` fields only; bodies never logged. JSON-RPC error objects from the server go only to the client, which already receives the server's data |
 | Downgrade to plain HTTP or a private address (DNS rebinding) | https required at start and per request; the DNS guard at connect time prevents sending to a non-public address; the peer check after connect is a backstop (#4593) |
-| TLS interception | Certificate verification is always on, with no opt-out. Trust anchors come from the platform store, or from `SSL_CERT_FILE`/`SSL_CERT_DIR` when set (R-TLS) |
+| TLS interception | Certificate verification is always on, with no opt-out. Trust anchors come from the platform store, or from `SSL_CERT_FILE`/`SSL_CERT_DIR` when set to a non-empty value; either way they are validated once at start and every failure is terminal (R-TLS, R-ROOTS) |
 
 ### 4.7 How offline tests prove each property
 
@@ -1064,11 +1303,11 @@ are each used only where they count as evidence:
 | SigV4 correctness | T-SIG-1: AWS SigV4 test-suite known-answer vectors through `SigV4Signer` with a fixed clock (S1, shared with #4582). T-SIG-2: a proxied `initialize` POST signed for `aws-mcp`/`us-east-1` gives a byte-exact `Authorization` header against a recorded fixture (S3). T-SIG-3: a session token gives `x-amz-security-token` (S1). T-SIG-4: `_meta` injection happens **before** signing; the signed payload hash equals the hash of the sent body (S3) |
 | service and region resolution | T-SCOPE: table test of `signing_service_region` plus `--service`/`--region`/`AWS_REGION` precedence, including aidevops, agentaccess-mcp and bedrock-agentcore hosts, and the error when nothing yields a region (S3) |
 | credential refresh and stdin | T-CRED-1: a fake provider counts loads: one load per attempt, and a rebuild after a recorded 403 (S3). T-CRED-4: a Rust fixture `credential_process` reads stdin and sees EOF at once (S1, D2). T-CRED-5: a credential flag in argv is refused (S3) |
-| unsigned only on semantic absence; error precedence | T-ABS (S1 preflight units, S3 end to end), section 4.1.1 table |
+| unsigned only on semantic absence; error precedence; configured source cannot fall through | T-ABS including the #5013 fallback cases and the R-SRC mutation check (S1 preflight and selector units, S3 end to end), section 4.1.1 table |
 | `aws login` source | T-LOGIN (S1), R-LOGIN, below |
 | provider-plane egress and isolation | T-PROV (S1 seam, S3), section 4.1.2 |
 | nothing logged or echoed | T-LEAK, T-LEAK-SDK, T-LEAK-GATE (S3), section 4.2 |
-| TLS verification and root sources | T-TLS-1 to T-TLS-11 (S1), section 4.3 |
+| TLS verification and root sources | T-TLS-1 to T-TLS-20 (S1), T-TLS-21 (S3), section 4.3 |
 | endpoint allowlist | T-EP (S3). Refused: non-AWS host, `localhost`, IP literal, `.amazonaws.com.cn`, private DNS answer, userinfo; a different URL in a response `Location`, an SSE `retry`/`id` or a tool result is never requested. Accepted: the four documented host shapes. Every request URL equals `McpTarget`'s |
 | request target and header framing | T-HDR, including the #5002 URL target cases (S1 refusal, S3 CLI and wire), section 4.4 |
 | size bounds | T-SIZE: one test per row of section 4.5 at the limit (accepted) and limit+1 (refused, loop continues, next message still served) (S1 transport rows, S2) |
@@ -1119,13 +1358,20 @@ Slices are ordered by dependency. Each slice leaves the Python/`uvx` configs unt
   - R-LOGIN: add `credentials-login` to the `sdk` feature's aws-config features.
   - The R-ABS preflight classifier: a pure function, plus the `aws_config::profile::load`
     adapter.
+  - The R-SRC selector (a pure function from the preflight result to one source) and the
+    single-source builders over the shared `ProviderConfig`, with the test-visible build log.
   - The R-PROV seam `default_chain_with_http`, and the env-mutation source gate.
+  - R-ROOTS: the root validator (a pure function plus the rustls-native-certs and
+    `openssl-probe` loaders), `ValidatedRoots`, and the explicit `TlsContext` for both the
+    `SdkTransport` connector and the provider-plane HTTP client. `openssl-probe` 0.2.2 becomes
+    a direct dependency for non-macOS Unix targets only.
   - D2's null-stdin mechanism, which is now mandatory.
   - The T-TLS loopback harness, with its test-only resolver constructor.
   - A `toolkit-cli` feature (`aws-sdk`) that enables `toolkit-aws/sdk`, and the swap of asm
     exec's `Unavailable*` for the real adapters when it is on (closes #4582 item 1).
-  - Tests: T-SIG-1/3, T-TLS-1 to T-TLS-11, T-CRED-4, T-LOGIN, the T-ABS preflight units, the
-    T-PROV seam and gate, the T-HDR refusal, the transport rows of T-SIZE.
+  - Tests: T-SIG-1/3, T-TLS-1 to T-TLS-20, T-CRED-4, T-LOGIN, the T-ABS preflight and R-SRC
+    selector units with the mutation check, the T-PROV seam and gate, the T-HDR refusal, the
+    transport rows of T-SIZE.
 - **S2: protocol core** (toolkit-cli `mcp_proxy` module, no network)
   - The stdio reader and writer, with separate data and control queues.
   - The R-MEM `Budget` and its `Reservation` guards.
@@ -1148,7 +1394,8 @@ Slices are ordered by dependency. Each slice leaves the Python/`uvx` configs unt
   - R-URL's `McpTarget`.
   - The Q3 User-Agent policy.
   - The R-LOG `Diag` sink and the dependency/source gate.
-  - Wiring of S1 and S2, plus D1, R-ABS, R-PREC, R-STICKY and the read-only filter.
+  - Wiring of S1 and S2, plus D1, R-ABS, R-SRC, R-PREC, R-STICKY, R-ROOTS at startup and the
+    read-only filter.
   - Tests: T-SCOPE, T-SIG-2/4, T-CRED-1/5, T-ABS end to end, T-PROV end to end, T-LEAK,
     T-LEAK-SDK, T-LEAK-GATE, T-EP, T-HDR CLI and wire, T-RO, T-CLI, and binary-level pipe tests
     over the fake transport.
@@ -1214,8 +1461,10 @@ part of CI.
 | Q6 | `.amazonaws.com.cn`, PrivateLink | **PM:** not now; follow-up |
 | Q7 | OAuth direct in plugin configs | **PM:** documented only |
 | Q8 | `iam-policy-autopilot` | **PM:** out of #4413's scope; its own research Issue later |
+| #5013 | Invalid configured profile falling through to another identity | **PM (8cd977f6):** guarded provider composition, not deeper reference validation. A Configured source builds only its own provider, never the default chain; any failure of it, `NotLoaded` included, is a hard credential error and never unsigned, even with `--skip-auth`. Only Absent uses the default chain, and only Absent plus `NotLoaded` may go unsigned with `--skip-auth`. T-ABS must include a valid recorder-backed ECS/IMDS fallback for the missing-`source_profile` and incomplete-SSO cases, with and without `--skip-auth` and across the rebuild, and assert the fallback is never contacted. Implemented as R-SRC |
+| #5014 | Partial and empty TLS roots | **PM (8cd977f6):** explicit safe root validation. A non-empty `SSL_CERT_FILE`/`SSL_CERT_DIR` with any load error, or zero usable roots, fails closed at start with a fixed TLS-configuration diagnostic; partial roots are never silently accepted; an empty-valued variable is treated as unset (documented); zero platform roots is the same fixed error in every build profile, never the `debug_assert`. Q4 stays deferred. Implemented as R-ROOTS; see proposed R-7 for the macOS/Windows empty-`SSL_CERT_FILE` limit |
 
-### 6.2 Proposed rulings for revision 2 (PM)
+### 6.2 Proposed rulings for revisions 2 and 3 (PM)
 
 Each is the design's choice, and the design is written as if it were accepted. A different
 ruling changes only the named requirement.
@@ -1228,6 +1477,7 @@ ruling changes only the named requirement.
 | R-4 | Endpoint URLs with a query or fragment are refused: an intentional supported subset of upstream's validator | R-URL | No proxy endpoint uses a query; this avoids a second URL representation and logging a secret query |
 | R-5 | `SSL_CERT_FILE`/`SSL_CERT_DIR` are honoured as inherited trusted configuration (replacement roots); `AWS_CA_BUNDLE` is not honoured; Q4's deferral of `HTTPS_PROXY` and additional roots stands | R-TLS | #5001: this states the real behaviour, which matches upstream's `httpx`; no unverified fallback exists |
 | R-6 | Enable aws-config `credentials-login` in `toolkit-aws`'s `sdk` feature (asm exec gets it too) | R-LOGIN | #4997: keeps the `aws login` source required by AC3 |
+| R-7 | On macOS and Windows, an empty-valued `SSL_CERT_FILE` is refused at start (`empty-file-var-unsupported`) instead of being treated as unset. Linux, other non-macOS Unix, and an empty `SSL_CERT_DIR` everywhere follow the PM ruling exactly | R-ROOTS | rustls-native-certs 0.8.5 exposes no public platform loader that ignores the variable on those targets, and the alternatives are environment mutation (banned) or vendoring trust-store code. The deviation fails closed and only affects a launch environment that sets the variable to nothing. Alternative if the PM prefers exact parity: S1 vendors the two private platform loaders (security-framework, schannel; both already in `Cargo.lock`) under S4 review |
 
 ### 6.3 Spending
 
@@ -1238,17 +1488,19 @@ stops and reports the exact cost line up, as the GM ruling requires.
 
 | Finding | Requirement (section) | Verification | Slice |
 | --- | --- | --- | --- |
-| #4995 (P1) NotLoaded does not prove absence | R-ABS preflight, R-PREC precedence across D1 attempts, R-STICKY (4.1.1); proposed R-1, R-2 | T-ABS: preflight unit table; the real SDK chain in subprocesses over synthetic env/config with the T-PROV recorder; genuine absence → unsigned; typo'd profiles, partial env (with a valid fallback profile present), invalid/SSO-incomplete profiles, process failure, expiry, provider timeout, precedence and stickiness cases → no transport call | S1 (preflight), S3 (wiring, end to end) |
+| #4995 (P1) NotLoaded does not prove absence | R-ABS preflight, R-PREC precedence across D1 attempts, R-STICKY (4.1.1); proposed R-1, R-2. Round 2 found the remaining fall-through to another identity; see #5013 (R-SRC) | T-ABS: preflight unit table; the real SDK chain in subprocesses over synthetic env/config with the T-PROV recorder; genuine absence → unsigned; typo'd profiles, partial env (with a valid fallback profile present), invalid/SSO-incomplete profiles, process failure, expiry, provider timeout, precedence and stickiness cases → no transport call | S1 (preflight), S3 (wiring, end to end) |
 | #4996 (P1) SDK tracing before redaction | R-LOG (4.2): no subscriber or logger ever; allowlisted `Diag` sink; dependency/source gate; `Interest::never` rule for any future subscriber | T-LEAK-SDK: the production entry point, `RUST_LOG` attempts, a real profile chain over a Rust fixture `credential_process` printing a bare canary (`WARN` and `DEBUG` chain paths, assume-role source chain); T-LEAK-GATE | S3 (S1 provides the fixture executable) |
 | #4997 (P2) `aws login` needs `credentials-login` | R-LOGIN (4.1); proposed R-6 | T-LOGIN: synthetic `login_session` and cache, injected Sign-in transport; success, expiry refresh, refresh failure fail-closed, recovery after a cache rewrite | S1 |
 | #4998 (P1) quadratic object parsing | R-WORK (4.5): indexed duplicate check (kaizen #4497), `parse_json_with_limits` node cap, parsing on blocking workers, cancellation after a bounded parse | T-WORK: probe count ≤ 2n for 20,000 keys, order and duplicate error preserved, node-cap boundary | **S0** (toolkit-core), used by S2 |
 | #4999 (P2) aggregate memory | R-MEM (4.5): shared 96 MiB budget, reserve-before-allocate RAII reservations, node charge, deadlock-free wait, control lane, release on every exit path; proposed R-3 | T-BUDGET with injected small limits: boundary, paused sink, control priority, release on reject/timeout/cancel/EOF/EPIPE, recovery, no deadlock | S2 |
 | #5000 (P2) Host and framing headers | R-HDR (4.4.2): owned set refused at start, case-insensitively; duplicates refused; transport and signer refusal; `Host`/`Content-Length` derived from `McpTarget` and the final body | T-HDR: CLI refusals (mixed case, framing, session); on the wire, exactly one `Host` = authority, `Content-Length` = post-`_meta` body, no TE, signature re-verifies; agentaccess header kept and redacted | S1 (refusal), S3 (CLI, wire) |
-| #5001 (P2) native roots honour `SSL_CERT_*` | R-TLS (4.3): corrected statement; `SSL_CERT_FILE`/`DIR` honoured as trusted configuration; `AWS_CA_BUNDLE` not; fail closed on empty roots; no proxy; Q4 deferral kept; proposed R-5 | T-TLS-1 to T-TLS-11 through the production rustls layer, one subprocess per case (`LazyLock`): untrusted, wrong host, each root variable, empty/missing roots, `HTTPS_PROXY` ignored, http refused, no redirects | S1 |
+| #5001 (P2) native roots honour `SSL_CERT_*` | R-TLS (4.3): corrected statement; `SSL_CERT_FILE`/`DIR` honoured as trusted configuration; `AWS_CA_BUNDLE` not; no proxy; Q4 deferral kept; proposed R-5. Round 2 found the partial and empty-root claims inaccurate; see #5014 (R-ROOTS) | T-TLS-1 to T-TLS-11 through the production rustls layer, one subprocess per case: untrusted, wrong host, each root variable, empty/missing roots, `HTTPS_PROXY` ignored, http refused, no redirects | S1 |
 | #5002 (P2) query and trailing-path contradiction | R-URL (4.4.1): stated grammar; query/fragment refused (proposed R-4); `McpTarget` keeps the path verbatim; no rebuild from `Endpoint`; global policy unchanged | T-HDR URL target cases: `/mcp` vs `/mcp/`, root, percent-encoded, ports, query/fragment refusal with no canary echo; SigV4 canonical-URI fixture | S3 (S1 harness) |
 | #5003 (P2) provider-chain egress | Section 4.0 scoping; 4.1.2 provider-plane egress and trust table; R-PROV (no traffic into provider inputs, one provider-HTTP seam, no env mutation) | T-PROV: the recorder injected through `default_chain_with_http` in every credential case with exact destination lists; source gate on chain construction; the traffic-cannot-reconfigure case | S1 (seam, gate), S3 (end to end) |
+| #5013 (P1, round 2) invalid configured profile can still sign as another identity | R-SRC guarded provider composition (4.1.1, PM ruling): the first configured source in SDK order gets only its own provider; the default chain is built only for Absent; every failure of a configured source, `NotLoaded` included, is terminal and never unsigned; R-ABS stays presence-only, and the "does not validate references" scope is stated; no error-text classification | T-ABS #5013-a/b/c: the real profile provider in subprocesses with `role_arn` + missing `source_profile` and with an existing `[sso-session]` but no account/role, each beside a valid recorder-backed ECS **and** an IMDS fallback (with control cases proving each fallback works), with and without `--skip-auth`, on the load and the D1 rebuild; assert no MCP call, no recorder request, build log `[Profile, Profile]`, fallback key id absent; a mutation run with a `DefaultChain` selector must fail; the missing-section case relabelled `MissingSsoSession` → `InvalidConfiguration`; source-order cases | S1 (selector, builders, units), S3 (end to end) |
+| #5014 (P2, round 2) partial and empty TLS roots | R-ROOTS (4.3, PM ruling): one validation at start; empty values are unset; each configured location must load without error and contribute a root; zero roots is the fixed error; a fixed diagnostic with a closed reason set, no paths; an explicit `TrustStore::empty()` context from non-empty `ValidatedRoots` for both planes, so Smithy's native-root `LazyLock` and `debug_assert` are never reached; proposed R-7 | T-TLS-5/6/7 now startup refusals with no panic and no connection; T-TLS-12/13 mixed valid and broken inputs; T-TLS-14 invalid certificate; T-TLS-15 empty directory in a list; T-TLS-16/17 empty-valued variables; T-TLS-18 `":"`; T-TLS-19 zero platform roots; T-TLS-20 no native-root source gate; T-TLS-11 on `ValidatedRoots`; T-TLS-21 provider-plane roots | S1 (validator, contexts, T-TLS-1 to 20), S3 (T-TLS-21) |
 
-Review #4994 confirmed the rest of section 4 as it stands: D1's single rebuild, D2 being
+Review #4994 (rounds 1 and 2) confirmed the rest of section 4 as it stands: D1's single rebuild, D2 being
 necessary, D4, the signer, the endpoint policy, the DNS guard, the read-only stance, framing by
 re-serialisation, session-id validation and the T-SIG/T-SESS/T-ERR/T-RO plans. Those parts are
 unchanged except where the requirements above touch them.
