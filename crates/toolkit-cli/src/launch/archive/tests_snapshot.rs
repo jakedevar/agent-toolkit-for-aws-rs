@@ -71,7 +71,13 @@ pub fn extract_to(
 pub fn names(dir: &Path) -> Vec<String> {
     let mut out: Vec<String> = fs::read_dir(dir)
         .expect("list")
-        .map(|entry| entry.expect("entry").file_name().to_string_lossy().into_owned())
+        .map(|entry| {
+            entry
+                .expect("entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
         .collect();
     out.sort();
     out
@@ -87,7 +93,11 @@ pub fn partials(dir: &Path) -> Vec<String> {
 
 /// The permission bits of `path` (not following a final symlink).
 pub fn mode(path: &Path) -> u32 {
-    fs::symlink_metadata(path).expect("stat").permissions().mode() & 0o7777
+    fs::symlink_metadata(path)
+        .expect("stat")
+        .permissions()
+        .mode()
+        & 0o7777
 }
 
 /// Every path below `dir` (relative, `/`-separated, sorted), not following
@@ -138,7 +148,7 @@ pub fn run_git(dir: &Path, args: &[&str]) -> String {
         .stderr(std::process::Stdio::null())
         .output()
         .expect("run git");
-    assert!(output.status.success(), "git {args:?} in {dir:?}");
+    assert!(output.status.success(), "git {args:?} in {}", dir.display());
     String::from_utf8(output.stdout).expect("utf-8")
 }
 
@@ -165,13 +175,20 @@ pub fn sha_tree(dir: &Path) -> Vec<(String, String)> {
     fn walk(base: &Path, dir: &Path, out: &mut Vec<(String, String)>) {
         for entry in fs::read_dir(dir).expect("list").map(|e| e.expect("entry")) {
             let path = entry.path();
-            let relative = path.strip_prefix(base).expect("below").to_string_lossy().into_owned();
+            let relative = path
+                .strip_prefix(base)
+                .expect("below")
+                .to_string_lossy()
+                .into_owned();
             let meta = fs::symlink_metadata(&path).expect("stat");
             if meta.file_type().is_symlink() {
                 let target = fs::read_link(&path).expect("link");
                 out.push((relative, format!("link:{}", target.display())));
             } else if meta.is_dir() {
-                out.push((relative, format!("dir {:o}", meta.permissions().mode() & 0o7777)));
+                out.push((
+                    relative,
+                    format!("dir {:o}", meta.permissions().mode() & 0o7777),
+                ));
                 walk(base, &path, out);
             } else if meta.is_file() {
                 let bytes = fs::read(&path).expect("read");

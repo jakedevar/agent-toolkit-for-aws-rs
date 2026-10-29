@@ -123,9 +123,7 @@ pub fn exists_message(shown_path: &str) -> String {
 
 /// "The output directory must end in a name".
 fn final_component_message(shown_path: &str) -> String {
-    format!(
-        "The output directory must end in a name (not empty, `.` or `..`): {shown_path}."
-    )
+    format!("The output directory must end in a name (not empty, `.` or `..`): {shown_path}.")
 }
 
 /// A staging, creation or cleanup failure that is not a decode failure.
@@ -281,14 +279,18 @@ struct Staging {
 }
 
 /// A held directory that must be ours, a directory, and private.
+#[allow(clippy::verbose_bit_mask)]
 fn check_private(dir: &DirHandle) -> io::Result<bool> {
     let (uid, mode) = fsops::owner_and_mode(dir)?;
     Ok(uid == fsops::euid() && mode & 0o077 == 0)
 }
 
 fn create_staging(parent: &DirHandle, random: &dyn Random) -> Result<Staging, LaunchError> {
-    let name = CString::new(format!(".launch-snapshot-{}.partial", random_hex(random, 8)?))
-        .map_err(|_| changed_failure())?;
+    let name = CString::new(format!(
+        ".launch-snapshot-{}.partial",
+        random_hex(random, 8)?
+    ))
+    .map_err(|_| changed_failure())?;
     fsops::mkdir_at(parent, &name, 0o700).map_err(|error| io_failure(&error))?;
     let dir = match fsops::enter_dir(parent, &name) {
         Ok(dir) if check_private(&dir).unwrap_or(false) => dir,
@@ -319,9 +321,7 @@ fn create_staging(parent: &DirHandle, random: &dyn Random) -> Result<Staging, La
 /// `unlinkat(dir, name, AT_REMOVEDIR)` only while `name` is still `ident`.
 fn remove_if_same(dir: &DirHandle, name: &CStr, ident: Ident) -> bool {
     match fsops::stat_at(dir, name) {
-        Ok(stat)
-            if stat.kind == fsops::EntryType::Directory && (stat.dev, stat.ino) == ident =>
-        {
+        Ok(stat) if stat.kind == fsops::EntryType::Directory && (stat.dev, stat.ino) == ident => {
             fsops::remove_at(dir, name, true).is_ok()
         }
         _ => false,
@@ -414,11 +414,9 @@ impl Run<'_> {
                 left += 1;
                 continue;
             };
-            let same = fsops::stat_at(parent, &name)
-                .is_ok_and(|stat| (stat.dev, stat.ino) == (dev, ino));
-            if same
-                && fsops::remove_at(parent, &name, spec.kind == NodeKind::Directory).is_ok()
-            {
+            let same =
+                fsops::stat_at(parent, &name).is_ok_and(|stat| (stat.dev, stat.ino) == (dev, ino));
+            if same && fsops::remove_at(parent, &name, spec.kind == NodeKind::Directory).is_ok() {
                 removed += 1;
             } else {
                 left += 1;
@@ -446,8 +444,7 @@ pub fn extract(
     stats.capacity_reserved = ledger.capacity();
     stats.capacity_max = ledger.capacity();
     let staging = create_staging(&target.parent, random)?;
-    let navigator_root =
-        fsops::enter_dir(&staging.tree, c".").map_err(|_| changed_failure());
+    let navigator_root = fsops::enter_dir(&staging.tree, c".").map_err(|_| changed_failure());
     let mut outcome = navigator_root.and_then(|root| {
         let mut run = Run {
             archive,
@@ -496,14 +493,12 @@ fn publish(
     hook.before(HookPoint::BeforePublish);
     let shown_path = shown(&target.path.to_string_lossy());
     let still_ours = fsops::stat_at(&target.parent, &staging.name).is_ok_and(|stat| {
-        stat.kind == fsops::EntryType::Directory
-            && (stat.dev, stat.ino) == staging.dir.identity()
+        stat.kind == fsops::EntryType::Directory && (stat.dev, stat.ino) == staging.dir.identity()
     });
     if !still_ours {
         return Err(changed_failure());
     }
-    if let Err(error) =
-        fsops::rename_noreplace(&staging.dir, c"tree", &target.parent, &target.name)
+    if let Err(error) = fsops::rename_noreplace(&staging.dir, c"tree", &target.parent, &target.name)
     {
         return Err(LaunchError::Archive(if fsops::is_taken(&error) {
             exists_message(&shown_path)
@@ -516,8 +511,7 @@ fn publish(
         }));
     }
     let published = fsops::stat_at(&target.parent, &target.name).is_ok_and(|stat| {
-        stat.kind == fsops::EntryType::Directory
-            && (stat.dev, stat.ino) == staging.tree.identity()
+        stat.kind == fsops::EntryType::Directory && (stat.dev, stat.ino) == staging.tree.identity()
     });
     let _ = remove_if_same(&target.parent, &staging.name, staging.dir.identity());
     if !published {

@@ -59,8 +59,8 @@ pub struct DownloadDeps<'a> {
     pub node_budget: usize,
     /// The download body cap (500 MiB; tests inject small caps, #5082).
     pub download_cap: usize,
-    /// The absolute download deadline.
-    pub deadline: Instant,
+    /// The download's whole-request time limit (from the start of the GET).
+    pub download_time: Duration,
 }
 
 /// The command's result.
@@ -104,7 +104,11 @@ pub fn default_output(
             }
         })
         .collect();
-    let safe = if safe.is_empty() { "launch".to_string() } else { safe };
+    let safe = if safe.is_empty() {
+        "launch".to_string()
+    } else {
+        safe
+    };
     Ok(temp_dir.join(format!("launch-snapshot-{safe}-{}", random_hex(random, 8)?)))
 }
 
@@ -114,8 +118,9 @@ fn download_error(text: impl Into<String>) -> LaunchError {
 
 /// The size limit as the messages name it.
 fn limit_text(cap: usize) -> String {
-    if cap >= MIB as usize && cap % MIB as usize == 0 {
-        format!("{} MiB", cap / MIB as usize)
+    let bytes = u64::try_from(cap).unwrap_or(u64::MAX);
+    if bytes >= MIB && bytes.is_multiple_of(MIB) {
+        format!("{} MiB", bytes / MIB)
     } else {
         format!("{cap} bytes")
     }
@@ -137,7 +142,7 @@ fn fetch(url: &str, deps: &DownloadDeps<'_>) -> Result<Vec<u8>, LaunchError> {
         deps.transport,
         &request,
         Operation::Download,
-        deps.deadline,
+        Instant::now() + deps.download_time,
         deps.download_cap,
     )
     .map_err(|error| {
@@ -146,9 +151,9 @@ fn fetch(url: &str, deps: &DownloadDeps<'_>) -> Result<Vec<u8>, LaunchError> {
                 "The snapshot download exceeds the {} limit.",
                 limit_text(deps.download_cap)
             ),
-            BodyError::Deadline => format!(
-                "The snapshot download did not finish within {DOWNLOAD_SECONDS} seconds."
-            ),
+            BodyError::Deadline => {
+                format!("The snapshot download did not finish within {DOWNLOAD_SECONDS} seconds.")
+            }
             BodyError::InvalidResponse => {
                 "The snapshot download returned an invalid response.".to_string()
             }
@@ -156,8 +161,7 @@ fn fetch(url: &str, deps: &DownloadDeps<'_>) -> Result<Vec<u8>, LaunchError> {
                 "The snapshot download could not be held in memory.".to_string()
             }
             BodyError::Transport { .. } => {
-                "The snapshot download failed: the connection could not be completed."
-                    .to_string()
+                "The snapshot download failed: the connection could not be completed.".to_string()
             }
         })
     })?;
@@ -196,7 +200,10 @@ pub fn check_download_url(url: &str, resolver: &dyn HostResolver) -> Result<(), 
     if authority.contains('@') {
         return Err(url_error("must not contain user information"));
     }
-    if url.chars().any(|c| c.is_control() || c.is_whitespace() || c == '\\') || url.contains('#')
+    if url
+        .chars()
+        .any(|c| c.is_control() || c.is_whitespace() || c == '\\')
+        || url.contains('#')
     {
         return Err(malformed());
     }
@@ -220,7 +227,10 @@ pub fn check_download_url(url: &str, resolver: &dyn HostResolver) -> Result<(), 
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'.')
         && host.split('.').all(|label| {
-            !label.is_empty() && label.len() <= 63 && !label.starts_with('-') && !label.ends_with('-')
+            !label.is_empty()
+                && label.len() <= 63
+                && !label.starts_with('-')
+                && !label.ends_with('-')
         });
     if !well_formed {
         return Err(malformed());

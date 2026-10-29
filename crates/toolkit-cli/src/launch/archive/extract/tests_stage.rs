@@ -16,23 +16,23 @@ use crate::launch::text::shown;
 
 /// Runs `action` once at `at`.
 struct At<F: FnMut()> {
-    at: HookPoint,
+    point: HookPoint,
     action: F,
     fired: bool,
 }
 
 impl<F: FnMut()> ExtractHook for At<F> {
     fn before(&mut self, point: HookPoint) {
-        if point == self.at && !self.fired {
+        if point == self.point && !self.fired {
             self.fired = true;
             (self.action)();
         }
     }
 }
 
-fn at<F: FnMut()>(at: HookPoint, action: F) -> At<F> {
+fn at<F: FnMut()>(point: HookPoint, action: F) -> At<F> {
     At {
-        at,
+        point,
         action,
         fired: false,
     }
@@ -188,7 +188,10 @@ fn swap_staging_at(point: HookPoint) {
     assert_eq!(stats.left, 0);
     assert_eq!(stats.removed, stats.len_at_stop);
     let link = staging_in(&parent);
-    assert!(fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
+    assert!(fs::symlink_metadata(&link)
+        .unwrap()
+        .file_type()
+        .is_symlink());
 }
 
 #[test]
@@ -238,7 +241,11 @@ fn t_stage_9_symlinked_parent_is_followed_once_and_bad_final_components_refused(
     let real = scratch.join("real");
     fs::create_dir(&real).unwrap();
     symlink(&real, scratch.join("link")).unwrap();
-    let (result, _) = extract_to(&sample_bytes(), &scratch.join("link/out"), &mut NoExtractHook);
+    let (result, _) = extract_to(
+        &sample_bytes(),
+        &scratch.join("link/out"),
+        &mut NoExtractHook,
+    );
     result.expect("symlinked parent followed");
     assert_eq!(tree(&real.join("out")), sample_tree());
 
@@ -252,7 +259,9 @@ fn t_stage_9_symlinked_parent_is_followed_once_and_bad_final_components_refused(
         let before = names(&real);
         let error = prepare_output(Path::new(&bad)).expect_err("refused");
         assert!(
-            error.message().starts_with("The output directory must end in a name"),
+            error
+                .message()
+                .starts_with("The output directory must end in a name"),
             "{bad:?}: {error:?}"
         );
         assert_eq!(names(&real), before);
@@ -260,9 +269,7 @@ fn t_stage_9_symlinked_parent_is_followed_once_and_bad_final_components_refused(
     let error = prepare_output(&real.join("out")).expect_err("exists");
     assert_eq!(
         error,
-        LaunchError::Archive(exists_message(&shown(
-            &real.join("out").to_string_lossy()
-        )))
+        LaunchError::Archive(exists_message(&shown(&real.join("out").to_string_lossy())))
     );
     let error = prepare_output(&scratch.join("missing/out")).expect_err("no parent");
     assert!(error.message().contains("does not exist"), "{error:?}");

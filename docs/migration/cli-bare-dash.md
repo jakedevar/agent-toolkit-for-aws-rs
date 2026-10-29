@@ -300,3 +300,12 @@ file named `-` is read. Its two synopsis lines change global usage to 44155
 bytes, FNV-1a `0xea11e5a1e031b87f` before the launch routes were added. With
 the launch routes and reward checker together, usage is 44502 bytes, FNV-1a
 `0x95a0edb8063410e1`.
+
+The launch snapshot routes (#5317) add `launch download-snapshot LAUNCH_ID
+[--output DIR] [--region REGION]` and `launch apply-snapshot SNAPSHOT_DIR
+[--into DIR]`. `--region` goes only to `resolve_region` (a supported-region
+name, never a path). `--output`, `--into` and the snapshot directory are paths;
+the router refuses a bare `-` and `--flag=-` for each value flag, and the
+positionals refuse a bare `-`, so `./-` is the way to name a literal
+directory `-`. Neither command reads stdin. Global usage is 45014 bytes, FNV-1a
+`0xcf2cb8463038df2b`.

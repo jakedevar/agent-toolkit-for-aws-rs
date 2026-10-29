@@ -14,20 +14,20 @@
 //! Extraction, staging, apply and the Git metadata discovery (R-AR-EXT,
 //! R-AR-STAGE, R-AR-APPLY, R-AR-META) are slice L6.
 
-pub mod casefold;
-pub mod crc32;
 #[cfg(unix)]
 pub mod apply;
+pub mod casefold;
+pub mod crc32;
 #[cfg(unix)]
 pub mod extract;
 #[cfg(unix)]
 pub mod fsops;
 #[cfg(unix)]
-pub mod nav;
-#[cfg(unix)]
 pub mod git;
 #[cfg(unix)]
 pub mod meta;
+#[cfg(unix)]
+pub mod nav;
 pub mod plan;
 #[cfg(unix)]
 pub mod select;
@@ -124,9 +124,9 @@ pub fn archive_size_message(size: u64, limits: &ArchiveLimits) -> String {
     )
 }
 
-#[cfg(test)]
-mod tests_zip64;
 #[cfg(all(test, unix))]
 pub mod tests_snapshot;
+#[cfg(test)]
+mod tests_zip64;
 #[cfg(test)]
 pub mod tests_zipfx;

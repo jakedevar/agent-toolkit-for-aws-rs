@@ -37,7 +37,14 @@ fn apply_opts(
 }
 
 fn apply_rules(source: &Path, into: &Path, rules: MetaRules) -> Result<Applied, LaunchError> {
-    apply_opts(source, into, &test_git(), &MapEnv::new(), rules, &mut NoApplyHook)
+    apply_opts(
+        source,
+        into,
+        &test_git(),
+        &MapEnv::new(),
+        rules,
+        &mut NoApplyHook,
+    )
 }
 
 fn apply_default(source: &Path, into: &Path) -> Result<Applied, LaunchError> {
@@ -148,7 +155,11 @@ fn t_apply_12_common_dir_indirection_in_a_linked_worktree_is_refused() {
     fs::rename(common.join("worktrees/wt"), &per).unwrap();
     fs::write(work.join(".git"), format!("gitdir: {}\n", per.display())).unwrap();
     fs::write(per.join("commondir"), format!("{}\n", common.display())).unwrap();
-    fs::write(per.join("gitdir"), format!("{}\n", work.join(".git").display())).unwrap();
+    fs::write(
+        per.join("gitdir"),
+        format!("{}\n", work.join(".git").display()),
+    )
+    .unwrap();
     assert_eq!(rev_parse(&work), (canonical(&per), canonical(&common)));
     let marker = holder.join("apply12-marker");
     let helper = marker_helper(&marker);
@@ -159,7 +170,11 @@ fn t_apply_12_common_dir_indirection_in_a_linked_worktree_is_refused() {
             ("helper", &helper[..], 0o755),
         ],
         vec![
-            ("wt-admin/config.worktree", &b"[core]\n\tfsmonitor = ./helper\n"[..], 0o644),
+            (
+                "wt-admin/config.worktree",
+                &b"[core]\n\tfsmonitor = ./helper\n"[..],
+                0o644,
+            ),
             ("helper", &helper[..], 0o755),
         ],
     ] {
@@ -167,7 +182,9 @@ fn t_apply_12_common_dir_indirection_in_a_linked_worktree_is_refused() {
         let before = sha_tree(&work);
         let error = apply_default(source.path(), &work).expect_err("refused");
         assert!(
-            error.message().starts_with("The snapshot would write into Git metadata at "),
+            error
+                .message()
+                .starts_with("The snapshot would write into Git metadata at "),
             "{error:?}"
         );
         assert_eq!(sha_tree(&work), before);
@@ -201,8 +218,12 @@ fn t_apply_14_target_root_inside_metadata_is_refused() {
         let before = sha_tree(target.path());
         let error = apply_default(source.path(), &into).expect_err("refused");
         assert!(
-            error.message().starts_with("apply-snapshot could not locate")
-                || error.message().starts_with("The snapshot would write into Git metadata"),
+            error
+                .message()
+                .starts_with("apply-snapshot could not locate")
+                || error
+                    .message()
+                    .starts_with("The snapshot would write into Git metadata"),
             "{into:?}: {error:?}"
         );
         assert_eq!(sha_tree(target.path()), before);
@@ -213,7 +234,9 @@ fn t_apply_14_target_root_inside_metadata_is_refused() {
     // Git refuses `--show-toplevel` inside the Git directory (`git_failed`);
     // either way the discovery fails closed.
     assert!(
-        error.message().starts_with("apply-snapshot could not locate"),
+        error
+            .message()
+            .starts_with("apply-snapshot could not locate"),
         "{error:?}"
     );
     assert_eq!(sha_tree(ordinary.dir.path()), before);
@@ -246,7 +269,10 @@ fn t_apply_15_nested_admin_dirs_bare_repos_and_shaped_snapshot_dirs() {
         let error = apply_default(source.path(), target).expect_err("refused");
         let text = error.message();
         if index < 2 {
-            assert!(text.starts_with("The snapshot would write into Git metadata at "), "{text}");
+            assert!(
+                text.starts_with("The snapshot would write into Git metadata at "),
+                "{text}"
+            );
         } else {
             assert_eq!(
                 text,
@@ -296,13 +322,28 @@ fn t_apply_16_discovery_fails_closed_before_the_snapshot_is_read() {
         program: tools.join("no-such-git"),
         ..test_git()
     };
-    check(&missing_git, &none, target, discovery_message(reason::GIT_MISSING));
+    check(
+        &missing_git,
+        &none,
+        target,
+        discovery_message(reason::GIT_MISSING),
+    );
     let outside = Scratch::new("apply16-outside");
-    check(&test_git(), &none, outside.path(), discovery_message(reason::GIT_FAILED));
+    check(
+        &test_git(),
+        &none,
+        outside.path(),
+        discovery_message(reason::GIT_FAILED),
+    );
     let five = fake_git(&tools, "printf 'true\\nfalse\\nfalse\\n/a\\n/b\\n'");
     check(&five, &none, target, discovery_message(reason::LINES));
     let relative = fake_git(&tools, "printf 'true\\nfalse\\nfalse\\n/a\\nrel/b\\n/c\\n'");
-    check(&relative, &none, target, discovery_message(reason::RELATIVE));
+    check(
+        &relative,
+        &none,
+        target,
+        discovery_message(reason::RELATIVE),
+    );
     let old = fake_git(
         &tools,
         "printf -- '--path-format=absolute\\ntrue\\nfalse\\nfalse\\n/a\\n/b\\n'",
@@ -330,11 +371,6 @@ fn t_apply_16_discovery_fails_closed_before_the_snapshot_is_read() {
 
 #[test]
 fn t_apply_17_git_dir_moved_into_a_planned_directory_after_planning_stops() {
-    let ordinary = crate::launch::archive::tests_snapshot::repo("apply17");
-    let target = ordinary.dir.path().to_path_buf();
-    ordinary.dir.write("docs/old.md", b"old\n");
-    let metadata = sha_tree(&target.join(".git"));
-    let source = snapshot("apply17-snap", &[("docs/hooks/post-checkout", b"#!/bin/sh\n", 0o755)]);
     struct Swap(PathBuf);
     impl ApplyHook for Swap {
         fn between_phases(&mut self) {
@@ -342,6 +378,14 @@ fn t_apply_17_git_dir_moved_into_a_planned_directory_after_planning_stops() {
             fs::rename(self.0.join(".git"), self.0.join("docs")).unwrap();
         }
     }
+    let ordinary = crate::launch::archive::tests_snapshot::repo("apply17");
+    let target = ordinary.dir.path().to_path_buf();
+    ordinary.dir.write("docs/old.md", b"old\n");
+    let metadata = sha_tree(&target.join(".git"));
+    let source = snapshot(
+        "apply17-snap",
+        &[("docs/hooks/post-checkout", b"#!/bin/sh\n", 0o755)],
+    );
     let error = apply_opts(
         source.path(),
         &target,
@@ -357,6 +401,10 @@ fn t_apply_17_git_dir_moved_into_a_planned_directory_after_planning_stops() {
             .starts_with("Applying the snapshot stopped after 0 files: "),
         "{error:?}"
     );
-    assert_eq!(sha_tree(&target.join("docs")), metadata, "metadata unchanged");
+    assert_eq!(
+        sha_tree(&target.join("docs")),
+        metadata,
+        "metadata unchanged"
+    );
     assert!(tree(&target.join("docs-away")).contains(&"old.md".to_string()));
 }

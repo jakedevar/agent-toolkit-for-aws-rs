@@ -61,7 +61,13 @@ pub fn run(
     transport: &dyn StreamingTransport,
     knobs: Knobs<'_>,
 ) -> Result<Downloaded, LaunchError> {
-    let url = knobs.url.map(str::to_string);
+    let Knobs {
+        url,
+        budget,
+        cap,
+        hook,
+    } = knobs;
+    let url = url.map(str::to_string);
     let source = move || Ok(url.clone());
     let resolver = resolver();
     let random = SeededRandom::new(11);
@@ -70,12 +76,12 @@ pub fn run(
         transport,
         resolver: &resolver,
         random: &random,
-        hook: knobs.hook,
+        hook,
         temp_dir: temp,
         limits: ArchiveLimits::PRODUCTION,
-        node_budget: knobs.budget,
-        download_cap: knobs.cap,
-        deadline: Instant::now() + Duration::from_secs(DOWNLOAD_SECONDS),
+        node_budget: budget,
+        download_cap: cap,
+        download_time: Duration::from_secs(DOWNLOAD_SECONDS),
     };
     download_snapshot(
         &DownloadRequest {
@@ -90,7 +96,11 @@ pub fn run(
 /// Nothing at `out`, nothing staged next to it.
 #[track_caller]
 pub fn assert_nothing_created(parent: &Path, out: &Path) {
-    assert!(std::fs::symlink_metadata(out).is_err(), "{out:?} exists");
+    assert!(
+        std::fs::symlink_metadata(out).is_err(),
+        "{} exists",
+        out.display()
+    );
     assert!(partials(parent).is_empty(), "{:?}", names(parent));
 }
 
@@ -147,10 +157,10 @@ pub fn default_outputs(temp: &Path) -> Vec<PathBuf> {
 // T-EXT-1..4: every refusal class of the reader, end to end.
 // ---------------------------------------------------------------------------
 
+use crate::launch::archive::plan::{plan, PlanStats};
 use crate::launch::archive::tests_snapshot::{mode, sample_bytes, sample_entries, tree};
 use crate::launch::archive::tests_zipfx::{extra_item, noise, put16, put32, put64, EndFx};
 use crate::launch::archive::zip_read::{decode_entry, read_archive, Profile, ReadStats};
-use crate::launch::archive::plan::{plan, PlanStats};
 use std::cell::Cell;
 
 /// The reader, the planner and every entry's decode, without a file system:
@@ -188,15 +198,20 @@ fn assert_refused_end_to_end(label: &str, bytes: &[u8], needle: &str) {
     let out = scratch.join("out");
     let transport = ok_transport(bytes);
     let before = creation_calls();
-    let error = run(Some(&out), scratch.path(), &transport, Knobs::default())
-        .expect_err(label);
+    let error = run(Some(&out), scratch.path(), &transport, Knobs::default()).expect_err(label);
     assert_eq!(error, expected, "{label}");
     assert_eq!(transport.requests().len(), 1, "{label}");
     assert_nothing_created(scratch.path(), &out);
     assert!(names(scratch.path()).is_empty(), "{label}");
-    let decode_time = ["trailing_data", "truncated_stream", "(deflate)", "size_mismatch", "crc_mismatch"]
-        .iter()
-        .any(|code| needle.contains(code));
+    let decode_time = [
+        "trailing_data",
+        "truncated_stream",
+        "(deflate)",
+        "size_mismatch",
+        "crc_mismatch",
+    ]
+    .iter()
+    .any(|code| needle.contains(code));
     if !decode_time {
         assert_eq!(creation_calls(), before, "{label}: created before refusing");
     }
@@ -205,7 +220,8 @@ fn assert_refused_end_to_end(label: &str, bytes: &[u8], needle: &str) {
 #[test]
 #[allow(clippy::too_many_lines)]
 fn t_ext_1_every_framing_refusal_creates_nothing() {
-    let mut cases: Vec<(&str, Vec<u8>, &str)> = vec![("short", b"PK\x05\x06".to_vec(), "eocd_missing")];
+    let mut cases: Vec<(&str, Vec<u8>, &str)> =
+        vec![("short", b"PK\x05\x06".to_vec(), "eocd_missing")];
     let base = Fx::of(sample_entries());
     let built = base.build();
     let mut forged = vec![0x50, 0x4b, 0x05, 0x06];
@@ -249,10 +265,18 @@ fn t_ext_1_every_framing_refusal_creates_nothing() {
     cases.push(("stored size", with_ok(stored).build().bytes, "stored_size"));
     let mut extra = FxEntry::stored("bad", b"x");
     extra.central_extra = vec![1, 2, 3];
-    cases.push(("extra remainder", with_ok(extra).build().bytes, "extra_field"));
+    cases.push((
+        "extra remainder",
+        with_ok(extra).build().bytes,
+        "extra_field",
+    ));
     let mut unicode_path = FxEntry::stored("bad", b"x");
     unicode_path.central_extra = extra_item(0x7075, b"\x01....other");
-    cases.push(("unicode path", with_ok(unicode_path).build().bytes, "extra_field"));
+    cases.push((
+        "unicode path",
+        with_ok(unicode_path).build().bytes,
+        "extra_field",
+    ));
     let mut zip64 = FxEntry::stored("bad", b"x");
     zip64.central_extra = extra_item(1, &[0; 8]);
     cases.push(("zip64 extra", with_ok(zip64).build().bytes, "zip64_extra"));
@@ -264,7 +288,11 @@ fn t_ext_1_every_framing_refusal_creates_nothing() {
     cases.push(("local crc", bytes, "local_mismatch"));
     let mut descriptor = FxEntry::stored("bad", b"x").with_descriptor();
     descriptor.descriptor[0] = 0;
-    cases.push(("descriptor", with_ok(descriptor).build().bytes, "(descriptor)"));
+    cases.push((
+        "descriptor",
+        with_ok(descriptor).build().bytes,
+        "(descriptor)",
+    ));
     let shared = Fx {
         duplicate_central: vec![0],
         ..base.clone()
@@ -284,17 +312,33 @@ fn t_ext_1_every_framing_refusal_creates_nothing() {
     cases.push(("padding", with_ok(padded).build().bytes, "trailing_data"));
     let mut truncated = FxEntry::deflated("bad", &noise(4000, 3));
     truncated.payload.truncate(truncated.payload.len() - 5);
-    cases.push(("truncated", with_ok(truncated).build().bytes, "truncated_stream"));
+    cases.push((
+        "truncated",
+        with_ok(truncated).build().bytes,
+        "truncated_stream",
+    ));
     let mut invalid = FxEntry::deflated("bad", b"x");
     invalid.payload = vec![0xff; 16];
     invalid.uncompressed = 16;
-    cases.push(("invalid deflate", with_ok(invalid).build().bytes, "(deflate)"));
+    cases.push((
+        "invalid deflate",
+        with_ok(invalid).build().bytes,
+        "(deflate)",
+    ));
     let mut short = FxEntry::deflated("bad", &b"y".repeat(100));
     short.uncompressed = 101;
-    cases.push(("short output", with_ok(short).build().bytes, "size_mismatch"));
+    cases.push((
+        "short output",
+        with_ok(short).build().bytes,
+        "size_mismatch",
+    ));
     let mut directory = FxEntry::dir("bad/");
     directory.external = 0o100_644 << 16;
-    cases.push(("directory mode", with_ok(directory).build().bytes, "(directory)"));
+    cases.push((
+        "directory mode",
+        with_ok(directory).build().bytes,
+        "(directory)",
+    ));
     for (label, bytes, needle) in cases {
         assert_refused_end_to_end(label, &bytes, needle);
     }
@@ -347,11 +391,7 @@ fn t_ext_2_every_zip64_refusal_creates_nothing() {
     put16(&mut bytes, fits.eocd + 8, count);
     put16(&mut bytes, fits.eocd + 10, count);
     cases.push(("classic differs", bytes, "not a valid ZIP file"));
-    cases.push((
-        "record without sentinel",
-        fits.bytes.clone(),
-        "(layout)",
-    ));
+    cases.push(("record without sentinel", fits.bytes.clone(), "(layout)"));
     for (label, bytes, needle) in cases {
         assert_refused_end_to_end(label, &bytes, needle);
     }
@@ -389,22 +429,42 @@ fn t_ext_3_every_entry_policy_refusal_creates_nothing() {
         .bytes;
         cases.push((format!("duplicate {first:?}"), bytes, "collide"));
     }
-    for (kind, mode) in [("symlink", 0o120_777), ("fifo", 0o010_644), ("device", 0o020_644)] {
+    for (kind, mode) in [
+        ("symlink", 0o120_777),
+        ("fifo", 0o010_644),
+        ("device", 0o020_644),
+    ] {
         let mut entry = FxEntry::stored("special", b"x");
         entry.external = mode << 16;
-        let needle = if kind == "symlink" { "symlink entry" } else { "not a regular file" };
+        let needle = if kind == "symlink" {
+            "symlink entry"
+        } else {
+            "not a regular file"
+        };
         cases.push((kind.to_string(), with_ok(entry).build().bytes, needle));
     }
     let mut declared = FxEntry::deflated("big", &noise(2000, 5));
     declared.uncompressed = 101 * 1024 * 1024;
-    cases.push(("declared size".into(), with_ok(declared).build().bytes, "per-entry limit"));
+    cases.push((
+        "declared size".into(),
+        with_ok(declared).build().bytes,
+        "per-entry limit",
+    ));
     let mut ratio = FxEntry::deflated("ratio", &noise(100, 6));
     ratio.uncompressed = ratio.compressed() * 100 + 1;
-    cases.push(("ratio".into(), with_ok(ratio).build().bytes, "compression-ratio"));
+    cases.push((
+        "ratio".into(),
+        with_ok(ratio).build().bytes,
+        "compression-ratio",
+    ));
     let mut cp437 = FxEntry::stored("x", b"x");
     cp437.name = vec![0xff, b'x'];
     cp437.flags = 0;
-    cases.push(("cp437".into(), with_ok(cp437).build().bytes, "not valid UTF-8"));
+    cases.push((
+        "cp437".into(),
+        with_ok(cp437).build().bytes,
+        "not valid UTF-8",
+    ));
     for (label, bytes, needle) in cases {
         assert_refused_end_to_end(&label, &bytes, needle);
     }
@@ -450,8 +510,10 @@ struct Watch {
 impl ExtractHook for Watch {
     fn before(&mut self, point: crate::launch::archive::extract::HookPoint) {
         if point == crate::launch::archive::extract::HookPoint::BeforePublish {
-            self.out_existed_before_publish =
-                self.out.as_ref().map(|out| std::fs::symlink_metadata(out).is_ok());
+            self.out_existed_before_publish = self
+                .out
+                .as_ref()
+                .map(|out| std::fs::symlink_metadata(out).is_ok());
         }
     }
 
@@ -558,7 +620,7 @@ fn t_ext_6_existing_destination_is_refused_before_the_download() {
         limits: ArchiveLimits::PRODUCTION,
         node_budget: MAX_SNAPSHOT_NODES,
         download_cap: DOWNLOAD_CAP,
-        deadline: Instant::now() + Duration::from_secs(DOWNLOAD_SECONDS),
+        download_time: Duration::from_secs(DOWNLOAD_SECONDS),
     };
     let request = DownloadRequest {
         launch_id: "l-1",
@@ -591,8 +653,13 @@ fn t_stage_2_writable_parent_refused_before_any_request() {
         Knobs::default(),
     )
     .expect_err("refused");
-    assert!(error.message().starts_with("The parent of the output directory can be modified"));
-    assert!(transport.requests().is_empty(), "the transport fake records none");
+    assert!(error
+        .message()
+        .starts_with("The parent of the output directory can be modified"));
+    assert!(
+        transport.requests().is_empty(),
+        "the transport fake records none"
+    );
     assert!(names(&parent).is_empty());
 }
 
@@ -606,13 +673,22 @@ fn t_ext_7_crc_failure_on_the_last_entry_cleans_up_descriptor_relative() {
     let scratch = Scratch::new("ext7");
     let out = scratch.join("out");
     let before = creation_calls();
-    let error = run(Some(&out), scratch.path(), &ok_transport(&bytes), Knobs::default())
-        .expect_err("crc");
+    let error = run(
+        Some(&out),
+        scratch.path(),
+        &ok_transport(&bytes),
+        Knobs::default(),
+    )
+    .expect_err("crc");
     assert_eq!(
         error.message(),
         "The archive is not a valid ZIP file (crc_mismatch)."
     );
-    assert_eq!(creation_calls() - before, 2 + 10, "staging, tree and every node");
+    assert_eq!(
+        creation_calls() - before,
+        2 + 10,
+        "staging, tree and every node"
+    );
     assert_nothing_created(scratch.path(), &out);
     assert!(names(scratch.path()).is_empty());
 }
@@ -737,7 +813,7 @@ fn t_ext_11_disallowed_or_non_public_hosts_are_refused_without_a_request() {
         limits: ArchiveLimits::PRODUCTION,
         node_budget: MAX_SNAPSHOT_NODES,
         download_cap: DOWNLOAD_CAP,
-        deadline: Instant::now() + Duration::from_secs(DOWNLOAD_SECONDS),
+        download_time: Duration::from_secs(DOWNLOAD_SECONDS),
     };
     let out = scratch.join("out");
     let error = download_snapshot(
@@ -762,7 +838,10 @@ fn t_ext_12_redirects_and_error_statuses_are_errors_naming_only_the_status() {
     for status in [301, 302, 307, 308, 403, 404, 500] {
         let transport = FakeStreamingTransport::new().respond(
             status,
-            &[("location", "https://elsewhere.example/x"), ("content-length", "5")],
+            &[
+                ("location", "https://elsewhere.example/x"),
+                ("content-length", "5"),
+            ],
             vec![FakeChunk::data(b"hello")],
         );
         let error = refused_download(URL, &transport, DOWNLOAD_CAP);
@@ -794,7 +873,8 @@ struct EndlessStream {
 
 impl Drop for EndlessStream {
     fn drop(&mut self) {
-        self.dropped.store(true, std::sync::atomic::Ordering::SeqCst);
+        self.dropped
+            .store(true, std::sync::atomic::Ordering::SeqCst);
     }
 }
 
@@ -855,7 +935,10 @@ fn t_ext_13_oversize_length_and_endless_bodies_stop_at_the_cap() {
         vec![FakeChunk::data(b"PK")],
     );
     let error = refused_download(URL, &transport, DOWNLOAD_CAP);
-    assert_eq!(error.message(), "The snapshot download exceeds the 500 MiB limit.");
+    assert_eq!(
+        error.message(),
+        "The snapshot download exceeds the 500 MiB limit."
+    );
     assert_eq!(transport.frames_pulled(), 0);
     // The same against the injected cap.
     let over = (SMALL_CAP + 1).to_string();
@@ -880,7 +963,11 @@ fn t_ext_13_oversize_length_and_endless_bodies_stop_at_the_cap() {
     );
     assert!(generator.dropped.load(std::sync::atomic::Ordering::SeqCst));
     let pulled = generator.pulled.load(std::sync::atomic::Ordering::SeqCst);
-    assert_eq!(pulled, SMALL_CAP / 4_097 + 1, "stopped at the first frame past the cap");
+    assert_eq!(
+        pulled,
+        SMALL_CAP / 4_097 + 1,
+        "stopped at the first frame past the cap"
+    );
     // A misleading Content-Length (smaller than the body): the first extra
     // byte is an invalid response.
     let body = sample_bytes();
@@ -924,9 +1011,20 @@ fn t_ext_13_download_collector_allocation_stays_within_the_injected_cap() {
     )
     .expect("exactly at the cap");
     assert_eq!(response.body, body);
-    assert!(response.collector_capacity <= SMALL_CAP, "{}", response.collector_capacity);
-    assert!(response.collector_peak < 2 * SMALL_CAP, "{}", response.collector_peak);
-    assert_eq!(transport.open_limits()[0].max_body_bytes(), SMALL_CAP as u64);
+    assert!(
+        response.collector_capacity <= SMALL_CAP,
+        "{}",
+        response.collector_capacity
+    );
+    assert!(
+        response.collector_peak < 2 * SMALL_CAP,
+        "{}",
+        response.collector_peak
+    );
+    assert_eq!(
+        transport.open_limits()[0].max_body_bytes(),
+        SMALL_CAP as u64
+    );
     // One byte more is refused and nothing is returned.
     let mut over = body.clone();
     over.push(0);
@@ -942,14 +1040,22 @@ fn t_ext_13_download_collector_allocation_stays_within_the_injected_cap() {
         Instant::now() + Duration::from_secs(DOWNLOAD_SECONDS),
         SMALL_CAP,
     );
-    assert_eq!(refused.unwrap_err(), crate::launch::http::BodyError::TooLarge);
+    assert_eq!(
+        refused.unwrap_err(),
+        crate::launch::http::BodyError::TooLarge
+    );
     // The production policy: the download row's ceiling is 500 MiB.
     assert_eq!(DOWNLOAD_CAP, 500 * 1024 * 1024);
 }
 
 #[test]
 fn t_ext_14_no_error_names_the_url_and_no_archive_file_is_written() {
-    let secret_parts = ["FAKE_SIG_9f3a", "snapshots.s3", "X-Amz-Signature", "FAKE_PW"];
+    let secret_parts = [
+        "FAKE_SIG_9f3a",
+        "snapshots.s3",
+        "X-Amz-Signature",
+        "FAKE_PW",
+    ];
     let mut messages = Vec::new();
     for url in [
         "http://snapshots.s3.us-east-1.amazonaws.com/x?X-Amz-Signature=FAKE_SIG_9f3a",
@@ -963,7 +1069,10 @@ fn t_ext_14_no_error_names_the_url_and_no_archive_file_is_written() {
         messages.push(refused_download(URL, &transport, DOWNLOAD_CAP));
     }
     messages.push(refused_download(URL, &endless(4_097), SMALL_CAP));
-    let failing = FakeStreamingTransport::new().open_error(toolkit_aws::AwsError::timeout(toolkit_aws::error::TimeoutPhase::Deadline, URL));
+    let failing = FakeStreamingTransport::new().open_error(toolkit_aws::AwsError::timeout(
+        toolkit_aws::error::TimeoutPhase::Deadline,
+        URL,
+    ));
     messages.push(refused_download(URL, &failing, DOWNLOAD_CAP));
     let failing = FakeStreamingTransport::new().respond(
         200,

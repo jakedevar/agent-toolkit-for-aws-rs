@@ -80,7 +80,10 @@ fn t_plan_8_apply_walk_refuses_too_many_files_and_nodes_before_any_write() {
         ..limits
     };
     let walked = walk_snapshot(nodes.path(), &limits).expect("at the limit");
-    assert_eq!((walked.files, walked.directories, walked.bytes), (101, 100, 101));
+    assert_eq!(
+        (walked.files, walked.directories, walked.bytes),
+        (101, 100, 101)
+    );
 }
 
 /// A snapshot directory holding `files` (`path`, bytes, mode).
@@ -110,7 +113,7 @@ pub fn assert_no_marker(repo: &Path, marker: &Path) {
 pub fn leftovers(dir: &Path) -> Vec<String> {
     tree(dir)
         .into_iter()
-        .filter(|path| path.contains(".launch-") && path.ends_with(".tmp"))
+        .filter(|path| path.contains(".launch-") && path.rsplit('.').next() == Some("tmp"))
         .collect()
 }
 
@@ -148,7 +151,10 @@ fn t_apply_1_normal_snapshot_adds_and_replaces_byte_exact_and_deletes_nothing() 
         }
     );
     assert_eq!(fs::read(target.join("README.md")).unwrap(), b"new readme\n");
-    assert_eq!(fs::read(target.join("src/new.rs")).unwrap(), b"fn new() {}\n");
+    assert_eq!(
+        fs::read(target.join("src/new.rs")).unwrap(),
+        b"fn new() {}\n"
+    );
     assert_eq!(fs::read(target.join("bin/tool")).unwrap(), b"#!/bin/sh\n");
     assert_eq!(fs::read(target.join("docs/guide.md")).unwrap(), b"guide\n");
     assert_eq!(mode_of(&target.join("README.md")), 0o644);
@@ -169,10 +175,7 @@ fn t_apply_2_planted_dot_git_config_is_refused_and_metadata_unchanged() {
     let helper = marker_helper(&marker);
     let source = snapshot(
         "apply2-snap",
-        &[
-            (".git/config", &config, 0o644),
-            ("helper", &helper, 0o755),
-        ],
+        &[(".git/config", &config, 0o644), ("helper", &helper, 0o755)],
     );
     let before = sha_tree(target.path());
     let error = apply_with(
@@ -193,7 +196,10 @@ fn t_apply_2_planted_dot_git_config_is_refused_and_metadata_unchanged() {
 #[test]
 fn t_apply_3_case_alias_of_dot_git_is_refused() {
     let Repo { dir: target } = repo("apply3");
-    let source = snapshot("apply3-snap", &[(".GIT/hooks/pre-commit", b"#!/bin/sh\n", 0o755)]);
+    let source = snapshot(
+        "apply3-snap",
+        &[(".GIT/hooks/pre-commit", b"#!/bin/sh\n", 0o755)],
+    );
     let before = sha_tree(target.path());
     let error = apply_with(
         source.path(),
@@ -202,7 +208,10 @@ fn t_apply_3_case_alias_of_dot_git_is_refused() {
         &mut NoApplyHook,
     )
     .expect_err("refused");
-    assert!(error.message().contains("version-control metadata"), "{error:?}");
+    assert!(
+        error.message().contains("version-control metadata"),
+        "{error:?}"
+    );
     assert_eq!(sha_tree(target.path()), before);
 }
 
@@ -263,7 +272,10 @@ fn t_apply_6_target_directory_symlink_is_refused_and_outside_untouched() {
         &mut NoApplyHook,
     )
     .expect_err("refused");
-    assert!(error.message().starts_with("The target has a symlink at "), "{error:?}");
+    assert!(
+        error.message().starts_with("The target has a symlink at "),
+        "{error:?}"
+    );
     assert_eq!(sha_tree(target.path()), before);
     assert!(tree(outside.path()).is_empty());
 }
@@ -284,7 +296,10 @@ fn t_apply_7_target_symlink_at_a_file_position_is_refused() {
         &mut NoApplyHook,
     )
     .expect_err("refused");
-    assert!(error.message().starts_with("The target has a symlink at "), "{error:?}");
+    assert!(
+        error.message().starts_with("The target has a symlink at "),
+        "{error:?}"
+    );
     assert_eq!(sha_tree(target.path()), before);
     assert_eq!(fs::read(&victim).unwrap(), b"original");
 }
@@ -295,8 +310,14 @@ fn t_apply_8_file_directory_conflicts_are_refused_before_writes() {
     target.write("src", b"a file named src");
     fs::create_dir(target.join("notes")).unwrap();
     for (label, files) in [
-        ("apply8-a", vec![("a.txt", &b"a"[..], 0o644), ("src/x.rs", b"x", 0o644)]),
-        ("apply8-b", vec![("a.txt", &b"a"[..], 0o644), ("notes", b"n", 0o644)]),
+        (
+            "apply8-a",
+            vec![("a.txt", &b"a"[..], 0o644), ("src/x.rs", b"x", 0o644)],
+        ),
+        (
+            "apply8-b",
+            vec![("a.txt", &b"a"[..], 0o644), ("notes", b"n", 0o644)],
+        ),
     ] {
         let source = snapshot(label, &files);
         let before = sha_tree(target.path());
@@ -307,7 +328,10 @@ fn t_apply_8_file_directory_conflicts_are_refused_before_writes() {
             &mut NoApplyHook,
         )
         .expect_err("refused");
-        assert!(error.message().starts_with("The target has a "), "{error:?}");
+        assert!(
+            error.message().starts_with("The target has a "),
+            "{error:?}"
+        );
         assert_eq!(sha_tree(target.path()), before, "{label}");
     }
 }
@@ -337,15 +361,22 @@ fn t_apply_9_directory_swapped_for_a_symlink_after_planning_stops_that_write() {
         fs::rename(&docs, &away).unwrap();
         std::os::unix::fs::symlink(&outside_path, &docs).unwrap();
     });
-    let error = apply_with(source.path(), target.path(), ApplyLimits::PRODUCTION, &mut hook)
-        .expect_err("stopped");
+    let error = apply_with(
+        source.path(),
+        target.path(),
+        ApplyLimits::PRODUCTION,
+        &mut hook,
+    )
+    .expect_err("stopped");
     assert!(
         error
             .message()
             .starts_with("Applying the snapshot stopped after 1 files: "),
         "{error:?}"
     );
-    assert!(error.message().ends_with(" Review the working tree with git status."));
+    assert!(error
+        .message()
+        .ends_with(" Review the working tree with git status."));
     assert!(tree(outside.path()).is_empty(), "nothing outside");
     assert_eq!(fs::read(target.join("a.txt")).unwrap(), b"a");
     assert!(leftovers(target.path()).is_empty());

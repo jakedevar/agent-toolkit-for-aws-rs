@@ -36,6 +36,7 @@ use toolkit_aws::Env;
 
 /// The walk limits (R-AR-PLAN's constants; tests inject smaller ones).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(clippy::struct_field_names)]
 pub struct ApplyLimits {
     /// Most files (100 000).
     pub max_files: usize,
@@ -192,14 +193,16 @@ fn walk_from(root: DirHandle, limits: &ApplyLimits) -> Result<SnapshotTree, Laun
     let mut nav = Navigator::new(root);
     let mut pending = vec![ROOT];
     while let Some(dir) = pending.pop() {
-        let held = nav.goto(&tree, dir, &mut idents).map_err(|_| walk_failure())?;
+        let held = nav
+            .goto(&tree, dir, &mut idents)
+            .map_err(|_| walk_failure())?;
         let listed = fsops::list_names(held).map_err(|_| walk_failure())?;
         let prefix = if dir == ROOT {
             String::new()
         } else {
             format!("{}/", tree.path(dir))
         };
-        if meta::names_are_git_shaped(listed.iter().map(|name| name.as_bytes())) {
+        if meta::names_are_git_shaped(listed.iter().map(CString::as_bytes)) {
             return Err(refusal(meta::shaped_snapshot_message(&shown(
                 prefix.trim_end_matches('/'),
             ))));
@@ -337,14 +340,16 @@ fn plan_target(
         match (existing.kind, wanted_dir) {
             (EntryType::Symlink, _) => return conflict("a symlink"),
             (EntryType::Special, _) => return conflict("a special file"),
-            (EntryType::Regular, true) => return conflict("a file where the snapshot has a directory"),
+            (EntryType::Regular, true) => {
+                return conflict("a file where the snapshot has a directory")
+            }
             (EntryType::Directory, false) => {
                 return conflict("a directory where the snapshot has a file")
             }
             (EntryType::Regular, false) => targets.push(Target::File),
             (EntryType::Directory, true) => {
-                let entered = fsops::open_dir_at(held, &node.name, &existing)
-                    .map_err(|_| walk_failure())?;
+                let entered =
+                    fsops::open_dir_at(held, &node.name, &existing).map_err(|_| walk_failure())?;
                 if !protected.allows(&entered, rules) {
                     return Err(refusal(meta::metadata_message(&shown_path())));
                 }
@@ -413,13 +418,17 @@ fn copy_exact(source: &mut std::fs::File, target: &mut std::fs::File, size: u64)
             break;
         }
         if read as u64 > remaining {
-            return Err(io::Error::other("a snapshot file grew while it was applied"));
+            return Err(io::Error::other(
+                "a snapshot file grew while it was applied",
+            ));
         }
         target.write_all(&buffer[..read])?;
         remaining -= read as u64;
     }
     if remaining != 0 {
-        return Err(io::Error::other("a snapshot file shrank while it was applied"));
+        return Err(io::Error::other(
+            "a snapshot file shrank while it was applied",
+        ));
     }
     Ok(())
 }
@@ -440,8 +449,8 @@ fn write_file(
         0o644
     };
     let temporary = temporary_name(&node.name, options.random)?;
-    let (mut file, _) = fsops::create_file_at(target_dir, &temporary, mode)
-        .map_err(|error| error.to_string())?;
+    let (mut file, _) =
+        fsops::create_file_at(target_dir, &temporary, mode).map_err(|error| error.to_string())?;
     let result = copy_exact(&mut source, &mut file, node.source.size)
         .and_then(|()| file.sync_all())
         .and_then(|()| options.hook.before_rename(index))
@@ -478,7 +487,8 @@ fn write_phase(
             (node.source.kind == EntryType::Directory).then_some((node.source.dev, node.source.ino))
         })
         .collect();
-    let target_root = fsops::enter_dir(into_handle, c".").map_err(|_| stopped(0, "the target changed"))?;
+    let target_root =
+        fsops::enter_dir(into_handle, c".").map_err(|_| stopped(0, "the target changed"))?;
     let mut target_nav = Navigator::new(target_root);
     let mut source_nav = Navigator::new(source);
     let (mut files, mut directories) = (0_usize, 0_usize);
