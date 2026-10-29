@@ -419,6 +419,14 @@ fn shipped_binary_exchange_publishes_session() {
         .status()
         .unwrap()
         .success());
+    // The production DNS guard rejects loopback addresses. This public-shaped
+    // address exists only on the private namespace's loopback interface; the
+    // namespace has no external interface or route.
+    assert!(Command::new("ip")
+        .args(["addr", "add", "1.1.1.1/32", "dev", "lo"])
+        .status()
+        .unwrap()
+        .success());
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
@@ -428,7 +436,7 @@ fn shipped_binary_exchange_publishes_session() {
     let hosts = home.join("hosts");
     std::fs::write(
         &hosts,
-        b"127.0.0.1 localhost oidc.us-east-1.amazonaws.com\n",
+        b"127.0.0.1 localhost\n1.1.1.1 oidc.us-east-1.amazonaws.com\n",
     )
     .unwrap();
     assert!(Command::new("mount")
@@ -461,7 +469,7 @@ fn shipped_binary_exchange_publishes_session() {
             PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(server_key.serialize_der())),
         )
         .unwrap();
-    let listener = TcpListener::bind("127.0.0.1:443").unwrap();
+    let listener = TcpListener::bind("1.1.1.1:443").unwrap();
     let (request_tx, request_rx) = mpsc::sync_channel(0);
     let (release_tx, release_rx) = mpsc::sync_channel(0);
     let server = std::thread::spawn(move || {
