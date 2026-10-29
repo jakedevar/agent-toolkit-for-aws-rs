@@ -442,3 +442,5 @@ Friction: #4727, Rsi #4694, Rsi #4704
   ROUND 18 candidates: #4396 (repair 2 c91a19d9), #4941 (repair b1cc4adc), #4393 (review #4985). New integration Issue when the first is accepted. Base = rolling after r17 lands.
   #4413 phase 1 (design only, build_free) worker efb8567a (Opus high, rolling; op 62eef109): docs/migration/mcp-proxy-design.md for AC4 pre-review.
   4/4 busy: b1cc4adc (#4941 repair), 384144f0 (#4985), c91a19d9 (#4396 repair 2), efb8567a (#4413 design).
+- 10-29 00:4xZ: #4985 (384144f0) on #4393 fe425a28: CHANGES_REQUESTED #4986 P1 (active password/IAM token leaks via cache error text), #4987 P2 (missing PING fabricated OK), #4988 P2 (unused cache steps accepted), #4989 P2 (partial SSM pagination drops hosts). Repair worker f5841517 (Sonnet high, continue_from 160f8b97, op 49c98c82). Then narrow re-review #4985.
+  4/4 busy: b1cc4adc (#4941 repair), c91a19d9 (#4396 repair 2), efb8567a (#4413 design), f5841517 (#4393 repair).
