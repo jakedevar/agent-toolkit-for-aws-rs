@@ -732,10 +732,7 @@ fn the_cli_fails_closed_on_a_quantity_outside_the_domain() {
             ),
         ] {
             let list = vec![agg_item(LICENSE, "Fine", "2026-01-31T11", 5), pending];
-            let cli = submitter_cli(&format!(
-                r#"{{"calls": [{}]}}"#,
-                reads_only(list).join(",")
-            ));
+            let cli = submitter_cli(&format!(r#"{{"calls": [{}]}}"#, reads_only(list).join(",")));
             assert_eq!(cli.status, 1, "{literal}: {}", cli.stderr);
             assert!(cli.stderr.contains("QuantityOutOfRange"), "{}", cli.stderr);
             assert!(
