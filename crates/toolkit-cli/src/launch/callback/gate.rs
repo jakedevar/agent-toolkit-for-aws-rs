@@ -306,7 +306,7 @@ mod tests {
             scratch.path(),
             b"session",
             &SeededRandom::new(1),
-            || cutoff - Duration::from_millis(1),
+            || cutoff.checked_sub(Duration::from_millis(1)).unwrap(),
             || events.borrow_mut().push("admitted"),
             |from, to| {
                 events.borrow_mut().push("rename");
@@ -343,7 +343,7 @@ mod tests {
             scratch.path(),
             b"session",
             &SeededRandom::new(1),
-            || cutoff - Duration::from_millis(1),
+            || cutoff.checked_sub(Duration::from_millis(1)).unwrap(),
             || {
                 for now in [100, 102] {
                     assert_eq!(

@@ -17,6 +17,7 @@ pub struct Custody {
 mod custody_tests {
     use super::*;
     #[test]
+    #[allow(clippy::used_underscore_binding)]
     fn lock_descriptors_are_close_on_exec() {
         let scratch = crate::launch::tests_support::Scratch::new("lock-cloexec");
         let custody = Custody::acquire(scratch.path(), 81).unwrap();

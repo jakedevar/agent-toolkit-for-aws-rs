@@ -58,7 +58,7 @@ pub fn run(
         announce,
         exchange,
         Instant::now,
-        |gate, deadline, record| gate::start_watchdog(gate, deadline, record),
+        gate::start_watchdog,
         listener::serve,
     )
 }

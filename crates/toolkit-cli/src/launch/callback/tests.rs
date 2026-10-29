@@ -666,6 +666,15 @@ fn terminal_record_remains_until_result_is_reported() {
 #[cfg(unix)]
 #[test]
 fn failed_report_preserves_final_record_for_retry() {
+    struct Broken;
+    impl std::io::Write for Broken {
+        fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::ErrorKind::BrokenPipe.into())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
     use super::{
         pending::{Custody, WaitTracker},
         PendingStatus,
@@ -685,15 +694,6 @@ fn failed_report_preserves_final_record_for_retry() {
         .unwrap();
     drop(custody);
     let path = scratch.join("pending/91.json");
-    struct Broken;
-    impl std::io::Write for Broken {
-        fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
-            Err(std::io::ErrorKind::BrokenPipe.into())
-        }
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
     let mut stdout = Vec::new();
     let mut stderr = Broken;
     let mut output = crate::Output::with_diagnostics(&mut stdout, &mut stderr);
@@ -890,7 +890,7 @@ fn revision4_permission_denied_record_uses_fallback_cutoff() {
     let custody = Custody::acquire(scratch.path(), 91).unwrap();
     let path = scratch.join("pending/91.json");
     std::fs::write(&path, b"unreadable").unwrap();
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0)).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).unwrap();
     if !nix::unistd::geteuid().is_root() {
         assert_eq!(
             std::fs::read(&path).unwrap_err().kind(),
