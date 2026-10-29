@@ -1027,3 +1027,5 @@ Friction: #4727, Rsi #4694, Rsi #4704
   NEXT FREE SLOT -> #5370 (Claude Opus, rolling, test-only if possible). Queue: 1d82c790 #5365, 2813c67f #5327, eb6b38ba #5362.
 - 13:19Z: #5365 1d82c790 REFUSED: new failure t_plan_8 (another L6 apply test). 3 of last 4 gates refused on L6 apply tests -> defect in L6 apply tests/code under gate conditions. Ruled out: thread_local CREATIONS, unique Scratch names, GIT_* removal. Suspect tmpfs inode reuse vs Navigator (dev,ino) checks, or load timeouts.
   #5370 -> Claude Opus d75d75d6 (rolling; capacity_override P1), queued until a slot frees (4/4 busy). RE-ENQUEUED #5365 as 1e84ebe1 (seq 3011). Queue: 2813c67f #5327, eb6b38ba #5362, 1e84ebe1 #5365. If more refusals pile up before #5370 lands, stop re-enqueueing and land #5370 first (expedite).
+- 13:2xZ: docgraph S5 #5327 LANDED (2813c67f published, a346bc3c8469fdecdc2c9f8265a6e039f4909aed). Auto-closed #5327; CLOSED #5343 #5318 #5321 #5322 #5324 #5325 #5348. Open: #5323, #5344, #4918. #4886 open (S1 #5366 in flight; S2 S3 S4 S6 after).
+  Queue: eb6b38ba #5362, 1e84ebe1 #5365. #5370 worker d75d75d6 queued for a slot.
