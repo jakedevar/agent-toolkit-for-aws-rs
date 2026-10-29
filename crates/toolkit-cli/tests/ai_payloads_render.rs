@@ -43,6 +43,36 @@ impl Drop for Fixture {
 const TEMPLATE: &str = "# Cell 0 [markdown]: Example\n# Description\n\n# Cell 1: Config\nACCEPT_EULA = [ACCEPT_EULA]\nrole = \"[ROLE_ARN]\"\n";
 
 #[test]
+fn ap_app_01_02_exact_report_and_ignored_names() {
+    let f = Fixture::new();
+    let template = f.write("template.py", "# Cell 0 [markdown]: Example\n# Desc\n# Cell 1: Code\npass\n");
+    let source = f.write("notebooks/example.ipynb", r#"{"cells":[],"metadata":{"keep":true},"nbformat":4,"nbformat_minor":4}"#);
+    for name in ["example-1.ipynb", "example-001.ipynb", "example-01.ipynb.bak"] {
+        f.write(&format!("notebooks/{name}"), "ignored");
+    }
+    let result = f.render(&template, "notebook", &["--append"]);
+    assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+    let out = String::from_utf8_lossy(&result.stdout);
+    assert!(out.contains(&format!("source: {} (sha256 4c27e216c25086bdcc597c7ee7c4dbc415899a8ac245fc713f2776efd9dcca53)", source.display())));
+    assert!(out.contains(&format!("open: {}", f.0.join("notebooks/example-01.ipynb").display())));
+}
+
+#[cfg(unix)]
+#[test]
+fn ap_app_07_fifo_source_is_refused() {
+    use std::process::Command;
+    let f = Fixture::new();
+    let template = f.write("template.py", "# Cell 0 [markdown]: Example\n# Desc\n# Cell 1: Code\npass\n");
+    fs::create_dir(f.0.join("notebooks")).unwrap();
+    let fifo = f.0.join("notebooks/example.ipynb");
+    assert!(Command::new("mkfifo").arg(&fifo).status().unwrap().success());
+    let result = f.render(&template, "notebook", &["--append"]);
+    assert_eq!(result.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&result.stderr).contains("append_source_invalid"));
+    assert!(!f.0.join("notebooks/example-01.ipynb").exists());
+}
+
+#[test]
 fn ap_asn_02_04_06_target_and_secret_matrix() {
     for (source, name) in [
         ("# Cell 0 [markdown]: Example\n# TARGET = 'old'\n# Cell 1: Code\npass\n", "TARGET"),
