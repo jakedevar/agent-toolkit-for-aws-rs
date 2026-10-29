@@ -6,7 +6,9 @@ use std::io::{BufRead, BufReader, Read};
 use std::net::TcpStream;
 use std::process::{Command, Stdio};
 #[cfg(all(unix, not(feature = "aws-sdk")))]
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
+#[cfg(unix)]
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[test]
 fn invalid_stdin_fails_silently_before_binding() {
