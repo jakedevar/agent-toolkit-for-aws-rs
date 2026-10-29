@@ -32,6 +32,7 @@ pub fn entity_id(name: &str) -> String {
     sha256_hex(name.as_bytes())[..32].to_string()
 }
 pub fn query(id: &str, statement: &str, parameters: Json) -> Result<Json, &'static str> {
+    // recorded-shape: caller-provided query parameters must be an object, not a response.
     if !matches!(parameters, Json::Object(_)) {
         return Err("parameters must be an object");
     }
@@ -50,6 +51,7 @@ pub fn query(id: &str, statement: &str, parameters: Json) -> Result<Json, &'stat
         ("queryString", Json::string(statement)),
         ("language", Json::string("OPEN_CYPHER")),
     ];
+    // recorded-shape: this is the already validated caller parameter object.
     if !matches!(&parameters, Json::Object(p) if p.is_empty()) {
         pairs.push(("parameters", parameters));
     }
@@ -173,6 +175,7 @@ pub fn plan(op: &str, input: &Json) -> Result<Vec<Json>, String> {
                 ("rel_type", "rel_type"),
             ],
         )?;
+        // recorded-shape: bindings are constructed from caller input, not a response.
         if let Json::Object(ref mut fields) = bindings {
             fields.push((
                 "confidence".to_string(),
@@ -197,6 +200,7 @@ pub fn plan(op: &str, input: &Json) -> Result<Vec<Json>, String> {
         ];
         let mut statement = "g.V().has('Entity','name',entity_name).fold().coalesce(unfold(),addV('Entity').property('name',entity_name)).property('type',entity_type).property('updated_at',new Date().getTime())".to_string();
         if let Some(properties) = input.get("properties") {
+            // recorded-shape: caller-supplied properties must be an object.
             let Json::Object(properties) = properties else {
                 return Err("properties must be an object".to_string());
             };
