@@ -6,6 +6,19 @@ use toolkit_core::Json;
 const FRAME_CAP: usize = 131_072;
 const FAILURE_FRAME: &[u8] = b"{\"ok\":false,\"error\":\"AgentCore request failed\"}\n";
 
+/// Fixed failure frames never include untrusted input.
+pub fn error_frame(error: BridgeError) -> (Vec<u8>, i32) {
+    let (bytes, status): (&[u8], i32) = match error {
+        BridgeError::Input => (b"{\"ok\":false,\"error\":\"invalid bridge request\"}\n", 2),
+        BridgeError::AgentCore => (FAILURE_FRAME, 1),
+        BridgeError::Unavailable => (
+            b"{\"ok\":false,\"error\":\"payment support unavailable\"}\n",
+            1,
+        ),
+    };
+    (bytes.to_vec(), status)
+}
+
 /// Render one complete success frame, replacing an oversized frame atomically.
 pub fn frame(value: &Json) -> (Vec<u8>, i32) {
     let mut bytes = crate::aurora::pyfmt::dumps_compact(value).into_bytes();
@@ -240,7 +253,10 @@ mod tests {
             (BridgeError::Unavailable, "payment support unavailable", 1),
         ] {
             let (actual, exit) = error_frame(error);
-            assert_eq!(actual, format!("{{\"ok\":false,\"error\":\"{expected}\"}}\n").as_bytes());
+            assert_eq!(
+                actual,
+                format!("{{\"ok\":false,\"error\":\"{expected}\"}}\n").as_bytes()
+            );
             assert_eq!(exit, status);
             assert!(actual.len() <= 131072);
         }
