@@ -74,6 +74,12 @@ pub fn is_retryable(code: &str) -> bool {
     )
 }
 
+/// A fixed, value-free exception class for the payment flow.
+#[must_use]
+pub fn aws_error_class(_error: &AwsError) -> &'static str {
+    "RuntimeError"
+}
+
 /// Build the standard `AgentCore` endpoint without reading endpoint overrides.
 ///
 /// # Errors
@@ -481,6 +487,29 @@ mod tests {
             endpoint("us-east-1").unwrap(),
             "https://bedrock-agentcore.us-east-1.amazonaws.com"
         );
+    }
+
+    #[test]
+    fn aws_error_classes_are_fixed_and_never_print_input() {
+        use toolkit_aws::error::TimeoutPhase;
+        let secret = "FAKE-SEEDED-SECRET";
+        for (error, class) in [
+            (AwsError::connect(secret), "ConnectError"),
+            (
+                AwsError::timeout(TimeoutPhase::Connect, secret),
+                "ConnectTimeout",
+            ),
+            (AwsError::timeout(TimeoutPhase::Read, secret), "ReadTimeout"),
+            (
+                AwsError::timeout(TimeoutPhase::Deadline, secret),
+                "ReadTimeout",
+            ),
+            (AwsError::NoCredentials, "NoCredentialsError"),
+            (AwsError::invalid_config("fixture", secret), "RuntimeError"),
+        ] {
+            assert_eq!(aws_error_class(&error), class);
+            assert!(!aws_error_class(&error).contains(secret));
+        }
     }
 
     #[test]
