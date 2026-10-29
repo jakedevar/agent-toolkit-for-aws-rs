@@ -447,3 +447,21 @@ fn request_boundary_rejects_wrong_state_and_bad_heads_without_terminal_result() 
         Outcome::InvalidCode
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn unreadable_record_with_free_lock_is_not_missing() {
+    use super::{
+        pending::{finish_if_final, Custody, Observation},
+        WaitDecision,
+    };
+    use crate::launch::tests_support::Scratch;
+    let scratch = Scratch::new("unreadable-wait");
+    let custody = Custody::acquire(scratch.path(), 91).unwrap();
+    let path = scratch.join("pending/91.json");
+    std::fs::write(&path, b"not json").unwrap();
+    drop(custody);
+    let (observation, _) = finish_if_final(scratch.path(), 91, 100);
+    assert_eq!(observation, Observation::Decision(WaitDecision::Ended));
+    assert!(!path.exists());
+}
