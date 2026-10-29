@@ -4,6 +4,8 @@
 //! signer is the real toolkit SigV4 signer over fixture keys, and the SDK
 //! service crates only encode requests and decode the scripted responses.
 
+#![allow(clippy::similar_names, clippy::type_complexity, clippy::unnecessary_wraps)]
+
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -499,9 +501,8 @@ fn metric_value(metric: &str, statistic: &str) -> Option<f64> {
         ("CPUUtilization", "Average") => 40.0,
         ("CPUUtilization", "Maximum") => 60.0,
         ("BufferCacheHitRatio", _) => 99.5,
-        ("DatabaseConnections", "Maximum") => 100.0,
+        ("DatabaseConnections", "Maximum") | ("ReadIOPS", _) => 100.0,
         ("DatabaseConnections", _) => 10.0,
-        ("ReadIOPS", _) => 100.0,
         ("FreeableMemory", _) => 8.0 * 1_073_741_824.0,
         ("SwapUsage", _) => 0.0,
         ("DiskQueueDepth", _) => 0.5,
@@ -758,6 +759,7 @@ fn t_dg_04a_all_ten_encodings_reach_the_injected_transport_signed() {
         let before = Instant::now();
         let mut live = client(&transport, &signer, &sleeper);
         let _ = live.call(service, operation, &json(&request));
+        let after = Instant::now();
         let sent = transport.sent.borrow();
         assert!(!sent.is_empty(), "{operation}: nothing reached the transport");
         let (first, limits) = &sent[0];
@@ -813,8 +815,8 @@ fn t_dg_04a_all_ten_encodings_reach_the_injected_transport_signed() {
         // One absolute deadline: the signer and the transport share it, it
         // lies within the operation budget, and the response is capped.
         assert_eq!(Some(signing.deadline), limits.deadline(), "{operation}");
-        assert!(signing.deadline <= before + Duration::from_secs(60));
-        assert!(signing.deadline > before + Duration::from_secs(50));
+        assert!(signing.deadline >= before + Duration::from_secs(60));
+        assert!(signing.deadline <= after + Duration::from_secs(60));
         assert_eq!(limits.max_body_bytes(), 16 * 1024 * 1024);
     }
 }
@@ -1314,7 +1316,8 @@ fn t_dg_04c_the_operation_deadline_stops_retries() {
     assert!(started.elapsed() < Duration::from_secs(2), "{:?}", started.elapsed());
     let (_, limits) = &transport.sent.borrow()[0];
     let deadline = limits.deadline().expect("deadline");
-    assert!(deadline <= started + Duration::from_millis(200));
+    assert!(deadline >= started + Duration::from_millis(200));
+    assert!(deadline <= Instant::now(), "the error came before the deadline");
 }
 
 // ---- T-DG-04d: Secrets Manager metadata only ----
