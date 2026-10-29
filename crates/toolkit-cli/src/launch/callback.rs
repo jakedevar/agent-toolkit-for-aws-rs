@@ -218,5 +218,16 @@ pub fn response(status: u16) -> Vec<u8> {
             "<!doctype html><title>Invalid request</title>",
         ),
     };
+    response_body(status, body)
+}
+
+fn authorization_failed_response() -> Vec<u8> {
+    response_body(
+        "400 Bad Request",
+        "<!doctype html><title>Authorization failed</title>",
+    )
+}
+
+fn response_body(status: &str, body: &str) -> Vec<u8> {
     format!("HTTP/1.1 {status}\r\nContent-Type: text/html; charset=utf-8\r\nCache-Control: no-store\r\nReferrer-Policy: no-referrer\r\nX-Content-Type-Options: nosniff\r\nContent-Security-Policy: default-src 'none'\r\nConnection: close\r\nContent-Length: {}\r\n\r\n{body}", body.len()).into_bytes()
 }

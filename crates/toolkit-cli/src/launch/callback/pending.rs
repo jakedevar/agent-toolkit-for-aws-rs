@@ -13,6 +13,25 @@ pub struct Custody {
     pid: u32,
 }
 
+#[cfg(all(test, unix))]
+mod custody_tests {
+    use super::*;
+    #[test]
+    #[allow(clippy::used_underscore_binding)]
+    fn lock_descriptors_are_close_on_exec() {
+        let scratch = crate::launch::tests_support::Scratch::new("lock-cloexec");
+        let custody = Custody::acquire(scratch.path(), 81).unwrap();
+        assert!(rustix::io::fcntl_getfd(&custody._lock)
+            .unwrap()
+            .contains(rustix::io::FdFlags::CLOEXEC));
+        drop(custody);
+        let lock = acquire_if_free(scratch.path(), 81).unwrap();
+        assert!(rustix::io::fcntl_getfd(&lock)
+            .unwrap()
+            .contains(rustix::io::FdFlags::CLOEXEC));
+    }
+}
+
 impl Custody {
     /// Create a private pending directory and acquire the helper's lock.
     ///
@@ -221,32 +240,6 @@ impl Default for WaitTracker {
     }
 }
 
-/// Observe a record while holding the free lock, if available. An unreadable
-/// lock is treated as held so it cannot produce a false final failure.
-#[cfg(unix)]
-#[must_use]
-pub fn observe(state_dir: &Path, pid: u32, now: i64) -> Observation {
-    let Some(record) = read_record(state_dir, pid) else {
-        return Observation::Missing;
-    };
-    let lock = acquire_if_free(state_dir, pid);
-    let valid = state::load_session(state_dir)
-        .is_some_and(|session| session.token_expires_at > now.saturating_add(300));
-    Observation::Decision(super::wait_decision(
-        record.status,
-        lock.is_none(),
-        valid,
-        now,
-        record.cutoff,
-    ))
-}
-
-/// Evaluate a wait and remove a final record only while the lock is held here.
-#[cfg(unix)]
-pub fn finish_if_final(state_dir: &Path, pid: u32, now: i64) -> (Observation, Option<String>) {
-    WaitTracker::default().finish(state_dir, pid, now)
-}
-
 #[cfg(unix)]
 impl WaitTracker {
     pub(super) fn finish_after_report<R>(
@@ -254,7 +247,7 @@ impl WaitTracker {
         dir: &Path,
         pid: u32,
         now: i64,
-        report: impl FnOnce(Observation, Option<String>) -> R,
+        report: impl FnOnce(Observation, Option<String>) -> (R, bool),
     ) -> R {
         let elapsed = i64::try_from(self.start.elapsed().as_secs()).unwrap_or(i64::MAX);
         self.finish_at_with(dir, pid, now, elapsed, report)
@@ -278,7 +271,7 @@ impl WaitTracker {
         elapsed: i64,
     ) -> (Observation, Option<String>) {
         self.finish_at_with(state_dir, pid, now, elapsed, |observation, reason| {
-            (observation, reason)
+            ((observation, reason), true)
         })
     }
 
@@ -288,7 +281,7 @@ impl WaitTracker {
         pid: u32,
         now: i64,
         elapsed: i64,
-        report: impl FnOnce(Observation, Option<String>) -> R,
+        report: impl FnOnce(Observation, Option<String>) -> (R, bool),
     ) -> R {
         let path = state_dir.join("pending").join(format!("{pid}.json"));
         let mut record = read_record(state_dir, pid);
@@ -296,7 +289,7 @@ impl WaitTracker {
             && !self.seen
             && matches!(std::fs::symlink_metadata(&path), Err(ref e) if e.kind() == io::ErrorKind::NotFound)
         {
-            return report(Observation::Missing, None);
+            return report(Observation::Missing, None).0;
         }
         self.seen = true;
         if let Some(ref value) = record {
@@ -323,11 +316,12 @@ impl WaitTracker {
             decision_now,
             cutoff,
         );
-        let reported = report(
+        let (reported, delivered) = report(
             Observation::Decision(decision),
             record.and_then(|r| r.reason),
         );
-        if lock.is_some()
+        if delivered
+            && lock.is_some()
             && decision != super::WaitDecision::Poll
             && decision != super::WaitDecision::HelperBlocked
         {
