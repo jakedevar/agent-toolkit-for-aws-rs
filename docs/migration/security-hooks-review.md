@@ -61,8 +61,15 @@ before `(`.
 | panic inside the evaluator | n/a | deny |
 
 Rust matchers are hand written linear-time scanners (no backtracking engine, no regex
-dependency), so processing time is `O(input)` plus the 12-group cap, bounded further by the
-size cap and a hard deadline thread.
+dependency): the rule scan is linear in the input plus the 12-group cap. That is a claim
+about the matchers, not about the whole process. Parsing the hook input goes through
+`toolkit_core::parse_json`, which is `parse_json_with_limits(input, &JsonLimits::default())`
+(nesting capped at `MAX_JSON_DEPTH`, no node cap). Since #4497 its duplicate-key check uses
+a hash index, so that check is linear in the number of keys with expected (not worst-case)
+constant time per key; before #4497 it was quadratic. What bounds the whole process is the
+4 MiB input cap and the hard deadline thread (3 s of the 5 s hook timeout), both of which
+deny. A `JsonLimits::max_nodes` cap through `parse_json_with_limits` is available if the
+hook ever needs a tighter parser bound (integration round 20, #5019 / #5020).
 
 ## 5. Launcher contract
 
