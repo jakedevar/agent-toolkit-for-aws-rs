@@ -992,3 +992,4 @@ Friction: #4727, Rsi #4694, Rsi #4704
   Flake #5362 -> Claude Sonnet 59d6d2c2 (rolling).
   #5360 (usage pin refactor) DEFERRED: it would conflict with L5 and x402 S5, both of which add routes. Launch it once those land.
   4/4 busy: 4ca3337b (#5345 L5), f6287c21 (#5352 x402 S5), 59add103 (#5363 B1), 59d6d2c2 (#5362). Queue: 1a3750bd (#5329), 9cb38026 (#5317), 9c5d9d91 (#5327).
+- 10-29 12:14Z: manager scoped a1f891b6 (#5306 f7dfc027 on e29cffce) OK 5077; check ok. ENQUEUED c7baf1b2 (seq 3002, no conflict warning). Queue: 1a3750bd (#5329), 9cb38026 (#5317), 9c5d9d91 (#5327), c7baf1b2 (#5306). Note: the #5362 fix (59d6d2c2) touches callback tests and may need a rolling merge after #5306 lands.
