@@ -24,6 +24,7 @@ use crate::{Invocation, Output};
 mod place;
 mod template;
 mod types;
+mod values;
 
 use template::Template;
 
