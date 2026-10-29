@@ -1153,3 +1153,4 @@ Friction: #4727, Rsi #4694, Rsi #4704
   4/4: f962147b #5472, 0311ca3f S1 r2, e02b0f23 B2, 1a973465 S6. Queue: 34df36a3 L5 (3036), 70f2cbda #5469 (3037).
 - 20:05Z: L5 LANDED (34df36a3, landed_sha 988d48d5a8a2722b26813615b7fca523346c3768); #5345 auto-closed. CLOSED #5403 #5424 #5468 #5406 #5426 #5427. #4382 next: L7 security review, then L8 cutover (next free slot). #5038 (design pre-review) still InProgress: verify and close.
   Queue: 70f2cbda #5469 (3037).
+- 20:10Z: #5469 LANDED (landed_sha 289fadc14e93343b7ff52ab20a47dff5794b8c69). Queue empty. CLOSED stale review records: #5038 (#4382 design accepted 02:56Z), #5091 (#4410 design accepted 03:55Z), #5425 + #5458 (S1 reviews delivered CR; blockers #5428 #5429 #5465 stay open until S1 lands).
