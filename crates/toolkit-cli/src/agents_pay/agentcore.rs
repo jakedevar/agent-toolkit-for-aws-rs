@@ -811,6 +811,26 @@ mod operation_contracts {
     }
 
     #[test]
+    fn process_response_rejects_multiple_or_unknown_union_arms() {
+        let body = r#"{"processPaymentId":"id","paymentManagerArn":"arn","paymentSessionId":"ps","paymentInstrumentId":"pi","paymentType":"CRYPTO_X402","status":"PROOF_GENERATED","paymentOutput":{"cryptoX402":{"version":"2","payload":{}},"future":{}},"createdAt":1,"updatedAt":1}"#;
+        assert!(!valid_process_response(body, "arn", "ps", "pi"));
+    }
+
+    #[test]
+    fn session_response_rejects_integer_outside_model_range() {
+        let good = r#"{"paymentSession":{"paymentSessionId":"ps","paymentManagerArn":"arn","userId":"user","expiryTimeInMinutes":60,"createdAt":1,"updatedAt":1}}"#;
+        assert!(valid_session_response(good, "arn", Some("ps"), "user"));
+        for n in ["2147483648", "-2147483649"] {
+            assert!(!valid_session_response(
+                &good.replace(":60", &format!(":{n}")),
+                "arn",
+                Some("ps"),
+                "user"
+            ));
+        }
+    }
+
+    #[test]
     fn session_response_requires_model_members_and_matching_resources() {
         let good = r#"{"paymentSession":{"paymentSessionId":"ps","paymentManagerArn":"arn","userId":"user","expiryTimeInMinutes":60,"createdAt":"2026-10-28T12:00:00Z","updatedAt":"2026-10-28T12:00:00Z","limits":{"maxSpendAmount":{"value":"10","currency":"USD"}},"availableLimits":{"availableSpendAmount":{"value":"9","currency":"USD"},"updatedAt":"2026-10-28T12:00:00Z"}}}"#;
         assert!(valid_session_response(good, "arn", Some("ps"), "user"));
