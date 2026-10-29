@@ -402,3 +402,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 10-28 23:30Z: SEAT ROTATED b14ee35f -> 8cd977f6 (context cap). *** LANDED *** ROUND 15 e77d1c18 (rolling merge fa3fa13, entry 92e0b509). Closed 52 Issues (full r14+r15 ON-LAND list above; #4898 auto). #4395 left open (#4886 remainder). Reported up (pm-8cd977f6-landed-r15-e77d1c18).
   Queue now empty. Round 16 (#4960, 092f281f) enqueues normally (no supersedes) when verified; base e77d1c18 is now an ancestor of rolling.
   4/4 busy, parked on jobs: 092f281f (r16), ff7ae0b8 (#4396), f8244a11 (#4941), b7e56ccf (#4390 repair).
+- 10-29 00:03Z: #4390 repair 3d96dd1e584e47dfbeafaf7b4b16a37152ffbeab (b7e56ccf; COVERS #4956 #4957 #4958; banner redact/bound/escape, write_private atomic 0600, strict seed types; red fd1af9f5 at 29f1df7 = 5 new fails; scoped d0d7b7bc clippy 81b31fc7 fmt db7882f5 ok). Re-review #4954 r2 worker 640f3f93 (Codex sol high, pinned 3d96dd1e, op 84d76dd8). On ACCEPT mail r16 092f281f to merge 3d96dd1e.
+  Friction from b7e56ccf: at_commit job a90ab88e exit 127, scripts/at-commit-test.sh missing in this repo (check kaizen).
+  4/4 busy: 092f281f (r16), ff7ae0b8 (#4396), f8244a11 (#4941), 640f3f93 (#4954 r2).
