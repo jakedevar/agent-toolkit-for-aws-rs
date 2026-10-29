@@ -484,3 +484,4 @@ Friction: #4727, Rsi #4694, Rsi #4704
   ROUND 20: #4941 (repair 2 544ef79b, PM inspects) with its integration duties, plus later slices.
   S0 = #4497 worker (Sonnet high, rolling): indexed dup-key + parse_json_with_limits, COVERS #4497 #4998.
   4/4 busy: 0f2c005c (#4487), 544ef79b (#4941 repair 2), 8f33aeb1 (#4413 design r3), #4497 worker.
+- 10-29 02:2xZ: #4413 design r3 fd7e7ffd296336159ddeb061a66fa4efe7f7a08a (8f33aeb1; COVERS #5013 #5014: R-SRC guarded single-source composition in SDK order, root validation fail closed; T-ABS with ECS/IMDS canary fallbacks). Narrow #4994 r3 (Codex sol high, build_free, pinned). On ACCEPT: S1 (streaming seam + SDK wiring + #4582 swap) after S0 #4497 lands.
