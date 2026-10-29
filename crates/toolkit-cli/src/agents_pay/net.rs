@@ -91,6 +91,9 @@ pub struct MerchantRequest<'a> {
 /// Merchant HTTP seam for the flow.
 pub trait MerchantHttp {
     /// Send one bounded request.
+    ///
+    /// # Errors
+    /// Returns a sanitized refusal when admission, transport, or bounds fail.
     fn request(&self, request: &MerchantRequest<'_>) -> Result<MerchantResponse, NetError>;
 }
 
@@ -193,28 +196,32 @@ impl<T: StreamingTransport, R: HostResolver, C: Clock> MerchantHttp for Streamin
                 }
             }
         }
-        let mut body = Vec::new();
-        loop {
-            match stream.next_chunk() {
-                Ok(Some(chunk)) => body.extend_from_slice(&chunk),
-                Ok(None) => break,
-                Err(StreamError::TooLarge) => {
-                    return Err(NetError(format!(
-                        "Response exceeded {} bytes; refusing to buffer more.",
-                        input.body_cap
-                    )))
-                }
-                Err(StreamError::IdleTimeout | StreamError::DeadlineExceeded) => {
-                    return Err(timeout())
-                }
-                Err(StreamError::Failed(e)) => return Err(aws_error(&e)),
-            }
-        }
+        let body = read_body(stream.as_mut(), input.body_cap)?;
         Ok(MerchantResponse {
             status,
             headers: response_headers,
             body,
         })
+    }
+}
+
+fn read_body(
+    stream: &mut dyn toolkit_aws::stream::ResponseStream,
+    cap: u64,
+) -> Result<Vec<u8>, NetError> {
+    let mut body = Vec::new();
+    loop {
+        match stream.next_chunk() {
+            Ok(Some(chunk)) => body.extend_from_slice(&chunk),
+            Ok(None) => return Ok(body),
+            Err(StreamError::TooLarge) => {
+                return Err(NetError(format!(
+                    "Response exceeded {cap} bytes; refusing to buffer more."
+                )))
+            }
+            Err(StreamError::IdleTimeout | StreamError::DeadlineExceeded) => return Err(timeout()),
+            Err(StreamError::Failed(e)) => return Err(aws_error(&e)),
+        }
     }
 }
 
