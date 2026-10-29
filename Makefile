@@ -31,6 +31,12 @@ test-sdk:
 docgraph-spike:
 	cargo test -p toolkit-cli --features docgraph-live --locked --test docgraph_bridge_spike service_orchestrators_use_only_the_injected_connector -- --exact
 
+docgraph-live-wipe:
+	cargo test -p toolkit-cli --features docgraph-live --locked --test docgraph_live live_wipe_ignores_ambient_confirmation -- --exact
+
+docgraph-live-consent:
+	cargo test -p toolkit-cli --features docgraph-live --locked --test docgraph_live live_consent_precedes_input_files_and_only_argv_counts -- --exact
+
 # Per-plugin ./bin binaries (#4487, docs/migration/plugin-binaries.md). Stage
 # every declared binary for every declared platform with the locally
 # installed toolchains (zig + cargo-zigbuild cross-link the non-host targets),

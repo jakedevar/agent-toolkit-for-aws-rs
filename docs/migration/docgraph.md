@@ -932,6 +932,18 @@ construction or absence of the SDK's default identity cache. In particular,
 explicit preference and the absence of SDK credential sources are both
 necessary to the tested design. S2 must fail closed if no-auth is not selected.
 
+The initial S1 CLI preflight recognizes `--live` but deliberately returns a
+usage error after validation because no live adapter exists in this slice.
+It rejects recorded/dry-run conflicts before file reads, ignores the legacy
+wipe environment variable in live mode, requires an explicit seed endpoint,
+and checks operation-level memory consent before reading its input. These are
+partial T-DG-01 checks, not evidence that the remaining S1 boundaries or all
+file-origin consent cases have been implemented. The ambient-wipe mutation
+red/green jobs were `ff393657-dff0-4d7f-afeb-7a3c2ef620ef` and
+`44ba8156-f0fc-42fa-bb2d-fae216004c7c`; the memory consent guard mutation
+red/green jobs were `08718c7a-172c-42cc-8aac-cf5862bb9659` and
+`77a0bafe-4692-47bb-b041-565ed9ccf080`. Mutations were not committed.
+
 Implementation slices remain Rust, use scoped optional service dependencies,
 daemon-owned jobs and independent exact-SHA review. Each owns a requirement/test
 matrix and deliberate CLI/output changes; no worker may treat this proposal as
