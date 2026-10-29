@@ -567,3 +567,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 10-29 03:14Z: #4487 repair 4 (483959bf) at 3d9066158009a7c477e290abab39af0449b4bfb3: MCP whole-object check, uvx-only templates, launchers/shells/interps refused. scoped_test 9a298dc8 ok, merges clean. Kaizen #5090 (failed scoped-test per-package log deleted; harness filing refused agent_create_issue_harness_project_unresolved).
   #5018 r5 (narrow: #5088 + MCP rules + 3 impl decisions) -> Codex gpt-6.1-sol high 453ccbd7 pinned 3d906615. On ACCEPT: continue r21 worker to merge #4487 + #4412 hooks.json activation.
   4/4 busy: de9907bc (S3), f38bc05f (#5085 L0-L2), 66f465b5 (#5091), 453ccbd7 (#5018 r5).
+- 10-29 03:18Z: #5018 r5 (453ccbd7) ACCEPT #4487 at 3d9066158009a7c477e290abab39af0449b4bfb3, no new findings; 3 impl decisions accepted. #4487 ACCEPTED. #5088 left open until #4487 lands.
+  r21 continuation db936e31 (Opus high, continue_from 374cf704, from d8179823): item 2 merge #4487 3d906615; item 3 #4412 hooks.json -> plugin-stage launcher (own commit). On handoff: verify, enqueue new r21 head superseding entry 0e7e277a (seq 2937).
+  4/4 busy: de9907bc (S3), f38bc05f (#5085 L0-L2), 66f465b5 (#5091), db936e31 (r21 items 2-3).
