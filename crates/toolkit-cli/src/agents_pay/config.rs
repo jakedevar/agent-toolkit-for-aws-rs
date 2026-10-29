@@ -187,6 +187,7 @@ fn filemode(mode: u32) -> String {
     }
     s
 }
+// recorded-shape: operator configuration file is not an AWS response.
 fn normalize(raw: &Json, path: &str) -> Result<Json, String> {
     if !matches!(raw, Json::Object(_)) {
         return Err(format!("Payment config {path} must be a JSON object."));

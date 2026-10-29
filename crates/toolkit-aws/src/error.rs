@@ -238,6 +238,8 @@ pub enum AwsError {
         /// Redacted failure message.
         message: String,
     },
+    /// The peer sent malformed HTTP framing or a malformed response head.
+    Protocol,
     /// A connect or read timeout fired.
     Timeout {
         /// Which timeout.
@@ -328,6 +330,7 @@ impl AwsError {
             Self::CredentialsExpired => "aws_credentials_expired",
             Self::CredentialProvider { .. } => "aws_credential_provider",
             Self::Connect { .. } => "aws_connect",
+            Self::Protocol => "aws_protocol",
             Self::Timeout { .. } => "aws_timeout",
             Self::Service(_) => "aws_service_error",
             Self::Pagination { .. } => "aws_pagination",
@@ -408,6 +411,7 @@ impl AwsError {
                     redact_text(message)
                 )
             }
+            Self::Protocol => f.write_str("the endpoint returned malformed HTTP"),
             Self::Timeout { phase, message } => {
                 write!(f, "{phase} timeout: {}", redact_text(message))
             }
@@ -447,6 +451,7 @@ impl AwsError {
                 .debug_struct("Connect")
                 .field("message", &Scrubbed(message))
                 .finish(),
+            Self::Protocol => f.write_str("Protocol"),
             Self::Timeout { phase, message } => f
                 .debug_struct("Timeout")
                 .field("phase", phase)
