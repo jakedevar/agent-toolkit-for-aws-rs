@@ -1080,3 +1080,7 @@ Friction: #4727, Rsi #4694, Rsi #4704
   Re-review #5419 -> Claude Opus c08ce82a pinned 84fd9fb0 (supersedes #5397). On ACCEPT: AgentCheckLandingCandidate + enqueue 84fd9fb0 (source_session_id 5fd44a0d, derive_filters, issue 5352); after landing close #5352 #5373 #5389 #5397 #5419 #5374-#5377 #5390 #5391 #5400 (confirm each).
   Kaizen dedupe: at_commit exit 127 -> survivor #4865; cancelled #5353 #5381 #5396 #5408. Next free kaizen slot: worker on #4865 (add scripts/at-commit-test.sh matching runner contract).
   4/4: 91a6981f L5 r1, 33d730c3 S1, a0bcd5cc B1 r1, c08ce82a #5419.
+- 16:45Z: B1 repair 1 (a0bcd5cc, Sonnet) DONE at b9e7980b27823338cc0ed32876b38d75dacc831d: test-only (verified every hunk inside #[cfg(test)] mod tests + doc row D-OC21), each new test red vs reviewer's mutation. PM ACCEPT without second review (recorded on #5401). Scoped 60dd65d1 ok 5205; check ok.
+  ENQUEUED seq 3022 entry 09811136 (derive_filters, issue 5363). On landing close (confirm): #5363 #5401 #5409 #5410 #5411 #5412 #5413 #5180; design e3fa85bf lands with it (#5159/#5175 can close).
+  Kaizen worker ef029147 (Sonnet) on #4865: add scripts/at-commit-test.sh to runner contract.
+  4/4: 91a6981f L5 r1, 33d730c3 S1, c08ce82a #5419, ef029147 #4865. #5344 (P4) waits.
