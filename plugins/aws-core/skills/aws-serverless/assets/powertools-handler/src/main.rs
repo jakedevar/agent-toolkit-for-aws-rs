@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use lambda_runtime::{service_fn, Error, LambdaEvent};
 use powertools_handler::{
-    Clock, DynamoDbPersistence, Handler, HandlerSettings, Idempotency, IdempotencyConfig,
+    metrics, Clock, DynamoDbPersistence, Handler, HandlerSettings, Idempotency, IdempotencyConfig,
     InvocationContext, LineSink, Logger, StdoutSink, SystemClock, Tracer, UdpSegmentSink,
 };
 use serde_json::Value;
@@ -50,7 +50,10 @@ async fn main() -> Result<(), Error> {
         sink,
         clock,
         &service,
-        HandlerSettings::default(),
+        HandlerSettings {
+            metrics_service: metrics::service_from_env(),
+            ..HandlerSettings::default()
+        },
     ));
 
     lambda_runtime::run(service_fn(move |event: LambdaEvent<Value>| {

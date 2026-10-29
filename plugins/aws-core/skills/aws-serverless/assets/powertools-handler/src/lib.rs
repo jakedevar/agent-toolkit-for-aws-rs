@@ -132,6 +132,10 @@ pub struct HandlerSettings {
     pub metrics_namespace: String,
     /// CORS origin of the response; replace with your domain.
     pub allow_origin: String,
+    /// The `service` metric dimension. `None` (the default) leaves the
+    /// dimension out, as Python does without `POWERTOOLS_SERVICE_NAME`; use
+    /// [`metrics::service_from_env`] to read the variable. This is independent
+    /// of the Logger's service name, which falls back to `service_undefined`.
     pub metrics_service: Option<String>,
 }
 
@@ -219,7 +223,7 @@ impl<P: PersistenceLayer> Handler<P> {
 
         let mut metrics = Metrics::new(
             Some(&self.settings.metrics_namespace),
-            Some(&self.service),
+            self.settings.metrics_service.as_deref(),
             self.sink.clone(),
             self.clock.clone(),
         );

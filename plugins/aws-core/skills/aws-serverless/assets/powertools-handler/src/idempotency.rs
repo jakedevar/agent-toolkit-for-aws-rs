@@ -290,15 +290,19 @@ pub fn select<'a>(event: &'a Value, path: &str) -> Option<&'a Value> {
         .try_fold(event, |value, field| value.as_object()?.get(field))
 }
 
-/// Null, an empty string, and containers holding only nulls (or nothing) do
-/// not identify a request.
+/// The Powertools rule for "no idempotency key"
+/// (`BasePersistenceLayer.is_missing_idempotency_key`): `None` and the empty
+/// string; a list that is empty or holds only `None`; a dict that is empty.
+/// The Python check iterates a dict's KEYS (never `None` in JSON), so a
+/// non-empty dict identifies a request whatever its values are. Numbers and
+/// booleans are never missing: `0` and `false` identify a request.
 fn is_missing(value: &Value) -> bool {
     match value {
         Value::Null => true,
         Value::String(s) => s.is_empty(),
         Value::Array(items) => items.iter().all(Value::is_null),
-        Value::Object(map) => map.values().all(Value::is_null),
-        _ => false,
+        Value::Object(map) => map.is_empty(),
+        Value::Bool(_) | Value::Number(_) => false,
     }
 }
 

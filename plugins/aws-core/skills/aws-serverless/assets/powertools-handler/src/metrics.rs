@@ -108,7 +108,9 @@ struct Metric {
 /// Metrics for one invocation. [`Metrics::flush`] writes one EMF line.
 pub struct Metrics {
     namespace: Option<String>,
-    service: String,
+    /// The `service` dimension; Powertools adds it only when a service is
+    /// configured (`POWERTOOLS_SERVICE_NAME` or the constructor argument).
+    service: Option<String>,
     entries: Vec<Metric>,
     sink: Arc<dyn LineSink>,
     clock: Arc<dyn Clock>,
@@ -125,7 +127,7 @@ impl Metrics {
     ) -> Self {
         Self {
             namespace: namespace.map(str::to_string),
-            service: service.unwrap_or("service_undefined").to_string(),
+            service: service.map(str::to_string),
             entries: Vec::new(),
             sink,
             clock,
@@ -161,10 +163,8 @@ impl Metrics {
             unit: MetricUnit::Count,
             values: vec![1.0],
         };
-        let dimensions = [
-            ("function_name".to_string(), function_name.to_string()),
-            ("service".to_string(), self.service.clone()),
-        ];
+        let mut dimensions = vec![("function_name".to_string(), function_name.to_string())];
+        dimensions.extend(self.service_dimension());
         self.sink.emit(&render_blob(
             namespace,
             &dimensions,
@@ -183,11 +183,17 @@ impl Metrics {
             .namespace
             .as_deref()
             .ok_or(MetricsError::MissingNamespace)?;
-        let dimensions = [("service".to_string(), self.service.clone())];
+        let dimensions: Vec<(String, String)> = self.service_dimension().into_iter().collect();
         let line = render_blob(namespace, &dimensions, &self.entries, self.clock.now_ms());
         self.sink.emit(&line);
         self.entries.clear();
         Ok(())
+    }
+
+    fn service_dimension(&self) -> Option<(String, String)> {
+        self.service
+            .as_ref()
+            .map(|service| ("service".to_string(), service.clone()))
     }
 }
 
@@ -217,14 +223,19 @@ fn render_blob(
         fields.push((name.clone(), Value::String(value.clone())));
     }
     for metric in metrics {
-        let value = if let [single] = metric.values.as_slice() {
-            json!(single)
-        } else {
-            json!(metric.values)
-        };
-        fields.push((metric.name.clone(), value));
+        // Always a list, as Powertools writes it: `[1.0]` for one value.
+        fields.push((metric.name.clone(), json!(metric.values)));
     }
     ordered_object(&fields)
+}
+
+/// `POWERTOOLS_SERVICE_NAME`, when set and not empty. Metrics have no default
+/// service (the Logger's `service_undefined` is only its display default):
+/// without it the `service` dimension is left out.
+pub fn service_from_env() -> Option<String> {
+    std::env::var("POWERTOOLS_SERVICE_NAME")
+        .ok()
+        .filter(|s| !s.is_empty())
 }
 
 /// `POWERTOOLS_METRICS_NAMESPACE`, when set and not empty.

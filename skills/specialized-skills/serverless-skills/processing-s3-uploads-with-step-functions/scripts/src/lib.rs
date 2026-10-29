@@ -16,11 +16,15 @@
 
 use std::fmt;
 use std::future::Future;
-use std::path::Path;
+use std::io::ErrorKind;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use aws_sdk_s3::error::DisplayErrorContext;
 use aws_sdk_s3::Client;
 use serde_json::{Map, Value};
+use tokio::fs::{File, OpenOptions};
 use tokio::io::AsyncWriteExt;
 
 /// S3 object keys are at most 1024 characters long here (the Python check
@@ -50,8 +54,9 @@ impl Output for StdoutOutput {
 
 /// Source of S3 objects.
 pub trait ObjectStore: Send + Sync {
-    /// Download `s3://bucket/key` to `destination`. On failure no partial file
-    /// may be left behind.
+    /// Download `s3://bucket/key` to `destination`. The destination is replaced
+    /// only by a complete download: on failure it is left as it was (nothing
+    /// is deleted) and no partial file remains.
     fn download(
         &self,
         bucket: &str,
@@ -424,16 +429,6 @@ impl ObjectStore for S3Store {
         key: &str,
         destination: &Path,
     ) -> Result<(), StoreError> {
-        let result = self.fetch(bucket, key, destination).await;
-        if result.is_err() {
-            let _ = tokio::fs::remove_file(destination).await;
-        }
-        result
-    }
-}
-
-impl S3Store {
-    async fn fetch(&self, bucket: &str, key: &str, destination: &Path) -> Result<(), StoreError> {
         let mut object = self
             .client
             .get_object()
@@ -450,15 +445,73 @@ impl S3Store {
         let io = |e: std::io::Error| {
             StoreError(format!("Failed to write {}: {e}", destination.display()))
         };
-        let mut file = tokio::fs::File::create(destination).await.map_err(io)?;
-        while let Some(chunk) = object
-            .body
-            .try_next()
-            .await
-            .map_err(|e| StoreError(format!("Failed to read s3://{bucket}/{key}: {e}")))?
-        {
-            file.write_all(&chunk).await.map_err(io)?;
+
+        // Publish like boto3's `download_file` (s3transfer): stream into a new
+        // temporary sibling and rename it over the destination once the whole
+        // object arrived. A failure at any point leaves the destination as it
+        // was (a previous download, a symlink and its target) and removes only
+        // the temporary file.
+        let (temporary, mut file) = create_temporary_sibling(destination).await.map_err(io)?;
+        let streamed = async {
+            while let Some(chunk) = object
+                .body
+                .try_next()
+                .await
+                .map_err(|e| StoreError(format!("Failed to read s3://{bucket}/{key}: {e}")))?
+            {
+                file.write_all(&chunk).await.map_err(io)?;
+            }
+            file.flush().await.map_err(io)
         }
-        file.flush().await.map_err(io)
+        .await;
+        drop(file);
+        let published = match streamed {
+            // `rename` replaces a symlink at the destination; it never
+            // follows it.
+            Ok(()) => tokio::fs::rename(&temporary, destination).await.map_err(io),
+            Err(e) => Err(e),
+        };
+        if published.is_err() {
+            let _ = tokio::fs::remove_file(&temporary).await;
+        }
+        published
     }
+}
+
+static TEMPORARY_FILES: AtomicU64 = AtomicU64::new(0);
+
+/// Create a new, empty file next to `destination`. `create_new` is
+/// `O_CREAT | O_EXCL`: it fails when anything exists at the path, a symlink
+/// included (it is never followed), so the file is always ours.
+async fn create_temporary_sibling(destination: &Path) -> std::io::Result<(PathBuf, File)> {
+    let directory = destination
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    for _ in 0..16 {
+        let unique = TEMPORARY_FILES.fetch_add(1, Ordering::Relaxed);
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |d| d.subsec_nanos());
+        // A fixed-length name: the object's own name may already be at the
+        // file system's limit.
+        let path = directory.join(format!(
+            ".s3-download-{}-{unique}-{nanos}.tmp",
+            std::process::id()
+        ));
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .await
+        {
+            Ok(file) => return Ok((path, file)),
+            Err(e) if e.kind() == ErrorKind::AlreadyExists => {}
+            Err(e) => return Err(e),
+        }
+    }
+    Err(std::io::Error::new(
+        ErrorKind::AlreadyExists,
+        "no unused temporary file name",
+    ))
 }
