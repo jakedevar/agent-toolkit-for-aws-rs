@@ -292,10 +292,6 @@ impl GremlinConnection {
         region: &str,
         invocation_deadline: std::time::Instant,
     ) -> Result<Self, AwsError> {
-        // RED STUB (#5515): no adapter yet.
-        if max_frame_bytes > 0 {
-            return Err(AwsError::connect("the Gremlin adapter is not implemented"));
-        }
         let bounds = opener.bounds();
         let invocation = Instant::from_std(invocation_deadline);
         let request = upgrade_request(opener.endpoint(), signer, region)?;

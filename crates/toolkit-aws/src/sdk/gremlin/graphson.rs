@@ -307,10 +307,6 @@ impl Results {
         text: &[u8],
         request_id: &str,
     ) -> Result<Status, AwsError> {
-        // RED STUB (#5515): no decoder yet.
-        if !text.is_empty() || request_id.is_empty() {
-            return Err(malformed("decoding is not implemented"));
-        }
         if !nesting_within(text, MAX_JSON_NESTING) {
             return Err(too_deep());
         }
