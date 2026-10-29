@@ -42,7 +42,7 @@ pub use diag::{
     quote_untrusted, quote_untrusted_bounded,
 };
 pub use digest::{sha256, sha256_hex};
-pub use encoding::base64url_nopad;
+pub use encoding::{base64_standard, base64_standard_decode, base64url_nopad};
 pub use error::{ErrorKind, ParseError, ToolkitError};
 pub use frontmatter::parse_frontmatter;
 pub use json::{

@@ -2059,6 +2059,13 @@ fn analyse_with(files: &[SourceFile], inventory: Option<&[(&str, Class)]>) -> Re
 /// it shows a recording signal.
 const INVENTORY: &[(&str, Class)] = &[
     (
+        "agents_pay",
+        Class::NotRecorded(
+            "the x402 payment policy over the operator's policy and the merchant's challenge; \
+             no AWS call is read or replayed",
+        ),
+    ),
+    (
         "ai_data",
         Class::NotRecorded(
             "dataset samples and metric definitions the user supplies; S3 and SageMaker go \
