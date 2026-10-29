@@ -821,3 +821,21 @@ fn ap_sub_11_12_invalid_scalars_never_echo_values() {
         assert!(!f.0.join("scripts").exists());
     }
 }
+
+#[test]
+fn ap_asn_05_type_errors_across_values_and_assign_are_collected_sorted() {
+    let f = Fixture::new();
+    let template = f.write("template.py", "# Cell 0 [markdown]: Example\n# Desc\n# Cell 1: Code\nA_FIELD = 1\nZ_FIELD = False\nx = '[MIDDLE]'\n");
+    let values = f.write(
+        "values.json",
+        r#"{"values":{"MIDDLE":false},"assign":{"Z_FIELD":"bad","A_FIELD":-1}}"#,
+    );
+    let result = f.render(&template, "script", &["--values", values.to_str().unwrap()]);
+    assert_eq!(result.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&result.stderr);
+    let a = stderr.find("A_FIELD").unwrap();
+    let middle = stderr.find("MIDDLE").unwrap();
+    let z = stderr.find("Z_FIELD").unwrap();
+    assert!(a < middle && middle < z, "{stderr}");
+    assert!(!f.0.join("scripts").exists());
+}

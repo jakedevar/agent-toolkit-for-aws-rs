@@ -25,6 +25,23 @@ fn error(code: &'static str, names: impl IntoIterator<Item = String>) -> Substit
     }
 }
 
+fn literal(
+    occurrence: &super::template::Occurrence,
+    value: &Json,
+    consent: &BTreeSet<String>,
+) -> Result<String, &'static str> {
+    match occurrence.context {
+        Context::Bare => {
+            types::literal(&occurrence.name, value, consent.contains(&occurrence.name))
+        }
+        Context::Quoted if super::template::is_secret_name(&occurrence.name) => {
+            types::secret_literal(value, occurrence.quote.unwrap_or('"'))
+        }
+        Context::Quoted => types::quoted_literal(value, occurrence.quote.unwrap_or('"')),
+        _ => unreachable!(),
+    }
+}
+
 /// Substitutes lexer-identified spans, leaving comments and sentinel comparisons intact.
 #[allow(dead_code)] // Connected by the render command.
 pub(crate) fn substitute(
@@ -67,6 +84,28 @@ pub(crate) fn substitute(
         return Err(error("slot_unresolved", missing));
     }
 
+    let mut invalid = BTreeMap::new();
+    for occurrence in &template.occurrences {
+        if !matches!(occurrence.context, Context::Bare | Context::Quoted) {
+            continue;
+        }
+        if let Some(value) = values.get(&occurrence.name) {
+            if let Err(code) = literal(occurrence, value, consent) {
+                invalid.insert(occurrence.name.clone(), code);
+            }
+        }
+    }
+    if let Some(code) = invalid.values().next().copied() {
+        return Err(SubstitutionError {
+            code,
+            names: invalid
+                .into_iter()
+                .map(|(name, code)| format!("{name} ({code})"))
+                .collect::<Vec<_>>()
+                .join(", "),
+        });
+    }
+
     let normalized = source.replace("\r\n", "\n");
     let mut lines: Vec<String> = normalized.split('\n').map(str::to_owned).collect();
     for occurrence in template.occurrences.iter().rev() {
@@ -76,17 +115,8 @@ pub(crate) fn substitute(
         let Some(value) = values.get(&occurrence.name) else {
             continue;
         };
-        let literal = match occurrence.context {
-            Context::Bare => {
-                types::literal(&occurrence.name, value, consent.contains(&occurrence.name))
-            }
-            Context::Quoted if super::template::is_secret_name(&occurrence.name) => {
-                types::secret_literal(value, occurrence.quote.unwrap_or('"'))
-            }
-            Context::Quoted => types::quoted_literal(value, occurrence.quote.unwrap_or('"')),
-            _ => unreachable!(),
-        }
-        .map_err(|code| error(code, [occurrence.name.clone()]))?;
+        let literal = literal(occurrence, value, consent)
+            .map_err(|code| error(code, [occurrence.name.clone()]))?;
         let Some(line) = lines.get_mut(occurrence.line - 1) else {
             return Err(error("slot_position_invalid", [occurrence.name.clone()]));
         };

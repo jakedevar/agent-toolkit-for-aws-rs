@@ -43,6 +43,33 @@ pub(crate) fn rewrite(
     consent: &BTreeSet<String>,
     replaced: &BTreeSet<usize>,
 ) -> Result<String, SubstitutionError> {
+    let mut errors = Vec::new();
+    for (name, value) in entries {
+        let single = BTreeMap::from([(name.clone(), value.clone())]);
+        if let Err(error) = rewrite_validated(source, template, &single, consent, replaced) {
+            errors.push(error);
+        }
+    }
+    if let Some(first) = errors.first() {
+        return Err(SubstitutionError {
+            code: first.code,
+            names: errors
+                .iter()
+                .map(|error| format!("{} ({})", error.names, error.code))
+                .collect::<Vec<_>>()
+                .join(", "),
+        });
+    }
+    rewrite_validated(source, template, entries, consent, replaced)
+}
+
+fn rewrite_validated(
+    source: &str,
+    template: &Template,
+    entries: &BTreeMap<String, Json>,
+    consent: &BTreeSet<String>,
+    replaced: &BTreeSet<usize>,
+) -> Result<String, SubstitutionError> {
     let mut lines: Vec<String> = source.split('\n').map(str::to_owned).collect();
     for (name, value) in entries {
         let target = template

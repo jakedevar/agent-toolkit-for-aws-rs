@@ -305,8 +305,7 @@ fn command_with_hooks(
         }
     }
     let replaced: BTreeSet<_> = replacements.keys().copied().collect();
-    let assigned = assign::rewrite(&text, &original, &assignments, &consents, &replaced)
-        .map_err(|e| fail(e.code, e.names))?;
+    let assigned = assign::rewrite(&text, &original, &assignments, &consents, &replaced);
     let mut active = original.clone();
     active.occurrences.retain(|occurrence| {
         original
@@ -341,13 +340,25 @@ fn command_with_hooks(
         );
     }
     let substituted = values::substitute(
-        &assigned,
+        assigned.as_deref().unwrap_or(&text),
         &active,
         &slots,
         &consents,
         inv.has_flag("--allow-unresolved"),
-    )
-    .map_err(|e| fail(e.code, e.names))?;
+    );
+    let substituted = match (assigned, substituted) {
+        (Ok(_), Ok(result)) => result,
+        (Err(error), Ok(_)) | (Ok(_), Err(error)) => return Err(fail(error.code, error.names)),
+        (Err(first), Err(second)) => {
+            let mut messages: Vec<_> = first
+                .names
+                .split(", ")
+                .chain(second.names.split(", "))
+                .collect();
+            messages.sort_unstable();
+            return Err(fail(first.code, messages.join(", ")));
+        }
+    };
     let lines: Vec<_> = substituted.split('\n').collect();
     let mut rebuilt = String::new();
     let mut parsed = original.clone();
@@ -411,6 +422,15 @@ fn command_with_hooks(
             .into_bytes(),
         )
     };
+    if mode == "notebook"
+        && !inv.has_flag("--append")
+        && fs::symlink_metadata(directory.join(&filename)).is_ok()
+    {
+        return Err(fail(
+            "destination_exists",
+            "notebook already exists; choose --append or a different name",
+        ));
+    }
     if !inv.has_flag("--dry-run") {
         toolkit_core::treesync::ensure_dir_chain(
             &project,
