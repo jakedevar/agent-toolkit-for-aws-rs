@@ -716,3 +716,7 @@ Friction: #4727, Rsi #4694, Rsi #4704
   4/4 busy: 1d17674d (#5181 S4), 2664b229 (#5190 L3), ed423b5f (#5198 S2a), 169dd3a4 (#5200).
 - 10-29 05:41Z: ai-payloads S2a #5198 (ed423b5f) partial at f78ca76f7c32470e3cfa1d7cfde0da2d57d69df3 (red 1d7590b0; fmt 0dc9c3db, clippy 55f7c588, scoped a4bb3a11 3864 ok). Gaps #5202. RULING: AP-PUB-03 retries + AP-PUB-15 dry-run -> S2b; AP-PUB-02 real interleave + after_commit_before_unlink assertion stay in S2a repair. Review #5205 -> Claude Sonnet 15d38b72 (pinned f78ca76). Then ONE repair (#5202 + findings, Codex terra continue_from ed423b5f).
   4/4 busy: 1d17674d (#5181 S4), 2664b229 (#5190 L3), 169dd3a4 (#5200), 15d38b72 (#5205).
+- 10-29 05:45Z: ROUND 22 LANDED: origin/rolling = 07e945e5ee06faa22a7fca3bf3c348136d2377c9 (fast-forward; outcome wake not yet received). CLOSED #5017 #5052 #5079 #5105 #5106-#5113 #5136-#5138 (#5147 already closed). #5153 (R-LOG scope post-land check) stays open.
+  ENQUEUED #5080 069ab1b 14dcba91 (seq 2959) and ROUND 23 e99eb20 ed167018 (seq 2960). Queue: S1 3f8f320a GATING (2957), S2 264d82e1 (2958), #5080 (2959), r23 (2960).
+  OPERATOR TODO 537407cb (mcp-proxy-signed-live-check, issue:#4413): build at 07e945e5 + signed initialize/tools/list. Wake f5a29d4d todo_closed (48h timeout -> GM Q2 ruling). mcp-proxy S5 waits on it.
+  Reported up (pm-7bc8ec84-landed-r22-07e945e).
