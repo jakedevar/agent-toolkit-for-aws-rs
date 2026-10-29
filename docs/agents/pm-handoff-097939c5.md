@@ -543,3 +543,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
   ROUND 21 = #5078, worker 374cf704 (Opus high, sandbox r20 head 0eff943c): merge #4397 now; continue later with #4487 (after #5018 r4) + #4412 hooks.json activation. When r21 is verified: enqueue with supersedes r20 a6460649 if r20 is still queued.
   Kaizen: #5067 cancelled (dup #5034); #5068 noted (review probes: use exact-name package jobs, not scoped_test, in review briefs).
   4/4 busy: d06901cb (#5052 S2), 0610b2fa (#4382 design r3), 8bd99aa0 (#4487 repair 3), 374cf704 (r21).
+- 10-29 02:48Z: S2 #5052 7d8ffd6621d53ff5b4ce6206064cb196cf681a58 (d06901cb; merges S1; red afbab5cd; fmt 9d35e267, clippy b705f6f1, clippy-sdk 9df5f675, scoped 4cd7aa62 ok). Decisions accepted on #4413 (seq 9): 8 KiB/1025 B test budget; thread-per-message. Kaizen #5077 cancelled (dup #4910).
+  S3 = #5079 worker de9907bc (Opus high, sandbox S2 7d8ffd66): command, CLI, wiring, Windows credential_process fail closed, SLICES/USAGE/bare-dash/recorded. Then S4 security review (Codex sol high, DEFENSIVE wording) of S0-S3 at the S3 SHA; then the S1-S3 stack lands as one integration round; then operator signed-run to-do; then S5.
+  4/4 busy: 0610b2fa (#4382 design r3), 8bd99aa0 (#4487 repair 3), 374cf704 (r21), de9907bc (S3).
