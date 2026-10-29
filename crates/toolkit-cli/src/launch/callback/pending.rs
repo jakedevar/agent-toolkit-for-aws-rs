@@ -249,16 +249,15 @@ pub fn finish_if_final(state_dir: &Path, pid: u32, now: i64) -> (Observation, Op
 
 #[cfg(unix)]
 impl WaitTracker {
-    #[cfg(test)]
-    pub(super) fn finish_after_report(
+    pub(super) fn finish_after_report<R>(
         &mut self,
         dir: &Path,
         pid: u32,
         now: i64,
-        report: impl FnOnce(),
-    ) {
-        let _ = self.finish(dir, pid, now);
-        report();
+        report: impl FnOnce(Observation, Option<String>) -> R,
+    ) -> R {
+        let elapsed = i64::try_from(self.start.elapsed().as_secs()).unwrap_or(i64::MAX);
+        self.finish_at_with(dir, pid, now, elapsed, report)
     }
     /// Evaluate one observation, retaining the last trusted cutoff across reads.
     pub fn finish(
@@ -267,6 +266,19 @@ impl WaitTracker {
         pid: u32,
         now: i64,
     ) -> (Observation, Option<String>) {
+        self.finish_at_with(state_dir, pid, now, elapsed, |observation, reason| {
+            (observation, reason)
+        })
+    }
+
+    fn finish_at_with<R>(
+        &mut self,
+        state_dir: &Path,
+        pid: u32,
+        now: i64,
+        elapsed: i64,
+        report: impl FnOnce(Observation, Option<String>) -> R,
+    ) -> R {
         let elapsed = i64::try_from(self.start.elapsed().as_secs()).unwrap_or(i64::MAX);
         self.finish_at(state_dir, pid, now, elapsed)
     }
@@ -284,7 +296,7 @@ impl WaitTracker {
             && !self.seen
             && matches!(std::fs::symlink_metadata(&path), Err(ref e) if e.kind() == io::ErrorKind::NotFound)
         {
-            return (Observation::Missing, None);
+            return report(Observation::Missing, None);
         }
         self.seen = true;
         if let Some(ref value) = record {
@@ -311,16 +323,17 @@ impl WaitTracker {
             decision_now,
             cutoff,
         );
+        let reported = report(
+            Observation::Decision(decision),
+            record.and_then(|r| r.reason),
+        );
         if lock.is_some()
             && decision != super::WaitDecision::Poll
             && decision != super::WaitDecision::HelperBlocked
         {
             let _ = state::remove_state_file(&state_dir.join("pending"), &format!("{pid}.json"));
         }
-        (
-            Observation::Decision(decision),
-            record.and_then(|r| r.reason),
-        )
+        reported
     }
 }
 

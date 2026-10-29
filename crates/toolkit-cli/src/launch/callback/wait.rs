@@ -54,21 +54,24 @@ pub fn command(invocation: &Invocation, output: &mut Output<'_>) -> Result<(), T
                 .ok()
                 .and_then(|v| i64::try_from(v.as_secs()).ok())
                 .unwrap_or(0);
-            let (observation, reason) = tracker.finish(&dir, pid, now);
-            match observation {
-                Observation::Missing => return failure(output, &format!("No sign-in is in progress for pid {pid}. Run auth-start again.")),
-                Observation::Decision(WaitDecision::Authenticated) => return output.line(&serde_json::json!({"authenticated":true,"baseUrl":base}).to_string()),
-                Observation::Decision(WaitDecision::Poll) => std::thread::sleep(std::time::Duration::from_secs(1)),
-                Observation::Decision(WaitDecision::HelperBlocked) => return failure(output, "Sign-in has not finished: the sign-in helper is still blocked. Run session-status in a minute; if it does not report a session, run auth-start again."),
-                Observation::Decision(WaitDecision::TimedOut) => return failure(output, "Sign-in did not finish in time. Run auth-start again."),
-                Observation::Decision(WaitDecision::Ended) => return failure(output, "Sign-in ended without completing authentication. Run auth-start again."),
-                Observation::Decision(WaitDecision::Failed) => return failure(output, match reason.as_deref() {
+            let result = tracker.finish_after_report(&dir, pid, now, |observation, reason| match observation {
+                Observation::Missing => Some(failure(output, &format!("No sign-in is in progress for pid {pid}. Run auth-start again."))),
+                Observation::Decision(WaitDecision::Authenticated) => Some(output.line(&serde_json::json!({"authenticated":true,"baseUrl":base}).to_string())),
+                Observation::Decision(WaitDecision::Poll) => None,
+                Observation::Decision(WaitDecision::HelperBlocked) => Some(failure(output, "Sign-in has not finished: the sign-in helper is still blocked. Run session-status in a minute; if it does not report a session, run auth-start again.")),
+                Observation::Decision(WaitDecision::TimedOut) => Some(failure(output, "Sign-in did not finish in time. Run auth-start again.")),
+                Observation::Decision(WaitDecision::Ended) => Some(failure(output, "Sign-in ended without completing authentication. Run auth-start again.")),
+                Observation::Decision(WaitDecision::Failed) => Some(failure(output, match reason.as_deref() {
                     Some("authorization_denied") => "Sign-in was denied. Run auth-start again.",
                     Some("invalid_code") => "Sign-in returned an invalid authorization code. Run auth-start again.",
                     Some("transport_unavailable") => "The sign-in service transport is unavailable.",
                     _ => "Sign-in failed. Run auth-start again.",
-                }),
+                })),
+            });
+            if let Some(result) = result {
+                return result;
             }
+            std::thread::sleep(std::time::Duration::from_secs(1));
         }
     }
     #[cfg(not(unix))]

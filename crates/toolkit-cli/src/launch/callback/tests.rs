@@ -488,7 +488,10 @@ fn terminal_record_remains_until_result_is_reported() {
         .unwrap();
     drop(custody);
     let path = scratch.join("pending/91.json");
-    WaitTracker::default().finish_after_report(scratch.path(), 91, 99, || assert!(path.exists()));
+    WaitTracker::default().finish_after_report(scratch.path(), 91, 99, |_, _| {
+        assert!(path.exists());
+        assert!(super::pending::acquire_if_free(scratch.path(), 91).is_none());
+    });
     assert!(!path.exists());
 }
 
