@@ -300,4 +300,88 @@ mod tests {
         assert!(decide(("payTo", Json::Array(vec![]))));
         assert!(parse_json(r#"{"a":1,"a":2}"#).is_err());
     }
+
+    #[test]
+    fn t_ocp_par_origins_and_resource() {
+        use crate::agents_pay::policy::{authorize, FixedResolver, PaymentRequest, Resources};
+        let fixture = parse_json(include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../plugins/aws-agents/skills/agents-pay/packages/openclaw/test/fixtures/v2-security-contract.json"))).unwrap();
+        let config = fixture.get("config").unwrap();
+        let profile = Json::object(
+            [
+                "networkPreferences",
+                "allowedOrigins",
+                "allowedRecipients",
+                "allowedAssetsByNetwork",
+                "maxPaymentAmountAtomic",
+            ]
+            .iter()
+            .map(|key| (*key, config.get(key).unwrap().clone()))
+            .collect(),
+        );
+        let policy = from_openclaw(&profile).unwrap();
+        let challenge = fixture.get("challenge").unwrap();
+        let resources = Resources {
+            payment_manager_arn: Some("m".into()),
+            payment_instrument_id: Some("i".into()),
+            payment_session_id: Some("s".into()),
+            user_id: Some("u".into()),
+        };
+        let resolver =
+            FixedResolver::new().with_host("merchant.example", vec!["8.8.8.8".parse().unwrap()]);
+        let url = fixture.get("requestUrl").unwrap().as_str().unwrap();
+        let gate = |challenge: &Json, policy: &Json, resolver: &FixedResolver| {
+            authorize(
+                &PaymentRequest {
+                    url,
+                    challenge,
+                    policy,
+                    resources: &resources,
+                    purchase_id: None,
+                },
+                resolver,
+            )
+        };
+        assert_eq!(
+            gate(challenge, &policy, &resolver).unwrap().amount(),
+            "1000"
+        );
+        let wrong_origin = from_openclaw(&parse_json(r#"{"maxPaymentAmountAtomic":"100000","allowAnyRecipient":true,"allowedOrigins":["https://other.example"]}"#).unwrap()).unwrap();
+        assert!(gate(challenge, &wrong_origin, &resolver).is_err());
+        let private =
+            FixedResolver::new().with_host("merchant.example", vec!["127.0.0.1".parse().unwrap()]);
+        assert!(gate(challenge, &policy, &private).is_err());
+        let Json::Object(members) = challenge else {
+            unreachable!()
+        };
+        for bad_url in [
+            "https://evil.example/pay/weather",
+            "https://MERCHANT.example/pay/weather?city=sydney",
+            "https://merchant.example:443/pay/weather?city=sydney",
+        ] {
+            let modified = Json::Object(
+                members
+                    .iter()
+                    .map(|(key, value)| {
+                        (
+                            key.clone(),
+                            if key == "resource" {
+                                Json::object(vec![("url", Json::string(bad_url))])
+                            } else {
+                                value.clone()
+                            },
+                        )
+                    })
+                    .collect(),
+            );
+            assert!(gate(&modified, &policy, &resolver).is_err());
+        }
+        let any_policy = from_openclaw(
+            &parse_json(r#"{"maxPaymentAmountAtomic":"100000","allowAnyRecipient":true}"#).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            gate(challenge, &any_policy, &resolver).unwrap().amount(),
+            "1"
+        );
+    }
 }

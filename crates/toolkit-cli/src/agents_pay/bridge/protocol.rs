@@ -312,6 +312,7 @@ mod tests {
         );
         for body in [
             "é".repeat(10240),
+            "漢".repeat(10240),
             "😀".repeat(5120),
             "eyJ4NDAyVmVyc2lvbiI6Mi 0x".to_owned(),
         ] {
