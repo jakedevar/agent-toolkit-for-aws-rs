@@ -465,3 +465,8 @@ Friction: #4727, Rsi #4694, Rsi #4704
   4/4 busy: b1cc4adc (#4941 repair), 378eb41c (#4413 design r2), dd159c19 (r18), b43baf80 (#4393 repair 2).
 - 10-29 01:1xZ: #4941 repair 837c3d85168aabe47c8447f6363767e22399495d (b1cc4adc; COVERS #4978-#4981; shown_value/redacted_value/shown_path at the value; CallerText::stdout deleted; stderr net span-merged; labelled any length; set_path_display hook in toolkit-core; decisions D7-D11; scoped a8ef0e97 ok cli 3090 core 158 aws 183 msk 110, fmt f5a42624, clippy cbf41b4b). Re-review #4971 r2 worker (Codex sol high, pinned). On ACCEPT mail r18 dd159c19.
   4/4 busy: 378eb41c (#4413 design r2), dd159c19 (r18), b43baf80 (#4393 repair 2), #4971 r2 reviewer.
+- 10-29 01:2xZ: ROUND 18 head bc29fa2d61d6cbc411ef1e8e7fbc75b29606ac17 (dd159c19; merge #4396 d5fd277a (route pin conflict resolved, size 92) + audit/USAGE re-pin 41167 0x614d170cb18738c2; fmt 1ada3306 clippy e4dffba7 scoped 0954c3af ok cli 3400; check ok). ENQUEUED entry ff11c937 (seq 2937, SUPERSEDES r17 4e99add5, issue 5006).
+  ON LAND close: #5006 (auto), #4983, #4960 + r16 set, #4961, #4396 set (#4969 #4972 #4973 #4974 #4976 #4984 #4991 #4992).
+  ROUND 19 candidates: #4941 (#4971 r2 a0b03921), #4393 (repair 2 b43baf80). Duties: the bedrock_probes diag::path move, the #4941 diag contract across slices, reconciling marketplace EMF and tunnel redaction.
+  #4487 build/stage pipeline worker (Opus high, rolling): design + Rust staging tool + packaging contract; no release, no main, no paid CI (stop and report the cost).
+  4/4 busy: 378eb41c (#4413 design r2), b43baf80 (#4393 repair 2), a0b03921 (#4971 r2), #4487 worker.
