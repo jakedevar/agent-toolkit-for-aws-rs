@@ -84,7 +84,7 @@ pub fn collect_response(
     collect_with_ceiling(transport, request, operation, deadline, operation.ceiling())
 }
 #[allow(clippy::too_many_lines)]
-fn collect_with_ceiling(
+pub(crate) fn collect_with_ceiling(
     transport: &dyn StreamingTransport,
     request: &HttpRequest,
     operation: Operation,

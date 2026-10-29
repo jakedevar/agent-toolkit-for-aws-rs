@@ -586,7 +586,7 @@ fn unsafe_path(name: &str) -> LaunchError {
 }
 
 /// R-AR-READ name rules; `name` keeps a directory's final `/`.
-fn check_name(name: &str) -> Result<(), LaunchError> {
+pub(crate) fn check_name(name: &str) -> Result<(), LaunchError> {
     let body = name.strip_suffix('/').unwrap_or(name);
     let drive = {
         let bytes = name.as_bytes();

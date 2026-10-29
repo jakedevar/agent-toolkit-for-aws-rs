@@ -17,9 +17,11 @@
 //! this build. Every AWS or database interaction goes through a seam
 //! ([`client::AwsClient`], [`seed::GremlinSession`]) with a recorded
 //! implementation (`--recorded FILE`) and a "no live client" implementation.
-//! Live bindings and the `--uri` database collection of `wa_review.py` are
-//! follow-ups. Parity evidence and the intentional changes are in
-//! `docs/migration/docgraph.md`.
+//! Live AWS and Gremlin bindings and the helper libraries
+//! `graphrag_pipeline.py` and `agentic_memory.py` are follow-ups. The `--uri`
+//! database collection of `wa_review.py` is replaced by a user-run shell recipe and
+//! the offline `capture` normalizer (`toolkit documentdb normalize-capture`). Parity
+//! evidence and the intentional changes are in `docs/migration/docgraph.md`.
 #![allow(
     clippy::cast_possible_truncation,
     clippy::cast_precision_loss,
@@ -42,6 +44,7 @@ use crate::startup::read_text;
 use crate::{CommandSpec, Invocation, Output};
 
 mod access;
+mod capture;
 mod checks;
 mod client;
 mod dbchecks;
@@ -79,6 +82,18 @@ pub const WA_REVIEW: CommandSpec = CommandSpec {
     handler: wa_review_command,
 };
 
+/// `documentdb normalize-capture`.
+pub const NORMALIZE_CAPTURE: CommandSpec = CommandSpec {
+    path: &["documentdb", "normalize-capture"],
+    flags: &[],
+    value_flags: &["--capture", "--output"],
+    strict_values: true,
+    repeatable_flags: &[],
+    max_positionals: 0,
+    passthrough: false,
+    handler: normalize_capture_command,
+};
+
 /// `neptune validate-input`.
 pub const NEPTUNE_VALIDATE_INPUT: CommandSpec = CommandSpec {
     path: &["neptune", "validate-input"],
@@ -110,12 +125,14 @@ pub(crate) const SLICE: crate::registry::Slice = crate::registry::Slice {
     name: "docgraph",
     commands: &[
         WA_REVIEW,
+        NORMALIZE_CAPTURE,
         NEPTUNE_VALIDATE_INPUT,
         NEPTUNE_SEED,
         NEPTUNE_MEMORY,
     ],
     synopsis: r"  toolkit documentdb wa-review --cluster-id ID --region R [--recorded FILE]
       [--analysis-data FILE] [--output DIR] [--now TS]
+  toolkit documentdb normalize-capture --capture FILE --output FILE
   toolkit neptune validate-input [KEY=VALUE...]
   toolkit neptune seed [--confirm-wipe] [--endpoint HOST] [--recorded FILE | --dry-run]
   toolkit neptune memory --operation OP --input FILE [--recorded FILE | --dry-run]
@@ -124,6 +141,10 @@ pub(crate) const SLICE: crate::registry::Slice = crate::registry::Slice {
                 infrastructure and database checks over recorded AWS responses
                 (--recorded) and a pre-collected analysis (--analysis-data) and
                 writes wa_review_results.json and wa_review_report.md.
+                normalize-capture turns a private, user-assembled mongo-shell
+                capture (docs: references/collection-recipe.md) into the
+                --analysis-data file; it never connects to a database and
+                refuses --uri, --tls-ca-file and --tls-allow-invalid-certs.
   neptune       Neptune input validation and test-graph seeding (#4395).
                 validate-input checks identifiers before a write call; seed
                 wipes and seeds the test graphs only with --confirm-wipe (or
@@ -387,6 +408,46 @@ pub fn seed_command(invocation: &Invocation, out: &mut Output<'_>) -> Result<(),
         }
     }
     Ok(())
+}
+
+/// Handler of `toolkit documentdb normalize-capture`.
+pub fn normalize_capture_command(
+    invocation: &Invocation,
+    out: &mut Output<'_>,
+) -> Result<(), ToolkitError> {
+    let missing: Vec<&str> = ["--capture", "--output"]
+        .into_iter()
+        .filter(|flag| required(invocation, flag).is_none())
+        .collect();
+    if !missing.is_empty() {
+        return Err(usage(format!(
+            "the following arguments are required: {}",
+            missing.join(", ")
+        )));
+    }
+    let capture = required(invocation, "--capture").unwrap_or_default();
+    let output = required(invocation, "--output").unwrap_or_default();
+    let limits = capture::Limits::default();
+    let refuse = |error: capture::CaptureError| {
+        ToolkitError::runtime(
+            "docgraph_capture",
+            format!("capture refused ({}): {}", error.class(), error.message()),
+        )
+    };
+    let document = capture::read_capture(Path::new(capture), &limits).map_err(refuse)?;
+    let normalized = capture::normalize(&document, &limits).map_err(refuse)?;
+    capture::write_snapshot(Path::new(output), &normalized.snapshot).map_err(refuse)?;
+    out.line(&format!(
+        "Normalized {} collection(s) across {} database(s)",
+        normalized.collections, normalized.databases
+    ))?;
+    if normalized.incomplete > 0 {
+        out.line(&format!(
+            "WARNING: {} of {} collection(s) incomplete (error markers; wa-review skips them)",
+            normalized.incomplete, normalized.collections
+        ))?;
+    }
+    out.line(&format!("  Analysis data: {}", safe_path(output)))
 }
 
 /// Offline memory request planning and replay.

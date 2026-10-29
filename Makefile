@@ -27,6 +27,7 @@ test-sdk:
 	cargo test -p toolkit-cli --features aws-sdk --locked --lib asm_exec
 	cargo test -p toolkit-cli --features aws-sdk --locked --lib mcp_proxy
 	cargo test -p toolkit-cli --features aws-sdk --locked --test mcp_proxy_cli
+	cargo test -p toolkit-cli --features aws-sdk --locked --test launch_callback shipped_binary_exchange_publishes_session
 	cargo test -p toolkit-cli --features aws-sdk --locked --test agents_pay_ac3 --test agents_pay_wiring --test agents_pay_gate
 
 # Lint-only coverage of the live x402 payment module (design Q24): the
