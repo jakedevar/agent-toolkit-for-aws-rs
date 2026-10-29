@@ -939,3 +939,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
   4/4 busy: e1de11f0 (#5327 docgraph S5), 75a7e4a6 (#5326 x402 S4 review), 56c78333 (#5317 L6), acde8672 (#5306, parked on job 7b9f9394). Next free slot -> #5329 (AP close-out).
   Pending on land: #5327 -> close #5318 #5321 #5322 #5324 #5325. #5326 ACCEPT -> check+enqueue (source_session cd65d0a9), close #5181 #5326.
   Wakes carried: 4 on_terminal, health 2d82a104, todo f5a29d4d, safety net e2517333. Load 13.
+- 10-29 10:31Z: #5326 (75a7e4a6, Opus) CHANGES_REQUESTED x402 S4 27a523ba: B1 unknown single union arm untested (mut b survived); B2 syn construction gate misses `use as` alias + indexed/compound field writes (mut d,e survived). Non-blocking filed #5330 #5331 #5332; kaizen #5333.
+  PM RULING B2: child module request.rs with private fields (rustc privacy), gate narrowed to it, (d)(e) seeded. Repair 1 -> Codex terra 3c1e60a0 (continue_from cd65d0a9). Then narrow re-review (B1,B2 mutations only).
+  4/4 busy: e1de11f0 (#5327), 56c78333 (#5317), acde8672 (#5306), 3c1e60a0 (#5181 repair 1). #5329 still waits for a slot.
