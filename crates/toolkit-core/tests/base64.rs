@@ -2,10 +2,8 @@
 //!
 //! `base64_standard` (`encode` here) is the standard padded encoder moved
 //! from `bedrock_resolve`. `base64_standard_decode` (`decode_validate` here)
-//! reproduces Python's `base64.b64decode(s, validate=True)`, which the x402
-//! challenge reader (R-CH step 2) relies on. Since Python 3.11 that is
-//! `binascii.a2b_base64(s, strict_mode=True)`: the standard alphabet only,
-//! correct padding, nothing after it and no leading padding.
+//! implements the strict x402 challenge reader rules (R-CH step 2), including
+//! the deliberate D35 tightening over Python's `b64decode(validate=True)`.
 
 use toolkit_core::encoding::{
     base64_standard as encode, base64_standard_decode as decode_validate,
@@ -65,7 +63,7 @@ fn decode_refuses_characters_outside_the_standard_alphabet() {
 }
 
 #[test]
-fn decode_follows_the_python_padding_rules() {
+fn decode_enforces_padding_rules_and_d35_tightening() {
     // One data character past a multiple of four is never valid.
     assert_eq!(decode_validate("Z"), None);
     assert_eq!(decode_validate("Zm9vY"), None);
@@ -77,8 +75,8 @@ fn decode_follows_the_python_padding_rules() {
     assert_eq!(decode_validate("Zm8"), None);
     assert_eq!(decode_validate("Zg==").as_deref(), Some(&b"f"[..]));
     assert_eq!(decode_validate("Zm8=").as_deref(), Some(&b"fo"[..]));
-    // Strict mode: no data or padding after the pad that completes the
-    // quad, no padding after a complete quad, no leading padding.
+    // Python strict mode rejects excess padding after a partial quartet;
+    // D35 additionally rejects padding after a complete quartet.
     assert_eq!(decode_validate("Zm8=="), None);
     assert_eq!(decode_validate("Zg==="), None);
     assert_eq!(decode_validate("Zg==Zg=="), None);

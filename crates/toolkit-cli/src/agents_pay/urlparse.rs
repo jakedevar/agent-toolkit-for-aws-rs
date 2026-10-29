@@ -300,7 +300,7 @@ impl ParsedUrl {
     ///
     /// [`UrlError`] when the port raises.
     pub fn canonical_origin(&self) -> Result<String, UrlError> {
-        let host = self.hostname().unwrap_or_default();
+        let host = self.hostname().unwrap_or_default().to_lowercase();
         Ok(match self.port()? {
             Some(port) if port != 0 && port != 443 => format!("{}://{host}:{port}", self.scheme),
             _ => format!("{}://{host}", self.scheme),

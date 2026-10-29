@@ -596,8 +596,14 @@ fn t_ch_extra_padding_after_complete_quartet_falls_back_to_body() {
     let encoded = encode(document.as_bytes());
     assert!(!encoded.ends_with('='));
     let padded = format!("{encoded}=");
-    assert_eq!(extract(&headers(&[("payment-required", &padded)]), b""), refused(NOT_PARSEABLE));
-    assert_eq!(extract(&headers(&[("payment-required", &padded)]), OTHER.as_bytes()), Ok(json(OTHER)));
+    assert_eq!(
+        extract(&headers(&[("payment-required", &padded)]), b""),
+        refused(NOT_PARSEABLE)
+    );
+    assert_eq!(
+        extract(&headers(&[("payment-required", &padded)]), OTHER.as_bytes()),
+        Ok(json(OTHER))
+    );
 }
 
 #[test]

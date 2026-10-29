@@ -22,7 +22,7 @@ use std::cmp::Ordering;
 
 use toolkit_core::Json;
 
-use super::pyval::{is_py_space, py_str, strip_digit_underscores};
+use super::pyval::{is_decimal_space, py_str, strip_digit_underscores};
 
 /// USDC base-unit decimals, used for every asset as in the legacy gate (Q9).
 pub const USDC_DECIMALS: u32 = 6;
@@ -121,7 +121,7 @@ impl CapDecimal {
     ///
     /// [`CapError`] for anything outside the finite grammar or the D6 bounds.
     pub fn parse(text: &str) -> Result<Self, CapError> {
-        let trimmed = text.trim_matches(is_py_space);
+        let trimmed = text.trim_matches(is_decimal_space);
         let (negative, body) = match trimmed.as_bytes().first() {
             Some(b'-') => (true, &trimmed[1..]),
             Some(b'+') => (false, &trimmed[1..]),

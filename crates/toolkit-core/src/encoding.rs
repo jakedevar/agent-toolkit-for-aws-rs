@@ -5,9 +5,9 @@
 //! for the code verifier and the `S256` challenge.
 //!
 //! [`base64_standard`] is RFC 4648 section 4 (`+/`, `=` padding), moved here
-//! from `bedrock_resolve`. [`base64_standard_decode`] reads it exactly as
-//! Python's `base64.b64decode(s, validate=True)` does since Python 3.11,
-//! which is `binascii.a2b_base64(s, strict_mode=True)`:
+//! from `bedrock_resolve`. [`base64_standard_decode`] is stricter than
+//! Python's `base64.b64decode(s, validate=True)`: it also refuses padding
+//! after a complete quartet (x402 design D35). Its rules are:
 //!
 //! - only the 64 alphabet characters and `=`; anything else (whitespace and
 //!   newlines included) is refused;
@@ -79,7 +79,7 @@ fn sextet(byte: u8) -> Option<u32> {
 }
 
 /// Decode `text` under the rules in the module documentation; `None` when
-/// Python would raise `binascii.Error`.
+/// those rules reject the input.
 #[must_use]
 pub fn base64_standard_decode(text: &str) -> Option<Vec<u8>> {
     let bytes = text.as_bytes();

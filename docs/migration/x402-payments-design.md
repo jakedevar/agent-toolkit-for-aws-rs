@@ -197,8 +197,9 @@ The Rust flow keeps this order. Section 3 records what changes. The one structur
 
 1. Header first: `payment-required`, else `x-payment-required`. Several field lines with the same
    name are joined with `", "`, which is httpx's `get` behaviour.
-2. Base64 strict decode, matching `b64decode(validate=True)`: standard alphabet, correct padding,
-   no other bytes. Then UTF-8 decode, then JSON. Accept if the result is an object whose
+2. Base64 strict decode: standard alphabet, correct padding, no other bytes; D35 tightens
+   Python's `b64decode(validate=True)` for padding after a complete quartet. Then UTF-8 decode,
+   then JSON. Accept if the result is an object whose
    `accepts` is Python-truthy.
 3. Otherwise the raw header text is parsed as JSON, with the same acceptance rule.
 4. Otherwise the body is decoded (lossy UTF-8, Q11) and parsed as JSON. A parse failure gives
@@ -1482,9 +1483,11 @@ These are stricter or safety-only unless noted:
   - Linux and other Unix: a fixed location table; `SSL_CERT_FILE`, `SSL_CERT_DIR` and
     `AWS_CA_BUNDLE` are ignored;
   - macOS: a refusal while `SSL_CERT_FILE` or `SSL_CERT_DIR` is set.
-
   Python and botocore honoured certifi and `AWS_CA_BUNDLE`. Credential-provider HTTP and the
   admin commands keep S1's R-ROOTS.
+- D35 (#5157) reject `=` after a complete Base64 quartet, although Python 3.11
+  `b64decode(validate=True)` accepts it. A header with this padding falls through
+  to raw-header and body extraction; it may therefore be refused.
 
 ## 11. What is offline-testable and what needs the operator's live run
 

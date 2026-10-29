@@ -1221,7 +1221,11 @@ fn t_ver_ascii_separators_are_refused_without_spending() {
         for version in [format!("{c}2"), format!("2{c}")] {
             let ch = with(&challenge(), "x402Version", Some(s(&version)));
             let mut log = SpendLog::default();
-            assert_eq!(gate_then_spend(&request(URL, &ch, &policy, &res), &resolver(), &mut log), Err(PolicyError::ValueError), "{version:?}");
+            assert_eq!(
+                gate_then_spend(&request(URL, &ch, &policy, &res), &resolver(), &mut log),
+                Err(PolicyError::ValueError),
+                "{version:?}"
+            );
             assert!(log.tokens.is_empty(), "{version:?}");
         }
     }
@@ -1413,7 +1417,13 @@ fn golden_entry() -> Json {
 #[test]
 fn r_tok_golden_vectors_match_byte_for_byte() {
     assert_eq!(
-        derive_client_token("ps-1", "https://[2606:4700::1%25Eth0]/item", &golden_entry(), None).unwrap(),
+        derive_client_token(
+            "ps-1",
+            "https://[2606:4700::1%25Eth0]/item",
+            &golden_entry(),
+            None
+        )
+        .unwrap(),
         "4f2feeb31c468e7deea344d59da2242eef64144c64616bf727934771c0343598"
     );
     for url in [

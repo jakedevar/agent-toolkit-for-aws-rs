@@ -99,9 +99,8 @@ pub fn float_repr(value: f64) -> String {
     }
 }
 
-/// The ASCII characters Python's `str.isspace()` (and so `int()` and
-/// `Decimal()`) treats as whitespace.
-pub(crate) fn is_py_space(c: char) -> bool {
+/// The ASCII whitespace accepted by Python's `Decimal()`.
+pub(crate) fn is_decimal_space(c: char) -> bool {
     matches!(
         c,
         '\t' | '\n' | '\u{b}' | '\u{c}' | '\r' | '\u{1c}'..='\u{1f}' | ' '
@@ -132,7 +131,7 @@ pub(crate) fn strip_digit_underscores(text: &str) -> Option<String> {
 /// Python `int(text)` in base 10 on ASCII; `None` where Python raises (or
 /// where the value leaves `i64`, D7).
 fn int_from_str(text: &str) -> Option<i64> {
-    let trimmed = text.trim_matches(is_py_space);
+    let trimmed = text.trim_matches(|c| matches!(c, '\t'..='\r' | ' '));
     let (negative, body) = match trimmed.as_bytes().first() {
         Some(b'-') => (true, &trimmed[1..]),
         Some(b'+') => (false, &trimmed[1..]),

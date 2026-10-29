@@ -4,7 +4,7 @@
 //!    case-insensitive; repeated field lines are joined with `", "`, as
 //!    httpx's `headers.get` joins them). An empty value is falsy, so the
 //!    fallback header is read.
-//! 2. The header as strict base64 (`b64decode(validate=True)`), then UTF-8,
+//! 2. The header as strict base64 (including D35), then UTF-8,
 //!    then JSON; accepted when it is an object with a truthy `accepts`.
 //! 3. Otherwise the raw header text as JSON, with the same rule.
 //! 4. Otherwise the body, decoded as lossy UTF-8 (Q11), as JSON: a parse
