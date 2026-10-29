@@ -31,6 +31,10 @@ fn exchange_failure(gate: &CommitGate, now: Instant, cutoff: Instant) -> Option<
     })
 }
 
+fn publication_timeout(gate: &CommitGate) -> Option<PendingStatus> {
+    gate.fail_exchange().then_some(PendingStatus::TimedOut)
+}
+
 #[cfg(test)]
 mod deadline_tests {
     use super::*;
@@ -59,9 +63,14 @@ mod deadline_tests {
     fn refused_publication_after_cutoff_records_timeout() {
         let gate = CommitGate::default();
         assert!(gate.start_exchange());
-        // Current timeout branch returns without recording a terminal status.
-        let status: Option<PendingStatus> = None;
-        assert_eq!(status, Some(PendingStatus::TimedOut));
+        assert_eq!(publication_timeout(&gate), Some(PendingStatus::TimedOut));
+        let aborted = CommitGate::default();
+        assert!(aborted.start_exchange());
+        assert_eq!(
+            aborted.watchdog(),
+            gate::WatchdogAction::RecordTimeoutAndExit
+        );
+        assert_eq!(publication_timeout(&aborted), None);
     }
 }
 
@@ -159,7 +168,10 @@ pub fn run(
                 Ok(bytes) => match gate::publish_session(&gate, cutoff, dir, &bytes, &OsRandom) {
                     Ok(()) => (PendingStatus::Succeeded, None, HelperResult::Succeeded),
                     Err(e) if e.kind() == io::ErrorKind::TimedOut => {
-                        return Ok(HelperResult::TimedOut)
+                        match publication_timeout(&gate) {
+                            Some(status) => (status, None, HelperResult::TimedOut),
+                            None => return Ok(HelperResult::TimedOut),
+                        }
                     }
                     Err(e) => return Err(e),
                 },
