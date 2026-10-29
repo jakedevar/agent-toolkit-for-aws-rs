@@ -77,8 +77,9 @@ fn t_tls_20_there_is_no_native_root_path() {
             }
         }
     }
-    // The SdkTransport connector and the provider-plane client.
-    assert_eq!(chains, 3, "tls_provider twice, build_https once");
+    // The SdkTransport connector, the provider-plane client and its bounded
+    // (gated-DNS) variant `ProviderHttp::validated_bounded` (#5366).
+    assert_eq!(chains, 4, "tls_provider three times, build_https once");
 }
 
 #[test]
