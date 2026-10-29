@@ -651,3 +651,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
   ENQUEUED 8dbb1e36 (seq 2954, #5147). On landing close: #5147 #5017 #5052 #5079 #5105 #5106-#5113 #5136-#5138; then operator signed-run to-do (#4413), x402 P-ROOTS + S4, mcp-proxy S5.
   #5080 TA-STREAM-DL -> Codex terra 3819aea9 (sandbox 07e945e5). Review later: Claude Sonnet.
   4/4 busy: f43fddbd (#5143), bc70b368 (#4411 design), da92fc19 (#5152), 3819aea9 (#5080).
+- 10-29 06:05Z: #5152 (da92fc19) CHANGES_REQUESTED on x402 S1 c66477fc, no P1: P2 #5155 (IPv6 zone-id case in origin/R-TOK), #5156 (int() whitespace U+001C-1F), P3 #5157 (b64 '=' after quartet; PM: keep tightening, document as divergence). #5097/#5102 confirmed closed in source.
+  Repair 1 -> Codex terra f8af4040 (sandbox c66477fc; rationing: no new Opus). Re-review: Claude Sonnet (cross-family vs Codex repair).
+  4/4 busy: f43fddbd (#5143), bc70b368 (#4411 design), 3819aea9 (#5080), f8af4040 (#5118 repair 1).
