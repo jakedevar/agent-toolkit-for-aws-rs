@@ -268,13 +268,7 @@ fn several_overlapping_credentials_leave_nothing_in_any_order() {
         "api_key=OVERLAP_FOUR",
     ];
     let markers = [
-        "OVERLAPX",
-        "ALPHA",
-        "ONE_LONG",
-        "BETA3",
-        "_TWO",
-        "_FOUR",
-        "OVERLAP_",
+        "OVERLAPX", "ALPHA", "ONE_LONG", "BETA3", "_TWO", "_FOUR", "OVERLAP_",
     ];
     let orders: [[usize; 4]; 4] = [[0, 1, 2, 3], [3, 2, 1, 0], [1, 3, 0, 2], [2, 0, 3, 1]];
     for order in orders {

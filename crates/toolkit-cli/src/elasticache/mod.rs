@@ -487,7 +487,10 @@ pub fn estimate_serverless_command(
         .unwrap_or("serverless_estimate.csv");
     if !results.is_empty() {
         write_regular_file(Path::new(output), &serverless::csv_report(&results))?;
-        out.line(&format!("Output written to: {}", escape_controls(&redacted_value(output))))?;
+        out.line(&format!(
+            "Output written to: {}",
+            escape_controls(&redacted_value(output))
+        ))?;
     }
     for line in serverless::summary_lines(&results) {
         out.line(&line)?;
@@ -503,7 +506,10 @@ pub fn estimate_serverless_command(
                 .collect(),
         );
         write_regular_file(Path::new(&json_path), &dumps(&document))?;
-        out.line(&format!("JSON written to: {}", escape_controls(&redacted_value(&json_path))))?;
+        out.line(&format!(
+            "JSON written to: {}",
+            escape_controls(&redacted_value(&json_path))
+        ))?;
     }
     Ok(())
 }
@@ -697,7 +703,10 @@ pub fn dashboard_command(
     match invocation.value("--output") {
         Some(path) => {
             write_regular_file(Path::new(path), &rendered)?;
-            out.line(&format!("Written to {}", escape_controls(&redacted_value(path))))?;
+            out.line(&format!(
+                "Written to {}",
+                escape_controls(&redacted_value(path))
+            ))?;
             out.line("")?;
             out.line("Deploy with:")?;
             out.line(&format!(

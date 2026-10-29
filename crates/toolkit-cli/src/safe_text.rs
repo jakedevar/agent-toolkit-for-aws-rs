@@ -255,7 +255,10 @@ fn label_start(value: &str, piece_start: usize) -> Option<usize> {
     let bytes = value.as_bytes();
     let mut at = piece_start;
     let mut separators = 0;
-    while at > 0 && separators < 4 && matches!(bytes[at - 1], b'=' | b':' | b'>' | b'"' | b'\'' | b' ') {
+    while at > 0
+        && separators < 4
+        && matches!(bytes[at - 1], b'=' | b':' | b'>' | b'"' | b'\'' | b' ')
+    {
         at -= 1;
         separators += 1;
     }
@@ -263,7 +266,9 @@ fn label_start(value: &str, piece_start: usize) -> Option<usize> {
         return None;
     }
     let key_end = at;
-    while at > 0 && (bytes[at - 1].is_ascii_alphanumeric() || matches!(bytes[at - 1], b'_' | b'-' | b'.')) {
+    while at > 0
+        && (bytes[at - 1].is_ascii_alphanumeric() || matches!(bytes[at - 1], b'_' | b'-' | b'.'))
+    {
         at -= 1;
     }
     (at < key_end).then_some(at)
@@ -297,6 +302,19 @@ enum Replacement<'c> {
     Shown { shown: &'c str, redacted: bool },
     /// A credential fragment, or a union of overlapping spans: [`REDACTED`].
     Hidden,
+}
+
+impl Replacement<'_> {
+    /// A known value that hides no credential (a newline or overlong one).
+    fn is_ordinary(self) -> bool {
+        matches!(
+            self,
+            Self::Shown {
+                redacted: false,
+                ..
+            }
+        )
+    }
 }
 
 /// The command-line values of one run, as the stderr sinks must show them
@@ -465,8 +483,7 @@ impl CallerText {
                     // A span inside one that already hides every credential,
                     // or an ordinary known value inside another, adds nothing.
                     let inside = end <= last.1;
-                    let covered = !matches!(last.2, Replacement::Shown { redacted: false, .. })
-                        || matches!(replacement, Replacement::Shown { redacted: false, .. });
+                    let covered = !last.2.is_ordinary() || replacement.is_ordinary();
                     if !(inside && covered) {
                         last.1 = last.1.max(end);
                         last.2 = Replacement::Hidden;
@@ -698,8 +715,7 @@ mod tests {
                         let cut: String = piece.chars().take(9).collect();
                         let nearly: String =
                             piece.chars().take(piece.chars().count() - 2).collect();
-                        let arg_cut: String =
-                            arg.chars().take(labels[index].len() + 10).collect();
+                        let arg_cut: String = arg.chars().take(labels[index].len() + 10).collect();
                         for echo in [arg.as_str(), piece, &cut, &nearly, &arg_cut] {
                             text.push_str(" <");
                             text.push_str(echo);

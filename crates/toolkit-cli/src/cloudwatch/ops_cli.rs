@@ -521,15 +521,17 @@ pub(super) fn clock_of(invocation: &Invocation) -> Result<UtcTime, ToolkitError>
         None => Ok(now()),
         // A credential-shaped value is never a timestamp: parse the redacted
         // value so the parser's message cannot quote the credential (#4941).
-        Some(text) => parse_iso_timestamp(&crate::safe_text::redacted_value(text)).map_err(|message| {
-            ToolkitError::usage(
-                "invalid_now",
-                format!(
-                    "--now is not an ISO 8601 timestamp: {}",
-                    safe_text(&message)
-                ),
-            )
-        }),
+        Some(text) => {
+            parse_iso_timestamp(&crate::safe_text::redacted_value(text)).map_err(|message| {
+                ToolkitError::usage(
+                    "invalid_now",
+                    format!(
+                        "--now is not an ISO 8601 timestamp: {}",
+                        safe_text(&message)
+                    ),
+                )
+            })
+        }
     }
 }
 

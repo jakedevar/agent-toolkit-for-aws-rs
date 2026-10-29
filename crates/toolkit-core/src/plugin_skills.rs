@@ -146,7 +146,10 @@ pub fn sync_plugin_skills(
                 format!("Plugin not found: {}", crate::paths::shown_text(plugin)),
             ));
         }
-        report.lines.push(format!("{verb} plugin: {}", crate::paths::shown_text(plugin)));
+        report.lines.push(format!(
+            "{verb} plugin: {}",
+            crate::paths::shown_text(plugin)
+        ));
         sync_one(options, plugin, &canonical, &mut report)?;
     } else {
         if path_state(options.root, "plugins")? != Some(Kind::Dir) {

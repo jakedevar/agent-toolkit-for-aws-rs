@@ -18,8 +18,8 @@ use toolkit_aws::recorded;
 
 use super::members::{response_reason, text_member};
 use crate::aurora::api::json_float;
-use crate::safe_text::redacted_value;
 use crate::aurora::pyfmt::{round_num, round_to, Num};
+use crate::safe_text::redacted_value;
 
 pub(crate) mod client;
 

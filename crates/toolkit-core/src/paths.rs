@@ -132,8 +132,12 @@ impl std::error::Error for PathError {}
 ///
 /// Returns [`PathError::Invalid`] naming the first violated rule.
 pub fn normalize_relative(input: &str) -> Result<String, PathError> {
-    let invalid =
-        |reason: &str| Err(PathError::Invalid(format!("{reason}: {:?}", shown_text(input))));
+    let invalid = |reason: &str| {
+        Err(PathError::Invalid(format!(
+            "{reason}: {:?}",
+            shown_text(input)
+        )))
+    };
     if input.is_empty() {
         return invalid("path is empty");
     }
