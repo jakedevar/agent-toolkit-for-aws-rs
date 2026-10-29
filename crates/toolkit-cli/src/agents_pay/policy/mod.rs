@@ -614,3 +614,5 @@ fn required_ids(resources: &Resources) -> Result<PaymentIds, PolicyError> {
         user_id,
     })
 }
+
+pub mod openclaw;

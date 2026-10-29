@@ -14,6 +14,9 @@
     clippy::doc_markdown
 )]
 
+#[cfg(feature = "agents-pay-live")]
+compile_error!("agents-pay-live is never built for tests (AC3)");
+
 mod ai_phases;
 mod azure_clarify;
 mod common;

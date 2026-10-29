@@ -18,6 +18,9 @@
 //! test is offline and cannot write outside it. Commands that need the network
 //! or credentials must fail closed, which is exactly what is asserted.
 
+#[cfg(feature = "agents-pay-live")]
+compile_error!("agents-pay-live is never built for tests (AC3)");
+
 use std::collections::BTreeSet;
 use std::fs;
 use std::io::Read;
@@ -2417,15 +2420,17 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
 /// six slices registered since, bedrock-probes (#4404), docgraph (#4395),
 /// dynamodb-bench (#4390), elasticache-tunnel (#4393), marketplace (#4396) and
 /// telemetry (#4398), then mcp-proxy (#5079) and ai-payloads (#5143).
-/// The S2b render synopsis is included as well (#5223), and the launch
-/// `download-snapshot` and `apply-snapshot` routes (#5317).
+/// The S2b render synopsis is included as well (#5223), the launch
+/// `download-snapshot` and `apply-snapshot` routes (#5317), and the agents-pay
+/// fetch route (#5352).
 /// A deliberate usage change updates the pin in the same
 /// commit and says so in the Issue; an incidental one fails here.
 // Neptune memory (#4886) deliberately adds its synopsis and description, and
 // the launch snapshot routes (#5317) theirs.
 // `documentdb normalize-capture` (#5327) deliberately adds its synopsis and description.
-const USAGE_BASE_LEN: usize = 45543;
-const USAGE_BASE_FNV1A64: u64 = 0x083b_eaeb_e9fa_001b;
+// `agents-pay fetch` (#5352) deliberately adds its synopsis and description.
+const USAGE_BASE_LEN: usize = 46270;
+const USAGE_BASE_FNV1A64: u64 = 0x91e6_f153_fb3c_4da2;
 
 #[test]
 fn the_global_usage_text_is_byte_identical_to_the_base() {

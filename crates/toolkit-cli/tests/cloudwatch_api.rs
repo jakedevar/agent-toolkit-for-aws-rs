@@ -4,6 +4,9 @@
 //! stdout/stderr. Every AWS answer is a recorded fixture or absent: no test
 //! reaches the network, reads credentials or changes a resource.
 
+#[cfg(feature = "agents-pay-live")]
+compile_error!("agents-pay-live is never built for tests (AC3)");
+
 use std::collections::BTreeSet;
 use std::fs;
 use std::ops::Deref;

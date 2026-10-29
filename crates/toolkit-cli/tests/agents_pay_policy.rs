@@ -18,6 +18,9 @@
 //! The spending fake stands in for the S4/S5 `process_payment`: like it, it
 //! takes the `Approved` by value, and it is the only thing that can spend.
 
+#[cfg(feature = "agents-pay-live")]
+compile_error!("agents-pay-live is never built for tests (AC3)");
+
 use std::net::IpAddr;
 
 use toolkit_cli::agents_pay::policy::{
