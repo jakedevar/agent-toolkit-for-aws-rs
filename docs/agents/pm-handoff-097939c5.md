@@ -1118,3 +1118,4 @@ Friction: #4727, Rsi #4694, Rsi #4704
   4/4: 0c08b166 L5 r2, f59917b1 S1 r1, c35bc7f4 #5394, e02b0f23 B2. Queue: 3022, 3023, 3027.
 - 17:35Z: OpenClaw B1 LANDED (entry 09811136, landed_sha b9e7980b27823338cc0ed32876b38d75dacc831d). #5363 auto-closed. CLOSED: #5401 #5409 #5410 #5411 #5412 #5413 #5385 (ruled on #5401) #5180 (folded: fragment>=32 anchored, D-OC19) #5159 #5175 (design landed with B1). #5179 stays open for B2/B4.
   Queue: 3023 #4865, 3027 x402 (c8af43d9 contains b9e7980b).
+- 17:36Z: #4865 LANDED (landed_sha 7a4d450b64b0c4f40cb68c45cbd666051f523c9c); auto-closed. at_commit jobs now usable. Queue: 3027 x402 (contains 67154493 + b9e7980b).
