@@ -574,3 +574,9 @@ Friction: #4727, Rsi #4694, Rsi #4704
   Design repair 1 -> 336823ec (Opus high, continue_from 4150e82f, build_free). Corrected #5098 ruling mid-run (halt+continue; continue fence raced 5x -> kaizen #5104): S1 R-ROOTS honouring SSL_CERT_* stays for provider HTTP; x402 gets an env-independent payment root seam as a separate toolkit-aws prereq slice.
   Kaizen this seat: #5104 (continue fence race; harness:true refused agent_create_issue_harness_project_unresolved, same as #5090). Worker-filed: #5089, #5090, #5103.
   4/4 busy: de9907bc (S3), f38bc05f (#5085 L0-L2), db936e31 (r21 items 2-3), 336823ec (#4410 repair 1).
+- 10-29 03:30Z: r21 continuation (db936e31) head c27549a66c2e03b3040703c033002a7e71149a46 = d8179823 + #4487 merge bb0bc00 + #4412 activation c27549a (hooks.json -> guard-deny launcher, removed e4212e0 staged copy, live-file test asserts Rust launcher; checker unwired warning gone). fmt/clippy/scoped_test c120c334 ok, merges clean. D-R21-2 (2 #4487 allowlist tests skip declared-binary templates; mutants 52,855 >50k) accepted. D-R21-3: unstaged checkout denies all guarded calls until #4414 stages bin/ (per 606912ca ruling on #4412) -> reported to GM as main-promotion condition.
+  ENQUEUED d0bb80aa (seq 2937, supersedes 0e7e277a) at c27549a. Wake = this seat.
+  #4386 ai-payloads DESIGN worker b5103711 (Opus high, build_free, rolling). Deps #4379/#4384/#4385 closed.
+  #5090 closed dup of #4874. GM report 3510de10 sent.
+  4/4 busy: de9907bc (S3), f38bc05f (#5085 L0-L2), 336823ec (#4410 repair 1), b5103711 (#4386 design).
+  Post-land: once r21 lands, close #5088 and the #4487/#4412/#4397 findings that landed; consider a post-land review of the #4412 activation commit c27549a.
