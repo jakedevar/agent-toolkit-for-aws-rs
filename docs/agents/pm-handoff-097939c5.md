@@ -895,3 +895,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 10-29 09:20Z: L4 f/u #5273 (f4e513e0) PARTIAL-but-reviewable at da31e0305ecce793fd2b32f924460e33b9cdec29 (#5269-#5272 fixed red->green; T-CB 1-18, NET, TIME, LOAD maps; scoped 732bcf9d 4182 ok, clean). Remaining gaps -> #5306.
   Review #5307 -> Claude Opus b4c2b805 (pinned da31e030; mutations accept-error/failed-report/denied-page). On ACCEPT: check (stale base cd611010 -> likely manager scoped rerun) + enqueue (source_session f4e513e0); close #5273 #5307 #5269 #5270 #5271 #5272 on land; #5306 next L-slice.
   4/4 busy: cd65d0a9 (#5181 S4 cont3), e70ae060 (#4886 repair 1), 6ff4ee6c (#5296 AP S5), b4c2b805 (#5307). Queue: e0de7c3f (#5261).
+- 10-29 09:21Z: #4886 repair 1 (e70ae060) DONE at 990c9008a8a9d171e484f8954ef43e322db75ac4 (replay request strict/mismatch/reorder tests; #5298 fixed; scoped 5fb8dc9f 4174 ok).
+  Re-review #5308 -> Claude Sonnet 4d05f4a4 (pinned 990c9008). On ACCEPT: check (maybe rerun) + enqueue (source_session e70ae060); close #5295 #5308 #5298 on land; #4886 stays open (items 2-3).
+  4/4 busy: cd65d0a9 (#5181), 6ff4ee6c (#5296), b4c2b805 (#5307), 4d05f4a4 (#5308). Queue: e0de7c3f (#5261).
