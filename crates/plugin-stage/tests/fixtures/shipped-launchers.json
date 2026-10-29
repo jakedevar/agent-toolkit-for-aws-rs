@@ -1,0 +1,293 @@
+{
+  "note": "Inventory of every shipped launcher string (#4487, PM ruling after review #5018 r3): every hook `command`, MCP server `command` and MCP `args` element in a hooks.json, .mcp.json or mcp.json the packaging contract scans under plugins/ on rolling fa3fa137, with the allowlist template it matches. An MCP server is checked as a whole: its command must be a canonical binary or a program listed here (only uvx), and its args must match that program's argv template (#5088 ruling). The plugin manifests only point at these files (no inline launchers). A new launcher shape needs a reviewed template change and a new entry here.",
+  "strings": [
+    {
+      "file": "plugins/aws-core/.mcp.json",
+      "key": "mcpServers.aws-mcp.command",
+      "value": "uvx",
+      "template": "uvx"
+    },
+    {
+      "file": "plugins/aws-core/.mcp.json",
+      "key": "mcpServers.aws-mcp.args[0]",
+      "value": "mcp-proxy-for-aws-cli==1.7.0",
+      "template": "uvx-package"
+    },
+    {
+      "file": "plugins/aws-core/.mcp.json",
+      "key": "mcpServers.aws-mcp.args[1]",
+      "value": "https://aws-mcp.us-east-1.api.aws/mcp",
+      "template": "uvx-url"
+    },
+    {
+      "file": "plugins/aws-core/.mcp.json",
+      "key": "mcpServers.aws-mcp.args[2]",
+      "value": "--skip-auth",
+      "template": "uvx-skip-auth"
+    },
+    {
+      "file": "plugins/aws-core/.mcp.json",
+      "key": "mcpServers.aws-mcp.args[3]",
+      "value": "--metadata",
+      "template": "uvx-metadata"
+    },
+    {
+      "file": "plugins/aws-core/.mcp.json",
+      "key": "mcpServers.aws-mcp.args[4]",
+      "value": "INSTALL_SOURCE=agent-toolkit-core",
+      "template": "uvx-metadata-value"
+    },
+    {
+      "file": "plugins/aws-core/com.anthropic.claude-code/hooks/hooks.json",
+      "key": "hooks.PreToolUse[0].hooks[0].command",
+      "value": "sh -c 'python3 \"$0\" 2>/dev/null || python \"$0\" 2>/dev/null || py -3 \"$0\"' \"${CLAUDE_PLUGIN_ROOT}/com.anthropic.claude-code/hooks/secret-safety.py\"",
+      "template": "python-guard"
+    },
+    {
+      "file": "plugins/aws-core/com.anthropic.claude-code/hooks/hooks.json",
+      "key": "hooks.PreToolUse[1].hooks[0].command",
+      "value": "sh -c 'python3 \"$0\" 2>/dev/null || python \"$0\" 2>/dev/null || py -3 \"$0\"' \"${CLAUDE_PLUGIN_ROOT}/com.anthropic.claude-code/hooks/secret-safety.py\"",
+      "template": "python-guard"
+    },
+    {
+      "file": "plugins/aws-core/mcp.json",
+      "key": "mcpServers.aws-mcp.command",
+      "value": "uvx",
+      "template": "uvx"
+    },
+    {
+      "file": "plugins/aws-core/mcp.json",
+      "key": "mcpServers.aws-mcp.args[0]",
+      "value": "mcp-proxy-for-aws-cli==1.7.0",
+      "template": "uvx-package"
+    },
+    {
+      "file": "plugins/aws-core/mcp.json",
+      "key": "mcpServers.aws-mcp.args[1]",
+      "value": "https://aws-mcp.us-east-1.api.aws/mcp",
+      "template": "uvx-url"
+    },
+    {
+      "file": "plugins/aws-core/mcp.json",
+      "key": "mcpServers.aws-mcp.args[2]",
+      "value": "--skip-auth",
+      "template": "uvx-skip-auth"
+    },
+    {
+      "file": "plugins/aws-core/mcp.json",
+      "key": "mcpServers.aws-mcp.args[3]",
+      "value": "--metadata",
+      "template": "uvx-metadata"
+    },
+    {
+      "file": "plugins/aws-core/mcp.json",
+      "key": "mcpServers.aws-mcp.args[4]",
+      "value": "INSTALL_SOURCE=agent-toolkit-core",
+      "template": "uvx-metadata-value"
+    },
+    {
+      "file": "plugins/aws-data-analytics/.mcp.json",
+      "key": "mcpServers.aws-mcp.command",
+      "value": "uvx",
+      "template": "uvx"
+    },
+    {
+      "file": "plugins/aws-data-analytics/.mcp.json",
+      "key": "mcpServers.aws-mcp.args[0]",
+      "value": "mcp-proxy-for-aws-cli==1.7.0",
+      "template": "uvx-package"
+    },
+    {
+      "file": "plugins/aws-data-analytics/.mcp.json",
+      "key": "mcpServers.aws-mcp.args[1]",
+      "value": "https://aws-mcp.us-east-1.api.aws/mcp",
+      "template": "uvx-url"
+    },
+    {
+      "file": "plugins/aws-data-analytics/.mcp.json",
+      "key": "mcpServers.aws-mcp.args[2]",
+      "value": "--skip-auth",
+      "template": "uvx-skip-auth"
+    },
+    {
+      "file": "plugins/aws-data-analytics/.mcp.json",
+      "key": "mcpServers.aws-mcp.args[3]",
+      "value": "--metadata",
+      "template": "uvx-metadata"
+    },
+    {
+      "file": "plugins/aws-data-analytics/.mcp.json",
+      "key": "mcpServers.aws-mcp.args[4]",
+      "value": "INSTALL_SOURCE=agent-toolkit-data-analytics",
+      "template": "uvx-metadata-value"
+    },
+    {
+      "file": "plugins/aws-data-analytics/mcp.json",
+      "key": "mcpServers.aws-mcp.command",
+      "value": "uvx",
+      "template": "uvx"
+    },
+    {
+      "file": "plugins/aws-data-analytics/mcp.json",
+      "key": "mcpServers.aws-mcp.args[0]",
+      "value": "mcp-proxy-for-aws-cli==1.7.0",
+      "template": "uvx-package"
+    },
+    {
+      "file": "plugins/aws-data-analytics/mcp.json",
+      "key": "mcpServers.aws-mcp.args[1]",
+      "value": "https://aws-mcp.us-east-1.api.aws/mcp",
+      "template": "uvx-url"
+    },
+    {
+      "file": "plugins/aws-data-analytics/mcp.json",
+      "key": "mcpServers.aws-mcp.args[2]",
+      "value": "--skip-auth",
+      "template": "uvx-skip-auth"
+    },
+    {
+      "file": "plugins/aws-data-analytics/mcp.json",
+      "key": "mcpServers.aws-mcp.args[3]",
+      "value": "--metadata",
+      "template": "uvx-metadata"
+    },
+    {
+      "file": "plugins/aws-data-analytics/mcp.json",
+      "key": "mcpServers.aws-mcp.args[4]",
+      "value": "INSTALL_SOURCE=agent-toolkit-data-analytics",
+      "template": "uvx-metadata-value"
+    },
+    {
+      "file": "plugins/aws-startup-advisor/.cursor-plugin/hooks.json",
+      "key": "hooks.afterFileEdit[0].command",
+      "value": "sh -c 'python3 \"$0\" \"$@\" 2>/dev/null || python \"$0\" \"$@\" 2>/dev/null || true' \"${CURSOR_PLUGIN_ROOT}/scripts/telemetry/metric_emission/migration.py\" --reconcile",
+      "template": "cursor-python-args-reconcile"
+    },
+    {
+      "file": "plugins/aws-startup-advisor/.cursor-plugin/hooks.json",
+      "key": "hooks.afterShellExecution[0].command",
+      "value": "sh -c 'python3 \"$0\" \"$@\" 2>/dev/null || python \"$0\" \"$@\" 2>/dev/null || true' \"${CURSOR_PLUGIN_ROOT}/scripts/telemetry/metric_emission/migration.py\" --reconcile",
+      "template": "cursor-python-args-reconcile"
+    },
+    {
+      "file": "plugins/aws-startup-advisor/.cursor-plugin/hooks.json",
+      "key": "hooks.stop[0].command",
+      "value": "sh -c 'python3 \"$0\" \"$@\" 2>/dev/null || python \"$0\" \"$@\" 2>/dev/null || true' \"${CURSOR_PLUGIN_ROOT}/scripts/telemetry/metric_emission/migration.py\" --reconcile",
+      "template": "cursor-python-args-reconcile"
+    },
+    {
+      "file": "plugins/aws-startup-advisor/.cursor-plugin/hooks.json",
+      "key": "hooks.sessionEnd[0].command",
+      "value": "sh -c 'python3 \"$0\" \"$@\" 2>/dev/null || python \"$0\" \"$@\" 2>/dev/null || true' \"${CURSOR_PLUGIN_ROOT}/scripts/telemetry/metric_emission/migration.py\" --session-end",
+      "template": "cursor-python-args-session-end"
+    },
+    {
+      "file": "plugins/aws-startup-advisor/.mcp.json",
+      "key": "mcpServers.aws-mcp.command",
+      "value": "uvx",
+      "template": "uvx"
+    },
+    {
+      "file": "plugins/aws-startup-advisor/.mcp.json",
+      "key": "mcpServers.aws-mcp.args[0]",
+      "value": "mcp-proxy-for-aws-cli==1.7.0",
+      "template": "uvx-package"
+    },
+    {
+      "file": "plugins/aws-startup-advisor/.mcp.json",
+      "key": "mcpServers.aws-mcp.args[1]",
+      "value": "https://aws-mcp.us-east-1.api.aws/mcp",
+      "template": "uvx-url"
+    },
+    {
+      "file": "plugins/aws-startup-advisor/.mcp.json",
+      "key": "mcpServers.aws-mcp.args[2]",
+      "value": "--skip-auth",
+      "template": "uvx-skip-auth"
+    },
+    {
+      "file": "plugins/aws-startup-advisor/.mcp.json",
+      "key": "mcpServers.aws-mcp.args[3]",
+      "value": "--metadata",
+      "template": "uvx-metadata"
+    },
+    {
+      "file": "plugins/aws-startup-advisor/.mcp.json",
+      "key": "mcpServers.aws-mcp.args[4]",
+      "value": "INSTALL_SOURCE=agent-toolkit-startup-advisor",
+      "template": "uvx-metadata-value"
+    },
+    {
+      "file": "plugins/aws-startup-advisor/com.anthropic.claude-code/hooks/hooks.json",
+      "key": "hooks.SessionStart[0].hooks[0].command",
+      "value": "cat \"${CLAUDE_PLUGIN_ROOT}/com.anthropic.claude-code/hooks/offer-context.txt\" 2>/dev/null || true",
+      "template": "cat-plugin-file"
+    },
+    {
+      "file": "plugins/aws-startup-advisor/com.anthropic.claude-code/hooks/hooks.json",
+      "key": "hooks.SessionStart[1].hooks[0].command",
+      "value": "sh -c 'python3 \"$0\" 2>/dev/null || python \"$0\" 2>/dev/null || py -3 \"$0\" 2>/dev/null || true' \"${CLAUDE_PLUGIN_ROOT}/scripts/telemetry/consent/session_start.py\"",
+      "template": "python-optional"
+    },
+    {
+      "file": "plugins/aws-startup-advisor/com.anthropic.claude-code/hooks/hooks.json",
+      "key": "hooks.PostToolUse[0].hooks[0].command",
+      "value": "sh -c 'python3 \"$0\" 2>/dev/null || python \"$0\" 2>/dev/null || py -3 \"$0\" 2>/dev/null || true' \"${CLAUDE_PLUGIN_ROOT}/scripts/telemetry/metric_emission/skill_invoked.py\"",
+      "template": "python-optional"
+    },
+    {
+      "file": "plugins/aws-startup-advisor/com.anthropic.claude-code/hooks/hooks.json",
+      "key": "hooks.PostToolUse[1].hooks[0].command",
+      "value": "sh -c 'python3 \"$0\" \"$@\" 2>/dev/null || python \"$0\" \"$@\" 2>/dev/null || py -3 \"$0\" \"$@\" 2>/dev/null || true' \"${CLAUDE_PLUGIN_ROOT}/scripts/telemetry/metric_emission/migration.py\"",
+      "template": "python-args"
+    },
+    {
+      "file": "plugins/aws-startup-advisor/com.anthropic.claude-code/hooks/hooks.json",
+      "key": "hooks.Stop[0].hooks[0].command",
+      "value": "sh -c 'python3 \"$0\" \"$@\" 2>/dev/null || python \"$0\" \"$@\" 2>/dev/null || py -3 \"$0\" \"$@\" 2>/dev/null || true' \"${CLAUDE_PLUGIN_ROOT}/scripts/telemetry/metric_emission/migration.py\" --reconcile",
+      "template": "python-args-reconcile"
+    },
+    {
+      "file": "plugins/aws-startup-advisor/com.anthropic.claude-code/hooks/hooks.json",
+      "key": "hooks.SessionEnd[0].hooks[0].command",
+      "value": "sh -c 'python3 \"$0\" \"$@\" 2>/dev/null || python \"$0\" \"$@\" 2>/dev/null || py -3 \"$0\" \"$@\" 2>/dev/null || true' \"${CLAUDE_PLUGIN_ROOT}/scripts/telemetry/metric_emission/migration.py\" --session-end",
+      "template": "python-args-session-end"
+    },
+    {
+      "file": "plugins/aws-startup-advisor/mcp.json",
+      "key": "mcpServers.aws-mcp.command",
+      "value": "uvx",
+      "template": "uvx"
+    },
+    {
+      "file": "plugins/aws-startup-advisor/mcp.json",
+      "key": "mcpServers.aws-mcp.args[0]",
+      "value": "mcp-proxy-for-aws-cli==1.7.0",
+      "template": "uvx-package"
+    },
+    {
+      "file": "plugins/aws-startup-advisor/mcp.json",
+      "key": "mcpServers.aws-mcp.args[1]",
+      "value": "https://aws-mcp.us-east-1.api.aws/mcp",
+      "template": "uvx-url"
+    },
+    {
+      "file": "plugins/aws-startup-advisor/mcp.json",
+      "key": "mcpServers.aws-mcp.args[2]",
+      "value": "--skip-auth",
+      "template": "uvx-skip-auth"
+    },
+    {
+      "file": "plugins/aws-startup-advisor/mcp.json",
+      "key": "mcpServers.aws-mcp.args[3]",
+      "value": "--metadata",
+      "template": "uvx-metadata"
+    },
+    {
+      "file": "plugins/aws-startup-advisor/mcp.json",
+      "key": "mcpServers.aws-mcp.args[4]",
+      "value": "INSTALL_SOURCE=agent-toolkit-startup-advisor",
+      "template": "uvx-metadata-value"
+    }
+  ]
+}

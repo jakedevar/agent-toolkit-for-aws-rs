@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/secret-safety-hook", "crates/toolkit-aws", "crates/toolkit-cli", "crates/toolkit-core", "crates/serverless-recipes", "crates/toolkit-msk", "skills/core-skills/aws-serverless/assets/powertools-handler", "skills/specialized-skills/serverless-skills/processing-s3-uploads-with-step-functions/scripts"]
+members = ["crates/plugin-stage", "crates/secret-safety-hook", "crates/toolkit-aws", "crates/toolkit-cli", "crates/toolkit-core", "crates/serverless-recipes", "crates/toolkit-msk", "skills/core-skills/aws-serverless/assets/powertools-handler", "skills/specialized-skills/serverless-skills/processing-s3-uploads-with-step-functions/scripts"]
 exclude = ["plugins"]
 
 [workspace.package]
