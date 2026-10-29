@@ -617,7 +617,7 @@ fn process_request_has_private_fields_and_only_approved_constructor() {
 }
 
 fn check_process_request(source: &str) {
-    let file = syn::parse_file(&source).unwrap();
+    let file = syn::parse_file(source).unwrap();
     let structs: Vec<_> = file
         .items
         .iter()
@@ -635,6 +635,21 @@ fn check_process_request(source: &str) {
         .fields
         .iter()
         .all(|field| matches!(field.vis, Visibility::Inherited)));
+    assert!(structs[0]
+        .attrs
+        .iter()
+        .all(|attr| !attr.path().is_ident("derive")));
+    let traits: Vec<_> = file
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            syn::Item::Impl(i) if names_request(&i.self_ty) => {
+                i.trait_.as_ref().map(|(_, path, _)| path_text(path))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(traits, ["std::fmt::Debug"]);
     let implementations: Vec<_> = file.items.iter().filter_map(|item| match item {
         syn::Item::Impl(i) if i.trait_.is_none() && matches!(&*i.self_ty, Type::Path(p) if p.path.is_ident("ProcessPaymentRequest")) => Some(i),
         _ => None,
@@ -659,6 +674,120 @@ fn check_process_request(source: &str) {
         panic!("constructor must borrow Approved");
     };
     assert!(matches!(&*reference.elem, Type::Path(p) if p.path.is_ident("Approved")));
+    assert!(reference.mutability.is_none());
+    let mut scanner = RequestScanner::default();
+    scanner.visit_file(&file);
+    assert_eq!(
+        scanner.literals, 1,
+        "only the constructor may build a request"
+    );
+    assert_eq!(
+        scanner.bad_literals, 0,
+        "request literal outside its constructor"
+    );
+    assert_eq!(scanner.aliases, 0, "request aliases are forbidden");
+    assert_eq!(scanner.macro_mentions, 0, "request type hidden in a macro");
+    assert_eq!(scanner.mutable_receivers, 0, "request mutation method");
+    assert_eq!(
+        scanner.field_writes, 0,
+        "request fields must remain immutable"
+    );
+}
+
+fn names_request(ty: &Type) -> bool {
+    matches!(ty, Type::Path(p) if p.path.segments.last().is_some_and(|s| s.ident == "ProcessPaymentRequest"))
+}
+
+#[derive(Default)]
+struct RequestScanner {
+    request_impl: bool,
+    constructor: bool,
+    literals: usize,
+    bad_literals: usize,
+    aliases: usize,
+    macro_mentions: usize,
+    mutable_receivers: usize,
+    field_writes: usize,
+}
+
+impl<'ast> Visit<'ast> for RequestScanner {
+    fn visit_item_mod(&mut self, item: &'ast syn::ItemMod) {
+        if item.attrs.iter().any(|a| matches!(&a.meta, syn::Meta::List(m) if m.path.is_ident("cfg") && m.tokens.to_string() == "test")) {
+            return;
+        }
+        visit::visit_item_mod(self, item);
+    }
+    fn visit_item_impl(&mut self, item: &'ast syn::ItemImpl) {
+        let previous = self.request_impl;
+        self.request_impl = names_request(&item.self_ty);
+        visit::visit_item_impl(self, item);
+        self.request_impl = previous;
+    }
+    fn visit_impl_item_fn(&mut self, item: &'ast syn::ImplItemFn) {
+        let previous = self.constructor;
+        self.constructor = self.request_impl && item.sig.ident == "from_approved";
+        if self.request_impl
+            && item
+                .sig
+                .receiver()
+                .is_some_and(|r| matches!(&*r.ty, Type::Reference(t) if t.mutability.is_some()))
+        {
+            self.mutable_receivers += 1;
+        }
+        visit::visit_impl_item_fn(self, item);
+        self.constructor = previous;
+    }
+    fn visit_expr_struct(&mut self, expr: &'ast syn::ExprStruct) {
+        let name = expr.path.segments.last().unwrap().ident.to_string();
+        if name == "ProcessPaymentRequest" || (name == "Self" && self.request_impl) {
+            self.literals += 1;
+            if !self.constructor {
+                self.bad_literals += 1;
+            }
+        }
+        visit::visit_expr_struct(self, expr);
+    }
+    fn visit_item_type(&mut self, item: &'ast syn::ItemType) {
+        struct TypeMention(bool);
+        impl<'ast> Visit<'ast> for TypeMention {
+            fn visit_path(&mut self, path: &'ast syn::Path) {
+                if path
+                    .segments
+                    .iter()
+                    .any(|s| s.ident == "ProcessPaymentRequest")
+                {
+                    self.0 = true;
+                }
+                visit::visit_path(self, path);
+            }
+        }
+        let mut mention = TypeMention(false);
+        mention.visit_type(&item.ty);
+        if mention.0 {
+            self.aliases += 1;
+        }
+        visit::visit_item_type(self, item);
+    }
+    fn visit_macro(&mut self, mac: &'ast syn::Macro) {
+        let mut tokens = Vec::new();
+        leaves(mac.tokens.clone(), &mut tokens);
+        if tokens.iter().any(|t| t == "ProcessPaymentRequest") {
+            self.macro_mentions += 1;
+        }
+        visit::visit_macro(self, mac);
+    }
+    fn visit_expr_assign(&mut self, expr: &'ast syn::ExprAssign) {
+        if let syn::Expr::Field(field) = &*expr.left {
+            if let syn::Member::Named(name) = &field.member {
+                if ["body", "manager", "session", "instrument", "user"]
+                    .contains(&name.to_string().as_str())
+                {
+                    self.field_writes += 1;
+                }
+            }
+        }
+        visit::visit_expr_assign(self, expr);
+    }
 }
 
 #[test]
@@ -673,6 +802,32 @@ fn process_request_gate_rejects_extra_trait_constructors() {
         }
     ";
     assert!(std::panic::catch_unwind(|| check_process_request(source)).is_err());
+}
+
+#[test]
+fn process_request_gate_rejects_alias_macro_literal_and_mutation() {
+    let good = r"
+        pub struct ProcessPaymentRequest { body: Vec<u8> }
+        impl ProcessPaymentRequest {
+            fn from_approved(approved: &Approved) -> Self { Self { body: vec![] } }
+        }
+        impl std::fmt::Debug for ProcessPaymentRequest {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { todo!() }
+        }
+    ";
+    check_process_request(good);
+    for extra in [
+        "type Alias = ProcessPaymentRequest;",
+        "fn forge() { let _ = ProcessPaymentRequest { body: vec![] }; }",
+        "fn forge() { helper!(ProcessPaymentRequest { body: vec![] }); }",
+        "fn change(r: &mut ProcessPaymentRequest) { r.body = vec![]; }",
+    ] {
+        let bad = format!("{good}\n{extra}");
+        assert!(
+            std::panic::catch_unwind(|| check_process_request(&bad)).is_err(),
+            "{extra}"
+        );
+    }
 }
 
 #[test]
