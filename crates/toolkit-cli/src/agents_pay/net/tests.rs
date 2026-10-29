@@ -1,7 +1,7 @@
 use super::*;
 use toolkit_aws::testing::{FakeChunk, FakeStreamingTransport, FixedResolver};
 
-fn input(deadline: Instant) -> MerchantRequest<'static> {
+fn input<'a>(deadline: Instant) -> MerchantRequest<'a> {
     MerchantRequest {
         url: "https://merchant.example/path",
         method: "get",
@@ -49,7 +49,8 @@ fn headers_are_fresh_redirect_is_not_followed_and_body_is_raw() {
     assert_eq!(response.body, b"raw");
     assert!(response.headers.get("location").is_none());
     let mut replay = input(deadline);
-    replay.proof = Some(("payment-signature", "secret"));
+    let proof = ProofHeader::new("payment-signature".into(), "secret".into());
+    replay.proof = Some(&proof);
     m.request(&replay).unwrap();
     let requests = m.transport.requests();
     assert_eq!(requests.len(), 2);
@@ -171,7 +172,6 @@ fn unsafe_methods_and_nonpublic_answers_never_connect() {
 
 #[test]
 fn proof_header_is_opaque_and_redacted() {
-    let source = include_str!("../net.rs");
-    assert!(source.contains("pub struct ProofHeader"));
-    assert!(!source.contains("pub proof: Option<(&'a str, &'a str)>"));
+    let proof = ProofHeader::new("payment-signature".into(), "secret".into());
+    assert_eq!(format!("{proof:?}"), "ProofHeader([REDACTED])");
 }

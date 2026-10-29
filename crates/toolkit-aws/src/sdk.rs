@@ -1728,6 +1728,43 @@ mod tests {
     }
 
     #[test]
+    fn rebinding_private_connect_time_answer_is_refused() {
+        struct Rebinding(std::sync::atomic::AtomicUsize);
+        impl HostResolver for Rebinding {
+            fn resolve(&self, _: &str) -> Result<Vec<IpAddr>, String> {
+                let address = if self.0.fetch_add(1, Ordering::SeqCst) == 0 {
+                    "8.8.8.8"
+                } else {
+                    "127.0.0.1"
+                };
+                Ok(vec![address.parse().unwrap()])
+            }
+        }
+        let resolver = Arc::new(Rebinding(std::sync::atomic::AtomicUsize::new(0)));
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        assert_eq!(
+            guarded_addresses("merchant.example", resolver.as_ref()).unwrap(),
+            vec!["8.8.8.8".parse::<IpAddr>().unwrap()]
+        );
+        let transport =
+            SdkTransport::with_resolver(&runtime(), &test_roots(), resolver.clone()).unwrap();
+        let mut request = vanilla_request();
+        request.url = format!(
+            "https://merchant.example:{}/",
+            listener.local_addr().unwrap().port()
+        );
+        let error = transport.send(&request).unwrap_err();
+        assert_eq!(error.code(), "aws_invalid_config");
+        assert!(error.to_string().contains("127.0.0.1"));
+        assert_eq!(resolver.0.load(Ordering::SeqCst), 2);
+        assert_eq!(
+            listener.accept().unwrap_err().kind(),
+            std::io::ErrorKind::WouldBlock
+        );
+    }
+
+    #[test]
     fn guarded_dns_refuses_answers_returned_after_deadline() {
         struct SlowResolver(std::sync::atomic::AtomicUsize);
         impl HostResolver for SlowResolver {

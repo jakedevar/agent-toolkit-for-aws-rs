@@ -72,6 +72,31 @@ fn safe_method(method: &str) -> bool {
     method.eq_ignore_ascii_case("GET") || method.eq_ignore_ascii_case("HEAD")
 }
 
+/// An opaque payment proof header. Only the payment module can create one.
+///
+/// ```compile_fail
+/// use toolkit_cli::agents_pay::net::ProofHeader;
+/// let _ = ProofHeader { name: "x-payment".into(), value: "secret".into() };
+/// ```
+pub struct ProofHeader {
+    name: String,
+    value: String,
+}
+
+impl ProofHeader {
+    // S5 constructs this from its verified proof.
+    #[allow(dead_code)]
+    pub(super) fn new(name: String, value: String) -> Self {
+        Self { name, value }
+    }
+}
+
+impl std::fmt::Debug for ProofHeader {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ProofHeader([REDACTED])")
+    }
+}
+
 /// One request's limits and operation deadline.
 pub struct MerchantRequest<'a> {
     /// Merchant URL.
@@ -79,7 +104,7 @@ pub struct MerchantRequest<'a> {
     /// GET or HEAD, case insensitive.
     pub method: &'a str,
     /// Optional validated payment proof header (name, value).
-    pub proof: Option<(&'a str, &'a str)>,
+    pub proof: Option<&'a ProofHeader>,
     /// Total body cap in bytes.
     pub body_cap: u64,
     /// Per-request idle timeout.
@@ -140,7 +165,8 @@ impl<T: StreamingTransport, R: HostResolver, C: Clock> MerchantHttp for Streamin
                 concat!("aws-agents-pay/", env!("CARGO_PKG_VERSION")),
             )
             .map_err(|e| aws_error(&e))?;
-        if let Some((name, value)) = input.proof {
+        if let Some(proof) = input.proof {
+            let (name, value) = (proof.name.as_str(), proof.value.as_str());
             if !name.eq_ignore_ascii_case("payment-signature")
                 && !name.eq_ignore_ascii_case("x-payment")
             {
