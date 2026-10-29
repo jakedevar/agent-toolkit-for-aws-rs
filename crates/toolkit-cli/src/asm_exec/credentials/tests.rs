@@ -295,3 +295,113 @@ fn the_system_runner_captures_stdout_reports_status_and_times_out() {
         Err(RunFailure::TimedOut)
     );
 }
+
+/// #4582 item 1: with the `aws-sdk` feature `asm exec` signs with the real
+/// `SigV4` signer over its own credential chain and sends over the real HTTPS
+/// transport.
+#[cfg(feature = "aws-sdk")]
+mod sdk_wiring {
+    use super::*;
+    use toolkit_aws::sdk::roots::{
+        validate_roots, NativeLoader, RootEnv, RootPlatform, RootsFailure, ValidatedRoots,
+    };
+
+    /// A self-signed P-256 test root, generated for this test; its private key
+    /// was discarded and nothing ever connects with it.
+    const FIXTURE_ROOT_PEM: &str = "-----BEGIN CERTIFICATE-----
+MIIBzjCCAXOgAwIBAgIUKaAU8PC/IC1N5u/VnjMRLTgUobwwCgYIKoZIzj0EAwIw
+OzE5MDcGA1UEAwwwdG9vbGtpdCBhc20tZXhlYyB0ZXN0IHJvb3QgKG5vIHByaXZh
+dGUga2V5IGtlcHQpMCAXDTI2MTAyOTAxNTQzMFoYDzIxMjYxMDA1MDE1NDMwWjA7
+MTkwNwYDVQQDDDB0b29sa2l0IGFzbS1leGVjIHRlc3Qgcm9vdCAobm8gcHJpdmF0
+ZSBrZXkga2VwdCkwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAAQ+r3OxEIYZQ2jd
+2xemPWMucYbEidkihgQxdkf62DLJjCUCjJTTABabDT1DRP/N+H5NcWIGbAV6peek
+Is8I22Yco1MwUTAdBgNVHQ4EFgQUA9zEUDV+V1YFTZmg3URIACZp57EwHwYDVR0j
+BBgwFoAUA9zEUDV+V1YFTZmg3URIACZp57EwDwYDVR0TAQH/BAUwAwEB/zAKBggq
+hkjOPQQDAgNJADBGAiEAkMITck2SyZ8BsyfbLk71ECblOlbcaCh5jEcpvu6bMbUC
+IQDbG59IEqBmNUE1XqgjF85ioVDHZHT7NIqRgu3C8g2T+g==
+-----END CERTIFICATE-----
+";
+
+    /// The fixture root validated through the production loader.
+    fn roots() -> Result<ValidatedRoots, RootsFailure> {
+        let dir = std::env::temp_dir().join(format!("asm-exec-roots-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let file = dir.join("root.pem");
+        std::fs::write(&file, FIXTURE_ROOT_PEM).expect("fixture root");
+        let env = RootEnv {
+            file: Some(file.into_os_string()),
+            dir: None,
+        };
+        validate_roots(&env, &NativeLoader, RootPlatform::current())
+    }
+
+    #[test]
+    fn the_real_signer_signs_with_the_asm_exec_credential_chain() {
+        let runner = FakeRunner::with(vec![]);
+        let chain = credential_chain(
+            &env(&[
+                ("AWS_ACCESS_KEY_ID", "AKIDSYNTHETIC"),
+                ("AWS_SECRET_ACCESS_KEY", "synthetic-secret"),
+                ("AWS_SESSION_TOKEN", "synthetic-token"),
+            ]),
+            &runner_dyn(&runner),
+        );
+        let (signer, _transport) = sdk_adapters(chain, roots());
+        let mut outgoing = request();
+        signer.sign(&mut outgoing, &scope()).expect("signed");
+        let authorization = outgoing.headers.get("authorization").expect("signed");
+        assert!(
+            authorization.starts_with("AWS4-HMAC-SHA256 Credential=AKIDSYNTHETIC/"),
+            "{authorization}"
+        );
+        assert_eq!(
+            outgoing.headers.get("x-amz-security-token"),
+            Some("synthetic-token")
+        );
+        assert!(!format!("{outgoing:?}").contains("synthetic-token"));
+
+        // No credentials: the chain's "no credentials" cause, nothing signed.
+        let none = credential_chain(&env(&[]), &runner_dyn(&runner));
+        let (signer, _) = sdk_adapters(none, roots());
+        let mut unsigned = request();
+        assert_eq!(
+            signer.sign(&mut unsigned, &scope()).unwrap_err(),
+            AwsError::NoCredentials
+        );
+        assert!(unsigned.headers.is_empty());
+    }
+
+    #[test]
+    fn the_real_transport_keeps_the_https_and_public_address_guards() {
+        let runner = FakeRunner::with(vec![]);
+        let chain = credential_chain(&env(&[]), &runner_dyn(&runner));
+        let (_, transport) = sdk_adapters(chain, roots());
+        let mut plain = request();
+        plain.url = "http://aws-mcp.us-east-1.api.aws/mcp".to_string();
+        assert_eq!(
+            transport.send(&plain).unwrap_err().code(),
+            "aws_invalid_config"
+        );
+        let mut private = request();
+        private.url = "https://169.254.169.254/mcp".to_string();
+        assert_eq!(
+            transport.send(&private).unwrap_err().code(),
+            "aws_invalid_config"
+        );
+    }
+
+    #[test]
+    fn unusable_trust_roots_fail_the_mcp_fallback_closed() {
+        let runner = FakeRunner::with(vec![]);
+        let chain = credential_chain(&env(&[]), &runner_dyn(&runner));
+        let (_, transport) = sdk_adapters(chain, Err(RootsFailure::ConfiguredLocationError));
+        let error = transport.send(&request()).unwrap_err();
+        assert_eq!(error.code(), "aws_invalid_config");
+        assert!(
+            error
+                .to_string()
+                .contains("TLS trust roots are unusable (configured-location-error)"),
+            "{error}"
+        );
+    }
+}

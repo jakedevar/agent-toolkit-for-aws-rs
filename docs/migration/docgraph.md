@@ -176,20 +176,98 @@ name or value of the file.
    `GenerationModel` parameter. The template has not been deployed in this
    slice (no paid environment); a reviewer can lint it with `cfn-lint` or
    `aws cloudformation validate-template`.
-10. **Caller paths are redacted before they are shown** (#4907). Every path this
-    slice prints (`--recorded`, `--analysis-data`, in the progress line and in
-    read or parse errors, and the `Results:` / `Report:` banners under
-    `--output`) goes through the shared redactor (`toolkit_aws::redact_text`:
-    URL userinfo, labelled credentials, key ids) and then has control,
-    bidirectional and invisible characters escaped; paths are never shortened.
+10. **Caller paths are redacted before they are shown** (#4907, #4941). Every
+    path this slice prints (`--recorded`, `--analysis-data`, in the progress
+    line and in read or parse errors, and the `Results:` / `Report:` banners
+    under `--output`) goes through the shared `safe_text::safe_path`: redacted
+    in full (`toolkit_aws::redact_text`: URL userinfo, labelled credentials,
+    key ids), then bounded to 200 characters with `...`, then escaped. Response
+    text in labels uses the same helper, validator values `safe_text::safe_text`
+    and the failover message `safe_text::safe_prefix` (120 characters, no mark).
+    The slice-local `clean`, `clean_prefix`, `first_chars`, `shown_path` and
+    `neptune_input::shown` helpers were removed for these shared ones (#4941).
     The file reader is `startup::read_text` with that redacted label (the
     shared `read_json_document` escapes but does not redact its label). A path
-    without credential-shaped text is shown as given.
+    without credential-shaped text and of at most 200 characters is shown as
+    given.
 
 ## Not in this slice
 
-Tracked in #4886: `graphrag_pipeline.py` and `agentic_memory.py` (helper
-libraries), the live AWS / Gremlin / MongoDB bindings, and retiring the Python
+Tracked in #4886: the live AWS / Gremlin / MongoDB bindings, and retiring the Python
 files and updating `SKILL.md` / `references/well-architected.md` callers. The
 Python stays in place until then: the Rust commands cannot reach AWS or a
 database yet, so replacing the callers now would remove a working path.
+
+## GraphRAG / agentic memory (#4886, item 1)
+
+The Rust surface is `docgraph::memory`, with `toolkit neptune memory
+--operation OP --input FILE [--dry-run | --recorded FILE]`. The input is a JSON
+object of operation arguments. Dry run prints a JSON array of ordered request
+objects; replay uses the `calls` format and strict ordered matching like the seed
+session. A retrieval dry run cannot predict
+response-dependent expansion, so it prints the initial request; replay expands
+from the returned chunks. No live network client is provided.
+
+Requirements: **M1** execute-query validates graph IDs and binds openCypher
+parameters; **M2** escaping, Unicode character chunk boundaries and SHA-256
+entity IDs; **M3** graph creation preserves secure defaults and tags; **M4**
+GraphRAG document/chunk/entity/link ingestion, embedding and vector search;
+**M5** vector search followed by entity, relation and neighbor expansion;
+**M6** short-term message requests preserve timestamp, TTL, ordering and limit;
+**M7** Gremlin entity, relationship and recall builders bind values safely;
+**M8** analytics memory embedding, semantic and hybrid recall; **M9**
+consolidation decays facts older than 90 days by 0.9 and deletes below 0.1;
+**M10** deterministic dry-run and recorded replay, including malformed results.
+Invalid chunk sizes and overlaps greater than or equal to the size are rejected
+to avoid the original infinite loop. Compared with the Python helpers, graph IDs
+are validated for every openCypher request, dynamic Gremlin property keys are
+bound rather than interpolated, and vertex_filter JSON is compact rather than
+using json.dumps spacing.
+Live AWS, DynamoDB and Gremlin clients, driver selection and Python retirement
+are outside this item; the legacy helpers remain until the live follow-up.
+
+### Memory command inputs and recordings
+
+`--operation` and `--input` are required; the latter is a JSON object. Exactly
+one of `--dry-run` and `--recorded` is needed. Request arrays contain the AWS
+API arguments, Gremlin `gremlin`/`bindings`, or DynamoDB operation and arguments.
+`--recorded` accepts `{"calls":[{"request":{...},"response":{"results":[]}}]}`:
+each step requires a request object, matched in order ignoring object key order,
+including on error steps. Unused or exhausted calls and malformed typed members fail. A
+create response uses `{"id":"g-..."}`, a DynamoDB query response uses
+`{"Items":[...]}`, and query/Gremlin responses use `{"results":[...]}`.
+`retrieve` returns the expanded context array; `recent-messages` returns items
+in chronological order; `hybrid-recall` returns `graph_recall` and
+`semantic_recall`. Other requests return an array of result arrays, except graph
+creation returns its id. A missing `results` list is empty; a present null or
+non-list is invalid. Recorded errors are reported without service messages.
+
+| Operation | JSON inputs (optional inputs in parentheses) |
+| --- | --- |
+| `create-graphrag`, `create-memory` | `graph_name` (optional for memory), (`memory_gb`, `embedding_dimension`, `generation_model`) |
+| `query` | `graph_id`, `query`, (`parameters` object) |
+| `vector-search`, `retrieve`, `semantic-recall` | `graph_id`, `embedding`, (`top_k`); `vector-search` also accepts `vertex_label` |
+| `ingest-document` | `graph_id`, `doc_id`, `title`, `source` |
+| `ingest-chunk` | `graph_id`, `chunk_id`, `doc_id`, `text`, `sequence`, `embedding`, (`prev_chunk_id`) |
+| `ingest-entity` | `graph_id`, `name`, `entity_type`, `description`, `embedding` |
+| `store-embedding` | `graph_id`, `vertex_id`, `embedding` |
+| `link-chunk-entity` | `graph_id`, `chunk_id`, `entity_name` |
+| `link-entities` | `graph_id`, `source`, `target`, `rel_type` |
+| `store-message` | `session_id`, `role`, `content`, `now_ms`, (`table`) |
+| `recent-messages` | `session_id`, (`limit`, `table`) |
+| `remember-entity` | `entity_name`, `entity_type`, (`properties` object) |
+| `remember-relationship` | `entity_a`, `entity_b`, `rel_type`, (`confidence`) |
+| `recall-entity` | `entity_name` |
+| `remember-embedding` | `graph_id`, `entity_name`, `description`, `embedding` |
+| `hybrid-recall` | `graph_id`, `entity_name`, `embedding` |
+| `consolidate` | `graph_id` |
+
+The public `docgraph::memory` module also provides `chunk_document`,
+`escape_cypher_string`, `entity_id`, request builders and a `MemoryClient`
+trait for injected clients. Escape preserves newlines as the source helper did;
+parameterized queries are preferred. `store-message` uses a single injected
+millisecond instant instead of two independent clock reads. Recorded DynamoDB
+requests include `operation` and `table` for deterministic matching. A dry run
+of `retrieve` prints the initial vector search only because later requests
+require response IDs; replay executes the expansions. The dry-run and replay
+commands cannot perform live writes or destructive consolidation.

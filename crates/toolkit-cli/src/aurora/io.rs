@@ -17,8 +17,8 @@ use super::api::{
     attribute, aurora_cluster_ids, on_demand_dimensions, parse_price_item, usd_price, AwsApi,
 };
 use super::args::{
-    float_value, format_value, int_value, region_value, reject_unrecognized, required, usage,
-    Format,
+    float_value, format_value, instance_value, int_value, region_value, reject_unrecognized,
+    required, usage, Format,
 };
 use super::pyfmt::{dumps, fmt_f, get_f64, get_str, py_max, round_num, round_to, truthy, Num};
 use super::{
@@ -819,7 +819,7 @@ pub(crate) fn command(
         Some(other) => {
             return Err(usage(format!(
                 "argument mode: invalid choice: {} (choose from 'offline')",
-                crate::manifests::py_repr_str(other)
+                crate::manifests::py_repr_str(&crate::safe_text::shown_value(other))
             )))
         }
     };
@@ -840,14 +840,14 @@ pub(crate) fn command(
         }
         required(&missing)?;
         let (Some(instance), Some(storage), Some(io_millions)) =
-            (invocation.value("--instance"), storage, io_millions)
+            (instance_value(invocation), storage, io_millions)
         else {
             return Ok(());
         };
         // Pricing is refreshed even offline so regional rates can apply.
         let pricing = refresh_pricing(api, engine, &region);
         let result = with_pricing_source(
-            analyze_offline(&pricing, instance, num_instances, storage, io_millions),
+            analyze_offline(&pricing, &instance, num_instances, storage, io_millions),
             &pricing,
         );
         return emit(output, engine, &result, format, false);

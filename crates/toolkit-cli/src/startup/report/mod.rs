@@ -389,8 +389,9 @@ pub fn migration_report_command(
             ToolkitError::usage(
                 "invalid_argument",
                 format!(
-                    "argument --mode: invalid choice: '{value}' (choose from 'full', \
-                     'decision', 'ai_only')"
+                    "argument --mode: invalid choice: '{}' (choose from 'full', \
+                     'decision', 'ai_only')",
+                    crate::safe_text::shown_value(value)
                 ),
             )
         })?,

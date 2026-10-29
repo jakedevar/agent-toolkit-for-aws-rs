@@ -74,18 +74,25 @@ pub(crate) struct Slice {
 pub(crate) const SLICES: &[Slice] = &[
     crate::ai_data::SLICE,
     crate::ai_models::SLICE,
+    crate::ai_payloads::SLICE,
     crate::asm_exec::SLICE,
     crate::aurora::SLICE,
     crate::bedrock_agent::SLICE,
+    crate::bedrock_probes::SLICE,
     crate::bedrock_report::SLICE,
     crate::bedrock_resolve::SLICE,
     crate::cloudwatch::API_SLICE,
     crate::cloudwatch::DOMAIN_SLICE,
     crate::docgraph::SLICE,
     crate::dynamodb::SLICE,
+    crate::dynamodb_bench::SLICE,
     crate::dynamodb_deploy::SLICE,
     crate::elasticache::SLICE,
+    crate::elasticache::tunnel::SLICE,
+    crate::launch::SLICE,
     crate::manifests::SLICE,
+    crate::marketplace::SLICE,
+    crate::mcp_proxy::command::SLICE,
     crate::msk::SLICE,
     crate::relational::SLICE,
     crate::skills::SLICE,
@@ -545,7 +552,7 @@ mod tests {
     /// The route paths of the old `COMMANDS` table (commit ce0eaf6a, before the
     /// registry), in table order: the public order of [`COMMANDS`]. The routes of
     /// slices added after the registry follow at the end, ordered by slice name.
-    const LEGACY_COMMAND_ORDER: [&str; 82] = [
+    const LEGACY_COMMAND_ORDER: [&str; 104] = [
         "skills list",
         "manifests validate",
         "spec validate",
@@ -625,10 +632,39 @@ mod tests {
         "timestream-influxdb validate-input",
         "timestream-influxdb instance-types",
         // Slices added after the registry (NEW_RANK), by slice name.
+        // ai-payloads (#4386, slice S1 #5143):
+        "ai-payloads reward sample",
+        "ai-payloads reward check",
+        "ai-payloads templates",
+        "ai-payloads render",
+        // bedrock-probes (#4404):
+        "bedrock-probes iam-policy",
+        "bedrock-probes preflight",
+        "bedrock-probes api-path",
+        "bedrock-probes classify",
+        "bedrock-probes source-baseline",
         // docgraph (#4395):
         "documentdb wa-review",
         "neptune validate-input",
         "neptune seed",
+        "neptune memory",
+        // dynamodb-bench (#4390):
+        "dynamodb benchmark-model",
+        "dynamodb generate-perf-report",
+        // elasticache-tunnel (#4393):
+        "elasticache find-tunnel-host",
+        "elasticache start-tunnel",
+        "elasticache test-connection",
+        // launch callback and sign-in lifecycle (#5216):
+        "launch auth-callback",
+        "launch auth-start",
+        "launch auth-wait",
+        // marketplace (#4396):
+        "marketplace handler",
+        "marketplace query-metering",
+        "marketplace test-events",
+        // mcp-proxy (#4413 S3):
+        "mcp-proxy",
         // telemetry (#4398):
         "telemetry",
     ];

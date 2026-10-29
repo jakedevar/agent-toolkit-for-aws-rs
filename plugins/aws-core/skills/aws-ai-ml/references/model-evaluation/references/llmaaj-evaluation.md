@@ -226,7 +226,13 @@ Read `../references/code_output_guide.md` for output format rules.
 
 If a project directory already exists (from earlier in the workflow), use it. Otherwise, load the **directory-management** reference to set one up.
 
-Read `code_templates/llmaaj_evaluator.py`, substitute the collected values into the placeholders, and write the cells. The template uses `# Cell N: Label` markers — each marker starts a new notebook cell, with everything between one marker and the next becoming that cell's content. `BUILTIN_METRICS` must be a Python list of strings, e.g. `["Faithfulness", "Correctness"]`. `CUSTOM_METRICS` should be read from `custom_metrics.json` if it was created previously, or set to `None` if no custom metrics are needed.
+Render `code_templates/llmaaj_evaluator.py` with `toolkit ai-payloads render`; do not write the cells by hand. Put the collected values in the values file under `values`, with the placeholder names written without brackets (`toolkit ai-payloads templates --root <skill-dir>` lists them), then run:
+
+```bash
+toolkit ai-payloads render <skill-dir>/references/model-evaluation/code_templates/llmaaj_evaluator.py --mode notebook --project-dir <project-dir> --values <scratch-dir>/values.json
+```
+
+Use `--mode script` for a script. `<skill-dir>` is the directory that holds this skill's `references/`. `METRICS_LIST` (the `BUILTIN_METRICS` list) must be a JSON array of strings, e.g. `["Faithfulness", "Correctness"]`. `CUSTOM_METRICS` stays `None` unless the user created custom metrics: then uncomment the line that loads `custom_metrics.json` in the rendered file (a `manual:` edit point).
 
 ### Step 19: Post-generation
 

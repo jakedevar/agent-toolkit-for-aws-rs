@@ -31,7 +31,7 @@ use toolkit_aws::recorded::{
 use toolkit_aws::{AwsError, ServiceError};
 use toolkit_core::Json;
 
-use super::checks::clean;
+use crate::safe_text::safe_path;
 
 /// The Gremlin port of Neptune.
 pub(super) const PORT: u16 = 8182;
@@ -328,13 +328,13 @@ pub(super) const WIPE_REFUSAL: &str = "Refusing to wipe the graph: g.V().drop() 
 /// A result item as Python `str()` prints it, cleaned for the terminal.
 fn py_str(item: &Json) -> String {
     match item {
-        Json::String(text) => clean(text),
+        Json::String(text) => safe_path(text),
         Json::Int(n) => n.to_string(),
         Json::Float(n) => format!("{n:?}"),
         Json::Bool(true) => "True".to_string(),
         Json::Bool(false) => "False".to_string(),
         Json::Null => "None".to_string(),
-        other => clean(&other.to_compact_string()),
+        other => safe_path(&other.to_compact_string()),
     }
 }
 
@@ -343,7 +343,7 @@ fn py_list(items: &[Json]) -> String {
     let rendered: Vec<String> = items
         .iter()
         .map(|item| match item {
-            Json::String(text) => format!("'{}'", clean(text).replace('\'', "\\'")),
+            Json::String(text) => format!("'{}'", safe_path(text).replace('\'', "\\'")),
             other => py_str(other),
         })
         .collect();

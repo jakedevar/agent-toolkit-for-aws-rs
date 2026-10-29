@@ -24,23 +24,30 @@ use std::fmt;
 use std::io::{self, Write};
 use std::path::PathBuf;
 
-use toolkit_core::{
-    discover_skills, neutralize_text_knowing, skills_to_json, ErrorKind, ToolkitError,
-};
+use toolkit_core::{discover_skills, skills_to_json, ErrorKind, ToolkitError};
 
+use safe_text::CallerText;
+
+pub mod agents_pay;
 mod ai_data;
 mod ai_models;
+mod ai_payloads;
 pub mod asm_exec;
 mod aurora;
 mod bedrock_agent;
+mod bedrock_probes;
 mod bedrock_report;
 mod bedrock_resolve;
 pub mod cloudwatch;
 pub mod docgraph;
 pub mod dynamodb;
+mod dynamodb_bench;
 mod dynamodb_deploy;
 pub mod elasticache;
+mod launch;
 pub mod manifests;
+mod marketplace;
+pub mod mcp_proxy;
 mod msk;
 mod registry;
 mod relational;
@@ -59,9 +66,9 @@ pub struct Output<'a> {
     diagnostics: Option<&'a mut dyn Write>,
     closed: bool,
     status: u8,
-    /// Argument values that contain a newline: escaped wherever a message
-    /// echoes them verbatim (see [`neutralize_text_knowing`]).
-    untrusted: Vec<String>,
+    /// The command-line values the sinks must not echo as given: values with
+    /// a newline, credential-shaped values and overlong values (#4639, #4941).
+    caller: CallerText,
 }
 
 impl<'a> Output<'a> {
@@ -72,7 +79,7 @@ impl<'a> Output<'a> {
             diagnostics: None,
             closed: false,
             status: 0,
-            untrusted: Vec::new(),
+            caller: CallerText::default(),
         }
     }
 
@@ -84,14 +91,17 @@ impl<'a> Output<'a> {
             diagnostics: Some(diagnostics),
             closed: false,
             status: 0,
-            untrusted: Vec::new(),
+            caller: CallerText::default(),
         }
     }
 
-    /// Registers the command-line values to escape wherever a diagnostic echoes
-    /// them verbatim (only values with a newline matter).
+    /// Registers the command-line values the sinks must not echo as given:
+    /// a value with a newline is escaped onto one line, a credential-shaped
+    /// value is redacted and an overlong one bounded wherever a diagnostic
+    /// echoes it (#4941). Stdout is not rewritten (see [`Output::line`]).
+    /// Ordinary values change nothing.
     pub fn set_untrusted(&mut self, args: &[String]) {
-        self.untrusted = untrusted_values(args);
+        self.caller = CallerText::from_args(args);
     }
 
     /// Writes `text` and a newline to the diagnostics writer, if there is one.
@@ -100,17 +110,18 @@ impl<'a> Output<'a> {
     /// to report that, which is also the rule for the final error report.
     ///
     /// Control characters other than newline (ESC, BEL, CR, tab), bidirectional
-    /// overrides and similar invisible characters are escaped by
-    /// [`neutralize_text_knowing`] so echoed caller text cannot drive the terminal
-    /// (#4639); newlines stay because some diagnostics are multi-line blocks, except
-    /// inside a command-line value that itself contains a newline (see
-    /// [`Output::set_untrusted`]), which is escaped wherever it is echoed verbatim.
-    /// A handler that echoes other untrusted text must quote it itself. Safe text
-    /// is written unchanged.
+    /// overrides and similar invisible characters are escaped so echoed caller
+    /// text cannot drive the terminal (#4639); newlines stay because some
+    /// diagnostics are multi-line blocks, except inside a command-line value
+    /// that itself contains a newline (see [`Output::set_untrusted`]), which is
+    /// escaped wherever it is echoed verbatim. A credential-shaped or overlong
+    /// command-line value echoed here is redacted, then bounded to 200
+    /// characters, then escaped (#4941). A handler that echoes other untrusted
+    /// text must quote it itself. Safe text is written unchanged.
     pub fn diagnostic(&mut self, text: &str) {
         if let Some(writer) = self.diagnostics.as_mut() {
             let _ = writer
-                .write_all(neutralize_text_knowing(text, &self.untrusted).as_bytes())
+                .write_all(self.caller.diagnostic(text).as_bytes())
                 .and_then(|()| writer.write_all(b"\n"));
         }
     }
@@ -140,6 +151,11 @@ impl<'a> Output<'a> {
     ///
     /// Returns a runtime error (`stdout_write`) for any write failure other
     /// than a closed pipe, which is treated as normal completion.
+    ///
+    /// The line is written exactly as given: it is never rewritten after it is
+    /// formatted, so JSON stays valid and typed fields keep their schema. A
+    /// handler redacts each command-line value where it builds stdout data
+    /// (`safe_text::redacted_value`, #4941, #4981).
     pub fn line(&mut self, text: &str) -> Result<(), ToolkitError> {
         if self.closed {
             return Ok(());
@@ -311,29 +327,82 @@ fn usage_error() -> ToolkitError {
 pub const STDIO_DASH_POSITIONAL: &str = "<positional>";
 
 /// The (command path, flag) pairs that accept the exact token `-` as the
-/// argparse stdin/stdout marker (`--json -`, #4743, #4780).
+/// argparse stdin marker (#4743, #4780).
 ///
 /// Fail closed: `-` is accepted ONLY where a pair is listed here, as the value
 /// of the named value flag (`--f -` and `--f=-`) or, for the pseudo-flag
 /// [`STDIO_DASH_POSITIONAL`], as a positional. The command path is the
-/// space-joined [`CommandSpec::path`] (for example
-/// `"cloudwatch validate instrumentation-type"`). Everywhere else `-` is
-/// refused exactly as it was before #4743: a positional `-` is an unknown
-/// flag, and on a `strict_values` command `-` is a refused dash-prefixed
-/// value (a command without `strict_values` keeps taking any value verbatim,
-/// as it always did).
+/// space-joined [`CommandSpec::path`] (for example `"cloudwatch snapshots"`).
+/// Everywhere else `-` is a usage error (exit 2) naming the flag, for EVERY
+/// value flag and positional of every command, `strict_values` or not (#4780):
+/// most slices turn a path argument straight into a filesystem path, where an
+/// accepted `-` would silently read or overwrite a file named `-`. `./-` stays
+/// a legal explicit literal path.
 ///
-/// A command that is not listed never receives a `-` it could mistake for a
-/// stream: most slices turn a path argument straight into a filesystem path,
-/// where an accepted `-` would silently read or overwrite a file named `-`.
-/// A slice that wants stdin/stdout support adds its pair here in the same
-/// change that makes its handler treat `-` explicitly (bounded, UTF-8 checked,
-/// with the same diagnostic escaping as any other input). The list ships
-/// empty because no slice reads stdin yet; the cloudwatch `--json` entry is
-/// added when that slice is integrated.
+/// The list is empty: no registered parameter reads standard input (the
+/// `cloudwatch` commands' `--json -` / `--json-file -` of the Python originals are
+/// deliberately not accepted, see `docs/migration/cw-api.md`). A slice that
+/// wants stdin support adds its pair here in the same change that makes its
+/// handler read stdin deliberately (bounded, with a finite wait) and lists it in
+/// `docs/migration/cli-bare-dash.md`.
 pub const STDIO_DASH: &[(&str, &str)] = &[];
 
-/// Whether `-` is an accepted stdio marker for `flag` (a value flag name, or
+/// The (command path, value flag) pairs whose exact value `-` is a legitimate
+/// LITERAL value passed through to the handler unchanged (#4780, #4934).
+///
+/// This is not a stdio marker: each listed flag is a selector, id, name or text
+/// that the Python original takes as an arbitrary string with no `-` sentinel
+/// (argparse hands a lone `-` through as an ordinary value), and whose Rust
+/// handler uses it only as a key, a request field or output text, never as a
+/// filesystem path, not even as a component of one (a filename, a suffix, a
+/// directory name, a join or a `format!` into a path). A parameter that names a
+/// file or directory, or is composed into a path, MUST NOT be listed here: it
+/// keeps the fail-closed refusal and `./-` is the way to name a file called `-`
+/// (`bedrock-report render --date-suffix`, which selects
+/// `MIGRATION_REPORT_<suffix>.md`, is refused for that reason, #4955).
+/// Value flags only (`--f -` and `--f=-`);
+/// a positional is never listed. A pair is listed in at most one of this list
+/// and [`STDIO_DASH`].
+///
+/// Every entry is audited, with its Python `file:line` and its Rust consumer,
+/// in `docs/migration/cli-bare-dash.md`. The contract test
+/// `every_value_flag_and_positional_dash_is_refused_or_in_exactly_one_list`
+/// (`tests/diag_contract.rs`) fails for a registered value flag that is neither
+/// refused nor listed, and `a_literal_dash_flag_never_reaches_the_filesystem`
+/// runs each pair against a file named `-` that must stay untouched.
+pub const LITERAL_DASH: &[(&str, &str)] = &[
+    ("startup verify-model-path", "--workload"),
+    ("bedrock-agent fetch", "--agent-id"),
+    ("bedrock-agent fetch", "--agent-version"),
+    ("bedrock-agent fetch", "--agent-alias-id"),
+    ("bedrock-agent fetch", "--region"),
+    ("bedrock-agent fetch", "--profile"),
+    ("bedrock-resolve identity", "--provider"),
+    ("bedrock-resolve identity", "--source"),
+    ("bedrock-resolve identity", "--target"),
+    ("bedrock-resolve pricing", "--region"),
+    ("bedrock-resolve pricing", "--models"),
+    ("cloudwatch instrumentation", "--region"),
+    ("cloudwatch instrumentation", "--profile"),
+    ("cloudwatch snapshots", "--region"),
+    ("cloudwatch snapshots", "--profile"),
+    ("cloudwatch evaluate-traces", "--trace-id"),
+    ("cloudwatch evaluate-traces", "--trace-ids"),
+    ("cloudwatch evaluate-traces", "--session-id"),
+    ("cloudwatch evaluate-traces", "--evaluator-id"),
+    ("cloudwatch evaluate-traces", "--evaluator-ids"),
+    ("cloudwatch evaluate-traces", "--region"),
+    ("cloudwatch evaluate-traces", "--kms-key-id"),
+    ("cloudwatch capture-dataset", "--trace-ids"),
+    ("cloudwatch capture-dataset", "--dataset-name"),
+    ("cloudwatch capture-dataset", "--dataset-id"),
+    ("cloudwatch capture-dataset", "--description"),
+    ("cloudwatch capture-dataset", "--region"),
+    ("msk size", "--region"),
+    ("ai-models search", "--region"),
+];
+
+/// Whether `-` is an accepted marker for `flag` (a value flag name, or
 /// [`STDIO_DASH_POSITIONAL`]) of `spec` according to `allowed`.
 fn dash_listed(allowed: &[(&str, &str)], spec: &CommandSpec, flag: &str) -> bool {
     let path = spec.path.join(" ");
@@ -342,13 +411,55 @@ fn dash_listed(allowed: &[(&str, &str)], spec: &CommandSpec, flag: &str) -> bool
         .any(|(command, listed)| *command == path && *listed == flag)
 }
 
+/// The two allowlists of the exact value `-`: stdio markers and literals.
+#[derive(Clone, Copy)]
+struct DashLists<'a> {
+    stdio: &'a [(&'a str, &'a str)],
+    literal: &'a [(&'a str, &'a str)],
+}
+
 /// Whether `value` may follow the value flag `flag` of `spec` (see
-/// [`CommandSpec::strict_values`]). The exact token `-` additionally needs
-/// the pair to be listed in `allowed` ([`STDIO_DASH`]).
-fn value_allowed(spec: &CommandSpec, allowed: &[(&str, &str)], flag: &str, value: &str) -> bool {
-    !spec.strict_values
-        || !(value.is_empty() || value.starts_with('-'))
-        || (value == "-" && dash_listed(allowed, spec, flag))
+/// [`CommandSpec::strict_values`]). The exact token `-` is refused for every
+/// command unless the pair is listed in [`STDIO_DASH`] or [`LITERAL_DASH`]; a
+/// listed pair takes it as an ordinary value, whatever `strict_values` says.
+fn value_allowed(
+    spec: &CommandSpec,
+    lists: DashLists<'_>,
+    flag: &str,
+    value: &str,
+) -> Result<(), ToolkitError> {
+    if value == "-" {
+        return if dash_listed(lists.stdio, spec, flag) || dash_listed(lists.literal, spec, flag) {
+            Ok(())
+        } else {
+            Err(dash_value_error(flag))
+        };
+    }
+    if spec.strict_values && (value.is_empty() || value.starts_with('-')) {
+        return Err(usage_error());
+    }
+    Ok(())
+}
+
+/// The usage error for a bare `-` given to `flag`: one line naming the flag
+/// (always a registered flag name, never caller text).
+pub(crate) fn dash_value_error(flag: &str) -> ToolkitError {
+    ToolkitError::usage(
+        "invalid_arguments",
+        format!(
+            "invalid arguments: {flag} does not accept - (standard input/output); \
+             use ./- for a file named -"
+        ),
+    )
+}
+
+/// The usage error for a bare `-` positional argument.
+pub(crate) fn dash_positional_error() -> ToolkitError {
+    ToolkitError::usage(
+        "invalid_arguments",
+        "invalid arguments: a bare - argument is not accepted (standard input/output); \
+         use ./- for a file named -",
+    )
 }
 
 /// Whether `name` is a value flag of `spec`, plain or repeatable.
@@ -372,14 +483,21 @@ fn is_value_flag(spec: &CommandSpec, name: &str) -> bool {
 /// Returns a usage error (exit status 2) for no arguments, an unknown
 /// command, an unknown flag or too many positional arguments.
 pub fn route<'a>(specs: &'a [CommandSpec], args: &[String]) -> Result<Routed<'a>, ToolkitError> {
-    route_with(specs, STDIO_DASH, args)
+    route_lists(
+        specs,
+        DashLists {
+            stdio: STDIO_DASH,
+            literal: LITERAL_DASH,
+        },
+        args,
+    )
 }
 
-/// [`route`] with an explicit [`STDIO_DASH`] allowlist, so tests can exercise
-/// the opt-in while the shipped constant is empty.
-fn route_with<'a>(
+/// [`route`] with explicit allowlists, so tests can exercise the opt-ins
+/// independently of the shipped constants.
+fn route_lists<'a>(
     specs: &'a [CommandSpec],
-    stdio_dash: &[(&str, &str)],
+    lists: DashLists<'_>,
     args: &[String],
 ) -> Result<Routed<'a>, ToolkitError> {
     let Some(first) = args.first().map(String::as_str) else {
@@ -415,25 +533,23 @@ fn route_with<'a>(
         // A bare `-` is a positional only where STDIO_DASH lists the command's
         // `<positional>`; otherwise it is an unknown flag, as before #4743.
         if word.starts_with('-')
-            && !(word == "-" && dash_listed(stdio_dash, spec, STDIO_DASH_POSITIONAL))
+            && !(word == "-" && dash_listed(lists.stdio, spec, STDIO_DASH_POSITIONAL))
         {
             if is_value_flag(spec, word) {
                 // `--name value`: the next word is the value.
                 let Some(value) = rest.next() else {
                     return Err(usage_error());
                 };
-                if !value_allowed(spec, stdio_dash, word, value) {
-                    return Err(usage_error());
-                }
+                value_allowed(spec, lists, word, value)?;
                 invocation.store_value(spec, word, value);
             } else if let Some((name, value)) = word
                 .split_once('=')
                 .filter(|(name, _)| is_value_flag(spec, name))
             {
-                if !value_allowed(spec, stdio_dash, name, value) {
-                    return Err(usage_error());
-                }
+                value_allowed(spec, lists, name, value)?;
                 invocation.store_value(spec, name, value);
+            } else if word == "-" {
+                return Err(dash_positional_error());
             } else if !spec.flags.contains(&word) {
                 return Err(usage_error());
             } else if !invocation.has_flag(word) {
@@ -447,6 +563,23 @@ fn route_with<'a>(
         }
     }
     Ok(Routed::Run(spec, invocation))
+}
+
+/// [`route_lists`] with only a [`STDIO_DASH`]-style allowlist (tests).
+#[cfg(test)]
+fn route_with<'a>(
+    specs: &'a [CommandSpec],
+    stdio_dash: &[(&str, &str)],
+    args: &[String],
+) -> Result<Routed<'a>, ToolkitError> {
+    route_lists(
+        specs,
+        DashLists {
+            stdio: stdio_dash,
+            literal: &[],
+        },
+        args,
+    )
 }
 
 fn skills_list(invocation: &Invocation, output: &mut Output<'_>) -> Result<(), ToolkitError> {
@@ -464,26 +597,12 @@ fn skills_list(invocation: &Invocation, output: &mut Output<'_>) -> Result<(), T
     Ok(())
 }
 
-/// The command-line values (and the value half of `--flag=value`) that contain a
-/// newline: the only argument text that can forge a line in a multi-line message.
-fn untrusted_values(args: &[String]) -> Vec<String> {
-    let mut values = Vec::new();
-    for arg in args {
-        if arg.contains('\n') {
-            values.push(arg.clone());
-            if let Some((_, value)) = arg.split_once('=') {
-                if value.contains('\n') {
-                    values.push(value.to_string());
-                }
-            }
-        }
-    }
-    values
-}
-
-/// Writes the error report and returns the exit status.
-fn report(err: &mut dyn Write, error: &ToolkitError, untrusted: &[String]) -> u8 {
-    let message = neutralize_text_knowing(error.message(), untrusted);
+/// Writes the error report and returns the exit status. The message passes
+/// through [`CallerText::diagnostic`]: a command-line value it echoes is shown
+/// escaped and, when credential-shaped or overlong, redacted then bounded
+/// (#4639, #4941).
+fn report(err: &mut dyn Write, error: &ToolkitError, caller: &CallerText) -> u8 {
+    let message = caller.diagnostic(error.message());
     let text = match error.kind() {
         ErrorKind::Usage => format!("error: {message}\n\n{USAGE}\n"),
         ErrorKind::Runtime => format!("error: {message}\n"),
@@ -498,13 +617,16 @@ fn print_static(out: &mut dyn Write, err: &mut dyn Write, text: &str) -> u8 {
     let result = output.line(text).and_then(|()| output.finish());
     match result {
         Ok(()) => 0,
-        Err(error) => report(err, &error, &[]),
+        Err(error) => report(err, &error, &CallerText::default()),
     }
 }
 
 /// Runs the CLI with the given arguments (without the program name) and
 /// writers, returning the process exit status.
 pub fn run(args: &[OsString], out: &mut dyn Write, err: &mut dyn Write) -> u8 {
+    // A path named in a shared file-contract error is redacted, then bounded,
+    // where the message is formatted, not only at the sinks (#4941).
+    toolkit_core::set_path_display(|path: &str| safe_text::shown_value(path).into_owned());
     let mut text_args = Vec::with_capacity(args.len());
     for arg in args {
         let Some(text) = arg.to_str() else {
@@ -514,27 +636,35 @@ pub fn run(args: &[OsString], out: &mut dyn Write, err: &mut dyn Write) -> u8 {
                     "invalid_arguments",
                     "invalid arguments: arguments must be valid UTF-8",
                 ),
-                &[],
+                &CallerText::default(),
             );
         };
         text_args.push(text.to_string());
     }
-    let untrusted = untrusted_values(&text_args);
+    let caller = CallerText::from_args(&text_args);
     match route(COMMANDS, &text_args) {
         Ok(Routed::Help) => print_static(out, err, USAGE),
         Ok(Routed::Version) => {
             print_static(out, err, &format!("toolkit {}", env!("CARGO_PKG_VERSION")))
         }
         Ok(Routed::Run(spec, invocation)) => {
+            // A passthrough command's words belong to another program and may
+            // be secret references, not secrets; it redacts what it resolves
+            // itself, so only the newline rule applies (#4941).
+            let caller = if spec.passthrough {
+                CallerText::newlines_only(&text_args)
+            } else {
+                caller
+            };
             let mut output = Output::with_diagnostics(out, err);
-            output.set_untrusted(&text_args);
+            output.caller = caller.clone();
             let result = (spec.handler)(&invocation, &mut output).and_then(|()| output.finish());
             match result {
                 Ok(()) => output.exit_status(),
-                Err(error) => report(err, &error, &untrusted),
+                Err(error) => report(err, &error, &caller),
             }
         }
-        Err(error) => report(err, &error, &untrusted),
+        Err(error) => report(err, &error, &caller),
     }
 }
 
@@ -825,8 +955,60 @@ mod tests {
     }
 
     #[test]
-    fn the_shipped_stdio_dash_list_is_empty_until_a_slice_reads_stdin() {
+    fn the_shipped_stdio_dash_list_is_empty() {
+        // No registered parameter reads standard input (#4935): a bare `-` is a
+        // stdio marker nowhere.
         assert!(STDIO_DASH.is_empty(), "{STDIO_DASH:?}");
+    }
+
+    #[test]
+    fn the_literal_dash_list_is_value_flags_only_and_disjoint_from_stdio() {
+        let mut seen = std::collections::BTreeSet::new();
+        for (command, flag) in LITERAL_DASH {
+            assert!(seen.insert((*command, *flag)), "duplicate {command} {flag}");
+            assert_ne!(*flag, STDIO_DASH_POSITIONAL, "{command}: positional");
+            assert!(flag.starts_with("--"), "{command} {flag}");
+            assert!(
+                !STDIO_DASH.contains(&(*command, *flag)),
+                "{command} {flag} is in both lists"
+            );
+        }
+    }
+
+    /// Routes `values` against `REPEATABLE_SPECS` with an explicit literal list.
+    fn route_literal(
+        literal: &[(&str, &str)],
+        values: &[&str],
+    ) -> Result<Invocation, ToolkitError> {
+        let lists = DashLists {
+            stdio: &[],
+            literal,
+        };
+        match route_lists(REPEATABLE_SPECS, lists, &words(values))? {
+            Routed::Run(_, invocation) => Ok(invocation),
+            other => panic!("expected a runnable route, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_literal_dash_pair_takes_the_value_unchanged_and_opens_only_itself() {
+        let literal = [("strict", "--mode"), ("loose", "--both")];
+        // Plain and attached spelling, strict and non-strict, the value is `-`.
+        let invocation = route_literal(&literal, &["strict", "--mode", "-"]).expect("routes");
+        assert_eq!(invocation.value("--mode"), Some("-"));
+        let invocation = route_literal(&literal, &["strict", "--mode=-"]).expect("routes");
+        assert_eq!(invocation.value("--mode"), Some("-"));
+        let invocation = route_literal(&literal, &["loose", "--both", "-"]).expect("routes");
+        assert_eq!(invocation.values_of("--both").collect::<Vec<_>>(), ["-"]);
+        // Another flag of the same command, another command and a positional stay refused.
+        assert!(route_literal(&literal, &["strict", "--workload", "-"]).is_err());
+        assert!(route_literal(&literal, &["strict", "--workload=-"]).is_err());
+        assert!(route_literal(&literal, &["loose", "--mode", "-"]).is_err());
+        assert!(route_literal(&literal, &["strict", "-"]).is_err());
+        // The literal pair does not loosen the other dash rules.
+        assert!(route_literal(&literal, &["strict", "--mode", "-x"]).is_err());
+        assert!(route_literal(&literal, &["strict", "--mode", ""]).is_err());
+        assert!(route_literal(&literal, &["strict", "--mode", "--"]).is_err());
     }
 
     #[test]
@@ -845,7 +1027,12 @@ mod tests {
             };
             assert_eq!(error.kind(), ErrorKind::Usage, "{values:?}");
             assert_eq!(error.code(), "invalid_arguments", "{values:?}");
-            assert_eq!(error.message(), "invalid arguments", "{values:?}");
+            assert!(
+                error.message().starts_with("invalid arguments: "),
+                "{values:?}: {}",
+                error.message()
+            );
+            assert!(!error.message().contains('\n'), "single line");
         }
         // A listed pair does not open its neighbours: another flag on the same
         // command, the same flag on another command, or the positional.
@@ -864,12 +1051,43 @@ mod tests {
     }
 
     #[test]
-    fn a_non_strict_command_keeps_taking_any_value_unlisted() {
-        // Unchanged by #4743: only `strict_values` commands ever refused values.
-        let invocation = route_repeatable(&["loose", "--mode", "-"]).expect("routes");
-        assert_eq!(invocation.value("--mode"), Some("-"));
-        // But a positional `-` was always an unknown flag, listed or not.
-        assert!(route_repeatable(&["loose", "-"]).is_err());
+    fn a_non_strict_command_refuses_a_bare_dash_value_too() {
+        // #4780: `loose` takes any other value verbatim, but a lone `-` reaches a
+        // handler only through STDIO_DASH, in both spellings, plain or repeatable.
+        for values in [
+            ["loose", "--mode", "-"].as_slice(),
+            &["loose", "--mode=-"],
+            &["loose", "--both", "-"],
+            &["loose", "--workload=-"],
+            &["loose", "-"],
+        ] {
+            let Err(error) = route_repeatable(values) else {
+                panic!("{values:?} must be a usage error");
+            };
+            assert_eq!(error.kind(), ErrorKind::Usage, "{values:?}");
+            assert_eq!(error.exit_code(), 2, "{values:?}");
+            assert!(
+                error.message().starts_with("invalid arguments: "),
+                "{values:?}: {}",
+                error.message()
+            );
+        }
+        // The message names the flag.
+        let error = route_repeatable(&["loose", "--mode=-"]).expect_err("refused");
+        assert!(error.message().contains("--mode"), "{}", error.message());
+        // Every other value is still taken verbatim, dashes included.
+        let invocation = route_repeatable(&["loose", "--mode", "-x"]).expect("routes");
+        assert_eq!(invocation.value("--mode"), Some("-x"));
+        let invocation = route_repeatable(&["loose", "--mode", ""]).expect("routes");
+        assert_eq!(invocation.value("--mode"), Some(""));
+        // `./-` is an ordinary literal.
+        let invocation = route_repeatable(&["loose", "--mode", "./-", "./-"]).expect("routes");
+        assert_eq!(invocation.value("--mode"), Some("./-"));
+        assert_eq!(invocation.positionals, ["./-"]);
+        // A listed pair opens only itself.
+        let allowed = [("loose", "--mode")];
+        assert!(route_dash(&allowed, &["loose", "--mode", "-"]).is_ok());
+        assert!(route_dash(&allowed, &["loose", "--both", "-"]).is_err());
     }
 
     #[test]

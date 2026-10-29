@@ -1003,9 +1003,9 @@ fn apply_baseline(
 
 // ---- command ----------------------------------------------------------------
 
-/// `text` as one safe line for stdout.
+/// `text` as one safe line for stdout, redacted first (#4941).
 fn shown(text: &str) -> String {
-    neutralize_line(text).into_owned()
+    neutralize_line(&toolkit_aws::redact_text(text)).into_owned()
 }
 
 /// JSON text with the one character `ensure_ascii` leaves raw and a terminal

@@ -146,9 +146,10 @@ pub(crate) struct Findings {
 }
 
 /// `text` as one safe line: caller-derived names (skill directories) must not
-/// forge lines or drive the terminal.
+/// forge lines or drive the terminal, and a credential-shaped one is redacted
+/// first (#4941).
 fn shown(text: &str) -> String {
-    neutralize_line(text).into_owned()
+    neutralize_line(&toolkit_aws::redact_text(text)).into_owned()
 }
 
 /// A bounded regular-file read that refuses links, as raw bytes.

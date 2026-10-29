@@ -1,0 +1,21 @@
+[package]
+name = "secret-safety-hook"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "PreToolUse hook that blocks direct Secrets Manager value fetching (slice #4412)."
+
+[lib]
+name = "secret_safety_hook"
+path = "src/lib.rs"
+
+[[bin]]
+name = "secret-safety"
+path = "src/main.rs"
+
+[dependencies]
+toolkit-core = { path = "../toolkit-core" }
+
+[lints]
+workspace = true

@@ -333,7 +333,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     AWS Lambda Handler for reward function.
     SageMaker Nova evaluation invokes this with a list of samples.
     Each sample has 'messages' (with assistant turn = model output) and 'reference_answer'.
-    Must return {"statusCode": 200, "body": [results]} where body is a parsed list.
+    Must return {"statusCode": 200, "body": json.dumps(results)} where body is a JSON string.
     """
     # Event may be a list of samples or a single sample dict
     batch = event if isinstance(event, list) else [event]
@@ -360,5 +360,5 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     return {
         "statusCode": 200,
         "headers": {"Content-Type": "application/json"},
-        "body": results,  # Must be a parsed list, NOT json.dumps()
+        "body": json.dumps(results),  # Must be a JSON string, NOT a parsed list
     }

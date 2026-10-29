@@ -640,11 +640,14 @@ pub fn terraform_policy_command(
     if !dir.is_dir() {
         output.diagnostic(&format!(
             "POLICY_FAIL | path={} | reason=not_a_directory",
-            neutralize_line(&dir.display().to_string())
+            neutralize_line(&crate::safe_text::shown_path(&dir))
         ));
         return Err(ToolkitError::usage(
             "terraform_not_a_directory",
-            format!("terraform directory is not a directory: {}", dir.display()),
+            format!(
+                "terraform directory is not a directory: {}",
+                crate::safe_text::shown_path(&dir)
+            ),
         ));
     }
     let files = read_tf_files(&dir)

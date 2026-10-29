@@ -691,7 +691,10 @@ pub fn pricing_parity_command(
     if !plugin.is_dir() {
         return Err(ToolkitError::usage(
             "plugin_not_found",
-            format!("Plugin directory not found: {}", plugin.display()),
+            format!(
+                "Plugin directory not found: {}",
+                crate::safe_text::shown_path(&plugin)
+            ),
         ));
     }
     // The repository root is two levels above `plugins/<name>`.

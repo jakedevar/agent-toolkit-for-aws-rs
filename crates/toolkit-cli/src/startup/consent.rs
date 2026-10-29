@@ -634,7 +634,10 @@ pub fn consent_audit_command(
     if !plugin.is_dir() {
         return Err(ToolkitError::usage(
             "plugin_not_found",
-            format!("Plugin directory not found: {}", plugin.display()),
+            format!(
+                "Plugin directory not found: {}",
+                crate::safe_text::shown_path(&plugin)
+            ),
         ));
     }
     let outcome = audit(&plugin);

@@ -99,7 +99,7 @@ and the test binary itself.
 
 | Change | Reason |
 | --- | --- |
-| **MCP signing and HTTPS are not available in this build** (follow-up #4582) | `toolkit-aws` is std-only; TLS and SigV4 arrive with the SDK adapter (#4463). The whole MCP flow is ported and tested behind the `Signer`/`Transport` seams; production wiring uses `UnavailableSigner` (loads credentials first, so a machine without any reports the Python's `no AWS credentials available for MCP signing`, then fails closed with `AWS MCP request signing and the HTTPS transport are not available in this build`) and `UnavailableTransport`. Without a running Secrets Manager Agent, resolution therefore fails closed. **#4415 must not retire the Python helper until #4582 lands.** |
+| **MCP signing and HTTPS need the `aws-sdk` feature** (#4582, wired by #4413 S1) | With `--features aws-sdk` (`toolkit-cli`), `asm exec` signs with the real `SigV4Signer` over this credential chain and sends over `SdkTransport` (https only, public addresses only, no redirects, no proxy, trust roots validated once from `SSL_CERT_FILE`/`SSL_CERT_DIR` or the platform store; unusable roots fail the MCP fallback closed with a fixed message). The paragraph below describes the default build without that feature. `toolkit-aws` is std-only; TLS and SigV4 arrive with the SDK adapter (#4463). The whole MCP flow is ported and tested behind the `Signer`/`Transport` seams; production wiring uses `UnavailableSigner` (loads credentials first, so a machine without any reports the Python's `no AWS credentials available for MCP signing`, then fails closed with `AWS MCP request signing and the HTTPS transport are not available in this build`) and `UnavailableTransport`. Without a running Secrets Manager Agent, resolution therefore fails closed. **#4415 must not retire the Python helper until #4582 lands.** |
 | The agent endpoint (`AWS_SECRETS_MANAGER_AGENT_ENDPOINT`) must be `http://` + `localhost`, `127.0.0.0/8` or `[::1]` with no path; anything else is skipped with one stderr notice and the MCP path is used | The Python sent the session token header to whatever URL the variable named, in clear text. Every resolved address is checked again before connecting; redirects are not followed |
 | The agent's version stage is percent-encoded | The Python interpolated it raw, so `&`/`#` could add query parameters. Identical for normal stages |
 | The MCP endpoint (`ASM_EXEC_MCP_ENDPOINT`) is validated with `toolkit_aws::validate_endpoint` (https, `.api.aws`/`.amazonaws.com` only, public DNS answers, no userinfo) | The Python signed and sent credentials to any URL. The default endpoint passes. The signing region must look like a region name |
@@ -125,7 +125,9 @@ the command unresolved**) is part of the retirement in #4415, and is blocked on
 
 - **AC1** CLI, exit codes, secret handling, offline tests with mocked Secrets
   Manager: implemented and tested for the Secrets Manager Agent path; the MCP
-  path is ported and tested with fakes but cannot run in this build (#4582).
+  path is ported and tested with fakes, and runs with the real SigV4 signer
+  and HTTPS transport when `toolkit-cli` is built with `aws-sdk` (#4582,
+  #4413 S1); the default build fails closed.
 - **AC2** skill docs/launchers updated and Python retired: deliberately
   deferred to #4415 (operator instruction on #4451); this page and
   `crates/toolkit-cli/README.md` document the Rust command.

@@ -2058,6 +2058,7 @@ fn analyse_with(files: &[SourceFile], inventory: Option<&[(&str, Class)]>) -> Re
 /// until it is listed here; a slice listed as not recorded fails as soon as
 /// it shows a recording signal.
 const INVENTORY: &[(&str, Class)] = &[
+    ("agents_pay", Class::Recorded),
     (
         "ai_data",
         Class::NotRecorded(
@@ -2066,6 +2067,13 @@ const INVENTORY: &[(&str, Class)] = &[
         ),
     ),
     ("ai_models", Class::Recorded),
+    (
+        "ai_payloads",
+        Class::NotRecorded(
+            "the skill's template files and user-supplied reward event and response files; \
+             no AWS service is called",
+        ),
+    ),
     (
         "asm_exec",
         Class::NotRecorded("resolves Secrets Manager references through the live SDK client"),
@@ -2078,6 +2086,7 @@ const INVENTORY: &[(&str, Class)] = &[
         ),
     ),
     ("bedrock_agent", Class::Recorded),
+    ("bedrock_probes", Class::Recorded),
     (
         "bedrock_report",
         Class::NotRecorded("the skill's own report payloads and phase-result files"),
@@ -2091,11 +2100,31 @@ const INVENTORY: &[(&str, Class)] = &[
             "a pure cost calculator and a design loop over the skill's own state files",
         ),
     ),
+    ("dynamodb_bench", Class::Recorded),
     ("dynamodb_deploy", Class::Recorded),
+    // Includes the tunnel commands of `elasticache/tunnel/` (#4393, round 19): they
+    // replay `--recorded` through `toolkit_aws::recorded`, and their flag constant
+    // `TUNNEL_RECORDED_FLAG` is unique in `src` (#4933).
     ("elasticache", Class::Recorded),
+    // Slices L0-L2 of #4382 (#5085): no Launch API response is read yet. L5
+    // reclassifies it `Recorded` with the shaped API reads (design 7.1, Q3).
+    (
+        "launch",
+        Class::NotRecorded(
+            "the local session and region files and the user's own source tree and ZIP archives",
+        ),
+    ),
     (
         "manifests",
         Class::NotRecorded("the repository's marketplace and plugin manifests"),
+    ),
+    ("marketplace", Class::Recorded),
+    (
+        "mcp_proxy",
+        Class::NotRecorded(
+            "bridges live MCP stdio traffic to one HTTPS endpoint and replays no recorded AWS \
+             responses",
+        ),
     ),
     (
         "msk",

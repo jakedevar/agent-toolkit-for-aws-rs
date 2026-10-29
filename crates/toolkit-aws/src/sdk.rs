@@ -44,14 +44,13 @@ use std::fmt;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, SystemTime};
 
-use aws_config::default_provider::credentials::DefaultCredentialsChain;
-use aws_config::Region;
 use aws_credential_types::provider::error::CredentialsError;
 use aws_credential_types::provider::{ProvideCredentials, SharedCredentialsProvider};
 use aws_credential_types::Credentials as SdkCredentials;
 use aws_sigv4::http_request::{sign, SignableBody, SignableRequest, SigningSettings};
 use aws_sigv4::sign::v4;
 use aws_smithy_async::rt::sleep::TokioSleep;
+use aws_smithy_http_client::tls::TlsContext;
 use aws_smithy_http_client::{tls, Connector};
 use aws_smithy_runtime_api::client::connection::CaptureSmithyConnection;
 use aws_smithy_runtime_api::client::dns::{DnsFuture, ResolveDns, ResolveDnsError};
@@ -74,7 +73,25 @@ use crate::config::ClientConfig;
 use crate::credentials::CredentialsProvider;
 use crate::endpoint::{HostResolver, SystemResolver};
 use crate::error::{AwsError, TimeoutPhase};
-use crate::transport::{HttpRequest, HttpResponse, Signer, SigningScope, Timeouts, Transport};
+use crate::stream::{ChunkLimiter, ResponseStream, StreamError, StreamLimits, StreamingTransport};
+use crate::transport::{
+    refuse_framing_headers, Headers, HttpRequest, HttpResponse, Signer, SigningScope, Timeouts,
+    Transport,
+};
+use roots::ValidatedRoots;
+
+pub mod profile;
+pub mod recorder;
+pub mod roots;
+pub mod roots_payment;
+#[cfg(test)]
+mod s3_tests;
+pub mod source;
+pub mod stdin;
+#[cfg(test)]
+mod test_support;
+#[cfg(test)]
+mod tls_tests;
 
 /// Provider name the signer gives the SDK credentials it builds.
 const SIGNER_PROVIDER_NAME: &str = "toolkit-aws";
@@ -104,6 +121,13 @@ impl SdkRuntime {
     fn block_on<F: std::future::Future>(&self, future: F) -> F::Output {
         self.0.block_on(future)
     }
+}
+
+/// Whether any `tracing` dispatcher was ever installed in this process
+/// (T-LEAK-GATE, R-LOG rule 1: the proxy must leave this `false`).
+#[must_use]
+pub fn tracing_dispatcher_set() -> bool {
+    tracing::dispatcher::has_been_set()
 }
 
 impl fmt::Debug for SdkRuntime {
@@ -142,13 +166,7 @@ impl SdkCredentialsProvider {
     /// the boundary's resolved region for any STS or SSO call the chain makes.
     #[must_use]
     pub fn default_chain(runtime: &SdkRuntime, config: &ClientConfig) -> Self {
-        let mut builder = DefaultCredentialsChain::builder()
-            .region(Region::new(config.region().name().to_string()));
-        if let Some(profile) = config.profile() {
-            builder = builder.profile_name(profile);
-        }
-        let chain = runtime.block_on(builder.build());
-        Self::from_sdk(runtime, chain)
+        Self::default_chain_with_http(runtime, config, &source::ProviderHttp::SdkDefault)
     }
 
     /// Wrap any SDK credentials provider (a custom source, or a test double).
@@ -239,6 +257,7 @@ fn signing_error(stage: &'static str) -> AwsError {
 
 impl<P: CredentialsProvider> Signer for SigV4Signer<P> {
     fn sign(&self, request: &mut HttpRequest, scope: &SigningScope) -> Result<(), AwsError> {
+        refuse_framing_headers(&request.headers)?;
         let now = (self.clock)();
         let credentials = self.credentials.load()?;
         if credentials.is_expired_at(now) {
@@ -287,6 +306,7 @@ impl<P: CredentialsProvider> Signer for SigV4Signer<P> {
 #[derive(Clone)]
 struct GuardedResolver {
     inner: Arc<dyn HostResolver + Send + Sync>,
+    deadline: Option<std::time::Instant>,
 }
 
 impl fmt::Debug for GuardedResolver {
@@ -297,68 +317,176 @@ impl fmt::Debug for GuardedResolver {
 
 impl ResolveDns for GuardedResolver {
     fn resolve_dns<'a>(&'a self, name: &'a str) -> DnsFuture<'a> {
-        DnsFuture::ready(guarded_addresses(name, self.inner.as_ref()).map_err(ResolveDnsError::new))
+        let expired = || {
+            self.deadline
+                .is_some_and(|d| std::time::Instant::now() >= d)
+        };
+        let result = if expired() {
+            Err(ResolveDnsError::new(std::io::Error::other(
+                "DNS deadline elapsed",
+            )))
+        } else {
+            let result = guarded_addresses(name, self.inner.as_ref()).map_err(ResolveDnsError::new);
+            if expired() {
+                Err(ResolveDnsError::new(std::io::Error::other(
+                    "DNS deadline elapsed",
+                )))
+            } else {
+                result
+            }
+        };
+        DnsFuture::ready(result)
     }
 }
 
-type ConnectorFactory = dyn Fn(&Timeouts) -> SharedHttpConnector + Send + Sync;
+/// A resolver **without** the public-address guard, for the T-TLS loopback
+/// harness only (test builds).
+#[cfg(test)]
+#[derive(Clone)]
+struct UnguardedResolver {
+    inner: Arc<dyn HostResolver + Send + Sync>,
+}
 
-/// [`Transport`] over the smithy hyper HTTP client.
+#[cfg(test)]
+impl fmt::Debug for UnguardedResolver {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("UnguardedResolver")
+    }
+}
+
+#[cfg(test)]
+impl ResolveDns for UnguardedResolver {
+    fn resolve_dns<'a>(&'a self, name: &'a str) -> DnsFuture<'a> {
+        DnsFuture::ready(
+            self.inner
+                .resolve(name)
+                .map_err(|reason| ResolveDnsError::new(std::io::Error::other(reason))),
+        )
+    }
+}
+
+type ConnectorFactory =
+    dyn Fn(&Timeouts, Option<std::time::Instant>) -> SharedHttpConnector + Send + Sync;
+
+/// [`Transport`] and [`StreamingTransport`] over the smithy hyper HTTP client.
 pub struct SdkTransport {
     runtime: SdkRuntime,
     factory: Box<ConnectorFactory>,
     connectors: Mutex<Vec<(Timeouts, SharedHttpConnector)>>,
+    /// The trust roots the connector was built with (`None` for an injected
+    /// connector).
+    roots: Option<ValidatedRoots>,
+    /// Refuse responses from a non-public socket peer (off only in the
+    /// loopback test harness).
+    peer_check: bool,
+}
+
+/// One rustls (aws-lc) connector over `resolver` that trusts exactly `ctx`:
+/// the explicit R-ROOTS context, never Smithy's native roots.
+fn build_connector<R: ResolveDns + Clone + 'static>(
+    runtime: &SdkRuntime,
+    timeouts: &Timeouts,
+    ctx: &TlsContext,
+    resolver: R,
+) -> SharedHttpConnector {
+    // The hyper client registers timers and its executor with the current
+    // runtime, so build it inside the adapter's runtime.
+    let _entered = runtime.0.enter();
+    let settings = HttpConnectorSettings::builder()
+        .connect_timeout(timeouts.connect())
+        .read_timeout(timeouts.read())
+        .build();
+    let connector = Connector::builder()
+        .connector_settings(settings)
+        .sleep_impl(TokioSleep::new())
+        .tls_provider(tls::Provider::Rustls(
+            tls::rustls_provider::CryptoMode::AwsLc,
+        ))
+        .tls_context(ctx.clone())
+        .build_with_resolver(resolver);
+    SharedHttpConnector::new(connector)
 }
 
 impl SdkTransport {
-    /// The production transport: system DNS behind the public-address guard.
-    #[must_use]
-    pub fn new(runtime: &SdkRuntime) -> Self {
-        Self::with_resolver(runtime, Arc::new(SystemResolver))
+    /// The production transport: system DNS behind the public-address guard,
+    /// trusting exactly `roots`.
+    ///
+    /// # Errors
+    /// `InvalidConfig` (field `tls_roots`) if the TLS context cannot be built.
+    pub fn new(runtime: &SdkRuntime, roots: &ValidatedRoots) -> Result<Self, AwsError> {
+        Self::with_resolver(runtime, roots, Arc::new(SystemResolver))
     }
 
     /// The production transport with an injected resolver (still guarded).
-    #[must_use]
+    ///
+    /// # Errors
+    /// `InvalidConfig` (field `tls_roots`) if the TLS context cannot be built.
     pub fn with_resolver(
         runtime: &SdkRuntime,
+        roots: &ValidatedRoots,
         resolver: Arc<dyn HostResolver + Send + Sync>,
-    ) -> Self {
-        let guard = GuardedResolver { inner: resolver };
-        let factory_runtime = runtime.clone();
-        let factory = move |timeouts: &Timeouts| {
-            // The hyper client registers timers and its executor with the
-            // current runtime, so build it inside the adapter's runtime.
-            let _entered = factory_runtime.0.enter();
-            let settings = HttpConnectorSettings::builder()
-                .connect_timeout(timeouts.connect())
-                .read_timeout(timeouts.read())
-                .build();
-            let connector = Connector::builder()
-                .connector_settings(settings)
-                .sleep_impl(TokioSleep::new())
-                .tls_provider(tls::Provider::Rustls(
-                    tls::rustls_provider::CryptoMode::AwsLc,
-                ))
-                .build_with_resolver(guard.clone());
-            SharedHttpConnector::new(connector)
+    ) -> Result<Self, AwsError> {
+        let guard = GuardedResolver {
+            inner: resolver,
+            deadline: None,
         };
-        Self {
+        let ctx = roots.tls_context()?;
+        let factory_runtime = runtime.clone();
+        let factory = move |timeouts: &Timeouts, deadline| {
+            let mut guard = guard.clone();
+            guard.deadline = deadline;
+            build_connector(&factory_runtime, timeouts, &ctx, guard)
+        };
+        Ok(Self {
             runtime: runtime.clone(),
             factory: Box::new(factory),
             connectors: Mutex::new(Vec::new()),
-        }
+            roots: Some(roots.clone()),
+            peer_check: true,
+        })
+    }
+
+    /// The T-TLS harness transport: the same connector builder, TLS provider
+    /// and `ValidatedRoots` as production, with only the DNS resolver
+    /// replaced (unguarded, so a synthetic name can reach a loopback server)
+    /// and the peer check off. Test builds only.
+    #[cfg(test)]
+    pub(crate) fn loopback_for_tests(
+        runtime: &SdkRuntime,
+        roots: &ValidatedRoots,
+        resolver: Arc<dyn HostResolver + Send + Sync>,
+    ) -> Result<Self, AwsError> {
+        let mut transport = Self::with_resolver(runtime, roots, Arc::clone(&resolver))?;
+        let unguarded = UnguardedResolver { inner: resolver };
+        let ctx = roots.tls_context()?;
+        let factory_runtime = runtime.clone();
+        transport.factory = Box::new(move |timeouts: &Timeouts, _deadline| {
+            build_connector(&factory_runtime, timeouts, &ctx, unguarded.clone())
+        });
+        transport.peer_check = false;
+        Ok(transport)
     }
 
     /// A transport over a given SDK HTTP connector, whatever the timeouts
-    /// (tests and custom stacks; the DNS guard is the connector's business).
+    /// (tests and custom stacks; the DNS guard and trust roots are the
+    /// connector's business).
     #[must_use]
     pub fn with_connector(runtime: &SdkRuntime, connector: impl HttpConnector + 'static) -> Self {
         let shared = SharedHttpConnector::new(connector);
         Self {
             runtime: runtime.clone(),
-            factory: Box::new(move |_: &Timeouts| shared.clone()),
+            factory: Box::new(move |_: &Timeouts, _deadline| shared.clone()),
             connectors: Mutex::new(Vec::new()),
+            roots: None,
+            peer_check: true,
         }
+    }
+
+    /// The trust roots this transport's connectors use (`None` for an
+    /// injected connector).
+    #[must_use]
+    pub fn roots(&self) -> Option<&ValidatedRoots> {
+        self.roots.as_ref()
     }
 
     fn connector_for(&self, timeouts: &Timeouts) -> SharedHttpConnector {
@@ -369,9 +497,37 @@ impl SdkTransport {
         if let Some((_, connector)) = cache.iter().find(|(key, _)| key == timeouts) {
             return connector.clone();
         }
-        let connector = (self.factory)(timeouts);
+        let connector = (self.factory)(timeouts, None);
         cache.push((*timeouts, connector.clone()));
         connector
+    }
+
+    /// The guards every request passes before a connector is called: https,
+    /// a public literal host, and no authority or framing header (R-HDR).
+    fn admit(request: &HttpRequest) -> Result<SdkHttpRequest, AwsError> {
+        require_https(&request.url)?;
+        require_public_host(&request.url)?;
+        refuse_framing_headers(&request.headers)?;
+        to_sdk_request(request)
+    }
+
+    /// Send and wait for the response head (bounded by the connector's read
+    /// timeout); the peer check runs before anything is returned.
+    async fn call(
+        &self,
+        connector: SharedHttpConnector,
+        mut request: SdkHttpRequest,
+    ) -> Result<aws_smithy_runtime_api::client::orchestrator::HttpResponse, AwsError> {
+        let capture = CaptureSmithyConnection::new();
+        request.add_extension(capture.clone());
+        let response = connector
+            .call(request)
+            .await
+            .map_err(|error| map_connector_error(&error))?;
+        if self.peer_check {
+            check_peer(&capture)?;
+        }
+        Ok(response)
     }
 }
 
@@ -402,6 +558,9 @@ fn map_connector_error(error: &ConnectorError) -> AwsError {
     if let Some(rejection) = find_guard_rejection(error) {
         return rejection.error().clone();
     }
+    if malformed_http(error) {
+        return AwsError::Protocol;
+    }
     let kind = if error.is_timeout() {
         ConnectorFailure::Timeout
     } else if error.is_io() {
@@ -412,6 +571,20 @@ fn map_connector_error(error: &ConnectorError) -> AwsError {
         ConnectorFailure::Other
     };
     connector_error(kind, &DisplayErrorContext(error).to_string())
+}
+
+fn malformed_http(error: &(dyn std::error::Error + 'static)) -> bool {
+    let mut source = Some(error);
+    while let Some(current) = source {
+        if current
+            .downcast_ref::<hyper::Error>()
+            .is_some_and(|error| error.is_parse() && !error.is_parse_too_large())
+        {
+            return true;
+        }
+        source = current.source();
+    }
+    false
 }
 
 /// Refuse a response that came over a socket whose peer is not public, and
@@ -428,56 +601,201 @@ fn check_peer(capture: &CaptureSmithyConnection) -> Result<(), AwsError> {
         return Ok(());
     };
     let Some(peer) = connection.remote_addr() else {
-        return Ok(());
+        connection.poison();
+        return Err(AwsError::invalid_config(
+            "endpoint",
+            "the connection did not report a remote address",
+        ));
     };
     require_public_peer(peer.ip()).inspect_err(|_| connection.poison())
 }
 
-/// Send one request and read the whole body within the read timeout.
-async fn exchange(
-    connector: SharedHttpConnector,
-    mut request: SdkHttpRequest,
-    read_timeout: Duration,
-) -> Result<HttpResponse, AwsError> {
-    let capture = CaptureSmithyConnection::new();
-    request.add_extension(capture.clone());
-    let response = connector
-        .call(request)
-        .await
-        .map_err(|error| map_connector_error(&error))?;
-    check_peer(&capture)?;
-    let status = response.status().as_u16();
-    let headers = response_headers(response.headers().iter());
-    let collected = tokio::time::timeout(
-        read_timeout,
-        ByteStream::new(response.into_body()).collect(),
-    )
-    .await
-    .map_err(|_| AwsError::timeout(TimeoutPhase::Read, "the response body was not read in time"))?;
-    let body = collected
-        .map_err(|error| {
-            AwsError::connect(format!(
-                "the response body could not be read: {}",
-                DisplayErrorContext(&error)
-            ))
-        })?
-        .into_bytes()
-        .to_vec();
-    Ok(HttpResponse {
-        status,
-        headers,
-        body,
-    })
+/// A body-read failure as a redacted boundary error.
+fn body_error(error: &aws_smithy_types::byte_stream::error::Error) -> AwsError {
+    let mut source: Option<&(dyn std::error::Error + 'static)> = Some(error);
+    let mut unexpected_eof = false;
+    while let Some(current) = source {
+        if current
+            .downcast_ref::<std::io::Error>()
+            .is_some_and(|error| error.kind() == std::io::ErrorKind::UnexpectedEof)
+        {
+            unexpected_eof = true;
+            break;
+        }
+        source = current.source();
+    }
+    if malformed_http(error) || unexpected_eof {
+        return AwsError::Protocol;
+    }
+    AwsError::connect(format!(
+        "the response body could not be read: {}",
+        DisplayErrorContext(error)
+    ))
 }
 
 impl Transport for SdkTransport {
     fn send(&self, request: &HttpRequest) -> Result<HttpResponse, AwsError> {
-        require_https(&request.url)?;
-        require_public_host(&request.url)?;
-        let sdk_request = to_sdk_request(request)?;
+        let sdk_request = Self::admit(request)?;
         let connector = self.connector_for(&request.timeouts);
-        self.runtime
-            .block_on(exchange(connector, sdk_request, request.timeouts.read()))
+        let read_timeout = request.timeouts.read();
+        self.runtime.block_on(async {
+            let response = self.call(connector, sdk_request).await?;
+            let status = response.status().as_u16();
+            let headers = response_headers(response.headers().iter());
+            let collected = tokio::time::timeout(
+                read_timeout,
+                ByteStream::new(response.into_body()).collect(),
+            )
+            .await
+            .map_err(|_| {
+                AwsError::timeout(TimeoutPhase::Read, "the response body was not read in time")
+            })?;
+            let body = collected
+                .map_err(|error| body_error(&error))?
+                .into_bytes()
+                .to_vec();
+            Ok(HttpResponse {
+                status,
+                headers,
+                body,
+            })
+        })
+    }
+}
+
+/// A streamed SDK response body.
+struct SdkStream {
+    runtime: SdkRuntime,
+    status: u16,
+    headers: Headers,
+    body: ByteStream,
+    idle: Duration,
+    limiter: ChunkLimiter,
+    deadline: Option<std::time::Instant>,
+    expired: bool,
+}
+
+impl Drop for SdkStream {
+    fn drop(&mut self) {
+        if self.deadline.is_some() {
+            // Hyper runs the connection on this current-thread runtime. Drive
+            // cancellation after releasing the body so it can close the socket.
+            let body = std::mem::replace(&mut self.body, ByteStream::from_static(b""));
+            self.runtime.block_on(async {
+                drop(body);
+                tokio::task::yield_now().await;
+                tokio::task::yield_now().await;
+            });
+        }
+    }
+}
+
+impl ResponseStream for SdkStream {
+    fn status(&self) -> u16 {
+        self.status
+    }
+
+    fn headers(&self) -> &Headers {
+        &self.headers
+    }
+
+    fn narrow_body_limit(&mut self, max_body_bytes: u64) {
+        self.limiter.narrow(max_body_bytes);
+    }
+
+    fn next_chunk(&mut self) -> Result<Option<Vec<u8>>, StreamError> {
+        if self.expired
+            || self
+                .deadline
+                .is_some_and(|d| std::time::Instant::now() >= d)
+        {
+            self.expired = true;
+            return Err(StreamError::DeadlineExceeded);
+        }
+        let (runtime, body, idle) = (&self.runtime, &mut self.body, self.idle);
+        let deadline = self.deadline;
+        let remaining = self.limiter.remaining();
+        let mut oversized = false;
+        let result = self.limiter.next(|| {
+            // The timer must be created inside the runtime.
+            let now = std::time::Instant::now();
+            let (wait, deadline_binding) = match deadline {
+                Some(d) if d.saturating_duration_since(now) <= idle => {
+                    (d.saturating_duration_since(now), true)
+                }
+                _ => (idle, false),
+            };
+            match runtime.block_on(async { tokio::time::timeout(wait, body.next()).await }) {
+                Err(_) if deadline_binding => Err(StreamError::DeadlineExceeded),
+                Err(_) => Err(StreamError::IdleTimeout),
+                Ok(None) => Ok(None),
+                Ok(Some(Err(error))) => Err(StreamError::Failed(body_error(&error))),
+                Ok(Some(Ok(bytes)))
+                    if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > remaining =>
+                {
+                    oversized = true;
+                    Err(StreamError::TooLarge)
+                }
+                Ok(Some(Ok(bytes))) => Ok(Some(bytes.to_vec())),
+            }
+        });
+        if oversized {
+            self.limiter.refuse();
+        }
+        if result == Err(StreamError::DeadlineExceeded) {
+            self.expired = true;
+        }
+        result
+    }
+}
+
+impl StreamingTransport for SdkTransport {
+    /// The blocking system DNS lookup cannot be cancelled, so opening may
+    /// overrun the deadline by one lookup (R-DNS).
+    fn open<'a>(
+        &'a self,
+        request: &HttpRequest,
+        limits: &StreamLimits,
+    ) -> Result<Box<dyn ResponseStream + 'a>, AwsError> {
+        let deadline_error =
+            || AwsError::timeout(TimeoutPhase::Deadline, "the response deadline elapsed");
+        if limits
+            .deadline()
+            .is_some_and(|d| std::time::Instant::now() >= d)
+        {
+            return Err(deadline_error());
+        }
+        let sdk_request = Self::admit(request)?;
+        let connector = match limits.deadline() {
+            Some(deadline) => (self.factory)(&request.timeouts, Some(deadline)),
+            None => self.connector_for(&request.timeouts),
+        };
+        let response = self.runtime.block_on(async {
+            if let Some(deadline) = limits.deadline() {
+                tokio::time::timeout_at(deadline.into(), self.call(connector, sdk_request))
+                    .await
+                    .map_err(|_| deadline_error())?
+            } else {
+                self.call(connector, sdk_request).await
+            }
+        });
+        if limits
+            .deadline()
+            .is_some_and(|d| std::time::Instant::now() >= d)
+        {
+            return Err(deadline_error());
+        }
+        let response = response?;
+        Ok(Box::new(SdkStream {
+            runtime: self.runtime.clone(),
+            status: response.status().as_u16(),
+            headers: response_headers(response.headers().iter()),
+            body: ByteStream::new(response.into_body()),
+            idle: request.timeouts.read(),
+            limiter: ChunkLimiter::new(*limits),
+            deadline: limits.deadline(),
+            expired: false,
+        }))
     }
 }
 
@@ -501,6 +819,22 @@ mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::UNIX_EPOCH;
 
+    #[test]
+    fn sdk_stream_refuses_oversized_frame_before_copy() {
+        let mut stream = SdkStream {
+            runtime: SdkRuntime::new().unwrap(),
+            status: 200,
+            headers: Headers::new(),
+            body: ByteStream::from_static(b"abcdef"),
+            idle: Duration::from_secs(1),
+            limiter: ChunkLimiter::new(StreamLimits::new(5, 2).unwrap()),
+            deadline: None,
+            expired: false,
+        };
+        assert_eq!(stream.next_chunk(), Err(StreamError::TooLarge));
+        assert_eq!(stream.next_chunk(), Err(StreamError::TooLarge));
+    }
+
     /// 2015-08-30T12:36:00Z, the AWS `SigV4` test-suite time.
     fn suite_time() -> SystemTime {
         UNIX_EPOCH + Duration::from_secs(1_440_938_160)
@@ -513,6 +847,10 @@ mod tests {
 
     fn runtime() -> SdkRuntime {
         SdkRuntime::new().expect("runtime")
+    }
+
+    fn test_roots() -> ValidatedRoots {
+        ValidatedRoots::for_tests(vec![super::test_support::Pki::new("sdk test CA").ca_der])
     }
 
     /// A fixed SDK credentials outcome.
@@ -846,6 +1184,175 @@ mod tests {
         assert!(!format!("{signer:?}").contains("AKID"));
     }
 
+    fn suite_signer() -> SigV4Signer<FakeProvider> {
+        SigV4Signer::new(FakeProvider::with_keys(
+            "suite",
+            "AKIDEXAMPLE",
+            "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
+        ))
+        .with_clock(suite_time)
+    }
+
+    /// Method, URL, headers, body, signed headers, signature.
+    type SuiteVector = (
+        Method,
+        &'static str,
+        Vec<(&'static str, &'static str)>,
+        &'static [u8],
+        &'static str,
+        &'static str,
+    );
+
+    /// T-SIG-1: further vectors from the AWS `SigV4` test suite (2015-08-30).
+    #[test]
+    fn sigv4_matches_more_aws_test_suite_vectors() {
+        let credential = "Credential=AKIDEXAMPLE/20150830/us-east-1/service/aws4_request";
+        let cases: [SuiteVector; 3] = [
+            (
+                Method::Post,
+                "https://example.amazonaws.com/",
+                vec![],
+                b"",
+                "host;x-amz-date",
+                "5da7c1a2acd57cee7505fc6676e4e544621c30862966e37dddb68e92efbe5d6b",
+            ),
+            (
+                Method::Get,
+                "https://example.amazonaws.com/?Param2=value2&Param1=value1",
+                vec![],
+                b"",
+                "host;x-amz-date",
+                "b97d918cfa904a5beff61c982a1b6f458b799221646efd99d3219ec94cdf2500",
+            ),
+            (
+                Method::Post,
+                "https://example.amazonaws.com/",
+                vec![("content-type", "application/x-www-form-urlencoded")],
+                b"Param1=value1",
+                "content-type;host;x-amz-date",
+                "ff11897932ad3f4e8b18135d722051e5ac45fc38421b1da7b9d196a0fe09473a",
+            ),
+        ];
+        for (method, url, headers, body, signed, signature) in cases {
+            let mut request = vanilla_request();
+            request.method = method;
+            request.url = url.to_string();
+            request.body = body.to_vec();
+            for (name, value) in headers {
+                request.headers.insert(name, value).unwrap();
+            }
+            suite_signer()
+                .sign(&mut request, &suite_scope())
+                .expect("signed");
+            assert_eq!(
+                request.headers.get("authorization"),
+                Some(
+                    format!(
+                        "AWS4-HMAC-SHA256 {credential}, SignedHeaders={signed}, Signature={signature}"
+                    )
+                    .as_str()
+                ),
+                "{url}"
+            );
+        }
+    }
+
+    /// R-HDR: the signer refuses authority and framing headers (a supplied
+    /// `Host` would otherwise be signed instead of the URL authority).
+    #[test]
+    fn the_signer_refuses_authority_and_framing_headers() {
+        for name in ["Host", "content-length", "Transfer-Encoding", "connection"] {
+            let mut request = vanilla_request();
+            request.headers.insert(name, "evil.example").unwrap();
+            let error = suite_signer()
+                .sign(&mut request, &suite_scope())
+                .unwrap_err();
+            assert_eq!(error.code(), "aws_invalid_config", "{name}");
+            assert!(request.headers.get("authorization").is_none(), "{name}");
+            assert!(!error.to_string().contains("evil.example"));
+        }
+    }
+
+    /// R-HDR: both transports refuse them before any connector is called.
+    #[test]
+    fn the_transport_refuses_authority_and_framing_headers_before_sending() {
+        let connector = FakeConnector::new(vec![Ok((200, vec![], "{}"))]);
+        let seen = Arc::clone(&connector.seen);
+        let transport = SdkTransport::with_connector(&runtime(), connector);
+        let limits = StreamLimits::new(1024, 64).unwrap();
+        for name in [
+            "host",
+            "Content-Length",
+            "te",
+            "trailer",
+            "keep-alive",
+            "upgrade",
+        ] {
+            let mut request = vanilla_request();
+            request.headers.insert(name, "x").unwrap();
+            assert_eq!(
+                transport.send(&request).unwrap_err().code(),
+                "aws_invalid_config",
+                "{name}"
+            );
+            assert_eq!(
+                transport.open(&request, &limits).err().map(|e| e.code()),
+                Some("aws_invalid_config"),
+                "{name}"
+            );
+        }
+        assert!(seen.lock().unwrap().methods.is_empty());
+    }
+
+    #[test]
+    fn the_streaming_transport_applies_the_same_guards_and_returns_the_head() {
+        let connector = FakeConnector::new(vec![Ok((
+            202,
+            vec![("content-type", "text/event-stream")],
+            "data: 1\n\n",
+        ))]);
+        let transport = SdkTransport::with_connector(&runtime(), connector);
+        let limits = StreamLimits::new(1024, 4).unwrap();
+        let mut plain = vanilla_request();
+        plain.url = "http://logs.us-east-1.amazonaws.com/".to_string();
+        assert_eq!(
+            transport.open(&plain, &limits).err().map(|e| e.code()),
+            Some("aws_invalid_config")
+        );
+        let mut literal = vanilla_request();
+        literal.url = "https://169.254.169.254/".to_string();
+        assert_eq!(
+            transport.open(&literal, &limits).err().map(|e| e.code()),
+            Some("aws_invalid_config")
+        );
+        let mut stream = transport.open(&vanilla_request(), &limits).expect("stream");
+        assert_eq!(stream.status(), 202);
+        assert_eq!(
+            stream.headers().get("content-type"),
+            Some("text/event-stream")
+        );
+        let mut body = Vec::new();
+        while let Some(chunk) = stream.next_chunk().expect("chunk") {
+            assert!(chunk.len() <= 4);
+            body.extend(chunk);
+        }
+        assert_eq!(body, b"data: 1\n\n");
+    }
+
+    #[test]
+    fn a_streamed_response_from_a_non_public_peer_is_refused() {
+        let connector = FakeConnector::new(vec![Ok((200, vec![], "{}"))]).with_peer("10.0.0.1:443");
+        let poisoned = Arc::clone(&connector.poisoned);
+        let transport = SdkTransport::with_connector(&runtime(), connector);
+        let limits = StreamLimits::new(1024, 64).unwrap();
+        let error = transport
+            .open(&vanilla_request(), &limits)
+            .err()
+            .expect("refused");
+        assert_eq!(error.code(), "aws_invalid_config");
+        assert!(poisoned.load(Ordering::SeqCst));
+    }
+
     /// A Send + Sync provider with a session token.
     struct TokenProvider;
 
@@ -1134,8 +1641,12 @@ mod tests {
     fn the_production_transport_refuses_literal_ips_without_connecting() {
         // The guarded production stack: the refusal comes before the hyper
         // connector, which would skip the resolver for a literal IP.
-        let transport =
-            SdkTransport::with_resolver(&runtime(), Arc::new(StaticResolver("52.94.0.10")));
+        let transport = SdkTransport::with_resolver(
+            &runtime(),
+            &test_roots(),
+            Arc::new(StaticResolver("52.94.0.10")),
+        )
+        .expect("transport");
         for url in [
             "https://127.0.0.1/",
             "https://[::1]/",
@@ -1149,6 +1660,69 @@ mod tests {
             assert!(error.to_string().contains("non-public address"), "{error}");
         }
         assert!(transport.connectors.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn production_guard_refuses_nonpublic_destinations_before_connecting() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let transport = SdkTransport::with_resolver(
+            &runtime(),
+            &test_roots(),
+            Arc::new(StaticResolver("127.0.0.1")),
+        )
+        .unwrap();
+        for host in [
+            "127.0.0.1",
+            "[::1]",
+            "0x7f.1",
+            "10.0.0.1",
+            "merchant.example",
+        ] {
+            let mut request = vanilla_request();
+            request.url = format!("https://{host}:{port}/");
+            let error = transport.send(&request).unwrap_err();
+            assert_eq!(error.code(), "aws_invalid_config", "{host}: {error}");
+            assert_eq!(
+                listener.accept().unwrap_err().kind(),
+                std::io::ErrorKind::WouldBlock,
+                "{host}"
+            );
+        }
+        // Merchant streaming opens with a deadline, which creates a fresh
+        // connector through the production factory rather than the cache.
+        let mut request = vanilla_request();
+        request.url = format!("https://merchant.example:{port}/");
+        let limits = StreamLimits::new(1024, 64)
+            .unwrap()
+            .with_deadline(std::time::Instant::now() + Duration::from_secs(5));
+        let error = transport.open(&request, &limits).err().expect("refused");
+        assert_eq!(error.code(), "aws_invalid_config");
+        assert_eq!(
+            listener.accept().unwrap_err().kind(),
+            std::io::ErrorKind::WouldBlock
+        );
+    }
+
+    #[test]
+    fn captured_connection_without_remote_address_is_refused_and_poisoned() {
+        let capture = CaptureSmithyConnection::new();
+        let poisoned = Arc::new(AtomicBool::new(false));
+        let marker = Arc::clone(&poisoned);
+        capture.set_connection_retriever(move || {
+            let marker = Arc::clone(&marker);
+            Some(
+                ConnectionMetadata::builder()
+                    .proxied(false)
+                    .poison_fn(move || marker.store(true, Ordering::SeqCst))
+                    .build(),
+            )
+        });
+        let error = check_peer(&capture).unwrap_err();
+        assert_eq!(error.code(), "aws_invalid_config");
+        assert!(poisoned.load(Ordering::SeqCst));
+        assert!(check_peer(&CaptureSmithyConnection::new()).is_ok());
     }
 
     #[test]
@@ -1235,6 +1809,7 @@ mod tests {
         let rt = runtime();
         let public = GuardedResolver {
             inner: Arc::new(StaticResolver("52.94.0.10")),
+            deadline: None,
         };
         let addresses = rt
             .block_on(public.resolve_dns("logs.us-east-1.amazonaws.com"))
@@ -1242,6 +1817,7 @@ mod tests {
         assert_eq!(addresses, vec!["52.94.0.10".parse::<IpAddr>().unwrap()]);
         let private = GuardedResolver {
             inner: Arc::new(StaticResolver("10.1.2.3")),
+            deadline: None,
         };
         let error = rt
             .block_on(private.resolve_dns("logs.us-east-1.amazonaws.com"))
@@ -1252,10 +1828,76 @@ mod tests {
     }
 
     #[test]
+    fn rebinding_private_connect_time_answer_is_refused() {
+        struct Rebinding(std::sync::atomic::AtomicUsize);
+        impl HostResolver for Rebinding {
+            fn resolve(&self, _: &str) -> Result<Vec<IpAddr>, String> {
+                let address = if self.0.fetch_add(1, Ordering::SeqCst) == 0 {
+                    "8.8.8.8"
+                } else {
+                    "127.0.0.1"
+                };
+                Ok(vec![address.parse().unwrap()])
+            }
+        }
+        let resolver = Arc::new(Rebinding(std::sync::atomic::AtomicUsize::new(0)));
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        assert_eq!(
+            guarded_addresses("merchant.example", resolver.as_ref()).unwrap(),
+            vec!["8.8.8.8".parse::<IpAddr>().unwrap()]
+        );
+        let transport =
+            SdkTransport::with_resolver(&runtime(), &test_roots(), resolver.clone()).unwrap();
+        let mut request = vanilla_request();
+        request.url = format!(
+            "https://merchant.example:{}/",
+            listener.local_addr().unwrap().port()
+        );
+        let error = transport.send(&request).unwrap_err();
+        assert_eq!(error.code(), "aws_invalid_config");
+        assert!(error.to_string().contains("127.0.0.1"));
+        assert_eq!(resolver.0.load(Ordering::SeqCst), 2);
+        assert_eq!(
+            listener.accept().unwrap_err().kind(),
+            std::io::ErrorKind::WouldBlock
+        );
+    }
+
+    #[test]
+    fn guarded_dns_refuses_answers_returned_after_deadline() {
+        struct SlowResolver(std::sync::atomic::AtomicUsize);
+        impl HostResolver for SlowResolver {
+            fn resolve(&self, _: &str) -> Result<Vec<IpAddr>, String> {
+                self.0.fetch_add(1, Ordering::SeqCst);
+                std::thread::sleep(Duration::from_millis(40));
+                Ok(vec!["8.8.8.8".parse().unwrap()])
+            }
+        }
+        let inner = Arc::new(SlowResolver(std::sync::atomic::AtomicUsize::new(0)));
+        let guard = GuardedResolver {
+            inner: inner.clone(),
+            deadline: Some(std::time::Instant::now() + Duration::from_millis(10)),
+        };
+        assert!(runtime()
+            .block_on(guard.resolve_dns("merchant.example"))
+            .is_err());
+        assert_eq!(inner.0.load(Ordering::SeqCst), 1);
+        assert!(runtime()
+            .block_on(guard.resolve_dns("merchant.example"))
+            .is_err());
+        assert_eq!(inner.0.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
     fn the_production_transport_builds_without_touching_the_network() {
         // Building a connector loads TLS roots but opens no socket.
-        let transport =
-            SdkTransport::with_resolver(&runtime(), Arc::new(StaticResolver("52.94.0.10")));
+        let transport = SdkTransport::with_resolver(
+            &runtime(),
+            &test_roots(),
+            Arc::new(StaticResolver("52.94.0.10")),
+        )
+        .expect("transport");
         let first = transport.connector_for(&Timeouts::default());
         let again = transport.connector_for(&Timeouts::default());
         let other = transport

@@ -232,7 +232,7 @@ re-parse `argv`.
   over everything after them. Inside a command, `-h`/`--help` selects help; any
   other `-`-prefixed word must be one of the command's flags or it is a usage
   error; a flag repeated is accepted once. A bare `-` is refused the same way
-  unless the command opts in (see "The bare `-` stdio marker").
+  unless the command opts in (see "The bare `-` argument").
 - Handlers return `Result<(), ToolkitError>`. `ToolkitError` has a class (usage
   = exit 2, runtime = exit 1), a stable machine code (for example
   `root_not_found`, `invalid_arguments`, `stdout_write`, `parse_error`,
@@ -291,33 +291,57 @@ let workloads: Vec<&str> = invocation.values_of("--workload").collect();
   (or `Output::diagnostic`) before they reach a message, as for any other value flag
   (see "Untrusted text in diagnostics").
 
-### The bare `-` stdio marker (#4743, #4780)
+### The bare `-` argument (#4743, #4780)
 
-argparse treats a lone `-` as an ordinary value, and scripts use it to mean
-"standard input" (`--json -`). Most slices turn a path argument straight into a
-filesystem path, where a `-` would read or overwrite a file literally named `-`
-(`dynamodb calculate-costs --output -` truncated `./-`). So the router fails
-closed: a command receives `-` only if it opts in.
+argparse treats a lone `-` as an ordinary value, and a few scripts use it to mean
+"standard input" (`--json -`). Almost every slice turns a path argument straight
+into a filesystem path, where a `-` would read or overwrite a file literally named
+`-` (`elasticache dashboard --output -` truncated `./-`). So the router fails
+closed, before any handler and so before any filesystem access, for EVERY
+registered value flag and positional: a command receives `-` only if it is listed.
+`./-` stays a legal explicit literal path. The full policy, the audited literal
+parameters and the reproductions are in `docs/migration/cli-bare-dash.md`.
 
-- The allowlist is `STDIO_DASH` in `src/lib.rs`, a list of `(command path, flag)`
-  pairs: the space-joined `CommandSpec::path` and either a value flag name
-  (`"--json"`) or `STDIO_DASH_POSITIONAL` (`"<positional>"`). It ships empty. There
-  is no field on `CommandSpec`, so adding a pair never touches a command row.
+- There are two allowlists in `src/lib.rs`, each a list of `(command path, flag)`
+  pairs (the space-joined `CommandSpec::path` and a value flag name). There is no
+  field on `CommandSpec`, so adding a pair never touches a command row. A pair is
+  in at most one of them.
+  - `STDIO_DASH` lists parameters whose Python original reads `-` as standard
+    input; a handler for a listed pair must read it deliberately (bounded, UTF-8
+    checked, with a finite wait). It ships empty: no parameter reads stdin, the
+    CloudWatch `--json -` / `--json-file -` included (#4935).
+    `STDIO_DASH_POSITIONAL` (`"<positional>"`) names a command's positionals.
+  - `LITERAL_DASH` lists value flags whose exact value `-` is a legitimate literal
+    passed through unchanged: a selector, id, name or text that the Python original
+    takes as an arbitrary string and that the handler never uses as a path
+    (`startup verify-model-path --workload -`, #4934). Path parameters are never
+    listed, a positional is never listed, and each entry is audited against its
+    Python `file:line` in `docs/migration/cli-bare-dash.md`. A value that is
+    composed into a path (a file name, suffix or directory name) is not listed
+    either: `bedrock-report render --date-suffix -` is refused because it would
+    select `MIGRATION_REPORT_-.md` (#4955).
+
 - For a listed pair the exact token `-` is a value of that flag, spaced
-  (`--json -`) or attached (`--json=-`), plain or repeatable, even on a
-  `strict_values` command; or, for `<positional>`, a positional that counts against
-  `max_positionals`. Every other `-`-prefixed value (`-x`, `--foo`, `--`) and the
-  empty value are still refused.
-- For every other pair `-` is refused exactly as before #4743: a positional `-` is
-  an unknown flag, and on a `strict_values` command a value of `-` is the usual
-  `invalid arguments` usage error (exit 2, before the handler runs). A command
-  without `strict_values` keeps taking any value verbatim, as it always did.
-- A slice requests stdin/stdout support by adding its pair in the same change that
-  makes its handler treat `-` explicitly: bounded, UTF-8 checked, diagnostics
-  escaped like its other inputs, and no fallback to a file named `-` (`./-` is
-  how a caller names that file). `tests/diag_contract.rs` checks that every entry
-  names a real command and flag.
+  (`--workload -`) or attached (`--workload=-`), plain or repeatable, even on a
+  `strict_values` command. Every other `-`-prefixed value (`-x`, `--foo`, `--`) and
+  the empty value keep their previous handling.
+- For every other pair `-` is a usage error (exit 2, before the handler runs):
+  `error: invalid arguments: --output does not accept - (standard input/output);
+  use ./- for a file named -`, one line naming the flag, then the usage text. A
+  positional `-` gets the same error without a flag name. This holds for
+  `strict_values` and non-strict commands alike, so a new slice cannot forget it.
+- `tests/diag_contract.rs` enumerates every registered value flag and positional
+  from `COMMANDS` (`every_value_flag_and_positional_dash_is_refused_or_in_exactly_one_list`):
+  each is refused, or listed in exactly one of the two lists, and a new flag
+  fails the test until it is one or the other. A `LITERAL_DASH` flag is run
+  against a FIFO named `-` that must never be opened
+  (`a_literal_dash_flag_never_reaches_the_filesystem`).
 - The router never reads stdin itself.
+- The global usage text is printed for every command's `--help` and appended to
+  every usage error, so a slice's description edit reaches every command. Its
+  length and hash are pinned to the base text
+  (`the_global_usage_text_is_byte_identical_to_the_base`); a deliberate change
+  updates the pin in the same commit.
 
 ## Shared library contracts (`toolkit-core`)
 
@@ -377,9 +401,18 @@ escaping, so there is now one helper and one contract test.
    keeps only the first 120 characters and ends with `...[N more chars]` when it
    cut something. `quote_untrusted_bounded` takes your own limit and
    `escape_untrusted` omits the quotes.
-3. **Escaping is not redaction.** The helper never recognises secrets. Payload
-   contents that may hold credentials must be left out of the diagnostic or
-   redacted first (`toolkit_aws::redact`); do not quote them.
+3. **Escaping is not redaction.** `quote_untrusted` never recognises secrets.
+   Payload contents that may hold credentials must be left out of the
+   diagnostic or redacted first (`toolkit_aws::redact`); do not quote them.
+   For a caller path or value inside `toolkit-cli`, use `safe_text::safe_path`
+   (or `safe_text` / `safe_prefix` for other text): it redacts the whole value,
+   then bounds it (200 characters for a path, then `...`), then escapes it, in
+   that order, so a credential that crosses the bound is still recognized
+   (#4941). A renderer that quotes or escapes on its own (a `repr`, a quoted
+   choice) is given `safe_text::shown_value(value)`, never the raw value, and
+   a value written into stdout data (JSON, a template) is given
+   `safe_text::redacted_value(value)` (#4971). Do not write a slice-local
+   redact/bound/escape helper.
 4. **Do not flatten or hand-roll.** Replacing controls with spaces (as
    `skills list` and `asm exec` do for their pinned output) hides the damage
    instead of showing it and each copy drifts; new code uses the helper. Those
@@ -387,7 +420,11 @@ escaping, so there is now one helper and one contract test.
    flattens into a tab-separated line and `asm exec` flattens after redaction,
    so the helper would change bytes tests already pin.
 5. **Safety net at the sinks.** `Output::diagnostic` and the final `error:`
-   report pass their text through `toolkit_core::neutralize_text_knowing`, which
+   report pass their text through `safe_text::CallerText::diagnostic` (#4941:
+   a credential-shaped or overlong argument value echoed verbatim is shown
+   redacted, bounded to 200 characters and on one line, and a credential
+   fragment of an argument value is hidden whole or cut, every match found
+   before any is replaced; stdout is never rewritten), which, like `toolkit_core::neutralize_text_knowing` before it,
    writes every control character (tab and carriage return included),
    bidirectional override and similar invisible character as `\r`, `\t` or
    `\uXXXX` and changes nothing else. Newlines are kept because several
@@ -403,8 +440,9 @@ escaping, so there is now one helper and one contract test.
    `toolkit_core::neutralize_line(&value)` also escapes newlines and keeps
    benign output byte-identical (used for the `startup program-artifacts` and
    `startup terraform-policy` not-a-directory diagnostics); `quote_untrusted`
-   adds quotes and a bound. Stdout lines are not rewritten: a handler that
-   prints untrusted text on stdout must escape it itself.
+   adds quotes and a bound. Stdout lines are not escaped (only argument
+   credentials are hidden there): a handler that prints untrusted text on
+   stdout must escape it itself.
 
 `tests/diag_contract.rs` runs every entry of `COMMANDS` through the real binary
 with hostile argv (ESC, BEL, CR, LF, U+202E and a marker in every value flag
@@ -1272,6 +1310,14 @@ escaped before it is printed (#4602). The parity table, the snapshot and
 describe formats, the intentional changes and the follow-ups are in
 [docs/migration/elasticache.md](../../docs/migration/elasticache.md).
 
+The tunnel tools `toolkit elasticache find-tunnel-host | start-tunnel |
+test-connection` (#4393) replace `find_tunnel_host.py`, `start_tunnel.py` and
+`test_connection.py`. They open no sockets, start no processes and connect to
+no AWS, Redis or Valkey endpoint: each needs `--recorded FILE` (a recorded
+run) and otherwise refuses with `elasticache_seam_unavailable`. Passwords and
+tokens are never printed. See
+[docs/migration/elasticache-tunnel.md](../../docs/migration/elasticache-tunnel.md).
+
 ## cloudwatch (#4380)
 
 `toolkit cloudwatch render`, `toolkit cloudwatch validate` and
@@ -1387,7 +1433,9 @@ toolkit cloudwatch capture-dataset --trace-ids IDS [--mode create|add] [--datase
   `batch-delete-by-scope`, `batch-delete-by-arns`, `get-status` or
   `check-status`; `snapshots OP` is `sample` or `search`. The arguments are one
   JSON object with the legacy parameter names (`--print-contract` prints the
-  schema). An unknown or mistyped argument exits 2; a failed operation prints
+  schema). `--json -` and `--json-file -` are refused: stdin is not an
+  argument source (`docs/migration/cli-bare-dash.md`). An unknown or mistyped
+  argument exits 2; a failed operation prints
   its report on stdout and exits 1. Caller values are escaped to one line
   before they reach a request or a diagnostic, and AWS text is escaped by the
   final output pass.
@@ -1439,6 +1487,16 @@ bundle or `scripts/telemetry`; without it there is no plugin version and nothing
   subcommands (`skill-invoked`, `migration`, `consent session-start`) always exit 0 and are
   silent (`session-start` prints the one instruction a host injects into the agent's context);
   `consent`, `status`, `reconcile` and `bundles` exit 2 on an unknown word.
+- **A bare `-` path flag (#4961).** `--telemetry-dir` and `bundles --plugin-root` follow the
+  repository's bare-`-` policy (#4780), applied by the handler because a passthrough command's
+  words never reach the router. An interactive subcommand (`status`, `reconcile`,
+  `consent show|status|accept|opt-out`, `bundles`) given `-` in either spelling
+  (`--telemetry-dir -`, `--telemetry-dir=-`) exits 2 with the router message
+  `invalid arguments: --telemetry-dir does not accept - ...; use ./- for a file named -` and
+  reads or writes nothing; a bare `-` word is refused the same way. A hook (`skill-invoked`,
+  `migration`, `consent session-start`) never fails: it treats the flag as absent, so the output
+  is that of the hook without the flag, the exit is 0 and no file is touched. `./-` stays an
+  explicit literal path. See `docs/migration/cli-bare-dash.md`.
 - **Consent is fail-closed.** Only `~/.aws-startup-advisor/plugin-telemetry.json` with
   `consentStatus` `ACCEPTED` and a UUID `installId` permits an event. A missing, unreadable,
   malformed or oversized record, an unknown home directory and `OPT_OUT` all mean no emission;

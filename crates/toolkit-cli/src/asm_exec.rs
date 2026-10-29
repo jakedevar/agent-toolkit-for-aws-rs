@@ -24,9 +24,10 @@
 //! Everything with a side effect is injected through [`Deps`]: the environment,
 //! the loopback transport, the MCP signer and transport, DNS and the program
 //! launcher. Tests use the doubles from `toolkit_aws::testing`; no test reaches
-//! AWS. In this build the MCP signer and the HTTPS transport are the
-//! fail-closed [`credentials::UnavailableSigner`]/
-//! [`credentials::UnavailableTransport`] pair (see the migration doc).
+//! AWS. With the `aws-sdk` cargo feature the MCP signer and HTTPS transport
+//! are the real `SigV4` signer and SDK transport
+//! ([`credentials::sdk_adapters`], #4582); without it they are the fail-closed
+//! `UnavailableSigner`/`UnavailableTransport` pair (see the migration doc).
 
 use std::cell::{Cell, RefCell};
 use std::ffi::{OsStr, OsString};
@@ -48,9 +49,9 @@ pub mod process;
 pub mod reference;
 pub mod sma;
 
-use credentials::{
-    credential_chain, CommandRunner, SystemRunner, UnavailableSigner, UnavailableTransport,
-};
+use credentials::{credential_chain, CommandRunner, SystemRunner};
+#[cfg(not(feature = "aws-sdk"))]
+use credentials::{UnavailableSigner, UnavailableTransport};
 use loopback::{LoopbackEndpoint, LoopbackHttp};
 use mcp::{McpBackend, DEFAULT_ENDPOINT};
 use process::{Launcher, SystemLauncher};
@@ -135,13 +136,21 @@ pub fn exec_command(invocation: &Invocation, output: &mut Output<'_>) -> Result<
     let shared_env: Rc<dyn Env> = Rc::new(ProcessEnv);
     let runner: Rc<dyn CommandRunner> = Rc::new(SystemRunner);
     let chain = credential_chain(&shared_env, &runner);
-    let signer = UnavailableSigner::new(&chain);
+    #[cfg(feature = "aws-sdk")]
+    let (signer, mcp_transport) = credentials::sdk_adapters(
+        chain,
+        toolkit_aws::sdk::roots::ValidatedRoots::from_process(),
+    );
+    #[cfg(feature = "aws-sdk")]
+    let mcp_transport = mcp_transport.as_ref();
+    #[cfg(not(feature = "aws-sdk"))]
+    let (signer, mcp_transport) = (UnavailableSigner::new(&chain), &UnavailableTransport);
     let deps = Deps {
         env: &env,
         process_env: std::env::vars_os().collect(),
         launcher: &SystemLauncher,
         sma_transport: &LoopbackHttp,
-        mcp_transport: &UnavailableTransport,
+        mcp_transport,
         signer: &signer,
         resolver: &SystemResolver,
     };

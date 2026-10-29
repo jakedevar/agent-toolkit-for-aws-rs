@@ -701,7 +701,7 @@ pub fn check_expected_command(
             "invalid_argument",
             format!(
                 "argument kind: invalid choice: {} (choose from {})",
-                toolkit_core::quote_untrusted(kind),
+                toolkit_core::quote_untrusted(&crate::safe_text::shown_value(kind)),
                 kinds()
             ),
         ));

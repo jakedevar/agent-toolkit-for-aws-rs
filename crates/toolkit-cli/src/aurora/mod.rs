@@ -293,7 +293,7 @@ impl Engine {
             Some("postgresql") => Ok(Self::Postgresql),
             Some(other) => Err(args::usage(format!(
                 "argument --engine: invalid choice: {} (choose from 'mysql', 'postgresql')",
-                crate::manifests::py_repr_str(other)
+                crate::manifests::py_repr_str(&crate::safe_text::shown_value(other))
             ))),
             None => Err(args::usage(
                 "the following arguments are required: --engine",

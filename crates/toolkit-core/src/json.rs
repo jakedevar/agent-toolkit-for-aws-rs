@@ -15,9 +15,15 @@
 //!   finite [`Json::Float`] (an integer outside the `i64` range is therefore
 //!   read as a float and may lose precision). Numbers that overflow `f64` are
 //!   rejected.
+//! - Parser work is linear in the input: duplicate keys are found through a
+//!   hash index (default `RandomState`, so keys cannot be chosen to collide)
+//!   while members keep insertion order. Parsing and writing are synchronous
+//!   and never yield; [`parse_json_with_limits`] adds a node cap, and
+//!   [`parse_json`] keeps its depth limit and has no node cap.
 //! - Non-finite floats cannot be written in JSON; the writers emit `null` for
 //!   them, like `JSON.stringify`.
 
+use std::collections::HashSet;
 use std::fmt::Write as _;
 
 use crate::error::ParseError;
@@ -226,24 +232,98 @@ pub fn skills_to_json(entries: &[SkillEntry]) -> String {
 /// not exactly one valid JSON value (see the module documentation for the
 /// strictness rules).
 pub fn parse_json(input: &str) -> Result<Json, ParseError> {
+    parse_json_with_limits(input, &JsonLimits::default())
+}
+
+/// Limits for [`parse_json_with_limits`].
+///
+/// [`JsonLimits::default`] is exactly what [`parse_json`] applies: nesting
+/// up to [`MAX_JSON_DEPTH`] and no node cap.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct JsonLimits {
+    /// Greatest zero-based nesting depth of a value (the top-level value is
+    /// depth 0); a value deeper than this is rejected with "nesting is too
+    /// deep". The parser recurses on the native stack, so callers should not
+    /// raise this far above [`MAX_JSON_DEPTH`].
+    pub max_depth: usize,
+    /// Greatest number of nodes in the document; a node is every value
+    /// (including each array element and object member value) and every
+    /// object member. A document with more is rejected with "too many JSON
+    /// values", at the first node past the cap (for an object member, at its
+    /// opening quote, before its key is scanned, decoded or allocated).
+    pub max_nodes: usize,
+}
+
+impl Default for JsonLimits {
+    fn default() -> Self {
+        Self {
+            max_depth: MAX_JSON_DEPTH,
+            max_nodes: usize::MAX,
+        }
+    }
+}
+
+/// Work counters reported by [`parse_json_with_stats`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct JsonParseStats {
+    /// Object-key operations spent on duplicate detection: one per key
+    /// comparison in the linear scan of a small object and one per index
+    /// insertion. At most about `n + 36` for `n` keys, not `n(n-1)/2`.
+    pub key_probes: u64,
+    /// Nodes seen (see [`JsonLimits::max_nodes`]).
+    pub nodes: usize,
+}
+
+/// Parses one JSON document under explicit [`JsonLimits`].
+///
+/// Behaves exactly like [`parse_json`] apart from the limits. Parser work is
+/// linear in the input: object keys are checked for duplicates through a hash
+/// index (expected constant time per key) while the members stay in
+/// insertion order.
+///
+/// # Errors
+///
+/// Returns a [`ParseError`] as [`parse_json`] does, and also when the
+/// document exceeds `limits`.
+pub fn parse_json_with_limits(input: &str, limits: &JsonLimits) -> Result<Json, ParseError> {
+    parse_with(input, limits).0
+}
+
+/// Like [`parse_json`], also returning the work counters, so tests can assert
+/// an operation count instead of timing. Not part of the stable API.
+#[doc(hidden)]
+pub fn parse_json_with_stats(input: &str) -> (Result<Json, ParseError>, JsonParseStats) {
+    parse_with(input, &JsonLimits::default())
+}
+
+fn parse_with(input: &str, limits: &JsonLimits) -> (Result<Json, ParseError>, JsonParseStats) {
     let mut parser = Parser {
         src: input,
         bytes: input.as_bytes(),
         pos: 0,
+        limits: *limits,
+        nodes: 0,
+        key_probes: 0,
     };
-    parser.skip_whitespace();
-    let value = parser.value(0)?;
-    parser.skip_whitespace();
-    if parser.pos != parser.bytes.len() {
-        return Err(parser.error("unexpected characters after the JSON value"));
-    }
-    Ok(value)
+    let result = parser.document();
+    let stats = JsonParseStats {
+        key_probes: parser.key_probes,
+        nodes: parser.nodes,
+    };
+    (result, stats)
 }
+
+/// Objects up to this many members use the linear key scan; the first key
+/// past it builds the hash index. The scan costs at most 28 comparisons.
+const LINEAR_SCAN_MEMBERS: usize = 8;
 
 struct Parser<'a> {
     src: &'a str,
     bytes: &'a [u8],
     pos: usize,
+    limits: JsonLimits,
+    nodes: usize,
+    key_probes: u64,
 }
 
 impl Parser<'_> {
@@ -289,10 +369,30 @@ impl Parser<'_> {
         }
     }
 
+    fn document(&mut self) -> Result<Json, ParseError> {
+        self.skip_whitespace();
+        let value = self.value(0)?;
+        self.skip_whitespace();
+        if self.pos != self.bytes.len() {
+            return Err(self.error("unexpected characters after the JSON value"));
+        }
+        Ok(value)
+    }
+
+    /// Counts one node against [`JsonLimits::max_nodes`].
+    fn count_node(&mut self) -> Result<(), ParseError> {
+        self.nodes = self.nodes.saturating_add(1);
+        if self.nodes > self.limits.max_nodes {
+            return Err(self.error("too many JSON values"));
+        }
+        Ok(())
+    }
+
     fn value(&mut self, depth: usize) -> Result<Json, ParseError> {
-        if depth > MAX_JSON_DEPTH {
+        if depth > self.limits.max_depth {
             return Err(self.error("nesting is too deep"));
         }
+        self.count_node()?;
         match self.peek() {
             Some(b'{') => self.object(depth),
             Some(b'[') => self.array(depth),
@@ -327,14 +427,22 @@ impl Parser<'_> {
             self.pos += 1;
             return Ok(Json::Object(pairs));
         }
+        // Built when the object outgrows the linear scan. `HashSet` uses the
+        // default `RandomState` (keyed SipHash with per-process random keys),
+        // so an adversary cannot precompute colliding keys.
+        let mut index: Option<HashSet<String>> = None;
         loop {
             self.skip_whitespace();
             if self.peek() != Some(b'"') {
                 return Err(self.error("expected a string object key"));
             }
+            // Charge the member before the key is scanned, decoded or
+            // allocated, so an exhausted budget does no key-sized work and is
+            // reported at the member's opening quote.
+            self.count_node()?;
             let key_start = self.pos;
             let key = self.string()?;
-            if pairs.iter().any(|(existing, _)| *existing == key) {
+            if self.is_duplicate_key(&mut index, &pairs, &key) {
                 self.pos = key_start;
                 return Err(self.error("duplicate object key"));
             }
@@ -353,6 +461,37 @@ impl Parser<'_> {
                 _ => return Err(self.error("expected ',' or '}'")),
             }
         }
+    }
+
+    /// Checks `key` against the members parsed so far in this object and
+    /// records it when new. Work is constant per key (linear in the key
+    /// count overall): a bounded scan for small objects, one hash insertion
+    /// otherwise.
+    fn is_duplicate_key(
+        &mut self,
+        index: &mut Option<HashSet<String>>,
+        pairs: &[(String, Json)],
+        key: &str,
+    ) -> bool {
+        if index.is_none() && pairs.len() < LINEAR_SCAN_MEMBERS {
+            for (existing, _) in pairs {
+                self.key_probes += 1;
+                if existing == key {
+                    return true;
+                }
+            }
+            return false;
+        }
+        let set = index.get_or_insert_with(|| {
+            let mut set = HashSet::with_capacity(pairs.len() * 2);
+            for (existing, _) in pairs {
+                self.key_probes += 1;
+                set.insert(existing.clone());
+            }
+            set
+        });
+        self.key_probes += 1;
+        !set.insert(key.to_string())
     }
 
     fn array(&mut self, depth: usize) -> Result<Json, ParseError> {
@@ -532,6 +671,13 @@ mod tests {
 
     fn parse_error(input: &str) -> ParseError {
         parse_json(input).expect_err("input must be rejected")
+    }
+
+    #[test]
+    fn overflowing_float_is_rejected_by_parser() {
+        assert!(parse_error("1e999")
+            .to_string()
+            .contains("number is out of range"));
     }
 
     #[test]

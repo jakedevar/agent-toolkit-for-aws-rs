@@ -1,9 +1,8 @@
-//! The result type of the review and the text rules for its labels.
+//! The result type of the review and its report icons. Response and caller
+//! text is shown through the shared `crate::safe_text` helpers (redact, bound,
+//! escape; #4907, #4908, #4941).
 
-use toolkit_aws::redact_text;
 use toolkit_core::Json;
-
-use crate::safe_text::safe_path;
 
 /// Status of one check.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,26 +73,6 @@ impl Findings {
     pub(super) fn has(&self, id: &str) -> bool {
         self.checks.iter().any(|check| check.id == id)
     }
-}
-
-/// Text taken from a response or a snapshot, made safe for a label: credential
-/// shaped text goes through the shared redactor, then control, bidirectional
-/// and invisible characters are escaped.
-pub(super) fn clean(text: &str) -> String {
-    safe_path(&redact_text(text))
-}
-
-/// [`clean`] bounded to the first `count` characters (`text[:count]`): the
-/// whole text is redacted first, then cut, then escaped, so a credential that
-/// crosses the bound (URL userinfo whose `@host` lies beyond it, an access-key
-/// id cut in half) is still recognized (#4908).
-pub(super) fn clean_prefix(text: &str, count: usize) -> String {
-    safe_path(&first_chars(&redact_text(text), count))
-}
-
-/// The first `count` characters (`text[:count]`).
-pub(super) fn first_chars(text: &str, count: usize) -> String {
-    text.chars().take(count).collect()
 }
 
 /// `status` -> `[PASS]`-style icon of the Markdown report.

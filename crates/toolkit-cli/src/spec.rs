@@ -111,7 +111,10 @@ pub fn validate_tree(root: &Path) -> Result<Report, ToolkitError> {
         Err(_) => {
             return Err(ToolkitError::runtime(
                 "root_not_found",
-                format!("root does not exist: {}", root.display()),
+                format!(
+                    "root does not exist: {}",
+                    crate::safe_text::shown_path(root)
+                ),
             ))
         }
     }

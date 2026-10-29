@@ -22,6 +22,8 @@ Verification update (2026-10-26): native manager jobs built exact `bb0df26` and 
 
 Latest foundation source: manager combined the preserved GLM source and governance documentation on the allocated branch. Commit `1ab92d8` built cleanly and all 42 offline tests passed (26 core, five CLI unit, 11 binary integration). Its fmt and clippy jobs ran after adding the required `cpu_quota_percent = 200` to each recipe; their diagnostics identified two formatting sites and one control-flow lint. GLM worker `c0fdbb81-d558-446f-8f5b-23496e7fcea9` committed that bounded cleanup as `d9c6e3c`. The final combined source still needs exact-commit daemon verification and independent review. Harness #4425 remains the trusted candidate blocker; no acceptance or landing is claimed. Inventory correction continues separately under GLM worker `8268e555-ffae-4416-b6d1-c04a5578162b`, with the stranded DeepSeek draft retained as unaccepted evidence.
 
+CLI path-argument policy (bare `-`, #4780): [cli-bare-dash.md](cli-bare-dash.md) lists the router rule and the audited literal `-` parameters (no parameter reads stdin).
+
 Dependencies exist in manager ledger with require_integrated true, as well as linked Issue bodies. Pinned bootstrap stacking is an explicit exception recorded by manager. At most two initial workers; normal concurrency stays inside project cap. No ready label bypasses prerequisites.
 
 ## Issue map
@@ -47,7 +49,7 @@ The table and issues.json preserve the initial owner map. Bootstrap substitution
 | #4383 | bedrock-fetch | glm | #4379 |
 | #4384 | ai-models | deepseek | #4379 |
 | #4385 | ai-data | glm | #4374 |
-| #4386 | ai-payloads | deepseek | #4379, #4384, #4385 |
+| #4386 | ai-payloads (S1-S5 done; 0 of 56 inventory rows removed, 56 retained with documented disposition; status: [ai-payloads.md](ai-payloads.md), design: [ai-payloads-design.md](ai-payloads-design.md)) | deepseek | #4379, #4384, #4385 |
 | #4387 | msk | glm | #4374 |
 | #4388 | aurora | deepseek | #4374, #4379 |
 | #4389 | dynamo-cost | glm | #4374, #4379 |
@@ -78,12 +80,24 @@ The table and issues.json preserve the initial owner map. Bootstrap substitution
 | #4414 | cutover | glm | #4378, #4413, #4398, #4386, #4411, #4397, #4412 |
 | #4415 | retire | deepseek | #4414, #4409, #4396, #4394, #4395, #4393, #4391, #4390, #4388, #4387, #4382, #4383 |
 | #4451 | asm-exec (added by audit #4371; status: [asm-exec.md](asm-exec.md)) | sonnet (assigned) | #4374, #4379; gates #4415 together with #4582 |
+| #4487 | plugin-binaries (per-plugin `./bin` build and stage pipeline; design: [plugin-binaries.md](plugin-binaries.md)) | opus (assigned) | serves #4412; reused by #4413 S5 and #4414 |
 
 ## Definition of done
 
 Each slice preserves tested public behavior, migrates callers and covered tests, has exact committed verification and independent review, then lands through queue. Overall completion additionally removes local Python requirements from installation, CI, maintenance, hooks and proxy transport; audits every original inventory row; resolves remote payload restrictions; verifies packaging/manifest/parity from clean checkout. Release publication/main changes remain separate operator gates.
 
 No bulk deletion before replacements pass. No Python wrappers counted as Rust ports. No paid/live AWS workloads in ordinary tests. Record compatibility changes and unknowns in Issue evidence.
+
+Launch with AWS L3 (#5190) adds an offline streaming and OIDC foundation;
+its API and callback consumers remain in L5 and L4 respectively. The collector
+uses `CappedBuf`: steady allocation is at most the effective cap C, while a
+moving growth may transiently hold old plus new allocations below 2C. Including
+the pinned SDK's at-most 512 KiB admitted frame and one 64 KiB returned chunk,
+the conservative peak is below 2C + 576 KiB, not the original design's
+C + 576 KiB. Single-use code exchanges do not retry ambiguous connection
+failures because the transport cannot prove whether request bytes were sent.
+Duplicate Content-Length values now remain detectable at the shared response
+header boundary. Live network use still waits for the S1 integration gate.
 
 ## Manager continuity
 

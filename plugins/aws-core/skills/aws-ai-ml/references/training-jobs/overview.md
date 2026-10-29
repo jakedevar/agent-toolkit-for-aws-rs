@@ -84,8 +84,8 @@ Before generating code or submitting a job:
 
 ## Generate and launch
 
-1. Read `references/configuration.md` and the selected template.
-2. Write the customized output under the project directory in notebook or script mode.
+1. Read `references/configuration.md` for the placeholder values of the selected template.
+2. Render the selected template, for example with `toolkit ai-payloads render <skill-dir>/references/training-jobs/code_templates/recipe_training.py --mode notebook --project-dir <project-dir> --values <scratch-dir>/values.json` (`--mode script` for a script; command forms and the values file are in `references/configuration.md`). Do not write the notebook or script by hand; make only the edits that `render` prints as `manual:` lines.
 3. Keep `WAIT_FOR_COMPLETION=False` unless the user asks to block.
 4. Templates create a collision-resistant job prefix, launch asynchronously, and resolve only that submission through public `ListTrainingJobs`/`DescribeTrainingJob` APIs. They do not use the SDK's private `_latest_training_job` state.
 5. Report output model artifacts only after the job reaches `Completed`.

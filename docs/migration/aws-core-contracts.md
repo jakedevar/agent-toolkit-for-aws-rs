@@ -310,6 +310,60 @@ h2, rustls 0.23 with native roots, and the generated `aws-sdk-sts`,
 assume-role and SSO. `ring` appears in `Cargo.lock` only as an optional entry
 under `rustls-webpki` and is never compiled. No `openssl` or `native-tls`.
 
+### MCP-proxy additions (#4413 S1)
+
+The accepted design is [mcp-proxy-design.md](mcp-proxy-design.md) (section 4,
+slice S1). The `sdk` feature now also provides:
+
+| Module | What it adds |
+| --- | --- |
+| `preflight` (default build) | R-ABS credential-source preflight, R-SRC selector, R-PREC precedence and R-STICKY session rule, as pure functions |
+| `stream` (default build) | `StreamingTransport`/`ResponseStream`: status and headers at once, then bounded chunks under an idle-read timeout and a body cap, pulled only on demand (the R-MEM hook); `FakeStreamingTransport` in `testing` |
+| `transport` (default build) | R-HDR: `refuse_framing_headers` (authority and framing headers), enforced by `SdkTransport` (both seams) and `SigV4Signer`; per-instance sensitive header names (`Headers::insert_sensitive`) |
+| `diag` (default build) | R-LOG's allowlisted diagnostics sink |
+| `sdk::roots` | R-ROOTS: explicit trust-root validation once at startup; `ValidatedRoots` (never empty) gives the `SdkTransport` connector and the provider-plane client an explicit trust store with native roots disabled. **`SdkTransport::new` now takes `&ValidatedRoots`** |
+| `sdk::profile` | The R-ABS adapter over aws-config's own profile parser (key names only) |
+| `sdk::source` | R-PROV's provider-HTTP seam (`ProviderHttp`, `SdkCredentialsProvider::default_chain_with_http`), R-SRC's single-source builders, and `GuardedCredentials` (preflight, selected provider only, one D1 rebuild, R-PREC, R-STICKY) |
+| `sdk::stdin` | D2: `isolate_stdin` moves stdin to a private descriptor and puts the null device on fd 0 so `credential_process` children read EOF (Unix; other targets fail closed) |
+
+New pinned dependencies (feature `sdk` only):
+
+| Crate | Version | Why | Features |
+| --- | --- | --- | --- |
+| `aws-config` | 1.13.0 | adds `credentials-login` (R-LOGIN, #4997): `login_session` profiles from `aws login`; pulls `aws-sdk-signin` 1.31.0 and its DPoP crypto (`p256`, `sha2`, `rand`, `zeroize`, ...) and no other service SDK | `credentials-login` added |
+| `aws-runtime` | 1.10.2 | the profile-file set and the SDK home-directory rule for the R-ABS adapter | default |
+| `aws-types` | 1.7.0 | the `Fs`/`Env` shims aws-config's profile parser takes | default |
+| `rustls` | 0.23.46 | `RootCertStore::add_parsable_certificates`: the same acceptance check Smithy applies to custom roots | `default-features = false`, `std` (no `logging`, so no `log` crate) |
+| `rustls-native-certs` | 0.8.5 | per-location loading (`load_certs_from_paths`) and the platform store | default |
+| `rustls-pki-types` | 1.15.1 | `CertificateDer` | `std` |
+| `openssl-probe` | 0.2.2 | Linux and other non-macOS Unix only: the platform loader's locations for an empty `SSL_CERT_FILE` | default |
+| `rustix` | 1.1.5 | Unix only: the safe `dup`/`dup2` for D2 (the workspace forbids `unsafe`) | `default-features = false`, `std`, `stdio` |
+
+Dev-dependencies for the offline T-TLS and T-LOGIN fixtures: `rcgen` 0.14.10
+(`aws_lc_rs`, `pem`; certificates minted at test time), `rustls` with
+`aws_lc_rs` (the loopback server), `p256` (a DPoP key generated at test time)
+and `sha2` (the login cache file name).
+
+### MCP-proxy additions (#4413 S3)
+
+S3 ([mcp-proxy-s3.md](mcp-proxy-s3.md)) adds `McpTarget` (R-URL, default
+build), `diag::Level` (the `--log-level` threshold), the non-Unix
+`credential_process` rule (`preflight::guard_credential_process`,
+`GuardedCredentials::with_null_stdin`), `sdk::profile::profile_region`, the
+public provider-plane recorder `sdk::recorder` (a test double, like
+`testing`) and `sdk::tracing_dispatcher_set` (T-LEAK-GATE). One new direct
+dependency, already in the tree through aws-config:
+
+| Crate | Version | Why | Features |
+| --- | --- | --- | --- |
+| `tracing` | 0.1.44 | `dispatcher::has_been_set` for T-LEAK-GATE; nothing is ever installed | `default-features = false`, `std` (no `log`) |
+
+`toolkit-cli` gains the non-default feature `aws-sdk` (enables
+`toolkit-aws/sdk`): `asm exec` then signs with `SigV4Signer` over its own
+credential chain and sends over `SdkTransport` with the process's validated
+roots (#4582 item 1). The `clippy-sdk` and `test-sdk` make targets build, lint
+and test both crates with their SDK features.
+
 ### Decisions and residuals
 
 - **Retries stay with the boundary.** `ApiClient` + `RetryPolicy` remain the
