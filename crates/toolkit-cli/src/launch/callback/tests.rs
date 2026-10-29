@@ -561,3 +561,45 @@ fn revision4_unknown_record_decision_matrix() {
         }
     }
 }
+
+#[cfg(unix)]
+#[test]
+fn revision4_first_missing_record_wins_over_valid_session() {
+    use super::pending::{Observation, WaitTracker};
+    use crate::launch::tests_support::Scratch;
+    let scratch = Scratch::new("first-missing");
+    let session = serde_json::json!({"client_id":"c","client_secret":"s","client_expires_at":9999,"authorize_endpoint":"https://example.com","token_endpoint":"https://example.com","scopes":["launch:access"],"access_token":"a","refresh_token":"r","token_expires_at":9999});
+    std::fs::write(scratch.join("session.json"), session.to_string()).unwrap();
+    assert_eq!(
+        WaitTracker::default()
+            .finish_at(scratch.path(), 91, 100, 700)
+            .0,
+        Observation::Missing
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn revision4_removes_unreadable_symlink_without_touching_target() {
+    use super::{
+        pending::{Custody, Observation, WaitTracker},
+        WaitDecision,
+    };
+    use crate::launch::tests_support::Scratch;
+    use std::os::unix::fs::symlink;
+    let scratch = Scratch::new("unknown-symlink");
+    let custody = Custody::acquire(scratch.path(), 91).unwrap();
+    let target = scratch.join("unrelated");
+    std::fs::write(&target, b"keep").unwrap();
+    let link = scratch.join("pending/91.json");
+    symlink(&target, &link).unwrap();
+    drop(custody);
+    assert_eq!(
+        WaitTracker::default()
+            .finish_at(scratch.path(), 91, 100, 660)
+            .0,
+        Observation::Decision(WaitDecision::TimedOut)
+    );
+    assert!(!link.exists());
+    assert_eq!(std::fs::read(target).unwrap(), b"keep");
+}
