@@ -1,7 +1,8 @@
 # Slice `ai-payloads` (Issue #4386): design
 
 Status: implemented. Slices S1, S2a, S2b, S3, S3r, S4 and S5 are implemented
-and landed (S5 `ai-payloads-inventory` is #5296); 0 of 56 inventory rows are
+and landed on `origin/rolling` (S5 `ai-payloads-inventory` is #5296); the
+landing commit of each slice is in the slice table of `ai-payloads.md`. 0 of 56 inventory rows are
 removed and 56 are retained with the section 3 disposition recorded in
 `python-inventory.json`. The rest of this document is the design as accepted at
 pre-review #5119 and is kept unchanged as the record. Python in scope was read
