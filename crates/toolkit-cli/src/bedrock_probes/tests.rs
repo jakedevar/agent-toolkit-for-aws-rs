@@ -3537,11 +3537,12 @@ fn a_failed_read_path_is_redacted_and_bounded_in_the_diagnostic() {
     assert_eq!(status, 1);
     // The shared safe_path bound (#4941, round 20): at most 200 characters
     // of the path, then `...`, then the reason.
-    let shown = err
+    let Some((shown, _)) = err
         .split_once("cannot read ")
         .and_then(|(_, rest)| rest.split_once("...: "))
-        .map(|(path, _)| path)
-        .unwrap_or_else(|| panic!("a cut path: {err}"));
+    else {
+        panic!("a cut path: {err}");
+    };
     assert_eq!(shown.chars().count(), 200, "{err}");
     assert!(err.chars().count() < 400, "{}", err.chars().count());
     assert!(err.trim_end().ends_with("file does not exist"), "{err}");
