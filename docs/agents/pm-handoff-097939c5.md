@@ -883,3 +883,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 10-29 09:00Z: x402 S4 cont (0dcdafea, ctx cap) INCOMPLETE at bc941b444dbf3a340e2521de76015481aaba5201 (checks pass; remaining: construction gate, fake API, model, error contract). Continuation cd65d0a9 (Codex terra, continue_from 0dcdafea).
   Kaizen: #5297 closed as dup of #5154 (stale toolkit-aws artifact after merge; evidence added; relay to GM). #5219 cited again (streaming duplicate Content-Length).
   4/4 busy: cd65d0a9 (#5181 S4 cont3), f4e513e0 (#5273), d2668841 (#5261 repair 1), 80111bba (#5295 review). Next slot: AP S5 #5296.
+- 10-29 09:05Z: #5295 (80111bba, Sonnet) CHANGES_REQUESTED #4886 item 1 885b2223: BLOCKER replay-mismatch untested (mutation c survived, job d5f2f765); (a) escape and (b) deletionProtection mutations killed. Parity + injection OK. Nonblocking #5298 (request-less step lenient; silent int defaults; undocumented diffs).
+  Repair 1 -> Codex terra e70ae060 (continue_from 0740a0b0), incl. #5298 (PM RULING: request-less recorded step rejected at load). Then narrow re-review (Sonnet, pinned) -> land.
+  4/4 busy: cd65d0a9 (#5181 S4 cont3), f4e513e0 (#5273), d2668841 (#5261 repair 1), e70ae060 (#4886 repair 1). Next slot: AP S5 #5296.
