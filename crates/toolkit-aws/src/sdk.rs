@@ -553,7 +553,7 @@ fn malformed_http(error: &(dyn std::error::Error + 'static)) -> bool {
     while let Some(current) = source {
         if current
             .downcast_ref::<hyper::Error>()
-            .is_some_and(hyper::Error::is_parse)
+            .is_some_and(|error| error.is_parse() && !error.is_parse_too_large())
         {
             return true;
         }
