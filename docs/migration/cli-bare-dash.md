@@ -199,9 +199,10 @@ description keeps the base wording (`stdin is not accepted`), and
 `the_global_usage_text_is_byte_identical_to_the_base` pins the length and the
 FNV-1a hash of `USAGE`, next to `every_command_help_is_the_global_usage_text`.
 At the base `f597a058` the pin was 35200 bytes, `0xa95b3df510f48191`. The round-16
-integration (#4960) moves it to 39130 bytes, `0xefe662a12a0a07aa`. The new text is
+integration (#4960) moves it to 39862 bytes, `0x586799b8d88de137`. The new text is
 the base text plus the synopsis and description of bedrock-probes (#4404),
-docgraph (#4395) and telemetry (#4398). Deleting exactly those lines gives back
+docgraph (#4395), dynamodb-bench (#4390) and telemetry (#4398). Deleting exactly
+those lines gives back
 the base length and hash.
 
 ## The four reproductions
