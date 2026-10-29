@@ -911,3 +911,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 10-29 09:53Z: #5310 (4f851dba, Codex sol) ACCEPT AP S5 6350187e (335 other rows byte-identical; mutations caught). Check ok via manager scoped 4895f2bf. ENQUEUED bbbd22bc (seq 2987, #5296). On land close #5296 #5310 #5282 #5283 #5284; then check #4386 closable (all S1-S5 landed).
   Filed Launch L6 #5317 (download/extract/apply; T-STAGE/APPLY/PLAN-6..8/EXT) -> Claude Opus 56c78333 (rolling). L5 (API client + commands, carry #5212 #5213 #5197) to file after L6/#5306.
   4/4 busy: cd65d0a9 (#5181), 4d05f4a4 (#5308), acde8672 (#5306), 56c78333 (#5317). Queue: 38151494 (#5273), bbbd22bc (#5296).
+- 10-29 09:54Z: #5308 (4d05f4a4, Sonnet) ACCEPT #4886 item 1 repair 990c9008 (6/6 mutations caught incl. original (c) and key-order (e)). Check refused stale base (#5265) -> manager scoped 483861e9 (worktree e70ae060, base f3ab564c) running. On ok: check job_id 483861e9 + enqueue (source_session e70ae060); close #5295 #5308 #5298 on land (#4886 stays open).
+  #4886 item 2 design-only #5318 -> Codex sol 0d63c229 (build_free): live clients, driver decision, live-test policy; then cross-family pre-review.
+  4/4 busy: cd65d0a9 (#5181), acde8672 (#5306), 56c78333 (#5317 L6), 0d63c229 (#5318 design). Queue: 38151494 (#5273), bbbd22bc (#5296).
