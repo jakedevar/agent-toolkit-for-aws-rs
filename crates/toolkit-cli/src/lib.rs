@@ -28,6 +28,7 @@ use toolkit_core::{discover_skills, skills_to_json, ErrorKind, ToolkitError};
 
 use safe_text::CallerText;
 
+pub mod agents_pay;
 mod ai_data;
 mod ai_models;
 pub mod asm_exec;
