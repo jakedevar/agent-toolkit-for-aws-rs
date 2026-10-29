@@ -774,6 +774,101 @@ fn revision4_unknown_record_decision_matrix() {
 
 #[cfg(unix)]
 #[test]
+fn revision4_corrupt_record_retains_last_trusted_cutoff() {
+    use super::{
+        pending::{Custody, Observation, WaitTracker},
+        PendingStatus, WaitDecision,
+    };
+    use crate::launch::{clock::SeededRandom, tests_support::Scratch};
+    let scratch = Scratch::new("retained-cutoff");
+    let custody = Custody::acquire(scratch.path(), 91).unwrap();
+    custody
+        .write(
+            1234,
+            40,
+            100,
+            PendingStatus::Listening,
+            None,
+            &SeededRandom::new(1),
+        )
+        .unwrap();
+    let mut tracker = WaitTracker::default();
+    assert_eq!(
+        tracker.finish_at(scratch.path(), 91, 99, 0).0,
+        Observation::Decision(WaitDecision::Poll)
+    );
+    std::fs::write(scratch.join("pending/91.json"), b"{\"cutoff\":999999}").unwrap();
+    assert_eq!(
+        tracker.finish_at(scratch.path(), 91, 105, 1).0,
+        Observation::Decision(WaitDecision::HelperBlocked)
+    );
+    drop(custody);
+    assert_eq!(
+        tracker.finish_at(scratch.path(), 91, 105, 1).0,
+        Observation::Decision(WaitDecision::TimedOut)
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn revision4_directory_record_preserves_contents() {
+    use super::{
+        pending::{Custody, Observation, WaitTracker},
+        WaitDecision,
+    };
+    use crate::launch::tests_support::Scratch;
+    let scratch = Scratch::new("directory-record");
+    let custody = Custody::acquire(scratch.path(), 91).unwrap();
+    let path = scratch.join("pending/91.json");
+    std::fs::create_dir(&path).unwrap();
+    std::fs::write(path.join("keep"), b"data").unwrap();
+    drop(custody);
+    assert_eq!(
+        WaitTracker::default().finish_at(scratch.path(), 91, 0, 0).0,
+        Observation::Decision(WaitDecision::Ended)
+    );
+    assert_eq!(std::fs::read(path.join("keep")).unwrap(), b"data");
+}
+
+#[cfg(unix)]
+#[test]
+fn revision4_permission_denied_record_uses_fallback_cutoff() {
+    use super::{
+        pending::{Custody, Observation, WaitTracker},
+        WaitDecision,
+    };
+    use crate::launch::tests_support::Scratch;
+    use std::os::unix::fs::PermissionsExt;
+    let scratch = Scratch::new("permission-record");
+    let custody = Custody::acquire(scratch.path(), 91).unwrap();
+    let path = scratch.join("pending/91.json");
+    std::fs::write(&path, b"unreadable").unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0)).unwrap();
+    if !nix::unistd::geteuid().is_root() {
+        assert_eq!(
+            std::fs::read(&path).unwrap_err().kind(),
+            std::io::ErrorKind::PermissionDenied
+        );
+    }
+    let mut tracker = WaitTracker::default();
+    assert_eq!(
+        tracker.finish_at(scratch.path(), 91, 1, 664).0,
+        Observation::Decision(WaitDecision::Poll)
+    );
+    assert_eq!(
+        tracker.finish_at(scratch.path(), 91, 1, 665).0,
+        Observation::Decision(WaitDecision::HelperBlocked)
+    );
+    drop(custody);
+    assert_eq!(
+        tracker.finish_at(scratch.path(), 91, 1, 665).0,
+        Observation::Decision(WaitDecision::TimedOut)
+    );
+    assert!(!path.exists());
+}
+
+#[cfg(unix)]
+#[test]
 fn revision4_first_missing_record_wins_over_valid_session() {
     use super::pending::{Observation, WaitTracker};
     use crate::launch::tests_support::Scratch;
