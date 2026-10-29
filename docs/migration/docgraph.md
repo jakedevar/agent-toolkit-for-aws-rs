@@ -1090,6 +1090,18 @@ attempts, with canary credentials and the acceptance flag set; it asserts
 zero connections, no canary in output and no live success. Both run under
 the default and `docgraph-live` features. No live test exists yet.
 
+Endpoint-admission red/green jobs (mutations uncommitted, restored with
+`git show HEAD:<path>`): removing the pre-send peer check made
+`a_forbidden_connected_peer_receives_zero_bytes` fail because the connector
+began TLS to the forbidden peer (red `8e4940b3-aae6-4853-92fe-da856707555b`,
+green `ac5a5ddc-46a5-46ae-ba90-85e2c3cd2ed4`). Admitting every DNS answer made
+`forbidden_or_mixed_answers_are_never_dialed` fail on the metadata address
+(red `878a82dc-f8ae-4da3-9ad6-387c766e13d0`, green
+`e604fbfa-6b5f-4def-a939-427147c44110`). The full connector module passed
+in job `86de3b8b-0eec-453c-81e8-50e2fdfa18c8` (25 tests), and the
+`docgraph_live` suite with the policy parser passed under both feature sets
+in job `fcf49e10-7784-45dc-b7a8-7c6198a68500`.
+
 The `.rsi/jobs.toml` additions in this slice declare bounded daemon recipes
 for the offline spike, consent, environment-selection, credential and
 feature-specific clippy checks. Their Makefile targets use the daemon-stamped
