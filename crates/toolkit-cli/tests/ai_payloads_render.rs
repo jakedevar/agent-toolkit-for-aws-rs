@@ -114,10 +114,15 @@ fn ap_asn_02_04_06_target_and_secret_matrix() {
 #[test]
 fn ap_typ_03_04_06_07_sub_14_process_rejection_matrix() {
     for (name, cases) in [
-        ("ACCEPT_EULA", vec!["\"true\"", "1", "null", "[]", "{}"]),
-        ("TRUE_OR_FALSE", vec!["\"false\"", "0", "null", "{}"]),
+        ("ACCEPT_EULA", vec!["\"true\"", "\"false\"", "1", "0", "null", "[]", "[true]", "[\"false\"]", "{}"]),
+        ("TRUE_OR_FALSE", vec!["\"false\"", "1", "null", "[\"false\"]"]),
         ("CONCURRENCY", vec!["0", "-1", "512.0", "5.12e2", "2147483648", "true", "\"512\"", "null", "[512]", "{}", "NaN"]),
-        ("METRICS_LIST", vec!["null", "{}", "[1]", "[\"bad-name\"]", "[\"Same\",\"Same\"]"]),
+        ("INPUT_TOKENS_MEAN", vec!["0", "-1", "512.0", "5.12e2", "2147483648", "true", "\"512\"", "null", "[512]"]),
+        ("OUTPUT_TOKENS_MEAN", vec!["0", "-1", "512.0", "5.12e2", "2147483648", "true", "\"512\"", "null", "[512]"]),
+        ("REQUEST_COUNT", vec!["0", "-1", "512.0", "5.12e2", "2147483648", "true", "\"512\"", "null", "[512]"]),
+        ("INPUT_TOKENS_STDDEV", vec!["-1", "512.0", "5.12e2", "2147483648", "true", "\"512\"", "null", "[512]"]),
+        ("OUTPUT_TOKENS_STDDEV", vec!["-1", "512.0", "5.12e2", "2147483648", "true", "\"512\"", "null", "[512]"]),
+        ("METRICS_LIST", vec!["null", "\"Correctness\"", "[1]", "[\"\"]", "[\"a b\"]", "[\"X\",\"X\"]", "[[\"X\"]]", "{}"]),
     ] {
         for raw in cases {
             let f = Fixture::new();
@@ -128,6 +133,22 @@ fn ap_typ_03_04_06_07_sub_14_process_rejection_matrix() {
             assert!(!f.0.join("scripts").exists());
         }
     }
+}
+
+#[test]
+fn ap_fs_01_cli_03_reserved_name_and_exit_codes() {
+    let f = Fixture::new();
+    let template = f.write("template.py", "# Cell 0 [markdown]: Example\n# Desc\n# Cell 1: Code\npass\n");
+    let project = f.0.join("reserved-01");
+    fs::create_dir(&project).unwrap();
+    for args in [vec!["--name", "example-01"], vec![]] {
+        let result = Command::new(env!("CARGO_BIN_EXE_toolkit")).args(["ai-payloads", "render"]).arg(&template)
+            .args(["--mode", "script", "--project-dir"]).arg(&project).args(args).output().unwrap();
+        assert_eq!(result.status.code(), Some(1));
+        assert!(String::from_utf8_lossy(&result.stderr).contains("name_reserved_suffix"));
+    }
+    assert_eq!(f.render(&template, "script", &[]).status.code(), Some(0));
+    assert_eq!(f.render(&template, "invalid", &[]).status.code(), Some(2));
 }
 
 #[test]
