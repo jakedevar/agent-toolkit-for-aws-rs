@@ -27,6 +27,13 @@ impl PublishHooks for NoHooks {}
 pub(crate) struct PublishError {
     pub code: &'static str,
     pub detail: String,
+    pub cleanup_failure: Option<CleanupFailure>,
+}
+#[derive(Debug)]
+pub(crate) struct CleanupFailure {
+    pub code: &'static str,
+    pub detail: String,
+    pub leftover_temp: PathBuf,
 }
 #[derive(Debug)]
 pub(crate) struct Published {
@@ -38,6 +45,7 @@ fn error(code: &'static str, detail: impl ToString) -> PublishError {
     PublishError {
         code,
         detail: detail.to_string(),
+        cleanup_failure: None,
     }
 }
 pub(crate) fn unsupported_platform() -> PublishError {
@@ -74,13 +82,22 @@ fn check_directory(dir: &Path) -> Result<(), PublishError> {
     Ok(())
 }
 
-fn cleanup(temp: &Path, original: PublishError) -> PublishError {
-    match fs::remove_file(temp) {
+fn cleanup(temp: &Path, mut original: PublishError, hooks: &mut dyn PublishHooks) -> PublishError {
+    match hooks
+        .fault("cleanup")
+        .map_or_else(|| fs::remove_file(temp), Err)
+    {
         Ok(()) => original,
-        Err(e) => error(
-            "publish_cleanup_failed",
-            format!("{}; cannot remove {}: {e}", original.detail, temp.display()),
-        ),
+        Err(e) => {
+            let detail = format!("cannot remove {}: {e}", temp.display());
+            original.detail.push_str(&format!("; {detail}"));
+            original.cleanup_failure = Some(CleanupFailure {
+                code: "publish_cleanup_failed",
+                detail,
+                leftover_temp: temp.to_path_buf(),
+            });
+            original
+        }
     }
 }
 
@@ -91,15 +108,7 @@ pub(crate) fn publish_new(
     bytes: &[u8],
     hooks: &mut dyn PublishHooks,
 ) -> Result<Published, PublishError> {
-    if name.is_empty()
-        || !matches!(
-            (
-                Path::new(name).components().next(),
-                Path::new(name).components().count()
-            ),
-            (Some(Component::Normal(_)), 1)
-        )
-    {
+    if name.is_empty() || name == "." || name == ".." || name.contains(['/', '\0']) {
         return Err(error(
             "publish_invalid_path",
             "output name must be a single filename",
@@ -128,7 +137,7 @@ pub(crate) fn publish_new(
         .and_then(|()| hooks.fault("sync").map_or_else(|| file.sync_all(), Err));
     drop(file);
     if let Err(e) = written {
-        return Err(cleanup(&temp, error("publish_io", e)));
+        return Err(cleanup(&temp, error("publish_io", e), hooks));
     }
     hooks.after_temp_written(&temp, &dest);
     hooks.before_commit(&temp, &dest);
@@ -136,14 +145,22 @@ pub(crate) fn publish_new(
         .fault("link")
         .map_or_else(|| fs::hard_link(&temp, &dest), Err);
     if let Err(e) = linked {
-        let code = match e.kind() {
-            io::ErrorKind::AlreadyExists => "destination_exists",
-            io::ErrorKind::PermissionDenied | io::ErrorKind::Unsupported => {
-                "publish_no_atomic_noreplace"
-            }
-            _ => "publish_io",
+        let raw = e.raw_os_error();
+        let code = if e.kind() == io::ErrorKind::AlreadyExists {
+            "destination_exists"
+        } else if [
+            rustix::io::Errno::PERM,
+            rustix::io::Errno::NOTSUP,
+            rustix::io::Errno::OPNOTSUPP,
+        ]
+        .iter()
+        .any(|errno| raw == Some(errno.raw_os_error()))
+        {
+            "publish_no_atomic_noreplace"
+        } else {
+            "publish_io"
         };
-        return Err(cleanup(&temp, error(code, e)));
+        return Err(cleanup(&temp, error(code, e), hooks));
     }
     hooks.after_commit_before_unlink(&temp, &dest);
     let removed = hooks
