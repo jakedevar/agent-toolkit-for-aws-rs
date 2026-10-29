@@ -324,6 +324,8 @@ fn ap_t28_01_02_03_04_cat_11_module_contract() {
             "def transform_dataset(df):\n    return df\n",
         );
         let before = fs::read(&module).unwrap();
+        #[cfg(unix)]
+        let before_meta = fs::metadata(&module).unwrap();
         let arg = format!("2={}", module.display());
         let result = f.render(&root, mode, &["--cell", &arg, "--allow-unresolved"]);
         assert!(
@@ -331,7 +333,21 @@ fn ap_t28_01_02_03_04_cat_11_module_contract() {
             "{}",
             String::from_utf8_lossy(&result.stderr)
         );
-        assert_eq!(fs::read(module).unwrap(), before);
+        assert_eq!(fs::read(&module).unwrap(), before);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            let after = fs::metadata(&module).unwrap();
+            assert_eq!(
+                (
+                    before_meta.dev(),
+                    before_meta.ino(),
+                    before_meta.mtime(),
+                    before_meta.mtime_nsec()
+                ),
+                (after.dev(), after.ino(), after.mtime(), after.mtime_nsec())
+            );
+        }
         let output = fs::read_to_string(f.0.join(if mode == "script" {
             "scripts/01_example.py"
         } else {
@@ -997,4 +1013,106 @@ fn ap_t28_03_symlinked_module_is_refused() {
     assert_eq!(result.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&result.stderr).contains("module_missing"));
     assert!(!f.0.join("notebooks").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn ap_app_01_08_source_identity_and_readonly_mode_are_preserved() {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    let f = Fixture::new();
+    let template = f.write(
+        "template.py",
+        "# Cell 0 [markdown]: Example\n# Desc\n# Cell 1: Code\npass\n",
+    );
+    let source = f.write(
+        "notebooks/example.ipynb",
+        "{\"cells\":[],\"metadata\":{},\"nbformat\":4,\"nbformat_minor\":4}",
+    );
+    fs::set_permissions(&source, fs::Permissions::from_mode(0o444)).unwrap();
+    let before = fs::metadata(&source).unwrap();
+    let bytes = fs::read(&source).unwrap();
+    let result = f.render(&template, "notebook", &["--append"]);
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let after = fs::metadata(&source).unwrap();
+    assert_eq!(
+        (
+            before.dev(),
+            before.ino(),
+            before.len(),
+            before.mtime(),
+            before.mtime_nsec()
+        ),
+        (
+            after.dev(),
+            after.ino(),
+            after.len(),
+            after.mtime(),
+            after.mtime_nsec()
+        )
+    );
+    assert_eq!(fs::read(source).unwrap(), bytes);
+}
+
+#[test]
+fn ap_asn_11_manual_edits_reported_after_success() {
+    let f = Fixture::new();
+    let template = f.write("template.py", "# Cell 0 [markdown]: Example\n# Desc\n# Cell 1: Code\n# NOTE FOR AGENT: change the config\npass\n");
+    let result = f.render(&template, "script", &[]);
+    assert!(result.status.success());
+    let stdout = String::from_utf8_lossy(&result.stdout);
+    assert!(
+        stdout.contains("manual: Cell 1 line 4: NOTE FOR AGENT: change the config"),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn ap_asn_07_secret_sentinel_is_unchanged_with_values_and_assign() {
+    let f = Fixture::new();
+    let template = f.write("template.py", "# Cell 0 [markdown]: Example\n# Desc\n# Cell 1: Code\nBASE_MODEL = 'old'\nHF_HUB_TOKEN = '[HF_TOKEN_OR_NONE]'\nif HF_HUB_TOKEN in ('', 'None', '[HF_TOKEN_OR_NONE]'): pass\n");
+    let values = f.write(
+        "values.json",
+        r#"{"values":{"HF_TOKEN_OR_NONE":null},"assign":{"BASE_MODEL":"new"}}"#,
+    );
+    let result = f.render(&template, "script", &["--values", values.to_str().unwrap()]);
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let output = fs::read_to_string(f.0.join("scripts/01_example.py")).unwrap();
+    assert!(output.contains("HF_HUB_TOKEN = None"));
+    assert!(output.contains("if HF_HUB_TOKEN in ('', 'None', '[HF_TOKEN_OR_NONE]'): pass"));
+}
+
+#[cfg(unix)]
+#[test]
+fn ap_app_02_07_latest_symlink_and_over_cap_source_are_refused() {
+    use std::os::unix::fs::symlink;
+    let f = Fixture::new();
+    let template = f.write(
+        "template.py",
+        "# Cell 0 [markdown]: Example\n# Desc\n# Cell 1: Code\npass\n",
+    );
+    let base = f.write(
+        "notebooks/example.ipynb",
+        "{\"cells\":[],\"metadata\":{},\"nbformat\":4,\"nbformat_minor\":4}",
+    );
+    symlink(&base, f.0.join("notebooks/example-05.ipynb")).unwrap();
+    let result = f.render(&template, "notebook", &["--append"]);
+    assert!(String::from_utf8_lossy(&result.stderr).contains("append_source_invalid"));
+    assert!(!f.0.join("notebooks/example-06.ipynb").exists());
+    fs::remove_file(f.0.join("notebooks/example-05.ipynb")).unwrap();
+    let huge = f.write(
+        "notebooks/example-06.ipynb",
+        &"x".repeat(16 * 1024 * 1024 + 1),
+    );
+    let result = f.render(&template, "notebook", &["--append"]);
+    assert!(String::from_utf8_lossy(&result.stderr).contains("append_source_invalid"));
+    assert_eq!(fs::metadata(huge).unwrap().len(), 16 * 1024 * 1024 + 1);
+    assert!(!f.0.join("notebooks/example-07.ipynb").exists());
 }

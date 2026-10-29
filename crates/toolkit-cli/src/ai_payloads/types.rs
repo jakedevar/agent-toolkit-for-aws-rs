@@ -158,6 +158,34 @@ mod tests {
         let names = (0..65).map(|i| Json::string(format!("X{i}"))).collect();
         assert!(literal("METRICS_LIST", &Json::Array(names), false).is_err());
     }
+    #[test]
+    fn ap_typ_08_table_equals_real_bare_slot_names() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../skills/core-skills/aws-ai-ml/references");
+        let mut names = std::collections::BTreeSet::new();
+        for group in std::fs::read_dir(root).unwrap() {
+            let dir = group.unwrap().path().join("code_templates");
+            let Ok(entries) = std::fs::read_dir(dir) else {
+                continue;
+            };
+            for entry in entries {
+                let path = entry.unwrap().path();
+                if path.extension().and_then(|x| x.to_str()) != Some("py") {
+                    continue;
+                }
+                let text = std::fs::read_to_string(path).unwrap();
+                for occurrence in super::super::template::parse(&text).occurrences {
+                    if occurrence.context == super::super::template::Context::Bare {
+                        names.insert(occurrence.name);
+                    }
+                }
+            }
+        }
+        assert_eq!(
+            names,
+            TYPES.iter().map(|(name, _)| (*name).to_owned()).collect()
+        );
+    }
 }
 
 #[cfg(test)]
