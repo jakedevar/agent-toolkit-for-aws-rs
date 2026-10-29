@@ -21,6 +21,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use toolkit_core::is_unsafe_char;
+use unicode_normalization::UnicodeNormalization;
 
 /// Characters of a comment kept for a manual edit point.
 const MANUAL_TEXT_CHARS: usize = 60;
@@ -211,8 +212,16 @@ pub(crate) fn is_secret_name(name: &str) -> bool {
 
 /// Syntactic consent guard for caller-supplied code, not a sandbox.
 pub(crate) fn contains_consent_identifier(text: &str) -> bool {
-    let lexed = lex(text);
-    lexed.occurrences.iter().any(|occurrence| occurrence.context == Context::Bare && super::types::slot_type(&occurrence.name) == Some(super::types::SlotType::Consent)) || lexed.tokens.iter().any(|token| matches!(&token.kind, Kind::Name(name) if super::types::slot_type(name) == Some(super::types::SlotType::Consent)))
+    let normalized: String = text.nfkc().collect();
+    let lexed = lex(&normalized);
+    let is_consent = |name: &str| super::types::slot_type(name) == Some(super::types::SlotType::Consent);
+    lexed.occurrences.iter().any(|occurrence| occurrence.context == Context::Bare && is_consent(&occurrence.name)) || lexed.tokens.iter().any(|token| match &token.kind {
+        Kind::Name(name) => is_consent(name),
+        // Conservatively inspect the entire f-string body, including literal text.
+        // This guard is syntactic and does not evaluate caller-owned code.
+        Kind::Str(value) if value.prefix.to_ascii_lowercase().contains('f') => value.body.split(|c: char| !is_ident_continue(c)).any(is_consent),
+        _ => false,
+    })
 }
 
 /// Whether this section assigns a consent identifier, including duplicates.
