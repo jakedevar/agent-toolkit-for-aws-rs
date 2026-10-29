@@ -242,6 +242,20 @@ fn runtime_region(
 }
 
 #[cfg(test)]
+fn has_required(shape_name: &str, value: &Json) -> bool {
+    let Ok(model) = parse_json(PAYMENT_SERVICE_MODEL) else {
+        return false;
+    };
+    let Some(shape) = model.get("shapes").and_then(|s| s.get(shape_name)) else {
+        return false;
+    };
+    let Ok(required) = toolkit_aws::recorded::optional_string_list(shape, "required") else {
+        return false;
+    };
+    !required.is_empty() && required.iter().all(|key| value.get(key).is_some())
+}
+
+#[cfg(test)]
 fn valid_process_response(body: &str, manager: &str, session: &str, instrument: &str) -> bool {
     if body.len() > 65_536 {
         return false;
@@ -249,19 +263,7 @@ fn valid_process_response(body: &str, manager: &str, session: &str, instrument: 
     let Ok(value) = parse_json(body) else {
         return false;
     };
-    let Ok(model) = parse_json(PAYMENT_SERVICE_MODEL) else {
-        return false;
-    };
-    let Some(shape) = model
-        .get("shapes")
-        .and_then(|s| s.get("ProcessPaymentResponse"))
-    else {
-        return false;
-    };
-    let Ok(required) = toolkit_aws::recorded::optional_string_list(shape, "required") else {
-        return false;
-    };
-    if required.is_empty() || required.iter().any(|key| value.get(key).is_none()) {
+    if !has_required("ProcessPaymentResponse", &value) {
         return false;
     }
     let text = |key| {
@@ -322,13 +324,69 @@ fn valid_process_response(body: &str, manager: &str, session: &str, instrument: 
 }
 
 #[cfg(test)]
-fn valid_session_response(
-    _body: &str,
-    _manager: &str,
-    _session: Option<&str>,
-    _user: &str,
-) -> bool {
-    false
+fn valid_session_response(body: &str, manager: &str, session: Option<&str>, user: &str) -> bool {
+    use toolkit_aws::recorded::{optional_member, optional_object, optional_text};
+    if body.len() > 65_536 {
+        return false;
+    }
+    let Ok(root) = parse_json(body) else {
+        return false;
+    };
+    let Ok(Some(value)) = optional_object(&root, "paymentSession") else {
+        return false;
+    };
+    if !has_required("PaymentSession", value) {
+        return false;
+    }
+    let text = |key| optional_text(value, key).ok().flatten();
+    if text("paymentManagerArn") != Some(manager)
+        || text("userId") != Some(user)
+        || text("paymentSessionId").is_none()
+        || session.is_some_and(|id| text("paymentSessionId") != Some(id))
+        || !matches!(
+            optional_member(value, "expiryTimeInMinutes", "an integer", |v| match v {
+                Json::Int(n) => Some(*n),
+                _ => None,
+            }),
+            Ok(Some(_))
+        )
+    {
+        return false;
+    }
+    let timestamp = |object: &Json, key: &str| {
+        optional_member(object, key, "a timestamp", |v| {
+            crate::cloudwatch::timefmt::time_from_json(v).ok()
+        })
+    };
+    if !matches!(timestamp(value, "createdAt"), Ok(Some(_)))
+        || !matches!(timestamp(value, "updatedAt"), Ok(Some(_)))
+    {
+        return false;
+    }
+    let amount = |object: &Json, key: &str, required: bool| match optional_object(object, key) {
+        Ok(None) => !required,
+        Ok(Some(v)) => {
+            matches!(optional_text(v, "value"), Ok(Some(_)))
+                && matches!(optional_text(v, "currency"), Ok(Some(_)))
+        }
+        Err(_) => false,
+    };
+    match optional_object(value, "limits") {
+        Ok(Some(limits)) if !amount(limits, "maxSpendAmount", true) => return false,
+        Err(_) => return false,
+        _ => {}
+    }
+    match optional_object(value, "availableLimits") {
+        Ok(Some(limits))
+            if !amount(limits, "availableSpendAmount", false)
+                || timestamp(limits, "updatedAt").is_err() =>
+        {
+            return false
+        }
+        Err(_) => return false,
+        _ => {}
+    }
+    true
 }
 #[cfg(test)]
 mod tests {
