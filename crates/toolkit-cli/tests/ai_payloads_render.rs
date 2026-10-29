@@ -1025,6 +1025,25 @@ fn ap_t28_03_05_module_mismatch_missing_definition_and_unsafe_project() {
 }
 
 #[test]
+fn ap_t28_05_magic_unsafe_project_characters() {
+    let template = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../skills/core-skills/aws-ai-ml/references/dataset-transformation/code_templates/transformation.py");
+    for suffix in ["space dir", "dollar$dir", "brace{dir", "quote'dir"] {
+        let f = Fixture::new();
+        let project = f.0.join(suffix);
+        fs::create_dir_all(project.join("scripts")).unwrap();
+        let module = project.join("scripts/transform_fn.py");
+        fs::write(&module, "def transform_dataset(df):\n    return df\n").unwrap();
+        let cell = format!("2={}", module.display());
+        let result = Command::new(env!("CARGO_BIN_EXE_toolkit")).args(["ai-payloads", "render"]).arg(&template)
+            .args(["--mode", "notebook", "--project-dir"]).arg(&project)
+            .args(["--name", "example", "--cell", &cell, "--allow-unresolved"]).output().unwrap();
+        assert_eq!(result.status.code(), Some(1), "{suffix}");
+        assert!(String::from_utf8_lossy(&result.stderr).contains("writefile_path_unsafe"));
+        assert!(!project.join("notebooks").exists());
+    }
+}
+
+#[test]
 fn ap_nb_01_02_03_04_and_scr_01_02_output_shape() {
     use toolkit_core::{parse_json, Json};
     let source = "# Cell 0 [markdown]: Example\n# Heading\n#\n# Text\n\n# Cell 1: Work\nx = 1\n\nshow() # NOTEBOOK_ONLY\nlast()\n";
