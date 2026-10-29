@@ -1076,3 +1076,7 @@ Friction: #4727, Rsi #4694, Rsi #4704
   PM RULING: structural final scrub at the output sink seeded from a local session-record read (no refresh/network) before any error renders; missing record = empty set. L5 repair 1 -> Opus 91a6981f (continue_from fbc33b5e). Then narrow re-review (Codex sol ok: no cyber kill on #5403).
   4/4: 91a6981f L5 r1, 33d730c3 S1, 5fd44a0d x402 r3, a0bcd5cc B1 r1.
 - 15:45Z: safety net. 4 workers parked on jobs (healthy). DISK 82G free (90%); disk_floor_hold on our jobs. Cohort audit: 0 settleable. Biggest sandboxes are other projects (e9b8f4ed 26G, 1a32ec94 19G, 03f25f8c 9G) + staging 13G + jobs 14G -> reported up to GM (msg 30374e97). Safety net re-armed 16:45Z.
+- 16:25Z: x402 S5 repair 3 (5fd44a0d, Opus) DONE at 84fd9fb04538fdde96bf7baa2f419e9c1aa8f4aa (no_payment.rs file module, absolute paths, whole-file pin, unraw entry point, raw-ident ban, crate-identity test; red 75e10102: 12 mutations past old gate; scoped bebf8a08 ok + fmt/clippy/sdk/live green).
+  Re-review #5419 -> Claude Opus c08ce82a pinned 84fd9fb0 (supersedes #5397). On ACCEPT: AgentCheckLandingCandidate + enqueue 84fd9fb0 (source_session_id 5fd44a0d, derive_filters, issue 5352); after landing close #5352 #5373 #5389 #5397 #5419 #5374-#5377 #5390 #5391 #5400 (confirm each).
+  Kaizen dedupe: at_commit exit 127 -> survivor #4865; cancelled #5353 #5381 #5396 #5408. Next free kaizen slot: worker on #4865 (add scripts/at-commit-test.sh matching runner contract).
+  4/4: 91a6981f L5 r1, 33d730c3 S1, a0bcd5cc B1 r1, c08ce82a #5419.
