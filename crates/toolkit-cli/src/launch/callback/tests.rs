@@ -411,3 +411,39 @@ fn watchdog_terminates_prepublication_process() {
     assert!(Custody::acquire(&dir, 99).is_ok());
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn request_boundary_rejects_wrong_state_and_bad_heads_without_terminal_result() {
+    for query in [
+        "code=x",
+        "state=wrong&code=x",
+        "error=access_denied",
+        "state=wrong&error=access_denied",
+        "state=secret&state=secret&code=x",
+        "state=secret&error=a&error=b",
+        "state=secret&code=%GG",
+    ] {
+        assert_eq!(
+            parse_request(&request(query), 1234, "secret"),
+            Outcome::Ignore(400),
+            "{query}"
+        );
+    }
+    for head in [
+        "GET /?state=secret&code=x HTTP/1.1\r\nHost: 127.0.0.1:1234\r\nHost: 127.0.0.1:1234\r\n\r\n",
+        "GET  / HTTP/1.1\r\nHost: 127.0.0.1:1234\r\n\r\n",
+        "GET / HTTP/1.1\r\nBad Header: x\r\nHost: 127.0.0.1:1234\r\n\r\n",
+    ] { assert_eq!(parse_request(head.as_bytes(), 1234, "secret"), Outcome::Ignore(400)); }
+    assert_eq!(
+        parse_request(&request("state=secret&code="), 1234, "secret"),
+        Outcome::InvalidCode
+    );
+    assert_eq!(
+        parse_request(
+            &request(&format!("state=secret&code={}", "a".repeat(4097))),
+            1234,
+            "secret"
+        ),
+        Outcome::InvalidCode
+    );
+}

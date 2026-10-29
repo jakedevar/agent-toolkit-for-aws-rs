@@ -2127,3 +2127,5 @@ lookup can overrun an operation deadline by the resolver's own configured limits
 The Rust callback helper is invoked as `toolkit launch auth-callback`; the parent waits with `toolkit launch auth-wait PID`.
 
 Start sign-in with `toolkit launch auth-start` before using the wait command.
+
+Implementation note for L4: #5081 supersedes the earlier per-slot timing and rate derivation above. The listener expires all due slots at each operation clock check and retains the turn's separate pacing deadline after an early slot-expiry wake. #5083 supersedes the earlier T-CB-TIME-9/14 wording: admission authorizes a rename but does not prove the syscall has started; watchdog exit is terminal for user-space code, and lock release is tied to process exit rather than parent reaping.

@@ -198,10 +198,16 @@ pub fn observe(state_dir: &Path, pid: u32, now: i64) -> Observation {
 /// Evaluate a wait and remove a final record only while the lock is held here.
 #[cfg(unix)]
 pub fn finish_if_final(state_dir: &Path, pid: u32, now: i64) -> (Observation, Option<String>) {
-    let Some(record) = read_record(state_dir, pid) else {
+    let Some(mut record) = read_record(state_dir, pid) else {
         return (Observation::Missing, None);
     };
     let lock = acquire_if_free(state_dir, pid);
+    if lock.is_some() {
+        let Some(final_record) = read_record(state_dir, pid) else {
+            return (Observation::Missing, None);
+        };
+        record = final_record;
+    }
     let valid = state::load_session(state_dir)
         .is_some_and(|session| session.token_expires_at > now.saturating_add(300));
     let decision = super::wait_decision(record.status, lock.is_none(), valid, now, record.cutoff);
@@ -239,7 +245,11 @@ pub fn cleanup_stale(state_dir: &Path, now: i64) {
                 continue;
             }
             if let Some(_lock) = acquire_if_free(state_dir, pid) {
-                let _ = state::remove_state_file(&pending, name);
+                if read_record(state_dir, pid)
+                    .is_some_and(|current| now > current.cutoff.saturating_add(3600))
+                {
+                    let _ = state::remove_state_file(&pending, name);
+                }
             }
         }
     }
