@@ -633,23 +633,24 @@ impl ResolveCachedIdentity for RefuseCredentials {
 }
 
 /// A generated client configured for the bridge.
+// recorded-shape: builds an SDK client from fixed configuration; it reads no JSON.
 macro_rules! sdk_client {
     ($krate:ident, $region:expr, $http:expr) => {
         $krate::Client::from_conf(
-                    $krate::Config::builder()
-                        .behavior_version_latest()
-                        .region($krate::config::Region::new($region.to_string()))
-                        .http_client($http)
-                        .identity_cache(RefuseCredentials)
-                        .allow_no_auth()
-                        .auth_scheme_preference([AuthSchemeId::new("noAuth")])
-                        .retry_config(RetryConfig::disabled())
-                        .timeout_config(TimeoutConfig::disabled())
-                        .stalled_stream_protection(
-                            $krate::config::StalledStreamProtectionConfig::disabled(),
+                            $krate::Config::builder()
+                                .behavior_version_latest()
+                                .region($krate::config::Region::new($region.to_string()))
+                                .http_client($http)
+                                .identity_cache(RefuseCredentials)
+                                .allow_no_auth()
+                                .auth_scheme_preference([AuthSchemeId::new("noAuth")])
+                                .retry_config(RetryConfig::disabled())
+                                .timeout_config(TimeoutConfig::disabled())
+                                .stalled_stream_protection(
+                                    $krate::config::StalledStreamProtectionConfig::disabled(),
+                                )
+                                .build(),
                         )
-                        .build(),
-                )
     };
 }
 
@@ -742,6 +743,7 @@ fn unsupported() -> AwsError {
 
 type Members = [(String, Json)];
 
+// recorded-shape: the seam request the checks build, not a response.
 fn members<'j>(request: &'j Json, allowed: &[&str]) -> Result<&'j Members, AwsError> {
     match request {
         Json::Object(pairs) if pairs.iter().all(|(key, _)| allowed.contains(&key.as_str())) => {
@@ -766,6 +768,7 @@ fn text(pairs: &Members, key: &str) -> Result<Option<String>, AwsError> {
     }
 }
 
+// recorded-shape: a list in the seam request the checks build, not a response.
 fn strings(value: &Json) -> Result<Vec<String>, AwsError> {
     match value {
         Json::Array(items) => items
@@ -796,6 +799,7 @@ fn int(pairs: &Members, key: &str) -> Result<Option<i32>, AwsError> {
 
 /// An array of objects with exactly the string member `first` and the member
 /// `second` read by `read`.
+// recorded-shape: an object list in the seam request, not a response.
 fn pairs_of<T>(
     pairs: &Members,
     key: &str,
