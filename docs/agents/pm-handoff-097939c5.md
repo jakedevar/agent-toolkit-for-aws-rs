@@ -615,3 +615,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 10-29 04:40Z: #4386 design repair 1 (094ad6cf) at 3e46f485bd9d38ead3652a27dda3c2715ca1e2e7 (§11 resolution; per-name type table, ACCEPT_EULA bool + --consent (B-11/OD-12); link(2) no-replace publish, no fallback, residual window stated; append CAS + .conflict-NN; publication = new slice S2a).
   #5119 r2 (bounded, last unless P1; told #5120 GM ruling = later slice) -> Codex 58279180 pinned 3e46f485.
   4/4 busy: 4cbe8435 (#5118), f698fe4e (#5085 repair 1), 27c4a78f (#5105 r2), 58279180 (#5119 r2).
+- 10-29 04:50Z: S4 r2 (27c4a78f) on 05a51ad9: all 8 originals CLOSED; new P1 #5136 (retire holds pending/session lock across credential I/O -> supervisor stall), P2 #5137 (retired GET delivery survives stdout backpressure), #5138 (cancel sent after deadline when signing slow).
+  Repair 2 -> 8c9c4a04 (Opus high, continue_from 869fe7ce). Then S4 r3 narrow (#5136-#5138 only).
+  4/4 busy: 4cbe8435 (#5118), f698fe4e (#5085 repair 1), 58279180 (#5119 r2), 8c9c4a04 (#5079 repair 2).
