@@ -76,8 +76,28 @@ pub fn is_retryable(code: &str) -> bool {
 
 /// A fixed, value-free exception class for the payment flow.
 #[must_use]
-pub fn aws_error_class(_error: &AwsError) -> &'static str {
-    "RuntimeError"
+pub fn aws_error_class(error: &AwsError) -> &'static str {
+    use toolkit_aws::error::TimeoutPhase;
+    match error {
+        AwsError::Connect { .. } => "ConnectError",
+        AwsError::Timeout {
+            phase: TimeoutPhase::Connect,
+            ..
+        } => "ConnectTimeout",
+        AwsError::Timeout {
+            phase: TimeoutPhase::Read | TimeoutPhase::Deadline,
+            ..
+        } => "ReadTimeout",
+        AwsError::NoCredentials => "NoCredentialsError",
+        AwsError::Service(_) => "ClientError",
+        AwsError::InvalidConfig { .. }
+        | AwsError::CredentialArgument { .. }
+        | AwsError::PartialCredentials { .. }
+        | AwsError::CredentialsExpired
+        | AwsError::CredentialProvider { .. }
+        | AwsError::Pagination { .. }
+        | AwsError::InvalidResponse { .. } => "RuntimeError",
+    }
 }
 
 /// Build the standard `AgentCore` endpoint without reading endpoint overrides.
