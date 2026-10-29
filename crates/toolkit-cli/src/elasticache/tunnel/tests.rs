@@ -10,6 +10,7 @@
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::ffi::OsString;
+use std::fmt::Write as _;
 use std::fs;
 use std::net::IpAddr;
 use std::path::PathBuf;
@@ -2236,16 +2237,19 @@ fn percent_encoded(text: &str, upper: bool) -> String {
         if byte.is_ascii_alphanumeric() || b"-._~".contains(&byte) {
             out.push(char::from(byte));
         } else if upper {
-            out.push_str(&format!("%{byte:02X}"));
+            let _ = write!(out, "%{byte:02X}");
         } else {
-            out.push_str(&format!("%{byte:02x}"));
+            let _ = write!(out, "%{byte:02x}");
         }
     }
     out
 }
 
 fn hex_encoded(text: &str) -> String {
-    text.bytes().map(|byte| format!("{byte:02x}")).collect()
+    text.bytes().fold(String::new(), |mut acc, byte| {
+        let _ = write!(acc, "{byte:02x}");
+        acc
+    })
 }
 
 /// The renderings of a credential in client error text that a scrubber must
@@ -2614,20 +2618,18 @@ fn a_recorded_cache_with_every_step_used_succeeds() {
 
 // ------------------------------------- #4989 partial SSM pagination
 
-fn two_instances() -> Result<Json, SeamError> {
-    Ok(instances_page(
+fn two_instances() -> Json {
+    instances_page(
         &[
             instance("i-0000000b", "plain", "c5.large"),
             instance("i-0000000a", "known-ready", "t3.micro"),
         ],
         None,
-    ))
+    )
 }
 
-fn first_managed_page() -> Result<Json, SeamError> {
-    Ok(document(
-        r#"{"InstanceInformationList":[{"InstanceId":"i-0000000a"}],"NextToken":"page-2"}"#,
-    ))
+fn first_managed_page() -> Json {
+    document(r#"{"InstanceInformationList":[{"InstanceId":"i-0000000a"}],"NextToken":"page-2"}"#)
 }
 
 #[test]
@@ -2647,8 +2649,8 @@ fn find_tunnel_hosts_keeps_the_hosts_of_earlier_ssm_pages_when_a_later_page_fail
         ),
     ] {
         let mut aws = ScriptedAws::new(vec![
-            (Operation::DescribeInstances, two_instances()),
-            (Operation::DescribeInstanceInformation, first_managed_page()),
+            (Operation::DescribeInstances, Ok(two_instances())),
+            (Operation::DescribeInstanceInformation, Ok(first_managed_page())),
             (Operation::DescribeInstanceInformation, Err(error)),
         ]);
         let run = run_discover(&mut aws);
@@ -2684,8 +2686,11 @@ fn find_tunnel_hosts_keeps_the_hosts_of_earlier_ssm_pages_when_a_later_page_fail
 #[test]
 fn find_tunnel_hosts_orders_the_hosts_kept_from_a_partial_ssm_walk() {
     let mut aws = ScriptedAws::new(vec![
-        (Operation::DescribeInstances, two_instances()),
-        (Operation::DescribeInstanceInformation, first_managed_page()),
+        (Operation::DescribeInstances, Ok(two_instances())),
+        (
+            Operation::DescribeInstanceInformation,
+            Ok(first_managed_page()),
+        ),
         (
             Operation::DescribeInstanceInformation,
             Err(denied("ThrottlingException")),
@@ -2708,8 +2713,11 @@ fn find_tunnel_hosts_orders_the_hosts_kept_from_a_partial_ssm_walk() {
 #[test]
 fn find_tunnel_hosts_keeps_earlier_pages_when_a_later_ssm_page_is_malformed() {
     let mut aws = ScriptedAws::new(vec![
-        (Operation::DescribeInstances, two_instances()),
-        (Operation::DescribeInstanceInformation, first_managed_page()),
+        (Operation::DescribeInstances, Ok(two_instances())),
+        (
+            Operation::DescribeInstanceInformation,
+            Ok(first_managed_page()),
+        ),
         (
             Operation::DescribeInstanceInformation,
             Ok(document(r#"{"InstanceInformationList":[{"NoId":1}]}"#)),
@@ -2726,8 +2734,11 @@ fn find_tunnel_hosts_keeps_earlier_pages_when_a_later_ssm_page_is_malformed() {
 #[test]
 fn find_tunnel_hosts_a_replay_mismatch_on_a_later_ssm_page_stays_fatal() {
     let mut aws = ScriptedAws::new(vec![
-        (Operation::DescribeInstances, two_instances()),
-        (Operation::DescribeInstanceInformation, first_managed_page()),
+        (Operation::DescribeInstances, Ok(two_instances())),
+        (
+            Operation::DescribeInstanceInformation,
+            Ok(first_managed_page()),
+        ),
         (
             Operation::DescribeInstanceInformation,
             Err(SeamError::Replay("the request differs".to_string())),

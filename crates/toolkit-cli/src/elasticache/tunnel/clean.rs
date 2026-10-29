@@ -8,6 +8,8 @@
 //! control, bidirectional and invisible characters are escaped last, so an
 //! escape never grows past the bound it was cut for.
 
+use std::fmt::Write as _;
+
 use toolkit_aws::redact_text;
 
 use crate::safe_text::safe_path;
@@ -76,9 +78,9 @@ fn percent(text: &str, upper: bool) -> String {
         if byte.is_ascii_alphanumeric() || b"-._~".contains(&byte) {
             out.push(char::from(byte));
         } else if upper {
-            out.push_str(&format!("%{byte:02X}"));
+            let _ = write!(out, "%{byte:02X}");
         } else {
-            out.push_str(&format!("%{byte:02x}"));
+            let _ = write!(out, "%{byte:02x}");
         }
     }
     out
@@ -94,7 +96,10 @@ fn renderings(secret: &str, out: &mut Vec<String>) {
     out.push(percent(secret, true));
     out.push(percent(secret, false));
     out.push(secret.replace(' ', "+"));
-    let hex: String = secret.bytes().map(|byte| format!("{byte:02x}")).collect();
+    let hex = secret.bytes().fold(String::new(), |mut acc, byte| {
+        let _ = write!(acc, "{byte:02x}");
+        acc
+    });
     out.push(hex.to_uppercase());
     out.push(hex);
     for url_safe in [false, true] {
