@@ -5,6 +5,9 @@ use toolkit_aws::{AwsError, Endpoint};
 use toolkit_core::parse_json;
 use toolkit_core::Json;
 
+/// Pinned AgentCore payment service-model excerpt used for response contracts.
+pub const PAYMENT_SERVICE_MODEL: &str = include_str!("model/agentcore-payments.json");
+
 const CODES: &[&str] = &[
     "AccessDeniedException",
     "ConflictException",
@@ -246,6 +249,21 @@ fn valid_process_response(body: &str, manager: &str, session: &str, instrument: 
     let Ok(value) = parse_json(body) else {
         return false;
     };
+    let Ok(model) = parse_json(PAYMENT_SERVICE_MODEL) else {
+        return false;
+    };
+    let Some(shape) = model
+        .get("shapes")
+        .and_then(|s| s.get("ProcessPaymentResponse"))
+    else {
+        return false;
+    };
+    let Ok(required) = toolkit_aws::recorded::optional_string_list(shape, "required") else {
+        return false;
+    };
+    if required.is_empty() || required.iter().any(|key| value.get(key).is_none()) {
+        return false;
+    }
     let text = |key| {
         toolkit_aws::recorded::optional_text(&value, key)
             .ok()
