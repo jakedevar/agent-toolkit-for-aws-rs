@@ -224,8 +224,9 @@ impl Declaration {
     /// package binary is never resolved by a plugin launcher).
     #[must_use]
     pub fn binary(&self, plugin: &str, name: &str) -> Option<&BinarySpec> {
-        self.plugin_binaries(plugin)
-            .find(|binary| binary.name == name)
+        self.binaries
+            .iter()
+            .find(|binary| binary.plugin() == Some(plugin) && binary.name == name)
     }
 
     /// The declared binaries of one plugin.
