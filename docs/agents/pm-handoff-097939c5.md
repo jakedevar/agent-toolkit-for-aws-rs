@@ -1061,3 +1061,7 @@ Friction: #4727, Rsi #4694, Rsi #4704
   PM RULINGS (in #5401 body): grouped matrix w/o own red commits OK if mutation-tested (survivor = BLOCKER); B2 matcher out of scope; dateutil exhaustiveness = accepted residual (needs divergence row, non-blocking).
   Review #5401 -> Claude Opus ca36147e pinned 4424a662. On ACCEPT: check + enqueue 4424a662 (source_session_id dd250991, derive_filters, issue 5363).
   4/4: fbc33b5e L5, cf9b5ebf S1, 5fd44a0d x402 r3, ca36147e #5401. #5344 still waits.
+- 14:58Z: S1 cf9b5ebf (Opus) rotated INCOMPLETE at fcc99b7c6c0202e6dd63c9e4577447d8725eee16 (DatabaseEndpoint R-DG-03, pre-send peer check via SdkTransport::for_database (#5387 done in S1), R-DG-07 deadlines/16MiB, network-policy parser, T-DG-09a; scoped 20ab0769 ok 5181).
+  PM RULINGS (brief): credential resolution cancellable deadline required before live signing; DNS abandoned-lookup residual accepted with cap of 1 outstanding (fail closed); WS/GraphSON limits deferred to S3. Opus continuation 33d730c3.
+  Then security review of S1: prefer CLAUDE reviewer (Codex cyber filter risk on network-security mutations, #5060).
+  #5344 is P4: stays behind P2 work. 4/4: fbc33b5e L5, 33d730c3 S1, 5fd44a0d x402 r3, ca36147e #5401.
