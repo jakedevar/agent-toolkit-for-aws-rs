@@ -64,10 +64,15 @@ fn a_build_without_the_sdk_refuses_every_start() {
 #[cfg(feature = "aws-sdk")]
 #[test]
 fn unusable_tls_roots_refuse_the_start() {
-    for (value, reason) in [(
-        "/nonexistent/toolkit-roots.pem",
-        "configured-location-error",
-    )] {
+    // A missing file, and a directory named as the file.
+    let directory = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/data/mcp_proxy");
+    for (value, reason) in [
+        (
+            "/nonexistent/toolkit-roots.pem",
+            "configured-location-error",
+        ),
+        (directory, "configured-location-error"),
+    ] {
         let output = toolkit(
             &["mcp-proxy", ENDPOINT, "--skip-auth"],
             &[("SSL_CERT_FILE", value)],
