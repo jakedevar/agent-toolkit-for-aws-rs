@@ -464,7 +464,7 @@ fn valid_session_response(body: &str, manager: &str, session: Option<&str>, user
         Ok(None) => !required,
         Ok(Some(v)) => {
             matches!(optional_text(v, "value"), Ok(Some(_)))
-                && matches!(optional_text(v, "currency"), Ok(Some(_)))
+                && matches!(optional_text(v, "currency"), Ok(Some("USD")))
         }
         Err(_) => false,
     };
