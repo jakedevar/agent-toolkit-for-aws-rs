@@ -714,3 +714,5 @@ Friction: #4727, Rsi #4694, Rsi #4704
   4/4 busy: 1d17674d (#5181 S4), 1e700b18 (#5196 P-ROOTS), 2664b229 (#5190 L3), ed423b5f (#5198 S2a).
 - 10-29 05:38Z: x402 P-ROOTS #5196 (1e700b18, Codex terra) at 11fcd793d4376c0064d67d0baa2028d4572465dd (compile-only red 9bae13de; fmt 5c1d1cc9, clippy e2cccbb5, clippy-sdk 90576e47, test-sdk 31a74f63, scoped c029f1b1 ok; #5199 recorder gap). Review #5200 -> Claude Sonnet 169dd3a4 (pinned 11fcd79). Lands after r22 (descends 069ab1b).
   4/4 busy: 1d17674d (#5181 S4), 2664b229 (#5190 L3), ed423b5f (#5198 S2a), 169dd3a4 (#5200).
+- 10-29 05:41Z: ai-payloads S2a #5198 (ed423b5f) partial at f78ca76f7c32470e3cfa1d7cfde0da2d57d69df3 (red 1d7590b0; fmt 0dc9c3db, clippy 55f7c588, scoped a4bb3a11 3864 ok). Gaps #5202. RULING: AP-PUB-03 retries + AP-PUB-15 dry-run -> S2b; AP-PUB-02 real interleave + after_commit_before_unlink assertion stay in S2a repair. Review #5205 -> Claude Sonnet 15d38b72 (pinned f78ca76). Then ONE repair (#5202 + findings, Codex terra continue_from ed423b5f).
+  4/4 busy: 1d17674d (#5181 S4), 2664b229 (#5190 L3), 169dd3a4 (#5200), 15d38b72 (#5205).
