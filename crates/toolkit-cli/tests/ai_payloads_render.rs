@@ -43,6 +43,47 @@ impl Drop for Fixture {
 const TEMPLATE: &str = "# Cell 0 [markdown]: Example\n# Description\n\n# Cell 1: Config\nACCEPT_EULA = [ACCEPT_EULA]\nrole = \"[ROLE_ARN]\"\n";
 
 #[test]
+fn ap_typ_03_04_06_07_sub_14_process_rejection_matrix() {
+    for (name, cases) in [
+        ("ACCEPT_EULA", vec!["\"true\"", "1", "null", "[]", "{}"]),
+        ("TRUE_OR_FALSE", vec!["\"false\"", "0", "null", "{}"]),
+        ("CONCURRENCY", vec!["0", "-1", "512.0", "5.12e2", "2147483648", "true", "\"512\"", "null", "[512]", "{}", "NaN"]),
+        ("METRICS_LIST", vec!["null", "{}", "[1]", "[\"bad-name\"]", "[\"Same\",\"Same\"]"]),
+    ] {
+        for raw in cases {
+            let f = Fixture::new();
+            let template = f.write("template.py", &format!("# Cell 0 [markdown]: Example\n# Desc\n# Cell 1: Code\nx = [{name}]\n"));
+            let values = f.write("values.json", &format!("{{\"values\":{{\"{name}\":{raw}}}}}"));
+            let result = f.render(&template, "script", &["--values", values.to_str().unwrap()]);
+            assert_eq!(result.status.code(), Some(1), "{name}: {raw}");
+            assert!(!f.0.join("scripts").exists());
+        }
+    }
+}
+
+#[test]
+fn ap_sub_11_22_sec_01_process_boundaries() {
+    for raw in ["\"line\\nfeed\"", "\"escape\\u001b\"", "\"bidi\\u202e\"", &format!("\"{}\"", "x".repeat(4097))] {
+        let f = Fixture::new();
+        let template = f.write("template.py", "# Cell 0 [markdown]: Example\n# Desc\n# Cell 1: Code\nx = '[VALUE]'\n");
+        let values = f.write("values.json", &format!("{{\"values\":{{\"VALUE\":{raw}}}}}"));
+        let result = f.render(&template, "script", &["--values", values.to_str().unwrap()]);
+        assert_eq!(result.status.code(), Some(1));
+        assert!(!f.0.join("scripts").exists());
+    }
+    let f = Fixture::new();
+    let template = f.write("template.py", "# Cell 0 [markdown]: Example\n# Desc\n# Cell 1: Code\n# [COMMENT_ONLY]\npass\n");
+    assert!(f.render(&template, "script", &[]).status.success());
+    let f = Fixture::new();
+    let template = f.write("template.py", "# Cell 0 [markdown]: Example\n# Desc\n# Cell 1: Code\nx = '[HF_TOKEN]'\n");
+    let values = f.write("values.json", r#"{"values":{"HF_TOKEN":"literal-secret-sentinel"}}"#);
+    let result = f.render(&template, "script", &["--values", values.to_str().unwrap()]);
+    assert_eq!(result.status.code(), Some(1));
+    for bytes in [&result.stdout, &result.stderr] { assert!(!String::from_utf8_lossy(bytes).contains("literal-secret-sentinel")); }
+    assert!(!f.0.join("scripts").exists());
+}
+
+#[test]
 fn ap_con_01_missing_typed_consent_is_refused_even_when_unresolved_allowed() {
     for mode in ["notebook", "script"] {
         let f = Fixture::new();
