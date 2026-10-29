@@ -256,6 +256,17 @@ impl WaitTracker {
         pid: u32,
         now: i64,
     ) -> (Observation, Option<String>) {
+        let elapsed = i64::try_from(self.start.elapsed().as_secs()).unwrap_or(i64::MAX);
+        self.finish_at(state_dir, pid, now, elapsed)
+    }
+
+    pub(super) fn finish_at(
+        &mut self,
+        state_dir: &Path,
+        pid: u32,
+        now: i64,
+        elapsed: i64,
+    ) -> (Observation, Option<String>) {
         let path = state_dir.join("pending").join(format!("{pid}.json"));
         let mut record = read_record(state_dir, pid);
         if record.is_none()
@@ -277,15 +288,9 @@ impl WaitTracker {
         }
         let valid = state::load_session(state_dir)
             .is_some_and(|session| session.token_expires_at > now.saturating_add(300));
-        let (decision_now, cutoff) = self.cutoff.map_or_else(
-            || {
-                (
-                    i64::try_from(self.start.elapsed().as_secs()).unwrap_or(i64::MAX),
-                    660,
-                )
-            },
-            |cutoff| (now, cutoff),
-        );
+        let (decision_now, cutoff) = self
+            .cutoff
+            .map_or_else(|| (elapsed, 660), |cutoff| (now, cutoff));
         let decision = super::wait_decision(
             record
                 .as_ref()

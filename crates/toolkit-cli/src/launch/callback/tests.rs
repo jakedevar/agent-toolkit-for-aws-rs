@@ -465,3 +465,70 @@ fn unreadable_record_with_free_lock_is_not_missing() {
     assert_eq!(observation, Observation::Decision(WaitDecision::Ended));
     assert!(!path.exists());
 }
+
+#[cfg(unix)]
+#[test]
+fn revision4_unknown_record_decision_matrix() {
+    use super::{
+        pending::{Custody, Observation, WaitTracker},
+        PendingStatus, WaitDecision,
+    };
+    use crate::launch::{clock::SeededRandom, tests_support::Scratch};
+    for disappeared in [false, true] {
+        for held in [false, true] {
+            for valid in [false, true] {
+                for (now, elapsed) in [(99, 659), (100, 660), (104, 664), (105, 665)] {
+                    let scratch = Scratch::new("unknown-matrix");
+                    let custody = Custody::acquire(scratch.path(), 91).unwrap();
+                    let path = scratch.join("pending/91.json");
+                    let mut tracker = WaitTracker::default();
+                    if disappeared {
+                        custody
+                            .write(
+                                1234,
+                                40,
+                                100,
+                                PendingStatus::Listening,
+                                None,
+                                &SeededRandom::new(1),
+                            )
+                            .unwrap();
+                        assert_eq!(
+                            tracker.finish_at(scratch.path(), 91, 99, 0).0,
+                            Observation::Decision(WaitDecision::Poll)
+                        );
+                        std::fs::remove_file(&path).unwrap();
+                    } else {
+                        std::fs::write(&path, b"malformed").unwrap();
+                    }
+                    if valid {
+                        let session = serde_json::json!({"client_id":"c","client_secret":"s","client_expires_at":9999,"authorize_endpoint":"https://example.com","token_endpoint":"https://example.com","scopes":["launch:access"],"access_token":"a","refresh_token":"r","token_expires_at":9999});
+                        std::fs::write(scratch.join("session.json"), session.to_string()).unwrap();
+                    }
+                    if !held {
+                        drop(custody);
+                    }
+                    let expected = if valid {
+                        WaitDecision::Authenticated
+                    } else if held && now < 105 {
+                        WaitDecision::Poll
+                    } else if held {
+                        WaitDecision::HelperBlocked
+                    } else if now >= 100 {
+                        WaitDecision::TimedOut
+                    } else {
+                        WaitDecision::Ended
+                    };
+                    assert_eq!(
+                        tracker.finish_at(scratch.path(), 91, now, elapsed).0,
+                        Observation::Decision(expected),
+                        "disappeared={disappeared} held={held} valid={valid} now={now}"
+                    );
+                    if !disappeared {
+                        assert_eq!(path.exists(), held);
+                    }
+                }
+            }
+        }
+    }
+}
