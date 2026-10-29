@@ -421,6 +421,10 @@ pub struct SdkTransport {
     /// Refuse responses from a non-public socket peer (off only in the
     /// loopback test harness).
     peer_check: bool,
+    /// Release a streamed response's connection as soon as a read ends it
+    /// (end of body or any terminal error): only the database transport sets
+    /// it (#5465), so the public and payment streams are unchanged.
+    release_ended_streams: bool,
 }
 
 /// One rustls (aws-lc) connector over `resolver` that trusts exactly `ctx`:
@@ -485,6 +489,7 @@ impl SdkTransport {
             connectors: Mutex::new(Vec::new()),
             roots: Some(roots.clone()),
             peer_check: true,
+            release_ended_streams: false,
         })
     }
 
@@ -521,6 +526,7 @@ impl SdkTransport {
             connectors: Mutex::new(Vec::new()),
             roots: None,
             peer_check: true,
+            release_ended_streams: false,
         }
     }
 
@@ -828,7 +834,7 @@ impl StreamingTransport for SdkTransport {
             return Err(deadline_error());
         }
         let response = response?;
-        Ok(Box::new(SdkStream {
+        let stream = SdkStream {
             runtime: self.runtime.clone(),
             status: response.status().as_u16(),
             headers: response_headers(response.headers().iter()),
@@ -837,7 +843,11 @@ impl StreamingTransport for SdkTransport {
             limiter: ChunkLimiter::new(*limits),
             deadline: limits.deadline(),
             expired: false,
-        }))
+        };
+        if self.release_ended_streams {
+            return Ok(Box::new(database::ReleasingStream::new(stream)));
+        }
+        Ok(Box::new(stream))
     }
 }
 

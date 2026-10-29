@@ -38,12 +38,14 @@
 //! only when the system resolver returns. At most one abandoned lookup is
 //! outstanding per process: a new lookup meanwhile fails closed.
 //!
-//! Close (R-DG-07, [`CLOSE_BUDGET`]; #5429): the HTTP connection is never
-//! spawned. The exchange drives it in line, then the response body owns and
-//! drives it, so dropping the body, or a failed or timed-out call dropping
+//! Close (R-DG-07, [`CLOSE_BUDGET`]; #5429, #5465): the HTTP connection is
+//! never spawned. The exchange drives it in line, then the response body owns
+//! and drives it, so dropping the body, or a failed or timed-out call dropping
 //! its future, drops the socket synchronously, before the synchronous API
-//! returns and without any later runtime poll. No graceful TLS close is
-//! awaited, so closing never waits on the server.
+//! returns and without any later runtime poll. A streamed read that ends the
+//! response (end of body, any terminal error or limit refusal) releases the
+//! socket before it returns too, even while the caller keeps the stream. No
+//! graceful TLS close is awaited, so closing never waits on the server.
 
 use std::fmt;
 use std::future::Future;
@@ -865,6 +867,7 @@ impl DatabaseConnector {
             idle_timer: Box::pin(tokio::time::sleep(self.idle)),
             deadline_timer: Box::pin(tokio::time::sleep_until(deadline)),
             driver,
+            ended: None,
         };
         let response = http::Response::from_parts(parts, SdkBody::from_body_1_x(bounded));
         SdkHttpResponse::try_from(response).map_err(|_| {
@@ -921,6 +924,11 @@ impl Driver {
         }
     }
 
+    /// Drop the connection, and with it the socket, now (#5465).
+    fn release(&mut self) {
+        *self.0.get_mut().unwrap_or_else(PoisonError::into_inner) = None;
+    }
+
     /// Wait for `future` while driving the connection.
     async fn drive<F: Future>(&mut self, future: F) -> F::Output {
         let mut future = std::pin::pin!(future);
@@ -944,16 +952,48 @@ impl fmt::Display for BodyBoundError {
 
 impl std::error::Error for BodyBoundError {}
 
+/// How a [`BoundedBody`] ended.
+#[derive(Debug, Clone, Copy)]
+enum BodyEnd {
+    /// The whole body was read.
+    Complete,
+    /// A terminal failure; later polls repeat it.
+    Failed(&'static str),
+}
+
 /// The response body under the byte limit, idle limit and deadline. Each
 /// frame is checked against the remaining allowance before it is passed on.
+///
+/// The end of the body and every terminal failure (deadline, byte limit, idle
+/// time, a connection error) release the connection, and so the socket,
+/// before the poll returns (#5465): a caller that keeps the response after it
+/// ended holds no socket. A failed body never reports a clean end afterwards.
 struct BoundedBody {
     inner: hyper::body::Incoming,
     remaining: u64,
     idle: Duration,
     idle_timer: Pin<Box<Sleep>>,
     deadline_timer: Pin<Box<Sleep>>,
-    /// The connection: polled with the body, dropped with it.
+    /// The connection: polled with the body, released when the body ends and
+    /// dropped with it.
     driver: Driver,
+    ended: Option<BodyEnd>,
+}
+
+impl BoundedBody {
+    /// Record how the body ended and release the socket at once.
+    fn end(&mut self, end: BodyEnd) {
+        self.ended = Some(end);
+        self.driver.release();
+    }
+
+    fn fail(
+        &mut self,
+        reason: &'static str,
+    ) -> Poll<Option<Result<Frame<Bytes>, Box<dyn std::error::Error + Send + Sync>>>> {
+        self.end(BodyEnd::Failed(reason));
+        Poll::Ready(Some(Err(Box::new(BodyBoundError(reason)))))
+    }
 }
 
 impl Body for BoundedBody {
@@ -964,10 +1004,15 @@ impl Body for BoundedBody {
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Option<Result<Frame<Bytes>, Self::Error>>> {
+        match self.ended {
+            Some(BodyEnd::Complete) => return Poll::Ready(None),
+            Some(BodyEnd::Failed(reason)) => {
+                return Poll::Ready(Some(Err(Box::new(BodyBoundError(reason)))))
+            }
+            None => {}
+        }
         if self.deadline_timer.as_mut().poll(cx).is_ready() {
-            return Poll::Ready(Some(Err(Box::new(BodyBoundError(
-                "the operation deadline elapsed while reading the database response",
-            )))));
+            return self.fail("the operation deadline elapsed while reading the database response");
         }
         self.driver.poll(cx);
         match Pin::new(&mut self.inner).poll_frame(cx) {
@@ -977,22 +1022,24 @@ impl Body for BoundedBody {
                     .map_or(0, |data| u64::try_from(data.len()).unwrap_or(u64::MAX));
                 if length > self.remaining {
                     self.remaining = 0;
-                    return Poll::Ready(Some(Err(Box::new(BodyBoundError(
-                        "the database response exceeded the size limit",
-                    )))));
+                    return self.fail("the database response exceeded the size limit");
                 }
                 self.remaining -= length;
                 let next = Instant::now() + self.idle;
                 self.idle_timer.as_mut().reset(next);
                 Poll::Ready(Some(Ok(frame)))
             }
-            Poll::Ready(Some(Err(error))) => Poll::Ready(Some(Err(Box::new(error)))),
-            Poll::Ready(None) => Poll::Ready(None),
+            Poll::Ready(Some(Err(error))) => {
+                self.end(BodyEnd::Failed("the database response could not be read"));
+                Poll::Ready(Some(Err(Box::new(error))))
+            }
+            Poll::Ready(None) => {
+                self.end(BodyEnd::Complete);
+                Poll::Ready(None)
+            }
             Poll::Pending => {
                 if self.idle_timer.as_mut().poll(cx).is_ready() {
-                    return Poll::Ready(Some(Err(Box::new(BodyBoundError(
-                        "the database response stalled",
-                    )))));
+                    return self.fail("the database response stalled");
                 }
                 Poll::Pending
             }
@@ -1000,11 +1047,93 @@ impl Body for BoundedBody {
     }
 
     fn is_end_stream(&self) -> bool {
-        self.inner.is_end_stream()
+        match self.ended {
+            Some(BodyEnd::Complete) => true,
+            Some(BodyEnd::Failed(_)) => false,
+            None => self.inner.is_end_stream(),
+        }
     }
 
     fn size_hint(&self) -> SizeHint {
-        self.inner.size_hint()
+        match self.ended {
+            Some(_) => SizeHint::with_exact(0),
+            None => self.inner.size_hint(),
+        }
+    }
+}
+
+/// A streamed database response that drops its whole SDK stream (body,
+/// connection and socket) the moment a read ends it (#5465): at the end of
+/// the body, on every terminal read error from the database body or from the
+/// outer [`crate::stream::StreamLimits`] (deadline, idle time, byte cap,
+/// including a deadline that passed before the body was read), and when
+/// [`ResponseStream::narrow_body_limit`] refuses the stream. The release
+/// happens before the call returns, without any later runtime poll. After it,
+/// every read repeats the outcome: a failure never turns into a clean end.
+pub(super) struct ReleasingStream<S> {
+    inner: Option<S>,
+    status: u16,
+    headers: crate::transport::Headers,
+    /// Bytes handed to the caller, to judge a narrowed limit.
+    delivered: u64,
+    /// `Ok(())` after the end of the body, else the terminal error.
+    ended: Option<Result<(), crate::stream::StreamError>>,
+}
+
+impl<S: crate::stream::ResponseStream> ReleasingStream<S> {
+    pub(super) fn new(inner: S) -> Self {
+        Self {
+            status: inner.status(),
+            headers: inner.headers().clone(),
+            inner: Some(inner),
+            delivered: 0,
+            ended: None,
+        }
+    }
+
+    fn end(&mut self, outcome: Result<(), crate::stream::StreamError>) {
+        self.ended = Some(outcome);
+        drop(self.inner.take());
+    }
+}
+
+impl<S: crate::stream::ResponseStream> crate::stream::ResponseStream for ReleasingStream<S> {
+    fn status(&self) -> u16 {
+        self.status
+    }
+
+    fn headers(&self) -> &crate::transport::Headers {
+        &self.headers
+    }
+
+    fn narrow_body_limit(&mut self, max_body_bytes: u64) {
+        let Some(inner) = self.inner.as_mut() else {
+            return;
+        };
+        inner.narrow_body_limit(max_body_bytes);
+        if self.delivered > max_body_bytes {
+            self.end(Err(crate::stream::StreamError::TooLarge));
+        }
+    }
+
+    fn next_chunk(&mut self) -> Result<Option<Vec<u8>>, crate::stream::StreamError> {
+        if let Some(outcome) = &self.ended {
+            return outcome.clone().map(|()| None);
+        }
+        let Some(inner) = self.inner.as_mut() else {
+            return Ok(None);
+        };
+        let result = inner.next_chunk();
+        match &result {
+            Ok(Some(chunk)) => {
+                self.delivered = self
+                    .delivered
+                    .saturating_add(u64::try_from(chunk.len()).unwrap_or(u64::MAX));
+            }
+            Ok(None) => self.end(Ok(())),
+            Err(error) => self.end(Err(error.clone())),
+        }
+        result
     }
 }
 
@@ -1081,6 +1210,7 @@ impl SdkTransport {
             connectors: Mutex::new(Vec::new()),
             roots: Some(roots.clone()),
             peer_check: true,
+            release_ended_streams: true,
         })
     }
 }

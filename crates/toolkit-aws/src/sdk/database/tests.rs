@@ -1512,3 +1512,103 @@ fn a_completed_stream_releases_its_socket_at_the_end_of_the_body() {
         },
     );
 }
+
+/// A scripted inner stream that records its own drop.
+struct ScriptedStream {
+    reads: VecDeque<Result<Option<Vec<u8>>, crate::stream::StreamError>>,
+    dropped: Arc<AtomicUsize>,
+    narrowed: Arc<Mutex<Vec<u64>>>,
+}
+
+impl Drop for ScriptedStream {
+    fn drop(&mut self) {
+        self.dropped.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+impl crate::stream::ResponseStream for ScriptedStream {
+    fn status(&self) -> u16 {
+        200
+    }
+
+    fn headers(&self) -> &Headers {
+        static EMPTY: std::sync::OnceLock<Headers> = std::sync::OnceLock::new();
+        EMPTY.get_or_init(Headers::new)
+    }
+
+    fn narrow_body_limit(&mut self, max_body_bytes: u64) {
+        self.narrowed.lock().expect("narrowed").push(max_body_bytes);
+    }
+
+    fn next_chunk(&mut self) -> Result<Option<Vec<u8>>, crate::stream::StreamError> {
+        self.reads.pop_front().unwrap_or(Ok(None))
+    }
+}
+
+#[test]
+fn the_releasing_stream_drops_its_inner_stream_on_every_terminal_read() {
+    use crate::stream::{ResponseStream, StreamError};
+    let scripted = |reads: Vec<Result<Option<Vec<u8>>, StreamError>>| {
+        let dropped = Arc::new(AtomicUsize::new(0));
+        let narrowed = Arc::new(Mutex::new(Vec::new()));
+        let stream = ReleasingStream::new(ScriptedStream {
+            reads: reads.into(),
+            dropped: Arc::clone(&dropped),
+            narrowed: Arc::clone(&narrowed),
+        });
+        (stream, dropped, narrowed)
+    };
+    let failures = [
+        StreamError::IdleTimeout,
+        StreamError::DeadlineExceeded,
+        StreamError::TooLarge,
+        StreamError::Failed(AwsError::Protocol),
+    ];
+    for failure in failures {
+        let (mut stream, dropped, _) = scripted(vec![
+            Ok(Some(b"ab".to_vec())),
+            Err(failure.clone()),
+            Ok(None),
+        ]);
+        assert_eq!(stream.next_chunk(), Ok(Some(b"ab".to_vec())));
+        assert_eq!(dropped.load(Ordering::SeqCst), 0, "{failure:?}: still open");
+        assert_eq!(stream.next_chunk(), Err(failure.clone()));
+        assert_eq!(
+            dropped.load(Ordering::SeqCst),
+            1,
+            "{failure:?}: not released"
+        );
+        // The failure repeats; it never becomes a clean end.
+        assert_eq!(stream.next_chunk(), Err(failure.clone()));
+        assert_eq!(stream.status(), 200);
+    }
+    // The end of the body releases, and the end repeats.
+    let (mut stream, dropped, _) = scripted(vec![Ok(Some(b"ab".to_vec())), Ok(None)]);
+    assert_eq!(stream.next_chunk(), Ok(Some(b"ab".to_vec())));
+    assert_eq!(stream.next_chunk(), Ok(None));
+    assert_eq!(
+        dropped.load(Ordering::SeqCst),
+        1,
+        "end of body: not released"
+    );
+    assert_eq!(stream.next_chunk(), Ok(None));
+    // A narrowed limit at or above what was delivered keeps the stream; one
+    // below it refuses and releases.
+    let (mut stream, dropped, narrowed) =
+        scripted(vec![Ok(Some(b"abcd".to_vec())), Ok(Some(b"ef".to_vec()))]);
+    assert_eq!(stream.next_chunk(), Ok(Some(b"abcd".to_vec())));
+    stream.narrow_body_limit(4);
+    assert_eq!(
+        dropped.load(Ordering::SeqCst),
+        0,
+        "narrow to the delivered size"
+    );
+    stream.narrow_body_limit(3);
+    assert_eq!(
+        dropped.load(Ordering::SeqCst),
+        1,
+        "a refusing narrow: not released"
+    );
+    assert_eq!(*narrowed.lock().expect("narrowed"), vec![4, 3]);
+    assert_eq!(stream.next_chunk(), Err(StreamError::TooLarge));
+}
