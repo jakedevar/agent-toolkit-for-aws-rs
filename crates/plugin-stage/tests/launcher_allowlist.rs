@@ -7,7 +7,10 @@
 //! classes, #5070 brace ranges, #5071 positional path construction) for
 //! hooks and MCP servers, prove those reproductions are real bypasses at
 //! runtime, and insert every shell metacharacter at every position of every
-//! template to show no mutant is accepted.
+//! template to show no mutant is accepted. After review #5018 round 4
+//! (#5088, `env -S` splitting an argument into a shell) an MCP server is
+//! checked as a whole: its command is a canonical binary or an inventory
+//! program (`uvx`) and its args match that program's argv template.
 
 mod common;
 
@@ -449,10 +452,401 @@ fn review_r3_mcp_reproductions_are_rejected() {
     }
 }
 
-/// Plugin-root arguments of a non-shell MCP command must be a plain
-/// plugin-relative path; a `bin` segment in any spelling is refused.
+/// The #5088 reproduction (review #5018 round 4): `env -S` splits one
+/// literal-looking argument into a shell invocation that reaches `bin/`.
+/// `{plugin}` is a literal plugin directory, `{name}` the binary.
+const R4_ENV_SPLIT_FORMS: [&[&str]; 8] = [
+    &[
+        "-C",
+        "${CLAUDE_PLUGIN_ROOT}/work",
+        "-S",
+        "sh -c '../b[[:lower:]]n/{name} || true'",
+    ],
+    &[
+        "-C",
+        "{plugin}/work",
+        "-S",
+        "sh -c '../b[[:lower:]]n/{name} || true'",
+    ],
+    &[
+        "-C",
+        "${CLAUDE_PLUGIN_ROOT}/work",
+        "-Ssh -c '../b[[:lower:]]n/{name} || true'",
+    ],
+    &[
+        "-C",
+        "${CLAUDE_PLUGIN_ROOT}/work",
+        "--split-string",
+        "sh -c '../b[[:lower:]]n/{name} || true'",
+    ],
+    &[
+        "-C",
+        "${CLAUDE_PLUGIN_ROOT}/work",
+        "--split-string=sh -c '../b[[:lower:]]n/{name} || true'",
+    ],
+    &[
+        "-S",
+        "sh -c 'cd \"$0\"; ./b[[:lower:]]n/{name}'",
+        "{plugin}",
+    ],
+    &["-S", "sh -c ./{b..b}in/{name}"],
+    &["-S", "bash -c ./b{i..i}n/{name}"],
+];
+
+fn r4_env_forms(plugin: &str, name: &str) -> Vec<Vec<String>> {
+    R4_ENV_SPLIT_FORMS
+        .iter()
+        .map(|form| {
+            form.iter()
+                .map(|arg| arg.replace("{plugin}", plugin).replace("{name}", name))
+                .collect()
+        })
+        .collect()
+}
+
+/// #5088: every `env` split-string wrapper is refused for the fixture guard
+/// and MCP server, with a fixed message that does not echo the argv.
+#[test]
+fn review_r4_env_split_string_mcp_wrappers_are_rejected() {
+    for name in ["guard", "tool", "note", "undeclared"] {
+        for args in r4_env_forms("/tmp/review/plugins/demo", name) {
+            let args: Vec<&str> = args.iter().map(String::as_str).collect();
+            for file in [".mcp.json", "mcp.json"] {
+                let (problems, references) = problems_for(&[(file, mcp("env", &args))]);
+                assert!(
+                    !problems.is_empty(),
+                    "{file} env {args:?}: accepted with {references} references"
+                );
+                assert_eq!(references, 0, "{args:?}: {problems:#?}");
+                for problem in &problems {
+                    assert!(
+                        problem.contains(&format!("plugins/demo/{file}: mcpServers.s.")),
+                        "{problem}"
+                    );
+                    assert!(
+                        !problem.contains("lower:") && !problem.contains("-c "),
+                        "the message echoes the argv: {problem}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// #5088 with the committed declaration: the exact reviewer JSON on
+/// aws-core, and every split-string variant aimed at secret-safety.
+#[test]
+fn review_r4_secret_safety_env_wrappers_fail_the_contract() {
+    let declaration = Declaration::load(&repo_root().join(DECLARATION_PATH)).expect("declaration");
+    let dir = temp_dir("r4secret");
+    let plugins = dir.join("plugins");
+    std::fs::create_dir_all(plugins.join("aws-core/work")).expect("work dir");
+    let exact = r#"{"mcpServers":{"s":{"command":"env","args":["-C","${CLAUDE_PLUGIN_ROOT}/work","-S","sh -c '../b[[:lower:]]n/secret-safety || true'"]}}}"#;
+    let plugin = plugins.join("aws-core").to_string_lossy().into_owned();
+    let mut files = vec![exact.to_string()];
+    for args in r4_env_forms(&plugin, "secret-safety") {
+        let args: Vec<&str> = args.iter().map(String::as_str).collect();
+        files.push(mcp("env", &args));
+    }
+    for file in files {
+        write(&plugins.join("aws-core/.mcp.json"), &file);
+        let report = check_launchers(&dir, &plugins, &declaration);
+        assert!(
+            !report.problems.is_empty(),
+            "{file}: accepted with {} references",
+            report.references.len()
+        );
+        assert!(report.references.is_empty(), "{file}");
+    }
+}
+
+/// The ruling's program launchers, shells and interpreters are refused as an
+/// MCP `command` whatever their args, as is any program not in the shipped
+/// inventory (only `uvx`), in any spelling.
+#[test]
+fn mcp_launchers_shells_and_interpreters_are_refused() {
+    let launchers = [
+        "env",
+        "xargs",
+        "nice",
+        "nohup",
+        "timeout",
+        "stdbuf",
+        "setsid",
+        "sudo",
+        "doas",
+        "busybox",
+        "sh",
+        "bash",
+        "dash",
+        "zsh",
+        "fish",
+        "cmd",
+        "cmd.exe",
+        "powershell",
+        "powershell.exe",
+        "pwsh",
+        "python",
+        "python3",
+        "py",
+        "node",
+        "ruby",
+        "perl",
+        "deno",
+        "npx",
+        "uv",
+        "pipx",
+        "chrt",
+        "ionice",
+        "taskset",
+        "unshare",
+        "flock",
+        "script",
+        "watch",
+        "find",
+        "awk",
+        "/usr/bin/env",
+        "/bin/sh",
+        "C:\\Windows\\System32\\cmd.exe",
+        "UVX",
+        "Uvx",
+        "uvx.exe",
+        "uvx.",
+        "./uvx",
+        "uvx ",
+        " uvx",
+    ];
+    let argvs: [&[&str]; 5] = [
+        &[],
+        &["--version"],
+        &["-c", "./b[[:lower:]]n/tool"],
+        &["-e", "require('child_process')"],
+        &[
+            "mcp-proxy-for-aws-cli==1.7.0",
+            "https://aws-mcp.us-east-1.api.aws/mcp",
+            "--skip-auth",
+        ],
+    ];
+    for command in launchers {
+        for args in argvs {
+            let (problems, references) = problems_for(&[(".mcp.json", mcp(command, args))]);
+            assert!(
+                !problems.is_empty(),
+                "{command:?} {args:?}: accepted with {references} references"
+            );
+            assert_eq!(references, 0, "{command:?} {args:?}");
+        }
+    }
+}
+
+const SHIPPED_UVX_ARGS: [&str; 5] = [
+    "mcp-proxy-for-aws-cli==1.7.0",
+    "https://aws-mcp.us-east-1.api.aws/mcp",
+    "--skip-auth",
+    "--metadata",
+    "INSTALL_SOURCE=agent-toolkit-core",
+];
+
+/// `uvx` args must match its inventory template: a pinned package of the
+/// inventory, an https URL, then only `--skip-auth` and `--metadata
+/// KEY=value`. The server object may hold only `type` (`stdio`), `command`
+/// and `args`, and args without a command are refused.
+#[test]
+fn uvx_argv_must_match_its_inventory_template() {
+    let accepted: [&[&str]; 4] = [
+        &SHIPPED_UVX_ARGS,
+        &[
+            "mcp-proxy-for-aws-cli==1.8.12",
+            "https://aws-mcp.eu-west-1.api.aws/mcp",
+            "--metadata",
+            "INSTALL_SOURCE=agent-toolkit-startup-advisor",
+        ],
+        &[
+            "mcp-proxy-for-aws-cli==2.0",
+            "https://knowledge-mcp.global.api.aws",
+        ],
+        &[
+            "mcp-proxy-for-aws-cli==1.7.0",
+            "https://aws-mcp.us-east-1.api.aws/mcp",
+            "--skip-auth",
+        ],
+    ];
+    for args in accepted {
+        let (problems, _) = problems_for(&[(".mcp.json", mcp("uvx", args))]);
+        assert!(problems.is_empty(), "{args:?}: {problems:#?}");
+    }
+    let url = "https://aws-mcp.us-east-1.api.aws/mcp";
+    let refused: [&[&str]; 26] = [
+        &[],
+        &["mcp-proxy-for-aws-cli==1.7.0"],
+        &[url],
+        &["mcp-proxy-for-aws-cli", url],
+        &["mcp-proxy-for-aws-cli>=1.7.0", url],
+        &["mcp-proxy-for-aws-cli==1.7.0rc1", url],
+        &["mcp-proxy-for-aws-cli==1..7", url],
+        &["other-package==1.0", url],
+        &["--from", "./x", "mcp-proxy-for-aws-cli==1.7.0", url],
+        &[
+            "--from=${CLAUDE_PLUGIN_ROOT}/x",
+            "mcp-proxy-for-aws-cli==1.7.0",
+            url,
+        ],
+        &["--with", "evil", "mcp-proxy-for-aws-cli==1.7.0", url],
+        &["git+https://example.com/x.git", url],
+        &["./b[[:lower:]]n/tool", url],
+        &["mcp-proxy-for-aws-cli==1.7.0", "http://aws-mcp.example/mcp"],
+        &[
+            "mcp-proxy-for-aws-cli==1.7.0",
+            "https://user@aws-mcp.example/mcp",
+        ],
+        &[
+            "mcp-proxy-for-aws-cli==1.7.0",
+            "https://aws-mcp.example:8443/mcp",
+        ],
+        &[
+            "mcp-proxy-for-aws-cli==1.7.0",
+            "https://aws-mcp.example/mcp?x=1",
+        ],
+        &[
+            "mcp-proxy-for-aws-cli==1.7.0",
+            "https://aws-mcp.example/bin/x",
+        ],
+        &["mcp-proxy-for-aws-cli==1.7.0", "https://localhost/mcp"],
+        &["mcp-proxy-for-aws-cli==1.7.0", url, "--metadata"],
+        &["mcp-proxy-for-aws-cli==1.7.0", url, "--metadata", "lower=x"],
+        &[
+            "mcp-proxy-for-aws-cli==1.7.0",
+            url,
+            "--metadata",
+            "K=${CLAUDE_PLUGIN_ROOT}/x",
+        ],
+        &["mcp-proxy-for-aws-cli==1.7.0", url, "--metadata", "K=bin"],
+        &["mcp-proxy-for-aws-cli==1.7.0", url, "--log-file", "/tmp/x"],
+        &[
+            "mcp-proxy-for-aws-cli==1.7.0",
+            url,
+            "sh -c ./b[[:lower:]]n/tool",
+        ],
+        &[
+            "mcp-proxy-for-aws-cli==1.7.0",
+            url,
+            "${CLAUDE_PLUGIN_ROOT}/x",
+        ],
+    ];
+    for args in refused {
+        let (problems, references) = problems_for(&[(".mcp.json", mcp("uvx", args))]);
+        assert!(!problems.is_empty(), "uvx {args:?}: accepted");
+        assert_eq!(references, 0, "{args:?}");
+        for problem in &problems {
+            assert!(
+                problem.contains("plugins/demo/.mcp.json: mcpServers.s"),
+                "{problem}"
+            );
+        }
+    }
+    let quoted: Vec<String> = SHIPPED_UVX_ARGS
+        .iter()
+        .map(|arg| format!("\"{arg}\""))
+        .collect();
+    let args = quoted.join(", ");
+    for server in [
+        format!(
+            r#"{{"command": "uvx", "args": [{args}], "env": {{"PATH": "${{CLAUDE_PLUGIN_ROOT}}/x"}}}}"#
+        ),
+        format!(r#"{{"command": "uvx", "args": [{args}], "cwd": "${{CLAUDE_PLUGIN_ROOT}}/work"}}"#),
+        format!(r#"{{"type": "http", "command": "uvx", "args": [{args}]}}"#),
+        format!(
+            r#"{{"command": "uvx", "args": "{}"}}"#,
+            SHIPPED_UVX_ARGS.join(" ")
+        ),
+        format!(r#"{{"command": "uvx", "args": [{args}, 7]}}"#),
+        format!(r#"{{"command": "uvx"}}"#),
+        format!(r#"{{"command": ["env", "-S", "sh -c x"], "args": []}}"#),
+        format!(r#"{{"args": ["-S", "sh -c ./b[[:lower:]]n/tool"]}}"#),
+    ] {
+        let file = format!(r#"{{"mcpServers": {{"s": {server}}}}}"#);
+        let (problems, references) = problems_for(&[(".mcp.json", file)]);
+        assert!(!problems.is_empty(), "{server}: accepted");
+        assert_eq!(references, 0, "{server}");
+    }
+    // A canonical binary server may still carry plain literal args.
+    let (problems, references) = problems_for(&[(
+        ".mcp.json",
+        mcp(
+            &mcp_command("CLAUDE_PLUGIN_ROOT", "tool"),
+            &["serve", "--port", "0"],
+        ),
+    )]);
+    assert!(problems.is_empty(), "{problems:#?}");
+    assert_eq!(references, 1);
+}
+
+/// Runtime proof for #5088 (when this host's `env` supports `-S` and `-C`):
+/// with no binary staged the wrapper exits without a deny, and with an
+/// executable marker at `bin/guard` it runs the marker. The checker refuses
+/// every variant.
+#[cfg(unix)]
+#[test]
+fn review_r4_env_split_string_reaches_the_binary_at_runtime_and_is_rejected() {
+    use std::os::unix::fs::PermissionsExt;
+    use std::process::Command;
+    let supported = Command::new("env")
+        .args(["-C", "/", "-S", "true"])
+        .status()
+        .is_ok_and(|status| status.success());
+    let dir = temp_dir("r4runtime");
+    let plugin = dir.join("plugins/demo");
+    std::fs::create_dir_all(plugin.join("work")).expect("work dir");
+    let plugin_text = plugin.to_string_lossy().into_owned();
+    let forms = r4_env_forms(&plugin_text, "guard");
+    for args in &forms {
+        let args: Vec<&str> = args.iter().map(String::as_str).collect();
+        let (problems, references) = problems_for(&[(".mcp.json", mcp("env", &args))]);
+        assert!(!problems.is_empty(), "env {args:?} passes the checker");
+        assert_eq!(references, 0);
+    }
+    if !supported {
+        eprintln!("env -C/-S unsupported here; runtime half skipped");
+        return;
+    }
+    let run = |args: &[String]| {
+        let args: Vec<String> = args
+            .iter()
+            .map(|arg| arg.replace("${CLAUDE_PLUGIN_ROOT}", &plugin_text))
+            .collect();
+        Command::new("env")
+            .args(&args)
+            .current_dir(&*dir)
+            .output()
+            .map(|output| String::from_utf8_lossy(&output.stdout).into_owned())
+            .unwrap_or_default()
+    };
+    for args in &forms[..5] {
+        let out = run(args);
+        assert!(
+            !out.contains(r#""permissionDecision":"deny""#),
+            "{args:?} denies without its binary"
+        );
+    }
+    let marker = plugin.join("bin/guard");
+    write(&marker, "#!/bin/sh\necho REACHED_PLUGIN_BINARY\n");
+    std::fs::set_permissions(&marker, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+    let reached = forms[..5]
+        .iter()
+        .filter(|args| run(args).contains("REACHED_PLUGIN_BINARY"))
+        .count();
+    assert_eq!(
+        reached, 5,
+        "the split, attached and long -S forms reach bin/guard"
+    );
+}
+
+/// Arguments of a canonical binary MCP server are literal data: one naming
+/// the plugin root must be a plain plugin-relative path, and a `bin` segment
+/// in any spelling is refused.
 #[test]
 fn mcp_argv_naming_the_root_or_bin_must_be_canonical() {
+    let tool = mcp_command("CLAUDE_PLUGIN_ROOT", "tool");
     for args in [
         &["${CLAUDE_PLUGIN_ROOT}/bin/note"][..],
         &["${CLAUDE_PLUGIN_ROOT}"],
@@ -464,15 +858,15 @@ fn mcp_argv_naming_the_root_or_bin_must_be_canonical() {
         &["./bin/tool"],
         &["bin\\tool.exe"],
         &["x/Bin./tool"],
+        &["sh", "-c", "x"],
     ] {
-        let (problems, references) = problems_for(&[(".mcp.json", mcp("node", args))]);
+        let (problems, _) = problems_for(&[(".mcp.json", mcp(&tool, args))]);
         assert!(!problems.is_empty(), "{args:?}: accepted");
-        assert_eq!(references, 0, "{args:?}");
     }
     let (problems, _) = problems_for(&[(
         ".mcp.json",
         mcp(
-            "node",
+            &tool,
             &["${CLAUDE_PLUGIN_ROOT}/server/main.js", "--port", "0"],
         ),
     )]);
@@ -619,16 +1013,34 @@ fn metacharacter_insertions_into_templates_are_rejected() {
     }
     assert!(total > 50_000, "only {total} mutants");
 
-    let mut commands: Vec<String> = vec!["uvx".to_string(), "./bin/tool".to_string()];
-    commands.extend(["CLAUDE_PLUGIN_ROOT", "CURSOR_PLUGIN_ROOT"].map(|r| mcp_command(r, "tool")));
-    for command in commands {
+    // MCP commands: each mutant of a program or binary command is refused
+    // even with the args its unmutated form accepts.
+    let shipped_args: String = SHIPPED_UVX_ARGS
+        .iter()
+        .map(|arg| format!("\"{arg}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let mut commands: Vec<(String, String)> = vec![
+        ("uvx".to_string(), shipped_args),
+        ("./bin/tool".to_string(), String::new()),
+    ];
+    commands.extend(
+        ["CLAUDE_PLUGIN_ROOT", "CURSOR_PLUGIN_ROOT"]
+            .map(|r| (mcp_command(r, "tool"), String::new())),
+    );
+    for (command, args) in commands {
+        let (problems, _) = problems_for(&[(
+            ".mcp.json",
+            format!(r#"{{"mcpServers": {{"s": {{"command": "{command}", "args": [{args}]}}}}}}"#),
+        )]);
+        assert!(problems.is_empty(), "control {command}: {problems:#?}");
         let mutants = mutants(&command);
         let servers: Vec<String> = mutants
             .iter()
             .enumerate()
             .map(|(index, mutant)| {
                 format!(
-                    r#""s{index}": {{"command": "{}", "args": []}}"#,
+                    r#""s{index}": {{"command": "{}", "args": [{args}]}}"#,
                     escape_json_string(mutant)
                 )
             })
@@ -644,6 +1056,73 @@ fn metacharacter_insertions_into_templates_are_rejected() {
             );
         }
     }
+
+    // MCP argv (#5088 ruling): every distinct shipped uvx argv, with each
+    // metacharacter inserted at each position of each element, is refused.
+    let entries = inventory();
+    let mut argvs: BTreeSet<Vec<String>> = BTreeSet::new();
+    for entry in entries.iter().filter(|e| e.value == "uvx") {
+        let server = entry.key.trim_end_matches(".command");
+        argvs.insert(
+            entries
+                .iter()
+                .filter(|e| e.file == entry.file && e.key.starts_with(&format!("{server}.args[")))
+                .map(|e| e.value.clone())
+                .collect(),
+        );
+    }
+    assert_eq!(argvs.len(), 3, "distinct shipped uvx argvs");
+    let mut argv_mutants = 0;
+    for argv in &argvs {
+        let render = |args: &[String]| {
+            args.iter()
+                .map(|arg| format!("\"{}\"", escape_json_string(arg)))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        let (problems, _) = problems_for(&[(
+            ".mcp.json",
+            format!(
+                r#"{{"mcpServers": {{"s": {{"type": "stdio", "command": "uvx", "args": [{}]}}}}}}"#,
+                render(argv)
+            ),
+        )]);
+        assert!(problems.is_empty(), "control {argv:?}: {problems:#?}");
+        let mut variants: Vec<Vec<String>> = Vec::new();
+        for (at, arg) in argv.iter().enumerate() {
+            for mutant in mutants(arg) {
+                let mut variant = argv.clone();
+                variant[at] = mutant;
+                variants.push(variant);
+            }
+        }
+        argv_mutants += variants.len();
+        let servers: Vec<String> = variants
+            .iter()
+            .enumerate()
+            .map(|(index, variant)| {
+                format!(
+                    r#""s{index}": {{"type": "stdio", "command": "uvx", "args": [{}]}}"#,
+                    render(variant)
+                )
+            })
+            .collect();
+        let file = format!(r#"{{"mcpServers": {{{}}}}}"#, servers.join(", "));
+        let (problems, references) = problems_for(&[(".mcp.json", file)]);
+        assert_eq!(references, 0);
+        let rejected = rejected_indices(&problems, "mcpServers.s");
+        let accepted: Vec<&Vec<String>> = (0..variants.len())
+            .filter(|index| !rejected.contains(index))
+            .map(|index| &variants[index])
+            .collect();
+        assert!(
+            accepted.is_empty(),
+            "{} uvx argv mutants accepted, e.g. {:?}",
+            accepted.len(),
+            &accepted[..accepted.len().min(3)]
+        );
+    }
+    assert!(argv_mutants > 10_000, "only {argv_mutants} argv mutants");
 }
 
 /// Runtime proof that the round-3 forms are real bypasses and that the

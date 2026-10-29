@@ -1,41 +1,41 @@
 {
-  "note": "Inventory of every shipped launcher string (#4487, PM ruling after review #5018 r3): every hook `command`, MCP server `command` and MCP `args` element in a hooks.json, .mcp.json or mcp.json the packaging contract scans under plugins/ on rolling fa3fa137, with the allowlist template it matches. The plugin manifests only point at these files (no inline launchers). A new launcher shape needs a reviewed template change and a new entry here.",
+  "note": "Inventory of every shipped launcher string (#4487, PM ruling after review #5018 r3): every hook `command`, MCP server `command` and MCP `args` element in a hooks.json, .mcp.json or mcp.json the packaging contract scans under plugins/ on rolling fa3fa137, with the allowlist template it matches. An MCP server is checked as a whole: its command must be a canonical binary or a program listed here (only uvx), and its args must match that program's argv template (#5088 ruling). The plugin manifests only point at these files (no inline launchers). A new launcher shape needs a reviewed template change and a new entry here.",
   "strings": [
     {
       "file": "plugins/aws-core/.mcp.json",
       "key": "mcpServers.aws-mcp.command",
       "value": "uvx",
-      "template": "mcp-program"
+      "template": "uvx"
     },
     {
       "file": "plugins/aws-core/.mcp.json",
       "key": "mcpServers.aws-mcp.args[0]",
       "value": "mcp-proxy-for-aws-cli==1.7.0",
-      "template": "mcp-argv"
+      "template": "uvx-package"
     },
     {
       "file": "plugins/aws-core/.mcp.json",
       "key": "mcpServers.aws-mcp.args[1]",
       "value": "https://aws-mcp.us-east-1.api.aws/mcp",
-      "template": "mcp-argv"
+      "template": "uvx-url"
     },
     {
       "file": "plugins/aws-core/.mcp.json",
       "key": "mcpServers.aws-mcp.args[2]",
       "value": "--skip-auth",
-      "template": "mcp-argv"
+      "template": "uvx-skip-auth"
     },
     {
       "file": "plugins/aws-core/.mcp.json",
       "key": "mcpServers.aws-mcp.args[3]",
       "value": "--metadata",
-      "template": "mcp-argv"
+      "template": "uvx-metadata"
     },
     {
       "file": "plugins/aws-core/.mcp.json",
       "key": "mcpServers.aws-mcp.args[4]",
       "value": "INSTALL_SOURCE=agent-toolkit-core",
-      "template": "mcp-argv"
+      "template": "uvx-metadata-value"
     },
     {
       "file": "plugins/aws-core/com.anthropic.claude-code/hooks/hooks.json",
@@ -53,109 +53,109 @@
       "file": "plugins/aws-core/mcp.json",
       "key": "mcpServers.aws-mcp.command",
       "value": "uvx",
-      "template": "mcp-program"
+      "template": "uvx"
     },
     {
       "file": "plugins/aws-core/mcp.json",
       "key": "mcpServers.aws-mcp.args[0]",
       "value": "mcp-proxy-for-aws-cli==1.7.0",
-      "template": "mcp-argv"
+      "template": "uvx-package"
     },
     {
       "file": "plugins/aws-core/mcp.json",
       "key": "mcpServers.aws-mcp.args[1]",
       "value": "https://aws-mcp.us-east-1.api.aws/mcp",
-      "template": "mcp-argv"
+      "template": "uvx-url"
     },
     {
       "file": "plugins/aws-core/mcp.json",
       "key": "mcpServers.aws-mcp.args[2]",
       "value": "--skip-auth",
-      "template": "mcp-argv"
+      "template": "uvx-skip-auth"
     },
     {
       "file": "plugins/aws-core/mcp.json",
       "key": "mcpServers.aws-mcp.args[3]",
       "value": "--metadata",
-      "template": "mcp-argv"
+      "template": "uvx-metadata"
     },
     {
       "file": "plugins/aws-core/mcp.json",
       "key": "mcpServers.aws-mcp.args[4]",
       "value": "INSTALL_SOURCE=agent-toolkit-core",
-      "template": "mcp-argv"
+      "template": "uvx-metadata-value"
     },
     {
       "file": "plugins/aws-data-analytics/.mcp.json",
       "key": "mcpServers.aws-mcp.command",
       "value": "uvx",
-      "template": "mcp-program"
+      "template": "uvx"
     },
     {
       "file": "plugins/aws-data-analytics/.mcp.json",
       "key": "mcpServers.aws-mcp.args[0]",
       "value": "mcp-proxy-for-aws-cli==1.7.0",
-      "template": "mcp-argv"
+      "template": "uvx-package"
     },
     {
       "file": "plugins/aws-data-analytics/.mcp.json",
       "key": "mcpServers.aws-mcp.args[1]",
       "value": "https://aws-mcp.us-east-1.api.aws/mcp",
-      "template": "mcp-argv"
+      "template": "uvx-url"
     },
     {
       "file": "plugins/aws-data-analytics/.mcp.json",
       "key": "mcpServers.aws-mcp.args[2]",
       "value": "--skip-auth",
-      "template": "mcp-argv"
+      "template": "uvx-skip-auth"
     },
     {
       "file": "plugins/aws-data-analytics/.mcp.json",
       "key": "mcpServers.aws-mcp.args[3]",
       "value": "--metadata",
-      "template": "mcp-argv"
+      "template": "uvx-metadata"
     },
     {
       "file": "plugins/aws-data-analytics/.mcp.json",
       "key": "mcpServers.aws-mcp.args[4]",
       "value": "INSTALL_SOURCE=agent-toolkit-data-analytics",
-      "template": "mcp-argv"
+      "template": "uvx-metadata-value"
     },
     {
       "file": "plugins/aws-data-analytics/mcp.json",
       "key": "mcpServers.aws-mcp.command",
       "value": "uvx",
-      "template": "mcp-program"
+      "template": "uvx"
     },
     {
       "file": "plugins/aws-data-analytics/mcp.json",
       "key": "mcpServers.aws-mcp.args[0]",
       "value": "mcp-proxy-for-aws-cli==1.7.0",
-      "template": "mcp-argv"
+      "template": "uvx-package"
     },
     {
       "file": "plugins/aws-data-analytics/mcp.json",
       "key": "mcpServers.aws-mcp.args[1]",
       "value": "https://aws-mcp.us-east-1.api.aws/mcp",
-      "template": "mcp-argv"
+      "template": "uvx-url"
     },
     {
       "file": "plugins/aws-data-analytics/mcp.json",
       "key": "mcpServers.aws-mcp.args[2]",
       "value": "--skip-auth",
-      "template": "mcp-argv"
+      "template": "uvx-skip-auth"
     },
     {
       "file": "plugins/aws-data-analytics/mcp.json",
       "key": "mcpServers.aws-mcp.args[3]",
       "value": "--metadata",
-      "template": "mcp-argv"
+      "template": "uvx-metadata"
     },
     {
       "file": "plugins/aws-data-analytics/mcp.json",
       "key": "mcpServers.aws-mcp.args[4]",
       "value": "INSTALL_SOURCE=agent-toolkit-data-analytics",
-      "template": "mcp-argv"
+      "template": "uvx-metadata-value"
     },
     {
       "file": "plugins/aws-startup-advisor/.cursor-plugin/hooks.json",
@@ -185,37 +185,37 @@
       "file": "plugins/aws-startup-advisor/.mcp.json",
       "key": "mcpServers.aws-mcp.command",
       "value": "uvx",
-      "template": "mcp-program"
+      "template": "uvx"
     },
     {
       "file": "plugins/aws-startup-advisor/.mcp.json",
       "key": "mcpServers.aws-mcp.args[0]",
       "value": "mcp-proxy-for-aws-cli==1.7.0",
-      "template": "mcp-argv"
+      "template": "uvx-package"
     },
     {
       "file": "plugins/aws-startup-advisor/.mcp.json",
       "key": "mcpServers.aws-mcp.args[1]",
       "value": "https://aws-mcp.us-east-1.api.aws/mcp",
-      "template": "mcp-argv"
+      "template": "uvx-url"
     },
     {
       "file": "plugins/aws-startup-advisor/.mcp.json",
       "key": "mcpServers.aws-mcp.args[2]",
       "value": "--skip-auth",
-      "template": "mcp-argv"
+      "template": "uvx-skip-auth"
     },
     {
       "file": "plugins/aws-startup-advisor/.mcp.json",
       "key": "mcpServers.aws-mcp.args[3]",
       "value": "--metadata",
-      "template": "mcp-argv"
+      "template": "uvx-metadata"
     },
     {
       "file": "plugins/aws-startup-advisor/.mcp.json",
       "key": "mcpServers.aws-mcp.args[4]",
       "value": "INSTALL_SOURCE=agent-toolkit-startup-advisor",
-      "template": "mcp-argv"
+      "template": "uvx-metadata-value"
     },
     {
       "file": "plugins/aws-startup-advisor/com.anthropic.claude-code/hooks/hooks.json",
@@ -257,37 +257,37 @@
       "file": "plugins/aws-startup-advisor/mcp.json",
       "key": "mcpServers.aws-mcp.command",
       "value": "uvx",
-      "template": "mcp-program"
+      "template": "uvx"
     },
     {
       "file": "plugins/aws-startup-advisor/mcp.json",
       "key": "mcpServers.aws-mcp.args[0]",
       "value": "mcp-proxy-for-aws-cli==1.7.0",
-      "template": "mcp-argv"
+      "template": "uvx-package"
     },
     {
       "file": "plugins/aws-startup-advisor/mcp.json",
       "key": "mcpServers.aws-mcp.args[1]",
       "value": "https://aws-mcp.us-east-1.api.aws/mcp",
-      "template": "mcp-argv"
+      "template": "uvx-url"
     },
     {
       "file": "plugins/aws-startup-advisor/mcp.json",
       "key": "mcpServers.aws-mcp.args[2]",
       "value": "--skip-auth",
-      "template": "mcp-argv"
+      "template": "uvx-skip-auth"
     },
     {
       "file": "plugins/aws-startup-advisor/mcp.json",
       "key": "mcpServers.aws-mcp.args[3]",
       "value": "--metadata",
-      "template": "mcp-argv"
+      "template": "uvx-metadata"
     },
     {
       "file": "plugins/aws-startup-advisor/mcp.json",
       "key": "mcpServers.aws-mcp.args[4]",
       "value": "INSTALL_SOURCE=agent-toolkit-startup-advisor",
-      "template": "mcp-argv"
+      "template": "uvx-metadata-value"
     }
   ]
 }

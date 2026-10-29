@@ -1074,15 +1074,22 @@ mod tests {
         with_scan(|scan| {
             let command = ["mcpServers", "s", "command"].map(String::from);
             let arg = ["mcpServers", "s", "args", "[0]"].map(String::from);
-            for program in ["uvx", "node", "python3", "mcp-proxy_1.2"] {
-                assert_eq!(
-                    scan.resolve_string(Kind::Mcp, program, &command)
-                        .map(|a| a.template),
-                    Ok("mcp-program"),
-                    "{program}"
-                );
-            }
+            assert_eq!(
+                scan.resolve_string(Kind::Mcp, "uvx", &command)
+                    .map(|a| a.template),
+                Ok("uvx")
+            );
             for refused in [
+                // #5088 ruling: only inventory programs; launchers, shells
+                // and interpreters are refused.
+                "node",
+                "python3",
+                "mcp-proxy_1.2",
+                "env",
+                "nohup",
+                "xargs",
+                "UVX",
+                "uvx.exe",
                 "sh",
                 "BASH",
                 "pwsh.exe",
