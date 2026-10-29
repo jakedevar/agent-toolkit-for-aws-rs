@@ -611,7 +611,7 @@ fn t_order_ctor_catches_randomness_in_the_pure_policy_modules() {
 
 #[test]
 fn process_request_has_private_fields_and_only_approved_constructor() {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/agents_pay/agentcore.rs");
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/agents_pay/agentcore/request.rs");
     let source = fs::read_to_string(path).unwrap();
     check_process_request(&source);
 }
@@ -663,11 +663,30 @@ fn check_process_request(source: &str) {
             _ => None,
         })
         .collect();
-    assert_eq!(methods.len(), 1);
-    assert_eq!(methods[0].sig.ident, "from_approved");
-    assert!(matches!(methods[0].vis, Visibility::Inherited));
-    assert_eq!(methods[0].sig.inputs.len(), 1);
-    let syn::FnArg::Typed(arg) = &methods[0].sig.inputs[0] else {
+    let constructors: Vec<_> = methods
+        .iter()
+        .filter(|f| f.sig.ident == "from_approved")
+        .collect();
+    assert_eq!(constructors.len(), 1);
+    let constructor = constructors[0];
+    assert!(
+        matches!(&constructor.vis, Visibility::Inherited)
+            || matches!(&constructor.vis, Visibility::Restricted(vis) if vis.path.is_ident("super"))
+    );
+    assert_eq!(constructor.sig.inputs.len(), 1);
+    for method in methods.iter().filter(|f| f.sig.ident != "from_approved") {
+        assert!(["body", "manager", "session", "instrument", "user"]
+            .contains(&method.sig.ident.to_string().as_str()));
+        assert_eq!(method.sig.inputs.len(), 1);
+        assert!(method
+            .sig
+            .receiver()
+            .is_some_and(|r| r.reference.is_some() && r.mutability.is_none()));
+        assert!(
+            matches!(&method.sig.output, syn::ReturnType::Type(_, ty) if matches!(&**ty, Type::Reference(reference) if reference.mutability.is_none()))
+        );
+    }
+    let syn::FnArg::Typed(arg) = &constructor.sig.inputs[0] else {
         panic!("constructor must take Approved");
     };
     let Type::Reference(reference) = &*arg.ty else {
@@ -699,7 +718,14 @@ fn names_request(ty: &Type) -> bool {
 }
 
 fn protected_field(expr: &syn::Expr) -> bool {
-    matches!(expr, syn::Expr::Field(field) if matches!(&field.member, syn::Member::Named(name) if ["body", "manager", "session", "instrument", "user"].contains(&name.to_string().as_str())))
+    match expr {
+        syn::Expr::Field(field) => {
+            matches!(&field.member, syn::Member::Named(name) if ["body", "manager", "session", "instrument", "user"].contains(&name.to_string().as_str()))
+        }
+        syn::Expr::Index(index) => protected_field(&index.expr),
+        syn::Expr::Paren(paren) => protected_field(&paren.expr),
+        _ => false,
+    }
 }
 
 #[derive(Default)]
@@ -715,6 +741,23 @@ struct RequestScanner {
 }
 
 impl<'ast> Visit<'ast> for RequestScanner {
+    fn visit_item_use(&mut self, item: &'ast syn::ItemUse) {
+        fn mentions_request(tree: &syn::UseTree) -> bool {
+            match tree {
+                syn::UseTree::Path(path) => {
+                    path.ident == "ProcessPaymentRequest" || mentions_request(&path.tree)
+                }
+                syn::UseTree::Name(name) => name.ident == "ProcessPaymentRequest",
+                syn::UseTree::Rename(rename) => rename.ident == "ProcessPaymentRequest",
+                syn::UseTree::Group(group) => group.items.iter().any(mentions_request),
+                syn::UseTree::Glob(_) => false,
+            }
+        }
+        if mentions_request(&item.tree) {
+            self.aliases += 1;
+        }
+        visit::visit_item_use(self, item);
+    }
     fn visit_item_mod(&mut self, item: &'ast syn::ItemMod) {
         if item.attrs.iter().any(|a| matches!(&a.meta, syn::Meta::List(m) if m.path.is_ident("cfg") && m.tokens.to_string() == "test")) {
             return;
@@ -794,6 +837,25 @@ impl<'ast> Visit<'ast> for RequestScanner {
         }
         visit::visit_expr_assign(self, expr);
     }
+    fn visit_expr_binary(&mut self, expr: &'ast syn::ExprBinary) {
+        if matches!(
+            expr.op,
+            syn::BinOp::AddAssign(_)
+                | syn::BinOp::SubAssign(_)
+                | syn::BinOp::MulAssign(_)
+                | syn::BinOp::DivAssign(_)
+                | syn::BinOp::RemAssign(_)
+                | syn::BinOp::BitXorAssign(_)
+                | syn::BinOp::BitAndAssign(_)
+                | syn::BinOp::BitOrAssign(_)
+                | syn::BinOp::ShlAssign(_)
+                | syn::BinOp::ShrAssign(_)
+        ) && protected_field(&expr.left)
+        {
+            self.field_writes += 1;
+        }
+        visit::visit_expr_binary(self, expr);
+    }
     fn visit_expr_reference(&mut self, expr: &'ast syn::ExprReference) {
         if expr.mutability.is_some() && protected_field(&expr.expr) {
             self.field_writes += 1;
@@ -805,6 +867,35 @@ impl<'ast> Visit<'ast> for RequestScanner {
             self.field_writes += 1;
         }
         visit::visit_expr_method_call(self, expr);
+    }
+}
+
+#[test]
+fn request_gate_rejects_use_alias_literal() {
+    let source = r"
+        pub struct ProcessPaymentRequest { body: Vec<u8> }
+        impl ProcessPaymentRequest { fn from_approved(approved: &Approved) -> Self { Self { body: vec![] } } }
+        impl std::fmt::Debug for ProcessPaymentRequest { fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { todo!() } }
+        use self::ProcessPaymentRequest as RequestAlias;
+        fn forge() -> RequestAlias { RequestAlias { body: vec![] } }
+    ";
+    assert!(std::panic::catch_unwind(|| check_process_request(source)).is_err());
+}
+
+#[test]
+fn request_gate_rejects_index_and_compound_writes() {
+    let source = r#"
+        pub struct ProcessPaymentRequest { body: Vec<u8>, manager: String }
+        impl ProcessPaymentRequest { fn from_approved(approved: &Approved) -> Self { Self { body: vec![], manager: String::new() } } }
+        impl std::fmt::Debug for ProcessPaymentRequest { fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { todo!() } }
+        fn change(r: &mut ProcessPaymentRequest) { WRITE }
+    "#;
+    for write in ["r.body[0] = b'x';", "r.manager += \"\";"] {
+        let bad = source.replace("WRITE", write);
+        assert!(
+            std::panic::catch_unwind(|| check_process_request(&bad)).is_err(),
+            "{write}"
+        );
     }
 }
 

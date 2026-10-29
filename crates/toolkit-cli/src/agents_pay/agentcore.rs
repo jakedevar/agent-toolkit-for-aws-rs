@@ -173,44 +173,8 @@ fn process_body(approved: &Approved) -> String {
     .to_compact_string()
 }
 
-/// Immutable payment request derived solely from an approved selection.
-///
-/// The constructor is private to this module.
-///
-/// ```compile_fail
-/// use toolkit_cli::agents_pay::{agentcore::ProcessPaymentRequest, policy::Approved};
-/// fn forge(approved: &Approved) { let _ = ProcessPaymentRequest::from_approved(approved); }
-/// ```
-///
-/// ```compile_fail
-/// use toolkit_cli::agents_pay::agentcore::ProcessPaymentRequest;
-/// fn forge() { let _ = ProcessPaymentRequest { body: vec![] }; }
-/// ```
-pub struct ProcessPaymentRequest {
-    body: Vec<u8>,
-    manager: String,
-    session: String,
-    instrument: String,
-    user: String,
-}
-
-impl ProcessPaymentRequest {
-    fn from_approved(approved: &Approved) -> Self {
-        Self {
-            body: process_body(approved).into_bytes(),
-            manager: approved.manager_arn().into(),
-            session: approved.session_id().into(),
-            instrument: approved.instrument_id().into(),
-            user: approved.user_id().into(),
-        }
-    }
-}
-
-impl std::fmt::Debug for ProcessPaymentRequest {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("ProcessPaymentRequest([REDACTED])")
-    }
-}
+mod request;
+pub use request::ProcessPaymentRequest;
 
 fn get_body(manager: &str, session: &str) -> String {
     Json::object(vec![
@@ -944,6 +908,15 @@ mod operation_contracts {
             "payment-session-TEST12345678901",
             "payment-instrument-TEST12345678901"
         ));
+        assert!(!valid_process_response(
+            &body.replace(
+                r#"{"cryptoX402":{"version":"2","payload":{}},"future":{}}"#,
+                r#"{"future":{}}"#
+            ),
+            "arn:aws:bedrock-agentcore:us-east-1:111111111111:payment-manager/test-abcdefghij",
+            "payment-session-TEST12345678901",
+            "payment-instrument-TEST12345678901"
+        ));
     }
 
     #[test]
@@ -1426,9 +1399,10 @@ impl PaymentsApi for FakePaymentsApi {
         &self,
         request: &ProcessPaymentRequest,
     ) -> Result<PaymentProof, PaymentError> {
-        assert_fixture_account(&request.manager);
+        assert_fixture_account(request.manager());
         self.calls.set(self.calls.get() + 1);
-        let body = std::str::from_utf8(&request.body).map_err(|_| PaymentError::InvalidResponse)?;
+        let body =
+            std::str::from_utf8(request.body()).map_err(|_| PaymentError::InvalidResponse)?;
         let parsed = parse_json(body).map_err(|_| PaymentError::InvalidResponse)?;
         let token = parsed
             .get("clientToken")
@@ -1436,7 +1410,7 @@ impl PaymentsApi for FakePaymentsApi {
             .ok_or(PaymentError::InvalidResponse)?;
         let mut records = self.idempotency.borrow_mut();
         if let Some((previous_body, proof)) = records.get(token) {
-            if previous_body != &request.body {
+            if previous_body != request.body() {
                 return Err(PaymentError::Service("ConflictException"));
             }
             return Ok(PaymentProof(proof.clone()));
@@ -1446,7 +1420,7 @@ impl PaymentsApi for FakePaymentsApi {
             .borrow()
             .clone()
             .unwrap_or_else(|| Json::object(vec![]));
-        records.insert(token.to_owned(), (request.body.clone(), proof.clone()));
+        records.insert(token.to_owned(), (request.body().to_vec(), proof.clone()));
         self.authorizations.set(self.authorizations.get() + 1);
         Ok(PaymentProof(proof))
     }
@@ -1724,17 +1698,17 @@ impl<'a> PaymentClient<'a> {
     ) -> Result<PaymentProof, PaymentError> {
         let body = self.call(
             "processPayment",
-            &payment.user,
+            payment.user(),
             true,
-            payment.body.clone(),
+            payment.body().to_vec(),
             200,
             deadline,
         )?;
         if !valid_process_response(
             &body,
-            &payment.manager,
-            &payment.session,
-            &payment.instrument,
+            payment.manager(),
+            payment.session(),
+            payment.instrument(),
         ) {
             return Err(PaymentError::InvalidResponse);
         }
@@ -2055,12 +2029,15 @@ mod wire_contracts {
         assert_eq!(api.process_payment(&request).unwrap().payload(), &first);
         assert_eq!(api.calls(), 2);
         assert_eq!(api.authorizations(), 1);
-        let mut conflicting = ProcessPaymentRequest::from_approved(
-            &super::operation_contracts::approved_for(manager),
-        );
-        conflicting.body.push(b' ');
+        api.idempotency
+            .borrow_mut()
+            .values_mut()
+            .next()
+            .unwrap()
+            .0
+            .push(b' ');
         assert_eq!(
-            api.process_payment(&conflicting).err(),
+            api.process_payment(&request).err(),
             Some(PaymentError::Service("ConflictException"))
         );
         assert_eq!(api.authorizations(), 1);
@@ -2510,11 +2487,30 @@ mod wire_contracts {
             good.replace("{\"email\":{\"emailAddress\":\"user@example.com\"}}", "{\"email\":{\"emailAddress\":\"x\"},\"sms\":{\"phoneNumber\":\"+123\"}}"),
             good.replace("[{\"email\":{\"emailAddress\":\"user@example.com\"}}]", "[{\"email\":{\"emailAddress\":\"user@example.com\"}},{\"sms\":{\"phoneNumber\":\"+123\"}}]"),
             good.replace("{\"email\":{\"emailAddress\":\"user@example.com\"}}", "{\"oAuth2\":{\"google\":{},\"apple\":{}}}"),
+            good.replace("{\"email\":{\"emailAddress\":\"user@example.com\"}}", "{\"future\":{}}"),
+            good.replace("{\"email\":{\"emailAddress\":\"user@example.com\"}}", "{\"oAuth2\":{\"future\":{}}}"),
         ] {
             let transport = FakeStreamingTransport::new().respond(201, &[], vec![FakeChunk::data(bad.as_bytes())]);
             let client = PaymentClient::new("us-east-1", &transport, &NoSigner).unwrap();
             assert_eq!(client.create_instrument("arn:aws:bedrock-agentcore:us-east-1:111111111111:payment-manager/test-abcdefghij", "user", "connector-abcdefghij", "ETHEREUM", "user@example.com", "token"), Err(PaymentError::InvalidResponse), "{bad}");
         }
+    }
+
+    #[test]
+    fn linked_account_rejects_single_unknown_arm() {
+        let model = parse_json(PAYMENT_SERVICE_MODEL).unwrap();
+        let wallet =
+            parse_json(r#"{"network":"ETHEREUM","linkedAccounts":[{"future":{}}]}"#).unwrap();
+        assert!(!valid_wallet_shape(&model, "EmbeddedCryptoWallet", &wallet));
+    }
+
+    #[test]
+    fn oauth_rejects_single_unknown_arm() {
+        let model = parse_json(PAYMENT_SERVICE_MODEL).unwrap();
+        let wallet =
+            parse_json(r#"{"network":"ETHEREUM","linkedAccounts":[{"oAuth2":{"future":{}}}]}"#)
+                .unwrap();
+        assert!(!valid_wallet_shape(&model, "EmbeddedCryptoWallet", &wallet));
     }
 
     #[test]
