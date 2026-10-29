@@ -57,7 +57,16 @@ async fn valid_event_returns_the_api_response() {
         .keys()
         .map(String::as_str)
         .collect();
-    assert_eq!(keys.len(), 3);
+    // Field order is the handler's own (insertion order), in every build
+    // scope: the crate selects `preserve_order` itself (#5394).
+    assert_eq!(keys, ["statusCode", "headers", "body"]);
+    let header_keys: Vec<&str> = response["headers"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(header_keys, ["Content-Type", "Access-Control-Allow-Origin"]);
 }
 
 #[tokio::test]

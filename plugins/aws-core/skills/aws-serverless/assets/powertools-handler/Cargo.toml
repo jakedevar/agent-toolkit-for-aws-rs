@@ -10,7 +10,9 @@ description = "Lambda handler with structured logging, tracing, EMF metrics and 
 aws-config = { version = "=1.13.0", default-features = false, features = ["rustls", "rt-tokio", "behavior-version-latest"] }
 aws-sdk-dynamodb = { version = "=1.134.0", default-features = false, features = ["rustls", "rt-tokio", "behavior-version-latest"] }
 lambda_runtime = "=1.5.0"
-serde_json = "=1.0.154"
+# Handler results are returned in field order (insertion order); select that
+# here instead of relying on aws-config to enable it (#5394).
+serde_json = { version = "=1.0.154", features = ["preserve_order"] }
 sha2 = "=0.11.1"
 tokio = { version = "=1.54.1", default-features = false, features = ["macros", "rt-multi-thread"] }
 

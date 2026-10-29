@@ -25,7 +25,9 @@ path = "src/bin/fargate_processor.rs"
 aws-config = { version = "=1.13.0", default-features = false, features = ["rustls", "rt-tokio", "behavior-version-latest"] }
 aws-sdk-s3 = { version = "=1.155.0", default-features = false, features = ["rustls", "rt-tokio", "behavior-version-latest"] }
 lambda_runtime = { version = "=1.5.0", optional = true }
-serde_json = "=1.0.154"
+# Output field order (response body, metadata log line) is insertion order;
+# select it here instead of relying on aws-config to enable it (#5394).
+serde_json = { version = "=1.0.154", features = ["preserve_order"] }
 tokio = { version = "=1.54.1", default-features = false, features = ["macros", "rt-multi-thread", "fs", "io-util"] }
 
 [dev-dependencies]

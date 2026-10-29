@@ -280,8 +280,23 @@ impl Schema {
                 self.message(inner, document, Some(&name), redact)
             }
             _ if redact => self.redacted_fallback(error, &shown),
-            _ => error.to_string(),
+            _ => crate_message(error, instance),
         }
+    }
+}
+
+/// The crate's own sentence for `error`. It quotes the instance through
+/// `serde_json`, whose object order depends on the build, so an object or array
+/// instance is re-rendered from the ordered document (the quoted prefix is
+/// replaced; the rest of the sentence is kept).
+fn crate_message(error: &ValidationError<'_>, instance: &Json) -> String {
+    let text = error.to_string();
+    if !matches!(instance, Json::Object(_) | Json::Array(_)) {
+        return text;
+    }
+    match text.strip_prefix(&error.instance().to_string()) {
+        Some(rest) => format!("{}{rest}", instance.to_compact_string()),
+        None => text,
     }
 }
 
@@ -409,7 +424,7 @@ fn operational_failure(error: &ValidationError<'_>) -> Option<String> {
 
 // ---- JSON conversion and pointers -------------------------------------------------
 
-fn to_value(json: &Json) -> Result<Value, String> {
+pub(crate) fn to_value(json: &Json) -> Result<Value, String> {
     Ok(match json {
         Json::Null => Value::Null,
         Json::Bool(flag) => Value::Bool(*flag),
@@ -426,8 +441,15 @@ fn to_value(json: &Json) -> Result<Value, String> {
                 .collect::<Result<Vec<Value>, String>>()?,
         ),
         Json::Object(members) => {
+            // Insert in sorted key order: `serde_json::Map` is sorted without
+            // `preserve_order` and insertion-ordered with it (another
+            // workspace member may turn it on), so sorting here makes every
+            // text the crate renders from this `Value` the same in all builds.
+            // A stable sort keeps "the last duplicate wins".
+            let mut ordered: Vec<&(String, Json)> = members.iter().collect();
+            ordered.sort_by(|a, b| a.0.cmp(&b.0));
             let mut map = serde_json::Map::new();
-            for (key, member) in members {
+            for (key, member) in ordered {
                 map.insert(key.clone(), to_value(member)?);
             }
             Value::Object(map)
