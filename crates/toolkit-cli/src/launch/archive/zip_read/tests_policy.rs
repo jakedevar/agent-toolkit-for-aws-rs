@@ -212,91 +212,70 @@ fn t_ar_read_13b_simple_case_folding_sharp_s_collides_5132() {
         .expect("ß and ss are distinct"),
         2
     );
-    // Upload applies the same duplicate rule (design R-AR-READ, both
-    // profiles; #5504 supersedes the earlier case-sensitive upload parity).
-    assert!(message(upload(vec![
-        FxEntry::stored("app/\u{df}.txt", b"1"),
-        FxEntry::stored("app/\u{1e9e}.txt", b"2"),
-    ]))
-    .starts_with("Archive contains entries whose names collide"));
+    // Upload keeps Python's case-sensitive parity (decision 1).
     assert_eq!(
         upload(vec![
             FxEntry::stored("app/\u{df}.txt", b"1"),
-            FxEntry::stored("app/ss.txt", b"2"),
+            FxEntry::stored("app/\u{1e9e}.txt", b"2"),
         ])
-        .expect("ß and ss are distinct on upload too"),
+        .expect("upload parity"),
         2
     );
 }
 
-/// T-AR-READ-12/13 under both profiles (#5504): case, NFC and file/directory
-/// prefix collisions are refused by Upload exactly as by Snapshot, with the
-/// same message; distinct names under one root still read.
+/// Upload is divergence-free parity with Python (decision 1; #5504 PM ruling):
+/// the duplicate and file/directory-prefix policy is the Snapshot extraction
+/// boundary, so Upload still reads a case pair, an NFC pair and a folded
+/// file/directory prefix pair, while Snapshot refuses each.
 #[test]
-fn t_ar_read_12_13_upload_and_snapshot_refuse_the_same_collisions_5504() {
-    let collide = |name: &str| {
-        format!(
-            "Archive contains entries whose names collide after case folding or Unicode \
-             normalisation: {}",
-            crate::launch::text::repr(name)
-        )
-    };
-    let cases: [(Vec<FxEntry>, String); 5] = [
+fn t_ar_read_12_13_upload_keeps_case_nfc_and_prefix_parity_snapshot_refuses_5504() {
+    let cases: [(&str, Vec<FxEntry>); 6] = [
         (
+            "case pair",
             vec![
-                FxEntry::stored("root/A", b"1"),
-                FxEntry::stored("root/a", b"2"),
+                FxEntry::stored("root/README", b"1"),
+                FxEntry::stored("root/readme", b"2"),
             ],
-            collide("root/a"),
         ),
         (
+            "NFC pair",
             vec![
                 FxEntry::stored("root/caf\u{e9}", b"1"),
                 FxEntry::stored("root/cafe\u{301}", b"2"),
             ],
-            collide("root/cafe\u{301}"),
         ),
         (
+            "sharp s pair",
+            vec![
+                FxEntry::stored("root/\u{df}.txt", b"1"),
+                FxEntry::stored("root/\u{1e9e}.txt", b"2"),
+            ],
+        ),
+        (
+            "file and directory prefix",
             vec![
                 FxEntry::stored("root/a", b"1"),
                 FxEntry::stored("root/a/b", b"2"),
             ],
-            "Archive contains a file that another entry uses as a directory: 'root/a'".into(),
         ),
         (
+            "folded file and directory prefix",
             vec![
                 FxEntry::stored("root/A", b"1"),
                 FxEntry::stored("root/a/b", b"2"),
             ],
-            "Archive contains a file that another entry uses as a directory: 'root/A'".into(),
         ),
         (
+            "directory entry and folded file",
             vec![FxEntry::dir("root/x/"), FxEntry::stored("root/X", b"1")],
-            collide("root/X"),
         ),
     ];
-    for (entries, expected) in cases {
-        for profile in [Profile::Upload, Profile::Snapshot] {
-            assert_eq!(
-                message(read_with(entries.clone(), profile, &LIMITS)),
-                expected,
-                "{profile:?}"
-            );
-        }
-    }
-    for profile in [Profile::Upload, Profile::Snapshot] {
-        assert_eq!(
-            read_with(
-                vec![
-                    FxEntry::stored("root/a", b"1"),
-                    FxEntry::stored("root/b", b"2"),
-                    FxEntry::stored("root/ab/c", b"3"),
-                ],
-                profile,
-                &LIMITS
-            ),
-            Ok(3),
-            "{profile:?}"
+    for (label, entries) in cases {
+        let count = entries.len();
+        assert_eq!(upload(entries.clone()), Ok(count), "upload parity: {label}");
+        assert!(
+            message(snapshot(entries)).starts_with("Archive contains"),
+            "snapshot refuses: {label}"
         );
     }
 }

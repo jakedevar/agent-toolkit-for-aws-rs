@@ -3,8 +3,7 @@
 //!
 //! [`read_archive`] runs the container framing (R-ZIP-FRAME steps 1-7) over
 //! the whole input, then the entry policy (names, types, declared limits,
-//! duplicates and file/directory conflicts under both profiles; the single
-//! top-level directory for [`Profile::Upload`], the
+//! duplicates; the single top-level directory for [`Profile::Upload`], the
 //! version-control denylist of R-AR-VCS for [`Profile::Snapshot`]). Nothing
 //! is decoded. [`decode_entry`] is step 8, the exact consumption of one
 //! entry's data, used by extraction (L6) and by the tests on writer output.
@@ -675,11 +674,10 @@ pub fn read_archive<'a>(
         entries: out,
         zip64: end.zip64,
     };
-    if profile == Profile::Upload {
-        check_single_root(&archive)?;
+    match profile {
+        Profile::Upload => check_single_root(&archive)?,
+        Profile::Snapshot => check_collisions(&archive)?,
     }
-    // R-AR-READ duplicates and file/directory conflicts under both profiles (#5504).
-    check_collisions(&archive)?;
     Ok(archive)
 }
 
@@ -791,7 +789,7 @@ fn check_single_root(archive: &Archive<'_>) -> Result<(), LaunchError> {
     Ok(())
 }
 
-/// Both profiles: no two entries equal after NFC and case folding, and no
+/// Snapshot profile: no two entries equal after NFC and case folding, and no
 /// file whose folded name is a proper path prefix of another entry.
 fn check_collisions(archive: &Archive<'_>) -> Result<(), LaunchError> {
     let mut keys = BTreeSet::new();
