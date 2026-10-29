@@ -84,7 +84,10 @@ fn snapshot(root: &Path) -> BTreeMap<PathBuf, (Vec<u8>, SystemTime)> {
                 stack.push(path.clone());
                 found.insert(path, (Vec::new(), meta.modified().unwrap()));
             } else {
-                found.insert(path.clone(), (fs::read(&path).unwrap(), meta.modified().unwrap()));
+                found.insert(
+                    path.clone(),
+                    (fs::read(&path).unwrap(), meta.modified().unwrap()),
+                );
             }
         }
     }
@@ -100,9 +103,22 @@ fn assert_no_connection(listener: &TcpListener) {
 
 const ROUTES: &[&[&str]] = &[
     &["agents-pay", "fetch", "https://merchant.example/paid"],
-    &["agents-pay", "fetch", "https://merchant.example/paid", "--method", "HEAD", "--purchase-id", "order-1"],
+    &[
+        "agents-pay",
+        "fetch",
+        "https://merchant.example/paid",
+        "--method",
+        "HEAD",
+        "--purchase-id",
+        "order-1",
+    ],
     &["agents-pay", "fetch", "--status"],
-    &["agents-pay", "fetch", "--browser-handle", "https://merchant.example/paid"],
+    &[
+        "agents-pay",
+        "fetch",
+        "--browser-handle",
+        "https://merchant.example/paid",
+    ],
 ];
 
 fn expected(route: &[&str]) -> String {
@@ -122,7 +138,11 @@ fn t_ac3_inh_fetch_routes_in_process_make_no_connection_and_touch_no_file() {
         let (mut out, mut err) = (Vec::new(), Vec::new());
         let code = toolkit_cli::run(&args, &mut out, &mut err);
         assert_eq!(code, 2, "{route:?}");
-        assert_eq!(String::from_utf8(out).unwrap(), expected(route), "{route:?}");
+        assert_eq!(
+            String::from_utf8(out).unwrap(),
+            expected(route),
+            "{route:?}"
+        );
         assert!(err.is_empty(), "{route:?}");
         assert_no_connection(&listener);
     }
@@ -143,10 +163,19 @@ fn t_ac3_inh_fetch_routes_as_a_child_under_a_hostile_environment() {
             .env("HOME", &home)
             .env("AWS_PROFILE", "hostile")
             .env("AWS_ACCESS_KEY_ID", "AKIAYYYYYYYYYYYYYYYY")
-            .env("AWS_SECRET_ACCESS_KEY", "hostileEnvSecrethostileEnvSecrethostile0")
+            .env(
+                "AWS_SECRET_ACCESS_KEY",
+                "hostileEnvSecrethostileEnvSecrethostile0",
+            )
             .env("AWS_REGION", "us-east-1")
-            .env("PAYMENT_MANAGER_ARN", "arn:aws:bedrock-agentcore:us-east-1:444455556666:payment-manager/prod-abcdefghij")
-            .env("PAYMENT_INSTRUMENT_ID", "payment-instrument-PRODabcdefghijk")
+            .env(
+                "PAYMENT_MANAGER_ARN",
+                "arn:aws:bedrock-agentcore:us-east-1:444455556666:payment-manager/prod-abcdefghij",
+            )
+            .env(
+                "PAYMENT_INSTRUMENT_ID",
+                "payment-instrument-PRODabcdefghijk",
+            )
             .env("PAYMENT_SESSION_ID", "payment-session-PRODabcdefghijk")
             .env("PAYMENT_USER_ID", "agents-pay-a1b2c3d4e5f6")
             .env("AWS_ENDPOINT_URL", &recorder)
@@ -159,7 +188,11 @@ fn t_ac3_inh_fetch_routes_as_a_child_under_a_hostile_environment() {
             .output()
             .unwrap();
         assert_eq!(out.status.code(), Some(2), "{route:?}");
-        assert_eq!(String::from_utf8(out.stdout).unwrap(), expected(route), "{route:?}");
+        assert_eq!(
+            String::from_utf8(out.stdout).unwrap(),
+            expected(route),
+            "{route:?}"
+        );
         assert!(out.stderr.is_empty(), "{route:?}");
         assert_no_connection(&listener);
     }

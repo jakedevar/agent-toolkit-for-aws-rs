@@ -17,8 +17,15 @@ use toolkit_aws::sdk::roots_payment::{
     validate_payment_roots, PaymentRootLoader, PaymentRootPlatform, PaymentRoots,
 };
 use toolkit_aws::sdk::SdkRuntime;
-use toolkit_aws::testing::FixedResolver;
 use toolkit_cli::agents_pay::wiring;
+
+/// A resolver that is `Send + Sync`, as the SDK transport requires.
+struct PublicResolver;
+impl toolkit_aws::endpoint::HostResolver for PublicResolver {
+    fn resolve(&self, _host: &str) -> Result<Vec<std::net::IpAddr>, String> {
+        Ok(vec!["93.184.216.34".parse().unwrap()])
+    }
+}
 
 fn test_root() -> LoadedCerts {
     let pem = include_str!("data/mcp_proxy/test-root.pem");
@@ -88,13 +95,9 @@ fn t_proots_use_proof_planes_share_the_payment_roots_and_providers_keep_s1_roots
     let runtime = SdkRuntime::new().unwrap();
     let payment = payment_roots();
     let provider = provider_roots();
-    let planes = wiring::PaymentPlanes::build(
-        &runtime,
-        &payment,
-        &provider,
-        Arc::new(FixedResolver::new().answer_any(&["93.184.216.34"])),
-    )
-    .unwrap();
+    let planes =
+        wiring::PaymentPlanes::build(&runtime, &payment, &provider, Arc::new(PublicResolver))
+            .unwrap();
     let merchant = planes.merchant.roots().expect("merchant roots");
     let agentcore = planes.agentcore.roots().expect("agentcore roots");
     assert!(merchant.same_allocation(payment.roots()));

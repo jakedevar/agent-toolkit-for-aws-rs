@@ -51,18 +51,36 @@ fn entry(amount: &str, pay_to: &str, extra: &str) -> String {
 }
 
 fn challenge_with(amount: &str, pay_to: &str, extra: &str) -> Vec<u8> {
-    format!(r#"{{"x402Version":2,"accepts":[{}]}}"#, entry(amount, pay_to, extra)).into_bytes()
+    format!(
+        r#"{{"x402Version":2,"accepts":[{}]}}"#,
+        entry(amount, pay_to, extra)
+    )
+    .into_bytes()
 }
 
 fn challenge() -> Vec<u8> {
     challenge_with("100000", PAY_TO, "")
 }
 
+/// The fixture config; a key in `resources_extra` replaces its default.
 fn config_with(policy_extra: &str, resources_extra: &str) -> Json {
+    let defaults = [
+        ("payment_manager_arn", MANAGER),
+        (
+            "payment_instrument_id",
+            "payment-instrument-TEST12345678901",
+        ),
+        ("payment_session_id", "ps-1"),
+        ("user_id", "agents-pay-0123456789ab"),
+    ];
+    let resources: Vec<String> = defaults
+        .iter()
+        .filter(|(key, _)| !resources_extra.contains(&format!("\"{key}\"")))
+        .map(|(key, value)| format!(r#""{key}":"{value}""#))
+        .collect();
+    let resources = resources.join(",");
     json(&format!(
-        r#"{{"resources":{{"payment_manager_arn":"{MANAGER}",
-            "payment_instrument_id":"payment-instrument-TEST12345678901",
-            "payment_session_id":"ps-1","user_id":"agents-pay-0123456789ab"{resources_extra}}},
+        r#"{{"resources":{{{resources}{resources_extra}}},
           "policy":{{"max_per_payment_usd":"0.50","allowed_networks":["eip155:84532"],
             "allowed_assets":{{"eip155:84532":["{USDC}"]}},
             "allowed_recipients":["{PAY_TO}","{OTHER_PAY_TO}"],
@@ -89,7 +107,10 @@ struct World {
 
 impl World {
     fn new(label: &str) -> Self {
-        Self::with(TempConfigStore::new(label, &config()), FakePaymentsApi::signing())
+        Self::with(
+            TempConfigStore::new(label, &config()),
+            FakePaymentsApi::signing(),
+        )
     }
     fn with(store: TempConfigStore, api: FakePaymentsApi) -> Self {
         Self {
@@ -141,7 +162,11 @@ fn t_retry_one_authorization_over_replays_with_the_golden_token_and_equal_header
         .respond(402, &[], &challenge())
         .respond(402, &[], b"")
         .respond(402, &[], b"")
-        .respond(200, &[("content-type", "Text/Plain; charset=utf-8")], b"paid!");
+        .respond(
+            200,
+            &[("content-type", "Text/Plain; charset=utf-8")],
+            b"paid!",
+        );
     let out = world.fetch();
     assert_eq!(out.get("paid"), Some(&Json::Bool(true)), "{out:?}");
     assert_eq!(out.get("status_code"), Some(&Json::Int(200)));
@@ -196,7 +221,9 @@ fn t_retry_a_hostile_402_on_a_replay_changes_nothing() {
     assert!(headers.iter().all(|header| header == &headers[0]));
     assert_eq!(
         flow::render(&out),
-        format!(r#"{{"paid": false, "refused": false, "status_code": 402, "attempts": 5, "reason": "Paid and replayed 5 times but the merchant still returns 402 — usually transient on-chain settlement. The same authorization was replayed each time, so there is no double charge. Retry shortly, or raise X402_MAX_PAYMENT_ATTEMPTS."}}"#)
+        format!(
+            r#"{{"paid": false, "refused": false, "status_code": 402, "attempts": 5, "reason": "Paid and replayed 5 times but the merchant still returns 402 \u2014 usually transient on-chain settlement. The same authorization was replayed each time, so there is no double charge. Retry shortly, or raise X402_MAX_PAYMENT_ATTEMPTS."}}"#
+        )
     );
 }
 
@@ -211,8 +238,8 @@ fn transient_settlement_attempt_tunable_is_bounded() {
         ("3", 3),
         ("10", 10),
     ] {
-        let store = TempConfigStore::new("tunable", &config())
-            .with_env("X402_MAX_PAYMENT_ATTEMPTS", value);
+        let store =
+            TempConfigStore::new("tunable", &config()).with_env("X402_MAX_PAYMENT_ATTEMPTS", value);
         let world = World::with(store, FakePaymentsApi::signing());
         world.merchant.respond(402, &[], &challenge());
         for _ in 0..12 {
@@ -235,9 +262,15 @@ fn assert_zero_authorizations(world: &World) {
 
 #[test]
 fn t_order_pre_configuration_and_resource_refusals_make_zero_requests() {
-    let world = World::with(TempConfigStore::empty("missing"), FakePaymentsApi::signing());
+    let world = World::with(
+        TempConfigStore::empty("missing"),
+        FakePaymentsApi::signing(),
+    );
     let out = world.fetch();
-    assert!(text(&out, "reason").starts_with("No payment config at "), "{out:?}");
+    assert!(
+        text(&out, "reason").starts_with("No payment config at "),
+        "{out:?}"
+    );
     assert_eq!(world.merchant.requests().len(), 0);
     assert_zero_authorizations(&world);
 
@@ -270,7 +303,11 @@ fn t_order_pre_origin_refusals_happen_before_any_merchant_request() {
             FixedResolver::new(),
             "Only https:// payment URLs are allowed.",
         ),
-        ("https:///x", FixedResolver::new(), "Payment URL has no host."),
+        (
+            "https:///x",
+            FixedResolver::new(),
+            "Payment URL has no host.",
+        ),
         (
             "https://user:pw@merchant.test/x",
             FixedResolver::new(),
@@ -348,12 +385,18 @@ fn t_order_pre_probe_and_challenge_refusals_make_zero_authorizations() {
     assert_zero_authorizations(&not_402);
 
     let cases: Vec<(Vec<u8>, &str)> = vec![
-        (b"not json".to_vec(), "402 response contains no parseable x402 challenge."),
+        (
+            b"not json".to_vec(),
+            "402 response contains no parseable x402 challenge.",
+        ),
         (
             br#"{"x402Version":2}"#.to_vec(),
             "402 challenge is missing the required 'accepts' array.",
         ),
-        (challenge_with("100000", "0x9999999999999999999999999999999999999999", ""), UNIFORM_REFUSAL),
+        (
+            challenge_with("100000", "0x9999999999999999999999999999999999999999", ""),
+            UNIFORM_REFUSAL,
+        ),
         (challenge_with("900000", PAY_TO, ""), UNIFORM_REFUSAL),
     ];
     for (body, reason) in cases {
@@ -405,7 +448,9 @@ fn t_order_post_service_failures_make_one_authorization_and_no_proof_send() {
             "ReadTimeout during payment flow.",
         ),
         (
-            FakeOutcome::Fail(PaymentError::Transport(PaymentErrorClass::NoCredentialsError)),
+            FakeOutcome::Fail(PaymentError::Transport(
+                PaymentErrorClass::NoCredentialsError,
+            )),
             "NoCredentialsError during payment flow.",
         ),
     ] {
@@ -421,7 +466,7 @@ fn t_order_post_service_failures_make_one_authorization_and_no_proof_send() {
     }
 }
 
-/// An AgentCore call that takes longer than the whole operation budget.
+/// An `AgentCore` call that takes longer than the whole operation budget.
 struct SlowApi<'a> {
     inner: &'a FakePaymentsApi,
     clock: &'a FakeClock,
@@ -438,7 +483,8 @@ impl PaymentsApi for SlowApi<'_> {
         expiry: i64,
         token: &str,
     ) -> Result<Json, PaymentError> {
-        self.inner.create_session(manager, user, budget, expiry, token)
+        self.inner
+            .create_session(manager, user, budget, expiry, token)
     }
     fn create_instrument(
         &self,
@@ -452,7 +498,10 @@ impl PaymentsApi for SlowApi<'_> {
         self.inner
             .create_instrument(manager, user, connector, network, email, token)
     }
-    fn process_payment(&self, request: &ProcessPaymentRequest) -> Result<PaymentProof, PaymentError> {
+    fn process_payment(
+        &self,
+        request: &ProcessPaymentRequest,
+    ) -> Result<PaymentProof, PaymentError> {
         let proof = self.inner.process_payment(request);
         self.clock.advance(Duration::from_secs(10_000));
         proof
@@ -572,19 +621,28 @@ fn t_proof_mismatched_terms_are_never_sent() {
 #[test]
 fn t_proof_valid_after_waits_at_most_fifteen_seconds() {
     let before = (NOW + 300).to_string();
-    let world = proof_world("wait", proof(PAY_TO, "100000", &(NOW + 14).to_string(), &before));
+    let world = proof_world(
+        "wait",
+        proof(PAY_TO, "100000", &(NOW + 14).to_string(), &before),
+    );
     assert_eq!(world.fetch().get("paid"), Some(&Json::Bool(true)));
     assert_eq!(world.clock.sleeps(), vec![Duration::from_secs(15)]);
     assert_eq!(world.headers().len(), 1);
 
-    let world = proof_world("late", proof(PAY_TO, "100000", &(NOW + 15).to_string(), &before));
+    let world = proof_world(
+        "late",
+        proof(PAY_TO, "100000", &(NOW + 15).to_string(), &before),
+    );
     assert_refused(&world.fetch(), OUTSIDE_WINDOW);
     assert!(world.clock.sleeps().is_empty());
     assert_eq!(world.headers().len(), 0);
 
     // The wait must not outlive the authorization itself.
     let short = (NOW + 5).to_string();
-    let world = proof_world("expires", proof(PAY_TO, "100000", &(NOW + 4).to_string(), &short));
+    let world = proof_world(
+        "expires",
+        proof(PAY_TO, "100000", &(NOW + 4).to_string(), &short),
+    );
     assert_refused(&world.fetch(), OUTSIDE_WINDOW);
     assert_eq!(world.headers().len(), 0);
 }
@@ -677,12 +735,14 @@ fn t_scrub_a_body_without_secrets_is_returned_as_is() {
         FakePaymentsApi::signing(),
     );
     world.merchant.respond(402, &[], &challenge());
-    world.merchant.respond(200, &[], "caf\u{e9} \u{1F600}".as_bytes());
+    world
+        .merchant
+        .respond(200, &[], "caf\u{e9} \u{1F600}".as_bytes());
     let out = world.fetch();
     assert_eq!(text(&out, "body"), "caf\u{e9} \u{1F600}");
     assert_eq!(out.get("truncated"), Some(&Json::Bool(false)));
     assert!(out.get("redacted").is_none());
-    assert!(flow::render(&out).contains(r#""body": "café 😀""#));
+    assert!(flow::render(&out).contains(r#""body": "caf\u00e9 \ud83d\ude00""#));
 }
 
 // ----------------------------------------------------------- T-DNS-DL-3
@@ -794,9 +854,11 @@ fn t_restart_2_a_lost_merchant_response_replays_the_same_proof_bytes() {
 #[test]
 fn t_restart_3_a_lost_agentcore_response_returns_the_stored_proof() {
     let world = World::new("restart3");
-    world.api.push_outcome(FakeOutcome::RecordThenFail(PaymentError::Transport(
-        PaymentErrorClass::ReadTimeout,
-    )));
+    world
+        .api
+        .push_outcome(FakeOutcome::RecordThenFail(PaymentError::Transport(
+            PaymentErrorClass::ReadTimeout,
+        )));
     world.merchant.respond(402, &[], &challenge());
     assert_refused(&world.fetch(), "ReadTimeout during payment flow.");
     assert_eq!(world.headers().len(), 0);
@@ -825,7 +887,10 @@ fn t_restart_4_and_5_changed_terms_authorize_again_l_terms() {
         challenge_with("100000", OTHER_PAY_TO, ""),
     ] {
         let world = World::new("restart45");
-        assert_eq!(paid_then(&world, &second).get("paid"), Some(&Json::Bool(true)));
+        assert_eq!(
+            paid_then(&world, &second).get("paid"),
+            Some(&Json::Bool(true))
+        );
         let recorded = world.api.recorded_requests();
         assert_eq!(recorded.len(), 2);
         assert_ne!(recorded[0].token, recorded[1].token);
@@ -1012,7 +1077,10 @@ fn status_reports_the_session_from_the_model_members() {
 
 #[test]
 fn status_without_a_session_or_with_a_failure_is_unusable() {
-    let world = World::with(TempConfigStore::empty("status-none"), FakePaymentsApi::default());
+    let world = World::with(
+        TempConfigStore::empty("status-none"),
+        FakePaymentsApi::default(),
+    );
     let out = flow::status(&world.deps());
     assert_eq!(
         flow::render(&out),
@@ -1027,9 +1095,11 @@ fn status_without_a_session_or_with_a_failure_is_unusable() {
         .with_env("PAYMENT_MANAGER_ARN", MANAGER)
         .with_env("PAYMENT_USER_ID", "agents-pay-0123456789ab");
     let world = World::with(store, FakePaymentsApi::default());
-    world.api.push_outcome(FakeOutcome::Fail(PaymentError::Service(
-        "AccessDeniedException",
-    )));
+    world
+        .api
+        .push_outcome(FakeOutcome::Fail(PaymentError::Service(
+            "AccessDeniedException",
+        )));
     let out = flow::status(&world.deps());
     assert_eq!(
         flow::render(&out),

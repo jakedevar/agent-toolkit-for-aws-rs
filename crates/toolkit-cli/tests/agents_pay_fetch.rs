@@ -1,4 +1,4 @@
-//! x402 S5 (#5352): the `toolkit agents-pay fetch` route (HarnessCli).
+//! x402 S5 (#5352): the `toolkit agents-pay fetch` route (`HarnessCli`).
 //!
 //! Handler behaviour runs through `agents_pay::run_with` over fixture
 //! `Deps`; the built binary runs only the D32 path of a verification build,
@@ -132,7 +132,11 @@ fn harness_cli_a_free_url_exits_0() {
     let merchant = FakeMerchant::new();
     merchant.respond(200, &[], b"free");
     let ran = run_fixture(
-        &invocation(&["https://93.184.216.34/free"], &[], &[("--method", "HEAD")]),
+        &invocation(
+            &["https://93.184.216.34/free"],
+            &[],
+            &[("--method", "HEAD")],
+        ),
         &merchant,
     );
     assert_eq!(ran.code, 0, "{}", ran.stdout);
@@ -177,14 +181,21 @@ fn toolkit(args: &[&str]) -> std::process::Output {
 fn harness_cli_binary_refuses_without_payment_support() {
     for args in [
         &["agents-pay", "fetch", "https://169.254.169.254/"][..],
-        &["agents-pay", "fetch", "--browser-handle", "https://merchant.test/x"],
+        &[
+            "agents-pay",
+            "fetch",
+            "--browser-handle",
+            "https://merchant.test/x",
+        ],
     ] {
         let out = toolkit(args);
         assert_eq!(out.status.code(), Some(2), "{args:?}");
         let stdout = String::from_utf8(out.stdout).unwrap();
         assert_eq!(
             stdout,
-            format!("{{\"paid\": false, \"refused\": true, \"reason\": \"{NO_PAYMENT_SUPPORT}\"}}\n")
+            format!(
+                "{{\"paid\": false, \"refused\": true, \"reason\": \"{NO_PAYMENT_SUPPORT}\"}}\n"
+            )
         );
         assert!(out.stderr.is_empty());
     }
@@ -206,11 +217,28 @@ fn harness_cli_binary_usage_errors() {
         format!("{USAGE}\n\nGive a URL, or --status.\n")
     );
     for args in [
-        &["agents-pay", "fetch", "https://merchant.test/x", "--method", "POST"][..],
+        &[
+            "agents-pay",
+            "fetch",
+            "https://merchant.test/x",
+            "--method",
+            "POST",
+        ][..],
         &["agents-pay", "fetch", "a", "b"],
         &["agents-pay", "fetch", "--unknown"],
-        &["agents-pay", "fetch", "https://merchant.test/x", "--purchase-id", "-"],
-        &["agents-pay", "fetch", "https://merchant.test/x", "--secret-access-key=wJalrXUtnFEMI"],
+        &[
+            "agents-pay",
+            "fetch",
+            "https://merchant.test/x",
+            "--purchase-id",
+            "-",
+        ],
+        &[
+            "agents-pay",
+            "fetch",
+            "https://merchant.test/x",
+            "--secret-access-key=wJalrXUtnFEMI",
+        ],
     ] {
         let out = toolkit(args);
         assert_eq!(out.status.code(), Some(2), "{args:?}");

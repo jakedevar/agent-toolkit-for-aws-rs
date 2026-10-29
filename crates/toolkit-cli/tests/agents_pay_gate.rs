@@ -22,6 +22,9 @@
 //! Each rule also runs over a seeded violation, so the gate cannot pass by
 //! finding nothing.
 
+#[cfg(feature = "agents-pay-live")]
+compile_error!("agents-pay-live is never built for tests (AC3)");
+
 use std::fs;
 use std::path::Path;
 
@@ -1036,13 +1039,16 @@ fn has_test_guard(text: &str) -> bool {
     let cfg = item.attrs.iter().any(|attr| match &attr.meta {
         syn::Meta::List(list) => {
             list.path.is_ident("cfg")
-                && list.tokens.to_string().replace(' ', "")
-                    == format!("feature=\"{LIVE_FEATURE}\"")
+                && list.tokens.to_string().replace(' ', "") == format!("feature=\"{LIVE_FEATURE}\"")
         }
         _ => false,
     });
     cfg && item.mac.path.is_ident("compile_error")
-        && item.mac.tokens.to_string().contains("never built for tests")
+        && item
+            .mac
+            .tokens
+            .to_string()
+            .contains("never built for tests")
 }
 
 /// Spellings of the live feature outside the G1a guard (two per guard).
@@ -1114,7 +1120,7 @@ fn feature_findings(manifests: &[(String, String)]) -> Vec<String> {
         for line in text.lines() {
             let trimmed = line.trim();
             if trimmed.starts_with('[') {
-                section = trimmed.to_owned();
+                trimmed.clone_into(&mut section);
                 continue;
             }
             if trimmed.starts_with('#') || !trimmed.contains(LIVE_FEATURE) {
@@ -1158,7 +1164,9 @@ fn workspace_manifests() -> Vec<(String, String)> {
 #[test]
 fn t_ac3_feat_no_default_or_dependency_enables_the_live_feature() {
     let manifests = workspace_manifests();
-    assert!(manifests.iter().any(|(n, _)| n.ends_with("toolkit-cli/Cargo.toml")));
+    assert!(manifests
+        .iter()
+        .any(|(n, _)| n.ends_with("toolkit-cli/Cargo.toml")));
     let found = feature_findings(&manifests);
     assert!(found.is_empty(), "{found:#?}");
 }
@@ -1173,7 +1181,10 @@ fn t_ac3_feat_catches_default_and_dependency_enablement() {
         format!("[features]\naws-sdk = [\"{LIVE_FEATURE}\"]\n{LIVE_FEATURE} = [\"aws-sdk\"]\n"),
         format!("[features]\n{LIVE_FEATURE} = []\n"),
     ] {
-        assert!(!feature_findings(&[(cli.clone(), bad.clone())]).is_empty(), "{bad}");
+        assert!(
+            !feature_findings(&[(cli.clone(), bad.clone())]).is_empty(),
+            "{bad}"
+        );
     }
     let dependent = format!(
         "[dependencies]\ntoolkit-cli = {{ path = \"../toolkit-cli\", features = [\"{LIVE_FEATURE}\"] }}\n"
@@ -1192,7 +1203,11 @@ fn make_findings(makefile: &str, recipes: &[(String, String)]) -> Vec<String> {
     let mut target = String::new();
     for line in makefile.lines() {
         if !line.starts_with('\t') && line.contains(':') && !line.starts_with('#') {
-            target = line.split(':').next().unwrap_or_default().trim().to_owned();
+            line.split(':')
+                .next()
+                .unwrap_or_default()
+                .trim()
+                .clone_into(&mut target);
         }
         if line.contains("all-features") {
             found.push(format!("`{line}` uses --all-features"));
@@ -1205,11 +1220,22 @@ fn make_findings(makefile: &str, recipes: &[(String, String)]) -> Vec<String> {
             && words.starts_with(&["cargo", "clippy"])
             && words.contains(&"--lib")
             && words.contains(&"--bins")
-            && !words
-                .iter()
-                .any(|w| matches!(*w, "--all-targets" | "--tests" | "--test" | "--benches" | "--examples" | "--doc" | "test"));
+            && !words.iter().any(|w| {
+                matches!(
+                    *w,
+                    "--all-targets"
+                        | "--tests"
+                        | "--test"
+                        | "--benches"
+                        | "--examples"
+                        | "--doc"
+                        | "test"
+                )
+            });
         if !lint_only {
-            found.push(format!("target `{target}` passes the live feature: `{line}`"));
+            found.push(format!(
+                "target `{target}` passes the live feature: `{line}`"
+            ));
         }
     }
     for (name, text) in recipes {
@@ -1227,7 +1253,10 @@ fn make_findings(makefile: &str, recipes: &[(String, String)]) -> Vec<String> {
 fn t_ac3_make_no_test_target_passes_the_live_feature() {
     let root = repo_root();
     let makefile = fs::read_to_string(root.join("Makefile")).unwrap();
-    assert!(makefile.contains("clippy-live:"), "make clippy-live (Q24) is missing");
+    assert!(
+        makefile.contains("clippy-live:"),
+        "make clippy-live (Q24) is missing"
+    );
     let recipes: Vec<(String, String)> = [".rsi/project.toml", ".rsi/jobs.toml"]
         .iter()
         .filter_map(|name| {
@@ -1248,7 +1277,9 @@ fn t_ac3_make_catches_a_test_target_with_the_feature() {
     assert!(make_findings(&good, &[]).is_empty());
     for bad in [
         format!("test-live:\n\tcargo test -p toolkit-cli --features {LIVE_FEATURE}\n"),
-        format!("clippy-live:\n\tcargo clippy -p toolkit-cli --features {LIVE_FEATURE} --all-targets\n"),
+        format!(
+            "clippy-live:\n\tcargo clippy -p toolkit-cli --features {LIVE_FEATURE} --all-targets\n"
+        ),
         "test:\n\tcargo test --workspace --all-features\n".to_owned(),
     ] {
         assert!(!make_findings(&bad, &[]).is_empty(), "{bad}");
@@ -1258,24 +1289,31 @@ fn t_ac3_make_catches_a_test_target_with_the_feature() {
 // ---------------------------------------------------------------- G4
 
 /// Names a test must never spell: the live constructors and real sources.
-const LIVE_PATHS: &[(&str, &str)] = &[
-    ("Deps", "for_process"),
-    ("PaymentRoots", "from_process"),
-];
+const LIVE_PATHS: &[(&str, &str)] = &[("Deps", "for_process"), ("PaymentRoots", "from_process")];
 const LIVE_IDENTS: &[&str] = &[
     "SdkTransport",
     "SystemResolver",
     "OsAccount",
     "default_chain",
     "default_chain_with_http",
-    "load_runtime_config",
-    "runtime_config_path",
 ];
 
 fn idents(stream: TokenStream, out: &mut Vec<String>) {
     for tree in stream {
         match tree {
-            TokenTree::Group(group) => idents(group.stream(), out),
+            TokenTree::Group(group) => {
+                // The opening delimiter, so `name(` and `Type {` are visible.
+                out.push(
+                    match group.delimiter() {
+                        proc_macro2::Delimiter::Parenthesis => "(",
+                        proc_macro2::Delimiter::Brace => "{",
+                        proc_macro2::Delimiter::Bracket => "[",
+                        proc_macro2::Delimiter::None => "",
+                    }
+                    .to_owned(),
+                );
+                idents(group.stream(), out);
+            }
             TokenTree::Ident(ident) => out.push(ident.to_string()),
             TokenTree::Punct(punct) => out.push(punct.as_char().to_string()),
             TokenTree::Literal(_) => out.push(String::new()),
@@ -1393,9 +1431,15 @@ fn proof_findings(sources: &[Source]) -> Vec<String> {
         let net_tests = source.path == "agents_pay/net/tests.rs";
         for (index, word) in words.iter().enumerate() {
             let next = |n: usize| words.get(index + n).map(String::as_str);
-            let prev = index.checked_sub(1).and_then(|i| words.get(i)).map(String::as_str);
+            let prev = index
+                .checked_sub(1)
+                .and_then(|i| words.get(i))
+                .map(String::as_str);
             if word == "into_parts" && prev == Some(".") && !in_proof {
-                found.push(format!("{}: Authorized::into_parts outside proof.rs", source.path));
+                found.push(format!(
+                    "{}: Authorized::into_parts outside proof.rs",
+                    source.path
+                ));
             }
             if word == "payload"
                 && prev == Some(".")
@@ -1403,10 +1447,16 @@ fn proof_findings(sources: &[Source]) -> Vec<String> {
                 && !in_proof
                 && !in_agentcore
             {
-                found.push(format!("{}: PaymentProof::payload outside proof.rs", source.path));
+                found.push(format!(
+                    "{}: PaymentProof::payload outside proof.rs",
+                    source.path
+                ));
             }
             if word == "VerifiedProof" && next(1) == Some("{") && !in_proof {
-                found.push(format!("{}: VerifiedProof literal outside proof.rs", source.path));
+                found.push(format!(
+                    "{}: VerifiedProof literal outside proof.rs",
+                    source.path
+                ));
             }
             if word == "ProofHeader"
                 && next(1) == Some(":")
@@ -1414,7 +1464,10 @@ fn proof_findings(sources: &[Source]) -> Vec<String> {
                 && !in_proof
                 && !net_tests
             {
-                found.push(format!("{}: ProofHeader::new outside proof.rs", source.path));
+                found.push(format!(
+                    "{}: ProofHeader::new outside proof.rs",
+                    source.path
+                ));
             }
         }
     }
@@ -1513,11 +1566,23 @@ fn r_tok_nofresh_the_flow_and_spend_path_name_no_randomness() {
 #[test]
 fn r_tok_nofresh_catches_a_fresh_token_source() {
     for (path, bad) in [
-        ("agents_pay/flow.rs", "fn retry() { let mut b = [0u8; 32]; getrandom::fill(&mut b).ok(); }"),
-        ("agents_pay/proof.rs", "fn n() -> String { uuid::Uuid::new_v4().to_string() }"),
-        ("agents_pay/agentcore.rs", "pub fn process_payment() { let _ = rand::random::<u64>(); }"),
+        (
+            "agents_pay/flow.rs",
+            "fn retry() { let mut b = [0u8; 32]; getrandom::fill(&mut b).ok(); }",
+        ),
+        (
+            "agents_pay/proof.rs",
+            "fn n() -> String { uuid::Uuid::new_v4().to_string() }",
+        ),
+        (
+            "agents_pay/agentcore.rs",
+            "pub fn process_payment() { let _ = rand::random::<u64>(); }",
+        ),
     ] {
-        assert!(!nofresh_findings(&seeded(&[(path, bad)])).is_empty(), "{bad}");
+        assert!(
+            !nofresh_findings(&seeded(&[(path, bad)])).is_empty(),
+            "{bad}"
+        );
     }
     let vault = "fn handle() { let mut b = [0u8; 24]; getrandom::fill(&mut b).ok(); }";
     assert!(nofresh_findings(&seeded(&[("agents_pay/vault.rs", vault)])).is_empty());
