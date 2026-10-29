@@ -2094,6 +2094,9 @@ const INVENTORY: &[(&str, Class)] = &[
     ),
     ("dynamodb_bench", Class::Recorded),
     ("dynamodb_deploy", Class::Recorded),
+    // Includes the tunnel commands of `elasticache/tunnel/` (#4393, round 19): they
+    // replay `--recorded` through `toolkit_aws::recorded`, and their flag constant
+    // `TUNNEL_RECORDED_FLAG` is unique in `src` (#4933).
     ("elasticache", Class::Recorded),
     (
         "manifests",

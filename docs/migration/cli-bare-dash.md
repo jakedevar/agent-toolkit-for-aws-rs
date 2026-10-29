@@ -164,6 +164,19 @@ not a valid region, product code, account, event source or bus name. Left refuse
 | --- | --- | --- |
 | `marketplace/mod.rs` | `--region` | `marketplace query-metering` / `test-events --region -` are refused by the router; the entries belong to other slices |
 
+Round-19 integration (#5015), `elasticache-tunnel` (#4393). Its three commands
+(`elasticache find-tunnel-host`, `start-tunnel`, `test-connection`) are `strict_values`,
+not passthrough, and have no `STDIO_DASH` or `LITERAL_DASH` entry, so the router refuses
+a bare `-` for every value flag in both spellings and for the `test-connection HOST`
+positional, before the `--recorded` file is read (`./-` names a file called `-`);
+`a_bare_dash_is_refused_for_every_value_flag_and_the_positional` pins it.
+`find_tunnel_host.py`, `start_tunnel.py` and `test_connection.py` read no `-` sentinel
+for any argument (divergence 3 of `docs/migration/elasticache-tunnel.md`), and `-` is
+not a valid VPC id, instance id, host, port, region or profile. Left refused. No row is
+added: the tunnel sources spell `--region`, `--profile` and `--target` (the SSM
+session argument), but none of them holds filesystem code (the recording is read
+through `elasticache::read_json_file`), so the scan above does not list them.
+
 `telemetry` is a passthrough command that parses its own words, so the router policy
 and the scans above never see its path flags. It declares them (`--telemetry-dir`,
 `--plugin-root`) in `value_flags`, which the router ignores for a passthrough command,
@@ -236,7 +249,11 @@ the base length and hash. The round-18 integration (#5006) moves it to 41167 byt
 `0x614d170cb18738c2`: the round-16 text plus the marketplace (#4396) synopsis (650
 bytes, 9 lines) and description (655 bytes, 8 lines), 39862 + 650 + 655 = 41167.
 marketplace has empty exit notes, and the merge changes no other slice's help text,
-`USAGE_HEAD` or the assembly in `registry.rs`.
+`USAGE_HEAD` or the assembly in `registry.rs`. The round-19 integration (#5015) moves
+it to 42243 bytes, `0x874fc84f07b07a26`: the round-18 text plus the elasticache-tunnel
+(#4393) synopsis (512 bytes, 8 lines) and description (564 bytes, 8 lines),
+41167 + 512 + 564 = 42243. The tunnel has empty exit notes, and the merge changes no
+other slice's help text, `USAGE_HEAD` or the assembly in `registry.rs`.
 
 ## The four reproductions
 
