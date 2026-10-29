@@ -613,6 +613,7 @@ fn the_streaming_transport_reads_incrementally_over_the_real_connector() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)] // Shared transport and TLS fixture across the deadline cases.
 fn t_sdl_real_deadlines_and_frame_bound() {
     use crate::error::{AwsError, TimeoutPhase};
     use std::io::Read;
@@ -627,7 +628,7 @@ fn t_sdl_real_deadlines_and_frame_bound() {
         request(
             format!("https://{HOST}:{port}/mcp"),
             Duration::from_secs(120),
-        )
+        );
     };
     let deadline = || Instant::now() + Duration::from_millis(300);
     let assert_elapsed = |start: Instant| {
@@ -718,7 +719,7 @@ fn t_sdl_real_deadlines_and_frame_bound() {
         &make_request(server.port()),
         &StreamLimits::new(10, 10)
             .unwrap()
-            .with_deadline(Instant::now() - Duration::from_secs(1)),
+            .with_deadline(Instant::now().checked_sub(Duration::from_secs(1)).unwrap()),
     );
     assert!(matches!(
         result,
