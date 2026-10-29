@@ -1161,3 +1161,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
   4/4: cfb95bf6 L7, 6d3a33dc #5474, 0311ca3f S1 r2, e02b0f23 B2.
 - 21:14Z: review #5474 (6d3a33dc) CHANGES_REQUESTED S6: BLOCKER #5475 (live AdminWorld built before TTY check). RULED nonblocker: setup-openclaw instrument step w/o approve (D33 keeps per-step approvals); deviations accepted. 6/6 guard reverts caught. Also: 31f6d96e does NOT merge cleanly (registry.rs, diag_contract.rs) despite worker prose; kaizen #5476. Repair 1 -> Claude Opus be2767ad (continue_from 1a973465). Then narrow re-review of #5475 + merge.
   4/4: be2767ad S6 r1, cfb95bf6 L7, 0311ca3f S1 r2, e02b0f23 B2. Waiting for slot: #5478 flake.
+- 21:16Z: S1 repair 2 (0311ca3f) DONE at cdc468a2f10b66db4ccda0aa54c866c4b2544e1c (#5465: inner BoundedBody drops conn on EOF/terminal error; db-only ReleasingStream wrap; merged 535c9424 + 289fadc1, usage 47548/0x355f_5278_556d_532a). scoped 874c8e18 ok. Re-review #5482 -> Codex sol 7fb40ec3 pinned cdc468a2. On ACCEPT: check + enqueue (source_session_id 0311ca3f, issue 5366); close #5428 #5429 #5465 #5482 on land; #4886 stays open (S2+).
+  Kaizen: #5480 cancelled as dup of #5360 (usage pin conflicts); #5360 raised to P2 -> worker at next free slot along with #5478 flake.
+  4/4: 7fb40ec3 #5482, be2767ad S6 r1, cfb95bf6 L7, e02b0f23 B2. Queue: 58fcd064 #5472.
