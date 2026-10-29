@@ -547,7 +547,7 @@ mod tests {
     /// The route paths of the old `COMMANDS` table (commit ce0eaf6a, before the
     /// registry), in table order: the public order of [`COMMANDS`]. The routes of
     /// slices added after the registry follow at the end, ordered by slice name.
-    const LEGACY_COMMAND_ORDER: [&str; 87] = [
+    const LEGACY_COMMAND_ORDER: [&str; 89] = [
         "skills list",
         "manifests validate",
         "spec validate",
@@ -637,6 +637,9 @@ mod tests {
         "documentdb wa-review",
         "neptune validate-input",
         "neptune seed",
+        // dynamodb-bench (#4390):
+        "dynamodb benchmark-model",
+        "dynamodb generate-perf-report",
         // telemetry (#4398):
         "telemetry",
     ];

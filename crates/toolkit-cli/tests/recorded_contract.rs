@@ -2092,6 +2092,7 @@ const INVENTORY: &[(&str, Class)] = &[
             "a pure cost calculator and a design loop over the skill's own state files",
         ),
     ),
+    ("dynamodb_bench", Class::Recorded),
     ("dynamodb_deploy", Class::Recorded),
     ("elasticache", Class::Recorded),
     (
