@@ -604,6 +604,7 @@ mod wire_contracts {
         assert!(result.is_ok());
         let requests = transport.requests();
         assert_eq!(requests.len(), 1);
+        assert!(transport.open_limits()[0].deadline().is_some());
         assert_eq!(
             requests[0].url,
             "https://bedrock-agentcore.us-east-1.amazonaws.com/payments/processPayment"
