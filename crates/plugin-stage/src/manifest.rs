@@ -58,7 +58,8 @@ pub struct StagingManifest {
     pub plugin: String,
     /// 40-hex commit the binaries were built from.
     pub source_commit: String,
-    /// Whether tracked files differed from that commit at build time.
+    /// Whether the checkout differed from that commit at build time (a
+    /// tracked change or an untracked, non-ignored file).
     pub source_dirty: bool,
     /// `rustc -V` of the toolchain used.
     pub rustc: String,
@@ -270,19 +271,28 @@ pub fn verify_staged(
         .collect();
     if let Ok(entries) = fs::read_dir(plugins_root) {
         for entry in entries.filter_map(Result::ok) {
-            if entry.path().join(BIN_DIR).exists() {
+            // symlink_metadata: a dangling or symlinked bin/ is still found.
+            if fs::symlink_metadata(entry.path().join(BIN_DIR)).is_ok() {
                 plugins.insert(entry.file_name().to_string_lossy().into_owned());
             }
         }
     }
     for plugin in plugins {
-        let bin_dir = plugins_root.join(&plugin).join(BIN_DIR);
+        let plugin_dir = plugins_root.join(&plugin);
+        let bin_dir = plugin_dir.join(BIN_DIR);
         let shown = display(repo_root, &bin_dir);
-        if !bin_dir.exists() {
-            if complete {
-                problems.push(format!("{shown}: not staged"));
+        match staged_bin_dir(repo_root, &plugin_dir) {
+            Ok(true) => {}
+            Ok(false) => {
+                if complete {
+                    problems.push(format!("{shown}: not staged"));
+                }
+                continue;
             }
-            continue;
+            Err(problem) => {
+                problems.push(problem);
+                continue;
+            }
         }
         if declaration.plugin_binaries(&plugin).next().is_none() {
             problems.push(format!(
@@ -292,11 +302,19 @@ pub fn verify_staged(
             continue;
         }
         let manifest_path = bin_dir.join(MANIFEST_FILE);
-        let parsed = fs::read_to_string(&manifest_path)
-            .map_err(|_| {
-                format!("{shown}: has no {MANIFEST_FILE}; staged files must come from plugin-stage")
+        let parsed = read_regular(&manifest_path)
+            .map_err(|err| {
+                if err == MISSING {
+                    format!(
+                        "{shown}: has no {MANIFEST_FILE}; staged files must come from plugin-stage"
+                    )
+                } else {
+                    format!("{shown}/{MANIFEST_FILE}: {err}")
+                }
             })
-            .and_then(|text| {
+            .and_then(|bytes| {
+                let text = String::from_utf8(bytes)
+                    .map_err(|_| format!("{shown}/{MANIFEST_FILE}: is not UTF-8"))?;
                 StagingManifest::parse(&text)
                     .map_err(|err| format!("{shown}/{MANIFEST_FILE}: {err}"))
             });
@@ -445,7 +463,7 @@ impl PluginCheck<'_> {
             ));
         }
         let path = self.bin_dir.join(&binary.path);
-        match read_regular(&path) {
+        match read_staged(self.bin_dir, &binary.path) {
             Ok(bytes) => {
                 if u64::try_from(bytes.len()).ok() != Some(binary.size) {
                     problems.push(format!("{label}: size differs from the manifest"));
@@ -460,15 +478,68 @@ impl PluginCheck<'_> {
     }
 }
 
+const MISSING: &str = "is missing";
+
+/// Whether `plugin_dir/bin` is staged. A symlinked (or non-directory)
+/// plugin directory or `bin/` is refused before anything is read through it
+/// (#5023): the release gate certifies a self-contained package, and a
+/// symlink force-added to the release tree would not ship the verified bytes.
+///
+/// # Errors
+///
+/// Names the symlinked or non-directory path.
+pub fn staged_bin_dir(repo_root: &Path, plugin_dir: &Path) -> Result<bool, String> {
+    let real_dir = |path: &Path, what: &str| {
+        match fs::symlink_metadata(path) {
+        Ok(meta) if meta.file_type().is_symlink() => Err(format!(
+            "{}: is a symlink; {what} must be a real directory so the staged package is self-contained",
+            display(repo_root, path)
+        )),
+        Ok(meta) if meta.is_dir() => Ok(true),
+        Ok(_) => Err(format!("{}: is not a directory", display(repo_root, path))),
+        Err(_) => Ok(false),
+    }
+    };
+    if !real_dir(plugin_dir, "a plugin with staged binaries")? {
+        return Ok(false);
+    }
+    real_dir(&plugin_dir.join(BIN_DIR), "bin/")
+}
+
 /// Reads a regular file without following a symlink at `path`.
-fn read_regular(path: &Path) -> Result<Vec<u8>, String> {
+pub(crate) fn read_regular(path: &Path) -> Result<Vec<u8>, String> {
     match fs::symlink_metadata(path) {
+        Ok(meta) if meta.file_type().is_symlink() => {
+            Err("is a symlink; staged files must be regular files inside bin/".to_string())
+        }
         Ok(meta) if meta.file_type().is_file() => {
             fs::read(path).map_err(|err| format!("cannot read: {err}"))
         }
         Ok(_) => Err("is not a regular file".to_string()),
-        Err(_) => Err("is missing".to_string()),
+        Err(_) => Err(MISSING.to_string()),
     }
+}
+
+/// Reads `bin_dir/rel` after checking that its platform directory is a real
+/// directory, not a symlink out of the package.
+fn read_staged(bin_dir: &Path, rel: &str) -> Result<Vec<u8>, String> {
+    if let Some(parent) = Path::new(rel)
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        match fs::symlink_metadata(bin_dir.join(parent)) {
+            Ok(meta) if meta.file_type().is_symlink() => {
+                return Err(format!(
+                    "its directory {} is a symlink; platform directories must be real directories inside bin/",
+                    parent.display()
+                ))
+            }
+            Ok(meta) if meta.is_dir() => {}
+            Ok(_) => return Err(format!("{} is not a directory", parent.display())),
+            Err(_) => return Err(MISSING.to_string()),
+        }
+    }
+    read_regular(&bin_dir.join(rel))
 }
 
 #[cfg(unix)]
@@ -505,6 +576,9 @@ fn walk_files(
             format!("{prefix}/{name}")
         };
         match entry.file_type() {
+            Ok(kind) if kind.is_symlink() => problems.push(format!(
+                "{shown}/{rel}: is a symlink; staged files and platform directories must be real entries inside bin/"
+            )),
             Ok(kind) if kind.is_dir() => {
                 if prefix.is_empty() && Platform::from_key(&name).is_some() {
                     walk_files(&entry.path(), &rel, out, problems, shown);

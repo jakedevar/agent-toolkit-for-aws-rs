@@ -137,8 +137,15 @@ fn run_check(ctx: &Context, complete: bool) -> ExitCode {
         );
     }
     for binary in launchers.unreferenced(&ctx.declaration) {
+        // A zero-reference scan is never evidence of a safe guard (#5022):
+        // it only means no registration runs this binary yet.
+        let note = if matches!(binary.role, plugin_stage::Role::GuardHook { .. }) {
+            "; this guard is NOT enforced by any registration, and the contract only proves that no launcher runs it in a non-canonical form"
+        } else {
+            ""
+        };
         println!(
-            "declared {}/{} ({}) has no launcher yet (consumer {})",
+            "declared {}/{} ({}) has no launcher yet (consumer {}){note}",
             binary.plugin,
             binary.name,
             binary.role.as_str(),
@@ -184,7 +191,7 @@ fn run_plan(ctx: &Context, args: &Args, build_now: bool) -> ExitCode {
     };
     if provenance.source_dirty && !args.allow_dirty {
         return report(
-            &["tracked files have uncommitted changes; commit them, or pass --allow-dirty (the manifest records source_dirty: true and the release gate refuses it)".to_string()],
+            &["the checkout has uncommitted changes or untracked files that are not ignored (Cargo may build them, for example an untracked build.rs); commit or remove them, or pass --allow-dirty (the manifest records source_dirty: true, it never merges with a clean stage and the release gate refuses it)".to_string()],
             "",
         );
     }

@@ -66,10 +66,11 @@ pub fn mcp_command(root_var: &str, name: &str) -> String {
 }
 
 /// The generated POSIX dispatcher staged at `bin/<name>`. It maps
-/// `uname -s` / `uname -m` to a platform key, runs `bin/<key>/<name>` (or
-/// `bin/<name>.exe` under Git Bash, MSYS or Cygwin on Windows) with the
-/// caller's arguments and stdin, and exits 127 with a message on stderr when
-/// no binary is staged for the platform.
+/// `uname -s` / `uname -m` to one of the supported platform pairs, runs
+/// `bin/<key>/<name>` (or `bin/<name>.exe` under Git Bash, MSYS or Cygwin on
+/// Windows, x86_64 or ARM64 through emulation) with the caller's arguments
+/// and stdin, and exits 127 with a message on stderr when the platform is
+/// unsupported (before any file lookup, #5025) or no binary is staged for it.
 #[must_use]
 pub fn dispatcher_script(name: &str) -> String {
     format!(
@@ -78,17 +79,23 @@ pub fn dispatcher_script(name: &str) -> String {
 # binary for this platform. bin/manifest.json lists every staged file, its
 # sha256 and the source commit it was built from.
 case "$0" in */*) d=${{0%/*}} ;; *) d=. ;; esac
-case "$(uname -s 2>/dev/null)" in
+s=$(uname -s 2>/dev/null)
+m=$(uname -m 2>/dev/null)
+o=
+a=
+case "$s" in
   Linux) o=linux ;;
   Darwin) o=macos ;;
   MINGW*|MSYS*|CYGWIN*) o=windows ;;
-  *) o=unsupported ;;
 esac
-case "$(uname -m 2>/dev/null)" in
+case "$m" in
   x86_64|amd64|x64) a=x86_64 ;;
   aarch64|arm64) a=aarch64 ;;
-  *) a=unsupported ;;
 esac
+if [ -z "$o" ] || [ -z "$a" ]; then
+  printf '%s: unsupported platform (uname -s %s, uname -m %s); no staged binary runs here\n' "{name}" "$s" "$m" >&2
+  exit 127
+fi
 if [ "$o" = windows ]; then b="$d/{name}.exe"; else b="$d/$o-$a/{name}"; fi
 if [ ! -f "$b" ] || [ ! -x "$b" ]; then
   echo "{name}: no staged binary for $o-$a at $b; reinstall the plugin" >&2
@@ -266,6 +273,9 @@ impl PluginScan<'_> {
                                     value,
                                 ));
                             }
+                            ManifestRef::Malformed(message) => report
+                                .problems
+                                .push(format!("{rel}: {}: {message}", path_text(&json_path))),
                         }
                     }
                 }
@@ -350,31 +360,243 @@ impl PluginScan<'_> {
         report: &mut LauncherReport,
     ) {
         let at = format!("{location}: {}", path_text(json_path));
-        for found in find_bin_refs(text) {
-            let name = match found {
-                Found::Name(name) => name,
-                Found::Bad(message) => {
-                    report.problems.push(format!("{at}: {message}"));
-                    continue;
-                }
-            };
-            let Some(binary) = self.declaration.binary(self.plugin, &name) else {
-                report.problems.push(format!(
-                    "{at}: references bin/{name}, which {} does not declare for plugin {}",
-                    crate::DECLARATION_PATH,
-                    self.plugin
-                ));
-                continue;
-            };
-            match role_problem(binary, kind, text, json_path) {
-                Some(message) => report.problems.push(format!("{at}: {message}")),
-                None => report.references.push(LauncherRef {
-                    plugin: self.plugin.to_string(),
-                    name,
-                    location: at.clone(),
-                }),
-            }
+        match self.resolve_string(kind, text, json_path) {
+            Ok(None) => {}
+            Ok(Some(name)) => report.references.push(LauncherRef {
+                plugin: self.plugin.to_string(),
+                name,
+                location: at,
+            }),
+            Err(message) => report.problems.push(format!("{at}: {message}")),
         }
+    }
+
+    /// Resolves one launcher string, failing closed (#5022): a string that
+    /// mentions a plugin `bin/` path is accepted only when it is exactly one
+    /// canonical launcher form of a declared binary, or names exactly one
+    /// declared `bin/<name>` in a spelling the checker resolves; any other
+    /// spelling (quoted, relative, wrapped, through a variable, `.`/`..`
+    /// segments, globs, a second reference) is refused. `Ok(None)` means the
+    /// string mentions no plugin binary.
+    fn resolve_string(
+        &self,
+        kind: Kind,
+        text: &str,
+        json_path: &[String],
+    ) -> Result<Option<String>, String> {
+        if let Some(binary) = self.canonical_binary(text) {
+            return match role_problem(binary, kind, text, json_path) {
+                Some(message) => Err(message),
+                None => Ok(Some(binary.name.clone())),
+            };
+        }
+        let mentions = plugin_bin_mentions(text);
+        if mentions.is_empty() {
+            return Ok(None);
+        }
+        let launcher_hint = "print the canonical launcher with `plugin-stage launcher PLUGIN/NAME`";
+        if let Some(reason) = mentions.iter().find_map(|mention| match mention {
+            Mention::Unresolvable(reason) => Some(reason),
+            Mention::Bin(_) => None,
+        }) {
+            return Err(format!(
+                "{reason}; plugin-stage cannot resolve it to one canonical launcher, so it is refused (fail closed); {launcher_hint}"
+            ));
+        }
+        if mentions.len() > 1 {
+            return Err(format!(
+                "mentions {} plugin bin/ paths; a launcher runs exactly one binary through its canonical form; {launcher_hint}",
+                mentions.len()
+            ));
+        }
+        let name = match find_bin_refs(text).as_slice() {
+            [Found::Bad(message)] => return Err(message.clone()),
+            [Found::Name(name)]
+                if mentions[0] == Mention::Bin(format!("{BIN_DIR}/{name}")) =>
+            {
+                name.clone()
+            }
+            _ => {
+                return Err(format!(
+                    "mentions a plugin bin/ path in a quoted, relative, wrapped or otherwise non-canonical spelling; plugin-stage cannot resolve it to one canonical launcher, so it is refused (fail closed); {launcher_hint}"
+                ))
+            }
+        };
+        let Some(binary) = self.declaration.binary(self.plugin, &name) else {
+            return Err(format!(
+                "references bin/{name}, which {} does not declare for plugin {}",
+                crate::DECLARATION_PATH,
+                self.plugin
+            ));
+        };
+        match role_problem(binary, kind, text, json_path) {
+            Some(message) => Err(message),
+            None => Ok(Some(name)),
+        }
+    }
+
+    /// The declared binary of this plugin whose canonical launcher `text` is
+    /// byte for byte, if any.
+    fn canonical_binary(&self, text: &str) -> Option<&BinarySpec> {
+        self.declaration
+            .plugin_binaries(self.plugin)
+            .find(|binary| canonical_forms(binary).iter().any(|form| form == text))
+    }
+}
+
+/// The exact launcher strings a binary's role allows.
+fn canonical_forms(binary: &BinarySpec) -> Vec<String> {
+    let name = &binary.name;
+    match &binary.role {
+        Role::GuardHook { deny_reason } => ROOT_VARS
+            .iter()
+            .map(|root| guard_hook_command(root, name, deny_reason))
+            .collect(),
+        Role::McpServer => ROOT_VARS
+            .iter()
+            .map(|root| mcp_command(root, name))
+            .chain([format!("./{BIN_DIR}/{name}")])
+            .collect(),
+        Role::Hook => ROOT_VARS
+            .iter()
+            .map(|root| format!("\"{}\"", mcp_command(root, name)))
+            .collect(),
+    }
+}
+
+/// How a launcher string mentions the plugin `bin/` directory.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Mention {
+    /// A statically resolved path below the plugin root starting at `bin`,
+    /// for example `bin/tool`.
+    Bin(String),
+    /// A path that may reach the plugin `bin/` but cannot be resolved.
+    Unresolvable(String),
+}
+
+/// Characters that make a path segment dynamic (expansion or globbing).
+const DYNAMIC: &[char] = &['$', '*', '?', '[', ']', '{', '}', '~', '`'];
+
+/// Glob characters that can make a relative path expand to `bin/...`.
+const GLOB: &[char] = &['*', '?', '['];
+
+/// Characters that separate shell words or commands, after quotes are
+/// removed. Splitting on them is deliberately coarse: it may produce more
+/// candidate paths than the shell would, never fewer.
+const SEPARATORS: &[char] = &[';', '|', '&', '(', ')', '<', '>', '=', '`', ','];
+
+/// Every place `text` may name the plugin `bin/` directory, found
+/// conservatively: quotes are dropped (the shell concatenates `"a"b`),
+/// backslashes are read as escapes (and, separately, as Windows path
+/// separators), and the string is split into candidate paths. A plugin-root
+/// path (`${CLAUDE_PLUGIN_ROOT}/...`), a path under another variable and a
+/// relative path (`bin/x`, `./bin/x`, `../bin/x`) are all considered; an
+/// absolute system path such as `/usr/bin/env` is not.
+fn plugin_bin_mentions(text: &str) -> Vec<Mention> {
+    let unquoted: String = text.chars().filter(|c| !matches!(c, '"' | '\'')).collect();
+    let mut mentions = scan_words(&unquoted.replace('\\', ""));
+    if unquoted.contains('\\') {
+        let separated = scan_words(&unquoted.replace('\\', "/"));
+        if separated
+            .iter()
+            .any(|mention| matches!(mention, Mention::Bin(_)) && !mentions.contains(mention))
+        {
+            mentions.push(Mention::Unresolvable(
+                "uses a backslash in a path that may name the plugin bin/ directory".to_string(),
+            ));
+        }
+    }
+    mentions
+}
+
+fn scan_words(text: &str) -> Vec<Mention> {
+    text.split(|c: char| c.is_whitespace() || SEPARATORS.contains(&c))
+        .filter(|word| !word.is_empty())
+        .filter_map(word_mention)
+        .collect()
+}
+
+fn is_bin_segment(segment: &str) -> bool {
+    let head = segment.split(':').next().unwrap_or(segment);
+    head.eq_ignore_ascii_case(BIN_DIR)
+}
+
+fn is_root_var(segment: &str) -> bool {
+    ROOT_VARS
+        .iter()
+        .any(|root| segment == format!("${{{root}}}") || segment == format!("${root}"))
+}
+
+fn word_mention(word: &str) -> Option<Mention> {
+    let segments: Vec<&str> = word.split('/').collect();
+    let root = segments
+        .iter()
+        .rposition(|segment| ROOT_VARS.iter().any(|root| segment.contains(root)));
+    if let Some(index) = root {
+        let rest = &segments[index + 1..];
+        if rest.iter().all(|segment| segment.is_empty()) {
+            return None;
+        }
+        if !is_root_var(segments[index]) {
+            return Some(Mention::Unresolvable(format!(
+                "uses the plugin root in {word:?} through an expansion other than a plain ${{CLAUDE_PLUGIN_ROOT}}"
+            )));
+        }
+        return plugin_path(word, rest);
+    }
+    if segments.first() == Some(&"") {
+        // An absolute path (`/usr/bin/env`) is not inside the plugin.
+        return None;
+    }
+    let Some(index) = segments.iter().position(|segment| is_bin_segment(segment)) else {
+        // No literal bin segment; a glob before the last segment may still
+        // expand to one (`b?n/tool`).
+        let leading = &segments[..segments.len() - 1];
+        return leading
+            .iter()
+            .any(|segment| segment.contains(GLOB))
+            .then(|| {
+                Mention::Unresolvable(format!(
+                    "{word:?} is a globbed path that may name the plugin bin/ directory"
+                ))
+            });
+    };
+    let leading = &segments[..index];
+    if leading.iter().any(|segment| segment.contains(DYNAMIC)) {
+        Some(Mention::Unresolvable(format!(
+            "{word:?} reaches a bin/ directory through a variable, glob or expansion"
+        )))
+    } else if leading.iter().all(|segment| *segment == ".") {
+        plugin_path(word, &segments[index..])
+    } else if leading.contains(&"..") {
+        Some(Mention::Unresolvable(format!(
+            "{word:?} is a relative path with `..` that may name the plugin bin/ directory"
+        )))
+    } else {
+        None
+    }
+}
+
+/// Classifies the segments of a path below the plugin root: only its first
+/// real segment decides whether it is the plugin `bin/` directory, and `..`
+/// anywhere could re-enter it.
+fn plugin_path(word: &str, rest: &[&str]) -> Option<Mention> {
+    if rest.contains(&"..") {
+        return Some(Mention::Unresolvable(format!(
+            "{word:?} has a `..` segment in its plugin path"
+        )));
+    }
+    let parts: Vec<&str> = rest
+        .iter()
+        .copied()
+        .filter(|segment| !segment.is_empty() && *segment != ".")
+        .collect();
+    match parts.first() {
+        Some(first) if first.contains(DYNAMIC) => Some(Mention::Unresolvable(format!(
+            "{word:?} has a variable, glob or expansion in its plugin path"
+        ))),
+        Some(first) if is_bin_segment(first) => Some(Mention::Bin(parts.join("/"))),
+        _ => None,
     }
 }
 
@@ -504,10 +726,35 @@ fn classify(rest: &str) -> Option<Found> {
 enum ManifestRef {
     File(Kind, String),
     Inline(Kind, Json),
+    Malformed(String),
+}
+
+/// One `hooks` / `mcpServers` value or path-list member.
+fn manifest_member(key: &str, kind: Kind, value: &Json) -> ManifestRef {
+    match value {
+        Json::String(text) => ManifestRef::File(kind, text.clone()),
+        Json::Object(_) => ManifestRef::Inline(kind, value.clone()),
+        other => ManifestRef::Malformed(format!(
+            "`{key}` must be a file path, a list of file paths or inline configuration, not {}",
+            json_type(other)
+        )),
+    }
+}
+
+fn json_type(value: &Json) -> &'static str {
+    match value {
+        Json::Null => "null",
+        Json::Bool(_) => "a boolean",
+        Json::String(_) => "a string",
+        Json::Array(_) => "a nested list",
+        Json::Object(_) => "an object",
+        Json::Int(_) | Json::Float(_) => "a number",
+    }
 }
 
 /// Collects `hooks` / `mcpServers` members of a plugin manifest: a string is
-/// a launcher file path, an object is inline launcher configuration.
+/// a launcher file path, an object is inline launcher configuration, and a
+/// list holds either; any other value is malformed and reported.
 fn manifest_refs(
     value: &Json,
     json_path: &mut Vec<String>,
@@ -523,13 +770,19 @@ fn manifest_refs(
                     _ => None,
                 };
                 match (kind, item) {
-                    (Some(kind), Json::String(text)) => {
-                        out.push((json_path.clone(), ManifestRef::File(kind, text.clone())));
+                    (Some(kind), Json::Array(members)) => {
+                        // A path list (Devin `mcpServers`, #5024): every
+                        // member keeps the owning kind.
+                        for (index, member) in members.iter().enumerate() {
+                            json_path.push(format!("[{index}]"));
+                            out.push((json_path.clone(), manifest_member(key, kind, member)));
+                            json_path.pop();
+                        }
                     }
-                    (Some(kind), Json::Object(_)) => {
-                        out.push((json_path.clone(), ManifestRef::Inline(kind, item.clone())));
+                    (Some(kind), _) => {
+                        out.push((json_path.clone(), manifest_member(key, kind, item)));
                     }
-                    _ => manifest_refs(item, json_path, out),
+                    (None, _) => manifest_refs(item, json_path, out),
                 }
                 json_path.pop();
             }

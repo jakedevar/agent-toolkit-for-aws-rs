@@ -15,7 +15,9 @@ use toolkit_core::{parse_json, sha256_hex, Json};
 
 use crate::declaration::{BinarySpec, Declaration, PlatformSpec};
 use crate::launcher::dispatcher_script;
-use crate::manifest::{StagedBinary, StagedDispatcher, StagingManifest};
+use crate::manifest::{
+    read_regular, staged_bin_dir, StagedBinary, StagedDispatcher, StagingManifest,
+};
 use crate::platform::Platform;
 use crate::{BIN_DIR, MANIFEST_FILE};
 
@@ -309,7 +311,8 @@ fn builder_for(spec: &PlatformSpec, probe: &Probe) -> Result<Builder, String> {
 pub struct Provenance {
     /// 40-hex source commit.
     pub source_commit: String,
-    /// Whether tracked files differed from the commit.
+    /// Whether the checkout differed from the commit: a tracked change or an
+    /// untracked, non-ignored file.
     pub source_dirty: bool,
     /// `rustc -V`.
     pub rustc: String,
@@ -340,6 +343,40 @@ pub fn check_merge(
     existing_entries(plugins_root, plugin, provenance, clean).map(|_| ())
 }
 
+/// Refuses to stage through a symlink (#5023), with or without `--clean`:
+/// the plugin directory, `bin/` and every entry of `bin/` and of its
+/// platform directories must be real. Returns whether `bin/` exists.
+fn check_layout(plugins_root: &Path, plugin: &str) -> Result<bool, String> {
+    let plugin_dir = plugins_root.join(plugin);
+    let staged = staged_bin_dir(Path::new(""), &plugin_dir)
+        .map_err(|err| format!("{err}; refusing to stage through it"))?;
+    if !staged {
+        return Ok(false);
+    }
+    let bin_dir = plugin_dir.join(BIN_DIR);
+    let mut pending = vec![bin_dir.clone()];
+    while let Some(dir) = pending.pop() {
+        let entries = fs::read_dir(&dir)
+            .map_err(|err| format!("{}: cannot be listed: {err}", dir.display()))?;
+        for entry in entries.filter_map(Result::ok) {
+            let path = entry.path();
+            let kind = entry
+                .file_type()
+                .map_err(|err| format!("{}: {err}", path.display()))?;
+            if kind.is_symlink() {
+                return Err(format!(
+                    "{}: is a symlink; staged files and platform directories must be real, so refusing to stage through it (remove it first)",
+                    path.display()
+                ));
+            }
+            if kind.is_dir() && dir == bin_dir {
+                pending.push(path);
+            }
+        }
+    }
+    Ok(true)
+}
+
 fn existing_entries(
     plugins_root: &Path,
     plugin: &str,
@@ -347,16 +384,19 @@ fn existing_entries(
     clean: bool,
 ) -> Result<Vec<StagedBinary>, String> {
     let bin_dir = plugins_root.join(plugin).join(BIN_DIR);
-    if clean || !bin_dir.exists() {
+    if !check_layout(plugins_root, plugin)? || clean {
         return Ok(Vec::new());
     }
     let remedy = "rerun with --clean to replace it";
-    let text = fs::read_to_string(bin_dir.join(MANIFEST_FILE)).map_err(|_| {
-        format!(
-            "{}: exists without a {MANIFEST_FILE}; {remedy}",
-            bin_dir.display()
-        )
-    })?;
+    let text = read_regular(&bin_dir.join(MANIFEST_FILE))
+        .ok()
+        .and_then(|bytes| String::from_utf8(bytes).ok())
+        .ok_or_else(|| {
+            format!(
+                "{}: exists without a {MANIFEST_FILE}; {remedy}",
+                bin_dir.display()
+            )
+        })?;
     let manifest = StagingManifest::parse(&text)
         .map_err(|err| format!("{}/{MANIFEST_FILE}: {err}; {remedy}", bin_dir.display()))?;
     if manifest.source_commit != provenance.source_commit
@@ -616,18 +656,28 @@ pub fn parse_metadata(text: &str) -> Result<(BTreeMap<String, BTreeSet<String>>,
     Ok((bins, PathBuf::from(target_dir)))
 }
 
-/// Reads the source commit and whether tracked files differ from it.
+/// Reads the source commit and whether the checkout differs from it: a
+/// tracked change, or any untracked file that is not ignored (#5027). Cargo
+/// picks up untracked inputs on its own (an auto-discovered `build.rs`, a
+/// new module, `.cargo/config.toml`, `rust-toolchain.toml`), so a build with
+/// one present is not a build of the named commit. Ignored files, such as
+/// `target/` and the generated `plugins/*/bin/`, stay permitted.
 ///
 /// # Errors
 ///
-/// When `git` cannot report the commit.
+/// When `git` cannot report the commit or the status.
 pub fn source_provenance(root: &Path, rustc: &str) -> Result<Provenance, String> {
     let commit = output(root, "git", &["rev-parse", "HEAD"])
         .ok_or("`git rev-parse HEAD` failed; stage from a git checkout")?;
     let status = output(
         root,
         "git",
-        &["status", "--porcelain", "--untracked-files=no"],
+        &[
+            "status",
+            "--porcelain",
+            "--untracked-files=all",
+            "--ignore-submodules=none",
+        ],
     )
     .ok_or("`git status` failed")?;
     Ok(Provenance {
