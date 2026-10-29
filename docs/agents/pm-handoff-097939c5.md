@@ -437,3 +437,8 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 10-29 00:31Z: safety net. #4969 r2 (0c8302c4) on #4396 9b6d90b8: CHANGES_REQUESTED, one P2 #4984 (literal MIN-1 rounds via f64 to i64::MIN, billed); originals #4972-#4976 confirmed fixed. Repair 2 worker c91a19d9 (Sonnet high, continue_from 8dc00bed, op 7cc231f4). Then narrow #4969 r3.
   Queue: r16 af05573a still queued (seq 2937). Host load ~7, disk 122G free (85%). No Failed workers. Net re-armed 01:31Z.
   4/4 busy: b1cc4adc (#4941 repair), a1adff0a (r17), 384144f0 (#4985), c91a19d9 (#4396 repair 2).
+- 10-29 00:33Z: ROUND 17 head c32595a6866602945046ceb408ba1114d563e15c (a1adff0a; = e312d923 + --no-ff merge #4961 2a0173c0, tree identical; fmt 1c342049 clippy fcda8617 scoped d02f787c ok cli 3259; check ok). ENQUEUED entry 4e99add5 (seq 2937, SUPERSEDES r16 af05573a, issue 4983). Queue wakes me once.
+  ON LAND close: #4983 (auto) + #4960 and the full r16 set (see 00:20Z) + #4961.
+  ROUND 18 candidates: #4396 (repair 2 c91a19d9), #4941 (repair b1cc4adc), #4393 (review #4985). New integration Issue when the first is accepted. Base = rolling after r17 lands.
+  #4413 phase 1 (design only, build_free) worker efb8567a (Opus high, rolling; op 62eef109): docs/migration/mcp-proxy-design.md for AC4 pre-review.
+  4/4 busy: b1cc4adc (#4941 repair), 384144f0 (#4985), c91a19d9 (#4396 repair 2), efb8567a (#4413 design).
