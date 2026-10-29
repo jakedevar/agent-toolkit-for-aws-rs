@@ -8,17 +8,17 @@ The AI recommendation job needs the model weights in **S3** (`ModelBuilder(model
 
 - Confirm the exact HuggingFace repo id with the user (e.g. `mistralai/Mistral-7B-Instruct-v0.3`).
 - Surface the model's license and get acceptance before downloading (gated models — Llama, Mistral, etc. — require accepting terms on HuggingFace and a HF token).
-- If the model is gated, ask the user for a HuggingFace access token (store it securely; never echo it back).
+- If the model is gated, ask the user for the ARN of an existing Secrets Manager secret that holds their HuggingFace access token. If they have no such secret, ask them to create it themselves (outside this conversation) and give you the ARN. For a public model there is nothing to collect: the value is `null`. The agent must never ask for, accept or echo the token itself; only the ARN goes into the values file (Step 2).
 
 ## Step 2: Download the model to S3
 
-Generate a Jupyter notebook or a Python script — read `../code_output_guide.md` for the mode choice and output format rules (the template's `# NOTEBOOK_ONLY` markers make it dual-mode). The code comes from `../../code_templates/optimize-huggingface-to-s3.py` (split on the `# Cell N:` comments). Cell 3 calls the SDK's `download_huggingface_model(...)` helper, which pulls the HuggingFace snapshot from the Hub and stages it to the session's default S3 bucket in one call, returning `MODEL_S3_URI`.
+Generate a Jupyter notebook or a Python script — read `../code_output_guide.md` for the mode choice and output format rules (the template's `# NOTEBOOK_ONLY` markers make it dual-mode). The code comes from `../../code_templates/optimize-huggingface-to-s3.py`, rendered with `toolkit ai-payloads render <skill-dir>/references/model-deployment/code_templates/optimize-huggingface-to-s3.py --mode notebook --project-dir <project-dir> --values <scratch-dir>/values.json` (the placeholder names below, without brackets, are the keys under `values`; `--mode script` for a script; do not assemble the cells by hand). Cell 3 calls the SDK's `download_huggingface_model(...)` helper, which pulls the HuggingFace snapshot from the Hub and stages it to the session's default S3 bucket in one call, returning `MODEL_S3_URI`.
 
 Placeholders to fill in Cell 2:
 
 - `[REGION]` — the AWS region for the run (e.g. `us-west-2`).
 - `[HF_MODEL_ID]` — the HuggingFace repo id confirmed in Step 1 (e.g. `mistralai/Mistral-7B-Instruct-v0.3`).
-- `[HF_TOKEN_OR_NONE]` — a HuggingFace access token for gated models, or `None` for public models.
+- `[HF_TOKEN_OR_NONE]` — for gated models, the ARN of a Secrets Manager secret that holds the HuggingFace access token; `null` (or `"None"`) for public models. `render` refuses a literal token, so never type the token into the values file or the command line.
 
 Requirements/notes:
 

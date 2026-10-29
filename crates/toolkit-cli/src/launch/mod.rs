@@ -14,6 +14,7 @@
 
 pub mod archive;
 pub mod buffer;
+pub mod callback;
 pub mod clock;
 pub mod config;
 pub mod http;
@@ -95,3 +96,43 @@ mod tests_mod;
 
 #[cfg(test)]
 pub mod tests_support;
+
+/// Internal callback route; the remaining launch commands arrive in L5.
+pub(crate) const SLICE: crate::registry::Slice = crate::registry::Slice {
+    name: "launch",
+    commands: &[crate::CommandSpec {
+        path: &["launch", "auth-callback"],
+        flags: &[],
+        value_flags: &[],
+        strict_values: false,
+        repeatable_flags: &[],
+        max_positionals: 0,
+        passthrough: false,
+        handler: callback::command::callback,
+    }, crate::CommandSpec {
+        path: &["launch", "auth-start"],
+        flags: &[],
+        value_flags: &["--region", "--aws-mcp-url"],
+        strict_values: true,
+        repeatable_flags: &[],
+        max_positionals: 0,
+        passthrough: false,
+        handler: callback::start::command,
+    }, crate::CommandSpec {
+        path: &["launch", "auth-wait"],
+        flags: &[],
+        value_flags: &["--region", "--aws-mcp-url"],
+        strict_values: true,
+        repeatable_flags: &[],
+        max_positionals: 1,
+        passthrough: false,
+        handler: callback::wait::command,
+    }],
+    synopsis: "  toolkit launch auth-callback\n  toolkit launch auth-start [--region REGION] [--aws-mcp-url URL]\n  toolkit launch auth-wait PID [--region REGION] [--aws-mcp-url URL]\n",
+    description:
+        "  launch auth-callback  Internal sign-in helper; reads configuration from stdin.\n  launch auth-start     Start sign-in.\n  launch auth-wait      Wait for a sign-in helper to finish.\n",
+    exit_notes: "",
+    doc: "docs/migration/launch-with-aws-design.md",
+    synopsis_rank: crate::registry::NEW_RANK,
+    description_rank: crate::registry::NEW_RANK,
+};

@@ -5,8 +5,7 @@
 //! assignable literal fields and manual edit points, and lints them against the
 //! template grammar of `docs/migration/ai-payloads-design.md` section 4.3.
 //!
-//! This slice reads and never writes: there is no render, no file publication
-//! and no value substitution yet (slices S2a and S2b). The template text stays
+//! The template text stays
 //! Python because the customer's own kernel runs it (design section 3); the
 //! files are read as text and never executed. See `docs/migration/ai-payloads.md`
 //! for the command contract and the JSON catalog.
@@ -21,9 +20,15 @@ use toolkit_core::{
 use crate::safe_text::safe_path;
 use crate::{Invocation, Output};
 
+mod assign;
+mod notebook;
 mod place;
+mod render;
 mod reward;
+mod script;
 mod template;
+mod types;
+mod values;
 
 use template::Template;
 
@@ -43,8 +48,17 @@ pub(crate) const SLICE: crate::registry::Slice = crate::registry::Slice {
         max_positionals: 0,
         passthrough: false,
         handler: templates_command,
+    }, crate::CommandSpec {
+        path: &["ai-payloads", "render"],
+        flags: &["--append", "--new", "--allow-unresolved", "--dry-run"],
+        value_flags: &["--mode", "--project-dir", "--name", "--values"],
+        strict_values: true,
+        repeatable_flags: &["--cell", "--consent"],
+        max_positionals: 1,
+        passthrough: false,
+        handler: render::command,
     }],
-    synopsis: "  toolkit ai-payloads templates [--root DIR] [--json] [--check]\n  toolkit ai-payloads reward sample --format FORMAT\n  toolkit ai-payloads reward check --format FORMAT --event FILE --response FILE [--batch]\n",
+    synopsis: "  toolkit ai-payloads templates [--root DIR] [--json] [--check]\n  toolkit ai-payloads render TEMPLATE --mode notebook|script --project-dir DIR\n      [--name NAME] [--values FILE] [--cell N=FILE]... [--append | --new]\n      [--consent NAME]... [--allow-unresolved] [--dry-run]\n  toolkit ai-payloads reward sample --format FORMAT\n  toolkit ai-payloads reward check --format FORMAT --event FILE --response FILE [--batch]\n",
     description: r"  ai-payloads   Payload templates of the AWS AI/ML skill (#4386).
                 templates lists the code_templates/*.py files under
                 ROOT/references (default: skills/core-skills/aws-ai-ml) with

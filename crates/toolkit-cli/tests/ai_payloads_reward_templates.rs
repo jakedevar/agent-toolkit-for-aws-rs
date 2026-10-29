@@ -285,36 +285,24 @@ fn ap_rwt_04_sync_plugin_skills_check_is_clean() {
 
 #[test]
 fn ap_rwt_05_python_inventory_has_no_additions() {
-    fn visit(dir: &Path, base: &Path, paths: &mut Vec<String>) {
-        for entry in fs::read_dir(dir).unwrap() {
-            let entry = entry.unwrap();
-            let path = entry.path();
-            let ty = entry.file_type().unwrap();
-            if ty.is_dir() {
-                if entry.file_name() != ".git" && entry.file_name() != "target" {
-                    visit(&path, base, paths);
-                }
-            } else if path
-                .extension()
-                .is_some_and(|e| e.eq_ignore_ascii_case("py"))
-            {
-                paths.push(
-                    path.strip_prefix(base)
-                        .unwrap()
-                        .to_str()
-                        .unwrap()
-                        .replace('\\', "/"),
-                );
-            }
-        }
-    }
+    // Remove retired entries as migrations land; additions require explicit review.
     let allowed: std::collections::HashSet<_> = include_str!("reward_python_inventory.txt")
         .lines()
         .collect();
-    let mut paths = Vec::new();
-    visit(&root(), &root(), &mut paths);
-    for path in paths {
-        assert!(allowed.contains(path.as_str()), "new Python file: {path}");
+    let output = Command::new("git")
+        .args(["ls-files", "-z"])
+        .current_dir(root())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    for path in output.stdout.split(|b| *b == 0).filter(|p| !p.is_empty()) {
+        let path = std::str::from_utf8(path).unwrap();
+        if Path::new(path)
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("py"))
+        {
+            assert!(allowed.contains(path), "new Python file: {path}");
+        }
     }
     for path in [T06.to_string(), T09.to_string(), mirror(T06), mirror(T09)] {
         let h = handler(&path);

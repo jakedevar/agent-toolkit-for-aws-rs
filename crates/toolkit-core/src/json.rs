@@ -674,6 +674,13 @@ mod tests {
     }
 
     #[test]
+    fn overflowing_float_is_rejected_by_parser() {
+        assert!(parse_error("1e999")
+            .to_string()
+            .contains("number is out of range"));
+    }
+
+    #[test]
     fn empty_list_is_bare_array() {
         assert_eq!(skills_to_json(&[]), "[]");
     }

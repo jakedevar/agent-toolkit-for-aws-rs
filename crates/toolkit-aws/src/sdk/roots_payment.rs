@@ -313,10 +313,16 @@ mod tests {
         if child_case().is_none() {
             return;
         }
-        let Ok(roots) = PaymentRoots::from_process() else {
+        let (files, dirs) = locations();
+        if !files
+            .iter()
+            .chain(dirs.iter())
+            .any(|p| Path::new(p).exists())
+        {
             report("roots", "no-fixed-roots");
             return;
-        };
+        }
+        let roots = PaymentRoots::from_process().unwrap();
         let digest = roots
             .roots()
             .certificates()

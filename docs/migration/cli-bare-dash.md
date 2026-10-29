@@ -257,7 +257,7 @@ other slice's help text, `USAGE_HEAD` or the assembly in `registry.rs`. Round 22
 (#5147) adds mcp-proxy and pins 43490 bytes, `0xe8bae3964772eac2`. Round 23
 (#5194) also adds the ai-payloads synopsis and description (#5143, S1 of #4386);
 the merged binary's usage is 44013 bytes, `0x169fada3871a54b6`. ai-payloads has
-empty exit notes. Its only path flag, `ai-payloads templates --root`, is a
+empty exit notes. The `ai-payloads templates --root` path flag is a
 directory and has no `LITERAL_DASH` or `STDIO_DASH` entry: `-` and `--root=-`
 are refused with exit 2 by the router (`ap_cli_03_exit_codes_and_usage_errors`).
 
@@ -289,7 +289,14 @@ name, number or `KEY=VALUE` pair that never names a file, so the exact value
 reads only its own stdin stream (the MCP client) and writes only its own
 stdout; neither is selected by an argument.
 
+The `launch auth-start` and `launch auth-wait` `--region` value is passed to
+`resolve_region` and validated against the supported region names; it is never
+used to construct a filesystem path. The router refuses a bare `-` for both
+commands (#5216).
+
 The reward checker (#5214) adds `--format`, `--event`, and `--response` value
 flags. The router refuses bare `-` and `--flag=-` for each; no stdin or literal
 file named `-` is read. Its two synopsis lines change global usage to 44155
-bytes, FNV-1a `0xea11e5a1e031b87f`.
+bytes, FNV-1a `0xea11e5a1e031b87f` before the launch routes were added. With
+the launch routes and reward checker together, usage is 44502 bytes, FNV-1a
+`0x95a0edb8063410e1`.

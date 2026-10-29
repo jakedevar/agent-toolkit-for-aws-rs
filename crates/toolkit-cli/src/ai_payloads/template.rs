@@ -21,28 +21,21 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use toolkit_core::is_unsafe_char;
-
-/// The bare-slot names that exist in the 23 real templates (section 1.4). A
-/// bare slot is a typed expression, so a name without a row in the type table
-/// of section 4.4.1 is a lint error (rule 6). The table itself (`types.rs`) is
-/// slice S2b; until then this closed list is the type table's name column.
-pub(crate) const TYPED_BARE_SLOTS: [&str; 9] = [
-    "ACCEPT_EULA",
-    "CONCURRENCY",
-    "INPUT_TOKENS_MEAN",
-    "INPUT_TOKENS_STDDEV",
-    "METRICS_LIST",
-    "OUTPUT_TOKENS_MEAN",
-    "OUTPUT_TOKENS_STDDEV",
-    "REQUEST_COUNT",
-    "TRUE_OR_FALSE",
-];
+use unicode_normalization::UnicodeNormalization;
 
 /// Characters of a comment kept for a manual edit point.
 const MANUAL_TEXT_CHARS: usize = 60;
 
 /// The words that mark a comment as a manual edit point (section 1.4).
 const MANUAL_MARKERS: [&str; 2] = ["NOTE FOR AGENT", "Uncomment"];
+
+/// The template section whose body is a caller-owned Python module (§4.4.4).
+pub(crate) const MODULE_CELLS: &[(&str, usize, &str, &str)] = &[(
+    "dataset-transformation/code_templates/transformation.py",
+    2,
+    "scripts/transform_fn.py",
+    "def transform_dataset(",
+)];
 
 /// How a placeholder occurrence is used in the template text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -217,6 +210,109 @@ pub(crate) fn is_secret_name(name: &str) -> bool {
     })
 }
 
+/// Syntactic consent guard for caller-supplied code, not a sandbox.
+pub(crate) fn contains_consent_identifier(text: &str) -> bool {
+    let normalized: String = text.nfkc().collect();
+    consent_in_lex(text) || consent_in_lex(&normalized)
+}
+
+fn consent_in_lex(text: &str) -> bool {
+    let lexed = lex(text);
+    let is_consent =
+        |name: &str| super::types::slot_type(name) == Some(super::types::SlotType::Consent);
+    // Quote reuse can split an interpolated string into several tokens. Inspect
+    // all string bodies when one is present, conservatively including literals.
+    let interpolated = lexed.tokens.iter().any(|token| {
+        matches!(&token.kind,
+        Kind::Str(value) if value.prefix.to_ascii_lowercase().contains(['f', 't']))
+    });
+    lexed
+        .occurrences
+        .iter()
+        .any(|occurrence| occurrence.context == Context::Bare && is_consent(&occurrence.name))
+        || lexed.tokens.iter().any(|token| match &token.kind {
+            Kind::Name(name) => is_consent(name),
+            Kind::Str(value) if interpolated => value
+                .body
+                .split(|c: char| !is_ident_continue(c))
+                .any(is_consent),
+            _ => false,
+        })
+}
+
+/// Whether this section assigns a consent identifier, including duplicates.
+pub(crate) fn contains_consent_binding(text: &str) -> bool {
+    let lexed = lex(text);
+    statements(&lexed.tokens).iter().any(|statement| {
+        let mut names = BTreeMap::new();
+        let mut start = 0;
+        for (index, at) in statement.iter().enumerate() {
+            let token = &lexed.tokens[*at];
+            if token.depth == 0 && matches!(&token.kind, Kind::Op(op) if op == "=" || AUGMENTED.contains(&op.as_str())) {
+                bound_names(&lexed.tokens, &statement[start..index], &mut names);
+                start = index + 1;
+            }
+        }
+        names.keys().any(|name| super::types::slot_type(name) == Some(super::types::SlotType::Consent))
+    })
+}
+
+/// Reject a consent binding other than a false literal or its typed slot.
+pub(crate) fn invalid_consent_binding(text: &str) -> bool {
+    let lexed = lex(text);
+    for statement in statements(&lexed.tokens) {
+        let mut names = BTreeMap::new();
+        let mut start = 0;
+        for (index, at) in statement.iter().enumerate() {
+            let token = &lexed.tokens[*at];
+            if token.depth == 0
+                && matches!(&token.kind, Kind::Op(op) if op == "=" || AUGMENTED.contains(&op.as_str()))
+            {
+                bound_names(&lexed.tokens, &statement[start..index], &mut names);
+                start = index + 1;
+            }
+        }
+        if !names
+            .keys()
+            .any(|name| super::types::slot_type(name) == Some(super::types::SlotType::Consent))
+        {
+            continue;
+        }
+        if candidate_of(&lexed.tokens, &statement).is_some_and(|candidate| {
+            super::types::slot_type(&candidate.name) == Some(super::types::SlotType::Consent)
+                && candidate.literal == "False"
+        }) {
+            continue;
+        }
+        let bare_slot = match statement.as_slice() {
+            [name, equal, slot] => match (
+                &lexed.tokens[*name].kind,
+                &lexed.tokens[*equal].kind,
+                &lexed.tokens[*slot].kind,
+            ) {
+                (Kind::Name(name), Kind::Op(op), Kind::Slot)
+                    if op == "="
+                        && super::types::slot_type(name)
+                            == Some(super::types::SlotType::Consent) =>
+                {
+                    lexed.occurrences.iter().any(|occurrence| {
+                        occurrence.context == Context::Bare
+                            && occurrence.name == *name
+                            && occurrence.line == lexed.tokens[*slot].line
+                            && occurrence.column == lexed.tokens[*slot].column
+                    })
+                }
+                _ => false,
+            },
+            _ => false,
+        };
+        if !bare_slot {
+            return true;
+        }
+    }
+    false
+}
+
 /// Reads one template. Never fails: every problem is a [`Violation`].
 pub(crate) fn parse(text: &str) -> Template {
     let mut template = Template::default();
@@ -260,6 +356,13 @@ pub(crate) fn parse(text: &str) -> Template {
     occurrences.extend(string_occurrences(&tokens));
     occurrences.sort_by_key(|occurrence| (occurrence.line, occurrence.column));
 
+    magic_slot_violations(
+        &lines,
+        &markers,
+        &tokens,
+        &occurrences,
+        &mut template.violations,
+    );
     template.slots = summarize(&occurrences);
     template.violations.extend(slot_violations(&occurrences));
     template.targets = find_targets(&tokens, &template.cells);
@@ -278,6 +381,74 @@ pub(crate) fn parse(text: &str) -> Template {
         .violations
         .sort_by_key(|violation| (violation.line, violation.column));
     template
+}
+
+fn magic_slot_violations(
+    lines: &[&str],
+    markers: &[Marker],
+    tokens: &[Token],
+    occurrences: &[Occurrence],
+    violations: &mut Vec<Violation>,
+) {
+    let magic_cells: Vec<(usize, usize)> = markers
+        .iter()
+        .enumerate()
+        .filter_map(|(i, marker)| {
+            let end = markers.get(i + 1).map_or(lines.len(), |next| next.index);
+            let first = lines[marker.index + 1..end]
+                .iter()
+                .map(|line| line.trim_start())
+                .find(|line| !line.is_empty() && !line.starts_with('#'))?;
+            (!marker.markdown && first.starts_with("%%")).then_some((marker.index + 2, end))
+        })
+        .collect();
+    let assigned_magic_lines: BTreeSet<usize> = tokens
+        .windows(2)
+        .filter_map(|pair| {
+            let (left, right) = (&pair[0], &pair[1]);
+            (left.line == right.line
+                && left.depth == 0
+                && right.depth == 0
+                && matches!(&left.kind, Kind::Op(op) if op == "=")
+                && matches!(&right.kind, Kind::Op(op) if op == "!" || op == "%"))
+            .then_some(left.line)
+        })
+        .collect();
+
+    // IPython joins backslash-continued escape lines into one shell command
+    // (#5301), so a continuation line belongs to the escape line before it.
+    let mut magic_lines: BTreeSet<usize> = BTreeSet::new();
+    for (index, line) in lines.iter().enumerate() {
+        let number = index + 1;
+        let continues = index > 0
+            && magic_lines.contains(&index)
+            && lines[index - 1].trim_end().ends_with('\\');
+        if continues
+            || assigned_magic_lines.contains(&number)
+            || line.trim_start().starts_with(['!', '%'])
+        {
+            magic_lines.insert(number);
+        }
+    }
+
+    for occurrence in occurrences {
+        if occurrence.context != Context::Comment
+            && (magic_cells
+                .iter()
+                .any(|(start, end)| (*start..=*end).contains(&occurrence.line))
+                || magic_lines.contains(&occurrence.line))
+        {
+            violations.push(Violation {
+                code: "magic_line_slot",
+                line: occurrence.line,
+                column: occurrence.column,
+                message: format!(
+                    "placeholder [{}] occurs on an IPython magic line",
+                    occurrence.name
+                ),
+            });
+        }
+    }
 }
 
 fn source_char_violation(line: usize, column: usize, character: char) -> Violation {
@@ -591,7 +762,7 @@ fn is_ident_continue(character: char) -> bool {
 fn is_string_prefix(name: &str) -> bool {
     matches!(
         name.to_ascii_lowercase().as_str(),
-        "r" | "u" | "b" | "f" | "br" | "rb" | "fr" | "rf"
+        "r" | "u" | "b" | "f" | "br" | "rb" | "fr" | "rf" | "t" | "tr" | "rt"
     )
 }
 
@@ -1147,9 +1318,19 @@ fn slot_violations(occurrences: &[Occurrence]) -> Vec<Violation> {
     let mut first_code: BTreeMap<&str, Context> = BTreeMap::new();
     let mut reported: BTreeSet<&str> = BTreeSet::new();
     for occurrence in occurrences {
+        if matches!(occurrence.context, Context::Quoted | Context::Sentinel)
+            && super::types::slot_type(&occurrence.name) == Some(super::types::SlotType::Consent)
+        {
+            violations.push(Violation {
+                code: "consent_slot_not_bare",
+                line: occurrence.line,
+                column: occurrence.column,
+                message: format!("consent slot [{}] must be bare", occurrence.name),
+            });
+        }
         match occurrence.context {
             Context::Bare => {
-                if !TYPED_BARE_SLOTS.contains(&occurrence.name.as_str()) {
+                if super::types::slot_type(&occurrence.name).is_none() {
                     violations.push(Violation {
                         code: "untyped_bare_slot",
                         line: occurrence.line,
@@ -1452,6 +1633,30 @@ fn find_targets(tokens: &[Token], cells: &[Cell]) -> Vec<Target> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ap_cat_11_module_table_matches_template() {
+        assert_eq!(MODULE_CELLS.len(), 1);
+        let (path, cell, module, definition) = MODULE_CELLS[0];
+        assert_eq!(
+            (cell, module, definition),
+            (2, "scripts/transform_fn.py", "def transform_dataset(")
+        );
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../skills/core-skills/aws-ai-ml/references")
+                .join(path),
+        )
+        .unwrap();
+        let parsed = parse(&source);
+        let lines: Vec<_> = source.lines().collect();
+        let two = &parsed.cells[2];
+        let three = &parsed.cells[3];
+        assert!(lines[two.line..three.line - 1]
+            .iter()
+            .any(|line| line.contains("transform_fn.py")));
+        assert!(lines[three.line..].contains(&"from transform_fn import transform_dataset"));
+    }
 
     #[test]
     fn hostile_text_never_panics_and_is_reported() {

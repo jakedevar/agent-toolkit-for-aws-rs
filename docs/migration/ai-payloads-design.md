@@ -1,7 +1,12 @@
 # Slice `ai-payloads` (Issue #4386): design
 
-Status: design only. No implementation code. Python in scope was read as
-migration evidence and was not run.
+Status: implemented. Slices S1, S2a, S2b, S3, S3r, S4 and S5 are implemented
+and landed on `origin/rolling` (S5 `ai-payloads-inventory` is #5296); the
+landing commit of each slice is in the slice table of `ai-payloads.md`. 0 of 56 inventory rows are
+removed and 56 are retained with the section 3 disposition recorded in
+`python-inventory.json`. The rest of this document is the design as accepted at
+pre-review #5119 and is kept unchanged as the record. Python in scope was read
+as migration evidence and was not run.
 
 Revision: **r2**, design repair 2 after round 2 of pre-review #5119
 (`CHANGES_REQUESTED` at `3e46f485`). r1 resolved round-1 findings

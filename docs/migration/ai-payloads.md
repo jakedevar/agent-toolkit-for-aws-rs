@@ -3,8 +3,8 @@
 Parity document of the `ai-payloads` slice. The design is
 [ai-payloads-design.md](ai-payloads-design.md) (accepted at pre-review #5119,
 round 3). This file records what has landed, the command contract and the
-decisions taken while implementing, slice by slice. It grows with each slice;
-only slice S1 is implemented so far.
+decisions taken while implementing, slice by slice.
+All slices S1 to S5 are implemented. "Landed in" names the commit that brought the slice onto `origin/rolling` (checked with `git merge-base --is-ancestor`); implemented without a commit would mean not yet landed.
 
 The 28 canonical Python files of the slice (and their 28 `plugins/` mirrors)
 **stay in place**: 23 are client-side templates that the customer's own Python
@@ -16,20 +16,38 @@ reference pattern (design sections 1 to 3). Nothing here removes Python rows
 
 | Slice | Content | Status |
 | --- | --- | --- |
-| S1 `ai-payloads-model` (#5143) | `template.rs` (grammar, lexer, classification), `toolkit ai-payloads templates` with `--json` and `--check`, registry line, this document | implemented |
-| S2a `ai-payloads-publish` | `place.rs`: no-replace publication | not started |
-| S2b `ai-payloads-render` | typed substitution, `assign`, notebook and script output, `render` | not started |
-| S3 `ai-payloads-reward` | `reward sample` and `reward check` | not started |
-| S3r, S4, S5 | reward-template fix, caller prose, inventory | not started |
+| S1 `ai-payloads-model` (#5143) | `template.rs` (grammar, lexer, classification), `toolkit ai-payloads templates` with `--json` and `--check`, registry line, this document | implemented, landed in `2facd953` |
+| S2a `ai-payloads-publish` | `place.rs`: no-replace publication | implemented, landed in `7244064e` |
+| S2b `ai-payloads-render` | typed substitution, `assign`, notebook and script output, `render` | implemented, landed in `0c84f35e` |
+| S3 `ai-payloads-reward` | `reward sample` and `reward check` | implemented, landed in `51b3872e` |
+| S3r `ai-payloads-reward-fix` (#5120) | minimal response-format fix of the two defective reward templates | implemented, landed in `028faeba` |
+| S4 `ai-payloads-docs` (#5278) | caller prose names `render` and `reward check` | implemented, landed in `92c2c174` |
+| S5 `ai-payloads-inventory` (#5296) | `python-inventory.json` dispositions (AP-INV-*, OD-7), status lines | implemented, landed in `3d861a6c` |
 
 ## Commands
 
 ```text
 toolkit ai-payloads templates [--root DIR] [--json] [--check]
+toolkit ai-payloads render TEMPLATE --mode notebook|script --project-dir DIR [--name NAME] [--values FILE] [--cell N=FILE]... [--append | --new] [--consent NAME]... [--allow-unresolved] [--dry-run]
+toolkit ai-payloads reward sample --format FORMAT
+toolkit ai-payloads reward check --format FORMAT --event FILE --response FILE [--batch]
 ```
 
-`render` and `reward` are specified in the design (sections 4.2, 4.5, 4.6) and
-are not registered yet.
+`render` accepts typed values and literal assignments from a JSON file, writes
+new notebooks or numbered scripts through atomic no-replace publication, and
+appends by publishing a versioned copy. `--cell` checks consent identifiers as
+a syntactic guard; it is not a sandbox. `--dry-run` writes nothing. The reward
+command is specified in design section 4.6.
+
+Render accepts a single template path, a project directory and optional JSON
+with `values` and `assign` objects. Typed bare slots must always be resolved;
+`--allow-unresolved` applies only to quoted slots. Consent-typed true values
+require `--consent ACCEPT_EULA`. Secret values accept `null`, `"None"`, or a
+Secrets Manager ARN, never a literal token. `--append` reads the latest
+notebook version and publishes a new numbered copy, retaining the original.
+T28 requires the caller-owned `scripts/transform_fn.py` via `--cell 2=FILE`;
+the command does not modify that module. Notebook mode retains the template's
+existing Cell 3 import and its documented D-5/P-8 limitation.
 
 ### `toolkit ai-payloads templates`
 

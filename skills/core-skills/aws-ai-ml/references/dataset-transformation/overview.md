@@ -125,7 +125,7 @@ def transform_dataset(df: pd.DataFrame) -> pd.DataFrame:
 
 The `<project-dir>` is the project directory established by the directory-management reference (e.g., `dpo-to-rlvr-conversion`).
 
-In notebook mode, add a `%%writefile <project-dir>/scripts/transform_fn.py` code cell AND write the file to disk for testing. In script mode, write the file to disk directly.
+Write the function to `<project-dir>/scripts/transform_fn.py` on disk in both modes, for testing and for Step 9: `toolkit ai-payloads render` reads that file and never writes it. In notebook mode the render adds the `%%writefile` cell for it, so do not add one yourself.
 
 Continue iterating with the user's feedback — update the code in place on each revision rather than showing code inline.
 
@@ -151,20 +151,30 @@ If no project directory exists, load the **directory-management** reference to s
 
 ### Step 9: Generate the execution code
 
-**Before writing the code, read:**
+**Before generating the code, read:**
 
-- `references/code_output_guide.md` (output format rules)
+- `references/code_output_guide.md` (output format rules and the render command)
 - `code_templates/transformation.py` (cell structure and skeleton code)
 
-The template uses `# Cell N: Label` markers — each marker starts a new section. Cell 2 (Transformation Function) is dynamically generated from Step 7; all other cells follow the template skeleton.
+The template uses `# Cell N: Label` markers — each marker starts a new section. Cell 2 (Transformation Function) is the module from Step 7; all other cells follow the template skeleton. Do not assemble them by hand: `toolkit ai-payloads render` renders the template.
 
-Generate the execution logic following the code output guide.
+1. Write the values file outside the project directory with the input and output locations (Step 5 and Step 6). The names have no brackets:
 
-- In notebook mode, add a `%%writefile <project-dir>/scripts/<script_name>.py` code cell AND write the file to disk. In script mode, write the file to disk directly.
-- The script must import `transform_dataset` from `transform_fn`.
-- Replace placeholders with the actual input/output paths.
+   ```json
+   {"values": {"INPUT_LOCATION": "<input location>", "OUTPUT_LOCATION": "<output location>"}}
+   ```
 
-Read the reference guide at `references/dataset_transformation_code.md` and follow its execution script skeleton exactly.
+2. Render it, passing the Step 7 module as Cell 2 (`--mode script` for a script):
+
+   ```bash
+   toolkit ai-payloads render <skill-dir>/references/dataset-transformation/code_templates/transformation.py --mode notebook --project-dir <project-dir> --values <scratch-dir>/values.json --cell 2=<project-dir>/scripts/transform_fn.py
+   ```
+
+   - The `--cell 2` file must be exactly `<project-dir>/scripts/transform_fn.py`, it must define `transform_dataset(`, and it must already exist; otherwise the command refuses and writes nothing.
+   - In notebook mode Cell 2 becomes `%%writefile <project-dir>/scripts/transform_fn.py` followed by the module, and the notebook path must not contain a space or shell character. In script mode the script keeps a comment and imports `transform_dataset` from `transform_fn`, which sits in the same directory.
+   - If the notebook already exists, follow the append rules in `references/code_output_guide.md`.
+
+The standalone execution script used for the local test below is still written to `<project-dir>/scripts/<script_name>.py` on disk, following the execution script skeleton in `references/dataset_transformation_code.md`. It must import `transform_dataset` from `transform_fn`.
 
 **If sample data was collected in Step 5**, test the full pipeline:
 

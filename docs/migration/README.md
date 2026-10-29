@@ -49,7 +49,7 @@ The table and issues.json preserve the initial owner map. Bootstrap substitution
 | #4383 | bedrock-fetch | glm | #4379 |
 | #4384 | ai-models | deepseek | #4379 |
 | #4385 | ai-data | glm | #4374 |
-| #4386 | ai-payloads | deepseek | #4379, #4384, #4385 |
+| #4386 | ai-payloads (S1-S5 done; 0 of 56 inventory rows removed, 56 retained with documented disposition; status: [ai-payloads.md](ai-payloads.md), design: [ai-payloads-design.md](ai-payloads-design.md)) | deepseek | #4379, #4384, #4385 |
 | #4387 | msk | glm | #4374 |
 | #4388 | aurora | deepseek | #4374, #4379 |
 | #4389 | dynamo-cost | glm | #4374, #4379 |

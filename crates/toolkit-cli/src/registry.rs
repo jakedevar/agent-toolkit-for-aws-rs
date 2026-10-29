@@ -90,6 +90,7 @@ pub(crate) const SLICES: &[Slice] = &[
     crate::dynamodb_deploy::SLICE,
     crate::elasticache::SLICE,
     crate::elasticache::tunnel::SLICE,
+    crate::launch::SLICE,
     crate::manifests::SLICE,
     crate::marketplace::SLICE,
     crate::mcp_proxy::command::SLICE,
@@ -552,7 +553,7 @@ mod tests {
     /// The route paths of the old `COMMANDS` table (commit ce0eaf6a, before the
     /// registry), in table order: the public order of [`COMMANDS`]. The routes of
     /// slices added after the registry follow at the end, ordered by slice name.
-    const LEGACY_COMMAND_ORDER: [&str; 100] = [
+    const LEGACY_COMMAND_ORDER: [&str; 105] = [
         "skills list",
         "manifests validate",
         "spec validate",
@@ -638,6 +639,7 @@ mod tests {
         "ai-payloads reward sample",
         "ai-payloads reward check",
         "ai-payloads templates",
+        "ai-payloads render",
         // bedrock-probes (#4404):
         "bedrock-probes iam-policy",
         "bedrock-probes preflight",
@@ -648,6 +650,7 @@ mod tests {
         "documentdb wa-review",
         "neptune validate-input",
         "neptune seed",
+        "neptune memory",
         // dynamodb-bench (#4390):
         "dynamodb benchmark-model",
         "dynamodb generate-perf-report",
@@ -655,6 +658,10 @@ mod tests {
         "elasticache find-tunnel-host",
         "elasticache start-tunnel",
         "elasticache test-connection",
+        // launch callback and sign-in lifecycle (#5216):
+        "launch auth-callback",
+        "launch auth-start",
+        "launch auth-wait",
         // marketplace (#4396):
         "marketplace handler",
         "marketplace query-metering",

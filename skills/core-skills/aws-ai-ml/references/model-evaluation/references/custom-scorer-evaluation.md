@@ -178,7 +178,13 @@ Read `../references/code_output_guide.md` for output format rules.
 
 If no project directory exists, load the **directory-management** reference to set one up.
 
-Read `code_templates/custom_scorer_evaluator.py`, substitute the collected values into the placeholders, and write the cells. The template uses `# Cell N: Label` markers — each marker starts a new notebook cell, with everything between one marker and the next becoming that cell's content.
+Render `code_templates/custom_scorer_evaluator.py` with `toolkit ai-payloads render`; do not write the cells by hand. Put the collected values in the values file under `values`, with the placeholder names written without brackets (`toolkit ai-payloads templates --root <skill-dir>` lists them), then run:
+
+```bash
+toolkit ai-payloads render <skill-dir>/references/model-evaluation/code_templates/custom_scorer_evaluator.py --mode notebook --project-dir <project-dir> --values <scratch-dir>/values.json
+```
+
+Use `--mode script` for a script. `<skill-dir>` is the directory that holds this skill's `references/`.
 
 ### Step 16: Post-generation
 
