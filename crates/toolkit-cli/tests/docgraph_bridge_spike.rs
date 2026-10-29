@@ -1,6 +1,9 @@
 #![cfg(feature = "docgraph-live")]
 
 //! Offline SDK orchestration experiment; it is not a live adapter.
+#[cfg(feature = "agents-pay-live")]
+compile_error!("agents-pay-live is never built for tests (AC3)");
+
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Arc, Mutex,

@@ -3,6 +3,9 @@
 //! stdout/stderr, deterministic offline temp fixtures. The last tests run
 //! check mode (read-only) on the real repository tree.
 
+#[cfg(feature = "agents-pay-live")]
+compile_error!("agents-pay-live is never built for tests (AC3)");
+
 use std::fs;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};

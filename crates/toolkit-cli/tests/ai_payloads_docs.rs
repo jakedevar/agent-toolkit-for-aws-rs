@@ -41,6 +41,9 @@
 //!   `ap_doc_11_configuration_pages_keep_one_values_paragraph`
 //! - AP-DOC-12 (#5284): the `HuggingFace` guide collects an ARN, never a token:
 //!   `ap_doc_12_huggingface_guide_collects_an_arn_never_a_token`
+#[cfg(feature = "agents-pay-live")]
+compile_error!("agents-pay-live is never built for tests (AC3)");
+
 use std::{
     fs,
     path::{Path, PathBuf},

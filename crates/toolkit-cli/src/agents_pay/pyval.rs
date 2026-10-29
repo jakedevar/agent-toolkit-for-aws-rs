@@ -23,6 +23,12 @@ use toolkit_core::Json;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyValueError;
 
+/// Python `str.isspace()` (Unicode whitespace plus the four ASCII separators).
+#[must_use]
+pub fn is_python_whitespace(c: char) -> bool {
+    c.is_whitespace() || matches!(c, '\u{1c}'..='\u{1f}')
+}
+
 /// Python's truthiness of a JSON value.
 #[must_use]
 // recorded-shape: policy and merchant challenge values need Python truthiness.

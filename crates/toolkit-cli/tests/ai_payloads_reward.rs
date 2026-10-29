@@ -1,4 +1,7 @@
 //! Offline reward-contract CLI tests (AP-RW-01..27).
+#[cfg(feature = "agents-pay-live")]
+compile_error!("agents-pay-live is never built for tests (AC3)");
+
 use std::{fs, process::Command};
 
 #[test]

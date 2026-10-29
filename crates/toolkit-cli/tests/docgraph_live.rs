@@ -1,3 +1,6 @@
+#[cfg(feature = "agents-pay-live")]
+compile_error!("agents-pay-live is never built for tests (AC3)");
+
 use std::process::Command;
 
 fn run(args: &[&str]) -> (i32, String, String) {

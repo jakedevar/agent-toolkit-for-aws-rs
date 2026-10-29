@@ -40,3 +40,11 @@ runner = "make"
 target = "test-sdk"
 timeout_minutes = 20
 cpu_quota_percent = 200
+
+# Lint-only build of the live x402 payment module (#5352, design Q24): the
+# library and binaries, never a test target.
+[recipes.clippy-live]
+runner = "make"
+target = "clippy-live"
+timeout_minutes = 20
+cpu_quota_percent = 200

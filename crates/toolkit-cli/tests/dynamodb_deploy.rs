@@ -4,6 +4,9 @@
 //! generated script is run against AWS (the scripts are only syntax-checked or
 //! run to their `--confirm` refusal, which precedes every `aws` call).
 
+#[cfg(feature = "agents-pay-live")]
+compile_error!("agents-pay-live is never built for tests (AC3)");
+
 use std::fs;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};

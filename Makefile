@@ -1,7 +1,7 @@
 # Rust workspace entry points. These targets never override the daemon-stamped
 # build environment (CARGO_TARGET_DIR, RUSTC_WRAPPER/sccache); they rely on it
 # being present in the invoking environment.
-.PHONY: build fmt clippy test clippy-sdk test-sdk plugin-binaries plugin-binaries-check
+.PHONY: build fmt clippy test test-scripts clippy-sdk test-sdk clippy-live plugin-binaries plugin-binaries-check
 
 build:
 	cargo build --workspace --locked
@@ -28,6 +28,13 @@ test-sdk:
 	cargo test -p toolkit-cli --features aws-sdk --locked --lib mcp_proxy
 	cargo test -p toolkit-cli --features aws-sdk --locked --test mcp_proxy_cli
 	cargo test -p toolkit-cli --features aws-sdk --locked --test launch_callback shipped_binary_exchange_publishes_session
+	cargo test -p toolkit-cli --features aws-sdk --locked --test agents_pay_ac3 --test agents_pay_wiring --test agents_pay_gate
+
+# Lint-only coverage of the live x402 payment module (design Q24): the
+# library and binaries only, never a test target (the G1a guards refuse
+# every test build with that feature; T-AC3-MAKE pins this recipe).
+clippy-live:
+	cargo clippy -p toolkit-cli --features agents-pay-live --lib --bins --locked -- -D warnings
 
 docgraph-spike:
 	cargo test -p toolkit-cli --features docgraph-live --locked --test docgraph_bridge_spike service_orchestrators_use_only_the_injected_connector -- --exact
@@ -97,3 +104,8 @@ plugin-binaries:
 
 plugin-binaries-check:
 	cargo run --locked --package plugin-stage -- check
+
+# Shell-level self-test of scripts/at-commit-test.sh (#4865): the runner the
+# daemon invokes for AgentSubmitJob test jobs with params.at_commit.
+test-scripts:
+	sh scripts/at-commit-test.selftest.sh

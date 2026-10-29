@@ -4,6 +4,9 @@
 //! Fixtures are deterministic offline directories created under
 //! `std::env::temp_dir()`; no network, cloud or live service is involved.
 
+#[cfg(feature = "agents-pay-live")]
+compile_error!("agents-pay-live is never built for tests (AC3)");
+
 use std::fmt::Write as _;
 use std::fs;
 use std::ops::Deref;

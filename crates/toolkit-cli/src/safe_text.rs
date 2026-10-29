@@ -662,6 +662,139 @@ impl CallerText {
     }
 }
 
+/// The live secrets of one invocation, for a scrub that must not let any
+/// piece of them out (x402 R-SCRUB, design D21; #5374, #5375).
+///
+/// It is [`CallerText`]'s fragment rule made total: a secret is recognized
+/// from [`MIN_PARTIAL_CHARS`] bytes on, as a prefix (a cut) **and at every
+/// other offset** (a partial or unaligned echo), ignoring ASCII case (a
+/// lower-cased content type) and in each spelling a renderer may give it
+/// ([`spellings`] plus any the caller adds, such as its JSON escape). Every
+/// window of [`MIN_PARTIAL_CHARS`] bytes of every spelling is learned, so a
+/// shown piece of at least that length always holds a learned window, at any
+/// offset, and the matched spans cover it whole. Matching is one hash lookup
+/// per text byte; a text whose work would pass [`MAX_MATCH_WORK`] is not
+/// scanned and counts as a hit everywhere (fail closed).
+#[derive(Debug, Default, Clone)]
+pub(crate) struct KnownSecrets {
+    windows: HashSet<[u8; MIN_PARTIAL_CHARS]>,
+}
+
+/// The ASCII-lower-cased window of `text` at `at`, if a whole window fits.
+fn window_at(text: &[u8], at: usize) -> Option<[u8; MIN_PARTIAL_CHARS]> {
+    let piece = text.get(at..at + MIN_PARTIAL_CHARS)?;
+    let mut window = [0_u8; MIN_PARTIAL_CHARS];
+    for (slot, byte) in window.iter_mut().zip(piece) {
+        *slot = byte.to_ascii_lowercase();
+    }
+    Some(window)
+}
+
+impl KnownSecrets {
+    /// Learn `secret` in every [`spellings`] form. A secret shorter than
+    /// [`MIN_PARTIAL_CHARS`] bytes is not learned: it would match ordinary
+    /// words.
+    pub(crate) fn learn(&mut self, secret: &str) {
+        if secret.len() < MIN_PARTIAL_CHARS {
+            return;
+        }
+        for spelling in spellings(secret) {
+            self.learn_spelling(&spelling);
+        }
+    }
+
+    /// Learn one more spelling of a secret already learned (for example the
+    /// JSON escape a document renderer gives it).
+    pub(crate) fn learn_spelling(&mut self, spelling: &str) {
+        let bytes = spelling.as_bytes();
+        for at in 0..=bytes.len().saturating_sub(MIN_PARTIAL_CHARS) {
+            if let Some(window) = window_at(bytes, at) {
+                tick(1);
+                self.windows.insert(window);
+            }
+        }
+    }
+
+    /// Whether nothing was learned.
+    #[cfg(test)]
+    pub(crate) fn is_empty(&self) -> bool {
+        self.windows.is_empty()
+    }
+
+    /// The merged byte spans of `text` that hold a learned piece, widened to
+    /// character boundaries; `None` when matching would take more than
+    /// `budget` steps.
+    fn spans_within(&self, text: &str, budget: usize) -> Option<Vec<(usize, usize)>> {
+        if self.windows.is_empty() {
+            return Some(Vec::new());
+        }
+        if text.len().saturating_add(self.windows.len()) > budget {
+            return None;
+        }
+        let bytes = text.as_bytes();
+        let mut spans: Vec<(usize, usize)> = Vec::new();
+        for at in 0..=bytes.len().saturating_sub(MIN_PARTIAL_CHARS) {
+            tick(1);
+            let Some(window) = window_at(bytes, at) else {
+                break;
+            };
+            if !self.windows.contains(&window) {
+                continue;
+            }
+            let end = at + MIN_PARTIAL_CHARS;
+            match spans.last_mut() {
+                Some(last) if at <= last.1 => last.1 = end,
+                _ => spans.push((at, end)),
+            }
+        }
+        for span in &mut spans {
+            while !text.is_char_boundary(span.0) {
+                span.0 -= 1;
+            }
+            while !text.is_char_boundary(span.1) {
+                span.1 += 1;
+            }
+        }
+        Some(spans)
+    }
+
+    /// `text` with every span holding a learned piece replaced by
+    /// [`REDACTED`], and whether anything was replaced. Past
+    /// [`MAX_MATCH_WORK`] the whole text is [`REDACTED`] (fail closed).
+    pub(crate) fn redact<'t>(&self, text: &'t str) -> (Cow<'t, str>, bool) {
+        self.redact_within(text, MAX_MATCH_WORK)
+    }
+
+    fn redact_within<'t>(&self, text: &'t str, budget: usize) -> (Cow<'t, str>, bool) {
+        let Some(spans) = self.spans_within(text, budget) else {
+            return (Cow::Borrowed(REDACTED), true);
+        };
+        if spans.is_empty() {
+            return (Cow::Borrowed(text), false);
+        }
+        let mut out = String::with_capacity(text.len());
+        let mut copied = 0;
+        for (start, end) in spans {
+            out.push_str(&text[copied..start]);
+            out.push_str(REDACTED);
+            copied = end;
+        }
+        out.push_str(&text[copied..]);
+        (Cow::Owned(out), true)
+    }
+
+    /// Whether `text` holds any learned piece. Past [`MAX_MATCH_WORK`] it
+    /// counts as holding one (fail closed).
+    pub(crate) fn found_in(&self, text: &str) -> bool {
+        self.found_within(text, MAX_MATCH_WORK)
+    }
+
+    fn found_within(&self, text: &str, budget: usize) -> bool {
+        self.spans_within(text, budget)
+            .is_none_or(|spans| !spans.is_empty())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1085,5 +1218,113 @@ mod tests {
     fn quoted_text_escapes_the_quote() {
         assert_eq!(safe_quoted("it's"), "'it\\'s'");
         assert_eq!(safe_quoted("a\nb"), "'a\\x0ab'");
+    }
+
+    /// A base64-shaped secret like an x402 proof header.
+    const PROOF: &str = "eyJ4NDAyVmVyc2lvbiI6MiwiYWNjZXB0ZWQiOnsic2NoZW1lIjoiZXhhY3Qi";
+
+    fn learned(secrets: &[&str]) -> KnownSecrets {
+        let mut known = KnownSecrets::default();
+        for secret in secrets {
+            known.learn(secret);
+        }
+        known
+    }
+
+    /// R-SCRUB (#5374, #5375): every piece of 8..=40 bytes at every offset,
+    /// as given, upper-cased and lower-cased, is found and replaced whole
+    /// with the text around it kept; a 7-byte piece is ordinary text.
+    #[test]
+    fn known_secrets_find_every_piece_at_every_offset() {
+        let known = learned(&[PROOF]);
+        for at in 0..PROOF.len() {
+            for len in 7..=40 {
+                let Some(piece) = PROOF.get(at..at + len) else {
+                    continue;
+                };
+                for spelling in [
+                    piece.to_owned(),
+                    piece.to_ascii_uppercase(),
+                    piece.to_ascii_lowercase(),
+                ] {
+                    let text = format!("<p>{spelling}</p>");
+                    let (shown, redacted) = known.redact(&text);
+                    if len < 8 {
+                        assert!(!known.found_in(&text), "{at}+{len}");
+                        assert_eq!((shown.as_ref(), redacted), (text.as_str(), false));
+                    } else {
+                        assert!(known.found_in(&text), "{at}+{len}");
+                        assert_eq!(shown, format!("<p>{REDACTED}</p>"), "{at}+{len}");
+                        assert!(redacted);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn known_secrets_find_whole_cut_and_repeated_secrets() {
+        let known = learned(&[PROOF, "0xsig0001c4293dfd364640b9"]);
+        let cut = &PROOF[..PROOF.len() - 3];
+        let text = format!("a {PROOF} b {cut} c 0XSIG0001C4 d {}", &PROOF[20..]);
+        let (shown, redacted) = known.redact(&text);
+        assert!(redacted);
+        assert_eq!(
+            shown,
+            format!("a {REDACTED} b {REDACTED} c {REDACTED} d {REDACTED}")
+        );
+        // Two secrets that touch become one span.
+        let touching = format!("x{}{}y", &PROOF[..9], "0xsig0001");
+        let (shown, _) = known.redact(&touching);
+        assert_eq!(shown, format!("x{REDACTED}y"));
+        // Ordinary text and a short secret are left alone.
+        let mut short = KnownSecrets::default();
+        short.learn("ps-1");
+        assert!(short.is_empty());
+        assert_eq!(known.redact("caf\u{e9} ok").0, "caf\u{e9} ok");
+    }
+
+    /// A secret that a renderer escapes is found in the escaped spelling,
+    /// and a span next to multi-byte text stays on character boundaries.
+    #[test]
+    fn known_secrets_find_escaped_spellings() {
+        let secret = "line-one\nline-two\u{1b}[31mSECRET-tail";
+        let mut known = learned(&[secret]);
+        known.learn_spelling("line-one\\nline-two\\u001b[31mSECRET-tail");
+        for shown in [
+            escaped(secret),
+            escape_untrusted(secret, usize::MAX),
+            neutralize_line(secret).into_owned(),
+            "line-one\\nline-two\\u001b[31m".to_owned(),
+        ] {
+            assert!(known.found_in(&shown), "{shown}");
+            let (redacted, hit) = known.redact(&shown);
+            assert!(hit);
+            assert!(!redacted.contains("line-one"), "{redacted}");
+        }
+        let text = format!("\u{e9}{}\u{1F600}", &PROOF[3..15]);
+        let (shown, _) = learned(&[PROOF]).redact(&text);
+        assert_eq!(shown, format!("\u{e9}{REDACTED}\u{1F600}"));
+    }
+
+    /// Matching is one step per text byte plus the learned windows; past
+    /// the budget the text is not scanned and counts as a hit everywhere.
+    #[test]
+    fn known_secrets_fail_closed_past_the_work_budget() {
+        let known = learned(&[PROOF]);
+        let text = format!("{}{}", "x".repeat(4096), &PROOF[5..13]);
+        WORK.with(|work| work.set(0));
+        assert!(known.found_in(&text));
+        let steps = WORK.with(std::cell::Cell::get);
+        assert!(steps <= text.len() + 1, "{steps} steps");
+        let budget = text.len();
+        assert!(known.found_within("ordinary text", 1));
+        assert!(known.found_within(&"x".repeat(budget), budget));
+        assert_eq!(
+            known.redact_within(&"y".repeat(budget), budget),
+            (Cow::Borrowed(REDACTED), true)
+        );
+        assert!(!known.found_within("ordinary text", budget));
+        assert!(!KnownSecrets::default().found_within(&"x".repeat(budget), 1));
     }
 }

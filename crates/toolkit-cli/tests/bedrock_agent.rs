@@ -2,6 +2,9 @@
 //! exit codes, separated stdout/stderr and a real manifest file. Responses are
 //! replayed from a recorded file; no network or AWS call is involved.
 
+#[cfg(feature = "agents-pay-live")]
+compile_error!("agents-pay-live is never built for tests (AC3)");
+
 use std::fs;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
