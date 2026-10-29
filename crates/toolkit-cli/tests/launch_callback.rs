@@ -624,7 +624,7 @@ fn shipped_binary_exchange_publishes_session() {
 /// short-lived descriptor or a process that is spawned and immediately exits.
 #[cfg(all(target_os = "linux", target_arch = "x86_64", not(feature = "aws-sdk")))]
 #[test]
-#[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_lines, clippy::zombie_processes)] // waitpid reaps traced tasks.
 fn helper_lifetime_has_no_process_spawns_and_opened_descriptors_are_cloexec() {
     use nix::libc;
     use nix::sys::{ptrace, signal, wait};
@@ -770,14 +770,16 @@ fn helper_lifetime_has_no_process_spawns_and_opened_descriptors_are_cloexec() {
             wait::WaitStatus::PtraceSyscall(tid) => {
                 let regs = ptrace::getregs(tid).unwrap();
                 let syscall = i64::try_from(regs.orig_rax).unwrap();
-                if regs.rax == (-i64::from(libc::ENOSYS)) as u64 {
+                if regs.rax == (-i64::from(libc::ENOSYS)).cast_unsigned() {
                     let flags = if syscall == libc::SYS_clone3 {
-                        ptrace::read(tid, regs.rdi as ptrace::AddressType).unwrap() as u64
+                        ptrace::read(tid, regs.rdi as ptrace::AddressType)
+                            .unwrap()
+                            .cast_unsigned()
                     } else {
                         regs.rdi
                     };
-                    entering.insert(tid, (syscall, flags));
-                } else if running_helper && (regs.rax as i64) >= 0 {
+                    entering.insert(tid, (syscall, flags, regs.r10));
+                } else if running_helper && regs.rax.cast_signed() >= 0 {
                     let is_fd = [
                         libc::SYS_open,
                         libc::SYS_openat,
@@ -794,12 +796,48 @@ fn helper_lifetime_has_no_process_spawns_and_opened_descriptors_are_cloexec() {
                         libc::SYS_dup2,
                         libc::SYS_dup3,
                         libc::SYS_memfd_create,
+                        libc::SYS_signalfd,
+                        libc::SYS_signalfd4,
+                        libc::SYS_timerfd_create,
+                        libc::SYS_inotify_init,
+                        libc::SYS_inotify_init1,
+                        libc::SYS_userfaultfd,
+                        libc::SYS_pidfd_open,
+                        libc::SYS_pidfd_getfd,
+                        libc::SYS_io_uring_setup,
                     ]
                     .contains(&syscall)
                         || (syscall == libc::SYS_fcntl
-                            && matches!(regs.rsi as i32, libc::F_DUPFD | libc::F_DUPFD_CLOEXEC));
+                            && (regs.rsi == u64::try_from(libc::F_DUPFD).unwrap()
+                                || regs.rsi == u64::try_from(libc::F_DUPFD_CLOEXEC).unwrap()));
+                    let mut fds = Vec::new();
                     if is_fd {
-                        let fd = regs.rax;
+                        fds.push(regs.rax);
+                    }
+                    if [libc::SYS_pipe, libc::SYS_pipe2, libc::SYS_socketpair].contains(&syscall) {
+                        let (_, first, fourth) = entering[&tid];
+                        let pointer = if syscall == libc::SYS_socketpair {
+                            fourth
+                        } else {
+                            first
+                        };
+                        let bytes = ptrace::read(tid, pointer as ptrace::AddressType)
+                            .unwrap()
+                            .to_ne_bytes();
+                        fds.push(u64::from(u32::from_ne_bytes(
+                            bytes[..4].try_into().unwrap(),
+                        )));
+                        fds.push(u64::from(u32::from_ne_bytes(
+                            bytes[4..].try_into().unwrap(),
+                        )));
+                    }
+                    if syscall == libc::SYS_fcntl
+                        && regs.rsi == u64::try_from(libc::F_SETFD).unwrap()
+                        && regs.rdx & u64::try_from(libc::FD_CLOEXEC).unwrap() == 0
+                    {
+                        violations.push(format!("fcntl cleared CLOEXEC on fd {}", regs.rdi));
+                    }
+                    for fd in fds {
                         opens += 1;
                         match std::fs::read_to_string(format!("/proc/{tid}/fdinfo/{fd}")) {
                             Ok(info) => {
@@ -808,12 +846,21 @@ fn helper_lifetime_has_no_process_spawns_and_opened_descriptors_are_cloexec() {
                                     .find_map(|line| line.strip_prefix("flags:\t"))
                                     .unwrap();
                                 let flags = u64::from_str_radix(flags, 8).unwrap();
-                                if flags & (libc::O_CLOEXEC as u64) == 0 {
+                                // stdout is intentionally replaced by /dev/null after announcing the port.
+                                let closed_stdout = syscall == libc::SYS_dup2
+                                    && fd == 1
+                                    && std::fs::read_link(format!("/proc/{tid}/fd/{fd}"))
+                                        .is_ok_and(|path| {
+                                            path == std::path::Path::new("/dev/null")
+                                        });
+                                if flags & u64::try_from(libc::O_CLOEXEC).unwrap() == 0
+                                    && !closed_stdout
+                                {
                                     violations.push(format!("syscall {syscall} fd {fd}"));
                                 }
                             }
                             Err(error) => {
-                                violations.push(format!("could not audit fd {fd}: {error}"))
+                                violations.push(format!("could not audit fd {fd}: {error}"));
                             }
                         }
                     }
@@ -839,7 +886,7 @@ fn helper_lifetime_has_no_process_spawns_and_opened_descriptors_are_cloexec() {
                     let new_tid =
                         Pid::from_raw(i32::try_from(ptrace::getevent(tid).unwrap()).unwrap());
                     tids.insert(new_tid);
-                    let is_thread = entering.get(&tid).is_some_and(|(call, flags)| {
+                    let is_thread = entering.get(&tid).is_some_and(|(call, flags, _)| {
                         (*call == libc::SYS_clone || *call == libc::SYS_clone3)
                             && flags & (libc::CLONE_THREAD as u64) != 0
                     });
