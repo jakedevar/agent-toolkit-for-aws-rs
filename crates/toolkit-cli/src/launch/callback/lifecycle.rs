@@ -332,6 +332,8 @@ mod deadline_tests {
         use crate::launch::{callback::pending::read_record, tests_support::Scratch};
         let scratch = Scratch::new("flood-lifecycle");
         let accepts = std::cell::Cell::new(0);
+        let last_accept = std::cell::Cell::new(None);
+        let flow_end = std::cell::Cell::new(None);
         let result = run_with(
             scratch.path(),
             "s",
@@ -340,10 +342,18 @@ mod deadline_tests {
             |_, _, _| panic!("flood must not exchange"),
             Instant::now,
             |_, _, _| {},
-            |_, _, end| listener::serve_scripted_flood(end, &accepts),
+            |_, _, end| {
+                flow_end.set(Some(end));
+                listener::serve_scripted_flood(end, &accepts, &last_accept)
+            },
         )
         .unwrap();
-        assert!(accepts.get() >= 100);
+        assert_eq!(accepts.get(), 200);
+        let remaining = flow_end
+            .get()
+            .unwrap()
+            .duration_since(last_accept.get().unwrap());
+        assert!(remaining <= Duration::from_millis(2));
         assert_eq!(result, HelperResult::TimedOut);
         let status = read_record(scratch.path(), std::process::id())
             .unwrap()

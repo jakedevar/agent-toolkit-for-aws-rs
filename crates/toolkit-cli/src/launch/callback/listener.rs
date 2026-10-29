@@ -275,12 +275,18 @@ fn expire<S>(slots: &mut [Option<Slot<S>>], now: Instant) {
 pub(super) fn serve_scripted_flood(
     flow_end: Instant,
     accepts: &std::cell::Cell<usize>,
+    last_accept: &std::cell::Cell<Option<Instant>>,
 ) -> io::Result<Option<Outcome>> {
-    struct Flood<'a>(&'a std::cell::Cell<usize>);
+    struct Flood<'a> {
+        accepts: &'a std::cell::Cell<usize>,
+        last_accept: &'a std::cell::Cell<Option<Instant>>,
+        clock: &'a ClockCell,
+    }
     impl ListenerIo for Flood<'_> {
         type Stream = std::io::Cursor<Vec<u8>>;
         fn accept_stream(&self) -> io::Result<Self::Stream> {
-            self.0.set(self.0.get() + 1);
+            self.accepts.set(self.accepts.get() + 1);
+            self.last_accept.set(Some(self.clock.now()));
             Ok(std::io::Cursor::new(b"invalid\r\n\r\n".to_vec()))
         }
     }
@@ -296,7 +302,17 @@ pub(super) fn serve_scripted_flood(
     let clock = ClockCell(std::cell::Cell::new(
         flow_end.checked_sub(Duration::from_millis(50)).unwrap(),
     ));
-    serve_with(Flood(accepts), 1234, "s", flow_end, &clock)
+    serve_with(
+        Flood {
+            accepts,
+            last_accept,
+            clock: &clock,
+        },
+        1234,
+        "s",
+        flow_end,
+        &clock,
+    )
 }
 
 #[cfg(test)]
