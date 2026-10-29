@@ -67,7 +67,9 @@ impl GremlinSession for LiveSession<'_> {
     fn submit(&mut self, request: &Json) -> Result<Vec<Json>, AwsError> {
         if self.connection.is_none() {
             let connect = self.connect.take().ok_or_else(|| {
-                AwsError::connect("the Gremlin connection could not be opened; no statement was sent")
+                AwsError::connect(
+                    "the Gremlin connection could not be opened; no statement was sent",
+                )
             })?;
             self.connection = Some(connect()?);
         }

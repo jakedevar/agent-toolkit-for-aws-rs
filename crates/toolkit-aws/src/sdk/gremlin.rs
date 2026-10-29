@@ -19,7 +19,7 @@
 //!    valid `Sec-WebSocket-Accept`; any other answer (a 403 for a bad
 //!    signature) fails before a statement is sent.
 //!
-//! [`GremlinConnection::submit`] sends one `eval` request (GraphSON v2,
+//! [`GremlinConnection::submit`] sends one `eval` request (`GraphSON` v2,
 //! traversal source `g`, bindings as data) with a fresh request id, and
 //! collects every 206 batch through the final 200/204 for that id only. One
 //! request is in flight; requests are sent in call order.
@@ -27,7 +27,7 @@
 //! Bounds (R-DG-07, owned by S3 per PM ruling 3 on #5366): frames above
 //! [`MAX_FRAME_BYTES`] are refused from the frame header, before the payload
 //! is buffered; messages and the bytes of one operation are capped at the
-//! database response limit (16 MiB); GraphSON depth and bulk expansion are
+//! database response limit (16 MiB); `GraphSON` depth and bulk expansion are
 //! bounded by [`MAX_DEPTH`] and [`MAX_RESULTS`] ([`graphson`]). The upgrade
 //! and every statement run inside one absolute deadline (the operation
 //! budget, capped by the caller's invocation deadline) with the idle bound
@@ -50,6 +50,7 @@ mod graphson;
 mod tests;
 
 use std::fmt;
+use std::fmt::Write as _;
 
 use futures_util::{SinkExt, StreamExt};
 use tokio::time::Instant;
@@ -111,7 +112,10 @@ fn request_id() -> Result<String, AwsError> {
         })?;
     bytes[6] = (bytes[6] & 0x0f) | 0x40;
     bytes[8] = (bytes[8] & 0x3f) | 0x80;
-    let hex: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
+    let hex = bytes.iter().fold(String::new(), |mut hex, byte| {
+        let _ = write!(hex, "{byte:02x}");
+        hex
+    });
     Ok(format!(
         "{}-{}-{}-{}-{}",
         &hex[..8],
@@ -142,7 +146,7 @@ fn upgrade_request(
         ));
     }
     let authority = format!("{}:{}", endpoint.host(), endpoint.port());
-    let mut signed = HttpRequest {
+    let mut upgrade = HttpRequest {
         method: Method::Get,
         url: format!("https://{authority}{PATH}"),
         headers: Headers::new(),
@@ -150,13 +154,13 @@ fn upgrade_request(
         timeouts: Timeouts::default(),
     };
     signer.sign(
-        &mut signed,
+        &mut upgrade,
         &SigningScope {
             region: region.to_string(),
             service: SERVICE.to_string(),
         },
     )?;
-    if signed.headers.get("authorization").is_none() {
+    if upgrade.headers.get("authorization").is_none() {
         return Err(AwsError::invalid_config(
             "signing",
             "the Gremlin upgrade was not signed; nothing was sent",
@@ -166,7 +170,7 @@ fn upgrade_request(
         .method("GET")
         .uri(format!("wss://{authority}{PATH}"))
         .header("Host", authority.as_str());
-    for (name, value) in signed.headers.entries() {
+    for (name, value) in upgrade.headers.entries() {
         builder = builder.header(name, value);
     }
     builder
@@ -233,7 +237,7 @@ async fn exchange(
                     unknown_after_send("no Gremlin response arrived in time"),
                 ))
             }
-            Ok(None) | Ok(Some(Ok(Message::Close(_)))) => {
+            Ok(None | Some(Ok(Message::Close(_)))) => {
                 return Err(AwsError::connect(unknown_after_send(
                     "the Gremlin connection closed before the response completed",
                 )))

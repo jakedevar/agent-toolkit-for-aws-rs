@@ -1,13 +1,13 @@
-//! GraphSON v2 for the Gremlin plane (R-DG-05, R-DG-07; S3, #5515): the
+//! `GraphSON` v2 for the Gremlin plane (R-DG-05, R-DG-07; S3, #5515): the
 //! request message the drivers send and a small typed-value decoder for the
 //! response batches. Everything outside the supported set fails closed.
 //!
 //! Supported response values: JSON null, booleans, strings and numbers; plain
-//! JSON arrays (lists) and objects (maps, GraphSON v2's form); the typed
+//! JSON arrays (lists) and objects (maps, `GraphSON` v2's form); the typed
 //! wrappers `g:Int32`, `g:Int64`, `g:Date`, `g:Timestamp` (integers),
 //! `g:Float`, `g:Double` (finite numbers), `g:UUID` (string), `g:List` and
 //! `g:Set` (arrays); and a top-level `g:Traverser`, expanded `bulk` times.
-//! Every other type (elements, paths, `g:Map`, GraphBinary, non-finite
+//! Every other type (elements, paths, `g:Map`, `GraphBinary`, non-finite
 //! doubles) is an error, and no type name or value is echoed.
 //!
 //! Bounds, each checked before the allocation it guards:
@@ -66,7 +66,7 @@ pub(crate) struct Results {
     expanded_bytes: usize,
 }
 
-/// Gremlin bindings in GraphSON v2: integers as `g:Int32` when they fit, else
+/// Gremlin bindings in `GraphSON` v2: integers as `g:Int32` when they fit, else
 /// `g:Int64`, other numbers as `g:Double`, containers recursively.
 fn encode_binding(value: &Json) -> Json {
     match value {
@@ -96,7 +96,7 @@ fn encode_binding(value: &Json) -> Json {
     }
 }
 
-/// The binary frame payload of one `eval` request, as the GraphSON v2 drivers
+/// The binary frame payload of one `eval` request, as the `GraphSON` v2 drivers
 /// send it: a length-prefixed MIME type, then the JSON message. Traversal
 /// source `g`; the statement and bindings are sent as given, never
 /// interpolated.
@@ -299,7 +299,7 @@ impl Results {
     /// Decode one response message for `request_id` and add its results.
     ///
     /// # Errors
-    /// `InvalidResponse` for malformed JSON or GraphSON, a foreign request
+    /// `InvalidResponse` for malformed JSON or `GraphSON`, a foreign request
     /// id, an unexpected status or a broken bound; `Service` (status only, no
     /// server text) for a Gremlin error status.
     pub(crate) fn add_message(

@@ -49,13 +49,13 @@ mod checks;
 mod client;
 mod dbchecks;
 mod infra;
+#[cfg(feature = "docgraph-live")]
+mod live_seed;
 pub mod memory;
 mod neptune_input;
 #[cfg(feature = "docgraph-live")]
 pub mod network_policy;
 mod report;
-#[cfg(feature = "docgraph-live")]
-mod live_seed;
 mod seed;
 mod snapshot;
 mod tables;
