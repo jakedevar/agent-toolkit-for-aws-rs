@@ -70,6 +70,25 @@ fn safe_dir(project: &Path, part: &str) -> Result<PathBuf, ToolkitError> {
         Err(_) => Err(fail("path_invalid", "cannot inspect output directory")),
     }
 }
+fn module_no_symlink(path: &Path) -> Result<(), ToolkitError> {
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map_err(|_| fail("module_missing", "cannot resolve module path"))?
+            .join(path)
+    };
+    let mut current = PathBuf::new();
+    for component in absolute.components() {
+        current.push(component.as_os_str());
+        let metadata = fs::symlink_metadata(&current)
+            .map_err(|_| fail("module_missing", "module path is missing"))?;
+        if metadata.file_type().is_symlink() {
+            return Err(fail("module_missing", "module path is symlinked"));
+        }
+    }
+    Ok(())
+}
 fn source_ok(text: &str, path: &Path) -> Result<String, ToolkitError> {
     let normalized = text.replace("\r\n", "\n");
     let mut line = 1;
@@ -237,9 +256,7 @@ fn command_with_hooks(
         }
         if let Some((_, _, module_path, _)) = module_spec.filter(|(_, number, _, _)| n == *number) {
             let expected = project.join(module_path);
-            if fs::symlink_metadata(file).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
-                return Err(fail("module_missing", "module is symlinked"));
-            }
+            module_no_symlink(Path::new(file))?;
             let resolved =
                 fs::canonicalize(file).map_err(|_| fail("module_missing", "module missing"))?;
             if resolved != expected {

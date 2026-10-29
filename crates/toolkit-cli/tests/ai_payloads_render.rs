@@ -1013,6 +1013,18 @@ fn ap_t28_03_symlinked_module_is_refused() {
     assert_eq!(result.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&result.stderr).contains("module_missing"));
     assert!(!f.0.join("notebooks").exists());
+    fs::remove_file(module).unwrap();
+    let module = f.write(
+        "scripts/transform_fn.py",
+        "def transform_dataset(df):\n    return df\n",
+    );
+    let alias = f.0.join("alias");
+    symlink(f.0.join("scripts"), &alias).unwrap();
+    let arg = format!("2={}", alias.join("transform_fn.py").display());
+    let result = f.render(&template, "notebook", &["--cell", &arg]);
+    assert_eq!(result.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&result.stderr).contains("module_missing"));
+    assert!(module.exists());
 }
 
 #[cfg(unix)]
@@ -1115,4 +1127,13 @@ fn ap_app_02_07_latest_symlink_and_over_cap_source_are_refused() {
     assert!(String::from_utf8_lossy(&result.stderr).contains("append_source_invalid"));
     assert_eq!(fs::metadata(huge).unwrap().len(), 16 * 1024 * 1024 + 1);
     assert!(!f.0.join("notebooks/example-07.ipynb").exists());
+    let fifo = f.0.join("notebooks/example-08.ipynb");
+    assert!(Command::new("mkfifo")
+        .arg(&fifo)
+        .status()
+        .unwrap()
+        .success());
+    let result = f.render(&template, "notebook", &["--append"]);
+    assert!(String::from_utf8_lossy(&result.stderr).contains("append_source_invalid"));
+    assert!(!f.0.join("notebooks/example-09.ipynb").exists());
 }
