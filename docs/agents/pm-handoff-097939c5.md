@@ -432,3 +432,5 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 10-29 00:29Z: #4961 ACCEPTED on PM inspection at 2a0173c04d8888ca65d2cc24a9810806a3ff4f8c (9b10f7cf; screen()/is_hook() in telemetry run_action, value_flags declared, passthrough kept; red f46f9928 = 5 new fails; scoped d947d70e ok cli 3259, fmt ff0fd00a, clippy 1d951c85; USAGE unchanged).
   ROUND 17: integration Issue #4983, worker a1adff0a (Opus high, base e312d923, op 4fef0842): merge #4961 now; mail #4396 (on #4969 r2 ACCEPT) and #4941 (on #4971 r2 ACCEPT). It hands off with #4961 alone if no mail arrives. Close on land: #4983 #4961 (+ the #4396 and #4941 sets).
   4/4 busy: 160f8b97 (#4393), b1cc4adc (#4941 repair), 0c8302c4 (#4969 r2), a1adff0a (r17).
+- 10-29 00:30Z: #4393 impl fe425a28b055d45ae82912730343897161adc03e (160f8b97; elasticache::tunnel SLICE: find-tunnel-host/start-tunnel/test-connection offline seams, Secret password/token; 13 divergences; scoped 993c74bb ok cli 3132, fmt 2a1d44f4, clippy 5fe8681f; follow-up #4982; base fa3fa137). Review #4985 worker 384144f0 (Codex sol high, pinned, op a51122fa).
+  4/4 busy: b1cc4adc (#4941 repair), 0c8302c4 (#4969 r2), a1adff0a (r17), 384144f0 (#4985).
