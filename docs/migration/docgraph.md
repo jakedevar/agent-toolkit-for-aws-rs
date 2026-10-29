@@ -1360,6 +1360,141 @@ the fix, `the_releasing_stream_drops_its_inner_stream_on_every_terminal_read`
 | #5465 | `4e9a4a29-3486-474c-988e-b16535d0bdef`: "idle: the read returned Failed(.. stalled ..) with the socket still open"; "stream cap: the read returned TooLarge with the socket still open" (33 passed, 2 failed) | `be0e45aa-b245-4a41-b49d-5eb009458202` (`sdk::database` 36 passed, 0 failed) |
 
 
+#### S2: AWS review client (#5489)
+
+`toolkit_cli::docgraph::live` (feature `docgraph-live`) adds
+`LiveAwsClient`, the R-DG-04 implementation of the review's `AwsClient` seam
+for exactly the ten operations of the table above (`OPERATIONS`). Any other
+pair, any request member the field map does not cover, or a member of the
+wrong type fails with a fixed `InvalidConfig` before anything is encoded,
+signed or sent. `--live` is still refused at the CLI: this slice adds the
+client, not its routing, which waits for the exact-source security review.
+
+**Bridge (spike criteria 1-2, T-DG-04e).** The pinned service crates encode
+the typed input (Query, AWS JSON, RPC-v2 CBOR) and decode the response; they
+never sign, resolve credentials, retry or open a socket. Each client is built
+per attempt with `noAuth` preferred, no credentials provider, an identity
+cache that refuses any AWS credential identity, SDK retries, timeouts and
+stalled-stream protection disabled, and one HTTP client: the in-process
+bridge connector. The SDK future is polled on the caller's thread with no
+async runtime: the connector parks the generated request and returns
+`Pending`, the driver runs the synchronous toolkit path and fills the
+response slot, and polling resumes. Nothing is nested in another runtime,
+and an SDK wait on anything but the bridge fails closed. The toolkit path:
+
+1. the generated URL must equal the operation's own standard-partition
+   endpoint (`https://{rds|monitoring|ec2|secretsmanager}.{region}.amazonaws.com`
+   plus the modeled path), the method POST and the body buffered; otherwise
+   refused;
+2. any SDK-prepared signature header (`authorization`, `x-amz-date`,
+   `x-amz-security-token`, `x-amz-content-sha256`) means `noAuth` was not
+   selected: refused (fail closed);
+3. the generated framing headers (`FRAMING_HEADERS`, including the
+   `content-length` every operation generates) are removed, all other
+   headers and the final body bytes kept unchanged;
+4. the toolkit signer signs with the operation's scope (`rds`, `monitoring`,
+   `ec2`, `secretsmanager`) and credentials bounded by the operation
+   deadline (`DeadlineSigner`; production: `GuardedCredentials::until`);
+5. the toolkit `StreamingTransport` sends exactly the signed request under
+   the same deadline and a 16 MiB response cap, regenerating authority and
+   framing from the unchanged URL and body;
+6. a 2xx with an empty body, or a Query/XML 2xx whose root element does not
+   close, is `InvalidResponse`; everything else, non-2xx included, goes to
+   the modeled decoder.
+
+**One retry owner (T-DG-04c).** `RetryPolicy::default()` (three retries,
+four sends, full jitter, 20 s cap) wraps whole attempts; each attempt
+encodes and signs afresh. The backoff never sleeps past the operation
+deadline (60 s from the start of the call, covering credentials, signing,
+DNS, connect, TLS, every attempt, backoff and body reads), and an attempt
+that would start after it fails `Timeout(Deadline)` without sending. Errors:
+a service error keeps only its HTTP status and sanitized code (message and
+request id discarded) and is retried only when throttling or transient;
+transport and credential failures keep their toolkit classes; a decode
+failure is a non-retried `InvalidResponse`.
+
+Decisions (engineering, recorded for review):
+
+- The SDK's Query and JSON decoders report an undecodable 2xx as an
+  unhandled *service* error with status 200; such an error is classified
+  as `InvalidResponse`, never a service verdict (found by T-DG-04b).
+- aws-smithy-xml stops silently at the end of input, so an XML document cut
+  at an element boundary could decode as a partial success; the bridge
+  therefore requires the `{Operation}Response` root to close.
+- The field map does not emit instance-level `IsClusterWriter`: the
+  DocumentDB model's `DBInstance` has no such member, exactly as boto3
+  returned none to `wa_review.py`, so the writer-only check (REL9) is
+  skipped on live data as it was in Python. Recorded fixtures may still
+  carry it. Deriving the writer from `DBClusterMembers` is a product change
+  left to a follow-up.
+- Regions outside the standard partition (`cn-`, `us-gov-`, `us-iso*`,
+  `eu-isoe-`) are refused up front; the bridge's exact-URL check would
+  refuse their endpoints anyway.
+- The client takes its signer, transport, sleeper and jitter by reference,
+  so the CLI wiring (follow-up) supplies the guarded credentials, the
+  R-ROOTS public `SdkTransport`, `ThreadSleeper` and `FullJitter`.
+
+**S2 field map (SDK output to seam).** Only members the checks read; an
+absent value is omitted, never `null`; list order is kept; `0` and `false`
+stay distinct from absent.
+
+| Operation | Seam members emitted |
+|---|---|
+| DescribeDBClusters | `DBClusters[]`: `BackupRetentionPeriod`, `DeletionProtection`, `EngineVersion`, `DBClusterParameterGroup`, `VpcSecurityGroups[].VpcSecurityGroupId`, `StorageEncrypted`, `EnabledCloudwatchLogsExports[]`, `DBSubnetGroup`, `PreferredMaintenanceWindow`, `DBClusterArn`, `StorageType` |
+| DescribeDBInstances | `DBInstances[]`: `DBInstanceIdentifier`, `DBInstanceClass`, `AvailabilityZone` |
+| DescribeEvents | `Events[]`: `Message`, `EventCategories[]`; `Marker` |
+| DescribeDBClusterParameters | `Parameters[]`: `ParameterName`, `ParameterValue` |
+| DescribeDBSubnetGroups | `DBSubnetGroups[].Subnets[].SubnetAvailabilityZone.Name` |
+| ListTagsForResource | `TagList[]`: `Key`, `Value` |
+| GetMetricStatistics | `Datapoints[]`: `SampleCount`, `Average`, `Sum`, `Minimum`, `Maximum` (finite only) |
+| DescribeAlarms | `MetricAlarms[].AlarmName` |
+| DescribeSecurityGroups | `SecurityGroups[].IpPermissions[]`: `IpRanges[].CidrIp`, `Ipv6Ranges[].CidrIpv6` |
+| ListSecrets | `SecretList[]`: `Name`, `Description`; `NextToken` |
+
+Request members accepted: exactly those the checks build (for example
+`Filters[{Name, Values[]}]`, `Dimensions[{Name, Value}]`, ISO `StartTime`/
+`EndTime`, integer `Period`, `Marker`, `NextToken`). Secrets Manager is
+`ListSecrets` only; `GetSecretValue`, `BatchGetSecretValue` and
+`DescribeSecret` are refused before any request is built (T-DG-04d).
+
+**Dependency audit (spike criterion 3).** S2 changes no manifest and no
+lockfile: `git diff origin/rolling -- Cargo.lock '*Cargo.toml'` is empty.
+The four service crates, `aws-credential-types`, `aws-smithy-runtime-api`
+and `aws-smithy-types` are the existing optional `docgraph-live` pins, so
+no TLS, root, crypto or connector crate is added and no SDK HTTP connector
+is used (the bridge is the only HTTP client the SDK is given).
+
+**Tests (`docgraph::tests::live`, recipe `docgraph-review-client`).**
+
+| T-case | Test(s) |
+|---|---|
+| 04a | `t_dg_04a_all_ten_encodings_reach_the_injected_transport_signed` (URL, method, content type, exact final body bytes incl. RPC-v2 CBOR, `x-amz-target`, signing scope and signed header set, sent == signed, no framing, one shared deadline, 16 MiB cap); `t_dg_04a_unknown_pairs_and_unmapped_request_members_fail_before_the_transport` |
+| 04b | `t_dg_04b_a_live_review_equals_the_seam_fixture_review` (whole review over the wire equals the seam fixture review, call by call and check by check); `..._zero_and_false_stay_distinct_from_absent`; `..._pagination_tokens_pass_through_one_page_per_call`; `..._truncation_wrong_types_and_service_errors_never_succeed` (XML, JSON, CBOR; message canary never kept) |
+| 04c | `t_dg_04c_transient_failures_recover_or_exhaust_at_four_sends` (throttling, 5xx, connect, read timeout, CBOR throttling; four fresh signatures; sleeps 2/4/8 s); `..._denial_malformed_and_credential_failures_send_once_or_never`; `..._the_operation_deadline_stops_retries` |
+| 04d | `t_dg_04d_a_live_review_only_lists_secret_metadata`; `..._repeated_tokens_and_the_page_cap_still_fail_the_check` |
+| 04e | `t_dg_04e_generated_framing_is_removed_and_the_url_and_body_kept` (real SDK-generated requests); `..._the_bridge_refuses_sdk_signing_streaming_bodies_and_foreign_urls`; `..._no_sdk_credential_identity_is_ever_accepted`; `..._only_toolkit_signing_and_retries_run_for_every_operation` |
+
+Red at `521a92b1` (tests only): job `825fac9c-f92a-4e32-b990-c8b71780a1d5`
+fails to compile (`unresolved import crate::docgraph::live`). Existing
+review/error/recorded goldens are unchanged and still run under both
+feature sets (`docgraph-live-suite`, scoped_test).
+
+**#5484 (re-review #5482 follow-up).** `sdk::database::tests` gains
+`a_bounded_body_releases_its_socket_on_every_terminal_failure` (idle,
+operation deadline, byte limit, connection cut mid-body) and
+`a_bounded_body_releases_its_socket_at_its_end`: they take the connector's
+response body directly (no `SdkStream`, no `ReleasingStream`), read the
+client socket's drop counter right after the terminal poll, before the body
+is dropped or the runtime driven again, and check that a later poll repeats
+a failure, never a clean end. With `self.driver.release()` removed from
+`BoundedBody::end` only, job `d965d330-5ce7-4c25-96af-e929036c646c` fails
+("idle: the body poll failed (.. stalled ..) with the socket still open";
+37 passed, 1 failed); with it restored, job
+`d643b659-e2cf-4cbe-aae4-db3ebb0d8ce9` passes (38 passed). Public, payment
+and offline fixtures are unchanged.
+
+
+
 Implementation slices remain Rust, use scoped optional service dependencies,
 daemon-owned jobs and independent exact-SHA review. Each owns a requirement/test
 matrix and deliberate CLI/output changes; no worker may treat this proposal as
