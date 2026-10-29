@@ -44,8 +44,6 @@ use std::fmt;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, SystemTime};
 
-use aws_config::default_provider::credentials::DefaultCredentialsChain;
-use aws_config::Region;
 use aws_credential_types::provider::error::CredentialsError;
 use aws_credential_types::provider::{ProvideCredentials, SharedCredentialsProvider};
 use aws_credential_types::Credentials as SdkCredentials;
@@ -82,7 +80,10 @@ use crate::transport::{
 };
 use roots::ValidatedRoots;
 
+pub mod profile;
 pub mod roots;
+pub mod source;
+pub mod stdin;
 #[cfg(test)]
 mod test_support;
 #[cfg(test)]
@@ -154,13 +155,7 @@ impl SdkCredentialsProvider {
     /// the boundary's resolved region for any STS or SSO call the chain makes.
     #[must_use]
     pub fn default_chain(runtime: &SdkRuntime, config: &ClientConfig) -> Self {
-        let mut builder = DefaultCredentialsChain::builder()
-            .region(Region::new(config.region().name().to_string()));
-        if let Some(profile) = config.profile() {
-            builder = builder.profile_name(profile);
-        }
-        let chain = runtime.block_on(builder.build());
-        Self::from_sdk(runtime, chain)
+        Self::default_chain_with_http(runtime, config, &source::ProviderHttp::SdkDefault)
     }
 
     /// Wrap any SDK credentials provider (a custom source, or a test double).
@@ -1016,6 +1011,175 @@ mod tests {
         let shown = format!("{request:?}");
         assert!(!shown.contains("5fa00fa3"), "{shown}");
         assert!(!format!("{signer:?}").contains("AKID"));
+    }
+
+    fn suite_signer() -> SigV4Signer<FakeProvider> {
+        SigV4Signer::new(FakeProvider::with_keys(
+            "suite",
+            "AKIDEXAMPLE",
+            "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
+        ))
+        .with_clock(suite_time)
+    }
+
+    /// Method, URL, headers, body, signed headers, signature.
+    type SuiteVector = (
+        Method,
+        &'static str,
+        Vec<(&'static str, &'static str)>,
+        &'static [u8],
+        &'static str,
+        &'static str,
+    );
+
+    /// T-SIG-1: further vectors from the AWS `SigV4` test suite (2015-08-30).
+    #[test]
+    fn sigv4_matches_more_aws_test_suite_vectors() {
+        let credential = "Credential=AKIDEXAMPLE/20150830/us-east-1/service/aws4_request";
+        let cases: [SuiteVector; 3] = [
+            (
+                Method::Post,
+                "https://example.amazonaws.com/",
+                vec![],
+                b"",
+                "host;x-amz-date",
+                "5da7c1a2acd57cee7505fc6676e4e544621c30862966e37dddb68e92efbe5d6b",
+            ),
+            (
+                Method::Get,
+                "https://example.amazonaws.com/?Param2=value2&Param1=value1",
+                vec![],
+                b"",
+                "host;x-amz-date",
+                "b97d918cfa904a5beff61c982a1b6f458b799221646efd99d3219ec94cdf2500",
+            ),
+            (
+                Method::Post,
+                "https://example.amazonaws.com/",
+                vec![("content-type", "application/x-www-form-urlencoded")],
+                b"Param1=value1",
+                "content-type;host;x-amz-date",
+                "ff11897932ad3f4e8b18135d722051e5ac45fc38421b1da7b9d196a0fe09473a",
+            ),
+        ];
+        for (method, url, headers, body, signed, signature) in cases {
+            let mut request = vanilla_request();
+            request.method = method;
+            request.url = url.to_string();
+            request.body = body.to_vec();
+            for (name, value) in headers {
+                request.headers.insert(name, value).unwrap();
+            }
+            suite_signer()
+                .sign(&mut request, &suite_scope())
+                .expect("signed");
+            assert_eq!(
+                request.headers.get("authorization"),
+                Some(
+                    format!(
+                        "AWS4-HMAC-SHA256 {credential}, SignedHeaders={signed}, Signature={signature}"
+                    )
+                    .as_str()
+                ),
+                "{url}"
+            );
+        }
+    }
+
+    /// R-HDR: the signer refuses authority and framing headers (a supplied
+    /// `Host` would otherwise be signed instead of the URL authority).
+    #[test]
+    fn the_signer_refuses_authority_and_framing_headers() {
+        for name in ["Host", "content-length", "Transfer-Encoding", "connection"] {
+            let mut request = vanilla_request();
+            request.headers.insert(name, "evil.example").unwrap();
+            let error = suite_signer()
+                .sign(&mut request, &suite_scope())
+                .unwrap_err();
+            assert_eq!(error.code(), "aws_invalid_config", "{name}");
+            assert!(request.headers.get("authorization").is_none(), "{name}");
+            assert!(!error.to_string().contains("evil.example"));
+        }
+    }
+
+    /// R-HDR: both transports refuse them before any connector is called.
+    #[test]
+    fn the_transport_refuses_authority_and_framing_headers_before_sending() {
+        let connector = FakeConnector::new(vec![Ok((200, vec![], "{}"))]);
+        let seen = Arc::clone(&connector.seen);
+        let transport = SdkTransport::with_connector(&runtime(), connector);
+        let limits = StreamLimits::new(1024, 64).unwrap();
+        for name in [
+            "host",
+            "Content-Length",
+            "te",
+            "trailer",
+            "keep-alive",
+            "upgrade",
+        ] {
+            let mut request = vanilla_request();
+            request.headers.insert(name, "x").unwrap();
+            assert_eq!(
+                transport.send(&request).unwrap_err().code(),
+                "aws_invalid_config",
+                "{name}"
+            );
+            assert_eq!(
+                transport.open(&request, &limits).err().map(|e| e.code()),
+                Some("aws_invalid_config"),
+                "{name}"
+            );
+        }
+        assert!(seen.lock().unwrap().methods.is_empty());
+    }
+
+    #[test]
+    fn the_streaming_transport_applies_the_same_guards_and_returns_the_head() {
+        let connector = FakeConnector::new(vec![Ok((
+            202,
+            vec![("content-type", "text/event-stream")],
+            "data: 1\n\n",
+        ))]);
+        let transport = SdkTransport::with_connector(&runtime(), connector);
+        let limits = StreamLimits::new(1024, 4).unwrap();
+        let mut plain = vanilla_request();
+        plain.url = "http://logs.us-east-1.amazonaws.com/".to_string();
+        assert_eq!(
+            transport.open(&plain, &limits).err().map(|e| e.code()),
+            Some("aws_invalid_config")
+        );
+        let mut literal = vanilla_request();
+        literal.url = "https://169.254.169.254/".to_string();
+        assert_eq!(
+            transport.open(&literal, &limits).err().map(|e| e.code()),
+            Some("aws_invalid_config")
+        );
+        let mut stream = transport.open(&vanilla_request(), &limits).expect("stream");
+        assert_eq!(stream.status(), 202);
+        assert_eq!(
+            stream.headers().get("content-type"),
+            Some("text/event-stream")
+        );
+        let mut body = Vec::new();
+        while let Some(chunk) = stream.next_chunk().expect("chunk") {
+            assert!(chunk.len() <= 4);
+            body.extend(chunk);
+        }
+        assert_eq!(body, b"data: 1\n\n");
+    }
+
+    #[test]
+    fn a_streamed_response_from_a_non_public_peer_is_refused() {
+        let connector = FakeConnector::new(vec![Ok((200, vec![], "{}"))]).with_peer("10.0.0.1:443");
+        let poisoned = Arc::clone(&connector.poisoned);
+        let transport = SdkTransport::with_connector(&runtime(), connector);
+        let limits = StreamLimits::new(1024, 64).unwrap();
+        let error = transport
+            .open(&vanilla_request(), &limits)
+            .err()
+            .expect("refused");
+        assert_eq!(error.code(), "aws_invalid_config");
+        assert!(poisoned.load(Ordering::SeqCst));
     }
 
     /// A Send + Sync provider with a session token.

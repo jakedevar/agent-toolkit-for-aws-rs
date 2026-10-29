@@ -15,6 +15,11 @@
 //!   chain semantics, redacting [`Credentials`], and rejection of credential
 //!   command-line flags;
 //! - [`retry`]: bounded exponential backoff with injected sleep and jitter;
+//! - [`preflight`]: the credential-source preflight (R-ABS), guarded source
+//!   selection (R-SRC) and error precedence (R-PREC, R-STICKY) for the MCP
+//!   proxy (#4413);
+//! - [`stream`]: the streaming response seam ([`StreamingTransport`]);
+//! - [`diag`]: allowlisted diagnostics (R-LOG);
 //! - [`paginate`]: token pagination with page, item and loop guards;
 //! - [`recorded`]: replay of recorded calls (`--recorded FILE`) and the
 //!   optional-member rules for recorded input and replayed responses (#4727);
@@ -30,9 +35,12 @@ pub mod binding;
 pub mod client;
 pub mod config;
 pub mod credentials;
+pub mod diag;
 pub mod endpoint;
 pub mod env;
 pub mod error;
+#[cfg(test)]
+mod gates;
 pub mod paginate;
 pub mod preflight;
 pub mod recorded;
@@ -54,16 +62,20 @@ pub use credentials::{
     STANDARD_CHAIN_STAGES,
 };
 pub use endpoint::{
-    is_valid_region, validate_endpoint, Endpoint, EndpointPolicy, HostResolver, SystemResolver,
+    is_valid_region, signing_service_region, validate_endpoint, Endpoint, EndpointPolicy,
+    HostResolver, SystemResolver,
 };
 pub use env::{Env, MapEnv, ProcessEnv};
 pub use error::{render_failure, render_failure_with, AwsError, Guidance, ServiceError};
 pub use paginate::{collect_pages, next_token_from, Page, PageLimits};
+pub use preflight::{AuthDecision, CredentialRefusal, Preflight, SelectedProfile, SourceKind};
 pub use redact::{redact_text, sanitize_path, Secret, REDACTED};
 pub use retry::{
     run_with_retry, Attempted, FullJitter, Jitter, NoJitter, RetryFailure, RetryMode, RetryPolicy,
     Sleeper, ThreadSleeper,
 };
+pub use stream::{ResponseStream, StreamError, StreamLimits, StreamingTransport};
+pub use transport::{refuse_framing_headers, FRAMING_HEADERS};
 pub use transport::{
     ApiRequest, Headers, HttpRequest, HttpResponse, Method, NoSigner, Signer, SigningScope,
     Timeouts, Transport,

@@ -230,6 +230,15 @@ impl ValidatedRoots {
         self.tolerated_errors
     }
 
+    /// Report tolerated platform loading errors to `diag` (a count only).
+    pub fn report_to(&self, diag: &mut crate::diag::Diag) {
+        if self.tolerated_errors > 0 {
+            diag.emit(crate::diag::DiagEvent::TlsRootErrorsTolerated {
+                count: self.tolerated_errors,
+            });
+        }
+    }
+
     /// Whether two values share the same certificate set allocation (the
     /// "both planes received this value" check).
     #[must_use]

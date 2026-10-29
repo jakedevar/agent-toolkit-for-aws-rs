@@ -476,6 +476,58 @@ fn v4_reason(address: Ipv4Addr) -> &'static str {
         .map_or("not publicly routable", |&(_, _, what)| what)
 }
 
+/// Service and region a request to `host` is signed for (the
+/// `mcp-proxy-for-aws` rules, shared by `asm exec` and the MCP proxy):
+/// `service.region.api.aws` gives `(service, region)`; a `bedrock-agentcore`
+/// host under `amazonaws.com` gives that service and the region before it;
+/// anything else gives the first label and no region (the caller then uses
+/// its own region precedence).
+#[must_use]
+pub fn signing_service_region(host: &str) -> (String, Option<String>) {
+    let parts: Vec<&str> = host.split('.').collect();
+    match parts.as_slice() {
+        [_, .., "bedrock-agentcore", region, "amazonaws", "com"] => {
+            ("bedrock-agentcore".to_string(), Some((*region).to_string()))
+        }
+        [service, region, "api", "aws"] => ((*service).to_string(), Some((*region).to_string())),
+        _ => (
+            parts.first().copied().unwrap_or("aws-mcp").to_string(),
+            None,
+        ),
+    }
+}
+
+#[cfg(test)]
+mod signing_scope_tests {
+    use super::signing_service_region;
+
+    #[test]
+    fn signing_service_and_region_come_from_the_endpoint_host() {
+        let some = |s: &str, r: &str| (s.to_string(), Some(r.to_string()));
+        assert_eq!(
+            signing_service_region("aws-mcp.us-east-1.api.aws"),
+            some("aws-mcp", "us-east-1")
+        );
+        assert_eq!(
+            signing_service_region("aidevops.us-west-2.api.aws"),
+            some("aidevops", "us-west-2")
+        );
+        assert_eq!(
+            signing_service_region("x.bedrock-agentcore.us-west-2.amazonaws.com"),
+            some("bedrock-agentcore", "us-west-2")
+        );
+        assert_eq!(
+            signing_service_region("custom.amazonaws.com"),
+            ("custom".to_string(), None)
+        );
+        assert_eq!(
+            signing_service_region("a.b.c.api.aws"),
+            ("a".to_string(), None)
+        );
+        assert_eq!(signing_service_region(""), (String::new(), None));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -13,8 +13,9 @@
 //! process. Credential values live in [`Credentials`]/`Secret`, whose `Debug`
 //! prints nothing; process output is never echoed.
 //!
-//! The `SigV4` signature and the HTTPS connection themselves are not available
-//! in this build; see [`UnavailableSigner`] and [`UnavailableTransport`].
+//! With the `aws-sdk` cargo feature, [`sdk_adapters`] gives the real `SigV4`
+//! signer and HTTPS transport (#4582). Without it the build has neither, and
+//! [`UnavailableSigner`] and [`UnavailableTransport`] fail closed.
 
 use std::io::Read;
 use std::process::{Command, Stdio};
@@ -266,7 +267,7 @@ pub const UNAVAILABLE_MESSAGE: &str = "AWS MCP request signing and the HTTPS tra
 available in this build; start the AWS Secrets Manager Agent on localhost, or use the Python \
 asm-exec until the SDK adapter lands";
 
-/// Signer for builds without a `SigV4` implementation (this build). It loads
+/// Signer for builds without a `SigV4` implementation (no `aws-sdk` feature). It loads
 /// credentials first, so a machine without any reports the Python's "no AWS
 /// credentials" cause, and then fails closed: **nothing is ever sent unsigned**.
 pub struct UnavailableSigner<'a> {
@@ -288,7 +289,8 @@ impl Signer for UnavailableSigner<'_> {
     }
 }
 
-/// Transport for builds without TLS (this build): every send fails closed.
+/// Transport for builds without TLS (no `aws-sdk` feature): every send fails
+/// closed.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct UnavailableTransport;
 
@@ -296,6 +298,46 @@ impl Transport for UnavailableTransport {
     fn send(&self, _request: &HttpRequest) -> Result<HttpResponse, AwsError> {
         Err(AwsError::connect(UNAVAILABLE_MESSAGE))
     }
+}
+
+/// A transport that refuses every request with a fixed boundary error: the
+/// MCP fallback fails closed when the HTTPS transport cannot be built (for
+/// example unusable TLS trust roots), while the Secrets Manager Agent path
+/// keeps working.
+#[cfg(feature = "aws-sdk")]
+struct RefusedTransport(AwsError);
+
+#[cfg(feature = "aws-sdk")]
+impl Transport for RefusedTransport {
+    fn send(&self, _request: &HttpRequest) -> Result<HttpResponse, AwsError> {
+        Err(self.0.clone())
+    }
+}
+
+/// The real MCP adapters (#4582, #4413 S1): the AWS `SigV4` signer over the
+/// `asm exec` credential chain, and the SDK HTTPS transport trusting exactly
+/// `roots` (R-ROOTS; validated once by the caller). The transport keeps every
+/// boundary guard: https only, public addresses only, no redirects, no proxy,
+/// no authority or framing headers.
+#[cfg(feature = "aws-sdk")]
+#[must_use]
+pub fn sdk_adapters(
+    chain: ProviderChain,
+    roots: Result<toolkit_aws::sdk::roots::ValidatedRoots, toolkit_aws::sdk::roots::RootsFailure>,
+) -> (
+    toolkit_aws::sdk::SigV4Signer<ProviderChain>,
+    Box<dyn Transport>,
+) {
+    let transport: Box<dyn Transport> = match roots {
+        Err(failure) => Box::new(RefusedTransport(failure.to_error())),
+        Ok(roots) => match toolkit_aws::sdk::SdkRuntime::new()
+            .and_then(|runtime| toolkit_aws::sdk::SdkTransport::new(&runtime, &roots))
+        {
+            Ok(transport) => Box::new(transport),
+            Err(error) => Box::new(RefusedTransport(error)),
+        },
+    };
+    (toolkit_aws::sdk::SigV4Signer::new(chain), transport)
 }
 
 #[cfg(test)]

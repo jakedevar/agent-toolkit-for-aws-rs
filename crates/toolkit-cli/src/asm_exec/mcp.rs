@@ -42,25 +42,9 @@ const MAX_SEARCH_DEPTH: usize = 32;
 /// Keys under which `run_script` nests the API response, in search order.
 const NESTING_KEYS: &[&str] = &["return_value", "result", "results", "output", "stdout"];
 
-/// Service and region a request to `host` is signed for (`mcp-proxy-for-aws-cli`
-/// rules): `service.region.api.aws` gives `(service, region)`; a
-/// `bedrock-agentcore` host under `amazonaws.com` gives that service and the
-/// region before it; anything else gives the first label and no region (the
-/// caller uses `AWS_REGION`, `AWS_DEFAULT_REGION` or `us-east-1`).
-#[must_use]
-pub fn signing_service_region(host: &str) -> (String, Option<String>) {
-    let parts: Vec<&str> = host.split('.').collect();
-    match parts.as_slice() {
-        [_, .., "bedrock-agentcore", region, "amazonaws", "com"] => {
-            ("bedrock-agentcore".to_string(), Some((*region).to_string()))
-        }
-        [service, region, "api", "aws"] => ((*service).to_string(), Some((*region).to_string())),
-        _ => (
-            parts.first().copied().unwrap_or("aws-mcp").to_string(),
-            None,
-        ),
-    }
-}
+/// Service and region a request to `host` is signed for; moved to `toolkit-aws`
+/// (#4413 S1) so the MCP proxy shares it.
+pub use toolkit_aws::signing_service_region;
 
 /// A validated endpoint and the scope requests to it are signed for.
 struct Prepared {
