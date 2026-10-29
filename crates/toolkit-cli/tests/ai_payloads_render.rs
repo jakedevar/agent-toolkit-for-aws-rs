@@ -446,6 +446,9 @@ fn ap_asn_01_04_05_06_09_10_assignment_contracts() {
         assert_eq!(result.status.code(), Some(1));
         let stderr = String::from_utf8_lossy(&result.stderr);
         assert!(stderr.contains(error), "{stderr}");
+        if document.contains("INPUT_LOCATION") {
+            assert!(stderr.contains("values.INPUT_LOCATION"));
+        }
         assert!(!stderr.contains("literal-secret-sentinel"));
         assert!(!f.0.join("scripts").exists());
     }
@@ -686,4 +689,60 @@ fn ap_app_02_07_series_invalid_and_exhausted_sources_are_untouched() {
     let result = f.render(&template, "notebook", &["--append"]);
     assert!(String::from_utf8_lossy(&result.stderr).contains("notebook_versions_exhausted"));
     assert_eq!(fs::read_to_string(source).unwrap(), base);
+}
+
+#[test]
+fn ap_typ_05_con_02_unused_consent_and_existing_kernel_fail_closed() {
+    let f = Fixture::new();
+    let template = f.write("template.py", TEMPLATE);
+    for name in ["ROLE_ARN", "NOT_USED"] {
+        let result = f.render(
+            &template,
+            "script",
+            &["--consent", name, "--allow-unresolved"],
+        );
+        assert_eq!(result.status.code(), Some(1));
+        assert!(String::from_utf8_lossy(&result.stderr).contains("consent_name_invalid"));
+    }
+    let source = f.write("notebooks/example.ipynb", "{\"cells\":[{\"source\":[\"ACCEPT_EULA = False\"]}],\"metadata\":{},\"nbformat\":4,\"nbformat_minor\":4}");
+    let before = fs::read(&source).unwrap();
+    let result = f.render(&template, "notebook", &["--append", "--allow-unresolved"]);
+    assert_eq!(result.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&result.stderr).contains("typed_slot_unresolved"));
+    assert_eq!(fs::read(source).unwrap(), before);
+    assert!(!f.0.join("notebooks/example-01.ipynb").exists());
+}
+
+#[test]
+fn ap_t28_03_05_module_mismatch_missing_definition_and_unsafe_project() {
+    let template = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../skills/core-skills/aws-ai-ml/references/dataset-transformation/code_templates/transformation.py");
+    let f = Fixture::new();
+    let wrong = f.write(
+        "elsewhere.py",
+        "def transform_dataset(df):\n    return df\n",
+    );
+    let arg = format!("2={}", wrong.display());
+    let result = f.render(&template, "script", &["--cell", &arg]);
+    assert!(String::from_utf8_lossy(&result.stderr).contains("module_path_mismatch"));
+    let module = f.write("scripts/transform_fn.py", "pass\n");
+    let arg = format!("2={}", module.display());
+    let result = f.render(&template, "script", &["--cell", &arg]);
+    assert!(String::from_utf8_lossy(&result.stderr).contains("module_definition_missing"));
+    let unsafe_dir = f.0.join("space dir");
+    fs::create_dir(&unsafe_dir).unwrap();
+    fs::create_dir(unsafe_dir.join("scripts")).unwrap();
+    let module = unsafe_dir.join("scripts/transform_fn.py");
+    fs::write(&module, "def transform_dataset(df):\n    return df\n").unwrap();
+    let arg = format!("2={}", module.display());
+    let result = Command::new(env!("CARGO_BIN_EXE_toolkit"))
+        .args(["ai-payloads", "render"])
+        .arg(&template)
+        .args(["--mode", "notebook", "--project-dir"])
+        .arg(&unsafe_dir)
+        .args(["--name", "example", "--cell", &arg, "--allow-unresolved"])
+        .output()
+        .unwrap();
+    assert_eq!(result.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&result.stderr).contains("writefile_path_unsafe"));
+    assert!(!unsafe_dir.join("notebooks").exists());
 }

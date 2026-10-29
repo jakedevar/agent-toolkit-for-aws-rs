@@ -198,6 +198,18 @@ mod tests {
             append(source, vec![cell], &mut second).unwrap()
         );
     }
+    #[test]
+    fn ap_nb_10_missing_and_duplicate_ids_refused() {
+        let mut ids = ContentIds("hash".into());
+        for cells in [r#"[{}]"#, r#"[{"id":"x"},{"id":"x"}]"#] {
+            let source =
+                format!(r#"{{"cells":{cells},"metadata":{{}},"nbformat":4,"nbformat_minor":5}}"#);
+            assert_eq!(
+                append(&source, vec![], &mut ids).unwrap_err(),
+                "notebook_cell_ids_invalid"
+            );
+        }
+    }
     struct FixedIds(std::vec::IntoIter<&'static str>);
     impl IdSource for FixedIds {
         fn id(&mut self, _: usize, _: usize) -> String {

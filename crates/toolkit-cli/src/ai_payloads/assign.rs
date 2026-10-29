@@ -15,6 +15,26 @@ fn fail(code: &'static str, name: &str) -> SubstitutionError {
     }
 }
 
+fn invalid_target(name: &str, source: &str, template: &Template) -> SubstitutionError {
+    let lines: Vec<_> = source.lines().collect();
+    let slot = template.occurrences.iter().find(|occurrence| {
+        occurrence.context == template::Context::Quoted
+            && lines.get(occurrence.line - 1).is_some_and(|line| {
+                line.strip_prefix(name)
+                    .is_some_and(|rest| rest.trim_start().starts_with('='))
+            })
+    });
+    slot.map_or_else(
+        || fail("assign_target_invalid", name),
+        |slot| {
+            fail(
+                "assign_target_invalid",
+                &format!("{name}: use values.{}", slot.name),
+            )
+        },
+    )
+}
+
 #[allow(dead_code)] // Connected by the render command.
 pub(crate) fn rewrite(
     source: &str,
@@ -29,7 +49,7 @@ pub(crate) fn rewrite(
             .targets
             .iter()
             .find(|target| target.name == *name)
-            .ok_or_else(|| fail("assign_target_invalid", name))?;
+            .ok_or_else(|| invalid_target(name, source, template))?;
         if replaced.contains(&target.cell) {
             return Err(fail("assign_target_replaced", name));
         }
