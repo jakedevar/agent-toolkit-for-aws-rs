@@ -819,3 +819,7 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 10-29 07:02Z: S2b cont (da98439f, 55% ctx) at 79ecfcd198157e29fa929df30cf03f0b926f19b4: render implemented; scoped 4106 ok, clean; per-case coverage gaps listed on #5223.
   Review FIRST (impl complete): #5252 -> Claude Opus f008eb74 (security; pinned 79ecfcd1; also lists uncovered reqs). Then ONE repair continue_from da98439f: findings + coverage gaps.
   4/4 busy: 0dcdafea (#5181 S4 cont), 8ea9ce8e (#5216 L4 cont2), 89ffdae7 (#5251 review), f008eb74 (#5252 review S2b).
+- 10-29 07:06Z: #5251 (89ffdae7, Sonnet) ACCEPT reward test f/u 95a55de8 with per-Issue mutation table (supersedes #5250). Nonblocking #5253 (exact diagnostics) #5254 (inventory walks untracked dirs).
+  Check ok (359f41d6, 4054). ENQUEUED 3d43898d (seq 2971, #5218). On land close #5218 #5221 #5222 #5247 #5248 #5249 #5250 #5251.
+  Test hardening: worker 2a78b5ff (Codex terra, base 95a55de8) bound #5244 + related #5245 #5253 #5254.
+  4/4 busy: 0dcdafea (#5181 S4 cont), 8ea9ce8e (#5216 L4 cont2), f008eb74 (#5252 review S2b), 2a78b5ff (#5244 tests).
