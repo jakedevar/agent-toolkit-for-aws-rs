@@ -1,7 +1,7 @@
 //! Offline request builders for Neptune GraphRAG and agentic memory.
 use toolkit_core::{sha256_hex, Json};
 
-pub(super) fn chunk_document(
+pub fn chunk_document(
     text: &str,
     size: usize,
     overlap: usize,
@@ -15,20 +15,23 @@ pub(super) fn chunk_document(
     while start < chars.len() {
         let end = start.saturating_add(size).min(chars.len());
         chunks.push(chars[start..end].iter().collect());
-        start += size - overlap;
+        start = start.saturating_add(size - overlap);
     }
     Ok(chunks)
 }
-pub(super) fn escape_cypher_string(value: &str) -> String {
+pub fn escape_cypher_string(value: &str) -> String {
     value
         .replace('\\', "\\\\")
         .replace('\'', "\\'")
         .replace('"', "\\\"")
 }
-pub(super) fn entity_id(name: &str) -> String {
+pub fn entity_id(name: &str) -> String {
     sha256_hex(name.as_bytes())[..32].to_string()
 }
-pub(super) fn query(id: &str, statement: &str, parameters: Json) -> Result<Json, &'static str> {
+pub fn query(id: &str, statement: &str, parameters: Json) -> Result<Json, &'static str> {
+    if !matches!(parameters, Json::Object(_)) {
+        return Err("parameters must be an object");
+    }
     let Some(suffix) = id.strip_prefix("g-") else {
         return Err("invalid graph_id");
     };
@@ -49,19 +52,13 @@ pub(super) fn query(id: &str, statement: &str, parameters: Json) -> Result<Json,
     }
     Ok(Json::object(pairs))
 }
-pub(super) fn gremlin(statement: &str, bindings: Json) -> Json {
+pub fn gremlin(statement: &str, bindings: Json) -> Json {
     Json::object(vec![
         ("gremlin", Json::string(statement)),
         ("bindings", bindings),
     ])
 }
-pub(super) fn create_graph(
-    name: &str,
-    memory: i64,
-    dimension: i64,
-    model: &str,
-    rag: bool,
-) -> Json {
+pub fn create_graph(name: &str, memory: i64, dimension: i64, model: &str, rag: bool) -> Json {
     let mut p = vec![
         ("graphName", Json::string(name)),
         ("provisionedMemory", Json::Int(memory)),
@@ -84,7 +81,7 @@ pub(super) fn create_graph(
     }
     Json::object(p)
 }
-pub(super) fn consolidate(id: &str) -> Result<Vec<Json>, &'static str> {
+pub fn consolidate(id: &str) -> Result<Vec<Json>, &'static str> {
     Ok(vec![query(id, "MATCH (f:Fact) WHERE f.updated_at < timestamp() - 7776000000 SET f.confidence = f.confidence * 0.9", Json::object(vec![]))?, query(id, "MATCH (f:Fact) WHERE f.confidence < 0.1 DETACH DELETE f", Json::object(vec![]))?])
 }
 
@@ -118,7 +115,7 @@ fn filter(label: &str) -> Json {
         .to_compact_string(),
     )
 }
-fn vector(id: &str, input: &Json, label: &str, top: i64) -> Result<Json, String> {
+fn vector(id: &str, input: &Json, label: &str, top: i64, entity: bool) -> Result<Json, String> {
     let p = Json::object(vec![
         ("embedding", arg(input, "embedding")?.clone()),
         (
@@ -127,7 +124,7 @@ fn vector(id: &str, input: &Json, label: &str, top: i64) -> Result<Json, String>
         ),
         ("vertex_filter", filter(label)),
     ]);
-    let ret = if label == "Chunk" {
+    let ret = if !entity {
         "node.id AS id, node.text AS text, score"
     } else {
         "node.name AS name, node.type AS type, node.description AS description, score"
@@ -135,14 +132,18 @@ fn vector(id: &str, input: &Json, label: &str, top: i64) -> Result<Json, String>
     cypher(id, &format!("CALL neptune.algo.vectors.topK.byEmbedding({{embedding: $embedding, topK: $top_k, vertexFilter: $vertex_filter}}) YIELD node, score RETURN {ret} ORDER BY score DESC"), p)
 }
 /// Build a deterministic sequence of requests from operation arguments.
-pub(super) fn plan(op: &str, input: &Json) -> Result<Vec<Json>, String> {
+pub fn plan(op: &str, input: &Json) -> Result<Vec<Json>, String> {
     let empty = || Json::object(vec![]);
     if op == "create-graphrag" || op == "create-memory" {
         let rag = op == "create-graphrag";
-        let name = input
-            .get("graph_name")
-            .and_then(Json::as_str)
-            .unwrap_or(if rag { "graphrag" } else { "agent-memory" });
+        let name = if rag {
+            string(input, "graph_name")?
+        } else {
+            input
+                .get("graph_name")
+                .and_then(Json::as_str)
+                .unwrap_or("agent-memory")
+        };
         let number = |key: &str, default| match input.get(key) {
             Some(Json::Int(n)) => *n,
             _ => default,
@@ -159,7 +160,21 @@ pub(super) fn plan(op: &str, input: &Json) -> Result<Vec<Json>, String> {
         )]);
     }
     if op == "remember-relationship" {
-        return Ok(vec![gremlin("g.V().has('Entity','name',name_a).as('a').V().has('Entity','name',name_b).as('b').coalesce(select('a').outE('RELATED_TO').where(inV().as('b')),select('a').addE('RELATED_TO').to(select('b'))).property('type',rel_type).property('confidence',confidence).property('updated_at',new Date().getTime())", params(input, &[("name_a","entity_a"),("name_b","entity_b"),("rel_type","rel_type"),("confidence","confidence")])?)]);
+        let mut bindings = params(
+            input,
+            &[
+                ("name_a", "entity_a"),
+                ("name_b", "entity_b"),
+                ("rel_type", "rel_type"),
+            ],
+        )?;
+        if let Json::Object(ref mut fields) = bindings {
+            fields.push((
+                "confidence".to_string(),
+                input.get("confidence").cloned().unwrap_or(Json::Float(1.0)),
+            ));
+        }
+        return Ok(vec![gremlin("g.V().has('Entity','name',name_a).as('a').V().has('Entity','name',name_b).as('b').coalesce(select('a').outE('RELATED_TO').where(inV().as('b')),select('a').addE('RELATED_TO').to(select('b'))).property('type',rel_type).property('confidence',confidence).property('updated_at',new Date().getTime())", bindings)]);
     }
     if op == "recall-entity" {
         return Ok(vec![gremlin("g.V().has('Entity','name',entity_name).project('entity','relationships','conversations').by(valueMap()).by(bothE('RELATED_TO').project('type','target','confidence').by(values('type')).by(otherV().values('name')).by(values('confidence')).fold()).by(in('ABOUT').hasLabel('Conversation').order().by('date',desc).limit(5).valueMap('summary','date').fold())",params(input,&[("entity_name","entity_name")])?)]);
@@ -246,8 +261,9 @@ pub(super) fn plan(op: &str, input: &Json) -> Result<Vec<Json>, String> {
     match op {
         "query" => Ok(vec![q(string(input,"query")?, input.get("parameters").cloned().unwrap_or_else(empty))?]),
         "consolidate" => consolidate(id).map_err(str::to_string),
-        "vector-search" | "retrieve" => Ok(vec![vector(id,input,"Chunk",5)?]),
-        "semantic-recall" => Ok(vec![vector(id,input,"Entity",10)?]),
+        "vector-search" => Ok(vec![vector(id,input,input.get("vertex_label").and_then(Json::as_str).unwrap_or("Chunk"),5,false)?]),
+        "retrieve" => Ok(vec![vector(id,input,"Chunk",5,false)?]),
+        "semantic-recall" => Ok(vec![vector(id,input,"Entity",10,true)?]),
         "hybrid-recall" => {
             let name = arg(input,"entity_name")?.clone();
             let filter = Json::object(vec![("andAll",Json::Array(vec![Json::object(vec![("equals",Json::object(vec![("property",Json::string("~label")),("value",Json::string("Entity"))]))]),Json::object(vec![("notEquals",Json::object(vec![("property",Json::string("name")),("value",name.clone())]))])]))]).to_compact_string();
@@ -271,23 +287,25 @@ pub(super) fn plan(op: &str, input: &Json) -> Result<Vec<Json>, String> {
     }
 }
 
-pub(super) fn retrieve(
-    session: &mut dyn super::seed::GremlinSession,
-    id: &str,
-    first: &Json,
-) -> Result<Json, String> {
-    let chunks = session
-        .submit(first)
-        .map_err(|_| "recorded query failed".to_string())?;
+pub fn retrieve(session: &mut dyn MemoryClient, id: &str, first: &Json) -> Result<Json, String> {
+    let response = session.submit(first)?;
+    let chunks = toolkit_aws::recorded::optional_list(&response, "results")
+        .map_err(|e| e.to_string())?
+        .to_vec();
     let mut expanded = Vec::new();
     for chunk in chunks {
-        let cid = arg(&chunk, "id")?.clone();
+        let cid = Json::string(
+            toolkit_aws::recorded::optional_text(&chunk, "id")
+                .map_err(|e| e.to_string())?
+                .ok_or("chunk missing id")?,
+        );
         let p = || Json::object(vec![("cid", cid.clone())]);
         let mut call = |s| -> Result<Vec<Json>, String> {
             let request = cypher(id, s, p())?;
-            session
-                .submit(&request)
-                .map_err(|_| "recorded query failed".to_string())
+            let response = session.submit(&request)?;
+            Ok(toolkit_aws::recorded::optional_list(&response, "results")
+                .map_err(|e| e.to_string())?
+                .to_vec())
         };
         let entities = call("MATCH (c:Chunk {id: $cid})-[:MENTIONS]->(e:Entity) RETURN e.name AS name, e.type AS type, e.description AS description")?;
         let related = call("MATCH (c:Chunk {id: $cid})-[:MENTIONS]->(e:Entity)-[:RELATED_TO]-(r:Entity) RETURN DISTINCT r.name AS name, r.type AS type, r.description AS description")?;
@@ -295,15 +313,130 @@ pub(super) fn retrieve(
             call("MATCH (c:Chunk {id: $cid})-[:NEXT]-(n:Chunk) RETURN n.text AS text, n.id AS id")?;
         let texts = neighbors
             .iter()
-            .map(|n| arg(n, "text").cloned())
+            .map(|n| {
+                toolkit_aws::recorded::optional_text(n, "text")
+                    .map_err(|e| e.to_string())?
+                    .map(Json::string)
+                    .ok_or_else(|| "neighbor missing text".to_string())
+            })
             .collect::<Result<Vec<_>, _>>()?;
+        let text = toolkit_aws::recorded::optional_text(&chunk, "text")
+            .map_err(|e| e.to_string())?
+            .ok_or("chunk missing text")?;
+        let score =
+            toolkit_aws::recorded::optional_member(&chunk, "score", "a number", |v| match v {
+                Json::Int(_) | Json::Float(_) => Some(v.clone()),
+                _ => None,
+            })
+            .map_err(|e| e.to_string())?
+            .ok_or("chunk missing score")?;
         expanded.push(Json::object(vec![
-            ("chunk_text", arg(&chunk, "text")?.clone()),
-            ("score", arg(&chunk, "score")?.clone()),
+            ("chunk_text", Json::string(text)),
+            ("score", score),
             ("entities", Json::Array(entities)),
             ("related_entities", Json::Array(related)),
             ("neighboring_chunks", Json::Array(texts)),
         ]));
     }
     Ok(Json::Array(expanded))
+}
+
+/// An injected offline or live-compatible request client.
+pub trait MemoryClient {
+    /// Execute one request and return its response object.
+    fn submit(&mut self, request: &Json) -> Result<Json, String>;
+}
+
+/// Ordered, request-matching recorded responses.
+pub struct RecordedMemory {
+    queue: toolkit_aws::recorded::StepQueue<()>,
+}
+impl RecordedMemory {
+    /// Parse and validate all recorded steps before replay.
+    pub fn from_document(document: &Json) -> Result<Self, String> {
+        use toolkit_aws::recorded::{
+            optional_list, optional_text, step_fields, KeyOrder, RecordedOutcome, Step, StepQueue,
+        };
+        let calls = document
+            .get("calls")
+            .and_then(super::snapshot::list)
+            .ok_or("recording needs a calls array")?;
+        let mut queue = StepQueue::new(KeyOrder::Ignored);
+        for (index, call) in calls.iter().enumerate() {
+            let fields =
+                step_fields(call).map_err(|_| format!("recorded call {index}: invalid step"))?;
+            let request = fields.request.cloned();
+            let step = match fields.outcome {
+                RecordedOutcome::Response(response) => {
+                    for key in ["results", "Items"] {
+                        optional_list(response, key)
+                            .map_err(|e| format!("recorded call {index}: {e}"))?;
+                    }
+                    optional_text(response, "id")
+                        .map_err(|e| format!("recorded call {index}: {e}"))?;
+                    Step::response(request, response.clone())
+                }
+                RecordedOutcome::Error(_) => Step::failure(
+                    request,
+                    toolkit_aws::AwsError::connect("recorded service error"),
+                ),
+            };
+            queue.push((), step);
+        }
+        Ok(Self { queue })
+    }
+    /// Number of unmatched entries.
+    pub fn unused(&self) -> usize {
+        self.queue.unconsumed()
+    }
+}
+impl MemoryClient for RecordedMemory {
+    fn submit(&mut self, request: &Json) -> Result<Json, String> {
+        self.queue
+            .replay(&(), request)
+            .map_err(|_| "recorded request mismatch or exhausted".to_string())?
+            .map_err(|_| "recorded service error".to_string())
+    }
+}
+/// Execute a planned operation and shape the script's response.
+pub fn execute(client: &mut dyn MemoryClient, op: &str, requests: &[Json]) -> Result<Json, String> {
+    let mut responses = Vec::new();
+    for request in requests {
+        responses.push(client.submit(request)?);
+    }
+    if op == "create-graphrag" || op == "create-memory" {
+        let id = toolkit_aws::recorded::optional_text(&responses[0], "id")
+            .map_err(|e| e.to_string())?
+            .ok_or("response missing id")?;
+        return Ok(Json::string(id));
+    }
+    if op == "recent-messages" {
+        let mut items = toolkit_aws::recorded::optional_list(&responses[0], "Items")
+            .map_err(|e| e.to_string())?
+            .to_vec();
+        items.reverse();
+        return Ok(Json::Array(items));
+    }
+    if op == "hybrid-recall" {
+        let list = |i| -> Result<Json, String> {
+            Ok(Json::Array(
+                toolkit_aws::recorded::optional_list(&responses[i], "results")
+                    .map_err(|e| e.to_string())?
+                    .to_vec(),
+            ))
+        };
+        return Ok(Json::object(vec![
+            ("graph_recall", list(0)?),
+            ("semantic_recall", list(1)?),
+        ]));
+    }
+    let results = responses
+        .iter()
+        .map(|response| {
+            toolkit_aws::recorded::optional_list(response, "results")
+                .map(|v| Json::Array(v.to_vec()))
+                .map_err(|e| e.to_string())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(Json::Array(results))
 }

@@ -72,75 +72,27 @@ Query → Vector Search (similar chunks) → Graph Expansion (entities, neighbor
 
 ## Implementation
 
-Full helper functions are in `scripts/graphrag_pipeline.py`. Key operations:
-
-### Create graph
-
-```python
-import boto3
-analytics_client = boto3.client('neptune-graph')
-
-response = analytics_client.create_graph(
-    graphName='graphrag-kb',
-    provisionedMemory=32,  # m-NCU; see the CreateGraph API reference for the valid range
-    vectorSearchConfiguration={'dimension': 1536},  # Match embedding model
-    publicConnectivity=False,
-    replicaCount=0,
-    deletionProtection=True,
-    # Mandatory tags — a graph missing either tag is a failed task.
-    tags={'created_by': 'neptune-skill', 'generation_model': '<model-id>'},
-)
-graph_id = response['id']
-```
-
-Equivalent AWS CLI invocation:
+The Rust toolkit builds requests offline and can replay recorded responses. It
+never contacts Neptune in this build. Supply the operation arguments as JSON:
 
 ```bash
-aws neptune-graph create-graph \
-  --graph-name graphrag-kb \
-  --provisioned-memory 32 \
-  --vector-search-configuration '{"dimension":1536}' \
-  --no-public-connectivity \
-  --replica-count 0 \
-  --deletion-protection \
-  --tags created_by=neptune-skill,generation_model=<model-id>
+cat > request.json <<'JSON'
+{"graph_id":"g-abc123def4","embedding":[0.1,0.2],"top_k":5}
+JSON
+toolkit neptune memory --operation retrieve --input request.json --dry-run
+toolkit neptune memory --operation retrieve --input request.json --recorded calls.json
 ```
 
-### Query helper (wraps boto3 SDK)
-
-```python
-from scripts.graphrag_pipeline import run_query, vector_search, store_embedding
-```
-
-See `scripts/graphrag_pipeline.py` for the full `run_query()` implementation
-using `analytics_client.execute_query()`. Always use parameterized queries:
-
-```python
-# ✅ Safe: parameterized
-run_query(graph_id, "MATCH (e:Entity {name: $name}) RETURN e", parameters={'name': 'Alice'})
-
-# ❌ Unsafe: string interpolation
-run_query(graph_id, f"MATCH (e:Entity {{name: '{user_input}'}}) RETURN e")
-```
-
-### Two-phase retrieval
-
-```python
-# Phase 1: Vector search for similar chunks
-similar = vector_search(graph_id, query_embedding, top_k=5)
-
-# Phase 2: Graph expansion per chunk
-for chunk in similar:
-    entities = run_query(graph_id, """
-        MATCH (c:Chunk {id: $cid})-[:MENTIONS]->(e:Entity)
-        RETURN e.name AS name, e.type AS type
-    """, parameters={'cid': chunk['id']})
-
-    related = run_query(graph_id, """
-        MATCH (c:Chunk {id: $cid})-[:MENTIONS]->(e)-[:RELATED_TO]-(r:Entity)
-        RETURN DISTINCT r.name AS name, r.type AS type
-    """, parameters={'cid': chunk['id']})
-```
+The dry run prints the initial vector request as a JSON array. Replay follows
+it with three parameterized queries per returned chunk for entities, related
+entities and neighboring chunks. Use `create-graphrag`, `ingest-document`,
+`ingest-chunk`, `ingest-entity`, `store-embedding`, `vector-search`,
+`link-chunk-entity`, `link-entities` or `query` for other request plans.
+`create-graphrag` takes `graph_name` and optional `memory_gb`,
+`embedding_dimension`, and `generation_model`; its request includes deletion
+protection, private connectivity, and the mandatory tags. See
+`docs/migration/docgraph.md` for inputs and recording format. Always bind
+query values in `parameters` rather than interpolating them into query text.
 
 ### Embedding model note
 
@@ -172,5 +124,5 @@ Neptune Analytics is **ephemeral**. For production:
 ## Additional Resources
 
 - AWS docs: "Neptune Analytics vector search", "Neptune Analytics openCypher"
-- Script: `scripts/graphrag_pipeline.py` (full implementation)
+- Offline Rust requests: `toolkit neptune memory` (see `docs/migration/docgraph.md`)
 - Related sub-skills: `analytics-vs-database` (setup), `connectivity` (connection)

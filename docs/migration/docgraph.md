@@ -201,7 +201,7 @@ database yet, so replacing the callers now would remove a working path.
 
 ## GraphRAG / agentic memory (#4886, item 1)
 
-The planned Rust surface is `docgraph::memory`, with `toolkit neptune memory
+The Rust surface is `docgraph::memory`, with `toolkit neptune memory
 --operation OP --input FILE [--dry-run | --recorded FILE]`. The input is a JSON
 object of operation arguments. Dry run prints a JSON array of ordered request
 objects; replay uses the `calls` format and strict ordered matching of the seed
@@ -223,3 +223,49 @@ Invalid chunk sizes or overlaps are rejected to avoid the original infinite
 loop; dynamic Gremlin property names are bound rather than interpolated.
 Live AWS, DynamoDB and Gremlin clients, driver selection and Python retirement
 are outside this item; the legacy helpers remain until the live follow-up.
+
+### Memory command inputs and recordings
+
+`--operation` and `--input` are required; the latter is a JSON object. Exactly
+one of `--dry-run` and `--recorded` is needed. Request arrays contain the AWS
+API arguments, Gremlin `gremlin`/`bindings`, or DynamoDB operation and arguments.
+`--recorded` accepts `{"calls":[{"request":{...},"response":{"results":[]}}]}`:
+requests are optional, matched in order ignoring object key order, including on
+error steps. Unused or exhausted calls and malformed typed members fail. A
+create response uses `{"id":"g-..."}`, a DynamoDB query response uses
+`{"Items":[...]}`, and query/Gremlin responses use `{"results":[...]}`.
+`retrieve` returns the expanded context array; `recent-messages` returns items
+in chronological order; `hybrid-recall` returns `graph_recall` and
+`semantic_recall`. Other requests return an array of result arrays, except graph
+creation returns its id. A missing `results` list is empty; a present null or
+non-list is invalid. Recorded errors are reported without service messages.
+
+| Operation | JSON inputs (optional inputs in parentheses) |
+| --- | --- |
+| `create-graphrag`, `create-memory` | `graph_name` (optional for memory), (`memory_gb`, `embedding_dimension`, `generation_model`) |
+| `query` | `graph_id`, `query`, (`parameters` object) |
+| `vector-search`, `retrieve`, `semantic-recall` | `graph_id`, `embedding`, (`top_k`) |
+| `ingest-document` | `graph_id`, `doc_id`, `title`, `source` |
+| `ingest-chunk` | `graph_id`, `chunk_id`, `doc_id`, `text`, `sequence`, `embedding`, (`prev_chunk_id`) |
+| `ingest-entity` | `graph_id`, `name`, `entity_type`, `description`, `embedding` |
+| `store-embedding` | `graph_id`, `vertex_id`, `embedding` |
+| `link-chunk-entity` | `graph_id`, `chunk_id`, `entity_name` |
+| `link-entities` | `graph_id`, `source`, `target`, `rel_type` |
+| `store-message` | `session_id`, `role`, `content`, `now_ms`, (`table`) |
+| `recent-messages` | `session_id`, (`limit`, `table`) |
+| `remember-entity` | `entity_name`, `entity_type`, (`properties` object) |
+| `remember-relationship` | `entity_a`, `entity_b`, `rel_type`, (`confidence`) |
+| `recall-entity` | `entity_name` |
+| `remember-embedding` | `graph_id`, `entity_name`, `description`, `embedding` |
+| `hybrid-recall` | `graph_id`, `entity_name`, `embedding` |
+| `consolidate` | `graph_id` |
+
+The public `docgraph::memory` module also provides `chunk_document`,
+`escape_cypher_string`, `entity_id`, request builders and a `MemoryClient`
+trait for injected clients. Escape preserves newlines as the source helper did;
+parameterized queries are preferred. `store-message` uses a single injected
+millisecond instant instead of two independent clock reads. Recorded DynamoDB
+requests include `operation` and `table` for deterministic matching. A dry run
+of `retrieve` prints the initial vector search only because later requests
+require response IDs; replay executes the expansions. The dry-run and replay
+commands cannot perform live writes or destructive consolidation.
