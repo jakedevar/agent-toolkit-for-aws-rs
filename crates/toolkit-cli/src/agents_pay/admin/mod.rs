@@ -278,6 +278,20 @@ impl AdminCommand {
             _ => return None,
         })
     }
+
+    /// The headless refusal of a creating route (D33, T-TTY): `None` for
+    /// the routes that create nothing. [`run_process`] prints it before it
+    /// builds any world, and each creating handler checks it again first.
+    #[must_use]
+    pub fn headless_refusal(self) -> Option<&'static str> {
+        match self {
+            Self::CreateInstrument => Some(create_instrument::HEADLESS),
+            Self::NewSession => Some(new_session::HEADLESS),
+            Self::SetupOpenclaw => Some(setup_openclaw::HEADLESS),
+            Self::SetupPaymentUser => Some(setup_payment_user::HEADLESS),
+            Self::InitConfig | Self::ShowConfig | Self::Preflight => None,
+        }
+    }
 }
 
 /// The process environment (`AGENTS_PAY_CONFIG`, `HOME`, `AWS_REGION`, the
@@ -432,6 +446,43 @@ pub fn run_with(
     }
 }
 
+/// A built admin world that lends its [`AdminDeps`]: the live process world
+/// (`live::AdminWorld`), or a test fixture.
+pub trait AdminWorldSource {
+    /// The injected world of the admin routes.
+    fn deps(&self) -> AdminDeps<'_>;
+}
+
+/// Run one admin route the way the live registry handlers do (#5475): a
+/// creating route checks `terminal` first and refuses headless before
+/// `build` runs, so no roots, runtime, transport, file, variable or
+/// argument is touched (design section 7, T-TTY, D33). Only then is the
+/// world built; a build failure prints its reason and exits 1.
+///
+/// # Errors
+/// What [`run_with`] returns.
+pub fn run_process<W: AdminWorldSource>(
+    command: AdminCommand,
+    invocation: &Invocation,
+    terminal: &dyn Terminal,
+    build: impl FnOnce() -> Result<W, super::deps::Unavailable>,
+    out: &mut Output<'_>,
+) -> Result<(), ToolkitError> {
+    if let Some(headless) = command.headless_refusal() {
+        if !terminal.is_tty() {
+            refuse(out, headless);
+            return Ok(());
+        }
+    }
+    match build() {
+        Ok(world) => run_with(command, invocation, &world.deps(), out),
+        Err(super::deps::Unavailable(reason)) => {
+            refuse(out, &reason);
+            Ok(())
+        }
+    }
+}
+
 // ---------------------------------------------------------------- live routes
 
 #[cfg(feature = "agents-pay-live")]
@@ -440,14 +491,13 @@ fn live_command(
     invocation: &Invocation,
     out: &mut Output<'_>,
 ) -> Result<(), ToolkitError> {
-    match super::live::AdminWorld::for_process() {
-        Ok(world) => run_with(command, invocation, &world.deps(), out),
-        Err(super::deps::Unavailable(reason)) => {
-            out.diagnostic(&reason);
-            out.set_exit_status(1);
-            Ok(())
-        }
-    }
+    run_process(
+        command,
+        invocation,
+        &super::live::LiveTerminal,
+        super::live::AdminWorld::for_process,
+        out,
+    )
 }
 
 #[cfg(feature = "agents-pay-live")]

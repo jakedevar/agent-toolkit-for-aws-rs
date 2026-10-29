@@ -245,7 +245,12 @@ them, never the agent. Code: `crates/toolkit-cli/src/agents_pay/admin/`.
 - **The creating gate (D28, D33).** `create-instrument`, `new-session`,
   `setup-openclaw` and `setup-payment-user` check the terminal first, before
   any argument, credential or service check; a headless caller always gets the
-  same refusal and exit 1. Then the arguments (D29), the STS check, the
+  same refusal and exit 1. The live registry handlers go through
+  `admin::run_process`, which makes that check before it builds the process
+  world (`live::AdminWorld::for_process`: roots, SDK runtime, transports), so
+  a headless caller gets the refusal even with broken trust roots (#5475;
+  pinned by the `t_tty_5475_*` tests with a counting world factory). Then the
+  arguments (D29), the STS check, the
   resolution and a summary (values through `shown_value`). The line typed at
   `Type 'approve' to continue: ` must be exactly `approve` (only the line
   terminator is removed: `approve ` with a trailing space aborts, which Python's

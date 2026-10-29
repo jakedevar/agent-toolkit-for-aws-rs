@@ -27,6 +27,9 @@ pub const USDC_DECIMALS: i32 = 6;
 /// The D28 abort text of the wizard and `new-session`.
 pub const ABORTED: &str = "Aborted. No session created.";
 
+/// The legacy headless refusal of the wizard.
+pub const HEADLESS: &str = "setup-openclaw requires an interactive terminal.";
+
 /// A human-entered positive decimal (legacy `parse_positive_decimal`).
 ///
 /// # Errors
@@ -591,7 +594,7 @@ pub(super) fn run(
     out: &mut Output<'_>,
 ) -> Result<(), ToolkitError> {
     if !deps.terminal.is_tty() {
-        refuse(out, "setup-openclaw requires an interactive terminal.");
+        refuse(out, HEADLESS);
         return Ok(());
     }
     let project = invocation

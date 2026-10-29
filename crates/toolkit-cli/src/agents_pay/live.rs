@@ -290,8 +290,9 @@ impl super::admin::AdminFs for LiveAdminFs {
     }
 }
 
-/// The controlling terminal on stdin.
-struct LiveTerminal;
+/// The controlling terminal on stdin: the admin routes' TTY gate (#5475)
+/// and their prompts.
+pub struct LiveTerminal;
 
 impl super::admin::Terminal for LiveTerminal {
     fn is_tty(&self) -> bool {
@@ -385,7 +386,8 @@ pub struct AdminWorld {
 }
 
 impl AdminWorld {
-    /// Build the live admin world.
+    /// Build the live admin world. `admin::run_process` calls it only after
+    /// a creating route's TTY gate (#5475).
     ///
     /// # Errors
     /// [`Unavailable`] with the fixed R-ROOTS text, or a generic text when
@@ -403,10 +405,10 @@ impl AdminWorld {
             provider,
         })
     }
+}
 
-    /// The injected world of the admin routes.
-    #[must_use]
-    pub fn deps(&self) -> super::admin::AdminDeps<'_> {
+impl super::admin::AdminWorldSource for AdminWorld {
+    fn deps(&self) -> super::admin::AdminDeps<'_> {
         super::admin::AdminDeps {
             env: &LiveAdminEnv,
             fs: &LiveAdminFs,

@@ -1121,7 +1121,9 @@ fn run_process<W: admin::AdminWorldSource>(
 
 /// A process-world factory that counts its calls and fails like broken
 /// trust roots.
-fn failing_factory(built: &Cell<usize>) -> impl FnOnce() -> Result<&'static World, Unavailable> + '_ {
+fn failing_factory(
+    built: &Cell<usize>,
+) -> impl FnOnce() -> Result<&'static World, Unavailable> + '_ {
     move || {
         built.set(built.get() + 1);
         Err(Unavailable(ROOTS_FAILURE.to_owned()))
@@ -1143,7 +1145,13 @@ fn t_tty_5475_headless_creating_routes_never_build_the_process_world() {
         (&["agents-pay", "admin", "create-instrument"], instrument),
         (&["agents-pay", "admin", "setup-openclaw"], wizard),
         (
-            &["agents-pay", "admin", "setup-openclaw", "--project-dir", "/nonexistent"],
+            &[
+                "agents-pay",
+                "admin",
+                "setup-openclaw",
+                "--project-dir",
+                "/nonexistent",
+            ],
             wizard,
         ),
         (SETUP_PAYMENT_USER, payment_user),
