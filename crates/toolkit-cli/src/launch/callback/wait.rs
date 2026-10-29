@@ -5,6 +5,7 @@ use toolkit_core::ToolkitError;
 /// Wait without signalling a PID: only lock custody can establish finality.
 #[allow(clippy::unnecessary_wraps)]
 pub fn command(invocation: &Invocation, output: &mut Output<'_>) -> Result<(), ToolkitError> {
+    crate::launch::sink::guard(output);
     #[cfg(unix)]
     {
         use super::{
@@ -86,8 +87,12 @@ pub(super) fn report_authenticated(
     output: &mut Output<'_>,
     base: &str,
 ) -> (Option<Result<(), ToolkitError>>, bool) {
-    let result = output.line(&serde_json::json!({"authenticated":true,"baseUrl":base}).to_string());
-    let delivered = result.is_ok() && !output.is_closed();
+    let (result, delivered) = output.line_delivered(&crate::launch::text::ok_text(
+        &toolkit_core::Json::object(vec![
+            ("authenticated", toolkit_core::Json::Bool(true)),
+            ("baseUrl", toolkit_core::Json::string(base)),
+        ]),
+    ));
     (Some(result), delivered)
 }
 
@@ -96,21 +101,13 @@ pub(super) fn report_failure(
     output: &mut Output<'_>,
     message: &str,
 ) -> (Option<Result<(), ToolkitError>>, bool) {
-    let text = serde_json::json!({"error":message}).to_string();
-    let text = output.caller.diagnostic(&text);
-    let delivered = output.diagnostics.as_mut().is_some_and(|writer| {
-        writer
-            .write_all(text.as_bytes())
-            .and_then(|()| writer.write_all(b"\n"))
-            .is_ok()
-    });
+    let delivered = output.diagnostic_delivered(&crate::launch::text::error_text(message));
     output.set_exit_status(1);
     (Some(Ok(())), delivered)
 }
 
 #[allow(clippy::unnecessary_wraps)]
 pub(super) fn failure(output: &mut Output<'_>, message: &str) -> Result<(), ToolkitError> {
-    output.diagnostic(&serde_json::json!({"error":message}).to_string());
-    output.set_exit_status(1);
+    crate::launch::text::fail(output, message);
     Ok(())
 }

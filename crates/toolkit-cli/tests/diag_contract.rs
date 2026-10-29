@@ -2231,7 +2231,7 @@ fn filesystem_bearing_consumers() -> BTreeSet<(String, String)> {
 /// file name or a directory name. A file that is not about a listed command
 /// (`elasticache`, `relational`, `ai-data`, `cloudwatch region`) is
 /// there for the flag name only.
-const AUDITED_FILESYSTEM_CONSUMERS: [(&str, &str); 28] = [
+const AUDITED_FILESYSTEM_CONSUMERS: [(&str, &str); 29] = [
     ("startup/model_path.rs", "--workload"),
     ("bedrock_agent.rs", "--agent-id"),
     ("bedrock_agent.rs", "--agent-version"),
@@ -2261,6 +2261,9 @@ const AUDITED_FILESYSTEM_CONSUMERS: [(&str, &str); 28] = [
     // Launch validates --region as a region key, never as a path (#5216).
     ("launch/callback/start.rs", "--region"),
     ("launch/callback/wait.rs", "--region"),
+    // L5 (#5345): the API commands pass --region to resolve_region and the
+    // list-launches region selection only, never to a path.
+    ("launch/commands.rs", "--region"),
     ("launch/snapshot.rs", "--region"),
     // Flag name only (#5462): no agents-pay admin or agents-build command has a
     // LITERAL_DASH entry; --region is an endpoint key and a config value.
@@ -2425,18 +2428,19 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
 /// dynamodb-bench (#4390), elasticache-tunnel (#4393), marketplace (#4396) and
 /// telemetry (#4398), then mcp-proxy (#5079) and ai-payloads (#5143).
 /// The S2b render synopsis is included as well (#5223), the launch
-/// `download-snapshot` and `apply-snapshot` routes (#5317), and the agents-pay
-/// fetch route (#5352), and the agents-pay admin and agents-build
-/// setup-payment-user routes (#5462).
+/// `download-snapshot` and `apply-snapshot` routes (#5317), the L5 API and
+/// offline launch routes (#5345), the agents-pay fetch route (#5352), and the
+/// agents-pay admin and agents-build setup-payment-user routes (#5462).
 /// A deliberate usage change updates the pin in the same
 /// commit and says so in the Issue; an incidental one fails here.
 // Neptune memory (#4886) deliberately adds its synopsis and description, and
 // the launch snapshot routes (#5317) theirs.
 // `documentdb normalize-capture` (#5327) deliberately adds its synopsis and description.
+// The L5 launch routes (#5345) add theirs.
 // `agents-pay fetch` (#5352) deliberately adds its synopsis and description.
 // The x402 S6 admin routes (#5462) deliberately add their synopses and descriptions.
-const USAGE_BASE_LEN: usize = 48424;
-const USAGE_BASE_FNV1A64: u64 = 0xded2_79c3_c049_e89d;
+const USAGE_BASE_LEN: usize = 49451;
+const USAGE_BASE_FNV1A64: u64 = 0x1e6a_60bd_cefc_66a3;
 
 #[test]
 fn the_global_usage_text_is_byte_identical_to_the_base() {
