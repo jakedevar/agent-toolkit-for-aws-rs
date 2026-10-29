@@ -150,6 +150,15 @@ mod tests {
     use std::time::Duration;
 
     #[test]
+    fn watchdog_attempts_timeout_record_once_before_failure_exit() {
+        let gate = CommitGate::default();
+        let calls = std::cell::RefCell::new(Vec::new());
+        // Stub until the watchdog exposes its record and exit boundaries.
+        let _ = gate.watchdog();
+        assert_eq!(*calls.borrow_mut(), vec!["record", "exit:1"]);
+    }
+
+    #[test]
     fn cutoff_and_watchdog_close_admission() {
         let cutoff = Instant::now() + Duration::from_secs(1);
         let gate = CommitGate::default();
