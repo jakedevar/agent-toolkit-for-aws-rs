@@ -300,3 +300,13 @@ pub(super) fn check_command(inv: &Invocation, out: &mut Output<'_>) -> Result<()
         samples.len()
     ))
 }
+
+#[cfg(test)]
+mod number_tests {
+    use super::*;
+
+    #[test]
+    fn rejects_infinite_float() {
+        assert!(!number(Some(&Json::Float(f64::INFINITY))));
+    }
+}
