@@ -11,6 +11,7 @@
 #[cfg(feature = "agents-pay-live")]
 compile_error!("agents-pay-live is never built for tests (AC3)");
 
+use std::cell::Cell;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -25,6 +26,7 @@ use toolkit_cli::agents_pay::admin::setup_openclaw::{
 };
 use toolkit_cli::agents_pay::admin::{preflight::leaked_names, write, AdminCommand, AdminDeps};
 use toolkit_cli::agents_pay::agentcore::{AdminCall, FakePaymentsApi, PaymentError};
+use toolkit_cli::agents_pay::deps::Unavailable;
 use toolkit_cli::{route, Output, Routed, COMMANDS};
 use toolkit_core::{parse_json, Json};
 
@@ -1067,6 +1069,140 @@ fn t_tty_setup_openclaw_checks_the_terminal_first() {
     );
     assert_eq!(world.admin.calls(), 0);
     assert_eq!(world.terminal.reads(), 0);
+}
+
+// ------------------------- #5475: TTY first, before the process world
+
+/// The roots failure a broken process world reports (a nonexistent
+/// `SSL_CERT_FILE`, say): a headless creating route must never reach it.
+const ROOTS_FAILURE: &str = "fixture roots failure: SSL_CERT_FILE does not exist";
+
+impl admin::AdminWorldSource for &World {
+    fn deps(&self) -> AdminDeps<'_> {
+        World::deps(self)
+    }
+}
+
+/// Route `argv` and run it through the process wrapper the live registry
+/// handlers use: `terminal` gates it, and `factory` stands for the process
+/// world (`AdminWorld::for_process` in a live build).
+fn run_process<W: admin::AdminWorldSource>(
+    terminal: &FakeTerminal,
+    argv: &[&str],
+    factory: impl FnOnce() -> Result<W, Unavailable>,
+) -> Ran {
+    let words: Vec<String> = argv.iter().map(|s| (*s).to_owned()).collect();
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let code = match route(COMMANDS, &words) {
+        Ok(Routed::Run(spec, invocation)) => {
+            let command = AdminCommand::from_path(spec.path).expect("an admin route");
+            let mut output = Output::with_diagnostics(&mut out, &mut err);
+            match admin::run_process(command, &invocation, terminal, factory, &mut output) {
+                Ok(()) => output.exit_status(),
+                Err(error) => {
+                    drop(output);
+                    err.extend_from_slice(error.message().as_bytes());
+                    error.exit_code()
+                }
+            }
+        }
+        Ok(_) => panic!("not a command: {argv:?}"),
+        Err(error) => {
+            err.extend_from_slice(error.message().as_bytes());
+            error.exit_code()
+        }
+    };
+    Ran {
+        code,
+        stdout: String::from_utf8(out).unwrap(),
+        stderr: String::from_utf8(err).unwrap(),
+    }
+}
+
+/// A process-world factory that counts its calls and fails like broken
+/// trust roots.
+fn failing_factory(built: &Cell<usize>) -> impl FnOnce() -> Result<&'static World, Unavailable> + '_ {
+    move || {
+        built.set(built.get() + 1);
+        Err(Unavailable(ROOTS_FAILURE.to_owned()))
+    }
+}
+
+#[test]
+fn t_tty_5475_headless_creating_routes_never_build_the_process_world() {
+    let new_session = "Refusing to create a payment session without an interactive terminal.\nSession creation requires a human typing 'approve' at a TTY. There is no\nnon-interactive mode: that would let an automated caller mint spending budget.\n";
+    let instrument =
+        "create-instrument must be run by a human at a terminal; it creates a wallet user.\n";
+    let wizard = "setup-openclaw requires an interactive terminal.\n";
+    let payment_user =
+        "setup-payment-user must be run by a human at a terminal; it creates a wallet user.\n";
+    let cases: [(&[&str], &str); 8] = [
+        (NEW_SESSION, new_session),
+        (&["agents-pay", "admin", "new-session"], new_session),
+        (CREATE_INSTRUMENT, instrument),
+        (&["agents-pay", "admin", "create-instrument"], instrument),
+        (&["agents-pay", "admin", "setup-openclaw"], wizard),
+        (
+            &["agents-pay", "admin", "setup-openclaw", "--project-dir", "/nonexistent"],
+            wizard,
+        ),
+        (SETUP_PAYMENT_USER, payment_user),
+        (&["agents-build", "setup-payment-user"], payment_user),
+    ];
+    for (argv, refusal) in cases {
+        let terminal = FakeTerminal::headless();
+        let built = Cell::new(0);
+        let ran = run_process(&terminal, argv, failing_factory(&built));
+        assert_eq!(built.get(), 0, "the process world was built: {argv:?}");
+        assert_eq!(ran.code, 1, "{argv:?}");
+        assert_eq!(ran.stderr, refusal, "{argv:?}");
+        assert!(ran.stdout.is_empty(), "{argv:?}");
+        assert_eq!(terminal.reads(), 0, "{argv:?}");
+    }
+}
+
+#[test]
+fn t_tty_5475_a_terminal_creating_route_reports_the_world_failure() {
+    for argv in [NEW_SESSION, CREATE_INSTRUMENT, SETUP_PAYMENT_USER] {
+        let terminal = FakeTerminal::tty(&["approve"]);
+        let built = Cell::new(0);
+        let ran = run_process(&terminal, argv, failing_factory(&built));
+        assert_eq!(built.get(), 1, "{argv:?}");
+        assert_eq!(ran.code, 1, "{argv:?}");
+        assert_eq!(ran.stderr, format!("{ROOTS_FAILURE}\n"), "{argv:?}");
+        assert!(ran.stdout.is_empty(), "{argv:?}");
+        assert_eq!(terminal.reads(), 0, "{argv:?}");
+    }
+}
+
+#[test]
+fn t_tty_5475_read_only_routes_need_no_terminal() {
+    for argv in [
+        &["agents-pay", "admin", "show-config"][..],
+        &["agents-pay", "admin", "preflight"][..],
+    ] {
+        let terminal = FakeTerminal::headless();
+        let built = Cell::new(0);
+        let ran = run_process(&terminal, argv, failing_factory(&built));
+        assert_eq!(built.get(), 1, "{argv:?}");
+        assert_eq!(ran.code, 1, "{argv:?}");
+        assert_eq!(ran.stderr, format!("{ROOTS_FAILURE}\n"), "{argv:?}");
+    }
+}
+
+#[test]
+fn t_tty_5475_the_wrapper_runs_the_route_over_the_built_world() {
+    let world = World::new("process-approve", FakeTerminal::tty(&["approve"]));
+    let built = Cell::new(0);
+    let ran = run_process(&world.terminal, NEW_SESSION, || {
+        built.set(built.get() + 1);
+        Ok::<_, Unavailable>(&world)
+    });
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    assert_eq!(built.get(), 1);
+    assert_eq!(world.sessions(), 1);
+    assert_eq!(world.terminal.reads(), 1);
+    assert!(world.fs.refused().is_empty(), "{:?}", world.fs.refused());
 }
 
 // ------------------------------------------------------------- T-VAL (D29)
