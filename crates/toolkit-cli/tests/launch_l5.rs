@@ -287,22 +287,78 @@ fn t_tok_sign_in_and_helper_matrix() {
     std::fs::remove_dir_all(home).unwrap();
 }
 
-/// #5406: with a stored session, a caller or configuration value equal to one
-/// of its secrets is never echoed by any launch route's early refusal
-/// (region, region environment, base-URL override, repository URL), the
-/// route makes no refresh (the session record is unchanged) and starts no
-/// sign-in (no other state file appears). Assertions never print the
-/// inspected text.
+/// The stored session secrets of the #5406 matrix.
 #[cfg(unix)]
-#[test]
-fn t_tok_early_refusals_with_a_stored_session_never_echo_its_secrets() {
-    const SECRETS: [&str; 3] = [
-        "FAKE-ACCESS-TOKEN-0001",
-        "FAKE-REFRESH-TOKEN-0001",
-        "FAKE-CLIENT-SECRET-0001",
+const EARLY_SECRETS: [&str; 3] = [
+    "FAKE-ACCESS-TOKEN-0001",
+    "FAKE-REFRESH-TOKEN-0001",
+    "FAKE-CLIENT-SECRET-0001",
+];
+
+/// One early refusal: label, arguments and extra environment.
+#[cfg(unix)]
+struct EarlyCase {
+    label: &'static str,
+    args: Vec<String>,
+    env: Vec<(&'static str, String)>,
+}
+
+/// Every early refusal that echoes a caller or configuration value, with
+/// `secret` as that value.
+#[cfg(unix)]
+fn early_route_cases(secret: &str) -> Vec<EarlyCase> {
+    let owned = |args: &[&str]| args.iter().map(|a| (*a).to_owned()).collect::<Vec<_>>();
+    let no_host = format!("https:///{secret}");
+    #[cfg_attr(not(feature = "aws-sdk"), allow(unused_mut))]
+    let mut routes: Vec<&[&str]> = vec![
+        &["launch", "resolve-region"],
+        &["launch", "auth-start"],
+        &["launch", "auth-wait", "4242"],
+        &["launch", "download-snapshot", "l-1"],
     ];
-    const GENERIC: &str =
-        "{\"error\": \"The operation failed. Re-run with logging enabled for details.\"}\n";
+    #[cfg(feature = "aws-sdk")]
+    routes.extend([
+        &["launch", "get-launch", "l-1"][..],
+        &["launch", "list-launches"],
+        &["launch", "create-launch", "."],
+    ]);
+    let mut cases = Vec::new();
+    for route in routes {
+        let mut explicit = owned(route);
+        explicit.extend(["--region".to_owned(), secret.to_owned()]);
+        cases.push(EarlyCase {
+            label: "explicit region",
+            args: explicit,
+            env: vec![],
+        });
+        cases.push(EarlyCase {
+            label: "region environment",
+            args: owned(route),
+            env: vec![("LAUNCH_WITH_AWS_REGION", secret.to_owned())],
+        });
+        cases.push(EarlyCase {
+            label: "base URL override",
+            args: owned(route),
+            env: vec![("LAUNCH_WITH_AWS_BASE_URL", no_host.clone())],
+        });
+    }
+    cases.push(EarlyCase {
+        label: "repository URL",
+        args: owned(&[
+            "launch",
+            "create-launch",
+            &format!("https://github.com/o/{secret}"),
+        ]),
+        env: vec![],
+    });
+    cases
+}
+
+/// A fresh `$HOME` whose state directory holds a session with an expired
+/// access token and a live client (any token work would refresh); returns
+/// (home, state dir, session record).
+#[cfg(unix)]
+fn early_home() -> (std::path::PathBuf, std::path::PathBuf, String) {
     let home = std::env::temp_dir().join(format!(
         "launch-l5-early-{}-{}",
         std::process::id(),
@@ -317,17 +373,32 @@ fn t_tok_early_refusals_with_a_stored_session_never_echo_its_secrets() {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_secs();
-    // An expired access token with a live client: any token work would refresh.
     let session = format!(
         "{{\"client_id\":\"client\",\"client_secret\":\"{}\",\"client_expires_at\":{},\"authorize_endpoint\":\"https://oidc.us-east-1.amazonaws.com/authorize\",\"token_endpoint\":\"https://oidc.us-east-1.amazonaws.com/token\",\"scopes\":[\"launch:access\"],\"access_token\":\"{}\",\"refresh_token\":\"{}\",\"token_expires_at\":{}}}",
-        SECRETS[2],
+        EARLY_SECRETS[2],
         now + 3600,
-        SECRETS[0],
-        SECRETS[1],
+        EARLY_SECRETS[0],
+        EARLY_SECRETS[1],
         now - 1
     );
+    std::fs::write(state_dir.join("session.json"), &session).unwrap();
+    (home, state_dir, session)
+}
+
+/// #5406: with a stored session, a caller or configuration value equal to one
+/// of its secrets is never echoed by any launch route's early refusal
+/// (region, region environment, base-URL override, repository URL), the
+/// route makes no refresh (the session record is unchanged) and starts no
+/// sign-in (no other state file appears). Assertions never print the
+/// inspected text; every leaking case is named (route, label, secret index),
+/// so a red run shows the whole matrix.
+#[cfg(unix)]
+#[test]
+fn t_tok_early_refusals_with_a_stored_session_never_echo_its_secrets() {
+    const GENERIC: &str =
+        "{\"error\": \"The operation failed. Re-run with logging enabled for details.\"}\n";
+    let (home, state_dir, session) = early_home();
     let session_path = state_dir.join("session.json");
-    std::fs::write(&session_path, &session).unwrap();
     let listing = || {
         let mut names: Vec<_> = std::fs::read_dir(&state_dir)
             .unwrap()
@@ -337,76 +408,28 @@ fn t_tok_early_refusals_with_a_stored_session_never_echo_its_secrets() {
         names
     };
     let before = listing();
-    let run = |args: &[&str], env: &[(&str, &str)]| {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_toolkit"));
-        command
-            .args(args)
-            .env("HOME", &home)
-            .env_remove("LAUNCH_WITH_AWS_REGION")
-            .env_remove("LAUNCH_WITH_AWS_BASE_URL")
-            .env_remove("AWS_REGION")
-            .env_remove("AWS_DEFAULT_REGION")
-            .env_remove("AWS_PROFILE");
-        for (name, value) in env {
-            command.env(name, value);
-        }
-        command.output().unwrap()
-    };
-    // Every leaking case is named (route, label, secret index; never the
-    // text), so a red run shows the whole matrix.
     let mut leaked = Vec::new();
-    for (number, secret) in SECRETS.into_iter().enumerate() {
-        let no_host = format!("https:///{secret}");
-        let repository = format!("https://github.com/o/{secret}");
-        let mut cases: Vec<(&str, Vec<&str>, Vec<(&str, &str)>)> = Vec::new();
-        for route in [
-            &["launch", "resolve-region"][..],
-            &["launch", "auth-start"],
-            &["launch", "auth-wait", "4242"],
-            &["launch", "download-snapshot", "l-1"],
-        ] {
-            let mut explicit = route.to_vec();
-            explicit.extend(["--region", secret]);
-            cases.push(("explicit region", explicit, vec![]));
-            cases.push((
-                "region environment",
-                route.to_vec(),
-                vec![("LAUNCH_WITH_AWS_REGION", secret)],
-            ));
-            cases.push((
-                "base URL override",
-                route.to_vec(),
-                vec![("LAUNCH_WITH_AWS_BASE_URL", no_host.as_str())],
-            ));
-        }
-        cases.push((
-            "repository URL",
-            vec!["launch", "create-launch", repository.as_str()],
-            vec![],
-        ));
-        #[cfg(feature = "aws-sdk")]
-        for route in [
-            &["launch", "get-launch", "l-1"][..],
-            &["launch", "list-launches"],
-            &["launch", "create-launch", "."],
-        ] {
-            let mut explicit = route.to_vec();
-            explicit.extend(["--region", secret]);
-            cases.push(("explicit region", explicit, vec![]));
-            cases.push((
-                "base URL override",
-                route.to_vec(),
-                vec![("LAUNCH_WITH_AWS_BASE_URL", no_host.as_str())],
-            ));
-        }
-        for (label, args, env) in &cases {
-            let output = run(args, env);
-            let route = args[1];
+    for (number, secret) in EARLY_SECRETS.into_iter().enumerate() {
+        for case in early_route_cases(secret) {
+            let mut command = Command::new(env!("CARGO_BIN_EXE_toolkit"));
+            command
+                .args(&case.args)
+                .env("HOME", &home)
+                .env_remove("LAUNCH_WITH_AWS_REGION")
+                .env_remove("LAUNCH_WITH_AWS_BASE_URL")
+                .env_remove("AWS_REGION")
+                .env_remove("AWS_DEFAULT_REGION")
+                .env_remove("AWS_PROFILE");
+            for (name, value) in &case.env {
+                command.env(name, value);
+            }
+            let output = command.output().unwrap();
+            let (route, label) = (&case.args[1], case.label);
             let shown = [&output.stdout, &output.stderr]
                 .map(|text| String::from_utf8_lossy(text).into_owned());
             if shown
                 .iter()
-                .any(|text| SECRETS.iter().any(|s| text.contains(s)))
+                .any(|text| EARLY_SECRETS.iter().any(|s| text.contains(s)))
             {
                 leaked.push(format!("{route} {label} (secret #{number})"));
                 continue;
