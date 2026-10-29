@@ -692,3 +692,5 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 10-29 05:13Z: #5188 (8db9afe2, Sonnet) ACCEPT #5080 repair at 069ab1b33896681fea3ad366e98412bce50a1ab8, no findings. #5080 READY: ENQUEUE 069ab1b ONLY AFTER r22 (8dbb1e36) PUBLISHES (it contains r22; do not let its gate carry r22). On landing close #5080 #5169 #5188 #5172 #5173 #5174.
   #4382 L3 OIDC/token = #5190 -> Codex terra 3b996393 (base 069ab1b, carry #5082). Review later: Claude Sonnet.
   4/4 busy: be4f9592 (#5181), a5b5b4a6 (#5166 repair 1), af33839b (#5187), 3b996393 (#5190).
+- 10-29 05:16Z: #5187 (af33839b, Sonnet) CHANGES_REQUESTED on ai-payloads S1 repair 5112657: #5171 ACCEPTED; new P2 #5189 (is_sentinel boundary allow-list regresses assignment/return/assert/ternary/comprehension sentinel contexts). RULING: invert to a deny-list (sentinel unless the far neighbour extends the expression: arithmetic/bitwise op, `.`, `[`, `(`, implicit string concat). Repair 2 -> Codex terra fb278451 (continue_from 191d9d7a). Then narrow r3 (Sonnet) on #5189 only.
+  4/4 busy: be4f9592 (#5181), a5b5b4a6 (#5166 repair 1), 3b996393 (#5190), fb278451 (#5143 repair 2).
