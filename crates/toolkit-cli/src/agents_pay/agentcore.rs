@@ -430,6 +430,26 @@ pub struct PaymentClient<'a> {
     transport: &'a dyn toolkit_aws::StreamingTransport,
     signer: &'a dyn toolkit_aws::Signer,
     region: String,
+    clock: &'a dyn PaymentClock,
+}
+
+#[cfg(test)]
+trait PaymentClock {
+    fn now(&self) -> std::time::Instant;
+    fn sleep(&self, duration: std::time::Duration);
+}
+
+#[cfg(test)]
+struct SystemPaymentClock;
+
+#[cfg(test)]
+impl PaymentClock for SystemPaymentClock {
+    fn now(&self) -> std::time::Instant {
+        std::time::Instant::now()
+    }
+    fn sleep(&self, duration: std::time::Duration) {
+        std::thread::sleep(duration);
+    }
 }
 
 /// A sensitive authorization returned by the service; it has not yet been
@@ -470,6 +490,7 @@ impl<'a> PaymentClient<'a> {
             transport,
             signer,
             region: region.to_owned(),
+            clock: &SystemPaymentClock,
         })
     }
 
@@ -479,12 +500,12 @@ impl<'a> PaymentClient<'a> {
     /// Refuses invalid responses and transport or service failures.
     #[allow(clippy::too_many_lines, clippy::needless_pass_by_value)] // Test prototype; consuming Approved is a security boundary.
     pub fn process_payment(&self, approved: Approved) -> Result<PaymentProof, PaymentError> {
-        use std::time::{Duration, Instant};
+        use std::time::Duration;
         use toolkit_aws::{
             FullJitter, Headers, HttpRequest, Method, RetryPolicy, SigningScope, StreamLimits,
             Timeouts,
         };
-        let deadline = Instant::now() + Duration::from_secs(60);
+        let deadline = self.clock.now() + Duration::from_secs(60);
         let body = process_body(&approved).into_bytes();
         let mut headers = Headers::new();
         headers
@@ -505,7 +526,7 @@ impl<'a> PaymentClient<'a> {
         let policy = RetryPolicy::default();
         let jitter = FullJitter::new();
         for attempt in 1..=policy.total_attempts() {
-            let remaining = deadline.saturating_duration_since(Instant::now());
+            let remaining = deadline.saturating_duration_since(self.clock.now());
             if remaining.is_zero() {
                 return Err(PaymentError::Transport);
             }
@@ -529,7 +550,7 @@ impl<'a> PaymentClient<'a> {
                     },
                 )
                 .map_err(|_| PaymentError::Transport)?;
-            if Instant::now() >= deadline {
+            if self.clock.now() >= deadline {
                 return Err(PaymentError::Transport);
             }
             let limits = StreamLimits::new(65_536, 8_192)
@@ -563,7 +584,7 @@ impl<'a> PaymentClient<'a> {
                     };
                     let mut bytes = Vec::new();
                     loop {
-                        if Instant::now() >= deadline {
+                        if self.clock.now() >= deadline {
                             return Err(PaymentError::Transport);
                         }
                         match stream.next_chunk() {
@@ -616,10 +637,10 @@ impl<'a> PaymentClient<'a> {
                 return Err(error);
             }
             let delay = policy.delay(attempt, &jitter);
-            if delay >= deadline.saturating_duration_since(Instant::now()) {
+            if delay >= deadline.saturating_duration_since(self.clock.now()) {
                 return Err(error);
             }
-            std::thread::sleep(delay);
+            self.clock.sleep(delay);
         }
         Err(PaymentError::Transport)
     }
@@ -628,10 +649,40 @@ impl<'a> PaymentClient<'a> {
 #[cfg(test)]
 mod wire_contracts {
     use super::*;
+    use std::cell::Cell;
+    use std::time::{Duration, Instant};
     use toolkit_aws::{
         testing::{FakeChunk, FakeStreamingTransport},
         NoSigner,
     };
+
+    struct FakeClock(Cell<Instant>);
+    impl PaymentClock for FakeClock {
+        fn now(&self) -> Instant {
+            self.0.get()
+        }
+        fn sleep(&self, duration: Duration) {
+            self.0.set(self.0.get() + duration);
+        }
+    }
+
+    #[test]
+    fn deadline_timeout_never_retries() {
+        let transport = FakeStreamingTransport::new()
+            .open_error(AwsError::timeout(
+                toolkit_aws::TimeoutPhase::Deadline,
+                "expired",
+            ))
+            .respond(200, &[], vec![]);
+        let clock = FakeClock(Cell::new(Instant::now()));
+        let mut client = PaymentClient::new("us-east-1", &transport, &NoSigner).unwrap();
+        client.clock = &clock;
+        assert_eq!(
+            client.process_payment(super::operation_contracts::approved()),
+            Err(PaymentError::Transport)
+        );
+        assert_eq!(transport.requests().len(), 1);
+    }
 
     #[test]
     fn declared_oversize_is_refused_before_pulling() {
