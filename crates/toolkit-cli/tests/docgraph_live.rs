@@ -19,6 +19,25 @@ fn run(args: &[&str]) -> (i32, String, String) {
 }
 
 #[test]
+fn environment_cannot_select_live_mode() {
+    for args in [
+        &["neptune", "seed", "--dry-run", "--confirm-wipe"][..],
+        &["neptune", "memory", "--operation", "retrieve"][..],
+        &["documentdb", "wa-review"][..],
+    ] {
+        let clean = Command::new(env!("CARGO_BIN_EXE_toolkit"))
+            .env_clear()
+            .args(args)
+            .output()
+            .unwrap();
+        let (status, stdout, stderr) = run(args);
+        assert_eq!(Some(status), clean.status.code());
+        assert_eq!(stdout.as_bytes(), clean.stdout);
+        assert_eq!(stderr.as_bytes(), clean.stderr);
+    }
+}
+
+#[test]
 #[cfg(feature = "docgraph-live")]
 fn live_wipe_ignores_ambient_confirmation() {
     let (status, stdout, stderr) = run(&[
@@ -70,6 +89,44 @@ fn live_consent_precedes_input_files_and_only_argv_counts() {
     ]);
     assert_eq!(status, 1);
     assert!(stderr.contains("--confirm-delete"));
+}
+
+#[test]
+#[cfg(feature = "docgraph-live")]
+fn live_memory_requires_consent_for_every_mutating_operation() {
+    for (operation, flag) in [
+        ("query", "--confirm-write"),
+        ("consolidate", "--confirm-delete"),
+        ("create-graphrag", "--confirm-create"),
+        ("create-memory", "--confirm-create"),
+        ("remember-relationship", "--confirm-write"),
+        ("remember-entity", "--confirm-write"),
+        ("store-message", "--confirm-write"),
+        ("ingest-document", "--confirm-write"),
+        ("store-embedding", "--confirm-write"),
+        ("link-chunk-entity", "--confirm-write"),
+        ("link-entities", "--confirm-write"),
+        ("remember-embedding", "--confirm-write"),
+        ("ingest-entity", "--confirm-write"),
+        ("ingest-chunk", "--confirm-write"),
+    ] {
+        let (status, stdout, stderr) = run(&[
+            "neptune",
+            "memory",
+            "--live",
+            "--operation",
+            operation,
+            "--input",
+            "/does/not/exist",
+            "--network-policy",
+            "/also/does/not/exist",
+        ]);
+        assert_eq!(status, 1, "{operation}: {stderr}");
+        assert!(stdout.is_empty(), "{operation}: {stdout}");
+        assert!(stderr.contains(flag), "{operation}: {stderr}");
+        assert!(!stderr.contains("/does/not/exist"));
+        assert!(!stderr.contains("/also/does/not/exist"));
+    }
 }
 
 #[test]

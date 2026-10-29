@@ -22,6 +22,7 @@
 
 use std::fmt;
 use std::sync::{Mutex, PoisonError};
+use std::time::SystemTime;
 
 use aws_config::default_provider::credentials::DefaultCredentialsChain;
 use aws_config::ecs::EcsCredentialsProvider;
@@ -420,6 +421,59 @@ impl GuardedCredentials {
                 RequestCredentials::Refused(CredentialRefusal::ProviderFailed)
             }
         }
+    }
+
+    /// Resolve credentials for a request that must be signed. Expired
+    /// credentials trigger one rebuild before the request is admitted; an
+    /// absent or failing source never becomes an unsigned request.
+    ///
+    /// This method does not impose a deadline on provider work. Callers must
+    /// supply a cancellable outer boundary before using it for live traffic.
+    ///
+    /// # Errors
+    /// A fixed credential class when resolution or refresh fails.
+    pub fn resolve_required(&self) -> Result<Credentials, AwsError> {
+        required_credentials(SystemTime::now, |rebuild| self.resolve(false, rebuild))
+    }
+}
+
+fn required_credentials(
+    mut now: impl FnMut() -> SystemTime,
+    mut resolve: impl FnMut(bool) -> RequestCredentials,
+) -> Result<Credentials, AwsError> {
+    let mut result = resolve(false);
+    if matches!(&result, RequestCredentials::Sign(credentials) if credentials.is_expired_at(now()))
+    {
+        result = resolve(true);
+    }
+    match result {
+        RequestCredentials::Sign(credentials) if !credentials.is_expired_at(now()) => {
+            Ok(credentials)
+        }
+        RequestCredentials::Sign(_) => Err(AwsError::CredentialsExpired),
+        RequestCredentials::Unsigned
+        | RequestCredentials::Refused(
+            CredentialRefusal::NoCredentials | CredentialRefusal::SignedSessionLostCredentials,
+        ) => Err(AwsError::NoCredentials),
+        RequestCredentials::Refused(CredentialRefusal::InvalidConfiguration(_)) => Err(
+            AwsError::invalid_config("credentials", "invalid credential configuration"),
+        ),
+        RequestCredentials::Refused(
+            CredentialRefusal::ProviderFailed | CredentialRefusal::ConfiguredSourceNotLoaded,
+        ) => Err(AwsError::CredentialProvider {
+            provider: "guarded",
+            message: "credential source failed".to_string(),
+        }),
+    }
+}
+
+impl CredentialsProvider for GuardedCredentials {
+    fn name(&self) -> &'static str {
+        "guarded"
+    }
+
+    fn load(&self) -> Result<Credentials, AwsError> {
+        self.resolve_required()
     }
 }
 

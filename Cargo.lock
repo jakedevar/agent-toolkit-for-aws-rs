@@ -3360,6 +3360,7 @@ name = "toolkit-cli"
 version = "0.1.0"
 dependencies = [
  "aws-credential-types",
+ "aws-runtime",
  "aws-sdk-cloudwatch",
  "aws-sdk-docdb",
  "aws-sdk-ec2",

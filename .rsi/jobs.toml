@@ -13,6 +13,12 @@ target = "docgraph-spike"
 timeout_minutes = 20
 cpu_quota_percent = 200
 
+[recipes.clippy-docgraph-live]
+runner = "make"
+target = "clippy-docgraph-live"
+timeout_minutes = 20
+cpu_quota_percent = 200
+
 [recipes.docgraph-live-wipe]
 runner = "make"
 target = "docgraph-live-wipe"
@@ -25,9 +31,33 @@ target = "docgraph-live-consent"
 timeout_minutes = 20
 cpu_quota_percent = 200
 
+[recipes.docgraph-live-all-consent]
+runner = "make"
+target = "docgraph-live-all-consent"
+timeout_minutes = 20
+cpu_quota_percent = 200
+
+[recipes.docgraph-required-credentials]
+runner = "make"
+target = "docgraph-required-credentials"
+timeout_minutes = 20
+cpu_quota_percent = 200
+
+[recipes.docgraph-guarded-canary]
+runner = "make"
+target = "docgraph-guarded-canary"
+timeout_minutes = 20
+cpu_quota_percent = 200
+
 [recipes.docgraph-live-modes]
 runner = "make"
 target = "docgraph-live-modes"
+timeout_minutes = 20
+cpu_quota_percent = 200
+
+[recipes.docgraph-env-selection]
+runner = "make"
+target = "docgraph-env-selection"
 timeout_minutes = 20
 cpu_quota_percent = 200
 

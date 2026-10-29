@@ -32,14 +32,30 @@ test-sdk:
 docgraph-spike:
 	cargo test -p toolkit-cli --features docgraph-live --locked --test docgraph_bridge_spike service_orchestrators_use_only_the_injected_connector -- --exact
 
+clippy-docgraph-live:
+	cargo clippy -p toolkit-cli --all-targets --features docgraph-live --locked -- -D warnings
+
 docgraph-live-wipe:
 	cargo test -p toolkit-cli --features docgraph-live --locked --test docgraph_live live_wipe_ignores_ambient_confirmation -- --exact
 
 docgraph-live-consent:
 	cargo test -p toolkit-cli --features docgraph-live --locked --test docgraph_live live_consent_precedes_input_files_and_only_argv_counts -- --exact
 
+docgraph-live-all-consent:
+	cargo test -p toolkit-cli --features docgraph-live --locked --test docgraph_live live_memory_requires_consent_for_every_mutating_operation -- --exact
+
+docgraph-required-credentials:
+	cargo test -p toolkit-aws --features sdk --locked --lib sdk::source::tests::required_credentials_rebuild_expired_and_never_use_unsigned_fallback -- --exact
+
+docgraph-guarded-canary:
+	cargo test -p toolkit-aws --features sdk --locked --lib sdk::source::tests::required_guarded_source_
+
 docgraph-live-modes:
 	cargo test -p toolkit-cli --features docgraph-live --locked --test docgraph_live live_rejects_recorded_and_dry_run_before_files -- --exact
+
+docgraph-env-selection:
+	cargo test -p toolkit-cli --locked --test docgraph_live environment_cannot_select_live_mode -- --exact
+	cargo test -p toolkit-cli --features docgraph-live --locked --test docgraph_live environment_cannot_select_live_mode -- --exact
 
 # Per-plugin ./bin binaries (#4487, docs/migration/plugin-binaries.md). Stage
 # every declared binary for every declared platform with the locally

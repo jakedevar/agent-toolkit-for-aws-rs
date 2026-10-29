@@ -932,6 +932,70 @@ construction or absence of the SDK's default identity cache. In particular,
 explicit preference and the absence of SDK credential sources are both
 necessary to the tested design. S2 must fail closed if no-auth is not selected.
 
+The successor's offline spike wraps the SDK's actual `SigV4AuthScheme` with a
+call counter and installs it under the same scheme ID for all four sampled
+clients. With `noAuth` preferred, the counter remains zero; a separate
+DocumentDB control with synthetic credentials and no preference invokes the
+wrapped SDK signer exactly once (job `8ca768d7-9fbd-4aed-86ed-142f1dcab142`).
+This observes the configured replacement scheme, not the construction or
+invocation of the original generated scheme. The expanded experiment passed
+all ten allowed operations with and without a forbidden credential provider,
+each reaching the injected connector once on a 503 (job
+`75cca6f3-5cd1-4f42-87e7-40ecefa73df2`); the signed toolkit headers and
+buffered body were then observed by an injected toolkit transport connector.
+This is not a production bridge or proof of every input and response shape.
+The direct, optional `aws-runtime` pin exposes this already-resolved
+crate for the spy; it adds no lockfile package. No live adapter uses it.
+The spike also supplies a real file-backed streaming SDK body and verifies that
+the in-memory bridge rejects it before toolkit signing (job
+`bd037b0e-54e3-43a3-b545-74239d319bd0`); the bridge is test code only. The
+`aws-smithy-types/rt-tokio` feature enables that fixture. A renewed offline
+normal-dependency set comparison against `aws-sdk` has the same 19-entry delta
+listed above, and the lockfile has no added package from this feature.
+
+The memory preflight's current mutating-operation table is covered by a test
+that checks argv consent before input or policy file access. Removing the
+`ingest-chunk` guard produced red job `16c931f6-28fc-46db-bbb0-05c11f6a1e2d`;
+the restored guard passed job `10249051-918b-488b-88a9-1cbe16e70d86`. This
+does not establish full T-DG-01e file-source or zero-socket instrumentation.
+With and without the feature, environment-shaped live selection produced the
+same offline outputs as a cleared environment (job
+`9c8e3962-624d-4fc4-914e-84d3c3c0b5cf`); temporarily treating the environment
+variable as live selection failed the default-feature check (red job
+`9c5f305b-763c-42ec-ab92-a5d90ebaa670`).
+
+As a partial R-DG-02 boundary, `GuardedCredentials::resolve_required` converts
+unsigned and source failures to fixed credential errors and rebuilds once when
+the first result is already expired; it samples the clock after resolution and
+again before returning. Its `CredentialsProvider` implementation connects
+this policy to the existing toolkit signer. The expiry mutation job
+`65de334b-11c0-4364-8bf8-4f4c17958ea3` failed as intended; the initial green
+job was `dbbf7a33-6c8c-4d5a-b4e3-a8314c115516`. The caller must check validity
+at signing as well. This synchronous source is not cancellable and the method
+is not wired to a live adapter: R-DG-07's provider deadline and real
+guarded-source expiry/recovery tests remain open. A real guarded-source test
+with injected HTTP covers absent and invalid sources, failing process stderr
+and network error canaries, and fallback refusal (green job
+`c8984212-48f8-4d11-87d1-a52cc8fcab57`). A temporary fixed-diagnostic mutation
+that emitted the same synthetic canary failed the assertion (red job
+`8e2f6ec8-c73d-41b5-a5d0-f2c5824d2c50`). This does not yet cover service
+response messages, reports, or a live adapter's diagnostics.
+Configured-source recovery through the `CredentialsProvider` interface is
+also exercised with an injected provider HTTP client (job
+`eb71f797-9868-4a9c-b4b2-74aae78e4271`).
+
+The existing `SdkTransport::call` awaits `connector.call(request)` before
+`check_peer`, so the peer check is post-send, not a pre-send admission control
+(#5387). The public DNS guard remains in place, but this ordering cannot meet
+R-DG-03 for private database targets. S1 must add a connector-level check
+before signed HTTP bytes are written, using the validated DNS answer set; it
+must not rely on the current post-response check or an unguarded connector.
+
+The `.rsi/jobs.toml` additions in this slice declare bounded daemon recipes
+for the offline spike, consent, environment-selection, credential and
+feature-specific clippy checks. Their Makefile targets use the daemon-stamped
+Cargo target and sccache; they do not enable a live test or a network call.
+
 The initial S1 CLI preflight recognizes `--live` but deliberately returns a
 usage error after validation because no live adapter exists in this slice.
 It rejects recorded/dry-run conflicts before file reads, ignores the legacy

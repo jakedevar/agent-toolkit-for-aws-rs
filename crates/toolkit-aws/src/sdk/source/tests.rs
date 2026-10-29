@@ -31,9 +31,65 @@ use crate::sdk::test_support::{child_case, child_command, report, run, Child, Te
 
 const ENTRY: &str = "sdk::source::tests::child_entry";
 const CANARY: &str = "AKIAFALLBACKCANARY0";
+const BARE_CANARY: &str = "barecredentialcanaryfortest";
 const IMDS: &str = "169.254.169.254";
 const ECS_HOST: &str = "169.254.170.2";
 const LOGIN_ARN: &str = "arn:aws:iam::012345678901:user/Admin";
+
+#[test]
+fn required_credentials_rebuild_expired_and_never_use_unsigned_fallback() {
+    use std::time::{Duration, UNIX_EPOCH};
+
+    let now = UNIX_EPOCH + Duration::from_secs(100);
+    let expired = Credentials::new("canary-key", "canary-secret", None, Some(now)).unwrap();
+    let fresh = Credentials::new("fresh-key", "fresh-secret", None, None).unwrap();
+    let mut calls = Vec::new();
+    let result = required_credentials(
+        || now,
+        |rebuild| {
+            calls.push(rebuild);
+            RequestCredentials::Sign(if rebuild {
+                fresh.clone()
+            } else {
+                expired.clone()
+            })
+        },
+    )
+    .unwrap();
+    assert_eq!(result, fresh);
+    assert_eq!(calls, [false, true]);
+
+    let mut count = 0;
+    let error = required_credentials(
+        || now,
+        |_| {
+            count += 1;
+            RequestCredentials::Sign(expired.clone())
+        },
+    )
+    .unwrap_err();
+    assert!(matches!(error, AwsError::CredentialsExpired));
+    assert_eq!(count, 2);
+    assert!(!format!("{error:?} {error}").contains("canary"));
+
+    let mut ticks = [now - Duration::from_secs(1), now].into_iter();
+    let error = required_credentials(
+        || ticks.next().unwrap(),
+        |_| RequestCredentials::Sign(expired.clone()),
+    )
+    .unwrap_err();
+    assert!(matches!(error, AwsError::CredentialsExpired));
+
+    let error = required_credentials(|| now, |_| RequestCredentials::Unsigned).unwrap_err();
+    assert!(matches!(error, AwsError::NoCredentials));
+    let error = required_credentials(
+        || now,
+        |_| RequestCredentials::Refused(CredentialRefusal::ProviderFailed),
+    )
+    .unwrap_err();
+    assert!(matches!(error, AwsError::CredentialProvider { .. }));
+    assert!(!format!("{error:?} {error}").contains("canary"));
+}
 
 // --- The recorder: the T-PROV provider-plane HTTP client. ---
 
@@ -42,6 +98,7 @@ enum Reply {
     Ok(u16, Vec<(&'static str, &'static str)>, String),
     Dispatch,
     Timeout,
+    Canary,
 }
 
 /// Scripted replies by `"METHOD host/path"`.
@@ -104,6 +161,7 @@ impl HttpConnector for Recorder {
                 Ok(response)
             }
             Some(Reply::Timeout) => Err(ConnectorError::timeout("recorder timeout".into())),
+            Some(Reply::Canary) => Err(ConnectorError::io(BARE_CANARY.into())),
             Some(Reply::Dispatch) | None => {
                 Err(ConnectorError::io("recorder refused the request".into()))
             }
@@ -207,6 +265,9 @@ fn recorder() -> Recorder {
     if fixture("FIXTURE_STS").as_deref() == Some("timeout") {
         recorder = recorder.route("POST sts.us-east-1.amazonaws.com/", vec![Reply::Timeout]);
     }
+    if fixture("FIXTURE_STS").as_deref() == Some("canary") {
+        recorder = recorder.route("POST sts.us-east-1.amazonaws.com/", vec![Reply::Canary]);
+    }
     match fixture("FIXTURE_SIGNIN").as_deref() {
         Some("ok") => {
             recorder = recorder.route(
@@ -288,8 +349,18 @@ fn child_entry() {
         guarded =
             guarded.with_between_attempts(Box::new(|| rewrite("AWS_CONFIG_FILE", "HOOK_CONFIG")));
     }
-    let first = guarded.resolve(skip_auth, false);
-    report_outcome("", &first);
+    if std::env::var("REQUIRE_CREDENTIALS").is_ok() {
+        match CredentialsProvider::load(&guarded) {
+            Ok(_) => report("decision", "sign"),
+            Err(error) => {
+                report("decision", error.code());
+                report("diagnostic", format!("{error:?} {error}"));
+            }
+        }
+    } else {
+        let first = guarded.resolve(skip_auth, false);
+        report_outcome("", &first);
+    }
     if std::env::var("THEN_CONFIG").is_ok() {
         rewrite("AWS_CONFIG_FILE", "THEN_CONFIG");
         report_outcome("2", &guarded.resolve(skip_auth, false));
@@ -403,6 +474,73 @@ fn genuine_absence_is_unsigned_only_with_skip_auth() {
             assert_eq!(outcome.result("dest"), "", "metadata disabled: no request");
         }
     }
+}
+
+#[test]
+fn required_guarded_source_refuses_fallback_and_hides_bare_canaries() {
+    let role = "[default]\nrole_arn = arn:aws:iam::123456789012:role/r\nsource_profile = base\n\
+                [profile base]\naws_access_key_id = AKIABASE0\naws_secret_access_key = s\n";
+    let process =
+        format!("[default]\ncredential_process = sh -c 'echo {BARE_CANARY} >&2; exit 1'\n");
+    let scenarios = [
+        (Scenario::new("", ""), "aws_no_credentials", ""),
+        (
+            Scenario::new("", "").with("AWS_ACCESS_KEY_ID", "partial"),
+            "aws_invalid_config",
+            "",
+        ),
+        (
+            Scenario::new("", "")
+                .with("AWS_PROFILE", "missing")
+                .ecs_fallback(),
+            "aws_invalid_config",
+            "",
+        ),
+        (
+            Scenario::new(&process, "").ecs_fallback(),
+            "aws_credential_provider",
+            "",
+        ),
+        (
+            Scenario::new(role, "")
+                .ecs_fallback()
+                .with("FIXTURE_STS", "canary"),
+            "aws_credential_provider",
+            "sts",
+        ),
+    ];
+    for (scenario, expected, destination) in scenarios {
+        let outcome = scenario
+            .with("REQUIRE_CREDENTIALS", "1")
+            .with("RUST_LOG", "trace")
+            .run();
+        assert_eq!(outcome.result("decision"), expected);
+        assert!(!outcome.stdout.contains(BARE_CANARY));
+        assert!(!outcome.stderr.contains(BARE_CANARY));
+        assert_no_canary(&outcome);
+        let destinations = outcome.result("dest");
+        if destination.is_empty() {
+            assert!(destinations.is_empty(), "{destinations}");
+        } else {
+            assert!(!destinations.is_empty());
+            assert!(destinations
+                .split('|')
+                .all(|request| request == "POST sts.us-east-1.amazonaws.com/"));
+        }
+    }
+}
+
+#[test]
+fn required_guarded_source_recovers_on_configured_rebuild() {
+    let valid = "[default]\naws_access_key_id = AKIAFIXEDKEY0\naws_secret_access_key = s\n";
+    let outcome = Scenario::new(&format!("[default]\n{SSO_INCOMPLETE}{SSO_SESSION}"), "")
+        .with("HOOK_CONFIG", valid)
+        .with("REQUIRE_CREDENTIALS", "1")
+        .run();
+    assert_eq!(outcome.result("decision"), "sign");
+    assert_eq!(outcome.result("log"), "Profile,Profile");
+    assert_eq!(outcome.result("dest"), "");
+    assert_no_canary(&outcome);
 }
 
 #[test]
