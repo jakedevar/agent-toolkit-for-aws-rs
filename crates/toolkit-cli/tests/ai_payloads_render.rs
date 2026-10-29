@@ -958,3 +958,43 @@ fn ap_asn_04_07_08_invalid_targets_and_replaced_cells() {
     let result = f.render(&template, "script", &["--cell", &arg, "--cell", &arg]);
     assert_eq!(result.status.code(), Some(2));
 }
+
+#[test]
+fn ap_sub_16_sec_04_asn_03_project_default_and_section_three_assignment() {
+    let f = Fixture::new();
+    let template = f.write("template.py", "# Cell 0 [markdown]: Example\n# Desc\n# Cell 1: Config\nx = '[PROJECT_DIR]'\nINPUT_TOKENS_MEAN = [INPUT_TOKENS_MEAN]\n# Cell 2: Other\npass\n# Cell 3: Custom\nCUSTOM_PROMPT_PATH = 'old'\n");
+    let values = f.write(
+        "values.json",
+        r#"{"values":{"INPUT_TOKENS_MEAN":1},"assign":{"CUSTOM_PROMPT_PATH":"new"}}"#,
+    );
+    let result = f.render(&template, "script", &["--values", values.to_str().unwrap()]);
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let output = fs::read_to_string(f.0.join("scripts/01_example.py")).unwrap();
+    assert!(output.contains(&format!(
+        "x = '{}'",
+        fs::canonicalize(&f.0).unwrap().display()
+    )));
+    assert!(output.contains("INPUT_TOKENS_MEAN = 1"));
+    assert!(output.contains("CUSTOM_PROMPT_PATH = 'new'"));
+}
+
+#[cfg(unix)]
+#[test]
+fn ap_t28_03_symlinked_module_is_refused() {
+    use std::os::unix::fs::symlink;
+    let template = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../skills/core-skills/aws-ai-ml/references/dataset-transformation/code_templates/transformation.py");
+    let f = Fixture::new();
+    let target = f.write("target.py", "def transform_dataset(df):\n    return df\n");
+    fs::create_dir(f.0.join("scripts")).unwrap();
+    let module = f.0.join("scripts/transform_fn.py");
+    symlink(target, &module).unwrap();
+    let arg = format!("2={}", module.display());
+    let result = f.render(&template, "notebook", &["--cell", &arg]);
+    assert_eq!(result.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&result.stderr).contains("module_missing"));
+    assert!(!f.0.join("notebooks").exists());
+}
