@@ -626,6 +626,7 @@ impl<'a> PaymentClient<'a> {
                     }
                     PaymentError::Service(error_code(error_header.as_deref(), body))
                 }
+                Err(error) if !error.is_retryable() => return Err(PaymentError::Transport),
                 Err(_) => PaymentError::Transport,
             };
             let retry = match &error {
