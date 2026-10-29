@@ -634,3 +634,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
   ai-payloads slices: S1 model -> S2a publish -> S2b render; S3 reward (after S1); S3r #5120 template fix (after S3 lands); S4 callers (after S2b+S3); S5 inventory (after S4+S3r). Proposed P-3/P-5/P-6/P-7 not yet filed (decide at S4/S5).
   S1 = #5143 -> f43fddbd (Sonnet high, sandbox 07ab2cde, merge rolling first).
   4/4 busy: 4cbe8435 (#5118), 8c9c4a04 (#5079 repair 2), bc70b368 (#4411 design), f43fddbd (#5143).
+- 10-29 05:30Z: mcp-proxy repair 2 (8c9c4a04) at 1f8dd6e66fc7d2aac8e660908ffa988a255c9254: #5136 retire = bookkeeping under lock, credential I/O after release; #5137 delivery cancel includes generation; #5138 post-sign recheck + bounded timeouts. Red 405c9a9e (0/3); repeat 829eef8c 10x; fmt 4fe003d8, clippy aba298f9, clippy-sdk c5f64dde, test-sdk b13e28a3, scoped 13c088ab ok. Still unmerged w/ rolling (Cargo.lock+Makefile).
+  S4 r3 (narrow, last unless P1) -> Codex d09ae2af pinned 1f8dd6e6. On ACCEPT: integration round 22 worker (merge S1-S3 head 1f8dd6e6 onto rolling, resolve lock/Makefile, sdk jobs + scoped) -> enqueue.
+  4/4 busy: 4cbe8435 (#5118), bc70b368 (#4411 design), f43fddbd (#5143), d09ae2af (#5105 r3).
