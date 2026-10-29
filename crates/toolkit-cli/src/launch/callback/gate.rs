@@ -356,7 +356,7 @@ mod tests {
                 scratch.path(),
                 session.as_bytes(),
                 &SeededRandom::new(2),
-                || cutoff - Duration::from_millis(1),
+                || cutoff.checked_sub(Duration::from_millis(1)).unwrap(),
                 || {
                     assert_eq!(
                         tracker.finish_at(scratch.path(), 81, 100, 0).0,

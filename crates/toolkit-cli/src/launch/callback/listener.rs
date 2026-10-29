@@ -66,7 +66,7 @@ fn connection_accept_error(error: &io::Error) -> bool {
     #[cfg(unix)]
     {
         use rustix::io::Errno;
-        return [
+        [
             Errno::PROTO,
             Errno::NETDOWN,
             Errno::NETUNREACH,
@@ -76,7 +76,7 @@ fn connection_accept_error(error: &io::Error) -> bool {
             Errno::OPNOTSUPP,
         ]
         .into_iter()
-        .any(|errno| error.raw_os_error() == io::Error::from(errno).raw_os_error());
+        .any(|errno| error.raw_os_error() == io::Error::from(errno).raw_os_error())
     }
     #[cfg(not(unix))]
     false
@@ -293,7 +293,9 @@ pub(super) fn serve_scripted_flood(
             self.0.set(self.0.get() + duration);
         }
     }
-    let clock = ClockCell(std::cell::Cell::new(flow_end - Duration::from_millis(50)));
+    let clock = ClockCell(std::cell::Cell::new(
+        flow_end.checked_sub(Duration::from_millis(50)).unwrap(),
+    ));
     serve_with(Flood(accepts), 1234, "s", flow_end, &clock)
 }
 
