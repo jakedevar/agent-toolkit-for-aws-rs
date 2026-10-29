@@ -1227,6 +1227,16 @@ fn slot_violations(occurrences: &[Occurrence]) -> Vec<Violation> {
     let mut first_code: BTreeMap<&str, Context> = BTreeMap::new();
     let mut reported: BTreeSet<&str> = BTreeSet::new();
     for occurrence in occurrences {
+        if matches!(occurrence.context, Context::Quoted | Context::Sentinel)
+            && super::types::slot_type(&occurrence.name) == Some(super::types::SlotType::Consent)
+        {
+            violations.push(Violation {
+                code: "consent_slot_not_bare",
+                line: occurrence.line,
+                column: occurrence.column,
+                message: format!("consent slot [{}] must be bare", occurrence.name),
+            });
+        }
         match occurrence.context {
             Context::Bare => {
                 if super::types::slot_type(&occurrence.name).is_none() {

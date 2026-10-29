@@ -82,7 +82,7 @@ fn rewrite_validated(
         }
         let quote = target.literal.chars().next().unwrap_or('"');
         let literal = if types::slot_type(name).is_some() {
-            types::literal(name, value, consent.contains(name))
+            types::literal(name, value, types::consent_given(consent, name))
         } else if template::is_secret_name(&name.to_ascii_uppercase()) {
             types::secret_literal(value, quote)
         } else {

@@ -32,7 +32,7 @@ fn literal(
 ) -> Result<String, &'static str> {
     match occurrence.context {
         Context::Bare => {
-            types::literal(&occurrence.name, value, consent.contains(&occurrence.name))
+            types::literal(&occurrence.name, value, types::consent_given(consent, &occurrence.name))
         }
         Context::Quoted if super::template::is_secret_name(&occurrence.name) => {
             types::secret_literal(value, occurrence.quote.unwrap_or('"'))
