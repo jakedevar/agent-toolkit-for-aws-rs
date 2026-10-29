@@ -24,6 +24,9 @@
 //! 5 (an `Interest::never` filter for every foreign target) and update this
 //! gate and T-LEAK-SDK in the same change.
 
+#[cfg(feature = "agents-pay-live")]
+compile_error!("agents-pay-live is never built for tests (AC3)");
+
 use std::path::{Path, PathBuf};
 
 /// Crates that install or implement a `tracing` subscriber or a `log` logger.

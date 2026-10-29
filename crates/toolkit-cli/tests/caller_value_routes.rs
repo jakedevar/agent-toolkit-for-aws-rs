@@ -19,6 +19,9 @@
 //! No AWS call, deployment or spend flag is involved: every route here is
 //! local.
 
+#[cfg(feature = "agents-pay-live")]
+compile_error!("agents-pay-live is never built for tests (AC3)");
+
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};

@@ -16,6 +16,11 @@ default = []
 # the `asm exec` MCP fallback (#4582) and the MCP proxy. Off by default so the
 # ordinary build compiles no AWS SDK crate.
 aws-sdk = ["toolkit-aws/sdk"]
+# The live x402 payment constructors (#5352, design section 7 G1): real
+# config, credentials, DNS, payment TLS roots and transports. Only release
+# builds and the operator live run enable it; every test target refuses it
+# (G1a), and no verification recipe passes it except `make clippy-live`.
+agents-pay-live = ["aws-sdk"]
 
 [dependencies]
 toolkit-aws = { path = "../toolkit-aws" }

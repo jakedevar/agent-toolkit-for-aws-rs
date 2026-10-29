@@ -2,6 +2,9 @@
 //! codes and separated stdout/stderr. Fixtures are deterministic offline
 //! directories; no network, AWS call or pricing API is involved.
 
+#[cfg(feature = "agents-pay-live")]
+compile_error!("agents-pay-live is never built for tests (AC3)");
+
 use std::fs;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};

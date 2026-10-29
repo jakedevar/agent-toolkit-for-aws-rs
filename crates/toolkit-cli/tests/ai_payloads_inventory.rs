@@ -20,6 +20,9 @@
 //!   `ap_inv_03_other_slices_are_untouched`
 //! - Status lines: the design document and the migration README record S1 to S5 as
 //!   done: `ap_inv_docs_record_s1_to_s5_done`
+#[cfg(feature = "agents-pay-live")]
+compile_error!("agents-pay-live is never built for tests (AC3)");
+
 use serde_json::Value;
 use std::{
     collections::{BTreeMap, BTreeSet},

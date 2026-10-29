@@ -3,6 +3,9 @@
 //! listener on 127.0.0.1 inside this test. No AWS endpoint, DNS name or
 //! credential is involved; the secret values are synthetic.
 
+#[cfg(feature = "agents-pay-live")]
+compile_error!("agents-pay-live is never built for tests (AC3)");
+
 use std::fs;
 use std::io::{Read, Write};
 use std::net::TcpListener;

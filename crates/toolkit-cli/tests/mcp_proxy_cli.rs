@@ -5,6 +5,9 @@
 //! roots before reading stdin (R-ROOTS). No network: every case stops before
 //! a DNS lookup.
 
+#[cfg(feature = "agents-pay-live")]
+compile_error!("agents-pay-live is never built for tests (AC3)");
+
 use std::process::{Command, Output, Stdio};
 
 const ENDPOINT: &str = "https://aws-mcp.us-east-1.api.aws/mcp";

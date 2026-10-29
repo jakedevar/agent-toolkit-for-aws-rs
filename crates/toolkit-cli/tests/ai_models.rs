@@ -2,6 +2,9 @@
 //! of stdout and stderr. Fixtures are offline temporary files; the binary has no
 //! live AWS client, so nothing can reach the network.
 
+#[cfg(feature = "agents-pay-live")]
+compile_error!("agents-pay-live is never built for tests (AC3)");
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
