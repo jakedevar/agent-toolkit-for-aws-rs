@@ -884,12 +884,12 @@ fn request_gate_rejects_use_alias_literal() {
 
 #[test]
 fn request_gate_rejects_index_and_compound_writes() {
-    let source = r#"
+    let source = r"
         pub struct ProcessPaymentRequest { body: Vec<u8>, manager: String }
         impl ProcessPaymentRequest { fn from_approved(approved: &Approved) -> Self { Self { body: vec![], manager: String::new() } } }
         impl std::fmt::Debug for ProcessPaymentRequest { fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { todo!() } }
         fn change(r: &mut ProcessPaymentRequest) { WRITE }
-    "#;
+    ";
     for write in ["r.body[0] = b'x';", "r.manager += \"\";"] {
         let bad = source.replace("WRITE", write);
         assert!(
