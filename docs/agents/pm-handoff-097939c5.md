@@ -1030,3 +1030,4 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 13:2xZ: docgraph S5 #5327 LANDED (2813c67f published, a346bc3c8469fdecdc2c9f8265a6e039f4909aed). Auto-closed #5327; CLOSED #5343 #5318 #5321 #5322 #5324 #5325 #5348. Open: #5323, #5344, #4918. #4886 open (S1 #5366 in flight; S2 S3 S4 S6 after).
   Queue: eb6b38ba #5362, 1e84ebe1 #5365. #5370 worker d75d75d6 queued for a slot.
 - 13:3xZ: flake fix #5362 LANDED (eb6b38ba published, c5920f50d8507cc4b0e3320059c1e4318078c7d3); #5362 auto-closed. Queue: 1e84ebe1 #5365. #5370 worker d75d75d6 still queued for a slot.
+- 13:35Z: #5365 LANDED (1e84ebe1 published, b3c2ce09887f0d8b5f5ae3c9b4c8caa19491309d); auto-closed. Queue EMPTY. #5370 worker d75d75d6 started (override). 5 live: 4ca3337b #5345 L5, 59add103 #5363 B1, b7e9d8f9 #5352 r1, 85f4c758 #5366 S1, d75d75d6 #5370. Cap ~229/256.
