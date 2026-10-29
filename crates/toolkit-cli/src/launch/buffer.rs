@@ -64,10 +64,21 @@ impl CappedBuf {
     /// [`BufError::Limit`] past the limit, [`BufError::Alloc`] when the
     /// reservation fails.
     pub fn extend(&mut self, bytes: &[u8]) -> Result<(), BufError> {
+        self.extend_parts(&[bytes])
+    }
+
+    /// Append every slice of `parts`, as one append: all of them or none.
+    ///
+    /// # Errors
+    /// As [`CappedBuf::extend`], for the parts' total length.
+    pub fn extend_parts(&mut self, parts: &[&[u8]]) -> Result<(), BufError> {
         let len = self.data.len();
-        let attempted = len.checked_add(bytes.len()).ok_or(BufError::Limit {
-            attempted: usize::MAX,
-        })?;
+        let attempted = parts
+            .iter()
+            .try_fold(len, |total, part| total.checked_add(part.len()))
+            .ok_or(BufError::Limit {
+                attempted: usize::MAX,
+            })?;
         if attempted > self.limit {
             return Err(BufError::Limit { attempted });
         }
@@ -84,7 +95,9 @@ impl CappedBuf {
             self.peak = self.peak.max(capacity + grown);
             self.growths += 1;
         }
-        self.data.extend_from_slice(bytes);
+        for part in parts {
+            self.data.extend_from_slice(part);
+        }
         Ok(())
     }
 

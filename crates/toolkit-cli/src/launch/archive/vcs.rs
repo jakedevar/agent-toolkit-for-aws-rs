@@ -3,12 +3,14 @@
 //! A snapshot containing any component that, after normalisation, names a
 //! version-control administrative directory or file is refused as a whole
 //! before anything is created. Normalisation covers the aliases Git itself
-//! guards against (`is_hfs_dotgit`, `is_ntfs_dotgit`): NFC, simple case
-//! folding, the HFS+ ignorable code points, NTFS stream syntax (`:` and what
-//! follows), trailing dots and spaces, and 8.3 short names `git~N`, `hg~N`,
-//! `svn~N`, `bzr~N`. The denylist is necessary, not sufficient: the
-//! repository's actual Git directory is protected by identity at apply time
-//! (R-AR-META, L6).
+//! guards against (`is_hfs_dotgit`, `is_ntfs_dotgit`): NFC, case folding
+//! (upper- then lower-casing: a fail-closed superset of simple case folding
+//! on the ASCII denylist, T-AR-VCS-9, that also catches the dotless `ı`
+//! alias simple folding keeps apart, #5132), the HFS+ ignorable code
+//! points, NTFS stream syntax (`:` and what follows), trailing dots and
+//! spaces, and 8.3 short names `git~N`, `hg~N`, `svn~N`, `bzr~N`. The
+//! denylist is necessary, not sufficient: the repository's actual Git
+//! directory is protected by identity at apply time (R-AR-META, L6).
 
 use unicode_normalization::UnicodeNormalization;
 

@@ -11,15 +11,18 @@ pub mod table;
 /// S mapping for it).
 #[must_use]
 pub fn simple_fold(c: char) -> char {
-    let _ = c;
-    todo!("#5132 simple_fold")
+    let code = u32::from(c);
+    table::SIMPLE_CASE_FOLDING
+        .binary_search_by_key(&code, |&(from, _)| from)
+        .ok()
+        .and_then(|index| char::from_u32(table::SIMPLE_CASE_FOLDING[index].1))
+        .unwrap_or(c)
 }
 
 /// [`simple_fold`] of every character of `text`.
 #[must_use]
 pub fn simple_fold_str(text: &str) -> String {
-    let _ = text;
-    todo!("#5132 simple_fold_str")
+    text.chars().map(simple_fold).collect()
 }
 
 #[cfg(test)]

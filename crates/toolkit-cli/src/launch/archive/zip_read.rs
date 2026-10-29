@@ -22,6 +22,7 @@ use miniz_oxide::inflate::core::{decompress, DecompressorOxide};
 use miniz_oxide::inflate::TINFLStatus;
 use unicode_normalization::UnicodeNormalization;
 
+use super::casefold::simple_fold_str;
 use super::crc32::Crc32;
 use super::vcs::check_snapshot_name;
 use super::{entry_count_message, entry_size_message, ratio_message, total_message, ArchiveLimits};
@@ -609,13 +610,14 @@ fn check_name(name: &str) -> Result<(), LaunchError> {
     Ok(())
 }
 
-/// The comparison key of R-AR-READ's duplicate rule: NFC and simple case
-/// folding (approximated as lower-casing the upper-cased NFC text, which
-/// also folds the final sigma and the Kelvin sign), directory marker removed.
+/// The comparison key of R-AR-READ's duplicate rule: NFC, then Unicode
+/// simple case folding (CaseFolding.txt C and S, [`simple_fold_str`]; #5132),
+/// then NFC again, with the directory marker removed. `ß` and `ẞ` share a key;
+/// `ß` and `ss`, and `ı` and `i`, do not.
 fn fold_key(name: &str) -> String {
     let body = name.strip_suffix('/').unwrap_or(name);
     let nfc: String = body.nfc().collect();
-    nfc.to_uppercase().to_lowercase().nfc().collect()
+    simple_fold_str(&nfc).nfc().collect()
 }
 
 /// Validate `data` under `profile` and `limits`.

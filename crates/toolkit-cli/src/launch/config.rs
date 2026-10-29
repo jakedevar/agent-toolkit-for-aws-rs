@@ -315,36 +315,50 @@ fn read_small_text(path: &Path) -> Option<String> {
 /// The `region` of `profile` in an AWS config file's text, with botocore's
 /// `RawConfigParser` rules: `[default]` or `[profile NAME]` sections (a
 /// `[profile default]` section wins over `[default]`), `key = value` or
-/// `key: value`, keys case-insensitive, `#`/`;` full-line comments, indented
-/// continuation lines. Any line that does not parse, a key before the first
-/// section, or a duplicate section or key makes the whole file no signal.
+/// `key: value`, keys case-insensitive, `#`/`;` full-line comments, and
+/// `RawConfigParser`'s indentation rule (#5133): a line continues the current
+/// value only when it is indented deeper than the line that started that
+/// key; any other line, indented or not, is a section header or a key. A
+/// blank line inside a value is kept, trailing blank lines are stripped and
+/// a comment line adds nothing. Any line that does not parse, a key before
+/// the first section, or a duplicate section or key makes the whole file no
+/// signal.
 #[must_use]
 pub fn parse_profile_region(text: &str, profile: &str) -> Option<String> {
-    let mut sections: Vec<(String, Vec<(String, String)>)> = Vec::new();
-    for line in text.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with(';') {
+    let mut sections: Vec<(String, Vec<IniOption>)> = Vec::new();
+    // Indentation of the line that started the current section or key.
+    let mut indent_level = 0_usize;
+    // Whether the last header line was a key (Python `optname`).
+    let mut in_value = false;
+    // Python text mode: `\r\n`, `\r` and `\n` all end a line.
+    let text = text.replace("\r\n", "\n").replace('\r', "\n");
+    for line in text.split('\n') {
+        let value = line.trim_matches(py_space);
+        let comment = value.starts_with('#') || value.starts_with(';');
+        if value.is_empty() || comment {
+            if !comment && in_value {
+                sections.last_mut()?.1.last_mut()?.1.push(String::new());
+            }
             continue;
         }
-        if line.starts_with([' ', '\t']) {
-            // A continuation line extends the previous value.
-            let (_, options) = sections.last_mut()?;
-            let (_, value) = options.last_mut()?;
-            value.push('\n');
-            value.push_str(trimmed);
+        let indent = line.chars().take_while(|c| py_space(*c)).count();
+        if in_value && indent > indent_level {
+            // A continuation line extends the current value.
+            sections.last_mut()?.1.last_mut()?.1.push(value.to_string());
             continue;
         }
-        if let Some(header) = trimmed.strip_prefix('[') {
-            let name = header.strip_suffix(']')?;
-            if name.is_empty() || sections.iter().any(|(existing, _)| existing == name) {
+        indent_level = indent;
+        if let Some(name) = section_header(value) {
+            if sections.iter().any(|(existing, _)| existing == name) {
                 return None;
             }
             sections.push((name.to_string(), Vec::new()));
+            in_value = false;
             continue;
         }
-        let delimiter = trimmed.find(['=', ':'])?;
-        let key = trimmed[..delimiter].trim().to_lowercase();
-        let value = trimmed[delimiter + 1..].trim().to_string();
+        let delimiter = value.find(['=', ':'])?;
+        let key = value[..delimiter].trim_matches(py_space).to_lowercase();
+        let first = value[delimiter + 1..].trim_matches(py_space).to_string();
         if key.is_empty() {
             return None;
         }
@@ -352,7 +366,8 @@ pub fn parse_profile_region(text: &str, profile: &str) -> Option<String> {
         if options.iter().any(|(existing, _)| *existing == key) {
             return None;
         }
-        options.push((key, value));
+        options.push((key, vec![first]));
+        in_value = true;
     }
     let wanted = format!("profile {profile}");
     let section = sections
@@ -367,8 +382,26 @@ pub fn parse_profile_region(text: &str, profile: &str) -> Option<String> {
         .1
         .iter()
         .find(|(key, _)| key == "region")
-        .map(|(_, value)| value.clone())
+        .map(|(_, lines)| lines.join("\n").trim_end_matches(py_space).to_string())
         .filter(|value| !value.is_empty())
+}
+
+/// One `key = value` of an INI section: the key and the value's lines.
+type IniOption = (String, Vec<String>);
+
+/// Python `str.isspace` (Rust's `White_Space` plus U+001C..=U+001F), which
+/// `RawConfigParser` uses to strip lines and measure their indentation.
+fn py_space(c: char) -> bool {
+    c.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&c)
+}
+
+/// `RawConfigParser.SECTCRE` (`\[(?P<header>.+)\]`, matched at the start of
+/// the stripped line): the text between the `[` and the last `]`, which must
+/// not be empty; anything after that `]` is ignored.
+fn section_header(value: &str) -> Option<&str> {
+    let rest = value.strip_prefix('[')?;
+    let close = rest.rfind(']')?;
+    (close > 0).then(|| &rest[..close])
 }
 
 /// The region chain (design 2.1): `--region` → [`ENV_REGION`] → saved

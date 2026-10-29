@@ -110,3 +110,22 @@ fn patch_rewrites_in_place_without_growth() {
     assert_eq!(buf.capacity(), cap);
     assert_eq!(buf.into_vec(), b"abXYef".to_vec());
 }
+
+#[test]
+fn extend_parts_is_one_all_or_nothing_append() {
+    let mut buf = CappedBuf::new(8);
+    buf.extend_parts(&[b"ab", b"c", &[0]]).expect("fits");
+    assert_eq!(buf.as_slice(), b"abc\0");
+    // 4 + 3 + 2 = 9 > 8: refused before any byte of either part is copied.
+    assert_eq!(
+        buf.extend_parts(&[b"def", b"gh"]),
+        Err(BufError::Limit { attempted: 9 })
+    );
+    assert_eq!(buf.as_slice(), b"abc\0");
+    buf.extend_parts(&[b"de", b"f", b"g"])
+        .expect("exactly the limit");
+    assert_eq!(buf.as_slice(), b"abc\0defg");
+    assert!(buf.capacity() <= 8);
+    buf.extend_parts(&[]).expect("nothing to add");
+    assert_eq!(buf.len(), 8);
+}

@@ -695,6 +695,12 @@ Both share one ZIP reader with a strict policy.
   Revision 1's "re-check `File::metadata` after a pathname `open`" is withdrawn (#5039): a blocking
   pathname open of a FIFO never returns, and a same-sized symlink or a symlinked ancestor passes a
   leaf-only post-open check.
+- Skipped secret files (#5135, part of #5082): the Python logged every skipped path on one INFO
+  line. The Rust ledger keeps at most 1000 paths or 64 KiB of path text (allocation capped at the
+  same 64 KiB through `CappedBuf`); the first path that does not fit closes it, so the kept list is
+  a prefix of the walk order, and every later path is only counted. The line reads `Excluded N
+  file(s) matching secret patterns: a, b, and M more not listed` (paths shown escaped). Skipping
+  never fails the build.
 
 ### R-AR-OPEN. Race-resistant rooted traversal and open (#5039)
 
@@ -812,7 +818,9 @@ name the entry through `shown_value`.
   empty segment. Every other segment must be non-empty, so `a//` and `/` are refused. (Windows name
   rules are not needed: the archive commands are Unix-only, D16.)
 - Duplicates: two entries whose names are equal after Unicode NFC normalisation and simple case
-  folding (`unicode-normalization` is already a `toolkit-cli` dependency) → refused, on every
+  folding (`unicode-normalization` is already a `toolkit-cli` dependency; the simple folding is
+  CaseFolding.txt status C and S, a table generated from Unicode 17.0.0, #5132, so `ß` and `ẞ`
+  collide while `ß`/`ss` and `ı`/`i` do not) → refused, on every
   platform (case-insensitive and normalising file systems would otherwise merge them). Directory
   markers are removed before comparing, so `a` and `a/` collide. A file entry whose folded name is
   a proper prefix-path of another entry (`a` and `a/b`) → refused (file/directory conflict).

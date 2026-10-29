@@ -341,6 +341,34 @@ fn t_reg_7b_indented_keys_follow_raw_config_parser_5133() {
 }
 
 #[test]
+fn t_reg_7c_section_headers_and_line_ends_follow_raw_config_parser() {
+    for (text, expected) in [
+        // SECTCRE `\[(?P<header>.+)\]` at the start: text after the last `]`
+        // is ignored, and the header runs to the last `]`.
+        ("[default] ; note\nregion = eu-west-1\n", Some("eu-west-1")),
+        (
+            "[profile x]]\nregion = a\n[default]\nregion = eu-west-2\n",
+            Some("eu-west-2"),
+        ),
+        ("[]\nregion = eu-west-1\n", None),
+        // Universal newlines: `\r\n` and a lone `\r` end lines.
+        ("[default]\r\nregion = eu-west-1\r\n", Some("eu-west-1")),
+        ("[default]\rregion = eu-west-1\r", Some("eu-west-1")),
+        // U+001C..U+001F are Python whitespace: indentation and stripping.
+        (
+            "[default]\n\u{1f}region = eu-west-1\u{1c}\n",
+            Some("eu-west-1"),
+        ),
+    ] {
+        assert_eq!(
+            parse_profile_region(text, "default").as_deref(),
+            expected,
+            "{text:?}"
+        );
+    }
+}
+
+#[test]
 fn t_reg_8_malformed_config_files_are_no_signal() {
     for text in [
         "region = us-west-2\n[default]\nregion = eu-west-1\n",

@@ -389,7 +389,9 @@ fn py_json_string(value: &str) -> String {
             '\t' => out.push_str("\\t"),
             '\u{8}' => out.push_str("\\b"),
             '\u{c}' => out.push_str("\\f"),
-            c if c.is_ascii() && u32::from(c) >= 0x20 => out.push(c),
+            // Python `ESCAPE_ASCII`: only U+0020..=U+007E is written raw, so
+            // DEL (U+007F) is `\u007f` like every other character (#5134).
+            c @ ' '..='~' => out.push(c),
             c => {
                 let mut units = [0_u16; 2];
                 for unit in c.encode_utf16(&mut units) {
