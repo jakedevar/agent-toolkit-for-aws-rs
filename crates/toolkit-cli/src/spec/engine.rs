@@ -409,7 +409,7 @@ fn operational_failure(error: &ValidationError<'_>) -> Option<String> {
 
 // ---- JSON conversion and pointers -------------------------------------------------
 
-fn to_value(json: &Json) -> Result<Value, String> {
+pub(crate) fn to_value(json: &Json) -> Result<Value, String> {
     Ok(match json {
         Json::Null => Value::Null,
         Json::Bool(flag) => Value::Bool(*flag),
