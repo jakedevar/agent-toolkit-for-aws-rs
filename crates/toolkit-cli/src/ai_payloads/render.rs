@@ -357,14 +357,17 @@ fn command_with_hooks(
         );
     }
     let substituted = values::substitute(
-        assigned.as_deref().unwrap_or(&text),
+        &text,
         &active,
         &slots,
         &consents,
         inv.has_flag("--allow-unresolved"),
     );
     let substituted = match (assigned, substituted) {
-        (Ok(_), Ok(result)) => result,
+        (Ok(_), Ok(result)) => {
+            assign::rewrite(&result, &original, &assignments, &consents, &replaced)
+                .map_err(|error| fail(error.code, error.names))?
+        }
         (Err(error), Ok(_)) | (Ok(_), Err(error)) => return Err(fail(error.code, error.names)),
         (Err(first), Err(second)) => {
             let mut messages: Vec<_> = first
