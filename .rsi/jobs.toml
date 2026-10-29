@@ -92,3 +92,27 @@ runner = "make"
 target = "test-sdk"
 timeout_minutes = 20
 cpu_quota_percent = 200
+
+[recipes.docgraph-database]
+runner = "make"
+target = "docgraph-database"
+timeout_minutes = 20
+cpu_quota_percent = 200
+
+[recipes.docgraph-database-peer]
+runner = "make"
+target = "docgraph-database-peer"
+timeout_minutes = 20
+cpu_quota_percent = 200
+
+[recipes.docgraph-database-admission]
+runner = "make"
+target = "docgraph-database-admission"
+timeout_minutes = 20
+cpu_quota_percent = 200
+
+[recipes.docgraph-live-suite]
+runner = "make"
+target = "docgraph-live-suite"
+timeout_minutes = 30
+cpu_quota_percent = 200

@@ -80,6 +80,7 @@ use crate::transport::{
 };
 use roots::ValidatedRoots;
 
+pub mod database;
 pub mod profile;
 pub mod recorder;
 pub mod roots;

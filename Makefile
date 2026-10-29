@@ -50,6 +50,19 @@ docgraph-required-credentials:
 docgraph-guarded-canary:
 	cargo test -p toolkit-aws --features sdk --locked --lib sdk::source::tests::required_guarded_source_
 
+docgraph-database:
+	cargo test -p toolkit-aws --features sdk --locked --lib sdk::database::
+
+docgraph-database-peer:
+	cargo test -p toolkit-aws --features sdk --locked --lib sdk::database::tests::a_forbidden_connected_peer_receives_zero_bytes -- --exact
+
+docgraph-database-admission:
+	cargo test -p toolkit-aws --features sdk --locked --lib sdk::database::tests::forbidden_or_mixed_answers_are_never_dialed -- --exact
+
+docgraph-live-suite:
+	cargo test -p toolkit-cli --locked --test docgraph_live
+	cargo test -p toolkit-cli --features docgraph-live --locked --test docgraph_live
+
 docgraph-live-modes:
 	cargo test -p toolkit-cli --features docgraph-live --locked --test docgraph_live live_rejects_recorded_and_dry_run_before_files -- --exact
 
