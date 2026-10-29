@@ -389,6 +389,25 @@ fn valid_session_response(body: &str, manager: &str, session: Option<&str>, user
     true
 }
 #[cfg(test)]
+#[derive(Debug, PartialEq, Eq)]
+struct SessionStatus {
+    status: &'static str,
+    usable: bool,
+    budget_usd: Option<String>,
+    spent_usd: Option<String>,
+}
+
+#[cfg(test)]
+fn session_status(_value: &Json, _now_micros: i64) -> SessionStatus {
+    SessionStatus {
+        status: "unknown",
+        usable: false,
+        budget_usd: None,
+        spent_usd: None,
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -419,6 +438,31 @@ mod tests {
             endpoint("us-east-1").unwrap(),
             "https://bedrock-agentcore.us-east-1.amazonaws.com"
         );
+    }
+
+    #[test]
+    fn session_status_uses_deadline_and_exact_available_balance() {
+        let session = parse_json(r#"{"createdAt":1000,"expiryTimeInMinutes":15,"limits":{"maxSpendAmount":{"value":"10.00","currency":"USD"}},"availableLimits":{"availableSpendAmount":{"value":"3.25","currency":"USD"}}}"#).unwrap();
+        let active = session_status(&session, 1_899_000_000);
+        assert_eq!(
+            active,
+            SessionStatus {
+                status: "ACTIVE",
+                usable: true,
+                budget_usd: Some("10.00".into()),
+                spent_usd: Some("6.75".into())
+            }
+        );
+        assert_eq!(session_status(&session, 1_900_000_000).status, "EXPIRED");
+        let drained = parse_json(&session.to_compact_string().replace("3.25", "0.00")).unwrap();
+        assert_eq!(session_status(&drained, 1_899_000_000).status, "DRAINED");
+        let missing = parse_json(
+            &session
+                .to_compact_string()
+                .replace(r#""createdAt":1000,"#, ""),
+        )
+        .unwrap();
+        assert!(!session_status(&missing, 1_000_000_000).usable);
     }
 }
 
