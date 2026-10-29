@@ -1217,6 +1217,11 @@ mod wire_contracts {
         assert_eq!(authorized.version, 2);
         assert_eq!(authorized.recipient, "0xB");
         assert!(matches!(authorized.proof.payload(), Json::Object(_)));
+        let request = ProcessPaymentRequest::from_approved(&super::operation_contracts::approved());
+        let shown = format!("{request:?}");
+        assert!(!shown.contains("100000"));
+        assert!(!shown.contains("user"));
+        assert!(!shown.contains("0xB"));
     }
 
     #[test]
