@@ -24,7 +24,7 @@ fn recording(requests: &[Json], responses: &[Json]) -> Json {
     )])
 }
 
-fn retrieval_recording(first: &Json, responses: Vec<Json>) -> Json {
+fn retrieval_recording(first: &Json, responses: &[Json]) -> Json {
     use crate::docgraph::memory::{retrieve, MemoryClient};
     struct Capture {
         requests: Vec<Json>,
@@ -40,10 +40,10 @@ fn retrieval_recording(first: &Json, responses: Vec<Json>) -> Json {
     }
     let mut capture = Capture {
         requests: vec![],
-        responses: responses.clone().into_iter(),
+        responses: responses.to_vec().into_iter(),
     };
     retrieve(&mut capture, "g-abc123def4", first).unwrap();
-    recording(&capture.requests, &responses)
+    recording(&capture.requests, responses)
 }
 
 #[test]
@@ -127,7 +127,7 @@ fn retrieve_replays_search_then_three_expansions_per_chunk() {
     let first = plan("retrieve", &input).unwrap().remove(0);
     let recording = retrieval_recording(
         &first,
-        vec![
+        &[
             json(r#"{"results":[{"id":"c1","text":"first","score":0.9}]}"#),
             json(r#"{"results":[{"name":"Alice"}]}"#),
             json(r#"{"results":[{"name":"Bob"}]}"#),
@@ -237,7 +237,7 @@ fn recorded_cli_replays_ordered_requests_and_rejects_mismatch() {
     .remove(0);
     let calls = retrieval_recording(
         &first,
-        vec![
+        &[
             json(r#"{"results":[{"id":"c1","text":"hello","score":0.5}]}"#),
             json(r#"{"results":[]}"#),
             json(r#"{"results":[]}"#),
