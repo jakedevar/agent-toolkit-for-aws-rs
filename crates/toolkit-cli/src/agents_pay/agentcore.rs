@@ -817,6 +817,18 @@ mod operation_contracts {
     }
 
     #[test]
+    fn process_response_rejects_malformed_process_identifier() {
+        let good = r#"{"processPaymentId":"12345678-abcd-1234-abcd-123456789abc","paymentManagerArn":"arn","paymentSessionId":"ps","paymentInstrumentId":"pi","paymentType":"CRYPTO_X402","status":"PROOF_GENERATED","paymentOutput":{"cryptoX402":{"version":"2","payload":{}}},"createdAt":1,"updatedAt":1}"#;
+        assert!(valid_process_response(good, "arn", "ps", "pi"));
+        assert!(!valid_process_response(
+            &good.replace("12345678-abcd-1234-abcd-123456789abc", "id"),
+            "arn",
+            "ps",
+            "pi"
+        ));
+    }
+
+    #[test]
     fn session_response_rejects_integer_outside_model_range() {
         let good = r#"{"paymentSession":{"paymentSessionId":"ps","paymentManagerArn":"arn","userId":"user","expiryTimeInMinutes":60,"createdAt":1,"updatedAt":1}}"#;
         assert!(valid_session_response(good, "arn", Some("ps"), "user"));
