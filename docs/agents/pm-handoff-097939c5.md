@@ -1231,3 +1231,4 @@ Friction: #4727, Rsi #4694, Rsi #4704
   Kaizen filed by the worker: #5518, #5519 (harness:true filing refused agent_create_issue_harness_project_unresolved).
   Workers: fe94684e docgraph S3, 6be15885 S2 review, 4d40e01a #5514, 0830cd5f #5360 merge (taking the freed slot). Queue: 3057 B3, 3058 #5504, 3060 #5158.
   After #5158 + B3 land: B4 is unblocked once B2+B3+#5158 are all on rolling (B2 already landed).
+- 23:50Z: B3 LANDED (ac9e0f9d, landed_sha 2f191bf511896890b6542ce8f3a0b95c2927c8e4); #5505 auto-closed, CLOSED #5511. #5514 worker (from a90abec7) now has B3 on rolling. B4 waits only on #5158 (seq 3060).
