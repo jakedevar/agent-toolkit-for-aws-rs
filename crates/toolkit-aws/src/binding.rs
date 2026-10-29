@@ -418,7 +418,8 @@ fn parse_ipv4_number(part: &str) -> Option<u64> {
 /// Copy response headers from the wire. Names and values that
 /// [`Headers::insert`] refuses (characters outside its name alphabet, control
 /// characters) are dropped rather than failing the whole response; a repeated
-/// name keeps its last value.
+/// name keeps its last value, except duplicate Content-Length values are
+/// combined so consumers can detect the invalid framing.
 #[must_use]
 pub fn response_headers<'h, I>(entries: I) -> Headers
 where
@@ -427,6 +428,15 @@ where
     let mut headers = Headers::new();
     for (name, value) in entries {
         // A refused header is dropped on purpose (see above).
+        // Preserve duplicate Content-Length as an invalid comma-separated value
+        // so status-aware consumers can reject it rather than lose evidence.
+        if name.eq_ignore_ascii_case("content-length") {
+            if let Some(previous) = headers.get(name) {
+                let combined = format!("{previous},{value}");
+                let _ = headers.insert(name, &combined);
+                continue;
+            }
+        }
         let _ = headers.insert(name, value);
     }
     headers
@@ -446,6 +456,18 @@ mod tests {
     use super::*;
     use crate::testing::FixedResolver;
     use std::time::Duration;
+
+    #[test]
+    fn duplicate_content_length_remains_detectable() {
+        let headers = response_headers([
+            ("Content-Length", "5"),
+            ("content-length", "5"),
+            ("x-other", "one"),
+            ("x-other", "two"),
+        ]);
+        assert_eq!(headers.get("content-length"), Some("5,5"));
+        assert_eq!(headers.get("x-other"), Some("two"));
+    }
 
     const LEAKY: &str = "profile failed: aws_secret_access_key=FAKESECRETVALUE0123456789 \
                          Authorization: Bearer FAKE-BEARER-TOKEN-VALUE";

@@ -1430,8 +1430,8 @@ launch `BoundedBody` collector:
   bytes delivered before it) + one 64 KiB chunk in flight. Analytically that is at most
   `2·C + 64 KiB`. For the pinned SDK stack, `R` is also bounded by hyper's read buffer, and
   TA-STREAM-DL's T-SDL-7 pins `R ≤ 512 KiB` (the test fails if a dependency update raises it). The
-  bound used for budgeting is therefore `C + 512 KiB + 64 KiB`: 64 KiB-class bodies stay under
-  1 MiB, API success under 64.6 MiB, download under 500.6 MiB. The hyper connection buffer itself
+  bound used for budgeting is therefore `< 2C + 512 KiB + 64 KiB` (D24): a moving collector
+  growth can temporarily retain both old and new allocations. The hyper connection buffer itself
   sits below the seam and is the same for every SDK user.
 - **Lifetime (revision 3, #5065).** Revision 2 checked the clock before each `next_chunk` and set
   the read timeout to `min(configured, remaining)`. The pinned `SdkStream` captures its idle
@@ -1555,7 +1555,7 @@ launch `BoundedBody` collector:
   a 500 status whose single raw frame is 1 MiB → refused at admission after narrowing, zero bytes
   handed to the collector. A 200 status whose single raw frame is ceiling + 1 → refused at
   admission. The instrumented peak of collector bytes plus limiter pending stays within
-  `C + R + 64 KiB` in each case; (15) the download path: 403 and 307 → zero pulls, error naming the
+  `< 2C + R + 64 KiB` in each case (D24); (15) the download path: 403 and 307 → zero pulls, error naming the
   status, nothing on disk; (16) retries near the bound: with a fake clock at `D_op − 1 s` and a
   scripted 503, a backoff of 2 s is not slept and the operation ends with the 503's error; with a
   backoff of 0.5 s the next attempt's deadline is exactly `D_op`; no attempt opens at or after
@@ -1782,10 +1782,10 @@ Each slice is one verified commit set: tests written first, then code, then the 
     `expiresIn` absent/0/negative/huge; refresh keeps the old refresh token when none is returned;
     refresh failure → `SessionExpiredError` text; OIDC error bodies whose `error_description`
     carries `FAKE_SECRET` never reach any output; `AWS_ENDPOINT_URL*` in `MapEnv` is ignored);
-    T-TOK-1..6 (every output and error string of the slice, collected by running every command
-    path against fakes seeded with `FAKE-ACCESS`, `FAKE-REFRESH`, `FAKE-CLIENT-SECRET`,
-    `FAKE-VERIFIER`, `FAKE-CODE`: none of them occurs in stdout, stderr, the pending record, the
-    helper argv or the helper environment; `Debug` of every secret-holding type).
+    T-TOK-1..6 for every output and error string produced by L3's OIDC, HTTP, persistence and
+    PKCE code, with fakes seeded with `FAKE-ACCESS`, `FAKE-REFRESH`, `FAKE-CLIENT-SECRET`,
+    `FAKE-VERIFIER` and `FAKE-CODE`, plus `Debug` of every secret-holding type. The command and
+    helper stdout/stderr/pending-record/argv/environment matrix belongs to L5 (#5197).
 - **L4. Callback and sign-in lifecycle**
   - Tests: T-CB-1..18 on `callback.rs` without sockets (request-line and head-size limits, method,
     path, Host header, form decoding, repeated parameters, wrong/missing state with `code` and with
@@ -1857,7 +1857,8 @@ Each slice is one verified commit set: tests written first, then code, then the 
     success when a session file appears; the exchange path in the default build ends `failed` with
     reason `transport_unavailable`).
 - **L5. API client, shaping and the commands**
-  - Tests: T-OPS-1..7 (R-API-OPS, `DeleteLaunch` 204 first); T-CODE-1..8 (Launch API half);
+  - Tests: T-TOK-1..6 command and helper stdout/stderr/pending-record/argv/environment matrix
+    against seeded fakes (#5197); T-OPS-1..7 (R-API-OPS, `DeleteLaunch` 204 first); T-CODE-1..8 (Launch API half);
     T-API-1..14 over `FakeStreamingTransport` (paths, percent-encoded ids, repeated `include`,
     bearer header, `clientToken` present and identical across a 503-then-201 retry, no retry of the
     presigned PUT, PUT URL validation refusals, PUT failure text without the URL, 401 and 404 hints
@@ -2014,6 +2015,11 @@ at no cost to the user, but any spend or data upload stays an operator decision.
 - D22 (revision 3): `download-snapshot` refuses a snapshot that would create more than 200 000
   files and directories, implicit parents included, and `apply-snapshot`'s walk uses the same
   budget (R-AR-PLAN). `unzip` had no such bound.
+- D23 (L3 ruling): authorization-code exchange does not retry ambiguous transport failures;
+  the streaming seam cannot establish that no request bytes were sent.
+- D24 (L3 ruling, #5082): account for moving collector growth as less than `2C`, plus the
+  admitted SDK frame (at most 512 KiB) and returned chunk (at most 64 KiB). The earlier
+  `C + 576 KiB` budget omitted the transient old allocation.
 
 Residuals: W-1 Windows file permissions (R-TOK-MODE; tokens only, since the archive commands are
 Unix-only); R-2 one non-blocking `open` of a device node that a writer with `CAP_MKNOD` swaps into
