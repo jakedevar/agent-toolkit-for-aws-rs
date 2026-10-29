@@ -1966,10 +1966,7 @@ fn findings_at_one_path_follow_the_schema_keyword_order() {
 #[test]
 fn unworded_keywords_render_the_instance_in_document_order() {
     assert_eq!(
-        evaluate(
-            r#"{"minProperties":3}"#,
-            r#"{"b":1,"a":[{"d":1,"c":2}]}"#
-        ),
+        evaluate(r#"{"minProperties":3}"#, r#"{"b":1,"a":[{"d":1,"c":2}]}"#),
         Ok(vec![
             r#"{"b":1,"a":[{"d":1,"c":2}]} has less than 3 properties (at <root>)"#.to_string()
         ])
