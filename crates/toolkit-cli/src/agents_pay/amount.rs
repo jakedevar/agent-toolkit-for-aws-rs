@@ -198,6 +198,36 @@ impl CapDecimal {
     pub fn is_positive(&self) -> bool {
         !self.negative && self.digits != "0"
     }
+
+    /// Exact decimal subtraction for session spending arithmetic.
+    #[must_use]
+    pub fn subtract(&self, _other: &Self) -> String {
+        String::new()
+    }
+}
+
+#[cfg(test)]
+mod subtraction_tests {
+    use super::CapDecimal;
+
+    #[test]
+    fn session_spend_decimal_subtraction_is_exact() {
+        for (budget, available, expected) in [
+            ("1.00", "0.25", "0.75"),
+            (
+                "1000000000000000000000000000000",
+                "0.000001",
+                "999999999999999999999999999999.999999",
+            ),
+            ("1", "2", "-1"),
+            ("1e2", "1e2", "0E+2"),
+            ("-1", "-2", "1"),
+        ] {
+            let left = CapDecimal::parse(budget).unwrap();
+            let right = CapDecimal::parse(available).unwrap();
+            assert_eq!(left.subtract(&right), expected, "{budget} - {available}");
+        }
+    }
 }
 
 /// `text` with `_` between digits removed; every other character must be an
