@@ -41,6 +41,7 @@ fn header_value(headers: &[(String, String)], name: &str) -> Option<String> {
 }
 
 /// Whether `value` is an object with a truthy `accepts`.
+// recorded-shape: merchant challenge is not an AWS response.
 fn carries_accepts(value: &Json) -> bool {
     matches!(value, Json::Object(_)) && value.get("accepts").is_some_and(truthy)
 }

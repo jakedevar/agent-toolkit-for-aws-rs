@@ -330,3 +330,46 @@ fn ap_inv_docs_record_s1_to_s5_done() {
         "parity document must list slice S5"
     );
 }
+
+/// #5316: the status summaries distinguish implemented from landed, carry no
+/// stale "pending review" text, and cite a landing commit for every slice.
+#[test]
+fn ap_inv_status_lines_distinguish_implemented_from_landed_with_evidence() {
+    let parity = fs::read_to_string(root().join("docs/migration/ai-payloads.md")).unwrap();
+    assert!(
+        !parity.to_ascii_lowercase().contains("pending review"),
+        "the parity document keeps stale pending-review text"
+    );
+    let rows: Vec<&str> = parity
+        .lines()
+        .filter(|l| l.starts_with("| S") && l.contains(" `ai-payloads-"))
+        .collect();
+    assert_eq!(rows.len(), 7, "S1, S2a, S2b, S3, S3r, S4 and S5: {rows:?}");
+    for row in rows {
+        let status = row.trim_end_matches('|').rsplit('|').next().unwrap().trim();
+        let landed = status
+            .strip_prefix("implemented, landed in `")
+            .and_then(|rest| rest.strip_suffix('`'));
+        assert!(
+            landed.is_some_and(|sha| sha.len() >= 8
+                && sha.len() <= 40
+                && sha
+                    .bytes()
+                    .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())),
+            "slice row must say `implemented, landed in `<commit>``: {row}"
+        );
+    }
+
+    let design = fs::read_to_string(root().join("docs/migration/ai-payloads-design.md")).unwrap();
+    let status_block: String = design
+        .lines()
+        .skip_while(|l| !l.starts_with("Status:"))
+        .take_while(|l| !l.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(
+        status_block.contains("landed on `origin/rolling`")
+            && status_block.contains("ai-payloads.md"),
+        "design status must point at the landing evidence table: {status_block}"
+    );
+}

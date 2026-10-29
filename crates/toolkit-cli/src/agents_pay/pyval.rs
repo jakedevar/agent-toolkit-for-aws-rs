@@ -25,6 +25,7 @@ pub struct PyValueError;
 
 /// Python's truthiness of a JSON value.
 #[must_use]
+// recorded-shape: policy and merchant challenge values need Python truthiness.
 pub fn truthy(value: &Json) -> bool {
     match value {
         Json::Null => false,
@@ -39,6 +40,7 @@ pub fn truthy(value: &Json) -> bool {
 
 /// Python's `str()` of a JSON scalar; `None` for an array or object (D2).
 #[must_use]
+// recorded-shape: policy and merchant challenge scalar coercion rejects containers.
 pub fn py_str(value: &Json) -> Option<String> {
     let text = match value {
         Json::Null => "None".to_owned(),
@@ -166,6 +168,7 @@ const I64_LIMIT: f64 = 9_223_372_036_854_775_808.0;
 /// # Errors
 ///
 /// [`PyValueError`] where Python raises, and for values outside `i64` (D7).
+// recorded-shape: merchant challenge version coercion rejects container values.
 pub fn py_int(value: &Json) -> Result<i64, PyValueError> {
     match value {
         Json::Bool(flag) => Ok(i64::from(*flag)),
