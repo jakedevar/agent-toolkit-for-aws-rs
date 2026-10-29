@@ -258,6 +258,44 @@ mod tests {
     }
 
     #[test]
+    fn t_br_tok_golden_vectors() {
+        use crate::agents_pay::policy::derive_client_token;
+        let entry = |amount: &str, timeout: i64| {
+            Json::object(vec![
+                ("network", Json::string("eip155:84532")),
+                (
+                    "asset",
+                    Json::string("0x036cbd53842c5426634e7929541ec2318f3dcf7e"),
+                ),
+                (
+                    "payTo",
+                    Json::string("0x1111111111111111111111111111111111111111"),
+                ),
+                ("amount", Json::string(amount)),
+                ("maxTimeoutSeconds", Json::Int(timeout)),
+            ])
+        };
+        let token = |amount, timeout| {
+            derive_client_token(
+                "payment-session-TEST00000000001",
+                "https://merchant.test/pay/weather?city=sydney",
+                &entry(amount, timeout),
+                None,
+            )
+            .unwrap()
+        };
+        assert_eq!(
+            token("1000", 60),
+            "e36c6d851f2fc37ad61d084f213d568e5c6920da19a3aa2675babb3bcff5c81d"
+        );
+        assert_eq!(
+            token("1001", 60),
+            "617369d56a4f010acec1db48579ab07eaf78887e3464e044a68c04c5b6162b3d"
+        );
+        assert_eq!(token("1000", 60), token("1000", 30));
+    }
+
+    #[test]
     fn t_ocp_map_cap_boundaries() {
         use crate::agents_pay::amount::{exceeds_cap, CapDecimal};
         for (maximum, lower, upper) in [

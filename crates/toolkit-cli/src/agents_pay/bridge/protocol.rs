@@ -79,14 +79,13 @@ pub fn read_request(reader: &mut impl Read) -> Result<Json, BridgeError> {
     if !toolkit_aws::endpoint::is_valid_region(field("region", 128)?) {
         return Err(BridgeError::Input);
     }
-    let manager = field("payment_manager_arn", 2048)?;
-    let session = field("payment_session_id", 2048)?;
-    let user = field("user_id", 512)?;
     if field("agent_name", 256)? != "openclaw-aws-agents-pay" {
         return Err(BridgeError::Input);
     }
+    let manager = field("payment_manager_arn", 2048)?;
+    let session = field("payment_session_id", 2048)?;
+    let user = field("user_id", 512)?;
     let instrument = if operation == "process_payment" {
-        let instrument = field("payment_instrument_id", 2048)?;
         if field("version", 8)? != "2" {
             return Err(BridgeError::Input);
         }
@@ -106,7 +105,7 @@ pub fn read_request(reader: &mut impl Read) -> Result<Json, BridgeError> {
         super::super::policy::openclaw::from_openclaw(
             request.get("policy").ok_or(BridgeError::Input)?,
         )?;
-        Some(instrument)
+        Some(field("payment_instrument_id", 2048)?)
     } else {
         None
     };
