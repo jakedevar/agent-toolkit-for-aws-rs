@@ -110,6 +110,15 @@ pub(crate) const SLICE: crate::registry::Slice = crate::registry::Slice {
         passthrough: false,
         handler: callback::command::callback,
     }, crate::CommandSpec {
+        path: &["launch", "auth-start"],
+        flags: &[],
+        value_flags: &["--region", "--aws-mcp-url"],
+        strict_values: true,
+        repeatable_flags: &[],
+        max_positionals: 0,
+        passthrough: false,
+        handler: callback::start::command,
+    }, crate::CommandSpec {
         path: &["launch", "auth-wait"],
         flags: &[],
         value_flags: &["--region", "--aws-mcp-url"],
@@ -119,9 +128,9 @@ pub(crate) const SLICE: crate::registry::Slice = crate::registry::Slice {
         passthrough: false,
         handler: callback::wait::command,
     }],
-    synopsis: "  toolkit launch auth-callback\n  toolkit launch auth-wait PID [--region REGION] [--aws-mcp-url URL]\n",
+    synopsis: "  toolkit launch auth-callback\n  toolkit launch auth-start [--region REGION] [--aws-mcp-url URL]\n  toolkit launch auth-wait PID [--region REGION] [--aws-mcp-url URL]\n",
     description:
-        "  launch auth-callback  Internal sign-in helper; reads configuration from stdin.\n  launch auth-wait      Wait for a sign-in helper to finish.\n",
+        "  launch auth-callback  Internal sign-in helper; reads configuration from stdin.\n  launch auth-start     Start sign-in.\n  launch auth-wait      Wait for a sign-in helper to finish.\n",
     exit_notes: "",
     doc: "docs/migration/launch-with-aws-design.md",
     synopsis_rank: crate::registry::NEW_RANK,

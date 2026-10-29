@@ -2125,3 +2125,5 @@ lookup can overrun an operation deadline by the resolver's own configured limits
   would need its own reviewed path.
 
 The Rust callback helper is invoked as `toolkit launch auth-callback`; the parent waits with `toolkit launch auth-wait PID`.
+
+Start sign-in with `toolkit launch auth-start` before using the wait command.

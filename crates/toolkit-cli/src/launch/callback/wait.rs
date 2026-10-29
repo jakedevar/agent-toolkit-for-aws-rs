@@ -77,7 +77,8 @@ pub fn command(invocation: &Invocation, output: &mut Output<'_>) -> Result<(), T
     }
 }
 
-fn failure(output: &mut Output<'_>, message: &str) -> Result<(), ToolkitError> {
+#[allow(clippy::unnecessary_wraps)]
+pub(super) fn failure(output: &mut Output<'_>, message: &str) -> Result<(), ToolkitError> {
     output.diagnostic(&serde_json::json!({"error":message}).to_string());
     output.set_exit_status(1);
     Ok(())

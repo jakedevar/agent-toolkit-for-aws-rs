@@ -15,6 +15,7 @@ pub mod lifecycle;
 pub mod listener;
 pub mod pending;
 pub mod spawn;
+pub mod start;
 pub mod wait;
 
 const MAX_HEAD: usize = 8192;

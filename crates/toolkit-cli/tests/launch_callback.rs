@@ -101,3 +101,64 @@ fn auth_wait_reports_unknown_pid_without_signalling() {
     assert!(message.contains("No sign-in is in progress for pid 999999"));
     std::fs::remove_dir_all(home).unwrap();
 }
+
+#[cfg(all(unix, not(feature = "aws-sdk")))]
+#[test]
+fn auth_start_spawns_helper_without_secrets_in_argv() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let home = std::env::temp_dir().join(format!("l4-start-{}-{unique}", std::process::id()));
+    let state_dir = home.join(".launch-with-aws");
+    std::fs::create_dir_all(&state_dir).unwrap();
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let session = serde_json::json!({"client_id":"example","client_secret":"private-client-secret","client_expires_at":now+3600,"authorize_endpoint":"https://oidc.us-east-1.amazonaws.com/authorize","token_endpoint":"https://oidc.us-east-1.amazonaws.com/token","scopes":["launch:access"],"access_token":"old","refresh_token":"old-refresh","token_expires_at":now-1});
+    std::fs::write(state_dir.join("session.json"), session.to_string()).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_toolkit"))
+        .args(["launch", "auth-start"])
+        .env("HOME", &home)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let response: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let pid = response["pid"].as_u64().unwrap();
+    let port = response["port"].as_u64().unwrap() as u16;
+    let url = response["signInUrl"].as_str().unwrap();
+    assert!(!url.contains("private-client-secret"));
+    #[cfg(target_os = "linux")]
+    {
+        let argv = std::fs::read(format!("/proc/{pid}/cmdline")).unwrap();
+        assert!(!String::from_utf8_lossy(&argv).contains("private-client-secret"));
+    }
+    let state = url
+        .split('&')
+        .find_map(|v| v.strip_prefix("state="))
+        .unwrap();
+    let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .unwrap();
+    write!(
+        stream,
+        "GET /?state={state}&code=abc HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\r\n"
+    )
+    .unwrap();
+    let mut reply = String::new();
+    stream.read_to_string(&mut reply).unwrap();
+    let wait = Command::new(env!("CARGO_BIN_EXE_toolkit"))
+        .args(["launch", "auth-wait", &pid.to_string()])
+        .env("HOME", &home)
+        .output()
+        .unwrap();
+    assert!(!wait.status.success());
+    assert!(String::from_utf8_lossy(&wait.stderr).contains("transport is unavailable"));
+    std::fs::remove_dir_all(home).unwrap();
+}
