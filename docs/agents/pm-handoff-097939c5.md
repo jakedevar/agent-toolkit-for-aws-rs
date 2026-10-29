@@ -529,3 +529,5 @@ Friction: #4727, Rsi #4694, Rsi #4704
   4/4 busy: e91f616e (#4397), d06901cb (#5052 S2), e2c08620 (#4487 repair 2), 4468c202 (#5038 r2).
 - 10-29 02:26Z: #4397 impl d676f42b17fd73d466f0faa52415fe09dc73f99a (e91f616e; powertools-handler + s3-upload-processor crates, recipes cargo-lambda + pinned Dockerfile, Python deleted; deps lambda_runtime 1.5.0, aws-sdk-s3 1.155.0, aws-sdk-dynamodb 1.134.0; scoped 5d1cfe3c, clippy 22a479f9, fmt ba6c460e). RULING: SHA-256 idempotency keys accepted (recorded divergence). Follow-up #5058 (live/container verification). Review #5059 worker 9801eac1 (Codex sol high, pinned).
   4/4 busy: d06901cb (#5052 S2), e2c08620 (#4487 repair 2), 4468c202 (#5038 r2), 9801eac1 (#5059).
+- 10-29 02:27Z: #4487 repair 2 6727baac93d1d3f95e5ac4cc5efc4b5541e81051 (e2c08620; normalised-substring fail-closed rule; fmt/clippy/scoped ok). #5018 r3 worker 1b32df58 (Codex sol high, pinned; #5053/#5022 only, adversarial). On ACCEPT: round 21 = #4487 + #4412 activation (+ #4397 if #5059 accepts).
+  4/4 busy: d06901cb (#5052 S2), 4468c202 (#5038 r2), 9801eac1 (#5059), 1b32df58 (#5018 r3).
