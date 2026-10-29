@@ -114,6 +114,93 @@ fn ap_rw_03_10_11_round_trips() {
         }
     }
 }
+// Each row is a source golden and each column is a target format.
+const MISSING: [[&[&str]; 6]; 6] = [
+    [
+        &[],
+        &[
+            "data_source",
+            "response",
+            "prompt",
+            "extra_info.reference_answer.text",
+        ],
+        &["prompt", "completion"],
+        &["prompt", "completion", "chosen", "rejected"],
+        &["model_response", "query", "response"],
+        &[],
+    ],
+    [
+        &["id", "messages", "reference_answer.text"],
+        &[],
+        &["id", "completion", "reference_answer.text"],
+        &[
+            "id",
+            "completion",
+            "chosen",
+            "rejected",
+            "reference_answer.text",
+        ],
+        &["id", "model_response", "query", "reference_answer.text"],
+        &["id", "messages"],
+    ],
+    [
+        &["messages"],
+        &[
+            "data_source",
+            "response",
+            "extra_info.reference_answer.text",
+        ],
+        &[],
+        &["chosen", "rejected"],
+        &["model_response", "query", "response"],
+        &["messages"],
+    ],
+    [
+        &["messages"],
+        &[
+            "data_source",
+            "response",
+            "extra_info.reference_answer.text",
+        ],
+        &[],
+        &[],
+        &["model_response", "query", "response"],
+        &["messages"],
+    ],
+    [
+        &["messages"],
+        &["data_source", "prompt", "extra_info.reference_answer.text"],
+        &["prompt", "completion"],
+        &["prompt", "completion", "chosen", "rejected"],
+        &[],
+        &["messages"],
+    ],
+    [
+        &["reference_answer.text"],
+        &[
+            "data_source",
+            "response",
+            "prompt",
+            "extra_info.reference_answer.text",
+        ],
+        &["prompt", "completion", "reference_answer.text"],
+        &[
+            "prompt",
+            "completion",
+            "chosen",
+            "rejected",
+            "reference_answer.text",
+        ],
+        &[
+            "model_response",
+            "query",
+            "response",
+            "reference_answer.text",
+        ],
+        &[],
+    ],
+];
+
 #[test]
 fn ap_rw_04_cross_format_matrix() {
     for (i, source) in FORMATS.iter().enumerate() {
@@ -128,95 +215,9 @@ fn ap_rw_04_cross_format_matrix() {
             if ok {
                 assert_out(o, 0, "ok:");
             } else {
-                // Each row is a source golden and each column is a target format.
-                let missing: [[&[&str]; 6]; 6] = [
-                    [
-                        &[],
-                        &[
-                            "data_source",
-                            "response",
-                            "prompt",
-                            "extra_info.reference_answer.text",
-                        ],
-                        &["prompt", "completion"],
-                        &["prompt", "completion", "chosen", "rejected"],
-                        &["model_response", "query", "response"],
-                        &[],
-                    ],
-                    [
-                        &["id", "messages", "reference_answer.text"],
-                        &[],
-                        &["id", "completion", "reference_answer.text"],
-                        &[
-                            "id",
-                            "completion",
-                            "chosen",
-                            "rejected",
-                            "reference_answer.text",
-                        ],
-                        &["id", "model_response", "query", "reference_answer.text"],
-                        &["id", "messages"],
-                    ],
-                    [
-                        &["messages"],
-                        &[
-                            "data_source",
-                            "response",
-                            "extra_info.reference_answer.text",
-                        ],
-                        &[],
-                        &["chosen", "rejected"],
-                        &["model_response", "query", "response"],
-                        &["messages"],
-                    ],
-                    [
-                        &["messages"],
-                        &[
-                            "data_source",
-                            "response",
-                            "extra_info.reference_answer.text",
-                        ],
-                        &[],
-                        &[],
-                        &["model_response", "query", "response"],
-                        &["messages"],
-                    ],
-                    [
-                        &["messages"],
-                        &["data_source", "prompt", "extra_info.reference_answer.text"],
-                        &["prompt", "completion"],
-                        &["prompt", "completion", "chosen", "rejected"],
-                        &[],
-                        &["messages"],
-                    ],
-                    [
-                        &["reference_answer.text"],
-                        &[
-                            "data_source",
-                            "response",
-                            "prompt",
-                            "extra_info.reference_answer.text",
-                        ],
-                        &["prompt", "completion", "reference_answer.text"],
-                        &[
-                            "prompt",
-                            "completion",
-                            "chosen",
-                            "rejected",
-                            "reference_answer.text",
-                        ],
-                        &[
-                            "model_response",
-                            "query",
-                            "response",
-                            "reference_answer.text",
-                        ],
-                        &[],
-                    ],
-                ];
                 let output = String::from_utf8_lossy(&o.stderr);
                 assert_eq!(o.status.code(), Some(1), "{source} -> {target}: {output}");
-                for field in missing[i][j] {
+                for field in MISSING[i][j] {
                     assert!(
                         output.contains(&format!("event[0].{field}")),
                         "{source} -> {target}: missing {field}: {output}"
