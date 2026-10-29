@@ -340,7 +340,12 @@ mod tests {
                                     || line.trim() == concat!("let _ = send", ".", "send(line);"))
                             || path.ends_with("callback/tests.rs")
                                 && line.trim()
-                                    == concat!("let _ = send", ".", "send(child.wait());");
+                                    == concat!("let _ = send", ".", "send(child.wait());")
+                            || path.ends_with("callback/gate.rs")
+                                && (line.trim()
+                                    == concat!("entered_tx", ".", "send(()).unwrap();")
+                                    || line.trim()
+                                        == concat!("release_tx", ".", "send(()).unwrap();"));
                         assert!(channel_call, "{}: {line}", path.display());
                     }
                 }

@@ -35,45 +35,6 @@ fn publication_timeout(gate: &CommitGate) -> Option<PendingStatus> {
     gate.fail_exchange().then_some(PendingStatus::TimedOut)
 }
 
-#[cfg(test)]
-mod deadline_tests {
-    use super::*;
-    #[test]
-    fn exchange_failure_at_cutoff_reports_timeout() {
-        let gate = CommitGate::default();
-        assert!(gate.start_exchange());
-        let now = Instant::now();
-        assert_eq!(
-            exchange_failure(&gate, now, now),
-            Some(HelperResult::TimedOut)
-        );
-        let gate = CommitGate::default();
-        assert!(gate.start_exchange());
-        assert_eq!(
-            exchange_failure(&gate, now, now + Duration::from_secs(1)),
-            Some(HelperResult::Failed)
-        );
-        let gate = CommitGate::default();
-        assert!(gate.start_exchange());
-        assert_eq!(gate.watchdog(), gate::WatchdogAction::RecordTimeoutAndExit);
-        assert_eq!(exchange_failure(&gate, now, now), None);
-    }
-
-    #[test]
-    fn refused_publication_after_cutoff_records_timeout() {
-        let gate = CommitGate::default();
-        assert!(gate.start_exchange());
-        assert_eq!(publication_timeout(&gate), Some(PendingStatus::TimedOut));
-        let aborted = CommitGate::default();
-        assert!(aborted.start_exchange());
-        assert_eq!(
-            aborted.watchdog(),
-            gate::WatchdogAction::RecordTimeoutAndExit
-        );
-        assert_eq!(publication_timeout(&aborted), None);
-    }
-}
-
 /// Run a helper in its own process, retaining lock custody through return.
 /// `exchange` receives the code, redirect URI and absolute exchange cutoff;
 /// it must return complete session JSON or a fixed failure, with no secrets in errors.
@@ -190,4 +151,43 @@ pub fn run(
     };
     custody.write(port, wall_deadline, wall_cutoff, status, reason, &OsRandom)?;
     Ok(result)
+}
+
+#[cfg(test)]
+mod deadline_tests {
+    use super::*;
+    #[test]
+    fn exchange_failure_at_cutoff_reports_timeout() {
+        let gate = CommitGate::default();
+        assert!(gate.start_exchange());
+        let now = Instant::now();
+        assert_eq!(
+            exchange_failure(&gate, now, now),
+            Some(HelperResult::TimedOut)
+        );
+        let gate = CommitGate::default();
+        assert!(gate.start_exchange());
+        assert_eq!(
+            exchange_failure(&gate, now, now + Duration::from_secs(1)),
+            Some(HelperResult::Failed)
+        );
+        let gate = CommitGate::default();
+        assert!(gate.start_exchange());
+        assert_eq!(gate.watchdog(), gate::WatchdogAction::RecordTimeoutAndExit);
+        assert_eq!(exchange_failure(&gate, now, now), None);
+    }
+
+    #[test]
+    fn refused_publication_after_cutoff_records_timeout() {
+        let gate = CommitGate::default();
+        assert!(gate.start_exchange());
+        assert_eq!(publication_timeout(&gate), Some(PendingStatus::TimedOut));
+        let aborted = CommitGate::default();
+        assert!(aborted.start_exchange());
+        assert_eq!(
+            aborted.watchdog(),
+            gate::WatchdogAction::RecordTimeoutAndExit
+        );
+        assert_eq!(publication_timeout(&aborted), None);
+    }
 }

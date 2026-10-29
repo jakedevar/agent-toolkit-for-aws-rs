@@ -428,7 +428,7 @@ mod tests {
                         release_rx.recv().unwrap();
                     },
                     |code| assert_eq!(code, 1),
-                )
+                );
             });
             entered_rx.recv().unwrap();
             assert_eq!(attempts.load(Ordering::SeqCst), 1);
