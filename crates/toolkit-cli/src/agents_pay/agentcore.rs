@@ -760,7 +760,51 @@ pub enum PaymentError {
     /// The service returned an invalid response.
     InvalidResponse,
     /// The transport or authentication failed.
-    Transport,
+    Transport(PaymentErrorClass),
+}
+
+/// Value-free classes used by the generic payment-flow error text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg(test)]
+pub enum PaymentErrorClass {
+    /// Connection or TLS failure.
+    ConnectError,
+    /// Connection timed out.
+    ConnectTimeout,
+    /// Idle read or operation deadline elapsed.
+    ReadTimeout,
+    /// No credentials were found.
+    NoCredentialsError,
+    /// AWS service error.
+    ClientError,
+    /// Other internal failure.
+    RuntimeError,
+}
+
+#[cfg(test)]
+fn transport_error(error: &AwsError) -> PaymentError {
+    use toolkit_aws::error::TimeoutPhase;
+    let class = match error {
+        AwsError::Connect { .. } => PaymentErrorClass::ConnectError,
+        AwsError::Timeout {
+            phase: TimeoutPhase::Connect,
+            ..
+        } => PaymentErrorClass::ConnectTimeout,
+        AwsError::Timeout {
+            phase: TimeoutPhase::Read | TimeoutPhase::Deadline,
+            ..
+        } => PaymentErrorClass::ReadTimeout,
+        AwsError::NoCredentials => PaymentErrorClass::NoCredentialsError,
+        AwsError::Service(_) => PaymentErrorClass::ClientError,
+        AwsError::InvalidConfig { .. }
+        | AwsError::CredentialArgument { .. }
+        | AwsError::PartialCredentials { .. }
+        | AwsError::CredentialsExpired
+        | AwsError::CredentialProvider { .. }
+        | AwsError::Pagination { .. }
+        | AwsError::InvalidResponse { .. } => PaymentErrorClass::RuntimeError,
+    };
+    PaymentError::Transport(class)
 }
 
 /// An adapter over a caller-supplied transport and signer.
@@ -1065,33 +1109,34 @@ impl<'a> PaymentClient<'a> {
         let mut headers = Headers::new();
         headers
             .insert_sensitive("x-amzn-bedrock-agentcore-payments-user-id", user)
-            .map_err(|_| PaymentError::Transport)?;
+            .map_err(|error| transport_error(&error))?;
         headers
             .insert(
                 "x-amzn-bedrock-agentcore-payments-agent-name",
                 agent_name(runtime),
             )
-            .map_err(|_| PaymentError::Transport)?;
+            .map_err(|error| transport_error(&error))?;
         headers
             .insert("content-type", "application/json")
-            .map_err(|_| PaymentError::Transport)?;
+            .map_err(|error| transport_error(&error))?;
         let policy = RetryPolicy::default();
         let jitter = FullJitter::new();
         for attempt in 1..=policy.total_attempts() {
             let remaining = deadline.saturating_duration_since(self.clock.now());
             if remaining.is_zero() {
-                return Err(PaymentError::Transport);
+                return Err(PaymentError::Transport(PaymentErrorClass::ReadTimeout));
             }
             let timeout = remaining.min(Duration::from_secs(30));
             let mut request = HttpRequest {
                 method: Method::Post,
                 url: format!(
                     "{}/payments/{path}",
-                    endpoint(&self.region).map_err(|_| PaymentError::Transport)?
+                    endpoint(&self.region).map_err(|error| transport_error(&error))?
                 ),
                 headers: headers.clone(),
                 body: request_body.clone(),
-                timeouts: Timeouts::new(timeout, timeout).map_err(|_| PaymentError::Transport)?,
+                timeouts: Timeouts::new(timeout, timeout)
+                    .map_err(|error| transport_error(&error))?,
             };
             self.signer
                 .sign(
@@ -1101,12 +1146,12 @@ impl<'a> PaymentClient<'a> {
                         service: "bedrock-agentcore".into(),
                     },
                 )
-                .map_err(|_| PaymentError::Transport)?;
+                .map_err(|error| transport_error(&error))?;
             if self.clock.now() >= deadline {
-                return Err(PaymentError::Transport);
+                return Err(PaymentError::Transport(PaymentErrorClass::ReadTimeout));
             }
             let limits = StreamLimits::new(65_536, 8_192)
-                .map_err(|_| PaymentError::Transport)?
+                .map_err(|error| transport_error(&error))?
                 .with_deadline(deadline);
             let outcome = self.transport.open(&request, &limits);
             let error = match outcome {
@@ -1140,7 +1185,7 @@ impl<'a> PaymentClient<'a> {
                     let mut bytes = Vec::new();
                     loop {
                         if self.clock.now() >= deadline {
-                            return Err(PaymentError::Transport);
+                            return Err(PaymentError::Transport(PaymentErrorClass::ReadTimeout));
                         }
                         match stream.next_chunk() {
                             Ok(Some(chunk)) => {
@@ -1152,12 +1197,17 @@ impl<'a> PaymentClient<'a> {
                             }
                             Ok(None) => break,
                             Err(toolkit_aws::StreamError::IdleTimeout) => {
-                                break 'response PaymentError::Transport;
+                                break 'response PaymentError::Transport(
+                                    PaymentErrorClass::ReadTimeout,
+                                );
                             }
                             Err(toolkit_aws::StreamError::Failed(error))
                                 if error.is_retryable() =>
                             {
-                                break 'response PaymentError::Transport;
+                                break 'response transport_error(&error);
+                            }
+                            Err(toolkit_aws::StreamError::Failed(error)) => {
+                                return Err(transport_error(&error));
                             }
                             Err(toolkit_aws::StreamError::TooLarge) if status >= 400 => {
                                 break 'response PaymentError::Service(error_code(
@@ -1168,7 +1218,11 @@ impl<'a> PaymentClient<'a> {
                             Err(toolkit_aws::StreamError::TooLarge) => {
                                 return Err(PaymentError::InvalidResponse);
                             }
-                            Err(_) => return Err(PaymentError::Transport),
+                            Err(toolkit_aws::StreamError::DeadlineExceeded) => {
+                                return Err(PaymentError::Transport(
+                                    PaymentErrorClass::ReadTimeout,
+                                ));
+                            }
                         }
                     }
                     let body =
@@ -1178,12 +1232,12 @@ impl<'a> PaymentClient<'a> {
                     }
                     PaymentError::Service(error_code(error_header.as_deref(), body))
                 }
-                Err(error) if !error.is_retryable() => return Err(PaymentError::Transport),
-                Err(_) => PaymentError::Transport,
+                Err(error) if !error.is_retryable() => return Err(transport_error(&error)),
+                Err(error) => transport_error(&error),
             };
             let retry = match &error {
                 PaymentError::Service(code) => is_retryable(code),
-                PaymentError::Transport => true,
+                PaymentError::Transport(_) => true,
                 PaymentError::InvalidResponse => false,
             };
             if !retry || attempt == policy.total_attempts() {
@@ -1195,7 +1249,7 @@ impl<'a> PaymentClient<'a> {
             }
             self.clock.sleep(delay);
         }
-        Err(PaymentError::Transport)
+        Err(PaymentError::Transport(PaymentErrorClass::ReadTimeout))
     }
 }
 
@@ -1388,7 +1442,7 @@ mod wire_contracts {
         client.clock = &clock;
         assert_eq!(
             client.process_payment(super::operation_contracts::approved()),
-            Err(PaymentError::Transport)
+            Err(PaymentError::Transport(PaymentErrorClass::ReadTimeout))
         );
         assert_eq!(transport.requests().len(), 1);
     }
@@ -1402,7 +1456,7 @@ mod wire_contracts {
         expired.clock = &clock;
         assert_eq!(
             expired.process_payment_until(super::operation_contracts::approved(), now),
-            Err(PaymentError::Transport)
+            Err(PaymentError::Transport(PaymentErrorClass::ReadTimeout))
         );
         assert!(expired_transport.requests().is_empty());
         let stalled_transport =
@@ -1412,7 +1466,7 @@ mod wire_contracts {
         let cutoff = now + Duration::from_secs(1);
         assert_eq!(
             stalled.process_payment_until(super::operation_contracts::approved(), cutoff),
-            Err(PaymentError::Transport)
+            Err(PaymentError::Transport(PaymentErrorClass::ReadTimeout))
         );
         assert_eq!(stalled_transport.requests().len(), 1);
         assert_eq!(stalled_transport.open_limits()[0].deadline(), Some(cutoff));
@@ -1431,7 +1485,7 @@ mod wire_contracts {
                 super::operation_contracts::approved(),
                 now + Duration::from_secs(2)
             ),
-            Err(PaymentError::Transport)
+            Err(PaymentError::Transport(PaymentErrorClass::ConnectError))
         );
         assert_eq!(transport.requests().len(), 1);
         assert_eq!(clock.now(), now);
