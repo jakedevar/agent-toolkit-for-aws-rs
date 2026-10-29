@@ -1091,7 +1091,7 @@ impl<'a> PaymentClient<'a> {
             true,
             get_body(manager, session).into_bytes(),
             200,
-            None,
+            self.operation_deadline,
         )?;
         if !valid_session_response(&body, manager, Some(session), user) {
             return Err(PaymentError::InvalidResponse);
@@ -1119,7 +1119,7 @@ impl<'a> PaymentClient<'a> {
             false,
             session_body(manager, budget, expiry, token).into_bytes(),
             201,
-            None,
+            self.operation_deadline,
         )?;
         if !valid_session_response(&body, manager, None, user) {
             return Err(PaymentError::InvalidResponse);
@@ -1148,7 +1148,7 @@ impl<'a> PaymentClient<'a> {
             false,
             instrument_body(manager, connector, network, email, token).into_bytes(),
             201,
-            None,
+            self.operation_deadline,
         )?;
         let value = parse_json(&body).map_err(|_| PaymentError::InvalidResponse)?;
         let instrument = toolkit_aws::recorded::optional_object(&value, "paymentInstrument")
