@@ -25,6 +25,8 @@ pub mod flow;
 #[cfg(feature = "agents-pay-live")]
 pub mod live;
 pub mod net;
+#[cfg(not(feature = "agents-pay-live"))]
+mod no_payment;
 pub mod proof;
 pub mod vault;
 #[cfg(feature = "aws-sdk")]
@@ -48,7 +50,10 @@ pub(crate) const SLICE: crate::registry::Slice = crate::registry::Slice {
         repeatable_flags: &[],
         max_positionals: 1,
         passthrough: false,
+        #[cfg(feature = "agents-pay-live")]
         handler: fetch_command,
+        #[cfg(not(feature = "agents-pay-live"))]
+        handler: self::no_payment::fetch_command,
     }],
     synopsis: r"  toolkit agents-pay fetch [URL] [--status] [--browser-handle URL]
                            [--method GET|HEAD] [--purchase-id ID]
@@ -211,21 +216,7 @@ fn fetch_command(invocation: &Invocation, out: &mut Output<'_>) -> Result<(), To
 /// `agents-pay-live` (D32), for every argv, `--status` included: the
 /// refusal document with [`deps::NO_PAYMENT_SUPPORT`], as [`flow::render`]
 /// prints it.
+///
+/// The default-build route (`no_payment`, pinned whole by
+/// `tests/agents_pay_gate.rs`) writes it and exits 2; nothing else runs.
 pub const D32_REFUSAL: &str = "{\"paid\": false, \"refused\": true, \"reason\": \"This toolkit build has no payment support; install a release build of toolkit.\"}";
-
-/// The registry handler of a build without `agents-pay-live` (D32): one
-/// call to the fixed refusal. Argv is not parsed, no world is built, and no
-/// file, variable, credential or terminal is read. `tests/agents_pay_gate.rs`
-/// pins this body token for token.
-#[cfg(not(feature = "agents-pay-live"))]
-fn fetch_command(_invocation: &Invocation, out: &mut Output<'_>) -> Result<(), ToolkitError> {
-    refuse_without_payment_support(out)
-}
-
-/// D32: print the refusal literal and exit 2. Nothing else runs.
-#[cfg(not(feature = "agents-pay-live"))]
-fn refuse_without_payment_support(out: &mut Output<'_>) -> Result<(), ToolkitError> {
-    out.line(D32_REFUSAL)?;
-    out.set_exit_status(2);
-    Ok(())
-}

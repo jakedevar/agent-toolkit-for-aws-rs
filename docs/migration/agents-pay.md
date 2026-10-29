@@ -33,14 +33,22 @@ every test target refuses to compile with it (G1a). Without it every
 `{"paid": false, "refused": true, "reason": "This toolkit build has no
 payment support; install a release build of toolkit."}` and exits 2.
 
-The refusal is structural (PM ruling on re-review #5389, #5390, #5391). In a
-build without the feature the registry handler `fetch_command` is a separate
-`#[cfg(not(feature = "agents-pay-live"))]` function whose body is one call,
-`refuse_without_payment_support(out)`, and that function prints the string
-literal `D32_REFUSAL` and sets exit 2. Nothing else runs: argv is not parsed,
-`Deps::for_process` does not exist (it is live-only), and no helper, file,
-variable, credential or terminal is reached. The live handler (argv, then the
-process world) is the `#[cfg(feature = "agents-pay-live")]` twin.
+The refusal is structural (PM rulings on re-reviews #5389 and #5397: #5390,
+#5391, #5400). In a build without the feature the registry entry points at
+`self::no_payment::fetch_command`, in its own file module
+`agents_pay/no_payment.rs`, declared `#[cfg(not(feature = "agents-pay-live"))]
+mod no_payment;` with no other attribute. That file holds only two functions:
+`fetch_command`, whose body is one call,
+`self::refuse_without_payment_support(out)`, and that function, which prints
+the string literal `super::D32_REFUSAL` and sets exit 2. Every path in the
+file is absolute (`::core::result::Result::Ok(())`,
+`::toolkit_core::ToolkitError`, `crate::Output`), and it has no `use`, no
+macro invocation and no other item, so no module item, import, raw
+identifier or textual macro can shadow a name it resolves. Nothing else
+runs: argv is not parsed, `Deps::for_process` does not exist (it is
+live-only), and no helper, file, variable, credential or terminal is
+reached. The live handler (argv, then the process world) is the
+`#[cfg(feature = "agents-pay-live")]` `fetch_command` in `mod.rs`.
 
 Behaviour change: in a build without the feature, D32 now wins over the
 handler's own usage errors and over `--status`. `toolkit agents-pay fetch`
@@ -52,22 +60,27 @@ the D32 document and exit 2, not the usage text (exit 1) or a usage error;
 (an unknown flag, a second positional, a `-` value) before any handler, and
 a live build keeps every row of the table above.
 
-A source gate pins that surface, token for token (`t_ac3_noread_*` in
-`tests/agents_pay_gate.rs`): exactly one live and one disabled
-`fetch_command`, the disabled body and the D32 function exactly as above,
-`D32_REFUSAL` a plain `&str` literal equal to the rendered D32 document, the
-registry handler `fetch_command`, and no top-level binding in `mod.rs` that
-could shadow a name the surface resolves (`Ok`, `Result`, `Invocation`,
-`Output`, `ToolkitError`, the two functions and the literal; no glob import,
-no item macro). Under `src/agents_pay/` it forbids every `macro_rules!`
-definition, every `use .. as` rename (so no aliased std/core macro), `extern
-crate`, and the `link_section`, `used`, `no_mangle`, `export_name`,
-`macro_use` and `macro_export` attributes. It is not an allowlist over
-general code: the reviewer's helper (#5390) and `matches!` shadow (#5391)
-mutations are committed negative fixtures. `make clippy-live` lints the live
-module (library and binaries only). G4 also scans the inline `#[cfg(test)]`
-modules of the payment sources (#5377), with no allowance: no default-build
-test can name `Deps::for_process`.
+A source gate pins that surface (`t_ac3_noread_*` in
+`tests/agents_pay_gate.rs`): the whole token stream of `no_payment.rs`
+exactly, so any change to that file fails it; the `mod no_payment;`
+declaration and the two cfg-split `handler:` entries of the registry exactly;
+`D32_REFUSAL` a plain `&str` literal equal to the rendered D32 document; and
+no top-level binding in `mod.rs` that could shadow `no_payment`,
+`D32_REFUSAL` or a prelude name (`Ok`, `Err`, `Some`, `None`, `Result`,
+`Option`; no glob import, no item macro). Every gate in that file compares
+identifiers after unraw (`r#Ok` is `Ok`), and under `src/agents_pay/` it
+forbids every raw identifier, every `macro_rules!` definition, every `use ..
+as` rename (so no aliased std/core macro), `extern crate`, and the
+`link_section`, `used`, `no_mangle`, `export_name`, `macro_use` and
+`macro_export` attributes, raw spellings included. Across the crate's
+`src/` it forbids `extern crate`, and the crate manifest may not rename a
+dependency to `core`, `std`, `alloc` or `toolkit_core`, so the absolute
+paths resolve to the real crates. It is not an allowlist over general code:
+the reviewers' helper (#5390), `matches!` shadow (#5391) and raw `fn r#Ok`
+(#5400) mutations are committed negative fixtures. `make clippy-live` lints
+the live module (library and binaries only). G4 also scans the inline
+`#[cfg(test)]` modules of the payment sources (#5377), with no allowance: no
+default-build test can name `Deps::for_process`.
 
 ## Flow (S5)
 

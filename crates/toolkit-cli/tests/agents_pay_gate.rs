@@ -29,6 +29,7 @@ use std::fs;
 use std::path::Path;
 
 use proc_macro2::{TokenStream, TokenTree};
+use syn::ext::IdentExt;
 use syn::punctuated::Punctuated;
 use syn::visit::{self, Visit};
 use syn::{Token, Type, Visibility};
@@ -102,6 +103,45 @@ fn seeded(files: &[(&str, &str)]) -> Vec<Source> {
             text: (*text).to_owned(),
         })
         .collect()
+}
+
+/// The tokens of a source with every raw identifier unraw-normalised
+/// (`r#Ok` is `Ok`, as `IdentExt::unraw` gives it), spans kept. Every gate
+/// in this file reads source through this or [`parse_source`], so it
+/// compares identifiers after unraw everywhere (#5400). A raw keyword
+/// (`r#type`) stays as written: it is an identifier, not the keyword.
+fn tokens(text: &str) -> Result<TokenStream, proc_macro2::LexError> {
+    text.parse::<TokenStream>().map(unraw_stream)
+}
+
+fn unraw_stream(stream: TokenStream) -> TokenStream {
+    stream
+        .into_iter()
+        .map(|tree| match tree {
+            TokenTree::Ident(ident) if ident.to_string().starts_with("r#") => {
+                let plain = ident.unraw();
+                if syn::parse_str::<syn::Ident>(&plain.to_string()).is_ok() {
+                    TokenTree::Ident(plain)
+                } else {
+                    TokenTree::Ident(ident)
+                }
+            }
+            TokenTree::Group(group) => {
+                let mut inner =
+                    proc_macro2::Group::new(group.delimiter(), unraw_stream(group.stream()));
+                inner.set_span(group.span());
+                TokenTree::Group(inner)
+            }
+            other => other,
+        })
+        .collect()
+}
+
+/// The syntax tree of a source, over [`tokens`].
+fn parse_source(text: &str) -> syn::Result<syn::File> {
+    let stream =
+        tokens(text).map_err(|error| syn::Error::new(proc_macro2::Span::call_site(), error))?;
+    syn::parse2(stream)
 }
 
 /// What the syntax tree says about `Approved`.
@@ -302,7 +342,7 @@ fn is_pure(path: &str) -> bool {
 fn analyse(sources: &[Source]) -> Analysis {
     let mut analysis = Analysis::default();
     for source in sources {
-        let Ok(file) = syn::parse_file(&source.text) else {
+        let Ok(file) = parse_source(&source.text) else {
             analysis.unparsed.push(source.path.clone());
             continue;
         };
@@ -314,7 +354,7 @@ fn analyse(sources: &[Source]) -> Analysis {
         };
         visitor.visit_file(&file);
 
-        let stream: TokenStream = source.text.parse().expect("tokens of a parsed file");
+        let stream: TokenStream = tokens(&source.text).expect("tokens of a parsed file");
         let mut toks = Vec::new();
         leaves(stream, &mut toks);
         analysis.new_tokens += toks
@@ -620,7 +660,7 @@ fn process_request_has_private_fields_and_only_approved_constructor() {
 }
 
 fn check_process_request(source: &str) {
-    let file = syn::parse_file(source).unwrap();
+    let file = parse_source(source).unwrap();
     let structs: Vec<_> = file
         .items
         .iter()
@@ -969,7 +1009,7 @@ fn process_request_gate_rejects_macro_hidden_self_and_field_mutation() {
 fn payment_service_model_is_embedded() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/agents_pay/agentcore.rs");
     let source = fs::read_to_string(path).unwrap();
-    let file = syn::parse_file(&source).unwrap();
+    let file = parse_source(&source).unwrap();
     let embedded = file.items.iter().any(|item| match item {
         syn::Item::Const(c) if c.ident == "PAYMENT_SERVICE_MODEL" => {
             matches!(&*c.expr, syn::Expr::Macro(m) if m.mac.path.is_ident("include_str") && m.mac.tokens.to_string().contains("agentcore-payments.json"))
@@ -1030,7 +1070,7 @@ fn test_crate_roots() -> Vec<(String, String)> {
 /// Whether a crate root's first item is the G1a guard (after its inner
 /// doc comments and inner attributes).
 fn has_test_guard(text: &str) -> bool {
-    let Ok(file) = syn::parse_file(text) else {
+    let Ok(file) = parse_source(text) else {
         return false;
     };
     let Some(syn::Item::Macro(item)) = file.items.first() else {
@@ -1332,7 +1372,7 @@ impl<'ast> Visit<'ast> for MethodCalls {
 fn g4_findings(files: &[(String, String)]) -> Vec<String> {
     let mut found = Vec::new();
     for (name, text) in files {
-        let Ok(stream) = text.parse::<TokenStream>() else {
+        let Ok(stream) = tokens(text) else {
             found.push(format!("{name}: does not tokenize"));
             continue;
         };
@@ -1357,7 +1397,7 @@ fn g4_findings(files: &[(String, String)]) -> Vec<String> {
             }
         }
         if words.iter().any(|w| w == "wiring") {
-            if let Ok(file) = syn::parse_file(text) {
+            if let Ok(file) = parse_source(text) {
                 let mut calls = MethodCalls(Vec::new());
                 calls.visit_file(&file);
                 if calls.0.iter().any(|m| m == "open" || m == "send") {
@@ -1419,7 +1459,7 @@ fn payment_test_files() -> Vec<(String, String)> {
         }
         if source.path.ends_with("/tests.rs") || source.path.contains("/tests/") {
             files.push((source.path, source.text));
-        } else if let Ok(stream) = source.text.parse::<TokenStream>() {
+        } else if let Ok(stream) = tokens(&source.text) {
             let mut modules = Vec::new();
             inline_test_modules(stream, &mut modules);
             for module in modules {
@@ -1460,7 +1500,7 @@ fn g4_scans_inline_test_modules() {
     assert!(deps.contains(anchor), "the deps unit test moved");
     let inline = |text: &str| -> Vec<(String, String)> {
         let mut modules = Vec::new();
-        inline_test_modules(text.parse().unwrap(), &mut modules);
+        inline_test_modules(tokens(text).unwrap(), &mut modules);
         modules
             .into_iter()
             .map(|m| ("agents_pay/deps.rs (inline tests)".to_owned(), m))
@@ -1481,8 +1521,7 @@ fn g4_scans_inline_test_modules() {
     // Production code outside the test module is not a test file.
     let mut modules = Vec::new();
     inline_test_modules(
-        "fn live() { let _ = SystemResolver; } #[cfg(test)] mod tests { fn t() {} }"
-            .parse()
+        tokens("fn live() { let _ = SystemResolver; } #[cfg(test)] mod tests { fn t() {} }")
             .unwrap(),
         &mut modules,
     );
@@ -1518,7 +1557,7 @@ const PROOF_FILE: &str = "agents_pay/proof.rs";
 fn proof_findings(sources: &[Source]) -> Vec<String> {
     let mut found = Vec::new();
     for source in sources {
-        let Ok(stream) = source.text.parse::<TokenStream>() else {
+        let Ok(stream) = tokens(&source.text) else {
             continue;
         };
         let mut words = Vec::new();
@@ -1626,14 +1665,14 @@ fn nofresh_findings(sources: &[Source]) -> Vec<String> {
     let mut found = Vec::new();
     for source in sources {
         let words = if NOFRESH_FILES.contains(&source.path.as_str()) {
-            let Ok(stream) = source.text.parse::<TokenStream>() else {
+            let Ok(stream) = tokens(&source.text) else {
                 continue;
             };
             let mut words = Vec::new();
             idents(stream, &mut words);
             words
         } else if source.path == "agents_pay/agentcore.rs" {
-            let Ok(stream) = source.text.parse::<TokenStream>() else {
+            let Ok(stream) = tokens(&source.text) else {
                 found.push("agentcore.rs does not tokenize".into());
                 continue;
             };
@@ -1685,42 +1724,63 @@ fn r_tok_nofresh_catches_a_fresh_token_source() {
     assert!(nofresh_findings(&seeded(&[("agents_pay/vault.rs", vault)])).is_empty());
 }
 
-// --------------------- D32 structural refusal (#5376, #5390, #5391, AC3)
+// ------------ D32 structural refusal (#5376, #5390, #5391, #5400, AC3)
 //
 // A build without the live feature never parses argv, builds `Deps` or
-// calls a helper on `toolkit agents-pay fetch`: its registry handler is one
-// call to one D32 function, which writes one string literal and sets exit 2
-// (PM ruling on #5389). The gate checks only that small surface, token for
-// token, and the names it resolves. It is not an allowlist over general
-// code, so a helper (#5390) or a shadowed macro (#5391) has nowhere to hide:
-// the surface calls no macro and no helper, and any extra statement, a
-// shadowing binding, a `macro_rules!` definition or a `use .. as` rename
-// under `src/agents_pay/` is a finding.
+// calls a helper on `toolkit agents-pay fetch`. Its registry entry is
+// `self::no_payment::fetch_command`, in the file module `no_payment.rs`:
+// one call to one D32 function, which writes one string literal and sets
+// exit 2 (PM rulings on #5389 and #5397). That file uses absolute paths only
+// and has no `use`, no macro invocation and no other item, so no module
+// item, import, raw identifier or textual macro can shadow a name it
+// resolves, and the gate pins its whole token stream: any change to it is a
+// finding. In `mod.rs` the gate pins the `mod` declaration and the two
+// cfg-split registry entries. Under `src/agents_pay/` it bans raw
+// identifiers, `macro_rules!`, `use .. as` renames, `extern crate` and
+// attributes that run code outside a call. Every gate in this file compares
+// identifiers after unraw ([`tokens`], #5400).
 
 const ROUTE_FILE: &str = "agents_pay/mod.rs";
+const NO_PAYMENT_FILE: &str = "agents_pay/no_payment.rs";
 
-/// The disabled handler and the D32 function, whitespace-free.
-const D32_HANDLER_SIG: &str =
-    "fnfetch_command(_invocation:&Invocation,out:&mutOutput<'_>)->Result<(),ToolkitError>";
-const D32_HANDLER_BODY: &str = "{refuse_without_payment_support(out)}";
-const D32_FN_SIG: &str =
-    "fnrefuse_without_payment_support(out:&mutOutput<'_>)->Result<(),ToolkitError>";
-const D32_FN_BODY: &str = "{out.line(D32_REFUSAL)?;out.set_exit_status(2);Ok(())}";
+/// The whole of `no_payment.rs`, compared token for token after unraw.
+/// Comments are not tokens; a doc comment is, so the file has none.
+const NO_PAYMENT_PIN: &str = r"
+pub(super) fn fetch_command(
+    _invocation: &crate::Invocation,
+    out: &mut crate::Output<'_>,
+) -> ::core::result::Result<(), ::toolkit_core::ToolkitError> {
+    self::refuse_without_payment_support(out)
+}
 
-/// The top-level names the surface resolves, and what may bind each in
-/// `mod.rs`: a count of items of one kind, or the one import path. `Ok` and
-/// `Result` must stay the prelude ones.
-const SURFACE_ITEMS: &[(&str, &str, usize)] = &[
-    ("fetch_command", "fn", 2),
-    ("refuse_without_payment_support", "fn", 1),
-    ("D32_REFUSAL", "const", 1),
-];
-const SURFACE_IMPORTS: &[(&str, &str)] = &[
-    ("Invocation", "crate::Invocation"),
-    ("Output", "crate::Output"),
-    ("ToolkitError", "toolkit_core::ToolkitError"),
-];
-const PRELUDE_NAMES: &[&str] = &["Ok", "Result"];
+fn refuse_without_payment_support(
+    out: &mut crate::Output<'_>,
+) -> ::core::result::Result<(), ::toolkit_core::ToolkitError> {
+    out.line(super::D32_REFUSAL)?;
+    out.set_exit_status(2);
+    ::core::result::Result::Ok(())
+}
+";
+
+/// The `mod` declaration in `mod.rs`, with no other attribute.
+fn no_payment_decl() -> String {
+    format!("#[cfg(not(feature = \"{LIVE_FEATURE}\"))]\nmod no_payment;")
+}
+
+/// The registry's `handler:` entries in `mod.rs`, in order.
+fn registry_handlers() -> Vec<String> {
+    vec![
+        format!("#[cfg(feature = \"{LIVE_FEATURE}\")]\nhandler: fetch_command,"),
+        format!(
+            "#[cfg(not(feature = \"{LIVE_FEATURE}\"))]\nhandler: self::no_payment::fetch_command,"
+        ),
+    ]
+}
+
+/// What may bind a name at the top of `mod.rs`: `no_payment` and
+/// `D32_REFUSAL` once each, by their own items; a prelude name never.
+const SURFACE_ITEMS: &[(&str, &str)] = &[("no_payment", "mod"), ("D32_REFUSAL", "const")];
+const PRELUDE_NAMES: &[&str] = &["Ok", "Err", "Some", "None", "Result", "Option"];
 
 /// Attributes that run or export code outside a call (`.init_array`), or
 /// import macros by another route.
@@ -1733,6 +1793,10 @@ const HIDDEN_ENTRY_ATTRS: &[&str] = &[
     "macro_export",
 ];
 
+/// Dependency names the crate manifest may not bind: the absolute paths of
+/// `no_payment.rs` resolve `::core` and `::toolkit_core` through them.
+const ROOT_CRATES: &[&str] = &["core", "std", "alloc"];
+
 /// The whitespace-free spelling of a token stream.
 fn compact(stream: &TokenStream) -> String {
     stream
@@ -1742,74 +1806,81 @@ fn compact(stream: &TokenStream) -> String {
         .collect()
 }
 
-fn compact_trees(trees: &[TokenTree]) -> String {
-    compact(&trees.iter().cloned().collect())
-}
-
-/// One top-level `fn NAME`: its non-doc attributes, everything from its
-/// qualifiers to the body, and the body, each whitespace-free.
-struct TopFn {
-    attrs: Vec<String>,
-    sig: String,
-    body: String,
-}
-
-fn top_level_fns(trees: &[TokenTree], name: &str) -> Vec<TopFn> {
-    let mut found = Vec::new();
-    for (index, tree) in trees.iter().enumerate() {
-        let is_fn = matches!(tree, TokenTree::Ident(i) if i == "fn");
-        let named = matches!(trees.get(index + 1), Some(TokenTree::Ident(i)) if i == name);
-        if !(is_fn && named) {
-            continue;
-        }
-        // Qualifiers (`pub`, `pub(..)`, `const`, `unsafe`, `extern "C"`) are
-        // part of the signature, so any of them is a mismatch.
-        let mut start = index;
-        while start > 0 {
-            match &trees[start - 1] {
-                TokenTree::Ident(i)
-                    if ["pub", "const", "async", "unsafe", "extern"]
-                        .contains(&i.to_string().as_str()) => {}
-                TokenTree::Group(g) if g.delimiter() == proc_macro2::Delimiter::Parenthesis => {}
-                TokenTree::Literal(_) => {}
-                _ => break,
+/// A token stream as a flat list that keeps every token boundary, each
+/// punctuation's spacing and every group delimiter, so two lists are equal
+/// only for the same tokens. Identifiers are as [`tokens`] left them.
+fn token_list(stream: TokenStream, out: &mut Vec<String>) {
+    for tree in stream {
+        match tree {
+            TokenTree::Group(group) => {
+                let (open, close) = match group.delimiter() {
+                    proc_macro2::Delimiter::Parenthesis => ("(", ")"),
+                    proc_macro2::Delimiter::Brace => ("{", "}"),
+                    proc_macro2::Delimiter::Bracket => ("[", "]"),
+                    proc_macro2::Delimiter::None => ("<none", "none>"),
+                };
+                out.push(open.to_owned());
+                token_list(group.stream(), out);
+                out.push(close.to_owned());
             }
-            start -= 1;
+            TokenTree::Ident(ident) => out.push(ident.to_string()),
+            TokenTree::Punct(punct) => out.push(match punct.spacing() {
+                proc_macro2::Spacing::Joint => format!("{}+", punct.as_char()),
+                proc_macro2::Spacing::Alone => punct.as_char().to_string(),
+            }),
+            TokenTree::Literal(literal) => out.push(literal.to_string()),
         }
-        let mut attrs = Vec::new();
-        let mut at = start;
-        while at >= 2 {
-            let (TokenTree::Punct(hash), TokenTree::Group(group)) =
-                (&trees[at - 2], &trees[at - 1])
-            else {
-                break;
-            };
-            if hash.as_char() != '#' || group.delimiter() != proc_macro2::Delimiter::Bracket {
-                break;
-            }
-            let attr = compact(&group.stream());
-            if !attr.starts_with("doc=") {
-                attrs.push(attr);
-            }
-            at -= 2;
-        }
-        attrs.reverse();
-        let Some(body_at) = trees[index..].iter().position(
-            |t| matches!(t, TokenTree::Group(g) if g.delimiter() == proc_macro2::Delimiter::Brace),
-        ) else {
-            continue;
-        };
-        let body_at = index + body_at;
-        let TokenTree::Group(body) = &trees[body_at] else {
-            unreachable!("found above");
-        };
-        found.push(TopFn {
-            attrs,
-            sig: compact_trees(&trees[start..body_at]),
-            body: format!("{{{}}}", compact(&body.stream())),
-        });
     }
-    found
+}
+
+fn list_of_trees(trees: &[TokenTree]) -> Vec<String> {
+    let mut out = Vec::new();
+    token_list(trees.iter().cloned().collect(), &mut out);
+    out
+}
+
+fn list_of_text(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    token_list(tokens(text).expect("a pinned text tokenizes"), &mut out);
+    out
+}
+
+/// Where the outer attributes right before `trees[at]` start.
+fn attr_start(trees: &[TokenTree], at: usize) -> usize {
+    let mut start = at;
+    while start >= 2 {
+        let (TokenTree::Punct(hash), TokenTree::Group(group)) =
+            (&trees[start - 2], &trees[start - 1])
+        else {
+            break;
+        };
+        if hash.as_char() != '#' || group.delimiter() != proc_macro2::Delimiter::Bracket {
+            break;
+        }
+        start -= 2;
+    }
+    start
+}
+
+/// Every `handler: ..,` struct field, at any depth, with its attributes.
+fn handler_fields(trees: &[TokenTree], out: &mut Vec<Vec<String>>) {
+    for (index, tree) in trees.iter().enumerate() {
+        if let TokenTree::Group(group) = tree {
+            let inner: Vec<TokenTree> = group.stream().into_iter().collect();
+            handler_fields(&inner, out);
+        }
+        let is_field = matches!(tree, TokenTree::Ident(i) if i == "handler")
+            && matches!(trees.get(index + 1), Some(TokenTree::Punct(p))
+                if p.as_char() == ':' && p.spacing() == proc_macro2::Spacing::Alone);
+        if !is_field {
+            continue;
+        }
+        let end = trees[index..]
+            .iter()
+            .position(|t| matches!(t, TokenTree::Punct(p) if p.as_char() == ','))
+            .map_or(trees.len(), |at| index + at + 1);
+        out.push(list_of_trees(&trees[attr_start(trees, index)..end]));
+    }
 }
 
 /// The leaf bindings of a `use` tree: (bound name, full path), or a glob.
@@ -1856,7 +1927,7 @@ fn item_binding(item: &syn::Item) -> Option<(String, &'static str)> {
     Some((ident.to_string(), kind))
 }
 
-/// What may bind a surface name at the top of `mod.rs`.
+/// What may bind a surface or prelude name at the top of `mod.rs`.
 fn binding_findings(file: &syn::File) -> Vec<String> {
     let mut found = Vec::new();
     let mut items: Vec<(String, &'static str)> = Vec::new();
@@ -1882,23 +1953,12 @@ fn binding_findings(file: &syn::File) -> Vec<String> {
         items.iter().filter(|(n, _)| n == name).count()
             + imports.iter().filter(|(n, _)| n == name).count()
     };
-    for (name, kind, count) in SURFACE_ITEMS {
+    for (name, kind) in SURFACE_ITEMS {
         let of_kind = items.iter().filter(|(n, k)| n == name && k == kind).count();
-        if of_kind != *count || bound(name) != *count {
+        if of_kind != 1 || bound(name) != 1 {
             found.push(format!(
-                "{ROUTE_FILE}: `{name}` must be bound by exactly {count} top-level {kind} item(s), found {} binding(s)",
+                "{ROUTE_FILE}: `{name}` must be bound by exactly one top-level {kind} item, found {} binding(s)",
                 bound(name)
-            ));
-        }
-    }
-    for (name, path) in SURFACE_IMPORTS {
-        let exact = imports
-            .iter()
-            .filter(|(n, p)| n == name && p == path)
-            .count();
-        if exact != 1 || bound(name) != 1 {
-            found.push(format!(
-                "{ROUTE_FILE}: `{name}` must be bound once, by `use {path}`"
             ));
         }
     }
@@ -1910,91 +1970,88 @@ fn binding_findings(file: &syn::File) -> Vec<String> {
     found
 }
 
-/// The default-build route of `mod.rs`: the registry handler is
-/// `fetch_command`, its disabled arm is exactly one call to the D32
-/// function, and that function writes exactly the `D32_REFUSAL` literal.
-fn d32_findings(text: &str) -> Vec<String> {
-    let Ok(stream) = text.parse::<TokenStream>() else {
-        return vec![format!("{ROUTE_FILE}: does not tokenize")];
-    };
-    let Ok(file) = syn::parse_file(text) else {
-        return vec![format!("{ROUTE_FILE}: does not parse")];
-    };
-    let trees: Vec<TokenTree> = stream.into_iter().collect();
-    let live = format!("cfg(feature=\"{LIVE_FEATURE}\")");
-    let disabled = format!("cfg(not(feature=\"{LIVE_FEATURE}\"))");
-    let mut found = binding_findings(&file);
+/// The default-build route: `no_payment.rs` is exactly the pinned file,
+/// `mod.rs` declares it exactly once as pinned and dispatches to it through
+/// exactly the pinned registry entries, and `D32_REFUSAL` is one literal.
+#[allow(clippy::too_many_lines)] // One pass over the pinned file, the declaration and the entries.
+fn d32_findings(sources: &[Source]) -> Vec<String> {
+    let text = |path: &str| sources.iter().find(|s| s.path == path).map(|s| &s.text);
+    let mut found = Vec::new();
 
-    // The registry dispatches to `fetch_command` and nothing else.
-    let mut words = Vec::new();
-    idents(trees.iter().cloned().collect(), &mut words);
-    let handlers: Vec<&str> = words
-        .windows(3)
-        .filter(|w| w[0] == "handler" && w[1] == ":")
-        .map(|w| w[2].as_str())
-        .collect();
-    if handlers != ["fetch_command"] {
-        found.push(format!(
-            "{ROUTE_FILE}: the registry handlers are {handlers:?}, expected [\"fetch_command\"]"
-        ));
-    }
-
-    let handlers = top_level_fns(&trees, "fetch_command");
-    let off: Vec<&TopFn> = handlers
-        .iter()
-        .filter(|f| f.attrs == [disabled.as_str()])
-        .collect();
-    let on = handlers
-        .iter()
-        .filter(|f| f.attrs == [live.as_str()])
-        .count();
-    if handlers.len() != 2 || off.len() != 1 || on != 1 {
-        found.push(format!(
-            "{ROUTE_FILE}: `fetch_command` must be one `#[{live}]` and one `#[{disabled}]` fn, found attrs {:?}",
-            handlers.iter().map(|f| &f.attrs).collect::<Vec<_>>()
-        ));
-    }
-    for handler in off {
-        if handler.sig != D32_HANDLER_SIG {
-            found.push(format!(
-                "{ROUTE_FILE}: the disabled handler's signature is {}",
-                handler.sig
-            ));
-        }
-        if handler.body != D32_HANDLER_BODY {
-            found.push(format!(
-                "{ROUTE_FILE}: the disabled handler does more than call the D32 refusal: {}",
-                handler.body
-            ));
+    // The file module, whole.
+    match text(NO_PAYMENT_FILE).map(String::as_str).map(tokens) {
+        None => found.push(format!("{NO_PAYMENT_FILE}: is missing")),
+        Some(Err(_)) => found.push(format!("{NO_PAYMENT_FILE}: does not tokenize")),
+        Some(Ok(stream)) => {
+            let mut actual = Vec::new();
+            token_list(stream, &mut actual);
+            let pinned = list_of_text(NO_PAYMENT_PIN);
+            if actual != pinned {
+                let at = actual
+                    .iter()
+                    .zip(&pinned)
+                    .position(|(a, p)| a != p)
+                    .unwrap_or(actual.len().min(pinned.len()));
+                let near = |list: &[String]| {
+                    list[at.min(list.len())..]
+                        .iter()
+                        .take(8)
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                };
+                found.push(format!(
+                    "{NO_PAYMENT_FILE}: differs from the pinned D32 route at token {at}: `{}` where the pin has `{}`",
+                    near(&actual),
+                    near(&pinned)
+                ));
+            }
         }
     }
 
-    let refusals = top_level_fns(&trees, "refuse_without_payment_support");
-    let [refusal] = refusals.as_slice() else {
-        found.push(format!(
-            "{ROUTE_FILE}: {} `fn refuse_without_payment_support`, expected 1",
-            refusals.len()
-        ));
+    // `mod.rs`: the declaration, the registry entries, the bindings and the
+    // literal.
+    let Some(route) = text(ROUTE_FILE) else {
+        found.push(format!("{ROUTE_FILE}: is missing"));
         return found;
     };
-    if refusal.attrs != [disabled.as_str()] {
+    let Ok(stream) = tokens(route) else {
+        found.push(format!("{ROUTE_FILE}: does not tokenize"));
+        return found;
+    };
+    let Ok(file) = parse_source(route) else {
+        found.push(format!("{ROUTE_FILE}: does not parse"));
+        return found;
+    };
+    let trees: Vec<TokenTree> = stream.into_iter().collect();
+    let decls: Vec<Vec<String>> = trees
+        .windows(2)
+        .enumerate()
+        .filter(|(_, w)| {
+            matches!((&w[0], &w[1]), (TokenTree::Ident(m), TokenTree::Ident(n)) if m == "mod" && n == "no_payment")
+        })
+        .map(|(at, _)| list_of_trees(&trees[attr_start(&trees, at)..(at + 3).min(trees.len())]))
+        .collect();
+    if decls != [list_of_text(&no_payment_decl())] {
         found.push(format!(
-            "{ROUTE_FILE}: the D32 refusal's attributes are {:?}",
-            refusal.attrs
+            "{ROUTE_FILE}: the `no_payment` module must be declared once, exactly `{}`; found {decls:?}",
+            no_payment_decl()
         ));
     }
-    if refusal.sig != D32_FN_SIG {
+    let mut handlers = Vec::new();
+    handler_fields(&trees, &mut handlers);
+    let expected: Vec<Vec<String>> = registry_handlers()
+        .iter()
+        .map(String::as_str)
+        .map(list_of_text)
+        .collect();
+    if handlers != expected {
         found.push(format!(
-            "{ROUTE_FILE}: the D32 refusal's signature is {}",
-            refusal.sig
+            "{ROUTE_FILE}: the registry entries must be exactly {:?}; found {handlers:?}",
+            registry_handlers()
         ));
     }
-    if refusal.body != D32_FN_BODY {
-        found.push(format!(
-            "{ROUTE_FILE}: the D32 refusal does more than print its literal: {}",
-            refusal.body
-        ));
-    }
+    found.extend(binding_findings(&file));
     if d32_literal(&file).is_none() {
         found.push(format!(
             "{ROUTE_FILE}: `D32_REFUSAL` is not one `const D32_REFUSAL: &str = \"..\";` string literal"
@@ -2076,21 +2133,48 @@ fn hidden_definitions(path: &str, stream: TokenStream, found: &mut Vec<String>) 
     }
 }
 
-/// Every source under `src/agents_pay/`: no `macro_rules!` definition, no
-/// `use .. as` rename (so no aliased std/core macro), no `extern crate` and
-/// no attribute that runs or exports code outside a call.
+/// Every raw identifier (`r#name`) in the source as written: the one scan
+/// that reads the tokens before [`tokens`] unraws them.
+fn raw_identifiers(stream: TokenStream, out: &mut Vec<String>) {
+    for tree in stream {
+        match tree {
+            TokenTree::Group(group) => raw_identifiers(group.stream(), out),
+            TokenTree::Ident(ident) if ident.to_string().starts_with("r#") => {
+                out.push(ident.to_string());
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Every source under `src/agents_pay/`: no raw identifier (a raw spelling
+/// names the same item as the plain one, #5400), no `macro_rules!`
+/// definition, no `use .. as` rename (so no aliased std/core macro), no
+/// `extern crate` and no attribute that runs or exports code outside a call.
 fn pay_dir_findings(sources: &[Source]) -> Vec<String> {
     let mut found = Vec::new();
     for source in sources {
         if !source.path.starts_with("agents_pay/") {
             continue;
         }
-        let Ok(stream) = source.text.parse::<TokenStream>() else {
+        let Ok(raw) = source.text.parse::<TokenStream>() else {
             found.push(format!("{}: does not tokenize", source.path));
             continue;
         };
+        let mut raws = Vec::new();
+        raw_identifiers(raw, &mut raws);
+        for name in raws {
+            found.push(format!(
+                "{}: raw identifier `{name}` (it names the same item as `{}`)",
+                source.path,
+                &name[2..]
+            ));
+        }
+        let Ok(stream) = tokens(&source.text) else {
+            continue;
+        };
         hidden_definitions(&source.path, stream, &mut found);
-        match syn::parse_file(&source.text) {
+        match parse_source(&source.text) {
             Ok(file) => {
                 let mut renames = Renames(Vec::new());
                 renames.visit_file(&file);
@@ -2104,6 +2188,81 @@ fn pay_dir_findings(sources: &[Source]) -> Vec<String> {
     found
 }
 
+/// The absolute paths of `no_payment.rs` resolve to the real crates: no
+/// source of the crate has an `extern crate` item, and the crate manifest
+/// binds no dependency under a root crate name (`core`, `std`, `alloc`)
+/// and does not rename `toolkit_core`.
+fn root_crate_findings(sources: &[Source], manifest: &str) -> Vec<String> {
+    let mut found = Vec::new();
+    for source in sources {
+        let Ok(stream) = tokens(&source.text) else {
+            found.push(format!("{}: does not tokenize", source.path));
+            continue;
+        };
+        let mut words = Vec::new();
+        idents(stream, &mut words);
+        if words
+            .windows(2)
+            .any(|w| w[0] == "extern" && w[1] == "crate")
+        {
+            found.push(format!("{}: has an extern crate item", source.path));
+        }
+    }
+    // Each dependency key: `NAME = ..` (or `NAME.workspace = ..`) under a
+    // `*dependencies` table, or the NAME of a `[*dependencies.NAME]` table.
+    // A root crate name is never bound, and `toolkit_core` is never a rename.
+    let mut table = String::new();
+    let mut dependency: Option<String> = None;
+    for line in manifest.lines().map(str::trim) {
+        let key = if let Some(header) = line.strip_prefix('[') {
+            table = header.trim_end_matches(']').to_owned();
+            dependency = table
+                .rsplit_once('.')
+                .filter(|(head, _)| head.ends_with("dependencies"))
+                .map(|(_, name)| name.trim_matches('"').replace('-', "_"));
+            match &dependency {
+                Some(name) => name.clone(),
+                None => continue,
+            }
+        } else if table.ends_with("dependencies") {
+            let Some((key, _)) = line.split_once('=') else {
+                continue;
+            };
+            let name = key.split('.').next().unwrap_or("");
+            name.trim().trim_matches('"').replace('-', "_")
+        } else if dependency.is_some() && line.starts_with("package") {
+            dependency.clone().unwrap_or_default()
+        } else {
+            continue;
+        };
+        if ROOT_CRATES.contains(&key.as_str()) {
+            found.push(format!(
+                "Cargo.toml: a dependency binds the root crate name `{key}`"
+            ));
+        }
+        let renamed = line.contains("package") && !line.starts_with('[');
+        if key == "toolkit_core" && renamed {
+            found.push(format!(
+                "Cargo.toml: `toolkit_core` is a renamed package: {line}"
+            ));
+        }
+    }
+    found
+}
+
+fn crate_manifest() -> String {
+    fs::read_to_string(manifest_dir().join("Cargo.toml")).expect("the toolkit-cli manifest")
+}
+
+/// The whole D32 gate over a source set and the real manifest.
+fn route_gate(sources: &[Source]) -> Vec<String> {
+    d32_findings(sources)
+        .into_iter()
+        .chain(pay_dir_findings(sources))
+        .chain(root_crate_findings(sources, &crate_manifest()))
+        .collect()
+}
+
 fn real_source(path: &str) -> String {
     real_sources()
         .into_iter()
@@ -2112,26 +2271,38 @@ fn real_source(path: &str) -> String {
         .text
 }
 
-/// The real `mod.rs` with `edit` applied at `anchor`, which must exist.
-fn route_with(anchor: &str, edit: impl Fn(&str) -> String) -> String {
-    let real = real_source(ROUTE_FILE);
-    assert!(real.contains(anchor), "the anchor moved: {anchor}");
-    real.replacen(anchor, &edit(anchor), 1)
+/// The real sources with `edit` applied at `anchor` in `path`; the anchor
+/// must exist.
+fn sources_with(path: &str, anchor: &str, edit: impl Fn(&str) -> String) -> Vec<Source> {
+    let mut sources = real_sources();
+    let at = sources
+        .iter()
+        .position(|s| s.path == path)
+        .unwrap_or_else(|| panic!("{path} is missing"));
+    assert!(
+        sources[at].text.contains(anchor),
+        "the anchor moved in {path}: {anchor}"
+    );
+    sources[at].text = sources[at].text.replacen(anchor, &edit(anchor), 1);
+    sources
 }
 
-const HANDLER_ANCHOR: &str = "    refuse_without_payment_support(out)\n}";
-const REFUSAL_ANCHOR: &str = "    out.line(D32_REFUSAL)?;\n";
+const HANDLER_ANCHOR: &str = "    self::refuse_without_payment_support(out)\n}";
+const REFUSAL_ANCHOR: &str = "    out.line(super::D32_REFUSAL)?;\n";
+const REFUSAL_FN_ANCHOR: &str = "fn refuse_without_payment_support(";
+const NO_PAYMENT_START: &str = "pub(super) fn fetch_command(";
 const PARSE_ANCHOR: &str = "fn parse(invocation: &Invocation";
 
 #[test]
 fn t_ac3_noread_the_disabled_route_reads_nothing_before_d32() {
-    let route = real_source(ROUTE_FILE);
-    let found: Vec<String> = d32_findings(&route)
-        .into_iter()
-        .chain(pay_dir_findings(&real_sources()))
-        .collect();
+    let sources = real_sources();
+    let found = route_gate(&sources);
     assert!(found.is_empty(), "{found:#?}");
-    let file = syn::parse_file(&route).unwrap();
+    // Not vacuous: the pin is the whole route, both functions included.
+    let pinned = list_of_text(NO_PAYMENT_PIN);
+    assert!(pinned.len() > 60, "{}", pinned.len());
+    assert!(pinned.contains(&"refuse_without_payment_support".to_owned()));
+    let file = parse_source(&real_source(ROUTE_FILE)).unwrap();
     assert_eq!(
         d32_literal(&file).as_deref(),
         Some(
@@ -2146,160 +2317,271 @@ fn t_ac3_noread_the_disabled_route_reads_nothing_before_d32() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)] // A table of mutations, each reported by label.
 fn t_ac3_noread_catches_a_read_before_the_d32_refusal() {
-    let mutations: Vec<(&str, String)> = vec![
-        // The #5376 mutation, now at the only pre-D32 statement position.
+    let disabled_entry = format!("#[cfg(not(feature = \"{LIVE_FEATURE}\"))]\n        handler:");
+    let live_entry =
+        format!("#[cfg(feature = \"{LIVE_FEATURE}\")]\n        handler: fetch_command,");
+    let decl = no_payment_decl();
+    let np = NO_PAYMENT_FILE;
+    let mutations: Vec<(&str, Vec<Source>)> = vec![
+        // The #5376 mutation, at each pre-D32 statement position.
         (
             "env read in the disabled handler",
-            route_with(HANDLER_ANCHOR, |a| {
-                format!("    let _ = std::env::var_os(\"PAYMENT_SESSION_ID\");\n{a}")
+            sources_with(np, HANDLER_ANCHOR, |a| {
+                format!("    let _ = ::std::env::var_os(\"PAYMENT_SESSION_ID\");\n{a}")
             }),
         ),
         (
             "file read in the disabled handler",
-            route_with(HANDLER_ANCHOR, |a| {
-                format!("    let _ = std::fs::read_to_string(\"/nonexistent\");\n{a}")
+            sources_with(np, HANDLER_ANCHOR, |a| {
+                format!("    let _ = ::std::fs::read_to_string(\"/nonexistent\");\n{a}")
             }),
         ),
         (
             "env read in the D32 refusal",
-            route_with(REFUSAL_ANCHOR, |a| {
-                format!("    let _ = std::env::var_os(\"AWS_PROFILE\");\n{a}")
+            sources_with(np, REFUSAL_ANCHOR, |a| {
+                format!("    let _ = ::std::env::var_os(\"AWS_PROFILE\");\n{a}")
             }),
         ),
         (
             "the disabled handler parses argv first",
-            route_with(HANDLER_ANCHOR, |a| {
-                format!("    let _ = parse(_invocation, out)?;\n{a}")
+            sources_with(np, HANDLER_ANCHOR, |a| {
+                format!("    let _ = super::parse(_invocation, out)?;\n{a}")
             }),
         ),
         (
             "the disabled handler builds the process world",
-            route_with(HANDLER_ANCHOR, |a| {
+            sources_with(np, HANDLER_ANCHOR, |a| {
                 a.replace(
-                    "refuse_without_payment_support(out)",
-                    "{ let _ = Deps::for_process(); refuse_without_payment_support(out) }",
+                    "self::refuse_without_payment_support(out)",
+                    "{ let _ = super::deps::Deps::for_process(); self::refuse_without_payment_support(out) }",
                 )
             }),
         ),
         (
             "the refusal text is read, not a literal",
-            route_with(REFUSAL_ANCHOR, |a| {
-                a.replace("D32_REFUSAL", "&std::env::var(\"X\").unwrap_or_default()")
+            sources_with(np, REFUSAL_ANCHOR, |a| {
+                a.replace(
+                    "super::D32_REFUSAL",
+                    "&::std::env::var(\"X\").unwrap_or_default()",
+                )
             }),
-        ),
-        (
-            "the D32 literal becomes an expression",
-            route_with("pub const D32_REFUSAL: &str = ", |a| {
-                format!("{a}env!(\"HOME\");\nconst UNUSED: &str = ")
-            }),
-        ),
-        (
-            "no disabled handler",
-            route_with(
-                &format!("#[cfg(not(feature = \"{LIVE_FEATURE}\"))]\nfn fetch_command"),
-                |a| a.replace("not(", "all("),
-            ),
         ),
         (
             "an extra attribute on the D32 refusal",
-            route_with("fn refuse_without_payment_support", |a| {
-                format!("#[inline(never)]\n{a}")
-            }),
+            sources_with(np, REFUSAL_FN_ANCHOR, |a| format!("#[inline(never)]\n{a}")),
+        ),
+        (
+            "a doc comment in the pinned file",
+            sources_with(np, REFUSAL_FN_ANCHOR, |a| format!("/// Refuses.\n{a}")),
         ),
         (
             "a generic D32 refusal",
-            route_with("fn refuse_without_payment_support(", |_| {
+            sources_with(np, REFUSAL_FN_ANCHOR, |_| {
                 "fn refuse_without_payment_support<T>(".to_owned()
             }),
         ),
         (
-            "the registry dispatches elsewhere",
-            route_with("handler: fetch_command,", |_| {
-                "handler: run_command,".to_owned()
+            "a use in the pinned file",
+            sources_with(np, NO_PAYMENT_START, |a| {
+                format!("use ::core::result::Result;\n{a}")
             }),
         ),
+        (
+            "an inner attribute in the pinned file",
+            sources_with(np, NO_PAYMENT_START, |a| format!("#![allow(unused)]\n{a}")),
+        ),
+        (
+            "an extra item in the pinned file",
+            sources_with(np, NO_PAYMENT_START, |a| format!("const _: () = ();\n{a}")),
+        ),
+        (
+            "a macro invocation in the D32 refusal",
+            sources_with(np, REFUSAL_ANCHOR, |a| {
+                format!("    ::std::eprintln!(\"x\");\n{a}")
+            }),
+        ),
+        (
+            "a relative, shadowable Ok",
+            sources_with(np, "    ::core::result::Result::Ok(())\n", |_| {
+                "    Ok(())\n".to_owned()
+            }),
+        ),
+        // `mod.rs`: the literal, the declaration and the registry entries.
+        (
+            "the D32 literal becomes an expression",
+            sources_with(ROUTE_FILE, "pub const D32_REFUSAL: &str = ", |a| {
+                format!("{a}env!(\"HOME\");\nconst UNUSED: &str = ")
+            }),
+        ),
+        (
+            "the default entry is no longer cfg(not(..))",
+            sources_with(ROUTE_FILE, &disabled_entry, |a| a.replace("not(", "all(")),
+        ),
+        (
+            "the registry dispatches elsewhere",
+            sources_with(
+                ROUTE_FILE,
+                "handler: self::no_payment::fetch_command,",
+                |_| "handler: run_command,".to_owned(),
+            ),
+        ),
+        (
+            "the default entry is a relative path",
+            sources_with(
+                ROUTE_FILE,
+                "handler: self::no_payment::fetch_command,",
+                |_| "handler: no_payment::fetch_command,".to_owned(),
+            ),
+        ),
+        (
+            "the live entry loses its cfg",
+            sources_with(ROUTE_FILE, &live_entry, |_| {
+                "handler: fetch_command,".to_owned()
+            }),
+        ),
+        (
+            "the module is read from another path",
+            sources_with(ROUTE_FILE, &decl, |a| format!("#[path = \"flow.rs\"]\n{a}")),
+        ),
+        (
+            "the module is inline, not the pinned file",
+            sources_with(ROUTE_FILE, &decl, |a| {
+                a.replace("mod no_payment;", "mod no_payment {}")
+            }),
+        ),
+        (
+            "the module is public",
+            sources_with(ROUTE_FILE, &decl, |a| {
+                a.replace("mod no_payment;", "pub mod no_payment;")
+            }),
+        ),
+        (
+            "the module declaration has a doc comment",
+            sources_with(ROUTE_FILE, &decl, |a| format!("/// Docs.\n{a}")),
+        ),
+        (
+            "the pinned file is missing",
+            real_sources()
+                .into_iter()
+                .filter(|s| s.path != NO_PAYMENT_FILE)
+                .collect(),
+        ),
+        (
+            "mod.rs has no route at all",
+            seeded(&[
+                (ROUTE_FILE, "fn parse() {}"),
+                (NO_PAYMENT_FILE, NO_PAYMENT_PIN),
+            ]),
+        ),
     ];
-    for (label, bad) in &mutations {
-        assert!(!d32_findings(bad).is_empty(), "{label} survived");
-    }
-    assert!(!d32_findings("fn parse() {}").is_empty(), "missing fns");
+    let survived: Vec<&str> = mutations
+        .iter()
+        .filter(|(_, sources)| d32_findings(sources).is_empty())
+        .map(|(label, _)| *label)
+        .collect();
+    assert!(survived.is_empty(), "survived the gate: {survived:#?}");
 }
 
 /// The re-review #5389 mutations, verbatim, and their variants at the D32
 /// surface: each is killed by the committed gate.
 #[test]
+#[allow(clippy::too_many_lines)] // A table of mutations, each reported by label.
 fn t_ac3_noread_catches_the_review_5389_helper_and_macro_mutations() {
     const HELPER: &str = "fn reason() -> Option<std::ffi::OsString> {\n    std::env::var_os(\"RSI_REVIEW_5389_NON_SECRET\")\n}\n\n";
     const SHADOW: &str = "macro_rules! matches {\n    ($($tokens:tt)*) => {{\n        let _ = std::env::var_os(\"RSI_REVIEW_5389_NON_SECRET\");\n        std::matches!($($tokens)*)\n    }};\n}\n\n";
-    let with_route = |text: String| -> Vec<Source> {
-        let mut sources = real_sources();
-        let at = sources.iter().position(|s| s.path == ROUTE_FILE).unwrap();
-        sources[at].text = text;
-        sources
-    };
-    let killed = |text: String| {
-        !d32_findings(&text).is_empty() || !pay_dir_findings(&with_route(text)).is_empty()
-    };
+    let killed = |sources: &[Source]| !route_gate(sources).is_empty();
+    let mut survived: Vec<&str> = Vec::new();
 
     // #5390: the env-reading helper, called first on the default path.
-    assert!(
-        killed(route_with(HANDLER_ANCHOR, |a| {
-            format!("    let _ = reason();\n{a}\n\n{HELPER}")
-        })),
-        "#5390 helper in the disabled handler survived"
-    );
-    assert!(
-        killed(
-            route_with(REFUSAL_ANCHOR, |a| {
-                format!("    let _ = reason();\n{a}")
-            })
-            .replacen(PARSE_ANCHOR, &format!("{HELPER}{PARSE_ANCHOR}"), 1)
-        ),
-        "#5390 helper in the D32 refusal survived"
-    );
-    // ... or under the D32 function's own name, so the call site is unchanged.
-    for (label, hide) in [
+    let np = NO_PAYMENT_FILE;
+    let with_helper = |mut sources: Vec<Source>| {
+        let at = sources.iter().position(|s| s.path == np).unwrap();
+        sources[at].text.push_str(&format!("\n{HELPER}"));
+        sources
+    };
+    if !killed(&with_helper(sources_with(np, HANDLER_ANCHOR, |a| {
+        format!("    let _ = reason();\n{a}")
+    }))) {
+        survived.push("#5390 helper in the disabled handler");
+    }
+    if !killed(&with_helper(sources_with(np, REFUSAL_ANCHOR, |a| {
+        format!("    let _ = reason();\n{a}")
+    }))) {
+        survived.push("#5390 helper in the D32 refusal");
+    }
+    // ... or a name the route resolves, shadowed so the call site is
+    // unchanged.
+    for (label, path, anchor, hide) in [
         (
             "an imported helper with the D32 name",
-            "mod hide {\n    pub fn refuse_without_payment_support(_: &mut crate::Output<'_>) -> Result<(), toolkit_core::ToolkitError> { let _ = std::env::var_os(\"X\"); Ok(()) }\n}\nuse hide::refuse_without_payment_support;\n",
+            np,
+            NO_PAYMENT_START,
+            "mod hide {\n    pub fn refuse_without_payment_support(_: &mut crate::Output<'_>) -> Result<(), toolkit_core::ToolkitError> { let _ = std::env::var_os(\"X\"); Ok(()) }\n}\nuse self::hide::refuse_without_payment_support;\n",
         ),
         (
-            "a glob import that may carry it",
-            "mod hide {}\nuse hide::*;\n",
+            "a glob import in the pinned file",
+            np,
+            NO_PAYMENT_START,
+            "use super::*;\n",
         ),
         (
-            "a shadowed Ok",
-            "#[allow(non_snake_case)]\nfn Ok(_: ()) -> Result<(), ToolkitError> { let _ = std::env::var_os(\"X\"); Result::Ok(()) }\n",
+            "a shadowed Ok in the pinned file",
+            np,
+            NO_PAYMENT_START,
+            "#[allow(non_snake_case)]\nfn Ok(_: ()) -> Result<(), toolkit_core::ToolkitError> { let _ = std::env::var_os(\"X\"); Result::Ok(()) }\n",
         ),
         (
-            "a shadowed Result",
-            "type Result<T, E> = std::result::Result<T, E>;\n",
-        ),
-        (
-            "a second Output import",
+            "an Output alias in the pinned file",
+            np,
+            NO_PAYMENT_START,
             "use crate::Invocation as Output;\n",
         ),
         (
-            "an item macro",
+            "a shadowed Ok in mod.rs",
+            ROUTE_FILE,
+            PARSE_ANCHOR,
+            "#[allow(non_snake_case)]\nfn Ok(_: ()) -> Result<(), ToolkitError> { let _ = std::env::var_os(\"X\"); Result::Ok(()) }\n",
+        ),
+        (
+            "a shadowed Result in mod.rs",
+            ROUTE_FILE,
+            PARSE_ANCHOR,
+            "type Result<T, E> = std::result::Result<T, E>;\n",
+        ),
+        (
+            "a glob import in mod.rs",
+            ROUTE_FILE,
+            PARSE_ANCHOR,
+            "mod hide {}\nuse hide::*;\n",
+        ),
+        (
+            "an item macro in mod.rs",
+            ROUTE_FILE,
+            PARSE_ANCHOR,
             "thread_local! { static X: u8 = 0; }\n",
         ),
     ] {
-        assert!(
-            killed(route_with(PARSE_ANCHOR, |a| format!("{hide}\n{a}"))),
-            "#5390 variant survived: {label}"
-        );
+        if !killed(&sources_with(path, anchor, |a| format!("{hide}\n{a}"))) {
+            survived.push(label);
+        }
     }
 
-    // #5391: the module-level `matches!` shadow, verbatim, before `parse`.
-    let shadowed = route_with(PARSE_ANCHOR, |a| format!("{SHADOW}{a}"));
-    assert!(killed(shadowed.clone()), "#5391 macro shadow survived");
-    assert!(
-        pay_dir_findings(&with_route(shadowed))
-            .iter()
-            .any(|f| f.contains("macro_rules!")),
-        "#5391 is not reported as a macro definition"
-    );
+    // #5391: the module-level `matches!` shadow, verbatim, in mod.rs and in
+    // the pinned file.
+    let shadowed = sources_with(ROUTE_FILE, PARSE_ANCHOR, |a| format!("{SHADOW}{a}"));
+    if !pay_dir_findings(&shadowed)
+        .iter()
+        .any(|f| f.contains("macro_rules!"))
+    {
+        survived.push("#5391 macro shadow in mod.rs");
+    }
+    if !killed(&sources_with(np, NO_PAYMENT_START, |a| {
+        format!("{SHADOW}{a}")
+    })) {
+        survived.push("#5391 macro shadow in the pinned file");
+    }
     // The same shadow in any other payment source, or an aliased std macro.
     for (path, insert) in [
         ("agents_pay/flow.rs", SHADOW),
@@ -2316,12 +2598,17 @@ fn t_ac3_noread_catches_the_review_5389_helper_and_macro_mutations() {
     ] {
         let mut sources = real_sources();
         let at = sources.iter().position(|s| s.path == path).unwrap();
-        sources[at].text = format!("{insert}{}", sources[at].text);
+        // After the inner `//!` docs, so the mutated source still parses.
+        sources[at].text = format!("{}\n{insert}", sources[at].text);
         assert!(
-            !pay_dir_findings(&sources).is_empty(),
-            "{path}: {insert} survived"
+            syn::parse_file(&sources[at].text).is_ok(),
+            "the fixture does not parse: {insert}"
         );
+        if pay_dir_findings(&sources).is_empty() {
+            survived.push(insert);
+        }
     }
+    assert!(survived.is_empty(), "survived the gate: {survived:#?}");
 }
 
 /// The re-review #5397 mutation (#5400), verbatim, and the other raw
@@ -2329,6 +2616,7 @@ fn t_ac3_noread_catches_the_review_5389_helper_and_macro_mutations() {
 /// so every gate compares identifiers after unraw. Each fixture is reported
 /// by label when it survives.
 #[test]
+#[allow(clippy::too_many_lines)] // A table of mutations, each reported by label.
 fn t_ac3_noread_catches_raw_identifier_mutations() {
     const RAW_OK: &str = "#[allow(non_snake_case)]\nfn r#Ok<T, E>(value: T) -> Result<T, E> {\n    let _ = std::env::var_os(\"RSI_REVIEW_5397_NON_SECRET\");\n    Result::Ok(value)\n}\n\n";
     const RAW_SHADOW: &str = "macro_rules! r#matches {\n    ($($tokens:tt)*) => {{\n        let _ = std::env::var_os(\"RSI_REVIEW_5397_NON_SECRET\");\n        std::matches!($($tokens)*)\n    }};\n}\n\n";
@@ -2350,8 +2638,7 @@ fn t_ac3_noread_catches_raw_identifier_mutations() {
         sources
     };
     let route_killed = |sources: &[Source]| {
-        let route = &sources.iter().find(|s| s.path == ROUTE_FILE).unwrap().text;
-        !d32_findings(route).is_empty() || !pay_dir_findings(sources).is_empty()
+        !d32_findings(sources).is_empty() || !pay_dir_findings(sources).is_empty()
     };
     let mut survived: Vec<&str> = Vec::new();
 
@@ -2400,10 +2687,47 @@ fn t_ac3_noread_catches_raw_identifier_mutations() {
             "agents_pay/vault.rs",
             "#[r#macro_use]\nextern crate core as std_core;\n",
         ),
+        // The pinned file itself.
+        ("#5400 fn r#Ok in no_payment.rs", NO_PAYMENT_FILE, RAW_OK),
+        (
+            "r#matches! in no_payment.rs",
+            NO_PAYMENT_FILE,
+            "fn raw_macro() -> bool {\n    ::core::r#matches!(1, 1)\n}\n",
+        ),
     ] {
         if !route_killed(&pay_with(path, insert)) {
             survived.push(label);
         }
+    }
+    // Each layer on its own: the unraw-normalised binding check and the raw
+    // identifier ban both see the #5400 and `r#Result` shadows in mod.rs.
+    for (label, insert, name) in [
+        ("#5400 binding check", RAW_OK, "`Ok` is shadowed"),
+        (
+            "r#Result binding check",
+            "type r#Result<T, E> = ::core::result::Result<T, E>;\n\n",
+            "`Result` is shadowed",
+        ),
+    ] {
+        let sources = pay_with(ROUTE_FILE, insert);
+        if !d32_findings(&sources).iter().any(|f| f.contains(name)) {
+            survived.push(label);
+        }
+        if !pay_dir_findings(&sources)
+            .iter()
+            .any(|f| f.contains("raw identifier"))
+        {
+            survived.push("raw identifier ban in mod.rs");
+        }
+    }
+    // A raw spelling of the pinned path is the same path: the pin, compared
+    // after unraw, accepts it, and the raw identifier ban still reports it.
+    let same = sources_with(NO_PAYMENT_FILE, "::core::result::Result::Ok(())", |_| {
+        "::core::result::Result::r#Ok(())".to_owned()
+    });
+    assert!(d32_findings(&same).is_empty(), "the pin does not unraw");
+    if pay_dir_findings(&same).is_empty() {
+        survived.push("raw identifier ban in no_payment.rs");
     }
 
     // G4: a raw spelling of a live constructor in a payment test.
@@ -2418,7 +2742,7 @@ fn t_ac3_noread_catches_raw_identifier_mutations() {
     ] {
         let bad = deps.replacen(anchor, &format!("{anchor}        {live}\n"), 1);
         let mut modules = Vec::new();
-        inline_test_modules(bad.parse().unwrap(), &mut modules);
+        inline_test_modules(tokens(&bad).unwrap(), &mut modules);
         let files: Vec<(String, String)> = modules
             .into_iter()
             .map(|m| ("agents_pay/deps.rs (inline tests)".to_owned(), m))
@@ -2460,6 +2784,53 @@ fn t_ac3_noread_catches_raw_identifier_mutations() {
     ] {
         let found = findings_with(&[("agents_pay/flow.rs", flow)], GOOD_APPROVED, GOOD_POLICY);
         if !found.iter().any(|f| f.contains("exactly one use")) {
+            survived.push(label);
+        }
+    }
+    assert!(survived.is_empty(), "survived the gate: {survived:#?}");
+}
+
+/// The absolute `::core` and `::toolkit_core` paths cannot be rebound from
+/// outside `src/agents_pay/` either: no `extern crate` in the crate, and no
+/// manifest dependency under a root crate's name.
+#[test]
+fn t_ac3_noread_absolute_paths_resolve_to_the_real_crates() {
+    let sources = real_sources();
+    let manifest = crate_manifest();
+    assert!(manifest.contains("toolkit-core"), "the manifest moved");
+    let found = root_crate_findings(&sources, &manifest);
+    assert!(found.is_empty(), "{found:#?}");
+    let mut survived: Vec<&str> = Vec::new();
+    let mut lib = real_sources();
+    let at = lib.iter().position(|s| s.path == "lib.rs").unwrap();
+    lib[at].text = format!("extern crate std as core;\n{}", lib[at].text);
+    if root_crate_findings(&lib, &manifest).is_empty() {
+        survived.push("extern crate std as core in lib.rs");
+    }
+    for (label, edit) in [
+        (
+            "a dependency named core",
+            manifest.replacen(
+                "[dependencies]\n",
+                "[dependencies]\ncore = { path = \"../evil\" }\n",
+                1,
+            ),
+        ),
+        (
+            "toolkit_core renamed from another package",
+            manifest.replacen(
+                "[dependencies]\n",
+                "[dependencies]\ntoolkit_core = { package = \"evil\", path = \"../evil\" }\n",
+                1,
+            ),
+        ),
+        (
+            "a [dependencies.std] table",
+            format!("{manifest}\n[dependencies.std]\npath = \"../evil\"\n"),
+        ),
+    ] {
+        assert_ne!(edit, manifest, "{label}: the manifest anchor moved");
+        if root_crate_findings(&sources, &edit).is_empty() {
             survived.push(label);
         }
     }

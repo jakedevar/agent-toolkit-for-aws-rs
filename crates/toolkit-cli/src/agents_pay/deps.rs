@@ -5,10 +5,10 @@
 //! ([`PaymentsConnector`]), the merchant ([`MerchantHttp`]), DNS
 //! ([`HostResolver`]) and time ([`PayClock`]). Only a live build has a
 //! process world (`Deps::for_process`, `agents-pay-live`). A build without
-//! the feature has none: its registry handler prints the D32 refusal literal
-//! (`agents_pay::D32_REFUSAL`) before it parses argv or reads any file,
-//! variable, credential or terminal. Tests call `run_with` with the
-//! [`fixtures`] instead.
+//! the feature has none: its registry handler (`agents_pay::no_payment`)
+//! prints the D32 refusal literal (`agents_pay::D32_REFUSAL`) before it
+//! parses argv or reads any file, variable, credential or terminal. Tests
+//! call `run_with` with the [`fixtures`] instead.
 
 use std::time::{Duration, Instant};
 
