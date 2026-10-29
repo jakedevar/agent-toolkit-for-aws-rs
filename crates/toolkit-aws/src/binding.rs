@@ -450,6 +450,12 @@ mod tests {
     const LEAKY: &str = "profile failed: aws_secret_access_key=FAKESECRETVALUE0123456789 \
                          Authorization: Bearer FAKE-BEARER-TOKEN-VALUE";
 
+    #[test]
+    fn duplicate_response_content_length_remains_detectable() {
+        let headers = response_headers([("content-length", "1"), ("Content-Length", "1")]);
+        assert_eq!(headers.get("content-length"), Some("invalid-duplicate"));
+    }
+
     fn assert_clean(error: &AwsError) {
         for shown in [
             error.to_string(),
