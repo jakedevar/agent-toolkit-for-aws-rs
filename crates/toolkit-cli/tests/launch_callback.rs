@@ -214,3 +214,53 @@ fn helper_retains_valid_oauth_error_without_description() {
     assert!(!response.contains("private_description"));
     std::fs::remove_dir_all(home).unwrap();
 }
+
+#[cfg(all(unix, not(feature = "aws-sdk")))]
+#[test]
+fn helper_closes_stdout_after_port_while_still_listening() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let home = std::env::temp_dir().join(format!("l4-stdout-{}-{unique}", std::process::id()));
+    std::fs::create_dir(&home).unwrap();
+    let deadline = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        + 10;
+    let mut child = Command::new(env!("CARGO_BIN_EXE_toolkit"))
+        .args(["launch", "auth-callback"])
+        .env("HOME", &home)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let input = format!(
+        r#"{{"client_id":"c","client_secret":"s","client_expires_at":1,"scopes":["launch:access"],"code_verifier":"v","state":"secret","deadline":{deadline}}}"#
+    );
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(input.as_bytes())
+        .unwrap();
+    let mut stdout = BufReader::new(child.stdout.take().unwrap());
+    let mut line = String::new();
+    stdout.read_line(&mut line).unwrap();
+    let port: u16 = line.trim().parse().unwrap();
+    assert_ne!(port, 0);
+    let (send, receive) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut rest = Vec::new();
+        let _ = send.send(stdout.read_to_end(&mut rest).map(|_| rest));
+    });
+    let result = receive.recv_timeout(Duration::from_secs(2));
+    let still_running = child.try_wait().unwrap().is_none();
+    child.kill().unwrap();
+    child.wait().unwrap();
+    std::fs::remove_dir_all(home).unwrap();
+    assert!(still_running);
+    assert!(result.expect("stdout remained open").unwrap().is_empty());
+}
