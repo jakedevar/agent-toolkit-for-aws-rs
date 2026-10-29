@@ -91,6 +91,7 @@ fn source_ok(text: &str) -> Result<String, ToolkitError> {
     Ok(normalized)
 }
 
+#[allow(clippy::too_many_lines, clippy::if_not_else)]
 pub(crate) fn command(inv: &Invocation, out: &mut Output<'_>) -> Result<(), ToolkitError> {
     let path = Path::new(
         inv.positional(0)
@@ -167,17 +168,6 @@ pub(crate) fn command(inv: &Invocation, out: &mut Output<'_>) -> Result<(), Tool
     }
     let mut slots = object(json.get("values"))?;
     let assignments = object(json.get("assign"))?;
-    if original
-        .slots
-        .iter()
-        .any(|s| s.name == "PROJECT_DIR" && s.code > 0)
-        && !slots.contains_key("PROJECT_DIR")
-    {
-        slots.insert(
-            "PROJECT_DIR".to_owned(),
-            Json::string(project.to_string_lossy()),
-        );
-    }
     let consents: BTreeSet<_> = inv.values_of("--consent").map(str::to_owned).collect();
     for name in &consents {
         if types::slot_type(name) != Some(types::SlotType::Consent)
@@ -287,21 +277,63 @@ pub(crate) fn command(inv: &Invocation, out: &mut Output<'_>) -> Result<(), Tool
             }
             *body = format!("%%writefile {path}\n{body}");
         } else {
-            *body =
-                "# transform_dataset is defined in scripts/transform_fn.py (imported in Cell 3)."
-                    .to_owned();
+            "# transform_dataset is defined in scripts/transform_fn.py (imported in Cell 3)."
+                .clone_into(body);
         }
     }
     let replaced: BTreeSet<_> = replacements.keys().copied().collect();
     let assigned = assign::rewrite(&text, &original, &assignments, &consents, &replaced)
         .map_err(|e| fail(e.code, e.names))?;
-    let lines: Vec<_> = assigned.split('\n').collect();
+    let mut active = original.clone();
+    active.occurrences.retain(|occurrence| {
+        original
+            .cells
+            .iter()
+            .rev()
+            .find(|cell| cell.line <= occurrence.line)
+            .is_none_or(|cell| !replaced.contains(&cell.number))
+    });
+    for slot in &mut active.slots {
+        slot.code = active
+            .occurrences
+            .iter()
+            .filter(|occurrence| {
+                occurrence.name == slot.name
+                    && matches!(
+                        occurrence.context,
+                        template::Context::Bare | template::Context::Quoted
+                    )
+            })
+            .count();
+    }
+    if active
+        .slots
+        .iter()
+        .any(|s| s.name == "PROJECT_DIR" && s.code > 0)
+        && !slots.contains_key("PROJECT_DIR")
+    {
+        slots.insert(
+            "PROJECT_DIR".to_owned(),
+            Json::string(project.to_string_lossy()),
+        );
+    }
+    let substituted = values::substitute(
+        &assigned,
+        &active,
+        &slots,
+        &consents,
+        inv.has_flag("--allow-unresolved"),
+    )
+    .map_err(|e| fail(e.code, e.names))?;
+    let lines: Vec<_> = substituted.split('\n').collect();
     let mut rebuilt = String::new();
+    let mut parsed = original.clone();
     for (i, cell) in original.cells.iter().enumerate() {
         let end = original
             .cells
             .get(i + 1)
             .map_or(lines.len(), |next| next.line - 1);
+        parsed.cells[i].line = rebuilt.bytes().filter(|b| *b == b'\n').count() + 1;
         rebuilt.push_str(lines[cell.line - 1]);
         rebuilt.push('\n');
         if let Some((_, body)) = replacements.get(&cell.number) {
@@ -314,16 +346,7 @@ pub(crate) fn command(inv: &Invocation, out: &mut Output<'_>) -> Result<(), Tool
             }
         }
     }
-    let parsed = template::parse(&rebuilt);
-    let rendered = values::substitute(
-        &rebuilt,
-        &parsed,
-        &slots,
-        &consents,
-        inv.has_flag("--allow-unresolved"),
-    )
-    .map_err(|e| fail(e.code, e.names))?;
-    let parsed = template::parse(&rendered);
+    let rendered = rebuilt;
     let directory = safe_dir(
         &project,
         if mode == "script" {

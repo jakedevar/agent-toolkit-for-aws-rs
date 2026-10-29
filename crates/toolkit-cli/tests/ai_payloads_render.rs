@@ -354,3 +354,27 @@ fn ap_con_05_template_consent_literal_must_be_false() {
     assert_eq!(result.status.code(), Some(1));
     assert!(!f.0.join("scripts").exists());
 }
+
+#[test]
+fn ap_cell_01_replacement_markers_remain_cell_text() {
+    let f = Fixture::new();
+    let template = f.write("template.py", "# Cell 0 [markdown]: Example\n# Description\n# Cell 1: Code\npass\n# Cell 2: Next\nother()\n");
+    let cell = f.write("cell.py", "# Cell 99: Just a comment\nprint('ok')\n");
+    let arg = format!("1={}", cell.display());
+    let result = f.render(&template, "notebook", &["--cell", &arg]);
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let result =
+        toolkit_core::parse_json(&fs::read_to_string(f.0.join("notebooks/example.ipynb")).unwrap())
+            .unwrap();
+    let toolkit_core::Json::Array(cells) = result.get("cells").unwrap() else {
+        panic!("cells")
+    };
+    assert_eq!(cells.len(), 3);
+    assert!(cells[1]
+        .to_compact_string()
+        .contains("# Cell 99: Just a comment"));
+}

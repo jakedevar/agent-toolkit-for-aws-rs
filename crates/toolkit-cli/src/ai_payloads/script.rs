@@ -4,7 +4,7 @@ use super::{
     place::{self, PublishHooks},
     template::Template,
 };
-use std::{fs, path::Path};
+use std::{fmt::Write as _, fs, path::Path};
 
 #[allow(dead_code)]
 pub(crate) fn render(source: &str, template: &Template) -> String {
@@ -21,7 +21,7 @@ pub(crate) fn render(source: &str, template: &Template) -> String {
         if cell.notebook_only_section {
             continue;
         }
-        result.push_str(&format!("\n# %% Cell {}: {}\n", cell.number, cell.label));
+        let _ = write!(result, "\n# %% Cell {}: {}\n", cell.number, cell.label);
         let end = template
             .cells
             .get(index + 1)
@@ -87,7 +87,7 @@ pub(crate) fn publish(
         let filename = format!("{number:02}_{name}.py");
         match place::publish_new(dir, &filename, bytes, hooks) {
             Ok(published) => return Ok((filename, published)),
-            Err(error) if error.code == "destination_exists" => continue,
+            Err(error) if error.code == "destination_exists" => (),
             Err(error) => return Err(error.code),
         }
     }
