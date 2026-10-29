@@ -167,6 +167,35 @@ mod tests {
         ] {
             assert!(from_openclaw(&parse_json(raw).unwrap()).is_err());
         }
+        for origin in [
+            "https://merchant.test/some/path",
+            "https://MERCHANT.test",
+            "https://merchant.test:443",
+        ] {
+            let input = Json::object(vec![
+                ("maxPaymentAmountAtomic", Json::string("1")),
+                ("allowAnyRecipient", Json::Bool(true)),
+                ("networkPreferences", Json::Array(vec![])),
+                ("allowedOrigins", Json::Array(vec![Json::string(origin)])),
+            ]);
+            let mapped = from_openclaw(&input).unwrap();
+            assert_eq!(
+                mapped.get("allowed_origins"),
+                Some(&Json::Array(vec![Json::string("https://merchant.test")]))
+            );
+            assert_eq!(
+                mapped.get("allowed_networks"),
+                Some(&Json::Array(vec![Json::string("eip155:84532")]))
+            );
+            assert_eq!(
+                mapped.get("allowed_assets").unwrap().get("eip155:84532"),
+                Some(&Json::Array(vec![Json::string(
+                    "0x036cbd53842c5426634e7929541ec2318f3dcf7e"
+                )]))
+            );
+        }
+        let input = parse_json(r#"{"maxPaymentAmountAtomic":"1","allowAnyRecipient":true,"allowedOrigins":["https://u:p@merchant.test"]}"#).unwrap();
+        assert!(from_openclaw(&input).is_err());
     }
 
     // T-OCP-PAR, T-OCP-MAP, T-BR-TOK: fixture, controls and atomic cap.
@@ -352,6 +381,10 @@ mod tests {
         assert!(decide(("maxAmountRequired", Json::string("1001"))));
         assert!(decide(("payTo", Json::Array(vec![]))));
         assert!(parse_json(r#"{"a":1,"a":2}"#).is_err());
+        // D-OC3(b): even a configured non-EVM network cannot be selected.
+        let other_policy = from_openclaw(&parse_json(r#"{"maxPaymentAmountAtomic":"100000","allowAnyRecipient":true,"networkPreferences":["solana:mainnet"],"allowedAssetsByNetwork":{"solana:mainnet":["asset"]}}"#).unwrap()).unwrap();
+        let non_evm = parse_json(r#"{"accepts":[{"scheme":"exact","network":"solana:mainnet","asset":"asset","payTo":"recipient","amount":"1000","maxTimeoutSeconds":60}]}"#).unwrap();
+        assert!(select_accept_entry(&non_evm, &other_policy).is_err());
     }
 
     #[test]
