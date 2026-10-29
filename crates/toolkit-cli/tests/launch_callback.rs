@@ -166,27 +166,49 @@ fn auth_start_spawns_helper_without_secrets_in_argv() {
 #[cfg(all(unix, not(feature = "aws-sdk")))]
 #[test]
 fn helper_retains_valid_oauth_error_without_description() {
-    let unique = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
     let home = std::env::temp_dir().join(format!("l4-denied-{}-{unique}", std::process::id()));
     std::fs::create_dir(&home).unwrap();
-    let deadline = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() + 10;
+    let deadline = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        + 10;
     let mut child = Command::new(env!("CARGO_BIN_EXE_toolkit"))
-        .args(["launch", "auth-callback"]).env("HOME", &home)
-        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().unwrap();
+        .args(["launch", "auth-callback"])
+        .env("HOME", &home)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
     let pid = child.id();
-    let input = format!(r#"{{"client_id":"c","client_secret":"s","client_expires_at":1,"scopes":["launch:access"],"code_verifier":"v","state":"secret","deadline":{deadline}}}"#);
-    child.stdin.take().unwrap().write_all(input.as_bytes()).unwrap();
+    let input = format!(
+        r#"{{"client_id":"c","client_secret":"s","client_expires_at":1,"scopes":["launch:access"],"code_verifier":"v","state":"secret","deadline":{deadline}}}"#
+    );
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(input.as_bytes())
+        .unwrap();
     let mut stdout = BufReader::new(child.stdout.take().unwrap());
     let mut line = String::new();
     stdout.read_line(&mut line).unwrap();
     let port: u16 = line.trim().parse().unwrap();
     let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
-    stream.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .unwrap();
     write!(stream, "GET /?state=secret&error=access_denied&error_description=private_description HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\r\n").unwrap();
     let mut response = String::new();
     stream.read_to_string(&mut response).unwrap();
     assert!(!child.wait().unwrap().success());
-    let record = std::fs::read_to_string(home.join(format!(".launch-with-aws/pending/{pid}.json"))).unwrap();
+    let record =
+        std::fs::read_to_string(home.join(format!(".launch-with-aws/pending/{pid}.json"))).unwrap();
     assert!(record.contains("access_denied"), "{record}");
     assert!(!record.contains("private_description"));
     assert!(!response.contains("private_description"));

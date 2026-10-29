@@ -51,6 +51,14 @@ pub fn state_matches(actual: &str, expected: &str) -> bool {
             == 0
 }
 
+fn valid_oauth_error(error: &str) -> bool {
+    !error.is_empty()
+        && error.len() <= 64
+        && error
+            .bytes()
+            .all(|b| matches!(b, 0x20..=0x21 | 0x23..=0x5b | 0x5d..=0x7e))
+}
+
 /// Parse a complete bounded HTTP request head; no request data is reflected.
 #[must_use]
 pub fn parse_request(head: &[u8], port: u16, state: &str) -> Outcome {
@@ -119,11 +127,7 @@ pub fn parse_request(head: &[u8], port: u16, state: &str) -> Outcome {
         return Outcome::Ignore(400);
     }
     if let Some(error) = error {
-        let valid = !error.is_empty()
-            && error.len() <= 64
-            && error
-                .bytes()
-                .all(|b| matches!(b, 0x20..=0x21 | 0x23..=0x5b | 0x5d..=0x7e));
+        let valid = valid_oauth_error(&error);
         return Outcome::Denied(if valid {
             error
         } else {

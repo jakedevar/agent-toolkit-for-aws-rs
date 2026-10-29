@@ -79,11 +79,18 @@ pub fn run(
     let outcome = listener::serve(listener, state, flow_end)?;
     let (status, reason, result) = match outcome {
         None => (PendingStatus::TimedOut, None, HelperResult::TimedOut),
-        Some(Outcome::Denied(_)) => (
-            PendingStatus::Failed,
-            Some("authorization_denied"),
-            HelperResult::Failed,
-        ),
+        Some(Outcome::Denied(error)) => {
+            custody.write_with_error(
+                port,
+                wall_deadline,
+                wall_cutoff,
+                PendingStatus::Failed,
+                Some("authorization_denied"),
+                Some(&error),
+                &OsRandom,
+            )?;
+            return Ok(HelperResult::Failed);
+        }
         Some(Outcome::InvalidCode) => (
             PendingStatus::Failed,
             Some("invalid_code"),

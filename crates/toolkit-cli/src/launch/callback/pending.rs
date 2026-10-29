@@ -53,7 +53,22 @@ impl Custody {
         deadline: i64,
         cutoff: i64,
         status: PendingStatus,
-        reason: Option<&'static str>,
+        reason: Option<&str>,
+        random: &dyn Random,
+    ) -> io::Result<()> {
+        self.write_with_error(port, deadline, cutoff, status, reason, None, random)
+    }
+
+    /// Write a denied record including the validated OAuth error code.
+    #[allow(clippy::too_many_arguments)]
+    pub fn write_with_error(
+        &self,
+        port: u16,
+        deadline: i64,
+        cutoff: i64,
+        status: PendingStatus,
+        reason: Option<&str>,
+        oauth_error: Option<&str>,
         random: &dyn Random,
     ) -> io::Result<()> {
         let status = match status {
@@ -63,7 +78,10 @@ impl Custody {
             PendingStatus::Failed => "failed",
             PendingStatus::TimedOut => "timed_out",
         };
-        let value = serde_json::json!({"pid":self.pid,"port":port,"deadline":deadline,"cutoff":cutoff,"status":status,"reason":reason});
+        let mut value = serde_json::json!({"pid":self.pid,"port":port,"deadline":deadline,"cutoff":cutoff,"status":status,"reason":reason});
+        if let Some(error) = oauth_error {
+            value["oauth_error"] = serde_json::json!(error);
+        }
         state::write_private_file(
             &self.dir,
             &format!("{}.json", self.pid),
@@ -91,7 +109,13 @@ pub fn read_record(state_dir: &Path, pid: u32) -> Option<Record> {
         return None;
     };
     let keys = ["pid", "port", "deadline", "cutoff", "status", "reason"];
-    if members.len() != keys.len()
+    if !(members.len() == keys.len()
+        || (members.len() == keys.len() + 1
+            && members
+                .iter()
+                .filter(|(name, _)| name == "oauth_error")
+                .count()
+                == 1))
         || !keys
             .iter()
             .all(|key| members.iter().filter(|(name, _)| name == key).count() == 1)
@@ -143,6 +167,11 @@ pub fn read_record(state_dir: &Path, pid: u32) -> Option<Record> {
         }
         _ => return None,
     };
+    if let Some(value) = get("oauth_error") {
+        if !matches!(value, Json::String(error) if super::valid_oauth_error(error)) {
+            return None;
+        }
+    }
     Some(Record {
         status,
         cutoff,
