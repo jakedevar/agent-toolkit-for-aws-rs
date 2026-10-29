@@ -810,6 +810,68 @@ mod scripted_tests {
     }
 
     #[test]
+    fn progressing_flood_stays_within_work_rate_bounds() {
+        struct Listener {
+            now: Rc<Cell<Instant>>,
+            accepts: Rc<Cell<usize>>,
+            reads: Rc<Cell<usize>>,
+        }
+        struct Stream {
+            now: Rc<Cell<Instant>>,
+            reads: Rc<Cell<usize>>,
+        }
+        impl ListenerIo for Listener {
+            type Stream = Stream;
+            fn accept_stream(&self) -> io::Result<Stream> {
+                self.now.set(self.now.get() + Duration::from_micros(1));
+                self.accepts.set(self.accepts.get() + 1);
+                Ok(Stream {
+                    now: self.now.clone(),
+                    reads: self.reads.clone(),
+                })
+            }
+        }
+        impl Read for Stream {
+            fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+                self.now.set(self.now.get() + Duration::from_micros(1));
+                self.reads.set(self.reads.get() + 1);
+                bytes[0] = b'a';
+                Ok(1)
+            }
+        }
+        impl Write for Stream {
+            fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        let start = Instant::now();
+        let now = Rc::new(Cell::new(start));
+        let accepts = Rc::new(Cell::new(0));
+        let reads = Rc::new(Cell::new(0));
+        let listener = Listener {
+            now: now.clone(),
+            accepts: accepts.clone(),
+            reads: reads.clone(),
+        };
+        assert_eq!(
+            serve_with(
+                listener,
+                1234,
+                "s",
+                start + Duration::from_secs(1),
+                &TimedClock(now)
+            )
+            .unwrap(),
+            None
+        );
+        assert!(accepts.get() <= 4000 && accepts.get() > 3900);
+        assert!(reads.get() <= 8000 && reads.get() > 7800);
+    }
+
+    #[test]
     fn head_finishing_at_slot_deadline_is_not_accepted() {
         struct SlowListener {
             now: Rc<Cell<Instant>>,
