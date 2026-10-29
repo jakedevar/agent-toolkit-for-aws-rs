@@ -10,6 +10,7 @@
 //! - [`schema`]: a small structural schema and path-addressed validation.
 //! - [`diag`]: [`quote_untrusted`], the one escaping helper for untrusted text in
 //!   diagnostics (#4639).
+//! - [`digest`] / [`encoding`]: SHA-256 (raw and hex) and base64url.
 //! - [`paths`]: relative-path normalization, symlink-refusing resolution and
 //!   bounded regular-file reads.
 //! - [`skills`] / [`frontmatter`]: `SKILL.md` discovery for `toolkit skills list`.
@@ -21,6 +22,7 @@
 
 pub mod diag;
 pub mod digest;
+pub mod encoding;
 pub mod error;
 pub mod frontmatter;
 pub mod json;
@@ -39,7 +41,8 @@ pub use diag::{
     escape_untrusted, is_unsafe_char, neutralize_line, neutralize_text, neutralize_text_knowing,
     quote_untrusted, quote_untrusted_bounded,
 };
-pub use digest::sha256_hex;
+pub use digest::{sha256, sha256_hex};
+pub use encoding::base64url_nopad;
 pub use error::{ErrorKind, ParseError, ToolkitError};
 pub use frontmatter::parse_frontmatter;
 pub use json::{
