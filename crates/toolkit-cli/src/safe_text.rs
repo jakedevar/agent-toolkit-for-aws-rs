@@ -592,7 +592,8 @@ mod tests {
     fn a_short_labelled_credential_is_hidden_in_a_diagnostic() {
         for value in ["password=abc", "token=ab", "pwd=x", "a/secret=Qz"] {
             let known = caller(&["x", value]);
-            let shown = known.diagnostic(&format!("cannot connect to {value}:6379"));
+            let message = format!("cannot connect to {value}:6379");
+            let shown = known.diagnostic(&message);
             assert!(!shown.contains(value), "{shown}");
             assert!(shown.contains(REDACTED), "{shown}");
         }
