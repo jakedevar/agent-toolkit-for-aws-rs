@@ -499,3 +499,5 @@ Friction: #4727, Rsi #4694, Rsi #4704
   4/4 busy: 3843c957 (#4497 S0), 41854b6c (#5017 S1), e91ab9e3 (#5018 review), 9b110cd7 (r20). Queue: r19 e7495083 still queued.
 - 10-29 01:31Z: #4497 S0 impl e605befdab8ac713738bec484d481c2f75c91289 (3843c957; COVERS #4497 #4998; scoped 5c809f14 ok core/aws/cli/msk, fmt baab6b02, clippy 082f899b). Review #5021 worker 91f9ecfe (Codex sol high, pinned). On ACCEPT: mail SHA to r20 9b110cd7 with #5020 (qualify O(input) wording in security-hooks-review.md, which arrives with #4412 in r20). S1 #5017 already uses rolling; it rebases onto S0 when S0 lands.
   4/4 busy: 41854b6c (#5017 S1), e91ab9e3 (#5018), 9b110cd7 (r20), 91f9ecfe (#5021).
+- 10-29 01:36Z: #5021 (91f9ecfe) on #4497 e605befd: CHANGES_REQUESTED, one P2 #5026 (object key decoded/allocated before node-budget check). Repair 1 worker 7f30f191 (Sonnet high, continue_from 3843c957). Next: narrow re-review or PM inspection, then mail SHA + #5020 to r20. Kaizen #5028 cancelled as dup of #4860.
+  4/4 busy: 41854b6c (#5017 S1), e91ab9e3 (#5018), 9b110cd7 (r20), 7f30f191 (#4497 repair).
