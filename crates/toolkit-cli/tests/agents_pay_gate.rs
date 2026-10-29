@@ -3062,8 +3062,18 @@ fn one_path_findings(sources: &[Source]) -> Vec<String> {
     found
 }
 
-/// R-BR-ONE-3: the public items of `live.rs`, in order.
-const LIVE_PUBLIC_ITEMS: &[&str] = &["World", "for_process", "deps"];
+/// R-BR-ONE-3: the public items of `live.rs`, in order. The first three are
+/// the fetch world; `LiveTerminal`, `AdminWorld` and its `for_process` are the
+/// x402 S6 admin world (#5462, `admin::run_process`). The list stays exact, so
+/// the bridge (B2) still adds none.
+const LIVE_PUBLIC_ITEMS: &[&str] = &[
+    "World",
+    "for_process",
+    "deps",
+    "LiveTerminal",
+    "AdminWorld",
+    "for_process",
+];
 
 fn live_items_findings(sources: &[Source]) -> Vec<String> {
     struct Public(Vec<String>);
