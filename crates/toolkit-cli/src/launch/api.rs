@@ -42,7 +42,7 @@ use toolkit_aws::Secret;
 use super::http::{self, MonotonicClock, Operation};
 
 #[derive(Clone, Copy)]
-pub(crate) enum ApiOperation { CreateUploadUrl, CreateLaunch, GetLaunch, ListLaunches, StartExecution, Delete, Put }
+pub(crate) enum ApiOperation { CreateUploadUrl, CreateLaunch, GetLaunch, ListLaunches, StartExecution, Delete, #[cfg(test)] Put }
 
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum ApiError {
@@ -91,6 +91,7 @@ impl Client<'_> {
             ApiOperation::ListLaunches => (Method::Get, "/api/launches".to_owned(), Operation::ApiJson),
             ApiOperation::StartExecution => (Method::Post, format!("/api/launches/{}/start", percent_encode(id)), Operation::ApiJson),
             ApiOperation::Delete => (Method::Delete, format!("/api/launches/{}", percent_encode(id)), Operation::Delete),
+            #[cfg(test)]
             ApiOperation::Put => (Method::Put, String::new(), Operation::Put),
         };
         let mut url = format!("{}{}", self.base.trim_end_matches('/'), path);
@@ -100,13 +101,13 @@ impl Client<'_> {
             url.push_str(&percent_encode(value));
         }
         let mut headers = Headers::new();
-        if !matches!(operation, ApiOperation::Put) {
+        {
             headers.insert("authorization", &format!("Bearer {}", self.token.expose())).map_err(|_| ApiError::InvalidRequest)?;
             headers.insert("content-type", "application/json").map_err(|_| ApiError::InvalidRequest)?;
         }
         let timeout = Duration::from_secs(120);
         let request = HttpRequest { method, url, headers, body: body.map_or_else(Vec::new, |v| v.to_string().into_bytes()), timeouts: Timeouts::new(timeout, timeout).map_err(|_| ApiError::InvalidRequest)? };
-        let put = matches!(operation, ApiOperation::Put);
+        let put = stream_op == Operation::Put;
         let deadline = self.clock.now() + Duration::from_secs(if put { 300 } else { 360 });
         let response = http::run(self.transport, &request, stream_op, deadline, if put { Duration::from_secs(300) } else { timeout }, !retry, self.clock, self.sleeper, self.jitter, &self.policy).map_err(|e| match e {
             http::BodyError::Deadline | http::BodyError::Transport { .. } => ApiError::Unreachable,
@@ -122,6 +123,23 @@ impl Client<'_> {
         let result: Value = serde_json::from_slice(&response.body).map_err(|_| ApiError::InvalidResponse)?;
         if !result.is_object() { return Err(ApiError::InvalidResponse); }
         Ok(result)
+    }
+
+    #[cfg(unix)]
+    pub fn put_archive(&self, url: &str, archive: &[u8], resolver: &dyn toolkit_aws::endpoint::HostResolver) -> Result<(), ApiError> {
+        super::download::check_download_url(url, resolver).map_err(|_| ApiError::InvalidRequest)?;
+        let authority = url.split_once("://").ok_or(ApiError::InvalidRequest)?.1.split(['/', '?', '#']).next().ok_or(ApiError::InvalidRequest)?;
+        let host = authority.split(':').next().ok_or(ApiError::InvalidRequest)?.to_ascii_lowercase();
+        if host.len() <= ".amazonaws.com".len() || !host.ends_with(".amazonaws.com") { return Err(ApiError::InvalidRequest); }
+        let mut headers = Headers::new();
+        headers.insert("content-type", "application/zip").map_err(|_| ApiError::InvalidRequest)?;
+        let timeout = Duration::from_secs(300);
+        let request = HttpRequest { method: Method::Put, url: url.to_owned(), headers, body: archive.to_vec(), timeouts: Timeouts::new(timeout, timeout).map_err(|_| ApiError::InvalidRequest)? };
+        let response = http::collect_response(self.transport, &request, Operation::Put, self.clock.now() + timeout).map_err(|e| match e {
+            http::BodyError::Deadline | http::BodyError::Transport { .. } => ApiError::Unreachable,
+            _ => ApiError::InvalidResponse,
+        })?;
+        if (200..300).contains(&response.status) { Ok(()) } else { Err(ApiError::PutStatus(response.status)) }
     }
 }
 
