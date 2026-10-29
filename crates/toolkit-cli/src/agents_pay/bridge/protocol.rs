@@ -5,7 +5,7 @@ mod tests {
     use super::*;
     use std::io::Cursor;
 
-    const VALID: &str = r#"{"operation":"get_payment_session","region":"us-east-1","payment_manager_arn":"arn","payment_session_id":"session","user_id":"user","agent_name":"openclaw-aws-agents-pay"}"#;
+    const VALID: &str = r#"{"operation":"get_payment_session","region":"us-east-1","payment_manager_arn":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","payment_session_id":"sssssssssssssssssssssssssssssss","user_id":"user","agent_name":"openclaw-aws-agents-pay"}"#;
 
     // T-BR-REQ-SIZE, JSON, KEYS, STR, AGENT, REGION and PARAM.
     #[test]
