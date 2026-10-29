@@ -87,6 +87,7 @@ pub(crate) const SLICES: &[Slice] = &[
     crate::dynamodb_bench::SLICE,
     crate::dynamodb_deploy::SLICE,
     crate::elasticache::SLICE,
+    crate::elasticache::tunnel::SLICE,
     crate::manifests::SLICE,
     crate::marketplace::SLICE,
     crate::msk::SLICE,
@@ -548,7 +549,7 @@ mod tests {
     /// The route paths of the old `COMMANDS` table (commit ce0eaf6a, before the
     /// registry), in table order: the public order of [`COMMANDS`]. The routes of
     /// slices added after the registry follow at the end, ordered by slice name.
-    const LEGACY_COMMAND_ORDER: [&str; 92] = [
+    const LEGACY_COMMAND_ORDER: [&str; 95] = [
         "skills list",
         "manifests validate",
         "spec validate",
@@ -641,6 +642,10 @@ mod tests {
         // dynamodb-bench (#4390):
         "dynamodb benchmark-model",
         "dynamodb generate-perf-report",
+        // elasticache-tunnel (#4393):
+        "elasticache find-tunnel-host",
+        "elasticache start-tunnel",
+        "elasticache test-connection",
         // marketplace (#4396):
         "marketplace handler",
         "marketplace query-metering",

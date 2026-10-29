@@ -1296,6 +1296,14 @@ escaped before it is printed (#4602). The parity table, the snapshot and
 describe formats, the intentional changes and the follow-ups are in
 [docs/migration/elasticache.md](../../docs/migration/elasticache.md).
 
+The tunnel tools `toolkit elasticache find-tunnel-host | start-tunnel |
+test-connection` (#4393) replace `find_tunnel_host.py`, `start_tunnel.py` and
+`test_connection.py`. They open no sockets, start no processes and connect to
+no AWS, Redis or Valkey endpoint: each needs `--recorded FILE` (a recorded
+run) and otherwise refuses with `elasticache_seam_unavailable`. Passwords and
+tokens are never printed. See
+[docs/migration/elasticache-tunnel.md](../../docs/migration/elasticache-tunnel.md).
+
 ## cloudwatch (#4380)
 
 `toolkit cloudwatch render`, `toolkit cloudwatch validate` and

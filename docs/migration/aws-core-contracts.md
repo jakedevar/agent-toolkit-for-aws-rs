@@ -138,7 +138,11 @@ a secret ends, it hides more.
   *before* upper-casing, since both transformations can remove the context a
   recognizer needs. `snippet` scrubs, flattens and truncates, then scrubs its
   own output.
-- **Bounded work (#4536).** Redaction is linear in the length of its input.
+- **Bounded work (#4536, #4568).** Every recognizer scan is linear in the
+  length of its input; the whole scrubber is linear scanning plus
+  O(s log s) ordering of the s collected spans (s is itself linear in the
+  input) and an expected-constant-time hash-map cache lookup per unquoted
+  value end.
   Each pass builds lookup tables in one right-to-left sweep (backslash runs,
   whitespace runs including escapes, line ends, unquoted value ends, base64
   runs), so every scan in a recognizer is a table lookup. Each complete key is
@@ -155,7 +159,14 @@ a secret ends, it hides more.
   lookup tables to a fixed amount of memory. Tests count elementary scan steps
   deterministically: 27 adversarial input families must grow about linearly
   in work when the input grows fourfold, and must stay under 1,000 steps per
-  byte. They do not rely on timing.
+  byte. They do not rely on timing. The cross-Issue regression table
+  `crates/toolkit-aws/tests/redaction_regressions.rs` runs every
+  reproduction from #4468, #4469, #4494, #4515, #4516 and #4536 through each
+  diagnostic surface (`redact_text`, `AwsError` and `RetryFailure`
+  `Display`/`Debug`, `ToolkitError`, `ServiceError`, `render_failure`,
+  `Headers`/request/response `Debug`), checks that ordinary diagnostic text
+  is unchanged, and adds one generous wall-clock bound (3 s) on 100 KB
+  repeated-label keys that the quadratic scrubber exceeded (about 10 s).
 
 `Debug` is enforced at formatting time, independent of how a value was built:
 `AwsError`, `ServiceError`, `Guidance`, `ClientSettings`, `SigningScope`,

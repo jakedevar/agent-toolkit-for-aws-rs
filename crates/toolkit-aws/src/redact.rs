@@ -181,7 +181,8 @@ const MAX_QUOTE_ESCAPE_DEPTH: usize = 32;
 /// construction: `redact_text(&redact_text(x)) == redact_text(x)`. When the
 /// end of a value is uncertain the redaction extends to the end of the input.
 ///
-/// Each pass does work linear in the length of its text, there
+/// Each pass scans linearly in the length of its text (plus `O(s log s)`
+/// ordering of its `s` spans and expected-constant cache lookups), there
 /// are at most `MAX_PASSES + 1` passes, and a text longer than
 /// [`MAX_REDACT_INPUT_BYTES`] is replaced by [`REDACTED`] without scanning, so
 /// untrusted error text cannot make redaction expensive (#4536).

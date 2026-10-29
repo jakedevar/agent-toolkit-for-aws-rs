@@ -55,6 +55,7 @@ pub mod pricing;
 pub mod references;
 pub mod serverless;
 pub mod text;
+pub mod tunnel;
 pub mod validator;
 
 use dashboards::{CacheType, TemplateOptions};
