@@ -81,6 +81,7 @@ use crate::transport::{
 use roots::ValidatedRoots;
 
 pub mod database;
+pub mod lookup;
 pub mod profile;
 pub mod recorder;
 pub mod roots;
@@ -203,6 +204,46 @@ impl CredentialsProvider for SdkCredentialsProvider {
     fn load(&self) -> Result<crate::credentials::Credentials, AwsError> {
         let provider = &self.provider;
         let loaded = self.runtime.block_on(provider.provide_credentials());
+        self.adopt(loaded)
+    }
+}
+
+impl SdkCredentialsProvider {
+    /// [`CredentialsProvider::load`] that stops at `deadline` (R-DG-07): the
+    /// provider future runs inside the adapter's runtime under
+    /// `tokio::time::timeout_at` and is **dropped** when the deadline fires,
+    /// so its HTTP work (STS, SSO, Sign-in, ECS, IMDS) is cancelled with it.
+    ///
+    /// # Errors
+    /// `Timeout` (phase `deadline`, fixed text) when the deadline fires first;
+    /// otherwise as [`CredentialsProvider::load`].
+    pub(crate) fn load_until(
+        &self,
+        deadline: std::time::Instant,
+    ) -> Result<crate::credentials::Credentials, AwsError> {
+        // `timeout_at` polls its future once before checking the deadline:
+        // a deadline already past must not start provider requests.
+        if std::time::Instant::now() >= deadline {
+            return Err(source::credential_deadline_error());
+        }
+        let provider = &self.provider;
+        let bounded = self.runtime.block_on(async {
+            tokio::time::timeout_at(
+                tokio::time::Instant::from_std(deadline),
+                provider.provide_credentials(),
+            )
+            .await
+        });
+        match bounded {
+            Ok(loaded) => self.adopt(loaded),
+            Err(_) => Err(source::credential_deadline_error()),
+        }
+    }
+
+    fn adopt(
+        &self,
+        loaded: Result<SdkCredentials, CredentialsError>,
+    ) -> Result<crate::credentials::Credentials, AwsError> {
         match loaded {
             Ok(credentials) => adopt_credentials(
                 credentials.access_key_id(),

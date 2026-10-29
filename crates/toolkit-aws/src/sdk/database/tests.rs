@@ -124,6 +124,8 @@ struct Recorder {
     dials: Mutex<Vec<SocketAddr>>,
     written: Arc<AtomicUsize>,
     received: Arc<Mutex<Vec<u8>>>,
+    /// Far ends that have finished (the connection closed under them).
+    closed: Arc<AtomicUsize>,
 }
 
 impl Recorder {
@@ -135,6 +137,7 @@ impl Recorder {
             dials: Mutex::new(Vec::new()),
             written: Arc::new(AtomicUsize::new(0)),
             received: Arc::new(Mutex::new(Vec::new())),
+            closed: Arc::new(AtomicUsize::new(0)),
         })
     }
 
@@ -146,6 +149,7 @@ impl Recorder {
             dials: Mutex::new(Vec::new()),
             written: Arc::new(AtomicUsize::new(0)),
             received: Arc::new(Mutex::new(Vec::new())),
+            closed: Arc::new(AtomicUsize::new(0)),
         })
     }
 
@@ -157,6 +161,7 @@ impl Recorder {
             dials: Mutex::new(Vec::new()),
             written: Arc::new(AtomicUsize::new(0)),
             received: Arc::new(Mutex::new(Vec::new())),
+            closed: Arc::new(AtomicUsize::new(0)),
         })
     }
 
@@ -220,7 +225,11 @@ impl Dialer for Recorder {
         let (client, server) = tokio::io::duplex(1 << 20);
         let received = Arc::clone(&self.received);
         let far = self.far.clone();
-        tokio::spawn(serve(far, server, received));
+        let closed = Arc::clone(&self.closed);
+        tokio::spawn(async move {
+            serve(far, server, received).await;
+            closed.fetch_add(1, Ordering::SeqCst);
+        });
         let stream = Counting {
             inner: client,
             written: Arc::clone(&self.written),
@@ -946,4 +955,109 @@ fn the_database_transport_shares_the_validated_roots_and_no_public_connector() {
     assert!(transport
         .roots()
         .is_some_and(|held| held.same_allocation(&roots)));
+}
+
+// ---- T-DG-07c close budget; R-DG-07 DNS residual cap (PM ruling 2) ----
+
+/// Drive the runtime until `dialer`'s far end has seen its connection close,
+/// or the close budget passes; returns how long that took.
+fn wait_for_close(fixture: &Fixture, dialer: &Recorder) -> Duration {
+    let start = std::time::Instant::now();
+    fixture.runtime.block_on(async {
+        while dialer.closed.load(Ordering::SeqCst) == 0 && start.elapsed() < CLOSE_BUDGET {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    });
+    start.elapsed()
+}
+
+#[test]
+fn a_finished_or_failed_exchange_closes_within_the_close_budget() {
+    // Success: the server holds the connection open after its reply.
+    let fixture = Fixture::new();
+    let resolver = ScriptedResolver::new(vec![vec![ip(PRIVATE)]]);
+    let dialer = Recorder::new(fixture.tls_far(vec![ok_reply("{}")]));
+    let transport = fixture.transport(quick(), resolver, Arc::clone(&dialer));
+    transport.send(&request(&db_url())).expect("exchange");
+    let took = wait_for_close(&fixture, &dialer);
+    assert_eq!(dialer.closed.load(Ordering::SeqCst), 1, "never closed");
+    assert!(took < CLOSE_BUDGET, "{took:?}");
+
+    // Failure mid-body: the server keeps dripping a chunked body past the
+    // limit and would never stop on its own.
+    let fixture = Fixture::new();
+    let mut acts = vec![Act::Write(
+        b"HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\n\r\n".to_vec(),
+    )];
+    for _ in 0..500 {
+        let mut chunk = b"20\r\n".to_vec();
+        chunk.extend([b'a'; 32]);
+        chunk.extend(b"\r\n");
+        acts.push(Act::Write(chunk));
+        acts.push(Act::Sleep(Duration::from_millis(10)));
+    }
+    let resolver = ScriptedResolver::new(vec![vec![ip(PRIVATE)]]);
+    let dialer = Recorder::new(fixture.tls_far(acts));
+    let transport = fixture.transport(quick(), resolver, Arc::clone(&dialer));
+    let error = transport.send(&request(&db_url())).expect_err("limit");
+    assert!(message(&error).contains("size limit"), "{error}");
+    let took = wait_for_close(&fixture, &dialer);
+    assert_eq!(dialer.closed.load(Ordering::SeqCst), 1, "never closed");
+    assert!(took < CLOSE_BUDGET, "{took:?}");
+}
+
+#[test]
+fn an_abandoned_lookup_makes_the_next_request_fail_closed_without_a_dial() {
+    let fixture = Fixture::new();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let (release, wait) = std::sync::mpsc::channel::<()>();
+    let wait = Mutex::new(wait);
+    let counted = Arc::clone(&calls);
+    let resolver = Arc::new(GatedResolver {
+        gate: Arc::new(lookup::LookupGate::new()),
+        lookup: Arc::new(move |_: &str| {
+            if counted.fetch_add(1, Ordering::SeqCst) == 0 {
+                let _ = wait.lock().expect("wait").recv();
+            }
+            Ok(vec![ip(PRIVATE)])
+        }),
+    });
+    let dialer = Recorder::new(fixture.tls_far(vec![ok_reply("{}")]));
+    let transport = SdkTransport::database(
+        &fixture.runtime,
+        &fixture.roots(),
+        endpoint(),
+        quick(),
+        Arc::clone(&resolver) as Arc<dyn DatabaseResolver>,
+        Arc::clone(&dialer) as Arc<dyn Dialer>,
+    )
+    .expect("database transport");
+
+    let start = std::time::Instant::now();
+    let error = transport.send(&request(&db_url())).expect_err("stuck DNS");
+    assert_within(start, Duration::from_secs(3));
+    assert!(matches!(error, AwsError::Timeout { .. }), "{error}");
+    assert!(resolver.gate.has_abandoned());
+
+    let start = std::time::Instant::now();
+    let error = transport
+        .send(&request(&db_url()))
+        .expect_err("abandoned lookup outstanding");
+    assert!(
+        start.elapsed() < Duration::from_millis(250),
+        "fails at once"
+    );
+    assert!(endpoint_refusal(&error), "{error}");
+    assert_eq!(calls.load(Ordering::SeqCst), 1, "no second lookup thread");
+    assert!(dialer.dials().is_empty(), "nothing was dialed");
+
+    release.send(()).expect("release");
+    let start = std::time::Instant::now();
+    while resolver.gate.has_abandoned() {
+        assert!(start.elapsed() < Duration::from_secs(5), "never cleared");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let response = transport.send(&request(&db_url())).expect("recovered");
+    assert_eq!(response.status, 200);
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
 }

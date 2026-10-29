@@ -373,6 +373,30 @@ impl Drop for ForbiddenNetwork {
     }
 }
 
+/// A hostile shared AWS configuration: a `credential_process` that would leave
+/// a marker, an endpoint at the forbidden network, and live/consent-shaped
+/// keys. Nothing may read it into an action.
+fn hostile_config(dir: &std::path::Path, fake: &str) -> std::path::PathBuf {
+    let path = dir.join("hostile-aws-config");
+    let marker = dir.join("provider-ran");
+    std::fs::write(
+        &path,
+        format!(
+            "[default]\ncredential_process = sh -c 'touch {}'\nendpoint_url = https://{fake}\n\
+             live = true\nconfirm_wipe = true\nconfirm_write = true\nconfirm_delete = true\n\
+             confirm_create = true\nregion = eu-west-1\n",
+            marker.display()
+        ),
+    )
+    .unwrap();
+    path
+}
+
+/// No credential provider ran in `dir` (the hostile `credential_process`).
+fn provider_never_ran(dir: &std::path::Path) -> bool {
+    !dir.join("provider-ran").exists()
+}
+
 /// Run the toolkit with canary credentials, the acceptance flag and every
 /// proxy, endpoint and metadata variable aimed at the forbidden network.
 fn run_hostile(args: &[&str], dir: &std::path::Path, fake: &str) -> std::process::Output {
@@ -383,6 +407,10 @@ fn run_hostile(args: &[&str], dir: &std::path::Path, fake: &str) -> std::process
         .env("AWS_ACCESS_KEY_ID", "AKIAFORBIDDENCANARY0")
         .env("AWS_SECRET_ACCESS_KEY", "forbidden-secret-canary")
         .env("AWS_REGION", "us-east-1")
+        .env("AWS_CONFIG_FILE", hostile_config(dir, fake))
+        .env("AWS_SHARED_CREDENTIALS_FILE", hostile_config(dir, fake))
+        .env("AWS_PROFILE", "default")
+        .env("RUST_LOG", "trace")
         .env("HTTPS_PROXY", format!("http://{fake}"))
         .env("HTTP_PROXY", format!("http://{fake}"))
         .env("ALL_PROXY", format!("http://{fake}"))
@@ -489,5 +517,387 @@ fn ordinary_and_live_shaped_runs_never_reach_the_network() {
         }
         assert_eq!(network.accepted(), 0, "{args:?} reached the network");
     }
+    assert!(provider_never_ran(&dir), "a credential provider ran");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+// ---- T-DG-01a golden replay; T-DG-01e consent carriers; T-DG-02b/c CLI ----
+
+/// A fresh working directory for one test.
+fn workdir(label: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("docgraph-{label}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+/// Run with an empty environment (the golden baseline).
+fn run_clean(args: &[&str], dir: &std::path::Path) -> std::process::Output {
+    Command::new(env!("CARGO_BIN_EXE_toolkit"))
+        .current_dir(dir)
+        .env_clear()
+        .args(args)
+        .output()
+        .unwrap()
+}
+
+fn json_string(text: &str) -> String {
+    let mut out = String::from("\"");
+    for c in text.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+/// The seed replay recording, rebuilt from the dry-run statement list: every
+/// statement answers `[]` and the four verification queries the values the
+/// recorded seed contract expects.
+fn seed_recording(dry_run: &str) -> String {
+    let answers = [
+        ("g.V().count()", "[12]"),
+        ("g.E().count()", "[14]"),
+        (
+            "g.V().has('Account','id','A2').out('USES').in('USES').dedup().values('id').toList()",
+            r#"["A1", "A2", "A3"]"#,
+        ),
+        (
+            "g.V().has('Person','id','U1').out('FOLLOWS').out('FOLLOWS').dedup().values('name').toList()",
+            r#"["Dave"]"#,
+        ),
+    ];
+    let mut calls = Vec::new();
+    for line in dry_run.lines().skip(1) {
+        let (_, statement) = line.split_once(". ").expect("numbered statement");
+        let statement = match statement.strip_prefix('[') {
+            Some(tagged) => tagged.split_once("] ").expect("tag").1,
+            None => statement,
+        };
+        let request = match statement.split_once(" {") {
+            Some((gremlin, bindings)) => format!(
+                r#"{{"gremlin":{},"bindings":{{{bindings}}}"#,
+                json_string(gremlin)
+            ),
+            None => format!(r#"{{"gremlin":{}}}"#, json_string(statement)),
+        };
+        let results = answers
+            .iter()
+            .find(|(query, _)| *query == statement)
+            .map_or("[]", |(_, results)| results);
+        calls.push(format!(
+            r#"{{"request": {request}, "response": {{"results": {results}}}}}"#
+        ));
+    }
+    format!(r#"{{"calls": [{}]}}"#, calls.join(","))
+}
+
+/// T-DG-01a: the golden seed dry run and replay, memory dry run and review
+/// fallback produce the fixed contract output under this build's features
+/// (the suite runs this file with and without `docgraph-live`), and a hostile
+/// AWS configuration, proxy/endpoint environment and canary credentials
+/// change nothing: identical output and status, zero sockets, no provider.
+#[test]
+fn golden_replays_are_unchanged_by_hostile_configuration() {
+    let network = ForbiddenNetwork::start();
+    let fake = format!("127.0.0.1:{}", network.port);
+    let dir = workdir("01a");
+    let dry = run_hostile(&["neptune", "seed", "--dry-run"], &dir, &fake);
+    let dry_text = String::from_utf8(dry.stdout.clone()).unwrap();
+    assert_eq!(dry.status.code(), Some(0));
+    let lines: Vec<&str> = dry_text.lines().collect();
+    assert_eq!(lines[0], "Dry run: nothing is sent to Neptune.");
+    assert_eq!(
+        lines[1],
+        "1. [destructive, needs --confirm-wipe] g.V().drop()"
+    );
+    assert_eq!(lines.len(), 2 + 29 + 4);
+
+    let recording = dir.join("seed.json");
+    std::fs::write(&recording, seed_recording(&dry_text)).unwrap();
+    let input = dir.join("input.json");
+    std::fs::write(&input, r#"{"graph_id":"g-abc123def4"}"#).unwrap();
+    let (recording, input) = (
+        recording.to_str().unwrap().to_string(),
+        input.to_str().unwrap().to_string(),
+    );
+    let out = dir.join("out").to_str().unwrap().to_string();
+    let invocations: Vec<Vec<&str>> = vec![
+        vec!["neptune", "seed", "--dry-run"],
+        vec![
+            "neptune",
+            "seed",
+            "--confirm-wipe",
+            "--recorded",
+            &recording,
+            "--endpoint",
+            "n.example",
+        ],
+        vec![
+            "neptune",
+            "memory",
+            "--operation",
+            "consolidate",
+            "--input",
+            &input,
+            "--dry-run",
+        ],
+        vec![
+            "documentdb",
+            "wa-review",
+            "--cluster-id",
+            "prod-docdb",
+            "--region",
+            "us-east-1",
+            "--output",
+            &out,
+            "--now",
+            "2026-01-31T12:00:00Z",
+        ],
+    ];
+    for args in &invocations {
+        let hostile = run_hostile(args, &dir, &fake);
+        let clean = run_clean(args, &dir);
+        assert_eq!(hostile.status.code(), clean.status.code(), "{args:?}");
+        assert_eq!(hostile.stdout, clean.stdout, "{args:?}");
+        assert_eq!(hostile.stderr, clean.stderr, "{args:?}");
+    }
+    let replay = run_hostile(&invocations[1], &dir, &fake);
+    let stdout = String::from_utf8(replay.stdout).unwrap();
+    assert_eq!(
+        replay.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&replay.stderr)
+    );
+    assert!(stdout.starts_with(
+        "Connecting to Neptune at n.example:8182...\nClearing ALL graph data at n.example...\nSeeding social graph...\n"
+    ));
+    assert!(stdout.ends_with("Endpoint: wss://n.example:8182/gremlin\n"));
+    let memory = run_hostile(&invocations[2], &dir, &fake);
+    assert_eq!(memory.status.code(), Some(0));
+    assert!(String::from_utf8_lossy(&memory.stdout).contains("7776000000"));
+    assert_eq!(network.accepted(), 0, "a golden replay reached the network");
+    assert!(provider_never_ran(&dir), "a credential provider ran");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Live- and consent-shaped keys every carrier file below holds.
+const CONSENT_CARRIER: &str = r#"{"live":true,"confirm_wipe":true,"confirm_write":true,"confirm_delete":true,"confirm_create":true,"--live":true,"--confirm-wipe":true,"calls":[]}"#;
+
+/// T-DG-01e: recorded responses, analysis/capture envelopes, memory inputs,
+/// network-policy files, the shared AWS configuration and the environment
+/// cannot supply `--live` or any `--confirm-*`. Missing argv consent is
+/// refused before any file is read; argv consent plus carriers still cannot
+/// enable live work in this build; non-live replay ignores them as consent.
+#[test]
+#[cfg(feature = "docgraph-live")]
+fn consent_carriers_never_authorize_live_work_or_missing_consent() {
+    let network = ForbiddenNetwork::start();
+    let fake = format!("127.0.0.1:{}", network.port);
+    let dir = workdir("01e");
+    let carrier = dir.join("carrier.json");
+    std::fs::write(&carrier, CONSENT_CARRIER).unwrap();
+    let carrier = carrier.to_str().unwrap().to_string();
+    let c = carrier.as_str();
+    let endpoint = "db.cluster-abc.us-east-1.neptune.amazonaws.com";
+    // (args, exit status, required stderr text)
+    let rows: Vec<(Vec<&str>, i32, &str)> = vec![
+        (
+            vec![
+                "neptune",
+                "seed",
+                "--live",
+                "--endpoint",
+                endpoint,
+                "--network-policy",
+                c,
+            ],
+            1,
+            "--confirm-wipe",
+        ),
+        (
+            vec![
+                "neptune",
+                "memory",
+                "--live",
+                "--operation",
+                "consolidate",
+                "--input",
+                c,
+                "--network-policy",
+                c,
+            ],
+            1,
+            "--confirm-delete",
+        ),
+        (
+            vec![
+                "neptune",
+                "memory",
+                "--live",
+                "--operation",
+                "query",
+                "--input",
+                c,
+            ],
+            1,
+            "--confirm-write",
+        ),
+        (
+            vec![
+                "neptune",
+                "memory",
+                "--live",
+                "--operation",
+                "create-memory",
+                "--input",
+                c,
+            ],
+            1,
+            "--confirm-create",
+        ),
+        (
+            vec![
+                "documentdb",
+                "wa-review",
+                "--live",
+                "--cluster-id",
+                "c1",
+                "--region",
+                "us-east-1",
+                "--analysis-data",
+                c,
+            ],
+            2,
+            "live docgraph adapters are not available",
+        ),
+        // A collection capture manifest has no live mode at all.
+        (
+            vec![
+                "documentdb",
+                "normalize-capture",
+                "--live",
+                "--capture",
+                c,
+                "--output",
+                c,
+            ],
+            2,
+            "",
+        ),
+        (
+            vec![
+                "neptune",
+                "seed",
+                "--live",
+                "--confirm-wipe",
+                "--endpoint",
+                endpoint,
+                "--network-policy",
+                c,
+            ],
+            2,
+            "live docgraph adapters are not available",
+        ),
+        (
+            vec![
+                "neptune",
+                "memory",
+                "--live",
+                "--operation",
+                "consolidate",
+                "--confirm-write",
+                "--confirm-delete",
+                "--input",
+                c,
+                "--network-policy",
+                c,
+            ],
+            2,
+            "live docgraph adapters are not available",
+        ),
+    ];
+    for (args, status, required) in &rows {
+        let out = run_hostile(args, &dir, &fake);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(*status), "{args:?}: {stderr}");
+        assert!(stderr.contains(required), "{args:?}: {stderr}");
+        assert!(
+            !stderr.contains(c),
+            "{args:?} read or echoed a carrier file"
+        );
+        assert!(out.stdout.is_empty(), "{args:?}");
+    }
+    // Non-live replay: a recording's consent keys are not --confirm-wipe.
+    let out = run_hostile(&["neptune", "seed", "--recorded", c], &dir, &fake);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(!String::from_utf8_lossy(&out.stdout).contains("Clearing ALL graph data"));
+    assert_eq!(network.accepted(), 0, "a carrier reached the network");
+    assert!(provider_never_ran(&dir), "a credential provider ran");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// T-DG-02b/c: no credential arguments exist (a supplied one is a usage error
+/// that echoes nothing), and `RUST_LOG` enables no logging of canaries.
+#[test]
+fn credential_arguments_are_rejected_without_echo() {
+    let network = ForbiddenNetwork::start();
+    let fake = format!("127.0.0.1:{}", network.port);
+    let dir = workdir("02b");
+    let canary = "argumentsecretcanary0";
+    for args in [
+        vec![
+            "neptune",
+            "seed",
+            "--live",
+            "--confirm-wipe",
+            "--aws-secret-access-key",
+            canary,
+        ],
+        vec![
+            "neptune",
+            "memory",
+            "--live",
+            "--operation",
+            "retrieve",
+            "--access-key-id",
+            canary,
+        ],
+        vec!["neptune", "seed", "--dry-run", "--secret-key", canary],
+        vec![
+            "documentdb",
+            "wa-review",
+            "--cluster-id",
+            "c1",
+            "--region",
+            "us-east-1",
+            "--profile",
+            canary,
+        ],
+        vec![
+            "documentdb",
+            "wa-review",
+            "--cluster-id",
+            "c1",
+            "--region",
+            "us-east-1",
+            "--session-token",
+            canary,
+        ],
+    ] {
+        let out = run_hostile(&args, &dir, &fake);
+        assert_eq!(out.status.code(), Some(2), "{args:?}");
+        for text in [&out.stdout, &out.stderr] {
+            let text = String::from_utf8_lossy(text);
+            assert!(!text.contains(canary), "{args:?} echoed: {text}");
+            assert!(!text.contains("forbidden-secret-canary"), "{args:?}");
+        }
+    }
+    assert_eq!(network.accepted(), 0);
+    assert!(provider_never_ran(&dir));
     std::fs::remove_dir_all(&dir).unwrap();
 }

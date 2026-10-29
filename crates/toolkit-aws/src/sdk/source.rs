@@ -22,7 +22,7 @@
 
 use std::fmt;
 use std::sync::{Mutex, PoisonError};
-use std::time::SystemTime;
+use std::time::{Duration, Instant, SystemTime};
 
 use aws_config::default_provider::credentials::DefaultCredentialsChain;
 use aws_config::ecs::EcsCredentialsProvider;
@@ -43,8 +43,8 @@ use crate::env::{Env, ProcessEnv};
 use crate::error::AwsError;
 use crate::preflight::{
     classify, guard_credential_process, platform_isolates_stdin, select_source, AttemptOutcome,
-    AuthDecision, CredentialRefusal, Preflight, RequestAuth, SelectedProfile, Selection,
-    SessionAuth, SourceKind,
+    AuthDecision, CredentialRefusal, Preflight, ProfileView, RequestAuth, SelectedProfile,
+    Selection, SessionAuth, SourceKind,
 };
 
 /// The HTTP client of the credential provider plane.
@@ -76,6 +76,27 @@ impl ProviderHttp {
             ))
             .tls_context(roots.tls_context()?)
             .build_https();
+        Ok(Self::Validated {
+            client,
+            roots: roots.clone(),
+        })
+    }
+
+    /// [`Self::validated`] whose DNS goes through the process-wide gated
+    /// system resolver ([`super::lookup`]), for bounded (deadline) credential
+    /// resolution: a lookup the deadline abandons is capped at one per
+    /// process and runs off Tokio's blocking pool. The proxy's
+    /// [`Self::validated`] client is unchanged.
+    ///
+    /// # Errors
+    /// `InvalidConfig` (field `tls_roots`) if the TLS context cannot be built.
+    pub fn validated_bounded(roots: &ValidatedRoots) -> Result<Self, AwsError> {
+        let client = HttpClientBuilder::new()
+            .tls_provider(tls::Provider::Rustls(
+                tls::rustls_provider::CryptoMode::AwsLc,
+            ))
+            .tls_context(roots.tls_context()?)
+            .build_with_resolver(super::lookup::GatedSystemDns);
         Ok(Self::Validated {
             client,
             roots: roots.clone(),
@@ -354,17 +375,30 @@ impl GuardedCredentials {
     }
 
     /// One attempt: preflight, select, build (or reuse) only the selected
-    /// provider, load, classify by variant.
-    fn attempt(&self, rebuild: bool) -> (AttemptOutcome, Option<Credentials>) {
+    /// provider, load, classify by variant. With a `deadline` (the bounded
+    /// path), the load stops at it and a source that could run a
+    /// `credential_process` is refused before it is built; either is an
+    /// `Err` that ends resolution at once (no rebuild, no fallback).
+    fn attempt(
+        &self,
+        rebuild: bool,
+        deadline: Option<Instant>,
+    ) -> Result<(AttemptOutcome, Option<Credentials>), AwsError> {
         let profile = SelectedProfile::resolve(self.cli_profile.as_deref(), self.env.as_ref());
         let view = profile_view(self.env.as_ref(), &profile);
         let preflight = classify(self.env.as_ref(), &profile, &view);
         let selection =
             guard_credential_process((self.selector)(&preflight), &view, self.null_stdin);
         let kind = match selection {
-            Selection::Refuse(reason) => return (AttemptOutcome::Invalid(reason), None),
+            Selection::Refuse(reason) => return Ok((AttemptOutcome::Invalid(reason), None)),
             Selection::Build(kind) => kind,
         };
+        if deadline.is_some() && runs_unbounded_process(kind, &view) {
+            return Err(AwsError::invalid_config(
+                "credentials",
+                UNBOUNDED_PROCESS_REFUSAL,
+            ));
+        }
         let mut state = self.lock();
         let reuse = !rebuild
             && state
@@ -377,27 +411,47 @@ impl GuardedCredentials {
             state.built = Some((kind, provider));
         }
         let Some((_, provider)) = state.built.as_ref() else {
-            return (AttemptOutcome::ProviderFailed, None);
+            return Ok((AttemptOutcome::ProviderFailed, None));
         };
-        match provider.load() {
+        let loaded = match deadline {
+            None => provider.load(),
+            Some(deadline) => match provider.load_until(deadline) {
+                Err(error @ AwsError::Timeout { .. }) => return Err(error),
+                other => other,
+            },
+        };
+        Ok(match loaded {
             Ok(credentials) => (AttemptOutcome::Loaded, Some(credentials)),
             Err(AwsError::NoCredentials) if kind == SourceKind::DefaultChain => {
                 (AttemptOutcome::AbsentNotLoaded, None)
             }
             Err(AwsError::NoCredentials) => (AttemptOutcome::ConfiguredNotLoaded, None),
             Err(_) => (AttemptOutcome::ProviderFailed, None),
-        }
+        })
     }
 
     /// Resolve credentials for one request: the load, then at most one D1
     /// rebuild (after a level-2/3 outcome, or at once when `force_rebuild` is
     /// set after a 401/403), R-PREC across both, then R-STICKY.
     pub fn resolve(&self, skip_auth: bool, force_rebuild: bool) -> RequestCredentials {
+        // Without a deadline no attempt returns `Err`.
+        self.resolve_by(skip_auth, force_rebuild, None)
+            .unwrap_or(RequestCredentials::Refused(
+                CredentialRefusal::ProviderFailed,
+            ))
+    }
+
+    fn resolve_by(
+        &self,
+        skip_auth: bool,
+        force_rebuild: bool,
+        deadline: Option<Instant>,
+    ) -> Result<RequestCredentials, AwsError> {
         let mut auth = RequestAuth::new();
         let mut rebuild = force_rebuild;
         let mut loaded = None;
         loop {
-            let (outcome, credentials) = self.attempt(rebuild);
+            let (outcome, credentials) = self.attempt(rebuild, deadline)?;
             auth.record(outcome);
             if credentials.is_some() {
                 loaded = credentials;
@@ -413,13 +467,57 @@ impl GuardedCredentials {
             rebuild = true;
         }
         let decision = self.lock().session.apply(auth.decide(skip_auth));
-        match (decision, loaded) {
+        Ok(match (decision, loaded) {
             (AuthDecision::Sign, Some(credentials)) => RequestCredentials::Sign(credentials),
             (AuthDecision::Unsigned, _) => RequestCredentials::Unsigned,
             (AuthDecision::Refuse(refusal), _) => RequestCredentials::Refused(refusal),
             (AuthDecision::Sign, None) => {
                 RequestCredentials::Refused(CredentialRefusal::ProviderFailed)
             }
+        })
+    }
+
+    /// [`Self::resolve_required`] under an absolute `deadline` (R-DG-07): the
+    /// operation's one monotonic deadline, further capped at
+    /// [`CREDENTIAL_BUDGET`] from now. Every provider load (and the D1
+    /// rebuild) runs as an async future that is dropped when the bound fires,
+    /// so no provider HTTP work outlives it. A source that could run a
+    /// `credential_process` is refused before it is built, because aws-config
+    /// does not kill that child when its future is dropped. Live signing must
+    /// use this (or [`Self::until`]), never the unbounded
+    /// [`Self::resolve_required`].
+    ///
+    /// # Errors
+    /// `Timeout` (phase `deadline`) when the bound fires;
+    /// `InvalidConfig` (field `credentials`) for a `credential_process`
+    /// source; otherwise the fixed classes of [`Self::resolve_required`].
+    pub fn resolve_required_until(&self, deadline: Instant) -> Result<Credentials, AwsError> {
+        let bound = deadline.min(Instant::now() + CREDENTIAL_BUDGET);
+        let mut stopped: Option<AwsError> = None;
+        let result = required_credentials(SystemTime::now, |rebuild| {
+            if stopped.is_some() {
+                return RequestCredentials::Refused(CredentialRefusal::ProviderFailed);
+            }
+            self.resolve_by(false, rebuild, Some(bound))
+                .unwrap_or_else(|error| {
+                    stopped = Some(error);
+                    RequestCredentials::Refused(CredentialRefusal::ProviderFailed)
+                })
+        });
+        match stopped {
+            Some(error) => Err(error),
+            None => result,
+        }
+    }
+
+    /// A [`CredentialsProvider`] view whose every load is
+    /// [`Self::resolve_required_until`] `deadline`: hand it to the signer of
+    /// one operation together with the same deadline for its transport.
+    #[must_use]
+    pub fn until(&self, deadline: Instant) -> CredentialsUntil<'_> {
+        CredentialsUntil {
+            guarded: self,
+            deadline,
         }
     }
 
@@ -480,6 +578,55 @@ impl CredentialsProvider for GuardedCredentials {
 impl fmt::Debug for GuardedCredentials {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("GuardedCredentials([REDACTED])")
+    }
+}
+
+/// The R-DG-07 credential resolution budget: at most this long from the start
+/// of a bounded resolution, and never past the operation deadline.
+pub const CREDENTIAL_BUDGET: Duration = Duration::from_secs(10);
+
+/// The fixed refusal of a `credential_process` source on the bounded path.
+pub const UNBOUNDED_PROCESS_REFUSAL: &str =
+    "a credential_process source cannot be stopped at the operation deadline, \
+     so it is not used for this command; choose another credential source";
+
+/// The fixed error when bounded credential resolution runs out of time.
+pub(crate) fn credential_deadline_error() -> AwsError {
+    AwsError::timeout(
+        crate::error::TimeoutPhase::Deadline,
+        "credential resolution did not finish within its time budget; nothing was sent",
+    )
+}
+
+/// Whether building `kind` over `view` could start a `credential_process`
+/// child. aws-config 1.13.0 runs it with `tokio::process::Command::output`
+/// without `kill_on_drop`, so a dropped (timed-out) load would leave the
+/// child running: the bounded path refuses such a source instead.
+fn runs_unbounded_process(kind: SourceKind, view: &ProfileView) -> bool {
+    matches!(kind, SourceKind::Profile | SourceKind::DefaultChain)
+        && matches!(view, ProfileView::Loaded(facts) if facts.credential_process_reachable)
+}
+
+/// [`GuardedCredentials`] bounded by one operation deadline
+/// ([`GuardedCredentials::until`]).
+pub struct CredentialsUntil<'a> {
+    guarded: &'a GuardedCredentials,
+    deadline: Instant,
+}
+
+impl CredentialsProvider for CredentialsUntil<'_> {
+    fn name(&self) -> &'static str {
+        "guarded"
+    }
+
+    fn load(&self) -> Result<Credentials, AwsError> {
+        self.guarded.resolve_required_until(self.deadline)
+    }
+}
+
+impl fmt::Debug for CredentialsUntil<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("CredentialsUntil([REDACTED])")
     }
 }
 

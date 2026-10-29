@@ -11,8 +11,9 @@
 //! file is read. S3/S4 read the file only after argv consent is checked.
 
 use serde_json::Value;
+use toolkit_aws::resolve_region;
 use toolkit_aws::sdk::database::DatabaseEndpoint;
-use toolkit_aws::AwsError;
+use toolkit_aws::{AwsError, Env};
 
 /// Largest policy file accepted.
 pub const MAX_POLICY_BYTES: usize = 16 * 1024;
@@ -70,6 +71,29 @@ pub fn parse(bytes: &[u8]) -> Result<DatabaseEndpoint, AwsError> {
         Some(_) => return Err(invalid("private_ranges must be an array of strings")),
     };
     DatabaseEndpoint::new(host, port, region, &ranges)
+}
+
+/// The signing region of a live database operation (R-DG-02): the shared
+/// precedence (explicit `--region`, `AWS_REGION`, `AWS_DEFAULT_REGION`,
+/// `us-east-1`; a profile region never counts), which must equal the policy's
+/// region. Checked before credentials, signing or any send.
+///
+/// # Errors
+/// `InvalidConfig` (field `region`) for an invalid region or a mismatch with
+/// the policy; neither region is echoed on a mismatch.
+pub fn signing_region(
+    policy: &DatabaseEndpoint,
+    explicit: Option<&str>,
+    env: &dyn Env,
+) -> Result<String, AwsError> {
+    let resolved = resolve_region(explicit, env)?;
+    if resolved.name() != policy.region() {
+        return Err(AwsError::invalid_config(
+            "region",
+            "the resolved region differs from the network policy's region; nothing was signed or sent",
+        ));
+    }
+    Ok(resolved.name().to_string())
 }
 
 #[cfg(test)]
@@ -149,5 +173,45 @@ mod tests {
             assert!(field(&error), "{text}");
             assert!(!error.to_string().contains(secret));
         }
+    }
+
+    /// T-DG-02b: region precedence, explicit mismatch and a profile region
+    /// that never changes the signing scope.
+    #[test]
+    fn the_signing_region_follows_precedence_and_must_match_the_policy() {
+        use toolkit_aws::MapEnv;
+        let policy =
+            parse(format!(r#"{{"host":"{HOST}","port":8182,"region":"us-east-1"}}"#).as_bytes())
+                .expect("policy");
+        let empty = MapEnv::new();
+        assert_eq!(
+            signing_region(&policy, None, &empty).expect("default"),
+            "us-east-1"
+        );
+        let env = MapEnv::new()
+            .with("AWS_REGION", "us-east-1")
+            .with("AWS_DEFAULT_REGION", "eu-west-1");
+        assert_eq!(
+            signing_region(&policy, None, &env).expect("AWS_REGION wins"),
+            "us-east-1"
+        );
+        let error = signing_region(&policy, Some("eu-west-1"), &env).expect_err("explicit wins");
+        assert!(matches!(error, AwsError::InvalidConfig { field, .. } if *field == "region"));
+        assert!(!error.to_string().contains("eu-west-1"), "{error}");
+        let env = MapEnv::new().with("AWS_DEFAULT_REGION", "us-west-2");
+        assert!(
+            signing_region(&policy, None, &env).is_err(),
+            "default-region mismatch"
+        );
+        // A selected profile whose file names another region changes nothing.
+        let env = MapEnv::new().with("AWS_PROFILE", "elsewhere").with(
+            "AWS_CONFIG_FILE",
+            "/nonexistent/config-with-region-eu-west-1",
+        );
+        assert_eq!(
+            signing_region(&policy, None, &env).expect("profile ignored"),
+            "us-east-1"
+        );
+        assert!(signing_region(&policy, Some("not a region"), &empty).is_err());
     }
 }

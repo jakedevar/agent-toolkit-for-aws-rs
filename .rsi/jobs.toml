@@ -116,3 +116,27 @@ runner = "make"
 target = "docgraph-live-suite"
 timeout_minutes = 30
 cpu_quota_percent = 200
+
+[recipes.docgraph-credential-deadline]
+runner = "make"
+target = "docgraph-credential-deadline"
+timeout_minutes = 20
+cpu_quota_percent = 200
+
+[recipes.docgraph-credential-process]
+runner = "make"
+target = "docgraph-credential-process"
+timeout_minutes = 20
+cpu_quota_percent = 200
+
+[recipes.docgraph-dns-cap]
+runner = "make"
+target = "docgraph-dns-cap"
+timeout_minutes = 20
+cpu_quota_percent = 200
+
+[recipes.docgraph-bounded]
+runner = "make"
+target = "docgraph-bounded"
+timeout_minutes = 20
+cpu_quota_percent = 200

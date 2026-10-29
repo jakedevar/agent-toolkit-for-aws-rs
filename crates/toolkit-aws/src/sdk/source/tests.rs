@@ -99,6 +99,8 @@ enum Reply {
     Dispatch,
     Timeout,
     Canary,
+    /// Never answers within the test: the provider is stalled.
+    Stall,
 }
 
 /// Scripted replies by `"METHOD host/path"`.
@@ -162,6 +164,12 @@ impl HttpConnector for Recorder {
             }
             Some(Reply::Timeout) => Err(ConnectorError::timeout("recorder timeout".into())),
             Some(Reply::Canary) => Err(ConnectorError::io(BARE_CANARY.into())),
+            Some(Reply::Stall) => {
+                return HttpConnectorFuture::new(async {
+                    tokio::time::sleep(std::time::Duration::from_secs(4)).await;
+                    Err(ConnectorError::io("recorder stalled".into()))
+                });
+            }
             Some(Reply::Dispatch) | None => {
                 Err(ConnectorError::io("recorder refused the request".into()))
             }
@@ -265,6 +273,9 @@ fn recorder() -> Recorder {
     if fixture("FIXTURE_STS").as_deref() == Some("timeout") {
         recorder = recorder.route("POST sts.us-east-1.amazonaws.com/", vec![Reply::Timeout]);
     }
+    if fixture("FIXTURE_STS").as_deref() == Some("stall") {
+        recorder = recorder.route("POST sts.us-east-1.amazonaws.com/", vec![Reply::Stall]);
+    }
     if fixture("FIXTURE_STS").as_deref() == Some("canary") {
         recorder = recorder.route("POST sts.us-east-1.amazonaws.com/", vec![Reply::Canary]);
     }
@@ -280,6 +291,12 @@ fn recorder() -> Recorder {
                      \"tokenType\":\"aws_sigv4\",\"expiresIn\":900,\"refreshToken\":\"refresh-2\"}"
                         .to_string(),
                 )],
+            );
+        }
+        Some("stall") => {
+            recorder = recorder.route(
+                "POST us-east-1.signin.aws.amazon.com/v1/token",
+                vec![Reply::Stall],
             );
         }
         Some("fail") => {
@@ -349,7 +366,22 @@ fn child_entry() {
         guarded =
             guarded.with_between_attempts(Box::new(|| rewrite("AWS_CONFIG_FILE", "HOOK_CONFIG")));
     }
-    if std::env::var("REQUIRE_CREDENTIALS").is_ok() {
+    if let Ok(budget) = std::env::var("BOUNDED_MS") {
+        let budget = std::time::Duration::from_millis(budget.parse().expect("BOUNDED_MS"));
+        let start = Instant::now();
+        let loaded = CredentialsProvider::load(&guarded.until(start + budget));
+        report("elapsed_ms", start.elapsed().as_millis().to_string());
+        match loaded {
+            Ok(credentials) => {
+                report("decision", "sign");
+                report("key", credentials.access_key_id().expose());
+            }
+            Err(error) => {
+                report("decision", error.code());
+                report("diagnostic", format!("{error:?} {error}"));
+            }
+        }
+    } else if std::env::var("REQUIRE_CREDENTIALS").is_ok() {
         match CredentialsProvider::load(&guarded) {
             Ok(_) => report("decision", "sign"),
             Err(error) => {
@@ -948,4 +980,134 @@ fn the_build_log_is_off_by_default_and_bounded_when_enabled() {
     );
     assert!(!guarded.lock().log.enabled);
     assert!(guarded.with_build_recording().lock().log.enabled);
+}
+
+// ---- R-DG-07: bounded credential resolution (#5366 PM ruling 1) ----
+
+fn elapsed_ms(outcome: &Child) -> u64 {
+    outcome.result("elapsed_ms").parse().expect("elapsed_ms")
+}
+
+/// T-DG-07a provider phase: a stalled provider (an assume-role STS call, and
+/// a login refresh, over injected provider HTTP) is abandoned at the
+/// operation deadline with the fixed timeout class, no rebuild, no fallback.
+#[test]
+fn a_stalled_provider_is_abandoned_at_the_deadline() {
+    let role = "[default]\nrole_arn = arn:aws:iam::123456789012:role/r\nsource_profile = base\n\
+                [profile base]\naws_access_key_id = AKIABASE0\naws_secret_access_key = s\n";
+    let (login, _) = login_scenario("2000-01-01T00:00:00Z", "stall");
+    let cases = [
+        (
+            Scenario::new(role, "")
+                .ecs_fallback()
+                .with("FIXTURE_STS", "stall"),
+            "POST sts.us-east-1.amazonaws.com/",
+        ),
+        (login, "POST us-east-1.signin.aws.amazon.com/v1/token"),
+    ];
+    for (scenario, destination) in cases {
+        let outcome = scenario
+            .with("BOUNDED_MS", "300")
+            .with("RUST_LOG", "trace")
+            .run();
+        assert_eq!(
+            outcome.result("decision"),
+            "aws_timeout",
+            "{}",
+            outcome.stdout
+        );
+        let elapsed = elapsed_ms(&outcome);
+        assert!((250..2000).contains(&elapsed), "took {elapsed} ms");
+        assert_eq!(
+            outcome.result("log"),
+            "Profile",
+            "no rebuild after the deadline"
+        );
+        let dest = outcome.result("dest");
+        assert!(
+            !dest.is_empty() && dest.split('|').all(|r| r == destination),
+            "{dest}"
+        );
+        assert!(outcome.result("diagnostic").contains("nothing was sent"));
+        assert_no_canary(&outcome);
+    }
+}
+
+/// The credential budget (10 s) and the operation deadline: the earlier
+/// wins, and a deadline already past stops before any provider request.
+#[test]
+fn bounded_resolution_succeeds_in_budget_and_an_expired_deadline_sends_nothing() {
+    let valid = "[default]\naws_access_key_id = AKIAFIXEDKEY0\naws_secret_access_key = s\n";
+    let outcome = Scenario::new(valid, "").with("BOUNDED_MS", "5000").run();
+    assert_eq!(outcome.result("decision"), "sign");
+    assert_eq!(outcome.result("key"), "AKIAFIXEDKEY0");
+    assert!(CREDENTIAL_BUDGET == std::time::Duration::from_secs(10));
+
+    let role = "[default]\nrole_arn = arn:aws:iam::123456789012:role/r\nsource_profile = base\n\
+                [profile base]\naws_access_key_id = AKIABASE0\naws_secret_access_key = s\n";
+    let outcome = Scenario::new(role, "")
+        .with("FIXTURE_STS", "stall")
+        .with("BOUNDED_MS", "0")
+        .run();
+    assert_eq!(outcome.result("decision"), "aws_timeout");
+    assert!(elapsed_ms(&outcome) < 1000);
+    assert_eq!(
+        outcome.result("dest"),
+        "",
+        "no provider request after the deadline"
+    );
+}
+
+/// T-DG-02a through the real guarded source on the bounded path: an expired
+/// login session refreshes through injected Sign-in HTTP, a refresh failure
+/// fails closed with a fixed class (no unsigned fallback, no other identity).
+#[test]
+fn bounded_resolution_refreshes_expired_credentials_and_fails_closed() {
+    let (refresh, _) = login_scenario("2000-01-01T00:00:00Z", "ok");
+    let outcome = refresh.with("BOUNDED_MS", "5000").run();
+    assert_eq!(outcome.result("decision"), "sign");
+    assert_eq!(outcome.result("key"), "AKIAREFRESHEDKEY0");
+    assert_eq!(
+        outcome.result("dest"),
+        "POST us-east-1.signin.aws.amazon.com/v1/token"
+    );
+
+    let (failing, _) = login_scenario("2000-01-01T00:00:00Z", "fail");
+    let outcome = failing.ecs_fallback().with("BOUNDED_MS", "5000").run();
+    assert_eq!(outcome.result("decision"), "aws_credential_provider");
+    let dest = outcome.result("dest");
+    assert!(
+        dest.split('|')
+            .all(|r| r == "POST us-east-1.signin.aws.amazon.com/v1/token"),
+        "no fallback identity was requested: {dest}"
+    );
+    assert_no_canary(&outcome);
+
+    let outcome = Scenario::new("", "").with("BOUNDED_MS", "5000").run();
+    assert_eq!(outcome.result("decision"), "aws_no_credentials");
+}
+
+/// aws-config does not kill a `credential_process` child when its future is
+/// dropped, so the bounded path refuses such a source before it is built:
+/// no process starts, and the refusal is a fixed message.
+#[test]
+fn bounded_resolution_refuses_a_credential_process_before_it_runs() {
+    let probe = TempDir::new("process-probe");
+    let marker = probe.path().join("started");
+    let process = format!(
+        "[default]\ncredential_process = sh -c 'touch {}; sleep 3'\n",
+        marker.display()
+    );
+    let start = std::time::Instant::now();
+    let outcome = Scenario::new(&process, "")
+        .ecs_fallback()
+        .with("BOUNDED_MS", "300")
+        .run();
+    assert_eq!(outcome.result("decision"), "aws_invalid_config");
+    assert!(outcome
+        .result("diagnostic")
+        .contains(UNBOUNDED_PROCESS_REFUSAL));
+    assert!(!marker.exists(), "the credential_process must not start");
+    assert_eq!(outcome.result("dest"), "", "and no fallback is requested");
+    assert!(start.elapsed() < std::time::Duration::from_secs(3));
 }

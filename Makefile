@@ -62,7 +62,23 @@ docgraph-database-admission:
 docgraph-live-suite:
 	cargo test -p toolkit-cli --locked --test docgraph_live
 	cargo test -p toolkit-cli --features docgraph-live --locked --test docgraph_live
-	cargo test -p toolkit-cli --features docgraph-live --locked --lib docgraph::network_policy::
+	cargo test -p toolkit-cli --features docgraph-live --locked --lib docgraph::
+
+docgraph-credential-deadline:
+	cargo test -p toolkit-aws --features sdk --locked --lib sdk::source::tests::a_stalled_provider_is_abandoned_at_the_deadline -- --exact
+
+docgraph-credential-process:
+	cargo test -p toolkit-aws --features sdk --locked --lib sdk::source::tests::bounded_resolution_refuses_a_credential_process_before_it_runs -- --exact
+
+docgraph-dns-cap:
+	cargo test -p toolkit-aws --features sdk --locked --lib sdk::lookup::
+	cargo test -p toolkit-aws --features sdk --locked --lib sdk::database::tests::an_abandoned_lookup_makes_the_next_request_fail_closed_without_a_dial -- --exact
+
+docgraph-bounded:
+	cargo test -p toolkit-aws --features sdk --locked --lib sdk::source::tests::bounded_resolution_
+	cargo test -p toolkit-aws --features sdk --locked --lib sdk::source::tests::a_stalled_provider
+	cargo test -p toolkit-aws --features sdk --locked --lib sdk::lookup::
+	cargo test -p toolkit-aws --features sdk --locked --lib sdk::database::
 
 docgraph-live-modes:
 	cargo test -p toolkit-cli --features docgraph-live --locked --test docgraph_live live_rejects_recorded_and_dry_run_before_files -- --exact

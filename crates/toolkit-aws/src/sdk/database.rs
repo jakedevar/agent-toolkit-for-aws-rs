@@ -31,10 +31,16 @@
 //! TLS work outlives it; a timeout after the request was handed to the
 //! connection is reported as an unknown outcome, never as a rollback.
 //!
-//! Residual (recorded in docs/migration/docgraph.md): the production resolver
-//! is the operating system's, run on Tokio's blocking pool. The deadline
-//! abandons the lookup and discards its answer, but the blocked
-//! `getaddrinfo` thread itself ends only when the system resolver returns.
+//! Residual (accepted, recorded in docs/migration/docgraph.md): the production
+//! resolver is the operating system's, run on a detached thread behind the
+//! process-wide gate of [`super::lookup`]. The deadline abandons the lookup
+//! and discards its answer, but the blocked `getaddrinfo` thread itself ends
+//! only when the system resolver returns. At most one abandoned lookup is
+//! outstanding per process: a new lookup meanwhile fails closed.
+//!
+//! Close (R-DG-07, [`CLOSE_BUDGET`]): dropping the response, or a failed call,
+//! aborts the connection task and drops the socket at once; no graceful TLS
+//! close is awaited, so closing never waits on the server.
 
 use std::fmt;
 use std::future::Future;
@@ -61,12 +67,18 @@ use rustls_pki_types::ServerName;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::time::{Instant, Sleep};
 
+use super::lookup;
 use super::roots::ValidatedRoots;
 use super::{SdkRuntime, SdkTransport};
 use crate::binding::GuardRejection;
 use crate::endpoint::is_non_public;
 use crate::error::{AwsError, TimeoutPhase};
 use crate::transport::{Timeouts, FRAMING_HEADERS};
+
+/// The design's close budget (2 s within the remaining invocation budget).
+/// The connector closes by aborting and dropping, so it needs none of it;
+/// the close test holds it to this bound.
+pub const CLOSE_BUDGET: Duration = Duration::from_secs(2);
 
 /// Most private ranges one policy may list.
 pub const MAX_PRIVATE_RANGES: usize = 16;
@@ -394,18 +406,38 @@ pub trait DatabaseResolver: Send + Sync {
     fn resolve<'a>(&'a self, host: &'a str) -> ResolveFuture<'a>;
 }
 
-/// The operating system resolver on Tokio's blocking pool (see the module
-/// residual note).
+/// The operating system resolver behind the process-wide lookup gate
+/// ([`super::lookup`]; see the module residual note).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SystemDatabaseResolver;
 
 impl DatabaseResolver for SystemDatabaseResolver {
     fn resolve<'a>(&'a self, host: &'a str) -> ResolveFuture<'a> {
         Box::pin(async move {
-            tokio::net::lookup_host((host, 0_u16))
+            lookup::system_gate()
+                .lookup(host, lookup::system_lookup())
                 .await
-                .map(|answers| answers.map(|answer| answer.ip()).collect())
-                .map_err(|error| error.to_string())
+                .map_err(|error| error.message().to_string())
+        })
+    }
+}
+
+/// A gated resolver over an injected blocking lookup and gate (tests: the
+/// same gate logic as [`SystemDatabaseResolver`], without the process gate).
+#[cfg(test)]
+pub(crate) struct GatedResolver {
+    pub(crate) gate: Arc<lookup::LookupGate>,
+    pub(crate) lookup: lookup::BlockingLookup,
+}
+
+#[cfg(test)]
+impl DatabaseResolver for GatedResolver {
+    fn resolve<'a>(&'a self, host: &'a str) -> ResolveFuture<'a> {
+        Box::pin(async move {
+            self.gate
+                .lookup(host, Arc::clone(&self.lookup))
+                .await
+                .map_err(|error| error.message().to_string())
         })
     }
 }
