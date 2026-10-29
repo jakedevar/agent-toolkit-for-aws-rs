@@ -460,6 +460,13 @@ fn ap_cat_10_all_real_templates_render_in_both_modes() {
             if mode == "notebook" {
                 parse_json(&fs::read_to_string(f.0.join("notebooks/example.ipynb")).unwrap())
                     .unwrap();
+            } else {
+                let output = fs::read_to_string(f.0.join("scripts/01_example.py")).unwrap();
+                assert!(output.contains("# %% Cell 1:"), "{rel}");
+                assert!(!output.contains("# NOTEBOOK_ONLY"), "{rel}");
+                for line in output.lines().filter(|line| !line.trim_start().starts_with('#')) {
+                    assert!(!line.contains("[ACCEPT_EULA]"), "{rel}: {line}");
+                }
             }
         }
     }
