@@ -203,6 +203,14 @@ enum Fill {
     SecretQuoted,
     /// A complete labelled credential of three characters (#4980).
     SecretShort,
+    /// An existing file whose name is a labelled credential,
+    /// `<scratch>/named/password=FAKE_SECRET.json` holding `{}` (#4971 round 2):
+    /// a command that reads it gets past its missing-file check.
+    SecretFileName,
+    /// A comma-separated list whose middle item is a URL with a comma inside
+    /// its userinfo (#5008): split before redaction, neither half is
+    /// recognized.
+    SecretList,
 }
 
 const FILLS: [Fill; 5] = [
@@ -232,12 +240,39 @@ fn value_for(mode: Fill, scratch: &Path, file: &Path, dir: &Path) -> String {
         Fill::SecretPastBound => userinfo_past_the_bound(),
         Fill::SecretQuoted => format!("password=ab'c\"{PATH_SECRET}"),
         Fill::SecretShort => format!("password={SHORT_SECRET}"),
+        Fill::SecretFileName => secret_file_name(scratch).display().to_string(),
+        Fill::SecretList => format!("alpha,{},beta", secret_list_item()),
     }
 }
 
 /// The three-character credential of [`Fill::SecretShort`]: it may not reach
 /// stdout or stderr in any spelling.
 const SHORT_SECRET: &str = "Zq9";
+
+/// The file name of [`Fill::SecretFileName`] and of the success-path probe.
+const SECRET_FILE_NAME: &str = "password=FAKE_SECRET.json";
+
+/// `<scratch>/named/password=FAKE_SECRET.json`.
+fn secret_file_name(scratch: &Path) -> PathBuf {
+    scratch.join("named").join(SECRET_FILE_NAME)
+}
+
+/// (Re)creates the [`Fill::SecretFileName`] file holding `{}`: a command that
+/// writes its output over a value may have replaced it.
+fn write_secret_file_name(scratch: &Path) {
+    let path = secret_file_name(scratch);
+    fs::create_dir_all(path.parent().expect("parent")).expect("create named dir");
+    if path.is_dir() {
+        let _ = fs::remove_dir_all(&path);
+    }
+    fs::write(&path, "{}").expect("write secret-named file");
+}
+
+/// A URL list item whose userinfo holds a comma: each half carries the
+/// credential, so a value split before redaction leaks either half.
+fn secret_list_item() -> String {
+    format!("https://user:{PATH_SECRET}_HEAD,{PATH_SECRET}_TAIL@example.invalid/x")
+}
 
 /// The fake credential of the #4941 path cases. It rides only in argument
 /// values; no 10-character prefix of it may reach stdout or stderr.
@@ -554,12 +589,14 @@ fn every_command_has_hostile_variants() {
 
 /// The credential-shaped path fills of #4941 and of its review findings
 /// #4979 (mixed quotes) and #4980 (a short labelled value).
-const SECRET_FILLS: [Fill; 5] = [
+const SECRET_FILLS: [Fill; 7] = [
     Fill::SecretUrl,
     Fill::SecretLong,
     Fill::SecretPastBound,
     Fill::SecretQuoted,
     Fill::SecretShort,
+    Fill::SecretFileName,
+    Fill::SecretList,
 ];
 
 /// Shortest prefix of [`PATH_SECRET`] whose appearance counts as a leak.
@@ -567,13 +604,18 @@ const LEAK_PREFIX_CHARS: usize = 10;
 
 /// Every way `stream` discloses the #4941 credential: [`PATH_SECRET`] or any
 /// prefix of it at least [`LEAK_PREFIX_CHARS`] long (each contains the
-/// shortest one).
+/// shortest one), in any letter case (a route may lowercase a value, as trace
+/// ids are, before it echoes it).
 fn secret_leaks(stream: &str, label: &str, args: &[String], found: &mut BTreeSet<String>) {
     let prefix: String = PATH_SECRET.chars().take(LEAK_PREFIX_CHARS).collect();
-    for needle in [prefix.as_str(), SHORT_SECRET] {
-        if let Some(line) = stream.lines().find(|line| line.contains(needle)) {
+    for needle in [prefix.to_lowercase(), SHORT_SECRET.to_lowercase()] {
+        let needle = needle.as_str();
+        if let Some(line) = stream
+            .lines()
+            .find(|line| line.to_lowercase().contains(needle))
+        {
             // The leaking line, with the credential masked, names the site.
-            let masked = line.replace(needle, "<LEAK>");
+            let masked = line.to_lowercase().replace(needle, "<LEAK>");
             found.insert(format!(
                 "credential {needle:?} in {label} for {}: {}",
                 display_args(args),
@@ -603,6 +645,7 @@ fn every_registered_path_value_is_shown_without_its_credential() {
         variants.sort();
         variants.dedup();
         for args in &variants {
+            write_secret_file_name(&scratch.0);
             let run = spawn_toolkit(args, &scratch.0);
             spawns += 1;
             if run.status.is_none() {
@@ -648,6 +691,20 @@ fn the_secret_path_fills_and_leak_detector_are_not_vacuous() {
     assert!(quoted.contains('\'') && quoted.contains('"'), "{quoted}");
     let short = value_for(Fill::SecretShort, &scratch, &scratch, &scratch);
     assert_eq!(short, "password=Zq9");
+    let named = value_for(Fill::SecretFileName, &scratch, &scratch, &scratch);
+    assert!(
+        named.ends_with("/named/password=FAKE_SECRET.json"),
+        "{named}"
+    );
+    let list = value_for(Fill::SecretList, &scratch, &scratch, &scratch);
+    // Whole, the list is redacted; split on its commas, no item is.
+    let whole = toolkit_aws::redact_text(&list);
+    assert!(!whole.contains(PATH_SECRET), "{whole}");
+    assert!(
+        list.split(',')
+            .any(|item| toolkit_aws::redact_text(item).contains(PATH_SECRET)),
+        "{list}"
+    );
 
     let args = vec!["x".to_string()];
     for leak in [
@@ -656,6 +713,7 @@ fn the_secret_path_fills_and_leak_detector_are_not_vacuous() {
         past.chars().take(200).collect(),
         "invalid float value: 'password=ab\\'c\"FAKE_SECRET'".to_string(),
         "\"host\": \"password=Zq9\"".to_string(),
+        "trace id(s): https://user:fake_secret_head".to_string(),
     ] {
         let mut one = BTreeSet::new();
         secret_leaks(&leak, "stderr", &args, &mut one);
@@ -669,6 +727,258 @@ fn the_secret_path_fills_and_leak_detector_are_not_vacuous() {
         &mut clean,
     );
     assert!(clean.is_empty(), "{clean:?}");
+}
+
+/// An offline command line that gets past its prerequisites and prints its
+/// report, and a line its stdout must contain to prove it (#4971 round 2).
+/// `{dir}` is a scratch directory holding `model.json` and `config.json`
+/// (each `{}`); no deploy, spend or `--yes` flag is ever used.
+struct Baseline {
+    args: &'static [&'static str],
+    reaches: &'static str,
+}
+
+const BASELINES: &[Baseline] = &[
+    Baseline {
+        args: &[
+            "msk",
+            "size",
+            "--pricing-source",
+            "static",
+            "--avg-data-in-mbs",
+            "10",
+            "--peak-data-in-mbs",
+            "20",
+            "--avg-data-out-mbs",
+            "30",
+            "--peak-data-out-mbs",
+            "40",
+            "--num-partitions",
+            "3000",
+            "--retention-hours",
+            "168",
+            "--primary-retention-hours",
+            "24",
+        ],
+        reaches: "=== Sizing inputs ===",
+    },
+    Baseline {
+        args: &[
+            "msk",
+            "sim",
+            "compute",
+            "--instance-type",
+            "express.m7g.large",
+            "--broker-count",
+            "3",
+            "--kafka-version",
+            "3.8.x",
+        ],
+        reaches: "\"instance_type\"",
+    },
+    Baseline {
+        args: &[
+            "msk",
+            "sim",
+            "render",
+            "--instance-type",
+            "express.m7g.large",
+            "--broker-count",
+            "3",
+            "--kafka-version",
+            "3.8.x",
+            "--output",
+            "{dir}/out/render.yaml",
+        ],
+        reaches: "\"output_path\"",
+    },
+    Baseline {
+        args: &[
+            "elasticache",
+            "dashboard",
+            "--replication-group",
+            "ordinary",
+            "--node-ids",
+            "n1,n2",
+            "--sns-topic",
+            "arn:aws:sns:us-east-1:123456789012:alerts",
+        ],
+        reaches: "CacheClusterId",
+    },
+    Baseline {
+        args: &[
+            "elasticache",
+            "price",
+            "--engine",
+            "valkey",
+            "--mode",
+            "serverless",
+            "--data-gb",
+            "5",
+            "--ecpu-millions",
+            "200",
+        ],
+        reaches: "\"total_monthly\"",
+    },
+    Baseline {
+        args: &["cloudwatch", "region", "--region", "us-west-2"],
+        reaches: "us-west-2",
+    },
+    Baseline {
+        args: &[
+            "aurora",
+            "commitment",
+            "offline",
+            "--engine",
+            "mysql",
+            "--instance",
+            "db.r6g.large",
+        ],
+        reaches: "db.r6g.large",
+    },
+    Baseline {
+        args: &["timestream-influxdb", "instance-types"],
+        reaches: "Instance Type",
+    },
+    Baseline {
+        args: &[
+            "dynamodb",
+            "iterate-design",
+            "--model",
+            "{dir}/model.json",
+            "--config",
+            "{dir}/config.json",
+            "--loop-state",
+            "{dir}/state.json",
+            "--manifest",
+            "{dir}/manifest.json",
+            "--calculator-only",
+        ],
+        reaches: "[iterate_design] calculate_costs",
+    },
+];
+
+/// The registered command a baseline runs: the longest path its words start
+/// with.
+fn baseline_spec(args: &[String]) -> &'static CommandSpec {
+    COMMANDS
+        .iter()
+        .filter(|spec| {
+            spec.path.len() <= args.len()
+                && spec.path.iter().zip(args).all(|(word, arg)| word == arg)
+        })
+        .max_by_key(|spec| spec.path.len())
+        .expect("a baseline names a registered command")
+}
+
+/// The baseline words with `{dir}` replaced.
+fn baseline_args(baseline: &Baseline, dir: &Path) -> Vec<String> {
+    baseline
+        .args
+        .iter()
+        .map(|word| word.replace("{dir}", &dir.display().to_string()))
+        .collect()
+}
+
+/// `args` with the value of `flag` replaced by `value` (or `flag value`
+/// appended when the baseline does not pass it).
+fn with_value(args: &[String], flag: &str, value: &str) -> Vec<String> {
+    let mut out = args.to_vec();
+    match out.iter().position(|word| word == flag) {
+        Some(at) if at + 1 < out.len() => out[at + 1] = value.to_string(),
+        _ => out.extend([flag.to_string(), value.to_string()]),
+    }
+    out
+}
+
+/// The credential probes of one flag: a file whose name is a labelled
+/// credential, in a fresh directory, holding what the baseline's own file
+/// held (or `{}` when the flag is optional); and the baseline value with a
+/// URL item whose userinfo holds a comma appended to it.
+fn credential_probes(original: Option<&str>, probe_dir: &Path) -> [String; 2] {
+    fs::create_dir_all(probe_dir).expect("create probe dir");
+    let extension = original
+        .and_then(|value| Path::new(value).extension())
+        .map_or_else(
+            || "json".to_string(),
+            |ext| ext.to_string_lossy().into_owned(),
+        );
+    let named = probe_dir.join(format!("password={PATH_SECRET}.{extension}"));
+    match original {
+        Some(value) if Path::new(value).is_file() => {
+            fs::copy(value, &named).expect("copy baseline input");
+        }
+        Some(_) => {}
+        None => fs::write(&named, "{}").expect("write probe file"),
+    }
+    let list = format!("{},{}", original.unwrap_or("a"), secret_list_item());
+    [named.display().to_string(), list]
+}
+
+/// Every value flag of each [`BASELINES`] command, on a command line that
+/// otherwise gets past every prerequisite, is probed with a credential in a
+/// file name and inside a comma-separated list item (#4971 round 2: #5008,
+/// #5009, #5010). The all-flags-invalid fills stop at the first missing file
+/// or invalid value; these reach the success path and its stdout report.
+#[test]
+fn every_value_flag_on_a_success_path_hides_a_credential_in_a_file_name_or_list() {
+    let scratch = Scratch::new();
+    let dir = scratch.0.join("base");
+    fs::create_dir_all(dir.join("out")).expect("create baseline dir");
+    for name in ["model.json", "config.json"] {
+        fs::write(dir.join(name), "{}").expect("write baseline input");
+    }
+    let mut found = BTreeSet::new();
+    let mut probes = 0_usize;
+    for (index, baseline) in BASELINES.iter().enumerate() {
+        let args = baseline_args(baseline, &dir);
+        let run = spawn_toolkit(&args, &scratch.0);
+        let stdout = String::from_utf8_lossy(&run.stdout);
+        assert!(
+            stdout.contains(baseline.reaches),
+            "baseline {} no longer reaches {:?}:\n{stdout}\n{}",
+            display_args(&args),
+            baseline.reaches,
+            String::from_utf8_lossy(&run.stderr)
+        );
+        let spec = baseline_spec(&args);
+        for (number, flag) in all_value_flags(spec)
+            .into_iter()
+            .filter(|flag| !flag_is_excluded(flag))
+            .enumerate()
+        {
+            let original = args
+                .iter()
+                .position(|word| word == flag)
+                .and_then(|at| args.get(at + 1))
+                .cloned();
+            let probe_dir = scratch.0.join(format!("probe-{index}-{number}"));
+            for value in credential_probes(original.as_deref(), &probe_dir) {
+                let probed = with_value(&args, flag, &value);
+                let run = spawn_toolkit(&probed, &scratch.0);
+                probes += 1;
+                if run.status.is_none() {
+                    found.insert(format!(
+                        "timed out or killed by signal: {}",
+                        display_args(&probed)
+                    ));
+                }
+                for (label, bytes) in [("stdout", &run.stdout), ("stderr", &run.stderr)] {
+                    secret_leaks(&String::from_utf8_lossy(bytes), label, &probed, &mut found);
+                }
+            }
+        }
+    }
+    assert!(probes > BASELINES.len() * 2, "the probe must run");
+    assert!(
+        found.is_empty(),
+        "a credential in a file name or list value reached stdout/stderr on a success \
+         path ({} distinct findings over {probes} runs); redact the whole value \
+         (safe_text::redacted_value / shown_value) before splitting, rendering or \
+         serializing it:\n{}",
+        found.len(),
+        found.iter().cloned().collect::<Vec<_>>().join("\n")
+    );
 }
 
 /// A handler that echoes only the SECOND occurrence of its repeatable flag,

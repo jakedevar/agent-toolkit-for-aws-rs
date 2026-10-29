@@ -187,11 +187,29 @@ pub(crate) fn safe_quoted(text: &str) -> String {
     format!("'{}'", safe_text(text).replace('\'', "\\'"))
 }
 
+// Count of elementary matcher steps, so tests can prove the stderr net's work
+// bound deterministically instead of timing it (#5012). Compiled out of
+// non-test builds.
+#[cfg(test)]
+thread_local! {
+    static WORK: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn tick(steps: usize) {
+    WORK.with(|work| work.set(work.get() + steps));
+}
+
+#[cfg(not(test))]
+#[inline]
+fn tick(_steps: usize) {}
+
 /// Length in bytes of the longest common prefix of `a` and `b` (a character
 /// boundary of both).
 fn common_prefix_len(a: &str, b: &str) -> usize {
     let mut len = 0;
     for (x, y) in a.chars().zip(b.chars()) {
+        tick(1);
         if x != y {
             break;
         }
@@ -864,6 +882,81 @@ mod tests {
         let shown = known.diagnostic("error: FRAGMENT_SECRET_1\nnext");
         assert!(!shown.contains("FRAGMENT"), "{shown}");
         assert!(!shown.contains('\n'), "{shown}");
+    }
+
+    /// Matcher steps taken by `known.diagnostic(text)`, and its result.
+    fn counted(known: &CallerText, text: &str) -> (String, usize) {
+        WORK.with(|work| work.set(0));
+        let shown = known.diagnostic(text).into_owned();
+        (shown, WORK.with(std::cell::Cell::get))
+    }
+
+    /// #5012: a credential of one repeated character (or a short repeated
+    /// pattern) taught by one occurrence of a flag and echoed whole by a
+    /// parser error for another occurrence overlaps itself at every position.
+    /// Matching it takes work linear in the text and the learned fragments,
+    /// counted in matcher steps, not timed, and nothing of it is shown.
+    #[test]
+    fn a_self_overlapping_credential_is_matched_in_linear_work() {
+        for n in [2_000_usize, 20_000] {
+            for secret in ["a".repeat(n), "ab".repeat(n / 2), "aab".repeat(n / 3)] {
+                // The msk size route of the finding: the first value is a
+                // labelled credential, the last (ordinary) one is parsed and
+                // quoted in full by the parser error.
+                let first = format!("password={secret}");
+                let known = caller(&[
+                    "msk",
+                    "size",
+                    "--discount-pct",
+                    &first,
+                    "--discount-pct",
+                    &secret,
+                ]);
+                let message = format!(
+                    "error: argument --discount-pct: invalid float value: '{secret}'\n\
+                     usage: toolkit msk size [...]\n"
+                );
+                let (shown, work) = counted(&known, &message);
+                let window = &secret[..8];
+                assert!(!shown.contains(window), "{n}: {shown:.300}");
+                // Each learned fragment and known value may be compared with
+                // the text a small constant number of times per byte.
+                let learned: usize = known
+                    .fragments
+                    .iter()
+                    .map(|fragment| fragment.text.len())
+                    .chain(known.shown.iter().map(|(value, _, _)| value.len()))
+                    .sum();
+                let entries = known.fragments.len() + known.shown.len();
+                let bound = 4 * (learned + entries * message.len());
+                assert!(
+                    work <= bound,
+                    "{n}: {work} matcher steps exceed the linear bound {bound}"
+                );
+            }
+        }
+    }
+
+    /// #5012: when the learned values are so many and the text so long that
+    /// matching them could exceed the work budget, the net does not scan at
+    /// all and fails closed: every line of the diagnostic is hidden.
+    #[test]
+    fn a_diagnostic_past_the_work_budget_hides_every_line() {
+        let values: Vec<String> = (0..64)
+            .map(|index| format!("password=BUDGET_SECRET_{index:03}_TAIL"))
+            .collect();
+        let mut args = vec!["x".to_string()];
+        args.extend(values.iter().cloned());
+        let known = CallerText::from_args(&args);
+        let mut message = format!("error: {}\n", values[7]);
+        message.push_str(&"x".repeat(300_000));
+        message.push_str("\nlast line BUDGET_SECRET_012_TAIL\n");
+        let (shown, work) = counted(&known, &message);
+        assert_eq!(shown, format!("{REDACTED}\n{REDACTED}\n{REDACTED}\n"));
+        assert!(work <= 1 << 26, "{work} matcher steps");
+        // An ordinary diagnostic with the same learned values is matched.
+        let (shown, _) = counted(&known, "error: cannot read BUDGET_SECRET_012_TAIL\n");
+        assert_eq!(shown, format!("error: cannot read {REDACTED}\n"));
     }
 
     #[test]
