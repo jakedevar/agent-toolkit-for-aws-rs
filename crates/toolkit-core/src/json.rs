@@ -290,7 +290,6 @@ pub fn parse_json_with_limits(input: &str, limits: &JsonLimits) -> Result<Json, 
 
 /// Like [`parse_json`], also returning the work counters, so tests can assert
 /// an operation count instead of timing. Not part of the stable API.
-#[doc(hidden)]
 #[must_use]
 pub fn parse_json_with_stats(input: &str) -> (Result<Json, ParseError>, JsonParseStats) {
     parse_with(input, &JsonLimits::default())
