@@ -406,6 +406,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "parity cases share a single fixture and resolver"
+    )]
     fn t_ocp_par_origins_and_resource() {
         use crate::agents_pay::policy::{authorize, FixedResolver, PaymentRequest, Resources};
         let fixture = parse_json(include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../plugins/aws-agents/skills/agents-pay/packages/openclaw/test/fixtures/v2-security-contract.json"))).unwrap();

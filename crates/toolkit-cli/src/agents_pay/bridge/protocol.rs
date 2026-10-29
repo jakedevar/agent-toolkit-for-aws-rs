@@ -240,6 +240,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one matrix uses the same baseline request"
+    )]
     fn t_br_req_field_and_payment_matrix() {
         let payment = VALID.replace("get_payment_session", "process_payment").replace(
             "\"user_id\":", "\"payment_instrument_id\":\"iiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii\",\"version\":\"2\",\"request_url\":\"https://merchant.test\",\"accepted\":{},\"resource\":{\"url\":\"https://merchant.test\"},\"policy\":{\"maxPaymentAmountAtomic\":\"1\",\"allowAnyRecipient\":true},\"user_id\":");

@@ -32,6 +32,10 @@ pub fn frame(value: &Json) -> (Vec<u8>, i32) {
     }
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "ISO normalization and validation share one bounded input"
+)]
 fn timestamp(value: &Json) -> Result<Json, BridgeError> {
     let text = value.as_str().ok_or(BridgeError::AgentCore)?;
     if !text.is_ascii() {
