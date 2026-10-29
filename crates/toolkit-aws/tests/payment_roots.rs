@@ -86,8 +86,28 @@ fn payment_roots_native_store_refuses_presence_before_loading() {
 
 #[test]
 fn unix_payment_source_does_not_use_environment_sensitive_loaders() {
+    fn forbidden_identifiers(source: &str) -> Vec<&str> {
+        source
+            .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+            .filter(|token| {
+                matches!(
+                    *token,
+                    "libc" | "rustix" | "getenv" | "NativeLoader" | "validate_roots"
+                )
+            })
+            .collect()
+    }
     let source = include_str!("../src/sdk/roots_payment.rs");
     let production = source.split("#[cfg(test)]").next().unwrap();
+    assert!(forbidden_identifiers(production).is_empty());
+    for (fixture, expected) in [
+        ("libc::getenv(x)", vec!["libc", "getenv"]),
+        ("rustix::param::getenv(x)", vec!["rustix", "getenv"]),
+        ("crate::sdk::roots::NativeLoader", vec!["NativeLoader"]),
+        ("crate::sdk::roots::validate_roots", vec!["validate_roots"]),
+    ] {
+        assert_eq!(forbidden_identifiers(fixture), expected, "{fixture}");
+    }
     for forbidden in [
         "openssl_probe::probe",
         "std::env::var",

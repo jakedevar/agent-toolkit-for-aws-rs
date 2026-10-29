@@ -132,9 +132,10 @@ const MISSING: [[&[&str]; 6]; 6] = [
     [
         &["id", "messages", "reference_answer.text"],
         &[],
-        &["id", "completion", "reference_answer.text"],
+        &["id", "prompt", "completion", "reference_answer.text"],
         &[
             "id",
+            "prompt",
             "completion",
             "chosen",
             "rejected",
@@ -148,6 +149,7 @@ const MISSING: [[&[&str]; 6]; 6] = [
         &[
             "data_source",
             "response",
+            "prompt",
             "extra_info.reference_answer.text",
         ],
         &[],
@@ -160,6 +162,7 @@ const MISSING: [[&[&str]; 6]; 6] = [
         &[
             "data_source",
             "response",
+            "prompt",
             "extra_info.reference_answer.text",
         ],
         &[],
@@ -217,12 +220,17 @@ fn ap_rw_04_cross_format_matrix() {
             } else {
                 let output = String::from_utf8_lossy(&o.stderr);
                 assert_eq!(o.status.code(), Some(1), "{source} -> {target}: {output}");
-                for field in MISSING[i][j] {
-                    assert!(
-                        output.contains(&format!("event[0].{field}")),
-                        "{source} -> {target}: missing {field}: {output}"
-                    );
-                }
+                let mut actual: Vec<_> = output
+                    .lines()
+                    .filter_map(|line| {
+                        let start = line.find("event[0].")?;
+                        Some(line[start + "event[0].".len()..].split(':').next().unwrap())
+                    })
+                    .collect();
+                let mut expected = MISSING[i][j].to_vec();
+                actual.sort_unstable();
+                expected.sort_unstable();
+                assert_eq!(actual, expected, "{source} -> {target}: {output}");
             }
         }
     }
@@ -337,10 +345,13 @@ fn ap_rw_17_raw_nonfinite_numbers_are_rejected() {
                     r#"[{{"id":"123","aggregate_reward_score":{token},"marker":"secret-sentinel"}}]"#
                 )
             };
-            for response in [
+            for (envelope_b, response) in [
                 body.clone(),
                 json!({"statusCode":200,"body":body}).to_string(),
-            ] {
+            ]
+            .into_iter()
+            .enumerate()
+            {
                 let out = check("openai", GOLDENS[0], &response, false);
                 let output = format!(
                     "{}{}",
@@ -354,6 +365,12 @@ fn ap_rw_17_raw_nonfinite_numbers_are_rejected() {
                 );
                 assert!(!output.contains("ok:"), "{output}");
                 assert!(!output.contains("secret-sentinel"), "{output}");
+                let reason = if envelope_b == 0 {
+                    "invalid JSON in --response"
+                } else {
+                    "body: expected JSON string containing a result list"
+                };
+                assert!(output.contains(reason), "{token} metric={metric}: {output}");
             }
         }
     }

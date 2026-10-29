@@ -313,6 +313,15 @@ mod tests {
         if child_case().is_none() {
             return;
         }
+        let (files, dirs) = locations();
+        if !files
+            .iter()
+            .chain(dirs.iter())
+            .any(|p| Path::new(p).exists())
+        {
+            report("roots", "no-fixed-roots");
+            return;
+        }
         let roots = PaymentRoots::from_process().unwrap();
         let digest = roots
             .roots()
@@ -366,6 +375,9 @@ mod tests {
         let entry = "sdk::roots_payment::tests::child_real_roots";
         let baseline = run_child(&mut child_command(entry, "baseline"));
         baseline.assert_ok();
+        if baseline.result("roots") == "no-fixed-roots" {
+            return;
+        }
         for (file, dirs, aws) in [
             (Some(pem.as_os_str()), None, None),
             (None, Some(dir.as_os_str()), None),
