@@ -23,6 +23,11 @@ pub fn git(dir: &Path, args: &[&str]) {
             "user.email=t@example.invalid",
             "-c",
             "init.defaultBranch=main",
+            // No detached auto maintenance after `commit` (#5370).
+            "-c",
+            "maintenance.auto=false",
+            "-c",
+            "gc.auto=0",
         ])
         .args(args)
         .current_dir(dir)
