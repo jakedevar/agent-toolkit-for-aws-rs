@@ -917,6 +917,21 @@ separate no-identity-cache-construction requirement is not yet demonstrated.
 No live routing is enabled by this experiment; the remaining spike evidence
 and security tests still gate the slice.
 
+The expanded offline experiment (job `2f57fc64-0956-4bdb-b392-f1a203dbf5e7`)
+prefers `noAuth` explicitly. In a negative-control configuration only, an
+injected credential provider panics if called; none of the four sampled calls
+invoked it. Removing that preference caused the first such call to invoke the
+trap (red job `81b9fb56-7ee2-464f-a45f-474c86b3e5e4`). The preference was
+restored, and the SDK client without an injected provider remains tested too.
+An injected toolkit `SdkTransport` connector then observed the same body and
+all signed headers after framing removal for each sampled request, with a
+synthetic public peer and no socket. This does not prove all operations,
+default connector construction, production connector selection, provider
+construction or absence of the SDK's default identity cache. In particular,
+`allow_no_auth` alone is insufficient in the presence of a provider: the
+explicit preference and the absence of SDK credential sources are both
+necessary to the tested design. S2 must fail closed if no-auth is not selected.
+
 Implementation slices remain Rust, use scoped optional service dependencies,
 daemon-owned jobs and independent exact-SHA review. Each owns a requirement/test
 matrix and deliberate CLI/output changes; no worker may treat this proposal as
