@@ -2105,6 +2105,14 @@ const INVENTORY: &[(&str, Class)] = &[
     // replay `--recorded` through `toolkit_aws::recorded`, and their flag constant
     // `TUNNEL_RECORDED_FLAG` is unique in `src` (#4933).
     ("elasticache", Class::Recorded),
+    // Slices L0-L2 of #4382 (#5085): no Launch API response is read yet. L5
+    // reclassifies it `Recorded` with the shaped API reads (design 7.1, Q3).
+    (
+        "launch",
+        Class::NotRecorded(
+            "the local session and region files and the user's own source tree and ZIP archives",
+        ),
+    ),
     (
         "manifests",
         Class::NotRecorded("the repository's marketplace and plugin manifests"),
