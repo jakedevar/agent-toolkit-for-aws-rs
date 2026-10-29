@@ -349,7 +349,7 @@ fn serve(
             }
             Part::Pause(duration) => std::thread::sleep(duration),
             Part::ObserveClose(tx) => {
-                let _ = tls.sock.set_read_timeout(Some(Duration::from_secs(2)));
+                let _ = tls.sock.set_read_timeout(Some(Duration::from_secs(10)));
                 let mut byte = [0_u8; 1];
                 let closed = match tls.read(&mut byte) {
                     Ok(0) => true,
