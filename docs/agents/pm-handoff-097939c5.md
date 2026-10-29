@@ -743,3 +743,4 @@ Friction: #4727, Rsi #4694, Rsi #4704
   #4382 L4 callback = #5216 -> Codex terra 573278a7 (rolling f57e8965; carry #5081 #5083).
   4/4 busy: 1d17674d (#5181 S4), 8a575dd5 (#5210 S3), 84855273 (#5214), 573278a7 (#5216).
   Next slot: P-ROOTS follow-ups #5199 #5203 #5204, then S2b after S2a lands.
+- 10-29 06:30Z: S2a LANDED (705c0c2a published, 7244064e70bffc31dc65622fed9c368a37435d07). CLOSED #5198 #5205 #5215 #5202 #5207 #5208 #5209. Queue empty. S2b render unblocked (next slot after P-ROOTS follow-ups, or before: S2b is larger and on the ai-payloads critical path -> S2b first).
