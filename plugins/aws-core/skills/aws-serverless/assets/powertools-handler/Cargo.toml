@@ -1,0 +1,27 @@
+[package]
+name = "powertools-handler"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+publish = false
+description = "Lambda handler with structured logging, tracing, EMF metrics and DynamoDB idempotency wired (Rust port of the Powertools handler template, #4397)."
+
+[dependencies]
+aws-config = { version = "=1.13.0", default-features = false, features = ["rustls", "rt-tokio", "behavior-version-latest"] }
+aws-sdk-dynamodb = { version = "=1.134.0", default-features = false, features = ["rustls", "rt-tokio", "behavior-version-latest"] }
+lambda_runtime = "=1.5.0"
+serde_json = "=1.0.154"
+sha2 = "=0.11.1"
+tokio = { version = "=1.54.1", default-features = false, features = ["macros", "rt-multi-thread"] }
+
+[dev-dependencies]
+aws-smithy-http-client = { version = "=1.5.1", default-features = false, features = ["test-util"] }
+aws-smithy-types = "=1.9.0"
+http = "=1.5.0"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
