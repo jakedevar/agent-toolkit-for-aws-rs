@@ -891,6 +891,9 @@ impl<'a> PaymentClient<'a> {
         expiry: i64,
         token: &str,
     ) -> Result<Json, PaymentError> {
+        if !(15..=480).contains(&expiry) {
+            return Err(PaymentError::InvalidResponse);
+        }
         let body = self.call(
             "createPaymentSession",
             user,
@@ -913,6 +916,9 @@ impl<'a> PaymentClient<'a> {
         email: &str,
         token: &str,
     ) -> Result<Json, PaymentError> {
+        if !matches!(network, "ETHEREUM" | "SOLANA") {
+            return Err(PaymentError::InvalidResponse);
+        }
         let body = self.call(
             "createPaymentInstrument",
             user,
