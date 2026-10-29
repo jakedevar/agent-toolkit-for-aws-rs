@@ -212,6 +212,37 @@ fn loopback_ignores_bad_state_and_closes_listener_on_success() {
 }
 
 #[test]
+fn silent_loopback_peer_is_dropped_without_ending_flow() {
+    use std::io::{Read, Write};
+    use std::net::TcpStream;
+    use std::time::{Duration, Instant};
+    let listener = super::listener::bind().unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let runner = std::thread::spawn(move || {
+        super::listener::serve(listener, "s", Instant::now() + Duration::from_secs(6)).unwrap()
+    });
+    let mut silent = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    silent
+        .set_read_timeout(Some(Duration::from_secs(4)))
+        .unwrap();
+    let mut byte = [0];
+    assert_eq!(silent.read(&mut byte).unwrap(), 0);
+    let mut valid = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    valid
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .unwrap();
+    write!(
+        valid,
+        "GET /?state=s&code=ok HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\r\n"
+    )
+    .unwrap();
+    let mut reply = String::new();
+    valid.read_to_string(&mut reply).unwrap();
+    assert!(reply.starts_with("HTTP/1.1 200"));
+    assert_eq!(runner.join().unwrap(), Some(Outcome::Code("ok".into())));
+}
+
+#[test]
 fn session_publication_requires_admission_before_cutoff() {
     use super::gate::{publish_session, CommitGate};
     use crate::launch::{clock::SeededRandom, tests_support::Scratch};
