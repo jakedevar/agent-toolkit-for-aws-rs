@@ -289,7 +289,7 @@ mod operation_contracts {
     use crate::agents_pay::policy::{authorize, FixedResolver, PaymentRequest, Resources};
     use toolkit_core::parse_json;
 
-    fn approved() -> crate::agents_pay::policy::Approved {
+    pub(super) fn approved() -> crate::agents_pay::policy::Approved {
         let policy = parse_json(r#"{"max_per_payment_usd":"0.10","allowed_networks":["eip155:84532"],"allowed_assets":{"eip155:84532":["0xa"]},"allowed_recipients":["0xb"]}"#).unwrap();
         let challenge = parse_json(r#"{"x402Version":2,"accepts":[{"scheme":"exact","network":"eip155:84532","asset":"0xA","payTo":"0xB","amount":"100000"}]}"#).unwrap();
         let resources = Resources {
@@ -394,5 +394,107 @@ mod operation_contracts {
             "ps",
             "pi"
         ));
+    }
+}
+
+/// AgentCore call failure, containing no server-supplied text.
+#[derive(Debug, PartialEq, Eq)]
+pub enum PaymentError {
+    /// A service error, reduced to a fixed code.
+    Service(&'static str),
+    /// The service returned an invalid response.
+    InvalidResponse,
+    /// The transport or authentication failed.
+    Transport,
+}
+
+/// An adapter over a caller-supplied transport and signer.
+pub struct PaymentClient<'a> {
+    transport: &'a dyn toolkit_aws::StreamingTransport,
+    signer: &'a dyn toolkit_aws::Signer,
+    region: String,
+}
+
+impl<'a> PaymentClient<'a> {
+    /// Build an adapter using the conventional endpoint.
+    ///
+    /// # Errors
+    /// Invalid region.
+    pub fn new(
+        region: &str,
+        transport: &'a dyn toolkit_aws::StreamingTransport,
+        signer: &'a dyn toolkit_aws::Signer,
+    ) -> Result<Self, AwsError> {
+        endpoint(region)?;
+        Ok(Self {
+            transport,
+            signer,
+            region: region.to_owned(),
+        })
+    }
+
+    /// Send one approved payment.
+    ///
+    /// # Errors
+    /// Refuses invalid responses and transport or service failures.
+    pub fn process_payment(
+        &self,
+        _approved: crate::agents_pay::policy::Approved,
+    ) -> Result<(), PaymentError> {
+        let _ = (&self.transport, &self.signer, &self.region);
+        Err(PaymentError::InvalidResponse)
+    }
+}
+
+#[cfg(test)]
+mod wire_contracts {
+    use super::*;
+    use toolkit_aws::{
+        testing::{FakeChunk, FakeStreamingTransport},
+        NoSigner,
+    };
+
+    #[test]
+    fn t_aws_process_wire_and_response() {
+        let response = br#"{"processPaymentId":"id","paymentManagerArn":"arn","paymentSessionId":"ps","paymentInstrumentId":"pi","paymentType":"CRYPTO_X402","status":"PROOF_GENERATED","paymentOutput":{"cryptoX402":{"version":"2","payload":{"signature":"secret"}}},"createdAt":1,"updatedAt":1}"#;
+        let transport =
+            FakeStreamingTransport::new().respond(200, &[], vec![FakeChunk::data(response)]);
+        let client = PaymentClient::new("us-east-1", &transport, &NoSigner).unwrap();
+        let result = client.process_payment(super::operation_contracts::approved());
+        assert!(result.is_ok());
+        let requests = transport.requests();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(
+            requests[0].url,
+            "https://bedrock-agentcore.us-east-1.amazonaws.com/payments/processPayment"
+        );
+        assert_eq!(
+            requests[0]
+                .headers
+                .get("x-amzn-bedrock-agentcore-payments-user-id"),
+            Some("user")
+        );
+        assert_eq!(
+            requests[0]
+                .headers
+                .get("x-amzn-bedrock-agentcore-payments-agent-name"),
+            Some("openclaw-aws-agents-pay")
+        );
+        assert!(!format!("{:?}", requests[0]).contains("user"));
+    }
+
+    #[test]
+    fn conflict_does_not_mint_or_send_again_and_error_is_redacted() {
+        let transport = FakeStreamingTransport::new().respond(
+            409,
+            &[("x-amzn-ErrorType", "ConflictException:secret")],
+            vec![FakeChunk::data(br#"{"message":"secret"}"#)],
+        );
+        let client = PaymentClient::new("us-east-1", &transport, &NoSigner).unwrap();
+        assert_eq!(
+            client.process_payment(super::operation_contracts::approved()),
+            Err(PaymentError::Service("ConflictException"))
+        );
+        assert_eq!(transport.requests().len(), 1);
     }
 }
