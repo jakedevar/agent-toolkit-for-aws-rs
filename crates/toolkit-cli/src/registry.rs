@@ -74,6 +74,7 @@ pub(crate) struct Slice {
 pub(crate) const SLICES: &[Slice] = &[
     crate::ai_data::SLICE,
     crate::ai_models::SLICE,
+    crate::ai_payloads::SLICE,
     crate::asm_exec::SLICE,
     crate::aurora::SLICE,
     crate::bedrock_agent::SLICE,
@@ -630,6 +631,8 @@ mod tests {
         "timestream-influxdb validate-input",
         "timestream-influxdb instance-types",
         // Slices added after the registry (NEW_RANK), by slice name.
+        // ai-payloads (#4386, slice S1 #5143):
+        "ai-payloads templates",
         // bedrock-probes (#4404):
         "bedrock-probes iam-policy",
         "bedrock-probes preflight",
