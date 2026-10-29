@@ -147,7 +147,7 @@ fn run_check(ctx: &Context, complete: bool) -> ExitCode {
         };
         println!(
             "declared {}/{} ({}) has no launcher yet (consumer {}){note}",
-            binary.plugin,
+            binary.destination.key(),
             binary.name,
             binary.role.as_str(),
             binary.consumer
