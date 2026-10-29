@@ -948,3 +948,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 10-29 11:10Z: #5181 repair 1 (3c1e60a0, Codex terra) at 424fe18337134f18b75de555a39cc592e54c7e23 (request.rs privacy module; B1 tests); worker scoped ad2997cd 4119 ok but check refused candidate_job_not_green/generic_cargo_commit_mismatch (#5265 pattern). Manager scoped df521a91 (worktree 3c1e60a0, base origin/rolling 07a4b4ec, rolling_tool) running.
   Re-review #5339 -> Claude Sonnet 23e9cf0d (pinned 424fe183; B1 mut b, B2 mut d/e). On ACCEPT + df521a91 ok: check (job df521a91) + enqueue (source_session 3c1e60a0); close #5181 #5326 #5339 on land; then x402 S5 + OpenClaw B1.
   4/4 busy: e1de11f0 (#5327), acde8672 (#5306), 17932ae8 (#5336 L6 review), 23e9cf0d (#5339). #5329 still waits.
+- 10-29 11:12Z: #5336 (17932ae8, Codex sol) CHANGES_REQUESTED L6 0330c885: BLOCKER #5340 (T-APPLY-17 passes with nav identity check disabled: EEXIST on hooks masks it). Mutations b,c,d killed. Decision 2 DFS walk ACCEPTED.
+  L6 repair 1 -> Claude Opus 35dfe5c8 (continue_from 56c78333; test-only fix, red/green proof). Then narrow re-review (mut a only).
+  4/4 busy: e1de11f0 (#5327), acde8672 (#5306), 23e9cf0d (#5339), 35dfe5c8 (#5317 repair 1). Manager scoped df521a91 (#5181) running. #5329 waits.
