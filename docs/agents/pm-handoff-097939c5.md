@@ -1198,3 +1198,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 4/4: ce95436a S6+B2 integration, a0ab0de1 docgraph S2 (parked on job), cfb95bf6 L7, ebb5348d B3. Queue: 3050 #5478.
 - Plan unchanged: land A (S6, issue 5462) -> B (B2, issue 5443) -> #5360 last (continue_from 27f4dc18 merge-only).
 - 22:20Z: GM relayed operator AWS-build permission (standing directive 78e730f9). DECISION: not used now. The cloud kinds (cloud_gate, cloud_sweep) only cover landing/QA, and the queue isn't backed up (one entry). The slow part is local worker scoped_test admission on the disk floor, which cloud jobs don't touch. Revisit if the queue backs up or the disk floor stalls gates; report at next milestone.
+- 22:32Z: L7 #5479 ACCEPT (cfb95bf6, 289fadc1; no blockers) -> CLOSED. Follow-ups #5504 -> Claude Opus high 545fbb43 (rolling).
+  OPERATOR TODO a010be89 (launch-with-aws-live-run) filed; wake 77c27408 todo_closed -> then file+launch L8 cutover. Reported up (pm-7df6d5c6-report-2235).
+  4/4: ce95436a S6+B2 integ, a0ab0de1 docgraph S2, ebb5348d B3 #5505, 545fbb43 #5504. Queue: 3050 #5478.
