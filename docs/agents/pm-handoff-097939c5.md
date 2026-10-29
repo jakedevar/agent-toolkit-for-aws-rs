@@ -654,3 +654,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 10-29 06:05Z: #5152 (da92fc19) CHANGES_REQUESTED on x402 S1 c66477fc, no P1: P2 #5155 (IPv6 zone-id case in origin/R-TOK), #5156 (int() whitespace U+001C-1F), P3 #5157 (b64 '=' after quartet; PM: keep tightening, document as divergence). #5097/#5102 confirmed closed in source.
   Repair 1 -> Codex terra f8af4040 (sandbox c66477fc; rationing: no new Opus). Re-review: Claude Sonnet (cross-family vs Codex repair).
   4/4 busy: f43fddbd (#5143), bc70b368 (#4411 design), 3819aea9 (#5080), f8af4040 (#5118 repair 1).
+- 10-29 06:10Z: #4411 DESIGN (bc70b368) at 86a545ea495fe826b582b4064155b1fd6e064e60, docs/migration/openclaw-bridge-design.md: per-call `toolkit agents-pay bridge` subprocess; TS sends chosen offer (not payload/token), Rust re-checks via #4410 policy; proof verified before return; bin/ toolkit x5 platforms via plugin-stage package destination; D-OC1..18; slices B1-B5 on #4410 slices; A1-A3 assumptions on #4410 APIs. Kaizen #5158 (no daemon npm test route).
+  RULINGS: OQ2 accept token change across upgrade (release notes + SKILL); OQ9 version 1.1.0 (release = operator gate); OQ13 all 5 platforms required. Pre-review #5159 -> Codex sol 51755587 pinned 86a545ea.
+  4/4 busy: f43fddbd (#5143), 3819aea9 (#5080), f8af4040 (#5118 repair 1), 51755587 (#5159).
