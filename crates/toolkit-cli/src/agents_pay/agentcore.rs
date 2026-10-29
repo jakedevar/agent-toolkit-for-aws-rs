@@ -1152,6 +1152,12 @@ impl<'a> PaymentClient<'a> {
                             {
                                 break 'response PaymentError::Transport;
                             }
+                            Err(toolkit_aws::StreamError::TooLarge) if status >= 400 => {
+                                break 'response PaymentError::Service(error_code(
+                                    error_header.as_deref(),
+                                    "",
+                                ));
+                            }
                             Err(toolkit_aws::StreamError::TooLarge) => {
                                 return Err(PaymentError::InvalidResponse);
                             }
