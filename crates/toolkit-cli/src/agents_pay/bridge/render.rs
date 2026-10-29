@@ -254,6 +254,16 @@ mod tests {
         }
     }
 
+    #[test]
+    fn t_br_out_timestamp_fractional_minutes() {
+        assert_eq!(
+            timestamp(&Json::string("2026-08-07T12:34.5Z"))
+                .unwrap()
+                .as_str(),
+            Some("2026-08-07T12:34:30+00:00")
+        );
+    }
+
     // T-BR-OUT-CAP: the encoded document and the final LF share the cap.
     #[test]
     fn t_br_out_cap_ascii_and_escapes() {
