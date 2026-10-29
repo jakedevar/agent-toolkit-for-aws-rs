@@ -878,9 +878,22 @@ pub enum PaymentError {
 }
 
 impl PaymentError {
-    #[cfg(test)]
-    fn class_name(&self) -> &'static str {
-        "RuntimeError"
+    /// Fixed, value-free class used by the generic payment-flow error text.
+    #[must_use]
+    pub fn class_name(&self) -> &'static str {
+        match self {
+            Self::Service(_) => "ClientError",
+            Self::InvalidResponse => "RuntimeError",
+            Self::Transport(class) => match class {
+                PaymentErrorClass::ConnectError => "ConnectError",
+                PaymentErrorClass::ConnectTimeout => "ConnectTimeout",
+                PaymentErrorClass::ReadTimeout => "ReadTimeout",
+                PaymentErrorClass::RemoteProtocolError => "RemoteProtocolError",
+                PaymentErrorClass::NoCredentialsError => "NoCredentialsError",
+                PaymentErrorClass::ClientError => "ClientError",
+                PaymentErrorClass::RuntimeError => "RuntimeError",
+            },
+        }
     }
 }
 
