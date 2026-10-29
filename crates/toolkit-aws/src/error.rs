@@ -703,6 +703,7 @@ mod tests {
             AwsError::invalid_config("region", "bad"),
             AwsError::pagination("loop"),
             AwsError::provider("p", "x"),
+            AwsError::timeout(TimeoutPhase::Deadline, "expired"),
         ] {
             assert!(!fatal.is_retryable(), "{fatal}");
         }
