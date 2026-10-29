@@ -9,14 +9,14 @@ const SLOT_COUNT: usize = 16;
 const ADMISSION: usize = 8;
 const SLOT_TIMEOUT: Duration = Duration::from_secs(2);
 
-struct Slot {
-    stream: TcpStream,
+struct Slot<S> {
+    stream: S,
     head: Vec<u8>,
     output: Option<(Vec<u8>, usize)>,
     deadline: Instant,
 }
 
-impl Slot {
+impl<S> Slot<S> {
     fn queue(&mut self, status: u16, now: Instant, flow_end: Instant) {
         self.output = Some((response(status), 0));
         self.deadline = (now + SLOT_TIMEOUT).min(flow_end + SLOT_TIMEOUT);
@@ -48,25 +48,64 @@ pub fn bind() -> io::Result<TcpListener> {
 #[allow(clippy::too_many_lines)]
 pub fn serve(listener: TcpListener, state: &str, flow_end: Instant) -> io::Result<Option<Outcome>> {
     let port = listener.local_addr()?.port();
-    let mut slots: Vec<Option<Slot>> = (0..SLOT_COUNT).map(|_| None).collect();
+    serve_with(listener, port, state, flow_end, &SystemClock)
+}
+
+trait ListenerIo {
+    type Stream: Read + Write;
+    fn accept_stream(&self) -> io::Result<Self::Stream>;
+}
+
+impl ListenerIo for TcpListener {
+    type Stream = TcpStream;
+    fn accept_stream(&self) -> io::Result<TcpStream> {
+        let (stream, _) = self.accept()?;
+        stream.set_nonblocking(true)?;
+        Ok(stream)
+    }
+}
+
+trait Clock {
+    fn now(&self) -> Instant;
+    fn sleep(&self, duration: Duration);
+}
+
+struct SystemClock;
+impl Clock for SystemClock {
+    fn now(&self) -> Instant {
+        Instant::now()
+    }
+    fn sleep(&self, duration: Duration) {
+        std::thread::sleep(duration);
+    }
+}
+
+#[allow(clippy::too_many_lines)]
+fn serve_with<L: ListenerIo>(
+    listener: L,
+    port: u16,
+    state: &str,
+    flow_end: Instant,
+    clock: &impl Clock,
+) -> io::Result<Option<Outcome>> {
+    let mut slots: Vec<Option<Slot<L::Stream>>> = (0..SLOT_COUNT).map(|_| None).collect();
     let mut first = 0;
     loop {
-        let start = Instant::now();
+        let start = clock.now();
         if start >= flow_end {
             return Ok(None);
         }
         let mut busy = false;
         for _ in 0..ADMISSION {
-            let now = Instant::now();
+            let now = clock.now();
             expire(&mut slots, now);
             if now >= flow_end {
                 return Ok(None);
             }
-            match listener.accept() {
-                Ok((stream, _)) => {
+            match listener.accept_stream() {
+                Ok(stream) => {
                     busy = true;
                     if let Some(empty) = slots.iter_mut().find(|slot| slot.is_none()) {
-                        stream.set_nonblocking(true)?;
                         *empty = Some(Slot {
                             stream,
                             head: Vec::with_capacity(MAX_HEAD),
@@ -81,7 +120,7 @@ pub fn serve(listener: TcpListener, state: &str, flow_end: Instant) -> io::Resul
             }
         }
         for offset in 0..SLOT_COUNT {
-            let now = Instant::now();
+            let now = clock.now();
             expire(&mut slots, now);
             if now >= flow_end {
                 return Ok(None);
@@ -113,7 +152,7 @@ pub fn serve(listener: TcpListener, state: &str, flow_end: Instant) -> io::Resul
                         busy = true;
                         slot.head.extend_from_slice(&buf[..n]);
                         if let Some(end) = slot.head.windows(4).position(|w| w == b"\r\n\r\n") {
-                            if Instant::now() >= flow_end {
+                            if clock.now() >= flow_end {
                                 return Ok(None);
                             }
                             let outcome = parse_request(&slot.head[..end + 4], port, state);
@@ -132,7 +171,7 @@ pub fn serve(listener: TcpListener, state: &str, flow_end: Instant) -> io::Resul
                                     let deadline =
                                         (now + SLOT_TIMEOUT).min(flow_end + SLOT_TIMEOUT);
                                     let mut written = 0;
-                                    while written < page.len() && Instant::now() < deadline {
+                                    while written < page.len() && clock.now() < deadline {
                                         match stream.write(&page[written..]) {
                                             Ok(0) => break,
                                             Ok(n) => written += n,
@@ -140,7 +179,7 @@ pub fn serve(listener: TcpListener, state: &str, flow_end: Instant) -> io::Resul
                                                 if e.kind() == io::ErrorKind::WouldBlock
                                                     || e.kind() == io::ErrorKind::Interrupted =>
                                             {
-                                                std::thread::sleep(Duration::from_millis(2));
+                                                clock.sleep(Duration::from_millis(2));
                                             }
                                             Err(_) => break,
                                         }
@@ -165,7 +204,7 @@ pub fn serve(listener: TcpListener, state: &str, flow_end: Instant) -> io::Resul
         first = (first + 1) % SLOT_COUNT;
         let next_turn = start + Duration::from_millis(if busy { 2 } else { 10 });
         loop {
-            let now = Instant::now();
+            let now = clock.now();
             expire(&mut slots, now);
             if now >= flow_end {
                 return Ok(None);
@@ -179,7 +218,7 @@ pub fn serve(listener: TcpListener, state: &str, flow_end: Instant) -> io::Resul
                 .map(|s| s.deadline)
                 .min()
                 .unwrap_or(flow_end);
-            std::thread::sleep(
+            clock.sleep(
                 next_turn
                     .min(next_deadline)
                     .min(flow_end)
@@ -189,7 +228,7 @@ pub fn serve(listener: TcpListener, state: &str, flow_end: Instant) -> io::Resul
     }
 }
 
-fn expire(slots: &mut [Option<Slot>], now: Instant) {
+fn expire<S>(slots: &mut [Option<Slot<S>>], now: Instant) {
     for slot in slots {
         if slot.as_ref().is_some_and(|s| now >= s.deadline) {
             *slot = None;
@@ -200,18 +239,81 @@ fn expire(slots: &mut [Option<Slot>], now: Instant) {
 #[cfg(test)]
 mod scripted_tests {
     use super::*;
+    use std::{cell::Cell, rc::Rc};
 
-    // Red stub for the injected listener boundary: the scripted callback must
-    // be serviced despite an always-ready admission queue.
-    fn scripted_flood_with_callback() -> Option<Outcome> {
-        None
+    struct FakeClock(Cell<Instant>);
+    impl Clock for FakeClock {
+        fn now(&self) -> Instant {
+            self.0.get()
+        }
+        fn sleep(&self, duration: Duration) {
+            self.0.set(self.0.get() + duration);
+        }
+    }
+
+    struct FakeListener {
+        accepts: Rc<Cell<usize>>,
+        reads: Rc<Cell<usize>>,
+    }
+    struct FakeStream {
+        callback: bool,
+        part: usize,
+        reads: Rc<Cell<usize>>,
+    }
+    impl ListenerIo for FakeListener {
+        type Stream = FakeStream;
+        fn accept_stream(&self) -> io::Result<FakeStream> {
+            let count = self.accepts.get();
+            self.accepts.set(count + 1);
+            Ok(FakeStream {
+                callback: count == 5,
+                part: 0,
+                reads: self.reads.clone(),
+            })
+        }
+    }
+    impl Read for FakeStream {
+        fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+            if !self.callback {
+                return Err(io::ErrorKind::WouldBlock.into());
+            }
+            self.reads.set(self.reads.get() + 1);
+            let parts: [&[u8]; 3] = [
+                b"GET /?state=s",
+                b"&code=ok HTTP/1.1\r\n",
+                b"Host: 127.0.0.1:1234\r\n\r\n",
+            ];
+            let part = parts[self.part];
+            self.part += 1;
+            bytes[..part.len()].copy_from_slice(part);
+            Ok(part.len())
+        }
+    }
+    impl Write for FakeStream {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
     }
 
     #[test]
     fn flood_does_not_starve_an_admitted_callback() {
+        let now = Instant::now();
+        let clock = FakeClock(Cell::new(now));
+        let accepts = Rc::new(Cell::new(0));
+        let reads = Rc::new(Cell::new(0));
+        let listener = FakeListener {
+            accepts: accepts.clone(),
+            reads: reads.clone(),
+        };
         assert_eq!(
-            scripted_flood_with_callback(),
+            serve_with(listener, 1234, "s", now + Duration::from_secs(1), &clock).unwrap(),
             Some(Outcome::Code("ok".into()))
         );
+        assert_eq!(reads.get(), 3);
+        assert_eq!(accepts.get(), 24);
+        assert_eq!(clock.now().duration_since(now), Duration::from_millis(4));
     }
 }
