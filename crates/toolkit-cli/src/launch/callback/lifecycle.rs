@@ -406,6 +406,85 @@ mod deadline_tests {
 
     #[cfg(unix)]
     #[test]
+    fn helper_process_records_exchange_and_success() {
+        use crate::launch::{
+            callback::pending::{acquire_if_free, read_record},
+            tests_support::Scratch,
+        };
+        use std::io::{BufRead, Write};
+        const CHILD: &str = "RSI_CALLBACK_TEST_CHILD";
+        if let Some(dir) = std::env::var_os(CHILD) {
+            let dir = std::path::PathBuf::from(dir);
+            let result = run_with(
+                &dir,
+                "s",
+                wall_deadline(),
+                |port| {
+                    println!("CALLBACK_PORT={port}");
+                    std::io::stdout().flush()
+                },
+                |_, _, _| {
+                    println!("CALLBACK_EXCHANGING");
+                    std::io::stdout().flush().unwrap();
+                    let mut byte = [0];
+                    std::io::Read::read_exact(&mut std::io::stdin(), &mut byte).unwrap();
+                    Ok(b"session".to_vec())
+                },
+                Instant::now,
+                |_, _, _| {},
+                listener::serve,
+            )
+            .unwrap();
+            assert_eq!(result, HelperResult::Succeeded);
+            return;
+        }
+        let scratch = Scratch::new("helper-process-success");
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "launch::callback::lifecycle::deadline_tests::helper_process_records_exchange_and_success", "--nocapture"])
+            .env(CHILD, scratch.path()).stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).spawn().unwrap();
+        let pid = child.id();
+        let mut lines = std::io::BufReader::new(child.stdout.take().unwrap());
+        let port = loop {
+            let mut line = String::new();
+            assert_ne!(lines.read_line(&mut line).unwrap(), 0);
+            if let Some(value) = line.split("CALLBACK_PORT=").nth(1) {
+                break value.trim().parse::<u16>().unwrap();
+            }
+        };
+        let mut socket =
+            std::net::TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, port)).unwrap();
+        write!(
+            socket,
+            "GET /?state=s&code=ok HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\r\n"
+        )
+        .unwrap();
+        loop {
+            let mut line = String::new();
+            assert_ne!(lines.read_line(&mut line).unwrap(), 0);
+            if line.contains("CALLBACK_EXCHANGING") {
+                break;
+            }
+        }
+        assert_eq!(
+            read_record(scratch.path(), pid).unwrap().status,
+            PendingStatus::Exchanging
+        );
+        assert!(acquire_if_free(scratch.path(), pid).is_none());
+        child.stdin.take().unwrap().write_all(b"x").unwrap();
+        assert!(child.wait().unwrap().success());
+        assert_eq!(
+            read_record(scratch.path(), pid).unwrap().status,
+            PendingStatus::Succeeded
+        );
+        assert!(acquire_if_free(scratch.path(), pid).is_some());
+        assert_eq!(
+            std::fs::read(scratch.join("session.json")).unwrap(),
+            b"session"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn watchdog_aborts_blocked_exchange_without_late_publication() {
         use crate::launch::{callback::pending::read_record, tests_support::Scratch};
         let scratch = Scratch::new("blocked-lifecycle");
