@@ -224,18 +224,24 @@ mod tests {
         let calls = Arc::new(AtomicUsize::new(0));
         let (lookup, release) = stuck_then_answering(&calls);
 
-        let first = rt.block_on(tokio::time::timeout(
-            Duration::from_millis(100),
-            gate.lookup("db.example", Arc::clone(&lookup)),
-        ));
+        let first = rt.block_on(async {
+            tokio::time::timeout(
+                Duration::from_millis(100),
+                gate.lookup("db.example", Arc::clone(&lookup)),
+            )
+            .await
+        });
         assert!(first.is_err(), "the deadline abandons the stuck lookup");
         assert!(gate.has_abandoned());
 
         let start = Instant::now();
-        let second = rt.block_on(tokio::time::timeout(
-            Duration::from_secs(2),
-            gate.lookup("db.example", Arc::clone(&lookup)),
-        ));
+        let second = rt.block_on(async {
+            tokio::time::timeout(
+                Duration::from_secs(2),
+                gate.lookup("db.example", Arc::clone(&lookup)),
+            )
+            .await
+        });
         assert_eq!(second, Ok(Err(LookupError::AbandonedOutstanding)));
         assert!(
             start.elapsed() < Duration::from_millis(500),
@@ -286,10 +292,13 @@ mod tests {
             assert!(start.elapsed() < Duration::from_secs(5), "first never ran");
             std::thread::sleep(Duration::from_millis(5));
         }
-        let waited = runtime().block_on(tokio::time::timeout(
-            Duration::from_millis(100),
-            gate.lookup("db.example", Arc::clone(&lookup)),
-        ));
+        let waited = runtime().block_on(async {
+            tokio::time::timeout(
+                Duration::from_millis(100),
+                gate.lookup("db.example", Arc::clone(&lookup)),
+            )
+            .await
+        });
         assert!(waited.is_err(), "the waiter times out on its own deadline");
         assert_eq!(calls.load(Ordering::SeqCst), 1, "one thread at a time");
         assert!(!gate.has_abandoned(), "a waiter is not an abandoned lookup");

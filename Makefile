@@ -63,6 +63,7 @@ docgraph-live-suite:
 	cargo test -p toolkit-cli --locked --test docgraph_live
 	cargo test -p toolkit-cli --features docgraph-live --locked --test docgraph_live
 	cargo test -p toolkit-cli --features docgraph-live --locked --lib docgraph::
+	cargo test -p toolkit-cli --features docgraph-live --locked --test docgraph_bridge_spike
 
 docgraph-credential-deadline:
 	cargo test -p toolkit-aws --features sdk --locked --lib sdk::source::tests::a_stalled_provider_is_abandoned_at_the_deadline -- --exact

@@ -686,6 +686,7 @@ fn golden_replays_are_unchanged_by_hostile_configuration() {
 }
 
 /// Live- and consent-shaped keys every carrier file below holds.
+#[cfg(feature = "docgraph-live")]
 const CONSENT_CARRIER: &str = r#"{"live":true,"confirm_wipe":true,"confirm_write":true,"confirm_delete":true,"confirm_create":true,"--live":true,"--confirm-wipe":true,"calls":[]}"#;
 
 /// T-DG-01e: recorded responses, analysis/capture envelopes, memory inputs,
@@ -703,9 +704,92 @@ fn consent_carriers_never_authorize_live_work_or_missing_consent() {
     std::fs::write(&carrier, CONSENT_CARRIER).unwrap();
     let carrier = carrier.to_str().unwrap().to_string();
     let c = carrier.as_str();
+    for (args, status, required) in &carrier_rows(c) {
+        let out = run_hostile(args, &dir, &fake);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(*status), "{args:?}: {stderr}");
+        assert!(stderr.contains(required), "{args:?}: {stderr}");
+        assert!(
+            !stderr.contains(c),
+            "{args:?} read or echoed a carrier file"
+        );
+        assert!(out.stdout.is_empty(), "{args:?}");
+    }
+    // Non-live replay: a recording's consent keys are not --confirm-wipe.
+    let out = run_hostile(&["neptune", "seed", "--recorded", c], &dir, &fake);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(!String::from_utf8_lossy(&out.stdout).contains("Clearing ALL graph data"));
+    assert_eq!(network.accepted(), 0, "a carrier reached the network");
+    assert!(provider_never_ran(&dir), "a credential provider ran");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// T-DG-02b/c: no credential arguments exist (a supplied one is a usage error
+/// that echoes nothing), and `RUST_LOG` enables no logging of canaries.
+#[test]
+fn credential_arguments_are_rejected_without_echo() {
+    let network = ForbiddenNetwork::start();
+    let fake = format!("127.0.0.1:{}", network.port);
+    let dir = workdir("02b");
+    let canary = "argumentsecretcanary0";
+    for args in [
+        vec![
+            "neptune",
+            "seed",
+            "--live",
+            "--confirm-wipe",
+            "--aws-secret-access-key",
+            canary,
+        ],
+        vec![
+            "neptune",
+            "memory",
+            "--live",
+            "--operation",
+            "retrieve",
+            "--access-key-id",
+            canary,
+        ],
+        vec!["neptune", "seed", "--dry-run", "--secret-key", canary],
+        vec![
+            "documentdb",
+            "wa-review",
+            "--cluster-id",
+            "c1",
+            "--region",
+            "us-east-1",
+            "--profile",
+            canary,
+        ],
+        vec![
+            "documentdb",
+            "wa-review",
+            "--cluster-id",
+            "c1",
+            "--region",
+            "us-east-1",
+            "--session-token",
+            canary,
+        ],
+    ] {
+        let out = run_hostile(&args, &dir, &fake);
+        assert_eq!(out.status.code(), Some(2), "{args:?}");
+        for text in [&out.stdout, &out.stderr] {
+            let text = String::from_utf8_lossy(text);
+            assert!(!text.contains(canary), "{args:?} echoed: {text}");
+            assert!(!text.contains("forbidden-secret-canary"), "{args:?}");
+        }
+    }
+    assert_eq!(network.accepted(), 0);
+    assert!(provider_never_ran(&dir));
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// The T-DG-01e table: (args, exit status, required stderr text).
+#[cfg(feature = "docgraph-live")]
+fn carrier_rows(c: &str) -> Vec<(Vec<&str>, i32, &'static str)> {
     let endpoint = "db.cluster-abc.us-east-1.neptune.amazonaws.com";
-    // (args, exit status, required stderr text)
-    let rows: Vec<(Vec<&str>, i32, &str)> = vec![
+    vec![
         (
             vec![
                 "neptune",
@@ -820,84 +904,5 @@ fn consent_carriers_never_authorize_live_work_or_missing_consent() {
             2,
             "live docgraph adapters are not available",
         ),
-    ];
-    for (args, status, required) in &rows {
-        let out = run_hostile(args, &dir, &fake);
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        assert_eq!(out.status.code(), Some(*status), "{args:?}: {stderr}");
-        assert!(stderr.contains(required), "{args:?}: {stderr}");
-        assert!(
-            !stderr.contains(c),
-            "{args:?} read or echoed a carrier file"
-        );
-        assert!(out.stdout.is_empty(), "{args:?}");
-    }
-    // Non-live replay: a recording's consent keys are not --confirm-wipe.
-    let out = run_hostile(&["neptune", "seed", "--recorded", c], &dir, &fake);
-    assert_eq!(out.status.code(), Some(1));
-    assert!(!String::from_utf8_lossy(&out.stdout).contains("Clearing ALL graph data"));
-    assert_eq!(network.accepted(), 0, "a carrier reached the network");
-    assert!(provider_never_ran(&dir), "a credential provider ran");
-    std::fs::remove_dir_all(&dir).unwrap();
-}
-
-/// T-DG-02b/c: no credential arguments exist (a supplied one is a usage error
-/// that echoes nothing), and `RUST_LOG` enables no logging of canaries.
-#[test]
-fn credential_arguments_are_rejected_without_echo() {
-    let network = ForbiddenNetwork::start();
-    let fake = format!("127.0.0.1:{}", network.port);
-    let dir = workdir("02b");
-    let canary = "argumentsecretcanary0";
-    for args in [
-        vec![
-            "neptune",
-            "seed",
-            "--live",
-            "--confirm-wipe",
-            "--aws-secret-access-key",
-            canary,
-        ],
-        vec![
-            "neptune",
-            "memory",
-            "--live",
-            "--operation",
-            "retrieve",
-            "--access-key-id",
-            canary,
-        ],
-        vec!["neptune", "seed", "--dry-run", "--secret-key", canary],
-        vec![
-            "documentdb",
-            "wa-review",
-            "--cluster-id",
-            "c1",
-            "--region",
-            "us-east-1",
-            "--profile",
-            canary,
-        ],
-        vec![
-            "documentdb",
-            "wa-review",
-            "--cluster-id",
-            "c1",
-            "--region",
-            "us-east-1",
-            "--session-token",
-            canary,
-        ],
-    ] {
-        let out = run_hostile(&args, &dir, &fake);
-        assert_eq!(out.status.code(), Some(2), "{args:?}");
-        for text in [&out.stdout, &out.stderr] {
-            let text = String::from_utf8_lossy(text);
-            assert!(!text.contains(canary), "{args:?} echoed: {text}");
-            assert!(!text.contains("forbidden-secret-canary"), "{args:?}");
-        }
-    }
-    assert_eq!(network.accepted(), 0);
-    assert!(provider_never_ran(&dir));
-    std::fs::remove_dir_all(&dir).unwrap();
+    ]
 }

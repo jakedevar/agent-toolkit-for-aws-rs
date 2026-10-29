@@ -196,7 +196,7 @@ mod tests {
             "us-east-1"
         );
         let error = signing_region(&policy, Some("eu-west-1"), &env).expect_err("explicit wins");
-        assert!(matches!(error, AwsError::InvalidConfig { field, .. } if *field == "region"));
+        assert!(matches!(error, AwsError::InvalidConfig { field, .. } if field == "region"));
         assert!(!error.to_string().contains("eu-west-1"), "{error}");
         let env = MapEnv::new().with("AWS_DEFAULT_REGION", "us-west-2");
         assert!(

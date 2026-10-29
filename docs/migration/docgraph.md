@@ -762,7 +762,7 @@ does not grant either. No run is part of this design change.
 | S0 — this design | PM resolves Q1/Q2/Q3 below; manager obtains cross-family pre-review of the committed document. No dependency/code changes. | R-DG-01..09 and T lists reviewed; publication alone is not pre-review acceptance. |
 | S1 — shared boundaries | First resolve Q4/Q5 with the offline S2 spike below and record the version/feature matrix before live code. Optional feature/dependency audit, credential/deadline bridge, explicit TLS contexts and narrow database endpoint capability. Keep existing public/payment policy unchanged. | T-DG-01..03, 07 and 09a; S2 spike exit criteria and exact-source security review before enabling live routing. |
 | S2 — AWS review client | Offline bridge spike runs in the first implementation slice; live client depends on S1 and spike acceptance. Modeled ten-operation codecs, field map, bridge and one retry owner. | All spike exit criteria below, T-DG-04 including 04e; existing report/error/recorded goldens. |
-| S3 — Gremlin | Depends on S1; optional WebSocket/GraphSON adapter, signed upgrade, consent and close/cancellation. | T-DG-05 plus adversarial bounds/TLS cases; seed guard remains enforced before connect. |
+| S3 — Gremlin | Depends on S1; optional WebSocket/GraphSON adapter, signed upgrade, consent and close/cancellation. Owns the R-DG-07 limits deferred from S1 (PM ruling 3 on #5366): the 1 MiB WebSocket frame limit, GraphSON nesting depth 64 and 100,000 decoded results (bulk expansion), each checked before allocation, plus the Gremlin WebSocket TLS context and wiring `network_policy::parse` after argv consent. | T-DG-05 plus adversarial bounds/TLS cases, including T-DG-07b frame/depth/bulk at the boundary and boundary plus one; seed guard remains enforced before connect. |
 | S4 — memory live dispatch | Depends on S1/S3 and integrated item-1 helpers; Analytics, secure gated creation and DynamoDB conversions. | T-DG-06 and all ordered replay/expansion fixtures; no unsupported partial-live plan. |
 | S5 — collection recipe | DELIVERED in #5327 (see "Collection capture (S5)"). Q1 accepted; per-command manual manifest/docs, private capture custody and Rust offline normalization. Can proceed independently of network adapters. | T-DG-08 including 08d/e; explicit manual-work cost and supported engine/shell/export matrix. |
 | S6 — acceptance/callers/retirement | Depends on S2..S5, exact-source review and the relevant operator grants. | T-DG-09, recorded evidence of unverified live cases, caller/mirror verification before Python retirement. |
@@ -1066,8 +1066,8 @@ not added. Residual: the production resolver is the operating system's on
 Tokio's blocking pool. The deadline abandons the lookup and discards its
 answer, but that `getaddrinfo` thread ends only when the system resolver
 returns, and dropping the runtime waits for it. No asynchronous DNS crate was
-added; S3 must decide whether this residual is acceptable before live
-enablement.
+added. Superseded: the residual is accepted and capped (PM ruling 2), see
+"S1 continuation: credential deadline, DNS cap and remaining evidence".
 
 Not delivered in S1, by decision: WebSocket frame, GraphSON depth and bulk
 limits (T-DG-07b) need the S3 codecs that do not exist yet; the constants are
@@ -1076,7 +1076,8 @@ Credential-provider deadlines (T-DG-07a provider phase) remain open:
 `GuardedCredentials::resolve_required` is synchronous and its SDK providers
 are driven by `SdkRuntime::block_on`, so an outer async deadline cannot drop
 them without a provider-level change. S2 must not wire live signing before
-that bound exists.
+that bound exists. Superseded: the bound now exists
+(`GuardedCredentials::resolve_required_until`, next section).
 
 T-DG-09a: `docgraph_live::test_inventories_hold_no_unignored_live_entry`
 parses every test in toolkit-cli and toolkit-aws with `syn` and requires any
