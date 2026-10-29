@@ -190,6 +190,21 @@ mod tests {
 
     const VALID: &str = r#"{"operation":"get_payment_session","region":"us-east-1","payment_manager_arn":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","payment_session_id":"sssssssssssssssssssssssssssssss","user_id":"user","agent_name":"openclaw-aws-agents-pay"}"#;
 
+    #[test]
+    fn t_br_req_shared_request_fixtures() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../plugins/aws-agents/skills/agents-pay/packages/openclaw/test/fixtures/bridge-contract");
+        for name in ["get_payment_session", "process_payment"] {
+            let bytes = std::fs::read(root.join(format!("{name}.request.json"))).unwrap();
+            let parsed = read_request(&mut Cursor::new(bytes)).unwrap();
+            assert_eq!(parsed.get("operation").and_then(Json::as_str), Some(name));
+        }
+        let legacy = std::fs::read(root.join("legacy_process_payment.request.json")).unwrap();
+        assert_eq!(
+            read_request(&mut Cursor::new(legacy)),
+            Err(BridgeError::Input)
+        );
+    }
+
     // Shared inputs and expected outcomes for the B2 final-output matcher.
     #[test]
     fn t_oc_final_shared_registry_cases() {
