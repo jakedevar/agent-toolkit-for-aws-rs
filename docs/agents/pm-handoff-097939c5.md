@@ -841,3 +841,5 @@ Friction: #4727, Rsi #4694, Rsi #4704
   Check refused: conflicts now with rolling (registry.rs, diag_contract.rs; S2b landed). Merge-only continuation e1167447 (Codex terra, continue_from 8ea9ce8e). Then check+enqueue; close #5216 #5262 #5228 #5229 #5230 on land.
   Follow-up slice #5273 created (findings + T-CB matrix); launch at next free slot AFTER L4 lands (base rolling). Queue after it: ai-payloads S4 callers.
   4/4 busy: 0dcdafea (#5181 S4 cont), 2a78b5ff (#5244 tests), 9de1fd5d (#5261 S2b f/u), e1167447 (#5216 merge).
+- 10-29 07:26Z: test hardening (2a78b5ff) DONE at 2b95608d23da73dd182483747676bf470a9e898b (test-only; scoped 4781 ok, clean; mutation reds). Review #5274 -> Claude Sonnet 74c74e8d (pinned 2b95608d). On ACCEPT: check+enqueue (source_session 2a78b5ff); close #5244 #5245 #5253 #5254 #5274.
+  4/4 busy: 0dcdafea (#5181 S4 cont), 9de1fd5d (#5261 S2b f/u), e1167447 (#5216 merge), 74c74e8d (#5274 review).
