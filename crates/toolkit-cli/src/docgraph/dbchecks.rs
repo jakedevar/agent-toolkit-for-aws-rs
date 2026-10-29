@@ -3,8 +3,9 @@
 
 use toolkit_core::Json;
 
-use super::checks::{clean, Findings, Status};
+use super::checks::{Findings, Status};
 use super::snapshot::Collection;
+use crate::safe_text::safe_path;
 
 const PERF: &str = "Performance Efficiency";
 const COST: &str = "Cost Optimization";
@@ -14,7 +15,7 @@ fn first_five(items: &[String]) -> String {
     items
         .iter()
         .take(5)
-        .map(|item| clean(item))
+        .map(|item| safe_path(item))
         .collect::<Vec<_>>()
         .join(", ")
 }

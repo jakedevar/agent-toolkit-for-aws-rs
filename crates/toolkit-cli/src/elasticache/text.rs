@@ -77,11 +77,13 @@ pub fn escape_controls(text: &str) -> String {
     out
 }
 
-/// `text` safe to print in a report or diagnostic: control characters are
-/// escaped and a value longer than 120 characters is elided.
+/// `text` safe to print in a report or diagnostic: redacted in full first
+/// (`toolkit_aws::redact_text`, #4941), then control characters are escaped
+/// and a value longer than 120 characters is elided. Text without
+/// credential-shaped content is shown as before.
 #[must_use]
 pub fn show(text: &str) -> String {
-    let escaped = escape_controls(text);
+    let escaped = escape_controls(&toolkit_aws::redact_text(text));
     if escaped.chars().count() <= MAX_SHOWN_CHARS {
         return escaped;
     }

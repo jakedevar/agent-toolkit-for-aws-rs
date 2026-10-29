@@ -181,7 +181,8 @@ fn check_s3_uri(label: &str, uri: &str) -> Result<(), String> {
         .unwrap_or("");
     if bucket.is_empty() {
         return Err(format!(
-            "Invalid {label}: must be an s3:// URI naming a bucket (got: {uri})"
+            "Invalid {label}: must be an s3:// URI naming a bucket (got: {})",
+            crate::safe_text::shown_value(uri)
         ));
     }
     Ok(())

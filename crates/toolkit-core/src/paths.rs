@@ -36,6 +36,34 @@ use std::fs;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
+/// How a path is shown inside a [`PathError`] message; see
+/// [`set_path_display`].
+static PATH_DISPLAY: std::sync::OnceLock<fn(&str) -> String> = std::sync::OnceLock::new();
+
+/// Registers, once per process, how a [`PathError`] message shows the path it
+/// names. The command-line front end registers a redact-then-bound rendering
+/// (`toolkit-cli` #4941), so a credential-shaped caller path (URL userinfo, a
+/// labelled `password=...`) is hidden where the message is formatted, before
+/// any sink sees it. This crate cannot call the redactor itself: the redactor
+/// lives in `toolkit-aws`, which depends on this crate. Without a registered
+/// rendering the path is shown as given. A later call is ignored.
+pub fn set_path_display(show: fn(&str) -> String) {
+    let _ = PATH_DISPLAY.set(show);
+}
+
+/// `text` as [`set_path_display`] registered it to be shown.
+pub(crate) fn shown_text(text: &str) -> String {
+    match PATH_DISPLAY.get() {
+        Some(show) => show(text),
+        None => text.to_string(),
+    }
+}
+
+/// `path` as [`set_path_display`] registered it to be shown.
+pub(crate) fn shown(path: &Path) -> String {
+    shown_text(&path.display().to_string())
+}
+
 /// Default upper bound for text files read by the toolkit (1 MiB).
 pub const MAX_TEXT_FILE_BYTES: u64 = 1024 * 1024;
 
@@ -71,21 +99,21 @@ impl fmt::Display for PathError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Invalid(reason) => write!(f, "invalid path: {reason}"),
-            Self::NotFound(path) => write!(f, "path does not exist: {}", path.display()),
+            Self::NotFound(path) => write!(f, "path does not exist: {}", shown(path)),
             Self::Symlink(path) => {
-                write!(f, "refusing to follow symbolic link: {}", path.display())
+                write!(f, "refusing to follow symbolic link: {}", shown(path))
             }
-            Self::NotRegularFile(path) => write!(f, "not a regular file: {}", path.display()),
+            Self::NotRegularFile(path) => write!(f, "not a regular file: {}", shown(path)),
             Self::TooLarge { path, limit } => {
-                write!(f, "{} is larger than {limit} bytes", path.display())
+                write!(f, "{} is larger than {limit} bytes", shown(path))
             }
-            Self::NotUtf8(path) => write!(f, "{} is not valid UTF-8", path.display()),
+            Self::NotUtf8(path) => write!(f, "{} is not valid UTF-8", shown(path)),
             Self::Changed(path) => {
-                write!(f, "{} changed while it was being opened", path.display())
+                write!(f, "{} changed while it was being opened", shown(path))
             }
-            Self::Io(error, path) => write!(f, "cannot read {}: {error}", path.display()),
+            Self::Io(error, path) => write!(f, "cannot read {}: {error}", shown(path)),
             Self::WriteFailed(error, path) => {
-                write!(f, "cannot write {}: {error}", path.display())
+                write!(f, "cannot write {}: {error}", shown(path))
             }
         }
     }
@@ -104,7 +132,12 @@ impl std::error::Error for PathError {}
 ///
 /// Returns [`PathError::Invalid`] naming the first violated rule.
 pub fn normalize_relative(input: &str) -> Result<String, PathError> {
-    let invalid = |reason: &str| Err(PathError::Invalid(format!("{reason}: {input:?}")));
+    let invalid = |reason: &str| {
+        Err(PathError::Invalid(format!(
+            "{reason}: {:?}",
+            shown_text(input)
+        )))
+    };
     if input.is_empty() {
         return invalid("path is empty");
     }

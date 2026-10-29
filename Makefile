@@ -1,7 +1,7 @@
 # Rust workspace entry points. These targets never override the daemon-stamped
 # build environment (CARGO_TARGET_DIR, RUSTC_WRAPPER/sccache); they rely on it
 # being present in the invoking environment.
-.PHONY: build fmt clippy test clippy-sdk test-sdk
+.PHONY: build fmt clippy test clippy-sdk test-sdk plugin-binaries plugin-binaries-check
 
 build:
 	cargo build --workspace --locked
@@ -22,3 +22,13 @@ clippy-sdk:
 
 test-sdk:
 	cargo test -p toolkit-aws --features sdk --locked
+
+# Per-plugin ./bin binaries (#4487, docs/migration/plugin-binaries.md). Stage
+# every declared binary for every declared platform with the locally
+# installed toolchains (zig + cargo-zigbuild cross-link the non-host targets),
+# then check launchers and staged files. Never commit the staged files.
+plugin-binaries:
+	cargo run --locked --package plugin-stage -- stage --platform all
+
+plugin-binaries-check:
+	cargo run --locked --package plugin-stage -- check

@@ -416,7 +416,7 @@ pub fn filter_command(
         let Some((key, value)) = word.split_once(':') else {
             output.diagnostic(&format!(
                 "Warning: Ignoring malformed constraint (no ':' separator): {}",
-                quote_untrusted(word)
+                quote_untrusted(&crate::safe_text::shown_value(word))
             ));
             continue;
         };

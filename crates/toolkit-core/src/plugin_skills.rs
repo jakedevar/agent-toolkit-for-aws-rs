@@ -96,7 +96,7 @@ pub fn build_canonical_index(root: &Path) -> Result<CanonicalIndex, ToolkitError
                 "path_symlink",
                 format!(
                     "refusing to follow symbolic link: {}",
-                    root.join("skills").display()
+                    crate::paths::shown(&root.join("skills"))
                 ),
             ));
         }
@@ -137,16 +137,19 @@ pub fn sync_plugin_skills(
         if !normalize_relative(plugin).is_ok_and(|n| n == plugin && !plugin.contains('/')) {
             return Err(ToolkitError::runtime(
                 "invalid_plugin_name",
-                format!("Invalid plugin name: {plugin}"),
+                format!("Invalid plugin name: {}", crate::paths::shown_text(plugin)),
             ));
         }
         if path_state(options.root, &format!("plugins/{plugin}"))? != Some(Kind::Dir) {
             return Err(ToolkitError::runtime(
                 "plugin_not_found",
-                format!("Plugin not found: {plugin}"),
+                format!("Plugin not found: {}", crate::paths::shown_text(plugin)),
             ));
         }
-        report.lines.push(format!("{verb} plugin: {plugin}"));
+        report.lines.push(format!(
+            "{verb} plugin: {}",
+            crate::paths::shown_text(plugin)
+        ));
         sync_one(options, plugin, &canonical, &mut report)?;
     } else {
         if path_state(options.root, "plugins")? != Some(Kind::Dir) {
@@ -154,7 +157,7 @@ pub fn sync_plugin_skills(
                 "plugins_not_found",
                 format!(
                     "plugins directory not found: {}",
-                    options.root.join("plugins").display()
+                    crate::paths::shown(&options.root.join("plugins"))
                 ),
             ));
         }

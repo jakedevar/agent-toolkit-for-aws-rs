@@ -45,8 +45,8 @@ Do not use this skill when:
 ## Prerequisites
 
 1. **AWS CLI v2** — Installed and configured. Verify with `aws sts get-caller-identity`.
-2. **Python 3.12** — For the Lambda function runtime.
-3. **Docker** — For building and pushing the Fargate container image.
+2. **Rust toolchain and cargo-lambda** — To build the Lambda function (`cargo` from rustup, plus `cargo install cargo-lambda` or the cargo-lambda release for your platform). The function runs on the `provided.al2023` runtime; no Python is needed.
+3. **Docker** — For building and pushing the Fargate container image (the image builds the Rust binary itself).
 
 ## Parameters
 
@@ -69,7 +69,7 @@ Constraints for parameter acquisition:
 
 Constraints:
 
-- You MUST verify the following tools are available: aws-cli, python3 (3.12+), docker
+- You MUST verify the following tools are available: aws-cli, cargo, cargo-lambda, docker
 - You MUST inform the user about any missing tools with a clear message
 - You MUST ask if the user wants to proceed despite missing tools
 - You MUST respect the customer's decision to abort at any point
@@ -117,7 +117,7 @@ Constraints:
 - You MUST verify Docker is installed by running `docker --version`. If Docker is not installed, instruct the user to install it from https://docs.docker.com/get-docker/ and abort until it is available
 - You MUST authenticate Docker with ECR:
   `aws ecr get-login-password --region {region} | docker login --username AWS --password-stdin {account_id}.dkr.ecr.{region}.amazonaws.com`
-- The Dockerfile and processor code are in `scripts/Dockerfile` and `scripts/fargate_processor.py`
+- The Dockerfile and processor code are in `scripts/Dockerfile` and `scripts/src/bin/fargate_processor.rs` (shared code in `scripts/src/lib.rs`). The image is built with `cargo build --locked` from `scripts/Cargo.lock`
 - You MUST build and push the image from the scripts directory:
 
   ```
@@ -138,18 +138,24 @@ Follow the detailed instructions in `references/iam-roles.md` to create all IAM 
 
 Constraints:
 
-- The function code is in `scripts/lambda_function.py`
+- The function code is in `scripts/src/bin/lambda_processor.rs` (shared code in `scripts/src/lib.rs`)
 - You MUST be in the skill root directory before packaging and creating the function
-- You MUST package it with: `python3 -c "import zipfile,io; z=io.BytesIO(); f=zipfile.ZipFile(z,'w'); f.writestr('lambda_function.py', open('scripts/lambda_function.py').read()); f.close(); open('/tmp/lambda_function.zip','wb').write(z.getvalue())"`
+- You MUST build and package it with cargo-lambda (the zip holds one `bootstrap` executable):
+
+  ```
+  (cd scripts && cargo lambda build --release --locked --x86-64 --bin lambda-processor --output-format zip --lambda-dir /tmp/lambda-build)
+  ```
+
+  The package is written to `/tmp/lambda-build/lambda-processor/bootstrap.zip`
 - You MUST create the function with:
 
   ```
   aws lambda create-function \
       --function-name sfn-file-processor \
-      --runtime python3.12 \
-      --handler lambda_function.lambda_handler \
+      --runtime provided.al2023 \
+      --handler bootstrap \
       --role arn:aws:iam::{account_id}:role/sfn-lambda-role \
-      --zip-file fileb:///tmp/lambda_function.zip \
+      --zip-file fileb:///tmp/lambda-build/lambda-processor/bootstrap.zip \
       --timeout 60 \
       --architectures x86_64 \
       --region {region}
@@ -308,6 +314,7 @@ Constraints:
 ### Lambda invocation fails
 
 - Check CloudWatch Logs: `aws logs tail /aws/lambda/sfn-file-processor --region {region}`
+- `Runtime.InvalidEntrypoint` or `exec format error`: the package was built for another architecture; rebuild with `--x86-64` (matching `--architectures x86_64`) or `--arm64` with `--architectures arm64`
 - Verify the Step Functions role has `lambda:InvokeFunction` permission
 
 ### IAM PassRole errors
@@ -332,8 +339,9 @@ Constraints:
 ## Version information
 
 - **AWS CLI**: 2.x
-- **Python runtime**: 3.12
-- **Last validated**: 2026-04-27
+- **Lambda runtime**: provided.al2023 (Rust, cargo-lambda)
+- **Rust toolchain**: stable (the Dockerfile pins 1.94.1)
+- **Last validated**: 2026-04-27 (workflow); the Rust processors are covered by offline tests (#4397) and have not been deployed
 
 ## Additional Resources
 

@@ -129,7 +129,10 @@ pub fn validate_tree(root: &Path, plugin: Option<&str>) -> Result<Report, Toolki
         Err(_) => {
             return Err(ToolkitError::runtime(
                 "root_not_found",
-                format!("root does not exist: {}", root.display()),
+                format!(
+                    "root does not exist: {}",
+                    crate::safe_text::shown_path(root)
+                ),
             ))
         }
     }
@@ -140,7 +143,7 @@ pub fn validate_tree(root: &Path, plugin: Option<&str>) -> Result<Report, Toolki
         if !single_component || !root.join("plugins").join(name).is_dir() {
             return Err(ToolkitError::runtime(
                 "plugin_not_found",
-                format!("Plugin not found: {name}"),
+                format!("Plugin not found: {}", crate::safe_text::shown_value(name)),
             ));
         }
         validator.validate_plugin(name);

@@ -7,6 +7,7 @@ Serverless-specific resource types and fast-iteration tools. For step-by-step de
 - [SAM resource types](#sam-resource-types)
 - [SAM Globals section](#sam-globals-section)
 - [CDK serverless constructs](#cdk-serverless-constructs)
+- [Rust functions (cargo-lambda)](#rust-functions-cargo-lambda)
 - [Fast iteration](#fast-iteration)
 
 ---
@@ -53,8 +54,35 @@ Prefer L2 constructs — they provide sensible defaults and least-privilege IAM 
 |---|---|---|
 | `NodejsFunction` | `aws-cdk-lib/aws-lambda-nodejs` | Node.js/TypeScript — bundles with esbuild automatically |
 | `PythonFunction` | `@aws-cdk/aws-lambda-python-alpha` | Python — requires Docker for bundling |
+| `RustFunction` | `cargo-lambda-cdk` (community construct) | Rust — builds with cargo-lambda |
 | `HttpApi` | `aws-cdk-lib/aws-apigatewayv2` | HTTP API with CORS, JWT auth |
 | `HttpLambdaIntegration` | `aws-cdk-lib/aws-apigatewayv2-integrations` | Connect Lambda to HttpApi |
+
+---
+
+## Rust functions (cargo-lambda)
+
+Rust functions run on the OS-only runtime `provided.al2023` and the handler is the executable `bootstrap`. [cargo-lambda](https://www.cargo-lambda.info/) cross-compiles and packages it.
+
+```bash
+cargo lambda build --release --locked --arm64 --output-format zip   # target/lambda/<bin>/bootstrap.zip
+```
+
+SAM builds it for you with the `rust-cargolambda` build method (install cargo-lambda first):
+
+```yaml
+MyFunction:
+  Type: AWS::Serverless::Function
+  Metadata:
+    BuildMethod: rust-cargolambda
+  Properties:
+    CodeUri: .                  # directory with Cargo.toml
+    Handler: bootstrap
+    Runtime: provided.al2023
+    Architectures: [arm64]
+```
+
+Keep `Architectures` equal to the `--arm64`/`--x86-64` build flag: a mismatch fails at start-up with `exec format error`. Build with `--locked` so the deployed dependency set is the committed `Cargo.lock`. The ready-to-copy handler is [assets/powertools-handler/](../assets/powertools-handler/).
 
 ---
 

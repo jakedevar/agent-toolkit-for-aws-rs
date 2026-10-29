@@ -297,7 +297,7 @@ fn rds_region(invocation: &Invocation) -> Result<String, ToolkitError> {
     } else {
         Err(usage(format!(
             "argument --region: invalid region: {}",
-            quote_untrusted(region)
+            quote_untrusted(&crate::safe_text::shown_value(region))
         )))
     }
 }
@@ -331,7 +331,7 @@ pub fn rds_commitment_command(
         Some(other) => {
             return Err(usage(format!(
                 "argument mode: invalid choice: {} (choose from 'offline')",
-                quote_untrusted(other)
+                quote_untrusted(&crate::safe_text::shown_value(other))
             )))
         }
     };
@@ -341,7 +341,7 @@ pub fn rds_commitment_command(
         Some(other) => {
             return Err(usage(format!(
                 "argument --format: invalid choice: {} (choose from 'json')",
-                quote_untrusted(other)
+                quote_untrusted(&crate::safe_text::shown_value(other))
             )))
         }
     }
@@ -360,7 +360,7 @@ pub fn rds_commitment_command(
         if !ENGINES.contains(&engine) {
             return Err(usage(format!(
                 "argument --engine: invalid choice: {} (choose from 'mysql', 'mariadb', 'postgres')",
-                quote_untrusted(engine)
+                quote_untrusted(&crate::safe_text::shown_value(engine))
             )));
         }
         Some((
@@ -560,7 +560,7 @@ pub fn timestream_instance_types_command(
                 numbers[offset] = parse_py_int(text).ok_or_else(|| {
                     usage(format!(
                         "invalid int value for {name}: {}",
-                        quote_untrusted(text)
+                        quote_untrusted(&crate::safe_text::shown_value(text))
                     ))
                 })?;
             }
@@ -571,7 +571,7 @@ pub fn timestream_instance_types_command(
         }
         Some(other) => Err(usage(format!(
             "unknown instance-types mode {}: use 'recommend' or no argument",
-            quote_untrusted(other)
+            quote_untrusted(&crate::safe_text::shown_value(other))
         ))),
     }
 }

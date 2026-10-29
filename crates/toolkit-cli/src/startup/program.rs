@@ -178,11 +178,14 @@ pub fn program_artifacts_command(
     if !dir.is_dir() {
         output.diagnostic(&format!(
             "STARTUP_FAIL | reason=not_a_directory | path={}",
-            neutralize_line(&dir.display().to_string())
+            neutralize_line(&crate::safe_text::shown_path(&dir))
         ));
         return Err(ToolkitError::runtime(
             "startup_not_a_directory",
-            format!("migration directory is not a directory: {}", dir.display()),
+            format!(
+                "migration directory is not a directory: {}",
+                crate::safe_text::shown_path(&dir)
+            ),
         ));
     }
     let errors = validate_startup_artifacts(&dir)

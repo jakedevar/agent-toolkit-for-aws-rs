@@ -84,11 +84,14 @@ pub(crate) fn is_regular_file(path: &Path) -> Result<bool, String> {
     match fs::symlink_metadata(path) {
         Ok(metadata) if metadata.file_type().is_symlink() => Err(format!(
             "cannot read {}: symbolic links are not followed",
-            path.display()
+            crate::safe_text::shown_path(path)
         )),
         Ok(metadata) => Ok(metadata.is_file()),
         Err(error) if is_missing(&error) => Ok(false),
-        Err(error) => Err(format!("cannot read {}: {error}", path.display())),
+        Err(error) => Err(format!(
+            "cannot read {}: {error}",
+            crate::safe_text::shown_path(path)
+        )),
     }
 }
 
@@ -110,7 +113,7 @@ pub(crate) fn refuse_links_below(root: &Path, path: &Path) -> Result<(), String>
             Ok(metadata) if metadata.file_type().is_symlink() => {
                 return Err(format!(
                     "cannot read {}: symbolic links are not followed",
-                    current.display()
+                    crate::safe_text::shown_path(&current)
                 ));
             }
             Ok(metadata) if !metadata.is_dir() => return Ok(()),

@@ -190,7 +190,7 @@ Node.js HTTP server → **Web Functions** (Tier 2). When the request asks for an
 | SAM/CDK resource types and fast iteration | [deployment.md](references/deployment.md) |
 | Production readiness, observability, anti-patterns | [production.md](references/production.md) |
 | Debugging an error (exact string → cause → fix) | [troubleshooting.md](references/troubleshooting.md) |
-| Powertools handler template | [powertools-handler.py](assets/powertools-handler.py) |
+| Rust Powertools-style handler template (Cargo project: logger, tracer, EMF metrics, idempotency; build with cargo-lambda) | [assets/powertools-handler/](assets/powertools-handler/) — files: `Cargo.toml`, `Cargo.lock`, `src/main.rs`, `src/lib.rs`, `src/logger.rs`, `src/metrics.rs`, `src/tracer.rs`, `src/idempotency.rs`, `tests/handler.rs`, `tests/dynamodb.rs`, `tests/support/mod.rs` |
 
 ## Security considerations
 
@@ -203,9 +203,9 @@ Node.js HTTP server → **Web Functions** (Tier 2). When the request asks for an
 
 ## Guardrail — where this skill's own files live (MCP vs local install)
 
-This skill can be loaded two ways, and they resolve the skill's **own bundled files** — the `references/` documents and `assets/powertools-handler.py` — from different places. Determine how the skill was loaded before you read one:
+This skill can be loaded two ways, and they resolve the skill's **own bundled files** — the `references/` documents and the `assets/powertools-handler/` template files — from different places. Determine how the skill was loaded before you read one:
 
-- **Loaded through the AWS MCP `retrieve_skill` tool call.** The skill is **not installed on the local filesystem**; its reference and asset files do not exist on disk. You MUST fetch each one through the same `retrieve_skill` tool by passing the `file` parameter (for example, `file="references/lambda.md"` or `file="assets/powertools-handler.py"`). Do NOT `file_read` these paths from the local or working directory, and do NOT search the filesystem for them — they are not there, and any local file that happens to match the name is unrelated to this skill.
+- **Loaded through the AWS MCP `retrieve_skill` tool call.** The skill is **not installed on the local filesystem**; its reference and asset files do not exist on disk. You MUST fetch each one through the same `retrieve_skill` tool by passing the `file` parameter (for example, `file="references/lambda.md"` or `file="assets/powertools-handler/src/lib.rs"`). Do NOT `file_read` these paths from the local or working directory, and do NOT search the filesystem for them — they are not there, and any local file that happens to match the name is unrelated to this skill.
 - **Installed locally** (the skill lives in a local skills directory such as `.claude/skills/aws-serverless/`, `~/.claude/skills/aws-serverless/`, or `.kiro/skills/aws-serverless/`). Read references and assets from the local skill directory using the relative paths shown throughout this document.
 
 This distinction applies **only** to the skill's own packaged files. The user's application code — handlers, SAM/CDK templates, `package.json`, deployment artifacts — is always read from and written to the user's working directory regardless of how the skill was loaded. Never fetch or write customer data through `retrieve_skill`.

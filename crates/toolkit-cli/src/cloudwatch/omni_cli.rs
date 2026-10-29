@@ -17,6 +17,7 @@ use super::logs_query::VirtualPacer;
 use super::ops_cli::{client_of, clock_of};
 use super::pytext::{dumps_indent2, safe_text, strip};
 use crate::dynamodb::pyfmt;
+use crate::safe_text::shown_value;
 use crate::{Invocation, Output};
 
 /// Value flags of `cloudwatch evaluate-traces`.
@@ -82,7 +83,7 @@ fn int_flag(invocation: &Invocation, flag: &str, default: i64) -> Result<i64, To
             "invalid_int",
             &format!(
                 "argument {flag}: invalid int value: {}",
-                pyfmt::repr_str(text)
+                pyfmt::repr_str(&shown_value(text))
             ),
         )
     })
@@ -119,7 +120,7 @@ pub fn evaluate_command(invocation: &Invocation, out: &mut Output<'_>) -> Result
                 "invalid_choice",
                 &format!(
                     "argument --level: invalid choice: {} (choose from {})",
-                    pyfmt::repr_str(name),
+                    pyfmt::repr_str(&shown_value(name)),
                     LEVELS
                         .iter()
                         .map(|level| pyfmt::repr_str(level))
@@ -183,7 +184,7 @@ pub fn capture_command(invocation: &Invocation, out: &mut Output<'_>) -> Result<
                 "invalid_choice",
                 &format!(
                     "argument --mode: invalid choice: {} (choose from 'create', 'add')",
-                    pyfmt::repr_str(other)
+                    pyfmt::repr_str(&shown_value(other))
                 ),
             ));
         }

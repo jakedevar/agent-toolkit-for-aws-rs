@@ -202,8 +202,10 @@ impl From<ScoreError> for ToolkitError {
 
 /// Text that is safe to print: control characters, escapes, bidirectional
 /// controls and other non-printing characters of an untrusted name or path are
-/// written as `\u{..}` so they cannot forge or hide report lines (#4602).
+/// written as `\u{..}` so they cannot forge or hide report lines (#4602). A
+/// credential-shaped one is redacted first (#4941).
 pub(crate) fn shown(text: &str) -> String {
+    let text = toolkit_aws::redact_text(text);
     let mut out = String::with_capacity(text.len());
     for c in text.chars() {
         let plain = c == ' ' || c.is_ascii_graphic() || (!c.is_ascii() && c.is_alphanumeric());

@@ -38,7 +38,7 @@ mod plan;
 mod policy;
 mod recorded;
 mod teardown;
-mod write;
+pub(crate) mod write;
 
 /// Registration of the `dynamodb-deploy` slice: its routes and help text (see `crate::registry`).
 pub(crate) const SLICE: crate::registry::Slice = crate::registry::Slice {

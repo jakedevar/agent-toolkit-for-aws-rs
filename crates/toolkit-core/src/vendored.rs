@@ -434,7 +434,10 @@ pub fn sync_vendored(plugin_root: &Path, check: bool) -> Result<VendoredReport, 
     if !plugin_root.is_dir() {
         return Err(ToolkitError::runtime(
             "plugin_root_not_found",
-            format!("plugin root is not a directory: {}", plugin_root.display()),
+            format!(
+                "plugin root is not a directory: {}",
+                crate::paths::shown(plugin_root)
+            ),
         ));
     }
     let mut report = VendoredReport::default();

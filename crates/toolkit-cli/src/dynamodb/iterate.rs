@@ -224,7 +224,14 @@ fn load_or(path: &Path, default: Option<Json>) -> Res<Json> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => match default {
             Some(value) => Ok(value),
             None => Err(die(
-                format!("file not found: {}", pyfmt::normalized_path(path)),
+                format!(
+                    "file not found: {}",
+                    // Redacted before normalizing: `//` becomes `/`, which
+                    // hides URL userinfo from the redactor (#4941).
+                    crate::safe_text::shown_value(&pyfmt::normalized_path(Path::new(
+                        &*crate::safe_text::redacted_value(&path.display().to_string())
+                    )))
+                ),
                 2,
             )),
         },
@@ -857,11 +864,16 @@ fn words(items: &[&str]) -> Vec<String> {
 }
 
 /// `_run`: announce a step, run it, and turn a failure into the step's own
-/// exit status.
+/// exit status. The announcement shows each word redacted (#5009); the step
+/// runs on the real words.
 fn run_step(env: &mut dyn RoundEnv, out: &mut Output<'_>, step: &str, argv: &[String]) -> Res<()> {
+    let shown: Vec<_> = argv
+        .iter()
+        .map(|word| crate::safe_text::redacted_value(word))
+        .collect();
     out.line(&format!(
         "\n[iterate_design] {step}: toolkit {}",
-        argv.join(" ")
+        shown.join(" ")
     ))?;
     match env.run_step(argv, out) {
         Ok(()) => Ok(()),
@@ -1205,9 +1217,10 @@ pub fn run_iterate_round(
         let change = load_or(change_path, None)?;
         model = apply_change(model, &change)?;
         write_text(model_path, &model.to_pretty_string())?;
-        let name = model_path
-            .file_name()
-            .map_or_else(String::new, |name| name.to_string_lossy().into_owned());
+        let name = model_path.file_name().map_or_else(String::new, |name| {
+            // Shown redacted; the change is written at the real path (#5009).
+            crate::safe_text::redacted_value(&name.to_string_lossy()).into_owned()
+        });
         applied_diff = Some(change);
         out.line(&format!("[iterate_design] applied change to {name}"))?;
     }

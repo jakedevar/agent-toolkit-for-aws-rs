@@ -2078,6 +2078,7 @@ const INVENTORY: &[(&str, Class)] = &[
         ),
     ),
     ("bedrock_agent", Class::Recorded),
+    ("bedrock_probes", Class::Recorded),
     (
         "bedrock_report",
         Class::NotRecorded("the skill's own report payloads and phase-result files"),
@@ -2091,12 +2092,25 @@ const INVENTORY: &[(&str, Class)] = &[
             "a pure cost calculator and a design loop over the skill's own state files",
         ),
     ),
+    ("dynamodb_bench", Class::Recorded),
     ("dynamodb_deploy", Class::Recorded),
+    // Includes the tunnel commands of `elasticache/tunnel/` (#4393, round 19): they
+    // replay `--recorded` through `toolkit_aws::recorded`, and their flag constant
+    // `TUNNEL_RECORDED_FLAG` is unique in `src` (#4933).
     ("elasticache", Class::Recorded),
+    // Slices L0-L2 of #4382 (#5085): no Launch API response is read yet. L5
+    // reclassifies it `Recorded` with the shaped API reads (design 7.1, Q3).
+    (
+        "launch",
+        Class::NotRecorded(
+            "the local session and region files and the user's own source tree and ZIP archives",
+        ),
+    ),
     (
         "manifests",
         Class::NotRecorded("the repository's marketplace and plugin manifests"),
     ),
+    ("marketplace", Class::Recorded),
     (
         "msk",
         Class::NotRecorded("sizing, compatibility and simulation inputs the user writes"),
