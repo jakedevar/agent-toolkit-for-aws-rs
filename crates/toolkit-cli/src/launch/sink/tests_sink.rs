@@ -135,7 +135,11 @@ fn screened(secrets: Secrets, text: &str) -> (String, String, u8) {
     let status = {
         let mut output = Output::with_diagnostics(&mut out, &mut err);
         output.refuse_known(secrets.0, super::super::text::error_text(GENERIC_FAILURE));
-        output.line(&format!("{{\"baseUrl\": \"https://h.example/{text}?x=1\"}}")).unwrap();
+        output
+            .line(&format!(
+                "{{\"baseUrl\": \"https://h.example/{text}?x=1\"}}"
+            ))
+            .unwrap();
         output.exit_status()
     };
     (
@@ -194,7 +198,10 @@ fn t_tok_sink_refuses_every_rendered_form_and_each_form_is_needed() {
             .filter(|e| *e != escape)
             .collect();
         assert!(
-            leaks(registered(&others, &REQUIRED_LAYERS), &escape.render(RENDERED)),
+            leaks(
+                registered(&others, &REQUIRED_LAYERS),
+                &escape.render(RENDERED)
+            ),
             "{escape:?} is covered without itself"
         );
     }
@@ -204,7 +211,10 @@ fn t_tok_sink_refuses_every_rendered_form_and_each_form_is_needed() {
             .filter(|l| *l != layer)
             .collect();
         assert!(
-            leaks(registered(&REQUIRED_ESCAPES, &others), &layer.render(RENDERED)),
+            leaks(
+                registered(&REQUIRED_ESCAPES, &others),
+                &layer.render(RENDERED)
+            ),
             "{layer:?} is covered without itself"
         );
     }

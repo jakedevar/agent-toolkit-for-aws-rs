@@ -175,9 +175,9 @@ impl Secrets {
             return;
         }
         for escape in escapes {
-            let escaped = escape.render(value);
+            let inner = escape.render(value);
             for layer in layers {
-                let form = layer.render(&escaped);
+                let form = layer.render(&inner);
                 if !self.0.contains(&form) {
                     self.0.push(form);
                 }
