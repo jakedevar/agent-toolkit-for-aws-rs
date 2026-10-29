@@ -416,3 +416,5 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 10-29 00:13Z: #4941 impl 449c309c530f376d947d70e48d3a654d6bc56070 (f8244a11; shared safe_path/safe_text/safe_prefix + CallerText sinks: redact whole -> 200-char cut "..." -> escape; docgraph helpers deleted; asm exec exempt; red on bdf1578f: 369 leaks / ~50 cmds; scoped 8bc1a92f ok cli 3080, fmt a147b591, clippy 1a478489). Review #4971 worker c5dd6313 (Codex sol high, pinned, op 81167013). On ACCEPT mail r16 (must also move bedrock_probes diag::path onto shared helper, keeping #4939 env scrub).
   #4970 cancelled as dup of #4865 (6th report; scripts/rsi-stash also missing).
   4/4 busy: 092f281f (r16), 1416bcca (#4969), 160f8b97 (#4393), c5dd6313 (#4971).
+- 10-29 00:2xZ: #4969 (1416bcca) on #4396 f2e3826b: CHANGES_REQUESTED #4973 P1 (out-of-range qty -> 0 submitted/finalized), #4974 P1 (EMF raw caller strings), #4972 P2 (saturating_add allocations), #4976 P2 (f64 ranking). Repair worker 8dc00bed (Sonnet high, continue_from ff7ae0b8, op 60c17d2d). Then narrow re-review #4969.
+  4/4 busy: 092f281f (r16), 160f8b97 (#4393), c5dd6313 (#4971), 8dc00bed (#4396 repair).
