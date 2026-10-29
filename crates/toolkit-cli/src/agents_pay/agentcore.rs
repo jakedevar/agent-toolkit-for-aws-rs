@@ -739,6 +739,35 @@ impl PaymentProof {
 
 #[cfg(test)]
 impl<'a> PaymentClient<'a> {
+    fn get_session(
+        &self,
+        _manager: &str,
+        _session: &str,
+        _user: &str,
+    ) -> Result<Json, PaymentError> {
+        Err(PaymentError::InvalidResponse)
+    }
+    fn create_session(
+        &self,
+        _manager: &str,
+        _user: &str,
+        _budget: &str,
+        _expiry: i64,
+        _token: &str,
+    ) -> Result<Json, PaymentError> {
+        Err(PaymentError::InvalidResponse)
+    }
+    fn create_instrument(
+        &self,
+        _manager: &str,
+        _user: &str,
+        _connector: &str,
+        _network: &str,
+        _email: &str,
+        _token: &str,
+    ) -> Result<Json, PaymentError> {
+        Err(PaymentError::InvalidResponse)
+    }
     /// Build an adapter using the conventional endpoint.
     ///
     /// # Errors
@@ -935,6 +964,69 @@ mod wire_contracts {
         }
         fn sleep(&self, duration: Duration) {
             self.0.set(self.0.get() + duration);
+        }
+    }
+
+    #[test]
+    fn other_payment_operations_have_golden_wires() {
+        let session = br#"{"paymentSession":{"paymentSessionId":"ps","paymentManagerArn":"arn","userId":"user","expiryTimeInMinutes":60,"createdAt":1,"updatedAt":1}}"#;
+        let instrument = br#"{"paymentInstrument":{"paymentInstrumentId":"pi","paymentManagerArn":"arn","paymentConnectorId":"connector","userId":"user","paymentInstrumentType":"EMBEDDED_CRYPTO_WALLET","paymentInstrumentDetails":{"embeddedCryptoWallet":{"network":"ETHEREUM","linkedAccounts":[{"email":{"emailAddress":"user@example.com"}}]}},"createdAt":1,"status":"ACTIVE","updatedAt":1}}"#;
+        let transport = FakeStreamingTransport::new()
+            .respond(200, &[], vec![FakeChunk::data(session)])
+            .respond(201, &[], vec![FakeChunk::data(session)])
+            .respond(201, &[], vec![FakeChunk::data(instrument)]);
+        let client = PaymentClient::new("us-east-1", &transport, &NoSigner).unwrap();
+        assert!(client.get_session("arn", "ps", "user").is_ok());
+        assert!(client
+            .create_session("arn", "user", "10", 60, "token")
+            .is_ok());
+        assert!(client
+            .create_instrument(
+                "arn",
+                "user",
+                "connector",
+                "ETHEREUM",
+                "user@example.com",
+                "token"
+            )
+            .is_ok());
+        let requests = transport.requests();
+        let expected = [
+            (
+                "getPaymentSession",
+                "openclaw-aws-agents-pay",
+                get_body("arn", "ps"),
+            ),
+            (
+                "createPaymentSession",
+                "aws-agents-pay",
+                session_body("arn", "10", 60, "token"),
+            ),
+            (
+                "createPaymentInstrument",
+                "aws-agents-pay",
+                instrument_body("arn", "connector", "ETHEREUM", "user@example.com", "token"),
+            ),
+        ];
+        assert_eq!(requests.len(), expected.len());
+        for (request, (path, agent, body)) in requests.iter().zip(expected) {
+            assert_eq!(
+                request.url,
+                format!("https://bedrock-agentcore.us-east-1.amazonaws.com/payments/{path}")
+            );
+            assert_eq!(
+                request
+                    .headers
+                    .get("x-amzn-bedrock-agentcore-payments-user-id"),
+                Some("user")
+            );
+            assert_eq!(
+                request
+                    .headers
+                    .get("x-amzn-bedrock-agentcore-payments-agent-name"),
+                Some(agent)
+            );
+            assert_eq!(request.body, body.as_bytes());
         }
     }
 
