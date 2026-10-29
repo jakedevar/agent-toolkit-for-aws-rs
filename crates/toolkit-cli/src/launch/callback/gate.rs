@@ -216,7 +216,7 @@ mod tests {
                     .path();
                 assert_eq!(std::fs::read(temp).unwrap(), b"session");
                 calls.borrow_mut().push("prepared");
-                cutoff - Duration::from_millis(1)
+                cutoff.checked_sub(Duration::from_millis(1)).unwrap()
             },
             || {
                 calls.borrow_mut().push("admitted");
