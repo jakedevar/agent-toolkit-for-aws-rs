@@ -74,7 +74,7 @@ The table and issues.json preserve the initial owner map. Bootstrap substitution
 | #4410 | payments-policy | deepseek | #4379 |
 | #4411 | payments-bridge | glm | #4379, #4410 |
 | #4412 | security-hooks | glm | #4374 |
-| #4413 | mcp (phase-1 design: [mcp-proxy-design.md](mcp-proxy-design.md)) | deepseek | #4379, #4374 |
+| #4413 | mcp (design rev. 2 after AC4 pre-review #4994: [mcp-proxy-design.md](mcp-proxy-design.md)) | deepseek | #4379, #4374 |
 | #4414 | cutover | glm | #4378, #4413, #4398, #4386, #4411, #4397, #4412 |
 | #4415 | retire | deepseek | #4414, #4409, #4396, #4394, #4395, #4393, #4391, #4390, #4388, #4387, #4382, #4383 |
 | #4451 | asm-exec (added by audit #4371; status: [asm-exec.md](asm-exec.md)) | sonnet (assigned) | #4374, #4379; gates #4415 together with #4582 |
