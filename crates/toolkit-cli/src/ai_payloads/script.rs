@@ -142,4 +142,21 @@ mod tests {
             .contains("toolkit-render")));
         fs::remove_dir_all(dir).unwrap();
     }
+
+    #[test]
+    fn ap_scr_03_numbering_ignores_nonmatching_and_nonregular_entries() {
+        let dir = std::env::temp_dir().join(format!(
+            "script-number-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir(&dir).unwrap();
+        assert_eq!(next_number(&dir).unwrap(), 1);
+        fs::write(dir.join("04_old.py"), "x").unwrap();
+        fs::write(dir.join("99_old.txt"), "x").unwrap();
+        fs::write(dir.join("8_old.py"), "x").unwrap();
+        fs::create_dir(dir.join("90_directory.py")).unwrap();
+        assert_eq!(next_number(&dir).unwrap(), 5);
+        fs::remove_dir_all(dir).unwrap();
+    }
 }

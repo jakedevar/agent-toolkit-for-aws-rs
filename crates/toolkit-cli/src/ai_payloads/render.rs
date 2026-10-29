@@ -495,5 +495,5 @@ fn command_with_hooks(
 }
 
 #[cfg(test)]
-#[path = "render_tests.rs"]
+#[path = "../../tests/support/ai_payloads_render_hooks.rs"]
 mod tests;

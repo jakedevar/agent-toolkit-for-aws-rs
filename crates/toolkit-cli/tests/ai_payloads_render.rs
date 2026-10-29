@@ -839,3 +839,54 @@ fn ap_asn_05_type_errors_across_values_and_assign_are_collected_sorted() {
     assert!(a < middle && middle < z, "{stderr}");
     assert!(!f.0.join("scripts").exists());
 }
+
+#[test]
+fn ap_nb_06_existing_notebook_is_never_overwritten() {
+    let f = Fixture::new();
+    let template = f.write(
+        "template.py",
+        "# Cell 0 [markdown]: Example\n# Desc\n# Cell 1: Code\npass\n",
+    );
+    let destination = f.write("notebooks/example.ipynb", "existing bytes");
+    for flags in [&[][..], &["--new"][..]] {
+        let result = f.render(&template, "notebook", flags);
+        assert_eq!(result.status.code(), Some(1));
+        assert!(String::from_utf8_lossy(&result.stderr).contains("destination_exists"));
+        assert_eq!(fs::read_to_string(&destination).unwrap(), "existing bytes");
+    }
+    assert!(fs::read_dir(f.0.join("notebooks"))
+        .unwrap()
+        .all(|entry| !entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .contains("toolkit-render")));
+}
+
+#[test]
+fn ap_app_09_production_sources_do_not_modify_existing_files() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/ai_payloads");
+    for entry in fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.extension().and_then(|x| x.to_str()) != Some("rs") {
+            continue;
+        }
+        let source = fs::read_to_string(&path).unwrap();
+        for forbidden in [
+            "std::fs::rename",
+            "fs::rename(",
+            ".set_len(",
+            ".try_lock(",
+            ".lock(",
+        ] {
+            assert!(
+                !source.contains(forbidden),
+                "{}: {forbidden}",
+                path.display()
+            );
+        }
+        if path.file_name().unwrap() != "place.rs" {
+            assert!(!source.contains("OpenOptions::new()"), "{}", path.display());
+        }
+    }
+}

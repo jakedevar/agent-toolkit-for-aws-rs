@@ -106,3 +106,46 @@ fn ap_app_04_source_edit_after_snapshot_keeps_both_versions() {
         .unwrap()
         .contains(&sha256_hex(SOURCE.as_bytes())));
 }
+
+#[test]
+fn ap_app_05_06_rename_save_and_deletion_preserve_snapshot() {
+    struct Edit {
+        source: PathBuf,
+        replace: bool,
+    }
+    impl place::PublishHooks for Edit {
+        fn before_commit(&mut self, _: &Path, _: &Path) {
+            if self.replace {
+                let temporary = self.source.with_extension("editor");
+                fs::write(&temporary, b"editor replacement").unwrap();
+                fs::rename(temporary, &self.source).unwrap();
+            } else {
+                fs::remove_file(&self.source).unwrap();
+            }
+        }
+    }
+    for replace in [true, false] {
+        let f = Fixture::new();
+        let source = f.0.join("notebooks/example.ipynb");
+        fs::write(&source, SOURCE).unwrap();
+        let mut sink = Vec::new();
+        let mut output = Output::new(&mut sink);
+        command_with_hooks(
+            &f.invocation(),
+            &mut output,
+            &mut Edit {
+                source: source.clone(),
+                replace,
+            },
+        )
+        .unwrap();
+        if replace {
+            assert_eq!(fs::read(source).unwrap(), b"editor replacement");
+        } else {
+            assert!(!source.exists());
+        }
+        assert!(fs::read_to_string(f.0.join("notebooks/example-01.ipynb"))
+            .unwrap()
+            .contains("snapshot"));
+    }
+}
