@@ -52,3 +52,28 @@ fn t_api_missing_client_token_never_retries() {
     assert!(call(&fake, ApiOperation::CreateLaunch, "l-1", &[], Some(json!({}))).is_err());
     assert_eq!(fake.requests().len(), 1);
 }
+
+#[cfg(unix)]
+#[test]
+fn t_api_put_validates_url_and_never_echoes_signature() {
+    use toolkit_aws::testing::FixedResolver;
+    let resolver = FixedResolver::new().answer_any(&["8.8.8.8"]);
+    for url in ["http://bucket.amazonaws.com/x?signature=FAKE-SIGNATURE", "https://user:FAKE-SECRET@bucket.amazonaws.com/x", "https://evil.example/x?signature=FAKE-SIGNATURE", "https://service.api.aws/x?signature=FAKE-SIGNATURE"] {
+        let fake = reply(200, "{}");
+        let sleeper = RecordingSleeper::new();
+        let client = Client { transport: &fake, base: "https://launch-with-aws.us-east-1.api.aws", region: "us-east-1", token: &Secret::new("FAKE-ACCESS-TOKEN"), clock: &SystemClock, sleeper: &sleeper, jitter: &NoJitter, policy: RetryPolicy::default() };
+        let error = client.put_archive(url, b"archive", &resolver).unwrap_err();
+        assert!(!format!("{error} {error:?}").contains("FAKE-"));
+        assert!(fake.requests().is_empty());
+    }
+    let fake = reply(503, "{}").respond(200, &[], vec![]);
+    let sleeper = RecordingSleeper::new();
+    let client = Client { transport: &fake, base: "https://launch-with-aws.us-east-1.api.aws", region: "us-east-1", token: &Secret::new("FAKE-ACCESS-TOKEN"), clock: &SystemClock, sleeper: &sleeper, jitter: &NoJitter, policy: RetryPolicy::default() };
+    let error = client.put_archive("https://bucket.amazonaws.com/x?signature=FAKE-SIGNATURE", b"archive", &resolver).unwrap_err();
+    assert!(!format!("{error} {error:?}").contains("FAKE-SIGNATURE"));
+    assert_eq!(fake.requests().len(), 1);
+    assert_eq!(fake.frames_pulled(), 0);
+    assert_eq!(fake.requests()[0].headers.get("content-type"), Some("application/zip"));
+    assert_eq!(fake.requests()[0].headers.get("authorization"), None);
+    assert_eq!(fake.requests()[0].body, b"archive");
+}
