@@ -253,7 +253,8 @@ impl WaitTracker {
         self.finish_at_with(dir, pid, now, elapsed, report)
     }
     /// Evaluate one observation, retaining the last trusted cutoff across reads.
-    pub fn finish(
+    #[cfg(test)]
+    pub(super) fn finish(
         &mut self,
         state_dir: &Path,
         pid: u32,
@@ -263,6 +264,7 @@ impl WaitTracker {
         self.finish_at(state_dir, pid, now, elapsed)
     }
 
+    #[cfg(test)]
     pub(super) fn finish_at(
         &mut self,
         state_dir: &Path,
