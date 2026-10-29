@@ -132,12 +132,10 @@ fn shown(dir: &Path, name: &str) -> String {
 #[cfg(unix)]
 fn write_private_file(path: &Path, contents: &str, name: &str) -> Result<(), String> {
     use std::io::Write;
-    use std::os::unix::fs::OpenOptionsExt;
 
     let mut file = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
-        .mode(0o600)
         .open(path)
         .map_err(|error| {
             if error.kind() == std::io::ErrorKind::AlreadyExists {

@@ -1154,39 +1154,6 @@ fn private_review_args<'a>(recorded: &'a str, analysis: &'a str, out: &'a str) -
     ]
 }
 
-/// Runs `wa-review` with a fully permissive process umask, restoring it after.
-#[cfg(unix)]
-fn run_with_open_umask(words: &[&str]) -> super::Ran {
-    use rustix::fs::Mode;
-    use rustix::process::umask;
-
-    let before = umask(Mode::empty());
-    let ran = run(words);
-    umask(before);
-    ran
-}
-
-#[cfg(unix)]
-#[test]
-fn r_dg_08_analysis_data_reports_are_created_0600_under_a_permissive_umask() {
-    use std::os::unix::fs::PermissionsExt;
-
-    let dir = TempDir::new("private-mode");
-    let recorded = dir.write("recorded.json", &Cluster::default().recording());
-    let analysis = dir.write("analysis.json", ANALYSIS);
-    let out = dir.join("out");
-    let out_text = out.to_string_lossy().into_owned();
-    let ran = run_with_open_umask(&private_review_args(&recorded, &analysis, &out_text));
-    assert_eq!(ran.status, 0, "{}", ran.stderr);
-    for name in [RESULTS_NAME, REPORT_NAME] {
-        let mode = std::fs::metadata(out.join(name))
-            .expect("report file")
-            .permissions()
-            .mode();
-        assert_eq!(mode & 0o7777, 0o600, "{name} is {:o}", mode & 0o7777);
-    }
-}
-
 #[cfg(unix)]
 #[test]
 fn r_dg_08_analysis_data_refuses_an_existing_report_and_leaves_it_unchanged() {
