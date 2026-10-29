@@ -849,10 +849,10 @@ fn ap_sub_04_grouped_operands_and_expression_components() {
 #[test]
 fn ap_cat_06_inline_case_assignments_and_soft_keyword_names() {
     let template = catalog_of(&demo(concat!(
-        "COUNT = 1\nAUG = 1\nLEFT = 1\nRIGHT = 1\n",
+        "COUNT = 1\nAUG = 1\nLEFT = 1\nRIGHT = 1\nNESTED = 1\n",
         "case = 1\nmatch = 2\n",
         "match value:\n    case 0: COUNT = 2\n    case 1: AUG += 1\n",
-        "    case 2: LEFT, RIGHT = 3, 4\n",
+        "    case 2: LEFT, RIGHT = 3, 4\n    case Point(x=0): NESTED = 2\n",
     )));
     let names: Vec<String> = items(field(&template, "targets"))
         .iter()
