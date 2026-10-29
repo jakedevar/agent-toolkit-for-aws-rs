@@ -201,8 +201,6 @@ fn ap_pub_02_two_publish_calls_interleave_and_post_commit_hook_observes_link() {
     }
     impl PublishHooks for Interleave {
         fn before_commit(&mut self, temp: &Path, dest: &Path) {
-            assert_eq!(fs::read(temp).unwrap(), b"loser");
-            assert!(!dest.exists());
             struct Observe<'a>(&'a mut bool);
             impl PublishHooks for Observe<'_> {
                 fn after_commit_before_unlink(&mut self, temp: &Path, dest: &Path) {
@@ -211,6 +209,8 @@ fn ap_pub_02_two_publish_calls_interleave_and_post_commit_hook_observes_link() {
                     *self.0 = true;
                 }
             }
+            assert_eq!(fs::read(temp).unwrap(), b"loser");
+            assert!(!dest.exists());
             publish_new(&self.dir, "x", b"winner", &mut Observe(&mut self.observed)).unwrap();
         }
     }
