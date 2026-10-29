@@ -141,6 +141,15 @@ pub(crate) fn command(inv: &Invocation, out: &mut Output<'_>) -> Result<(), Tool
             format!("template line {} column {}", v.line, v.column),
         ));
     }
+    if original.targets.iter().any(|target| {
+        types::slot_type(&target.name) == Some(types::SlotType::Consent)
+            && target.literal != "False"
+    }) {
+        return Err(fail(
+            "consent_template_invalid",
+            "consent template literals must be False",
+        ));
+    }
     let json = if let Some(file) = inv.value("--values") {
         let data = read(Path::new(file), MAX_TEXT_FILE_BYTES, "values_invalid")?;
         parse_json(&data).map_err(|_| fail("values_invalid", "invalid JSON"))?

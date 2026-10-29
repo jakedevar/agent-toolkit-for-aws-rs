@@ -182,6 +182,22 @@ mod tests {
             "notebook_version_unsupported"
         );
     }
+    #[test]
+    fn ap_nb_09_id_collision_limit_and_content_ids_are_deterministic() {
+        let source = r#"{"cells":[{"id":"a1"}],"metadata":{},"nbformat":4,"nbformat_minor":5}"#;
+        let cell = Json::object(vec![("cell_type", Json::string("code"))]);
+        let mut collisions = FixedIds(vec!["a1"; 64].into_iter());
+        assert_eq!(
+            append(source, vec![cell.clone()], &mut collisions).unwrap_err(),
+            "cell_id_exhausted"
+        );
+        let mut first = ContentIds("snapshot".into());
+        let mut second = ContentIds("snapshot".into());
+        assert_eq!(
+            append(source, vec![cell.clone()], &mut first).unwrap(),
+            append(source, vec![cell], &mut second).unwrap()
+        );
+    }
     struct FixedIds(std::vec::IntoIter<&'static str>);
     impl IdSource for FixedIds {
         fn id(&mut self, _: usize, _: usize) -> String {

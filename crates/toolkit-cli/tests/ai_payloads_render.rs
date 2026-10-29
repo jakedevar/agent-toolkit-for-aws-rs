@@ -319,7 +319,7 @@ fn ap_t28_01_02_03_04_cat_11_module_contract() {
         );
         let before = fs::read(&module).unwrap();
         let arg = format!("2={}", module.display());
-        let result = f.render(&root, mode, &["--cell", &arg]);
+        let result = f.render(&root, mode, &["--cell", &arg, "--allow-unresolved"]);
         assert!(
             result.status.success(),
             "{}",
@@ -341,4 +341,16 @@ fn ap_t28_01_02_03_04_cat_11_module_contract() {
             assert!(output.contains("def transform_dataset(df):"));
         }
     }
+}
+
+#[test]
+fn ap_con_05_template_consent_literal_must_be_false() {
+    let f = Fixture::new();
+    let template = f.write(
+        "template.py",
+        "# Cell 0 [markdown]: Example\n# Description\n# Cell 1: Code\nACCEPT_EULA = True\n",
+    );
+    let result = f.render(&template, "script", &[]);
+    assert_eq!(result.status.code(), Some(1));
+    assert!(!f.0.join("scripts").exists());
 }
