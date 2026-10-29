@@ -764,17 +764,20 @@ fn optional_origin_allowed_origins_must_be_a_list() {
 }
 
 #[test]
-fn optional_origin_the_refused_origin_is_escaped() {
-    let url = "https://ex\u{1b}ample.com/x";
-    let resolver = resolver().with_host("ex\u{1b}ample.com", vec![ip("93.184.216.37")]);
+fn optional_origin_the_refused_origin_is_a_shown_value() {
+    // The origin is a caller value: redacted, then bounded to 200
+    // characters (`shown_value`, #4941); the JSON writer escapes it.
+    let host = format!("{}.example", "a".repeat(250));
+    let url = format!("https://{host}/x");
+    let resolver = resolver().with_host(&host, vec![ip("93.184.216.37")]);
     let ch = challenge();
-    let got = authorize(&request(url, &ch, &base_policy(), &resources()), &resolver);
-    let text = reason(got);
-    assert!(
-        text.starts_with("Origin https://ex\\x1bample.com is not"),
-        "{text}"
+    let got = authorize(&request(&url, &ch, &base_policy(), &resources()), &resolver);
+    let origin = format!("https://{host}");
+    let shown: String = origin.chars().take(200).collect();
+    assert_eq!(
+        reason(got),
+        format!("Origin {shown}... is not in the configured allowed_origins.")
     );
-    assert!(!text.contains('\u{1b}'));
 }
 
 #[test]

@@ -28,7 +28,7 @@ use toolkit_core::{sha256_hex, Json};
 use super::amount::{exceeds_cap, validated_amount_units, CapDecimal};
 use super::pyval::{py_int, py_str, truthy};
 use super::urlparse::{urlparse, ParsedUrl};
-use crate::safe_text::safe_text;
+use crate::safe_text::shown_value;
 
 mod approved;
 mod fixed;
@@ -61,7 +61,8 @@ const TIMEOUT_RANGE: std::ops::RangeInclusive<i64> = 1..=3600;
 /// A refusal of the gate.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PolicyError {
-    /// A refusal with its fixed text (caller values in it are escaped).
+    /// A refusal with its fixed text (a caller value in it is a
+    /// `shown_value`: redacted and bounded; the JSON writer escapes it).
     Refused(String),
     /// Python raised `ValueError` (a URL, a port or `int()`); the flow
     /// reports the generic class-name text (R-ERR).
@@ -239,7 +240,7 @@ pub fn check_allowed_origins(policy: &Json, origin: &str) -> Result<(), PolicyEr
     } else {
         Err(refused(format!(
             "Origin {} is not in the configured allowed_origins.",
-            safe_text(origin)
+            shown_value(origin)
         )))
     }
 }
