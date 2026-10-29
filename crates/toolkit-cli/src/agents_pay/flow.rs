@@ -18,8 +18,8 @@ use super::config::{resolve_resource, Tunables};
 use super::deps::Deps;
 use super::net::{method_refusal, MerchantRequest, MerchantResponse, ProofHeader};
 use super::policy::{
-    assert_public_https_url, authorize, check_allowed_origins, PaymentRequest, PolicyError,
-    Resources,
+    assert_public_https_url, authorize, check_allowed_origins, Approved, PaymentRequest,
+    PolicyError, Resources,
 };
 use super::proof;
 use super::urlparse::urlparse;
@@ -269,7 +269,7 @@ fn learn_secret(secrets: &mut KnownSecrets, secret: &str) {
 /// `payment-session-` head, which is public and would otherwise match the
 /// fixed texts (`payment-capable`, `new-session`). Any other id is secret
 /// whole.
-fn session_secret(session: &str) -> &str {
+pub(in crate::agents_pay) fn session_secret(session: &str) -> &str {
     session
         .get(..SESSION_ID_HEAD.len())
         .filter(|head| head.eq_ignore_ascii_case(SESSION_ID_HEAD))
@@ -293,6 +293,81 @@ struct Paid {
     origin: String,
 }
 
+/// The inputs of [`prove`]: the post-probe half of one payment.
+pub(in crate::agents_pay) struct ProveInput<'a> {
+    /// The URL the payment is for.
+    pub(in crate::agents_pay) url: &'a str,
+    /// The challenge (R-CH output, or the bridge's one-entry challenge).
+    pub(in crate::agents_pay) challenge: &'a Json,
+    /// The policy object `policy::authorize` judges.
+    pub(in crate::agents_pay) policy: &'a Json,
+    /// The four resource ids.
+    pub(in crate::agents_pay) resources: &'a Resources,
+    /// The caller's purchase discriminator (none for the bridge, R-BR-TOK).
+    pub(in crate::agents_pay) purchase_id: Option<&'a str>,
+    /// The operation deadline.
+    pub(in crate::agents_pay) deadline: Instant,
+}
+
+/// Why [`prove`] produced no proof.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(in crate::agents_pay) enum ProveError {
+    /// Before `ProcessPayment` (T-ORDER-PRE): the gate, the deadline, the
+    /// region or the client refused; zero authorizations.
+    Refused(String),
+    /// `ProcessPayment` failed: at most one logical call (T-ORDER-POST).
+    Payment(PaymentError),
+    /// R-PP-VERIFY refused the proof; it is dropped unsent.
+    Proof(proof::ProofError),
+}
+
+/// The one spending path (R-SPEND-ORDER; `OpenClaw` R-BR-ONE-2): deadline
+/// admission around `policy::authorize`, then `before_spend` (the caller's
+/// region choice and secret bookkeeping), then exactly one
+/// `agentcore::process_payment` through a client opened for that region,
+/// then R-PP-VERIFY without the wait. `fetch`, the browser handle and the
+/// bridge all pay through here; the caller waits for `validAfter` itself
+/// (the bridge never does).
+///
+/// # Errors
+/// [`ProveError`].
+pub(in crate::agents_pay) fn prove(
+    deps: &Deps<'_>,
+    input: &ProveInput<'_>,
+    before_spend: impl FnOnce(&Approved) -> Result<String, String>,
+) -> Result<(proof::VerifiedProof, Duration), ProveError> {
+    let admitted = || {
+        if deps.clock.now() >= input.deadline {
+            Err(ProveError::Refused(FlowError::Timeout.during_flow()))
+        } else {
+            Ok(())
+        }
+    };
+    admitted()?;
+    let approved = authorize(
+        &PaymentRequest {
+            url: input.url,
+            challenge: input.challenge,
+            policy: input.policy,
+            resources: input.resources,
+            purchase_id: input.purchase_id,
+        },
+        deps.resolver,
+    )
+    .map_err(|error| ProveError::Refused(error.reason()))?;
+    admitted()?;
+    let region = before_spend(&approved).map_err(ProveError::Refused)?;
+    admitted()?;
+    let manager = approved.manager_arn().to_owned();
+    let api = deps
+        .payments
+        .open(&region, &manager, input.deadline)
+        .map_err(ProveError::Refused)?;
+    let authorized =
+        agentcore::process_payment(api.as_ref(), approved).map_err(ProveError::Payment)?;
+    proof::check(authorized, deps.clock).map_err(ProveError::Proof)
+}
+
 /// From the probe's 402 through the gate, `ProcessPayment` and R-PP-VERIFY.
 fn pay(
     run: &mut Run<'_, '_>,
@@ -313,52 +388,49 @@ fn pay(
         payment_session_id: run.resource("payment_session_id")?,
         user_id: run.resource("user_id")?,
     };
-    let approved = run.around(|| {
-        authorize(
-            &PaymentRequest {
-                url,
-                challenge: &challenge,
-                policy: &run.policy,
-                resources: &resources,
-                purchase_id,
-            },
-            run.deps.resolver,
-        )
-    })??;
-    let region = run_region(run, approved.manager_arn())?;
-    let path = urlparse(url)
-        .map(|p| p.path().to_owned())
-        .unwrap_or_default();
-    let receipt = Json::object(vec![
-        ("amount_usd", Json::string(approved.amount_usd())),
-        (
-            "network",
-            approved
-                .entry()
-                .get("network")
-                .cloned()
-                .unwrap_or(Json::Null),
-        ),
-        ("resource", Json::string(format!("{origin}{path}"))),
-    ]);
-    let manager = approved.manager_arn().to_owned();
-    let session = approved.session_id().to_owned();
-    run.add_secret(session_secret(&session));
-    run.add_secret(approved.token());
-    run.admitted()?;
-    let api = run
-        .deps
-        .payments
-        .open(&region, &manager, run.deadline)
-        .map_err(Refusal)?;
-    let authorized = agentcore::process_payment(api.as_ref(), approved).map_err(|error| {
+    let policy = run.policy.clone();
+    let deps = run.deps;
+    let input = ProveInput {
+        url,
+        challenge: &challenge,
+        policy: &policy,
+        resources: &resources,
+        purchase_id,
+        deadline: run.deadline,
+    };
+    let mut receipt = Json::Null;
+    let proved = prove(deps, &input, |approved| {
+        let region = run_region(run, approved.manager_arn()).map_err(|Refusal(reason)| reason)?;
+        let path = urlparse(url)
+            .map(|p| p.path().to_owned())
+            .unwrap_or_default();
+        receipt = Json::object(vec![
+            ("amount_usd", Json::string(approved.amount_usd())),
+            (
+                "network",
+                approved
+                    .entry()
+                    .get("network")
+                    .cloned()
+                    .unwrap_or(Json::Null),
+            ),
+            ("resource", Json::string(format!("{origin}{path}"))),
+        ]);
+        run.add_secret(session_secret(approved.session_id()));
+        run.add_secret(approved.token());
+        Ok(region)
+    });
+    let (verified, wait) = proved.map_err(|error| {
         Refusal(match error {
-            PaymentError::InvalidResponse => SHAPE.to_owned(),
-            other => FlowError::from_payment(&other).during_flow(),
+            ProveError::Refused(reason) => reason,
+            ProveError::Payment(PaymentError::InvalidResponse) => SHAPE.to_owned(),
+            ProveError::Payment(other) => FlowError::from_payment(&other).during_flow(),
+            ProveError::Proof(error) => error.reason().to_owned(),
         })
     })?;
-    let verified = proof::verify(authorized, run.deps.clock)
-        .map_err(|error| Refusal(error.reason().to_owned()))?;
+    if !wait.is_zero() {
+        run.deps.clock.sleep(wait);
+    }
     let header = verified.header();
     run.add_secret(header.value());
     if let Some(signature) = verified.signature() {
