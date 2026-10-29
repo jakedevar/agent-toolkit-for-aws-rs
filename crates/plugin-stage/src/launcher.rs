@@ -371,13 +371,16 @@ impl PluginScan<'_> {
         }
     }
 
-    /// Resolves one launcher string, failing closed (#5022): a string that
-    /// mentions a plugin `bin/` path is accepted only when it is exactly one
-    /// canonical launcher form of a declared binary, or names exactly one
-    /// declared `bin/<name>` in a spelling the checker resolves; any other
-    /// spelling (quoted, relative, wrapped, through a variable, `.`/`..`
-    /// segments, globs, a second reference) is refused. `Ok(None)` means the
-    /// string mentions no plugin binary.
+    /// Resolves one launcher string, failing closed (#5022, #5053 PM
+    /// ruling). The string is first compared byte for byte with the
+    /// canonical forms of this plugin's declared binaries. Otherwise, a
+    /// string that [`touches_bin`] (after classification-only
+    /// normalisation) is accepted only as a plain `hook` that holds exactly
+    /// one byte-exact canonical reference `"${CLAUDE_PLUGIN_ROOT}/bin/<name>"`
+    /// and nothing else touching `bin/`; a guard must be its canonical deny
+    /// launcher and an MCP server its canonical command. Every other
+    /// bin-touching string is refused with a fixed message that does not
+    /// echo it. `Ok(None)` means the string does not touch `bin/`.
     fn resolve_string(
         &self,
         kind: Kind,
@@ -390,37 +393,13 @@ impl PluginScan<'_> {
                 None => Ok(Some(binary.name.clone())),
             };
         }
-        let mentions = plugin_bin_mentions(text);
-        if mentions.is_empty() {
+        if !touches_bin(text, false) {
             return Ok(None);
-        }
-        let launcher_hint = "print the canonical launcher with `plugin-stage launcher PLUGIN/NAME`";
-        if let Some(reason) = mentions.iter().find_map(|mention| match mention {
-            Mention::Unresolvable(reason) => Some(reason),
-            Mention::Bin(_) => None,
-        }) {
-            return Err(format!(
-                "{reason}; plugin-stage cannot resolve it to one canonical launcher, so it is refused (fail closed); {launcher_hint}"
-            ));
-        }
-        if mentions.len() > 1 {
-            return Err(format!(
-                "mentions {} plugin bin/ paths; a launcher runs exactly one binary through its canonical form; {launcher_hint}",
-                mentions.len()
-            ));
         }
         let name = match find_bin_refs(text).as_slice() {
             [Found::Bad(message)] => return Err(message.clone()),
-            [Found::Name(name)]
-                if mentions[0] == Mention::Bin(format!("{BIN_DIR}/{name}")) =>
-            {
-                name.clone()
-            }
-            _ => {
-                return Err(format!(
-                    "mentions a plugin bin/ path in a quoted, relative, wrapped or otherwise non-canonical spelling; plugin-stage cannot resolve it to one canonical launcher, so it is refused (fail closed); {launcher_hint}"
-                ))
-            }
+            [Found::Name(name)] => name.clone(),
+            _ => return Err(REFUSED.to_string()),
         };
         let Some(binary) = self.declaration.binary(self.plugin, &name) else {
             return Err(format!(
@@ -429,10 +408,26 @@ impl PluginScan<'_> {
                 self.plugin
             ));
         };
-        match role_problem(binary, kind, text, json_path) {
-            Some(message) => Err(message),
-            None => Ok(Some(name)),
+        if let Some(message) = role_problem(binary, kind, text, json_path) {
+            return Err(message);
         }
+        // Only a plain hook gets here: the guard and MCP roles accept their
+        // exact canonical form alone, which matched above if it was used.
+        let references: Vec<String> = ROOT_VARS
+            .iter()
+            .map(|root| format!("\"{}\"", mcp_command(root, &name)))
+            .collect();
+        let hits: usize = references
+            .iter()
+            .map(|reference| text.matches(reference.as_str()).count())
+            .sum();
+        let Some(reference) = references.iter().find(|r| text.contains(r.as_str())) else {
+            return Err(REFUSED.to_string());
+        };
+        if hits != 1 || touches_bin(&text.replacen(reference.as_str(), "", 1), true) {
+            return Err(REFUSED.to_string());
+        }
+        Ok(Some(name))
     }
 
     /// The declared binary of this plugin whose canonical launcher `text` is
@@ -443,6 +438,11 @@ impl PluginScan<'_> {
             .find(|binary| canonical_forms(binary).iter().any(|form| form == text))
     }
 }
+
+/// The fixed refusal for a bin-touching string that is not a canonical
+/// launcher (#5053): the location prefix names the file and key, and the
+/// command itself is never echoed.
+const REFUSED: &str = "touches the plugin bin/ directory but is not a canonical launcher (a guard must be exactly its canonical deny launcher, an MCP server exactly its canonical command, and a plain hook may hold exactly one \"${CLAUDE_PLUGIN_ROOT}/bin/<name>\" reference and nothing else that touches bin/); refused (fail closed); print the canonical launcher with `plugin-stage launcher PLUGIN/NAME`";
 
 /// The exact launcher strings a binary's role allows.
 fn canonical_forms(binary: &BinarySpec) -> Vec<String> {
@@ -464,140 +464,221 @@ fn canonical_forms(binary: &BinarySpec) -> Vec<String> {
     }
 }
 
-/// How a launcher string mentions the plugin `bin/` directory.
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum Mention {
-    /// A statically resolved path below the plugin root starting at `bin`,
-    /// for example `bin/tool`.
-    Bin(String),
-    /// A path that may reach the plugin `bin/` but cannot be resolved.
-    Unresolvable(String),
-}
-
-/// Characters that make a path segment dynamic (expansion or globbing).
-const DYNAMIC: &[char] = &['$', '*', '?', '[', ']', '{', '}', '~', '`'];
-
-/// Glob characters that can make a relative path expand to `bin/...`.
-const GLOB: &[char] = &['*', '?', '['];
-
-/// Characters that separate shell words or commands, after quotes are
-/// removed. Splitting on them is deliberately coarse: it may produce more
-/// candidate paths than the shell would, never fewer.
-const SEPARATORS: &[char] = &[';', '|', '&', '(', ')', '<', '>', '=', '`', ','];
-
-/// Every place `text` may name the plugin `bin/` directory, found
-/// conservatively: quotes are dropped (the shell concatenates `"a"b`),
-/// backslashes are read as escapes (and, separately, as Windows path
-/// separators), and the string is split into candidate paths. A plugin-root
-/// path (`${CLAUDE_PLUGIN_ROOT}/...`), a path under another variable and a
-/// relative path (`bin/x`, `./bin/x`, `../bin/x`) are all considered; an
-/// absolute system path such as `/usr/bin/env` is not.
-fn plugin_bin_mentions(text: &str) -> Vec<Mention> {
-    let unquoted: String = text.chars().filter(|c| !matches!(c, '"' | '\'')).collect();
-    let mut mentions = scan_words(&unquoted.replace('\\', ""));
-    if unquoted.contains('\\') {
-        let separated = scan_words(&unquoted.replace('\\', "/"));
-        if separated
-            .iter()
-            .any(|mention| matches!(mention, Mention::Bin(_)) && !mentions.contains(mention))
-        {
-            mentions.push(Mention::Unresolvable(
-                "uses a backslash in a path that may name the plugin bin/ directory".to_string(),
-            ));
-        }
-    }
-    mentions
-}
-
-fn scan_words(text: &str) -> Vec<Mention> {
-    text.split(|c: char| c.is_whitespace() || SEPARATORS.contains(&c))
-        .filter(|word| !word.is_empty())
-        .filter_map(word_mention)
+/// Classification-only normalisation (#5053 PM ruling): every shell
+/// backslash-newline continuation (LF or CRLF) is removed, then every quote
+/// character, so `b\<LF>in`, `b""in` and `"${ROOT}"'/bin'` all read as one
+/// word. The original string is still what canonical forms are compared
+/// against.
+fn normalise(text: &str) -> String {
+    text.replace("\\\r\n", "")
+        .replace("\\\n", "")
+        .chars()
+        .filter(|c| !matches!(c, '"' | '\''))
         .collect()
 }
 
-fn is_bin_segment(segment: &str) -> bool {
-    let head = segment.split(':').next().unwrap_or(segment);
-    head.eq_ignore_ascii_case(BIN_DIR)
+/// Whether a launcher string may reach the plugin `bin/` directory. This
+/// deliberately does not parse the shell (#5053): it fails closed on
+/// substrings of the normalised string, read once with backslashes kept (as
+/// Windows separators) and once with them removed (as escapes). A string
+/// touches `bin/` when it
+/// - holds the word `bin` (any case) bounded by anything but a letter,
+///   digit, `_`, `.` or `-`, which covers `/bin/`, `\bin\`, `.//bin/`,
+///   `./././bin` and a system path such as `/usr/bin/env`;
+/// - holds a path segment whose glob (`*`, `?`, `[...]`) or brace expansion
+///   (`{b,x}in`) can produce `bin`; or
+/// - names a plugin-root variable (or is the rest of a string that did,
+///   `root_context`) and holds anything that can compute a path from it: a
+///   non-plain root expansion such as `${CLAUDE_PLUGIN_ROOT:-.}`, another
+///   `$name`, `${...}` or `$(...)` expansion, a backquote, a glob or brace
+///   character, `~` or `..`. Positional parameters such as `"$0"` and
+///   `"$@"` are allowed: they are how the shipped launchers pass the path.
+fn touches_bin(text: &str, root_context: bool) -> bool {
+    let joined = normalise(text);
+    let unescaped: String = joined.chars().filter(|c| *c != '\\').collect();
+    let rooted = root_context
+        || ROOT_VARS
+            .iter()
+            .any(|root| joined.to_ascii_uppercase().contains(root));
+    [joined, unescaped]
+        .iter()
+        .any(|form| has_bin_word(form) || expands_to_bin(form) || (rooted && computes_path(form)))
 }
 
-fn is_root_var(segment: &str) -> bool {
-    ROOT_VARS
-        .iter()
-        .any(|root| segment == format!("${{{root}}}") || segment == format!("${root}"))
+/// Whether `text` holds `bin` (ASCII case-insensitive) as a word.
+fn has_bin_word(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    let word = |byte: u8| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.' | b'-');
+    bytes.windows(3).enumerate().any(|(index, window)| {
+        window.eq_ignore_ascii_case(b"bin")
+            && (index == 0 || !word(bytes[index - 1]))
+            && bytes.get(index + 3).is_none_or(|byte| !word(*byte))
+    })
 }
 
-fn word_mention(word: &str) -> Option<Mention> {
-    let segments: Vec<&str> = word.split('/').collect();
-    let root = segments
-        .iter()
-        .rposition(|segment| ROOT_VARS.iter().any(|root| segment.contains(root)));
-    if let Some(index) = root {
-        let rest = &segments[index + 1..];
-        if rest.iter().all(|segment| segment.is_empty()) {
+/// Characters that separate shell words or commands. Splitting on them is
+/// coarse on purpose: it may produce more candidate words than the shell
+/// would, never fewer.
+const SEPARATORS: &[char] = &[';', '|', '&', '(', ')', '<', '>', '=', ':', '`'];
+
+/// The most brace alternatives expanded per word; more fails closed.
+const MAX_EXPANSIONS: usize = 64;
+
+/// Whether a word of `text` has a path segment that a glob or a brace
+/// expansion can turn into `bin`.
+fn expands_to_bin(text: &str) -> bool {
+    text.split(|c: char| c.is_whitespace() || SEPARATORS.contains(&c))
+        .filter(|word| !word.is_empty())
+        .any(|word| match expand_braces(word) {
+            None => true,
+            Some(expansions) => expansions.iter().any(|expansion| {
+                expansion
+                    .split(['/', '\\', ','])
+                    .any(|segment| glob_matches(segment.as_bytes(), b"bin"))
+            }),
+        })
+}
+
+/// Bash brace expansion of one word, bounded by [`MAX_EXPANSIONS`] (`None`
+/// past it). A `${...}` parameter expansion is not a brace list.
+fn expand_braces(word: &str) -> Option<Vec<String>> {
+    let mut done = Vec::new();
+    let mut pending = vec![word.to_string()];
+    while let Some(current) = pending.pop() {
+        match brace_list(&current) {
+            None => done.push(current),
+            Some((open, close, alternatives)) => {
+                for alternative in alternatives {
+                    pending.push(format!(
+                        "{}{alternative}{}",
+                        &current[..open],
+                        &current[close + 1..]
+                    ));
+                }
+            }
+        }
+        if done.len() + pending.len() > MAX_EXPANSIONS {
             return None;
         }
-        if !is_root_var(segments[index]) {
-            return Some(Mention::Unresolvable(format!(
-                "uses the plugin root in {word:?} through an expansion other than a plain ${{CLAUDE_PLUGIN_ROOT}}"
-            )));
+    }
+    Some(done)
+}
+
+/// The first `{a,b}` list of `word`: its brace offsets and its top-level
+/// alternatives.
+fn brace_list(word: &str) -> Option<(usize, usize, Vec<String>)> {
+    let bytes = word.as_bytes();
+    for open in 0..bytes.len() {
+        if bytes[open] != b'{' || (open > 0 && bytes[open - 1] == b'$') {
+            continue;
         }
-        return plugin_path(word, rest);
+        let mut depth = 0usize;
+        let mut commas = Vec::new();
+        for (index, byte) in bytes.iter().enumerate().skip(open) {
+            match byte {
+                b'{' => depth += 1,
+                b'}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        if commas.is_empty() {
+                            break;
+                        }
+                        let mut alternatives = Vec::new();
+                        let mut start = open + 1;
+                        for comma in commas.iter().copied().chain([index]) {
+                            alternatives.push(word[start..comma].to_string());
+                            start = comma + 1;
+                        }
+                        return Some((open, index, alternatives));
+                    }
+                }
+                b',' if depth == 1 => commas.push(index),
+                _ => {}
+            }
+        }
     }
-    if segments.first() == Some(&"") {
-        // An absolute path (`/usr/bin/env`) is not inside the plugin.
-        return None;
-    }
-    let Some(index) = segments.iter().position(|segment| is_bin_segment(segment)) else {
-        // No literal bin segment; a glob before the last segment may still
-        // expand to one (`b?n/tool`).
-        let leading = &segments[..segments.len() - 1];
-        return leading
-            .iter()
-            .any(|segment| segment.contains(GLOB))
-            .then(|| {
-                Mention::Unresolvable(format!(
-                    "{word:?} is a globbed path that may name the plugin bin/ directory"
-                ))
-            });
-    };
-    let leading = &segments[..index];
-    if leading.iter().any(|segment| segment.contains(DYNAMIC)) {
-        Some(Mention::Unresolvable(format!(
-            "{word:?} reaches a bin/ directory through a variable, glob or expansion"
-        )))
-    } else if leading.iter().all(|segment| *segment == ".") {
-        plugin_path(word, &segments[index..])
-    } else if leading.contains(&"..") {
-        Some(Mention::Unresolvable(format!(
-            "{word:?} is a relative path with `..` that may name the plugin bin/ directory"
-        )))
-    } else {
-        None
+    None
+}
+
+/// ASCII case-insensitive shell glob match of `pattern` against `name`
+/// (`*`, `?` and `[...]` classes with `!`/`^` negation and ranges; an
+/// unterminated `[` is literal).
+fn glob_matches(pattern: &[u8], name: &[u8]) -> bool {
+    match pattern.split_first() {
+        None => name.is_empty(),
+        Some((b'*', rest)) => (0..=name.len()).any(|skip| glob_matches(rest, &name[skip..])),
+        Some((b'?', rest)) => !name.is_empty() && glob_matches(rest, &name[1..]),
+        Some((b'[', rest)) => match rest.iter().skip(1).position(|byte| *byte == b']') {
+            Some(end) => {
+                let (class, after) = (&rest[..=end], &rest[end + 2..]);
+                let Some((&first, tail)) = name.split_first() else {
+                    return false;
+                };
+                class_matches(class, first) && glob_matches(after, tail)
+            }
+            None => name.first() == Some(&b'[') && glob_matches(rest, &name[1..]),
+        },
+        Some((&literal, rest)) => name.split_first().is_some_and(|(first, tail)| {
+            first.eq_ignore_ascii_case(&literal) && glob_matches(rest, tail)
+        }),
     }
 }
 
-/// Classifies the segments of a path below the plugin root: only its first
-/// real segment decides whether it is the plugin `bin/` directory, and `..`
-/// anywhere could re-enter it.
-fn plugin_path(word: &str, rest: &[&str]) -> Option<Mention> {
-    if rest.contains(&"..") {
-        return Some(Mention::Unresolvable(format!(
-            "{word:?} has a `..` segment in its plugin path"
-        )));
+fn class_matches(class: &[u8], byte: u8) -> bool {
+    let (negated, class) = match class.split_first() {
+        Some((b'!' | b'^', rest)) => (true, rest),
+        _ => (false, class),
+    };
+    let byte = byte.to_ascii_lowercase();
+    let mut index = 0;
+    let mut found = false;
+    while index < class.len() {
+        let low = class[index].to_ascii_lowercase();
+        if index + 2 < class.len() && class[index + 1] == b'-' {
+            let high = class[index + 2].to_ascii_lowercase();
+            found |= (low..=high).contains(&byte);
+            index += 3;
+        } else {
+            found |= low == byte;
+            index += 1;
+        }
     }
-    let parts: Vec<&str> = rest
-        .iter()
-        .copied()
-        .filter(|segment| !segment.is_empty() && *segment != ".")
-        .collect();
-    match parts.first() {
-        Some(first) if first.contains(DYNAMIC) => Some(Mention::Unresolvable(format!(
-            "{word:?} has a variable, glob or expansion in its plugin path"
-        ))),
-        Some(first) if is_bin_segment(first) => Some(Mention::Bin(parts.join("/"))),
-        _ => None,
+    found != negated
+}
+
+/// Whether a string that names the plugin root can compute another path
+/// from it. Plain `${ROOT}` / `$ROOT` expansions are removed first; any
+/// remaining root-variable name means a non-plain expansion.
+fn computes_path(text: &str) -> bool {
+    let mut rest = text.to_string();
+    for root in ROOT_VARS {
+        rest = rest.replace(&format!("${{{root}}}"), " ");
+        let plain = format!("${root}");
+        let mut out = String::new();
+        let mut tail = rest.as_str();
+        while let Some(at) = tail.find(&plain) {
+            let after = &tail[at + plain.len()..];
+            out.push_str(&tail[..at]);
+            if after.starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_') {
+                out.push_str(&plain);
+            } else {
+                out.push(' ');
+            }
+            tail = after;
+        }
+        out.push_str(tail);
+        rest = out;
     }
+    let upper = rest.to_ascii_uppercase();
+    if ROOT_VARS.iter().any(|root| upper.contains(root)) || rest.contains("..") {
+        return true;
+    }
+    if rest.contains(['*', '?', '[', ']', '{', '}', '~', '`']) {
+        return true;
+    }
+    rest.as_bytes().windows(2).any(|pair| {
+        pair[0] == b'$' && (pair[1].is_ascii_alphabetic() || matches!(pair[1], b'_' | b'{' | b'('))
+    })
 }
 
 /// Checks the launcher form a binary's role requires.
@@ -928,45 +1009,78 @@ mod tests {
     }
 
     #[test]
-    fn mentions_are_found_conservatively() {
-        let bin = |path: &str| vec![Mention::Bin(path.to_string())];
-        assert_eq!(
-            plugin_bin_mentions(r#""${CLAUDE_PLUGIN_ROOT}/bin/tool""#),
-            bin("bin/tool")
-        );
-        assert_eq!(
-            plugin_bin_mentions(r#""${CLAUDE_PLUGIN_ROOT}"/./bin/tool"#),
-            bin("bin/tool")
-        );
-        assert_eq!(plugin_bin_mentions("exec ./bin/tool"), bin("bin/tool"));
-        for none in [
+    fn bin_touching_strings_are_found_on_substrings() {
+        for touching in [
+            r#""${CLAUDE_PLUGIN_ROOT}/bin/tool""#,
+            r#""${CLAUDE_PLUGIN_ROOT}"/./bin/tool"#,
+            "exec ./bin/tool",
+            "cd x; .//bin/tool",
+            ".///bin/tool",
+            "././/bin//tool",
+            "./b\\\nin/tool",
+            "\"./b\\\r\nin/tool\"",
+            "b\"\"in/tool",
+            "b'i'n/tool",
+            r"b\in/tool",
+            r"${CLAUDE_PLUGIN_ROOT}\bin\tool",
+            "BIN/tool",
+            "cd bin && ./tool",
             "/usr/bin/env python3",
+            "PATH=bin:$PATH tool",
+            "./b?n/tool",
+            "./b*/tool",
+            "./[b]in/tool",
+            "./{b,x}in/tool",
+            "./{x,{b,y}in}/tool",
+            "${CLAUDE_PLUGIN_ROOT}/$X/tool",
+            "${CLAUDE_PLUGIN_ROOT}/${X}/tool",
+            "${CLAUDE_PLUGIN_ROOT:-.}/tool",
+            "${CLAUDE_PLUGIN_ROOT%/}/tool",
+            "${CLAUDE_PLUGIN_ROOT}/x/../y",
+            "${CLAUDE_PLUGIN_ROOT}/$(echo x)/tool",
+            "${CLAUDE_PLUGIN_ROOT}/`x`/tool",
+            "${claude_plugin_root}/tool",
+            "${CLAUDE_PLUGIN_ROOTX}/tool",
+        ] {
+            assert!(touches_bin(touching, false), "{touching:?}");
+        }
+        for ordinary in [
             r#"sh -c 'python3 "$0" 2>/dev/null || py -3 "$0"' "${CLAUDE_PLUGIN_ROOT}/hooks/x.py""#,
-            r#"cat "${CLAUDE_PLUGIN_ROOT}/scripts/$1.txt""#,
-            "scripts/bin/tool",
-            r#"sh -c '"$0"/note' x"#,
+            r#"sh -c 'python3 "$0" "$@" || true' "${CURSOR_PLUGIN_ROOT}/scripts/m.py" --reconcile"#,
+            r#"cat "${CLAUDE_PLUGIN_ROOT}/scripts/x.txt" 2>/dev/null || true"#,
+            "cat $CLAUDE_PLUGIN_ROOT/x.txt",
+            "scripts/binary/tool",
+            "cabin/x robin bins .bin bin-x x-bin bin.x",
             "${CLAUDE_PLUGIN_ROOT}/node_modules/.bin/x",
             r#"printf %s "{\"a\":\"b\"}""#,
+            "uvx mcp-proxy-for-aws-cli==1.7.0 https://x.example/mcp?a=1 --skip-auth",
+            "Bearer ${DEVOPS_AGENT_TOKEN}",
+            "./?/x",
+            "{a,b}/x",
         ] {
-            assert!(plugin_bin_mentions(none).is_empty(), "{none}");
+            assert!(!touches_bin(ordinary, false), "{ordinary:?}");
         }
-        for unresolvable in [
-            r"${CLAUDE_PLUGIN_ROOT}\bin\tool",
-            "$D/bin/tool",
-            "../bin/tool",
-            "b?n/tool",
-            "${CLAUDE_PLUGIN_ROOT}/$X/tool",
-            "${CLAUDE_PLUGIN_ROOT}/x/../bin/tool",
-            "${CLAUDE_PLUGIN_ROOT%/}/bin/tool",
-        ] {
-            let mentions = plugin_bin_mentions(unresolvable);
-            assert!(
-                mentions
-                    .iter()
-                    .any(|m| matches!(m, Mention::Unresolvable(_))),
-                "{unresolvable}: {mentions:?}"
-            );
-        }
+        // After the one canonical reference is removed, the rest of a plain
+        // hook is read in the plugin-root context.
+        assert!(!touches_bin(r#"sh -c '"$0" --flush || true' "#, true));
+        assert!(touches_bin(r#"sh -c 'cd "${0%/*}"' "#, true));
+        assert!(touches_bin(r#"sh -c 'cd "$0"/..' "#, true));
+
+        assert!(glob_matches(b"b[!x]n", b"bin"));
+        assert!(glob_matches(b"[a-c]IN", b"bin"));
+        assert!(!glob_matches(b"b[!i]n", b"bin"));
+        assert!(!glob_matches(b"b[in", b"bin"));
+        assert_eq!(
+            expand_braces("a{b,c{d,e}}f"),
+            Some(vec![
+                "acef".to_string(),
+                "acdf".to_string(),
+                "abf".to_string()
+            ])
+        );
+        assert_eq!(expand_braces("${X}"), Some(vec!["${X}".to_string()]));
+        assert_eq!(expand_braces(&"{a,b}".repeat(8)), None);
+
         // A canonical guard whose deny reason says "bin" is still canonical:
         // exact canonical forms are matched before the conservative scan.
         let declaration = crate::Declaration::parse(

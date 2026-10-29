@@ -151,30 +151,46 @@ provides.
 
 **Role `hook`** (non-guarding hooks, for example telemetry) may wrap the dispatcher
 (for example `|| true`), because a missing binary there must not block the user. The
-reference itself must still be one plain `${CLAUDE_PLUGIN_ROOT}/bin/<name>` (or
-`./bin/<name>` at the start of the string).
+string must hold exactly one byte-exact reference `"${CLAUDE_PLUGIN_ROOT}/bin/<name>"`
+(quotes included, as `plugin-stage launcher` prints it), and nothing else in it may
+touch `bin/` (see below).
 
-**Fail-closed resolution (#5022).** The checker does not trust a scan that found no
-reference. It reads each launcher string conservatively: quotes are dropped (the shell
-joins `"a"b`), backslashes are read both as escapes and as Windows separators, and the
-string is split into candidate paths at every shell separator. Any path that may reach
-the plugin `bin/` directory counts: a plugin-root path, a path under any other
-variable, or a relative `bin/...`, `./bin/...` or `../bin/...`. Absolute system paths
-such as `/usr/bin/env` do not count. A string with such a mention passes only if it
-resolves to exactly one canonical reference:
+**Fail-closed classification (#5022, #5053).** The checker does not parse shell. After
+two rounds of bypasses through shell spellings (`"${CLAUDE_PLUGIN_ROOT}"/bin/x || true`
+in round 1; `.//bin/x`, `.///bin/x` and a backslash-newline inside `b\<LF>in` in round
+2), it fails closed on substrings instead, following the PM ruling on #4487.
 
-- it is byte for byte the canonical launcher of a declared binary (for a guard hook,
-  the deny launcher above and nothing else); or
-- it has exactly one mention, and that mention is the plain `bin/<name>` the strict
-  parser found.
+1. For classification only, every backslash-newline pair (LF or CRLF) is removed, then
+   every `'` and `"`. The result is read twice: with backslashes kept (as Windows
+   separators) and with them removed (as escapes).
+2. A string is *bin-touching* when the normalised form:
+   - holds the word `bin` in any case, bounded by anything but a letter, digit, `_`,
+     `.` or `-`. This covers `/bin/`, `\bin\`, `.//bin/`, `././/bin`, `BIN/`,
+     `cd bin`, `PATH=bin:...` and system paths such as `/usr/bin/env`, which are now
+     refused too;
+   - has a path segment whose glob (`b?n`, `b*`, `[b]in`) or brace expansion
+     (`{b,x}in`) can produce `bin`; or
+   - names a plugin-root variable and also holds anything that can compute a path from
+     it: a non-plain root expansion (`${CLAUDE_PLUGIN_ROOT:-.}`), another `$name`,
+     `${...}` or `$(...)` expansion, a backquote, a glob or brace character, `~` or
+     `..`. Positional parameters (`"$0"`, `"$@"`) are allowed, because the shipped
+     launchers pass their path that way.
+3. A guard hook must be byte for byte its canonical deny launcher (above). Anything
+   else that names the guard is refused, with or without wrapping.
+4. An MCP server command must be exactly `${CLAUDE_PLUGIN_ROOT}/bin/<name>` (or
+   `./bin/<name>`).
+5. A plain hook is accepted when it holds exactly one canonical reference
+   `"${CLAUDE_PLUGIN_ROOT}/bin/<name>"` and the rest of the string, with that one
+   occurrence removed, is not bin-touching. The rest is read as if it named the plugin
+   root, so `"${0%/*}"`, `$(dirname "$0")` or `"$0"/..` beside the reference is refused.
+6. Any other bin-touching string is refused with a fixed message that names the file
+   and JSON key and does not echo the command.
 
-Everything else is refused, including quoted or split spellings
-(`"${CLAUDE_PLUGIN_ROOT}"/bin/x || true`, `.../b""in/x`), relative or wrapped calls
-(`exec ./bin/x`, `sh -c "./bin/x"`, `cd ... && bin/x`), `.`, `..` or `//` segments,
-variables, globs and braces in the plugin path, non-plain root expansions
-(`${CLAUDE_PLUGIN_ROOT:-.}`), case variants (`BIN/`), `PATH=.../bin:...`, and two
-references in one string. `plugin-stage check` reports a declared guard with no
-registration as not enforced.
+Strings that do not touch `bin/` (every shipped launcher today) are not references and
+pass. The residual class is a path computed with neither a plugin-root variable nor
+the word `bin` in it, for example `eval` or `base64` of an encoded path. That is the
+deferred arbitrary-evaluation hardening, not a spelling of a static path.
+`plugin-stage check` reports a declared guard with no registration as not enforced.
 
 ## 5. Checksums and provenance
 
