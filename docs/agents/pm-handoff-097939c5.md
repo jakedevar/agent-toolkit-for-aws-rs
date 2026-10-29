@@ -829,3 +829,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
   DECISION: land S2b now; follow-up slice #5261 (findings + coverage) -> Codex terra 9de1fd5d (base 79ecfcd1).
   AgentCheckLandingCandidate on worker job 11022cc2 refused candidate_job_not_green detail generic_cargo_commit_mismatch (base c8bcc072, rolling since moved). Manager scoped a71d4f19 (worktree da98439f sandbox, base origin/rolling, head 79ecfcd1) running; on ok: check with job_id a71d4f19 + enqueue (source_session da98439f), close #5223 #5252 on land.
   4/4 busy: 0dcdafea (#5181 S4 cont), 8ea9ce8e (#5216 L4 cont2), 2a78b5ff (#5244 tests), 9de1fd5d (#5261 S2b f/u).
+- 10-29 07:13Z: L4 cont2 (8ea9ce8e, 52% ctx) at 1b1655f5e954afdcb190ef557879c69fa0775e80: rev 4 recorded, #5229 fixes, substantial timing/load; scoped 4106 ok, clean; named-case matrix incomplete.
+  Same plan as S2b: review now #5262 -> Claude Opus d9d25099 (pinned 1b1655f5; uncovered-case list); then land + follow-up slice for gaps/findings.
+  4/4 busy: 0dcdafea (#5181 S4 cont), 2a78b5ff (#5244 tests), 9de1fd5d (#5261 S2b f/u), d9d25099 (#5262 review L4). Pending: manager scoped a71d4f19 (S2b).
