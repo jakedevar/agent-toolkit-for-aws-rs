@@ -3393,19 +3393,18 @@ const ADMIN_NO_PAYMENT_FILE: &str = "agents_pay/admin/no_payment.rs";
 
 /// The whole of `admin/no_payment.rs`, compared token for token.
 const ADMIN_NO_PAYMENT_PIN: &str = r"
+#[allow(clippy::unnecessary_wraps)]
 pub(super) fn admin_command(
     _invocation: &crate::Invocation,
     out: &mut crate::Output<'_>,
 ) -> ::core::result::Result<(), ::toolkit_core::ToolkitError> {
-    self::refuse_without_payment_support(out)
+    self::refuse_without_payment_support(out);
+    ::core::result::Result::Ok(())
 }
 
-fn refuse_without_payment_support(
-    out: &mut crate::Output<'_>,
-) -> ::core::result::Result<(), ::toolkit_core::ToolkitError> {
+fn refuse_without_payment_support(out: &mut crate::Output<'_>) {
     out.diagnostic(super::D32_ADMIN_REFUSAL);
     out.set_exit_status(1);
-    ::core::result::Result::Ok(())
 }
 ";
 
@@ -3659,14 +3658,19 @@ fn admin_findings(sources: &[Source]) -> Vec<String> {
         }
     }
     if imports.iter().any(|(name, _)| name == "*") {
-        found.push(format!("{ADMIN_FILE}: a glob import can shadow a surface name"));
+        found.push(format!(
+            "{ADMIN_FILE}: a glob import can shadow a surface name"
+        ));
     }
     let bound = |name: &str| {
         items.iter().filter(|(n, _)| n == name).count()
             + imports.iter().filter(|(n, _)| n == name).count()
     };
     for (name, kind) in [("no_payment", "mod"), ("D32_ADMIN_REFUSAL", "const")] {
-        let of_kind = items.iter().filter(|(n, k)| n == name && *k == kind).count();
+        let of_kind = items
+            .iter()
+            .filter(|(n, k)| n == name && *k == kind)
+            .count();
         if of_kind != 1 || bound(name) != 1 {
             found.push(format!(
                 "{ADMIN_FILE}: `{name}` must be bound by exactly one top-level {kind} item, found {} binding(s)",
@@ -3701,7 +3705,8 @@ fn t_ac3_admin_routes_the_real_sources_keep_every_d32_pin() {
 
 #[test]
 fn t_ac3_admin_routes_catch_every_seeded_violation() {
-    let admin = |anchor: &str, edit: &dyn Fn(&str) -> String| sources_with(ADMIN_FILE, anchor, edit);
+    let admin =
+        |anchor: &str, edit: &dyn Fn(&str) -> String| sources_with(ADMIN_FILE, anchor, edit);
     let refusal = "    out.diagnostic(super::D32_ADMIN_REFUSAL);\n";
     let disabled = format!(
         "            #[cfg(not(feature = \"{LIVE_FEATURE}\"))]\n            handler: self::no_payment::admin_command,\n"
@@ -3715,9 +3720,11 @@ fn t_ac3_admin_routes_catch_every_seeded_violation() {
         ),
         (
             "admin refusal exits 0",
-            sources_with(ADMIN_NO_PAYMENT_FILE, "    out.set_exit_status(1);\n", |_| {
-                "    out.set_exit_status(0);\n".to_owned()
-            }),
+            sources_with(
+                ADMIN_NO_PAYMENT_FILE,
+                "    out.set_exit_status(1);\n",
+                |_| "    out.set_exit_status(0);\n".to_owned(),
+            ),
         ),
         (
             "a disabled handler that runs the live route",
@@ -3739,7 +3746,9 @@ fn t_ac3_admin_routes_catch_every_seeded_violation() {
         ),
         (
             "a second declaration of no_payment",
-            admin("mod no_payment;\n", &|a| format!("{a}#[cfg(any())]\nmod no_payment;\n")),
+            admin("mod no_payment;\n", &|a| {
+                format!("{a}#[cfg(any())]\nmod no_payment;\n")
+            }),
         ),
         (
             "an import that shadows the D32 text",
@@ -3749,19 +3758,24 @@ fn t_ac3_admin_routes_catch_every_seeded_violation() {
         ),
         (
             "a route moved out of its table",
-            admin("            path: &[\"agents-pay\", \"admin\", \"preflight\"],", &|_| {
-                "            path: &[\"agents-pay\", \"admin\", \"preflight-x\"],".to_owned()
-            }),
+            admin(
+                "            path: &[\"agents-pay\", \"admin\", \"preflight\"],",
+                &|_| "            path: &[\"agents-pay\", \"admin\", \"preflight-x\"],".to_owned(),
+            ),
         ),
         (
             "an attribute on the build table",
-            admin("pub(crate) const BUILD_SLICE", &|a| format!("#[cfg_attr(all(), cfg(any()))]\n{a}")),
+            admin("pub(crate) const BUILD_SLICE", &|a| {
+                format!("#[cfg_attr(all(), cfg(any()))]\n{a}")
+            }),
         ),
         (
             "an admin table missing from the registry",
-            sources_with("registry.rs", "    crate::agents_pay::admin::BUILD_SLICE,\n", |_| {
-                String::new()
-            }),
+            sources_with(
+                "registry.rs",
+                "    crate::agents_pay::admin::BUILD_SLICE,\n",
+                |_| String::new(),
+            ),
         ),
     ];
     for (label, sources) in mutations {

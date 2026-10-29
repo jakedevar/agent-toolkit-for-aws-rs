@@ -66,25 +66,24 @@ pub(super) fn run(
         let candidates = deployed::candidates(None, deps);
         let found = deployed::find(&candidates, deps);
         let discovered = deployed::discover_in(&candidates, deps);
-        match (found, discovered.manager_arn.filter(|m| !m.is_empty())) {
-            (Some(state), Some(manager)) => {
-                out.line(&format!(
-                    "\n       Found in {}: run this to fix the above ->",
-                    shown_path(&state)
-                ))?;
-                out.line(&format!(
-                    "         export PAYMENT_MANAGER_ARN={}",
-                    shown_value(&manager)
-                ))?;
-            }
-            _ => {
-                out.line(&format!(
-                    "\n       deployed-state.json not found (checked: {}).",
-                    deployed::checked(&candidates)
-                ))?;
-                out.line("       Run from the directory that CONTAINS the agentcore/ folder,")?;
-                out.line("       from inside it, or set the variables by hand.")?;
-            }
+        if let (Some(state), Some(manager)) =
+            (found, discovered.manager_arn.filter(|m| !m.is_empty()))
+        {
+            out.line(&format!(
+                "\n       Found in {}: run this to fix the above ->",
+                shown_path(&state)
+            ))?;
+            out.line(&format!(
+                "         export PAYMENT_MANAGER_ARN={}",
+                shown_value(&manager)
+            ))?;
+        } else {
+            out.line(&format!(
+                "\n       deployed-state.json not found (checked: {}).",
+                deployed::checked(&candidates)
+            ))?;
+            out.line("       Run from the directory that CONTAINS the agentcore/ folder,")?;
+            out.line("       from inside it, or set the variables by hand.")?;
         }
     }
     let leaked = leaked_names(&deps.env.names());

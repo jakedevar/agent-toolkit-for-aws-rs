@@ -12,6 +12,7 @@ use crate::{Invocation, Output};
 /// The missing-config hint (D23: the Rust command name).
 pub const CREATE_HINT: &str = "Create it with: toolkit agents-pay admin init-config --max-per-payment-usd 0.05 --recipient <payTo> (or explicitly use --allow-any-recipient)";
 
+#[allow(clippy::verbose_bit_mask)] // The legacy `mode & 0o077` checks, as written.
 pub(super) fn run(
     invocation: &Invocation,
     deps: &AdminDeps<'_>,
@@ -82,7 +83,9 @@ pub(super) fn run(
     .collect();
     if !missing.is_empty() {
         out.line(&format!("\nNot yet set: {}", missing.join(", ")))?;
-        out.line("These may also come from the environment, but the config file wins when present.")?;
+        out.line(
+            "These may also come from the environment, but the config file wins when present.",
+        )?;
     }
     Ok(())
 }

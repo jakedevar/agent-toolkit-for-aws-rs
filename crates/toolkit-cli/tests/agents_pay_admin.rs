@@ -15,21 +15,21 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
+use toolkit_cli::agents_pay::admin;
 use toolkit_cli::agents_pay::admin::deployed::{self, Discovered};
 use toolkit_cli::agents_pay::admin::fixtures::{
     CountingRandom, FakeAdmin, FakeEnv, FakeTerminal, TempAdminFs,
 };
 use toolkit_cli::agents_pay::admin::setup_openclaw::{
-    build_openclaw_config, format_duration, parse_positive_decimal, usd_to_atomic,
-    OpenClawInputs,
+    build_openclaw_config, format_duration, parse_positive_decimal, usd_to_atomic, OpenClawInputs,
 };
-use toolkit_cli::agents_pay::admin;
 use toolkit_cli::agents_pay::admin::{preflight::leaked_names, write, AdminCommand, AdminDeps};
 use toolkit_cli::agents_pay::agentcore::{AdminCall, FakePaymentsApi, PaymentError};
 use toolkit_cli::{route, Output, Routed, COMMANDS};
 use toolkit_core::{parse_json, Json};
 
-const MANAGER: &str = "arn:aws:bedrock-agentcore:us-east-1:111111111111:payment-manager/fixture-abcdefghij";
+const MANAGER: &str =
+    "arn:aws:bedrock-agentcore:us-east-1:111111111111:payment-manager/fixture-abcdefghij";
 const CONNECTOR: &str = "connector-TESTabcdef";
 const MERCHANT: &str = "0x1111111111111111111111111111111111111111";
 const GENERATED_USER: &str = "agents-pay-000102030405";
@@ -182,7 +182,13 @@ fn admin_recipient_mode_recipient_flag_writes_an_allowlist() {
     let world = World::new("recipient", FakeTerminal::headless());
     let ran = run(
         &world,
-        &["agents-pay", "admin", "init-config", "--recipient", MERCHANT],
+        &[
+            "agents-pay",
+            "admin",
+            "init-config",
+            "--recipient",
+            MERCHANT,
+        ],
     );
     assert_eq!(ran.code, 0, "{}", ran.stderr);
     let config = world.config();
@@ -196,7 +202,12 @@ fn admin_recipient_mode_allow_any_recipient_writes_explicit_mode() {
     let world = World::new("any", FakeTerminal::headless());
     let ran = run(
         &world,
-        &["agents-pay", "admin", "init-config", "--allow-any-recipient"],
+        &[
+            "agents-pay",
+            "admin",
+            "init-config",
+            "--allow-any-recipient",
+        ],
     );
     assert_eq!(ran.code, 0, "{}", ran.stderr);
     let config = world.config();
@@ -205,7 +216,9 @@ fn admin_recipient_mode_allow_any_recipient_writes_explicit_mode() {
         Some(&Json::Bool(true))
     );
     assert!(get(&config, &["policy", "allowed_recipients"]).is_none());
-    assert!(ran.stdout.contains("WARNING: allow_any_recipient is enabled."));
+    assert!(ran
+        .stdout
+        .contains("WARNING: allow_any_recipient is enabled."));
 }
 
 #[test]
@@ -239,7 +252,13 @@ fn init_config_writes_the_legacy_document_byte_for_byte_at_0600() {
     let world = World::new("bytes", FakeTerminal::headless());
     let ran = run(
         &world,
-        &["agents-pay", "admin", "init-config", "--recipient", MERCHANT],
+        &[
+            "agents-pay",
+            "admin",
+            "init-config",
+            "--recipient",
+            MERCHANT,
+        ],
     );
     assert_eq!(ran.code, 0, "{}", ran.stderr);
     let expected = format!(
@@ -263,7 +282,12 @@ fn init_config_refuses_to_overwrite_and_force_keeps_the_payer() {
     let before = fs::read_to_string(world.config_path()).unwrap();
     let ran = run(
         &world,
-        &["agents-pay", "admin", "init-config", "--allow-any-recipient"],
+        &[
+            "agents-pay",
+            "admin",
+            "init-config",
+            "--allow-any-recipient",
+        ],
     );
     assert_eq!(ran.code, 1);
     assert_eq!(
@@ -293,7 +317,10 @@ fn init_config_refuses_to_overwrite_and_force_keeps_the_payer() {
     );
     assert_eq!(ran.code, 0, "{}", ran.stderr);
     let config = world.config();
-    assert_eq!(text(&config, &["resources", "user_id"]), Some("agents-pay-keepme"));
+    assert_eq!(
+        text(&config, &["resources", "user_id"]),
+        Some("agents-pay-keepme")
+    );
     assert_eq!(
         text(&config, &["resources", "payment_instrument_id"]),
         Some("pi-1")
@@ -338,7 +365,12 @@ fn init_config_seeds_the_manager_from_the_deploy_record() {
     );
     let ran = run(
         &world,
-        &["agents-pay", "admin", "init-config", "--allow-any-recipient"],
+        &[
+            "agents-pay",
+            "admin",
+            "init-config",
+            "--allow-any-recipient",
+        ],
     );
     assert_eq!(ran.code, 0, "{}", ran.stderr);
     assert_eq!(
@@ -521,11 +553,7 @@ fn generated_config_preserves_policy_inputs() {
         origins: vec!["https://sandbox.example".into()],
         return_body: true,
     });
-    let plugin = get(
-        &config,
-        &["plugins", "entries", "aws-agents-pay", "config"],
-    )
-    .unwrap();
+    let plugin = get(&config, &["plugins", "entries", "aws-agents-pay", "config"]).unwrap();
     assert_eq!(text(plugin, &["maxPaymentAmountAtomic"]), Some("100000"));
     assert_eq!(
         plugin.get("allowedOrigins"),
@@ -542,7 +570,10 @@ fn generated_config_preserves_policy_inputs() {
         Some(&Json::Array(vec![Json::string("aws-agents-pay")]))
     );
     assert_eq!(
-        get(&config, &["plugins", "entries", "aws-agents-pay", "enabled"]),
+        get(
+            &config,
+            &["plugins", "entries", "aws-agents-pay", "enabled"]
+        ),
         Some(&Json::Bool(true))
     );
 }
@@ -565,7 +596,9 @@ fn explicit_project_dir_finds_agentcore_deployment() {
     );
     // Relative to the working directory, as Path.resolve() gives it.
     assert_eq!(
-        deployed::discover(&world.deps(), Some("../project")).manager_arn.as_deref(),
+        deployed::discover(&world.deps(), Some("../project"))
+            .manager_arn
+            .as_deref(),
         Some("arn:manager")
     );
 }
@@ -588,12 +621,16 @@ fn deployed_state_reads_every_layout_and_fails_soft() {
     };
     // 0.20.x: targets.<t>.resources.payments[].
     assert_eq!(
-        deployed::parse(r#"{"targets":{"prod":{"resources":{"payments":[{"managerArn":"arn:a","connectors":[{"connectorId":"c-1"}],"processPaymentRoleArn":"arn:role"}]}}}}"#),
+        deployed::parse(
+            r#"{"targets":{"prod":{"resources":{"payments":[{"managerArn":"arn:a","connectors":[{"connectorId":"c-1"}],"processPaymentRoleArn":"arn:role"}]}}}}"#
+        ),
         full("arn:a", Some("c-1"), Some("arn:role"))
     );
     // 0.26.x: keyed by name.
     assert_eq!(
-        deployed::parse(r#"{"targets":{"default":{"resources":{"payments":{"main":{"managerArn":"arn:b","connectors":{"x":{"connectorId":"c-2"}}}}}}}}"#),
+        deployed::parse(
+            r#"{"targets":{"default":{"resources":{"payments":{"main":{"managerArn":"arn:b","connectors":{"x":{"connectorId":"c-2"}}}}}}}}"#
+        ),
         full("arn:b", Some("c-2"), None)
     );
     // Legacy top-level payments[].
@@ -603,7 +640,9 @@ fn deployed_state_reads_every_layout_and_fails_soft() {
     );
     // Empty target payments fall back to the top level.
     assert_eq!(
-        deployed::parse(r#"{"targets":{"default":{"resources":{"payments":[]}}},"payments":[{"managerArn":"arn:d"}]}"#),
+        deployed::parse(
+            r#"{"targets":{"default":{"resources":{"payments":[]}}},"payments":[{"managerArn":"arn:d"}]}"#
+        ),
         full("arn:d", None, None)
     );
     // A later step that raises keeps what was already read (legacy partial).
@@ -733,7 +772,9 @@ fn t_write_refuses_a_symlinked_final_directory() {
 #[test]
 fn t_write_admin_updates_merge_resources_and_keep_the_policy() {
     let world = World::new("merge", FakeTerminal::headless());
-    world.write_config(r#"{"resources":{"user_id":"u","region":"r"},"policy":{"max_per_payment_usd":"1"}}"#);
+    world.write_config(
+        r#"{"resources":{"user_id":"u","region":"r"},"policy":{"max_per_payment_usd":"1"}}"#,
+    );
     let deps = world.deps();
     admin::update_resources(
         &world.config_path(),
@@ -755,7 +796,10 @@ fn t_write_admin_updates_merge_resources_and_keep_the_policy() {
     assert_eq!(text(&raw, &["policy", "max_per_payment_usd"]), Some("2"));
     world.write_config("{not json");
     let raw = admin::load_raw_config(&world.config_path(), &deps);
-    assert_eq!(admin::config_text(&raw), "{\n  \"resources\": {},\n  \"policy\": {}\n}\n");
+    assert_eq!(
+        admin::config_text(&raw),
+        "{\n  \"resources\": {},\n  \"policy\": {}\n}\n"
+    );
 }
 
 // --------------------------------------------- show-config and preflight
@@ -777,13 +821,24 @@ fn show_config_without_a_file_explains_and_exits_1() {
 #[test]
 fn show_config_reports_modes_owner_and_missing_resources() {
     let world = World::new("show", FakeTerminal::headless());
-    world.write_config(r#"{"resources":{"user_id":"u-1"},"policy":{"max_per_payment_usd":"0.05"}}"#);
+    world
+        .write_config(r#"{"resources":{"user_id":"u-1"},"policy":{"max_per_payment_usd":"0.05"}}"#);
     let ran = run(&world, &["agents-pay", "admin", "show-config"]);
     assert_eq!(ran.code, 0, "{}", ran.stderr);
-    assert!(ran.stdout.contains("File mode : -rw------- OK\n"), "{}", ran.stdout);
-    assert!(ran.stdout.contains("Dir mode  : drwx------ OK\n"), "{}", ran.stdout);
+    assert!(
+        ran.stdout.contains("File mode : -rw------- OK\n"),
+        "{}",
+        ran.stdout
+    );
+    assert!(
+        ran.stdout.contains("Dir mode  : drwx------ OK\n"),
+        "{}",
+        ran.stdout
+    );
     assert!(ran.stdout.contains(") (you)\n") || ran.stdout.contains(" (you)\n"));
-    assert!(ran.stdout.contains("\n--- policy (what MAY be paid) ---\n{\n  \"max_per_payment_usd\": \"0.05\"\n}\n"));
+    assert!(ran.stdout.contains(
+        "\n--- policy (what MAY be paid) ---\n{\n  \"max_per_payment_usd\": \"0.05\"\n}\n"
+    ));
     assert!(ran.stdout.contains(
         "\nNot yet set: payment_manager_arn, payment_instrument_id, payment_session_id\n"
     ));
@@ -829,7 +884,9 @@ fn t_preflight_fails_on_a_secret_named_variable_and_never_prints_its_value() {
     world.write_config(r#"{"resources":{},"policy":{"max_per_payment_usd":"0.05"}}"#);
     let ran = run(&world, &["agents-pay", "admin", "preflight"]);
     assert_eq!(ran.code, 1);
-    assert!(ran.stdout.contains("[ok]   policy loaded, max_per_payment_usd=0.05\n"));
+    assert!(ran
+        .stdout
+        .contains("[ok]   policy loaded, max_per_payment_usd=0.05\n"));
     assert!(ran.stdout.contains("[ok]   PAYMENT_MANAGER_ARN\n"));
     assert!(ran.stdout.contains("[--]   PAYMENT_SESSION_ID not set\n"));
     assert!(ran
@@ -854,7 +911,9 @@ fn t_preflight_passes_with_a_checked_policy_and_hints_the_deployed_manager() {
     assert!(ran.stdout.contains(&format!(
         "\n       Found in agentcore/.cli/deployed-state.json: run this to fix the above ->\n         export PAYMENT_MANAGER_ARN={MANAGER}\n"
     )));
-    assert!(ran.stdout.contains("[ok]   no provider secrets in the runtime environment\n"));
+    assert!(ran
+        .stdout
+        .contains("[ok]   no provider secrets in the runtime environment\n"));
     assert!(ran.stdout.ends_with("\nPreflight PASSED\n"));
     // The runtime checks apply: a group-readable config fails.
     fs::set_permissions(world.config_path(), fs::Permissions::from_mode(0o640)).unwrap();
@@ -905,7 +964,10 @@ fn t_tty_new_session_needs_exactly_approve() {
         let world = World::new("tty-exact", FakeTerminal::tty(&[answer]));
         let ran = run(&world, NEW_SESSION);
         assert_eq!(ran.code, 1, "{answer:?}");
-        assert!(ran.stdout.ends_with("Aborted. No session created.\n"), "{answer:?}");
+        assert!(
+            ran.stdout.ends_with("Aborted. No session created.\n"),
+            "{answer:?}"
+        );
         assert_eq!(world.sessions(), 0, "{answer:?}");
     }
 }
@@ -943,11 +1005,20 @@ fn t_tty_new_session_approve_creates_one_session_and_records_it() {
         (manager.as_str(), user.as_str(), budget.as_str(), *expiry),
         (MANAGER, "agents-pay-u1", "1.00", 30)
     );
-    assert_eq!(token, "00010203-0405-4607-8809-0a0b0c0d0e0f", "a UUID4 clientToken");
+    assert_eq!(
+        token, "00010203-0405-4607-8809-0a0b0c0d0e0f",
+        "a UUID4 clientToken"
+    );
     assert_eq!(world.admin.sts_calls(), 1);
     let config = world.config();
-    assert_eq!(text(&config, &["resources", "payment_session_id"]), Some(SESSION_ID));
-    assert_eq!(text(&config, &["resources", "user_id"]), Some("agents-pay-u1"));
+    assert_eq!(
+        text(&config, &["resources", "payment_session_id"]),
+        Some(SESSION_ID)
+    );
+    assert_eq!(
+        text(&config, &["resources", "user_id"]),
+        Some("agents-pay-u1")
+    );
 }
 
 #[test]
@@ -981,10 +1052,19 @@ fn t_tty_setup_openclaw_checks_the_terminal_first() {
     let world = World::new("wizard-tty", FakeTerminal::headless());
     let ran = run(
         &world,
-        &["agents-pay", "admin", "setup-openclaw", "--project-dir", "/nonexistent"],
+        &[
+            "agents-pay",
+            "admin",
+            "setup-openclaw",
+            "--project-dir",
+            "/nonexistent",
+        ],
     );
     assert_eq!(ran.code, 1);
-    assert_eq!(ran.stderr, "setup-openclaw requires an interactive terminal.\n");
+    assert_eq!(
+        ran.stderr,
+        "setup-openclaw requires an interactive terminal.\n"
+    );
     assert_eq!(world.admin.calls(), 0);
     assert_eq!(world.terminal.reads(), 0);
 }
@@ -1028,7 +1108,11 @@ fn t_val_budget_and_expiry_are_checked_before_any_call_or_prompt() {
 
 #[test]
 fn t_val_boundaries_and_the_capdecimal_rendering_reach_the_service() {
-    for (budget, expiry, sent) in [("1e1", "15", "10"), ("0.50", "480", "0.50"), ("+2", "60", "2")] {
+    for (budget, expiry, sent) in [
+        ("1e1", "15", "10"),
+        ("0.50", "480", "0.50"),
+        ("+2", "60", "2"),
+    ] {
         let world = World::new("val-ok", FakeTerminal::tty(&["approve"]));
         let ran = run(
             &world,
@@ -1060,13 +1144,25 @@ fn t_val_malformed_arguments_are_usage_errors_after_the_terminal_check() {
     let world = World::new("val-usage", FakeTerminal::tty(&["approve"]));
     let ran = run(
         &world,
-        &["agents-pay", "admin", "new-session", "--budget", "1", "--expiry-minutes", "ten"],
+        &[
+            "agents-pay",
+            "admin",
+            "new-session",
+            "--budget",
+            "1",
+            "--expiry-minutes",
+            "ten",
+        ],
     );
     assert_eq!(ran.code, 2);
-    assert!(ran.stderr.contains("argument --expiry-minutes: invalid int value: 'ten'"));
+    assert!(ran
+        .stderr
+        .contains("argument --expiry-minutes: invalid int value: 'ten'"));
     let ran = run(&world, &["agents-pay", "admin", "new-session"]);
     assert_eq!(ran.code, 2);
-    assert!(ran.stderr.contains("the following arguments are required: --budget"));
+    assert!(ran
+        .stderr
+        .contains("the following arguments are required: --budget"));
     assert_eq!(world.admin.calls(), 0);
 }
 
@@ -1106,10 +1202,27 @@ fn with(base: &[&'static str], extra: &[&'static str]) -> Vec<&'static str> {
 #[test]
 fn t_tty_ci_1_headless_refuses_with_zero_calls_whatever_the_arguments() {
     let cases: [(&[&str], &str); 4] = [
-        (CREATE_INSTRUMENT, "create-instrument must be run by a human at a terminal; it creates a wallet user.\n"),
-        (&["agents-pay", "admin", "create-instrument"], "create-instrument must be run by a human at a terminal; it creates a wallet user.\n"),
-        (SETUP_PAYMENT_USER, "setup-payment-user must be run by a human at a terminal; it creates a wallet user.\n"),
-        (&["agents-build", "setup-payment-user", "--expiry-minutes", "ten"], "setup-payment-user must be run by a human at a terminal; it creates a wallet user.\n"),
+        (
+            CREATE_INSTRUMENT,
+            "create-instrument must be run by a human at a terminal; it creates a wallet user.\n",
+        ),
+        (
+            &["agents-pay", "admin", "create-instrument"],
+            "create-instrument must be run by a human at a terminal; it creates a wallet user.\n",
+        ),
+        (
+            SETUP_PAYMENT_USER,
+            "setup-payment-user must be run by a human at a terminal; it creates a wallet user.\n",
+        ),
+        (
+            &[
+                "agents-build",
+                "setup-payment-user",
+                "--expiry-minutes",
+                "ten",
+            ],
+            "setup-payment-user must be run by a human at a terminal; it creates a wallet user.\n",
+        ),
     ];
     for (argv, refusal) in cases {
         let world = World::new("ci-1", FakeTerminal::headless());
@@ -1164,15 +1277,24 @@ fn t_tty_ci_4_approve_creates_one_instrument_and_a_session_only_with_budget() {
     assert_eq!(ran.code, 0, "{}", ran.stderr);
     assert_eq!((world.instruments(), world.sessions()), (1, 0));
     let calls = world.admin.api().admin_calls();
-    assert!(matches!(
-        calls.as_slice(),
-        [AdminCall::CreateInstrument { manager, user, connector, network, email, .. }]
-            if manager == MANAGER && user == "agents-pay-u1" && connector == CONNECTOR
-                && network == "ETHEREUM" && email == "user@example.com"
-    ), "{calls:?}");
+    assert!(
+        matches!(
+            calls.as_slice(),
+            [AdminCall::CreateInstrument { manager, user, connector, network, email, .. }]
+                if manager == MANAGER && user == "agents-pay-u1" && connector == CONNECTOR
+                    && network == "ETHEREUM" && email == "user@example.com"
+        ),
+        "{calls:?}"
+    );
     let config = world.config();
-    assert_eq!(text(&config, &["resources", "payment_instrument_id"]), Some(INSTRUMENT_ID));
-    assert_eq!(text(&config, &["resources", "payment_manager_arn"]), Some(MANAGER));
+    assert_eq!(
+        text(&config, &["resources", "payment_instrument_id"]),
+        Some(INSTRUMENT_ID)
+    );
+    assert_eq!(
+        text(&config, &["resources", "payment_manager_arn"]),
+        Some(MANAGER)
+    );
     assert!(ran.stdout.contains(&format!(
         "Instrument created : {INSTRUMENT_ID}\nWallet address     : {WALLET}\n"
     )));
@@ -1185,20 +1307,34 @@ fn t_tty_ci_4_approve_creates_one_instrument_and_a_session_only_with_budget() {
     let ran = run(&world, SETUP_PAYMENT_USER);
     assert_eq!(ran.code, 0, "{}", ran.stderr);
     assert_eq!((world.instruments(), world.sessions()), (1, 0));
-    assert!(ran.stdout.contains("Session ID    : (none - use `agentcore invoke --auto-session`)\n"));
-    assert!(!world.config_path().exists(), "setup-payment-user writes no config");
+    assert!(ran
+        .stdout
+        .contains("Session ID    : (none - use `agentcore invoke --auto-session`)\n"));
+    assert!(
+        !world.config_path().exists(),
+        "setup-payment-user writes no config"
+    );
 
     let world = World::new("ci-4c", FakeTerminal::tty(&["approve"]));
-    let ran = run(&world, &with(SETUP_PAYMENT_USER, &["--budget", "5", "--expiry-minutes", "120"]));
+    let ran = run(
+        &world,
+        &with(
+            SETUP_PAYMENT_USER,
+            &["--budget", "5", "--expiry-minutes", "120"],
+        ),
+    );
     assert_eq!(ran.code, 0, "{}", ran.stderr);
     assert_eq!((world.instruments(), world.sessions()), (1, 1));
     assert_eq!(world.terminal.reads(), 1, "one approval covers both");
     let calls = world.admin.api().admin_calls();
-    assert!(matches!(
-        calls.as_slice(),
-        [AdminCall::CreateInstrument { .. }, AdminCall::CreateSession { budget, expiry: 120, user, .. }]
-            if budget == "5" && user == "alice"
-    ), "{calls:?}");
+    assert!(
+        matches!(
+            calls.as_slice(),
+            [AdminCall::CreateInstrument { .. }, AdminCall::CreateSession { budget, expiry: 120, user, .. }]
+                if budget == "5" && user == "alice"
+        ),
+        "{calls:?}"
+    );
     assert_eq!(
         world.admin.opened(),
         vec![Some("us-east-1".to_owned())],
@@ -1222,7 +1358,9 @@ fn t_tty_ci_5_the_summary_shows_the_email_bounded_and_nothing_from_the_response(
         let ran = run(&world, &argv);
         assert_eq!(ran.code, 1);
         assert!(!ran.stdout.contains(long), "the raw email is not echoed");
-        assert!(ran.stdout.contains(&format!("  email     : {}...\n", &long[..200])));
+        assert!(ran
+            .stdout
+            .contains(&format!("  email     : {}...\n", &long[..200])));
         assert!(!ran.stdout.contains(WALLET) && !ran.stdout.contains(INSTRUMENT_ID));
         assert!(ran.stdout.contains("Type 'approve' to continue: "));
         assert_eq!(world.instruments(), 0);
@@ -1232,10 +1370,16 @@ fn t_tty_ci_5_the_summary_shows_the_email_bounded_and_nothing_from_the_response(
 #[test]
 fn t_tty_ci_validates_the_network_family_before_any_call() {
     let world = World::new("ci-net", FakeTerminal::tty(&["approve"]));
-    let ran = run(&world, &with(CREATE_INSTRUMENT, &["--network-family", "BITCOIN"]));
+    let ran = run(
+        &world,
+        &with(CREATE_INSTRUMENT, &["--network-family", "BITCOIN"]),
+    );
     assert_eq!(ran.code, 1);
     assert_eq!(ran.stderr, "--network-family must be ETHEREUM or SOLANA.\n");
-    let ran = run(&world, &with(SETUP_PAYMENT_USER, &["--network", "ethereum"]));
+    let ran = run(
+        &world,
+        &with(SETUP_PAYMENT_USER, &["--network", "ethereum"]),
+    );
     assert_eq!(ran.code, 1);
     assert_eq!(world.admin.calls(), 0);
     let ran = run(&world, &with(SETUP_PAYMENT_USER, &["--budget", "0"]));
@@ -1254,7 +1398,14 @@ fn d27_setup_payment_user_reads_the_dict_layout_from_its_single_candidate() {
     );
     let ran = run(
         &world,
-        &["agents-build", "setup-payment-user", "--user-id", "alice", "--email", "a@example.com"],
+        &[
+            "agents-build",
+            "setup-payment-user",
+            "--user-id",
+            "alice",
+            "--email",
+            "a@example.com",
+        ],
     );
     assert_eq!(ran.code, 0, "{}", ran.stderr);
     assert!(matches!(
@@ -1270,7 +1421,14 @@ fn d27_setup_payment_user_reads_the_dict_layout_from_its_single_candidate() {
     );
     let ran = run(
         &world,
-        &["agents-build", "setup-payment-user", "--user-id", "alice", "--email", "a@example.com"],
+        &[
+            "agents-build",
+            "setup-payment-user",
+            "--user-id",
+            "alice",
+            "--email",
+            "a@example.com",
+        ],
     );
     assert_eq!(ran.code, 1);
     assert_eq!(ran.stderr, "Could not resolve manager ARN / connector ID. Pass --manager-arn and --connector-id, or run from the project dir with agentcore/.cli/deployed-state.json present.\n");
@@ -1286,7 +1444,10 @@ fn d31_a_service_failure_prints_only_the_allowlisted_code() {
     };
     let ran = run(&world, CREATE_INSTRUMENT);
     assert_eq!(ran.code, 1);
-    assert_eq!(ran.stderr, "CreatePaymentInstrument failed: ValidationException\n");
+    assert_eq!(
+        ran.stderr,
+        "CreatePaymentInstrument failed: ValidationException\n"
+    );
     assert!(!world.config_path().exists());
 
     let world = World::new("d31-sts", FakeTerminal::tty(&["approve"]));
@@ -1300,7 +1461,11 @@ fn d31_a_service_failure_prints_only_the_allowlisted_code() {
         ran.stderr,
         "AWS credentials are invalid, expired, or missing.\n  (ExpiredTokenException)\n\nRun `aws sso login` (or otherwise refresh your credentials), then re-run this command.\n"
     );
-    assert_eq!(world.terminal.reads(), 0, "the STS check precedes the prompt");
+    assert_eq!(
+        world.terminal.reads(),
+        0,
+        "the STS check precedes the prompt"
+    );
     assert_eq!(world.sessions(), 0);
 }
 
@@ -1309,14 +1474,28 @@ fn create_instrument_without_a_payer_or_manager_refuses_after_the_sts_check() {
     let world = World::new("no-payer", FakeTerminal::tty(&["approve"]));
     let ran = run(
         &world,
-        &["agents-pay", "admin", "create-instrument", "--email", "a@example.com"],
+        &[
+            "agents-pay",
+            "admin",
+            "create-instrument",
+            "--email",
+            "a@example.com",
+        ],
     );
     assert_eq!(ran.code, 1);
     assert_eq!(ran.stderr, "No payer identity found. Run init-config first (it generates one), or pass --user-id explicitly.\n");
     assert_eq!(world.admin.sts_calls(), 1);
     let ran = run(
         &world,
-        &["agents-pay", "admin", "create-instrument", "--email", "a@example.com", "--user-id", "u"],
+        &[
+            "agents-pay",
+            "admin",
+            "create-instrument",
+            "--email",
+            "a@example.com",
+            "--user-id",
+            "u",
+        ],
     );
     assert_eq!(ran.code, 1);
     assert!(ran.stderr.starts_with("Could not find deployed-state.json (checked: agentcore/.cli/deployed-state.json, .cli/deployed-state.json, ../.cli/deployed-state.json)."));
@@ -1327,21 +1506,21 @@ fn create_instrument_without_a_payer_or_manager_refuses_after_the_sts_check() {
 // --------------------------------------------- setup-openclaw (the wizard)
 
 const WIZARD_ANSWERS: &[&str] = &[
-    "",                   // user id: generate
-    "",                   // region: us-east-1
-    "",                   // network: eip155:84532
-    "1",                  // allowlist
-    MERCHANT,             // payTo
-    "",                   // end of recipients
-    "0.05",               // per-payment cap
-    "5.00",               // budget
-    "120",                // expiry
+    "",                      // user id: generate
+    "",                      // region: us-east-1
+    "",                      // network: eip155:84532
+    "1",                     // allowlist
+    MERCHANT,                // payTo
+    "",                      // end of recipients
+    "0.05",                  // per-payment cap
+    "5.00",                  // budget
+    "120",                   // expiry
     "https://merchant.test", // origin
-    "",                   // end of origins
-    "n",                  // return body
-    "user@example.com",   // email
-    "",                   // delegation done
-    "approve",            // session approval
+    "",                      // end of origins
+    "n",                     // return body
+    "user@example.com",      // email
+    "",                      // delegation done
+    "approve",               // session approval
 ];
 
 #[test]
@@ -1353,35 +1532,77 @@ fn setup_openclaw_wizard_writes_creates_and_prints_the_plugin_config() {
     );
     let ran = run(
         &world,
-        &["agents-pay", "admin", "setup-openclaw", "--project-dir", "../project"],
+        &[
+            "agents-pay",
+            "admin",
+            "setup-openclaw",
+            "--project-dir",
+            "../project",
+        ],
     );
     assert_eq!(ran.code, 0, "{}\n{}", ran.stderr, ran.stdout);
     assert_eq!(world.terminal.reads(), WIZARD_ANSWERS.len());
-    assert!(ran.stdout.contains("Session expiry in minutes (15-480; 480 = 8 hours) [120]: "), "D30");
-    assert!(ran.stdout.contains(&format!("  Generated: {GENERATED_USER}\n")));
-    assert!(ran.stdout.contains("  $0.05 USD = 50000 atomic units (USDC, 6 decimals)\n"));
-    assert!(ran.stdout.contains("    Expiry:          120 minutes (2 hours)\n"));
+    assert!(
+        ran.stdout
+            .contains("Session expiry in minutes (15-480; 480 = 8 hours) [120]: "),
+        "D30"
+    );
+    assert!(ran
+        .stdout
+        .contains(&format!("  Generated: {GENERATED_USER}\n")));
+    assert!(ran
+        .stdout
+        .contains("  $0.05 USD = 50000 atomic units (USDC, 6 decimals)\n"));
+    assert!(ran
+        .stdout
+        .contains("    Expiry:          120 minutes (2 hours)\n"));
     let config = world.config();
-    assert_eq!(text(&config, &["resources", "user_id"]), Some(GENERATED_USER));
-    assert_eq!(text(&config, &["resources", "payment_manager_arn"]), Some(MANAGER));
-    assert_eq!(text(&config, &["resources", "payment_instrument_id"]), Some(INSTRUMENT_ID));
-    assert_eq!(text(&config, &["resources", "payment_session_id"]), Some(SESSION_ID));
-    assert_eq!(text(&config, &["policy", "max_per_payment_usd"]), Some("0.05"));
-    assert_eq!(get(&config, &["policy", "return_body"]), Some(&Json::Bool(false)));
+    assert_eq!(
+        text(&config, &["resources", "user_id"]),
+        Some(GENERATED_USER)
+    );
+    assert_eq!(
+        text(&config, &["resources", "payment_manager_arn"]),
+        Some(MANAGER)
+    );
+    assert_eq!(
+        text(&config, &["resources", "payment_instrument_id"]),
+        Some(INSTRUMENT_ID)
+    );
+    assert_eq!(
+        text(&config, &["resources", "payment_session_id"]),
+        Some(SESSION_ID)
+    );
+    assert_eq!(
+        text(&config, &["policy", "max_per_payment_usd"]),
+        Some("0.05")
+    );
+    assert_eq!(
+        get(&config, &["policy", "return_body"]),
+        Some(&Json::Bool(false))
+    );
     let calls = world.admin.api().admin_calls();
-    assert!(matches!(
-        calls.as_slice(),
-        [AdminCall::CreateInstrument { network, email, .. }, AdminCall::CreateSession { budget, expiry: 120, .. }]
-            if network == "ETHEREUM" && email == "user@example.com" && budget == "5.00"
-    ), "{calls:?}");
-    let start = ran.stdout.find("\n{\n  \"plugins\"").expect("the plugin JSON");
+    assert!(
+        matches!(
+            calls.as_slice(),
+            [AdminCall::CreateInstrument { network, email, .. }, AdminCall::CreateSession { budget, expiry: 120, .. }]
+                if network == "ETHEREUM" && email == "user@example.com" && budget == "5.00"
+        ),
+        "{calls:?}"
+    );
+    let start = ran
+        .stdout
+        .find("\n{\n  \"plugins\"")
+        .expect("the plugin JSON");
     let end = ran.stdout.rfind("\n}\n").unwrap() + 2;
     let plugin = parse_json(&ran.stdout[start + 1..end]).unwrap();
     let inner = get(&plugin, &["plugins", "entries", "aws-agents-pay", "config"]).unwrap();
     assert_eq!(text(inner, &["maxPaymentAmountAtomic"]), Some("50000"));
     assert_eq!(text(inner, &["payment_session_id"]), Some(SESSION_ID));
     assert_eq!(inner.get("returnBody"), Some(&Json::Bool(false)));
-    assert!(ran.stdout.ends_with("\nThen restart OpenClaw to activate the plugin.\n"));
+    assert!(ran
+        .stdout
+        .ends_with("\nThen restart OpenClaw to activate the plugin.\n"));
 }
 
 #[test]
@@ -1408,7 +1629,9 @@ fn setup_openclaw_rejects_an_expiry_the_service_refuses_d29() {
     let world = World::new("wizard-cap", FakeTerminal::tty(&answers));
     let ran = run(&world, &["agents-pay", "admin", "setup-openclaw"]);
     assert_eq!(ran.code, 1);
-    assert!(ran.stderr.starts_with("Max per-payment USD cannot exceed the cumulative session budget."));
+    assert!(ran
+        .stderr
+        .starts_with("Max per-payment USD cannot exceed the cumulative session budget."));
 }
 
 #[test]
@@ -1416,7 +1639,13 @@ fn setup_openclaw_refuses_a_missing_project_directory() {
     let world = World::new("wizard-dir", FakeTerminal::tty(&[]));
     let ran = run(
         &world,
-        &["agents-pay", "admin", "setup-openclaw", "--project-dir", "missing"],
+        &[
+            "agents-pay",
+            "admin",
+            "setup-openclaw",
+            "--project-dir",
+            "missing",
+        ],
     );
     assert_eq!(ran.code, 1);
     assert_eq!(

@@ -265,10 +265,7 @@ const ADMIN_ROUTES: &[&[&str]] = &[
 
 /// The D32 text of an admin route, on stderr (exit 1).
 fn admin_expected() -> String {
-    format!(
-        "{}\n",
-        toolkit_cli::agents_pay::admin::D32_ADMIN_REFUSAL
-    )
+    format!("{}\n", toolkit_cli::agents_pay::admin::D32_ADMIN_REFUSAL)
 }
 
 #[test]

@@ -12,8 +12,8 @@ use toolkit_core::ToolkitError;
 use super::create_instrument::{ABORTED, NETWORK_FAMILIES};
 use super::new_session::check_budget_and_expiry;
 use super::{
-    api_failure, ask_approval, client_token, credentials_ok, deployed, int_flag, open_api,
-    or_none, refuse, required, response_text, wallet_of, AdminDeps, Approval, NO_RANDOM,
+    api_failure, ask_approval, client_token, credentials_ok, deployed, int_flag, open_api, or_none,
+    refuse, required, response_text, wallet_of, AdminDeps, Approval, NO_RANDOM,
 };
 use crate::agents_pay::agentcore::PaymentError;
 use crate::safe_text::shown_value;
@@ -26,7 +26,12 @@ pub const HEADLESS: &str =
 /// The legacy resolution failure.
 pub const UNRESOLVED: &str = "Could not resolve manager ARN / connector ID. Pass --manager-arn and --connector-id, or run from the project dir with agentcore/.cli/deployed-state.json present.";
 
-fn flag_or_env(invocation: &Invocation, deps: &AdminDeps<'_>, flag: &str, env: &str) -> Option<String> {
+fn flag_or_env(
+    invocation: &Invocation,
+    deps: &AdminDeps<'_>,
+    flag: &str,
+    env: &str,
+) -> Option<String> {
     invocation
         .value(flag)
         .map(str::to_owned)
@@ -120,7 +125,11 @@ pub(super) fn run(
     };
     let Some(instrument) = response_text(&response, "paymentInstrument", "paymentInstrumentId")
     else {
-        api_failure(out, "CreatePaymentInstrument", PaymentError::InvalidResponse);
+        api_failure(
+            out,
+            "CreatePaymentInstrument",
+            PaymentError::InvalidResponse,
+        );
         return Ok(());
     };
     let instrument = shown_value(&instrument).into_owned();
@@ -134,8 +143,7 @@ pub(super) fn run(
         };
         match api.create_session(&manager, user, budget, expiry, &token) {
             Ok(session) => {
-                let Some(id) = response_text(&session, "paymentSession", "paymentSessionId")
-                else {
+                let Some(id) = response_text(&session, "paymentSession", "paymentSessionId") else {
                     out.line(&format!("Instrument ID : {instrument}"))?;
                     api_failure(out, "CreatePaymentSession", PaymentError::InvalidResponse);
                     return Ok(());
@@ -173,8 +181,12 @@ pub(super) fn run(
         Some(url) => out.line(&format!(
             "  1. Delegation (Coinbase): visit {url}, log in, grant access to {wallet}"
         ))?,
-        None => out.line("  1. Delegation (Privy): approve delegation via the Privy frontend SDK")?,
+        None => {
+            out.line("  1. Delegation (Privy): approve delegation via the Privy frontend SDK")?
+        }
     }
-    out.line(&format!("  2. Funding: send testnet USDC to {wallet} via https://faucet.circle.com/ (Base Sepolia)"))?;
+    out.line(&format!(
+        "  2. Funding: send testnet USDC to {wallet} via https://faucet.circle.com/ (Base Sepolia)"
+    ))?;
     Ok(())
 }

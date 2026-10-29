@@ -517,7 +517,10 @@ pub fn error_code(error: PaymentError) -> &'static str {
 }
 
 /// A required value flag, as argparse reports a missing one (exit 2).
-pub(super) fn required<'i>(invocation: &'i Invocation, flag: &str) -> Result<&'i str, ToolkitError> {
+pub(super) fn required<'i>(
+    invocation: &'i Invocation,
+    flag: &str,
+) -> Result<&'i str, ToolkitError> {
     invocation.value(flag).ok_or_else(|| {
         ToolkitError::usage(
             "invalid_arguments",
@@ -756,7 +759,11 @@ pub fn resolve_manager_arn(
 
 /// User id: flag > config `resources.user_id` > `PAYMENT_USER_ID`.
 #[must_use]
-pub fn resolve_user_id(explicit: Option<&str>, path: &Path, deps: &AdminDeps<'_>) -> Option<String> {
+pub fn resolve_user_id(
+    explicit: Option<&str>,
+    path: &Path,
+    deps: &AdminDeps<'_>,
+) -> Option<String> {
     if let Some(user) = explicit.filter(|u| !u.is_empty()) {
         return Some(user.to_owned());
     }
@@ -877,10 +884,10 @@ pub(super) fn ask(
     prompt: &str,
 ) -> Result<Option<String>, ToolkitError> {
     out.prompt(prompt)?;
-    Ok(deps
-        .terminal
-        .read_line()
-        .map(|line| line.trim_matches(super::pyval::is_python_whitespace).to_owned()))
+    Ok(deps.terminal.read_line().map(|line| {
+        line.trim_matches(super::pyval::is_python_whitespace)
+            .to_owned()
+    }))
 }
 
 /// A response member through the shared recorded readers: the

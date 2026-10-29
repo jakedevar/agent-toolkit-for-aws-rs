@@ -85,14 +85,9 @@ pub fn atomic_write_0600_with(
         Mode::from_raw_mode(0o600),
     )?;
     let mut file = std::fs::File::from(fd);
-    if let Err(error) = fill_and_rename(
-        &mut file,
-        &dir,
-        &temp,
-        name,
-        content,
-        || before_rename(&parent.join(&temp)),
-    ) {
+    if let Err(error) = fill_and_rename(&mut file, &dir, &temp, name, content, || {
+        before_rename(&parent.join(&temp))
+    }) {
         let _ = unlinkat(&dir, temp.as_str(), AtFlags::empty());
         return Err(error);
     }

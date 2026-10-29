@@ -2422,15 +2422,17 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
 /// telemetry (#4398), then mcp-proxy (#5079) and ai-payloads (#5143).
 /// The S2b render synopsis is included as well (#5223), the launch
 /// `download-snapshot` and `apply-snapshot` routes (#5317), and the agents-pay
-/// fetch route (#5352).
+/// fetch route (#5352), and the agents-pay admin and agents-build
+/// setup-payment-user routes (#5462).
 /// A deliberate usage change updates the pin in the same
 /// commit and says so in the Issue; an incidental one fails here.
 // Neptune memory (#4886) deliberately adds its synopsis and description, and
 // the launch snapshot routes (#5317) theirs.
 // `documentdb normalize-capture` (#5327) deliberately adds its synopsis and description.
 // `agents-pay fetch` (#5352) deliberately adds its synopsis and description.
-const USAGE_BASE_LEN: usize = 46270;
-const USAGE_BASE_FNV1A64: u64 = 0x91e6_f153_fb3c_4da2;
+// The x402 S6 admin routes (#5462) deliberately add their synopses and descriptions.
+const USAGE_BASE_LEN: usize = 48424;
+const USAGE_BASE_FNV1A64: u64 = 0xded2_79c3_c049_e89d;
 
 #[test]
 fn the_global_usage_text_is_byte_identical_to_the_base() {

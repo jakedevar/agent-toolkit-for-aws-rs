@@ -5,9 +5,9 @@
 use toolkit_core::ToolkitError;
 
 use super::{
-    admin_config_path, api_failure, ask_approval, client_token, credentials_ok, deployed,
-    open_api, or_none, refuse, required, resolve_manager_arn, resolve_region, resolve_user_id,
-    response_text, update_resources, wallet_of, AdminDeps, Approval, NO_PAYER, NO_RANDOM,
+    admin_config_path, api_failure, ask_approval, client_token, credentials_ok, deployed, open_api,
+    or_none, refuse, required, resolve_manager_arn, resolve_region, resolve_user_id, response_text,
+    update_resources, wallet_of, AdminDeps, Approval, NO_PAYER, NO_RANDOM,
 };
 use crate::safe_text::{shown_path, shown_value};
 use crate::{Invocation, Output};
@@ -98,8 +98,7 @@ pub(super) fn run(
         refuse(out, NO_RANDOM);
         return Ok(());
     };
-    let response = match api.create_instrument(&manager, &user, &connector, family, email, &token)
-    {
+    let response = match api.create_instrument(&manager, &user, &connector, family, email, &token) {
         Ok(response) => response,
         Err(error) => {
             api_failure(out, "CreatePaymentInstrument", error);
@@ -141,14 +140,13 @@ pub(super) fn run(
         shown_path(&path)
     ))?;
     out.line("\nTwo one-time steps remain, both done by the END USER, not the agent:")?;
-    match redirect {
-        Some(url) => out.line(&format!(
+    if let Some(url) = redirect {
+        out.line(&format!(
             "  1. Delegation: visit {url}, sign in, grant access to {wallet}"
-        ))?,
-        None => {
-            out.line("  1. Delegation: approve via the Privy frontend SDK")?;
-            out.line("     https://github.com/privy-io/aws-agentcore-sdk")?;
-        }
+        ))?;
+    } else {
+        out.line("  1. Delegation: approve via the Privy frontend SDK")?;
+        out.line("     https://github.com/privy-io/aws-agentcore-sdk")?;
     }
     out.line(&format!("  2. Funding   : send testnet USDC to {wallet}"))?;
     out.line("                 https://faucet.circle.com/ (Base Sepolia)")?;

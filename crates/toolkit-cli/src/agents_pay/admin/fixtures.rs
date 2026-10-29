@@ -231,8 +231,7 @@ impl AdminFs for TempAdminFs {
         let Some(resolved) = self.resolve(path) else {
             return Err("TempAdminFs refuses a path outside its root.".to_owned());
         };
-        super::write::atomic_write_0600(&resolved, content)
-            .map_err(|_| super::write_failure(path))
+        super::write::atomic_write_0600(&resolved, content).map_err(|_| super::write_failure(path))
     }
     fn load_runtime_policy(&self, path: &Path) -> Result<Json, String> {
         let Some(resolved) = self.resolve(path) else {

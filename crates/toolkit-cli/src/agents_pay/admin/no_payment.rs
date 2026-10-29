@@ -12,17 +12,16 @@
 // any change to it fails the gate. Only `//` comments are allowed here, as
 // they are not tokens; a doc comment would be.
 
+#[allow(clippy::unnecessary_wraps)] // The registry `Handler` signature.
 pub(super) fn admin_command(
     _invocation: &crate::Invocation,
     out: &mut crate::Output<'_>,
 ) -> ::core::result::Result<(), ::toolkit_core::ToolkitError> {
-    self::refuse_without_payment_support(out)
+    self::refuse_without_payment_support(out);
+    ::core::result::Result::Ok(())
 }
 
-fn refuse_without_payment_support(
-    out: &mut crate::Output<'_>,
-) -> ::core::result::Result<(), ::toolkit_core::ToolkitError> {
+fn refuse_without_payment_support(out: &mut crate::Output<'_>) {
     out.diagnostic(super::D32_ADMIN_REFUSAL);
     out.set_exit_status(1);
-    ::core::result::Result::Ok(())
 }

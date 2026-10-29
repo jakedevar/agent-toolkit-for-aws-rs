@@ -98,13 +98,13 @@ pub(super) fn run(
     let user = match (explicit_user, &existing) {
         (Some(user), _) => Json::string(user),
         (None, Some(existing)) => existing.clone(),
-        (None, None) => match generate_user_id(deps) {
-            Ok(user) => Json::string(user),
-            Err(_) => {
+        (None, None) => {
+            let Ok(user) = generate_user_id(deps) else {
                 refuse(out, NO_RANDOM);
                 return Ok(());
-            }
-        },
+            };
+            Json::string(user)
+        }
     };
     let user_text = py_str(&user).unwrap_or_default();
     set_in(&mut config, "resources", "user_id", user);

@@ -33,7 +33,8 @@ pub const ABORTED: &str = "Aborted. No session created.";
 /// `"<label> must be a decimal number."` or `"<label> must be greater than
 /// zero."`.
 pub fn parse_positive_decimal(text: &str, label: &str) -> Result<CapDecimal, String> {
-    let value = CapDecimal::parse(text).map_err(|_| format!("{label} must be a decimal number."))?;
+    let value =
+        CapDecimal::parse(text).map_err(|_| format!("{label} must be a decimal number."))?;
     if !value.is_positive() {
         return Err(format!("{label} must be greater than zero."));
     }
@@ -164,9 +165,18 @@ fn strings(values: &[String]) -> Json {
 pub fn build_openclaw_config(inputs: &OpenClawInputs) -> Json {
     let mut plugin = vec![
         ("region", Json::string(inputs.region.as_str())),
-        ("paymentManagerArn", Json::string(inputs.manager_arn.as_str())),
-        ("paymentInstrumentId", Json::string(inputs.instrument_id.as_str())),
-        ("payment_session_id", Json::string(inputs.session_id.as_str())),
+        (
+            "paymentManagerArn",
+            Json::string(inputs.manager_arn.as_str()),
+        ),
+        (
+            "paymentInstrumentId",
+            Json::string(inputs.instrument_id.as_str()),
+        ),
+        (
+            "payment_session_id",
+            Json::string(inputs.session_id.as_str()),
+        ),
         ("userId", Json::string(inputs.user_id.as_str())),
         (
             "networkPreferences",
@@ -315,10 +325,7 @@ struct Identity {
 }
 
 /// Steps 1 to 3: identity, region, network and recipients.
-fn identity(
-    deps: &AdminDeps<'_>,
-    out: &mut Output<'_>,
-) -> Result<Option<Identity>, ToolkitError> {
+fn identity(deps: &AdminDeps<'_>, out: &mut Output<'_>) -> Result<Option<Identity>, ToolkitError> {
     out.line("\n--- Step 1: User Identity ---")?;
     out.line("A stable userId ties your instrument and session together.")?;
     let Some(mut user) = prompt(deps, out, "User ID (blank to auto-generate)", "")? else {
@@ -465,7 +472,12 @@ fn answers(deps: &AdminDeps<'_>, out: &mut Output<'_>) -> Result<Option<Answers>
     };
     out.line("\n--- Step 5: Paid Content Return ---")?;
     out.line("By default, paid publisher content is withheld from the model's context as a security\ncontrol \u{2014} the response body may contain prompt injection. Returning it lets the agent\nread/summarize what it paid for, at that risk.")?;
-    let Some(answer) = prompt(deps, out, "Return paid response body to the agent? (y/n)", "y")?
+    let Some(answer) = prompt(
+        deps,
+        out,
+        "Return paid response body to the agent? (y/n)",
+        "y",
+    )?
     else {
         return Ok(None);
     };
@@ -627,7 +639,10 @@ pub(super) fn run(
         refuse(out, &reason);
         return Ok(());
     }
-    out.line(&format!("\n  \u{2713} Config written to {}", shown_path(&path)))?;
+    out.line(&format!(
+        "\n  \u{2713} Config written to {}",
+        shown_path(&path)
+    ))?;
     out.line(&format!(
         "  Paid response body will be {} the agent (policy.return_body).",
         if a.return_body {
@@ -671,7 +686,11 @@ pub(super) fn run(
         };
     let Some(instrument) = response_text(&response, "paymentInstrument", "paymentInstrumentId")
     else {
-        api_failure(out, "CreatePaymentInstrument", PaymentError::InvalidResponse);
+        api_failure(
+            out,
+            "CreatePaymentInstrument",
+            PaymentError::InvalidResponse,
+        );
         return Ok(());
     };
     let (wallet, redirect) = wallet_of(&response);
@@ -688,7 +707,9 @@ pub(super) fn run(
         );
         return Ok(());
     }
-    out.line(&format!("  \u{2713} Instrument created: {shown_instrument}"))?;
+    out.line(&format!(
+        "  \u{2713} Instrument created: {shown_instrument}"
+    ))?;
     out.line(&format!("    Wallet: {wallet}"))?;
 
     out.line("\n--- Step 7: Delegate & Fund ---")?;
@@ -702,7 +723,13 @@ pub(super) fn run(
     out.line(&format!("  2. Send testnet USDC to {wallet}"))?;
     out.line("     https://faucet.circle.com/ (Base Sepolia)")?;
     out.line("")?;
-    if line(deps, out, "Press Enter when delegation and funding are complete...")?.is_none() {
+    if line(
+        deps,
+        out,
+        "Press Enter when delegation and funding are complete...",
+    )?
+    .is_none()
+    {
         return Ok(());
     }
 
@@ -717,7 +744,10 @@ pub(super) fn run(
         fixed(&a.max),
         a.atomic
     ))?;
-    out.line(&format!("    Expiry:          {}", format_duration(a.expiry)))?;
+    out.line(&format!(
+        "    Expiry:          {}",
+        format_duration(a.expiry)
+    ))?;
     out.line(&format!("    User:            {}", shown_value(&a.user)))?;
     if matches!(
         ask_approval(deps, out, "  Type 'approve' to continue: ")?,
@@ -731,8 +761,7 @@ pub(super) fn run(
         refuse(out, NO_RANDOM);
         return Ok(());
     };
-    let session = match api.create_session(&manager, &a.user, &fixed(&a.budget), a.expiry, &token)
-    {
+    let session = match api.create_session(&manager, &a.user, &fixed(&a.budget), a.expiry, &token) {
         Ok(session) => session,
         Err(error) => {
             api_failure(out, "CreatePaymentSession", error);
