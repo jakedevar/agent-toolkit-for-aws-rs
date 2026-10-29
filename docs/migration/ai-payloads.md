@@ -203,3 +203,19 @@ the later slices bring (B-1 to B-16).
 - **Not in `templates`.** The four Lambda reward templates and `mlflow_reference.py`
   (T06 to T10) live outside `code_templates/` and are not listed; the reward
   checker is slice S3.
+
+### Reward contracts
+
+`toolkit ai-payloads reward sample --format FORMAT` prints a documented event.
+`toolkit ai-payloads reward check --format FORMAT --event FILE --response FILE
+[--batch]` validates captured JSON offline; it does not execute a template or
+invoke AWS. Formats are `openai`, `verl`, `hf-prompt-completion`,
+`hf-preference`, `sagemaker-eval`, and `nova`. SageMaker sends one sample per
+invocation; `--batch` enables a local test extension. Nova accepts either an
+object or an array. Responses must be a result list or a 200 wrapper with a
+JSON-string list body. A non-200 wrapper fails, as SageMaker counts that sample
+in `byoc_failure_count` and drops its custom metrics. Verl samples without an
+id cannot have their id compared. Diagnostics identify positions without
+printing payload values. Input files are bounded regular files and symlinks are
+refused. Success exits 0, contract or file errors exit 1, and usage errors
+exit 2. The existing T06 and T09 response defects remain for #5120.

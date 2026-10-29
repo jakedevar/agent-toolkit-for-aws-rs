@@ -288,3 +288,8 @@ name, number or `KEY=VALUE` pair that never names a file, so the exact value
 `-` is refused (exit 2) by the router before the handler runs. The command
 reads only its own stdin stream (the MCP client) and writes only its own
 stdout; neither is selected by an argument.
+
+The reward checker (#5214) adds `--format`, `--event`, and `--response` value
+flags. The router refuses bare `-` and `--flag=-` for each; no stdin or literal
+file named `-` is read. Its two synopsis lines change global usage to 44155
+bytes, FNV-1a `0xea11e5a1e031b87f`.
