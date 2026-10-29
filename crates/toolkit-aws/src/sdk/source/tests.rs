@@ -31,9 +31,65 @@ use crate::sdk::test_support::{child_case, child_command, report, run, Child, Te
 
 const ENTRY: &str = "sdk::source::tests::child_entry";
 const CANARY: &str = "AKIAFALLBACKCANARY0";
+const BARE_CANARY: &str = "barecredentialcanaryfortest";
 const IMDS: &str = "169.254.169.254";
 const ECS_HOST: &str = "169.254.170.2";
 const LOGIN_ARN: &str = "arn:aws:iam::012345678901:user/Admin";
+
+#[test]
+fn required_credentials_rebuild_expired_and_never_use_unsigned_fallback() {
+    use std::time::{Duration, UNIX_EPOCH};
+
+    let now = UNIX_EPOCH + Duration::from_secs(100);
+    let expired = Credentials::new("canary-key", "canary-secret", None, Some(now)).unwrap();
+    let fresh = Credentials::new("fresh-key", "fresh-secret", None, None).unwrap();
+    let mut calls = Vec::new();
+    let result = required_credentials(
+        || now,
+        |rebuild| {
+            calls.push(rebuild);
+            RequestCredentials::Sign(if rebuild {
+                fresh.clone()
+            } else {
+                expired.clone()
+            })
+        },
+    )
+    .unwrap();
+    assert_eq!(result, fresh);
+    assert_eq!(calls, [false, true]);
+
+    let mut count = 0;
+    let error = required_credentials(
+        || now,
+        |_| {
+            count += 1;
+            RequestCredentials::Sign(expired.clone())
+        },
+    )
+    .unwrap_err();
+    assert!(matches!(error, AwsError::CredentialsExpired));
+    assert_eq!(count, 2);
+    assert!(!format!("{error:?} {error}").contains("canary"));
+
+    let mut ticks = [now - Duration::from_secs(1), now].into_iter();
+    let error = required_credentials(
+        || ticks.next().unwrap(),
+        |_| RequestCredentials::Sign(expired.clone()),
+    )
+    .unwrap_err();
+    assert!(matches!(error, AwsError::CredentialsExpired));
+
+    let error = required_credentials(|| now, |_| RequestCredentials::Unsigned).unwrap_err();
+    assert!(matches!(error, AwsError::NoCredentials));
+    let error = required_credentials(
+        || now,
+        |_| RequestCredentials::Refused(CredentialRefusal::ProviderFailed),
+    )
+    .unwrap_err();
+    assert!(matches!(error, AwsError::CredentialProvider { .. }));
+    assert!(!format!("{error:?} {error}").contains("canary"));
+}
 
 // --- The recorder: the T-PROV provider-plane HTTP client. ---
 
@@ -42,6 +98,9 @@ enum Reply {
     Ok(u16, Vec<(&'static str, &'static str)>, String),
     Dispatch,
     Timeout,
+    Canary,
+    /// Never answers within the test: the provider is stalled.
+    Stall,
 }
 
 /// Scripted replies by `"METHOD host/path"`.
@@ -104,6 +163,13 @@ impl HttpConnector for Recorder {
                 Ok(response)
             }
             Some(Reply::Timeout) => Err(ConnectorError::timeout("recorder timeout".into())),
+            Some(Reply::Canary) => Err(ConnectorError::io(BARE_CANARY.into())),
+            Some(Reply::Stall) => {
+                return HttpConnectorFuture::new(async {
+                    tokio::time::sleep(std::time::Duration::from_secs(4)).await;
+                    Err(ConnectorError::io("recorder stalled".into()))
+                });
+            }
             Some(Reply::Dispatch) | None => {
                 Err(ConnectorError::io("recorder refused the request".into()))
             }
@@ -207,6 +273,12 @@ fn recorder() -> Recorder {
     if fixture("FIXTURE_STS").as_deref() == Some("timeout") {
         recorder = recorder.route("POST sts.us-east-1.amazonaws.com/", vec![Reply::Timeout]);
     }
+    if fixture("FIXTURE_STS").as_deref() == Some("stall") {
+        recorder = recorder.route("POST sts.us-east-1.amazonaws.com/", vec![Reply::Stall]);
+    }
+    if fixture("FIXTURE_STS").as_deref() == Some("canary") {
+        recorder = recorder.route("POST sts.us-east-1.amazonaws.com/", vec![Reply::Canary]);
+    }
     match fixture("FIXTURE_SIGNIN").as_deref() {
         Some("ok") => {
             recorder = recorder.route(
@@ -219,6 +291,12 @@ fn recorder() -> Recorder {
                      \"tokenType\":\"aws_sigv4\",\"expiresIn\":900,\"refreshToken\":\"refresh-2\"}"
                         .to_string(),
                 )],
+            );
+        }
+        Some("stall") => {
+            recorder = recorder.route(
+                "POST us-east-1.signin.aws.amazon.com/v1/token",
+                vec![Reply::Stall],
             );
         }
         Some("fail") => {
@@ -288,8 +366,33 @@ fn child_entry() {
         guarded =
             guarded.with_between_attempts(Box::new(|| rewrite("AWS_CONFIG_FILE", "HOOK_CONFIG")));
     }
-    let first = guarded.resolve(skip_auth, false);
-    report_outcome("", &first);
+    if let Ok(budget) = std::env::var("BOUNDED_MS") {
+        let budget = std::time::Duration::from_millis(budget.parse().expect("BOUNDED_MS"));
+        let start = Instant::now();
+        let loaded = CredentialsProvider::load(&guarded.until(start + budget));
+        report("elapsed_ms", start.elapsed().as_millis().to_string());
+        match loaded {
+            Ok(credentials) => {
+                report("decision", "sign");
+                report("key", credentials.access_key_id().expose());
+            }
+            Err(error) => {
+                report("decision", error.code());
+                report("diagnostic", format!("{error:?} {error}"));
+            }
+        }
+    } else if std::env::var("REQUIRE_CREDENTIALS").is_ok() {
+        match CredentialsProvider::load(&guarded) {
+            Ok(_) => report("decision", "sign"),
+            Err(error) => {
+                report("decision", error.code());
+                report("diagnostic", format!("{error:?} {error}"));
+            }
+        }
+    } else {
+        let first = guarded.resolve(skip_auth, false);
+        report_outcome("", &first);
+    }
     if std::env::var("THEN_CONFIG").is_ok() {
         rewrite("AWS_CONFIG_FILE", "THEN_CONFIG");
         report_outcome("2", &guarded.resolve(skip_auth, false));
@@ -403,6 +506,73 @@ fn genuine_absence_is_unsigned_only_with_skip_auth() {
             assert_eq!(outcome.result("dest"), "", "metadata disabled: no request");
         }
     }
+}
+
+#[test]
+fn required_guarded_source_refuses_fallback_and_hides_bare_canaries() {
+    let role = "[default]\nrole_arn = arn:aws:iam::123456789012:role/r\nsource_profile = base\n\
+                [profile base]\naws_access_key_id = AKIABASE0\naws_secret_access_key = s\n";
+    let process =
+        format!("[default]\ncredential_process = sh -c 'echo {BARE_CANARY} >&2; exit 1'\n");
+    let scenarios = [
+        (Scenario::new("", ""), "aws_no_credentials", ""),
+        (
+            Scenario::new("", "").with("AWS_ACCESS_KEY_ID", "partial"),
+            "aws_invalid_config",
+            "",
+        ),
+        (
+            Scenario::new("", "")
+                .with("AWS_PROFILE", "missing")
+                .ecs_fallback(),
+            "aws_invalid_config",
+            "",
+        ),
+        (
+            Scenario::new(&process, "").ecs_fallback(),
+            "aws_credential_provider",
+            "",
+        ),
+        (
+            Scenario::new(role, "")
+                .ecs_fallback()
+                .with("FIXTURE_STS", "canary"),
+            "aws_credential_provider",
+            "sts",
+        ),
+    ];
+    for (scenario, expected, destination) in scenarios {
+        let outcome = scenario
+            .with("REQUIRE_CREDENTIALS", "1")
+            .with("RUST_LOG", "trace")
+            .run();
+        assert_eq!(outcome.result("decision"), expected);
+        assert!(!outcome.stdout.contains(BARE_CANARY));
+        assert!(!outcome.stderr.contains(BARE_CANARY));
+        assert_no_canary(&outcome);
+        let destinations = outcome.result("dest");
+        if destination.is_empty() {
+            assert!(destinations.is_empty(), "{destinations}");
+        } else {
+            assert!(!destinations.is_empty());
+            assert!(destinations
+                .split('|')
+                .all(|request| request == "POST sts.us-east-1.amazonaws.com/"));
+        }
+    }
+}
+
+#[test]
+fn required_guarded_source_recovers_on_configured_rebuild() {
+    let valid = "[default]\naws_access_key_id = AKIAFIXEDKEY0\naws_secret_access_key = s\n";
+    let outcome = Scenario::new(&format!("[default]\n{SSO_INCOMPLETE}{SSO_SESSION}"), "")
+        .with("HOOK_CONFIG", valid)
+        .with("REQUIRE_CREDENTIALS", "1")
+        .run();
+    assert_eq!(outcome.result("decision"), "sign");
+    assert_eq!(outcome.result("log"), "Profile,Profile");
+    assert_eq!(outcome.result("dest"), "");
+    assert_no_canary(&outcome);
 }
 
 #[test]
@@ -810,4 +980,134 @@ fn the_build_log_is_off_by_default_and_bounded_when_enabled() {
     );
     assert!(!guarded.lock().log.enabled);
     assert!(guarded.with_build_recording().lock().log.enabled);
+}
+
+// ---- R-DG-07: bounded credential resolution (#5366 PM ruling 1) ----
+
+fn elapsed_ms(outcome: &Child) -> u64 {
+    outcome.result("elapsed_ms").parse().expect("elapsed_ms")
+}
+
+/// T-DG-07a provider phase: a stalled provider (an assume-role STS call, and
+/// a login refresh, over injected provider HTTP) is abandoned at the
+/// operation deadline with the fixed timeout class, no rebuild, no fallback.
+#[test]
+fn a_stalled_provider_is_abandoned_at_the_deadline() {
+    let role = "[default]\nrole_arn = arn:aws:iam::123456789012:role/r\nsource_profile = base\n\
+                [profile base]\naws_access_key_id = AKIABASE0\naws_secret_access_key = s\n";
+    let (login, _) = login_scenario("2000-01-01T00:00:00Z", "stall");
+    let cases = [
+        (
+            Scenario::new(role, "")
+                .ecs_fallback()
+                .with("FIXTURE_STS", "stall"),
+            "POST sts.us-east-1.amazonaws.com/",
+        ),
+        (login, "POST us-east-1.signin.aws.amazon.com/v1/token"),
+    ];
+    for (scenario, destination) in cases {
+        let outcome = scenario
+            .with("BOUNDED_MS", "300")
+            .with("RUST_LOG", "trace")
+            .run();
+        assert_eq!(
+            outcome.result("decision"),
+            "aws_timeout",
+            "{}",
+            outcome.stdout
+        );
+        let elapsed = elapsed_ms(&outcome);
+        assert!((250..2000).contains(&elapsed), "took {elapsed} ms");
+        assert_eq!(
+            outcome.result("log"),
+            "Profile",
+            "no rebuild after the deadline"
+        );
+        let dest = outcome.result("dest");
+        assert!(
+            !dest.is_empty() && dest.split('|').all(|r| r == destination),
+            "{dest}"
+        );
+        assert!(outcome.result("diagnostic").contains("nothing was sent"));
+        assert_no_canary(&outcome);
+    }
+}
+
+/// The credential budget (10 s) and the operation deadline: the earlier
+/// wins, and a deadline already past stops before any provider request.
+#[test]
+fn bounded_resolution_succeeds_in_budget_and_an_expired_deadline_sends_nothing() {
+    let valid = "[default]\naws_access_key_id = AKIAFIXEDKEY0\naws_secret_access_key = s\n";
+    let outcome = Scenario::new(valid, "").with("BOUNDED_MS", "5000").run();
+    assert_eq!(outcome.result("decision"), "sign");
+    assert_eq!(outcome.result("key"), "AKIAFIXEDKEY0");
+    assert!(CREDENTIAL_BUDGET == std::time::Duration::from_secs(10));
+
+    let role = "[default]\nrole_arn = arn:aws:iam::123456789012:role/r\nsource_profile = base\n\
+                [profile base]\naws_access_key_id = AKIABASE0\naws_secret_access_key = s\n";
+    let outcome = Scenario::new(role, "")
+        .with("FIXTURE_STS", "stall")
+        .with("BOUNDED_MS", "0")
+        .run();
+    assert_eq!(outcome.result("decision"), "aws_timeout");
+    assert!(elapsed_ms(&outcome) < 1000);
+    assert_eq!(
+        outcome.result("dest"),
+        "",
+        "no provider request after the deadline"
+    );
+}
+
+/// T-DG-02a through the real guarded source on the bounded path: an expired
+/// login session refreshes through injected Sign-in HTTP, a refresh failure
+/// fails closed with a fixed class (no unsigned fallback, no other identity).
+#[test]
+fn bounded_resolution_refreshes_expired_credentials_and_fails_closed() {
+    let (refresh, _) = login_scenario("2000-01-01T00:00:00Z", "ok");
+    let outcome = refresh.with("BOUNDED_MS", "5000").run();
+    assert_eq!(outcome.result("decision"), "sign");
+    assert_eq!(outcome.result("key"), "AKIAREFRESHEDKEY0");
+    assert_eq!(
+        outcome.result("dest"),
+        "POST us-east-1.signin.aws.amazon.com/v1/token"
+    );
+
+    let (failing, _) = login_scenario("2000-01-01T00:00:00Z", "fail");
+    let outcome = failing.ecs_fallback().with("BOUNDED_MS", "5000").run();
+    assert_eq!(outcome.result("decision"), "aws_credential_provider");
+    let dest = outcome.result("dest");
+    assert!(
+        dest.split('|')
+            .all(|r| r == "POST us-east-1.signin.aws.amazon.com/v1/token"),
+        "no fallback identity was requested: {dest}"
+    );
+    assert_no_canary(&outcome);
+
+    let outcome = Scenario::new("", "").with("BOUNDED_MS", "5000").run();
+    assert_eq!(outcome.result("decision"), "aws_no_credentials");
+}
+
+/// aws-config does not kill a `credential_process` child when its future is
+/// dropped, so the bounded path refuses such a source before it is built:
+/// no process starts, and the refusal is a fixed message.
+#[test]
+fn bounded_resolution_refuses_a_credential_process_before_it_runs() {
+    let probe = TempDir::new("process-probe");
+    let marker = probe.path().join("started");
+    let process = format!(
+        "[default]\ncredential_process = sh -c 'touch {}; sleep 3'\n",
+        marker.display()
+    );
+    let start = std::time::Instant::now();
+    let outcome = Scenario::new(&process, "")
+        .ecs_fallback()
+        .with("BOUNDED_MS", "300")
+        .run();
+    assert_eq!(outcome.result("decision"), "aws_invalid_config");
+    assert!(outcome
+        .result("diagnostic")
+        .contains(UNBOUNDED_PROCESS_REFUSAL));
+    assert!(!marker.exists(), "the credential_process must not start");
+    assert_eq!(outcome.result("dest"), "", "and no fallback is requested");
+    assert!(start.elapsed() < std::time::Duration::from_secs(3));
 }

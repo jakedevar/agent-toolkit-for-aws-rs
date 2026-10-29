@@ -30,27 +30,44 @@ sdk = [
     "dep:tokio",
     "dep:tracing",
     "dep:hyper",
+    "dep:hyper-util",
+    "dep:tokio-rustls",
+    "dep:http",
+    "dep:http-body",
+    "dep:http-body-util",
+    "dep:bytes",
 ]
 
 [dependencies]
 toolkit-core = { path = "../toolkit-core" }
 # Hyper gates its typed head-size classifier on these features, even for clients.
-hyper = { version = "=1.12.0", optional = true, default-features = false, features = ["http1", "server"] }
+hyper = { version = "=1.12.0", optional = true, default-features = false, features = ["http1", "server", "client"] }
+# The narrow database endpoint connector (R-DG-03, #5387): the HTTP/1 client
+# connection, TLS stream and body types already in the `sdk` graph through
+# aws-smithy-http-client, pinned to the resolved versions. They add no crate:
+# the connector reuses the same rustls/aws-lc stack and `ValidatedRoots`, but
+# owns the TCP dial so the connected peer is checked before any byte is sent.
+hyper-util = { version = "=0.1.21", optional = true, default-features = false, features = ["tokio"] }
+tokio-rustls = { version = "=0.26.6", optional = true, default-features = false }
+http = { version = "=1.5.0", optional = true }
+http-body = { version = "=1.1.0", optional = true }
+http-body-util = { version = "=0.1.5", optional = true }
+bytes = { version = "=1.12.1", optional = true }
 aws-config = { version = "=1.13.0", optional = true, default-features = false, features = ["rustls", "rt-tokio", "sso", "credentials-process", "credentials-login"] }
 aws-credential-types = { version = "=1.3.1", optional = true }
 aws-sigv4 = { version = "=1.6.3", optional = true, default-features = false, features = ["sign-http"] }
 aws-smithy-async = { version = "=1.3.1", optional = true, features = ["rt-tokio"] }
 aws-smithy-http-client = { version = "=1.5.1", optional = true, default-features = false, features = ["rustls-aws-lc"] }
-aws-smithy-runtime-api = { version = "=1.19.1", optional = true, features = ["client"] }
-aws-smithy-types = { version = "=1.9.0", optional = true }
-tokio = { version = "=1.54.1", optional = true, default-features = false, features = ["rt", "time", "net"] }
+aws-smithy-runtime-api = { version = "=1.19.1", optional = true, features = ["client", "http-1x"] }
+aws-smithy-types = { version = "=1.9.0", optional = true, features = ["http-body-1-x"] }
+tokio = { version = "=1.54.1", optional = true, default-features = false, features = ["rt", "time", "net", "io-util", "sync"] }
 # R-ABS profile adapter (#4413 S1): aws-config's own profile parser over the
 # `Fs`/`Env` shims, and the SDK home-directory rule for the default paths.
 aws-runtime = { version = "=1.10.2", optional = true }
 aws-types = { version = "=1.7.0", optional = true }
 # R-ROOTS (#4413 S1): explicit root validation. No `logging` feature: the R-LOG
 # gate keeps every `log` backend out of the tree.
-rustls = { version = "=0.23.46", optional = true, default-features = false, features = ["std"] }
+rustls = { version = "=0.23.46", optional = true, default-features = false, features = ["std", "aws_lc_rs"] }
 rustls-native-certs = { version = "=0.8.5", optional = true }
 rustls-pki-types = { version = "=1.15.1", optional = true, features = ["std"] }
 # T-LEAK-GATE (#4413 S3): `tracing::dispatcher::has_been_set`, already in the

@@ -199,6 +199,23 @@ impl Pki {
             PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key.serialize_der())),
         )
     }
+
+    /// A server certificate for `host` that expired in 2001.
+    pub fn expired_server(
+        &self,
+        host: &str,
+    ) -> (Vec<CertificateDer<'static>>, PrivateKeyDer<'static>) {
+        let key = KeyPair::generate().expect("server key");
+        let mut params = CertificateParams::new(vec![host.to_string()]).expect("server params");
+        params.not_before = rcgen::date_time_ymd(2000, 1, 1);
+        params.not_after = rcgen::date_time_ymd(2001, 1, 1);
+        let issuer = Issuer::from_params(&self.params, &self.key);
+        let cert = params.signed_by(&key, &issuer).expect("server certificate");
+        (
+            vec![cert.der().clone(), self.ca_der.clone()],
+            PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key.serialize_der())),
+        )
+    }
 }
 
 /// One piece of a loopback reply.

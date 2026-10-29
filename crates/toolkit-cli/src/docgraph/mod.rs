@@ -51,6 +51,8 @@ mod dbchecks;
 mod infra;
 pub mod memory;
 mod neptune_input;
+#[cfg(feature = "docgraph-live")]
+pub mod network_policy;
 mod report;
 mod seed;
 mod snapshot;
@@ -66,7 +68,7 @@ use seed::{GremlinSession, NoLiveSession, RecordedSession, SeedError};
 /// `documentdb wa-review`.
 pub const WA_REVIEW: CommandSpec = CommandSpec {
     path: &["documentdb", "wa-review"],
-    flags: &[],
+    flags: &["--live"],
     value_flags: &[
         "--cluster-id",
         "--region",
@@ -74,6 +76,7 @@ pub const WA_REVIEW: CommandSpec = CommandSpec {
         "--recorded",
         "--output",
         "--now",
+        "--network-policy",
     ],
     strict_values: true,
     repeatable_flags: &[],
@@ -109,8 +112,8 @@ pub const NEPTUNE_VALIDATE_INPUT: CommandSpec = CommandSpec {
 /// `neptune seed`.
 pub const NEPTUNE_SEED: CommandSpec = CommandSpec {
     path: &["neptune", "seed"],
-    flags: &["--confirm-wipe", "--dry-run"],
-    value_flags: &["--endpoint", "--recorded"],
+    flags: &["--confirm-wipe", "--dry-run", "--live"],
+    value_flags: &["--endpoint", "--recorded", "--region", "--network-policy"],
     strict_values: true,
     repeatable_flags: &[],
     max_positionals: 0,
@@ -130,12 +133,14 @@ pub(crate) const SLICE: crate::registry::Slice = crate::registry::Slice {
         NEPTUNE_SEED,
         NEPTUNE_MEMORY,
     ],
-    synopsis: r"  toolkit documentdb wa-review --cluster-id ID --region R [--recorded FILE]
-      [--analysis-data FILE] [--output DIR] [--now TS]
+    synopsis: r"  toolkit documentdb wa-review --cluster-id ID --region R [--recorded FILE | --live]
+      [--analysis-data FILE] [--output DIR] [--now TS] [--network-policy FILE]
   toolkit documentdb normalize-capture --capture FILE --output FILE
   toolkit neptune validate-input [KEY=VALUE...]
-  toolkit neptune seed [--confirm-wipe] [--endpoint HOST] [--recorded FILE | --dry-run]
-  toolkit neptune memory --operation OP --input FILE [--recorded FILE | --dry-run]
+  toolkit neptune seed [--confirm-wipe] [--endpoint HOST] [--recorded FILE | --dry-run | --live]
+      [--region R] [--network-policy FILE]
+  toolkit neptune memory --operation OP --input FILE [--recorded FILE | --dry-run | --live]
+      [--confirm-write] [--confirm-delete] [--confirm-create] [--region R] [--network-policy FILE]
 ",
     description: r"  documentdb    DocumentDB Well-Architected review (#4395). wa-review runs the 41
                 infrastructure and database checks over recorded AWS responses
@@ -150,8 +155,9 @@ pub(crate) const SLICE: crate::registry::Slice = crate::registry::Slice {
                 wipes and seeds the test graphs only with --confirm-wipe (or
                 NEPTUNE_SEED_CONFIRM_WIPE=1), replays --recorded responses or
                 prints the statements with --dry-run: this build has no
-                Gremlin or AWS client. memory prints or replays GraphRAG and
-                agent-memory requests. See docs/migration/docgraph.md.
+                Gremlin or AWS client; --live is reserved and currently refused.
+                memory prints or replays GraphRAG and agent-memory requests.
+                See docs/migration/docgraph.md.
 ",
     exit_notes: "",
     doc: "docs/migration/docgraph.md",
@@ -193,11 +199,34 @@ fn load_recorded(path: &str) -> Result<Json, ToolkitError> {
     read_document(path).map_err(|reason| ToolkitError::runtime("docgraph_recorded", reason))
 }
 
+/// Validate live selection before any input, policy, credential or DNS work.
+fn live_selected(invocation: &Invocation) -> Result<bool, ToolkitError> {
+    if !invocation.has_flag("--live") {
+        return Ok(false);
+    }
+    if !cfg!(feature = "docgraph-live") {
+        return Err(usage("--live requires the docgraph-live feature"));
+    }
+    if invocation.has_flag("--dry-run") || invocation.value("--recorded").is_some() {
+        return Err(usage(
+            "--live cannot be combined with --dry-run or --recorded",
+        ));
+    }
+    Ok(true)
+}
+
+fn unavailable_live() -> ToolkitError {
+    usage("live docgraph adapters are not available in this build")
+}
+
 /// Handler of `toolkit documentdb wa-review`.
 pub fn wa_review_command(
     invocation: &Invocation,
     out: &mut Output<'_>,
 ) -> Result<(), ToolkitError> {
+    if live_selected(invocation)? {
+        return Err(unavailable_live());
+    }
     let missing: Vec<&str> = ["--cluster-id", "--region"]
         .into_iter()
         .filter(|flag| required(invocation, flag).is_none())
@@ -359,6 +388,15 @@ fn seed_failure(error: &SeedError) -> ToolkitError {
 
 /// Handler of `toolkit neptune seed`.
 pub fn seed_command(invocation: &Invocation, out: &mut Output<'_>) -> Result<(), ToolkitError> {
+    if live_selected(invocation)? {
+        if !invocation.has_flag("--confirm-wipe") {
+            return Err(ToolkitError::runtime("docgraph_seed", "Refusing to wipe the graph: g.V().drop() requires explicit confirmation. Re-run with --confirm-wipe. Never run this against a graph holding data you need."));
+        }
+        if invocation.value("--endpoint").is_none() {
+            return Err(usage("--endpoint is required with --live"));
+        }
+        return Err(unavailable_live());
+    }
     let recorded = invocation.value("--recorded");
     if invocation.has_flag("--dry-run") {
         if recorded.is_some() {
@@ -453,6 +491,38 @@ pub fn normalize_capture_command(
 
 /// Offline memory request planning and replay.
 pub fn memory_command(invocation: &Invocation, out: &mut Output<'_>) -> Result<(), ToolkitError> {
+    if live_selected(invocation)? {
+        let op = invocation
+            .value("--operation")
+            .ok_or_else(|| usage("--operation is required"))?;
+        let required: &[&str] = match op {
+            "query" => &["--confirm-write", "--confirm-delete"],
+            "consolidate" => &["--confirm-delete"],
+            "create-graphrag" | "create-memory" => &["--confirm-create"],
+            "vector-search" | "retrieve" | "semantic-recall" | "hybrid-recall"
+            | "recall-entity" | "recent-messages" => &[],
+            "remember-relationship"
+            | "remember-entity"
+            | "store-message"
+            | "ingest-document"
+            | "store-embedding"
+            | "link-chunk-entity"
+            | "link-entities"
+            | "remember-embedding"
+            | "ingest-entity"
+            | "ingest-chunk" => &["--confirm-write"],
+            _ => return Err(usage("unknown operation")),
+        };
+        for flag in required {
+            if !invocation.has_flag(flag) {
+                return Err(ToolkitError::runtime(
+                    "docgraph_memory",
+                    format!("live operation requires {flag}"),
+                ));
+            }
+        }
+        return Err(unavailable_live());
+    }
     let op = invocation
         .value("--operation")
         .ok_or_else(|| usage("--operation is required"))?;
@@ -500,8 +570,20 @@ pub fn memory_command(invocation: &Invocation, out: &mut Output<'_>) -> Result<(
 /// `neptune memory` offline request builder and replay.
 pub const NEPTUNE_MEMORY: CommandSpec = CommandSpec {
     path: &["neptune", "memory"],
-    flags: &["--dry-run"],
-    value_flags: &["--operation", "--input", "--recorded"],
+    flags: &[
+        "--dry-run",
+        "--live",
+        "--confirm-write",
+        "--confirm-delete",
+        "--confirm-create",
+    ],
+    value_flags: &[
+        "--operation",
+        "--input",
+        "--recorded",
+        "--region",
+        "--network-policy",
+    ],
     strict_values: true,
     repeatable_flags: &[],
     max_positionals: 0,

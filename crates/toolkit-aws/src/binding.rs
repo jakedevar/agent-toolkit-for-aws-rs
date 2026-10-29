@@ -154,6 +154,14 @@ pub fn connector_error(kind: ConnectorFailure, detail: &str) -> AwsError {
 pub struct GuardRejection(AwsError);
 
 impl GuardRejection {
+    /// Carry a fixed boundary error through a connector failure chain (the
+    /// database connector's pre-send admission and deadline verdicts, #5387),
+    /// so [`find_guard_rejection`] returns it unchanged.
+    #[cfg(feature = "sdk")]
+    pub(crate) fn carrying(error: AwsError) -> Self {
+        Self(error)
+    }
+
     /// The boundary error (`InvalidConfig` for field `endpoint`).
     #[must_use]
     pub fn error(&self) -> &AwsError {
