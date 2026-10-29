@@ -297,4 +297,6 @@ commands (#5216).
 The reward checker (#5214) adds `--format`, `--event`, and `--response` value
 flags. The router refuses bare `-` and `--flag=-` for each; no stdin or literal
 file named `-` is read. Its two synopsis lines change global usage to 44155
-bytes, FNV-1a `0xea11e5a1e031b87f` before the launch routes were added.
+bytes, FNV-1a `0xea11e5a1e031b87f` before the launch routes were added. With
+the launch routes and reward checker together, usage is 44502 bytes, FNV-1a
+`0x95a0edb8063410e1`.
