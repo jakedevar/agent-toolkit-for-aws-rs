@@ -421,18 +421,23 @@ impl PluginScan<'_> {
         json_path.push("command".to_string());
         let resolved = self.resolve_string(Kind::Mcp, command, json_path);
         json_path.pop();
-        let accepted = match resolved {
-            Ok(accepted) => accepted,
+        // A canonical binary server keeps literal args; a refused command
+        // stays refused, and its other keys are still scanned as literal
+        // data so a binary launcher hidden in its args is named too.
+        let literal_rest = match resolved {
+            Ok(accepted) => {
+                let canonical = accepted.name.is_some();
+                self.record(&at(json_path, "command"), command, accepted, report);
+                canonical
+            }
             Err(message) => {
                 report
                     .problems
                     .push(format!("{}: {message}", at(json_path, "command")));
-                return;
+                true
             }
         };
-        let canonical = accepted.name.is_some();
-        self.record(&at(json_path, "command"), command, accepted, report);
-        if canonical {
+        if literal_rest {
             for (key, item) in pairs.iter().filter(|(key, _)| key != "command") {
                 json_path.push(key.clone());
                 self.scan_value(location, Kind::Mcp, item, json_path, report);
