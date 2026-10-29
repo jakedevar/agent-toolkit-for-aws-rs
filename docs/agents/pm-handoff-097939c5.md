@@ -1176,3 +1176,7 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 21:29Z: re-review #5487 (f342da4f) ACCEPT S6 c5132d51. check ok (80b290ff). Enqueued (e946fe64) but queue warned conflict with S1 e04f364b in diag_contract.rs (usage pin) -> CANCELLED. AFTER S1 LANDS: continue_from be2767ad merge-only (merge rolling, re-pin usage, scoped), check, enqueue; close #5462 #5474 #5475 #5487 on land.
   #5478 flake -> Claude Sonnet 9441f443 (rolling).
   4/4: 9441f443 #5478, 27f4dc18 #5360, 457c73c0 #5483 B2 review, cfb95bf6 L7. Queue: 58fcd064 #5472 (3042), e04f364b S1 (3044).
+- 21:41Z: review #5483 (457c73c0) ACCEPT B2 b0f6dd2e (P3 follow-up #5488: registry count relaxation not caught by gate negatives). check ok (eeb8d1b6). NOT enqueued: B2 conflicts with S1 (diag_contract) and S6 (registry, agents_pay_gate, diag_contract, agents-pay.md).
+  PLAN after S1 lands (wake): ONE integration worker (continue_from be2767ad on #5462): A = merge rolling into S6 c5132d51, re-pin, scoped -> push; B = merge B2 b0f6dd2e into A on the same branch, resolve, re-pin, scoped -> push. Enqueue A (issue 5462), then B (issue 5443, source_session the integration worker). Close #5462 #5474 #5475 #5487 / #5443 #5483 on land.
+  Filed docgraph S2 #5489 -> Claude Opus a0ab0de1 (sandbox cdc468a2; also #5484 if cheap).
+  4/4: a0ab0de1 S2, 9441f443 #5478, 27f4dc18 #5360, cfb95bf6 L7. Queue: #5472 (3042), S1 (3044).
