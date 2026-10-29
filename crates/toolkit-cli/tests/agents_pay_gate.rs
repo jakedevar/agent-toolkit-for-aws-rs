@@ -1369,28 +1369,137 @@ fn g4_findings(files: &[(String, String)]) -> Vec<String> {
     found
 }
 
-/// The payment test files: integration tests and the in-crate test modules.
+/// The bodies of every inline `#[cfg(test)] mod NAME { .. }` in `text`, at
+/// any depth (#5377): the in-file unit tests of a production source.
+fn inline_test_modules(stream: TokenStream, out: &mut Vec<String>) {
+    let trees: Vec<TokenTree> = stream.into_iter().collect();
+    for (index, tree) in trees.iter().enumerate() {
+        let TokenTree::Group(group) = tree else {
+            continue;
+        };
+        let is_cfg_test = group.delimiter() == proc_macro2::Delimiter::Bracket
+            && compact(&group.stream()) == "cfg(test)"
+            && matches!(index.checked_sub(1).map(|i| &trees[i]), Some(TokenTree::Punct(p)) if p.as_char() == '#');
+        if is_cfg_test {
+            // Skip further attributes and the visibility, then `mod NAME {`.
+            let rest = &trees[index + 1..];
+            let at_mod = rest.iter().position(|t| match t {
+                TokenTree::Punct(p) => p.as_char() != '#',
+                TokenTree::Group(g) => !matches!(
+                    g.delimiter(),
+                    proc_macro2::Delimiter::Bracket | proc_macro2::Delimiter::Parenthesis
+                ),
+                TokenTree::Ident(i) => i != "pub",
+                TokenTree::Literal(_) => true,
+            });
+            let at_mod = at_mod.filter(|&at| matches!(&rest[at], TokenTree::Ident(i) if i == "mod"));
+            if let Some(at) = at_mod {
+                if let Some(TokenTree::Group(body)) = rest.get(at + 2) {
+                    if body.delimiter() == proc_macro2::Delimiter::Brace {
+                        out.push(body.stream().to_string());
+                    }
+                }
+            }
+        }
+        inline_test_modules(group.stream(), out);
+    }
+}
+
+/// The payment test files: integration tests, the in-crate test files and
+/// the inline test modules of every payment source (#5377).
 fn payment_test_files() -> Vec<(String, String)> {
     let mut files: Vec<(String, String)> = test_crate_roots()
         .into_iter()
         .filter(|(name, _)| name.starts_with("tests/agents_pay"))
         .collect();
     for source in real_sources() {
-        if source.path.starts_with("agents_pay/")
-            && (source.path.ends_with("/tests.rs") || source.path.contains("/tests/"))
-        {
+        if !source.path.starts_with("agents_pay/") {
+            continue;
+        }
+        if source.path.ends_with("/tests.rs") || source.path.contains("/tests/") {
             files.push((source.path, source.text));
+        } else if let Ok(stream) = source.text.parse::<TokenStream>() {
+            let mut modules = Vec::new();
+            inline_test_modules(stream, &mut modules);
+            for module in modules {
+                files.push((format!("{} (inline tests)", source.path), module));
+            }
+        } else {
+            files.push((source.path, "fn ) does not tokenize".to_owned()));
         }
     }
     files
+}
+
+/// The one live name a test may spell: the D32 unit test in `deps.rs`
+/// asserts that the disabled constructor returns `Unavailable` (it cannot
+/// return anything else without the live feature, G1a).
+const G4_ALLOWED: &str = "agents_pay/deps.rs (inline tests): names Deps::for_process";
+
+/// G4 findings without the single allowed D32 assertion.
+fn g4_unexpected(files: &[(String, String)]) -> Vec<String> {
+    let mut found = g4_findings(files);
+    if let Some(at) = found.iter().position(|f| f == G4_ALLOWED) {
+        found.remove(at);
+    }
+    found
 }
 
 #[test]
 fn g4_payment_tests_never_name_a_live_constructor() {
     let files = payment_test_files();
     assert!(files.len() >= 8, "{}", files.len());
-    let found = g4_findings(&files);
+    assert!(
+        files
+            .iter()
+            .any(|(name, _)| name == "agents_pay/deps.rs (inline tests)"),
+        "the inline test modules are not scanned"
+    );
+    let found = g4_unexpected(&files);
     assert!(found.is_empty(), "{found:#?}");
+}
+
+#[test]
+fn g4_scans_inline_test_modules() {
+    let deps = real_source("agents_pay/deps.rs");
+    let anchor = "    fn d32_for_process_is_unavailable_in_verification_builds() {\n";
+    assert!(deps.contains(anchor), "the D32 unit test moved");
+    // The #5377 mutation: a live resolver named inside the inline test.
+    let bad = deps.replacen(
+        anchor,
+        &format!("{anchor}        let _ = toolkit_aws::SystemResolver;\n"),
+        1,
+    );
+    let mut modules = Vec::new();
+    inline_test_modules(bad.parse().unwrap(), &mut modules);
+    let files: Vec<(String, String)> = modules
+        .into_iter()
+        .map(|m| ("agents_pay/deps.rs (inline tests)".to_owned(), m))
+        .collect();
+    assert!(!g4_unexpected(&files).is_empty(), "inline mutation survived");
+    // A second for_process naming is not covered by the one allowance.
+    let twice = deps.replacen(
+        anchor,
+        &format!("{anchor}        let _ = Deps::for_process();\n"),
+        1,
+    );
+    let mut modules = Vec::new();
+    inline_test_modules(twice.parse().unwrap(), &mut modules);
+    let files: Vec<(String, String)> = modules
+        .into_iter()
+        .map(|m| ("agents_pay/deps.rs (inline tests)".to_owned(), m))
+        .collect();
+    assert!(!g4_unexpected(&files).is_empty(), "second naming survived");
+    // Production code outside the test module is not a test file.
+    let mut modules = Vec::new();
+    inline_test_modules(
+        "fn live() { let _ = SystemResolver; } #[cfg(test)] mod tests { fn t() {} }"
+            .parse()
+            .unwrap(),
+        &mut modules,
+    );
+    assert_eq!(modules.len(), 1);
+    assert!(!modules[0].contains("SystemResolver"));
 }
 
 #[test]
@@ -1586,4 +1695,393 @@ fn r_tok_nofresh_catches_a_fresh_token_source() {
     }
     let vault = "fn handle() { let mut b = [0u8; 24]; getrandom::fill(&mut b).ok(); }";
     assert!(nofresh_findings(&seeded(&[("agents_pay/vault.rs", vault)])).is_empty());
+}
+
+// ------------------------------------- D32 read boundary (#5376, AC3)
+
+/// The disabled route: everything `toolkit agents-pay fetch` evaluates
+/// before it prints D32 in a build without the live feature.
+const ROUTE_FILE: &str = "agents_pay/mod.rs";
+const DEPS_FILE: &str = "agents_pay/deps.rs";
+const ROUTE_FNS: &[&str] = &["fetch_command", "parse", "emit"];
+
+/// Every path the route functions may evaluate: argv, the credential-flag
+/// check over argv, the D32 call, the JSON document and its rendering, and
+/// local bindings. Fail closed: anything else, such as `std::env::var_os`,
+/// `fs::read_to_string` or `std::io::stdin`, is a finding.
+const ROUTE_PATHS: &[&str] = &[
+    "Deps::for_process",
+    "Err",
+    "FETCH_USAGE",
+    "Json::Bool",
+    "Json::object",
+    "Json::string",
+    "None",
+    "Ok",
+    "Request::Browser",
+    "Request::Fetch",
+    "Request::Status",
+    "Some",
+    "ToolkitError::usage",
+    "document",
+    "emit",
+    "flag",
+    "flow::render",
+    "invocation",
+    "method",
+    "out",
+    "parse",
+    "purchase_id",
+    "reason",
+    "request",
+    "run_request",
+    "status",
+    "str::to_owned",
+    "toolkit_aws::reject_credential_arguments",
+    "url",
+    "words",
+    "world",
+];
+const ROUTE_METHODS: &[&str] = &[
+    "clone",
+    "cloned",
+    "deps",
+    "diagnostic",
+    "extend",
+    "filter",
+    "first",
+    "has_flag",
+    "is_empty",
+    "iter",
+    "line",
+    "map",
+    "map_err",
+    "set_exit_status",
+    "to_owned",
+    "unwrap_or",
+    "value",
+];
+const ROUTE_MACROS: &[&str] = &["matches", "vec"];
+
+/// The paths, method names and macro names an expression tree evaluates.
+#[derive(Default)]
+struct Evaluated {
+    paths: Vec<String>,
+    methods: Vec<String>,
+    macros: Vec<String>,
+}
+
+impl<'ast> Visit<'ast> for Evaluated {
+    fn visit_expr_path(&mut self, expr: &'ast syn::ExprPath) {
+        // A qualified self (`<T as Trait>::f`) is never part of the route.
+        if expr.qself.is_some() {
+            self.paths.push("<qualified self>".to_owned());
+        }
+        self.paths.push(path_text(&expr.path));
+        visit::visit_expr_path(self, expr);
+    }
+    fn visit_expr_struct(&mut self, expr: &'ast syn::ExprStruct) {
+        self.paths.push(path_text(&expr.path));
+        visit::visit_expr_struct(self, expr);
+    }
+    fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
+        self.methods.push(call.method.to_string());
+        visit::visit_expr_method_call(self, call);
+    }
+    fn visit_macro(&mut self, mac: &'ast syn::Macro) {
+        // Only allowed macros pass, and their bodies are parsed and checked
+        // as expressions: `vec![a, b]` and `matches!(e, PAT if guard)`.
+        let name = path_text(&mac.path);
+        let parsed = match name.as_str() {
+            "vec" => mac
+                .parse_body_with(Punctuated::<syn::Expr, Token![,]>::parse_terminated)
+                .map(|exprs| exprs.into_iter().collect::<Vec<_>>()),
+            "matches" => mac.parse_body_with(|input: syn::parse::ParseStream<'_>| {
+                let scrutinee: syn::Expr = input.parse()?;
+                input.parse::<Token![,]>()?;
+                syn::Pat::parse_multi_with_leading_vert(input)?;
+                let mut exprs = vec![scrutinee];
+                if input.parse::<Option<Token![if]>>()?.is_some() {
+                    exprs.push(input.parse()?);
+                }
+                input.parse::<Option<Token![,]>>()?;
+                Ok(exprs)
+            }),
+            _ => Ok(Vec::new()),
+        };
+        match parsed {
+            Ok(exprs) => {
+                for expr in &exprs {
+                    self.visit_expr(expr);
+                }
+            }
+            Err(_) => self.macros.push(format!("{name} (unparsed body)")),
+        }
+        self.macros.push(name);
+    }
+    fn visit_item(&mut self, item: &'ast syn::Item) {
+        // A nested item (fn, static, impl) inside a route fn hides code.
+        self.paths
+            .push(format!("<nested item {}>", item_kind(item)));
+    }
+}
+
+fn item_kind(item: &syn::Item) -> &'static str {
+    match item {
+        syn::Item::Fn(_) => "fn",
+        syn::Item::Static(_) => "static",
+        syn::Item::Const(_) => "const",
+        syn::Item::Impl(_) => "impl",
+        syn::Item::Use(_) => "use",
+        _ => "item",
+    }
+}
+
+/// The whitespace-free spelling of a token stream.
+fn compact(stream: &TokenStream) -> String {
+    stream
+        .to_string()
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect()
+}
+
+/// `for_process` must be exactly the two `cfg` arms, and the arm without the
+/// live feature exactly the D32 error: no statement can run before it.
+fn for_process_findings(text: &str) -> Vec<String> {
+    let Ok(stream) = text.parse::<TokenStream>() else {
+        return vec![format!("{DEPS_FILE}: does not tokenize")];
+    };
+    let mut bodies = Vec::new();
+    fn_body_trees(stream, "for_process", &mut bodies);
+    if bodies.len() != 1 {
+        return vec![format!(
+            "{DEPS_FILE}: {} `fn for_process` bodies, expected 1",
+            bodies.len()
+        )];
+    }
+    let trees = &bodies[0];
+    let live = format!("cfg(feature=\"{LIVE_FEATURE}\")");
+    let disabled = format!("cfg(not(feature=\"{LIVE_FEATURE}\"))");
+    let shape: Vec<String> = trees
+        .iter()
+        .map(|tree| match tree {
+            TokenTree::Group(group) => match group.delimiter() {
+                proc_macro2::Delimiter::Bracket => format!("[{}]", compact(&group.stream())),
+                proc_macro2::Delimiter::Brace => "{}".to_owned(),
+                _ => "()".to_owned(),
+            },
+            other => other.to_string(),
+        })
+        .collect();
+    let expected = ["#", &format!("[{live}]"), "{}", "#", &format!("[{disabled}]"), "{}"];
+    if shape != expected {
+        return vec![format!(
+            "{DEPS_FILE}: for_process is not exactly the two cfg arms: {shape:?}"
+        )];
+    }
+    let TokenTree::Group(arm) = &trees[5] else {
+        unreachable!("checked above");
+    };
+    let body = compact(&arm.stream());
+    if body == "Err(Unavailable(NO_PAYMENT_SUPPORT.to_owned()))" {
+        Vec::new()
+    } else {
+        vec![format!(
+            "{DEPS_FILE}: the arm without the live feature does more than return D32: {body}"
+        )]
+    }
+}
+
+/// The top-level token trees of every `fn NAME` body, at any depth.
+fn fn_body_trees(stream: TokenStream, name: &str, out: &mut Vec<Vec<TokenTree>>) {
+    let trees: Vec<TokenTree> = stream.into_iter().collect();
+    for (index, tree) in trees.iter().enumerate() {
+        if let TokenTree::Group(group) = tree {
+            fn_body_trees(group.stream(), name, out);
+        }
+        let is_fn = matches!(tree, TokenTree::Ident(i) if i == "fn");
+        let named = matches!(trees.get(index + 1), Some(TokenTree::Ident(i)) if i == name);
+        if is_fn && named {
+            let body = trees[index + 2..].iter().find_map(|t| match t {
+                TokenTree::Group(g) if g.delimiter() == proc_macro2::Delimiter::Brace => {
+                    Some(g.stream().into_iter().collect())
+                }
+                _ => None,
+            });
+            if let Some(body) = body {
+                out.push(body);
+            }
+        }
+    }
+}
+
+/// Every route function exists once at the top level of `mod.rs` and
+/// evaluates only allowed paths, methods and macros.
+fn route_findings(text: &str) -> Vec<String> {
+    let Ok(file) = syn::parse_file(text) else {
+        return vec![format!("{ROUTE_FILE}: does not parse")];
+    };
+    let mut found = Vec::new();
+    for name in ROUTE_FNS {
+        let fns: Vec<&syn::ItemFn> = file
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                syn::Item::Fn(function) if function.sig.ident == name => Some(function),
+                _ => None,
+            })
+            .collect();
+        let [function] = fns.as_slice() else {
+            found.push(format!("{ROUTE_FILE}: {} `fn {name}`, expected 1", fns.len()));
+            continue;
+        };
+        let mut evaluated = Evaluated::default();
+        evaluated.visit_block(&function.block);
+        for path in evaluated.paths {
+            if !ROUTE_PATHS.contains(&path.as_str()) {
+                found.push(format!("{ROUTE_FILE}: {name} evaluates {path}"));
+            }
+        }
+        for method in evaluated.methods {
+            if !ROUTE_METHODS.contains(&method.as_str()) {
+                found.push(format!("{ROUTE_FILE}: {name} calls .{method}()"));
+            }
+        }
+        for mac in evaluated.macros {
+            if !ROUTE_MACROS.contains(&mac.as_str()) {
+                found.push(format!("{ROUTE_FILE}: {name} expands {mac}!"));
+            }
+        }
+    }
+    found
+}
+
+fn real_source(path: &str) -> String {
+    real_sources()
+        .into_iter()
+        .find(|source| source.path == path)
+        .unwrap_or_else(|| panic!("{path} is missing"))
+        .text
+}
+
+#[test]
+fn t_ac3_noread_the_disabled_route_reads_nothing_before_d32() {
+    let found: Vec<String> = route_findings(&real_source(ROUTE_FILE))
+        .into_iter()
+        .chain(for_process_findings(&real_source(DEPS_FILE)))
+        .collect();
+    assert!(found.is_empty(), "{found:#?}");
+}
+
+const GOOD_FOR_PROCESS: &str = r#"
+impl Deps<'static> {
+    pub fn for_process() -> Result<ProcessWorld, Unavailable> {
+        #[cfg(feature = "LIVE")]
+        {
+            super::live::World::for_process().map(|world| ProcessWorld::Live(Box::new(world)))
+        }
+        #[cfg(not(feature = "LIVE"))]
+        {
+            Err(Unavailable(NO_PAYMENT_SUPPORT.to_owned()))
+        }
+    }
+}
+"#;
+
+fn seeded_for_process(edit: impl Fn(&str) -> String) -> String {
+    edit(&GOOD_FOR_PROCESS.replace("LIVE", LIVE_FEATURE))
+}
+
+#[test]
+fn t_ac3_noread_catches_a_read_before_the_d32_refusal() {
+    assert!(for_process_findings(&seeded_for_process(str::to_owned)).is_empty());
+    for (label, bad) in [
+        // The #5376 mutation: an environment read before the D32 error.
+        (
+            "env read in the disabled arm",
+            seeded_for_process(|good| {
+                good.replace(
+                    "            Err(Unavailable",
+                    "            let _ = std::env::var_os(\"PAYMENT_SESSION_ID\");\n            Err(Unavailable",
+                )
+            }),
+        ),
+        (
+            "file read before both arms",
+            seeded_for_process(|good| {
+                good.replace(
+                    "Unavailable> {\n",
+                    "Unavailable> {\n        let _ = std::fs::read(\"/etc/hosts\");\n",
+                )
+            }),
+        ),
+        (
+            "a reason read from the environment",
+            seeded_for_process(|good| {
+                good.replace(
+                    "NO_PAYMENT_SUPPORT.to_owned()",
+                    "std::env::var(\"X\").unwrap_or_default()",
+                )
+            }),
+        ),
+        (
+            "no disabled arm",
+            seeded_for_process(|good| good.replace("not(", "all(")),
+        ),
+        ("no for_process", "impl Deps<'static> {}".to_owned()),
+    ] {
+        assert!(!for_process_findings(&bad).is_empty(), "{label}: {bad}");
+    }
+}
+
+#[test]
+fn t_ac3_noread_catches_a_read_in_the_route_functions() {
+    let real = real_source(ROUTE_FILE);
+    assert!(route_findings(&real).is_empty());
+    let anchor = "    let Some(request) = parse(invocation, out)? else {";
+    assert!(real.contains(anchor), "the route anchor moved");
+    for (label, insert) in [
+        (
+            "env read",
+            "    let _ = std::env::var_os(\"PAYMENT_SESSION_ID\");\n",
+        ),
+        (
+            "file read",
+            "    let _ = std::fs::read_to_string(\"config.json\");\n",
+        ),
+        ("stdin", "    let _ = std::io::stdin();\n"),
+        (
+            "macro-hidden read",
+            "    let _ = format!(\"{:?}\", std::env::var(\"HOME\"));\n",
+        ),
+        (
+            "unlisted method",
+            "    let _ = invocation.positionals.first().map(|p| p.read_file());\n",
+        ),
+        (
+            "nested fn",
+            "    fn hidden() {}\n",
+        ),
+        (
+            "read inside vec!",
+            "    let _ = vec![std::env::var_os(\"X\")];\n",
+        ),
+        (
+            "read in a matches! guard",
+            "    let _ = matches!(1, 1 if std::env::var_os(\"X\").is_some());\n",
+        ),
+    ] {
+        let bad = real.replacen(anchor, &format!("{insert}{anchor}"), 1);
+        assert!(!route_findings(&bad).is_empty(), "{label}");
+    }
+    let parse_anchor = "    let method = invocation.value(\"--method\").unwrap_or(\"GET\");";
+    assert!(real.contains(parse_anchor), "the parse anchor moved");
+    let bad = real.replacen(
+        parse_anchor,
+        &format!("    let _ = std::env::var(\"AWS_PROFILE\");\n{parse_anchor}"),
+        1,
+    );
+    assert!(!route_findings(&bad).is_empty(), "env read in parse");
+    assert!(!route_findings("fn parse() {}").is_empty(), "missing fns");
 }

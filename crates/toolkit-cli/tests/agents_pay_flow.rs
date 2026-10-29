@@ -728,6 +728,142 @@ fn t_scrub_an_echoed_proof_outside_the_body_replaces_the_document() {
     );
 }
 
+/// The deterministic proof header of the fixture world: one paid fetch,
+/// captured from the merchant's replay request. The world's idempotency
+/// record makes every later fetch of the same terms send the same bytes.
+fn paid_header(world: &World) -> String {
+    world.merchant.respond(402, &[], &challenge());
+    world.merchant.respond(200, &[], b"ok");
+    let first = world.fetch();
+    assert_eq!(first.get("paid"), Some(&Json::Bool(true)), "{first:?}");
+    world.headers()[0].1.clone()
+}
+
+/// Whether `shown` still holds any piece of `secret` of at least 8 bytes,
+/// ignoring ASCII case.
+fn holds_fragment(shown: &str, secret: &str) -> Option<String> {
+    let shown = shown.to_ascii_lowercase();
+    let secret = secret.to_ascii_lowercase();
+    (0..=secret.len().saturating_sub(8))
+        .filter_map(|at| secret.get(at..at + 8))
+        .find(|window| shown.contains(window))
+        .map(str::to_owned)
+}
+
+/// #5374 (review #5373): a 32-byte echo at an offset that is not a multiple
+/// of 8, lower-cased by the content-type rendering, is withheld.
+#[test]
+fn review_scrub_unaligned_32_byte_echo_is_withheld() {
+    let world = World::new("scrub-unaligned");
+    let header = paid_header(&world);
+    world.merchant.respond(402, &[], &challenge());
+    world.merchant.respond(
+        200,
+        &[("content-type", &format!("text/{}", &header[1..33]))],
+        b"ok",
+    );
+    assert_refused(&world.fetch(), "RuntimeError during payment flow.");
+}
+
+/// #5375 (review #5373): an eight-byte prefix of the proof in an opt-in
+/// body is redacted, not returned verbatim.
+#[test]
+fn review_scrub_eight_byte_prefix_in_body_is_redacted() {
+    let world = World::with(
+        TempConfigStore::new("scrub-prefix", &config_with(r#","return_body":true"#, "")),
+        FakePaymentsApi::signing(),
+    );
+    let header = paid_header(&world);
+    world.merchant.respond(402, &[], &challenge());
+    world.merchant.respond(200, &[], header[..8].as_bytes());
+    let out = world.fetch();
+    let rendered = flow::render(&out);
+    assert!(
+        !rendered.contains(&header[..8]),
+        "eight-byte proof prefix escaped the scrub: {rendered}"
+    );
+    assert_eq!(out.get("redacted"), Some(&Json::Bool(true)), "{rendered}");
+    assert_eq!(text(&out, "body"), "[REDACTED]");
+}
+
+/// R-SCRUB boundary: every offset of the proof, fragment lengths 8..=40, in
+/// the body as sent, upper-cased and lower-cased, is redacted to
+/// `[REDACTED]` with the text around it kept; a 7-byte piece is ordinary.
+#[test]
+fn t_scrub_body_fragments_at_every_offset_and_length_are_redacted() {
+    let world = World::with(
+        TempConfigStore::new("scrub-every", &config_with(r#","return_body":true"#, "")),
+        FakePaymentsApi::signing(),
+    );
+    let header = paid_header(&world);
+    let mut bodies = Vec::new();
+    for at in 0..header.len() - 8 {
+        for len in [8, 9, 15, 31, 32, 33, 40] {
+            if let Some(piece) = header.get(at..at + len) {
+                bodies.push(piece.to_owned());
+            }
+        }
+    }
+    // One fetch per body, batched so the world is reused.
+    for (index, piece) in bodies.iter().enumerate() {
+        let spelling = match index % 3 {
+            0 => piece.clone(),
+            1 => piece.to_ascii_uppercase(),
+            _ => piece.to_ascii_lowercase(),
+        };
+        world.merchant.respond(402, &[], &challenge());
+        world
+            .merchant
+            .respond(200, &[], format!("<p>{spelling}</p>").as_bytes());
+        let out = world.fetch();
+        let rendered = flow::render(&out);
+        assert_eq!(out.get("redacted"), Some(&Json::Bool(true)), "{rendered}");
+        assert_eq!(text(&out, "body"), "<p>[REDACTED]</p>", "{piece}");
+        assert_eq!(holds_fragment(&rendered, &header), None, "{rendered}");
+    }
+    // Seven bytes are below the fragment bound: returned unchanged.
+    world.merchant.respond(402, &[], &challenge());
+    world.merchant.respond(200, &[], header[3..10].as_bytes());
+    let out = world.fetch();
+    assert_eq!(text(&out, "body"), &header[3..10]);
+    assert!(out.get("redacted").is_none());
+}
+
+/// R-SCRUB boundary outside the body: a fragment of 8..=40 bytes at every
+/// offset in the content type (lower-cased and cut to 256 by D17) replaces
+/// the whole document with the generic refusal.
+#[test]
+fn t_scrub_content_type_fragments_at_every_offset_and_length_are_refused() {
+    let world = World::new("scrub-ct-every");
+    let header = paid_header(&world);
+    for at in 0..header.len() - 8 {
+        let len = [8, 13, 31, 32, 40][at % 5];
+        let Some(piece) = header.get(at..at + len) else {
+            continue;
+        };
+        let spelling = if at % 2 == 0 {
+            piece.to_ascii_uppercase()
+        } else {
+            piece.to_owned()
+        };
+        world.merchant.respond(402, &[], &challenge());
+        world.merchant.respond(
+            200,
+            &[("content-type", &format!("text/{spelling}"))],
+            b"ok",
+        );
+        assert_refused(&world.fetch(), "RuntimeError during payment flow.");
+    }
+    // The whole header cut by the 256-character bound still refuses.
+    world.merchant.respond(402, &[], &challenge());
+    world.merchant.respond(
+        200,
+        &[("content-type", &format!("text/{}{header}", "x".repeat(240)))],
+        b"ok",
+    );
+    assert_refused(&world.fetch(), "RuntimeError during payment flow.");
+}
+
 #[test]
 fn t_scrub_a_body_without_secrets_is_returned_as_is() {
     let world = World::with(
