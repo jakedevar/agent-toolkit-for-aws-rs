@@ -42,7 +42,9 @@ pub use diag::{
 pub use digest::sha256_hex;
 pub use error::{ErrorKind, ParseError, ToolkitError};
 pub use frontmatter::parse_frontmatter;
-pub use json::{escape_json_string, parse_json, skills_to_json, Json};
+pub use json::{
+    escape_json_string, parse_json, parse_json_with_limits, skills_to_json, Json, JsonLimits,
+};
 pub use paths::{
     normalize_relative, open_regular_file, read_regular_file, resolve_within, set_path_display,
     write_regular_file, PathError, MAX_TEXT_FILE_BYTES,
