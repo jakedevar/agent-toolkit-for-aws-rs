@@ -1303,3 +1303,212 @@ fn a_streamed_response_releases_its_socket_when_dropped_or_failed() {
     assert!(opened.is_err(), "deadline");
     assert!(dialer.released(), "a failed open left the socket open");
 }
+
+// ---- #5465: a terminal streamed read releases its socket before it returns ----
+//
+// The caller keeps the stream after the read returns. The client stream's drop
+// is read right after `next_chunk` (or `narrow_body_limit`) returns, without
+// driving any runtime: a terminal result must release the socket itself, not
+// leave it to the caller dropping the stream later.
+
+/// Open `far` with `bounds` and `limits` and hand the retained stream to `read`.
+fn with_retained_stream<T>(
+    fixture: &Fixture,
+    far: Far,
+    bounds: DatabaseBounds,
+    limits: crate::stream::StreamLimits,
+    read: impl FnOnce(&Recorder, &mut dyn crate::stream::ResponseStream) -> T,
+) -> T {
+    let resolver = ScriptedResolver::new(vec![vec![ip(PRIVATE)]]);
+    let dialer = Recorder::new(far);
+    let transport = fixture.transport(bounds, resolver, Arc::clone(&dialer));
+    let mut stream =
+        crate::stream::StreamingTransport::open(&transport, &request(&db_url()), &limits)
+            .expect("opened");
+    assert!(!dialer.released(), "the open stream owns its socket");
+    let out = read(&dialer, stream.as_mut());
+    drop(stream);
+    assert!(
+        dialer.released(),
+        "dropping the stream left the socket open"
+    );
+    out
+}
+
+/// A head declaring ten body bytes, then silence.
+fn stalled_body() -> Vec<Act> {
+    vec![
+        Act::Write(b"HTTP/1.1 200 OK\r\ncontent-length: 10\r\n\r\n".to_vec()),
+        Act::Sleep(Duration::from_secs(30)),
+    ]
+}
+
+/// One chunked frame of `size` bytes, then silence.
+fn chunked_frame(size: usize) -> Vec<Act> {
+    let mut bytes = b"HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\n\r\n".to_vec();
+    bytes.extend(format!("{size:x}\r\n").into_bytes());
+    bytes.extend(std::iter::repeat_n(b'a', size));
+    bytes.extend(b"\r\n");
+    vec![Act::Write(bytes), Act::Sleep(Duration::from_secs(30))]
+}
+
+/// Read once, expect a terminal error, check the socket is already released,
+/// and check a later read repeats a failure instead of reporting a clean end.
+fn read_fails_and_releases(
+    dialer: &Recorder,
+    stream: &mut dyn crate::stream::ResponseStream,
+    case: &str,
+) -> crate::stream::StreamError {
+    let error = stream.next_chunk().expect_err(case);
+    assert!(
+        dialer.released(),
+        "{case}: the read returned {error:?} with the socket still open"
+    );
+    let again = stream.next_chunk();
+    assert!(
+        again.is_err(),
+        "{case}: a read after the failure returned {again:?}"
+    );
+    error
+}
+
+#[test]
+fn a_terminal_database_body_error_releases_the_socket_before_it_returns() {
+    let fixture = Fixture::new();
+    let limits = || crate::stream::StreamLimits::new(256, 256).expect("limits");
+    // The database body's idle bound.
+    let error = with_retained_stream(
+        &fixture,
+        fixture.tls_far(stalled_body()),
+        quick(),
+        limits(),
+        |dialer, stream| read_fails_and_releases(dialer, stream, "idle"),
+    );
+    assert!(error.to_string().contains("stalled"), "{error}");
+    // The database body's operation deadline (idle is longer).
+    let bounds = DatabaseBounds {
+        idle: Duration::from_secs(10),
+        operation: Duration::from_millis(150),
+        ..quick()
+    };
+    let error = with_retained_stream(
+        &fixture,
+        fixture.tls_far(stalled_body()),
+        bounds,
+        limits(),
+        |dialer, stream| read_fails_and_releases(dialer, stream, "operation deadline"),
+    );
+    assert!(error.to_string().contains("operation deadline"), "{error}");
+    // The database byte cap (64) against one 128-byte frame.
+    let error = with_retained_stream(
+        &fixture,
+        fixture.tls_far(chunked_frame(128)),
+        quick(),
+        limits(),
+        |dialer, stream| read_fails_and_releases(dialer, stream, "byte cap"),
+    );
+    assert!(error.to_string().contains("size limit"), "{error}");
+}
+
+#[test]
+fn a_terminal_stream_limit_refusal_releases_the_socket_before_it_returns() {
+    let fixture = Fixture::new();
+    // The stream's own byte cap (16) is below the database cap (64).
+    let error = with_retained_stream(
+        &fixture,
+        fixture.tls_far(chunked_frame(32)),
+        quick(),
+        crate::stream::StreamLimits::new(16, 256).expect("limits"),
+        |dialer, stream| read_fails_and_releases(dialer, stream, "stream cap"),
+    );
+    assert_eq!(error, crate::stream::StreamError::TooLarge);
+    // The caller deadline has already passed when the body is first read, so
+    // the read refuses before polling the body.
+    let deadline = std::time::Instant::now() + Duration::from_millis(400);
+    let limits = crate::stream::StreamLimits::new(256, 256)
+        .expect("limits")
+        .with_deadline(deadline);
+    let error = with_retained_stream(
+        &fixture,
+        fixture.tls_far(stalled_body()),
+        DatabaseBounds {
+            idle: Duration::from_secs(10),
+            operation: Duration::from_secs(10),
+            ..quick()
+        },
+        limits,
+        |dialer, stream| {
+            std::thread::sleep(deadline.saturating_duration_since(std::time::Instant::now()));
+            std::thread::sleep(Duration::from_millis(50));
+            read_fails_and_releases(dialer, stream, "expired caller deadline")
+        },
+    );
+    assert_eq!(error, crate::stream::StreamError::DeadlineExceeded);
+    // The caller deadline fires while the read waits.
+    let deadline = std::time::Instant::now() + Duration::from_millis(400);
+    let limits = crate::stream::StreamLimits::new(256, 256)
+        .expect("limits")
+        .with_deadline(deadline);
+    let error = with_retained_stream(
+        &fixture,
+        fixture.tls_far(stalled_body()),
+        DatabaseBounds {
+            idle: Duration::from_secs(10),
+            operation: Duration::from_secs(10),
+            ..quick()
+        },
+        limits,
+        |dialer, stream| read_fails_and_releases(dialer, stream, "caller deadline while reading"),
+    );
+    assert!(error.to_string().contains("deadline"), "{error}");
+    // Narrowing the cap below what was already delivered refuses the stream.
+    with_retained_stream(
+        &fixture,
+        fixture.tls_far(chunked_frame(32)),
+        quick(),
+        crate::stream::StreamLimits::new(256, 256).expect("limits"),
+        |dialer, stream| {
+            assert_eq!(
+                stream.next_chunk().expect("first frame").map(|c| c.len()),
+                Some(32)
+            );
+            assert!(!dialer.released(), "an unfinished stream owns its socket");
+            stream.narrow_body_limit(8);
+            assert!(
+                dialer.released(),
+                "a refusing narrow_body_limit left the socket open"
+            );
+            assert_eq!(
+                stream.next_chunk(),
+                Err(crate::stream::StreamError::TooLarge)
+            );
+        },
+    );
+}
+
+#[test]
+fn a_completed_stream_releases_its_socket_at_the_end_of_the_body() {
+    let fixture = Fixture::new();
+    // The server keeps the connection open after a complete body.
+    with_retained_stream(
+        &fixture,
+        fixture.tls_far(vec![
+            sized_reply(10, 10),
+            Act::Sleep(Duration::from_secs(30)),
+        ]),
+        quick(),
+        crate::stream::StreamLimits::new(256, 4).expect("limits"),
+        |dialer, stream| {
+            let mut body = Vec::new();
+            while let Some(chunk) = stream.next_chunk().expect("chunk") {
+                body.extend(chunk);
+            }
+            assert_eq!(body, vec![b'a'; 10]);
+            assert!(
+                dialer.released(),
+                "the end of the body left the socket open"
+            );
+            assert_eq!(stream.next_chunk(), Ok(None));
+        },
+    );
+}
