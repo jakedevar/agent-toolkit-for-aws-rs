@@ -1,4 +1,7 @@
 //! Offline tests for the internal sign-in helper.
+#[cfg(feature = "agents-pay-live")]
+compile_error!("agents-pay-live is never built for tests (AC3)");
+
 use std::io::Write;
 #[cfg(all(unix, not(feature = "aws-sdk")))]
 use std::io::{BufRead, BufReader, Read};
