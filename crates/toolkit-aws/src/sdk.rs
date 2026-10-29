@@ -613,6 +613,21 @@ struct SdkStream {
     expired: bool,
 }
 
+impl Drop for SdkStream {
+    fn drop(&mut self) {
+        if self.deadline.is_some() {
+            // Hyper runs the connection on this current-thread runtime. Drive
+            // cancellation after releasing the body so it can close the socket.
+            let body = std::mem::replace(&mut self.body, ByteStream::from_static(b""));
+            self.runtime.block_on(async {
+                drop(body);
+                tokio::task::yield_now().await;
+                tokio::task::yield_now().await;
+            });
+        }
+    }
+}
+
 impl ResponseStream for SdkStream {
     fn status(&self) -> u16 {
         self.status
