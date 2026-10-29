@@ -132,6 +132,7 @@ pub struct HandlerSettings {
     pub metrics_namespace: String,
     /// CORS origin of the response; replace with your domain.
     pub allow_origin: String,
+    pub metrics_service: Option<String>,
 }
 
 impl Default for HandlerSettings {
@@ -139,6 +140,7 @@ impl Default for HandlerSettings {
         Self {
             metrics_namespace: "MyApp".to_string(),
             allow_origin: "https://your-domain.example".to_string(),
+            metrics_service: None,
         }
     }
 }
@@ -217,7 +219,7 @@ impl<P: PersistenceLayer> Handler<P> {
 
         let mut metrics = Metrics::new(
             Some(&self.settings.metrics_namespace),
-            &self.service,
+            Some(&self.service),
             self.sink.clone(),
             self.clock.clone(),
         );

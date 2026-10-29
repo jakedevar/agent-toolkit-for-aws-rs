@@ -251,6 +251,18 @@ pub fn rig() -> Rig {
 }
 
 pub fn rig_with(config: IdempotencyConfig, traced: bool) -> Rig {
+    let settings = HandlerSettings {
+        metrics_service: Some("orders".to_string()),
+        ..HandlerSettings::default()
+    };
+    rig_with_settings(config, traced, settings)
+}
+
+pub fn rig_with_settings(
+    config: IdempotencyConfig,
+    traced: bool,
+    settings: HandlerSettings,
+) -> Rig {
     let sink = Arc::new(MemorySink::default());
     let segments = Arc::new(MemorySegments::default());
     let clock = Arc::new(FixedClock::at(NOW_MS));
@@ -272,7 +284,7 @@ pub fn rig_with(config: IdempotencyConfig, traced: bool) -> Rig {
         sink.clone(),
         clock.clone(),
         "orders",
-        HandlerSettings::default(),
+        settings,
     );
     Rig {
         handler,

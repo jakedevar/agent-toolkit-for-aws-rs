@@ -119,13 +119,13 @@ impl Metrics {
     /// [`namespace_from_env`] to honour `POWERTOOLS_METRICS_NAMESPACE`.
     pub fn new(
         namespace: Option<&str>,
-        service: &str,
+        service: Option<&str>,
         sink: Arc<dyn LineSink>,
         clock: Arc<dyn Clock>,
     ) -> Self {
         Self {
             namespace: namespace.map(str::to_string),
-            service: service.to_string(),
+            service: service.unwrap_or("service_undefined").to_string(),
             entries: Vec::new(),
             sink,
             clock,

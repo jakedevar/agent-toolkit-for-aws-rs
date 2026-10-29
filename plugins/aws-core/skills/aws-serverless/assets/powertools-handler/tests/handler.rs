@@ -15,10 +15,11 @@ use powertools_handler::idempotency::{self, Record, STATUS_COMPLETED, STATUS_IN_
 use powertools_handler::logger::format_timestamp;
 use powertools_handler::metrics::{MetricUnit, Metrics, MetricsError, MAX_METRICS_PER_BLOB};
 use powertools_handler::{
-    HandlerError, Idempotency, IdempotencyConfig, IdempotencyError, Level, Logger, Tracer,
+    HandlerError, HandlerSettings, Idempotency, IdempotencyConfig, IdempotencyError, Level, Logger,
+    Tracer,
 };
 use serde_json::{json, Value};
-use support::{context, rig, rig_with, Call, FixedClock, MemorySink, NOW_MS};
+use support::{context, rig, rig_with, rig_with_settings, Call, FixedClock, MemorySink, NOW_MS};
 
 fn order_event(body: &str) -> Value {
     json!({
@@ -168,7 +169,7 @@ async fn metrics_are_embedded_metric_format_lines() {
     }
 
     let cold = &blobs[0];
-    assert_eq!(cold["ColdStart"], 1.0);
+    assert_eq!(cold["ColdStart"], json!([1.0]));
     assert_eq!(cold["function_name"], "orders-fn");
     assert_eq!(cold["service"], "orders");
     assert_eq!(
@@ -181,7 +182,7 @@ async fn metrics_are_embedded_metric_format_lines() {
     );
 
     let request = &blobs[1];
-    assert_eq!(request["RequestsProcessed"], 1.0);
+    assert_eq!(request["RequestsProcessed"], json!([1.0]));
     assert_eq!(request["service"], "orders");
     assert_eq!(request["_aws"]["Timestamp"], NOW_MS);
     assert_eq!(
@@ -375,6 +376,127 @@ async fn an_event_without_a_key_skips_idempotency_with_a_warning() {
     }
 }
 
+// The Powertools rule (`BasePersistenceLayer.is_missing_idempotency_key`):
+// None and the empty string are missing; a list or dict is missing when every
+// item (for a dict: every KEY, never its values) is None; numbers and booleans
+// are never missing, so 0 and false identify a request.
+const MISSING_BODIES: &[(&str, &str)] = &[
+    ("absent", "{}"),
+    ("null", "{\"body\":null}"),
+    ("empty string", "{\"body\":\"\"}"),
+    ("empty list", "{\"body\":[]}"),
+    ("empty object", "{\"body\":{}}"),
+    ("all-null list", "{\"body\":[null,null]}"),
+];
+
+const KEYED_BODIES: &[(&str, &str)] = &[
+    ("object with a null value", "{\"body\":{\"x\":null}}"),
+    (
+        "object with only null values",
+        "{\"body\":{\"x\":null,\"y\":null}}",
+    ),
+    ("object with an empty object value", "{\"body\":{\"x\":{}}}"),
+    ("object with a value", "{\"body\":{\"x\":1}}"),
+    ("list with one non-null item", "{\"body\":[null,1]}"),
+    ("list of empty lists", "{\"body\":[[]]}"),
+    ("zero", "{\"body\":0}"),
+    ("zero float", "{\"body\":0.0}"),
+    ("false", "{\"body\":false}"),
+    ("true", "{\"body\":true}"),
+    ("whitespace string", "{\"body\":\" \"}"),
+    ("string zero", "{\"body\":\"0\"}"),
+];
+
+fn raising() -> IdempotencyConfig {
+    IdempotencyConfig {
+        raise_on_no_idempotency_key: true,
+        ..IdempotencyConfig::for_body()
+    }
+}
+
+#[tokio::test]
+async fn values_that_identify_a_request_are_persisted_and_deduplicated() {
+    for (name, text) in KEYED_BODIES {
+        let event: Value = serde_json::from_str(text).unwrap();
+        for config in [IdempotencyConfig::for_body(), raising()] {
+            let rig = rig_with(config, false);
+            let first = rig
+                .handler
+                .handle(event.clone(), &context())
+                .await
+                .unwrap_or_else(|e| panic!("{name}: {e}"));
+            let second = rig.handler.handle(event.clone(), &context()).await.unwrap();
+            assert_eq!(first, second, "{name}");
+            assert_eq!(rig.store.keys().len(), 1, "{name} must be persisted");
+            let ran = rig
+                .sink
+                .logs()
+                .iter()
+                .filter(|l| l["message"] == "Processing request")
+                .count();
+            assert_eq!(ran, 1, "{name}: the duplicate must not run the function");
+            assert!(
+                rig.sink.logs().iter().all(|l| l["level"] != "WARNING"),
+                "{name}: no missing-key warning"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn values_that_do_not_identify_a_request_skip_idempotency_or_fail() {
+    for (name, text) in MISSING_BODIES {
+        let event: Value = serde_json::from_str(text).unwrap();
+
+        let skipping = rig();
+        skipping
+            .handler
+            .handle(event.clone(), &context())
+            .await
+            .unwrap_or_else(|e| panic!("{name}: {e}"));
+        assert!(
+            skipping.store.calls().is_empty(),
+            "{name} touched the store"
+        );
+        let warnings = skipping
+            .sink
+            .logs()
+            .iter()
+            .filter(|l| l["level"] == "WARNING")
+            .count();
+        assert_eq!(warnings, 1, "{name}");
+
+        let failing = rig_with(raising(), false);
+        let error = failing.handler.handle(event, &context()).await.unwrap_err();
+        assert!(
+            matches!(
+                error,
+                HandlerError::Idempotency(IdempotencyError::MissingKey)
+            ),
+            "{name}: {error}"
+        );
+        assert!(failing.store.calls().is_empty(), "{name}");
+    }
+}
+
+#[tokio::test]
+async fn the_whole_event_follows_the_same_rule() {
+    let config = |raise| IdempotencyConfig {
+        event_key: None,
+        raise_on_no_idempotency_key: raise,
+        ..IdempotencyConfig::for_body()
+    };
+    // `{"x": null}` is a non-empty dict: its key is not None.
+    let rig = rig_with(config(true), false);
+    let event = json!({"x": null});
+    rig.handler.handle(event.clone(), &context()).await.unwrap();
+    rig.handler.handle(event, &context()).await.unwrap();
+    assert_eq!(rig.store.keys().len(), 1);
+    // The empty event is missing.
+    let rig = rig_with(config(true), false);
+    assert!(rig.handler.handle(json!({}), &context()).await.is_err());
+}
+
 #[tokio::test]
 async fn a_missing_key_can_be_an_error() {
     let config = IdempotencyConfig {
@@ -546,7 +668,7 @@ fn metrics(namespace: Option<&str>) -> (Metrics, Arc<MemorySink>) {
     let sink = Arc::new(MemorySink::default());
     let metrics = Metrics::new(
         namespace,
-        "orders",
+        Some("orders"),
         sink.clone(),
         Arc::new(FixedClock::at(NOW_MS)),
     );
@@ -580,7 +702,7 @@ fn a_repeated_metric_becomes_an_array_and_units_are_cloudwatch_names() {
     metrics.flush().unwrap();
     let blob = &sink.metrics()[0];
     assert_eq!(blob["Latency"], json!([5.0, 7.5]));
-    assert_eq!(blob["Throughput"], 2.0);
+    assert_eq!(blob["Throughput"], json!([2.0]));
     assert_eq!(
         blob["_aws"]["CloudWatchMetrics"][0]["Metrics"],
         json!([
@@ -618,7 +740,91 @@ async fn the_cold_start_metric_is_written_even_when_the_invocation_fails() {
     let _ = rig.handler.handle(order_event("a"), &context()).await;
     let blobs = rig.sink.metrics();
     assert_eq!(blobs.len(), 1);
-    assert_eq!(blobs[0]["ColdStart"], 1.0);
+    assert_eq!(blobs[0]["ColdStart"], json!([1.0]));
+}
+
+// Python `Metrics(namespace="MyApp")` adds the `service` dimension only when
+// POWERTOOLS_SERVICE_NAME (or the `service` argument) is set; the Logger's
+// "service_undefined" display default never reaches the metrics.
+#[tokio::test]
+async fn without_a_configured_service_the_metrics_have_no_service_dimension() {
+    let rig = rig_with_settings(
+        IdempotencyConfig::for_body(),
+        false,
+        HandlerSettings::default(),
+    );
+    rig.handler
+        .handle(order_event("a"), &context())
+        .await
+        .unwrap();
+    // The log lines still show the Logger's service.
+    assert_eq!(rig.sink.logs()[0]["service"], "orders");
+    let blobs = rig.sink.metrics();
+    assert_eq!(blobs.len(), 2);
+
+    let cold = &blobs[0];
+    assert!(cold.get("service").is_none(), "{cold}");
+    assert_eq!(cold["function_name"], "orders-fn");
+    assert_eq!(
+        cold["_aws"]["CloudWatchMetrics"][0]["Dimensions"],
+        json!([["function_name"]])
+    );
+
+    let request = &blobs[1];
+    assert!(request.get("service").is_none(), "{request}");
+    assert_eq!(request["RequestsProcessed"], json!([1.0]));
+    assert_eq!(
+        request["_aws"]["CloudWatchMetrics"][0]["Dimensions"],
+        json!([[]])
+    );
+}
+
+#[test]
+fn a_configured_service_is_a_dimension_and_an_unset_one_is_not() {
+    let sink = Arc::new(MemorySink::default());
+    let mut with = Metrics::new(
+        Some("MyApp"),
+        Some("billing"),
+        sink.clone(),
+        Arc::new(FixedClock::at(NOW_MS)),
+    );
+    with.add_metric("Orders", MetricUnit::Count, 3.0);
+    with.flush().unwrap();
+    let mut without = Metrics::new(
+        Some("MyApp"),
+        None,
+        sink.clone(),
+        Arc::new(FixedClock::at(NOW_MS)),
+    );
+    without.add_metric("Orders", MetricUnit::Count, 3.0);
+    without.flush().unwrap();
+    let blobs = sink.metrics();
+    assert_eq!(blobs[0]["service"], "billing");
+    assert_eq!(
+        blobs[0]["_aws"]["CloudWatchMetrics"][0]["Dimensions"],
+        json!([["service"]])
+    );
+    assert_eq!(blobs[0]["Orders"], json!([3.0]));
+    assert!(blobs[1].get("service").is_none());
+    assert_eq!(
+        blobs[1]["_aws"]["CloudWatchMetrics"][0]["Dimensions"],
+        json!([[]])
+    );
+}
+
+// The metric values are written as Powertools writes them: a list of floats,
+// after the dimension fields (top-level order is fixed by hand).
+#[test]
+fn the_emf_line_writes_dimensions_then_float_value_lists() {
+    let (mut metrics, sink) = metrics(Some("MyApp"));
+    metrics.add_metric("RequestsProcessed", MetricUnit::Count, 1.0);
+    metrics.flush().unwrap();
+    let line = &sink.lines()[0];
+    assert!(line.starts_with("{\"_aws\":"), "{line}");
+    assert!(
+        line.ends_with(",\"service\":\"orders\",\"RequestsProcessed\":[1.0]}"),
+        "{line}"
+    );
 }
 
 // ---- logger ----
