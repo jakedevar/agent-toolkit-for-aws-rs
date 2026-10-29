@@ -247,7 +247,11 @@ fn ap_rw_18_19_private_diagnostics_and_strict_json() {
     assert!(!text.contains("InvalidLambdaResponseException"));
     assert_out(o, 1, "matches neither documented envelope (C10 Option A/B)");
     for r in ["\u{feff}[]", r#"[{"id":"123","id":"123"}]"#] {
-        assert_out(check("openai", GOLDENS[0], r, false), 1, "reward_json");
+        assert_out(
+            check("openai", GOLDENS[0], r, false),
+            1,
+            "invalid JSON in --response",
+        );
     }
 }
 #[test]
