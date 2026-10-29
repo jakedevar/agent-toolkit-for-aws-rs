@@ -2,139 +2,23 @@
 //! R-AR-EXT and R-AR-APPLY; the cutover of `SKILL.md` step 8A and step C is
 //! L8).
 //!
-//! `download-snapshot` needs one Launch API call, `GetLaunch
-//! include=download_url`. Until L5's API client lands, [`get_download_url`]
-//! is that one operation over the bounded runner of R-API-BODY: the
-//! percent-encoded id path, the repeated `include` query member, a bearer
-//! token, the 64 MiB JSON cap, 120 s attempts within a 360 s deadline. Its
-//! failures name only the HTTP status. The default build has no network
-//! transport and refuses with the Q20 message before any request.
 
 use std::path::Path;
 #[cfg(unix)]
 use std::time::Duration;
 
 use serde_json::Value;
-use toolkit_aws::retry::{Jitter, RetryPolicy, Sleeper};
+use toolkit_aws::retry::RetryPolicy;
 use toolkit_aws::stream::StreamingTransport;
-use toolkit_aws::transport::{percent_encode, Headers, HttpRequest, Method, Timeouts};
-use toolkit_aws::Secret;
+use toolkit_aws::transport::HttpRequest;
 use toolkit_core::ToolkitError;
 
-use super::http::{self, MonotonicClock, Operation};
 use super::LaunchError;
 use crate::{Invocation, Output};
 
 /// The fixed refusal of a build without the `aws-sdk` feature (Q20).
 pub const NO_NETWORK_MESSAGE: &str =
     "This toolkit build has no network support; install a build with the aws-sdk feature.";
-/// The Launch API operation deadline (R-API-BODY).
-pub const API_SECONDS: u64 = 360;
-/// The per-attempt limit.
-pub const ATTEMPT_SECONDS: u64 = 120;
-/// Longest launch id (botocore `launchIdentifier`).
-pub const MAX_LAUNCH_ID: usize = 2048;
-
-/// The local launch id check, before any request.
-///
-/// # Errors
-/// A fixed message for an empty or overlong id.
-pub fn validate_launch_id(launch_id: &str) -> Result<(), LaunchError> {
-    let length = launch_id.chars().count();
-    if length == 0 || length > MAX_LAUNCH_ID {
-        return Err(LaunchError::Config(format!(
-            "Invalid launch id: it must be 1 to {MAX_LAUNCH_ID} characters."
-        )));
-    }
-    Ok(())
-}
-
-/// The retry seams of [`get_download_url`].
-pub struct Runner<'a> {
-    /// Monotonic time.
-    pub clock: &'a dyn MonotonicClock,
-    /// Backoff sleeps.
-    pub sleeper: &'a dyn Sleeper,
-    /// Backoff jitter.
-    pub jitter: &'a dyn Jitter,
-    /// The shared retry policy.
-    pub policy: RetryPolicy,
-}
-
-/// `GET <base>/api/launches/<id>?include=download_url`: the launch's
-/// `downloadUrl`, or `None` when it has none yet.
-///
-/// # Errors
-/// [`LaunchError::Download`] naming only the status or the failure class.
-pub fn get_download_url(
-    transport: &dyn StreamingTransport,
-    base: &str,
-    launch_id: &str,
-    token: &Secret,
-    runner: &Runner<'_>,
-) -> Result<Option<String>, LaunchError> {
-    let failed = |text: &str| LaunchError::Download(format!("The launch lookup failed: {text}."));
-    let mut headers = Headers::new();
-    headers
-        .insert("authorization", &format!("Bearer {}", token.expose()))
-        .map_err(|_| failed("the session token is not usable"))?;
-    headers
-        .insert("accept", "application/json")
-        .map_err(|_| failed("invalid request"))?;
-    let timeout = std::time::Duration::from_secs(ATTEMPT_SECONDS);
-    let request = HttpRequest {
-        method: Method::Get,
-        url: format!(
-            "{}/api/launches/{}?include=download_url",
-            base.trim_end_matches('/'),
-            percent_encode(launch_id)
-        ),
-        headers,
-        body: Vec::new(),
-        timeouts: Timeouts::new(timeout, timeout).map_err(|_| failed("invalid request"))?,
-    };
-    let deadline = runner.clock.now() + std::time::Duration::from_secs(API_SECONDS);
-    let response = http::run(
-        transport,
-        &request,
-        Operation::ApiJson,
-        deadline,
-        timeout,
-        false,
-        runner.clock,
-        runner.sleeper,
-        runner.jitter,
-        &runner.policy,
-    )
-    .map_err(|error| {
-        failed(match error {
-            http::BodyError::Deadline => "the request timed out",
-            http::BodyError::TooLarge => "the response is too large",
-            http::BodyError::InvalidResponse | http::BodyError::Allocation => {
-                "the response is invalid"
-            }
-            http::BodyError::Transport { .. } => "the service could not be reached",
-        })
-    })?;
-    if !(200..300).contains(&response.status) {
-        return Err(LaunchError::Download(format!(
-            "The launch lookup failed with HTTP status {}.",
-            response.status
-        )));
-    }
-    let value: Value =
-        serde_json::from_slice(&response.body).map_err(|_| failed("the response is invalid"))?;
-    let Some(object) = value.as_object() else {
-        return Err(failed("the response is invalid"));
-    };
-    match object.get("downloadUrl") {
-        None | Some(Value::Null) => Ok(None),
-        Some(Value::String(url)) if url.is_empty() => Ok(None),
-        Some(Value::String(url)) => Ok(Some(url.clone())),
-        Some(_) => Err(failed("the response is invalid")),
-    }
-}
-
 /// `{"applied": true, "files": N, "directories": M, "into": "<path>"}`.
 #[must_use]
 pub fn render_applied(files: usize, directories: usize, into: &Path) -> String {
@@ -226,7 +110,8 @@ fn download(invocation: &Invocation, launch_id: &str) -> Result<String, LaunchEr
     };
     use super::http::DOWNLOAD_CAP;
     use toolkit_aws::{Env, ProcessEnv, SystemResolver};
-    validate_launch_id(launch_id)?;
+    super::api::validate_launch_id(launch_id)
+        .map_err(|error| LaunchError::Config(error.to_string()))?;
     let env = ProcessEnv;
     let dir = super::state::state_dir(&env)?;
     let home = env.var("HOME").map(std::path::PathBuf::from);
@@ -243,7 +128,15 @@ fn download(invocation: &Invocation, launch_id: &str) -> Result<String, LaunchEr
     };
     let output_path = invocation.value("--output").map(Path::new);
     let network = Network::open()?;
-    let lookup = || network.download_url(&dir, &base, launch_id);
+    let lookup = || {
+        network.download_url(
+            &dir,
+            &base,
+            launch_id,
+            region.region,
+            env.var(config::ENV_BASE_URL).is_some_and(|s| !s.is_empty()),
+        )
+    };
     let temp = std::env::temp_dir();
     let mut hook = NoExtractHook;
     let mut deps = DownloadDeps {
@@ -331,6 +224,8 @@ impl Network {
         _dir: &Path,
         _base: &str,
         _launch_id: &str,
+        _region: &str,
+        _override_base: bool,
     ) -> Result<Option<String>, LaunchError> {
         Err(LaunchError::Download(NO_NETWORK_MESSAGE.to_string()))
     }
@@ -341,6 +236,8 @@ impl Network {
         dir: &Path,
         base: &str,
         launch_id: &str,
+        region: &str,
+        override_base: bool,
     ) -> Result<Option<String>, LaunchError> {
         use super::clock::OsRandom;
         use super::http::SystemClock;
@@ -367,18 +264,18 @@ impl Network {
                 std::time::Instant::now() + Duration::from_secs(30),
             )
             .map_err(|error| LaunchError::Download(error.to_string()))?;
-        get_download_url(
-            &self.transport,
+        super::api::Client {
+            transport: &self.transport,
             base,
-            launch_id,
-            &token,
-            &Runner {
-                clock: &SystemClock,
-                sleeper: &ThreadSleeper,
-                jitter: &jitter,
-                policy: RetryPolicy::default(),
-            },
-        )
+            region,
+            token: &token,
+            clock: &SystemClock,
+            sleeper: &ThreadSleeper,
+            jitter: &jitter,
+            policy: RetryPolicy::default(),
+        }
+        .download_url(launch_id, override_base)
+        .map_err(|error| LaunchError::Download(error.to_string()))
     }
 }
 
