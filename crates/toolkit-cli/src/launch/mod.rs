@@ -8,20 +8,27 @@
 //! ([`config`], [`state`]), the bounded byte collector of #5082 ([`buffer`])
 //! and the archive boundary ([`archive`]: rooted race-free source walk, Git
 //! ignore rules, the strict ZIP writer and reader, version-control name
-//! policy and the materialisation planner). The API client and its commands
-//! arrive in L5; until then parts of this code are reached only by the unit
-//! tests, so dead-code analysis is silenced for the module as a whole.
+//! policy and the materialisation planner). L5 (#5345) adds the API client
+//! ([`api`]), model-driven shaping ([`shape`]) and the API commands
+//! ([`flow`], routed by [`commands`]). The network commands are compiled into
+//! the default build only for their offline tests, so dead-code analysis is
+//! silenced for the module as a whole.
 #![allow(dead_code)]
 
+pub mod api;
 pub mod archive;
 pub mod buffer;
 pub mod callback;
 pub mod clock;
+pub mod commands;
 pub mod config;
 #[cfg(unix)]
 pub mod download;
+pub mod flow;
 pub mod http;
 pub mod oidc;
+pub mod shape;
+pub mod sink;
 pub mod snapshot;
 pub mod state;
 pub mod text;
@@ -105,11 +112,31 @@ mod tests_mod;
 #[cfg(test)]
 pub mod tests_support;
 
-/// The sign-in routes (L4) and the snapshot routes (L6); the remaining launch
-/// commands arrive in L5.
+/// Every launch route: the API commands and offline commands (L5), sign-in
+/// (L4) and the snapshot routes (L6).
 pub(crate) const SLICE: crate::registry::Slice = crate::registry::Slice {
     name: "launch",
     commands: &[crate::CommandSpec {
+        path: &["launch", "resolve-region"], flags: &[], value_flags: &["--region", "--aws-mcp-url"], strict_values: true, repeatable_flags: &[], max_positionals: 0, passthrough: false, handler: commands::resolve_region,
+    }, crate::CommandSpec {
+        path: &["launch", "create-launch"], flags: &[], value_flags: &["--region", "--aws-mcp-url"], strict_values: true, repeatable_flags: &[], max_positionals: 2, passthrough: false, handler: commands::create_launch,
+    }, crate::CommandSpec {
+        path: &["launch", "get-launch"], flags: &[], value_flags: &["--region", "--aws-mcp-url"], strict_values: true, repeatable_flags: &[], max_positionals: 2, passthrough: false, handler: commands::get_launch,
+    }, crate::CommandSpec {
+        path: &["launch", "list-launches"], flags: &[], value_flags: &["--region", "--aws-mcp-url"], strict_values: true, repeatable_flags: &[], max_positionals: 0, passthrough: false, handler: commands::list_launches,
+    }, crate::CommandSpec {
+        path: &["launch", "delete-launch"], flags: &[], value_flags: &["--region", "--aws-mcp-url"], strict_values: true, repeatable_flags: &[], max_positionals: 1, passthrough: false, handler: commands::delete_launch,
+    }, crate::CommandSpec {
+        path: &["launch", "start-launch-execution"], flags: &[], value_flags: &["--region", "--aws-mcp-url"], strict_values: true, repeatable_flags: &[], max_positionals: 1, passthrough: false, handler: commands::start_execution,
+    }, crate::CommandSpec {
+        path: &["launch", "get-launch-status"], flags: &[], value_flags: &["--region", "--aws-mcp-url"], strict_values: true, repeatable_flags: &[], max_positionals: 1, passthrough: false, handler: commands::get_status,
+    }, crate::CommandSpec {
+        path: &["launch", "get-launch-download-url"], flags: &[], value_flags: &["--region", "--aws-mcp-url"], strict_values: true, repeatable_flags: &[], max_positionals: 1, passthrough: false, handler: commands::get_download_url,
+    }, crate::CommandSpec {
+        path: &["launch", "session-status"], flags: &[], value_flags: &["--region", "--aws-mcp-url"], strict_values: true, repeatable_flags: &[], max_positionals: 0, passthrough: false, handler: commands::session_status,
+    }, crate::CommandSpec {
+        path: &["launch", "sign-out"], flags: &[], value_flags: &["--region", "--aws-mcp-url"], strict_values: true, repeatable_flags: &[], max_positionals: 0, passthrough: false, handler: commands::sign_out,
+    }, crate::CommandSpec {
         path: &["launch", "auth-callback"],
         flags: &[],
         value_flags: &[],
@@ -155,11 +182,11 @@ pub(crate) const SLICE: crate::registry::Slice = crate::registry::Slice {
         passthrough: false,
         handler: snapshot::apply_command,
     }],
-    synopsis: "  toolkit launch auth-callback\n  toolkit launch auth-start [--region REGION] [--aws-mcp-url URL]\n  toolkit launch auth-wait PID [--region REGION] [--aws-mcp-url URL]\n  toolkit launch download-snapshot LAUNCH_ID [--output DIR] [--region REGION]\n  toolkit launch apply-snapshot SNAPSHOT_DIR [--into DIR]\n",
+    synopsis: "  toolkit launch resolve-region [--region REGION] [--aws-mcp-url URL]\n  toolkit launch session-status\n  toolkit launch sign-out\n  toolkit launch create-launch DIR [NAME] [--region REGION]\n  toolkit launch get-launch ID [INCLUDE] [--region REGION]\n  toolkit launch list-launches [--region REGION]\n  toolkit launch delete-launch ID [--region REGION]\n  toolkit launch start-launch-execution ID [--region REGION]\n  toolkit launch get-launch-status ID [--region REGION]\n  toolkit launch get-launch-download-url ID [--region REGION]\n  toolkit launch auth-callback\n  toolkit launch auth-start [--region REGION] [--aws-mcp-url URL]\n  toolkit launch auth-wait PID [--region REGION] [--aws-mcp-url URL]\n  toolkit launch download-snapshot LAUNCH_ID [--output DIR] [--region REGION]\n  toolkit launch apply-snapshot SNAPSHOT_DIR [--into DIR]\n",
     description:
-        "  launch auth-callback  Internal sign-in helper; reads configuration from stdin.\n  launch auth-start     Start sign-in.\n  launch auth-wait      Wait for a sign-in helper to finish.\n  launch download-snapshot  Download and safely extract a launch's migrated snapshot.\n  launch apply-snapshot     Apply an extracted snapshot to the Git work tree.\n",
+        "  launch resolve-region  Resolve the migration region.\n  launch session-status  Show local session status.\n  launch sign-out  Remove the local session.\n  launch create-launch  Upload a local directory and create a launch.\n  launch get-launch  Show launch details.\n  launch list-launches  List launches.\n  launch delete-launch  Delete a launch.\n  launch start-launch-execution  Start a launch.\n  launch get-launch-status  Show launch progress.\n  launch get-launch-download-url  Show the download URL.\n  launch auth-callback  Internal sign-in helper; reads configuration from stdin.\n  launch auth-start     Start sign-in.\n  launch auth-wait      Wait for a sign-in helper to finish.\n  launch download-snapshot  Download and safely extract a launch's migrated snapshot.\n  launch apply-snapshot     Apply an extracted snapshot to the Git work tree.\n",
     exit_notes: "",
-    doc: "docs/migration/launch-with-aws-design.md",
+    doc: "docs/migration/launch-with-aws.md",
     synopsis_rank: crate::registry::NEW_RANK,
     description_rank: crate::registry::NEW_RANK,
 };

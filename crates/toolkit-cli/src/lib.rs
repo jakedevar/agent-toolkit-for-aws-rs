@@ -74,6 +74,18 @@ pub struct Output<'a> {
     /// The command-line values the sinks must not echo as given: values with
     /// a newline, credential-shaped values and overlong values (#4639, #4941).
     caller: CallerText,
+    /// Live secret values no write may carry, and the diagnostic written in
+    /// place of a write that would (#5406); see [`Output::refuse_known`].
+    known: Option<KnownSecrets>,
+}
+
+/// The guard of [`Output::refuse_known`].
+struct KnownSecrets {
+    values: Vec<String>,
+    refusal: String,
+    /// `None` until a refused write; then whether the one refusal reached an
+    /// open diagnostics writer (#5427).
+    refusal_delivered: Option<bool>,
 }
 
 impl<'a> Output<'a> {
@@ -85,6 +97,7 @@ impl<'a> Output<'a> {
             closed: false,
             status: 0,
             caller: CallerText::default(),
+            known: None,
         }
     }
 
@@ -97,6 +110,7 @@ impl<'a> Output<'a> {
             closed: false,
             status: 0,
             caller: CallerText::default(),
+            known: None,
         }
     }
 
@@ -107,6 +121,63 @@ impl<'a> Output<'a> {
     /// Ordinary values change nothing.
     pub fn set_untrusted(&mut self, args: &[String]) {
         self.caller = CallerText::from_args(args);
+    }
+
+    /// Refuses every later write that carries one of `values` (#5406): such a
+    /// stdout line is not written, such a diagnostic is not written, and
+    /// `refusal` is written to the diagnostics writer once instead, with exit
+    /// status 1. A route registers the live secrets it knows (for the launch
+    /// routes, the stored session's tokens) before it can render anything, so
+    /// no branch, early or late, can echo one. Values shorter than 8 bytes and
+    /// an empty list change nothing.
+    pub fn refuse_known(&mut self, values: Vec<String>, refusal: String) {
+        let values: Vec<String> = values.into_iter().filter(|v| v.len() >= 8).collect();
+        self.known = (!values.is_empty()).then_some(KnownSecrets {
+            values,
+            refusal,
+            refusal_delivered: None,
+        });
+    }
+
+    /// Whether `text` carries a value registered with [`Output::refuse_known`].
+    fn carries_known(&self, text: &str) -> bool {
+        self.known
+            .as_ref()
+            .is_some_and(|known| known.values.iter().any(|v| text.contains(v.as_str())))
+    }
+
+    /// [`Output::diagnostic`] that reports whether the text (or the refusal
+    /// that replaced it) was written to an open diagnostics writer. A refused
+    /// write after the first reports the first refusal's own delivery, so a
+    /// refusal that never reached stderr is never counted as delivered
+    /// (#5427).
+    pub(crate) fn diagnostic_delivered(&mut self, text: &str) -> bool {
+        if !self.carries_known(text) {
+            let text = self.caller.diagnostic(text).into_owned();
+            return self.write_diagnostic(&text);
+        }
+        self.status = 1;
+        let Some(known) = self.known.as_ref() else {
+            return false;
+        };
+        if let Some(delivered) = known.refusal_delivered {
+            return delivered;
+        }
+        let refusal = known.refusal.clone();
+        let delivered = self.write_diagnostic(&refusal);
+        if let Some(known) = self.known.as_mut() {
+            known.refusal_delivered = Some(delivered);
+        }
+        delivered
+    }
+
+    fn write_diagnostic(&mut self, text: &str) -> bool {
+        self.diagnostics.as_mut().is_some_and(|writer| {
+            writer
+                .write_all(text.as_bytes())
+                .and_then(|()| writer.write_all(b"\n"))
+                .is_ok()
+        })
     }
 
     /// Writes `text` and a newline to the diagnostics writer, if there is one.
@@ -124,11 +195,7 @@ impl<'a> Output<'a> {
     /// characters, then escaped (#4941). A handler that echoes other untrusted
     /// text must quote it itself. Safe text is written unchanged.
     pub fn diagnostic(&mut self, text: &str) {
-        if let Some(writer) = self.diagnostics.as_mut() {
-            let _ = writer
-                .write_all(self.caller.diagnostic(text).as_bytes())
-                .and_then(|()| writer.write_all(b"\n"));
-        }
+        let _ = self.diagnostic_delivered(text);
     }
 
     /// Sets the exit status [`run`] returns when the handler itself succeeds.
@@ -162,14 +229,28 @@ impl<'a> Output<'a> {
     /// handler redacts each command-line value where it builds stdout data
     /// (`safe_text::redacted_value`, #4941, #4981).
     pub fn line(&mut self, text: &str) -> Result<(), ToolkitError> {
+        self.line_delivered(text).0
+    }
+
+    /// [`Output::line`] that also reports whether a report reached the caller:
+    /// the line itself on an open stdout, or, for a line refused by
+    /// [`Output::refuse_known`], the refusal on an open diagnostics writer
+    /// (#5427). A caller that makes a result final only once it is delivered
+    /// (auth-wait's pending record) keeps it when this is false.
+    pub(crate) fn line_delivered(&mut self, text: &str) -> (Result<(), ToolkitError>, bool) {
+        if self.carries_known(text) {
+            return (Ok(()), self.diagnostic_delivered(text));
+        }
         if self.closed {
-            return Ok(());
+            return (Ok(()), false);
         }
         let result = self
             .sink
             .write_all(text.as_bytes())
             .and_then(|()| self.sink.write_all(b"\n"));
-        self.settle(result)
+        let result = self.settle(result);
+        let delivered = result.is_ok() && !self.closed;
+        (result, delivered)
     }
 
     /// Flushes buffered output with the same error contract as [`Output::line`].

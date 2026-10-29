@@ -2231,7 +2231,7 @@ fn filesystem_bearing_consumers() -> BTreeSet<(String, String)> {
 /// file name or a directory name. A file that is not about a listed command
 /// (`elasticache`, `relational`, `ai-data`, `cloudwatch region`) is
 /// there for the flag name only.
-const AUDITED_FILESYSTEM_CONSUMERS: [(&str, &str); 26] = [
+const AUDITED_FILESYSTEM_CONSUMERS: [(&str, &str); 27] = [
     ("startup/model_path.rs", "--workload"),
     ("bedrock_agent.rs", "--agent-id"),
     ("bedrock_agent.rs", "--agent-version"),
@@ -2261,6 +2261,9 @@ const AUDITED_FILESYSTEM_CONSUMERS: [(&str, &str); 26] = [
     // Launch validates --region as a region key, never as a path (#5216).
     ("launch/callback/start.rs", "--region"),
     ("launch/callback/wait.rs", "--region"),
+    // L5 (#5345): the API commands pass --region to resolve_region and the
+    // list-launches region selection only, never to a path.
+    ("launch/commands.rs", "--region"),
     ("launch/snapshot.rs", "--region"),
 ];
 
@@ -2421,8 +2424,8 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
 /// dynamodb-bench (#4390), elasticache-tunnel (#4393), marketplace (#4396) and
 /// telemetry (#4398), then mcp-proxy (#5079) and ai-payloads (#5143).
 /// The S2b render synopsis is included as well (#5223), the launch
-/// `download-snapshot` and `apply-snapshot` routes (#5317), and the agents-pay
-/// fetch route (#5352).
+/// `download-snapshot` and `apply-snapshot` routes (#5317), the L5 API and
+/// offline launch routes (#5345), and the agents-pay fetch route (#5352).
 /// A deliberate usage change updates the pin in the same
 /// commit and says so in the Issue; an incidental one fails here.
 // Neptune memory (#4886) deliberately adds its synopsis and description, and
@@ -2430,9 +2433,10 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
 // `documentdb normalize-capture` (#5327) deliberately adds its synopsis and description.
 // Docgraph live preflight flags (#5366) are advertised even though adapters
 // are not yet available.
+// The L5 launch routes (#5345) add theirs.
 // `agents-pay fetch` (#5352) deliberately adds its synopsis and description.
-const USAGE_BASE_LEN: usize = 46521;
-const USAGE_BASE_FNV1A64: u64 = 0x88f4_991c_c8a3_2540;
+const USAGE_BASE_LEN: usize = 47548;
+const USAGE_BASE_FNV1A64: u64 = 0x355f_5278_556d_532a;
 
 #[test]
 fn the_global_usage_text_is_byte_identical_to_the_base() {

@@ -21,6 +21,7 @@ pub struct HelperConfig {
 
 impl HelperConfig {
     /// Strictly decode a bounded stdin object, rejecting duplicate and unknown fields.
+    // recorded-shape: stdin is a bounded helper configuration with exact keys and types, not an AWS response.
     pub fn read(mut input: impl Read) -> io::Result<Self> {
         let mut bytes = Vec::new();
         input.by_ref().take(LIMIT + 1).read_to_end(&mut bytes)?;
