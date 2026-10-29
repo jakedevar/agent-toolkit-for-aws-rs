@@ -454,7 +454,22 @@ fn ap_cell_04_08_multiline_normalization_and_unsafe_characters() {
         outputs.push(fs::read_to_string(f.0.join("scripts/01_example.py")).unwrap());
     }
     assert_eq!(outputs[0], outputs[1]);
-    assert!(outputs[0].contains(body));
+    assert_eq!(outputs[0], format!("\"\"\"Example\n\nDescription\n\"\"\"\n\n# %% Cell 1: Code\n{body}\n"));
+    let mut notebooks = Vec::new();
+    for contents in [body.to_owned(), body.replace('\n', "\r\n")] {
+        let f = Fixture::new();
+        let template = f.write("template.py", template_text);
+        let cell = f.write("cell.py", &contents);
+        let arg = format!("1={}", cell.display());
+        assert!(f.render(&template, "notebook", &["--cell", &arg]).status.success());
+        let bytes = fs::read(f.0.join("notebooks/example.ipynb")).unwrap();
+        let notebook = toolkit_core::parse_json(std::str::from_utf8(&bytes).unwrap()).unwrap();
+        let toolkit_core::Json::Array(cells) = notebook.get("cells").unwrap() else { panic!("cells") };
+        let toolkit_core::Json::Array(source) = cells[1].get("source").unwrap() else { panic!("source") };
+        assert_eq!(source.iter().map(|s| s.as_str().unwrap()).collect::<String>(), body);
+        notebooks.push(bytes);
+    }
+    assert_eq!(notebooks[0], notebooks[1]);
     for ch in [
         '\r', '\0', '\x1b', '\x7f', '\u{85}', '\u{2028}', '\u{202e}', '\u{2066}', '\u{feff}',
     ] {
@@ -568,7 +583,14 @@ fn ap_t28_01_02_03_04_cat_11_module_contract() {
             assert!(!output.contains("%%writefile"));
             assert!(output.contains("# transform_dataset is defined"));
         } else {
-            assert!(output.contains("%%writefile"));
+            let notebook = toolkit_core::parse_json(&output).unwrap();
+            let toolkit_core::Json::Array(cells) = notebook.get("cells").unwrap() else { panic!("cells") };
+            let toolkit_core::Json::Array(source) = cells[2].get("source").unwrap() else { panic!("source") };
+            assert_eq!(source[0].as_str(), Some(format!("%%writefile {}\n", fs::canonicalize(&module).unwrap().display()).as_str()));
+            let toolkit_core::Json::Array(source) = cells[3].get("source").unwrap() else { panic!("source") };
+            let actual: String = source.iter().map(|line| line.as_str().unwrap()).collect();
+            let expected = original.split("# Cell 3: Load Dataset\n").nth(1).unwrap().split("\n# Cell 4:").next().unwrap().trim_matches('\n');
+            assert_eq!(actual, expected);
             assert!(output.contains("def transform_dataset(df):"));
         }
     }
