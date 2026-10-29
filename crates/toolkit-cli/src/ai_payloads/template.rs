@@ -22,7 +22,6 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use toolkit_core::is_unsafe_char;
 
-
 /// Characters of a comment kept for a manual edit point.
 const MANUAL_TEXT_CHARS: usize = 60;
 
