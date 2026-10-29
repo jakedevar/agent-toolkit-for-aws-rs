@@ -34,12 +34,22 @@ impl std::fmt::Display for OidcError {
         }
     }
 }
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Client {
     pub id: String,
     pub secret: Secret,
     pub expires_at: i64,
     pub scopes: Vec<String>,
+}
+impl std::fmt::Debug for Client {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Client")
+            .field("id", &"[REDACTED]")
+            .field("secret", &self.secret)
+            .field("expires_at", &self.expires_at)
+            .field("scopes", &self.scopes)
+            .finish()
+    }
 }
 #[derive(Debug, Clone)]
 pub struct Tokens {
@@ -111,6 +121,28 @@ pub struct Oidc<'a> {
     pub policy: RetryPolicy,
 }
 impl Oidc<'_> {
+    /// Return a cached access token, or refresh and atomically persist it.
+    pub fn access_token(
+        &self,
+        dir: &std::path::Path,
+        random: &dyn super::clock::Random,
+        now: i64,
+        deadline: Instant,
+    ) -> Result<Secret, OidcError> {
+        let mut session = super::state::load_session(dir).ok_or(OidcError::SessionExpired)?;
+        if session.token_expires_at > now.saturating_add(300) {
+            return Ok(session.access_token);
+        }
+        if session.client_expires_at <= now {
+            return Err(OidcError::SessionExpired);
+        }
+        let token = self.refresh(&session, now, deadline)?;
+        session.access_token = token.access.clone();
+        session.refresh_token = token.refresh;
+        session.token_expires_at = token.expires_at;
+        super::state::save_session(dir, &session, random).map_err(|_| OidcError::SessionExpired)?;
+        Ok(token.access)
+    }
     fn call(
         &self,
         path: &str,
@@ -316,6 +348,62 @@ mod tests {
         assert_eq!(error_code(Some("FAKE-ACCESS"), b"{}"), "UnrecognizedError");
         assert!(
             !scrub("failure FAKE-ACCESS", &[&Secret::new("FAKE-ACCESS")]).contains("FAKE-ACCESS")
+        );
+    }
+}
+
+#[cfg(test)]
+mod refresh_tests {
+    use super::super::http::SystemClock;
+    use super::*;
+    use toolkit_aws::retry::NoJitter;
+    use toolkit_aws::testing::{FakeChunk, FakeStreamingTransport, RecordingSleeper};
+    #[test]
+    fn refresh_keeps_old_refresh_token_and_failure_is_generic() {
+        let session = StoredSession {
+            client_id: "id".into(),
+            client_secret: Secret::new("FAKE-CLIENT-SECRET"),
+            client_expires_at: 5000,
+            authorize_endpoint: format!("{ENDPOINT}/authorize"),
+            token_endpoint: format!("{ENDPOINT}/token"),
+            scopes: vec![],
+            access_token: Secret::new("FAKE-ACCESS"),
+            refresh_token: Secret::new("FAKE-REFRESH"),
+            token_expires_at: 0,
+        };
+        let fake = FakeStreamingTransport::new()
+            .respond(
+                200,
+                &[],
+                vec![FakeChunk::Data(br#"{"accessToken":"new"}"#.to_vec())],
+            )
+            .respond(
+                400,
+                &[],
+                vec![FakeChunk::Data(
+                    br#"{"error":"FAKE-CLIENT-SECRET","error_description":"FAKE-REFRESH"}"#
+                        .to_vec(),
+                )],
+            );
+        let sleeper = RecordingSleeper::new();
+        let oidc = Oidc {
+            transport: &fake,
+            clock: &SystemClock,
+            sleeper: &sleeper,
+            jitter: &NoJitter,
+            policy: RetryPolicy::none(),
+        };
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let token = oidc.refresh(&session, 100, deadline).unwrap();
+        assert_eq!(token.refresh, session.refresh_token);
+        let error = oidc.refresh(&session, 100, deadline).unwrap_err();
+        assert_eq!(error, OidcError::SessionExpired);
+        assert!(!format!("{error:?} {error}").contains("FAKE-"));
+        let requests = fake.requests();
+        let request: Value = serde_json::from_slice(&requests[0].body).unwrap();
+        assert_eq!(
+            request,
+            json!({"clientId":"id","clientSecret":"FAKE-CLIENT-SECRET","grantType":"refresh_token","refreshToken":"FAKE-REFRESH"})
         );
     }
 }

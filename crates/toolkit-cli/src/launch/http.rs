@@ -80,11 +80,15 @@ pub fn collect_response(
     deadline: Instant,
 ) -> Result<Response, BodyError> {
     let limits = limits_for(operation, deadline);
-    let mut stream = transport
-        .open(request, &limits)
-        .map_err(|e| BodyError::Transport {
-            retryable: e.is_retryable(),
-        })?;
+    let mut stream = transport.open(request, &limits).map_err(|e| match e {
+        toolkit_aws::AwsError::Timeout {
+            phase: toolkit_aws::error::TimeoutPhase::Deadline,
+            ..
+        } => BodyError::Deadline,
+        other => BodyError::Transport {
+            retryable: other.is_retryable(),
+        },
+    })?;
     let status = stream.status();
     let error_header = if status >= 400 {
         stream.headers().get("x-amzn-errortype").map(str::to_owned)
@@ -168,7 +172,8 @@ impl MonotonicClock for SystemClock {
     }
 }
 /// Retry only before the absolute operation deadline. An authorization-code
-/// exchange may retry connection failures but never an HTTP response.
+/// exchange does not retry ambiguous transport failures or HTTP responses.
+#[allow(clippy::too_many_arguments)]
 pub fn run(
     transport: &dyn StreamingTransport,
     request: &HttpRequest,
@@ -276,5 +281,129 @@ mod tests {
         assert_eq!(result.status, 500);
         assert!(result.body.is_empty());
         assert_eq!(fake.narrow_calls(), vec![65536]);
+    }
+
+    #[test]
+    fn all_zero_read_statuses_ignore_lengths_and_frames() {
+        for (op, status) in [
+            (Operation::Put, 403),
+            (Operation::Delete, 200),
+            (Operation::Delete, 204),
+            (Operation::Download, 307),
+            (Operation::Download, 403),
+            (Operation::Oidc, 307),
+        ] {
+            let fake = FakeStreamingTransport::new().respond(
+                status,
+                &[("content-length", "bad")],
+                vec![FakeChunk::Data(vec![0; 2])],
+            );
+            assert_eq!(
+                collect_response(
+                    &fake,
+                    &request(),
+                    op,
+                    Instant::now() + Duration::from_secs(30)
+                )
+                .unwrap()
+                .status,
+                status
+            );
+            assert_eq!(fake.frames_pulled(), 0);
+        }
+    }
+
+    #[test]
+    fn length_and_limit_fail_before_further_reads() {
+        for length in ["bogus", "1,1", "65537"] {
+            let fake = FakeStreamingTransport::new().respond(
+                200,
+                &[("content-length", length)],
+                vec![FakeChunk::Data(vec![0])],
+            );
+            assert!(collect_response(
+                &fake,
+                &request(),
+                Operation::Oidc,
+                Instant::now() + Duration::from_secs(30)
+            )
+            .is_err());
+            assert_eq!(fake.frames_pulled(), 0);
+        }
+        let fake =
+            FakeStreamingTransport::new().respond(200, &[], vec![FakeChunk::Data(vec![0; 65536])]);
+        assert_eq!(
+            collect_response(
+                &fake,
+                &request(),
+                Operation::Oidc,
+                Instant::now() + Duration::from_secs(30)
+            )
+            .unwrap()
+            .body
+            .len(),
+            65536
+        );
+        let fake =
+            FakeStreamingTransport::new().respond(200, &[], vec![FakeChunk::Data(vec![0; 65537])]);
+        assert_eq!(
+            collect_response(
+                &fake,
+                &request(),
+                Operation::Oidc,
+                Instant::now() + Duration::from_secs(30)
+            )
+            .unwrap_err(),
+            BodyError::TooLarge
+        );
+    }
+
+    #[test]
+    fn retry_stops_before_deadline_and_deadline_failure_is_terminal() {
+        use super::{run, SystemClock};
+        use toolkit_aws::retry::{NoJitter, RetryPolicy};
+        use toolkit_aws::testing::RecordingSleeper;
+        let fake = FakeStreamingTransport::new()
+            .respond(503, &[], vec![])
+            .respond(200, &[], vec![]);
+        let sleeper = RecordingSleeper::new();
+        let deadline = Instant::now() + Duration::from_secs(1);
+        let r = run(
+            &fake,
+            &request(),
+            Operation::Oidc,
+            deadline,
+            Duration::from_secs(30),
+            false,
+            &SystemClock,
+            &sleeper,
+            &NoJitter,
+            &RetryPolicy::default(),
+        )
+        .unwrap();
+        assert_eq!(r.status, 503);
+        assert!(sleeper.sleeps().is_empty());
+        assert_eq!(fake.requests().len(), 1);
+        assert_eq!(fake.open_limits()[0].deadline(), Some(deadline));
+        let stalled = FakeStreamingTransport::new()
+            .respond(200, &[], vec![FakeChunk::Stall])
+            .respond(200, &[], vec![]);
+        assert_eq!(
+            run(
+                &stalled,
+                &request(),
+                Operation::Oidc,
+                deadline,
+                Duration::from_secs(30),
+                false,
+                &SystemClock,
+                &sleeper,
+                &NoJitter,
+                &RetryPolicy::default()
+            )
+            .unwrap_err(),
+            BodyError::Deadline
+        );
+        assert_eq!(stalled.requests().len(), 1);
     }
 }
