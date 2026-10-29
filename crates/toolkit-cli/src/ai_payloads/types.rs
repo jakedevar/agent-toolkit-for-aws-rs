@@ -22,10 +22,17 @@ pub(crate) const TYPES: &[(&str, SlotType)] = &[
 ];
 
 pub(crate) fn slot_type(name: &str) -> Option<SlotType> {
+    if name.eq_ignore_ascii_case("ACCEPT_EULA") {
+        return Some(SlotType::Consent);
+    }
     TYPES
         .iter()
         .find(|(key, _)| *key == name)
         .map(|(_, kind)| *kind)
+}
+
+pub(crate) fn consent_given(consent: &std::collections::BTreeSet<String>, name: &str) -> bool {
+    name.eq_ignore_ascii_case("ACCEPT_EULA") && consent.contains("ACCEPT_EULA")
 }
 
 /// Returns only a literal, never an error containing the supplied value.

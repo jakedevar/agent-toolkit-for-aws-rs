@@ -87,7 +87,13 @@ pub(crate) fn publish(
         let filename = format!("{number:02}_{name}.py");
         match place::publish_new(dir, &filename, bytes, hooks) {
             Ok(published) => return Ok((filename, published)),
-            Err(error) if error.code == "destination_exists" => (),
+            Err(error) if error.code == "destination_exists" => {
+                if fs::symlink_metadata(dir.join(&filename))
+                    .is_ok_and(|metadata| !metadata.file_type().is_file())
+                {
+                    return Err("script_destination_not_regular");
+                }
+            }
             Err(error) => return Err(error.code),
         }
     }

@@ -43,6 +43,449 @@ impl Drop for Fixture {
 const TEMPLATE: &str = "# Cell 0 [markdown]: Example\n# Description\n\n# Cell 1: Config\nACCEPT_EULA = [ACCEPT_EULA]\nrole = \"[ROLE_ARN]\"\n";
 
 #[test]
+fn ap_typ_01_04_06_07_valid_literals_golden() {
+    let f = Fixture::new();
+    let template = f.write("template.py", "# Cell 0 [markdown]: Example\n# Desc\n# Cell 1: Config\nACCEPT_EULA = [ACCEPT_EULA]\nflag = [TRUE_OR_FALSE]\na = [INPUT_TOKENS_STDDEV]\nb = [OUTPUT_TOKENS_STDDEV]\nmetrics = [METRICS_LIST]\n");
+    let values = f.write("values.json", r#"{"values":{"ACCEPT_EULA":false,"TRUE_OR_FALSE":true,"INPUT_TOKENS_STDDEV":0,"OUTPUT_TOKENS_STDDEV":0,"METRICS_LIST":["Correctness","Faithfulness"]}}"#);
+    assert!(f
+        .render(&template, "script", &["--values", values.to_str().unwrap()])
+        .status
+        .success());
+    let script = fs::read_to_string(f.0.join("scripts/01_example.py")).unwrap();
+    for expected in [
+        "ACCEPT_EULA = False",
+        "flag = True",
+        "a = 0",
+        "b = 0",
+        "metrics = [\"Correctness\", \"Faithfulness\"]",
+    ] {
+        assert!(script.contains(expected));
+    }
+    let values = f.write("values.json", r#"{"values":{"ACCEPT_EULA":true,"TRUE_OR_FALSE":false,"INPUT_TOKENS_STDDEV":0,"OUTPUT_TOKENS_STDDEV":0,"METRICS_LIST":[]}}"#);
+    assert!(f
+        .render(
+            &template,
+            "script",
+            &[
+                "--values",
+                values.to_str().unwrap(),
+                "--consent",
+                "ACCEPT_EULA"
+            ]
+        )
+        .status
+        .success());
+    let script = fs::read_to_string(f.0.join("scripts/02_example.py")).unwrap();
+    for expected in ["ACCEPT_EULA = True", "flag = False", "metrics = []"] {
+        assert!(script.contains(expected));
+    }
+    let names = (0..65)
+        .map(|i| format!("\"M{i}\""))
+        .collect::<Vec<_>>()
+        .join(",");
+    let values = f.write("values.json", &format!("{{\"values\":{{\"ACCEPT_EULA\":false,\"TRUE_OR_FALSE\":false,\"INPUT_TOKENS_STDDEV\":0,\"OUTPUT_TOKENS_STDDEV\":0,\"METRICS_LIST\":[{names}]}}}}"));
+    assert_eq!(
+        f.render(&template, "script", &["--values", values.to_str().unwrap()])
+            .status
+            .code(),
+        Some(1)
+    );
+}
+
+#[test]
+fn ap_con_05_template_shaped_consent_sites_require_consent() {
+    for line in [
+        "model.accept_eula = [ACCEPT_EULA]",
+        "ACCEPT_EULA = [ACCEPT_EULA]\nmodel = {'accept_eula': ACCEPT_EULA}",
+    ] {
+        let f = Fixture::new();
+        let template = f.write(
+            "template.py",
+            &format!("# Cell 0 [markdown]: Example\n# Desc\n# Cell 1: Code\n{line}\n"),
+        );
+        let values = f.write("values.json", r#"{"values":{"ACCEPT_EULA":true}}"#);
+        let result = f.render(&template, "script", &["--values", values.to_str().unwrap()]);
+        assert_eq!(result.status.code(), Some(1));
+        assert!(String::from_utf8_lossy(&result.stderr).contains("consent_not_given"));
+        assert!(f
+            .render(
+                &template,
+                "script",
+                &[
+                    "--values",
+                    values.to_str().unwrap(),
+                    "--consent",
+                    "ACCEPT_EULA"
+                ]
+            )
+            .status
+            .success());
+    }
+}
+
+#[test]
+fn ap_app_01_02_exact_report_and_ignored_names() {
+    let f = Fixture::new();
+    let template = f.write(
+        "template.py",
+        "# Cell 0 [markdown]: Example\n# Desc\n# Cell 1: Code\npass\n",
+    );
+    let source = f.write(
+        "notebooks/example.ipynb",
+        r#"{"cells":[],"metadata":{"keep":true},"nbformat":4,"nbformat_minor":4}"#,
+    );
+    for name in [
+        "example-1.ipynb",
+        "example-001.ipynb",
+        "example-01.ipynb.bak",
+    ] {
+        f.write(&format!("notebooks/{name}"), "ignored");
+    }
+    let result = f.render(&template, "notebook", &["--append"]);
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let out = String::from_utf8_lossy(&result.stdout);
+    assert!(out.contains(&format!(
+        "source: {} (sha256 4c27e216c25086bdcc597c7ee7c4dbc415899a8ac245fc713f2776efd9dcca53)",
+        source.display()
+    )));
+    assert!(out.contains(&format!(
+        "open: {}",
+        f.0.join("notebooks/example-01.ipynb").display()
+    )));
+}
+
+#[cfg(unix)]
+#[test]
+fn ap_app_07_fifo_source_is_refused() {
+    use std::process::Command;
+    let f = Fixture::new();
+    let template = f.write(
+        "template.py",
+        "# Cell 0 [markdown]: Example\n# Desc\n# Cell 1: Code\npass\n",
+    );
+    fs::create_dir(f.0.join("notebooks")).unwrap();
+    let fifo = f.0.join("notebooks/example.ipynb");
+    assert!(Command::new("mkfifo")
+        .arg(&fifo)
+        .status()
+        .unwrap()
+        .success());
+    let result = f.render(&template, "notebook", &["--append"]);
+    assert_eq!(result.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&result.stderr).contains("append_source_invalid"));
+    assert!(!f.0.join("notebooks/example-01.ipynb").exists());
+}
+
+#[test]
+fn ap_asn_02_04_06_target_and_secret_matrix() {
+    for (source, name) in [
+        (
+            "# Cell 0 [markdown]: Example\n# TARGET = 'old'\n# Cell 1: Code\npass\n",
+            "TARGET",
+        ),
+        (
+            "# Cell 0 [markdown]: Example\n# Desc\n# Cell 1: Code\nTARGET, other = 'old', 1\n",
+            "TARGET",
+        ),
+        (
+            "# Cell 0 [markdown]: Example\n# Desc\n# Cell 1: Code\nTARGET = f'old'\n",
+            "TARGET",
+        ),
+        (
+            "# Cell 0 [markdown]: Example\n# Desc\n# Cell 1: Code\nTARGET = None\n",
+            "TARGET",
+        ),
+        (
+            "# Cell 0 [markdown]: Example\n# Desc\n# Cell 1: Code\nS3_OUTPUT_PATH = f'old'\n",
+            "S3_OUTPUT_PATH",
+        ),
+    ] {
+        let f = Fixture::new();
+        let template = f.write("template.py", source);
+        let values = f.write(
+            "values.json",
+            &format!("{{\"assign\":{{\"{name}\":\"new\"}}}}"),
+        );
+        let result = f.render(&template, "script", &["--values", values.to_str().unwrap()]);
+        assert_eq!(result.status.code(), Some(1), "{source}");
+        assert!(String::from_utf8_lossy(&result.stderr).contains("assign_target_invalid"));
+    }
+    for (value, expected, success) in [
+        ("null", "HF_HUB_TOKEN = None", true),
+        (
+            "\"arn:aws:secretsmanager:us-east-1:123456789012:secret:example\"",
+            "arn:aws:secretsmanager",
+            true,
+        ),
+        ("\"literal-secret-sentinel\"", "secret_value_invalid", false),
+    ] {
+        let f = Fixture::new();
+        let template = f.write("template.py", "# Cell 0 [markdown]: Example\n# Desc\n# Cell 1: Code\nHF_HUB_TOKEN = ''\nreward_function_path = (\n    'old'\n)\n");
+        let values = f.write(
+            "values.json",
+            &format!(
+                "{{\"assign\":{{\"HF_HUB_TOKEN\":{value},\"reward_function_path\":\"new\"}}}}"
+            ),
+        );
+        let result = f.render(&template, "script", &["--values", values.to_str().unwrap()]);
+        assert_eq!(
+            result.status.success(),
+            success,
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        if success {
+            let script = fs::read_to_string(f.0.join("scripts/01_example.py")).unwrap();
+            assert!(script.contains(expected));
+            assert!(script.contains("reward_function_path = (\n    'new'\n)"));
+        } else {
+            assert!(String::from_utf8_lossy(&result.stderr).contains(expected));
+            assert!(!String::from_utf8_lossy(&result.stdout).contains("literal-secret-sentinel"));
+            assert!(!String::from_utf8_lossy(&result.stderr).contains("literal-secret-sentinel"));
+            assert!(!f.0.join("scripts").exists());
+        }
+    }
+}
+
+#[test]
+#[allow(clippy::too_many_lines)] // Explicit per-type process rejection matrix.
+fn ap_typ_03_04_06_07_sub_14_process_rejection_matrix() {
+    for (name, cases) in [
+        (
+            "ACCEPT_EULA",
+            vec![
+                "\"true\"",
+                "\"false\"",
+                "1",
+                "0",
+                "null",
+                "[]",
+                "[true]",
+                "[\"false\"]",
+                "{}",
+            ],
+        ),
+        (
+            "TRUE_OR_FALSE",
+            vec!["\"false\"", "1", "null", "[\"false\"]"],
+        ),
+        (
+            "CONCURRENCY",
+            vec![
+                "0",
+                "-1",
+                "512.0",
+                "5.12e2",
+                "2147483648",
+                "true",
+                "\"512\"",
+                "null",
+                "[512]",
+                "{}",
+                "NaN",
+            ],
+        ),
+        (
+            "INPUT_TOKENS_MEAN",
+            vec![
+                "0",
+                "-1",
+                "512.0",
+                "5.12e2",
+                "2147483648",
+                "true",
+                "\"512\"",
+                "null",
+                "[512]",
+            ],
+        ),
+        (
+            "OUTPUT_TOKENS_MEAN",
+            vec![
+                "0",
+                "-1",
+                "512.0",
+                "5.12e2",
+                "2147483648",
+                "true",
+                "\"512\"",
+                "null",
+                "[512]",
+            ],
+        ),
+        (
+            "REQUEST_COUNT",
+            vec![
+                "0",
+                "-1",
+                "512.0",
+                "5.12e2",
+                "2147483648",
+                "true",
+                "\"512\"",
+                "null",
+                "[512]",
+            ],
+        ),
+        (
+            "INPUT_TOKENS_STDDEV",
+            vec![
+                "-1",
+                "512.0",
+                "5.12e2",
+                "2147483648",
+                "true",
+                "\"512\"",
+                "null",
+                "[512]",
+            ],
+        ),
+        (
+            "OUTPUT_TOKENS_STDDEV",
+            vec![
+                "-1",
+                "512.0",
+                "5.12e2",
+                "2147483648",
+                "true",
+                "\"512\"",
+                "null",
+                "[512]",
+            ],
+        ),
+        (
+            "METRICS_LIST",
+            vec![
+                "null",
+                "\"Correctness\"",
+                "[1]",
+                "[\"\"]",
+                "[\"a b\"]",
+                "[\"X\",\"X\"]",
+                "[[\"X\"]]",
+                "{}",
+            ],
+        ),
+    ] {
+        let mut diagnostic = None;
+        for raw in cases {
+            let f = Fixture::new();
+            let template = f.write(
+                "template.py",
+                &format!("# Cell 0 [markdown]: Example\n# Desc\n# Cell 1: Code\nx = [{name}]\n"),
+            );
+            let values = f.write(
+                "values.json",
+                &format!("{{\"values\":{{\"{name}\":{raw}}}}}"),
+            );
+            let result = f.render(&template, "script", &["--values", values.to_str().unwrap()]);
+            assert_eq!(result.status.code(), Some(1), "{name}: {raw}");
+            if raw != "NaN" {
+                let stderr = String::from_utf8_lossy(&result.stderr);
+                assert!(stderr.contains(name), "{name}: {raw}: {stderr}");
+                assert!(
+                    stderr.contains("typed_value_invalid"),
+                    "{name}: {raw}: {stderr}"
+                );
+                // Identical diagnostics for different values prove that even
+                // short values such as 0 or null are not interpolated.
+                if let Some(previous) = &diagnostic {
+                    assert_eq!(&result.stderr, previous, "{name}: {raw}");
+                } else {
+                    diagnostic = Some(result.stderr.clone());
+                }
+                assert!(result.stdout.is_empty(), "{name}: {raw}");
+            }
+            assert!(!f.0.join("scripts").exists());
+        }
+    }
+}
+
+#[test]
+fn ap_fs_01_cli_03_reserved_name_and_exit_codes() {
+    let f = Fixture::new();
+    let template = f.write(
+        "template.py",
+        "# Cell 0 [markdown]: Example\n# Desc\n# Cell 1: Code\npass\n",
+    );
+    let project = f.0.join("reserved-01");
+    fs::create_dir(&project).unwrap();
+    for args in [vec!["--name", "example-01"], vec![]] {
+        let result = Command::new(env!("CARGO_BIN_EXE_toolkit"))
+            .args(["ai-payloads", "render"])
+            .arg(&template)
+            .args(["--mode", "script", "--project-dir"])
+            .arg(&project)
+            .args(args)
+            .output()
+            .unwrap();
+        assert_eq!(result.status.code(), Some(1));
+        assert!(String::from_utf8_lossy(&result.stderr).contains("name_reserved_suffix"));
+    }
+    assert_eq!(f.render(&template, "script", &[]).status.code(), Some(0));
+    assert_eq!(f.render(&template, "invalid", &[]).status.code(), Some(2));
+}
+
+#[test]
+fn ap_sub_11_22_sec_01_process_boundaries() {
+    for raw in [
+        "\"line\\nfeed\"",
+        "\"escape\\u001b\"",
+        "\"bidi\\u202e\"",
+        &format!("\"{}\"", "x".repeat(4097)),
+    ] {
+        let f = Fixture::new();
+        let template = f.write(
+            "template.py",
+            "# Cell 0 [markdown]: Example\n# Desc\n# Cell 1: Code\nx = '[VALUE]'\n",
+        );
+        let values = f.write(
+            "values.json",
+            &format!("{{\"values\":{{\"VALUE\":{raw}}}}}"),
+        );
+        let result = f.render(&template, "script", &["--values", values.to_str().unwrap()]);
+        assert_eq!(result.status.code(), Some(1));
+        assert!(!f.0.join("scripts").exists());
+    }
+    let f = Fixture::new();
+    let template = f.write(
+        "template.py",
+        "# Cell 0 [markdown]: Example\n# Desc\n# Cell 1: Code\n# [COMMENT_ONLY]\npass\n",
+    );
+    assert!(f.render(&template, "script", &[]).status.success());
+    let f = Fixture::new();
+    let template = f.write(
+        "template.py",
+        "# Cell 0 [markdown]: Example\n# Desc\n# Cell 1: Code\nx = '[HF_TOKEN]'\n",
+    );
+    let values = f.write(
+        "values.json",
+        r#"{"values":{"HF_TOKEN":"literal-secret-sentinel"}}"#,
+    );
+    for mode in ["script", "notebook"] {
+        let result = f.render(&template, mode, &["--values", values.to_str().unwrap()]);
+        assert_eq!(result.status.code(), Some(1));
+        for bytes in [&result.stdout, &result.stderr] {
+            assert!(!String::from_utf8_lossy(bytes).contains("literal-secret-sentinel"));
+        }
+        for dir in ["scripts", "notebooks"] {
+            let dir = f.0.join(dir);
+            if dir.exists() {
+                for entry in fs::read_dir(dir).unwrap() {
+                    let path = entry.unwrap().path();
+                    assert!(!String::from_utf8_lossy(&fs::read(path).unwrap())
+                        .contains("literal-secret-sentinel"));
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn ap_con_01_missing_typed_consent_is_refused_even_when_unresolved_allowed() {
     for mode in ["notebook", "script"] {
         let f = Fixture::new();
@@ -134,6 +577,217 @@ fn ap_pub_15_dry_run_creates_no_output() {
 }
 
 #[test]
+fn ap_t28_03_normalized_template_path_requires_module_cell() {
+    let f = Fixture::new();
+    f.write("dataset-transformation/code_templates/transformation.py", "# Cell 0 [markdown]: Example\n# Description\n# Cell 1: Code\npass\n# Cell 2: Module\npass\n");
+    let template =
+        f.0.join("dataset-transformation/code_templates/../code_templates/transformation.py");
+    let result = f.render(&template, "script", &[]);
+    assert_eq!(result.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&result.stderr).contains("module_cell_required"));
+}
+
+#[test]
+fn ap_scr_04_nonregular_destination_has_specific_error() {
+    let f = Fixture::new();
+    let template = f.write(
+        "template.py",
+        "# Cell 0 [markdown]: Example\n# Description\n# Cell 1: Code\npass\n",
+    );
+    fs::create_dir_all(f.0.join("scripts/01_example.py")).unwrap();
+    let result = f.render(&template, "script", &[]);
+    assert_eq!(result.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&result.stderr).contains("script_destination_not_regular"));
+    assert!(f.0.join("scripts/01_example.py").is_dir());
+}
+
+#[test]
+fn ap_asn_01_float_assignments_keep_float_literals() {
+    for (value, expected) in [
+        ("1", "1.0"),
+        ("1.0", "1.0"),
+        ("1e300", "1e300"),
+        ("1e-7", "1e-7"),
+    ] {
+        let f = Fixture::new();
+        let template = f.write(
+            "template.py",
+            "# Cell 0 [markdown]: Example\n# Description\n# Cell 1: Code\nLR = 0.5\n",
+        );
+        let values = f.write("values.json", &format!("{{\"assign\":{{\"LR\":{value}}}}}"));
+        let result = f.render(&template, "script", &["--values", values.to_str().unwrap()]);
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        let script = fs::read_to_string(f.0.join("scripts/01_example.py")).unwrap();
+        assert!(script.contains(&format!("LR = {expected}\n")), "{script}");
+    }
+}
+
+#[test]
+fn ap_sub_magic_lines_reject_quoted_slots() {
+    for line in ["!aws s3 cp \"[S3_URI]\" .", "  %run \"[S3_URI]\""] {
+        let f = Fixture::new();
+        let template = f.write(
+            "template.py",
+            &format!("# Cell 0 [markdown]: Example\n# Description\n# Cell 1: Code\n{line}\n"),
+        );
+        let values = f.write("values.json", r#"{"values":{"S3_URI":"$(id)"}}"#);
+        let result = f.render(
+            &template,
+            "notebook",
+            &["--values", values.to_str().unwrap()],
+        );
+        assert_eq!(result.status.code(), Some(1), "{line}");
+        assert!(String::from_utf8_lossy(&result.stderr).contains("magic_line_slot"));
+        assert!(!f.0.join("notebooks/example.ipynb").exists());
+    }
+}
+
+#[test]
+fn ap_con_05_quoted_and_lowercase_consent_are_refused() {
+    for (source, values, code) in [
+        (
+            "model.accept_eula = \"[ACCEPT_EULA]\"\n",
+            r#"{"values":{"ACCEPT_EULA":"true"}}"#,
+            "consent_slot_not_bare",
+        ),
+        (
+            "accept_eula = False\n",
+            r#"{"assign":{"accept_eula":true}}"#,
+            "consent_not_given",
+        ),
+    ] {
+        let f = Fixture::new();
+        let template = f.write(
+            "template.py",
+            &format!("# Cell 0 [markdown]: Example\n# Description\n# Cell 1: Code\n{source}"),
+        );
+        let values = f.write("values.json", values);
+        let result = f.render(&template, "script", &["--values", values.to_str().unwrap()]);
+        assert_eq!(result.status.code(), Some(1), "{source}");
+        assert!(String::from_utf8_lossy(&result.stderr).contains(code));
+        assert!(!f.0.join("scripts/01_example.py").exists());
+    }
+    let f = Fixture::new();
+    let template = f.write(
+        "template.py",
+        "# Cell 0 [markdown]: Example\n# Description\n# Cell 1: Code\naccept_eula = False\n",
+    );
+    let values = f.write("values.json", r#"{"assign":{"accept_eula":true}}"#);
+    let result = f.render(
+        &template,
+        "script",
+        &[
+            "--values",
+            values.to_str().unwrap(),
+            "--consent",
+            "ACCEPT_EULA",
+        ],
+    );
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert!(fs::read_to_string(f.0.join("scripts/01_example.py"))
+        .unwrap()
+        .contains("accept_eula = True"));
+}
+
+#[test]
+fn review_5290_fullwidth_quote_does_not_hide_consent() {
+    assert_cell_consent_refused("x = \"\u{ff02}\"\nACCEPT_EULA = True\n");
+}
+
+#[test]
+fn review_5291_interpolated_quote_reuse_and_template_strings() {
+    for code in [
+        "print(f\"{\"x\" if (ACCEPT_EULA := True) else \"y\"}\")\n",
+        "print(t\"{(ACCEPT_EULA := True)}\")\n",
+        "print(tr\"{(ACCEPT_EULA := True)}\")\n",
+    ] {
+        assert_cell_consent_refused(code);
+    }
+}
+
+fn assert_cell_consent_refused(code: &str) {
+    let f = Fixture::new();
+    let template = f.write(
+        "template.py",
+        "# Cell 0 [markdown]: Example\n# Description\n# Cell 1: Code\npass\n",
+    );
+    let cell = f.write("cell.py", code);
+    let arg = format!("1={}", cell.display());
+    let result = f.render(&template, "script", &["--cell", &arg]);
+    assert_eq!(result.status.code(), Some(1), "{code}");
+    assert!(String::from_utf8_lossy(&result.stderr).contains("cell_binds_consent"));
+}
+
+#[test]
+fn review_5292_cell_magic_and_assigned_escape_reject_slots() {
+    for source in [
+        "%%bash\necho \"[S3_URI]\"",
+        "files = !ls \"[S3_URI]\"",
+        "files = %run \"[S3_URI]\"",
+    ] {
+        let f = Fixture::new();
+        let template = f.write(
+            "template.py",
+            &format!("# Cell 0 [markdown]: Example\n# Description\n# Cell 1: Code\n{source}\n"),
+        );
+        let values = f.write("values.json", r#"{"values":{"S3_URI":"$(id)"}}"#);
+        let result = f.render(
+            &template,
+            "notebook",
+            &["--values", values.to_str().unwrap()],
+        );
+        assert_eq!(result.status.code(), Some(1), "{source}");
+        assert!(String::from_utf8_lossy(&result.stderr).contains("magic_line_slot"));
+    }
+}
+
+#[test]
+fn review_5293_consent_flag_is_exact_case() {
+    let f = Fixture::new();
+    let template = f.write("template.py", "# Cell 0 [markdown]: Example\n# Description\n# Cell 1: Code\nACCEPT_EULA = [ACCEPT_EULA]\n");
+    let values = f.write("values.json", r#"{"values":{"ACCEPT_EULA":true}}"#);
+    let result = f.render(
+        &template,
+        "script",
+        &[
+            "--values",
+            values.to_str().unwrap(),
+            "--consent",
+            "accept_eula",
+        ],
+    );
+    assert_eq!(result.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&result.stderr).contains("consent_name_invalid"));
+}
+
+#[test]
+fn ap_con_06_normalized_and_fstring_consent_identifiers_are_guarded() {
+    for code in [
+        "ＡCCEPT_EULA = True\n",
+        "print(f\"{(ACCEPT_EULA := True)}\")\n",
+    ] {
+        let f = Fixture::new();
+        let template = f.write(
+            "template.py",
+            "# Cell 0 [markdown]: Example\n# Description\n# Cell 1: Code\npass\n",
+        );
+        let cell = f.write("cell.py", code);
+        let arg = format!("1={}", cell.display());
+        let result = f.render(&template, "script", &["--cell", &arg]);
+        assert_eq!(result.status.code(), Some(1), "{code}");
+        assert!(String::from_utf8_lossy(&result.stderr).contains("cell_binds_consent"));
+    }
+}
+
+#[test]
 fn ap_con_06_cell_consent_identifier_guard() {
     let f = Fixture::new();
     let template = f.write(
@@ -162,6 +816,73 @@ fn ap_con_06_cell_consent_identifier_guard() {
 }
 
 #[test]
+fn ap_con_06_exec_caller_code_boundary_is_syntactic() {
+    let f = Fixture::new();
+    let template = f.write(
+        "template.py",
+        "# Cell 0 [markdown]: Example\n# Description\n# Cell 1: Code\npass\n",
+    );
+    // The guard does not execute or interpret strings passed to exec. Caller
+    // code remains trusted and the rendered bytes demonstrate that boundary.
+    let body = "exec('ACCEPT_EULA = True')\n";
+    let cell = f.write("cell.py", body);
+    let arg = format!("1={}", cell.display());
+    let result = f.render(&template, "script", &["--cell", &arg]);
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert!(fs::read_to_string(f.0.join("scripts/01_example.py"))
+        .unwrap()
+        .contains(body));
+}
+
+#[test]
+fn ap_con_05_parenthesized_and_training_assignments_emit_booleans() {
+    for source in [
+        "ACCEPT_EULA = (\n    False  # license\n)",
+        "ACCEPT_EULA = False\nmodel = train(accept_eula=ACCEPT_EULA)",
+    ] {
+        for (value, consent, expected) in [(false, false, "False"), (true, true, "True")] {
+            for mode in ["script", "notebook"] {
+                let f = Fixture::new();
+                let template = f.write(
+                    "template.py",
+                    &format!("# Cell 0 [markdown]: Example\n# Desc\n# Cell 1: Code\n{source}\n"),
+                );
+                let values = f.write(
+                    "values.json",
+                    &format!("{{\"assign\":{{\"ACCEPT_EULA\":{value}}}}}"),
+                );
+                let mut args = vec!["--values", values.to_str().unwrap()];
+                if consent {
+                    args.extend(["--consent", "ACCEPT_EULA"]);
+                }
+                let result = f.render(&template, mode, &args);
+                assert!(
+                    result.status.success(),
+                    "{}",
+                    String::from_utf8_lossy(&result.stderr)
+                );
+                let path = if mode == "script" {
+                    "scripts/01_example.py"
+                } else {
+                    "notebooks/example.ipynb"
+                };
+                let output = fs::read_to_string(f.0.join(path)).unwrap();
+                assert!(
+                    output.contains(&format!("{expected}  # license"))
+                        || output.contains(&format!("ACCEPT_EULA = {expected}")),
+                    "{mode}: {output}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+#[allow(clippy::too_many_lines)] // Inventory and render all catalog entries in both modes.
 fn ap_cat_10_all_real_templates_render_in_both_modes() {
     use toolkit_core::{parse_json, Json};
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../skills/core-skills/aws-ai-ml");
@@ -181,6 +902,27 @@ fn ap_cat_10_all_real_templates_render_in_both_modes() {
         let Json::Array(placeholders) = entry.get("placeholders").unwrap() else {
             panic!("slots")
         };
+        let template_text = fs::read_to_string(root.join("references").join(rel)).unwrap();
+        let is_site = |line: &str| {
+            let line = line.trim_start();
+            line.starts_with("ACCEPT_EULA =") || line.starts_with("\"accept_eula\":")
+        };
+        let expected_sites = match rel {
+            "model-deployment/code_templates/deploy-oss-sagemaker.py"
+            | "model-deployment/code_templates/deploy-jumpstart-sagemaker.py"
+            | "finetuning/code_templates/rlaif_builtin.py"
+            | "finetuning/code_templates/rlaif_custom_prompt.py"
+            | "finetuning/code_templates/sft.py"
+            | "finetuning/code_templates/rlvr.py"
+            | "finetuning/code_templates/dpo.py"
+            | "training-jobs/code_templates/jumpstart_training.py" => 1,
+            _ => 0,
+        };
+        assert_eq!(
+            template_text.lines().filter(|line| is_site(line)).count(),
+            expected_sites,
+            "consent inventory: {rel}"
+        );
         for mode in ["script", "notebook"] {
             let f = Fixture::new();
             let mut pairs = Vec::new();
@@ -222,15 +964,101 @@ fn ap_cat_10_all_real_templates_render_in_both_modes() {
                 "{rel} {mode}: {}",
                 String::from_utf8_lossy(&result.stderr)
             );
-            if mode == "notebook" {
-                parse_json(&fs::read_to_string(f.0.join("notebooks/example.ipynb")).unwrap())
-                    .unwrap();
+            let code = if mode == "notebook" {
+                let notebook =
+                    parse_json(&fs::read_to_string(f.0.join("notebooks/example.ipynb")).unwrap())
+                        .unwrap();
+                let Json::Array(cells) = notebook.get("cells").unwrap() else {
+                    panic!("cells")
+                };
+                cells
+                    .iter()
+                    .filter(|cell| cell.get("cell_type").and_then(Json::as_str) == Some("code"))
+                    .map(|cell| {
+                        let Json::Array(source) = cell.get("source").unwrap() else {
+                            panic!("source")
+                        };
+                        source
+                            .iter()
+                            .map(|line| line.as_str().unwrap())
+                            .collect::<String>()
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            } else {
+                fs::read_to_string(f.0.join("scripts/01_example.py")).unwrap()
+            };
+            let sites: Vec<_> = code.lines().filter(|line| is_site(line)).collect();
+            assert_eq!(
+                sites.len(),
+                expected_sites,
+                "emitted consent inventory: {rel} {mode}"
+            );
+            for site in sites {
+                let line = site.trim_start();
+                if line.starts_with("ACCEPT_EULA = (") {
+                    assert!(code.contains("ACCEPT_EULA = (\n    False"), "{rel} {mode}");
+                } else {
+                    assert!(
+                        line.starts_with("ACCEPT_EULA = False")
+                            || line.starts_with("\"accept_eula\": False"),
+                        "{rel} {mode}: {line}"
+                    );
+                }
+            }
+            assert!(
+                !code
+                    .lines()
+                    .filter(|line| !line.trim_start().starts_with('#'))
+                    .any(|line| line.contains("[ACCEPT_EULA]")),
+                "{rel} {mode}"
+            );
+            if mode == "script" {
+                let output = fs::read_to_string(f.0.join("scripts/01_example.py")).unwrap();
+                assert!(output.contains("# %% Cell 1:"), "{rel}");
+                assert!(!output.contains("# NOTEBOOK_ONLY"), "{rel}");
+                for line in template_text
+                    .lines()
+                    .filter(|line| line.trim_end().ends_with("# NOTEBOOK_ONLY"))
+                {
+                    let dropped = line
+                        .trim_end()
+                        .strip_suffix("# NOTEBOOK_ONLY")
+                        .unwrap()
+                        .trim_end();
+                    assert!(
+                        !output.lines().any(|emitted| emitted.trim_end() == dropped),
+                        "{rel}: {dropped}"
+                    );
+                }
+                for line in template_text
+                    .lines()
+                    .filter(|line| line.contains("# NOTEBOOK_ONLY_SECTION"))
+                {
+                    let number = line
+                        .strip_prefix("# Cell ")
+                        .unwrap()
+                        .split(':')
+                        .next()
+                        .unwrap();
+                    assert!(
+                        !output.contains(&format!("# %% Cell {number}:")),
+                        "{rel}: {line}"
+                    );
+                }
+                for line in output
+                    .lines()
+                    .filter(|line| !line.trim_start().starts_with('#'))
+                {
+                    assert!(!line.contains("[ACCEPT_EULA]"), "{rel}: {line}");
+                }
             }
         }
     }
 }
 
 #[test]
+#[allow(clippy::too_many_lines)] // The notebook golden is deliberately byte-exact.
 fn ap_cell_04_08_multiline_normalization_and_unsafe_characters() {
     let template_text = "# Cell 0 [markdown]: Example\n# Description\n# Cell 1: Code\npass\n";
     let body = "def transform_dataset(df):\n    x = 1\n\n\treturn df # comment";
@@ -249,13 +1077,88 @@ fn ap_cell_04_08_multiline_normalization_and_unsafe_characters() {
         outputs.push(fs::read_to_string(f.0.join("scripts/01_example.py")).unwrap());
     }
     assert_eq!(outputs[0], outputs[1]);
-    assert!(outputs[0].contains(body));
+    assert_eq!(
+        outputs[0],
+        format!("\"\"\"Example\n\nDescription\n\"\"\"\n\n# %% Cell 1: Code\n{body}\n")
+    );
+    let mut notebooks = Vec::new();
+    for contents in [body.to_owned(), body.replace('\n', "\r\n")] {
+        let f = Fixture::new();
+        let template = f.write("template.py", template_text);
+        let cell = f.write("cell.py", &contents);
+        let arg = format!("1={}", cell.display());
+        assert!(f
+            .render(&template, "notebook", &["--cell", &arg])
+            .status
+            .success());
+        let bytes = fs::read(f.0.join("notebooks/example.ipynb")).unwrap();
+        let notebook = toolkit_core::parse_json(std::str::from_utf8(&bytes).unwrap()).unwrap();
+        let toolkit_core::Json::Array(cells) = notebook.get("cells").unwrap() else {
+            panic!("cells")
+        };
+        let toolkit_core::Json::Array(source) = cells[1].get("source").unwrap() else {
+            panic!("source")
+        };
+        assert_eq!(
+            source
+                .iter()
+                .map(|s| s.as_str().unwrap())
+                .collect::<String>(),
+            body
+        );
+        notebooks.push(bytes);
+    }
+    assert_eq!(notebooks[0], notebooks[1]);
+    let golden = r#"{
+  "cells": [
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "Description"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {},
+      "outputs": [],
+      "source": [
+        "def transform_dataset(df):\n",
+        "    x = 1\n",
+        "\n",
+        "\treturn df # comment"
+      ]
+    }
+  ],
+  "metadata": {
+    "kernelspec": {
+      "display_name": "Python 3",
+      "language": "python",
+      "name": "python3"
+    },
+    "language_info": {
+      "name": "python"
+    }
+  },
+  "nbformat": 4,
+  "nbformat_minor": 4
+}
+"#;
+    assert_eq!(notebooks[0], golden.as_bytes());
     for ch in [
         '\r', '\0', '\x1b', '\x7f', '\u{85}', '\u{2028}', '\u{202e}', '\u{2066}', '\u{feff}',
     ] {
         let f = Fixture::new();
         let template = f.write("template.py", template_text);
-        let cell = f.write("cell.py", &format!("x{ch}y"));
+        let cell = f.write(
+            "cell.py",
+            &if ch == '\u{feff}' {
+                format!("{ch}xy")
+            } else {
+                format!("x{ch}y")
+            },
+        );
         let arg = format!("1={}", cell.display());
         let result = f.render(&template, "script", &["--cell", &arg]);
         assert_eq!(result.status.code(), Some(1));
@@ -285,10 +1188,16 @@ fn ap_app_02_nb_08_10_12_versioned_append_and_invalid_ids() {
     assert_eq!(fs::read_to_string(source).unwrap(), base);
     let copy =
         parse_json(&fs::read_to_string(f.0.join("notebooks/example-04.ipynb")).unwrap()).unwrap();
+    let original = parse_json(base).unwrap();
+    assert_eq!(copy.get("metadata"), original.get("metadata"));
+    let Json::Array(original_cells) = original.get("cells").unwrap() else {
+        panic!("cells")
+    };
     assert_eq!(copy.get("nbformat_minor"), Some(&Json::Int(5)));
     let Json::Array(cells) = copy.get("cells").unwrap() else {
         panic!("cells")
     };
+    assert_eq!(&cells[..original_cells.len()], original_cells.as_slice());
     assert_eq!(cells[0].get("id").unwrap().as_str(), Some("a1"));
     for cell in &cells[1..] {
         assert_eq!(cell.get("id").unwrap().as_str().unwrap().len(), 8);
@@ -298,13 +1207,15 @@ fn ap_app_02_nb_08_10_12_versioned_append_and_invalid_ids() {
         "template.py",
         "# Cell 0 [markdown]: Example\n# Desc\n# Cell 1: Code\npass\n",
     );
-    bad.write(
+    let bad_source = bad.write(
         "notebooks/example.ipynb",
         &base.replace("\"a1\"", "\"bad id!\""),
     );
+    let before = fs::read(&bad_source).unwrap();
     let result = bad.render(&t, "notebook", &["--append"]);
     assert_eq!(result.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&result.stderr).contains("notebook_cell_ids_invalid"));
+    assert_eq!(fs::read(bad_source).unwrap(), before);
     assert!(!bad.0.join("notebooks/example-01.ipynb").exists());
 }
 
@@ -359,7 +1270,36 @@ fn ap_t28_01_02_03_04_cat_11_module_contract() {
             assert!(!output.contains("%%writefile"));
             assert!(output.contains("# transform_dataset is defined"));
         } else {
-            assert!(output.contains("%%writefile"));
+            let notebook = toolkit_core::parse_json(&output).unwrap();
+            let toolkit_core::Json::Array(cells) = notebook.get("cells").unwrap() else {
+                panic!("cells")
+            };
+            let toolkit_core::Json::Array(source) = cells[2].get("source").unwrap() else {
+                panic!("source")
+            };
+            assert_eq!(
+                source[0].as_str(),
+                Some(
+                    format!(
+                        "%%writefile {}\n",
+                        fs::canonicalize(&module).unwrap().display()
+                    )
+                    .as_str()
+                )
+            );
+            let toolkit_core::Json::Array(source) = cells[3].get("source").unwrap() else {
+                panic!("source")
+            };
+            let actual: String = source.iter().map(|line| line.as_str().unwrap()).collect();
+            let expected = original
+                .split("# Cell 3: Load Dataset\n")
+                .nth(1)
+                .unwrap()
+                .split("\n# Cell 4:")
+                .next()
+                .unwrap()
+                .trim_matches('\n');
+            assert_eq!(actual, expected);
             assert!(output.contains("def transform_dataset(df):"));
         }
     }
@@ -632,6 +1572,21 @@ fn ap_con_03_04_all_bare_slots_are_required_even_when_unresolved_allowed() {
 
 #[test]
 fn ap_nb_10_11_12_unsupported_versions_and_invalid_ids() {
+    for cells in [r"[{}]", r#"[{"id":"x"},{"id":"x"}]"#] {
+        let f = Fixture::new();
+        let template = f.write(
+            "template.py",
+            "# Cell 0 [markdown]: Example\n# Desc\n# Cell 1: Code\npass\n",
+        );
+        let text =
+            format!(r#"{{"cells":{cells},"metadata":{{}},"nbformat":4,"nbformat_minor":5}}"#);
+        let source = f.write("notebooks/example.ipynb", &text);
+        let result = f.render(&template, "notebook", &["--append"]);
+        assert_eq!(result.status.code(), Some(1));
+        assert!(String::from_utf8_lossy(&result.stderr).contains("notebook_cell_ids_invalid"));
+        assert_eq!(fs::read(source).unwrap(), text.as_bytes());
+        assert!(!f.0.join("notebooks/example-01.ipynb").exists());
+    }
     for (version, minor, id, error) in [
         ("4", "5", "", "notebook_cell_ids_invalid"),
         ("4", "5", "bad id!", "notebook_cell_ids_invalid"),
@@ -761,6 +1716,30 @@ fn ap_t28_03_05_module_mismatch_missing_definition_and_unsafe_project() {
     assert_eq!(result.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&result.stderr).contains("writefile_path_unsafe"));
     assert!(!unsafe_dir.join("notebooks").exists());
+}
+
+#[test]
+fn ap_t28_05_magic_unsafe_project_characters() {
+    let template = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../skills/core-skills/aws-ai-ml/references/dataset-transformation/code_templates/transformation.py");
+    for suffix in ["space dir", "dollar$dir", "brace{dir", "quote'dir"] {
+        let f = Fixture::new();
+        let project = f.0.join(suffix);
+        fs::create_dir_all(project.join("scripts")).unwrap();
+        let module = project.join("scripts/transform_fn.py");
+        fs::write(&module, "def transform_dataset(df):\n    return df\n").unwrap();
+        let cell = format!("2={}", module.display());
+        let result = Command::new(env!("CARGO_BIN_EXE_toolkit"))
+            .args(["ai-payloads", "render"])
+            .arg(&template)
+            .args(["--mode", "notebook", "--project-dir"])
+            .arg(&project)
+            .args(["--name", "example", "--cell", &cell, "--allow-unresolved"])
+            .output()
+            .unwrap();
+        assert_eq!(result.status.code(), Some(1), "{suffix}");
+        assert!(String::from_utf8_lossy(&result.stderr).contains("writefile_path_unsafe"));
+        assert!(!project.join("notebooks").exists());
+    }
 }
 
 #[test]
@@ -1125,7 +2104,7 @@ fn ap_app_02_07_latest_symlink_and_over_cap_source_are_refused() {
     );
     let result = f.render(&template, "notebook", &["--append"]);
     assert!(String::from_utf8_lossy(&result.stderr).contains("append_source_invalid"));
-    assert_eq!(fs::metadata(huge).unwrap().len(), 16 * 1024 * 1024 + 1);
+    assert_eq!(fs::read(huge).unwrap(), vec![b'x'; 16 * 1024 * 1024 + 1]);
     assert!(!f.0.join("notebooks/example-07.ipynb").exists());
     let fifo = f.0.join("notebooks/example-08.ipynb");
     assert!(Command::new("mkfifo")

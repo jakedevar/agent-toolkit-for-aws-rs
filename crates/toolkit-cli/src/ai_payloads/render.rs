@@ -124,6 +124,16 @@ fn command_with_hooks(
     out: &mut Output<'_>,
     hooks: &mut dyn place::PublishHooks,
 ) -> Result<(), ToolkitError> {
+    command_with_ids(inv, out, hooks, None)
+}
+
+#[allow(clippy::too_many_lines, clippy::if_not_else)]
+fn command_with_ids(
+    inv: &Invocation,
+    out: &mut Output<'_>,
+    hooks: &mut dyn place::PublishHooks,
+    ids_override: Option<&mut dyn notebook::IdSource>,
+) -> Result<(), ToolkitError> {
     let path = Path::new(
         inv.positional(0)
             .ok_or_else(|| usage("TEMPLATE is required"))?,
@@ -198,16 +208,21 @@ fn command_with_hooks(
     let assignments = object(json.get("assign"))?;
     let consents: BTreeSet<_> = inv.values_of("--consent").map(str::to_owned).collect();
     for name in &consents {
-        if types::slot_type(name) != Some(types::SlotType::Consent)
-            || !(original.slots.iter().any(|s| s.name == *name && s.code > 0)
-                || assignments.contains_key(name))
+        if name != "ACCEPT_EULA"
+            || !(original
+                .slots
+                .iter()
+                .any(|s| s.name.eq_ignore_ascii_case(name) && s.code > 0)
+                || assignments.keys().any(|key| key.eq_ignore_ascii_case(name)))
         {
             return Err(fail("consent_name_invalid", name));
         }
     }
+    let normalized_template = std::fs::canonicalize(path)
+        .map_err(|_| fail("template_invalid", "cannot resolve template path"))?;
     let module_spec = template::MODULE_CELLS
         .iter()
-        .find(|(suffix, _, _, _)| path.ends_with(suffix));
+        .find(|(suffix, _, _, _)| normalized_template.ends_with(suffix));
     let module = module_spec.is_some();
     let mut replacements = BTreeMap::new();
     for arg in inv.values_of("--cell") {
@@ -425,7 +440,8 @@ fn command_with_hooks(
         let text = read(&source, 16 * 1024 * 1024, "append_source_invalid")?;
         let hash = sha256_hex(text.as_bytes());
         let mut ids = notebook::ContentIds(hash.clone());
-        let value = notebook::append(&text, notebook::cells(&rendered, &parsed), &mut ids)
+        let ids = ids_override.unwrap_or(&mut ids);
+        let value = notebook::append(&text, notebook::cells(&rendered, &parsed), ids)
             .map_err(|e| fail(e, "invalid source notebook"))?;
         source_report = Some((source, hash));
         (

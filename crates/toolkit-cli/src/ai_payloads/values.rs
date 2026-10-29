@@ -31,9 +31,11 @@ fn literal(
     consent: &BTreeSet<String>,
 ) -> Result<String, &'static str> {
     match occurrence.context {
-        Context::Bare => {
-            types::literal(&occurrence.name, value, consent.contains(&occurrence.name))
-        }
+        Context::Bare => types::literal(
+            &occurrence.name,
+            value,
+            types::consent_given(consent, &occurrence.name),
+        ),
         Context::Quoted if super::template::is_secret_name(&occurrence.name) => {
             types::secret_literal(value, occurrence.quote.unwrap_or('"'))
         }

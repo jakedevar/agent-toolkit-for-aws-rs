@@ -115,9 +115,15 @@ If the use case allows, think of rewards as a pyramid where each layer depends o
 
 ### Step 7: Test Locally
 
-Test the reward function by executing it against crafted sample data:
+Test the reward function by executing it against crafted sample data, then check the response against the documented Lambda contract with the Rust checker:
 
-1. **Build test input.** Infer the expected Lambda event and response format from the `lambda_handler` function in the appropriate source template. Choose one prompt from the training data reviewed in Step 1. Construct four test events that mimic what SageMaker sends to the Lambda:
+1. **Build test input.** Choose the `--format` that matches the training data: `openai` (chat messages), `verl`, or `nova` for Nova 2.0 Lite. Print the documented event for it:
+
+   ```bash
+   toolkit ai-payloads reward sample --format verl
+   ```
+
+   Infer the expected Lambda event and response format from that sample and from the `lambda_handler` function in the appropriate source template. Choose one prompt from the training data reviewed in Step 1. Construct four test events that mimic what SageMaker sends to the Lambda:
    - An **excellent** response — use the response from the data.
    - A **partially correct** response — generate one that gets some things right but misses others.
    - A **bad** response — generate one that is clearly wrong or off-topic, but without gaming.
@@ -127,7 +133,7 @@ Test the reward function by executing it against crafted sample data:
 
 3. Write the batch to a temp file (e.g., `/tmp/test_reward_input.json`).
 
-4. **Run the function** Invoke `lambda_function.py` via the shell:
+4. **Run the function** Invoke `lambda_function.py` via the shell and save the response (`/tmp/test_reward_output.json`):
 
    ```bash
    python3 -c "
@@ -137,19 +143,29 @@ Test the reward function by executing it against crafted sample data:
    with open('/tmp/test_reward_input.json') as f:
        event = json.load(f)
    result = lambda_handler(event, None)
+   with open('/tmp/test_reward_output.json', 'w') as f:
+       json.dump(result, f)
    print(json.dumps(result, indent=2))
    "
 
    ```
 
-5. **Verify the output.** Check that:
+5. **Check the response format.** SageMaker sends one sample per invocation, so `--batch` is needed for the four-sample file (a local test extension). The checker reads both files offline; it does not run the Lambda or call AWS:
+
+   ```bash
+   toolkit ai-payloads reward check --format verl --event /tmp/test_reward_input.json --response /tmp/test_reward_output.json --batch
+   ```
+
+   Use the same `--format` as in 1 (`--format openai`, `--format nova`). Exit 0 means the response matches one of the two documented envelopes with one result per sample. On exit 1, fix `lambda_handler`'s return value (it must not be changed from the template's schema, so a failure usually means the function was edited incorrectly) and re-run.
+
+6. **Verify the output.** Check that:
    - All scores fall within [-1.0, 1.0].
    - The excellent response scores highest, the bad response scores lowest.
    - No errors or exceptions occurred.
 
-6. **Show the user** the test inputs, expected score ordering, and actual scores.
+7. **Show the user** the test inputs, expected score ordering, and actual scores.
 
-7. If the test fails or scores don't match expectations, fix the function and re-run until it passes. Inform the user about what you are doing.
+8. If the test fails or scores don't match expectations, fix the function and re-run until it passes. Inform the user about what you are doing.
 
 ### Step 8: Check In with the User
 
@@ -159,25 +175,16 @@ Test the reward function by executing it against crafted sample data:
 
 ### Step 9: Register the Reward Function in the Finetuning Output
 
-After the reward function is written and tested, generate the registration code that corresponds to **Cell 3** in `code_templates/rlvr.py`. Add the registration code to the finetuning output as Cell 3, following the format already chosen for this session (notebook or script).
+The registration code is Cell 3 of `code_templates/rlvr.py`. Do not write it by hand: `toolkit ai-payloads render` renders it with the rest of the finetuning output (see `finetuning/overview.md` section 1.3), so finish this step before that render. After the reward function is written and tested, put the path where `lambda_function.py` was saved in Step 6 and the Evaluator name into the values file:
 
-Set `reward_function_path` to the path where `lambda_function.py` was saved in Step 6.
-
-```python
-from sagemaker.ai_registry.evaluator import Evaluator
-
-# Insert path to lambda_function.py from Step 6 here:
-reward_function_path = ""
-
-evaluator = Evaluator.create(
-    name="[GENERATE A NAME FOR THE EVALUATOR HERE]",
-    type="RewardFunction",
-    source=reward_function_path,
-)
-CUSTOM_REWARD_FUNCTION = evaluator.arn
-print(f"Reward Function ARN: {CUSTOM_REWARD_FUNCTION}")
-
+```json
+{
+  "values": {"GENERATE A NAME FOR THE EVALUATOR HERE": "<evaluator-name>"},
+  "assign": {"reward_function_path": "<project-dir>/scripts/lambda_function.py"}
+}
 ```
+
+`reward_function_path` is a literal field of Cell 3 and `GENERATE A NAME FOR THE EVALUATOR HERE` is its Evaluator name placeholder. Cell 3 then reads `Evaluator.create(name=..., type="RewardFunction", source=reward_function_path)` and `CUSTOM_REWARD_FUNCTION = evaluator.arn`, in the format already chosen for this session (notebook or script).
 
 Generate an appropriate name for the Evaluator based on the use case and current context.
 

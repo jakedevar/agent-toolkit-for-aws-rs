@@ -82,7 +82,7 @@ fn rewrite_validated(
         }
         let quote = target.literal.chars().next().unwrap_or('"');
         let literal = if types::slot_type(name).is_some() {
-            types::literal(name, value, consent.contains(name))
+            types::literal(name, value, types::consent_given(consent, name))
         } else if template::is_secret_name(&name.to_ascii_uppercase()) {
             types::secret_literal(value, quote)
         } else {
@@ -92,8 +92,8 @@ fn rewrite_validated(
                     Ok(if *v { "True" } else { "False" }.to_owned())
                 }
                 (LiteralKind::Int, Json::Int(v)) if *v >= 0 => Ok(v.to_string()),
-                (LiteralKind::Float, Json::Int(v)) => Ok(v.to_string()),
-                (LiteralKind::Float, Json::Float(v)) if v.is_finite() => Ok(v.to_string()),
+                (LiteralKind::Float, Json::Int(v)) => Ok(format!("{v}.0")),
+                (LiteralKind::Float, Json::Float(v)) if v.is_finite() => Ok(format!("{v:?}")),
                 _ => Err("assign_value_invalid"),
             }
         }

@@ -24,6 +24,7 @@ use super::checks::{Findings, Status};
 use super::client::RecordedClient;
 use super::infra::run_infra_checks;
 
+mod memory;
 mod neptune;
 mod redaction;
 mod review;
@@ -125,7 +126,7 @@ fn the_commands_are_registered_strict_and_not_passthrough() {
         assert!(!spec.passthrough, "{:?}", spec.path);
         assert!(spec.repeatable_flags.is_empty(), "{:?}", spec.path);
     }
-    assert_eq!(seen, 3);
+    assert_eq!(seen, 4);
     assert!(Status::Info.as_str() == "info");
 }
 

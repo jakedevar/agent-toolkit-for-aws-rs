@@ -281,4 +281,4 @@ CI automation that creates its own throwaway graphs should pass `deletionProtect
 
 - AWS docs: "Neptune Analytics user guide", "Neptune Analytics graph algorithms"
 - Related sub-skills: `graphrag` (vector + graph), `agentic-memory` (agent use case)
-- Script: `scripts/graphrag_pipeline.py` (Analytics SDK usage examples)
+- Offline Analytics request plans: `toolkit neptune memory` (see `docs/migration/docgraph.md`; no live client in this build)

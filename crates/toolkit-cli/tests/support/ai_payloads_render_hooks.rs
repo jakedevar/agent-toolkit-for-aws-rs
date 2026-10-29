@@ -36,6 +36,118 @@ impl Drop for Fixture {
 }
 const SOURCE: &str =
     "{\"cells\":[{\"source\":[\"snapshot\"]}],\"metadata\":{},\"nbformat\":4,\"nbformat_minor\":4}";
+
+#[test]
+fn ap_nb_09_collision_retry_and_exhaustion_through_append_command() {
+    struct FixedIds(std::vec::IntoIter<&'static str>);
+    impl notebook::IdSource for FixedIds {
+        fn id(&mut self, _: usize, _: usize) -> String {
+            self.0.next().unwrap_or("a1").to_owned()
+        }
+    }
+    let source_text = r#"{"cells":[{"id":"a1"}],"metadata":{},"nbformat":4,"nbformat_minor":5}"#;
+    for exhausted in [false, true] {
+        let f = Fixture::new();
+        let source = f.0.join("notebooks/example.ipynb");
+        fs::write(&source, source_text).unwrap();
+        let mut ids = if exhausted {
+            FixedIds(vec!["a1"; 64].into_iter())
+        } else {
+            FixedIds(vec!["a1", "a1", "b2", "c3"].into_iter())
+        };
+        let mut sink = Vec::new();
+        let result = command_with_ids(
+            &f.invocation(),
+            &mut Output::new(&mut sink),
+            &mut place::NoHooks,
+            Some(&mut ids),
+        );
+        let dest = f.0.join("notebooks/example-01.ipynb");
+        assert_eq!(fs::read(&source).unwrap(), source_text.as_bytes());
+        if exhausted {
+            assert_eq!(result.unwrap_err().code(), "cell_id_exhausted");
+            assert!(!dest.exists());
+        } else {
+            result.unwrap();
+            let copy = parse_json(&fs::read_to_string(dest).unwrap()).unwrap();
+            let Json::Array(cells) = copy.get("cells").unwrap() else {
+                panic!("cells")
+            };
+            assert_eq!(
+                cells
+                    .iter()
+                    .map(|cell| cell.get("id").unwrap().as_str().unwrap())
+                    .collect::<Vec<_>>(),
+                ["a1", "b2", "c3"]
+            );
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn ap_pub_04_05_faults_through_script_and_append_commands() {
+    struct Fault(&'static str, i32);
+    impl place::PublishHooks for Fault {
+        fn fault(&mut self, stage: &str) -> Option<std::io::Error> {
+            (stage == self.0).then(|| std::io::Error::from_raw_os_error(self.1))
+        }
+    }
+    for mode in ["script", "notebook"] {
+        for (stage, raw, expected) in [
+            ("temp_create", 5, "publish_io"),
+            ("write", 5, "publish_io"),
+            ("sync", 5, "publish_io"),
+            (
+                "link",
+                rustix::io::Errno::PERM.raw_os_error(),
+                "publish_no_atomic_noreplace",
+            ),
+            (
+                "link",
+                rustix::io::Errno::OPNOTSUPP.raw_os_error(),
+                "publish_no_atomic_noreplace",
+            ),
+        ] {
+            let f = Fixture::new();
+            let source = f.0.join("notebooks/example.ipynb");
+            fs::write(&source, SOURCE).unwrap();
+            let mut inv = f.invocation();
+            if mode == "script" {
+                inv.flags.clear();
+                inv.values
+                    .iter_mut()
+                    .find(|(k, _)| k == "--mode")
+                    .unwrap()
+                    .1 = "script".into();
+            }
+            let mut sink = Vec::new();
+            let error =
+                command_with_hooks(&inv, &mut Output::new(&mut sink), &mut Fault(stage, raw))
+                    .unwrap_err();
+            assert_eq!(error.code(), expected, "{mode} {stage}");
+            assert_eq!(fs::read_to_string(source).unwrap(), SOURCE);
+            let dir = f.0.join(if mode == "script" {
+                "scripts"
+            } else {
+                "notebooks"
+            });
+            assert!(fs::read_dir(dir).unwrap().all(|e| !e
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .contains("toolkit-render")));
+            assert!(!f
+                .0
+                .join(if mode == "script" {
+                    "scripts/01_example.py"
+                } else {
+                    "notebooks/example-01.ipynb"
+                })
+                .exists());
+        }
+    }
+}
 struct Hook {
     source: PathBuf,
     take_destination: bool,
