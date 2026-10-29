@@ -797,15 +797,14 @@ fn malformed_http_from_real_connector_has_a_protocol_error_class() {
         HOST,
         Arc::new(|_, _| vec![Part::Bytes(b"HTTP/1.1 nonsense\r\n\r\n".to_vec())]),
     );
-    let error = match transport.open(
+    let Err(error) = transport.open(
         &request(
             format!("https://{HOST}:{}/mcp", server.port()),
             Duration::from_secs(5),
         ),
         &StreamLimits::new(1024, 1024).unwrap(),
-    ) {
-        Ok(_) => panic!("malformed response was accepted"),
-        Err(error) => error,
+    ) else {
+        panic!("malformed response was accepted");
     };
     assert_eq!(error.code(), "aws_protocol");
     assert!(!error.is_retryable());

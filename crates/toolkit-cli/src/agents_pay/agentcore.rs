@@ -109,6 +109,7 @@ pub fn endpoint(region: &str) -> Result<String, AwsError> {
     Endpoint::for_service("bedrock-agentcore", region).map(|endpoint| endpoint.url())
 }
 
+// recorded-shape: approved merchant challenge is policy input, not an AWS response.
 fn process_body(approved: &Approved) -> String {
     let mut payload = match approved.entry() {
         Json::Object(entries) => entries.clone(),
@@ -279,6 +280,7 @@ fn has_required(shape_name: &str, value: &Json) -> bool {
 // Validate the model closure for wallet details, including nested unions and
 // the constraints on their strings. Unknown structure members are ignored,
 // but a union must contain exactly one known arm.
+// recorded-shape: model-driven validation rejects every mismatched required shape and union.
 fn valid_wallet_shape(model: &Json, name: &str, value: &Json) -> bool {
     let Some(shape) = model.get("shapes").and_then(|shapes| shapes.get(name)) else {
         return false;
@@ -351,6 +353,7 @@ fn valid_wallet_shape(model: &Json, name: &str, value: &Json) -> bool {
     }
 }
 
+// recorded-shape: payment payload is required as an object and all other shapes are rejected.
 fn valid_process_response(body: &str, manager: &str, session: &str, instrument: &str) -> bool {
     if body.len() > 65_536 {
         return false;
@@ -1031,6 +1034,7 @@ impl<'a> PaymentClient<'a> {
     /// # Errors
     /// Returns a sanitized failure for an unsuccessful or malformed response.
     pub fn sts_check(&self) -> Result<(), PaymentError> {
+        const STS_NS: &str = "https://sts.amazonaws.com/doc/2011-06-15/";
         let mut headers = toolkit_aws::Headers::new();
         headers
             .insert("content-type", "application/x-www-form-urlencoded")
@@ -1048,7 +1052,6 @@ impl<'a> PaymentClient<'a> {
         )?;
         let doc = roxmltree::Document::parse(&body).map_err(|_| PaymentError::InvalidResponse)?;
         let root = doc.root_element();
-        const STS_NS: &str = "https://sts.amazonaws.com/doc/2011-06-15/";
         if root.tag_name().name() != "GetCallerIdentityResponse"
             || root.tag_name().namespace() != Some(STS_NS)
         {
