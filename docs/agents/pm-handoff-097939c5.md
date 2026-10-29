@@ -685,3 +685,5 @@ Friction: #4727, Rsi #4694, Rsi #4704
   4/4 busy: 12652329 (#5080 repair 1), 191d9d7a (#5143 repair 1), a191c4d0 (#5178), be4f9592 (#5181).
 - 10-29 05:07Z: #5178 (a191c4d0, Sonnet) ACCEPT x402 S2 121c233e (no P1/P2); filed #5182 P3 tests, #5185 P3 design s9 nix pin/cfg_aliases, #5183 P4 bare relative path parent, #5184 P4 filemode suid letters, #5186 P4 D37 wording. Repair 1 (D37 + all five) -> Codex terra a5b5b4a6 (continue_from d4591cd7). Then narrow re-review (Sonnet) and enqueue after S1 lands.
   4/4 busy: 12652329 (#5080 repair 1), 191d9d7a (#5143 repair 1), be4f9592 (#5181), a5b5b4a6 (#5166 repair 1).
+- 10-29 05:09Z: ai-payloads S1 repair 1 (191d9d7a, Codex terra) at 5112657873e5694dcd5b91f9424de3c085e178f9 (red 79274371 + 960a3e7f; fmt a4b0d6f1, clippy 53fae5bc, scoped 665c3ba0 3730 ok, clean onto rolling; golden unchanged). Re-review #5187 -> Claude Sonnet high af33839b (pinned 5112657). On ACCEPT: enqueue 5112657; close #5143 #5167 #5187 #5170 #5171 on landing; then S2a publish + S3 reward.
+  4/4 busy: 12652329 (#5080 repair 1), be4f9592 (#5181), a5b5b4a6 (#5166 repair 1), af33839b (#5187).
