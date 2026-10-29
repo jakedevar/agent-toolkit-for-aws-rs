@@ -397,7 +397,7 @@ mod operation_contracts {
     }
 }
 
-/// AgentCore call failure, containing no server-supplied text.
+/// `AgentCore` call failure, containing no server-supplied text.
 #[derive(Debug, PartialEq, Eq)]
 #[cfg(test)]
 pub enum PaymentError {
@@ -462,6 +462,7 @@ impl<'a> PaymentClient<'a> {
     ///
     /// # Errors
     /// Refuses invalid responses and transport or service failures.
+    #[allow(clippy::too_many_lines, clippy::needless_pass_by_value)] // Test prototype; consuming Approved is a security boundary.
     pub fn process_payment(&self, approved: Approved) -> Result<PaymentProof, PaymentError> {
         use std::time::{Duration, Instant};
         use toolkit_aws::{
