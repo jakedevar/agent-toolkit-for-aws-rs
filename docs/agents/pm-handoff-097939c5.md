@@ -1210,3 +1210,5 @@ Friction: #4727, Rsi #4694, Rsi #4704
   DECISION: ONE gate for B, which contains A. ENQUEUED seq 3056 (6b036cfa, issue 5462). On land, close #5462 #5474 #5475 #5487 #5443 #5483; then #5360 merge-only continue_from 27f4dc18 (re-pin from failing test output), check, enqueue issue 5360. B3 (#5511 review) also lands after this if it conflicts.
   #5158 (offline npm route, gates B4) -> Claude Opus high dc2bb4e7. Friction from ce95436a: #5485 (existing).
   4/4: a0ab0de1 docgraph S2, 545fbb43 #5504, 1d8e7401 #5511 review, dc2bb4e7 #5158. Queue: 3056 S6+B2.
+- 23:25Z: #5504 (545fbb43) DONE at 05a11502 (4 items; 7 reds; scoped f989b441 ok 4621). RULING: item 2 (Upload collision refusal) REVERTED. Upload keeps Python parity (design R-AR-READ Upload profile has no duplicate rule; decision 1). Items 1, 3 and 4 accepted. Continuation 9482d07f (Sonnet high, continue_from 545fbb43) reverts item 2 with explicit parity tests -> PM check -> enqueue issue 5504 (no second review).
+  4/4: a0ab0de1 docgraph S2, 1d8e7401 #5511 B3 review, dc2bb4e7 #5158, 9482d07f #5504 revert. Queue: 3056 S6+B2.
