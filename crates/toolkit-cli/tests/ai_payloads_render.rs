@@ -154,3 +154,72 @@ fn ap_con_06_cell_consent_identifier_guard() {
         .status
         .success());
 }
+
+#[test]
+fn ap_cat_10_all_real_templates_render_in_both_modes() {
+    use toolkit_core::{parse_json, Json};
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../skills/core-skills/aws-ai-ml");
+    let catalog = Command::new(env!("CARGO_BIN_EXE_toolkit"))
+        .args(["ai-payloads", "templates", "--json", "--root"])
+        .arg(&root)
+        .output()
+        .unwrap();
+    assert!(catalog.status.success());
+    let catalog = parse_json(std::str::from_utf8(&catalog.stdout).unwrap()).unwrap();
+    let Json::Array(entries) = catalog.get("templates").unwrap() else {
+        panic!("catalog")
+    };
+    assert_eq!(entries.len(), 23);
+    for entry in entries {
+        let rel = entry.get("path").unwrap().as_str().unwrap();
+        let Json::Array(placeholders) = entry.get("placeholders").unwrap() else {
+            panic!("slots")
+        };
+        for mode in ["script", "notebook"] {
+            let f = Fixture::new();
+            let mut pairs = Vec::new();
+            for slot in placeholders {
+                if slot.get("code") == Some(&Json::Int(0)) {
+                    continue;
+                }
+                let name = slot.get("name").unwrap().as_str().unwrap();
+                let kind = slot.get("kind").unwrap().as_str().unwrap();
+                let value = match kind {
+                    "secret" => Json::Null,
+                    "string" => Json::string("x"),
+                    "value" => match name {
+                        "ACCEPT_EULA" | "TRUE_OR_FALSE" => Json::Bool(false),
+                        "METRICS_LIST" => Json::Array(vec![]),
+                        _ => Json::Int(1),
+                    },
+                    _ => panic!("kind"),
+                };
+                pairs.push((name.to_owned(), value));
+            }
+            let values = f.write(
+                "values.json",
+                &Json::object(vec![("values", Json::Object(pairs))]).to_compact_string(),
+            );
+            let module = f.write(
+                "scripts/transform_fn.py",
+                "def transform_dataset(df):\n    return df\n",
+            );
+            let cell = format!("2={}", module.display());
+            let args = if rel.ends_with("dataset-transformation/code_templates/transformation.py") {
+                vec!["--values", values.to_str().unwrap(), "--cell", &cell]
+            } else {
+                vec!["--values", values.to_str().unwrap()]
+            };
+            let result = f.render(&root.join("references").join(rel), mode, &args);
+            assert!(
+                result.status.success(),
+                "{rel} {mode}: {}",
+                String::from_utf8_lossy(&result.stderr)
+            );
+            if mode == "notebook" {
+                parse_json(&fs::read_to_string(f.0.join("notebooks/example.ipynb")).unwrap())
+                    .unwrap();
+            }
+        }
+    }
+}
