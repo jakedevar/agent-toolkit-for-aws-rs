@@ -1405,7 +1405,7 @@ impl<'a> PaymentClient<'a> {
                 Ok(mut stream) => 'response: {
                     let status = stream.status();
                     let error_header = stream.headers().get("x-amzn-ErrorType").map(str::to_owned);
-                    if (300..400).contains(&status) {
+                    if status < 400 && status != expected {
                         return Err(PaymentError::InvalidResponse);
                     }
                     let length = match stream.headers().get("content-length") {
@@ -2048,6 +2048,7 @@ mod wire_contracts {
             Err(PaymentError::InvalidResponse)
         );
         assert_eq!(transport.requests().len(), 1);
+        assert_eq!(transport.frames_pulled(), 0);
     }
 
     #[test]
