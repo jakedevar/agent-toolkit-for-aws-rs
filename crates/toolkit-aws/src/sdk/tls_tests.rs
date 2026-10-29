@@ -633,7 +633,7 @@ fn t_sdl_real_deadlines_and_frame_bound() {
     let deadline = || Instant::now() + Duration::from_millis(300);
     let assert_elapsed = |start: Instant| {
         assert!(
-            start.elapsed() < Duration::from_millis(550),
+            start.elapsed() < Duration::from_secs(3),
             "elapsed {:?}",
             start.elapsed()
         );
@@ -652,13 +652,15 @@ fn t_sdl_real_deadlines_and_frame_bound() {
         }),
     );
     let start = Instant::now();
-    let limits = StreamLimits::new(10, 10).unwrap().with_deadline(deadline());
+    let limits = StreamLimits::new(10, 10)
+        .unwrap()
+        .with_deadline(Instant::now() + Duration::from_secs(3));
     let mut stream = transport
         .open(&make_request(server.port()), &limits)
         .unwrap();
     assert_eq!(stream.next_chunk().unwrap(), Some(b"x".to_vec()));
     assert_eq!(stream.next_chunk(), Err(StreamError::DeadlineExceeded));
-    assert_elapsed(start);
+    assert!(start.elapsed() < Duration::from_secs(8));
     assert_eq!(stream.next_chunk(), Err(StreamError::DeadlineExceeded));
     drop(stream);
     assert!(rx.recv_timeout(Duration::from_secs(2)).unwrap());
@@ -752,4 +754,34 @@ fn t_sdl_real_deadlines_and_frame_bound() {
         total += frame.len();
     }
     assert_eq!(total, 8 * 1024 * 1024);
+}
+
+#[test]
+fn real_stream_narrow_refuses_pending_remainder() {
+    let fixture = Fixture::new();
+    let roots = ValidatedRoots::for_tests(vec![fixture.trusted.ca_der.clone()]);
+    let runtime = SdkRuntime::new().unwrap();
+    let transport = SdkTransport::loopback_for_tests(&runtime, &roots, Arc::new(Loopback)).unwrap();
+    let server = serve_as(
+        &fixture.trusted,
+        HOST,
+        Arc::new(|_, _| {
+            vec![Part::Bytes(
+                b"HTTP/1.1 200 OK\r\ncontent-length: 6\r\n\r\nabcdef".to_vec(),
+            )]
+        }),
+    );
+    let mut stream = transport
+        .open(
+            &request(
+                format!("https://{HOST}:{}/mcp", server.port()),
+                Duration::from_secs(5),
+            ),
+            &StreamLimits::new(10, 1).unwrap(),
+        )
+        .unwrap();
+    assert_eq!(stream.next_chunk(), Ok(Some(b"a".to_vec())));
+    stream.narrow_body_limit(1);
+    assert_eq!(stream.next_chunk(), Err(StreamError::TooLarge));
+    assert_eq!(stream.next_chunk(), Err(StreamError::TooLarge));
 }

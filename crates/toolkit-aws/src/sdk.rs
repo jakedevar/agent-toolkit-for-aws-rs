@@ -688,6 +688,8 @@ impl ResponseStream for SdkStream {
 }
 
 impl StreamingTransport for SdkTransport {
+    /// The blocking system DNS lookup cannot be cancelled, so opening may
+    /// overrun the deadline by one lookup (R-DNS).
     fn open<'a>(
         &'a self,
         request: &HttpRequest,
@@ -744,6 +746,22 @@ mod tests {
     use std::net::{IpAddr, SocketAddr};
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::UNIX_EPOCH;
+
+    #[test]
+    fn sdk_stream_refuses_oversized_frame_before_copy() {
+        let mut stream = SdkStream {
+            runtime: SdkRuntime::new().unwrap(),
+            status: 200,
+            headers: Headers::new(),
+            body: ByteStream::from_static(b"abcdef"),
+            idle: Duration::from_secs(1),
+            limiter: ChunkLimiter::new(StreamLimits::new(5, 2).unwrap()),
+            deadline: None,
+            expired: false,
+        };
+        assert_eq!(stream.next_chunk(), Err(StreamError::TooLarge));
+        assert_eq!(stream.next_chunk(), Err(StreamError::TooLarge));
+    }
 
     /// 2015-08-30T12:36:00Z, the AWS `SigV4` test-suite time.
     fn suite_time() -> SystemTime {

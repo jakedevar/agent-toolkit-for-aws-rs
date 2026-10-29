@@ -69,6 +69,8 @@ impl StreamLimits {
     }
 
     /// Set an absolute deadline for opening and reading this response.
+    /// The blocking system DNS lookup cannot be cancelled, so opening may
+    /// overrun the deadline by one lookup (R-DNS).
     #[must_use]
     pub fn with_deadline(mut self, deadline: Instant) -> Self {
         self.deadline = Some(deadline);

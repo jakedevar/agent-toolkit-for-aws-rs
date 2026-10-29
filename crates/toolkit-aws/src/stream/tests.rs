@@ -202,3 +202,39 @@ fn t_sdl_limits_narrow_and_fake_stall() {
     stream.narrow_body_limit(2);
     assert_eq!(stream.next_chunk(), Err(StreamError::TooLarge));
 }
+
+#[test]
+fn narrowing_pending_and_exactly_delivered() {
+    let mut limiter = ChunkLimiter::new(limits(10, 4));
+    assert_eq!(
+        limiter.next(|| Ok(Some(b"abcdef".to_vec()))),
+        Ok(Some(b"abcd".to_vec()))
+    );
+    limiter.narrow(5);
+    assert_eq!(
+        limiter.next(|| panic!("pending remainder must be checked first")),
+        Err(StreamError::TooLarge)
+    );
+    assert_eq!(
+        limiter.next(|| panic!("refusal is terminal")),
+        Err(StreamError::TooLarge)
+    );
+
+    for extra in [false, true] {
+        let mut limiter = ChunkLimiter::new(limits(10, 4));
+        assert_eq!(
+            limiter.next(|| Ok(Some(b"abc".to_vec()))),
+            Ok(Some(b"abc".to_vec()))
+        );
+        limiter.narrow(3);
+        let result = limiter.next(|| Ok(extra.then(|| b"x".to_vec())));
+        assert_eq!(
+            result,
+            if extra {
+                Err(StreamError::TooLarge)
+            } else {
+                Ok(None)
+            }
+        );
+    }
+}
