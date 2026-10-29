@@ -314,6 +314,45 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn watchdog_exits_after_real_record_write_failure() {
+        use crate::launch::{
+            callback::{pending::Custody, PendingStatus},
+            clock::SeededRandom,
+            tests_support::Scratch,
+        };
+        let scratch = Scratch::new("watchdog-write-error");
+        let custody = Custody::acquire(scratch.path(), 81).unwrap();
+        std::fs::create_dir(scratch.join("pending/81.json")).unwrap();
+        let gate = CommitGate::default();
+        assert!(gate.start_exchange());
+        let writes = std::cell::Cell::new(0);
+        let exits = std::cell::Cell::new(0);
+        watchdog_step(
+            &gate,
+            || {
+                writes.set(writes.get() + 1);
+                assert!(custody
+                    .write(
+                        1234,
+                        40,
+                        100,
+                        PendingStatus::TimedOut,
+                        None,
+                        &SeededRandom::new(1)
+                    )
+                    .is_err());
+            },
+            |code| {
+                assert_eq!(code, 1);
+                exits.set(exits.get() + 1);
+            },
+        );
+        assert_eq!(writes.get(), 1);
+        assert_eq!(exits.get(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn stalled_rename_keeps_custody_and_watchdog_returns_without_waiting() {
         use crate::launch::{
             callback::{
