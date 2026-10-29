@@ -860,3 +860,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 10-29 07:52Z: AP S4 #5278 (f40721c4, Sonnet) DONE at 37abb7674f14230757eda7170ce7e039ee579ffa (prose -> render/reward check; AP-DOC-01..10, 14 tests; mirrors synced; scoped 8b934375 4121 ok, clean).
   Review #5280 -> Codex sol 641e0107 (review_of 5278; mutation AP-DOC-04/05). On ACCEPT: check+enqueue (source_session f40721c4); close #5278 #5280 on land. Then ai-payloads S5 inventory.
   4/4 busy: 0dcdafea (#5181 S4 cont), dc5cd37d (#5261 cont), f4e513e0 (#5273 L4 f/u), 641e0107 (#5280 review).
+- 10-29 07:57Z: #5280 pass 1 (641e0107, Codex sol): invariants 1-3 + compat decisions PASS (read-only), but CHANGES_REQUESTED only because mutations could not run: sandbox fell back to rolling (my launch omitted sandbox_source; review_of did not pin 37abb767). Kaizen #5281 (PM note added; relay to GM as harness item). Nonblocking #5282 (AP-DOC-04 skips inline cmds) #5283 (dup paragraphs) #5284 (HF token step 1 still asks raw token) -> fold into AP S5 or a doc f/u.
+  RULE: always pass sandbox_source {commit} together with review_of.
+  Pass 2 (mutations only) -> Codex sol fb49ccc4, sandbox_source commit 37abb767. On ACCEPT: check+enqueue (source_session f40721c4); close #5278 #5280 on land.
