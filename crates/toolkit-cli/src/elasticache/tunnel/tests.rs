@@ -2225,3 +2225,516 @@ fn recording_parse_errors_never_carry_a_value() {
         assert!(!error.contains(secret), "{text}: {error}");
     }
 }
+
+// ------------------------------------------- #4986 secrets in client text
+
+/// Percent-encoding of every byte but the unreserved ones (RFC 3986), the
+/// way a client puts a credential into a URL.
+fn percent_encoded(text: &str, upper: bool) -> String {
+    let mut out = String::new();
+    for byte in text.bytes() {
+        if byte.is_ascii_alphanumeric() || b"-._~".contains(&byte) {
+            out.push(char::from(byte));
+        } else if upper {
+            out.push_str(&format!("%{byte:02X}"));
+        } else {
+            out.push_str(&format!("%{byte:02x}"));
+        }
+    }
+    out
+}
+
+fn hex_encoded(text: &str) -> String {
+    text.bytes().map(|byte| format!("{byte:02x}")).collect()
+}
+
+/// The renderings of a credential in client error text that a scrubber must
+/// know: raw, quoted, escaped for JSON, percent-encoded, hex.
+fn renderings(secret: &str) -> Vec<String> {
+    vec![
+        secret.to_string(),
+        format!("{secret:?}"),
+        toolkit_core::escape_json_string(secret),
+        percent_encoded(secret, true),
+        percent_encoded(secret, false),
+        hex_encoded(secret),
+    ]
+}
+
+/// Every error text a cache client can hand back, with `form` inside it.
+fn client_errors(form: &str) -> Vec<(&'static str, String)> {
+    vec![
+        ("init", format!("cannot build client for {form} here")),
+        ("authentication", format!("WRONGPASS {form} rejected")),
+        ("connection", format!("Error connecting with {form}")),
+        (
+            "connection (tls)",
+            format!("SSL handshake with {form} failed"),
+        ),
+        ("other", format!("unexpected {form} reply")),
+    ]
+}
+
+fn failing_cache(kind: &str, message: String) -> MockCache {
+    let mut cache = MockCache::healthy();
+    match kind {
+        "init" => cache.init_error = Some(message),
+        "authentication" => cache.ping = Err(PingFailure::Authentication(message)),
+        "connection" | "connection (tls)" => cache.ping = Err(PingFailure::Connection(message)),
+        _ => cache.ping = Err(PingFailure::Other(message)),
+    }
+    cache
+}
+
+fn assert_no_leak(run: &Captured, forms: &[String], context: &str) {
+    let all = format!("{}{}", run.stdout, run.stderr);
+    for form in forms {
+        assert!(
+            !all.contains(form.as_str()),
+            "{context}: {form:?} leaked into:\n{all}"
+        );
+    }
+    if let Err(error) = &run.result {
+        let text = format!("{error:?}{error}");
+        for form in forms {
+            assert!(
+                !text.contains(form.as_str()),
+                "{context}: error leaked {form:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn test_connection_removes_the_active_password_from_every_client_error() {
+    for password in [
+        "hunter2-PASSWORD",
+        "p@ss/w0rd+=&\"q",
+        "a b\\c'd",
+        "0123456789abcdef0123456789",
+    ] {
+        let forms = renderings(password);
+        for form in &forms {
+            for (kind, message) in client_errors(form) {
+                let mut cache = failing_cache(kind, message);
+                let args = ConnectArgs {
+                    password: Some(password),
+                    ..connect_args(NODE_HOST)
+                };
+                let run = run_connect(&args, &mut cache);
+                assert_eq!(run.status, 1, "{kind}");
+                assert!(run.stderr.contains("[REDACTED]"), "{kind}: {}", run.stderr);
+                assert_no_leak(&run, &forms, kind);
+            }
+        }
+    }
+}
+
+#[test]
+fn test_connection_the_password_in_the_password_auth_flow_is_scrubbed_too() {
+    let password = "unlabelled-S3CRET-0042";
+    for (kind, message) in client_errors(password) {
+        let mut cache = failing_cache(kind, message);
+        let args = ConnectArgs {
+            username: None,
+            password: Some(password),
+            ..connect_args(NODE_HOST)
+        };
+        let run = run_connect(&args, &mut cache);
+        assert_eq!(run.status, 1, "{kind}");
+        assert_no_leak(&run, &renderings(password), kind);
+    }
+}
+
+#[test]
+fn test_connection_scrubs_before_bounding_and_escaping() {
+    let password = "hunter2-PASSWORD";
+    // The bound (200 characters) would cut the password in two and leak the
+    // front half.
+    let near_the_bound = format!("{}{password}{}", "x".repeat(196), "y".repeat(50));
+    // A control character inside the password is escaped by the last step.
+    let hostile = "tab\there-9X\u{7}";
+    let with_controls = format!("a\u{1b}[31m{hostile}\r\nForged: line {hostile}");
+    for (secret, text) in [(password, near_the_bound), (hostile, with_controls)] {
+        for (kind, _) in client_errors("") {
+            let mut cache = failing_cache(kind, text.clone());
+            let args = ConnectArgs {
+                password: Some(secret),
+                ..connect_args(NODE_HOST)
+            };
+            let run = run_connect(&args, &mut cache);
+            let mut forms = renderings(secret);
+            forms.push(secret[..5].to_string());
+            forms.push(crate::safe_text::safe_path(secret));
+            assert_no_leak(&run, &forms, kind);
+            assert!(!run.stderr.contains('\u{1b}'), "{}", run.stderr);
+        }
+    }
+}
+
+#[test]
+fn test_connection_the_tls_hint_does_not_depend_on_the_password() {
+    // A password "tls" must not flip the hint of an unrelated failure.
+    let mut cache = MockCache::healthy();
+    cache.ping = Err(PingFailure::Connection("refused for tls".to_string()));
+    let args = ConnectArgs {
+        password: Some("tls"),
+        no_tls: true,
+        ..connect_args(NODE_HOST)
+    };
+    let run = run_connect(&args, &mut cache);
+    assert!(
+        run.stderr.contains("Hint: Check security group rules"),
+        "{}",
+        run.stderr
+    );
+}
+
+#[test]
+fn test_connection_removes_server_info_that_echoes_the_password() {
+    let password = "unlabelled-S3CRET-0042";
+    let mut cache = MockCache::healthy();
+    cache.info = Some(ServerInfo {
+        version: format!("7.1 {password}"),
+        mode: percent_encoded(password, true),
+    });
+    let args = ConnectArgs {
+        password: Some(password),
+        ..connect_args(NODE_HOST)
+    };
+    let run = run_connect(&args, &mut cache);
+    assert_eq!(run.status, 0);
+    assert_no_leak(&run, &renderings(password), "server info");
+}
+
+#[test]
+fn test_connection_removes_the_iam_token_from_every_client_error() {
+    let token =
+        "mycache.use1.cache.amazonaws.com/?Action=connect&User=iamuser&Zq9=Wd8zXk33&Ab=Cd/Ef+Gh";
+    let supplied = "also-supplied-PW-77";
+    let mut forms = renderings(token);
+    forms.extend(renderings(supplied));
+    for form in forms.clone() {
+        for (kind, message) in client_errors(&form) {
+            let mut cache = failing_cache(kind, message);
+            cache.iam = Some(token);
+            let args = ConnectArgs {
+                username: None,
+                password: Some(supplied),
+                iam_auth: true,
+                iam_user: Some("iam-user"),
+                cache_name: Some("My-Cache"),
+                ..connect_args(NODE_HOST)
+            };
+            let run = run_connect(&args, &mut cache);
+            assert_eq!(run.status, 1, "{kind}");
+            assert_eq!(cache.iam_requests.len(), 1, "{kind}");
+            assert_no_leak(&run, &forms, kind);
+            assert!(run.stderr.contains("[REDACTED]"), "{kind}: {}", run.stderr);
+        }
+    }
+}
+
+#[test]
+fn test_connection_cli_replay_never_prints_a_password_a_recording_echoes() {
+    let password = "unlabelled-S3CRET-0042";
+    for recording in [
+        format!(r#"{{"cache":{{"connect":{{"init_error":"cannot use {password}"}}}}}}"#),
+        format!(
+            r#"{{"cache":{{"ping_error":{{"kind":"authentication","message":"WRONGPASS {password}"}}}}}}"#
+        ),
+        format!(
+            r#"{{"cache":{{"ping_error":{{"kind":"connection","message":"closed {password}"}}}}}}"#
+        ),
+        format!(r#"{{"cache":{{"ping_error":{{"message":"odd {password}"}}}}}}"#),
+    ] {
+        let file = write_recording(&recording);
+        let (status, stdout, stderr) = exec(&[
+            "elasticache",
+            "test-connection",
+            "127.0.0.1",
+            "--password",
+            password,
+            "--recorded",
+            file.path(),
+        ]);
+        assert_eq!(status, 1, "{recording}");
+        assert!(
+            !format!("{stdout}{stderr}").contains(password),
+            "{recording}: {stdout}{stderr}"
+        );
+    }
+}
+
+// ---------------------------------------------- #4987 the PING outcome
+
+fn replay_connection(recording: &str, extra: &[&str]) -> (u8, String, String) {
+    let file = write_recording(recording);
+    let mut args = vec!["elasticache", "test-connection", "127.0.0.1"];
+    args.extend_from_slice(extra);
+    args.push("--recorded");
+    args.push(file.path());
+    exec(&args)
+}
+
+#[test]
+fn a_recorded_cache_needs_exactly_one_ping_outcome() {
+    for (recording, why) in [
+        (r#"{"cache":{}}"#, "no outcome"),
+        (r#"{"cache":{"server":{"version":"7"}}}"#, "only server"),
+        (
+            r#"{"cache":{"ping_ms":1.0,"ping_error":{"message":"x"}}}"#,
+            "both",
+        ),
+        (
+            r#"{"cache":{"ping_ms":1.0,"ping_error":{"kind":"connection","message":"x"}}}"#,
+            "both, explicit kind",
+        ),
+    ] {
+        let (status, stdout, stderr) = replay_connection(recording, &[]);
+        assert_eq!(status, 1, "{why}: {stdout}{stderr}");
+        assert!(
+            !stdout.contains("PING: OK") && !stdout.contains("CONNECTION SUCCESSFUL"),
+            "{why}: success without a recorded outcome:\n{stdout}"
+        );
+        assert!(
+            stderr.contains("ping_ms") && stderr.contains("ping_error"),
+            "{why}: {stderr}"
+        );
+        assert!(!stderr.contains("PING FAILED"), "{why}: {stderr}");
+    }
+}
+
+#[test]
+fn a_recorded_ping_time_must_be_a_finite_non_negative_number() {
+    for bad in ["-1.0", "\"fast\"", "null"] {
+        let recording = format!(r#"{{"cache":{{"ping_ms":{bad}}}}}"#);
+        let (status, stdout, stderr) = replay_connection(&recording, &[]);
+        assert_eq!(status, 1, "{bad}: {stdout}{stderr}");
+        assert!(!stdout.contains("CONNECTION SUCCESSFUL"), "{bad}");
+    }
+}
+
+#[test]
+fn a_recorded_explicit_ping_outcome_replays_and_an_init_error_needs_none() {
+    let (status, stdout, stderr) = replay_connection(r#"{"cache":{"ping_ms":2.5}}"#, &[]);
+    assert_eq!(status, 0, "{stdout}{stderr}");
+    assert!(stderr.contains("Server info: not available"), "{stderr}");
+    assert!(stdout.contains("  PING: OK (2.5 ms)\n"));
+
+    let (status, stdout, stderr) = replay_connection(
+        r#"{"cache":{"ping_error":{"kind":"connection","message":"reset"}}}"#,
+        &[],
+    );
+    assert_eq!(status, 1, "{stdout}{stderr}");
+    assert!(stderr.contains("PING FAILED: Connection error -- reset"));
+
+    // A client that never gets built never reaches PING.
+    let (status, stdout, stderr) =
+        replay_connection(r#"{"cache":{"connect":{"init_error":"no client"}}}"#, &[]);
+    assert_eq!(status, 1, "{stdout}{stderr}");
+    assert!(
+        stderr.starts_with("  Client init FAILED: no client\n"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("recorded"), "{stderr}");
+}
+
+// ----------------------------------------- #4988 unused cache operations
+
+fn assert_unused(recording: &str, extra: &[&str], why: &str) {
+    let (status, stdout, stderr) = replay_connection(recording, extra);
+    assert_eq!(status, 1, "{why}: {stdout}{stderr}");
+    assert!(stderr.contains("never used by this run"), "{why}: {stderr}");
+}
+
+#[test]
+fn a_recorded_cache_step_no_call_used_fails_the_run() {
+    // The recorded signer result: IAM was not requested.
+    assert_unused(
+        r#"{"cache":{"iam_token":true,"ping_ms":1.0}}"#,
+        &[],
+        "unused signer",
+    );
+    // The explicit DNS answer: a loopback host skips the lookup.
+    assert_unused(
+        r#"{"cache":{"address":"10.0.0.9","ping_ms":1.0}}"#,
+        &[],
+        "unused dns",
+    );
+    // The reviewed reproduction: both at once.
+    assert_unused(
+        r#"{"cache":{"address":"10.0.0.9","iam_token":true,"ping_ms":1.0}}"#,
+        &[],
+        "unused dns and signer",
+    );
+}
+
+#[test]
+fn a_recorded_result_after_an_earlier_failure_is_unused() {
+    assert_unused(
+        r#"{"cache":{"connect":{"init_error":"no client"},"ping_ms":1.0}}"#,
+        &[],
+        "ping after init_error",
+    );
+    assert_unused(
+        r#"{"cache":{"connect":{"init_error":"no client"},"server":{"version":"7"}}}"#,
+        &[],
+        "info after init_error",
+    );
+    assert_unused(
+        r#"{"cache":{"ping_error":{"message":"reset"},"server":{"version":"7"}}}"#,
+        &[],
+        "info after a failed ping",
+    );
+}
+
+#[test]
+fn a_recorded_cache_with_every_step_used_succeeds() {
+    let (status, stdout, stderr) = replay_connection(
+        r#"{"cache":{"iam_token":true,"ping_ms":1.0,"server":{"version":"7.1","mode":"cluster"}}}"#,
+        &["--iam-auth", "--iam-user", "u", "--cache-name", "c"],
+    );
+    assert_eq!((status, stderr.as_str()), (0, ""), "{stdout}");
+    assert!(stdout.contains("IAM token generated"));
+    assert!(stdout.contains("Server: engine version 7.1, mode=cluster"));
+
+    // Optional metadata may be absent: no server, no address.
+    let file = write_recording(r#"{"cache":{"address":"54.1.2.3","ping_ms":1.0}}"#);
+    let (status, stdout, stderr) = exec(&[
+        "elasticache",
+        "test-connection",
+        NODE_HOST,
+        "--recorded",
+        file.path(),
+    ]);
+    assert_eq!(status, 0, "{stdout}{stderr}");
+    assert!(stdout.contains("Result: CONNECTION SUCCESSFUL"));
+}
+
+// ------------------------------------- #4989 partial SSM pagination
+
+fn two_instances() -> Result<Json, SeamError> {
+    Ok(instances_page(
+        &[
+            instance("i-0000000b", "plain", "c5.large"),
+            instance("i-0000000a", "known-ready", "t3.micro"),
+        ],
+        None,
+    ))
+}
+
+fn first_managed_page() -> Result<Json, SeamError> {
+    Ok(document(
+        r#"{"InstanceInformationList":[{"InstanceId":"i-0000000a"}],"NextToken":"page-2"}"#,
+    ))
+}
+
+#[test]
+fn find_tunnel_hosts_keeps_the_hosts_of_earlier_ssm_pages_when_a_later_page_fails() {
+    for (error, expected) in [
+        (
+            denied("ThrottlingException"),
+            "Warning: could not query SSM: ",
+        ),
+        (
+            denied("AccessDeniedException"),
+            "ERROR: Access denied querying SSM. Ensure your IAM role/user has ssm:DescribeInstanceInformation permission.\n",
+        ),
+        (
+            denied("UnauthorizedAccess"),
+            "ERROR: Access denied querying SSM.",
+        ),
+    ] {
+        let mut aws = ScriptedAws::new(vec![
+            (Operation::DescribeInstances, two_instances()),
+            (Operation::DescribeInstanceInformation, first_managed_page()),
+            (Operation::DescribeInstanceInformation, Err(error)),
+        ]);
+        let run = run_discover(&mut aws);
+        assert!(run.result.is_ok(), "{expected}");
+        assert_eq!(run.status, 0, "{expected}: {}", run.stdout);
+        assert!(run.stdout.contains(expected), "{expected}: {}", run.stdout);
+        assert!(
+            run.stdout.contains("Listing all instances -- SSM status unknown.\n\n"),
+            "{}",
+            run.stdout
+        );
+        assert!(
+            run.stdout.contains("Found 1 SSM-managed instance(s)"),
+            "{}",
+            run.stdout
+        );
+        assert!(
+            run.stdout.contains("Recommended: i-0000000a (known-ready)\n"),
+            "{}",
+            run.stdout
+        );
+        assert!(!run.stdout.contains("none have SSM agent"), "{}", run.stdout);
+        assert!(
+            run.stdout
+                .contains("(1 additional instance(s) without SSM agent not shown)"),
+            "{}",
+            run.stdout
+        );
+        assert_eq!(aws.unconsumed(), 0);
+    }
+}
+
+#[test]
+fn find_tunnel_hosts_orders_the_hosts_kept_from_a_partial_ssm_walk() {
+    let mut aws = ScriptedAws::new(vec![
+        (Operation::DescribeInstances, two_instances()),
+        (Operation::DescribeInstanceInformation, first_managed_page()),
+        (
+            Operation::DescribeInstanceInformation,
+            Err(denied("ThrottlingException")),
+        ),
+    ]);
+    let mut lines = Vec::new();
+    let found = discover::find_tunnel_hosts(&discover_args(), &mut aws, &mut lines).expect("found");
+    let order: Vec<(&str, bool)> = found.iter().map(|i| (i.id.as_str(), i.ssm)).collect();
+    assert_eq!(
+        order,
+        [("i-0000000a", true), ("i-0000000b", false)],
+        "the host of the first page is SSM-managed, so it sorts first"
+    );
+    assert!(aws.seen[2]
+        .1
+        .to_compact_string()
+        .contains(r#""NextToken":"page-2""#));
+}
+
+#[test]
+fn find_tunnel_hosts_keeps_earlier_pages_when_a_later_ssm_page_is_malformed() {
+    let mut aws = ScriptedAws::new(vec![
+        (Operation::DescribeInstances, two_instances()),
+        (Operation::DescribeInstanceInformation, first_managed_page()),
+        (
+            Operation::DescribeInstanceInformation,
+            Ok(document(r#"{"InstanceInformationList":[{"NoId":1}]}"#)),
+        ),
+    ]);
+    let run = run_discover(&mut aws);
+    assert_eq!(run.status, 0, "{}", run.stdout);
+    assert!(run.stdout.contains("Warning: could not query SSM: "));
+    assert!(run
+        .stdout
+        .contains("Recommended: i-0000000a (known-ready)\n"));
+}
+
+#[test]
+fn find_tunnel_hosts_a_replay_mismatch_on_a_later_ssm_page_stays_fatal() {
+    let mut aws = ScriptedAws::new(vec![
+        (Operation::DescribeInstances, two_instances()),
+        (Operation::DescribeInstanceInformation, first_managed_page()),
+        (
+            Operation::DescribeInstanceInformation,
+            Err(SeamError::Replay("the request differs".to_string())),
+        ),
+    ]);
+    let run = run_discover(&mut aws);
+    assert!(run.result.is_err(), "{}", run.stdout);
+    assert!(!run.stdout.contains("Recommended:"), "{}", run.stdout);
+    assert!(!run.stdout.contains("Warning: could not query SSM"));
+}
