@@ -371,6 +371,7 @@ fn ap_typ_03_04_06_07_sub_14_process_rejection_matrix() {
             ],
         ),
     ] {
+        let mut diagnostic = None;
         for raw in cases {
             let f = Fixture::new();
             let template = f.write(
@@ -383,6 +384,22 @@ fn ap_typ_03_04_06_07_sub_14_process_rejection_matrix() {
             );
             let result = f.render(&template, "script", &["--values", values.to_str().unwrap()]);
             assert_eq!(result.status.code(), Some(1), "{name}: {raw}");
+            if raw != "NaN" {
+                let stderr = String::from_utf8_lossy(&result.stderr);
+                assert!(stderr.contains(name), "{name}: {raw}: {stderr}");
+                assert!(
+                    stderr.contains("typed_value_invalid"),
+                    "{name}: {raw}: {stderr}"
+                );
+                // Identical diagnostics for different values prove that even
+                // short values such as 0 or null are not interpolated.
+                if let Some(previous) = &diagnostic {
+                    assert_eq!(&result.stderr, previous, "{name}: {raw}");
+                } else {
+                    diagnostic = Some(result.stderr.clone());
+                }
+                assert!(result.stdout.is_empty(), "{name}: {raw}");
+            }
             assert!(!f.0.join("scripts").exists());
         }
     }
@@ -449,12 +466,23 @@ fn ap_sub_11_22_sec_01_process_boundaries() {
         "values.json",
         r#"{"values":{"HF_TOKEN":"literal-secret-sentinel"}}"#,
     );
-    let result = f.render(&template, "script", &["--values", values.to_str().unwrap()]);
-    assert_eq!(result.status.code(), Some(1));
-    for bytes in [&result.stdout, &result.stderr] {
-        assert!(!String::from_utf8_lossy(bytes).contains("literal-secret-sentinel"));
+    for mode in ["script", "notebook"] {
+        let result = f.render(&template, mode, &["--values", values.to_str().unwrap()]);
+        assert_eq!(result.status.code(), Some(1));
+        for bytes in [&result.stdout, &result.stderr] {
+            assert!(!String::from_utf8_lossy(bytes).contains("literal-secret-sentinel"));
+        }
+        for dir in ["scripts", "notebooks"] {
+            let dir = f.0.join(dir);
+            if dir.exists() {
+                for entry in fs::read_dir(dir).unwrap() {
+                    let path = entry.unwrap().path();
+                    assert!(!String::from_utf8_lossy(&fs::read(path).unwrap())
+                        .contains("literal-secret-sentinel"));
+                }
+            }
+        }
     }
-    assert!(!f.0.join("scripts").exists());
 }
 
 #[test]
