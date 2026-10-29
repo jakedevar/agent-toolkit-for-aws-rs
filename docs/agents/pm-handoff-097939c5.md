@@ -1003,3 +1003,5 @@ Friction: #4727, Rsi #4694, Rsi #4704
   Filed docgraph live S1 #5366 (design S1 + offline S2 spike) -> Codex terra 3d2690f2 (sandbox baee1137 = #5327 head; merge rolling before final verify). Then exact-source security review (Claude), then S2/S3.
   Creation cap 224/256 (next free 18:33Z): spend sessions carefully.
   4/4: 59add103 (#5363 B1), 4ca3337b (#5345 L5), f6287c21 (#5352 x402 S5), 3d2690f2 (#5366). Queue: 9cb38026 #5317, 9c5d9d91 #5327, c7baf1b2 #5306, 6ed49cd6 #5362.
+- 10-29 12:35Z: manager scoped 97013374 (#5365 3c0b4f1d on a0c08c7e) OK 4314; check ok. ENQUEUED 1d82c790 (seq 3005; generic_cargo refuses fixes_tests, so plain derive_filters). Close #5365 on land.
+  Queue: 9cb38026 #5317, 9c5d9d91 #5327, c7baf1b2 #5306, 6ed49cd6 #5362, 1d82c790 #5365.
