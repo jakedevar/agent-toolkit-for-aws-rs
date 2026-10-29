@@ -546,7 +546,14 @@ fn shipped_binary_exchange_publishes_session() {
     let mut response = String::new();
     callback.read_to_string(&mut response).unwrap();
     assert!(response.starts_with("HTTP/1.1 200"));
-    let (head, body) = request_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+    let (head, body) = request_rx
+        .recv_timeout(Duration::from_secs(10))
+        .unwrap_or_else(|error| {
+            let status = child.try_wait().unwrap();
+            let record =
+                std::fs::read_to_string(home.join(format!(".launch-with-aws/pending/{pid}.json")));
+            panic!("TLS request {error}: child={status:?}, record={record:?}");
+        });
     assert!(head.starts_with("POST /token "));
     let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(body["code"], "test-code");
