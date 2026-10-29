@@ -84,6 +84,23 @@ fn inventory() -> Vec<Entry> {
         .collect()
 }
 
+/// Templates whose instances name a binary that the repository declaration
+/// declares for one plugin. Such a string is valid only in that plugin, so
+/// the fixture-plugin tests below skip the shipped instances. They exercise
+/// the fixture's own declared `guard` instead, and
+/// `shipped_strings_match_their_inventory_templates` checks the shipped
+/// instances against the real declaration (#4412 activation, #5078).
+const DECLARED_BINARY_TEMPLATES: [&str; 4] =
+    ["guard-deny", "bin-hook", "bin-hook-or-true", "mcp-bin"];
+
+/// The inventory entries that are valid in any plugin (no declared binary).
+fn plugin_agnostic_inventory() -> Vec<Entry> {
+    inventory()
+        .into_iter()
+        .filter(|entry| !DECLARED_BINARY_TEMPLATES.contains(&entry.template.as_str()))
+        .collect()
+}
+
 fn hooks_entries(event: &str, commands: &[String]) -> String {
     let entries: Vec<String> = commands
         .iter()
@@ -272,17 +289,29 @@ fn assert_no_inline_launchers(value: &Json, path: &Path) {
     }
 }
 
-/// Every inventory hook string is accepted in a fixture plugin, under every
-/// event, and every inventory MCP server (command plus its args) too.
+/// Every plugin-agnostic inventory hook string is accepted in a fixture
+/// plugin, under every event, and every inventory MCP server (command plus its
+/// args) too. The declared-binary instances are the two aws-core secret-safety
+/// guard registrations.
 #[test]
 fn every_inventory_string_is_accepted() {
-    let entries = inventory();
+    let declared: Vec<(String, String)> = inventory()
+        .into_iter()
+        .filter(|entry| DECLARED_BINARY_TEMPLATES.contains(&entry.template.as_str()))
+        .map(|entry| (entry.file, entry.template))
+        .collect();
+    let guard = (
+        "plugins/aws-core/com.anthropic.claude-code/hooks/hooks.json".to_string(),
+        "guard-deny".to_string(),
+    );
+    assert_eq!(declared, [guard.clone(), guard]);
+    let entries = plugin_agnostic_inventory();
     let hook_strings: Vec<String> = entries
         .iter()
         .filter(|entry| entry.file.ends_with("hooks.json"))
         .map(|entry| entry.value.clone())
         .collect();
-    assert_eq!(hook_strings.len(), 12);
+    assert_eq!(hook_strings.len(), 10);
     for event in ["PreToolUse", "PostToolUse", "Stop", "SessionStart", "stop"] {
         let (problems, references) =
             problems_for(&[("hooks/hooks.json", hooks_entries(event, &hook_strings))]);
@@ -979,7 +1008,7 @@ fn rejected_indices(problems: &[String], prefix: &str) -> BTreeSet<usize> {
 /// guard event or any other, and no MCP command does either.
 #[test]
 fn metacharacter_insertions_into_templates_are_rejected() {
-    let mut templates: Vec<String> = inventory()
+    let mut templates: Vec<String> = plugin_agnostic_inventory()
         .into_iter()
         .filter(|entry| entry.file.ends_with("hooks.json"))
         .map(|entry| entry.value)

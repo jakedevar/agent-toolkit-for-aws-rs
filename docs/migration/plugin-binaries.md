@@ -1,8 +1,9 @@
 # Per-plugin `./bin` binaries: build and stage pipeline (#4487)
 
 Status: pipeline, contract test and design implemented on the #4487 branch. Nothing is
-released. The live `hooks.json` still launches `secret-safety.py`; the switch to the Rust
-binary happens once the #4412 crate is on rolling (section 9).
+released. Integration round 21 (#5078) switched the live aws-core `hooks.json` to the
+canonical secret-safety launcher (section 9, follow-up 1). The staged binaries travel with
+the release (#4414).
 
 ## 1. Decision and scope
 
@@ -269,8 +270,11 @@ declared guard with no registration as not enforced.
   and long `-S` forms exit without a deny when no binary is staged and run a marker
   `bin/guard` when one is.
 - A deterministic exhaustive test inserts each of 31 shell metacharacters at every
-  position of every template instance. That is 57,412 mutants, each run under a
-  guard event and a plain event. The same insertions into each MCP command (with the
+  position of every template instance. That is 52,855 mutants since the #4412 switch
+  (57,412 before it, when the inventory still held the aws-core `python-guard` string),
+  each run under a guard event and a plain event. Shipped `guard-deny` instances name a
+  binary that only aws-core declares, so the fixture plugin exercises its own declared
+  guard instead. The same insertions into each MCP command (with the
   args it accepts) and into every element of each of the three distinct shipped `uvx`
   argvs (12,183 argv mutants) are refused too. No mutant is accepted.
 
@@ -381,8 +385,8 @@ and it is why the switch ships only together with staged binaries (section 9).
   and any other value or member type is refused. Every string is checked against
   the launcher allowlist (section 4). Each reference must name a binary that the
   declaration declares for that plugin, and must have the form its role requires.
-  Today it scans 12 launcher files and finds no `bin/` reference, because the
-  secret-safety switch has not landed.
+  Today it scans 12 launcher files and finds two `bin/` references: the two aws-core
+  PreToolUse registrations of `aws-core/secret-safety` (#4412 switch, #5078).
 - **Staged files.** For every `plugins/*/bin/` that exists, the test checks:
   - the plugin declares binaries, and the manifest exists and parses;
   - each entry is declared, has the declared triple, package, bin and features, and
@@ -419,15 +423,15 @@ and `check` commands.
 
 `plan` and `stage` report every problem before building anything:
 
-- a declared package that is not in the workspace. Today `secret-safety-hook` is
-  reported with its consumer, #4412.
+- a declared package that is not in the workspace, reported with its consumer.
 - a Rust target that is not installed, with the remedy
   `rustup target add <triple>` or a native runner.
 - a missing `zig` or `cargo-zigbuild`.
 
 Follow-ups:
 
-1. **#4412 switch.** When `crates/secret-safety-hook` lands on rolling:
+1. **#4412 switch.** Step 1 is done on the integration round 21 head (#5078); step 2
+   belongs to release packaging (#4414):
    1. Replace both `PreToolUse` commands in
       `plugins/aws-core/com.anthropic.claude-code/hooks/hooks.json` with the output of
       `plugin-stage launcher aws-core/secret-safety`.

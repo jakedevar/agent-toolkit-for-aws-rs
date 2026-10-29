@@ -40,14 +40,14 @@
     {
       "file": "plugins/aws-core/com.anthropic.claude-code/hooks/hooks.json",
       "key": "hooks.PreToolUse[0].hooks[0].command",
-      "value": "sh -c 'python3 \"$0\" 2>/dev/null || python \"$0\" 2>/dev/null || py -3 \"$0\"' \"${CLAUDE_PLUGIN_ROOT}/com.anthropic.claude-code/hooks/secret-safety.py\"",
-      "template": "python-guard"
+      "value": "sh -c 'if out=$(\"$0\" 2>/dev/null); then printf %s \"$out\"; else printf %s \"{\\\"hookSpecificOutput\\\":{\\\"hookEventName\\\":\\\"PreToolUse\\\",\\\"permissionDecision\\\":\\\"deny\\\",\\\"permissionDecisionReason\\\":\\\"Secret-safety hook is unavailable or failed, so this call is blocked. Reinstall the aws-core plugin.\\\"}}\"; fi' \"${CLAUDE_PLUGIN_ROOT}/bin/secret-safety\"",
+      "template": "guard-deny"
     },
     {
       "file": "plugins/aws-core/com.anthropic.claude-code/hooks/hooks.json",
       "key": "hooks.PreToolUse[1].hooks[0].command",
-      "value": "sh -c 'python3 \"$0\" 2>/dev/null || python \"$0\" 2>/dev/null || py -3 \"$0\"' \"${CLAUDE_PLUGIN_ROOT}/com.anthropic.claude-code/hooks/secret-safety.py\"",
-      "template": "python-guard"
+      "value": "sh -c 'if out=$(\"$0\" 2>/dev/null); then printf %s \"$out\"; else printf %s \"{\\\"hookSpecificOutput\\\":{\\\"hookEventName\\\":\\\"PreToolUse\\\",\\\"permissionDecision\\\":\\\"deny\\\",\\\"permissionDecisionReason\\\":\\\"Secret-safety hook is unavailable or failed, so this call is blocked. Reinstall the aws-core plugin.\\\"}}\"; fi' \"${CLAUDE_PLUGIN_ROOT}/bin/secret-safety\"",
+      "template": "guard-deny"
     },
     {
       "file": "plugins/aws-core/mcp.json",

@@ -74,11 +74,11 @@ hook ever needs a tighter parser bound (integration round 20, #5019 / #5020).
 ## 5. Launcher contract
 
 `hooks.json` keeps both matchers and `timeout: 5`. The command runs the Rust binary
-`${CLAUDE_PLUGIN_ROOT}/com.anthropic.claude-code/hooks/secret-safety` and captures its
+`${CLAUDE_PLUGIN_ROOT}/bin/secret-safety` (the #4487 plugin-stage dispatcher) and captures its
 output. Exit 0: forward stdout (allow = empty). Any other result (missing file, not
 executable, non-zero exit, signal, unset `CLAUDE_PLUGIN_ROOT`): print the deny JSON with a
 reason naming the unavailable guard, exit 0. Nothing in the launcher invokes
-`python3`, `python` or `py`; `secret-safety.py` therefore becomes **dead** once this launcher is activated (held at landing, §9.3)
+`python3`, `python` or `py`; `secret-safety.py` is therefore **dead** now that this launcher is activated (integration round 21, §9.3)
 and stays in place only as read-only evidence until retirement (#4415).
 
 Consequence to record: until a platform binary is staged at that path, every guarded
@@ -171,23 +171,28 @@ the exact commit are diagnostic evidence only.
 
 ### 9.3 Python file status
 
-At landing (integration round 20, #5019) the registration switch is **held**: the shipped
-`plugins/aws-core/com.anthropic.claude-code/hooks/hooks.json` stays byte-identical to its
-pre-#4412 content and still launches `secret-safety.py`, which therefore stays live, not
-dead, until activation. The reviewed Rust launcher registration (§5, review #4488) is kept
-byte-for-byte in `crates/secret-safety-hook/launcher/hooks.json`, and `tests/launcher.rs`
-runs every fail-closed test against that staged file.
-`the_live_registration_is_held_on_the_python_launcher_until_activation` pins the held
-state: the shipped file guards the same two matchers with `timeout: 5` through
-`secret-safety.py`, and that file is present. The binary packaging slice #4487 activates
-the switch atomically with the staged binary: it copies `launcher/hooks.json` over the
-plugin file, points `HOOKS_JSON` in `tests/launcher.rs` back at the plugin file and deletes
-the held-registration test. After that `secret-safety.py` is dead and stays in place as
-read-only evidence until retirement (#4415).
+At landing (integration round 20, #5019) the registration switch was **held** on the
+Python launcher until the binary packaging slice #4487 defined where the binary is staged.
+Integration round 21 (#5078) activates it. Both PreToolUse commands in
+`plugins/aws-core/com.anthropic.claude-code/hooks/hooks.json` are now the canonical #4487
+`guard-deny` launcher, byte-identical to the output of
+`plugin-stage launcher aws-core/secret-safety`. That is the §5 contract with the path
+changed to the plugin-stage dispatcher `${CLAUDE_PLUGIN_ROOT}/bin/secret-safety`
+(docs/migration/plugin-binaries.md §4). The round-20 staged copy
+`crates/secret-safety-hook/launcher/hooks.json` named the pre-#4487 path, so it was
+removed. `tests/launcher.rs` runs every fail-closed test against the live plugin file, and
+`the_live_registration_runs_the_rust_launcher` pins its exact command, built from the
+deny reason in `packaging/plugin-binaries.json`. The plugin-stage contract test checks the
+same strings against the `guard-deny` template and the shipped-launcher inventory.
+`plugin-stage check` reports both registrations as references to `aws-core/secret-safety`
+and no longer reports the guard as unenforced. `secret-safety.py` is now dead: no
+registration launches it. It stays in place only as read-only evidence until retirement
+(#4415).
 
 ### 9.4 Release dependency
 
-The binary is not committed. Until a platform build is staged at
-`com.anthropic.claude-code/hooks/secret-safety` in the shipped plugin, every guarded call
-is denied by the launcher (the required fail-closed behaviour). Cross-platform build and
-staging of this binary needs an owner before this lands in a release.
+The binary is not committed: staged files under `plugins/*/bin/` are generated and
+ignored on source branches (#4487). Until `plugin-stage stage --platform all` and
+`verify --complete` have staged the dispatcher and the platform binaries in the shipped
+plugin, every guarded call is denied by the launcher. That is the required fail-closed
+behaviour. Release packaging (#4414) owns the staging.
