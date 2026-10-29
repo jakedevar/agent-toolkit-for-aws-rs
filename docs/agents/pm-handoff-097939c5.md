@@ -1164,3 +1164,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 21:16Z: S1 repair 2 (0311ca3f) DONE at cdc468a2f10b66db4ccda0aa54c866c4b2544e1c (#5465: inner BoundedBody drops conn on EOF/terminal error; db-only ReleasingStream wrap; merged 535c9424 + 289fadc1, usage 47548/0x355f_5278_556d_532a). scoped 874c8e18 ok. Re-review #5482 -> Codex sol 7fb40ec3 pinned cdc468a2. On ACCEPT: check + enqueue (source_session_id 0311ca3f, issue 5366); close #5428 #5429 #5465 #5482 on land; #4886 stays open (S2+).
   Kaizen: #5480 cancelled as dup of #5360 (usage pin conflicts); #5360 raised to P2 -> worker at next free slot along with #5478 flake.
   4/4: 7fb40ec3 #5482, be2767ad S6 r1, cfb95bf6 L7, e02b0f23 B2. Queue: 58fcd064 #5472.
+- 21:17Z: OpenClaw B2 (e02b0f23) DONE at b0f6dd2e6e264458ea208c9aa9d8a7f7894f2c98 (bridge route, R-OC-FINAL scrub, flow::prove shared, stdin cap fix, AC3 gate extended; scoped eeb8d1b6 4641). Design: #5160 resolved rev2 §5.1 (TS side owed by B4); #5179 still open for B4. Review #5483 -> Codex sol 457c73c0 pinned b0f6dd2e. On ACCEPT: check + enqueue (source_session_id e02b0f23, issue 5443).
+  Kaizen: #5481 cancelled as dup of #5360 (3rd report; suggestions carried).
+  4/4: 457c73c0 #5483, 7fb40ec3 #5482, be2767ad S6 r1, cfb95bf6 L7. Waiting: #5360 (P2), #5478 flake.
