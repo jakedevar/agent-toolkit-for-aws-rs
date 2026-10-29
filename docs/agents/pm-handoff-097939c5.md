@@ -637,3 +637,5 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 10-29 05:30Z: mcp-proxy repair 2 (8c9c4a04) at 1f8dd6e66fc7d2aac8e660908ffa988a255c9254: #5136 retire = bookkeeping under lock, credential I/O after release; #5137 delivery cancel includes generation; #5138 post-sign recheck + bounded timeouts. Red 405c9a9e (0/3); repeat 829eef8c 10x; fmt 4fe003d8, clippy aba298f9, clippy-sdk c5f64dde, test-sdk b13e28a3, scoped 13c088ab ok. Still unmerged w/ rolling (Cargo.lock+Makefile).
   S4 r3 (narrow, last unless P1) -> Codex d09ae2af pinned 1f8dd6e6. On ACCEPT: integration round 22 worker (merge S1-S3 head 1f8dd6e6 onto rolling, resolve lock/Makefile, sdk jobs + scoped) -> enqueue.
   4/4 busy: 4cbe8435 (#5118), bc70b368 (#4411 design), f43fddbd (#5143), d09ae2af (#5105 r3).
+- 10-29 05:35Z: LANDED L0-L2 (#5085) at ce7bf4885597dd37cf6fdb4035806abb3fef484d (entry 608c2693). Closed #5085 (auto), #5131, #5132-#5135. #5082 reopened (owes L3/L6 + #5080). Carry #5141 (P3) + #5081/#5083 (L4) into later L reviews.
+  Next #4382: #5080 TA-STREAM-DL after S1 #5017 lands (mcp-proxy integration round 22); then L3; L4-L6 per design.
