@@ -1119,3 +1119,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 17:35Z: OpenClaw B1 LANDED (entry 09811136, landed_sha b9e7980b27823338cc0ed32876b38d75dacc831d). #5363 auto-closed. CLOSED: #5401 #5409 #5410 #5411 #5412 #5413 #5385 (ruled on #5401) #5180 (folded: fragment>=32 anchored, D-OC19) #5159 #5175 (design landed with B1). #5179 stays open for B2/B4.
   Queue: 3023 #4865, 3027 x402 (c8af43d9 contains b9e7980b).
 - 17:36Z: #4865 LANDED (landed_sha 7a4d450b64b0c4f40cb68c45cbd666051f523c9c); auto-closed. at_commit jobs now usable. Queue: 3027 x402 (contains 67154493 + b9e7980b).
+- 17:40Z: x402 S5 LANDED (5a91bf0c, landed_sha a719edb2072558c56b95d56a1317c8a573805479). #5352 auto-closed. CLOSED: #5373 #5389 #5397 #5419 #5374 #5375 #5376 #5377 #5390 #5391 #5400 #5421 #5422 (residual note) #5423. Left open (unverified): #5330 #5332 (S4 findings; check against S5 before closing).
+  #5372 guard now ACTIVE on rolling: every new toolkit-cli test crate root needs it (L5 r2 launch_l5.rs, #5344 docgraph_review_private.rs, B2, S1 if any). Reported up (pm-f233e271-report-1740).
+  Next free slot: #5344 relaunch (continue_from 1a36fb6d): merge rolling + guard, re-verify, enqueue. Queue EMPTY. 4/4: 0c08b166 L5 r2, f59917b1 S1 r1, c35bc7f4 #5394, e02b0f23 B2.
