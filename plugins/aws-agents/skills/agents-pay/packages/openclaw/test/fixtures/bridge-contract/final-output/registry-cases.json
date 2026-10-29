@@ -1,0 +1,317 @@
+{
+   "cases" : [
+      {
+         "expected" : {
+            "content" : [
+               {
+                  "text" : "{\"body\":\"eyJ4NDAyVmVyc2lvbiI6Mi 0x\",\"paid\":true}",
+                  "type" : "text"
+               }
+            ],
+            "details" : {
+               "body" : "eyJ4NDAyVmVyc2lvbiI6Mi 0x",
+               "paid" : true
+            }
+         },
+         "name" : "public-prefix",
+         "request" : {
+            "candidate" : {
+               "content" : [
+                  {
+                     "text" : "{\"body\":\"eyJ4NDAyVmVyc2lvbiI6Mi 0x\",\"paid\":true}",
+                     "type" : "text"
+                  }
+               ],
+               "details" : {
+                  "body" : "eyJ4NDAyVmVyc2lvbiI6Mi 0x",
+                  "paid" : true
+               }
+            },
+            "operation" : "sanitize_output",
+            "secrets" : [
+               "eyJ4NDAyVmVyc2lvbiI6Mi-private-proof-material-1234567890-ABCDEFGHIJ",
+               "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+            ]
+         }
+      },
+      {
+         "expected" : {
+            "content" : [
+               {
+                  "text" : "{\"body\":\"private-proof-material-12345678\",\"paid\":true}",
+                  "type" : "text"
+               }
+            ],
+            "details" : {
+               "body" : "private-proof-material-12345678",
+               "paid" : true
+            }
+         },
+         "name" : "short-fragment",
+         "request" : {
+            "candidate" : {
+               "content" : [
+                  {
+                     "text" : "{\"body\":\"private-proof-material-12345678\",\"paid\":true}",
+                     "type" : "text"
+                  }
+               ],
+               "details" : {
+                  "body" : "private-proof-material-12345678",
+                  "paid" : true
+               }
+            },
+            "operation" : "sanitize_output",
+            "secrets" : [
+               "eyJ4NDAyVmVyc2lvbiI6Mi-private-proof-material-1234567890-ABCDEFGHIJ",
+               "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+            ]
+         }
+      },
+      {
+         "expected" : {
+            "content" : [
+               {
+                  "text" : "{\"body\":\"[REDACTED]\",\"paid\":true,\"redacted\":true}",
+                  "type" : "text"
+               }
+            ],
+            "details" : {
+               "body" : "[REDACTED]",
+               "paid" : true,
+               "redacted" : true
+            }
+         },
+         "name" : "literal-fragment",
+         "request" : {
+            "candidate" : {
+               "content" : [
+                  {
+                     "text" : "{\"body\":\"private-proof-material-123456789\",\"paid\":true}",
+                     "type" : "text"
+                  }
+               ],
+               "details" : {
+                  "body" : "private-proof-material-123456789",
+                  "paid" : true
+               }
+            },
+            "operation" : "sanitize_output",
+            "secrets" : [
+               "eyJ4NDAyVmVyc2lvbiI6Mi-private-proof-material-1234567890-ABCDEFGHIJ",
+               "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+            ]
+         }
+      },
+      {
+         "expected" : {
+            "content" : [
+               {
+                  "text" : "{\"body\":\"[REDACTED]\",\"paid\":true,\"redacted\":true}",
+                  "type" : "text"
+               }
+            ],
+            "details" : {
+               "body" : "[REDACTED]",
+               "paid" : true,
+               "redacted" : true
+            }
+         },
+         "name" : "base64-fragment",
+         "request" : {
+            "candidate" : {
+               "content" : [
+                  {
+                     "text" : "{\"body\":\"cHJpdmF0ZS1wcm9vZi1tYXRlcmlhbC0xMjM0NTY3ODk=\",\"paid\":true}",
+                     "type" : "text"
+                  }
+               ],
+               "details" : {
+                  "body" : "cHJpdmF0ZS1wcm9vZi1tYXRlcmlhbC0xMjM0NTY3ODk=",
+                  "paid" : true
+               }
+            },
+            "operation" : "sanitize_output",
+            "secrets" : [
+               "eyJ4NDAyVmVyc2lvbiI6Mi-private-proof-material-1234567890-ABCDEFGHIJ",
+               "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+            ]
+         }
+      },
+      {
+         "expected" : {
+            "content" : [
+               {
+                  "text" : "{\"body\":\"[REDACTED]\",\"paid\":true,\"redacted\":true}",
+                  "type" : "text"
+               }
+            ],
+            "details" : {
+               "body" : "[REDACTED]",
+               "paid" : true,
+               "redacted" : true
+            }
+         },
+         "name" : "percent-fragment",
+         "request" : {
+            "candidate" : {
+               "content" : [
+                  {
+                     "text" : "{\"body\":\"%70%72%69%76%61%74%65%2D%70%72%6F%6F%66%2D%6D%61%74%65%72%69%61%6C%2D%31%32%33%34%35%36%37%38%39\",\"paid\":true}",
+                     "type" : "text"
+                  }
+               ],
+               "details" : {
+                  "body" : "%70%72%69%76%61%74%65%2D%70%72%6F%6F%66%2D%6D%61%74%65%72%69%61%6C%2D%31%32%33%34%35%36%37%38%39",
+                  "paid" : true
+               }
+            },
+            "operation" : "sanitize_output",
+            "secrets" : [
+               "eyJ4NDAyVmVyc2lvbiI6Mi-private-proof-material-1234567890-ABCDEFGHIJ",
+               "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+            ]
+         }
+      },
+      {
+         "expected" : {
+            "content" : [
+               {
+                  "text" : "{\"body\":\"[REDACTED]\",\"paid\":true,\"redacted\":true}",
+                  "type" : "text"
+               }
+            ],
+            "details" : {
+               "body" : "[REDACTED]",
+               "paid" : true,
+               "redacted" : true
+            }
+         },
+         "name" : "json-escape-fragment",
+         "request" : {
+            "candidate" : {
+               "content" : [
+                  {
+                     "text" : "{\"body\":\"\\\\u0070rivate-proof-material-123456789\",\"paid\":true}",
+                     "type" : "text"
+                  }
+               ],
+               "details" : {
+                  "body" : "\\u0070rivate-proof-material-123456789",
+                  "paid" : true
+               }
+            },
+            "operation" : "sanitize_output",
+            "secrets" : [
+               "eyJ4NDAyVmVyc2lvbiI6Mi-private-proof-material-1234567890-ABCDEFGHIJ",
+               "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+            ]
+         }
+      },
+      {
+         "expected" : {
+            "content" : [
+               {
+                  "text" : "{\"body\":\"[REDACTED]\",\"paid\":true,\"redacted\":true}",
+                  "type" : "text"
+               }
+            ],
+            "details" : {
+               "body" : "[REDACTED]",
+               "paid" : true,
+               "redacted" : true
+            }
+         },
+         "name" : "whole-header",
+         "request" : {
+            "candidate" : {
+               "content" : [
+                  {
+                     "text" : "{\"body\":\"eyJ4NDAyVmVyc2lvbiI6Mi-private-proof-material-1234567890-ABCDEFGHIJ\",\"paid\":true}",
+                     "type" : "text"
+                  }
+               ],
+               "details" : {
+                  "body" : "eyJ4NDAyVmVyc2lvbiI6Mi-private-proof-material-1234567890-ABCDEFGHIJ",
+                  "paid" : true
+               }
+            },
+            "operation" : "sanitize_output",
+            "secrets" : [
+               "eyJ4NDAyVmVyc2lvbiI6Mi-private-proof-material-1234567890-ABCDEFGHIJ",
+               "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+            ]
+         }
+      },
+      {
+         "expected" : {
+            "content" : [
+               {
+                  "text" : "{\"body\":\"[REDACTED]\",\"paid\":true,\"redacted\":true}",
+                  "type" : "text"
+               }
+            ],
+            "details" : {
+               "body" : "[REDACTED]",
+               "paid" : true,
+               "redacted" : true
+            }
+         },
+         "name" : "whole-signature",
+         "request" : {
+            "candidate" : {
+               "content" : [
+                  {
+                     "text" : "{\"body\":\"0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"paid\":true}",
+                     "type" : "text"
+                  }
+               ],
+               "details" : {
+                  "body" : "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+                  "paid" : true
+               }
+            },
+            "operation" : "sanitize_output",
+            "secrets" : [
+               "eyJ4NDAyVmVyc2lvbiI6Mi-private-proof-material-1234567890-ABCDEFGHIJ",
+               "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+            ]
+         }
+      },
+      {
+         "expected" : {
+            "content" : [
+               {
+                  "text" : "{\"paid\":false,\"reason\":\"Payment flow failed safely without exposing provider or proof details\",\"refused\":true}",
+                  "type" : "text"
+               }
+            ],
+            "details" : {
+               "paid" : false,
+               "reason" : "Payment flow failed safely without exposing provider or proof details",
+               "refused" : true
+            }
+         },
+         "name" : "metadata-refusal",
+         "request" : {
+            "candidate" : {
+               "content" : [
+                  {
+                     "text" : "{\"content_type\":\"0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"paid\":true}",
+                     "type" : "text"
+                  }
+               ],
+               "details" : {
+                  "content_type" : "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+                  "paid" : true
+               }
+            },
+            "operation" : "sanitize_output",
+            "secrets" : [
+               "eyJ4NDAyVmVyc2lvbiI6Mi-private-proof-material-1234567890-ABCDEFGHIJ",
+               "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+            ]
+         }
+      }
+   ]
+}
