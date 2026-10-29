@@ -21,9 +21,10 @@ use toolkit_core::{
 use crate::safe_text::safe_path;
 use crate::{Invocation, Output};
 
-mod place;
 mod assign;
 mod notebook;
+mod place;
+mod render;
 mod script;
 mod template;
 mod types;
@@ -43,8 +44,17 @@ pub(crate) const SLICE: crate::registry::Slice = crate::registry::Slice {
         max_positionals: 0,
         passthrough: false,
         handler: templates_command,
+    }, crate::CommandSpec {
+        path: &["ai-payloads", "render"],
+        flags: &["--append", "--new", "--allow-unresolved", "--dry-run"],
+        value_flags: &["--mode", "--project-dir", "--name", "--values"],
+        strict_values: true,
+        repeatable_flags: &["--cell", "--consent"],
+        max_positionals: 1,
+        passthrough: false,
+        handler: render::command,
     }],
-    synopsis: "  toolkit ai-payloads templates [--root DIR] [--json] [--check]\n",
+    synopsis: "  toolkit ai-payloads templates [--root DIR] [--json] [--check]\n  toolkit ai-payloads render TEMPLATE --mode notebook|script --project-dir DIR [options]\n",
     description: r"  ai-payloads   Payload templates of the AWS AI/ML skill (#4386).
                 templates lists the code_templates/*.py files under
                 ROOT/references (default: skills/core-skills/aws-ai-ml) with

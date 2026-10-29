@@ -48,17 +48,6 @@ pub(crate) fn substitute(
     if !unknown.is_empty() {
         return Err(error("unknown_value", unknown));
     }
-    let invalid_consent: Vec<_> = consent
-        .iter()
-        .filter(|name| {
-            types::slot_type(name) != Some(types::SlotType::Consent)
-                || !used.contains(name.as_str())
-        })
-        .cloned()
-        .collect();
-    if !invalid_consent.is_empty() {
-        return Err(error("consent_name_invalid", invalid_consent));
-    }
     let missing_bare: Vec<_> = template
         .occurrences
         .iter()

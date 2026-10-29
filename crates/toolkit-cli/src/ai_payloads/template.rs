@@ -201,6 +201,11 @@ pub(crate) fn is_secret_name(name: &str) -> bool {
     })
 }
 
+/// Syntactic consent guard for caller-supplied code, not a sandbox.
+pub(crate) fn contains_consent_identifier(text: &str) -> bool {
+    lex(text).tokens.iter().any(|token| matches!(&token.kind, Kind::Name(name) if super::types::slot_type(name) == Some(super::types::SlotType::Consent)))
+}
+
 /// Reads one template. Never fails: every problem is a [`Violation`].
 pub(crate) fn parse(text: &str) -> Template {
     let mut template = Template::default();

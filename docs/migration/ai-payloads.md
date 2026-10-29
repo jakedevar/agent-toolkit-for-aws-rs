@@ -26,10 +26,14 @@ reference pattern (design sections 1 to 3). Nothing here removes Python rows
 
 ```text
 toolkit ai-payloads templates [--root DIR] [--json] [--check]
+toolkit ai-payloads render TEMPLATE --mode notebook|script --project-dir DIR [--name NAME] [--values FILE] [--cell N=FILE]... [--append | --new] [--consent NAME]... [--allow-unresolved] [--dry-run]
 ```
 
-`render` and `reward` are specified in the design (sections 4.2, 4.5, 4.6) and
-are not registered yet.
+`render` accepts typed values and literal assignments from a JSON file, writes
+new notebooks or numbered scripts through atomic no-replace publication, and
+appends by publishing a versioned copy. `--cell` checks consent identifiers as
+a syntactic guard; it is not a sandbox. `--dry-run` writes nothing. The reward
+command is specified in design section 4.6.
 
 ### `toolkit ai-payloads templates`
 
