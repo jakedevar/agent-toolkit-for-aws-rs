@@ -120,21 +120,64 @@ fn t_err_merchant_transport_failures_use_the_same_table() {
     }
 }
 
+fn learned(secrets: &[&str]) -> KnownSecrets {
+    let mut known = KnownSecrets::default();
+    for secret in secrets {
+        learn_secret(&mut known, secret);
+    }
+    known
+}
+
 #[test]
 fn t_scrub_finds_whole_cut_and_partial_secrets() {
-    let secret = "eyj4ndayvmvyc2lvbii6miwiywnjzxb0zwqionsic2nozw1lijoizxhhy3qi";
-    assert!(leaks(&format!("text/{secret}"), secret));
-    // A cut keeps a prefix; a partial echo keeps a middle piece.
-    assert!(leaks(&format!("text/{}", &secret[..40]), secret));
-    assert!(leaks(&format!("x{}y", &secret[13..50]), secret));
-    // Shorter than a window and not the whole secret: not a match.
-    assert!(!leaks(&secret[..20], secret));
+    let secret = "eyJ4NDAyVmVyc2lvbiI6MiwiYWNjZXB0ZWQiOnsic2NoZW1lIjoiZXhhY3Qi";
+    let known = learned(&[secret]);
+    let lower = secret.to_ascii_lowercase();
+    assert!(known.found_in(&format!("text/{lower}")));
+    // A cut keeps a prefix; a partial echo keeps a piece at any offset.
+    assert!(known.found_in(&format!("text/{}", &lower[..8])));
+    assert!(known.found_in(&format!("x{}y", &secret[13..50])));
+    assert!(known.found_in(&format!("x{}y", &secret[1..33])));
+    assert!(known.found_in(&secret[47..55]));
+    // Seven bytes are ordinary text.
+    assert!(!known.found_in(&secret[47..54]));
     // Secrets under 8 bytes are never searched (they match ordinary words).
-    assert!(!leaks("ps-1", "ps-1"));
-    assert!(leaks("session payment-s", "payment-s"));
-    let document = Json::object(vec![("content_type", Json::string(&secret[..40]))]);
+    assert!(learned(&["ps-1"]).is_empty());
+    let document = Json::object(vec![("content_type", Json::string(&lower[3..11]))]);
     assert_eq!(
-        render(&scrubbed(document, &[secret.to_owned()])),
+        render(&scrubbed(document, &known)),
+        r#"{"paid": false, "refused": true, "reason": "RuntimeError during payment flow."}"#
+    );
+}
+
+/// The fixed head of a payment session id is public: only the part after it
+/// is a secret, so the fixed texts that say `payment-` or `-session` pass.
+#[test]
+fn t_scrub_a_session_id_is_secret_after_its_public_head() {
+    assert_eq!(
+        session_secret("payment-session-TEST12345678901"),
+        "TEST12345678901"
+    );
+    assert_eq!(session_secret("PAYMENT-SESSION-abcdefgh"), "abcdefgh");
+    assert_eq!(session_secret("ps-custom-identifier"), "ps-custom-identifier");
+    let known = learned(&[session_secret("payment-session-TEST12345678901")]);
+    for fixed in [WITHHELD, MINT_BUDGET, NEW_SESSION, CHECK_SESSION, BROWSER_NEXT] {
+        assert!(!known.found_in(fixed), "{fixed}");
+    }
+    assert!(known.found_in("id payment-session-test1234"));
+    assert!(known.found_in("12345678"));
+}
+
+/// The JSON escape of a secret is learned too: a secret holding a quote or
+/// a non-ASCII character is still found in the rendered document.
+#[test]
+fn t_scrub_finds_the_rendered_json_spelling() {
+    let secret = "s\u{e9}cret\"value-0123";
+    let known = learned(&[secret]);
+    let document = Json::object(vec![("content_type", Json::string(secret))]);
+    assert!(render(&document).contains("\\u00e9"));
+    assert_eq!(
+        render(&scrubbed(document, &known)),
         r#"{"paid": false, "refused": true, "reason": "RuntimeError during payment flow."}"#
     );
 }

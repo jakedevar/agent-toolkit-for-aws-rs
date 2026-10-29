@@ -31,8 +31,15 @@ the Cargo feature `agents-pay-live`. No verification build (`make test`,
 every test target refuses to compile with it (G1a). Without it every route
 prints `This toolkit build has no payment support; install a release build of
 toolkit.` and exits 2, after argv parsing and before any file, variable,
-credential or network access. `make clippy-live` lints the live module
-(library and binaries only).
+credential or network access. A source gate holds that order
+(`t_ac3_noread_*` in `tests/agents_pay_gate.rs`, #5376): the no-feature arm
+of `Deps::for_process` must be exactly the D32 error, and the route functions
+(`fetch_command`, `parse`, `emit`) may evaluate only an allowlist of paths,
+methods and macros (argv, the credential-flag check, the D32 call, the JSON
+document), so an added read fails the gate. `make clippy-live`
+lints the live module (library and binaries only). G4 also scans the inline
+`#[cfg(test)]` modules of the payment sources (#5377); the D32 unit test in
+`deps.rs` is the one allowed naming of `Deps::for_process`.
 
 ## Flow (S5)
 
@@ -49,12 +56,18 @@ credential or network access. `make clippy-live` lints the live module
   window.`
 - R-HDR: `PAYMENT-SIGNATURE` (v2, with the vetted entry as `accepted` and the
   sanitized resource) or `X-PAYMENT` (v1), base64 of compact JSON.
-- R-SCRUB: the header value, the signature and the session id (at least 8
-  bytes) are replaced by `[REDACTED]` in an opt-in body, before the body is
-  cut to 10240 characters, adding `"redacted": true`. Anywhere else in the
-  document, ignoring ASCII case, the secret or any 32-byte piece of it (a cut
-  content type, a partial echo) replaces the whole document with
-  `RuntimeError during payment flow.`
+- R-SCRUB: the live secrets are the header value, the signature, the
+  idempotency token and the session id (without its public
+  `payment-session-` head); secrets under 8 bytes are not searched. Any piece
+  of a secret of 8 bytes or more, at any offset, ignoring ASCII case, as
+  given or in its escaped and JSON spellings, is a hit
+  (`safe_text::KnownSecrets`). In an opt-in body each hit span becomes
+  `[REDACTED]`, before the body is cut to 10240 characters, adding
+  `"redacted": true`. Anywhere else in the rendered document (a cut or
+  lower-cased content type, a partial echo) a hit replaces the whole document
+  with `RuntimeError during payment flow.` Past `MAX_MATCH_WORK` (2^26 steps:
+  text bytes plus learned windows) the matcher fails closed: the body becomes
+  `[REDACTED]` and a document is refused.
 - R-ERR: one exhaustive class-name table (`flow::FlowError`); the merchant
   plane maps malformed HTTP to `RemoteProtocolError` (S3 reported
   `RuntimeError`).
@@ -73,10 +86,14 @@ credential or network access. `make clippy-live` lints the live module
   `vault::Vault::attach` is the in-process redemption.
 - `--status` with an unresolvable region, a non-scalar resource or a missing
   user id reports `RuntimeError while reading session status.`
-- The secret scrub matches whole secrets (a linear substring search), not
-  the fragment matcher of `safe_text`. It runs on the whole decoded body before
-  the cut, so a cut cannot leave part of a secret in the output. AWS
-  credentials never reach the flow; they stay inside the signer.
+- The secret scrub (REPAIR 1, #5374, #5375) extends `safe_text`'s fragment
+  rule (prefixes from 8 bytes) to every offset: each 8-byte window of each
+  spelling of a secret is learned, and the text is scanned with one lookup
+  per byte, so any shown piece of 8 bytes or more is found and redacted whole.
+  Case folding is ASCII only; the secrets are ASCII (base64, hex, service
+  ids). A secret split into pieces under 8 bytes is not found. It runs on the
+  whole decoded body before the cut, and the final check runs on the rendered
+  JSON. AWS credentials never reach the flow; they stay inside the signer.
 - R-SEC: the route refuses credential flags by name
   (`reject_credential_arguments`); the router already refuses every unknown
   flag.

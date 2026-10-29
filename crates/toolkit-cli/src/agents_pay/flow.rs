@@ -24,15 +24,15 @@ use super::policy::{
 use super::proof;
 use super::urlparse::urlparse;
 use super::vault::{Vault, HANDLE_TTL};
+use crate::safe_text::KnownSecrets;
 
 /// The paid body is cut to this many characters (`return_body`).
 const BODY_CHARS: usize = 10_240;
 /// D17: the reported content type is bounded.
 const CONTENT_TYPE_CHARS: usize = 256;
-/// R-SCRUB searches for secrets of at least this many bytes.
-const MIN_SECRET_BYTES: usize = 8;
-/// R-SCRUB also refuses a document holding any piece of a secret this long.
-const SECRET_WINDOW: usize = 32;
+/// The public, fixed head of an `AgentCore` payment session id: the secret
+/// part of the id is what follows it (R-SCRUB).
+const SESSION_ID_HEAD: &str = "payment-session-";
 /// D13: the pause between merchant replays.
 const REPLAY_PAUSE: Duration = Duration::from_secs(1);
 
@@ -174,7 +174,7 @@ struct Run<'d, 'a> {
     tunables: Tunables,
     deadline: Instant,
     /// Live secrets of this invocation, for R-SCRUB.
-    secrets: Vec<String>,
+    secrets: KnownSecrets,
 }
 
 impl<'d, 'a> Run<'d, 'a> {
@@ -187,7 +187,7 @@ impl<'d, 'a> Run<'d, 'a> {
             deps,
             policy,
             tunables,
-            secrets: Vec::new(),
+            secrets: KnownSecrets::default(),
         })
     }
 
@@ -247,10 +247,33 @@ impl<'d, 'a> Run<'d, 'a> {
     }
 
     fn add_secret(&mut self, secret: &str) {
-        if secret.len() >= MIN_SECRET_BYTES && !self.secrets.iter().any(|known| known == secret) {
-            self.secrets.push(secret.to_owned());
-        }
+        learn_secret(&mut self.secrets, secret);
     }
+}
+
+/// R-SCRUB: learn `secret` in the spellings [`KnownSecrets::learn`] knows and
+/// in the JSON escape [`render`] gives it, so every piece of it is found in
+/// the decoded body and in the rendered document.
+fn learn_secret(secrets: &mut KnownSecrets, secret: &str) {
+    secrets.learn(secret);
+    let rendered = render(&Json::string(secret));
+    if let Some(inner) = rendered
+        .strip_prefix('"')
+        .and_then(|rest| rest.strip_suffix('"'))
+    {
+        secrets.learn_spelling(inner);
+    }
+}
+
+/// The secret part of a payment session id: without the service's fixed
+/// `payment-session-` head, which is public and would otherwise match the
+/// fixed texts (`payment-capable`, `new-session`). Any other id is secret
+/// whole.
+fn session_secret(session: &str) -> &str {
+    session
+        .get(..SESSION_ID_HEAD.len())
+        .filter(|head| head.eq_ignore_ascii_case(SESSION_ID_HEAD))
+        .map_or(session, |_| &session[SESSION_ID_HEAD.len()..])
 }
 
 // The bounds are small and positive; truncation is the legacy `int()`.
@@ -320,7 +343,8 @@ fn pay(
     ]);
     let manager = approved.manager_arn().to_owned();
     let session = approved.session_id().to_owned();
-    run.add_secret(&session);
+    run.add_secret(session_secret(&session));
+    run.add_secret(approved.token());
     run.admitted()?;
     let api = run
         .deps
@@ -389,16 +413,11 @@ fn safe_content(run: &Run<'_, '_>, response: &MerchantResponse) -> Vec<(String, 
         ),
     ];
     if run.policy.get("return_body") == Some(&Json::Bool(true)) {
-        // R-SCRUB: replace every live secret in the whole decoded body
-        // before it is cut, so a cut cannot leave part of one behind.
-        let mut text = String::from_utf8_lossy(&response.body).into_owned();
-        let mut redacted = false;
-        for secret in &run.secrets {
-            if text.contains(secret.as_str()) {
-                text = text.replace(secret.as_str(), "[REDACTED]");
-                redacted = true;
-            }
-        }
+        // R-SCRUB: replace every piece of a live secret (8 bytes or more, at
+        // any offset, ignoring ASCII case) in the whole decoded body before
+        // it is cut, so a cut cannot leave part of one behind.
+        let text = String::from_utf8_lossy(&response.body);
+        let (text, redacted) = run.secrets.redact(&text);
         let body: String = text.chars().take(BODY_CHARS).collect();
         members.push(("body_returned".to_owned(), Json::Bool(true)));
         members.push(("body".to_owned(), Json::string(body)));
@@ -425,33 +444,14 @@ fn document(head: Vec<(&str, Json)>, tail: Vec<(String, Json)>) -> Json {
     Json::Object(members)
 }
 
-/// R-SCRUB: a live secret anywhere in the rendered document (outside the
-/// already-redacted body) replaces the whole document with the generic text.
-/// The comparison ignores ASCII case: the content type is lower-cased, and a
-/// lower-cased proof still carries the proof.
-/// Whether `text` holds `secret`, or a piece of it: a cut (the D17 bound on
-/// the content type) or a partial echo still carries part of the proof, so
-/// every window of [`SECRET_WINDOW`] bytes at a stride of 8 is searched.
-fn leaks(text: &str, secret: &str) -> bool {
-    if secret.len() < MIN_SECRET_BYTES {
-        return false;
-    }
-    if secret.len() <= SECRET_WINDOW {
-        return text.contains(secret);
-    }
-    (0..=secret.len() - SECRET_WINDOW)
-        .step_by(8)
-        .chain(std::iter::once(secret.len() - SECRET_WINDOW))
-        .filter_map(|start| secret.get(start..start + SECRET_WINDOW))
-        .any(|window| text.contains(window))
-}
-
-fn scrubbed(document: Json, secrets: &[String]) -> Json {
-    let text = render(&document).to_ascii_lowercase();
-    if secrets
-        .iter()
-        .any(|secret| leaks(&text, &secret.to_ascii_lowercase()))
-    {
+/// R-SCRUB: a piece of a live secret anywhere in the rendered document
+/// (outside the `[REDACTED]` spans of the body) replaces the whole document
+/// with the generic text. The matcher finds every piece of at least 8 bytes
+/// at any offset, ignoring ASCII case (the content type is lower-cased and
+/// cut to 256 characters), in the rendered JSON spelling, and fails closed
+/// past its work bound.
+fn scrubbed(document: Json, secrets: &KnownSecrets) -> Json {
+    if secrets.found_in(&render(&document)) {
         refusal_doc(&FlowError::Runtime.during_flow())
     } else {
         document
@@ -673,7 +673,9 @@ pub fn status(deps: &Deps<'_>) -> Json {
     if !computed.usable {
         members.push(("next_step", Json::string(MINT_BUDGET)));
     }
-    scrubbed(Json::object(members), &[session])
+    let mut secrets = KnownSecrets::default();
+    learn_secret(&mut secrets, session_secret(&session));
+    scrubbed(Json::object(members), &secrets)
 }
 
 #[cfg(test)]
