@@ -23,6 +23,7 @@ pub mod config;
 pub mod download;
 pub mod http;
 pub mod oidc;
+pub mod shape;
 pub mod snapshot;
 pub mod state;
 pub mod text;
