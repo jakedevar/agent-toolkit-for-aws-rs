@@ -1131,3 +1131,4 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - Scoped 4dad1a2c (#5394 c69895d1) running, owner now this seat (wake owner). On ok: AgentCheckLandingCandidate + enqueue (source_session_id c35bc7f4, issue 5394, derive_filters).
 - Wakes carried: health, safety-net, mcp-proxy todo, 5 terminal watches. Queue empty. Load ~14, disk 88%.
 - 17:50Z: safety net (stale f233e271 text) handled; re-armed pm-safety-net 18:48Z. CLOSED #5330 #5332 (verified fixed on rolling by S5: FakePaymentsApi scripting/recording; into_parts/payload pub(in agents_pay) + compile_fail).
+- 18:04Z: scoped 4dad1a2c OK (5179 tests); check ok; #5394 c69895d1 ENQUEUED seq 3031 (entry 4760cd75). On land: close #5394.
