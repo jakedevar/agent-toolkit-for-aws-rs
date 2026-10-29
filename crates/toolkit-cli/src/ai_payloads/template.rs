@@ -214,14 +214,22 @@ pub(crate) fn is_secret_name(name: &str) -> bool {
 pub(crate) fn contains_consent_identifier(text: &str) -> bool {
     let normalized: String = text.nfkc().collect();
     let lexed = lex(&normalized);
-    let is_consent = |name: &str| super::types::slot_type(name) == Some(super::types::SlotType::Consent);
-    lexed.occurrences.iter().any(|occurrence| occurrence.context == Context::Bare && is_consent(&occurrence.name)) || lexed.tokens.iter().any(|token| match &token.kind {
-        Kind::Name(name) => is_consent(name),
-        // Conservatively inspect the entire f-string body, including literal text.
-        // This guard is syntactic and does not evaluate caller-owned code.
-        Kind::Str(value) if value.prefix.to_ascii_lowercase().contains('f') => value.body.split(|c: char| !is_ident_continue(c)).any(is_consent),
-        _ => false,
-    })
+    let is_consent =
+        |name: &str| super::types::slot_type(name) == Some(super::types::SlotType::Consent);
+    lexed
+        .occurrences
+        .iter()
+        .any(|occurrence| occurrence.context == Context::Bare && is_consent(&occurrence.name))
+        || lexed.tokens.iter().any(|token| match &token.kind {
+            Kind::Name(name) => is_consent(name),
+            // Conservatively inspect the entire f-string body, including literal text.
+            // This guard is syntactic and does not evaluate caller-owned code.
+            Kind::Str(value) if value.prefix.to_ascii_lowercase().contains('f') => value
+                .body
+                .split(|c: char| !is_ident_continue(c))
+                .any(is_consent),
+            _ => false,
+        })
 }
 
 /// Whether this section assigns a consent identifier, including duplicates.
@@ -342,15 +350,18 @@ pub(crate) fn parse(text: &str) -> Template {
 
     for occurrence in &occurrences {
         if occurrence.context != Context::Comment
-            && lines.get(occurrence.line - 1).is_some_and(|line| {
-                line.trim_start().starts_with(['!', '%'])
-            })
+            && lines
+                .get(occurrence.line - 1)
+                .is_some_and(|line| line.trim_start().starts_with(['!', '%']))
         {
             template.violations.push(Violation {
                 code: "magic_line_slot",
                 line: occurrence.line,
                 column: occurrence.column,
-                message: format!("placeholder [{}] occurs on an IPython magic line", occurrence.name),
+                message: format!(
+                    "placeholder [{}] occurs on an IPython magic line",
+                    occurrence.name
+                ),
             });
         }
     }

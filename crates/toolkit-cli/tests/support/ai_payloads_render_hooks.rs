@@ -48,10 +48,19 @@ fn ap_pub_04_05_faults_through_script_and_append_commands() {
     }
     for mode in ["script", "notebook"] {
         for (stage, raw, expected) in [
-            ("temp_create", 5, "publish_io"), ("write", 5, "publish_io"),
+            ("temp_create", 5, "publish_io"),
+            ("write", 5, "publish_io"),
             ("sync", 5, "publish_io"),
-            ("link", rustix::io::Errno::PERM.raw_os_error(), "publish_no_atomic_noreplace"),
-            ("link", rustix::io::Errno::OPNOTSUPP.raw_os_error(), "publish_no_atomic_noreplace"),
+            (
+                "link",
+                rustix::io::Errno::PERM.raw_os_error(),
+                "publish_no_atomic_noreplace",
+            ),
+            (
+                "link",
+                rustix::io::Errno::OPNOTSUPP.raw_os_error(),
+                "publish_no_atomic_noreplace",
+            ),
         ] {
             let f = Fixture::new();
             let source = f.0.join("notebooks/example.ipynb");
@@ -59,15 +68,36 @@ fn ap_pub_04_05_faults_through_script_and_append_commands() {
             let mut inv = f.invocation();
             if mode == "script" {
                 inv.flags.clear();
-                inv.values.iter_mut().find(|(k, _)| k == "--mode").unwrap().1 = "script".into();
+                inv.values
+                    .iter_mut()
+                    .find(|(k, _)| k == "--mode")
+                    .unwrap()
+                    .1 = "script".into();
             }
             let mut sink = Vec::new();
-            let error = command_with_hooks(&inv, &mut Output::new(&mut sink), &mut Fault(stage, raw)).unwrap_err();
+            let error =
+                command_with_hooks(&inv, &mut Output::new(&mut sink), &mut Fault(stage, raw))
+                    .unwrap_err();
             assert_eq!(error.code(), expected, "{mode} {stage}");
             assert_eq!(fs::read_to_string(source).unwrap(), SOURCE);
-            let dir = f.0.join(if mode == "script" { "scripts" } else { "notebooks" });
-            assert!(fs::read_dir(dir).unwrap().all(|e| !e.unwrap().file_name().to_string_lossy().contains("toolkit-render")));
-            assert!(!f.0.join(if mode == "script" { "scripts/01_example.py" } else { "notebooks/example-01.ipynb" }).exists());
+            let dir = f.0.join(if mode == "script" {
+                "scripts"
+            } else {
+                "notebooks"
+            });
+            assert!(fs::read_dir(dir).unwrap().all(|e| !e
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .contains("toolkit-render")));
+            assert!(!f
+                .0
+                .join(if mode == "script" {
+                    "scripts/01_example.py"
+                } else {
+                    "notebooks/example-01.ipynb"
+                })
+                .exists());
         }
     }
 }

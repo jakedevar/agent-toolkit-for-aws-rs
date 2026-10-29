@@ -167,7 +167,9 @@ mod tests {
         let cell = Json::object(vec![("cell_type", Json::string("code"))]);
         let mut ids = FixedIds(vec!["a1", "a1", "b2"].into_iter());
         let result = append(source, vec![cell.clone(), cell], &mut ids).unwrap();
-        let Json::Array(cells) = result.get("cells").unwrap() else { panic!("cells") };
+        let Json::Array(cells) = result.get("cells").unwrap() else {
+            panic!("cells")
+        };
         assert_eq!(cells[0].get("id").and_then(Json::as_str), Some("a1"));
         assert_eq!(cells[1].get("id").and_then(Json::as_str), Some("b2"));
     }

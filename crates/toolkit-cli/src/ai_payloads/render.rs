@@ -199,7 +199,10 @@ fn command_with_hooks(
     let consents: BTreeSet<_> = inv.values_of("--consent").map(str::to_owned).collect();
     for name in &consents {
         if types::slot_type(name) != Some(types::SlotType::Consent)
-            || !(original.slots.iter().any(|s| s.name.eq_ignore_ascii_case(name) && s.code > 0)
+            || !(original
+                .slots
+                .iter()
+                .any(|s| s.name.eq_ignore_ascii_case(name) && s.code > 0)
                 || assignments.keys().any(|key| key.eq_ignore_ascii_case(name)))
         {
             return Err(fail("consent_name_invalid", name));
