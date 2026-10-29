@@ -231,7 +231,11 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             batch = body.get("batch", [])
 
         if not batch:
-            return {"error": "Missing or empty batch"}
+            return {
+                "statusCode": 200,
+                "headers": {"Content-Type": "application/json"},
+                "body": json.dumps([]),
+            }
 
         # Process each sample
         results = []
@@ -239,8 +243,19 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             try:
                 result = reward_function(sample, i)
                 results.append(result)
-            except Exception as e:
-                return {"error": str(e)}
+            except Exception:
+                # One result per input: score 0.0 instead of aborting the batch
+                results.append(
+                    {
+                        "id": str(
+                            sample.get("id", f"sample-{i:03d}")
+                            if isinstance(sample, dict)
+                            else f"sample-{i:03d}"
+                        ),
+                        "aggregate_reward_score": 0.0,
+                        "metrics_list": [],
+                    }
+                )
 
         return {
             "statusCode": 200,
