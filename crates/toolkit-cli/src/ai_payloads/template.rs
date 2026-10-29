@@ -1366,8 +1366,9 @@ fn read_statement(
             && statement[start + 1..]
                 .iter()
                 .take_while(|index| {
-                    !is_operator(&tokens[**index], "=")
-                        && !AUGMENTED.iter().any(|op| is_operator(&tokens[**index], op))
+                    tokens[**index].depth != 0
+                        || (!is_operator(&tokens[**index], "=")
+                            && !AUGMENTED.iter().any(|op| is_operator(&tokens[**index], op)))
                 })
                 .any(|index| tokens[*index].depth == 0 && is_operator(&tokens[*index], ":"));
         if !COMPOUND.contains(&name.as_str()) && !soft_header {
