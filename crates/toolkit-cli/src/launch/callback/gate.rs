@@ -385,7 +385,9 @@ mod tests {
                 },
             );
             assert_eq!(result.is_ok(), succeeds);
-            drop(custody);
+            // A bare drop races a concurrent test's fork copy of the lock; see
+            // `dropped_lock_with_inherited_copy_reads_helper_blocked`.
+            custody.release_settled();
             assert_eq!(
                 tracker.finish_at(scratch.path(), 81, 105, 0).0,
                 Observation::Decision(if succeeds {
@@ -395,6 +397,47 @@ mod tests {
                 })
             );
         }
+    }
+
+    /// Deterministic form of the #5478 flake: a descriptor copy made by a
+    /// concurrently spawning test keeps the dropped lock held, so the real
+    /// evaluator reports `HelperBlocked` where the owner already ended.
+    /// `release_settled` waits the copy out and yields the real decision.
+    #[cfg(unix)]
+    #[test]
+    fn dropped_lock_with_inherited_copy_reads_helper_blocked() {
+        use crate::launch::{
+            callback::{
+                pending::{Custody, Observation, WaitTracker},
+                PendingStatus, WaitDecision,
+            },
+            clock::SeededRandom,
+            tests_support::Scratch,
+        };
+        let scratch = Scratch::new("inherited-copy-wait");
+        let custody = Custody::acquire(scratch.path(), 81).unwrap();
+        custody
+            .write(
+                1234,
+                40,
+                100,
+                PendingStatus::Exchanging,
+                None,
+                &SeededRandom::new(1),
+            )
+            .unwrap();
+        let copy = custody.inherited_copy();
+        let mut tracker = WaitTracker::default();
+        drop(custody);
+        assert_eq!(
+            tracker.finish_at(scratch.path(), 81, 105, 0).0,
+            Observation::Decision(WaitDecision::HelperBlocked)
+        );
+        drop(copy);
+        assert_eq!(
+            tracker.finish_at(scratch.path(), 81, 105, 0).0,
+            Observation::Decision(WaitDecision::TimedOut)
+        );
     }
 
     #[cfg(unix)]
