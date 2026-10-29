@@ -198,3 +198,28 @@ libraries), the live AWS / Gremlin / MongoDB bindings, and retiring the Python
 files and updating `SKILL.md` / `references/well-architected.md` callers. The
 Python stays in place until then: the Rust commands cannot reach AWS or a
 database yet, so replacing the callers now would remove a working path.
+
+## GraphRAG / agentic memory (#4886, item 1)
+
+The planned Rust surface is `docgraph::memory`, with `toolkit neptune memory
+--operation OP --input FILE [--dry-run | --recorded FILE]`. The input is a JSON
+object of operation arguments. Dry run prints a JSON array of ordered request
+objects; replay uses the `calls` format and strict ordered matching of the seed
+session, with `results` in each response. A retrieval dry run cannot predict
+response-dependent expansion, so it prints the initial request; replay expands
+from the returned chunks. No live network client is provided.
+
+Requirements: **M1** execute-query validates graph IDs and binds openCypher
+parameters; **M2** escaping, Unicode character chunk boundaries and SHA-256
+entity IDs; **M3** graph creation preserves secure defaults and tags; **M4**
+GraphRAG document/chunk/entity/link ingestion, embedding and vector search;
+**M5** vector search followed by entity, relation and neighbor expansion;
+**M6** short-term message requests preserve timestamp, TTL, ordering and limit;
+**M7** Gremlin entity, relationship and recall builders bind values safely;
+**M8** analytics memory embedding, semantic and hybrid recall; **M9**
+consolidation decays facts older than 90 days by 0.9 and deletes below 0.1;
+**M10** deterministic dry-run and recorded replay, including malformed results.
+Invalid chunk sizes or overlaps are rejected to avoid the original infinite
+loop; dynamic Gremlin property names are bound rather than interpolated.
+Live AWS, DynamoDB and Gremlin clients, driver selection and Python retirement
+are outside this item; the legacy helpers remain until the live follow-up.
