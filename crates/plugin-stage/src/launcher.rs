@@ -68,7 +68,7 @@ pub fn mcp_command(root_var: &str, name: &str) -> String {
 /// The generated POSIX dispatcher staged at `bin/<name>`. It maps
 /// `uname -s` / `uname -m` to one of the supported platform pairs, runs
 /// `bin/<key>/<name>` (or `bin/<name>.exe` under Git Bash, MSYS or Cygwin on
-/// Windows, x86_64 or ARM64 through emulation) with the caller's arguments
+/// Windows, `x86_64` or ARM64 through emulation) with the caller's arguments
 /// and stdin, and exits 127 with a message on stderr when the platform is
 /// unsupported (before any file lookup, #5025) or no binary is staged for it.
 #[must_use]
