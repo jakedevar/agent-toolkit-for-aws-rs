@@ -915,3 +915,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
   #4886 item 2 design-only #5318 -> Codex sol 0d63c229 (build_free): live clients, driver decision, live-test policy; then cross-family pre-review.
   4/4 busy: cd65d0a9 (#5181), acde8672 (#5306), 56c78333 (#5317 L6), 0d63c229 (#5318 design). Queue: 38151494 (#5273), bbbd22bc (#5296).
 - 10-29 09:55Z: manager scoped 483861e9 (#4886 990c9008 on f3ab564c) OK 4174; check ok. ENQUEUED d7346462 (seq 2988, issue 4886). On land: close #5295 #5308 #5298; if #4886 auto-closes, REOPEN it (items 2-3 open; design #5318).
+- 10-29 10:04Z: #5318 design (0d63c229, Codex sol) at 1805856c0c01d78bea063e90fb2407fea4f8abd9: 9 reqs, 32 T-cases, 7 slices; two-step user-run collection, URI/TLS flags refused. PM RULINGS on #5318: Q1 accept two-step (no Mongo driver dep); Q2 flags provisional; Q3 to pre-review; Q4/Q5 resolved in slice 1; O1-O4 operator gates only for the live run (one operator todo after offline slices land).
+  Pre-review #5321 -> Claude Opus 887003f3 (pinned 1805856c, build_free). On ACCEPT: land the design doc (source_session 0d63c229, docs-only) + file slices.
+  4/4 busy: cd65d0a9 (#5181), acde8672 (#5306), 56c78333 (#5317 L6), 887003f3 (#5321 pre-review). Queue: #5273, #5296, #4886.
