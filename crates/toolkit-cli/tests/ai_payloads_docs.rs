@@ -128,7 +128,7 @@ fn render_pages() -> Vec<&'static str> {
 /// Every markdown page under `dir`, as paths relative to it.
 fn markdown_files(dir: &Path, base: &Path, found: &mut Vec<String>) {
     let mut entries: Vec<_> = fs::read_dir(dir).unwrap().map(|e| e.unwrap()).collect();
-    entries.sort_by_key(|e| e.file_name());
+    entries.sort_by_key(std::fs::DirEntry::file_name);
     for entry in entries {
         let path = entry.path();
         if entry.file_type().unwrap().is_dir() {
@@ -481,14 +481,14 @@ fn ap_doc_07_append_step_saves_appends_then_opens() {
         let save = body
             .find("save the notebook")
             .unwrap_or_else(|| panic!("{rel} does not ask the user to save the notebook"));
-        let append = body[save..]
-            .find("--append")
-            .map(|i| i + save)
-            .unwrap_or_else(|| panic!("{rel} does not run `--append` after the save step"));
-        let open = body[append..]
-            .find("`open:`")
-            .unwrap_or_else(|| panic!("{rel} does not tell the user to open the `open:` path"));
-        assert!(open > 0, "{rel}");
+        let append = save
+            + body[save..]
+                .find("--append")
+                .unwrap_or_else(|| panic!("{rel} does not run `--append` after the save step"));
+        assert!(
+            body[append..].contains("`open:`"),
+            "{rel} does not tell the user to open the `open:` path"
+        );
         assert!(
             body.contains("versioned") || body.contains("-01.ipynb"),
             "{rel} does not explain that the append publishes a new versioned notebook"
