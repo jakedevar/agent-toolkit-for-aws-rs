@@ -1,6 +1,14 @@
 //! The `hooks.json` launcher must fail closed. These tests execute the
 //! registered command with `sh`, exactly as a host would, against stub and
 //! real binaries placed under a throwaway plugin root.
+//!
+//! Integration round 20 (#5019) lands this crate with the plugin registration
+//! switch held: the shipped `plugins/aws-core/.../hooks/hooks.json` keeps the
+//! Python launcher until the binary packaging slice (#4487) stages the binary.
+//! The Rust launcher registration is kept byte-for-byte as reviewed (#4488) in
+//! `launcher/hooks.json`; the fail-closed tests below run against it. #4487
+//! activates it by copying that file over the plugin `hooks.json`, pointing
+//! `HOOKS_JSON` back at the plugin file and deleting the held-registration test.
 #![cfg(unix)]
 
 use std::fs;
@@ -14,9 +22,16 @@ use std::thread;
 use toolkit_core::{parse_json, Json};
 
 const BINARY: &str = env!("CARGO_BIN_EXE_secret-safety");
-const HOOKS_JSON: &str = concat!(
+/// The staged Rust launcher registration (activated by #4487).
+const HOOKS_JSON: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/launcher/hooks.json");
+/// The registration the plugin ships today (held on the Python launcher).
+const LIVE_HOOKS_JSON: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../plugins/aws-core/com.anthropic.claude-code/hooks/hooks.json"
+);
+const LIVE_PYTHON_HOOK: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../plugins/aws-core/com.anthropic.claude-code/hooks/secret-safety.py"
 );
 const HOOK_DIR: &str = "com.anthropic.claude-code/hooks";
 const SECRET_INPUT: &str =
@@ -34,8 +49,13 @@ struct Registration {
 }
 
 fn registrations() -> Vec<Registration> {
-    let text = fs::read_to_string(HOOKS_JSON).expect("read hooks.json");
-    let root = parse_json(&text).expect("hooks.json is valid JSON");
+    registrations_in(HOOKS_JSON)
+}
+
+fn registrations_in(path: &str) -> Vec<Registration> {
+    let text = fs::read_to_string(path).unwrap_or_else(|error| panic!("read {path}: {error}"));
+    let root =
+        parse_json(&text).unwrap_or_else(|error| panic!("{path} is not valid JSON: {error}"));
     let Some(Json::Array(entries)) = root.get("hooks").and_then(|hooks| hooks.get("PreToolUse"))
     else {
         panic!("hooks.PreToolUse must be an array");
@@ -184,6 +204,32 @@ fn registrations_keep_matchers_and_timeouts_and_drop_python() {
             "{command}"
         );
     }
+}
+
+/// While the switch is held (#5019, until #4487), the shipped plugin must keep
+/// guarding the same tools with the same timeout through the Python launcher,
+/// and the Python hook it launches must still be present: holding the switch
+/// never removes the protection.
+#[test]
+fn the_live_registration_is_held_on_the_python_launcher_until_activation() {
+    let staged = registrations();
+    let live = registrations_in(LIVE_HOOKS_JSON);
+    let matchers = |found: &[Registration]| -> Vec<String> {
+        found.iter().map(|r| r.matcher.clone()).collect()
+    };
+    assert_eq!(matchers(&live), matchers(&staged));
+    for registration in &live {
+        assert_eq!(registration.timeout, 5);
+        assert!(
+            registration.command.contains(
+                "\"${CLAUDE_PLUGIN_ROOT}/com.anthropic.claude-code/hooks/secret-safety.py\""
+            ),
+            "{}",
+            registration.command
+        );
+    }
+    let python = fs::metadata(LIVE_PYTHON_HOOK).expect("the held Python hook is shipped");
+    assert!(python.is_file() && python.len() > 0);
 }
 
 #[test]

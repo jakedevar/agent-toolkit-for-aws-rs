@@ -71,7 +71,7 @@ size cap and a hard deadline thread.
 output. Exit 0: forward stdout (allow = empty). Any other result (missing file, not
 executable, non-zero exit, signal, unset `CLAUDE_PLUGIN_ROOT`): print the deny JSON with a
 reason naming the unavailable guard, exit 0. Nothing in the launcher invokes
-`python3`, `python` or `py`; `secret-safety.py` therefore becomes **dead** once this lands
+`python3`, `python` or `py`; `secret-safety.py` therefore becomes **dead** once this launcher is activated (held at landing, §9.3)
 and stays in place only as read-only evidence until retirement (#4415).
 
 Consequence to record: until a platform binary is staged at that path, every guarded
@@ -164,8 +164,19 @@ the exact commit are diagnostic evidence only.
 
 ### 9.3 Python file status
 
-`hooks.json` no longer launches `secret-safety.py`, so the Python file is dead. It stays
-in place as read-only evidence until retirement (#4415).
+At landing (integration round 20, #5019) the registration switch is **held**: the shipped
+`plugins/aws-core/com.anthropic.claude-code/hooks/hooks.json` stays byte-identical to its
+pre-#4412 content and still launches `secret-safety.py`, which therefore stays live, not
+dead, until activation. The reviewed Rust launcher registration (§5, review #4488) is kept
+byte-for-byte in `crates/secret-safety-hook/launcher/hooks.json`, and `tests/launcher.rs`
+runs every fail-closed test against that staged file.
+`the_live_registration_is_held_on_the_python_launcher_until_activation` pins the held
+state: the shipped file guards the same two matchers with `timeout: 5` through
+`secret-safety.py`, and that file is present. The binary packaging slice #4487 activates
+the switch atomically with the staged binary: it copies `launcher/hooks.json` over the
+plugin file, points `HOOKS_JSON` in `tests/launcher.rs` back at the plugin file and deletes
+the held-registration test. After that `secret-safety.py` is dead and stays in place as
+read-only evidence until retirement (#4415).
 
 ### 9.4 Release dependency
 
