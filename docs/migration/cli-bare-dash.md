@@ -272,3 +272,13 @@ an explicit literal. `tests/cloudwatch_api.rs`
 (`a_bare_dash_argument_is_refused_and_stdin_is_never_read`) checks that
 `cloudwatch instrumentation` and `snapshots` refuse `--json -` / `--json-file -`
 and never read stdin.
+
+## `mcp-proxy` (#5079)
+
+`toolkit mcp-proxy` (#4413 S3) lists nothing in either list. Its positional is
+the endpoint URL, and every value flag (`--service`, `--region`, `--profile`,
+`--metadata`, `--header`, `--retries`, the five timeouts, `--log-level`) is a
+name, number or `KEY=VALUE` pair that never names a file, so the exact value
+`-` is refused (exit 2) by the router before the handler runs. The command
+reads only its own stdin stream (the MCP client) and writes only its own
+stdout; neither is selected by an argument.

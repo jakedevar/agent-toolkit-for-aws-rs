@@ -72,13 +72,22 @@ pub fn profile_facts(
     let Some(profile) = parsed.get_profile(selected.name()) else {
         return Some(ProfileFacts::default());
     };
+    let has = |name: &str| profile.get(name).is_some();
+    // Key names only: a `source_profile` chain is assumed to reach any profile
+    // that runs a process (the `source_profile` value is never read).
+    let any_process = parsed
+        .profiles()
+        .filter_map(|name| parsed.get_profile(name))
+        .any(|other| other.get("credential_process").is_some());
     Some(ProfileFacts {
         profile_exists: true,
         credential_keys: CREDENTIAL_PROFILE_KEYS
             .iter()
             .copied()
-            .filter(|key| profile.get(key).is_some())
+            .filter(|key| has(key))
             .collect(),
+        credential_process_reachable: has("credential_process")
+            || (has("source_profile") && any_process),
     })
 }
 
@@ -105,9 +114,27 @@ fn home_dir_from(env: &dyn Env) -> Option<String> {
     home_dir(&SdkEnv::from_slice(&borrowed), Os::real())
 }
 
-/// Read both profile files for the preflight.
+/// The selected profile's `region` value, for the proxy's `AWS_REGION`
+/// metadata default (#4413 S3; upstream uses the boto3 session region). `None`
+/// when the files cannot be read or parsed, the profile is missing or has no
+/// valid region. A region is not a credential; no other value is read.
 #[must_use]
-pub fn profile_view(env: &dyn Env, selected: &SelectedProfile) -> ProfileView {
+pub fn profile_region(env: &dyn Env, selected: &SelectedProfile) -> Option<String> {
+    let texts = read_texts(env).ok()?;
+    let files = EnvConfigFiles::builder()
+        .with_contents(EnvConfigFileKind::Config, texts[0].as_str())
+        .with_contents(EnvConfigFileKind::Credentials, texts[1].as_str())
+        .build();
+    let fs = Fs::from_slice(&[]);
+    let sdk_env = SdkEnv::from_slice(&[]);
+    let name = Some(Cow::Owned(selected.name().to_string()));
+    let parsed = ready(aws_config::profile::load(&fs, &sdk_env, &files, name))?.ok()?;
+    let region = parsed.get_profile(selected.name())?.get("region")?.trim();
+    crate::endpoint::is_valid_region(region).then(|| region.to_string())
+}
+
+/// Both file texts (config, credentials), or the view that refuses them.
+fn read_texts(env: &dyn Env) -> Result<Vec<String>, ProfileView> {
     let mut texts = Vec::with_capacity(2);
     for (_, variable, default) in FILES {
         let Some((path, explicit)) = file_path(env, variable, default) else {
@@ -119,13 +146,23 @@ pub fn profile_view(env: &dyn Env, selected: &SelectedProfile) -> ProfileView {
             Ok(bytes) => texts.push(String::from_utf8_lossy(&bytes).into_owned()),
             Err(error) if error.kind() == ErrorKind::NotFound => {
                 if explicit {
-                    return ProfileView::MissingOverride;
+                    return Err(ProfileView::MissingOverride);
                 }
                 texts.push(String::new());
             }
-            Err(_) => return ProfileView::Unusable,
+            Err(_) => return Err(ProfileView::Unusable),
         }
     }
+    Ok(texts)
+}
+
+/// Read both profile files for the preflight.
+#[must_use]
+pub fn profile_view(env: &dyn Env, selected: &SelectedProfile) -> ProfileView {
+    let texts = match read_texts(env) {
+        Ok(texts) => texts,
+        Err(view) => return view,
+    };
     match profile_facts(&texts[0], &texts[1], selected) {
         Some(facts) => ProfileView::Loaded(facts),
         None => ProfileView::Unusable,
@@ -256,5 +293,56 @@ mod tests {
             .with("AWS_CONFIG_FILE", &broken.display().to_string())
             .with("HOME", &home.path().display().to_string());
         assert_eq!(profile_view(&env, &implicit()), ProfileView::Unusable);
+    }
+}
+
+#[cfg(test)]
+mod s3_tests {
+    use super::*;
+    use crate::env::MapEnv;
+    use crate::sdk::test_support::TempDir;
+
+    fn named(name: &str) -> SelectedProfile {
+        SelectedProfile::resolve(Some(name), &MapEnv::new())
+    }
+
+    #[test]
+    fn a_credential_process_is_reachable_directly_or_through_a_source_profile() {
+        let direct = "[profile dev]\ncredential_process = /bin/false\n";
+        let facts = profile_facts(direct, "", &named("dev")).expect("parsed");
+        assert!(facts.credential_process_reachable);
+        let chained = "[profile dev]\nrole_arn = arn:aws:iam::1:role/r\nsource_profile = base\n\
+                       [profile base]\ncredential_process = /bin/false\n";
+        let facts = profile_facts(chained, "", &named("dev")).expect("parsed");
+        assert!(facts.credential_process_reachable);
+        // No source_profile: another profile's process is not reachable.
+        let other = "[profile dev]\naws_access_key_id = AKID\naws_secret_access_key = s\n\
+                     [profile base]\ncredential_process = /bin/false\n";
+        let facts = profile_facts(other, "", &named("dev")).expect("parsed");
+        assert!(!facts.credential_process_reachable);
+        // A chain with no process anywhere.
+        let static_chain =
+            "[profile dev]\nrole_arn = arn:aws:iam::1:role/r\nsource_profile = base\n\
+                            [profile base]\naws_access_key_id = AKID\naws_secret_access_key = s\n";
+        let facts = profile_facts(static_chain, "", &named("dev")).expect("parsed");
+        assert!(!facts.credential_process_reachable);
+    }
+
+    #[test]
+    fn the_profile_region_is_read_and_validated() {
+        let tmp = TempDir::new("profile-region");
+        let config = tmp.write(
+            "cfg",
+            "[profile dev]\nregion = eu-west-1\n[profile bad]\nregion = not a region\n",
+        );
+        let env = MapEnv::new()
+            .with("AWS_CONFIG_FILE", &config.display().to_string())
+            .with("HOME", &tmp.path().display().to_string());
+        assert_eq!(
+            profile_region(&env, &named("dev")).as_deref(),
+            Some("eu-west-1")
+        );
+        assert_eq!(profile_region(&env, &named("bad")), None);
+        assert_eq!(profile_region(&env, &named("missing")), None);
     }
 }

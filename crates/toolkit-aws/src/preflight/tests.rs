@@ -7,6 +7,7 @@ fn facts(exists: bool, keys: &[&'static str]) -> ProfileView {
     ProfileView::Loaded(ProfileFacts {
         profile_exists: exists,
         credential_keys: keys.iter().copied().collect(),
+        ..ProfileFacts::default()
     })
 }
 

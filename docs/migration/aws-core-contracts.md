@@ -344,6 +344,20 @@ Dev-dependencies for the offline T-TLS and T-LOGIN fixtures: `rcgen` 0.14.10
 `aws_lc_rs` (the loopback server), `p256` (a DPoP key generated at test time)
 and `sha2` (the login cache file name).
 
+### MCP-proxy additions (#4413 S3)
+
+S3 ([mcp-proxy-s3.md](mcp-proxy-s3.md)) adds `McpTarget` (R-URL, default
+build), `diag::Level` (the `--log-level` threshold), the non-Unix
+`credential_process` rule (`preflight::guard_credential_process`,
+`GuardedCredentials::with_null_stdin`), `sdk::profile::profile_region`, the
+public provider-plane recorder `sdk::recorder` (a test double, like
+`testing`) and `sdk::tracing_dispatcher_set` (T-LEAK-GATE). One new direct
+dependency, already in the tree through aws-config:
+
+| Crate | Version | Why | Features |
+| --- | --- | --- | --- |
+| `tracing` | 0.1.44 | `dispatcher::has_been_set` for T-LEAK-GATE; nothing is ever installed | `default-features = false`, `std` (no `log`) |
+
 `toolkit-cli` gains the non-default feature `aws-sdk` (enables
 `toolkit-aws/sdk`): `asm exec` then signs with `SigV4Signer` over its own
 credential chain and sends over `SdkTransport` with the process's validated

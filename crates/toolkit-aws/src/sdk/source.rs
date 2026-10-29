@@ -41,8 +41,9 @@ use crate::credentials::{Credentials, CredentialsProvider};
 use crate::env::{Env, ProcessEnv};
 use crate::error::AwsError;
 use crate::preflight::{
-    classify, select_source, AttemptOutcome, AuthDecision, CredentialRefusal, Preflight,
-    RequestAuth, SelectedProfile, Selection, SessionAuth, SourceKind,
+    classify, guard_credential_process, platform_isolates_stdin, select_source, AttemptOutcome,
+    AuthDecision, CredentialRefusal, Preflight, RequestAuth, SelectedProfile, Selection,
+    SessionAuth, SourceKind,
 };
 
 /// The HTTP client of the credential provider plane.
@@ -230,6 +231,9 @@ pub struct GuardedCredentials {
     http: ProviderHttp,
     env: Box<dyn Env + Send + Sync>,
     selector: Selector,
+    /// Whether `credential_process` children get a null stdin (D2); when
+    /// not, a profile that could run one is refused.
+    null_stdin: bool,
     #[cfg(test)]
     between_attempts: Option<BetweenAttempts>,
     state: Mutex<State>,
@@ -251,6 +255,7 @@ impl GuardedCredentials {
             http,
             env: Box::new(ProcessEnv),
             selector: select_source,
+            null_stdin: platform_isolates_stdin(),
             #[cfg(test)]
             between_attempts: None,
             state: Mutex::new(State {
@@ -259,6 +264,17 @@ impl GuardedCredentials {
                 session: SessionAuth::new(),
             }),
         }
+    }
+
+    /// Declare whether this process gave `credential_process` children a
+    /// null stdin (D2, `isolate_stdin` succeeded). The default is this
+    /// target's capability; the proxy passes the real outcome. Without it, a
+    /// selected profile that could run a `credential_process` fails closed
+    /// ([`crate::preflight::guard_credential_process`]).
+    #[must_use]
+    pub fn with_null_stdin(mut self, null_stdin: bool) -> Self {
+        self.null_stdin = null_stdin;
+        self
     }
 
     /// Replace the R-SRC selector (the mutation check). Test builds only: the
@@ -299,7 +315,9 @@ impl GuardedCredentials {
         let profile = SelectedProfile::resolve(self.cli_profile.as_deref(), self.env.as_ref());
         let view = profile_view(self.env.as_ref(), &profile);
         let preflight = classify(self.env.as_ref(), &profile, &view);
-        let kind = match (self.selector)(&preflight) {
+        let selection =
+            guard_credential_process((self.selector)(&preflight), &view, self.null_stdin);
+        let kind = match selection {
             Selection::Refuse(reason) => return (AttemptOutcome::Invalid(reason), None),
             Selection::Build(kind) => kind,
         };

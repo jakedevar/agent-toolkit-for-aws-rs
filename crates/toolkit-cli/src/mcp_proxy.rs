@@ -1,5 +1,7 @@
-//! The MCP proxy protocol core (#4413 slice S2): a stdio ↔ MCP Streamable
-//! HTTP bridge, with no command registered yet (S3 adds `toolkit mcp-proxy`).
+//! `toolkit mcp-proxy` (#4413): a stdio ↔ MCP Streamable HTTP bridge. S2 is
+//! the protocol core below; S3 adds the command ([`command`]: arguments,
+//! [`toolkit_aws::McpTarget`], the start-up order, the S1 wiring and the
+//! read-only filter).
 //!
 //! The accepted design is `docs/migration/mcp-proxy-design.md` (sections 2,
 //! 4.5 and 4.6). This module owns:
@@ -41,7 +43,10 @@
 //! allowlisted [`toolkit_aws::diag::Diag`] (R-LOG).
 
 pub mod budget;
+pub mod cli;
 pub mod clock;
+pub mod command;
+pub mod scope;
 pub mod sse;
 
 mod auth;
@@ -53,7 +58,7 @@ mod proxy;
 mod session;
 mod templates;
 
-pub use auth::{Auth, SignerAuth, Unsigned};
+pub use auth::{Auth, CredentialSource, Resolved, SignWith, SignerAuth, SourceAuth, Unsigned};
 pub use budget::{Budget, Reservation};
 pub use clock::{Clock, FakeClock, SystemClock};
 pub use limits::{Limits, LimitsError, LimitsSpec, MAX_CONTROL_LINE, MAX_ID_BYTES, NODE_CHARGE};

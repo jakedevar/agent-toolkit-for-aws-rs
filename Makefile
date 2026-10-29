@@ -25,3 +25,5 @@ clippy-sdk:
 test-sdk:
 	cargo test -p toolkit-aws --features sdk --locked
 	cargo test -p toolkit-cli --features aws-sdk --locked --lib asm_exec
+	cargo test -p toolkit-cli --features aws-sdk --locked --lib mcp_proxy
+	cargo test -p toolkit-cli --features aws-sdk --locked --test mcp_proxy_cli

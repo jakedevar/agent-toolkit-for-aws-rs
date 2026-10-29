@@ -41,6 +41,7 @@ pub mod env;
 pub mod error;
 #[cfg(test)]
 mod gates;
+pub mod mcp_target;
 pub mod paginate;
 pub mod preflight;
 pub mod recorded;
@@ -67,6 +68,7 @@ pub use endpoint::{
 };
 pub use env::{Env, MapEnv, ProcessEnv};
 pub use error::{render_failure, render_failure_with, AwsError, Guidance, ServiceError};
+pub use mcp_target::{McpTarget, TargetError};
 pub use paginate::{collect_pages, next_token_from, Page, PageLimits};
 pub use preflight::{AuthDecision, CredentialRefusal, Preflight, SelectedProfile, SourceKind};
 pub use redact::{redact_text, sanitize_path, Secret, REDACTED};

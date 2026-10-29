@@ -90,6 +90,7 @@ pub(crate) const SLICES: &[Slice] = &[
     crate::elasticache::tunnel::SLICE,
     crate::manifests::SLICE,
     crate::marketplace::SLICE,
+    crate::mcp_proxy::command::SLICE,
     crate::msk::SLICE,
     crate::relational::SLICE,
     crate::skills::SLICE,
@@ -549,7 +550,7 @@ mod tests {
     /// The route paths of the old `COMMANDS` table (commit ce0eaf6a, before the
     /// registry), in table order: the public order of [`COMMANDS`]. The routes of
     /// slices added after the registry follow at the end, ordered by slice name.
-    const LEGACY_COMMAND_ORDER: [&str; 95] = [
+    const LEGACY_COMMAND_ORDER: [&str; 96] = [
         "skills list",
         "manifests validate",
         "spec validate",
@@ -650,6 +651,8 @@ mod tests {
         "marketplace handler",
         "marketplace query-metering",
         "marketplace test-events",
+        // mcp-proxy (#4413 S3):
+        "mcp-proxy",
         // telemetry (#4398):
         "telemetry",
     ];

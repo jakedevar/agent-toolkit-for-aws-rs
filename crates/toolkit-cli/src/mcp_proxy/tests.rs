@@ -3,9 +3,14 @@
 //! in-process against fake streaming transports and the fake signer.
 
 mod budget;
+mod cli;
 mod errors;
 mod frame;
 mod harness;
+mod process;
+mod s3core;
+#[cfg(feature = "aws-sdk")]
+mod sdk;
 mod session;
 mod size;
 mod work;

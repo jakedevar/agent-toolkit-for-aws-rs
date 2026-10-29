@@ -18,7 +18,7 @@
 use std::fmt::Write as _;
 use std::io::Write;
 
-use crate::preflight::CredentialRefusal;
+use crate::preflight::{CredentialRefusal, InvalidReason};
 use crate::redact::redact_text;
 
 /// Longest rendered diagnostic line, in characters.
@@ -88,6 +88,12 @@ pub enum ProxyEvent {
     NotificationFailed,
     /// stdout could not be written.
     StdoutClosed,
+    /// `--read-only`: a `tools/call` for a tool not listed with a truthy
+    /// `readOnlyHint` was answered locally and never sent (#4413 S3).
+    ReadOnlyToolRefused,
+    /// The proxy's own deadline fired for a request and a
+    /// `notifications/cancelled` was sent upstream for it (#4413 S3).
+    TimeoutCancelForwarded,
 }
 
 impl ProxyEvent {
@@ -107,6 +113,8 @@ impl ProxyEvent {
             Self::MetaNotObject => line.write_str("meta-not-object"),
             Self::NotificationFailed => line.write_str("notification-failed"),
             Self::StdoutClosed => line.write_str("stdout-closed"),
+            Self::ReadOnlyToolRefused => line.write_str("read-only-tool-refused"),
+            Self::TimeoutCancelForwarded => line.write_str("timeout-cancel-forwarded"),
         }
     }
 }
@@ -132,6 +140,9 @@ impl DiagEvent {
 
 fn refusal_kind(refusal: CredentialRefusal) -> &'static str {
     match refusal {
+        CredentialRefusal::InvalidConfiguration(InvalidReason::CredentialProcessNeedsNullStdin) => {
+            "credential-process-needs-null-stdin"
+        }
         CredentialRefusal::InvalidConfiguration(_) => "invalid-configuration",
         CredentialRefusal::ProviderFailed => "provider-failed",
         CredentialRefusal::ConfiguredSourceNotLoaded => "configured-source-not-loaded",
@@ -140,17 +151,80 @@ fn refusal_kind(refusal: CredentialRefusal) -> &'static str {
     }
 }
 
+/// Diagnostic severity, ordered from the most verbose (`--log-level`, #4413
+/// S3: upstream's `DEBUG`, `INFO`, `WARNING`, `ERROR` and `CRITICAL`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Level {
+    /// Everything.
+    Debug,
+    /// Informational events.
+    Info,
+    /// Recoverable problems.
+    Warning,
+    /// Failed requests.
+    Error,
+    /// Nothing the proxy emits is this severe; `CRITICAL` silences the sink.
+    Critical,
+}
+
+impl Level {
+    /// Parse an upstream `--log-level` name (ASCII case-insensitive).
+    #[must_use]
+    pub fn parse(name: &str) -> Option<Self> {
+        match name.to_ascii_uppercase().as_str() {
+            "DEBUG" => Some(Self::Debug),
+            "INFO" => Some(Self::Info),
+            "WARNING" => Some(Self::Warning),
+            "ERROR" => Some(Self::Error),
+            "CRITICAL" => Some(Self::Critical),
+            _ => None,
+        }
+    }
+}
+
+impl DiagEvent {
+    /// The severity of this event.
+    #[must_use]
+    pub fn level(self) -> Level {
+        match self {
+            Self::TlsRootErrorsTolerated { .. } => Level::Info,
+            Self::CredentialFailure { .. } => Level::Error,
+            Self::TransportFailure { .. } | Self::HttpStatus { .. } => Level::Warning,
+            Self::Proxy(event) => match event {
+                ProxyEvent::BudgetExhausted
+                | ProxyEvent::SessionIdRefused
+                | ProxyEvent::ProtocolVersionRefused
+                | ProxyEvent::StdoutClosed => Level::Error,
+                ProxyEvent::ReadOnlyToolRefused | ProxyEvent::TimeoutCancelForwarded => Level::Info,
+                _ => Level::Warning,
+            },
+        }
+    }
+}
+
 /// The diagnostics sink.
 pub struct Diag {
     component: &'static str,
     sink: Box<dyn Write + Send>,
+    threshold: Level,
 }
 
 impl Diag {
     /// A sink writing `toolkit <component>: <event>` lines to `sink`.
     #[must_use]
     pub fn new(component: &'static str, sink: Box<dyn Write + Send>) -> Self {
-        Self { component, sink }
+        Self {
+            component,
+            sink,
+            threshold: Level::Debug,
+        }
+    }
+
+    /// Emit only events at `threshold` or above (a new sink emits all).
+    #[must_use]
+    pub fn with_threshold(mut self, threshold: Level) -> Self {
+        self.threshold = threshold;
+        self
     }
 
     /// The production sink: stderr.
@@ -170,6 +244,9 @@ impl Diag {
     /// Write one event. A write failure is ignored: diagnostics never change
     /// the outcome.
     pub fn emit(&mut self, event: DiagEvent) {
+        if event.level() < self.threshold {
+            return;
+        }
         let line = self.line(event);
         let _ = writeln!(self.sink, "{line}");
         let _ = self.sink.flush();
@@ -249,5 +326,55 @@ mod tests {
         let line = diag.line(DiagEvent::HttpStatus { status: 200 });
         assert!(line.chars().count() <= MAX_DIAG_CHARS);
         assert!(!format!("{diag:?}").contains("sink"));
+    }
+}
+
+#[cfg(test)]
+mod level_tests {
+    use std::sync::{Arc, Mutex};
+
+    use super::*;
+
+    #[derive(Clone, Default)]
+    struct Shared(Arc<Mutex<Vec<u8>>>);
+
+    impl Write for Shared {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn the_threshold_filters_by_severity() {
+        assert_eq!(Level::parse("debug"), Some(Level::Debug));
+        assert_eq!(Level::parse("WARNING"), Some(Level::Warning));
+        assert_eq!(Level::parse("WARN"), None);
+        let shared = Shared::default();
+        let mut diag =
+            Diag::new("mcp-proxy", Box::new(shared.clone())).with_threshold(Level::Error);
+        diag.emit(DiagEvent::HttpStatus { status: 503 });
+        diag.emit(DiagEvent::Proxy(ProxyEvent::ReadOnlyToolRefused));
+        diag.emit(DiagEvent::CredentialFailure {
+            refusal: CredentialRefusal::InvalidConfiguration(
+                InvalidReason::CredentialProcessNeedsNullStdin,
+            ),
+        });
+        let text = String::from_utf8(shared.0.lock().unwrap().clone()).unwrap();
+        assert_eq!(
+            text,
+            "toolkit mcp-proxy: credential-failure kind=credential-process-needs-null-stdin\n"
+        );
+        let mut silent =
+            Diag::new("mcp-proxy", Box::new(shared.clone())).with_threshold(Level::Critical);
+        silent.emit(DiagEvent::Proxy(ProxyEvent::StdoutClosed));
+        assert_eq!(
+            String::from_utf8(shared.0.lock().unwrap().clone()).unwrap(),
+            text
+        );
     }
 }

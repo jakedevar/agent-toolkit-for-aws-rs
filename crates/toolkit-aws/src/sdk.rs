@@ -81,7 +81,10 @@ use crate::transport::{
 use roots::ValidatedRoots;
 
 pub mod profile;
+pub mod recorder;
 pub mod roots;
+#[cfg(test)]
+mod s3_tests;
 pub mod source;
 pub mod stdin;
 #[cfg(test)]
@@ -117,6 +120,13 @@ impl SdkRuntime {
     fn block_on<F: std::future::Future>(&self, future: F) -> F::Output {
         self.0.block_on(future)
     }
+}
+
+/// Whether any `tracing` dispatcher was ever installed in this process
+/// (T-LEAK-GATE, R-LOG rule 1: the proxy must leave this `false`).
+#[must_use]
+pub fn tracing_dispatcher_set() -> bool {
+    tracing::dispatcher::has_been_set()
 }
 
 impl fmt::Debug for SdkRuntime {

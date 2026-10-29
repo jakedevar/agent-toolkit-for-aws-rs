@@ -28,6 +28,7 @@ sdk = [
     "dep:rustls-native-certs",
     "dep:rustls-pki-types",
     "dep:tokio",
+    "dep:tracing",
 ]
 
 [dependencies]
@@ -49,6 +50,9 @@ aws-types = { version = "=1.7.0", optional = true }
 rustls = { version = "=0.23.46", optional = true, default-features = false, features = ["std"] }
 rustls-native-certs = { version = "=0.8.5", optional = true }
 rustls-pki-types = { version = "=1.15.1", optional = true, features = ["std"] }
+# T-LEAK-GATE (#4413 S3): `tracing::dispatcher::has_been_set`, already in the
+# tree through aws-config; no `log` feature (R-LOG).
+tracing = { version = "=0.1.44", optional = true, default-features = false, features = ["std"] }
 
 # The Unix platform loader's locations for an empty `SSL_CERT_FILE` (R-ROOTS),
 # and the safe `dup2` that gives `credential_process` children a null stdin (D2).

@@ -167,6 +167,18 @@ pub(crate) fn failure(id: &Json, tool: Option<&str>, failure: Failure) -> String
     }
 }
 
+/// `--read-only`: upstream's refusal of a `tools/call` for a tool that is
+/// not marked read-only, as a `CallToolResult` with `isError: true`.
+pub(crate) fn read_only_refusal(id: &Json, tool: &str) -> String {
+    tool_error(
+        id,
+        &format!(
+            "Tool '{}' is not available in read-only mode.",
+            bounded_name(tool)
+        ),
+    )
+}
+
 /// A JSON-RPC error response.
 pub(crate) fn rpc_error(id: &Json, code: i64, message: &str) -> String {
     let line = to_line(&Json::object(vec![

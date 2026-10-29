@@ -64,6 +64,10 @@ pub struct ProxyConfig {
     pub limits: Limits,
     /// The `User-Agent` (S3's Q3 policy); none by default.
     pub user_agent: Option<String>,
+    /// `--read-only`: `tools/list` keeps only tools whose
+    /// `annotations.readOnlyHint` is `true`, and a `tools/call` for any other
+    /// tool is answered locally and never sent.
+    pub read_only: bool,
 }
 
 impl ProxyConfig {
@@ -78,6 +82,7 @@ impl ProxyConfig {
             retries: 0,
             limits: Limits::default(),
             user_agent: None,
+            read_only: false,
         }
     }
 }
@@ -181,6 +186,7 @@ impl Proxy {
             jitter: FullJitter::new(),
             retry,
             workers: AtomicUsize::new(0),
+            read_only_tools: Mutex::new(HashMap::new()),
         });
 
         let writer = {
@@ -209,6 +215,9 @@ impl Proxy {
         exit
     }
 }
+
+/// S3 tests-first stub switch (red commit only).
+const STUB: bool = true;
 
 fn spawn(name: &str, body: impl FnOnce() + Send + 'static) -> std::thread::JoinHandle<()> {
     std::thread::Builder::new()
@@ -245,6 +254,9 @@ struct Entry {
     timeout_seconds: u64,
     task: Arc<Task>,
     finished: bool,
+    /// This request is a `tools/list` (its result is filtered in read-only
+    /// mode).
+    lists_tools: bool,
 }
 
 #[derive(Debug, Default)]
@@ -273,6 +285,9 @@ struct Shared {
     jitter: FullJitter,
     retry: RetryPolicy,
     workers: AtomicUsize,
+    /// `--read-only`: each tool name from the latest `tools/list` that named
+    /// it, and whether its `readOnlyHint` was `true`.
+    read_only_tools: Mutex<HashMap<String, bool>>,
 }
 
 /// How a worker step ended early.
@@ -481,7 +496,7 @@ impl Shared {
 
     // -------------------------------------------------------- supervisor
 
-    fn supervise(&self) {
+    fn supervise(self: &Arc<Self>) {
         let mut pending = lock(&self.pending);
         loop {
             if self.is_shutdown() {
@@ -495,9 +510,16 @@ impl Shared {
                 .map(|(key, _)| key.clone())
                 .collect();
             if !expired.is_empty() {
+                let ids: Vec<Json> = expired
+                    .iter()
+                    .filter_map(|key| pending.entries.get(key).map(|e| e.id.clone()))
+                    .collect();
                 drop(pending);
                 for key in &expired {
                     self.fail_entry(key, Failure::TimedOut { seconds: 0 });
+                }
+                for id in ids {
+                    self.forward_cancel(id);
                 }
                 pending = lock(&self.pending);
                 for key in &expired {
@@ -644,6 +666,10 @@ impl Shared {
             }
         }
 
+        if self.config.read_only && self.refuse_read_only(&messages) {
+            return;
+        }
+
         // `_meta` injection: the body is the client's bytes unless it changed.
         let injected = inject(&mut value, &self.config.metadata);
         if injected.kept > 0 {
@@ -715,20 +741,26 @@ impl Shared {
         let now = self.clock.now();
         let mut task_deadline = now + limits.request_timeout;
         let mut entries = Vec::new();
-        for (id, tool, _) in requests {
+        for (id, tool, method) in requests {
             let timeout = if tool.is_some() {
                 limits.tool_timeout
             } else {
                 limits.request_timeout
             };
             task_deadline = task_deadline.max(now + timeout);
-            entries.push((id.clone(), tool.clone(), now + timeout, timeout.as_secs()));
+            entries.push((
+                id.clone(),
+                tool.clone(),
+                now + timeout,
+                timeout.as_secs(),
+                method == "tools/list",
+            ));
         }
         let task = Arc::new(Task {
             aborted: AtomicBool::new(false),
             deadline: task_deadline,
         });
-        for (id, tool, deadline, timeout_seconds) in entries {
+        for (id, tool, deadline, timeout_seconds, lists_tools) in entries {
             pending.entries.insert(
                 key_of(&id),
                 Entry {
@@ -738,6 +770,7 @@ impl Shared {
                     timeout_seconds,
                     task: Arc::clone(&task),
                     finished: false,
+                    lists_tools,
                 },
             );
         }
@@ -887,6 +920,10 @@ impl Shared {
         initialize: bool,
         initialized: bool,
     ) -> Result<(), Stop> {
+        if initialize && !STUB {
+            // R-STICKY: a new session begins with this request.
+            self.auth.initialize_started();
+        }
         let mut stream = self.open_post(task, &body)?;
         drop(body);
         drop(body_hold);
@@ -1032,7 +1069,7 @@ impl Shared {
         let parsed = parse_upstream(&bytes, limits);
         drop(bytes);
         drop(raw_hold);
-        let value = match parsed {
+        let mut value = match parsed {
             Ok(value) => value,
             Err(Dropped::Malformed) => {
                 self.emit(ProxyEvent::UpstreamMessageMalformed);
@@ -1043,6 +1080,9 @@ impl Shared {
                 return Ok(false);
             }
         };
+        if self.config.read_only {
+            self.filter_tool_lists(&mut value, delivery.keys);
+        }
         let line_hold = self
             .budget
             .reserve(compact_len(&value) + 1, &self.budget_wait(&cancelled))?;
@@ -1200,6 +1240,138 @@ impl Shared {
                 }
             }
         }
+    }
+
+    // ---------------------------------------------------------- read-only
+
+    /// `--read-only`: answer locally (never forward) a line holding a
+    /// `tools/call` for a tool the latest `tools/list` did not mark
+    /// `readOnlyHint: true` (before any listing, every tool). In a batch, the
+    /// other requests are refused too, so nothing of it is sent. `true` when
+    /// the line was refused.
+    fn refuse_read_only(&self, messages: &[ClientMessage]) -> bool {
+        if STUB {
+            return false;
+        }
+        let lines: Vec<String> = {
+            let allowed = lock(&self.read_only_tools);
+            let refused = |message: &ClientMessage| {
+                matches!(message, ClientMessage::Request { method, tool, .. }
+                    if method == "tools/call"
+                        && tool.as_ref().is_none_or(|name| allowed.get(name) != Some(&true)))
+            };
+            if !messages.iter().any(refused) {
+                return false;
+            }
+            messages
+                .iter()
+                .filter_map(|message| match message {
+                    ClientMessage::Request { id, tool, .. } if refused(message) => Some(
+                        templates::read_only_refusal(id, tool.as_deref().unwrap_or("")),
+                    ),
+                    ClientMessage::Request { id, .. } => Some(templates::rpc_error(
+                        id,
+                        INVALID_REQUEST,
+                        "Invalid Request: batch refused in read-only mode",
+                    )),
+                    _ => None,
+                })
+                .collect()
+        };
+        self.emit(ProxyEvent::ReadOnlyToolRefused);
+        for line in lines {
+            self.send_control(&line);
+        }
+        true
+    }
+
+    /// `--read-only`: keep only `readOnlyHint: true` tools in the results of
+    /// this message's `tools/list` requests, and remember every listed name.
+    fn filter_tool_lists(&self, value: &mut Json, keys: &[String]) {
+        if STUB {
+            return;
+        }
+        let list_keys: Vec<String> = {
+            let pending = lock(&self.pending);
+            keys.iter()
+                .filter(|key| pending.entries.get(*key).is_some_and(|e| e.lists_tools))
+                .cloned()
+                .collect()
+        };
+        if list_keys.is_empty() {
+            return;
+        }
+        let mut listed: Vec<(String, bool)> = Vec::new();
+        let mut filter = |item: &mut Json| {
+            if !item
+                .get("id")
+                .is_some_and(|id| list_keys.contains(&key_of(id)))
+            {
+                return;
+            }
+            let Json::Object(members) = item else {
+                return;
+            };
+            let Some((_, Json::Object(result))) = members.iter_mut().find(|(k, _)| k == "result")
+            else {
+                return;
+            };
+            let Some((_, Json::Array(tools))) = result.iter_mut().find(|(k, _)| k == "tools")
+            else {
+                return;
+            };
+            tools.retain(|tool| {
+                let read_only = tool
+                    .get("annotations")
+                    .and_then(|annotations| annotations.get("readOnlyHint"))
+                    == Some(&Json::Bool(true));
+                if let Some(name) = tool.get("name").and_then(Json::as_str) {
+                    listed.push((name.to_string(), read_only));
+                }
+                read_only
+            });
+        };
+        match value {
+            Json::Array(items) => items.iter_mut().for_each(&mut filter),
+            other => filter(other),
+        }
+        lock(&self.read_only_tools).extend(listed);
+    }
+
+    /// The proxy's own deadline fired for request `id`: tell the server with
+    /// a `notifications/cancelled` (sent once, signed, its response unread).
+    fn forward_cancel(self: &Arc<Self>, id: Json) {
+        if STUB {
+            return;
+        }
+        let body = to_line(&Json::object(vec![
+            ("jsonrpc", Json::string("2.0")),
+            ("method", Json::string("notifications/cancelled")),
+            (
+                "params",
+                Json::object(vec![
+                    ("requestId", id),
+                    ("reason", Json::string("request timed out")),
+                ]),
+            ),
+        ]))
+        .into_bytes();
+        let shared = Arc::clone(self);
+        spawn("mcp-proxy-cancel", move || {
+            if shared.is_shutdown() {
+                return;
+            }
+            let Ok(mut request) = shared.build_request(Method::Post, body) else {
+                return;
+            };
+            if shared.auth.sign(&mut request).is_err() {
+                return;
+            }
+            match shared.transport.open(&request, &shared.stream_limits) {
+                Ok(_stream) => shared.emit(ProxyEvent::TimeoutCancelForwarded),
+                Err(error) => shared.emit_event(DiagEvent::TransportFailure { code: error.code() }),
+            }
+        });
     }
 
     /// stdin EOF: end the session with exactly one `DELETE`.

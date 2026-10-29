@@ -123,6 +123,12 @@ pub struct ProfileFacts {
     pub profile_exists: bool,
     /// The [`CREDENTIAL_PROFILE_KEYS`] the selected profile holds.
     pub credential_keys: BTreeSet<&'static str>,
+    /// Whether the selected profile's provider could run a
+    /// `credential_process`: the profile has the key itself, or it has a
+    /// `source_profile` and some profile in the files has the key (key names
+    /// only; the `source_profile` value is never read, so a chain is assumed
+    /// to reach any such profile).
+    pub credential_process_reachable: bool,
 }
 
 /// The profile files as the preflight sees them.
@@ -153,6 +159,10 @@ pub enum InvalidReason {
     MissingProfileFile,
     /// A profile file exists but cannot be read or parsed.
     UnusableProfileFile,
+    /// The selected profile could run a `credential_process` but this
+    /// process cannot give children a null stdin (non-Unix, D2): the child
+    /// would inherit the MCP message stream (#4413 S3).
+    CredentialProcessNeedsNullStdin,
 }
 
 /// The configured sources a preflight found (R-ABS "Configured"), before
@@ -458,3 +468,107 @@ impl SessionAuth {
 
 #[cfg(test)]
 mod tests;
+
+/// D2 on platforms without stdin isolation (#4413 S3): when `null_stdin` is
+/// false (the proxy could not give child processes a null stdin, as on
+/// non-Unix targets), a selection of the profile provider whose profile could
+/// run a `credential_process` is refused (level 1: fail closed, no rebuild,
+/// no fallback to another source). Every other selection is unchanged.
+#[must_use]
+pub fn guard_credential_process(
+    selection: Selection,
+    files: &ProfileView,
+    null_stdin: bool,
+) -> Selection {
+    match (selection, files) {
+        (Selection::Build(SourceKind::Profile), ProfileView::Loaded(facts))
+            if false && !null_stdin && facts.credential_process_reachable =>
+        {
+            Selection::Refuse(InvalidReason::CredentialProcessNeedsNullStdin)
+        }
+        (other, _) => other,
+    }
+}
+
+/// Whether this target can give `credential_process` children a null stdin
+/// (the D2 mechanism exists on Unix only).
+#[must_use]
+pub const fn platform_isolates_stdin() -> bool {
+    cfg!(unix)
+}
+
+#[cfg(test)]
+mod credential_process_tests {
+    use super::*;
+
+    fn loaded(reachable: bool) -> ProfileView {
+        ProfileView::Loaded(ProfileFacts {
+            profile_exists: true,
+            credential_keys: ["credential_process"].into_iter().collect(),
+            credential_process_reachable: reachable,
+        })
+    }
+
+    #[test]
+    fn without_a_null_stdin_a_reachable_credential_process_is_refused() {
+        let profile = Selection::Build(SourceKind::Profile);
+        assert_eq!(
+            guard_credential_process(profile, &loaded(true), false),
+            Selection::Refuse(InvalidReason::CredentialProcessNeedsNullStdin)
+        );
+        // With isolation, or without a reachable process, nothing changes.
+        assert_eq!(
+            guard_credential_process(profile, &loaded(true), true),
+            profile
+        );
+        assert_eq!(
+            guard_credential_process(profile, &loaded(false), false),
+            profile
+        );
+        // Other sources never run a credential process and are not refused:
+        // the refusal never falls through to them either (the profile row is
+        // refused, not skipped).
+        for kind in [
+            SourceKind::Env,
+            SourceKind::WebIdentity,
+            SourceKind::Ecs,
+            SourceKind::DefaultChain,
+        ] {
+            let other = Selection::Build(kind);
+            assert_eq!(guard_credential_process(other, &loaded(true), false), other);
+        }
+        let refused = Selection::Refuse(InvalidReason::PartialStaticKeys);
+        assert_eq!(
+            guard_credential_process(refused, &loaded(true), false),
+            refused
+        );
+    }
+
+    #[test]
+    fn a_refusal_is_level_one_and_triggers_no_rebuild() {
+        let outcome = AttemptOutcome::Invalid(InvalidReason::CredentialProcessNeedsNullStdin);
+        assert_eq!(outcome.level(), Some(1));
+        assert!(!outcome.triggers_rebuild());
+        let mut auth = RequestAuth::new();
+        auth.record(outcome);
+        assert!(!auth.should_retry(outcome));
+        assert_eq!(
+            auth.decide(true),
+            AuthDecision::Refuse(CredentialRefusal::InvalidConfiguration(
+                InvalidReason::CredentialProcessNeedsNullStdin
+            ))
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_isolates_stdin() {
+        assert!(platform_isolates_stdin());
+    }
+
+    #[cfg(not(unix))]
+    #[test]
+    fn other_targets_do_not_isolate_stdin() {
+        assert!(!platform_isolates_stdin());
+    }
+}

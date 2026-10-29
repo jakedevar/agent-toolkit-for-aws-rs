@@ -2412,10 +2412,11 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
 /// bytes, `0xa95b_3df5_10f4_8191`) plus the synopsis and description of the
 /// six slices registered since, bedrock-probes (#4404), docgraph (#4395),
 /// dynamodb-bench (#4390), elasticache-tunnel (#4393), marketplace (#4396) and
-/// telemetry (#4398). A deliberate usage change updates the pin in the same
+/// telemetry (#4398), then mcp-proxy (#5079, #4413 S3: 42243 bytes before it).
+/// A deliberate usage change updates the pin in the same
 /// commit and says so in the Issue; an incidental one fails here.
-const USAGE_BASE_LEN: usize = 42243;
-const USAGE_BASE_FNV1A64: u64 = 0x874f_c84f_07b0_7a26;
+const USAGE_BASE_LEN: usize = 43490;
+const USAGE_BASE_FNV1A64: u64 = 0xe8ba_e396_4772_eac2;
 
 #[test]
 fn the_global_usage_text_is_byte_identical_to_the_base() {
