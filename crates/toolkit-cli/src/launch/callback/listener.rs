@@ -150,6 +150,10 @@ fn serve_with<L: ListenerIo>(
                     Ok(0) => drop_slot = true,
                     Ok(n) => {
                         busy = true;
+                        if clock.now() >= slot.deadline {
+                            slots[index] = None;
+                            continue;
+                        }
                         slot.head.extend_from_slice(&buf[..n]);
                         if let Some(end) = slot.head.windows(4).position(|w| w == b"\r\n\r\n") {
                             if clock.now() >= flow_end {
