@@ -928,6 +928,69 @@ mod tests {
     }
 
     #[test]
+    fn mentions_are_found_conservatively() {
+        let bin = |path: &str| vec![Mention::Bin(path.to_string())];
+        assert_eq!(
+            plugin_bin_mentions(r#""${CLAUDE_PLUGIN_ROOT}/bin/tool""#),
+            bin("bin/tool")
+        );
+        assert_eq!(
+            plugin_bin_mentions(r#""${CLAUDE_PLUGIN_ROOT}"/./bin/tool"#),
+            bin("bin/tool")
+        );
+        assert_eq!(plugin_bin_mentions("exec ./bin/tool"), bin("bin/tool"));
+        for none in [
+            "/usr/bin/env python3",
+            r#"sh -c 'python3 "$0" 2>/dev/null || py -3 "$0"' "${CLAUDE_PLUGIN_ROOT}/hooks/x.py""#,
+            r#"cat "${CLAUDE_PLUGIN_ROOT}/scripts/$1.txt""#,
+            "scripts/bin/tool",
+            r#"sh -c '"$0"/note' x"#,
+            "${CLAUDE_PLUGIN_ROOT}/node_modules/.bin/x",
+            r#"printf %s "{\"a\":\"b\"}""#,
+        ] {
+            assert!(plugin_bin_mentions(none).is_empty(), "{none}");
+        }
+        for unresolvable in [
+            r"${CLAUDE_PLUGIN_ROOT}\bin\tool",
+            "$D/bin/tool",
+            "../bin/tool",
+            "b?n/tool",
+            "${CLAUDE_PLUGIN_ROOT}/$X/tool",
+            "${CLAUDE_PLUGIN_ROOT}/x/../bin/tool",
+            "${CLAUDE_PLUGIN_ROOT%/}/bin/tool",
+        ] {
+            let mentions = plugin_bin_mentions(unresolvable);
+            assert!(
+                mentions
+                    .iter()
+                    .any(|m| matches!(m, Mention::Unresolvable(_))),
+                "{unresolvable}: {mentions:?}"
+            );
+        }
+        // A canonical guard whose deny reason says "bin" is still canonical:
+        // exact canonical forms are matched before the conservative scan.
+        let declaration = crate::Declaration::parse(
+            r##"{"schema": 1,
+              "platforms": [{"platform": "linux-x86_64", "triple": "x86_64-unknown-linux-gnu"}],
+              "binaries": [{"plugin": "p", "name": "g", "package": "g", "bin": "g",
+                "role": "guard-hook", "deny_reason": "Reinstall bin/ files.", "consumer": "#1"}]}"##,
+        )
+        .expect("declaration");
+        let scan = PluginScan {
+            repo_root: Path::new(""),
+            plugin_dir: Path::new("p"),
+            plugin: "p",
+            declaration: &declaration,
+        };
+        let command = guard_hook_command("CLAUDE_PLUGIN_ROOT", "g", "Reinstall bin/ files.");
+        let path = ["PreToolUse".to_string(), "command".to_string()];
+        assert_eq!(
+            scan.resolve_string(Kind::Hooks, &command, &path),
+            Ok(Some("g".to_string()))
+        );
+    }
+
+    #[test]
     fn json_paths_render_readably() {
         let parts: Vec<String> = ["hooks", "PreToolUse", "[0]", "hooks", "[1]", "command"]
             .iter()
