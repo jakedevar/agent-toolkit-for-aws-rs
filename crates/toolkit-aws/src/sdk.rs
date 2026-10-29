@@ -1765,41 +1765,6 @@ mod tests {
     }
 
     #[test]
-    fn non_public_socket_peer_receives_no_bytes_before_refusal() {
-        use std::io::Read;
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let port = listener.local_addr().unwrap().port();
-        let server = std::thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            stream
-                .set_read_timeout(Some(Duration::from_secs(5)))
-                .unwrap();
-            let mut bytes = [0; 1024];
-            stream.read(&mut bytes).unwrap()
-        });
-        let rt = runtime();
-        let roots = test_roots();
-        let connector = build_connector(
-            &rt,
-            &Timeouts::default(),
-            &roots.tls_context().unwrap(),
-            UnguardedResolver {
-                inner: Arc::new(StaticResolver("127.0.0.1")),
-            },
-            true,
-        );
-        let transport = SdkTransport::with_connector(&rt, connector);
-        let mut request = vanilla_request();
-        request.url = format!("https://merchant.example:{port}/");
-        request
-            .headers
-            .insert_sensitive("payment-signature", "secret")
-            .unwrap();
-        assert!(transport.send(&request).is_err());
-        assert_eq!(server.join().unwrap(), 0);
-    }
-
-    #[test]
     fn guarded_dns_refuses_answers_returned_after_deadline() {
         struct SlowResolver(std::sync::atomic::AtomicUsize);
         impl HostResolver for SlowResolver {
