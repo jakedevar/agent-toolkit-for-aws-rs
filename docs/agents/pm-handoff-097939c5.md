@@ -1197,3 +1197,4 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - Filed OpenClaw B3 #5505 (packaging; T-JS-PKG pending #5158) -> Claude Opus high ebb5348d (rolling).
 - 4/4: ce95436a S6+B2 integration, a0ab0de1 docgraph S2 (parked on job), cfb95bf6 L7, ebb5348d B3. Queue: 3050 #5478.
 - Plan unchanged: land A (S6, issue 5462) -> B (B2, issue 5443) -> #5360 last (continue_from 27f4dc18 merge-only).
+- 22:20Z: GM relayed operator AWS-build permission (standing directive 78e730f9). DECISION: not used now. The cloud kinds (cloud_gate, cloud_sweep) only cover landing/QA, and the queue isn't backed up (one entry). The slow part is local worker scoped_test admission on the disk floor, which cloud jobs don't touch. Revisit if the queue backs up or the disk floor stalls gates; report at next milestone.
