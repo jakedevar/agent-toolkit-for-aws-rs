@@ -446,6 +446,37 @@ fn shipped_binary_exchange_publishes_session() {
         .status()
         .unwrap()
         .success());
+    // Do not let host systemd-resolved or nscd bypass the private hosts file.
+    let nss = home.join("nsswitch.conf");
+    let original = std::fs::read_to_string("/etc/nsswitch.conf").unwrap();
+    let isolated = original
+        .lines()
+        .map(|line| {
+            if line.starts_with("hosts:") {
+                "hosts: files"
+            } else {
+                line
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    std::fs::write(&nss, isolated).unwrap();
+    assert!(Command::new("mount")
+        .arg("--bind")
+        .arg(&nss)
+        .arg("/etc/nsswitch.conf")
+        .status()
+        .unwrap()
+        .success());
+    use std::net::ToSocketAddrs;
+    let resolved: Vec<_> = ("oidc.us-east-1.amazonaws.com", 443)
+        .to_socket_addrs()
+        .unwrap()
+        .collect();
+    assert!(resolved
+        .iter()
+        .all(|address| address.ip().to_string() == "1.1.1.1"));
+    assert!(!resolved.is_empty());
 
     let ca_key = KeyPair::generate().unwrap();
     let mut ca_params = CertificateParams::new(Vec::<String>::new()).unwrap();
