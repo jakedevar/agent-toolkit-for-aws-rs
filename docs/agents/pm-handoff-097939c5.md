@@ -790,3 +790,7 @@ Friction: #4727, Rsi #4694, Rsi #4704
   Continuation 78d863e6 (Codex terra, continue_from 573278a7). Close #5228 #5229 with L4 landing.
   4/4 busy: 0dcdafea (#5181 S4 cont), da98439f (#5223 S2b cont), 23ccf6b5 (#5203 P-ROOTS f/u), 78d863e6 (#5216 L4 cont).
 - 10-29 06:30Z: GM mail: RATIONING LIFTED (operator: backup Claude + Codex accounts). Codex-first directive withdrawn; route by normal directives (impl Codex terra / Claude Sonnet; cross-family review: Claude Sonnet for Codex impl; Opus for security/hard). Provider window exhaustion -> report fault up once, keep going.
+- 10-29 06:33Z: L4 cont1 (78d863e6) stopped in 40 s on design contradiction #5230 (unreadable record has no trusted cutoff; unreadable+lock-free no row; valid-session row vs R-CB-WAIT missing error). No code.
+  RULING on #5230 (design rev 4): first-read missing -> R-CB-WAIT error; unreadable/disappeared = status unknown with cutoff_eff (last parsed cutoff, else wait-start + max flow lifetime, monotonic); session->auth; held<cutoff_eff+5s poll; held>= -> helper_blocked; free -> final (timeout/ended); auth-wait deletes record only after FINAL w/ lock free.
+  Continuation 8ea9ce8e (Codex terra, continue_from 78d863e6). Close #5228 #5229 #5230 with L4 landing.
+  4/4 busy: 0dcdafea (#5181 S4 cont), da98439f (#5223 S2b cont), 23ccf6b5 (#5203 P-ROOTS f/u), 8ea9ce8e (#5216 L4 cont2).
