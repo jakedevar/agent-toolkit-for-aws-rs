@@ -197,6 +197,7 @@ impl Proxy {
             workers: AtomicUsize::new(0),
             list_seq: AtomicU64::new(0),
             approvals: Mutex::new(Approvals::default()),
+            boundary: Mutex::new(0),
         });
 
         let writer = {
@@ -362,6 +363,10 @@ struct Shared {
     /// Dispatch order of `tools/list` requests.
     list_seq: AtomicU64,
     approvals: Mutex<Approvals>,
+    /// The last generation whose R-STICKY boundary was applied. Held only
+    /// by an initialize worker around [`Auth::initialize_started`], never
+    /// together with another lock of the proxy (#5136).
+    boundary: Mutex<u64>,
 }
 
 /// How a worker step ended early.
@@ -482,11 +487,13 @@ impl Shared {
 
     /// `initialize` is dispatched: retire the current session and start the
     /// next generation, atomically (#5106). The new generation has no
-    /// session id, signing state (R-STICKY) and read-only approvals; work
-    /// of the old one is never (re)sent, its `GET` stream stops and its
-    /// late listings are ignored.
+    /// session id, protocol version or read-only approvals; work of the old
+    /// one is never (re)sent, its `GET` stream stops and its late listings
+    /// are ignored. Only bookkeeping happens under the locks: the credential
+    /// side of the boundary (R-STICKY) runs later in the initialize worker,
+    /// with no proxy lock held ([`Self::session_boundary`], #5136).
     fn retire_session(&self) -> u64 {
-        let generation = {
+        let (generation, old_approvals) = {
             let mut session = lock(&self.session);
             let generation = session.generation + 1;
             *session = Session {
@@ -494,16 +501,37 @@ impl Shared {
                 ..Session::default()
             };
             self.generation.store(generation, Ordering::SeqCst);
-            self.auth.initialize_started();
-            *lock(&self.approvals) = Approvals {
-                generation,
-                ..Approvals::default()
-            };
-            generation
+            let old = std::mem::replace(
+                &mut *lock(&self.approvals),
+                Approvals {
+                    generation,
+                    ..Approvals::default()
+                },
+            );
+            (generation, old)
         };
+        drop(old_approvals); // releases their budget charge, outside the locks
         self.session_changed.notify_all();
         self.wake_waiters();
         generation
+    }
+
+    /// R-STICKY's credential boundary for the session `generation` opens:
+    /// [`Auth::initialize_started`], which may wait on credential I/O (the
+    /// guarded source's state mutex is held across a provider load). It runs
+    /// in the initialize worker before its request is signed, with no proxy
+    /// lock held, so stdin, deadlines, cancels and shutdown never wait on
+    /// it (#5136). The boundary lock only orders these calls: a boundary for
+    /// a generation already retired, or older than the last one applied, is
+    /// skipped, so a slow earlier boundary can never reset the signing state
+    /// of a later session.
+    fn session_boundary(&self, generation: u64) {
+        let mut applied = lock(&self.boundary);
+        if *applied >= generation || self.current_generation() != generation {
+            return;
+        }
+        self.auth.initialize_started();
+        *applied = generation;
     }
 
     fn wake_waiters(&self) {
@@ -1082,6 +1110,9 @@ impl Shared {
             slots: _,
         } = job;
         let keys = keys.as_slice();
+        if initialize {
+            self.session_boundary(generation);
+        }
         let mut stream = self.open_signed(
             Method::Post,
             &body,
@@ -1237,7 +1268,11 @@ impl Shared {
         raw_hold: Reservation,
     ) -> Result<bool, Stop> {
         let task = delivery.task;
-        let cancelled = || task.aborted() || self.is_shutdown();
+        // A retired `GET` delivery is cancelled wherever it waits, budget or
+        // stdout room included, so it is never queued into the next session
+        // and frees the `GET` worker (#5137). POST responses are not
+        // stream-owned: an old request's answer is still delivered.
+        let cancelled = || task.aborted() || self.is_shutdown() || self.retired(delivery);
         let limits = &self.config.limits;
         let charge = self.budget.reserve(
             limits.parse_charge(bytes.len()),
@@ -1670,8 +1705,12 @@ impl Shared {
     }
 
     /// The control worker: sends queued cancels one at a time, best effort
-    /// (signed once, no D1 refresh, response unread). A cancel past its
-    /// deadline, or of a retired session, is dropped.
+    /// (signed once, no D1 refresh, response unread). The deadline is
+    /// absolute (#5138): a cancel past it, of a retired session, refused by
+    /// the credentials or met by shutdown, is dropped with
+    /// `timeout-cancel-dropped`, checked when it is dequeued and again
+    /// after signing (which may wait on credential I/O); the transport's
+    /// connect and read timeouts are bounded by the time left.
     fn cancel_loop(&self) {
         loop {
             let cancel = {
@@ -1702,16 +1741,35 @@ impl Shared {
                 self.emit(ProxyEvent::TimeoutCancelDropped);
                 continue;
             };
-            if self.auth.sign(&mut request).is_err()
-                || self.current_generation() != cancel.generation
-            {
+            if self.auth.sign(&mut request).is_err() {
+                self.emit(ProxyEvent::TimeoutCancelDropped);
                 continue;
             }
+            let Some(timeouts) = self.cancel_timeouts(cancel.deadline, cancel.generation) else {
+                self.emit(ProxyEvent::TimeoutCancelDropped);
+                continue;
+            };
+            request.timeouts = timeouts;
             match self.transport.open(&request, &self.stream_limits) {
                 Ok(_stream) => self.emit(ProxyEvent::TimeoutCancelForwarded),
                 Err(error) => self.emit_event(DiagEvent::TransportFailure { code: error.code() }),
             }
         }
+    }
+
+    /// A signed cancel may still be sent: the proxy is running, its session
+    /// is current and its deadline has not passed. The transport timeouts
+    /// for it, each at most the time left; `None` drops it.
+    fn cancel_timeouts(&self, deadline: Duration, generation: u64) -> Option<Timeouts> {
+        if self.is_shutdown() || self.current_generation() != generation {
+            return None;
+        }
+        let left = deadline.checked_sub(self.clock.now())?;
+        if left.is_zero() {
+            return None;
+        }
+        let configured = self.config.timeouts;
+        Timeouts::new(configured.connect().min(left), configured.read().min(left)).ok()
     }
 
     /// stdin EOF: end the session with one `DELETE` (D1: one rebuild and

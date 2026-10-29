@@ -27,7 +27,9 @@ pub trait Auth: Send + Sync {
     fn session_started(&self) {}
 
     /// An `initialize` request is about to be signed: the session it opens
-    /// starts here (R-STICKY forgets the previous session's signing).
+    /// starts here (R-STICKY forgets the previous session's signing). It may
+    /// wait on credential I/O, so the core calls it from the initialize
+    /// worker with no proxy lock held (#5136).
     fn initialize_started(&self) {}
 }
 

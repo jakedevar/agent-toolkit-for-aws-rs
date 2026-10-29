@@ -83,9 +83,15 @@ proxy writes through private duplicates of descriptors 1 and 2 (std's safe
 - **R-STICKY session boundary** (repair 1, #5106): sessions are numbered
   generations. When an `initialize` is dispatched, the current session is
   retired and the next generation starts atomically: no session id, no
-  protocol version, `Auth::initialize_started` (R-STICKY forgets the old
-  session's signing, so the `initialize` itself counts for the new one), no
-  read-only approvals. The fresh `initialize` never carries the old
+  protocol version, no read-only approvals. Only that bookkeeping happens
+  under the proxy's locks (repair 2, #5136): R-STICKY's credential side,
+  `Auth::initialize_started` (the old session's signing is forgotten, so
+  the `initialize` itself counts for the new one), may wait on credential
+  I/O, so the initialize worker calls it before signing, with no proxy lock
+  held. stdin, deadlines, cancels and shutdown never wait on a provider. A
+  boundary lock orders these calls, and a boundary for a generation that is
+  already retired or superseded is skipped, so a slow earlier boundary never
+  resets a later session's signing state. The fresh `initialize` never carries the old
   `Mcp-Session-Id`. Work bound to a retired generation is never (re)sent:
   each attempt checks its generation when the request is built and again
   after signing, and a retry of an old-session request fails with the
@@ -97,7 +103,11 @@ proxy writes through private duplicates of descriptors 1 and 2 (std's safe
   generation in turn, so at most one `GET` stream is ever open. When its
   session is retired the stream stops at its next chunk (or its idle read
   timeout), its messages are dropped, it is never reopened, and the worker
-  then opens the new session's stream.
+  then opens the new session's stream. A message already waiting for budget
+  or stdout room when its session is retired is dropped too (repair 2,
+  #5137): it is never queued into the next session, and the worker is not
+  held by stdout backpressure. Lines already queued before the retirement
+  are written.
 - **The proxy's own deadline** (tool or request timeout): besides answering
   the client, the core queues one signed `notifications/cancelled` with the
   request id and reason `request timed out`. Repair 1 (#5107) bounds this
@@ -107,6 +117,11 @@ proxy writes through private duplicates of descriptors 1 and 2 (std's safe
   timeout. A full queue, an exhausted budget, a passed deadline, a retired
   session or a worker thread the system refuses drops the cancel with
   `timeout-cancel-dropped`; the supervisor never blocks or panics on it.
+  The deadline is absolute (repair 2, #5138). It is checked when the cancel
+  is dequeued and again after signing, which may wait on credential I/O,
+  together with shutdown and the session. The transport's connect and read
+  timeouts are capped at the time left. A cancel refused at any of these
+  points, or by the credentials, is dropped with `timeout-cancel-dropped`.
 - **Admission** (repair 1, #5107): each request of a message takes one
   concurrency slot (a message without requests takes one), so a batch holds
   at most `max_in_flight` requests; a message whose requests do not fit is
@@ -197,3 +212,15 @@ are fixed before the stack lands (PM ruling, no carry). Tests are in
 | #5111 (P2) unbounded retained names | approved names only, charged and capped, fail closed | `read_only_retained_approvals_are_charged_capped_and_released` |
 | #5113 (P2) D1 for `GET`/`DELETE` | one shared `open_signed` with D1 for every method; cancels documented best effort | `d1_a_refused_get_is_rebuilt_and_reopened_once`, `d1_a_refused_session_delete_is_rebuilt_and_resent_once` |
 | #5112 (P3) unbounded build log | `BuildLog` off by default, opt-in (`with_build_recording`) and capped at 64 | `toolkit-aws` `sdk::source::tests::the_build_log_is_off_by_default_and_bounded_when_enabled` |
+
+## Repair 2 (S4 review #5105, round 2)
+
+Round 2 at `05a51ad9` confirmed that all eight repair-1 findings are
+closed. It found three defects that repair 1 itself introduced; all three
+are fixed. Tests are in `crates/toolkit-cli/src/mcp_proxy/tests/repair2.rs`.
+
+| Finding | Fix | Regression |
+| --- | --- | --- |
+| #5136 (P1) retirement held `pending`/`session` across credential I/O | retirement is bookkeeping only; `Auth::initialize_started` runs in the initialize worker with no proxy lock held, ordered by a boundary lock that skips retired or superseded generations | `credential_io_a_held_session_boundary_never_blocks_stdin_deadlines_or_shutdown` |
+| #5137 (P2) a retired `GET` delivery survived stdout backpressure | the delivery's cancellation includes its generation's retirement, in budget and stdout waits | `get_stream_a_retired_delivery_waiting_on_stdout_is_dropped_and_frees_the_worker` |
+| #5138 (P2) a cancel sent after its deadline when signing was slow | deadline, shutdown and session checked again after signing; transport timeouts capped by the time left; every refusal logs `timeout-cancel-dropped` | `bounded_control_a_cancel_is_checked_again_after_signing` |
