@@ -398,12 +398,55 @@ struct SessionStatus {
 }
 
 #[cfg(test)]
-fn session_status(_value: &Json, _now_micros: i64) -> SessionStatus {
+fn session_status(value: &Json, now_micros: i64) -> SessionStatus {
+    use crate::agents_pay::amount::CapDecimal;
+    use toolkit_aws::recorded::{optional_member, optional_object, optional_text};
+    let amount = |container: &str, member: &str| {
+        optional_object(value, container)
+            .ok()
+            .flatten()
+            .and_then(|v| optional_object(v, member).ok().flatten())
+            .and_then(|v| optional_text(v, "value").ok().flatten())
+    };
+    let budget = amount("limits", "maxSpendAmount");
+    let available = amount("availableLimits", "availableSpendAmount");
+    let parsed_budget = budget.and_then(|v| CapDecimal::parse(v).ok());
+    let parsed_available = available.and_then(|v| CapDecimal::parse(v).ok());
+    let spent_usd = parsed_budget
+        .as_ref()
+        .zip(parsed_available.as_ref())
+        .map(|(a, b)| a.subtract(b));
+    let created = optional_member(value, "createdAt", "a timestamp", |v| {
+        crate::cloudwatch::timefmt::time_from_json(v).ok()
+    })
+    .ok()
+    .flatten();
+    let duration = optional_member(value, "expiryTimeInMinutes", "an integer", |v| match v {
+        Json::Int(n) if *n > 0 => n.checked_mul(60_000_000),
+        _ => None,
+    })
+    .ok()
+    .flatten();
+    let expiry = created
+        .zip(duration)
+        .and_then(|(time, duration)| time.epoch_micros().checked_add(duration));
+    let (status, usable) = match expiry {
+        None => ("unknown", false),
+        Some(end) if end <= now_micros => ("EXPIRED", false),
+        Some(_)
+            if parsed_available
+                .as_ref()
+                .is_some_and(CapDecimal::is_positive) =>
+        {
+            ("ACTIVE", true)
+        }
+        Some(_) => ("DRAINED", false),
+    };
     SessionStatus {
-        status: "unknown",
-        usable: false,
-        budget_usd: None,
-        spent_usd: None,
+        status,
+        usable,
+        budget_usd: budget.map(str::to_owned),
+        spent_usd,
     }
 }
 
