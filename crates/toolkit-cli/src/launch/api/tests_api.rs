@@ -229,3 +229,20 @@ fn t_api_snapshot_lookup_uses_launch_envelope_and_error_hints() {
         }
     }
 }
+
+#[test]
+fn t_api_output_is_shaped_and_required_members_validated() {
+    let fake = reply(
+        200,
+        r#"{"ignored":"FAKE-ACCESS-TOKEN","nextToken":null,"items":[]}"#,
+    );
+    assert_eq!(
+        call(&fake, ApiOperation::ListLaunches, "", &[], None).unwrap(),
+        json!({"items":[]})
+    );
+    let fake = reply(200, r#"{"items":null}"#);
+    assert_eq!(
+        call(&fake, ApiOperation::ListLaunches, "", &[], None),
+        Err(ApiError::InvalidResponse)
+    );
+}
