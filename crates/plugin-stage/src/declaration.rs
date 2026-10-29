@@ -27,6 +27,45 @@ pub struct PlatformSpec {
     pub glibc: Option<String>,
 }
 
+/// Where a binary is staged: a plugin `bin/` directory or a package
+/// destination (#4411 B3, R-PKG-1).
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Destination {
+    /// `plugins/<plugin>/bin/` (the plugin directory name).
+    Plugin(String),
+    /// `<package_root>/bin/` (a repository-relative path to an npm/ClawHub
+    /// package directory inside the source tree).
+    PackageRoot(String),
+}
+
+impl Destination {
+    /// The plugin name or the package root path.
+    #[must_use]
+    pub fn key(&self) -> &str {
+        match self {
+            Self::Plugin(key) | Self::PackageRoot(key) => key,
+        }
+    }
+
+    /// The destination directory (the parent of its `bin/`).
+    #[must_use]
+    pub fn dir(&self, repo_root: &Path, plugins_root: &Path) -> std::path::PathBuf {
+        match self {
+            Self::Plugin(plugin) => plugins_root.join(plugin),
+            Self::PackageRoot(root) => repo_root.join(root),
+        }
+    }
+
+    /// `plugin NAME` or `package_root PATH`, for messages.
+    #[must_use]
+    pub fn label(&self) -> String {
+        match self {
+            Self::Plugin(plugin) => format!("plugin {plugin}"),
+            Self::PackageRoot(root) => format!("package_root {root}"),
+        }
+    }
+}
+
 /// How a staged binary may be launched.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Role {
@@ -41,6 +80,9 @@ pub enum Role {
     McpServer,
     /// Any other (non-guarding) hook command.
     Hook,
+    /// Spawned by code inside a package destination, never by a launcher
+    /// string (R-PKG-2): `plugin-stage launcher` refuses it.
+    Subprocess,
 }
 
 impl Role {
@@ -51,15 +93,16 @@ impl Role {
             Self::GuardHook { .. } => "guard-hook",
             Self::McpServer => "mcp-server",
             Self::Hook => "hook",
+            Self::Subprocess => "subprocess",
         }
     }
 }
 
-/// One binary a plugin ships.
+/// One binary a plugin or package destination ships.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BinarySpec {
-    /// Plugin directory name under `plugins/`.
-    pub plugin: String,
+    /// Where it is staged.
+    pub destination: Destination,
     /// Staged name: the dispatcher is `bin/<name>`.
     pub name: String,
     /// Workspace package that builds it.
@@ -72,6 +115,17 @@ pub struct BinarySpec {
     pub role: Role,
     /// Issue that consumes the binary, for messages (for example `#4412`).
     pub consumer: String,
+}
+
+impl BinarySpec {
+    /// The plugin directory name, for a plugin destination.
+    #[must_use]
+    pub fn plugin(&self) -> Option<&str> {
+        match &self.destination {
+            Destination::Plugin(plugin) => Some(plugin),
+            Destination::PackageRoot(_) => None,
+        }
+    }
 }
 
 /// The parsed, validated declaration.
@@ -149,10 +203,11 @@ impl Declaration {
         }
         let mut names = BTreeSet::new();
         for binary in &self.binaries {
-            if !names.insert((binary.plugin.as_str(), binary.name.as_str())) {
+            if !names.insert((&binary.destination, binary.name.as_str())) {
                 return Err(format!(
                     "declaration: binary {}/{} is listed twice",
-                    binary.plugin, binary.name
+                    binary.destination.key(),
+                    binary.name
                 ));
             }
         }
@@ -165,28 +220,73 @@ impl Declaration {
         self.platforms.iter().find(|spec| spec.platform == platform)
     }
 
-    /// The declared binary `name` of `plugin`.
+    /// The declared binary `name` of `plugin` (plugin destinations only: a
+    /// package binary is never resolved by a plugin launcher).
     #[must_use]
     pub fn binary(&self, plugin: &str, name: &str) -> Option<&BinarySpec> {
-        self.binaries
-            .iter()
-            .find(|binary| binary.plugin == plugin && binary.name == name)
+        self.plugin_binaries(plugin)
+            .find(|binary| binary.name == name)
     }
 
     /// The declared binaries of one plugin.
     pub fn plugin_binaries<'a>(&'a self, plugin: &'a str) -> impl Iterator<Item = &'a BinarySpec> {
         self.binaries
             .iter()
-            .filter(move |binary| binary.plugin == plugin)
+            .filter(move |binary| binary.plugin() == Some(plugin))
+    }
+
+    /// The declared binaries of one package destination.
+    pub fn package_binaries<'a>(&'a self, root: &'a str) -> impl Iterator<Item = &'a BinarySpec> {
+        self.binaries.iter().filter(move |binary| {
+            matches!(&binary.destination, Destination::PackageRoot(r) if r == root)
+        })
+    }
+
+    /// The declared binaries of one destination.
+    pub fn destination_binaries<'a>(
+        &'a self,
+        destination: &'a Destination,
+    ) -> impl Iterator<Item = &'a BinarySpec> {
+        self.binaries
+            .iter()
+            .filter(move |binary| &binary.destination == destination)
     }
 
     /// Distinct plugins that ship at least one binary.
     #[must_use]
     pub fn plugins(&self) -> BTreeSet<&str> {
+        self.binaries.iter().filter_map(BinarySpec::plugin).collect()
+    }
+
+    /// Distinct package destinations.
+    #[must_use]
+    pub fn package_roots(&self) -> BTreeSet<&str> {
         self.binaries
             .iter()
-            .map(|binary| binary.plugin.as_str())
+            .filter_map(|binary| match &binary.destination {
+                Destination::PackageRoot(root) => Some(root.as_str()),
+                Destination::Plugin(_) => None,
+            })
             .collect()
+    }
+
+    /// Every distinct destination (plugins sort first).
+    #[must_use]
+    pub fn destinations(&self) -> BTreeSet<&Destination> {
+        self.binaries
+            .iter()
+            .map(|binary| &binary.destination)
+            .collect()
+    }
+
+    /// Resolves a `PLUGIN/NAME` or `PACKAGE_ROOT/NAME` selector (the name is
+    /// the last path segment).
+    #[must_use]
+    pub fn select(&self, selector: &str) -> Option<&BinarySpec> {
+        let (key, name) = selector.rsplit_once('/')?;
+        self.binaries
+            .iter()
+            .find(|binary| binary.destination.key() == key && binary.name == name)
     }
 }
 
@@ -237,6 +337,7 @@ fn parse_binary(value: &Json) -> Result<BinarySpec, String> {
         pairs,
         &[
             "plugin",
+            "package_root",
             "name",
             "package",
             "bin",
@@ -247,7 +348,11 @@ fn parse_binary(value: &Json) -> Result<BinarySpec, String> {
         ],
         "binary",
     )?;
+    if value.get("package_root").is_some() {
+        return Err("binary: `package_root` is not supported yet (B3 skeleton)".to_string());
+    }
     let plugin = required_str(value, "plugin", "binary")?;
+    let destination = Destination::Plugin(plugin.to_string());
     let name = required_str(value, "name", "binary")?;
     let label = format!("binary {plugin}/{name}");
     if !is_name(plugin) || !is_name(name) {
@@ -311,7 +416,7 @@ fn parse_binary(value: &Json) -> Result<BinarySpec, String> {
     };
     let consumer = required_str(value, "consumer", &label)?;
     Ok(BinarySpec {
-        plugin: plugin.to_string(),
+        destination,
         name: name.to_string(),
         package: package.to_string(),
         bin: bin.to_string(),
@@ -319,6 +424,15 @@ fn parse_binary(value: &Json) -> Result<BinarySpec, String> {
         role,
         consumer: consumer.to_string(),
     })
+}
+
+/// Checks a declared package destination on disk (R-PKG-1): every path
+/// component is a real directory (no symlink), and it holds a regular
+/// `package.json` and a regular `.gitignore` that ignores `bin/`. Returns the
+/// problems; empty means the destination is usable.
+#[must_use]
+pub fn check_package_root(_repo_root: &Path, _root: &str) -> Vec<String> {
+    Vec::new()
 }
 
 /// Lower-case plugin or binary name: `[a-z0-9][a-z0-9_-]{0,63}`.

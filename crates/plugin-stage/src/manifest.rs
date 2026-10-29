@@ -12,7 +12,7 @@ use std::path::Path;
 
 use toolkit_core::{parse_json, sha256_hex, Json};
 
-use crate::declaration::{object, reject_unknown, required_str, Declaration};
+use crate::declaration::{object, reject_unknown, required_str, Declaration, Destination};
 use crate::launcher::{dispatcher_script, display};
 use crate::platform::Platform;
 use crate::{BIN_DIR, MANIFEST_FILE};
@@ -51,11 +51,11 @@ pub struct StagedDispatcher {
     pub sha256: String,
 }
 
-/// The staging manifest of one plugin.
+/// The staging manifest of one destination.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StagingManifest {
-    /// Plugin directory name.
-    pub plugin: String,
+    /// The destination it was staged into (`plugin` or `package_root`).
+    pub destination: Destination,
     /// 40-hex commit the binaries were built from.
     pub source_commit: String,
     /// Whether the checkout differed from that commit at build time (a
@@ -114,7 +114,10 @@ impl StagingManifest {
                 "generated_by",
                 Json::string("plugin-stage (#4487); generated, do not edit"),
             ),
-            ("plugin", Json::string(&self.plugin)),
+            match &self.destination {
+                Destination::Plugin(plugin) => ("plugin", Json::string(plugin)),
+                Destination::PackageRoot(root) => ("package_root", Json::string(root)),
+            },
             ("source_commit", Json::string(&self.source_commit)),
             ("source_dirty", Json::Bool(self.source_dirty)),
             ("rustc", Json::string(&self.rustc)),
@@ -140,6 +143,7 @@ impl StagingManifest {
                 "schema",
                 "generated_by",
                 "plugin",
+                "package_root",
                 "source_commit",
                 "source_dirty",
                 "rustc",
@@ -176,8 +180,21 @@ impl StagingManifest {
                 .collect::<Result<Vec<_>, _>>()?,
             _ => return Err("manifest: `dispatchers` must be an array".to_string()),
         };
+        let destination = match (root.get("plugin"), root.get("package_root")) {
+            (Some(_), None) => {
+                Destination::Plugin(required_str(&root, "plugin", "manifest")?.to_string())
+            }
+            (None, Some(_)) => Destination::PackageRoot(
+                required_str(&root, "package_root", "manifest")?.to_string(),
+            ),
+            _ => {
+                return Err(
+                    "manifest: needs exactly one of `plugin` or `package_root`".to_string(),
+                )
+            }
+        };
         Ok(Self {
-            plugin: required_str(&root, "plugin", "manifest")?.to_string(),
+            destination,
             source_commit: source_commit.to_string(),
             source_dirty: *source_dirty,
             rustc: required_str(&root, "rustc", "manifest")?.to_string(),
@@ -346,10 +363,11 @@ struct PluginCheck<'a> {
 impl PluginCheck<'_> {
     fn run(&self, manifest: &StagingManifest, complete: bool, problems: &mut Vec<String>) {
         let shown = self.shown;
-        if manifest.plugin != self.plugin {
+        if manifest.destination != Destination::Plugin(self.plugin.to_string()) {
             problems.push(format!(
-                "{shown}/{MANIFEST_FILE}: names plugin {:?}, expected {:?}",
-                manifest.plugin, self.plugin
+                "{shown}/{MANIFEST_FILE}: names {}, expected plugin {}",
+                manifest.destination.label(),
+                self.plugin
             ));
         }
         let mut listed: BTreeSet<String> = BTreeSet::from([MANIFEST_FILE.to_string()]);
@@ -478,6 +496,25 @@ impl PluginCheck<'_> {
     }
 }
 
+/// The npm pack guard (R-PKG-4): verifies exactly the declared package
+/// destination at `package_dir` with the shared verifier.
+#[must_use]
+pub fn verify_package(
+    _repo_root: &Path,
+    _declaration: &Declaration,
+    _package_dir: &Path,
+    _complete: bool,
+) -> Vec<String> {
+    vec!["verify-package is not implemented yet (B3 skeleton)".to_string()]
+}
+
+/// `check` (R-PKG-2): no file under a package destination's `bin/` may be
+/// tracked by git.
+#[must_use]
+pub fn tracked_package_files(_repo_root: &Path, _declaration: &Declaration) -> Vec<String> {
+    Vec::new()
+}
+
 const MISSING: &str = "is missing";
 
 /// Whether `plugin_dir/bin` is staged. A symlinked (or non-directory)
@@ -597,7 +634,7 @@ mod tests {
 
     fn sample() -> StagingManifest {
         StagingManifest {
-            plugin: "aws-core".to_string(),
+            destination: Destination::Plugin("aws-core".to_string()),
             source_commit: "0123456789abcdef0123456789abcdef01234567".to_string(),
             source_dirty: false,
             rustc: "rustc 1.94.1".to_string(),

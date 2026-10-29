@@ -13,7 +13,7 @@ use std::process::{Command, Stdio};
 
 use toolkit_core::{parse_json, sha256_hex, Json};
 
-use crate::declaration::{BinarySpec, Declaration, PlatformSpec};
+use crate::declaration::{BinarySpec, Declaration, Destination, PlatformSpec};
 use crate::launcher::dispatcher_script;
 use crate::manifest::{
     read_regular, staged_bin_dir, StagedBinary, StagedDispatcher, StagingManifest,
@@ -125,7 +125,7 @@ impl BuildStep {
     pub fn display(&self) -> String {
         format!(
             "{}/{} [{}]: cargo {}",
-            self.binary.plugin,
+            self.binary.destination.key(),
             self.binary.name,
             self.platform.platform,
             self.cargo_args().join(" ")
@@ -229,11 +229,11 @@ pub fn plan(
         match probe.workspace_bins.get(&binary.package) {
             None => problems.push(format!(
                 "{}/{}: package {} is not a member of this workspace (consumer {}); land it first or select other binaries with --only",
-                binary.plugin, binary.name, binary.package, binary.consumer
+                binary.destination.key(), binary.name, binary.package, binary.consumer
             )),
             Some(bins) if !bins.contains(&binary.bin) => problems.push(format!(
                 "{}/{}: package {} has no bin target {}",
-                binary.plugin, binary.name, binary.package, binary.bin
+                binary.destination.key(), binary.name, binary.package, binary.bin
             )),
             Some(_) => {}
         }
@@ -452,11 +452,11 @@ pub fn install(
     }
     for item in built {
         let step = &item.step;
-        if step.binary.plugin != plugin {
+        if step.binary.plugin() != Some(plugin) {
             return Err(format!(
-                "{}: built for plugin {}",
+                "{}: built for {}",
                 item.file.display(),
-                step.binary.plugin
+                step.binary.destination.label()
             ));
         }
         let bytes = fs::read(&item.file)
@@ -491,7 +491,7 @@ pub fn install(
         });
     }
     let manifest = StagingManifest {
-        plugin: plugin.to_string(),
+        destination: Destination::Plugin(plugin.to_string()),
         source_commit: provenance.source_commit.clone(),
         source_dirty: provenance.source_dirty,
         rustc: provenance.rustc.clone(),
@@ -504,6 +504,22 @@ pub fn install(
         false,
     )?;
     Ok(manifest)
+}
+
+/// Installs built files into the destination directory `dest_dir` (the
+/// parent of its `bin/`), like [`install`] for any destination.
+///
+/// # Errors
+///
+/// As [`install`].
+pub fn install_at(
+    _dest_dir: &Path,
+    _destination: &Destination,
+    _built: &[Built],
+    _provenance: &Provenance,
+    _clean: bool,
+) -> Result<StagingManifest, String> {
+    Err("install_at is not implemented yet (B3 skeleton)".to_string())
 }
 
 fn write_executable(path: &Path, bytes: &[u8]) -> Result<(), String> {

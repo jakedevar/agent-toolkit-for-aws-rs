@@ -24,6 +24,7 @@ use plugin_stage::launcher::{check_launchers, launcher_snippet};
 use plugin_stage::manifest::verify_staged;
 use plugin_stage::stage::{self, Probe};
 use plugin_stage::{Declaration, DECLARATION_PATH};
+use toolkit_core::quote_untrusted;
 
 const USAGE: &str = "usage: plugin-stage <check|verify|plan|stage|launcher> [--root DIR] [--plugins-root DIR] [--declaration FILE] [--platform host|all|KEY]... [--only PLUGIN/NAME]... [--complete] [--allow-dirty] [--clean] [PLUGIN/NAME]";
 
@@ -198,7 +199,7 @@ fn run_plan(ctx: &Context, args: &Args, build_now: bool) -> ExitCode {
     let mut by_plugin: BTreeMap<&str, Vec<&stage::BuildStep>> = BTreeMap::new();
     for step in &steps {
         by_plugin
-            .entry(step.binary.plugin.as_str())
+            .entry(step.binary.plugin().unwrap_or_default())
             .or_default()
             .push(step);
     }
@@ -240,17 +241,16 @@ fn run_launcher(ctx: &Context, args: &Args) -> ExitCode {
     let [selector] = args.positional.as_slice() else {
         return usage("launcher needs exactly one PLUGIN/NAME");
     };
-    let binary = selector
-        .split_once('/')
-        .and_then(|(plugin, name)| ctx.declaration.binary(plugin, name));
-    match binary {
-        Some(binary) => {
-            println!("{}", launcher_snippet(binary));
+    match ctx.declaration.select(selector).map(launcher_snippet) {
+        Some(Ok(snippet)) => {
+            println!("{snippet}");
             ExitCode::SUCCESS
         }
+        Some(Err(problem)) => report(&[problem], ""),
         None => report(
             &[format!(
-                "{selector}: no such PLUGIN/NAME in {DECLARATION_PATH}"
+                "{}: no such PLUGIN/NAME in {DECLARATION_PATH}",
+                quote_untrusted(selector)
             )],
             "",
         ),
