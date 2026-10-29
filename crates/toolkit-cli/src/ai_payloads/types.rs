@@ -201,3 +201,76 @@ mod scalar_tests {
         }
     }
 }
+
+/// Escape a validated scalar as a complete Python string literal.
+#[allow(dead_code)] // Wired into substitution by the renderer.
+pub(crate) fn quoted_literal(value: &Json, quote: char) -> Result<String, &'static str> {
+    let Json::String(text) = value else {
+        return Err("string_value_invalid");
+    };
+    if !matches!(quote, '\'' | '"')
+        || text.chars().count() > 4096
+        || text.chars().any(toolkit_core::is_unsafe_char)
+    {
+        return Err("string_value_invalid");
+    }
+    let mut result = String::with_capacity(text.len() + 2);
+    result.push(quote);
+    for ch in text.chars() {
+        if ch == quote || ch == '\\' {
+            result.push('\\');
+        }
+        result.push(ch);
+    }
+    result.push(quote);
+    Ok(result)
+}
+
+/// A secret is a reference or the None sentinel, never a literal token.
+#[allow(dead_code)] // Wired into substitution by the renderer.
+pub(crate) fn secret_literal(value: &Json, quote: char) -> Result<String, &'static str> {
+    if matches!(value, Json::Null) {
+        return Ok("None".to_owned());
+    }
+    let Json::String(text) = value else {
+        return Err("secret_value_invalid");
+    };
+    if text != "None" && !secrets_manager_arn(text) {
+        return Err("secret_value_invalid");
+    }
+    quoted_literal(value, quote).map_err(|_| "secret_value_invalid")
+}
+
+fn secrets_manager_arn(text: &str) -> bool {
+    let mut parts = text.splitn(7, ':');
+    let (
+        Some("arn"),
+        Some(partition),
+        Some("secretsmanager"),
+        Some(region),
+        Some(account),
+        Some("secret"),
+        Some(resource),
+    ) = (
+        parts.next(),
+        parts.next(),
+        parts.next(),
+        parts.next(),
+        parts.next(),
+        parts.next(),
+        parts.next(),
+    )
+    else {
+        return false;
+    };
+    partition
+        .strip_prefix("aws")
+        .is_some_and(|suffix| suffix.bytes().all(|c| c.is_ascii_lowercase() || c == b'-'))
+        && !region.is_empty()
+        && region
+            .bytes()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
+        && account.len() == 12
+        && account.bytes().all(|c| c.is_ascii_digit())
+        && !resource.is_empty()
+}
