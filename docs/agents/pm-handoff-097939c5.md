@@ -1031,3 +1031,4 @@ Friction: #4727, Rsi #4694, Rsi #4704
   Queue: eb6b38ba #5362, 1e84ebe1 #5365. #5370 worker d75d75d6 queued for a slot.
 - 13:3xZ: flake fix #5362 LANDED (eb6b38ba published, c5920f50d8507cc4b0e3320059c1e4318078c7d3); #5362 auto-closed. Queue: 1e84ebe1 #5365. #5370 worker d75d75d6 still queued for a slot.
 - 13:35Z: #5365 LANDED (1e84ebe1 published, b3c2ce09887f0d8b5f5ae3c9b4c8caa19491309d); auto-closed. Queue EMPTY. #5370 worker d75d75d6 started (override). 5 live: 4ca3337b #5345 L5, 59add103 #5363 B1, b7e9d8f9 #5352 r1, 85f4c758 #5366 S1, d75d75d6 #5370. Cap ~229/256.
+- 13:40Z: GM disk request (hub ~99G, floor 100G): cargo clean'd finished clean sandboxes b4b703db e6d193bf 8fdc14b5 93a325d6 (~3.4G; now 100G free). GM also listed 4ca3337b 85f4c758 59add103 d75d75d6 as finished: they are LIVE, left alone; clean each when its worker ends (`cargo clean --manifest-path <sb>/Cargo.toml --target-dir <sb>/target`; no scripts/clean-target in this repo). Reported up.
