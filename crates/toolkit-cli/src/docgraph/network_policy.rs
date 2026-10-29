@@ -35,6 +35,7 @@ pub fn parse(bytes: &[u8]) -> Result<DatabaseEndpoint, AwsError> {
     }
     let value: Value = serde_json::from_slice(bytes)
         .map_err(|_| invalid("the network policy is not valid JSON"))?;
+    // recorded-shape: an operator network-policy file, not a service response; every other shape is rejected
     let Value::Object(map) = value else {
         return Err(invalid("the network policy must be a JSON object"));
     };
@@ -58,6 +59,7 @@ pub fn parse(bytes: &[u8]) -> Result<DatabaseEndpoint, AwsError> {
         .ok_or_else(|| invalid("the network policy needs a string region"))?;
     let ranges: Vec<&str> = match map.get("private_ranges") {
         None => Vec::new(),
+        // recorded-shape: an operator network-policy file, not a service response; every other shape is rejected
         Some(Value::Array(items)) => items
             .iter()
             .map(|item| {
