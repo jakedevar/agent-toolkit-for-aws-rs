@@ -19,6 +19,7 @@
 //!   (`skills/shared` to per-skill vendored copies) on top.
 #![allow(clippy::module_name_repetitions)]
 
+pub mod base64;
 pub mod diag;
 pub mod digest;
 pub mod error;

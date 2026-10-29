@@ -66,28 +66,8 @@ pub(crate) fn mime_type(image_path: &str) -> Result<String, String> {
     converse_format(image_path).map(|format| format!("image/{format}"))
 }
 
-const BASE64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
-/// Standard base64 with padding.
-pub(crate) fn base64_encode(raw: &[u8]) -> String {
-    let mut out = String::with_capacity(raw.len().div_ceil(3) * 4);
-    for chunk in raw.chunks(3) {
-        let block = [
-            chunk[0],
-            *chunk.get(1).unwrap_or(&0),
-            *chunk.get(2).unwrap_or(&0),
-        ];
-        let value = (u32::from(block[0]) << 16) | (u32::from(block[1]) << 8) | u32::from(block[2]);
-        for (index, shift) in [18_u32, 12, 6, 0].into_iter().enumerate() {
-            if index <= chunk.len() {
-                out.push(char::from(BASE64[((value >> shift) & 0x3f) as usize]));
-            } else {
-                out.push('=');
-            }
-        }
-    }
-    out
-}
+/// Standard base64 with padding (moved to `toolkit_core::base64`, #5118).
+pub(crate) use toolkit_core::base64::encode as base64_encode;
 
 /// Base64 data URL for the Responses `input_image.image_url` field.
 pub(crate) fn data_url(image_path: &str, raw: &[u8]) -> Result<String, String> {
