@@ -971,3 +971,8 @@ Friction: #4727, Rsi #4694, Rsi #4704
   #5343 (42d60f19, Codex sol) CHANGES_REQUESTED docgraph S5: BLOCKER #5348 (secret_field key-echo mutation survives). Repair 1 -> Claude Sonnet 9e585ee2 (continue_from e1de11f0). Then narrow re-check (PM verify of the red/green if test-only).
   Filed x402 S5 #5352 -> Claude Opus f6287c21 (sandbox 424fe183; P-ROOTS on rolling). OpenClaw B1 not yet filed (after S4 lands).
   4/4 busy: 8139c2ea (#5329), 6c9b74b6 (#5345 L5), 9e585ee2 (#5327 r1), f6287c21 (#5352). Queue: 81c0c481 (#5181), dc9fd4ea (#5317).
+- 10-29 11:38Z: #5329 AP close-out (8139c2ea, Sonnet) COMPLETE at ead732e39b7b4d5443f3812c5784c6d6d0696458 (template.rs fix #5301 red 3fcc2911/green d94c28e0; docs #5316; scoped 525dada2 4251 ok). PM accepted from the table, no extra review: the only production change is one guard with red/green proof. ENQUEUED 1a3750bd (seq 2997, issue 5329).
+  CLOSED (resolved on rolling, with mutation evidence): #5122 #5123 #5139 #5124 #5125 #5126 #5128 #5140 #5142 #5129. On land: close #5301 #5316 #5329 #5119 #4386 (#5121 stays as follow-up).
+  Kaizen: #5315 #5333 cancelled as dups of #5302; #5341 cancelled (covered by #5154 + #5353); #5353 gains test_no_run evidence. Open harness relays: #5154 #5265 #5353 #5302.
+  #5306 merge+fold continuation -> Codex terra c057ddb0 (continue_from acde8672): merge 424fe183 (S4) + rolling, Cargo.lock regen, fold #5349 with red/green. Then check + enqueue behind 81c0c481; close #5306 #5342 #5312 #5314 #5349 on land.
+  4/4 busy: 6c9b74b6 (#5345 L5), 9e585ee2 (#5327 r1), f6287c21 (#5352 x402 S5), c057ddb0 (#5306 merge). Queue: 81c0c481 (#5181), dc9fd4ea (#5317), 1a3750bd (#5329).
