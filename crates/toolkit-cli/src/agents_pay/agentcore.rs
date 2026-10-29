@@ -1294,6 +1294,32 @@ mod wire_contracts {
     }
 
     #[test]
+    fn admin_rejects_invalid_session_and_wallet_inputs_before_transport() {
+        let transport = FakeStreamingTransport::new();
+        let client = PaymentClient::new("us-east-1", &transport, &NoSigner).unwrap();
+        assert_eq!(
+            client.create_session("arn", "user", "10", 14, "token"),
+            Err(PaymentError::InvalidResponse)
+        );
+        assert_eq!(
+            client.create_session("arn", "user", "10", 481, "token"),
+            Err(PaymentError::InvalidResponse)
+        );
+        assert_eq!(
+            client.create_instrument(
+                "arn",
+                "user",
+                "connector",
+                "OTHER",
+                "user@example.com",
+                "token"
+            ),
+            Err(PaymentError::InvalidResponse)
+        );
+        assert!(transport.requests().is_empty());
+    }
+
+    #[test]
     fn instrument_response_rejects_invalid_nested_and_required_members() {
         let good = r#"{"paymentInstrument":{"paymentInstrumentId":"pi","paymentManagerArn":"arn","paymentConnectorId":"connector","userId":"user","paymentInstrumentType":"EMBEDDED_CRYPTO_WALLET","paymentInstrumentDetails":{"embeddedCryptoWallet":{"network":"ETHEREUM","linkedAccounts":[{"email":{"emailAddress":"user@example.com"}}]}},"createdAt":1,"status":"ACTIVE","updatedAt":1}}"#;
         for bad in [
