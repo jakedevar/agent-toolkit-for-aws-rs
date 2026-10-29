@@ -36,7 +36,10 @@
 //!   `stops_gracefully` whether it stops within the 5 s grace period after
 //!   SIGTERM. `command`, when given, must equal the command the run builds.
 //! - `cache` scripts `test-connection`; `connect.request` (when given) is the
-//!   connect plan without the credentials.
+//!   connect plan without the credentials. A run that builds a client needs
+//!   exactly one of `ping_ms` and `ping_error`. Each of `address`, `iam_token`,
+//!   `connect`, the PING outcome and `server` is consumed by its own call, and
+//!   one no call used fails the run.
 //!
 //! Every optional member is absent or of its type (`null` rejects the
 //! recording) except where this list says `null`. A call, probe or process
@@ -44,7 +47,7 @@
 //! no run used all fail. A recording holds no credential: a password or token
 //! never appears in it and is never compared.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::net::IpAddr;
 use std::rc::Rc;
@@ -444,33 +447,48 @@ impl TunnelHost for RecordedHost {
 
 // ---------------------------------------------------------------- cache
 
-struct RecordedPing {
-    ping_ms: Option<f64>,
-    failure: Option<PingFailure>,
+/// The one recorded result of `PING`.
+enum PingOutcome {
+    Pong(f64),
+    Failed(PingFailure),
+}
+
+/// The recorded cache steps no call has used yet. Each is taken by the call it
+/// answers (DNS, the signer, the connect, `PING`, `INFO`), on the environment
+/// and on the connection it returns alike, so a step a run never reached is
+/// counted (#4988).
+#[derive(Default)]
+struct Pending {
+    address: Option<IpAddr>,
+    iam_token: bool,
+    expected_plan: Option<Json>,
+    init_error: Option<String>,
+    ping: Option<PingOutcome>,
     server: Option<ServerInfo>,
+}
+
+impl Pending {
+    fn unused(&self) -> usize {
+        usize::from(self.address.is_some())
+            + usize::from(self.iam_token)
+            + usize::from(self.expected_plan.is_some())
+            + usize::from(self.init_error.is_some())
+            + usize::from(self.ping.is_some())
+            + usize::from(self.server.is_some())
+    }
 }
 
 /// Replays `cache`.
 pub(super) struct RecordedCache {
     present: bool,
-    address: Option<IpAddr>,
-    iam_token: bool,
-    expected_plan: Option<Json>,
-    init_error: Option<String>,
-    ping: Option<RecordedPing>,
-    connected: bool,
+    pending: Rc<RefCell<Pending>>,
 }
 
 impl RecordedCache {
     fn from_document(document: &Json) -> Result<Self, String> {
         let mut cache = Self {
             present: false,
-            address: None,
-            iam_token: false,
-            expected_plan: None,
-            init_error: None,
-            ping: None,
-            connected: false,
+            pending: Rc::new(RefCell::new(Pending::default())),
         };
         let Some(section) = object_member(document, "cache")? else {
             return Ok(cache);
@@ -488,18 +506,21 @@ impl RecordedCache {
             "\"cache\"",
         )?;
         cache.present = true;
-        cache.address = match text_member(section, "address")? {
-            None => None,
-            Some(text) => Some(
-                text.parse::<IpAddr>()
-                    .map_err(|_| "\"address\" must be an IP address".to_string())?,
-            ),
+        let mut pending = Pending {
+            address: match text_member(section, "address")? {
+                None => None,
+                Some(text) => Some(
+                    text.parse::<IpAddr>()
+                        .map_err(|_| "\"address\" must be an IP address".to_string())?,
+                ),
+            },
+            iam_token: bool_member(section, "iam_token")?.unwrap_or(false),
+            ..Pending::default()
         };
-        cache.iam_token = bool_member(section, "iam_token")?.unwrap_or(false);
         if let Some(connect) = object_member(section, "connect")? {
             only_members(connect, &["request", "init_error"], "\"connect\"")?;
-            cache.expected_plan = object_member(connect, "request")?.cloned();
-            cache.init_error = match connect.get("init_error") {
+            pending.expected_plan = object_member(connect, "request")?.cloned();
+            pending.init_error = match connect.get("init_error") {
                 Some(Json::Null) | None => None,
                 Some(_) => text_member(connect, "init_error")?.map(str::to_string),
             };
@@ -524,7 +545,22 @@ impl RecordedCache {
                 })
             }
         };
-        let server = match object_member(section, "server")? {
+        let ping_ms = number_member(section, "ping_ms")?;
+        if ping_ms.is_some_and(|ms| !ms.is_finite() || ms < 0.0) {
+            return Err("\"ping_ms\" must be a finite, non-negative number".to_string());
+        }
+        pending.ping = match (ping_ms, failure) {
+            (Some(_), Some(_)) => {
+                return Err(
+                    "\"cache\" has both \"ping_ms\" and \"ping_error\"; record exactly one PING outcome"
+                        .to_string(),
+                )
+            }
+            (Some(ms), None) => Some(PingOutcome::Pong(ms)),
+            (None, Some(failure)) => Some(PingOutcome::Failed(failure)),
+            (None, None) => None,
+        };
+        pending.server = match object_member(section, "server")? {
             None => None,
             Some(server) => {
                 only_members(server, &["version", "mode"], "\"server\"")?;
@@ -538,11 +574,7 @@ impl RecordedCache {
                 })
             }
         };
-        cache.ping = Some(RecordedPing {
-            ping_ms: number_member(section, "ping_ms")?,
-            failure,
-            server,
-        });
+        cache.pending = Rc::new(RefCell::new(pending));
         Ok(cache)
     }
 }
@@ -574,21 +606,24 @@ pub(super) fn plan_request(plan: &ConnectPlan) -> Json {
 }
 
 struct RecordedConnection {
-    ping_ms: Option<f64>,
-    failure: Option<PingFailure>,
-    server: Option<ServerInfo>,
+    pending: Rc<RefCell<Pending>>,
 }
 
 impl CacheConnection for RecordedConnection {
     fn ping(&mut self) -> Result<f64, PingFailure> {
-        match self.failure.take() {
-            Some(failure) => Err(failure),
-            None => Ok(self.ping_ms.unwrap_or(0.0)),
+        match self.pending.borrow_mut().ping.take() {
+            Some(PingOutcome::Pong(ms)) => Ok(ms),
+            Some(PingOutcome::Failed(failure)) => Err(failure),
+            // `connect` checks that the outcome is recorded; a second PING
+            // has none.
+            None => Err(PingFailure::Other(
+                "no recorded PING outcome is left".to_string(),
+            )),
         }
     }
 
     fn info_server(&mut self) -> Option<ServerInfo> {
-        self.server.take()
+        self.pending.borrow_mut().server.take()
     }
 
     fn close(&mut self) {}
@@ -600,12 +635,16 @@ impl CacheEnvironment for RecordedCache {
             return Err(SeamError::Replay("no recorded cache".to_string()));
         }
         Ok(self
+            .pending
+            .borrow_mut()
             .address
+            .take()
             .map_or(Resolution::NotFound, Resolution::Address))
     }
 
     fn iam_token(&mut self, _request: &IamTokenRequest) -> Result<toolkit_aws::Secret, SeamError> {
-        if self.iam_token {
+        let mut pending = self.pending.borrow_mut();
+        if std::mem::take(&mut pending.iam_token) {
             // A placeholder: the recording holds no token and the replay
             // client never reads it.
             Ok(toolkit_aws::Secret::new("recorded-token"))
@@ -618,25 +657,31 @@ impl CacheEnvironment for RecordedCache {
         &mut self,
         plan: &ConnectPlan,
     ) -> Result<Result<Box<dyn CacheConnection>, String>, SeamError> {
-        if let Some(expected) = &self.expected_plan {
-            if !same_json(expected, &plan_request(plan)) {
+        if !self.present {
+            return Err(SeamError::Replay("no recorded cache".to_string()));
+        }
+        let mut pending = self.pending.borrow_mut();
+        if let Some(expected) = pending.expected_plan.take() {
+            if !same_json(&expected, &plan_request(plan)) {
                 return Err(SeamError::Replay(
                     "the recorded connect plan differs from the plan built".to_string(),
                 ));
             }
         }
-        self.connected = true;
-        if let Some(message) = self.init_error.take() {
+        if let Some(message) = pending.init_error.take() {
             return Ok(Err(message));
         }
-        let ping = self
-            .ping
-            .take()
-            .ok_or_else(|| SeamError::Replay("no recorded cache".to_string()))?;
+        // A client that is built is pinged: the outcome must be recorded, never
+        // assumed.
+        if pending.ping.is_none() {
+            return Err(SeamError::Replay(
+                "the recorded cache has no PING outcome: record exactly one of \"ping_ms\" and \"ping_error\""
+                    .to_string(),
+            ));
+        }
+        drop(pending);
         Ok(Ok(Box::new(RecordedConnection {
-            ping_ms: ping.ping_ms,
-            failure: ping.failure,
-            server: ping.server,
+            pending: Rc::clone(&self.pending),
         })))
     }
 
@@ -645,6 +690,6 @@ impl CacheEnvironment for RecordedCache {
     }
 
     fn unconsumed(&self) -> usize {
-        usize::from(self.present && !self.connected)
+        self.pending.borrow().unused()
     }
 }

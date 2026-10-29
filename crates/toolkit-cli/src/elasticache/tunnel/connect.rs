@@ -12,7 +12,7 @@ use std::net::IpAddr;
 use toolkit_aws::Secret;
 use toolkit_core::ToolkitError;
 
-use super::clean::clean;
+use super::clean::{clean, Scrubber};
 use super::seams::{
     CacheEnvironment, ConnectPlan, IamTokenRequest, PingFailure, Resolution, SeamError,
 };
@@ -153,6 +153,15 @@ fn connection_succeeds(
     out: &mut Output<'_>,
 ) -> Result<bool, ToolkitError> {
     check_dns(args.host, env, out)?;
+    // The supplied password and the active password or IAM token are removed
+    // by value from everything the client says (#4986).
+    let scrub = Scrubber::new(
+        &[
+            args.password.unwrap_or_default(),
+            password.as_ref().map_or("", Secret::expose),
+        ],
+        username.as_deref(),
+    );
     let host = clean(args.host);
     let mut tls_label = if use_tls { "TLS" } else { "plaintext" }.to_string();
     if args.tunnel_mode {
@@ -198,7 +207,7 @@ fn connection_succeeds(
     let mut connection = match env.connect(&plan)? {
         Ok(connection) => connection,
         Err(message) => {
-            out.diagnostic(&format!("  Client init FAILED: {}", clean(&message)));
+            out.diagnostic(&format!("  Client init FAILED: {}", scrub.clean(&message)));
             return Ok(false);
         }
     };
@@ -212,7 +221,7 @@ fn connection_succeeds(
         Err(PingFailure::Authentication(message)) => {
             out.diagnostic(&format!(
                 "  PING FAILED: Authentication error -- {}",
-                clean(&message)
+                scrub.clean(&message)
             ));
             out.diagnostic(
                 "  Hint: Check username/password or ensure the RBAC user exists and is active.",
@@ -222,9 +231,12 @@ fn connection_succeeds(
         Err(PingFailure::Connection(message)) => {
             out.diagnostic(&format!(
                 "  PING FAILED: Connection error -- {}",
-                clean(&message)
+                scrub.clean(&message)
             ));
-            if message.contains("SSL") || message.to_lowercase().contains("tls") {
+            // The hint reads the text without credentials, so a password such as
+            // "tls" cannot steer it.
+            let known = scrub.remove(&message);
+            if known.contains("SSL") || known.to_lowercase().contains("tls") {
                 out.diagnostic(if use_tls {
                     "  Hint: TLS handshake failed. Verify the endpoint supports in-transit encryption."
                 } else {
@@ -238,7 +250,7 @@ fn connection_succeeds(
             return Ok(false);
         }
         Err(PingFailure::Other(message)) => {
-            out.diagnostic(&format!("  PING FAILED: {}", clean(&message)));
+            out.diagnostic(&format!("  PING FAILED: {}", scrub.clean(&message)));
             return Ok(false);
         }
     }
@@ -246,8 +258,8 @@ fn connection_succeeds(
     match connection.info_server() {
         Some(info) => out.line(&format!(
             "  Server: engine version {}, mode={}",
-            clean(&info.version),
-            clean(&info.mode)
+            scrub.clean(&info.version),
+            scrub.clean(&info.mode)
         ))?,
         // INFO may be blocked by an ACL; that is fine.
         None => out.diagnostic("  Server info: not available (ACL may restrict INFO command)"),

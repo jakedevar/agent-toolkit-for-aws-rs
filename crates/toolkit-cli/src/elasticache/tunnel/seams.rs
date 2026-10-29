@@ -162,13 +162,31 @@ fn with_token(request: &Json, token: Option<&str>) -> Json {
 /// Walks every page of `operation` (a `boto3` paginator): `parse` turns one
 /// response into items. A seam failure other than an AWS error ends the walk
 /// as it is, so it is never mistaken for a service error.
-pub(crate) fn paged<T>(
+pub(crate) fn paged<T: Clone>(
     aws: &mut dyn TunnelAws,
     operation: Operation,
     request: &Json,
     parse: impl Fn(&Json) -> Result<Vec<T>, String>,
 ) -> Result<Vec<T>, SeamError> {
+    match paged_partial(aws, operation, request, parse)? {
+        (items, None) => Ok(items),
+        (_, Some(error)) => Err(SeamError::Aws(error)),
+    }
+}
+
+/// [`paged`] that keeps the items of the pages read before a service error:
+/// `(items, None)` for a whole walk, `(items so far, Some(error))` when a
+/// later page failed (as `ssm_managed` in `find_tunnel_host.py`, which lives
+/// outside its `try`). Only an AWS error is kept; any other seam failure is
+/// still `Err`.
+pub(crate) fn paged_partial<T: Clone>(
+    aws: &mut dyn TunnelAws,
+    operation: Operation,
+    request: &Json,
+    parse: impl Fn(&Json) -> Result<Vec<T>, String>,
+) -> Result<(Vec<T>, Option<AwsError>), SeamError> {
     let mut fatal: Option<SeamError> = None;
+    let mut kept: Vec<T> = Vec::new();
     let result = collect_pages(&PageLimits::default(), |token| {
         let response = match aws.call(operation, &with_token(request, token)) {
             Ok(response) => response,
@@ -180,12 +198,13 @@ pub(crate) fn paged<T>(
         };
         let items = parse(&response).map_err(AwsError::invalid_response)?;
         let next_token = next_token_from(&response, "NextToken")?;
+        kept.extend(items.iter().cloned());
         Ok(Page { items, next_token })
     });
     match (fatal, result) {
         (Some(fatal), _) => Err(fatal),
-        (None, Ok(items)) => Ok(items),
-        (None, Err(error)) => Err(SeamError::Aws(error)),
+        (None, Ok(items)) => Ok((items, None)),
+        (None, Err(error)) => Ok((kept, Some(error))),
     }
 }
 

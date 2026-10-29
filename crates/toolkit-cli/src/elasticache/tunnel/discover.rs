@@ -10,7 +10,7 @@ use toolkit_aws::AwsError;
 use toolkit_core::{Json, ToolkitError};
 
 use super::clean::clean;
-use super::seams::{paged, Operation, SeamError, TunnelAws};
+use super::seams::{paged, paged_partial, Operation, SeamError, TunnelAws};
 use crate::elasticache::text::pad_right;
 use crate::Output;
 
@@ -158,33 +158,31 @@ pub(super) fn find_tunnel_hosts(
         .iter()
         .map(|instance| instance.id.as_str())
         .collect();
-    let managed = paged(
+    // The ids of the pages read before a service error are kept, as the script
+    // adds them to `ssm_managed` page by page; a replay or seam failure is not
+    // a service error and ends the run.
+    let (managed, failure) = paged_partial(
         aws,
         Operation::DescribeInstanceInformation,
         &managed_request(&ids),
         parse_managed_ids,
-    );
-    let managed = match managed {
-        Ok(ids) => ids,
-        Err(SeamError::Aws(error)) => {
-            if access_denied(&error) {
-                lines.push(
-                    "ERROR: Access denied querying SSM. Ensure your IAM role/user has \
-                     ssm:DescribeInstanceInformation permission."
-                        .to_string(),
-                );
-            } else {
-                lines.push(format!(
-                    "Warning: could not query SSM: {}",
-                    clean(&error.to_string())
-                ));
-            }
-            lines.push("Listing all instances -- SSM status unknown.".to_string());
-            lines.push(String::new());
-            Vec::new()
+    )?;
+    if let Some(error) = failure {
+        if access_denied(&error) {
+            lines.push(
+                "ERROR: Access denied querying SSM. Ensure your IAM role/user has \
+                 ssm:DescribeInstanceInformation permission."
+                    .to_string(),
+            );
+        } else {
+            lines.push(format!(
+                "Warning: could not query SSM: {}",
+                clean(&error.to_string())
+            ));
         }
-        Err(other) => return Err(other),
-    };
+        lines.push("Listing all instances -- SSM status unknown.".to_string());
+        lines.push(String::new());
+    }
     for instance in &mut instances {
         instance.ssm = managed.contains(&instance.id);
     }

@@ -46,6 +46,15 @@ to 200 characters (`...`), then escape of control, bidirectional and invisible
 characters (`safe_path`). The order matters: a credential that crosses the
 bound is still recognized, and an escape never grows past the cut.
 
+Text a cache client returns (client-init, `PING` and server-info text) first has
+the active credentials removed by value (`Scrubber` in `tunnel/clean.rs`), before
+the steps above: the supplied password and the active password or IAM token in
+their common renderings (raw, quoted, JSON- or shell-escaped, percent-encoded,
+hex, base64 and the Basic auth `user:secret` form, plus the signature and
+credential values of a pre-signed token), replaced by `[REDACTED]`. The generic
+scrubber cannot recognize an unlabelled credential, so the value itself is the
+only reliable key (#4986). The TLS hint reads the scrubbed text.
+
 No command writes a file: the scripts only print, so there is no output to
 write privately or atomically (the `write_private` helper of `dynamodb_deploy`
 is not needed here).
@@ -71,7 +80,10 @@ the full example.
   optional `command` that must equal the command built.
 - `cache`: `address` (DNS answer; absent is a failed lookup), `iam_token`,
   `connect.request` (the plan without credentials; compared), `connect.init_error`,
-  `ping_ms`, `ping_error {kind: authentication|connection|other, message}`,
+  `ping_ms` or `ping_error {kind: authentication|connection|other, message}`
+  (exactly one when the run builds a client and so reaches PING; both, or
+  neither, is a recording error and is never read as success; `ping_ms` is
+  finite and not negative),
   `server {version, mode}` (absent: INFO refused by an ACL).
 
 Every optional member is absent or of its type: a present member of another
@@ -79,7 +91,12 @@ type, `null` included, rejects the recording (the shared rule of #4727,
 #4712/#4713/#4726); parse errors name the member and the types, never a value.
 A call, probe, process or cache with nothing recorded, a request that differs
 and a recorded step, probe or event that the run never used all fail
-(`elasticache_recording_mismatch`, `elasticache_recording_unused`).
+(`elasticache_recording_mismatch`, `elasticache_recording_unused`). Each cache
+step is consumed by its own call: `address` by the DNS lookup (skipped for
+`127.0.0.1`, `localhost` and `::1`), `iam_token` by the signer (only with
+`--iam-auth`), `connect.request` and `connect.init_error` by the connect,
+`ping_ms`/`ping_error` by `PING` and `server` by `INFO`. A run that stops early
+(an init error, a failed `PING`) leaves the later steps unused and fails.
 
 ## Host selection (AC2)
 
@@ -157,6 +174,11 @@ and the durations; none starts a process.
     token (`toolkit_aws::paginate`). `DescribeInstanceInformation` is not
     chunked to 100 ids as the live API requires; the script did not chunk
     either. A live client must (follow-up).
+    When a later `DescribeInstanceInformation` page fails with a service error the
+    instance ids of the earlier pages are kept, as in the script (`ssm_managed`
+    is filled outside its `try`); the warning or access-denied text is printed
+    and the hosts known to be managed are still ordered first and recommended.
+    A replay mismatch is never a service error and stays fatal (#4989).
 13. **Python tests.** The skill has no Python tests for these scripts
     (`test_connection.py` is a script, not a test). The Rust tests are named
     after the script functions they port: `find_tunnel_hosts_*`,
@@ -170,5 +192,4 @@ and the durations; none starts a process.
 - Live implementations of the three seams behind optional features (AWS
   describe calls through the toolkit-aws seams, a bounded local socket/process
   layer with `kill_on_drop` and the same timeouts, a Valkey client with TLS and
-  the IAM token signer): filed alongside #4610 (the other live-client
-  follow-up of the ElastiCache family).
+  the IAM token signer): filed as #4982.
