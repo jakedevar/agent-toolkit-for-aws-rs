@@ -1232,3 +1232,7 @@ Friction: #4727, Rsi #4694, Rsi #4704
   Workers: fe94684e docgraph S3, 6be15885 S2 review, 4d40e01a #5514, 0830cd5f #5360 merge (taking the freed slot). Queue: 3057 B3, 3058 #5504, 3060 #5158.
   After #5158 + B3 land: B4 is unblocked once B2+B3+#5158 are all on rolling (B2 already landed).
 - 23:50Z: B3 LANDED (ac9e0f9d, landed_sha 2f191bf511896890b6542ce8f3a0b95c2927c8e4); #5505 auto-closed, CLOSED #5511. #5514 worker (from a90abec7) now has B3 on rolling. B4 waits only on #5158 (seq 3060).
+- 23:52Z: #5514 (4d40e01a) DONE at d90cbf2acc713f55b06915c0f6ada3e22ab2810a (quote_untrusted/neutralize_line on plugin-stage usage; refuse any `!` line in a package .gitignore). PM reviewed and ACCEPTED it; check refused only on commit_mismatch (base a90abec7), 94 green, merges cleanly. ENQUEUED seq 3061 (9916d8cd, issue 5514).
+  Filed x402 S7 #5526 (cutover docs; Q2/Q3 ruled in #5091) -> Claude Sonnet high 014458e4. B5 follows S7.
+  Workers: fe94684e docgraph S3, 6be15885 S2 review, 0830cd5f #5360 merge, 014458e4 S7. Queue: 3058 #5504, 3060 #5158, 3061 #5514.
+  Kaizen note: generic_cargo_commit_mismatch (#5265) refused 3 green candidates this seat after rolling moved; enqueued anyway since the queue re-gates.
