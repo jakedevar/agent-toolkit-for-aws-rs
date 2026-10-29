@@ -56,7 +56,10 @@ fn probe_count_grows_linearly_with_the_number_of_keys() {
     let large = probes(20_000);
     // Ten times the keys, at most about ten times the probes (quadratic
     // growth would be a hundred times).
-    assert!(large <= small * 11, "{small} probes for 2,000, {large} for 20,000");
+    assert!(
+        large <= small * 11,
+        "{small} probes for 2,000, {large} for 20,000"
+    );
 }
 
 #[test]
@@ -66,7 +69,11 @@ fn wide_object_nested_at_depth_100_stays_linear() {
     let input = format!("{}{object}{}", "[".repeat(100), "]".repeat(100));
     let (result, stats) = parse_json_with_stats(&input);
     result.expect("depth 100 is inside the default limit");
-    assert!(stats.key_probes <= 2 * n as u64, "{} probes", stats.key_probes);
+    assert!(
+        stats.key_probes <= 2 * n as u64,
+        "{} probes",
+        stats.key_probes
+    );
 }
 
 #[test]
@@ -99,9 +106,12 @@ fn object_with_duplicate(n: usize, at: usize, of: usize) -> String {
 }
 
 fn assert_duplicate_at(n: usize, at: usize, of: usize) {
-    let error = parse_json(&object_with_duplicate(n, at, of))
-        .expect_err("a repeated key must be rejected");
-    assert_eq!(error.message, "duplicate object key", "n={n} at={at} of={of}");
+    let error =
+        parse_json(&object_with_duplicate(n, at, of)).expect_err("a repeated key must be rejected");
+    assert_eq!(
+        error.message, "duplicate object key",
+        "n={n} at={at} of={of}"
+    );
     assert_eq!(error.format, "JSON");
     // Line 1 is `{`; member `i` is on line `i + 2`; the error points at the
     // opening quote of the repeated key.
@@ -308,8 +318,7 @@ fn depth_cap_accepts_the_boundary_and_refuses_one_more_level() {
     // applies to an injected cap.
     let nest = |levels: usize| format!("{}{}", "[".repeat(levels), "]".repeat(levels));
     assert!(parse_json_with_limits(&nest(4), &limits(3, usize::MAX)).is_ok());
-    let error =
-        parse_json_with_limits(&nest(5), &limits(3, usize::MAX)).expect_err("too deep");
+    let error = parse_json_with_limits(&nest(5), &limits(3, usize::MAX)).expect_err("too deep");
     assert_eq!(error.message, "nesting is too deep");
     assert_eq!(error.format, "JSON");
 }
