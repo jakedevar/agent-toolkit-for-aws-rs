@@ -836,3 +836,4 @@ Friction: #4727, Rsi #4694, Rsi #4704
   Kaizen #5265 (opaque generic_cargo_commit_mismatch on stale-base green receipt; also harness:true filing refused agent_create_issue_harness_project_unresolved -> relay to GM in next report).
 - 10-29 07:17Z: S2b LANDED (188e5056 published, f51a06f44d65675c2c2839b5ea2d4a47a53ecc4b). #5223 auto-closed; CLOSED #5252. Queue empty. Reported up (key pm-0efc0d66-report-0715) incl. kaizen relay.
   UNBLOCKED: ai-payloads S4 callers (design row S4; needs S2b+S3, both landed) -> next free slot (Claude Sonnet or Codex; prose + Rust contract tests).
+- 10-29 07:20Z: GM relayed kaizen: #5265->Rsi #5266, #5243->Rsi #5267, #5226->Rsi #5268 (xref notes added). Keep relaying harness items in reports until harness:true works (Rsi #4856/#4857). Project is a named baseline for operator request Rsi #5231 (weekly scorecard + RSI-defect mining).
