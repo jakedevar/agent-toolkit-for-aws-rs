@@ -831,6 +831,27 @@ fn process_request_gate_rejects_alias_macro_literal_and_mutation() {
 }
 
 #[test]
+fn process_request_gate_rejects_macro_hidden_self_and_field_mutation() {
+    let good = r"
+        pub struct ProcessPaymentRequest { body: Vec<u8> }
+        impl ProcessPaymentRequest {
+            fn from_approved(approved: &Approved) -> Self { Self { body: vec![] } }
+        }
+        impl std::fmt::Debug for ProcessPaymentRequest {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { todo!() }
+        }
+    ";
+    let hidden_write = good.replace(
+        "Self { body: vec![] }",
+        "{ let mut r = Self { body: vec![] }; helper!(r.body = vec![]); r }",
+    );
+    let hidden_self = good.replace("{ todo!() }", "{ helper!(Self { body: vec![] }); todo!() }");
+    for bad in [&hidden_write, &hidden_self] {
+        assert!(std::panic::catch_unwind(|| check_process_request(bad)).is_err());
+    }
+}
+
+#[test]
 fn payment_service_model_is_embedded() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/agents_pay/agentcore.rs");
     let source = fs::read_to_string(path).unwrap();
