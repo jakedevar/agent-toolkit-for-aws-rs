@@ -167,12 +167,128 @@ fn live_selection_is_unavailable_without_feature() {
     }
 }
 
+// ---- T-DG-05c/d (S3, #5515): live seed consent, then the policy, then the network ----
+
+#[cfg(feature = "docgraph-live")]
+const SEED_HOST: &str = "db.cluster-abc.us-east-1.neptune.amazonaws.com";
+
+#[cfg(feature = "docgraph-live")]
+fn policy_file(name: &str, body: &str) -> String {
+    let dir = std::env::temp_dir().join(format!("docgraph-s3-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join(name);
+    std::fs::write(&path, body).unwrap();
+    path.to_str().unwrap().to_string()
+}
+
+#[test]
+#[cfg(feature = "docgraph-live")]
+fn live_seed_consent_shaped_policy_keys_and_ambient_wipe_confirm_nothing() {
+    let consent = policy_file(
+        "consent.json",
+        &format!(
+            r#"{{"host":"{SEED_HOST}","port":8182,"region":"us-east-1","live":true,"confirm_wipe":true}}"#
+        ),
+    );
+    // NEPTUNE_SEED_CONFIRM_WIPE=1 is set by `run`; the policy cannot confirm.
+    let (status, stdout, stderr) = run(&[
+        "neptune",
+        "seed",
+        "--live",
+        "--endpoint",
+        SEED_HOST,
+        "--network-policy",
+        &consent,
+    ]);
+    assert_eq!(status, 1, "{stderr}");
+    assert!(stdout.is_empty(), "{stdout}");
+    assert!(stderr.contains("Refusing to wipe the graph"), "{stderr}");
+    assert!(stderr.contains("Re-run with --confirm-wipe."), "{stderr}");
+    assert!(!stderr.contains("NEPTUNE_SEED_CONFIRM_WIPE"), "{stderr}");
+    // With argv consent the policy is read, and its consent-shaped keys are
+    // refused before any connection is attempted.
+    let (status, stdout, stderr) = run(&[
+        "neptune",
+        "seed",
+        "--live",
+        "--confirm-wipe",
+        "--endpoint",
+        SEED_HOST,
+        "--network-policy",
+        &consent,
+    ]);
+    assert_eq!(status, 1, "{stderr}");
+    assert!(stdout.is_empty(), "nothing ran: {stdout}");
+    assert!(stderr.contains("unknown key"), "{stderr}");
+    assert!(!stderr.contains(&consent), "{stderr}");
+}
+
+#[test]
+#[cfg(feature = "docgraph-live")]
+fn live_seed_refuses_policy_mismatches_before_credentials_or_dns() {
+    let valid = policy_file(
+        "valid.json",
+        &format!(r#"{{"host":"{SEED_HOST}","port":8182,"region":"us-east-1"}}"#),
+    );
+    let other_port = policy_file(
+        "port.json",
+        &format!(r#"{{"host":"{SEED_HOST}","port":8183,"region":"us-east-1"}}"#),
+    );
+    let other_host = "db.cluster-xyz.us-east-1.neptune.amazonaws.com";
+    let base = ["neptune", "seed", "--live", "--confirm-wipe", "--endpoint"];
+    for (case, tail, code, expected) in [
+        ("no policy", vec![SEED_HOST], 2, "--network-policy is required"),
+        (
+            "unreadable policy",
+            vec![SEED_HOST, "--network-policy", "/does/not/exist"],
+            1,
+            "could not be read",
+        ),
+        (
+            "endpoint is not the policy host",
+            vec![other_host, "--network-policy", valid.as_str()],
+            2,
+            "--endpoint must be the network policy's host",
+        ),
+        (
+            "not the Gremlin port",
+            vec![SEED_HOST, "--network-policy", other_port.as_str()],
+            1,
+            "Gremlin port 8182",
+        ),
+        (
+            "region mismatch",
+            vec![
+                SEED_HOST,
+                "--network-policy",
+                valid.as_str(),
+                "--region",
+                "us-west-2",
+            ],
+            1,
+            "differs from the network policy's region",
+        ),
+    ] {
+        let args: Vec<&str> = base.iter().copied().chain(tail).collect();
+        let (status, stdout, stderr) = run(&args);
+        assert_eq!(status, code, "{case}: {stderr}");
+        assert!(stdout.is_empty(), "{case}: {stdout}");
+        assert!(stderr.contains(expected), "{case}: {stderr}");
+        assert!(!stderr.contains("/does/not/exist"), "{case}: {stderr}");
+    }
+}
+
 // ---- T-DG-09a: no unignored live entry; ordinary runs never reach a network ----
 
 /// Identifiers only a live test would use: the production database transport
 /// and resolver. A test naming one, or the exact acceptance gate variable,
 /// must be `#[ignore]` and gated on the `docgraph-live` feature.
-const LIVE_IDENTS: [&str; 3] = ["for_database", "SystemDatabaseResolver", "TcpDialer"];
+const LIVE_IDENTS: [&str; 4] = [
+    "for_database",
+    "SystemDatabaseResolver",
+    "TcpDialer",
+    "connect_live",
+];
 
 fn live_tokens(stream: proc_macro2::TokenStream, gate: &str) -> bool {
     stream.into_iter().any(|tree| match tree {

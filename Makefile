@@ -110,3 +110,18 @@ plugin-binaries-check:
 test-scripts:
 	sh scripts/at-commit-test.selftest.sh
 	sh scripts/run-rsid-test-shards.selftest.sh
+
+# docgraph live S3 (#5515): the Gremlin WebSocket plane (toolkit-aws feature
+# `gremlin`, enabled by toolkit-cli `docgraph-live`). gremlin-sync formats the
+# workspace and records the new optional dependency in Cargo.lock from the
+# local registry cache (--offline: no network).
+gremlin-sync:
+	cargo fmt --all
+	cargo metadata --format-version 1 --offline > /dev/null
+
+docgraph-gremlin:
+	cargo test -p toolkit-aws --features gremlin --locked --lib sdk::gremlin::
+	cargo test -p toolkit-aws --features gremlin --locked --lib sdk::database::
+
+clippy-gremlin:
+	cargo clippy -p toolkit-aws --features gremlin --all-targets --locked -- -D warnings

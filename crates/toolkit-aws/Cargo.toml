@@ -38,8 +38,21 @@ sdk = [
     "dep:bytes",
 ]
 
+# The Gremlin WebSocket plane of the docgraph live adapter (S3, #5515;
+# R-DG-05). Not part of `sdk`: only `toolkit-cli/docgraph-live` enables it, so
+# the SDK build and every default build stay free of a WebSocket crate.
+gremlin = ["sdk", "dep:tokio-tungstenite", "dep:futures-util"]
+
 [dependencies]
 toolkit-core = { path = "../toolkit-core" }
+# RFC 6455 framing and the client upgrade handshake for the Gremlin plane
+# (feature `gremlin` only). No TLS, connect or URL feature: the connection is
+# the database capability's pre-send guarded rustls stream (`SecureOpener`).
+# `handshake` adds only crates already in the lock (http, httparse, sha1,
+# data-encoding); see docs/migration/docgraph.md "S3 Gremlin adapter".
+tokio-tungstenite = { version = "=0.29.0", optional = true, default-features = false, features = ["handshake"] }
+# `StreamExt`/`SinkExt` over the WebSocket stream; already resolved (tokio-tungstenite).
+futures-util = { version = "=0.3.34", optional = true, default-features = false, features = ["sink", "std"] }
 # Hyper gates its typed head-size classifier on these features, even for clients.
 hyper = { version = "=1.12.0", optional = true, default-features = false, features = ["http1", "server", "client"] }
 # The narrow database endpoint connector (R-DG-03, #5387): the HTTP/1 client

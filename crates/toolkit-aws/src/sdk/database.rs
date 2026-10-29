@@ -787,6 +787,31 @@ impl DatabaseConnector {
         }))))
     }
 
+    /// Steps 2 to 4: resolve and validate every answer, dial a validated
+    /// answer, check the actual peer before any byte, then TLS to the original
+    /// host name trusting only the roots. Shared with the Gremlin WebSocket
+    /// plane ([`SecureOpener`]), so neither plane can send a byte to a peer
+    /// the policy did not admit (#5387).
+    async fn secure_stream(
+        &self,
+        deadline: Instant,
+    ) -> Result<tokio_rustls::client::TlsStream<Box<dyn Stream>>, ConnectorError> {
+        let answers = self.resolve(deadline).await?;
+        let stream = self.connect(&answers, deadline).await?;
+        let name = ServerName::try_from(self.shared.endpoint.host.clone())
+            .map_err(|_| verdict(refusal("the database host is not a valid TLS name")))?;
+        let bound = deadline.min(Instant::now() + self.connect);
+        tokio::time::timeout_at(bound, self.shared.tls.connect(name, stream))
+            .await
+            .map_err(|_| {
+                verdict(AwsError::timeout(
+                    TimeoutPhase::Connect,
+                    "HTTP connect to the database timed out during TLS",
+                ))
+            })?
+            .map_err(|error| ConnectorError::io(Box::new(error)))
+    }
+
     async fn exchange(
         &self,
         request: SdkHttpRequest,
@@ -800,22 +825,7 @@ impl DatabaseConnector {
                 "streaming request bodies are not sent to a database endpoint",
             ))
         })?;
-        let answers = self.resolve(deadline).await?;
-        let stream = self.connect(&answers, deadline).await?;
-
-        // Step 4: TLS to the original host name, trusting only the roots.
-        let name = ServerName::try_from(self.shared.endpoint.host.clone())
-            .map_err(|_| verdict(refusal("the database host is not a valid TLS name")))?;
-        let bound = deadline.min(Instant::now() + self.connect);
-        let tls = tokio::time::timeout_at(bound, self.shared.tls.connect(name, stream))
-            .await
-            .map_err(|_| {
-                verdict(AwsError::timeout(
-                    TimeoutPhase::Connect,
-                    "HTTP connect to the database timed out during TLS",
-                ))
-            })?
-            .map_err(|error| ConnectorError::io(Box::new(error)))?;
+        let tls = self.secure_stream(deadline).await?;
         let (mut sender, connection) = hyper::client::conn::http1::handshake(TokioIo::new(tls))
             .await
             .map_err(|error| ConnectorError::io(Box::new(error)))?;
@@ -1208,6 +1218,82 @@ impl SdkTransport {
             roots: Some(roots.clone()),
             peer_check: true,
             release_ended_streams: true,
+        })
+    }
+}
+
+/// The pre-send guarded TLS opener of the database capability, for planes that
+/// need the raw connection rather than one HTTP exchange: the Gremlin
+/// WebSocket (S3, [`super::gremlin`]). It runs exactly the connector's steps 2
+/// to 4 (fresh resolution, every answer and the actual peer checked before any
+/// byte, TLS trusting only the roots and verifying the original host name), so
+/// no signed byte can reach a peer the policy did not admit (#5387).
+#[cfg(feature = "gremlin")]
+pub(crate) struct SecureOpener(DatabaseConnector);
+
+#[cfg(feature = "gremlin")]
+impl SecureOpener {
+    pub(crate) fn new(
+        roots: &ValidatedRoots,
+        endpoint: DatabaseEndpoint,
+        bounds: DatabaseBounds,
+        resolver: Arc<dyn DatabaseResolver>,
+        dialer: Arc<dyn Dialer>,
+    ) -> Result<Self, AwsError> {
+        Ok(Self(DatabaseConnector {
+            shared: Arc::new(Shared {
+                endpoint,
+                tls: tokio_rustls::TlsConnector::from(Arc::new(tls_config(roots)?)),
+                resolver,
+                dialer,
+                bounds,
+            }),
+            caller_deadline: None,
+            connect: bounds.connect,
+            idle: bounds.idle,
+        }))
+    }
+
+    /// The production opener: system resolver and TCP dialer.
+    pub(crate) fn system(
+        roots: &ValidatedRoots,
+        endpoint: DatabaseEndpoint,
+        bounds: DatabaseBounds,
+    ) -> Result<Self, AwsError> {
+        Self::new(
+            roots,
+            endpoint,
+            bounds,
+            Arc::new(SystemDatabaseResolver),
+            Arc::new(TcpDialer),
+        )
+    }
+
+    pub(crate) fn endpoint(&self) -> &DatabaseEndpoint {
+        &self.0.shared.endpoint
+    }
+
+    pub(crate) fn bounds(&self) -> DatabaseBounds {
+        self.0.shared.bounds
+    }
+
+    /// An admitted TLS stream, or the boundary's fixed verdict (refusal or
+    /// timeout). Any other failure (no answer accepted a connection, the TLS
+    /// handshake or certificate failed) becomes one fixed connect error: the
+    /// I/O or rustls text is never forwarded (R-DG-02).
+    pub(crate) async fn open(
+        &self,
+        deadline: Instant,
+    ) -> Result<tokio_rustls::client::TlsStream<Box<dyn Stream>>, AwsError> {
+        self.0.secure_stream(deadline).await.map_err(|error| {
+            crate::binding::find_guard_rejection(&error).map_or_else(
+                || {
+                    AwsError::connect(
+                        "the TLS connection to the database could not be established",
+                    )
+                },
+                |rejection| rejection.error().clone(),
+            )
         })
     }
 }

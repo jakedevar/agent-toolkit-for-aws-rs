@@ -16,7 +16,7 @@ default = []
 # the `asm exec` MCP fallback (#4582) and the MCP proxy. Off by default so the
 # ordinary build compiles no AWS SDK crate.
 aws-sdk = ["toolkit-aws/sdk"]
-docgraph-live = ["aws-sdk", "dep:aws-sdk-docdb", "dep:aws-sdk-cloudwatch", "dep:aws-sdk-ec2", "dep:aws-sdk-secretsmanager", "dep:aws-credential-types", "dep:aws-runtime", "dep:aws-smithy-runtime-api", "dep:aws-smithy-types", "dep:tokio"]
+docgraph-live = ["aws-sdk", "toolkit-aws/gremlin", "dep:aws-sdk-docdb", "dep:aws-sdk-cloudwatch", "dep:aws-sdk-ec2", "dep:aws-sdk-secretsmanager", "dep:aws-credential-types", "dep:aws-runtime", "dep:aws-smithy-runtime-api", "dep:aws-smithy-types", "dep:tokio"]
 # The live x402 payment constructors (#5352, design section 7 G1): real
 # config, credentials, DNS, payment TLS roots and transports. Only release
 # builds and the operator live run enable it; every test target refuses it
