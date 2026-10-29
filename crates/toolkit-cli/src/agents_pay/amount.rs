@@ -201,8 +201,90 @@ impl CapDecimal {
 
     /// Exact decimal subtraction for session spending arithmetic.
     #[must_use]
-    pub fn subtract(&self, _other: &Self) -> String {
-        String::new()
+    pub fn subtract(&self, other: &Self) -> String {
+        let exponent = self.exponent.min(other.exponent);
+        let left = format!(
+            "{}{}",
+            self.digits,
+            "0".repeat(
+                usize::try_from(self.exponent - exponent).expect("nonnegative exponent difference")
+            )
+        );
+        let right = format!(
+            "{}{}",
+            other.digits,
+            "0".repeat(
+                usize::try_from(other.exponent - exponent)
+                    .expect("nonnegative exponent difference")
+            )
+        );
+        let left_negative = self.negative && self.digits != "0";
+        let right_negative = !other.negative && other.digits != "0";
+        let (digits, negative) = if left_negative == right_negative {
+            (add_digits(&left, &right), left_negative)
+        } else {
+            match compare_digits(&left, &right) {
+                Ordering::Less => (subtract_digits(&right, &left), right_negative),
+                Ordering::Equal => ("0".to_owned(), false),
+                Ordering::Greater => (subtract_digits(&left, &right), left_negative),
+            }
+        };
+        let rendered = decimal_str(&digits, i64::from(exponent));
+        if negative && digits != "0" {
+            format!("-{rendered}")
+        } else {
+            rendered
+        }
+    }
+}
+
+fn add_digits(left: &str, right: &str) -> String {
+    let mut a = left.bytes().rev();
+    let mut b = right.bytes().rev();
+    let mut carry = 0_u8;
+    let mut out = Vec::with_capacity(left.len().max(right.len()) + 1);
+    loop {
+        let x = a.next().map(|v| v - b'0');
+        let y = b.next().map(|v| v - b'0');
+        if x.is_none() && y.is_none() && carry == 0 {
+            break;
+        }
+        let sum = x.unwrap_or(0) + y.unwrap_or(0) + carry;
+        out.push(b'0' + sum % 10);
+        carry = sum / 10;
+    }
+    out.reverse();
+    let result = String::from_utf8(out).expect("decimal digits");
+    let stripped = result.trim_start_matches('0');
+    if stripped.is_empty() {
+        "0".to_owned()
+    } else {
+        stripped.to_owned()
+    }
+}
+
+// `left >= right`, with both arguments containing only ASCII digits.
+fn subtract_digits(left: &str, right: &str) -> String {
+    let mut b = right.bytes().rev();
+    let mut borrow = 0_i16;
+    let mut out = Vec::with_capacity(left.len());
+    for x in left.bytes().rev() {
+        let mut digit = i16::from(x - b'0') - borrow - i16::from(b.next().map_or(0, |v| v - b'0'));
+        if digit < 0 {
+            digit += 10;
+            borrow = 1;
+        } else {
+            borrow = 0;
+        }
+        out.push(b'0' + u8::try_from(digit).expect("decimal digit"));
+    }
+    out.reverse();
+    let result = String::from_utf8(out).expect("decimal digits");
+    let stripped = result.trim_start_matches('0');
+    if stripped.is_empty() {
+        "0".to_owned()
+    } else {
+        stripped.to_owned()
     }
 }
 
