@@ -320,9 +320,6 @@ mod compact_tests {
             encoded.as_bytes(),
             br#"["\u00e9\ud83d\ude00\u007f\u0000\n\t\b\f\r\"\\",1.5]"#
         );
-        assert_eq!(
-            toolkit_core::json::parse_json(&encoded).unwrap(),
-            value
-        );
+        assert_eq!(toolkit_core::json::parse_json(&encoded).unwrap(), value);
     }
 }

@@ -154,4 +154,94 @@ mod tests {
             assert!(from_openclaw(&parse_json(raw).unwrap()).is_err());
         }
     }
+
+    // T-OCP-PAR, T-OCP-MAP, T-BR-TOK: fixture, controls and atomic cap.
+    #[test]
+    fn t_ocp_par_and_token() {
+        use crate::agents_pay::policy::{derive_client_token, select_accept_entry};
+        let fixture = parse_json(include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../plugins/aws-agents/skills/agents-pay/packages/openclaw/test/fixtures/v2-security-contract.json"))).unwrap();
+        let config = fixture.get("config").unwrap();
+        let profile = Json::object(
+            [
+                "networkPreferences",
+                "allowedOrigins",
+                "allowedRecipients",
+                "allowedAssetsByNetwork",
+                "maxPaymentAmountAtomic",
+            ]
+            .iter()
+            .map(|key| (*key, config.get(key).unwrap().clone()))
+            .collect(),
+        );
+        let policy = from_openclaw(&profile).unwrap();
+        let challenge = fixture.get("challenge").unwrap();
+        let selected = select_accept_entry(challenge, &policy).unwrap();
+        assert_eq!(selected.get("amount").and_then(Json::as_str), Some("1000"));
+        let change = |value: &Json, key: &str, replacement: Json| {
+            let Json::Object(fields) = value else {
+                panic!("object fixture")
+            };
+            Json::Object(
+                fields
+                    .iter()
+                    .map(|(k, v)| {
+                        (
+                            k.clone(),
+                            if k == key {
+                                replacement.clone()
+                            } else {
+                                v.clone()
+                            },
+                        )
+                    })
+                    .collect(),
+            )
+        };
+        for (key, replacement) in [
+            ("payTo", "other"),
+            ("amount", "100001"),
+            ("asset", "other"),
+            ("scheme", "upto"),
+            ("network", "eip155:1"),
+            ("amount", "0"),
+            ("amount", "1.0"),
+            ("amount", "1e3"),
+            ("amount", " 1000 "),
+        ] {
+            let altered = change(selected, key, Json::string(replacement));
+            assert!(
+                select_accept_entry(
+                    &Json::object(vec![("accepts", Json::Array(vec![altered]))]),
+                    &policy
+                )
+                .is_err(),
+                "{key}: {replacement}"
+            );
+        }
+        let url = fixture.get("requestUrl").unwrap().as_str().unwrap();
+        let token = derive_client_token("session", url, selected, None).unwrap();
+        let changed_nonce = change(
+            selected,
+            "extra",
+            Json::object(vec![("nonce", Json::string("different"))]),
+        );
+        assert_eq!(
+            token,
+            derive_client_token("session", url, &changed_nonce, None).unwrap()
+        );
+        assert_ne!(
+            token,
+            derive_client_token("other", url, selected, None).unwrap()
+        );
+        assert_ne!(
+            token,
+            derive_client_token(
+                "session",
+                url,
+                &change(selected, "amount", Json::string("1001")),
+                None
+            )
+            .unwrap()
+        );
+    }
 }
