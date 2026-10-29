@@ -2749,3 +2749,321 @@ fn find_tunnel_hosts_a_replay_mismatch_on_a_later_ssm_page_stays_fatal() {
     assert!(!run.stdout.contains("Recommended:"), "{}", run.stdout);
     assert!(!run.stdout.contains("Warning: could not query SSM"));
 }
+
+// ------------------------- #5004 #5005 #5007: typed cache diagnostics (PM ruling)
+//
+// No cache client or server string reaches stdout, stderr or a recording. A
+// failure is a kind from a closed set with fixed first-party text; the version
+// and mode of the server are printed only when they match a strict allowlist
+// and hold no active secret.
+
+const KINDS: [(&str, &str); 6] = [
+    ("authentication_failed", "authentication failed"),
+    ("connection_refused", "connection refused"),
+    ("tls_handshake_failed", "TLS handshake failed"),
+    ("timeout", "timed out"),
+    ("dns_failed", "host name lookup failed"),
+    ("other", "client error (details withheld)"),
+];
+
+const SG_HINT: &str =
+    "  Hint: Check security group rules, VPC placement, and whether you need a tunnel or jump host.\n";
+
+#[test]
+fn every_client_init_failure_kind_prints_its_fixed_text() {
+    for (kind, text) in KINDS {
+        let (status, stdout, stderr) = replay_connection(
+            &format!(r#"{{"cache":{{"connect":{{"init_error":"{kind}"}}}}}}"#),
+            &[],
+        );
+        assert_eq!(status, 1, "{kind}: {stdout}{stderr}");
+        assert_eq!(stderr, format!("  Client init FAILED: {text}\n"), "{kind}");
+    }
+}
+
+#[test]
+fn every_ping_failure_kind_prints_its_fixed_text_and_hint() {
+    let rbac = "  Hint: Check username/password or ensure the RBAC user exists and is active.\n";
+    let tls = "  Hint: TLS handshake failed. Verify the endpoint supports in-transit encryption.\n";
+    let expected = [
+        (
+            "authentication_failed",
+            format!("  PING FAILED: Authentication error -- authentication failed\n{rbac}"),
+        ),
+        (
+            "connection_refused",
+            format!("  PING FAILED: Connection error -- connection refused\n{SG_HINT}"),
+        ),
+        (
+            "tls_handshake_failed",
+            format!("  PING FAILED: Connection error -- TLS handshake failed\n{tls}"),
+        ),
+        (
+            "timeout",
+            format!("  PING FAILED: Connection error -- timed out\n{SG_HINT}"),
+        ),
+        (
+            "dns_failed",
+            format!("  PING FAILED: Connection error -- host name lookup failed\n{SG_HINT}"),
+        ),
+        (
+            "other",
+            "  PING FAILED: client error (details withheld)\n".to_string(),
+        ),
+    ];
+    for (kind, stderr_expected) in expected {
+        let (status, stdout, stderr) = replay_connection(
+            &format!(r#"{{"cache":{{"ping_error":{{"kind":"{kind}"}}}}}}"#),
+            &[],
+        );
+        assert_eq!(status, 1, "{kind}: {stdout}{stderr}");
+        assert_eq!(stderr, stderr_expected, "{kind}");
+        assert!(!stdout.contains("CONNECTION SUCCESSFUL"), "{kind}");
+    }
+}
+
+#[test]
+fn the_tls_hint_follows_the_typed_kind_and_the_tls_setting() {
+    let (_, _, with_tls) = replay_connection(
+        r#"{"cache":{"ping_error":{"kind":"tls_handshake_failed"}}}"#,
+        &[],
+    );
+    assert!(
+        with_tls.contains("Hint: TLS handshake failed. Verify"),
+        "{with_tls}"
+    );
+    let (_, _, plaintext) = replay_connection(
+        r#"{"cache":{"ping_error":{"kind":"tls_handshake_failed"}}}"#,
+        &["--no-tls"],
+    );
+    assert!(
+        plaintext.contains("Hint: This endpoint may require TLS. Retry without --no-tls"),
+        "{plaintext}"
+    );
+    // A password that spells "tls" steers nothing: only the kind picks the hint.
+    let (_, _, other) = replay_connection(
+        r#"{"cache":{"ping_error":{"kind":"connection_refused"}}}"#,
+        &["--password", "tls"],
+    );
+    assert!(other.ends_with(SG_HINT), "{other}");
+}
+
+#[test]
+fn a_recording_refuses_free_text_error_and_unknown_kinds_without_echoing_them() {
+    let secret = "marmalade 742/synthetic+value";
+    let echo = "marmalade";
+    for recording in [
+        // Free text as the init error or the PING message is no longer a recording.
+        format!(r#"{{"cache":{{"connect":{{"init_error":"rejected {secret}"}}}}}}"#),
+        format!(r#"{{"cache":{{"ping_error":{{"kind":"other","message":"{secret}"}}}}}}"#),
+        format!(r#"{{"cache":{{"ping_error":{{"kind":"authentication_failed","message":"x"}}}}}}"#),
+        // An unknown or old-style kind, a missing kind.
+        format!(r#"{{"cache":{{"ping_error":{{"kind":"{secret}"}}}}}}"#),
+        r#"{"cache":{"ping_error":{"kind":"authentication"}}}"#.to_string(),
+        r#"{"cache":{"ping_error":{}}}"#.to_string(),
+        format!(r#"{{"cache":{{"connect":{{"init_error":"{secret}"}}}}}}"#),
+    ] {
+        let (status, stdout, stderr) = replay_connection(&recording, &["--password", secret]);
+        assert_eq!(status, 1, "{recording}");
+        let all = format!("{stdout}{stderr}");
+        assert!(!all.contains(echo), "{recording}: {all}");
+        assert!(!all.contains("742"), "{recording}: {all}");
+        assert!(!all.contains("PING FAILED"), "{recording}: {all}");
+        assert!(!all.contains("Client init FAILED"), "{recording}: {all}");
+    }
+}
+
+/// The text of a server field that the allowlist must refuse.
+const UNKNOWN: &str = "unknown";
+
+fn server_line(version: &str, mode: &str, extra: &[&str]) -> (u8, String, String) {
+    let recording = format!(
+        r#"{{"cache":{{"ping_ms":1.0,"server":{{"version":{},"mode":{}}}}}}}"#,
+        Json::string(version).to_compact_string(),
+        Json::string(mode).to_compact_string(),
+    );
+    replay_connection(&recording, extra)
+}
+
+#[test]
+fn the_server_version_prints_only_when_it_matches_the_allowlist() {
+    let longest = format!("7{}", "9".repeat(31));
+    for version in [
+        "7.1.0",
+        "255.255.255",
+        "7.2.4-rc1+build5",
+        "V",
+        "0",
+        longest.as_str(),
+    ] {
+        let (status, stdout, stderr) = server_line(version, "standalone", &[]);
+        assert_eq!(status, 0, "{version}: {stderr}");
+        assert!(
+            stdout.contains(&format!(
+                "  Server: engine version {version}, mode=standalone\n"
+            )),
+            "{version}: {stdout}"
+        );
+    }
+    let too_long = format!("7{}", "9".repeat(32));
+    for version in [
+        "",
+        too_long.as_str(),
+        ".1.0",
+        "-1",
+        "+x",
+        "7 1",
+        "7.1\n0",
+        "7.1\u{1b}[31m",
+        "7.1_0",
+        "7.1/0",
+        "7%2F1",
+        "7.1.0;rm",
+        "\u{e9}7",
+        "<b>7</b>",
+        "7.1.0 (build 5)",
+    ] {
+        let (status, stdout, _) = server_line(version, "standalone", &[]);
+        assert_eq!(status, 0, "{version:?}");
+        assert!(
+            stdout.contains(&format!(
+                "  Server: engine version {UNKNOWN}, mode=standalone\n"
+            )),
+            "{version:?}: {stdout}"
+        );
+        assert!(
+            !stdout.contains(version) || version.is_empty(),
+            "{version:?}: {stdout}"
+        );
+    }
+}
+
+#[test]
+fn the_server_mode_prints_only_a_known_mode() {
+    for mode in ["standalone", "cluster", "sentinel"] {
+        let (_, stdout, _) = server_line("7.1.0", mode, &[]);
+        assert!(
+            stdout.contains(&format!("version 7.1.0, mode={mode}\n")),
+            "{mode}: {stdout}"
+        );
+    }
+    for mode in [
+        "",
+        "Standalone",
+        "cluster\n",
+        "unexpected",
+        "7.1.0",
+        "stand alone",
+    ] {
+        let (_, stdout, _) = server_line("7.1.0", mode, &[]);
+        assert!(
+            stdout.contains(&format!("version 7.1.0, mode={UNKNOWN}\n")),
+            "{mode:?}: {stdout}"
+        );
+    }
+}
+
+#[test]
+fn a_server_value_holding_an_active_secret_prints_as_unknown() {
+    // Each value passes the pattern and holds the secret as a substring.
+    let long_a = "a".repeat(30);
+    let long_secret = format!("{long_a}b");
+    for (version, secret, why) in [
+        ("7.1.0-Zx9kq2", "Zx9kq2", "raw suffix"),
+        ("Zx9kq2", "Zx9kq2", "the whole value"),
+        ("7.Zx9kq2.0", "Zx9kq2", "inside"),
+        (
+            "pre-recorded-token",
+            "pre-rec",
+            "overlaps the IAM placeholder",
+        ),
+        ("ababababababababa", "ababababababa", "self-overlapping"),
+        ("9.9.9", "9", "a one-character secret"),
+        (
+            long_a.as_str(),
+            long_secret.as_str(),
+            "near match, secret longer: not held",
+        ),
+    ] {
+        let (status, stdout, stderr) = server_line(version, "standalone", &["--password", secret]);
+        assert_eq!(status, 0, "{why}: {stderr}");
+        if why.contains("not held") {
+            // The secret is not inside the value: the value is printed.
+            assert!(
+                stdout.contains(&format!("engine version {version},")),
+                "{why}: {stdout}"
+            );
+        } else {
+            assert!(
+                stdout.contains(&format!("engine version {UNKNOWN},")),
+                "{why}: {stdout}"
+            );
+            assert!(!stdout.contains(secret), "{why}: {stdout}");
+        }
+    }
+}
+
+#[test]
+fn the_active_iam_token_is_a_secret_of_the_server_gate() {
+    // The replay signer hands out the token `recorded-token`.
+    let (status, stdout, stderr) = replay_connection(
+        r#"{"cache":{"iam_token":true,"ping_ms":1.0,"server":{"version":"7.recorded-token.1","mode":"cluster"}}}"#,
+        &["--iam-auth", "--iam-user", "u", "--cache-name", "c"],
+    );
+    assert_eq!(status, 0, "{stdout}{stderr}");
+    assert!(
+        stdout.contains("engine version unknown, mode=cluster"),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("recorded-token"), "{stdout}");
+}
+
+#[test]
+fn server_text_in_reviewed_encodings_never_shows_the_password() {
+    // #5004: form-urlencoded; #5007: overlapping and self-overlapping.
+    let password = "marmalade 742/synthetic+value";
+    for version in [
+        "marmalade+742%2Fsynthetic%2Bvalue",
+        "marmalade%20742%2Fsynthetic%2Bvalue",
+        "marmalade 742/synthetic+value",
+        "marmalade",
+        "synthetic+value",
+    ] {
+        let (status, stdout, stderr) =
+            server_line(version, "standalone", &["--password", password]);
+        assert_eq!(status, 0, "{version}: {stderr}");
+        let all = format!("{stdout}{stderr}");
+        for part in ["marmalade", "742", "synthetic", "%2F", "%2B"] {
+            assert!(!all.contains(part), "{version}: {part:?} leaked: {all}");
+        }
+    }
+    for (password, text) in [
+        ("ababababababa", "ababababababababa"),
+        ("pre-rec", "pre-recorded-token"),
+    ] {
+        let (_, stdout, stderr) = server_line(text, "cluster", &["--password", password]);
+        let all = format!("{stdout}{stderr}");
+        assert!(
+            !all.contains("baba") && !all.contains("orded-token"),
+            "{text}: {all}"
+        );
+    }
+}
+
+#[test]
+fn a_very_large_server_value_is_unknown_and_never_scanned_whole() {
+    // #5005: a long near-match input. The value is far beyond the cap, so it is
+    // refused before any scan; so is a secret beyond the cap.
+    let value = "a".repeat(1_048_576);
+    let secret = format!("{}b", "a".repeat(5000));
+    let (status, stdout, stderr) = server_line(&value, "standalone", &["--password", &secret]);
+    assert_eq!(status, 0, "{stderr}");
+    assert!(
+        stdout.contains(&format!(
+            "  Server: engine version {UNKNOWN}, mode=standalone\n"
+        )),
+        "{}",
+        &stdout[..stdout.len().min(300)]
+    );
+    assert!(stdout.len() < 400, "{}", stdout.len());
+}
