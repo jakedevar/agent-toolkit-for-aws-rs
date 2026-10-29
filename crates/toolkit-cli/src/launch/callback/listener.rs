@@ -369,6 +369,76 @@ mod scripted_tests {
     }
 
     #[test]
+    fn slot_service_rotates_without_starving_admitted_connections() {
+        use std::cell::RefCell;
+        struct Listener {
+            count: Cell<usize>,
+            serviced: Rc<RefCell<Vec<usize>>>,
+        }
+        struct Stream {
+            id: usize,
+            serviced: Rc<RefCell<Vec<usize>>>,
+        }
+        impl ListenerIo for Listener {
+            type Stream = Stream;
+            fn accept_stream(&self) -> io::Result<Stream> {
+                let id = self.count.get();
+                self.count.set(id + 1);
+                if id >= 16 {
+                    return Err(io::ErrorKind::WouldBlock.into());
+                }
+                Ok(Stream {
+                    id,
+                    serviced: self.serviced.clone(),
+                })
+            }
+        }
+        impl Read for Stream {
+            fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
+                self.serviced.borrow_mut().push(self.id);
+                Err(io::ErrorKind::WouldBlock.into())
+            }
+        }
+        impl Write for Stream {
+            fn write(&mut self, _: &[u8]) -> io::Result<usize> {
+                Err(io::ErrorKind::WouldBlock.into())
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        let start = Instant::now();
+        let clock = FakeClock(Cell::new(start));
+        let serviced = Rc::new(RefCell::new(Vec::new()));
+        let listener = Listener {
+            count: Cell::new(0),
+            serviced: serviced.clone(),
+        };
+        assert_eq!(
+            serve_with(
+                listener,
+                1234,
+                "s",
+                start + Duration::from_millis(14),
+                &clock
+            )
+            .unwrap(),
+            None
+        );
+        let calls = serviced.borrow();
+        assert_eq!(&calls[..8], &(0..8).collect::<Vec<_>>());
+        assert_eq!(
+            &calls[8..24],
+            &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 0]
+        );
+        assert_eq!(
+            &calls[24..40],
+            &[2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 0, 1]
+        );
+        assert_eq!(calls.len(), 40);
+    }
+
+    #[test]
     fn head_finishing_at_slot_deadline_is_not_accepted() {
         struct SlowListener {
             now: Rc<Cell<Instant>>,
