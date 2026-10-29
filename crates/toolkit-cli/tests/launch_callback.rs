@@ -374,3 +374,202 @@ fn helper_closes_stdout_after_port_while_still_listening() {
     assert!(still_running);
     assert!(result.expect("stdout remained open").unwrap().is_empty());
 }
+
+// A private network and mount namespace make the fixed production hostname
+// resolve only to this test's loopback TLS server, without changing host DNS.
+#[cfg(all(target_os = "linux", feature = "aws-sdk"))]
+#[test]
+#[allow(clippy::too_many_lines)]
+fn shipped_binary_exchange_publishes_session() {
+    use rcgen::{BasicConstraints, CertificateParams, IsCa, Issuer, KeyPair};
+    use rustls::pki_types::{PrivateKeyDer, PrivatePkcs8KeyDer};
+    use std::io::{BufRead, BufReader, Read};
+    use std::net::{TcpListener, TcpStream};
+    use std::sync::{mpsc, Arc};
+    use std::time::Duration;
+
+    const CHILD: &str = "RSI_CALLBACK_NET5_NAMESPACE";
+    if std::env::var_os(CHILD).is_none() {
+        let output = Command::new("unshare")
+            .args(["--user", "--map-root-user", "--mount", "--net"])
+            .arg(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "shipped_binary_exchange_publishes_session",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "namespace test failed: {} {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+    assert!(Command::new("mount")
+        .args(["--make-rprivate", "/"])
+        .status()
+        .unwrap()
+        .success());
+    assert!(Command::new("ip")
+        .args(["link", "set", "lo", "up"])
+        .status()
+        .unwrap()
+        .success());
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let home = std::env::temp_dir().join(format!("net5-{}-{unique}", std::process::id()));
+    std::fs::create_dir(&home).unwrap();
+    let hosts = home.join("hosts");
+    std::fs::write(
+        &hosts,
+        b"127.0.0.1 localhost oidc.us-east-1.amazonaws.com\n",
+    )
+    .unwrap();
+    assert!(Command::new("mount")
+        .arg("--bind")
+        .arg(&hosts)
+        .arg("/etc/hosts")
+        .status()
+        .unwrap()
+        .success());
+
+    let ca_key = KeyPair::generate().unwrap();
+    let mut ca_params = CertificateParams::new(Vec::<String>::new()).unwrap();
+    ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+    let ca = ca_params.self_signed(&ca_key).unwrap();
+    let server_key = KeyPair::generate().unwrap();
+    let server_params =
+        CertificateParams::new(vec!["oidc.us-east-1.amazonaws.com".into()]).unwrap();
+    let server_cert = server_params
+        .signed_by(&server_key, &Issuer::from_params(&ca_params, &ca_key))
+        .unwrap();
+    let ca_path = home.join("ca.pem");
+    std::fs::write(&ca_path, ca.pem()).unwrap();
+    let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
+    let config = rustls::ServerConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .unwrap()
+        .with_no_client_auth()
+        .with_single_cert(
+            vec![server_cert.der().clone(), ca.der().clone()],
+            PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(server_key.serialize_der())),
+        )
+        .unwrap();
+    let listener = TcpListener::bind("127.0.0.1:443").unwrap();
+    let (request_tx, request_rx) = mpsc::sync_channel(0);
+    let (release_tx, release_rx) = mpsc::sync_channel(0);
+    let server = std::thread::spawn(move || {
+        let (socket, _) = listener.accept().unwrap();
+        socket
+            .set_read_timeout(Some(Duration::from_secs(10)))
+            .unwrap();
+        let connection = rustls::ServerConnection::new(Arc::new(config)).unwrap();
+        let mut stream = rustls::StreamOwned::new(connection, socket);
+        let mut reader = BufReader::new(&mut stream);
+        let mut head = String::new();
+        let mut length = None;
+        loop {
+            let mut line = String::new();
+            assert_ne!(reader.read_line(&mut line).unwrap(), 0);
+            if line == "\r\n" {
+                break;
+            }
+            if let Some((name, value)) = line.split_once(':') {
+                if name.eq_ignore_ascii_case("content-length") {
+                    length = Some(value.trim().parse::<usize>().unwrap());
+                }
+            }
+            head.push_str(&line);
+        }
+        let mut body = vec![0; length.unwrap()];
+        reader.read_exact(&mut body).unwrap();
+        std::sync::mpsc::SyncSender::send(&request_tx, (head, body)).unwrap();
+        release_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+        let body =
+            br#"{"accessToken":"test-access","refreshToken":"test-refresh","expiresIn":3600}"#;
+        write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).unwrap();
+        stream.write_all(body).unwrap();
+        stream.flush().unwrap();
+    });
+    let deadline = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        + 30;
+    let mut child = Command::new(env!("CARGO_BIN_EXE_toolkit"))
+        .args(["launch", "auth-callback"])
+        .env("HOME", &home)
+        .env("SSL_CERT_FILE", &ca_path)
+        .env_remove("SSL_CERT_DIR")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let pid = child.id();
+    let input = format!(
+        r#"{{"client_id":"test-client","client_secret":"test-secret","client_expires_at":9999999999,"scopes":["launch:access"],"code_verifier":"test-verifier","state":"secret","deadline":{deadline}}}"#
+    );
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(input.as_bytes())
+        .unwrap();
+    let mut stdout = BufReader::new(child.stdout.take().unwrap());
+    let mut line = String::new();
+    stdout.read_line(&mut line).unwrap();
+    let port: u16 = line.trim().parse().unwrap();
+    let mut callback = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    callback
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .unwrap();
+    write!(
+        callback,
+        "GET /?state=secret&code=test-code HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\r\n"
+    )
+    .unwrap();
+    let mut response = String::new();
+    callback.read_to_string(&mut response).unwrap();
+    assert!(response.starts_with("HTTP/1.1 200"));
+    let (head, body) = request_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+    assert!(head.starts_with("POST /token "));
+    let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(body["code"], "test-code");
+    assert_eq!(body["codeVerifier"], "test-verifier");
+    assert_eq!(body["redirectUri"], format!("http://127.0.0.1:{port}"));
+    let state_dir = home.join(".launch-with-aws");
+    let record_path = state_dir.join(format!("pending/{pid}.json"));
+    let record: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&record_path).unwrap()).unwrap();
+    assert_eq!(record["status"], "exchanging");
+    let lock = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(state_dir.join(format!("pending/{pid}.lock")))
+        .unwrap();
+    assert!(lock.try_lock().is_err());
+    std::sync::mpsc::SyncSender::send(&release_tx, ()).unwrap();
+    server.join().unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(lock.try_lock().is_ok());
+    let record: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(record_path).unwrap()).unwrap();
+    assert_eq!(record["status"], "succeeded");
+    let session: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(state_dir.join("session.json")).unwrap()).unwrap();
+    assert_eq!(session["access_token"], "test-access");
+    assert_eq!(session["refresh_token"], "test-refresh");
+    std::fs::remove_dir_all(home).unwrap();
+}
