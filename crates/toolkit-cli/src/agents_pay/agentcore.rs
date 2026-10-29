@@ -461,6 +461,18 @@ mod operation_contracts {
             "pi"
         ));
     }
+
+    #[test]
+    fn process_response_accepts_iso8601_model_timestamps() {
+        let body = r#"{"processPaymentId":"id","paymentManagerArn":"arn","paymentSessionId":"ps","paymentInstrumentId":"pi","paymentType":"CRYPTO_X402","status":"PROOF_GENERATED","paymentOutput":{"cryptoX402":{"version":"2","payload":{"signature":"secret"}}},"createdAt":"2026-10-28T12:00:00Z","updatedAt":"2026-10-28T12:00:00Z"}"#;
+        assert!(valid_process_response(body, "arn", "ps", "pi"));
+        assert!(!valid_process_response(
+            &body.replace("2026-10-28T12:00:00Z", "not-a-timestamp"),
+            "arn",
+            "ps",
+            "pi"
+        ));
+    }
 }
 
 /// `AgentCore` call failure, containing no server-supplied text.
