@@ -1237,3 +1237,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
   Workers: fe94684e docgraph S3, 6be15885 S2 review, 0830cd5f #5360 merge, 014458e4 S7. Queue: 3058 #5504, 3060 #5158, 3061 #5514.
   Kaizen note: generic_cargo_commit_mismatch (#5265) refused 3 green candidates this seat after rolling moved; enqueued anyway since the queue re-gates.
 - 23:55Z: #5504 LANDED (10a1f793, landed_sha 76cef4908cbf7daa124190b71d00aa491d1d35c7); auto-closed. #4382 now waits only on the operator live run (todo a010be89), then L8. Queue: 3060 #5158, 3061 #5514.
+- 00:00Z: #5360 merge-only (0830cd5f) DONE at 1da3ae9a8bbf3eede2f6ef2ad05e954e7aa91c58: rolling 76cef490 merged, four slice pins pasted, SHARED_PIN unchanged. PM verified test/docs only (#[cfg(test)] usage_pins, test const). Check ok (60ac2c1b, 4718). ENQUEUED seq 3063 (903ce533, issue 5360). From now on, a slice adding help text pastes one SLICE_PINS line from the failing test output.
+  Kaizen #5509 (fmt-patch recipe) -> Claude Sonnet high (launch pm-7df6d5c6-launch-5509).
+  Workers: fe94684e docgraph S3, 6be15885 S2 review, 014458e4 x402 S7, #5509. Queue: 3060 #5158, 3061 #5514, 3063 #5360.
