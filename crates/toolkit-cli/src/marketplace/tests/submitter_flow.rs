@@ -562,3 +562,224 @@ fn the_i64_boundaries_themselves_are_still_submitted_as_literals() {
         assert_eq!(ran.unused, 0);
     }
 }
+
+// ---- the metering quantity domain is |q| <= 2^53 - 1 (#4991, #4992) -------------------
+//
+// The JSON reader rounds what it cannot hold exactly to a float, so a value the
+// reader may have rounded cannot be told from a legitimate one. A metering
+// quantity is therefore valid only where an `f64` is exact: an integer with
+// `|q| <= 2^53 - 1`. Anything else, however it is written, fails the whole run
+// with QuantityOutOfRange before anything is submitted or written.
+
+const SAFE_MAX: i64 = 9_007_199_254_740_991;
+
+/// Quantities outside the domain, in every spelling the recording can use: the
+/// integer forms either side of the bound and of `i64`, the float forms the
+/// reader rounds onto `i64::MIN` (#4991) and the ones beyond `i64`.
+const OUT_OF_DOMAIN: [&str; 21] = [
+    "9007199254740992",
+    "9007199254740993",
+    "-9007199254740992",
+    "9223372036854775807",
+    "-9223372036854775808",
+    "-9223372036854775809",
+    "9223372036854775808",
+    r#""9007199254740992""#,
+    r#""-9007199254740992""#,
+    r#""9223372036854775807""#,
+    "9007199254740992.0",
+    "-9007199254740992.0",
+    "9.007199254740992e15",
+    "-9223372036854775809.0",
+    "-9.223372036854775809e18",
+    "-92233720368547758090e-1",
+    "-9223372036854775809e0",
+    "9223372036854775808.0",
+    "1e16",
+    "1e19",
+    "-1e19",
+];
+
+fn dry_config() -> Vec<(&'static str, &'static str)> {
+    config_with(&[("METERING_MODE", "dry-run")])
+}
+
+#[test]
+fn a_stored_quantity_outside_the_domain_fails_the_run_live_and_dry() {
+    for literal in OUT_OF_DOMAIN {
+        let calls = reads_only(vec![item_with(literal, "")]);
+        assert_failed_closed(&run("submitter", "{}", &calls));
+        assert_failed_closed(&run_with("submitter", &dry_config(), "{}", &calls, NOW));
+    }
+}
+
+#[test]
+fn an_allocated_quantity_outside_the_domain_fails_the_run_live_and_dry() {
+    for literal in OUT_OF_DOMAIN {
+        let allocations = format!(
+            r#"{{"AllocatedUsageQuantity": {literal}, "Tags": [{{"Key": "team", "Value": "a"}}]}}"#
+        );
+        let calls = reads_only(vec![item_with("5", &allocations)]);
+        assert_failed_closed(&run("submitter", "{}", &calls));
+        assert_failed_closed(&run_with("submitter", &dry_config(), "{}", &calls, NOW));
+    }
+}
+
+#[test]
+fn a_quantity_outside_the_domain_stops_the_valid_neighbours_in_its_run_too() {
+    for literal in ["-9223372036854775809.0", "9007199254740992", "1e19"] {
+        let allocations = format!(
+            r#"{{"AllocatedUsageQuantity": {literal}, "Tags": [{{"Key": "team", "Value": "a"}}]}}"#
+        );
+        for pending in [
+            vec![
+                agg_item(LICENSE, "Fine", "2026-01-31T11", 5),
+                item_with(literal, ""),
+                agg_item(LICENSE, "AlsoFine", "2026-01-31T11", 7),
+            ],
+            vec![
+                agg_item(LICENSE, "Fine", "2026-01-31T11", 5),
+                item_with("5", &allocations),
+            ],
+        ] {
+            let calls = reads_only(pending);
+            assert_failed_closed(&run("submitter", "{}", &calls));
+            assert_failed_closed(&run_with("submitter", &dry_config(), "{}", &calls, NOW));
+        }
+    }
+}
+
+#[test]
+fn the_largest_safe_quantity_is_submitted_at_both_sites() {
+    for spelling in [
+        SAFE_MAX.to_string(),
+        format!(r#""{SAFE_MAX}""#),
+        format!("{SAFE_MAX}.0"),
+    ] {
+        let allocations = format!(
+            r#"{{"AllocatedUsageQuantity": {spelling}, "Tags": [{{"Key": "team", "Value": "a"}}]}}"#
+        );
+        let mut calls = reads_only(vec![item_with(&spelling, &allocations)]);
+        calls.push(metering(&format!(
+            r#"{{"Results": [{{"MeteringRecordId": "mrec-safe", "Status": "Success", "UsageRecord": {{"Timestamp": 1769857200, "Dimension": "Requests", "Quantity": {SAFE_MAX}, "CustomerAWSAccountId": "{ACCOUNT}", "LicenseArn": "{LICENSE}"}}}}]}}"#
+        )));
+        calls.push(update());
+        let ran = run("submitter", "{}", &calls);
+        assert_eq!(ran.ok().to_compact_string(), r#"{"submitted":1}"#);
+        let batch = ran.requests("meteringmarketplace:BatchMeterUsage")[0].to_compact_string();
+        assert!(
+            batch.contains(&format!(
+                r#""Quantity":{SAFE_MAX},"UsageAllocations":[{{"AllocatedUsageQuantity":{SAFE_MAX},"Tags""#
+            )),
+            "{batch}"
+        );
+        assert_eq!(ran.requests("dynamodb:UpdateItem").len(), 1);
+        assert_eq!(ran.unused, 0);
+
+        // Dry-run accepts it too: it logs the quantity and finalizes without billing.
+        let mut dry_calls = reads_only(vec![item_with(&spelling, &allocations)]);
+        dry_calls.push(update());
+        let dry = run_with("submitter", &dry_config(), "{}", &dry_calls, NOW);
+        assert_eq!(dry.ok().to_compact_string(), r#"{"submitted":1}"#);
+        assert!(dry
+            .requests("meteringmarketplace:BatchMeterUsage")
+            .is_empty());
+        assert!(dry.logged(&format!("quantity={SAFE_MAX} ")));
+        assert_eq!(dry.unused, 0);
+    }
+}
+
+fn submitter_cli(recording: &str) -> Cli {
+    let config = TempFile::new(
+        "config",
+        &format!(
+            "{{{}}}",
+            CFG.iter()
+                .map(|(key, value)| format!(r#""{key}": "{value}""#))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    );
+    let recording = TempFile::new("rec", recording);
+    toolkit(&[
+        "marketplace",
+        "handler",
+        "submitter",
+        "--config",
+        &config.path(),
+        "--recorded",
+        &recording.path(),
+        "--now",
+        NOW,
+    ])
+}
+
+#[test]
+fn the_cli_fails_closed_on_a_quantity_outside_the_domain() {
+    for literal in [
+        "-9223372036854775809.0",
+        "-9.223372036854775809e18",
+        "9007199254740992",
+        "1e19",
+    ] {
+        for pending in [
+            item_with(literal, ""),
+            item_with(
+                "5",
+                &format!(
+                    r#"{{"AllocatedUsageQuantity": {literal}, "Tags": [{{"Key": "team", "Value": "a"}}]}}"#
+                ),
+            ),
+        ] {
+            let list = vec![agg_item(LICENSE, "Fine", "2026-01-31T11", 5), pending];
+            let cli = submitter_cli(&format!(
+                r#"{{"calls": [{}]}}"#,
+                reads_only(list).join(",")
+            ));
+            assert_eq!(cli.status, 1, "{literal}: {}", cli.stderr);
+            assert!(cli.stderr.contains("QuantityOutOfRange"), "{}", cli.stderr);
+            assert!(
+                cli.stderr.contains("nothing was submitted"),
+                "{literal}: {}",
+                cli.stderr
+            );
+            assert!(cli.stdout.is_empty(), "{}", cli.stdout);
+        }
+    }
+}
+
+#[test]
+fn an_unquoted_object_key_is_invalid_json_whatever_its_digits() {
+    let calls = reads_only(vec![agg_item(LICENSE, "Fine", "2026-01-31T11", 5)]).join(",");
+    for document in [
+        format!(r#"{{1: 0, "calls": [{calls}]}}"#),
+        format!(r#"{{9223372036854775808: 0, "calls": [{calls}]}}"#),
+        format!(r#"{{-9223372036854775809: 0, "calls": [{calls}]}}"#),
+        format!(r#"{{99999999999999999999: 0, "calls": [{calls}]}}"#),
+        format!(r#"{{"calls": [{calls}], "extra": {{9223372036854775808: 1}}}}"#),
+        format!(r#"{{"calls": [{calls}], "extra": [{{"a": {{-99999999999999999999: 1}}}}]}}"#),
+    ] {
+        let cli = submitter_cli(&document);
+        assert_eq!(cli.status, 1, "{document}: {}", cli.stderr);
+        assert!(cli.stderr.contains("invalid JSON"), "{}", cli.stderr);
+        assert!(cli.stdout.is_empty(), "{}", cli.stdout);
+    }
+}
+
+#[test]
+fn the_recording_reader_rejects_an_unquoted_key_and_keeps_wide_literals_as_numbers() {
+    for text in [
+        r#"{9223372036854775808: 0, "calls": []}"#,
+        r#"{-9223372036854775809: 0, "calls": []}"#,
+        r#"{"calls": [], "nested": {99999999999999999999: 1}}"#,
+    ] {
+        let file = TempFile::new("bare-key", text);
+        let error = super::super::read_recording(&file.path()).expect_err(text);
+        assert!(error.contains("invalid JSON"), "{error}");
+    }
+    // A wide literal is a number the quantity checks judge, never a string.
+    let file = TempFile::new("wide", r#"{"quantity": -9223372036854775809}"#);
+    let parsed = super::super::read_recording(&file.path()).expect("valid JSON");
+    let raw = parsed.get("quantity").expect("member");
+    assert!(matches!(raw, Json::Float(_) | Json::Int(_)), "{raw:?}");
+}

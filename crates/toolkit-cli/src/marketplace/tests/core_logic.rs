@@ -1101,3 +1101,54 @@ fn text_that_is_not_json_still_fails_in_the_reader_not_the_rewrite() {
         assert!(parse_recorded(text).is_err(), "{text}");
     }
 }
+
+// ---- the metering quantity domain is |q| <= 2^53 - 1 (#4991) -------------------------
+
+const SAFE_MAX: i64 = 9_007_199_254_740_991;
+
+#[test]
+fn an_aggregated_total_that_crosses_the_safe_bound_rejects_the_group() {
+    // Exactly the bound is valid; one more unit is not, whether the unit comes
+    // from the same row's neighbour or from a single large row.
+    let at_bound = fold(&[row(&key(1), &SAFE_MAX.to_string(), "")]);
+    assert_eq!(at_bound.reject_reason, None);
+    assert_eq!(at_bound.quantity, SAFE_MAX);
+    let split = fold(&[
+        row(&key(1), &(SAFE_MAX - 1).to_string(), ""),
+        row(&key(2), "1", ""),
+    ]);
+    assert_eq!(split.reject_reason, None);
+    assert_eq!(split.quantity, SAFE_MAX);
+    let crossed = fold(&[
+        row(&key(1), &SAFE_MAX.to_string(), ""),
+        row(&key(2), "1", ""),
+    ]);
+    assert_eq!(crossed.reject_reason, Some("QuantityOutOfRange"));
+    assert_eq!(
+        validate_group(&crossed, at(NOW)),
+        Some("QuantityOutOfRange")
+    );
+    let single = fold(&[row(&key(1), &(SAFE_MAX + 1).to_string(), "")]);
+    assert_eq!(single.reject_reason, Some("QuantityOutOfRange"));
+}
+
+#[test]
+fn a_merged_allocation_total_that_crosses_the_safe_bound_is_rejected() {
+    let mut entries = Vec::new();
+    let first = j(&format!("[{}]", alloc(SAFE_MAX - 1, TAG_A)));
+    assert_eq!(core::merge_allocations(&mut entries, &first), None);
+    let one_more = j(&format!("[{}]", alloc(1, TAG_A)));
+    assert_eq!(core::merge_allocations(&mut entries, &one_more), None);
+    assert_eq!(entries[0].qty, SAFE_MAX);
+    assert_eq!(
+        core::merge_allocations(&mut entries, &one_more),
+        Some("QuantityOutOfRange")
+    );
+    // A single allocation beyond the bound is out of range on its own.
+    let mut fresh = Vec::new();
+    let large = j(&format!("[{}]", alloc(SAFE_MAX + 1, TAG_A)));
+    assert_eq!(
+        core::merge_allocations(&mut fresh, &large),
+        Some("QuantityOutOfRange")
+    );
+}

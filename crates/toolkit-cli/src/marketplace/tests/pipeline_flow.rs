@@ -810,3 +810,14 @@ fn expiry_leaves_previous_month_records_alone_while_the_grace_is_open() {
     assert_eq!(ran.ok().to_compact_string(), r#"{"expired":0}"#);
     assert!(ran.sent.is_empty());
 }
+
+#[test]
+fn a_total_beyond_two_pow_53_minus_1_rejects_the_group_at_aggregation() {
+    // The domain bound of a metering quantity (#4991): exactly 2^53 - 1 stays
+    // valid at the submitter, so nothing larger may be aggregated for it.
+    let safe_max = 9_007_199_254_740_991_i64;
+    let row = allocated_row(safe_max + 1, &[(safe_max + 1, "a")]);
+    assert_rejected_with(&aggregate_one(&row), "QuantityOutOfRange");
+    let split = allocated_row(safe_max, &[(safe_max, "a"), (1, "a")]);
+    assert_rejected_with(&aggregate_one(&split), "QuantityOutOfRange");
+}
