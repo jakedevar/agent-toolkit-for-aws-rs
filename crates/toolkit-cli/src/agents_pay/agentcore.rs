@@ -1638,6 +1638,23 @@ mod wire_contracts {
     }
 
     #[test]
+    fn instrument_response_rejects_invalid_unions_and_enums() {
+        let good = r#"{"paymentInstrument":{"paymentInstrumentId":"pi","paymentManagerArn":"arn","paymentConnectorId":"connector","userId":"user","paymentInstrumentType":"EMBEDDED_CRYPTO_WALLET","paymentInstrumentDetails":{"embeddedCryptoWallet":{"network":"ETHEREUM","linkedAccounts":[{"email":{"emailAddress":"user@example.com"}}]}},"createdAt":1,"status":"ACTIVE","updatedAt":1}}"#;
+        for bad in [
+            good.replace("\"status\":\"ACTIVE\"", "\"status\":\"OTHER\""),
+            good.replace("{\"email\":{\"emailAddress\":\"user@example.com\"}}", "{}"),
+            good.replace("{\"email\":{\"emailAddress\":\"user@example.com\"}}", "{\"email\":{}}"),
+            good.replace("{\"email\":{\"emailAddress\":\"user@example.com\"}}", "{\"email\":{\"emailAddress\":\"x\"},\"sms\":{\"phoneNumber\":\"+123\"}}"),
+            good.replace("[{\"email\":{\"emailAddress\":\"user@example.com\"}}]", "[{\"email\":{\"emailAddress\":\"user@example.com\"}},{\"sms\":{\"phoneNumber\":\"+123\"}}]"),
+            good.replace("{\"email\":{\"emailAddress\":\"user@example.com\"}}", "{\"oAuth2\":{\"google\":{},\"apple\":{}}}"),
+        ] {
+            let transport = FakeStreamingTransport::new().respond(201, &[], vec![FakeChunk::data(bad.as_bytes())]);
+            let client = PaymentClient::new("us-east-1", &transport, &NoSigner).unwrap();
+            assert_eq!(client.create_instrument("arn", "user", "connector", "ETHEREUM", "user@example.com", "token"), Err(PaymentError::InvalidResponse), "{bad}");
+        }
+    }
+
+    #[test]
     fn deadline_timeout_never_retries() {
         let transport = FakeStreamingTransport::new()
             .open_error(AwsError::timeout(
