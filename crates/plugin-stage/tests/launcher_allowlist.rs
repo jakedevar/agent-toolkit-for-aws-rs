@@ -717,3 +717,31 @@ fn review_r3_forms_bypass_the_guard_at_runtime_and_are_rejected() {
         );
     }
 }
+
+/// The real repository check matches each inventory string to exactly the
+/// template the inventory names (the matcher accepts a string only when one
+/// template matches), and accepts nothing else of the scanned `command` /
+/// `args` strings.
+#[test]
+fn shipped_strings_match_their_inventory_templates() {
+    let root = repo_root();
+    let declaration = Declaration::load(&root.join(DECLARATION_PATH)).expect("declaration");
+    let report = check_launchers(&root, &root.join("plugins"), &declaration);
+    assert!(report.problems.is_empty(), "{:#?}", report.problems);
+    let matched: BTreeSet<Entry> = report
+        .accepted
+        .iter()
+        .filter_map(|accepted| {
+            let (file, key) = accepted.location.split_once(": ")?;
+            let launcher = key.ends_with(".command") || key.contains(".args[");
+            launcher.then(|| Entry {
+                file: file.to_string(),
+                key: key.to_string(),
+                value: accepted.value.clone(),
+                template: accepted.template.to_string(),
+            })
+        })
+        .collect();
+    let listed: BTreeSet<Entry> = inventory().into_iter().collect();
+    assert_eq!(matched, listed);
+}

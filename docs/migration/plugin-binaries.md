@@ -137,8 +137,8 @@ with a faked `uname` (`MINGW64_NT`, `MSYS_NT`, `CYGWIN_NT`). A real run on Windo
 still open.
 
 **MCP servers (role `mcp-server`).** The server `command` must be exactly
-`${CLAUDE_PLUGIN_ROOT}/bin/<name>` (or `./bin/<name>`). `args` are free.
-`sh -c` wrappers and extra words in `command` are refused.
+`${CLAUDE_PLUGIN_ROOT}/bin/<name>` (or `./bin/<name>`). `sh -c` wrappers and extra
+words in `command` are refused, and `args` follow the literal-data rule below.
 
 - On Unix the host spawns the dispatcher script directly.
 - On Windows the host launches `bin/<name>` without a shell. Windows process creation
@@ -149,48 +149,101 @@ That Windows behaviour must be verified on a Windows host before #4413 S5. If it
 the fallback is a host that runs MCP commands through `sh`, which Git for Windows
 provides.
 
-**Role `hook`** (non-guarding hooks, for example telemetry) may wrap the dispatcher
-(for example `|| true`), because a missing binary there must not block the user. The
-string must hold exactly one byte-exact reference `"${CLAUDE_PLUGIN_ROOT}/bin/<name>"`
-(quotes included, as `plugin-stage launcher` prints it), and nothing else in it may
-touch `bin/` (see below).
+**Role `hook`** (non-guarding hooks, for example telemetry) may be followed by
+`|| true`, because a missing binary there must not block the user. Its only templates
+are `"${CLAUDE_PLUGIN_ROOT}/bin/<name>"` and `"${CLAUDE_PLUGIN_ROOT}/bin/<name>" || true`.
 
-**Fail-closed classification (#5022, #5053).** The checker does not parse shell. After
-two rounds of bypasses through shell spellings (`"${CLAUDE_PLUGIN_ROOT}"/bin/x || true`
-in round 1; `.//bin/x`, `.///bin/x` and a backslash-newline inside `b\<LF>in` in round
-2), it fails closed on substrings instead, following the PM ruling on #4487.
+### Launcher allowlist (#5022, #5053, #5069, #5070, #5071)
 
-1. For classification only, every backslash-newline pair (LF or CRLF) is removed, then
-   every `'` and `"`. The result is read twice: with backslashes kept (as Windows
-   separators) and with them removed (as escapes).
-2. A string is *bin-touching* when the normalised form:
-   - holds the word `bin` in any case, bounded by anything but a letter, digit, `_`,
-     `.` or `-`. This covers `/bin/`, `\bin\`, `.//bin/`, `././/bin`, `BIN/`,
-     `cd bin`, `PATH=bin:...` and system paths such as `/usr/bin/env`, which are now
-     refused too;
-   - has a path segment whose glob (`b?n`, `b*`, `[b]in`) or brace expansion
-     (`{b,x}in`) can produce `bin`; or
-   - names a plugin-root variable and also holds anything that can compute a path from
-     it: a non-plain root expansion (`${CLAUDE_PLUGIN_ROOT:-.}`), another `$name`,
-     `${...}` or `$(...)` expansion, a backquote, a glob or brace character, `~` or
-     `..`. Positional parameters (`"$0"`, `"$@"`) are allowed, because the shipped
-     launchers pass their path that way.
-3. A guard hook must be byte for byte its canonical deny launcher (above). Anything
-   else that names the guard is refused, with or without wrapping.
-4. An MCP server command must be exactly `${CLAUDE_PLUGIN_ROOT}/bin/<name>` (or
-   `./bin/<name>`).
-5. A plain hook is accepted when it holds exactly one canonical reference
-   `"${CLAUDE_PLUGIN_ROOT}/bin/<name>"` and the rest of the string, with that one
-   occurrence removed, is not bin-touching. The rest is read as if it named the plugin
-   root, so `"${0%/*}"`, `$(dirname "$0")` or `"$0"/..` beside the reference is refused.
-6. Any other bin-touching string is refused with a fixed message that names the file
-   and JSON key and does not echo the command.
+Three review rounds found ways to spell a path into `bin/` that a classifier missed:
 
-Strings that do not touch `bin/` (every shipped launcher today) are not references and
-pass. The residual class is a path computed with neither a plugin-root variable nor
-the word `bin` in it, for example `eval` or `base64` of an encoded path. That is the
-deferred arbitrary-evaluation hardening, not a spelling of a static path.
-`plugin-stage check` reports a declared guard with no registration as not enforced.
+1. Quoting: `"${CLAUDE_PLUGIN_ROOT}"/bin/x || true`.
+2. Repeated separators and continuations: `.//bin/x` and `b\<LF>in`.
+3. Shell expansion: POSIX classes `b[[:lower:]]n`, brace ranges `{b..b}in` and
+   positional construction `sh -c '"$0/$1$2/x"' "${CLAUDE_PLUGIN_ROOT}" b in`.
+
+Following the PM ruling on #4487, the checker no longer detects bad shell. It accepts
+only a closed set of templates and refuses everything else
+(`crates/plugin-stage/src/launcher.rs`).
+
+**Inventory.** `crates/plugin-stage/tests/fixtures/shipped-launchers.json` lists every
+shipped launcher string with the template it matches. That covers every hook
+`command`, MCP `command` and MCP `args` element in a scanned `hooks.json`, `.mcp.json`
+or `mcp.json` on rolling: 12 hook commands, 6 MCP commands and 30 MCP args. The plugin
+manifests only point at those files. Tests pin the inventory as complete
+(`the_inventory_lists_every_shipped_launcher_string`) and pin each string to its
+template (`shipped_strings_match_their_inventory_templates`).
+
+**Shell-evaluated strings** (a hook `command`) must be one of these templates byte for
+byte. Only the `<...>` parts vary:
+
+| Template id | Shape |
+| --- | --- |
+| `guard-deny` | the canonical guard deny launcher above, for a declared `guard-hook` |
+| `bin-hook` | `"${CLAUDE_PLUGIN_ROOT}/bin/<name>"`, for a declared `hook` |
+| `bin-hook-or-true` | `"${CLAUDE_PLUGIN_ROOT}/bin/<name>" \|\| true`, for a declared `hook` |
+| `plugin-file` | `"${CLAUDE_PLUGIN_ROOT}/<relpath>"` |
+| `cat-plugin-file` | `cat "${CLAUDE_PLUGIN_ROOT}/<relpath>" 2>/dev/null \|\| true` |
+| `python-guard` | `sh -c 'python3 "$0" 2>/dev/null \|\| python "$0" 2>/dev/null \|\| py -3 "$0"' "${CLAUDE_PLUGIN_ROOT}/<relpath>"` |
+| `python-optional` | as `python-guard`, with ` 2>/dev/null \|\| true` after `py -3 "$0"` |
+| `python-args`, `-reconcile`, `-session-end` | `sh -c 'python3 "$0" "$@" 2>/dev/null \|\| python "$0" "$@" 2>/dev/null \|\| py -3 "$0" "$@" 2>/dev/null \|\| true' "${CLAUDE_PLUGIN_ROOT}/<relpath>"`, then nothing, ` --reconcile` or ` --session-end` |
+| `cursor-python-args-reconcile`, `-session-end` | `sh -c 'python3 "$0" "$@" 2>/dev/null \|\| python "$0" "$@" 2>/dev/null \|\| true' "${CURSOR_PLUGIN_ROOT}/<relpath>"`, then ` --reconcile` or ` --session-end` |
+
+- `<name>` is a binary that the declaration declares for that plugin with that role.
+- `<relpath>` matches `^[A-Za-z0-9_][A-Za-z0-9_.-]*(/[A-Za-z0-9_][A-Za-z0-9_.-]*)*$`.
+  No segment may be `bin` in any case, with trailing dots ignored as on Windows (so
+  `Bin.` counts as `bin`). The first-character class already excludes `.`, `..` and
+  hidden segments. Any part of the relpath that exists in the plugin as a symlink is
+  refused, so a plain spelling cannot lead into `bin/`.
+- The python shapes are exactly as shipped and stay until #4412 activates the binary
+  and #4415 retires the scripts.
+- `CURSOR_PLUGIN_ROOT` twins exist only where the inventory has them (the Cursor
+  telemetry launchers). A Cursor guard or binary-hook launcher would be a new shape.
+- A guard is also checked to be registered under `PreToolUse`.
+
+**MCP `command`** is either a canonical binary command (above) or a bare program name
+matching `^[A-Za-z0-9_.-]+$`. It may not be all dots, may not be `bin` (as above), and
+may not be a shell: `sh`, `bash`, `dash`, `zsh`, `ksh`, `mksh`, `ash`, `yash`, `fish`,
+`csh`, `tcsh`, `busybox`, `cmd`, `powershell`, `pwsh` or `wsl`, in any case, with or
+without `.exe`. No template runs an MCP server through a shell, so an args element after
+`-c`, `/c` or `-Command` is never shell-evaluated by an accepted configuration.
+
+**Every other string** (MCP `args`, `matcher`, `type`, `url`, headers and so on) is
+literal data:
+
+- It may name `CLAUDE_PLUGIN_ROOT` or `CURSOR_PLUGIN_ROOT` (in any case) only as exactly
+  `${CLAUDE_PLUGIN_ROOT}/<relpath>`.
+- It may not hold a `bin` path segment. Segments are split at every character outside
+  `[A-Za-z0-9_.-]`.
+- An MCP `args` element may not name a shell. This blocks wrappers such as
+  `env -C <dir> sh -c ...`.
+- An exact canonical binary launcher outside a `command` key is refused ("may only
+  appear in a launcher `command` field").
+
+**Everything else is refused.** The message names the file and JSON key and never
+echoes the string. When a refused `command` starts like a binary launcher, the message
+says why: undeclared name, platform path, `.exe` or wrong role. A new hook shape needs
+a reviewed template change and a new inventory entry. `plugin-stage check` reports a
+declared guard with no registration as not enforced.
+
+**Tests** (`crates/plugin-stage/tests/launcher_allowlist.rs` and
+`packaging_contract.rs`):
+
+- Every reproduction from #5022, #5053, #5069, #5070 and #5071 is rejected, for hooks
+  under `PreToolUse` and `Stop` and for MCP command/args splits.
+- A runtime test shows the round-3 forms fail open without the binary and reach a
+  marker binary under `sh` and `bash`. The canonical guard denies.
+- A deterministic exhaustive test inserts each of 31 shell metacharacters at every
+  position of every template instance. That is 57,412 mutants, each run under a
+  guard event and a plain event, plus the MCP commands. No mutant is accepted.
+
+**Residual.** Literal argv is not shell-evaluated, but a non-shell interpreter can
+still compute a path from arguments without the word `bin` (`python3 -c ...`,
+`node -e ...`). The same goes for Windows programs that expand wildcards in their own
+argv. This is the deferred arbitrary-evaluation class, which no shipped configuration
+uses. Likewise, a template that runs a plugin file (`plugin-file`, the python shapes)
+trusts that file's content: a reviewed plugin script could itself call `bin/`, which
+is a source-review matter, not a launcher spelling.
 
 ## 5. Checksums and provenance
 
@@ -288,9 +341,9 @@ and it is why the switch ships only together with staged binaries (section 9).
   `.claude-plugin/`, `.codex-plugin/`, `.cursor-plugin/` and `.devin-plugin/`). A value
   may be a file path, an inline object, or a list of either (Devin's string-or-list
   `mcpServers`, #5024). Every listed file is resolved and scanned with its kind kept,
-  and any other value or member type is refused. Every string is resolved fail closed
-  (section 4). Each reference must name a binary that the declaration declares for
-  that plugin, and must have the form its role requires.
+  and any other value or member type is refused. Every string is checked against
+  the launcher allowlist (section 4). Each reference must name a binary that the
+  declaration declares for that plugin, and must have the form its role requires.
   Today it scans 12 launcher files and finds no `bin/` reference, because the
   secret-safety switch has not landed.
 - **Staged files.** For every `plugins/*/bin/` that exists, the test checks:

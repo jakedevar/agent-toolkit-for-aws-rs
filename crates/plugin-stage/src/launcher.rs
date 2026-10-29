@@ -7,6 +7,14 @@
 //! platform directory, and the dispatcher picks the binary for the running
 //! platform. [`check_launchers`] proves every such reference resolves to a
 //! declared binary and has the form its role requires.
+//!
+//! The check is a closed allowlist (#4487 PM ruling after review #5018
+//! round 3): every hook command must be byte for byte one reviewed template
+//! instance and every MCP command a canonical binary launcher or a bare
+//! program name; other strings are literal data that may not name the plugin
+//! root (except as a plain relative path) or a `bin` segment. No shell is
+//! parsed or approximated, so an unlisted spelling is refused rather than
+//! classified.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -161,8 +169,22 @@ pub struct LauncherReport {
     pub problems: Vec<String>,
     /// Every valid reference to a declared binary.
     pub references: Vec<LauncherRef>,
+    /// Every accepted string with the allowlist template it instantiates.
+    pub accepted: Vec<TemplateMatch>,
     /// Number of launcher files scanned.
     pub files_scanned: usize,
+}
+
+/// One accepted launcher-file string and the allowlist template it matches
+/// (see `docs/migration/plugin-binaries.md` section 4).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TemplateMatch {
+    /// Repository-relative launcher file and JSON path.
+    pub location: String,
+    /// The string itself.
+    pub value: String,
+    /// Template id, for example `python-guard`, `guard-deny` or `mcp-argv`.
+    pub template: &'static str,
 }
 
 impl LauncherReport {
@@ -361,324 +383,359 @@ impl PluginScan<'_> {
     ) {
         let at = format!("{location}: {}", path_text(json_path));
         match self.resolve_string(kind, text, json_path) {
-            Ok(None) => {}
-            Ok(Some(name)) => report.references.push(LauncherRef {
-                plugin: self.plugin.to_string(),
-                name,
-                location: at,
-            }),
+            Ok(accepted) => {
+                if let Some(name) = accepted.name {
+                    report.references.push(LauncherRef {
+                        plugin: self.plugin.to_string(),
+                        name,
+                        location: at.clone(),
+                    });
+                }
+                report.accepted.push(TemplateMatch {
+                    location: at,
+                    value: text.to_string(),
+                    template: accepted.template,
+                });
+            }
             Err(message) => report.problems.push(format!("{at}: {message}")),
         }
     }
 
-    /// Resolves one launcher string, failing closed (#5022, #5053 PM
-    /// ruling). The string is first compared byte for byte with the
-    /// canonical forms of this plugin's declared binaries. Otherwise, a
-    /// string that [`touches_bin`] (after classification-only
-    /// normalisation) is accepted only as a plain `hook` that holds exactly
-    /// one byte-exact canonical reference `"${CLAUDE_PLUGIN_ROOT}/bin/<name>"`
-    /// and nothing else touching `bin/`; a guard must be its canonical deny
-    /// launcher and an MCP server its canonical command. Every other
-    /// bin-touching string is refused with a fixed message that does not
-    /// echo it. `Ok(None)` means the string does not touch `bin/`.
+    /// Resolves one launcher string against the closed template allowlist
+    /// (#4487 PM ruling after review #5018 round 3). Nothing is classified
+    /// as "bad shell": a string is accepted only when it is byte for byte one
+    /// template instance, whose only variable part is a declared binary name
+    /// or a plain plugin-relative path ([`is_relpath`]).
+    /// - Any key: the exact canonical launcher of one of this plugin's
+    ///   declared binaries (guard deny launcher, plain-hook reference, MCP
+    ///   command), then checked for the form its role and key require.
+    /// - A hook `command`: one of [`FILE_TEMPLATES`].
+    /// - An MCP `command`: a bare program name that is not a shell.
+    /// - Any other string (MCP `args`, `matcher`, `url`, headers, ...) is
+    ///   literal data: it may not name a plugin-root variable except as
+    ///   exactly `${CLAUDE_PLUGIN_ROOT}/<relpath>`, may not hold a `bin`
+    ///   path segment, and an MCP `args` element may not name a shell.
+    ///
+    /// Everything else is refused with a fixed message that names the file
+    /// and key and does not echo the string.
     fn resolve_string(
         &self,
         kind: Kind,
         text: &str,
         json_path: &[String],
-    ) -> Result<Option<String>, String> {
-        if let Some(binary) = self.canonical_binary(text) {
+    ) -> Result<Accepted, String> {
+        if let Some((binary, template)) = self.canonical_binary(text) {
             return match role_problem(binary, kind, text, json_path) {
                 Some(message) => Err(message),
-                None => Ok(Some(binary.name.clone())),
+                None => Ok(Accepted {
+                    template,
+                    name: Some(binary.name.clone()),
+                }),
             };
         }
-        if !touches_bin(text, false) {
-            return Ok(None);
-        }
-        let name = match find_bin_refs(text).as_slice() {
-            [Found::Bad(message)] => return Err(message.clone()),
-            [Found::Name(name)] => name.clone(),
-            _ => return Err(REFUSED.to_string()),
+        let key = json_path.last().map(String::as_str);
+        let in_args = json_path
+            .len()
+            .checked_sub(2)
+            .is_some_and(|at| json_path[at] == "args");
+        let template = match (kind, key == Some("command")) {
+            (Kind::Hooks, true) => self.hook_command(kind, text, json_path)?,
+            (Kind::Mcp, true) => self.mcp_program(kind, text, json_path)?,
+            (Kind::Mcp, false) if in_args => self.literal(text, true)?,
+            _ => self.literal(text, false)?,
         };
-        let Some(binary) = self.declaration.binary(self.plugin, &name) else {
-            return Err(format!(
-                "references bin/{name}, which {} does not declare for plugin {}",
-                crate::DECLARATION_PATH,
-                self.plugin
-            ));
-        };
-        if let Some(message) = role_problem(binary, kind, text, json_path) {
-            return Err(message);
-        }
-        // Only a plain hook gets here: the guard and MCP roles accept their
-        // exact canonical form alone, which matched above if it was used.
-        let references: Vec<String> = ROOT_VARS
-            .iter()
-            .map(|root| format!("\"{}\"", mcp_command(root, &name)))
-            .collect();
-        let hits: usize = references
-            .iter()
-            .map(|reference| text.matches(reference.as_str()).count())
-            .sum();
-        let Some(reference) = references.iter().find(|r| text.contains(r.as_str())) else {
-            return Err(REFUSED.to_string());
-        };
-        if hits != 1 || touches_bin(&text.replacen(reference.as_str(), "", 1), true) {
-            return Err(REFUSED.to_string());
-        }
-        Ok(Some(name))
+        Ok(Accepted {
+            template,
+            name: None,
+        })
     }
 
     /// The declared binary of this plugin whose canonical launcher `text` is
-    /// byte for byte, if any.
-    fn canonical_binary(&self, text: &str) -> Option<&BinarySpec> {
+    /// byte for byte, with the template it instantiates.
+    fn canonical_binary(&self, text: &str) -> Option<(&BinarySpec, &'static str)> {
         self.declaration
             .plugin_binaries(self.plugin)
-            .find(|binary| canonical_forms(binary).iter().any(|form| form == text))
+            .find_map(|binary| {
+                canonical_forms(binary)
+                    .into_iter()
+                    .find(|(form, _)| form == text)
+                    .map(|(_, template)| (binary, template))
+            })
+    }
+
+    /// A hook `command` that is not a binary launcher: exactly one
+    /// [`FILE_TEMPLATES`] entry around a plain, symlink-free relpath.
+    fn hook_command(
+        &self,
+        kind: Kind,
+        text: &str,
+        json_path: &[String],
+    ) -> Result<&'static str, String> {
+        let matches: Vec<(&'static str, &str)> = FILE_TEMPLATES
+            .iter()
+            .filter_map(|(id, prefix, suffix)| {
+                let relpath = text.strip_prefix(prefix)?.strip_suffix(suffix)?;
+                is_relpath(relpath).then_some((*id, relpath))
+            })
+            .collect();
+        match matches.as_slice() {
+            [(id, relpath)] => {
+                self.symlink_free(relpath)?;
+                Ok(id)
+            }
+            _ => Err(self.binary_hint(kind, text, json_path, HOOK_BIN_PREFIXES, '"', REFUSED)),
+        }
+    }
+
+    /// An MCP `command` that is not a binary launcher: a bare program name.
+    fn mcp_program(
+        &self,
+        kind: Kind,
+        text: &str,
+        json_path: &[String],
+    ) -> Result<&'static str, String> {
+        let bare = !text.is_empty()
+            && text
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b'-'));
+        if bare && !text.bytes().all(|b| b == b'.') && !is_bin_segment(text) && !is_shell(text) {
+            return Ok("mcp-program");
+        }
+        Err(self.binary_hint(kind, text, json_path, MCP_BIN_PREFIXES, ' ', REFUSED_MCP))
+    }
+
+    /// Literal data (MCP `args` with `mcp_arg`, or any other key).
+    fn literal(&self, text: &str, mcp_arg: bool) -> Result<&'static str, String> {
+        let template = if mcp_arg { "mcp-argv" } else { "literal" };
+        let upper = text.to_ascii_uppercase();
+        if ROOT_VARS.iter().any(|root| upper.contains(root)) {
+            let relpath = text
+                .strip_prefix(ROOT_PREFIX)
+                .filter(|relpath| is_relpath(relpath));
+            return match relpath {
+                Some(relpath) => self.symlink_free(relpath).map(|()| template),
+                None => Err(REFUSED_ROOT_ARG.to_string()),
+            };
+        }
+        if text
+            .split(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-')))
+            .any(is_bin_segment)
+        {
+            return Err(REFUSED_ROOT_ARG.to_string());
+        }
+        if mcp_arg && is_shell(text.rsplit(['/', '\\']).next().unwrap_or(text)) {
+            return Err(REFUSED_SHELL_ARG.to_string());
+        }
+        Ok(template)
+    }
+
+    /// Refuses a relpath any existing component of which is a symlink in
+    /// the plugin: a plain spelling could otherwise lead into `bin/`.
+    fn symlink_free(&self, relpath: &str) -> Result<(), String> {
+        let mut path = self.plugin_dir.to_path_buf();
+        for segment in relpath.split('/') {
+            path.push(segment);
+            if fs::symlink_metadata(&path).is_ok_and(|meta| meta.file_type().is_symlink()) {
+                return Err(
+                    "names a plugin path through a symlink; launcher paths must be plain files of the plugin; refused (fail closed)"
+                        .to_string(),
+                );
+            }
+        }
+        Ok(())
+    }
+
+    /// The message for a refused `command`. When the string starts like a
+    /// binary launcher (`prefixes`), the token up to `end` explains what is
+    /// wrong with it (undeclared, platform path, `.exe`, wrong role); every
+    /// other string gets the fixed `refused` message. Only a token that is a
+    /// valid binary name is ever echoed.
+    fn binary_hint(
+        &self,
+        kind: Kind,
+        text: &str,
+        json_path: &[String],
+        prefixes: &[&str],
+        end: char,
+        refused: &str,
+    ) -> String {
+        let Some(rest) = prefixes.iter().find_map(|prefix| text.strip_prefix(prefix)) else {
+            return refused.to_string();
+        };
+        let token = match rest.find(end) {
+            Some(at) => &rest[..at],
+            None if end == ' ' => rest,
+            None => return refused.to_string(),
+        };
+        if token.is_empty() {
+            "references the bin/ directory itself; launchers must name bin/<name>".to_string()
+        } else if token.contains(['/', '\\']) {
+            "references a file below bin/<name> directly; launchers must call the dispatcher bin/<name>, which selects the platform binary".to_string()
+        } else if token.to_ascii_lowercase().ends_with(".exe") {
+            "references bin/<name>.exe directly; launchers must call the dispatcher bin/<name>, which runs the .exe on Windows".to_string()
+        } else if !crate::declaration::is_name(token) {
+            refused.to_string()
+        } else if let Some(binary) = self.declaration.binary(self.plugin, token) {
+            role_problem(binary, kind, text, json_path).unwrap_or_else(|| refused.to_string())
+        } else {
+            format!(
+                "references bin/{token}, which {} does not declare for plugin {}",
+                crate::DECLARATION_PATH,
+                self.plugin
+            )
+        }
     }
 }
 
-/// The fixed refusal for a bin-touching string that is not a canonical
-/// launcher (#5053): the location prefix names the file and key, and the
-/// command itself is never echoed.
-const REFUSED: &str = "touches the plugin bin/ directory but is not a canonical launcher (a guard must be exactly its canonical deny launcher, an MCP server exactly its canonical command, and a plain hook may hold exactly one \"${CLAUDE_PLUGIN_ROOT}/bin/<name>\" reference and nothing else that touches bin/); refused (fail closed); print the canonical launcher with `plugin-stage launcher PLUGIN/NAME`";
-
-/// The exact launcher strings a binary's role allows.
-fn canonical_forms(binary: &BinarySpec) -> Vec<String> {
-    let name = &binary.name;
-    match &binary.role {
-        Role::GuardHook { deny_reason } => ROOT_VARS
-            .iter()
-            .map(|root| guard_hook_command(root, name, deny_reason))
-            .collect(),
-        Role::McpServer => ROOT_VARS
-            .iter()
-            .map(|root| mcp_command(root, name))
-            .chain([format!("./{BIN_DIR}/{name}")])
-            .collect(),
-        Role::Hook => ROOT_VARS
-            .iter()
-            .map(|root| format!("\"{}\"", mcp_command(root, name)))
-            .collect(),
-    }
+/// One accepted launcher string: the template it instantiates and, for a
+/// binary launcher, the declared binary it runs.
+struct Accepted {
+    template: &'static str,
+    name: Option<String>,
 }
 
-/// Classification-only normalisation (#5053 PM ruling): every shell
-/// backslash-newline continuation (LF or CRLF) is removed, then every quote
-/// character, so `b\<LF>in`, `b""in` and `"${ROOT}"'/bin'` all read as one
-/// word. The original string is still what canonical forms are compared
-/// against.
-fn normalise(text: &str) -> String {
-    text.replace("\\\r\n", "")
-        .replace("\\\n", "")
-        .chars()
-        .filter(|c| !matches!(c, '"' | '\''))
-        .collect()
-}
+/// The fixed refusal for a hook `command` that is no template instance
+/// (#5053, #4487 allowlist ruling): the location prefix names the file and
+/// key, and the command itself is never echoed.
+const REFUSED: &str = "is not an allowed launcher template; refused (fail closed). A hook command must be byte for byte one reviewed template: a guard exactly its canonical fail-closed launcher, a declared hook \"${CLAUDE_PLUGIN_ROOT}/bin/<name>\" (optionally followed by \" || true\"), \"${CLAUDE_PLUGIN_ROOT}/<relpath>\" or a shipped script launcher shape; a new shape needs a reviewed template change (docs/migration/plugin-binaries.md section 4). Print a binary's launcher with `plugin-stage launcher PLUGIN/NAME`";
 
-/// Whether a launcher string may reach the plugin `bin/` directory. This
-/// deliberately does not parse the shell (#5053): it fails closed on
-/// substrings of the normalised string, read once with backslashes kept (as
-/// Windows separators) and once with them removed (as escapes). A string
-/// touches `bin/` when it
-/// - holds the word `bin` (any case) bounded by anything but a letter,
-///   digit, `_`, `.` or `-`, which covers `/bin/`, `\bin\`, `.//bin/`,
-///   `./././bin` and a system path such as `/usr/bin/env`;
-/// - holds a path segment whose glob (`*`, `?`, `[...]`) or brace expansion
-///   (`{b,x}in`) can produce `bin`; or
-/// - names a plugin-root variable (or is the rest of a string that did,
-///   `root_context`) and holds anything that can compute a path from it: a
-///   non-plain root expansion such as `${CLAUDE_PLUGIN_ROOT:-.}`, another
-///   `$name`, `${...}` or `$(...)` expansion, a backquote, a glob or brace
-///   character, `~` or `..`. Positional parameters such as `"$0"` and
-///   `"$@"` are allowed: they are how the shipped launchers pass the path.
-fn touches_bin(text: &str, root_context: bool) -> bool {
-    let joined = normalise(text);
-    let unescaped: String = joined.chars().filter(|c| *c != '\\').collect();
-    let rooted = root_context
-        || ROOT_VARS
-            .iter()
-            .any(|root| joined.to_ascii_uppercase().contains(root));
-    [joined, unescaped]
-        .iter()
-        .any(|form| has_bin_word(form) || expands_to_bin(form) || (rooted && computes_path(form)))
-}
+/// The fixed refusal for an MCP `command` that is no template instance.
+const REFUSED_MCP: &str = "MCP server command must be exactly ${CLAUDE_PLUGIN_ROOT}/bin/<name> of a declared mcp-server binary, or a bare program name (ASCII letters, digits, `.`, `_`, `-`) that is not a shell; refused (fail closed)";
 
-/// Whether `text` holds `bin` (ASCII case-insensitive) as a word.
-fn has_bin_word(text: &str) -> bool {
-    let bytes = text.as_bytes();
-    let word = |byte: u8| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.' | b'-');
-    bytes.windows(3).enumerate().any(|(index, window)| {
-        window.eq_ignore_ascii_case(b"bin")
-            && (index == 0 || !word(bytes[index - 1]))
-            && bytes.get(index + 3).is_none_or(|byte| !word(*byte))
-    })
-}
+/// The fixed refusal for literal data naming the plugin root or `bin`.
+const REFUSED_ROOT_ARG: &str = "names the plugin root or a bin path segment but is not exactly \"${CLAUDE_PLUGIN_ROOT}/<relpath>\" outside bin/; refused (fail closed)";
 
-/// Characters that separate shell words or commands. Splitting on them is
-/// coarse on purpose: it may produce more candidate words than the shell
-/// would, never fewer.
-const SEPARATORS: &[char] = &[';', '|', '&', '(', ')', '<', '>', '=', ':', '`'];
+/// The fixed refusal for an MCP argument naming a shell.
+const REFUSED_SHELL_ARG: &str = "names a shell interpreter; no template lets an MCP server start a shell; refused (fail closed)";
 
-/// The most brace alternatives expanded per word; more fails closed.
-const MAX_EXPANSIONS: usize = 64;
+/// The only plugin-root prefix a template or literal path may use.
+const ROOT_PREFIX: &str = "${CLAUDE_PLUGIN_ROOT}/";
 
-/// Whether a word of `text` has a path segment that a glob or a brace
-/// expansion can turn into `bin`.
-fn expands_to_bin(text: &str) -> bool {
-    text.split(|c: char| c.is_whitespace() || SEPARATORS.contains(&c))
-        .filter(|word| !word.is_empty())
-        .any(|word| match expand_braces(word) {
-            None => true,
-            Some(expansions) => expansions.iter().any(|expansion| {
-                expansion
-                    .split(['/', '\\', ','])
-                    .any(|segment| glob_matches(segment.as_bytes(), b"bin"))
-            }),
+/// Hook command prefixes whose token (up to the closing quote) names a
+/// binary, for messages only.
+const HOOK_BIN_PREFIXES: &[&str] = &[
+    "\"${CLAUDE_PLUGIN_ROOT}/bin/",
+    "\"${CURSOR_PLUGIN_ROOT}/bin/",
+];
+
+/// MCP command prefixes whose token (up to a space) names a binary, for
+/// messages only.
+const MCP_BIN_PREFIXES: &[&str] = &[
+    "${CLAUDE_PLUGIN_ROOT}/bin/",
+    "${CURSOR_PLUGIN_ROOT}/bin/",
+    "./bin/",
+    "bin/",
+];
+
+const PY_GUARD: &str = r#"sh -c 'python3 "$0" 2>/dev/null || python "$0" 2>/dev/null || py -3 "$0"' "${CLAUDE_PLUGIN_ROOT}/"#;
+const PY_OPTIONAL: &str = r#"sh -c 'python3 "$0" 2>/dev/null || python "$0" 2>/dev/null || py -3 "$0" 2>/dev/null || true' "${CLAUDE_PLUGIN_ROOT}/"#;
+const PY_ARGS: &str = r#"sh -c 'python3 "$0" "$@" 2>/dev/null || python "$0" "$@" 2>/dev/null || py -3 "$0" "$@" 2>/dev/null || true' "${CLAUDE_PLUGIN_ROOT}/"#;
+const CURSOR_PY_ARGS: &str = r#"sh -c 'python3 "$0" "$@" 2>/dev/null || python "$0" "$@" 2>/dev/null || true' "${CURSOR_PLUGIN_ROOT}/"#;
+
+/// Hook command templates around one `<relpath>` (id, prefix, suffix),
+/// derived from the shipped inventory
+/// (`crates/plugin-stage/tests/fixtures/shipped-launchers.json`) plus the
+/// ruling's plain `"${CLAUDE_PLUGIN_ROOT}/<relpath>"`. The python launcher
+/// shapes stay until #4412 activation and #4415 retire them.
+pub const FILE_TEMPLATES: [(&str, &str, &str); 9] = [
+    ("plugin-file", "\"${CLAUDE_PLUGIN_ROOT}/", "\""),
+    (
+        "cat-plugin-file",
+        "cat \"${CLAUDE_PLUGIN_ROOT}/",
+        "\" 2>/dev/null || true",
+    ),
+    ("python-guard", PY_GUARD, "\""),
+    ("python-optional", PY_OPTIONAL, "\""),
+    ("python-args", PY_ARGS, "\""),
+    ("python-args-reconcile", PY_ARGS, "\" --reconcile"),
+    ("python-args-session-end", PY_ARGS, "\" --session-end"),
+    (
+        "cursor-python-args-reconcile",
+        CURSOR_PY_ARGS,
+        "\" --reconcile",
+    ),
+    (
+        "cursor-python-args-session-end",
+        CURSOR_PY_ARGS,
+        "\" --session-end",
+    ),
+];
+
+/// A `<relpath>`: `^[A-Za-z0-9_][A-Za-z0-9_.-]*(/[A-Za-z0-9_][A-Za-z0-9_.-]*)*$`
+/// with no segment that is `bin` in any case (trailing dots ignored, as
+/// Windows does). `.` and `..` cannot match the first-character class.
+#[must_use]
+pub fn is_relpath(text: &str) -> bool {
+    !text.is_empty()
+        && text.split('/').all(|segment| {
+            segment
+                .bytes()
+                .next()
+                .is_some_and(|b| b.is_ascii_alphanumeric() || b == b'_')
+                && segment
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b'-'))
+                && !is_bin_segment(segment)
         })
 }
 
-/// Bash brace expansion of one word, bounded by [`MAX_EXPANSIONS`] (`None`
-/// past it). A `${...}` parameter expansion is not a brace list.
-fn expand_braces(word: &str) -> Option<Vec<String>> {
-    let mut done = Vec::new();
-    let mut pending = vec![word.to_string()];
-    while let Some(current) = pending.pop() {
-        match brace_list(&current) {
-            None => done.push(current),
-            Some((open, close, alternatives)) => {
-                for alternative in alternatives {
-                    pending.push(format!(
-                        "{}{alternative}{}",
-                        &current[..open],
-                        &current[close + 1..]
-                    ));
-                }
-            }
-        }
-        if done.len() + pending.len() > MAX_EXPANSIONS {
-            return None;
-        }
-    }
-    Some(done)
+/// Whether a path segment names `bin` on some supported file system: any
+/// ASCII case, with trailing dots ignored (Windows strips them).
+fn is_bin_segment(segment: &str) -> bool {
+    segment.trim_end_matches('.').eq_ignore_ascii_case("bin")
 }
 
-/// The first `{a,b}` list of `word`: its brace offsets and its top-level
-/// alternatives.
-fn brace_list(word: &str) -> Option<(usize, usize, Vec<String>)> {
-    let bytes = word.as_bytes();
-    for open in 0..bytes.len() {
-        if bytes[open] != b'{' || (open > 0 && bytes[open - 1] == b'$') {
-            continue;
-        }
-        let mut depth = 0usize;
-        let mut commas = Vec::new();
-        for (index, byte) in bytes.iter().enumerate().skip(open) {
-            match byte {
-                b'{' => depth += 1,
-                b'}' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        if commas.is_empty() {
-                            break;
-                        }
-                        let mut alternatives = Vec::new();
-                        let mut start = open + 1;
-                        for comma in commas.iter().copied().chain([index]) {
-                            alternatives.push(word[start..comma].to_string());
-                            start = comma + 1;
-                        }
-                        return Some((open, index, alternatives));
-                    }
-                }
-                b',' if depth == 1 => commas.push(index),
-                _ => {}
-            }
-        }
-    }
-    None
+/// Shell interpreters, matched on a program's file name in any case with an
+/// optional `.exe`.
+const SHELLS: [&str; 16] = [
+    "sh",
+    "bash",
+    "dash",
+    "zsh",
+    "ksh",
+    "mksh",
+    "ash",
+    "yash",
+    "fish",
+    "csh",
+    "tcsh",
+    "busybox",
+    "cmd",
+    "powershell",
+    "pwsh",
+    "wsl",
+];
+
+fn is_shell(program: &str) -> bool {
+    let lower = program.to_ascii_lowercase();
+    let name = lower.strip_suffix(".exe").unwrap_or(&lower);
+    SHELLS.contains(&name)
 }
 
-/// ASCII case-insensitive shell glob match of `pattern` against `name`
-/// (`*`, `?` and `[...]` classes with `!`/`^` negation and ranges; an
-/// unterminated `[` is literal).
-fn glob_matches(pattern: &[u8], name: &[u8]) -> bool {
-    match pattern.split_first() {
-        None => name.is_empty(),
-        Some((b'*', rest)) => (0..=name.len()).any(|skip| glob_matches(rest, &name[skip..])),
-        Some((b'?', rest)) => !name.is_empty() && glob_matches(rest, &name[1..]),
-        Some((b'[', rest)) => match rest.iter().skip(1).position(|byte| *byte == b']') {
-            Some(end) => {
-                let (class, after) = (&rest[..=end], &rest[end + 2..]);
-                let Some((&first, tail)) = name.split_first() else {
-                    return false;
-                };
-                class_matches(class, first) && glob_matches(after, tail)
-            }
-            None => name.first() == Some(&b'[') && glob_matches(rest, &name[1..]),
-        },
-        Some((&literal, rest)) => name.split_first().is_some_and(|(first, tail)| {
-            first.eq_ignore_ascii_case(&literal) && glob_matches(rest, tail)
-        }),
-    }
-}
-
-fn class_matches(class: &[u8], byte: u8) -> bool {
-    let (negated, class) = match class.split_first() {
-        Some((b'!' | b'^', rest)) => (true, rest),
-        _ => (false, class),
-    };
-    let byte = byte.to_ascii_lowercase();
-    let mut index = 0;
-    let mut found = false;
-    while index < class.len() {
-        let low = class[index].to_ascii_lowercase();
-        if index + 2 < class.len() && class[index + 1] == b'-' {
-            let high = class[index + 2].to_ascii_lowercase();
-            found |= (low..=high).contains(&byte);
-            index += 3;
-        } else {
-            found |= low == byte;
-            index += 1;
+/// The exact launcher strings a binary's role allows, with their template
+/// ids. Hook templates exist for `CLAUDE_PLUGIN_ROOT` only: no shipped hook
+/// uses a `CURSOR_PLUGIN_ROOT` binary launcher, so its twin would be a new
+/// shape needing review.
+fn canonical_forms(binary: &BinarySpec) -> Vec<(String, &'static str)> {
+    let name = &binary.name;
+    let root = ROOT_VARS[0];
+    match &binary.role {
+        Role::GuardHook { deny_reason } => {
+            vec![(guard_hook_command(root, name, deny_reason), "guard-deny")]
+        }
+        Role::McpServer => ROOT_VARS
+            .iter()
+            .map(|root| (mcp_command(root, name), "mcp-bin"))
+            .chain([(format!("./{BIN_DIR}/{name}"), "mcp-bin")])
+            .collect(),
+        Role::Hook => {
+            let reference = format!("\"{}\"", mcp_command(root, name));
+            vec![
+                (format!("{reference} || true"), "bin-hook-or-true"),
+                (reference, "bin-hook"),
+            ]
         }
     }
-    found != negated
-}
-
-/// Whether a string that names the plugin root can compute another path
-/// from it. Plain `${ROOT}` / `$ROOT` expansions are removed first; any
-/// remaining root-variable name means a non-plain expansion.
-fn computes_path(text: &str) -> bool {
-    let mut rest = text.to_string();
-    for root in ROOT_VARS {
-        rest = rest.replace(&format!("${{{root}}}"), " ");
-        let plain = format!("${root}");
-        let mut out = String::new();
-        let mut tail = rest.as_str();
-        while let Some(at) = tail.find(&plain) {
-            let after = &tail[at + plain.len()..];
-            out.push_str(&tail[..at]);
-            if after.starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_') {
-                out.push_str(&plain);
-            } else {
-                out.push(' ');
-            }
-            tail = after;
-        }
-        out.push_str(tail);
-        rest = out;
-    }
-    let upper = rest.to_ascii_uppercase();
-    if ROOT_VARS.iter().any(|root| upper.contains(root)) || rest.contains("..") {
-        return true;
-    }
-    if rest.contains(['*', '?', '[', ']', '{', '}', '~', '`']) {
-        return true;
-    }
-    rest.as_bytes().windows(2).any(|pair| {
-        pair[0] == b'$' && (pair[1].is_ascii_alphabetic() || matches!(pair[1], b'_' | b'{' | b'('))
-    })
 }
 
 /// Checks the launcher form a binary's role requires.
@@ -701,9 +758,7 @@ fn role_problem(
                     "guard hook bin/{name} must be registered under PreToolUse"
                 ));
             }
-            let canonical = ROOT_VARS
-                .iter()
-                .any(|root| text == guard_hook_command(root, name, deny_reason));
+            let canonical = text == guard_hook_command(ROOT_VARS[0], name, deny_reason);
             (!canonical).then(|| {
                 format!(
                     "guard hook bin/{name} must use the canonical fail-closed launcher (print it with `plugin-stage launcher {}/{name}`)",
@@ -727,80 +782,6 @@ fn role_problem(
             "bin/{name} is declared {} and cannot be launched as an MCP server",
             role.as_str()
         )),
-    }
-}
-
-/// A `bin/` reference inside one launcher string.
-#[derive(Debug, PartialEq, Eq)]
-enum Found {
-    Name(String),
-    Bad(String),
-}
-
-/// Finds every reference to the plugin `bin/` directory in `text`:
-/// `${CLAUDE_PLUGIN_ROOT}/bin...`, `${CURSOR_PLUGIN_ROOT}/bin...` (with or
-/// without braces) anywhere, or a string that starts with `./bin/` or `bin/`.
-fn find_bin_refs(text: &str) -> Vec<Found> {
-    let mut found = Vec::new();
-    let mut prefixes = Vec::new();
-    for root in ROOT_VARS {
-        prefixes.push(format!("${{{root}}}/{BIN_DIR}"));
-        prefixes.push(format!("${root}/{BIN_DIR}"));
-    }
-    for prefix in &prefixes {
-        let mut start = 0;
-        while let Some(offset) = text[start..].find(prefix.as_str()) {
-            let after = start + offset + prefix.len();
-            if let Some(item) = classify(&text[after..]) {
-                found.push(item);
-            }
-            start = after;
-        }
-    }
-    for prefix in ["./bin", "bin"] {
-        if let Some(rest) = text.strip_prefix(prefix) {
-            if let Some(item) = classify(rest) {
-                found.push(item);
-            }
-        }
-    }
-    found
-}
-
-/// Classifies the text that follows a `.../bin` prefix. `None` when the
-/// prefix was part of a longer word (for example `bin2` or `binaries`).
-fn classify(rest: &str) -> Option<Found> {
-    let mut chars = rest.chars();
-    match chars.next() {
-        Some('/') => {}
-        Some(c) if c.is_ascii_alphanumeric() || "-_.".contains(c) => return None,
-        _ => {
-            return Some(Found::Bad(
-                "references the bin/ directory itself; launchers must name bin/<name>".to_string(),
-            ))
-        }
-    }
-    let token: String = rest[1..]
-        .chars()
-        .take_while(|c| !c.is_whitespace() && !"\"'`;|&()<>$".contains(*c))
-        .collect();
-    let bad = |message: String| Some(Found::Bad(message));
-    if token.is_empty() {
-        bad("references the bin/ directory itself; launchers must name bin/<name>".to_string())
-    } else if token.contains('/') || token.contains('\\') {
-        bad(format!(
-            "references bin/{token} directly; launchers must call the dispatcher bin/<name>, which selects the platform binary"
-        ))
-    } else if token.to_ascii_lowercase().ends_with(".exe") {
-        bad(format!(
-            "references bin/{token} directly; launchers must call the dispatcher bin/<name>, which runs the .exe on Windows"
-        ))
-    } else if crate::declaration::is_name(&token) {
-        Some(Found::Name(token))
-    } else {
-        bad(format!(
-            "references bin/{token}, which is not a valid binary name"
-        ))
     }
 }
 
@@ -937,41 +918,30 @@ pub fn display(root: &Path, path: &Path) -> String {
 mod tests {
     use super::*;
 
-    #[test]
-    fn references_are_found_and_classified() {
-        assert_eq!(
-            find_bin_refs(r#"sh -c 'x' "${CLAUDE_PLUGIN_ROOT}/bin/secret-safety""#),
-            vec![Found::Name("secret-safety".to_string())]
-        );
-        assert_eq!(
-            find_bin_refs("$CURSOR_PLUGIN_ROOT/bin/tool --flag"),
-            vec![Found::Name("tool".to_string())]
-        );
-        assert_eq!(
-            find_bin_refs("./bin/tool"),
-            vec![Found::Name("tool".to_string())]
-        );
-        assert_eq!(
-            find_bin_refs("bin/tool"),
-            vec![Found::Name("tool".to_string())]
-        );
-        assert!(find_bin_refs("/usr/bin/env python3").is_empty());
-        assert!(find_bin_refs("${CLAUDE_PLUGIN_ROOT}/binaries/x").is_empty());
-        assert!(find_bin_refs("cabin/x").is_empty());
-        for bad in [
-            "${CLAUDE_PLUGIN_ROOT}/bin/linux-x86_64/tool",
-            "${CLAUDE_PLUGIN_ROOT}/bin/tool.exe",
-            "${CLAUDE_PLUGIN_ROOT}/bin",
-            "\"${CLAUDE_PLUGIN_ROOT}/bin\" x",
-            "${CLAUDE_PLUGIN_ROOT}/bin/",
-            "${CLAUDE_PLUGIN_ROOT}/bin/Tool",
-        ] {
-            let found = find_bin_refs(bad);
-            assert!(
-                matches!(found.as_slice(), [Found::Bad(_)]),
-                "{bad}: {found:?}"
-            );
-        }
+    const DECLARATION: &str = r##"{"schema": 1,
+      "platforms": [{"platform": "linux-x86_64", "triple": "x86_64-unknown-linux-gnu"}],
+      "binaries": [
+        {"plugin": "p", "name": "guard", "package": "g", "bin": "g",
+         "role": "guard-hook", "deny_reason": "Reinstall bin/ files.", "consumer": "#1"},
+        {"plugin": "p", "name": "note", "package": "n", "bin": "n", "role": "hook", "consumer": "#2"},
+        {"plugin": "p", "name": "tool", "package": "t", "bin": "t", "role": "mcp-server", "consumer": "#3"}]}"##;
+
+    fn with_scan(check: impl FnOnce(&PluginScan<'_>)) {
+        let declaration = crate::Declaration::parse(DECLARATION).expect("declaration");
+        let scan = PluginScan {
+            repo_root: Path::new(""),
+            plugin_dir: Path::new("/nonexistent/plugin-stage-unit/p"),
+            plugin: "p",
+            declaration: &declaration,
+        };
+        check(&scan);
+    }
+
+    fn command_path(event: &str) -> Vec<String> {
+        ["hooks", event, "[0]", "hooks", "[0]", "command"]
+            .iter()
+            .map(ToString::to_string)
+            .collect()
     }
 
     #[test]
@@ -981,10 +951,6 @@ mod tests {
         assert_eq!(
             command,
             r#"sh -c 'if out=$("$0" 2>/dev/null); then printf %s "$out"; else printf %s "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Secret-safety hook is unavailable or failed, so this call is blocked. Reinstall the aws-core plugin.\"}}"; fi' "${CLAUDE_PLUGIN_ROOT}/bin/secret-safety""#
-        );
-        assert_eq!(
-            find_bin_refs(&command),
-            vec![Found::Name("secret-safety".to_string())]
         );
     }
 
@@ -1009,99 +975,183 @@ mod tests {
     }
 
     #[test]
-    fn bin_touching_strings_are_found_on_substrings() {
-        for touching in [
-            r#""${CLAUDE_PLUGIN_ROOT}/bin/tool""#,
-            r#""${CLAUDE_PLUGIN_ROOT}"/./bin/tool"#,
-            "exec ./bin/tool",
-            "cd x; .//bin/tool",
-            ".///bin/tool",
-            "././/bin//tool",
-            "./b\\\nin/tool",
-            "\"./b\\\r\nin/tool\"",
-            "b\"\"in/tool",
-            "b'i'n/tool",
-            r"b\in/tool",
-            r"${CLAUDE_PLUGIN_ROOT}\bin\tool",
-            "BIN/tool",
-            "cd bin && ./tool",
-            "/usr/bin/env python3",
-            "PATH=bin:$PATH tool",
-            "./b?n/tool",
-            "./b*/tool",
-            "./[b]in/tool",
-            "./{b,x}in/tool",
-            "./{x,{b,y}in}/tool",
-            "${CLAUDE_PLUGIN_ROOT}/$X/tool",
-            "${CLAUDE_PLUGIN_ROOT}/${X}/tool",
-            "${CLAUDE_PLUGIN_ROOT:-.}/tool",
-            "${CLAUDE_PLUGIN_ROOT%/}/tool",
-            "${CLAUDE_PLUGIN_ROOT}/x/../y",
-            "${CLAUDE_PLUGIN_ROOT}/$(echo x)/tool",
-            "${CLAUDE_PLUGIN_ROOT}/`x`/tool",
-            "${claude_plugin_root}/tool",
-            "${CLAUDE_PLUGIN_ROOTX}/tool",
+    fn relpaths_are_plain_plugin_paths_outside_bin() {
+        for good in [
+            "x",
+            "scripts/telemetry/metric_emission/migration.py",
+            "com.anthropic.claude-code/hooks/secret-safety.py",
+            "_a/b-c/d.e",
+            "robin/cabin.bin/bin2/x.bin",
         ] {
-            assert!(touches_bin(touching, false), "{touching:?}");
+            assert!(is_relpath(good), "{good}");
         }
-        for ordinary in [
-            r#"sh -c 'python3 "$0" 2>/dev/null || py -3 "$0"' "${CLAUDE_PLUGIN_ROOT}/hooks/x.py""#,
-            r#"sh -c 'python3 "$0" "$@" || true' "${CURSOR_PLUGIN_ROOT}/scripts/m.py" --reconcile"#,
-            r#"cat "${CLAUDE_PLUGIN_ROOT}/scripts/x.txt" 2>/dev/null || true"#,
-            "cat $CLAUDE_PLUGIN_ROOT/x.txt",
-            "scripts/binary/tool",
-            "cabin/x robin bins .bin bin-x x-bin bin.x",
-            "${CLAUDE_PLUGIN_ROOT}/node_modules/.bin/x",
-            r#"printf %s "{\"a\":\"b\"}""#,
-            "uvx mcp-proxy-for-aws-cli==1.7.0 https://x.example/mcp?a=1 --skip-auth",
-            "Bearer ${DEVOPS_AGENT_TOKEN}",
-            "./?/x",
-            "{a,b}/x",
+        for bad in [
+            "", "/x", "x/", "x//y", "./x", "x/./y", "x/../y", "..", ".x", "-x", "bin/x", "x/BIN/y",
+            "x/Bin./y", "x/bin..", "x y", "x\\y", "x/$y", "x/*", "x/b?n", "x/[b]in", "x/{b,c}",
+            "x/~", "x;y", "x\ny", "x'y", "x\"y", "x`y`", "x:y",
         ] {
-            assert!(!touches_bin(ordinary, false), "{ordinary:?}");
+            assert!(!is_relpath(bad), "{bad:?}");
         }
-        // After the one canonical reference is removed, the rest of a plain
-        // hook is read in the plugin-root context.
-        assert!(!touches_bin(r#"sh -c '"$0" --flush || true' "#, true));
-        assert!(touches_bin(r#"sh -c 'cd "${0%/*}"' "#, true));
-        assert!(touches_bin(r#"sh -c 'cd "$0"/..' "#, true));
+    }
 
-        assert!(glob_matches(b"b[!x]n", b"bin"));
-        assert!(glob_matches(b"[a-c]IN", b"bin"));
-        assert!(!glob_matches(b"b[!i]n", b"bin"));
-        assert!(!glob_matches(b"b[in", b"bin"));
-        assert_eq!(
-            expand_braces("a{b,c{d,e}}f"),
-            Some(vec![
-                "acef".to_string(),
-                "acdf".to_string(),
-                "abf".to_string()
-            ])
-        );
-        assert_eq!(expand_braces("${X}"), Some(vec!["${X}".to_string()]));
-        assert_eq!(expand_braces(&"{a,b}".repeat(8)), None);
+    /// Review #5018 round 3: the reviewer's regressions, now refusals of
+    /// non-template hook commands (the substring classifier they targeted
+    /// is gone).
+    #[test]
+    fn review_r3_forms_are_not_templates() {
+        with_scan(|scan| {
+            for text in [
+                "./b[[:lower:]]n/guard",
+                "./b[[:alpha:]]n/guard",
+                "env -C /plugin sh -c './b[[:lower:]]n/guard || true'",
+                "./{b..b}in/guard",
+                "./b{i..i}n/guard",
+                r#"sh -c '"$0/$1$2/guard" || true' "${CLAUDE_PLUGIN_ROOT}" b in"#,
+            ] {
+                for event in ["PreToolUse", "Stop"] {
+                    let result = scan.resolve_string(Kind::Hooks, text, &command_path(event));
+                    assert!(result.is_err(), "{event} {text:?} accepted");
+                }
+            }
+        });
+    }
 
-        // A canonical guard whose deny reason says "bin" is still canonical:
-        // exact canonical forms are matched before the conservative scan.
-        let declaration = crate::Declaration::parse(
-            r##"{"schema": 1,
-              "platforms": [{"platform": "linux-x86_64", "triple": "x86_64-unknown-linux-gnu"}],
-              "binaries": [{"plugin": "p", "name": "g", "package": "g", "bin": "g",
-                "role": "guard-hook", "deny_reason": "Reinstall bin/ files.", "consumer": "#1"}]}"##,
-        )
-        .expect("declaration");
-        let scan = PluginScan {
-            repo_root: Path::new(""),
-            plugin_dir: Path::new("p"),
-            plugin: "p",
-            declaration: &declaration,
-        };
-        let command = guard_hook_command("CLAUDE_PLUGIN_ROOT", "g", "Reinstall bin/ files.");
-        let path = ["PreToolUse".to_string(), "command".to_string()];
-        assert_eq!(
-            scan.resolve_string(Kind::Hooks, &command, &path),
-            Ok(Some("g".to_string()))
-        );
+    /// Each template instance matches exactly one template, and binary
+    /// launchers resolve to their declared binary.
+    #[test]
+    fn every_template_instance_matches_exactly_one_template() {
+        for (id, prefix, suffix) in FILE_TEMPLATES {
+            let text = format!("{prefix}scripts/x.py{suffix}");
+            let matching: Vec<&str> = FILE_TEMPLATES
+                .iter()
+                .filter(|(_, p, s)| {
+                    text.strip_prefix(p)
+                        .and_then(|rest| rest.strip_suffix(s))
+                        .is_some_and(is_relpath)
+                })
+                .map(|(other, _, _)| *other)
+                .collect();
+            assert_eq!(matching, [id], "{text}");
+        }
+        with_scan(|scan| {
+            let path = command_path("PreToolUse");
+            let resolve = |text: &str| {
+                scan.resolve_string(Kind::Hooks, text, &path)
+                    .map(|accepted| (accepted.template, accepted.name))
+            };
+            // A canonical guard whose deny reason says "bin" is still
+            // canonical.
+            let guard = guard_hook_command("CLAUDE_PLUGIN_ROOT", "guard", "Reinstall bin/ files.");
+            assert_eq!(
+                resolve(&guard),
+                Ok(("guard-deny", Some("guard".to_string())))
+            );
+            assert_eq!(
+                resolve(r#""${CLAUDE_PLUGIN_ROOT}/bin/note""#),
+                Ok(("bin-hook", Some("note".to_string())))
+            );
+            assert_eq!(
+                resolve(r#""${CLAUDE_PLUGIN_ROOT}/bin/note" || true"#),
+                Ok(("bin-hook-or-true", Some("note".to_string())))
+            );
+            assert_eq!(
+                resolve(r#""${CLAUDE_PLUGIN_ROOT}/hooks/run.sh""#),
+                Ok(("plugin-file", None))
+            );
+            assert!(resolve(r#""${CLAUDE_PLUGIN_ROOT}/bin/guard""#).is_err());
+            assert!(resolve(r#""${CURSOR_PLUGIN_ROOT}/bin/note""#).is_err());
+            assert!(resolve(&guard_hook_command(
+                "CURSOR_PLUGIN_ROOT",
+                "guard",
+                "Reinstall bin/ files."
+            ))
+            .is_err());
+        });
+    }
+
+    #[test]
+    fn mcp_commands_and_argv_follow_the_literal_rules() {
+        with_scan(|scan| {
+            let command = ["mcpServers", "s", "command"].map(String::from);
+            let arg = ["mcpServers", "s", "args", "[0]"].map(String::from);
+            for program in ["uvx", "node", "python3", "mcp-proxy_1.2"] {
+                assert_eq!(
+                    scan.resolve_string(Kind::Mcp, program, &command)
+                        .map(|a| a.template),
+                    Ok("mcp-program"),
+                    "{program}"
+                );
+            }
+            for refused in [
+                "sh",
+                "BASH",
+                "pwsh.exe",
+                "cmd",
+                "bin",
+                "Bin.",
+                ".",
+                "..",
+                "/usr/bin/env",
+                "./x",
+                "uvx x",
+                "",
+                "b?n",
+                "${X}",
+            ] {
+                assert!(
+                    scan.resolve_string(Kind::Mcp, refused, &command).is_err(),
+                    "{refused:?}"
+                );
+            }
+            assert_eq!(
+                scan.resolve_string(Kind::Mcp, "${CLAUDE_PLUGIN_ROOT}/bin/tool", &command)
+                    .map(|a| (a.template, a.name)),
+                Ok(("mcp-bin", Some("tool".to_string())))
+            );
+            for literal in [
+                "mcp-proxy-for-aws-cli==1.7.0",
+                "https://aws-mcp.us-east-1.api.aws/mcp",
+                "INSTALL_SOURCE=agent-toolkit-core",
+                "${CLAUDE_PLUGIN_ROOT}/server/main.js",
+                "./b[[:lower:]]n/tool",
+                "cabin/.bin/robin",
+            ] {
+                assert_eq!(
+                    scan.resolve_string(Kind::Mcp, literal, &arg)
+                        .map(|a| a.template),
+                    Ok("mcp-argv"),
+                    "{literal}"
+                );
+            }
+            for refused in [
+                "sh",
+                "/bin/bash",
+                "C:\\Windows\\System32\\cmd.exe",
+                "${CLAUDE_PLUGIN_ROOT}",
+                "${CLAUDE_PLUGIN_ROOT}/bin/x",
+                "${CURSOR_PLUGIN_ROOT}/x",
+                "--root=${CLAUDE_PLUGIN_ROOT}/x",
+                "PATH=${CLAUDE_PLUGIN_ROOT}/x",
+                "/usr/bin/env",
+                "x\\BIN\\y",
+            ] {
+                assert!(
+                    scan.resolve_string(Kind::Mcp, refused, &arg).is_err(),
+                    "{refused:?}"
+                );
+            }
+            // Other keys are literal data too, but naming a shell there
+            // (a matcher such as "Bash") is fine.
+            let matcher = ["hooks", "PreToolUse", "[0]", "matcher"].map(String::from);
+            assert_eq!(
+                scan.resolve_string(Kind::Hooks, "Bash", &matcher)
+                    .map(|a| a.template),
+                Ok("literal")
+            );
+            assert!(scan
+                .resolve_string(Kind::Hooks, "${CLAUDE_PLUGIN_ROOT}/bin/x", &matcher)
+                .is_err());
+        });
     }
 
     #[test]
