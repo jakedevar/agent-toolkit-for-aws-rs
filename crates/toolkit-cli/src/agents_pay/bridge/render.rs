@@ -48,4 +48,16 @@ mod tests {
             }
         }
     }
+
+    // T-BR-OUT-2/3/REQ: model order, timestamp normalization, reduced proof.
+    #[test]
+    fn t_br_out_session_and_payment() {
+        let wire = toolkit_core::parse_json(r#"{"unknown":"drop","updatedAt":"2026-08-07T00:00:00.1234567Z","createdAt":"2026-08-07T00:00:00.5Z","expiryTimeInMinutes":10,"userId":"u","paymentManagerArn":"m","paymentSessionId":"s"}"#).unwrap();
+        let rendered = session_result(&wire).unwrap();
+        assert_eq!(crate::aurora::pyfmt::dumps_compact(&rendered), r#"{"ok":true,"result":{"paymentSession":{"paymentSessionId":"s","paymentManagerArn":"m","userId":"u","expiryTimeInMinutes":10,"createdAt":"2026-08-07T00:00:00.500000+00:00","updatedAt":"2026-08-07T00:00:00.123456+00:00"}}}"#);
+        let bad = toolkit_core::parse_json(r#"{"updatedAt":"2026-08-07T00:00:00Z"}"#).unwrap();
+        assert!(session_result(&bad).is_err());
+        let payload = Json::string(r#"{"signature":"abc"}"#);
+        assert_eq!(crate::aurora::pyfmt::dumps_compact(&payment_result(&payload).unwrap()), r#"{"ok":true,"result":{"paymentOutput":{"cryptoX402":{"payload":{"signature":"abc"}}}}}"#);
+    }
 }
