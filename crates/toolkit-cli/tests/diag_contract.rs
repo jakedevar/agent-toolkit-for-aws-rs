@@ -2413,10 +2413,11 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
 /// six slices registered since, bedrock-probes (#4404), docgraph (#4395),
 /// dynamodb-bench (#4390), elasticache-tunnel (#4393), marketplace (#4396) and
 /// telemetry (#4398), then mcp-proxy (#5079) and ai-payloads (#5143).
+/// The S2b render synopsis is included as well (#5223).
 /// A deliberate usage change updates the pin in the same
 /// commit and says so in the Issue; an incidental one fails here.
-const USAGE_BASE_LEN: usize = 44155;
-const USAGE_BASE_FNV1A64: u64 = 0xea11_e5a1_e031_b87f;
+const USAGE_BASE_LEN: usize = 44367;
+const USAGE_BASE_FNV1A64: u64 = 0xe5cc_c5c0_3b51_b63e;
 
 #[test]
 fn the_global_usage_text_is_byte_identical_to_the_base() {
