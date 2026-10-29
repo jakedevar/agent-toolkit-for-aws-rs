@@ -230,7 +230,8 @@ Retain Python until replacements, callers and contract tests are verified.
 The following are engineering recommendations for pre-review, not requests
 for operator decisions: adapter structure, retry limits, timeout defaults,
 root-policy separation, and a narrowly scoped private-endpoint capability.
-The PM must approve the collection workflow and CLI divergences. Credentials,
+The decision list below records PM workflow/CLI rulings and Q3 acceptance;
+the argv-only repair still needs independent re-review. Credentials,
 account access, spending and permission to touch a real database remain operator
 gates even after design acceptance.
 
@@ -249,6 +250,19 @@ reject `--live` with `--recorded` or `--dry-run` before credentials, DNS or
 output-file creation. Live infrastructure plus `--analysis-data` is valid.
 Without explicit live selection, preserve the present no-live behavior.
 
+Live selection is argv-only, with no environment alias for `--live`. In live
+mode, every `--confirm-*` flag (currently `--confirm-wipe`, `--confirm-write`,
+`--confirm-delete` and `--confirm-create`) is also argv-only, with no
+environment alias. No environment variable, config, recorded response,
+analysis/capture envelope,
+collection manifest or network-policy file may supply or imply these flags.
+Ignore live/consent-shaped data keys as authority; reject them where the
+file's schema forbids unknown keys. Check required argv consent before reading
+input/policy files, credential resolution, DNS or any network action. The
+existing
+`NEPTUNE_SEED_CONFIRM_WIPE=1` alias is retained only for non-live replay
+compatibility; it is ignored whenever `--live` is present (R-DG-05).
+
 - T-DG-01a: run existing golden review/seed/memory replay fixtures under both
   feature configurations; identical output and exit status, zero provider,
   resolver and socket calls even with hostile AWS configuration present.
@@ -256,6 +270,16 @@ Without explicit live selection, preserve the present no-live behavior.
   return usage errors (exit 2) before side effects; feature alone sends nothing.
 - T-DG-01c: malformed/null response members, request mismatch, error steps and
   unused seed/memory recordings retain their existing failure contracts.
+- T-DG-01d: with the live feature and `NEPTUNE_SEED_CONFIRM_WIPE=1`, a live
+  seed lacking argv `--confirm-wipe` is refused with the fixed wipe-refusal
+  message and exit 1; provider, resolver and socket counters all remain zero.
+  Supplying argv confirmation reaches only an injected adapter; non-live
+  replay retains its existing environment-confirmation contract.
+- T-DG-01e: table-driven attempts to supply `--live` or each `--confirm-*`
+  through environment/config, recorded responses, analysis/capture envelopes,
+  collection manifests or network-policy files cannot authorize live work or
+  missing consent. Unknown keys are ignored as authority or schema-refused;
+  unselected/unconfirmed runs have zero credential, DNS and network actions.
 
 **R-DG-02 — Credentials, region and logging.** Keep `wa-review --region`
 required. Add optional `--region` for live seed/memory, resolved by the shared
@@ -354,6 +378,12 @@ The SDK request serializer/endpoint rules are useful; a second credentials,
 TLS, logging or retry stack is not. Configure generated clients to one attempt
 with toolkit signing as the sole signer, and bridge generated HTTP requests
 through toolkit `Signer`/`Transport`; prove no generated signer/provider is built.
+The bridge is at the generated orchestrator's HTTP-client boundary, not private
+modeled serializer APIs. It must remove generated framing headers before the
+toolkit signer and sign the final body bytes; the transport regenerates framing
+from the same URL/body. The explicit S2 spike exit criteria below must establish
+this path, SDK auth/identity suppression and the service-crate feature closure
+before live client implementation is enabled.
 Return bounded raw HTTP responses, including non-2xx responses, to the modeled
 decoder. The JSON-only `ApiClient::execute_json` and its generic error parser
 cannot decode Query/XML or CBOR. At the typed-call boundary use the shared
@@ -384,6 +414,8 @@ window and one page per seam call; generated paginators must not swallow tokens.
 - T-DG-04a: all ten operation encodings are captured by an injected HTTP
   transport: correct protocol, endpoint, signature scope, filters, timestamps,
   list ordering and pagination tokens; unknown pairs fail before transport.
+  Assert the signed header set and exact final body bytes; the sent request
+  equals the signed request apart from documented transport-generated framing.
 - T-DG-04b: modeled successful responses become the same seam objects and
   final reports as existing fixtures, including zero/false versus absent;
   XML/JSON/CBOR truncation, wrong types and service errors cannot become success.
@@ -392,6 +424,10 @@ window and one page per seam call; generated paginators must not swallow tokens.
   AccessDenied, malformed responses and credentials yield one or zero sends.
 - T-DG-04d: metadata-only Secrets Manager access never constructs
   `GetSecretValue`; existing repeated-token/page-cap failure behavior survives.
+- T-DG-04e: the offline bridge spike exercises generated framing-header
+  removal/regeneration and fails if SDK auth, identity resolution or retries
+  are constructed/invoked; spies prove only toolkit signing/provider/retry
+  paths run. An exact feature/lockfile audit adds no TLS, root or crypto crate.
 
 **R-DG-05 — Gremlin WebSocket adapter.** Implement a live
 `seed::GremlinSession` and reuse it for the memory Gremlin request kind. The
@@ -421,8 +457,16 @@ frames, premature close and server errors fail the operation. Close on every
 exit and bound close time. Re-sign every new connection; refresh before expiry
 between operations, never reconnect/resubmit an in-flight statement. A drop
 after send has an unknown outcome and terminates the remaining plan. Preserve
-the seed wipe guard, statement/binding order, counts/assertions and exit 1 on
-verification failure. Check confirmation before provider/DNS/socket work.
+statement/binding order, counts/assertions and exit 1 on verification failure.
+For a live seed, only argv `--confirm-wipe` confirms the destructive wipe;
+ignore `NEPTUNE_SEED_CONFIRM_WIPE` in live mode. Missing argv confirmation
+returns exit 1 with the fixed message: "Refusing to wipe the graph:
+g.V().drop() requires explicit confirmation. Re-run with --confirm-wipe."
+Do not reuse the replay refusal's suggestion to set an environment variable.
+Refuse before reading input/policy files, credential resolution, DNS or network
+action. This deliberately tightens the legacy guard: the
+environment alias remains valid only for non-live replay parity. Neither a
+recording nor any other file can confer consent (R-DG-01).
 
 - T-DG-05a: a local in-memory handshake fixture verifies canonical GET, host
   and port, path, credential scope, date/token, empty payload and fresh signing
@@ -433,6 +477,10 @@ verification failure. Check confirmation before provider/DNS/socket work.
 - T-DG-05c: unconfirmed seed sends nothing; confirmed seed preserves every
   statement and verification. Disconnect after a mutation is sent produces
   one send, no retry and no later statement; cleanup runs on every exit.
+- T-DG-05d: live seed with environment-only wipe confirmation, including
+  `NEPTUNE_SEED_CONFIRM_WIPE=1`, is refused before provider, resolver or socket
+  construction/calls. Assert fixed message/exit 1 and zero sends even when
+  a policy/capture contains consent-shaped keys; argv confirmation is required.
 
 **R-DG-06 — Analytics and memory dispatch.** Implement a dispatcher behind
 `MemoryClient::submit`, consuming the existing planned requests unchanged.
@@ -517,9 +565,17 @@ collection recipe executed by the user's existing mongo shell, followed by a
 Rust offline normalizer and `wa-review --analysis-data`. No toolkit database
 connection, subprocess shell launcher, new JavaScript helper, Python runtime
 or MongoDB dependency is proposed. The recipe is documentation plus a JSON
-manifest of allowed commands and output fields; newly shipped executable
-normalization/validation and tests are Rust. The user owns shell installation,
-authentication and trusted CA configuration; toolkit never takes its URI.
+manifest of allowed commands and output fields, consumed as a per-command
+manual procedure, not as an executable shell script. Do not imply that the
+shell can execute JSON. Document the individual read-only commands, native
+canonical-EJSON export steps and manual envelope assembly; no loop/helper JS
+is shipped or pasted. This costs manual work proportional to the number of
+databases and collections and can be cumbersome for large deployments; record
+that workflow cost explicitly. Newly shipped executable normalization,
+validation and tests are Rust. The user owns shell installation, authentication
+and trusted CA configuration; toolkit never takes its URI. A future automated
+shell snippet would be executable shipped text requiring a separate no-write
+review and supported-shell contract, not an implicit part of this recipe.
 
 | Option | Supply chain, TLS, licence, maintenance and MSRV | Compatibility and decision |
 | --- | --- | --- |
@@ -555,11 +611,29 @@ an engine/version question, not guaranteed by choosing a MongoDB client.
 Per-collection failures retain the existing `error` skip marker with a fixed
 code and a visible incomplete-collection summary; top-level connection/list
 failure exits nonzero and publishes no apparently complete snapshot. Never
-store arbitrary driver errors. Capture files/reports are user data: private
-permissions, no committed live samples, no automatic upload, no URI/credentials
-in envelopes or terminal output. Shell connection instructions use interactive
-authentication or the user's established secure tooling, never passwords in
-arguments, shell history or a generated script. Reject toolkit `--uri`,
+store arbitrary driver errors.
+
+Secret custody belongs to the user's authenticated shell and existing secure
+credential store, outside toolkit. Prefer interactive authentication: supply
+only non-secret host/port/user/authentication-database selectors to the user's
+shell and enter the password at its prompt, with no password value in argv.
+S5 must verify the exact prompt form for each supported shell/version before
+publishing instructions. If established secure tooling uses a connection
+string, keep it in that tooling's private credential store and authenticated
+shell memory; it never enters toolkit argv, environment, files, manifest,
+capture, snapshot, logs or output. Do not put it in shell history, command
+arguments or a generated script. The recipe does not retrieve or print it.
+
+Before exporting, the user creates a private directory/file under `umask 077`
+(directory 0700, capture 0600 on Unix); toolkit never creates the shell capture.
+The normalizer accepts only the versioned allowlisted statistics envelope
+(ordinals, ordered index keys, canonical EJSON numeric data and fixed status
+codes), never shell transcripts, scripts, connection configuration or raw
+driver errors. Reject unknown/connection/credential fields with a fixed error
+without echoing their values. Refuse group/world-readable capture files before
+parsing on Unix; on other platforms require equivalent owner-only ACL evidence
+or fail closed until supported. Normalized files/reports also require private
+permissions. No committed live samples or automatic upload. Reject toolkit `--uri`,
 `--tls-ca-file` and `--tls-allow-invalid-certs` before any value is echoed.
 Even if (a) is chosen later, acceptance needs a separately reviewed secret
 input channel and fixed-error/TLS path; parsing a password URI from argv is
@@ -574,6 +648,15 @@ not that path, and insecure certificate validation remains refused.
   become an empty healthy report. No secret or arbitrary error text is echoed.
 - T-DG-08c: all three refused flags, including credential-shaped values and
   newlines, fail safely; no shell process or database driver is constructed.
+- T-DG-08d: Rust golden checks tie the documented manual command/export rows
+  to the manifest's exact read-only allowlist and envelope schema. Recorded,
+  sanitized native outputs for every supported shell/version normalize to the
+  same snapshot; unsupported EJSON/export dialects fail explicitly. No shell
+  is launched by the test, and the recipe needs no executable loop/helper.
+- T-DG-08e: private-permission and ACL fixtures admit owner-only captures and
+  refuse group/world-readable or unverifiable files before parsing. Envelopes
+  containing URI/password/token/connection fields, transcripts or arbitrary
+  errors fail without echoing secret canaries or producing a snapshot.
 
 **R-DG-09 — Live acceptance and retirement.** Ordinary `cargo test`, including
 all-feature runs, must not use credentials, external DNS, live sockets or paid
@@ -615,12 +698,40 @@ does not grant either. No run is part of this design change.
 | Slice | Deliverable and dependency | Required acceptance evidence |
 | --- | --- | --- |
 | S0 — this design | PM resolves Q1/Q2/Q3 below; manager obtains cross-family pre-review of the committed document. No dependency/code changes. | R-DG-01..09 and T lists reviewed; publication alone is not pre-review acceptance. |
-| S1 — shared boundaries | Optional feature/dependency audit, credential/deadline bridge, explicit TLS contexts and narrow database endpoint capability. Keep existing public/payment policy unchanged. | T-DG-01..03, 07 and 09a; exact-source security review before enabling live routing. |
-| S2 — AWS review client | Depends on S1; modeled ten-operation codecs, field map, bridge and one retry owner. | T-DG-04; existing report/error/recorded goldens. |
+| S1 — shared boundaries | First resolve Q4/Q5 with the offline S2 spike below and record the version/feature matrix before live code. Optional feature/dependency audit, credential/deadline bridge, explicit TLS contexts and narrow database endpoint capability. Keep existing public/payment policy unchanged. | T-DG-01..03, 07 and 09a; S2 spike exit criteria and exact-source security review before enabling live routing. |
+| S2 — AWS review client | Offline bridge spike runs in the first implementation slice; live client depends on S1 and spike acceptance. Modeled ten-operation codecs, field map, bridge and one retry owner. | All spike exit criteria below, T-DG-04 including 04e; existing report/error/recorded goldens. |
 | S3 — Gremlin | Depends on S1; optional WebSocket/GraphSON adapter, signed upgrade, consent and close/cancellation. | T-DG-05 plus adversarial bounds/TLS cases; seed guard remains enforced before connect. |
 | S4 — memory live dispatch | Depends on S1/S3 and integrated item-1 helpers; Analytics, secure gated creation and DynamoDB conversions. | T-DG-06 and all ordered replay/expansion fixtures; no unsupported partial-live plan. |
-| S5 — collection recipe | Depends on Q1 acceptance; declarative manifest/docs and Rust offline normalization. Can proceed independently of network adapters. | T-DG-08; explicit workflow divergence and supported engine/shell matrix. |
+| S5 — collection recipe | Q1 accepted; per-command manual manifest/docs, private capture custody and Rust offline normalization. Can proceed independently of network adapters. | T-DG-08 including 08d/e; explicit manual-work cost and supported engine/shell/export matrix. |
 | S6 — acceptance/callers/retirement | Depends on S2..S5, exact-source review and the relevant operator grants. | T-DG-09, recorded evidence of unverified live cases, caller/mirror verification before Python retirement. |
+
+**S2 offline bridge spike exit criteria (#5325).** Complete and record these
+in the first implementation slice before enabling live client code; this is
+not authorization for a network experiment:
+
+1. Pin the orchestrator HTTP-client boundary for each selected service crate.
+   Record how generated `host`, `content-length`, `transfer-encoding`, `te`,
+   `trailer`, `connection`, `keep-alive`, `proxy-connection` and `upgrade`
+   headers (the current `FRAMING_HEADERS` set) are removed before
+   `SigV4Signer`; retain semantic headers and let toolkit transport regenerate
+   authority/framing from the unchanged URL and final body bytes. T-DG-04a/e
+   must prove signed-versus-sent header/body equivalence and reject unsupported
+   streaming/framing rather than silently changing payload semantics.
+2. Demonstrate the exact SDK auth/identity suppression mechanism (for example,
+   a proven anonymous/no-credentials scheme) and one-attempt configuration.
+   A no-credentials option alone is not evidence: construction/call spies must
+   prove no generated signer/provider or SDK retry path runs, with toolkit as
+   the sole signer, credential resolver and retry owner (T-DG-04c/e).
+3. Record exact pins and `default-features=false` plus the explicit enabled
+   features for every service crate, including Analytics/DynamoDB if selected.
+   Audit the resolved feature graph and lockfile delta against the base: no
+   new TLS, root or crypto crates, no ring/webpki-roots or implicit native-root
+   path, and no default SDK HTTP connector. Share rustls/aws-lc and R-ROOTS;
+   record licence, MSRV and dependency-size costs (T-DG-04e).
+4. Record the supported endpoint, engine, GraphSON and shell/export versions
+   justified by offline fixtures (Q5); operator versions remain live-run input.
+   If any bridge criterion fails, stop live enablement and revise the design;
+   do not bypass signer checks, add a second stack or invent protocol codecs.
 
 Implementation slices remain Rust, use scoped optional service dependencies,
 daemon-owned jobs and independent exact-SHA review. Each owns a requirement/test
@@ -632,17 +743,19 @@ source/requirement review and a docs-only diff check.
 
 | ID | Owner/type | Recommendation, assumption and required ruling/grant |
 | --- | --- | --- |
-| Q1 | PM product choice | Accept (b), the explicit user-run collection plus Rust snapshot workflow, and continued refusal of legacy URI/TLS flags. Assume two steps are acceptable if collection fidelity is preserved. If one-command parity is required, select (a) and commission a pinned driver/secret-input design; do not silently choose (c). |
-| Q2 | PM CLI compatibility choice | Accept explicit `--live`, proposed region/network-policy and operation consent flags, stronger pre-connect seed guard, startup-config failure and bounded timeouts. Existing recorded/dry-run outputs remain the contract. Assume live behavior can be additive rather than activating when a recording is absent. |
-| Q3 | PM/security pre-review | Accept narrowly scoped private-target capability and R-ROOTS reuse with P-ROOTS policy separation. Recommend it because current public guards cannot reach normal VPC databases. Require tests before relaxing any target admission; no global bypass. |
-| Q4 | Engineering choice for implementation review | Recommend optional official AWS service codecs through a toolkit bridge and optional WebSocket/GraphSON codec, sharing signer, TLS, retry and deadline policy. Pin only after demonstrating the bridge can suppress duplicate signer/retries and satisfy R-LOG; exact licence/size/MSRV audit is still required. No operator ruling needed on routine crate mechanics. |
-| Q5 | Engineering support matrix | Recommend initial standard AWS endpoint forms, GraphSON v2 and an explicitly tested DocumentDB/MongoDB/mongo-shell version matrix. Record unsupported engines/partitions/custom endpoints explicitly; derive broader support from fixture evidence. Initial deployment versions must be supplied with the operator target, not guessed. |
+| Q1 | PM product choice — ACCEPT | PM ff294c79 accepted (b) on #5318: two-step user-run declarative collection plus Rust normalization, no MongoDB driver and continued URI/TLS-flag refusal. This repair specifies a per-command manual procedure and its scale cost; automation would require a separate design/review. |
+| Q2 | PM CLI compatibility choice — provisionally ACCEPT | PM ff294c79 accepted the proposed flags subject to pre-review tightening. #5322 tightens R-DG-01/05 to argv-only live/consent flags, ignoring environment wipe confirmation for live runs while preserving replay parity. Other proposed region/network-policy, startup-config and timeout changes remain as reviewed. |
+| Q3 | Security pre-review — ACCEPT | Reviewer 887003f3 ruled ACCEPT in #5321: exact standard AWS database host/port/region and operator-listed RFC1918/ULA CIDRs; every DNS answer and connected peer checked before signed bytes, with original hostname for TLS/signing and reconnect revalidation. R-ROOTS infrastructure reuse is correct; PaymentRoots remains payment-only. No global/provider/payment admission change. VPC-interface-endpoint review API use and non-RFC1918/ULA VPC CIDRs fail closed pending review. S1 must move this capability's peer check before transmission; O1 remains required. |
+| Q4 | Engineering choice for implementation review | Resolve in the first implementation slice via the explicit offline S2 spike exit criteria, before live code. Optional official service codecs/WebSocket codec share toolkit signer, credentials, TLS, retries and deadlines; prove framing handling, auth/identity suppression, R-LOG and audited exact feature/lockfile closure. |
+| Q5 | Engineering support matrix | Record fixture-supported standard endpoints, GraphSON v2 and exact DocumentDB/MongoDB/shell/export versions in the first implementation slice before live code, as an S2 spike exit criterion. Unsupported forms fail closed. Operator deployment versions are required for live acceptance, not guessed. |
 | O1 | Operator gate: credentials/access | Supply an approved account/role, target IDs/hosts, signing region, network CIDRs and connectivity. Authorize metadata access and narrowly scoped database actions; do not send secrets in Issues. Credentials are resolved locally through existing approved sources. |
 | O2 | Operator gate: spend | Approve resources/cost ceiling and run duration for live Analytics/Neptune/DynamoDB work, and any graph creation separately. Prefer existing disposable resources; neither `--live` nor a test flag authorizes spending or deployment. |
 | O3 | Operator gate: real database/user data | Approve read-only statistics access and capture custody. Separately identify a disposable graph/table and authorize specific writes/wipe/consolidation; no destructive test on real user data. Operator owns final cleanup/snapshot retention. |
 | O4 | Operator gate: live acceptance scope | Choose which T-DG-09 live cases may run and the approved engine versions. Deferred paid/destructive cases remain explicit evidence gaps; offline passage alone cannot retire the corresponding live legacy path. |
 
-The engineering defaults above are recommendations, not unresolved requests to
-the operator. Only O1..O4 require real-resource authorization; Q1..Q3 require PM
-acceptance before dependent slices, and Q4/Q5 are resolved by implementers with
-recorded evidence during review.
+Only O1..O4 require real-resource authorization and gate live runs, not offline
+slices; the PM will consolidate those grants in one operator to-do after the
+offline slices land. Q1 and Q3 are accepted, Q2 is provisionally accepted with
+the argv-only tightening above, and #5322's repair still needs independent
+re-review before implementation. Q4/Q5 are engineering gates resolved with
+recorded evidence in the first implementation slice, before live code.
