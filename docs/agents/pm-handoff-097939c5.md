@@ -665,3 +665,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 10-29 04:50Z: #5165 (10d15740, Sonnet) ACCEPT x402 S1 repair at 265653b3 (#5155-#5157 resolved, no new findings). Landing check ok (scoped 39b6dc51, 4441 tests, clean onto rolling; trial merge onto r22 07e945e5 clean). ENQUEUED 3f8f320a (seq 2957, #5118, behind r22). On landing close: #5118 #5152 #5165 #5155 #5156 #5157.
   x402 S2 config = #5166 -> Codex terra high d4591cd7 (sandbox 265653b3). Review later: Claude Sonnet (cross-family).
   4/4 busy: f43fddbd (#5143), 3819aea9 (#5080), 51755587 (#5159), d4591cd7 (#5166).
+- 10-29 04:52Z: #5159 (51755587, Codex sol) CHANGES_REQUESTED on #4411 design 86a545ea: P1 #5160 (merchant echo of PAYMENT-SIGNATURE in content_type/body after TS replay reaches model), P2 #5161 (JS pack verifier -> reuse Rust plugin-stage verifier; PM RULING: no new JS verifier), #5162 (frame cap excl LF), #5164 (buffer cleanup on error paths), P3 #5163 (Unicode goldens must be ensure_ascii). #5158 gap OK for design, required before B4 acceptance.
+  Design repair 1 (all 5) -> Codex sol high af98d414 (continue_from bc70b368, build_free). Then bounded r2 re-review (Claude Sonnet, cross-family vs Codex repair).
+  4/4 busy: f43fddbd (#5143), 3819aea9 (#5080), d4591cd7 (#5166), af98d414 (#4411 design repair 1).
