@@ -908,3 +908,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
   L4 gaps #5306 (+#5312 #5314) -> Codex terra acde8672, sandbox_source da31e030.
   4/4 busy: cd65d0a9 (#5181), 4d05f4a4 (#5308), 4f851dba (#5310), acde8672 (#5306). Pending: manager scoped fa82eb30 (#5273), AP S5 scoped 4895f2bf ok awaiting #5310.
 - 10-29 09:51Z: manager scoped fa82eb30 (#5273 da31e030 on f3ab564c) OK 4182; check ok. ENQUEUED 38151494 (seq 2986, #5273). On land close #5273 #5307 #5269 #5270 #5271 #5272.
+- 10-29 09:53Z: #5310 (4f851dba, Codex sol) ACCEPT AP S5 6350187e (335 other rows byte-identical; mutations caught). Check ok via manager scoped 4895f2bf. ENQUEUED bbbd22bc (seq 2987, #5296). On land close #5296 #5310 #5282 #5283 #5284; then check #4386 closable (all S1-S5 landed).
+  Filed Launch L6 #5317 (download/extract/apply; T-STAGE/APPLY/PLAN-6..8/EXT) -> Claude Opus 56c78333 (rolling). L5 (API client + commands, carry #5212 #5213 #5197) to file after L6/#5306.
+  4/4 busy: cd65d0a9 (#5181), 4d05f4a4 (#5308), acde8672 (#5306), 56c78333 (#5317). Queue: 38151494 (#5273), bbbd22bc (#5296).
