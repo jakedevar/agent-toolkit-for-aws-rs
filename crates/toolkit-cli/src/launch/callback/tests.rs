@@ -468,6 +468,32 @@ fn unreadable_record_with_free_lock_is_not_missing() {
 
 #[cfg(unix)]
 #[test]
+fn terminal_record_remains_until_result_is_reported() {
+    use super::{
+        pending::{Custody, WaitTracker},
+        PendingStatus,
+    };
+    use crate::launch::{clock::SeededRandom, tests_support::Scratch};
+    let scratch = Scratch::new("wait-report-order");
+    let custody = Custody::acquire(scratch.path(), 91).unwrap();
+    custody
+        .write(
+            1234,
+            40,
+            100,
+            PendingStatus::Failed,
+            Some("invalid_code"),
+            &SeededRandom::new(1),
+        )
+        .unwrap();
+    drop(custody);
+    let path = scratch.join("pending/91.json");
+    WaitTracker::default().finish_after_report(scratch.path(), 91, 99, || assert!(path.exists()));
+    assert!(!path.exists());
+}
+
+#[cfg(unix)]
+#[test]
 fn revision4_unknown_record_decision_matrix() {
     use super::{
         pending::{Custody, Observation, WaitTracker},

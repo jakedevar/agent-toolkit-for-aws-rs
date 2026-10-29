@@ -249,6 +249,17 @@ pub fn finish_if_final(state_dir: &Path, pid: u32, now: i64) -> (Observation, Op
 
 #[cfg(unix)]
 impl WaitTracker {
+    #[cfg(test)]
+    pub(super) fn finish_after_report(
+        &mut self,
+        dir: &Path,
+        pid: u32,
+        now: i64,
+        report: impl FnOnce(),
+    ) {
+        let _ = self.finish(dir, pid, now);
+        report();
+    }
     /// Evaluate one observation, retaining the last trusted cutoff across reads.
     pub fn finish(
         &mut self,
