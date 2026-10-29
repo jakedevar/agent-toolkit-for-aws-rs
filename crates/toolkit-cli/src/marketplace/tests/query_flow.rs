@@ -508,3 +508,147 @@ fn undecodable_events_are_skipped_and_wrong_shapes_refused() {
     let (cli, _file) = query_cli(&[], &recording(&[r#"{"Events": null}"#.to_string()]));
     assert_eq!(cli.status, 1);
 }
+
+// ---- exact integer ranking of customer totals (#4976) -------------------------------
+
+fn usage_raw(account: &str, quantity: &str) -> String {
+    format!(
+        r#"{{"customerAWSAccountId": "{account}", "dimension": "Requests", "timestamp": "2026-01-30T10:00:00Z", "licenseArn": "{LICENSE}", "quantity": {quantity}}}"#
+    )
+}
+
+fn top_usage(quantities: &[(&str, &str)], top_n: i64) -> String {
+    let usages: Vec<String> = quantities
+        .iter()
+        .map(|(account, quantity)| usage_raw(account, quantity))
+        .collect();
+    let records = extract_records("t", &j(&ct_event(&usages.join(","), "", ""))).expect("records");
+    let out = aggregate(&records, "top_customers", top_n, 10);
+    get(&out, "topCustomersByUsage").to_compact_string()
+}
+
+#[test]
+fn customer_totals_above_2_pow_53_are_ranked_exactly() {
+    let small = "9007199254740992";
+    let large = "9007199254740993";
+    // The smaller total comes first in the data: f64 sees the two as equal and
+    // the stable sort would keep it first.
+    assert_eq!(
+        top_usage(&[("111111111111", small), ("222222222222", large)], 1),
+        r#"[{"customer":"222222222222","totalQuantity":9007199254740993}]"#
+    );
+    assert_eq!(
+        top_usage(&[("111111111111", small), ("222222222222", large)], 2),
+        r#"[{"customer":"222222222222","totalQuantity":9007199254740993},{"customer":"111111111111","totalQuantity":9007199254740992}]"#
+    );
+    assert_eq!(
+        top_usage(&[("222222222222", large), ("111111111111", small)], 1),
+        r#"[{"customer":"222222222222","totalQuantity":9007199254740993}]"#
+    );
+    // Sums of several records rank exactly too.
+    assert_eq!(
+        top_usage(
+            &[
+                ("111111111111", "9007199254740992"),
+                ("111111111111", "1"),
+                ("222222222222", "9007199254740992"),
+            ],
+            1,
+        ),
+        r#"[{"customer":"111111111111","totalQuantity":9007199254740993}]"#
+    );
+}
+
+#[test]
+fn the_cli_ranks_the_exact_total_and_reports_the_exact_sum() {
+    let events = page(
+        &[ct_event(
+            &[
+                usage(
+                    "111111111111",
+                    "Requests",
+                    "2026-01-30",
+                    9_007_199_254_740_992,
+                ),
+                usage(
+                    "222222222222",
+                    "Requests",
+                    "2026-01-30",
+                    9_007_199_254_740_993,
+                ),
+            ]
+            .join(","),
+            "",
+            "",
+        )],
+        None,
+    );
+    let (cli, _file) = query_cli(
+        &["--query-type", "summary", "--top-n", "1"],
+        &recording(std::slice::from_ref(&events)),
+    );
+    let out = output(&cli);
+    assert_eq!(
+        get(&out, "totalUsageQuantity"),
+        &Json::Int(18_014_398_509_481_985)
+    );
+    assert_eq!(
+        get(&out, "topCustomersByUsage").to_compact_string(),
+        r#"[{"customer":"222222222222","totalQuantity":9007199254740993}]"#
+    );
+}
+
+#[test]
+fn equal_totals_keep_first_seen_order_as_counter_most_common_does() {
+    assert_eq!(
+        top_usage(
+            &[
+                ("333333333333", "5"),
+                ("111111111111", "9"),
+                ("222222222222", "9"),
+                ("444444444444", "9"),
+            ],
+            3,
+        ),
+        r#"[{"customer":"111111111111","totalQuantity":9},{"customer":"222222222222","totalQuantity":9},{"customer":"444444444444","totalQuantity":9}]"#
+    );
+    assert_eq!(top_usage(&[("111111111111", "1")], 0), "[]");
+    assert_eq!(top_usage(&[("111111111111", "1")], -1), "[]");
+}
+
+#[test]
+fn integer_and_float_totals_compare_exactly_with_each_other() {
+    // 2^53 as a float against the exact integer 2^53 + 1, either order.
+    for quantities in [
+        [
+            ("111111111111", "9007199254740992.0"),
+            ("222222222222", "9007199254740993"),
+        ],
+        [
+            ("222222222222", "9007199254740993"),
+            ("111111111111", "9007199254740992.0"),
+        ],
+    ] {
+        assert_eq!(
+            top_usage(&quantities, 1),
+            r#"[{"customer":"222222222222","totalQuantity":9007199254740993}]"#
+        );
+    }
+    // A float beyond i64 outranks the largest integer; a float below any integer loses.
+    let beyond = top_usage(
+        &[
+            ("111111111111", "9223372036854775807"),
+            ("222222222222", "1e19"),
+        ],
+        1,
+    );
+    assert!(beyond.contains(r#""customer":"222222222222""#), "{beyond}");
+    let below = top_usage(
+        &[
+            ("111111111111", "-1e19"),
+            ("222222222222", "-9223372036854775807"),
+        ],
+        1,
+    );
+    assert!(below.contains(r#""customer":"222222222222""#), "{below}");
+}

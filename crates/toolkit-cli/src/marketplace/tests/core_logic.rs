@@ -312,6 +312,70 @@ fn allocations_merge_by_tag_set_and_must_sum_to_the_quantity() {
     assert!(core::finalize_allocations(&plain).is_empty());
 }
 
+/// A tagged raw row whose allocations are written out verbatim.
+fn tagged_row(second: u32, quantity: &str, allocations: &str) -> Json {
+    row(
+        &key(second),
+        quantity,
+        &format!(r#", "usageAllocations": [{allocations}]"#),
+    )
+}
+
+const TAG_A: &str = r#"[{"Key": "team", "Value": "a"}]"#;
+const TAG_B: &str = r#"[{"Key": "team", "Value": "b"}]"#;
+
+#[test]
+fn a_merged_allocation_that_overflows_is_rejected_not_clamped() {
+    // MAX + 1 on one tag set is 2^63: it cannot be stored, so the group is
+    // rejected rather than clamped to a value that happens to equal MAX.
+    let max = i64::MAX;
+    let group = fold(&[tagged_row(
+        1,
+        &max.to_string(),
+        &format!("{}, {}", alloc(max, TAG_A), alloc(1, TAG_A)),
+    )]);
+    assert_eq!(group.quantity, max);
+    assert_eq!(group.reject_reason, Some("QuantityOutOfRange"));
+    assert_eq!(validate_group(&group, at(NOW)), Some("QuantityOutOfRange"));
+    // The overflow also surfaces when the two halves come from two rows.
+    let mut entries = Vec::new();
+    let first = j(&format!("[{}]", alloc(max, TAG_A)));
+    let second = j(&format!("[{}]", alloc(1, TAG_A)));
+    assert_eq!(core::merge_allocations(&mut entries, &first), None);
+    assert_eq!(
+        core::merge_allocations(&mut entries, &second),
+        Some("QuantityOutOfRange")
+    );
+    assert_eq!(entries[0].qty, max, "the merged sum is never clamped");
+}
+
+#[test]
+fn allocations_across_tag_sets_that_overflow_the_total_do_not_match_the_quantity() {
+    // MAX on tag set a plus 1 on tag set b is 2^63 against a quantity of MAX.
+    let max = i64::MAX;
+    let group = fold(&[tagged_row(
+        1,
+        &max.to_string(),
+        &format!("{}, {}", alloc(max, TAG_A), alloc(1, TAG_B)),
+    )]);
+    assert_eq!(group.reject_reason, None);
+    assert_eq!(group.allocations.len(), 2);
+    assert_eq!(
+        validate_group(&group, at(NOW)),
+        Some("AllocationSumMismatch")
+    );
+    // The same quantity carried by one allocation is still valid.
+    let exact = fold(&[tagged_row(1, &max.to_string(), &alloc(max, TAG_A))]);
+    assert_eq!(validate_group(&exact, at(NOW)), None);
+    // And a split that adds up exactly to MAX is valid too.
+    let split = fold(&[tagged_row(
+        1,
+        &max.to_string(),
+        &format!("{}, {}", alloc(max - 1, TAG_A), alloc(1, TAG_B)),
+    )]);
+    assert_eq!(validate_group(&split, at(NOW)), None);
+}
+
 #[test]
 fn malformed_allocations_are_reason_coded() {
     let reason = |extra: &str| fold(&[row(&key(1), "2", extra)]).reject_reason;
@@ -491,6 +555,131 @@ fn emf_lines_pick_their_dimension_set() {
     assert!(emf("UsageRecordRejected", None, None).contains(r#""Dimensions": [["ProductCode"]]"#));
 }
 
+/// A credential-shaped sentinel the redactor must hide (`Bearer` scheme).
+pub(super) const BEARER: &str = "Bearer FAKE-BEARER-4396-EMF-SENTINEL";
+
+/// Caller text with a secret, controls, bidi characters and a long tail.
+pub(super) fn hostile() -> String {
+    format!(
+        "{BEARER} \u{1b}[31mred\u{202e}\n\"quoted\"\\ {}",
+        "long-tail-".repeat(60)
+    )
+}
+
+fn all_strings(value: &Json, out: &mut Vec<String>) {
+    match value {
+        Json::String(text) => out.push(text.clone()),
+        Json::Array(items) => items.iter().for_each(|item| all_strings(item, out)),
+        Json::Object(members) => {
+            for (name, member) in members {
+                out.push(name.clone());
+                all_strings(member, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Asserts that an EMF line is one parseable JSON object whose every string is
+/// redacted, bounded and free of control and bidi characters, and returns it.
+pub(super) fn assert_clean_emf(line: &str) -> Json {
+    assert!(
+        !line
+            .to_lowercase()
+            .contains("fake-bearer-4396-emf-sentinel"),
+        "secret in {line}"
+    );
+    assert!(
+        !line.chars().any(toolkit_core::is_unsafe_char),
+        "unescaped control or bidi character in {line:?}"
+    );
+    assert!(
+        line.len() < 2_000,
+        "unbounded EMF line: {} bytes",
+        line.len()
+    );
+    let parsed =
+        parse_json(line).unwrap_or_else(|error| panic!("EMF is not JSON ({error}): {line}"));
+    let mut strings = Vec::new();
+    all_strings(&parsed, &mut strings);
+    for text in &strings {
+        assert!(
+            text.chars().count() <= 200,
+            "unbounded string {text:?} in {line}"
+        );
+    }
+    parsed
+}
+
+fn emf_with(
+    pairs: &[(&str, &str)],
+    name: &str,
+    reason: Option<&str>,
+    exception: Option<&str>,
+) -> String {
+    let mut log = Logger::default();
+    let mut client = RecordedClient::from_document(&j(r#"{"calls": []}"#)).expect("recording");
+    let config = Config::from_pairs(pairs);
+    let mut ctx = Ctx {
+        client: &mut client,
+        config: &config,
+        log: &mut log,
+        now: at(NOW),
+    };
+    emf_metric(&mut ctx, name, 1, reason, exception);
+    log.lines()[0].clone()
+}
+
+#[test]
+fn emf_fields_from_the_caller_are_redacted_bounded_and_escaped() {
+    let hostile = hostile();
+    let config = [
+        ("PRODUCT_CODE", hostile.as_str()),
+        ("METERING_MODE", hostile.as_str()),
+        ("METRIC_NAMESPACE", hostile.as_str()),
+    ];
+    // A counter with the bare dimension set, one with a reason and one with an
+    // exception: every untrusted field of each is covered.
+    for (name, reason, exception) in [
+        ("DuplicateRecord", None, None),
+        ("UsageRecordRejected", Some(hostile.as_str()), None),
+        ("BatchMeterUsageException", None, Some(hostile.as_str())),
+    ] {
+        let line = emf_with(&config, name, reason, exception);
+        let parsed = assert_clean_emf(&line);
+        // The line stays EMF: the directive, the dimension names and the
+        // metric name are the fixed vocabulary.
+        let directive = parsed
+            .get("_aws")
+            .and_then(|aws| aws.get("CloudWatchMetrics"))
+            .map(Json::to_compact_string)
+            .expect("directive");
+        assert!(directive.contains(&format!(r#""Name":"{name}""#)), "{line}");
+        assert!(directive.contains(r#""Unit":"Count""#), "{line}");
+        assert!(parsed.get(name).is_some(), "{line}");
+        assert!(line.contains("[REDACTED]"), "{line}");
+        assert!(line.contains(r"more chars]"), "{line}");
+    }
+}
+
+#[test]
+fn legitimate_emf_values_are_not_changed_by_the_sanitizing() {
+    let line = emf_with(
+        &[
+            ("PRODUCT_CODE", "prod-123_ABC.x"),
+            ("METERING_MODE", " Live "),
+            ("METRIC_NAMESPACE", "My/Custom-Namespace_1"),
+        ],
+        "BatchMeterUsageException",
+        None,
+        Some("InvalidUsageDimensionException"),
+    );
+    assert_eq!(
+        line,
+        r#"{"_aws": {"Timestamp": 1769862600000, "CloudWatchMetrics": [{"Namespace": "My/Custom-Namespace_1", "Dimensions": [["Exception", "MeteringMode", "ProductCode"]], "Metrics": [{"Name": "BatchMeterUsageException", "Unit": "Count"}]}]}, "Exception": "InvalidUsageDimensionException", "ProductCode": "prod-123_ABC.x", "MeteringMode": "live", "BatchMeterUsageException": 1}"#
+    );
+}
+
 // ---- submit ----------------------------------------------------------------
 
 fn usage_record(n: usize) -> Json {
@@ -660,6 +849,25 @@ fn transient_codes_propagate_and_stamp_nothing() {
     }
     // A response without recorded steps is a connect failure: raised, never stamped.
     assert!(submit(1, &[], false).pending.is_err());
+}
+
+#[test]
+fn an_isolated_request_error_code_is_sanitized_in_the_exception_metric() {
+    let code = hostile();
+    let rejected = format!(
+        r#"{{"service": "meteringmarketplace", "operation": "BatchMeterUsage", "error": {{"code": {}, "message": "{SECRET}"}}}}"#,
+        Json::string(code).to_compact_string()
+    );
+    let run = submit(1, &[rejected], false);
+    assert_eq!(run.pending, Ok(false));
+    let metrics: Vec<&String> = run.log.iter().filter(|l| l.starts_with('{')).collect();
+    assert_eq!(metrics.len(), 1, "{:?}", run.log);
+    let parsed = assert_clean_emf(metrics[0]);
+    assert!(parsed.get("BatchMeterUsageException").is_some());
+    assert!(parsed.get("Exception").is_some());
+    for line in &run.log {
+        assert!(!line.contains(SECRET), "{line}");
+    }
 }
 
 #[test]

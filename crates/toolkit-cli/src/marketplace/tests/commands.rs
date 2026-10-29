@@ -123,6 +123,64 @@ fn metric_lines_go_to_the_log_stream_and_the_result_to_stdout() {
 }
 
 #[test]
+fn emf_diagnostics_on_stderr_never_echo_caller_text() {
+    // A rejected group emits `UsageRecordRejected` with the configured product
+    // code, mode and namespace, all of them caller text.
+    let hostile = core_logic::hostile();
+    let mut members: Vec<(String, Json)> = CFG
+        .iter()
+        .filter(|(name, _)| *name != "PRODUCT_CODE")
+        .map(|(name, value)| ((*name).to_string(), Json::string(*value)))
+        .collect();
+    for name in ["PRODUCT_CODE", "METERING_MODE", "METRIC_NAMESPACE"] {
+        members.push((name.to_string(), Json::string(hostile.clone())));
+    }
+    let config = TempFile::new("config", &Json::Object(members).to_compact_string());
+    let row = format!(
+        r#"{{"licenseArn": "{LICENSE}", "customerAWSAccountId_dimension_timestamp": "{ACCOUNT}#Requests#2026-01-31T11:00:01", "meteringPending": "2026-01-31T11", "quantity": -1}}"#
+    );
+    let body = format!(
+        r#"{{"licenseArn": "{LICENSE}", "customerAWSAccountId": "{ACCOUNT}", "dimension": "Requests", "hourBucket": "2026-01-31T11"}}"#
+    );
+    let event = TempFile::new(
+        "event",
+        &format!(
+            r#"{{"Records": [{{"messageId": "m1", "body": {}}}]}}"#,
+            Json::string(body).to_compact_string()
+        ),
+    );
+    let calls = [query(&format!(r#"{{"Items": [{row}]}}"#)), update()];
+    let recording = TempFile::new("rec", &format!(r#"{{"calls": [{}]}}"#, calls.join(",")));
+    let cli = toolkit(&[
+        "marketplace",
+        "handler",
+        "aggregator",
+        "--config",
+        &config.path(),
+        "--event",
+        &event.path(),
+        "--recorded",
+        &recording.path(),
+        "--now",
+        PINNED,
+    ]);
+    assert_eq!(cli.status, 0, "{}", cli.stderr);
+    assert!(
+        !cli.stderr
+            .to_lowercase()
+            .contains("fake-bearer-4396-emf-sentinel"),
+        "{}",
+        cli.stderr
+    );
+    let metrics: Vec<&str> = cli.stderr.lines().filter(|l| l.starts_with('{')).collect();
+    assert!(!metrics.is_empty(), "{}", cli.stderr);
+    for line in metrics {
+        core_logic::assert_clean_emf(line);
+    }
+    assert!(cli.stderr.contains("UsageRecordRejected"));
+}
+
+#[test]
 fn without_a_recording_nothing_is_sent_and_the_run_fails() {
     let config = TempFile::new("config", r#"{"SUBSCRIBERS_TABLE": "subs"}"#);
     let cli = toolkit(&[

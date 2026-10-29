@@ -489,6 +489,68 @@ fn an_invalid_group_is_rejected_client_side() {
     assert!(ran.logged("Rejecting usage group client-side"));
 }
 
+/// One tagged raw row of `quantity` with the given allocations.
+fn allocated_row(quantity: i64, allocations: &[(i64, &str)]) -> String {
+    let list: Vec<String> = allocations
+        .iter()
+        .map(|(allocated, value)| {
+            format!(
+                r#"{{"AllocatedUsageQuantity": {allocated}, "Tags": [{{"Key": "team", "Value": "{value}"}}]}}"#
+            )
+        })
+        .collect();
+    let row = raw_row("Requests", 1, &quantity.to_string(), "2026-01-31T11");
+    format!(
+        r#"{}, "usageAllocations": [{}]}}"#,
+        row.trim_end_matches('}'),
+        list.join(",")
+    )
+}
+
+fn aggregate_one(row: &str) -> Ran {
+    let calls = [query(&format!(r#"{{"Items": [{row}]}}"#)), update()];
+    let event = event_of(&[sqs_record(
+        "m1",
+        &group_message("Requests", "2026-01-31T11"),
+    )]);
+    run("aggregator", &event, &calls)
+}
+
+fn assert_rejected_with(ran: &Ran, reason: &str) {
+    assert_eq!(ran.ok().to_compact_string(), r#"{"batchItemFailures":[]}"#);
+    assert!(
+        ran.requests("dynamodb:PutItem").is_empty(),
+        "an overflowing group is never aggregated"
+    );
+    assert!(
+        ran.requests("sqs:SendMessageBatch").is_empty(),
+        "and never reaches cleanup"
+    );
+    let updates = ran.requests("dynamodb:UpdateItem");
+    assert_eq!(updates.len(), 1);
+    let values = updates[0]
+        .get("ExpressionAttributeValues")
+        .map(Json::to_compact_string)
+        .unwrap_or_default();
+    assert!(
+        values.contains(r#"":st":"RejectedClientSide""#) && values.contains(reason),
+        "{values}"
+    );
+    assert_eq!(ran.unused, 0);
+}
+
+#[test]
+fn overflowing_allocations_on_one_tag_set_reject_the_group() {
+    let row = allocated_row(i64::MAX, &[(i64::MAX, "a"), (1, "a")]);
+    assert_rejected_with(&aggregate_one(&row), "QuantityOutOfRange");
+}
+
+#[test]
+fn overflowing_allocation_totals_across_tag_sets_reject_the_group() {
+    let row = allocated_row(i64::MAX, &[(i64::MAX, "a"), (1, "b")]);
+    assert_rejected_with(&aggregate_one(&row), "AllocationSumMismatch");
+}
+
 #[test]
 fn zero_quantity_is_left_pending_except_at_the_oldest_edge() {
     let zero = |bucket: &str| format!(r#"{{"Items": [{}]}}"#, raw_row("Requests", 1, "0", bucket));

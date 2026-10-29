@@ -323,3 +323,107 @@ fn the_submitter_needs_the_aggregated_table() {
     let ran = run_with("submitter", &cfg, "{}", &[], NOW);
     assert_eq!(ran.err(), "AGGREGATED_USAGE_TABLE is not configured");
 }
+
+// ---- exact integers beyond i64 fail closed (#4973) ----------------------------------
+
+fn item_with(quantity: &str, allocations: &str) -> String {
+    let allocations = if allocations.is_empty() {
+        String::new()
+    } else {
+        format!(r#", "usageAllocations": [{allocations}]"#)
+    };
+    format!(
+        r#"{{"licenseArn": "{LICENSE}", "account_dimension_hour": "{ACCOUNT}#Requests#2026-01-31T11", "customerAWSAccountId": "{ACCOUNT}", "dimension": "Requests", "hourBucket": "2026-01-31T11", "quantity": {quantity}{allocations}, "meteringPending": "2026-01-31T11"}}"#
+    )
+}
+
+/// The reads of a run over `pending` items: nothing else is recorded, so any
+/// `BatchMeterUsage` or write the run attempted would be refused and counted.
+fn reads_only(pending: Vec<String>) -> Vec<String> {
+    let mut calls = vec![empty_subscribers()];
+    calls.extend(ordinary_pass(&[(22, pending)]));
+    calls
+}
+
+fn assert_failed_closed(ran: &Ran) {
+    let error = ran.err();
+    assert!(error.contains("QuantityOutOfRange"), "{error}");
+    assert!(
+        ran.requests("meteringmarketplace:BatchMeterUsage")
+            .is_empty(),
+        "nothing is submitted, not even a substituted zero"
+    );
+    assert!(
+        ran.requests("dynamodb:UpdateItem").is_empty(),
+        "nothing is finalized, the pending marker stays"
+    );
+    assert_eq!(ran.unused, 0);
+}
+
+#[test]
+fn a_stored_quantity_beyond_i64_fails_the_run_instead_of_becoming_zero() {
+    for quantity in [
+        r#""9223372036854775808""#,
+        "9223372036854775808",
+        "1e19",
+        r#""-9223372036854775809""#,
+        r#""18446744073709551616""#,
+    ] {
+        let calls = reads_only(vec![item_with(quantity, "")]);
+        assert_failed_closed(&run("submitter", "{}", &calls));
+        let dry = config_with(&[("METERING_MODE", "dry-run")]);
+        assert_failed_closed(&run_with("submitter", &dry, "{}", &calls, NOW));
+    }
+}
+
+#[test]
+fn one_out_of_range_record_stops_the_valid_records_beside_it_too() {
+    let calls = reads_only(vec![
+        agg_item(LICENSE, "Fine", "2026-01-31T11", 5),
+        item_with(r#""9223372036854775808""#, ""),
+    ]);
+    assert_failed_closed(&run("submitter", "{}", &calls));
+}
+
+#[test]
+fn a_stored_allocation_beyond_i64_fails_the_run_instead_of_becoming_zero() {
+    for allocated in [
+        r#""9223372036854775808""#,
+        "9223372036854775808",
+        "1e19",
+        r#""-9223372036854775809""#,
+    ] {
+        let allocations = format!(
+            r#"{{"AllocatedUsageQuantity": {allocated}, "Tags": [{{"Key": "team", "Value": "a"}}]}}"#
+        );
+        let calls = reads_only(vec![item_with("5", &allocations)]);
+        assert_failed_closed(&run("submitter", "{}", &calls));
+    }
+}
+
+#[test]
+fn the_largest_quantity_and_a_legitimate_zero_are_still_submitted() {
+    let max = i64::MAX;
+    let allocations = r#"{"AllocatedUsageQuantity": "0", "Tags": [{"Key": "team", "Value": "a"}]}, {"AllocatedUsageQuantity": 9223372036854775807, "Tags": [{"Key": "team", "Value": "b"}]}"#;
+    let mut calls = reads_only(vec![
+        item_with(&max.to_string(), allocations),
+        agg_item(LICENSE, "Zero", "2026-01-31T11", 0),
+    ]);
+    calls.push(metering(&format!(
+        r#"{{"Results": [{{"MeteringRecordId": "mrec-max", "Status": "Success", "UsageRecord": {{"Timestamp": 1769857200, "Dimension": "Requests", "Quantity": {max}, "CustomerAWSAccountId": "{ACCOUNT}", "LicenseArn": "{LICENSE}"}}}}, {{"MeteringRecordId": "mrec-zero", "Status": "Success", "UsageRecord": {{"Timestamp": 1769857200, "Dimension": "Zero", "Quantity": 0, "CustomerAWSAccountId": "{ACCOUNT}", "LicenseArn": "{LICENSE}"}}}}]}}"#
+    )));
+    calls.extend([update(), update()]);
+    let ran = run("submitter", "{}", &calls);
+    assert_eq!(ran.ok().to_compact_string(), r#"{"submitted":2}"#);
+    let batch = ran.requests("meteringmarketplace:BatchMeterUsage")[0].to_compact_string();
+    assert!(
+        batch.contains(&format!(r#""Dimension":"Requests","Quantity":{max},"UsageAllocations":[{{"AllocatedUsageQuantity":0,"Tags":[{{"Key":"team","Value":"a"}}]}},{{"AllocatedUsageQuantity":{max},"Tags":[{{"Key":"team","Value":"b"}}]}}]"#)),
+        "{batch}"
+    );
+    assert!(
+        batch.contains(r#""Dimension":"Zero","Quantity":0"#),
+        "{batch}"
+    );
+    assert_eq!(ran.requests("dynamodb:UpdateItem").len(), 2);
+    assert_eq!(ran.unused, 0);
+}
