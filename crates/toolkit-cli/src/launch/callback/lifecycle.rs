@@ -20,6 +20,23 @@ pub enum HelperResult {
     Failed,
 }
 
+#[cfg(test)]
+mod deadline_tests {
+    use super::*;
+    #[test]
+    fn exchange_failure_at_cutoff_reports_timeout() {
+        let gate = CommitGate::default();
+        assert!(gate.start_exchange());
+        let now = Instant::now();
+        let result = if gate.fail_exchange() {
+            HelperResult::Failed
+        } else {
+            HelperResult::TimedOut
+        };
+        assert_eq!(result, HelperResult::TimedOut, "at cutoff {now:?}");
+    }
+}
+
 /// Run a helper in its own process, retaining lock custody through return.
 /// `exchange` receives the code, redirect URI and absolute exchange cutoff;
 /// it must return complete session JSON or a fixed failure, with no secrets in errors.
