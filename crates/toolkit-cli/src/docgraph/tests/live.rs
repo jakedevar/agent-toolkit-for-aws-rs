@@ -1184,20 +1184,22 @@ fn secs(values: &[u64]) -> Vec<Duration> {
 fn t_dg_04c_transient_failures_recover_or_exhaust_at_four_sends() {
     // Recover on the fourth send after throttling, a 5xx and a connect
     // failure; then exhaust on four 503s and on four read timeouts.
-    let recover = |_: &HttpRequest, n: usize| match n {
-        0 => query_error(400, "Throttling"),
-        1 => Ok((503, vec![], Vec::new())),
-        2 => Err(AwsError::connect("fixture: connection reset")),
-        _ => query_ok("DescribeDBClusters", CLUSTER_XML),
+    let recover = |_: &HttpRequest, n: usize| -> Reply {
+        match n {
+            0 => query_error(400, "Throttling"),
+            1 => Ok((503, vec![], Vec::new())),
+            2 => Err(AwsError::connect("fixture: connection reset")),
+            _ => query_ok("DescribeDBClusters", CLUSTER_XML),
+        }
     };
-    let exhaust_5xx = |_: &HttpRequest, _| Ok((503, vec![], Vec::new()));
-    let exhaust_timeout = |_: &HttpRequest, _| {
+    let exhaust_5xx = |_: &HttpRequest, _: usize| -> Reply { Ok((503, vec![], Vec::new())) };
+    let exhaust_timeout = |_: &HttpRequest, _: usize| -> Reply {
         Err(AwsError::timeout(
             toolkit_aws::error::TimeoutPhase::Read,
             "fixture: no response",
         ))
     };
-    let cbor_throttle = |_: &HttpRequest, n: usize| {
+    let cbor_throttle = |_: &HttpRequest, n: usize| -> Reply {
         if n < 3 {
             cbor_reply(
                 400,
