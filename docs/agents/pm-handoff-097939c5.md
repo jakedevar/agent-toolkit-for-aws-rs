@@ -564,3 +564,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 10-29 03:13Z: #4410 DESIGN done (4150e82f) at 0eddbc25bec566ccd8f93ec0c8416949ab4fa2ae, docs/migration/x402-payments-design.md (7 slices; policy slice dep-free; net/flow/admin wait on S1 #5017, #5080, #4941). PM rulings Q2/Q3/Q4/Q15/Q19/Q22 = accept doc recs (recorded in #5091 body). Operator live run on Base Sepolia (creates wallet user) = operator gate, later. Kaizen #5089 (service-model provenance) filed by worker.
   Pre-review #5091 -> Codex gpt-6.1-sol high 66f465b5 (review_of 4410, pinned 0eddbc25, build_free).
   4/4 busy: de9907bc (S3), f38bc05f (#5085 L0-L2), 483959bf (#4487 repair 4), 66f465b5 (#5091).
+- 10-29 03:14Z: #4487 repair 4 (483959bf) at 3d9066158009a7c477e290abab39af0449b4bfb3: MCP whole-object check, uvx-only templates, launchers/shells/interps refused. scoped_test 9a298dc8 ok, merges clean. Kaizen #5090 (failed scoped-test per-package log deleted; harness filing refused agent_create_issue_harness_project_unresolved).
+  #5018 r5 (narrow: #5088 + MCP rules + 3 impl decisions) -> Codex gpt-6.1-sol high 453ccbd7 pinned 3d906615. On ACCEPT: continue r21 worker to merge #4487 + #4412 hooks.json activation.
+  4/4 busy: de9907bc (S3), f38bc05f (#5085 L0-L2), 66f465b5 (#5091), 453ccbd7 (#5018 r5).
