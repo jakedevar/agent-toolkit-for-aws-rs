@@ -217,6 +217,34 @@ mod tests {
         assert_eq!(large.position(), 131073);
     }
 
+    #[test]
+    fn t_br_req_size_and_unicode_boundaries() {
+        let exactly = format!("{}{}", VALID, " ".repeat(131072 - VALID.len()));
+        assert!(read_request(&mut Cursor::new(&exactly)).is_ok());
+        assert_eq!(
+            read_request(&mut Cursor::new(format!("{exactly} "))),
+            Err(BridgeError::Input)
+        );
+        let manager = "a".repeat(66);
+        for (length, expected) in [(2048, true), (2049, false)] {
+            let request = VALID.replace(&manager, &"é".repeat(length));
+            assert_eq!(read_request(&mut Cursor::new(request)).is_ok(), expected);
+        }
+        let accepted = VALID.replace("\"user\"", "\"\u{200b}\"");
+        let parsed = read_request(&mut Cursor::new(accepted)).unwrap();
+        assert_eq!(
+            parsed.get("user_id").and_then(Json::as_str),
+            Some("\u{200b}")
+        );
+        for whitespace in [" ", "\u{3000}", "\u{1c}"] {
+            let request = VALID.replace("\"user\"", &format!("\"{whitespace}\""));
+            assert_eq!(
+                read_request(&mut Cursor::new(request)),
+                Err(BridgeError::Input)
+            );
+        }
+    }
+
     // T-BR-REQ-PAY, T-BR-REQ-LEG, T-OC-FINAL-BOUND (pure shapes).
     #[test]
     fn t_br_req_pay_and_final_bound() {
