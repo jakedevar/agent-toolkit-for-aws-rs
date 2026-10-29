@@ -288,3 +288,17 @@ pub(crate) fn truthy(value: Option<&Json>) -> bool {
         Json::Bool(true) | Json::Int(_) => true,
     })
 }
+
+#[cfg(test)]
+mod compact_tests {
+    use super::*;
+
+    // T-BR-OUT-1: byte equality is separate from parsed-value equality.
+    #[test]
+    fn t_br_out_1_compact_ensure_ascii() {
+        let value = Json::Array(vec![Json::String("é😀\u{7f}\0\n\t\u{8}\u{c}\r\"\\".into()), Json::Float(1.5)]);
+        let encoded = dumps_compact(&value);
+        assert_eq!(encoded.as_bytes(), br#"["\u00e9\ud83d\ude00\u007f\u0000\n\t\b\f\r\"\\",1.5]"#);
+        assert_eq!(toolkit_core::json::parse_json(encoded.as_bytes()).unwrap(), value);
+    }
+}
