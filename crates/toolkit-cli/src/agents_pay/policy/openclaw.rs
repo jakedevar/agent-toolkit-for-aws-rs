@@ -21,6 +21,29 @@ fn valid_cap(cap: &str) -> bool {
         && cap.bytes().all(|c| c.is_ascii_digit())
 }
 
+fn origins(input: &Json) -> Result<Vec<Json>, BridgeError> {
+    let mut origins = Vec::new();
+    if let Some(value) = input.get("allowedOrigins") {
+        for origin in strings(value)? {
+            let parsed = urlparse(origin.as_str().ok_or(BridgeError::Input)?)
+                .map_err(|_| BridgeError::Input)?;
+            if parsed.scheme() != "https"
+                || parsed.netloc().contains('@')
+                || parsed.hostname().is_none_or(|host| host.is_empty())
+            {
+                return Err(BridgeError::Input);
+            }
+            origins.push(Json::string(
+                parsed
+                    .canonical_origin()
+                    .map_err(|_| BridgeError::Input)?
+                    .to_lowercase(),
+            ));
+        }
+    }
+    Ok(origins)
+}
+
 /// Convert the trusted glue's profile into the existing policy gate's JSON shape.
 ///
 /// # Errors
@@ -101,25 +124,7 @@ pub fn from_openclaw(input: &Json) -> Result<Json, BridgeError> {
             assets.push((name.to_owned(), Json::Array(values)));
         }
     }
-    let mut origins = Vec::new();
-    if let Some(value) = input.get("allowedOrigins") {
-        for origin in strings(value)? {
-            let parsed = urlparse(origin.as_str().ok_or(BridgeError::Input)?)
-                .map_err(|_| BridgeError::Input)?;
-            if parsed.scheme() != "https"
-                || parsed.netloc().contains('@')
-                || parsed.hostname().is_none_or(|host| host.is_empty())
-            {
-                return Err(BridgeError::Input);
-            }
-            origins.push(Json::string(
-                parsed
-                    .canonical_origin()
-                    .map_err(|_| BridgeError::Input)?
-                    .to_lowercase(),
-            ));
-        }
-    }
+    let origins = origins(input)?;
     Ok(Json::object(vec![
         ("max_per_payment_usd", Json::string(format!("{cap}e-6"))),
         ("allowed_networks", Json::Array(networks)),

@@ -20,7 +20,7 @@ pub enum BridgeError {
 /// Read and validate a bounded request without consulting the environment.
 ///
 /// # Errors
-/// Returns an input error for invalid requests or an AgentCore error for model length violations.
+/// Returns an input error for invalid requests or an `AgentCore` error for model length violations.
 pub fn read_request(reader: &mut impl Read) -> Result<Json, BridgeError> {
     let mut bytes = Vec::new();
     reader
@@ -217,12 +217,12 @@ mod tests {
         );
         let mut large = Cursor::new(vec![b' '; 1_048_576]);
         assert_eq!(read_request(&mut large), Err(BridgeError::Input));
-        assert_eq!(large.position(), 131073);
+        assert_eq!(large.position(), 131_073);
     }
 
     #[test]
     fn t_br_req_size_and_unicode_boundaries() {
-        let exactly = format!("{}{}", VALID, " ".repeat(131072 - VALID.len()));
+        let exactly = format!("{}{}", VALID, " ".repeat(131_072 - VALID.len()));
         assert!(read_request(&mut Cursor::new(&exactly)).is_ok());
         assert_eq!(
             read_request(&mut Cursor::new(format!("{exactly} "))),
@@ -308,7 +308,7 @@ mod tests {
             .to_compact_string()
         };
         let dense = make(&"\u{1}".repeat(10240));
-        assert!(dense.len() > 131072);
+        assert!(dense.len() > 131_072);
         assert_eq!(
             read_request(&mut Cursor::new(dense)),
             Err(BridgeError::Input)
@@ -320,7 +320,7 @@ mod tests {
             "eyJ4NDAyVmVyc2lvbiI6Mi 0x".to_owned(),
         ] {
             let clean = make(&body);
-            assert!(clean.len() <= 131072);
+            assert!(clean.len() <= 131_072);
             assert!(read_request(&mut Cursor::new(clean)).is_ok());
         }
         let lone_surrogate = r#"{"operation":"sanitize_output","candidate":{"content":[{"type":"text","text":"{}"}],"details":{}},"secrets":["\ud800"]}"#;

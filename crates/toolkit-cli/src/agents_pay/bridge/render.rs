@@ -88,7 +88,7 @@ fn amount(value: &Json) -> Result<Json, BridgeError> {
 /// Render the S4 session model in service-model member order.
 ///
 /// # Errors
-/// Returns an AgentCore error when required model data is missing or malformed.
+/// Returns an `AgentCore` error when required model data is missing or malformed.
 pub fn session_result(session: &Json) -> Result<Json, BridgeError> {
     let mut fields = Vec::new();
     for key in [
@@ -148,7 +148,7 @@ pub fn session_result(session: &Json) -> Result<Json, BridgeError> {
 /// Render an already verified proof payload as the reduced bridge response.
 ///
 /// # Errors
-/// Returns an AgentCore error when the payload is not a JSON object.
+/// Returns an `AgentCore` error when the payload is not a JSON object.
 pub fn payment_result(payload: &Json) -> Result<Json, BridgeError> {
     let normalized = match payload {
         Json::String(text) => toolkit_core::parse_json(text).map_err(|_| BridgeError::AgentCore)?,
@@ -186,11 +186,11 @@ mod tests {
                 "😀" => 12,
                 _ => 0,
             };
-            for size in [131072, 131073] {
+            for size in [131_072, 131_073] {
                 let value =
                     Json::String(format!("{prefix}{}", "x".repeat(size - encoded_prefix - 3)));
                 let (frame, status) = frame(&value);
-                if size == 131072 {
+                if size == 131_072 {
                     assert_eq!(frame.len(), size);
                     assert_eq!(frame.last(), Some(&b'\n'));
                     assert_eq!(status, 0);
@@ -240,10 +240,10 @@ mod tests {
             let Some(Json::Int(repeat)) = case.get("repeat") else {
                 panic!("repeat")
             };
-            let prefix = text.repeat(*repeat as usize);
+            let prefix = text.repeat(usize::try_from(*repeat).unwrap());
             let initial = session_result(&session(prefix.clone())).unwrap();
             let initial_len = crate::aurora::pyfmt::dumps_compact(&initial).len() + 1;
-            for target in [131072, 131073] {
+            for target in [131_072, 131_073] {
                 let value = session_result(&session(format!(
                     "{prefix}{}",
                     "x".repeat(target - initial_len)
@@ -252,7 +252,7 @@ mod tests {
                 let expected = format!("{}\n", crate::aurora::pyfmt::dumps_compact(&value));
                 assert_eq!(expected.len(), target);
                 let (actual, code) = frame(&value);
-                if target == 131072 {
+                if target == 131_072 {
                     assert_eq!(actual, expected.as_bytes());
                     assert_eq!(code, 0);
                 } else {
@@ -324,7 +324,7 @@ mod tests {
                 format!("{{\"ok\":false,\"error\":\"{expected}\"}}\n").as_bytes()
             );
             assert_eq!(exit, status);
-            assert!(actual.len() <= 131072);
+            assert!(actual.len() <= 131_072);
         }
     }
 }
