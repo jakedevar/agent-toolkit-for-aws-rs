@@ -43,6 +43,45 @@ impl Drop for Fixture {
 const TEMPLATE: &str = "# Cell 0 [markdown]: Example\n# Description\n\n# Cell 1: Config\nACCEPT_EULA = [ACCEPT_EULA]\nrole = \"[ROLE_ARN]\"\n";
 
 #[test]
+fn ap_asn_02_04_06_target_and_secret_matrix() {
+    for (source, name) in [
+        ("# Cell 0 [markdown]: Example\n# TARGET = 'old'\n# Cell 1: Code\npass\n", "TARGET"),
+        ("# Cell 0 [markdown]: Example\n# Desc\n# Cell 1: Code\nTARGET, other = 'old', 1\n", "TARGET"),
+        ("# Cell 0 [markdown]: Example\n# Desc\n# Cell 1: Code\nTARGET = f'old'\n", "TARGET"),
+        ("# Cell 0 [markdown]: Example\n# Desc\n# Cell 1: Code\nTARGET = None\n", "TARGET"),
+        ("# Cell 0 [markdown]: Example\n# Desc\n# Cell 1: Code\nS3_OUTPUT_PATH = f'old'\n", "S3_OUTPUT_PATH"),
+    ] {
+        let f = Fixture::new();
+        let template = f.write("template.py", source);
+        let values = f.write("values.json", &format!("{{\"assign\":{{\"{name}\":\"new\"}}}}"));
+        let result = f.render(&template, "script", &["--values", values.to_str().unwrap()]);
+        assert_eq!(result.status.code(), Some(1), "{source}");
+        assert!(String::from_utf8_lossy(&result.stderr).contains("assign_target_invalid"));
+    }
+    for (value, expected, success) in [
+        ("null", "HF_HUB_TOKEN = None", true),
+        ("\"arn:aws:secretsmanager:us-east-1:123456789012:secret:example\"", "arn:aws:secretsmanager", true),
+        ("\"literal-secret-sentinel\"", "secret_value_invalid", false),
+    ] {
+        let f = Fixture::new();
+        let template = f.write("template.py", "# Cell 0 [markdown]: Example\n# Desc\n# Cell 1: Code\nHF_HUB_TOKEN = ''\nreward_function_path = (\n    'old'\n)\n");
+        let values = f.write("values.json", &format!("{{\"assign\":{{\"HF_HUB_TOKEN\":{value},\"reward_function_path\":\"new\"}}}}"));
+        let result = f.render(&template, "script", &["--values", values.to_str().unwrap()]);
+        assert_eq!(result.status.success(), success, "{}", String::from_utf8_lossy(&result.stderr));
+        if success {
+            let script = fs::read_to_string(f.0.join("scripts/01_example.py")).unwrap();
+            assert!(script.contains(expected));
+            assert!(script.contains("reward_function_path = (\n    'new'\n)"));
+        } else {
+            assert!(String::from_utf8_lossy(&result.stderr).contains(expected));
+            assert!(!String::from_utf8_lossy(&result.stdout).contains("literal-secret-sentinel"));
+            assert!(!String::from_utf8_lossy(&result.stderr).contains("literal-secret-sentinel"));
+            assert!(!f.0.join("scripts").exists());
+        }
+    }
+}
+
+#[test]
 fn ap_typ_03_04_06_07_sub_14_process_rejection_matrix() {
     for (name, cases) in [
         ("ACCEPT_EULA", vec!["\"true\"", "1", "null", "[]", "{}"]),
