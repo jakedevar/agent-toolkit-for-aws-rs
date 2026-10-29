@@ -138,20 +138,17 @@ If a project directory already exists (from earlier in the workflow), use it. Ot
 
 ### Markdown Header
 
-```json
-{
-  "cell_type": "markdown",
-  "metadata": {},
-  "source": [
-    "# Deploy to SageMaker Multi-Adapter Endpoint"
-  ]
-}
-
-```
+The notebook begins with a markdown cell whose only content is the title `# Deploy to SageMaker Multi-Adapter Endpoint`. It is Cell 0 of the template, and `toolkit ai-payloads render` writes it.
 
 ### Cells
 
-Each cell's content comes from `../code_templates/deploy-oss-sagemaker.py`, split on the `# Cell N:` comments. Each marker starts a new notebook cell — everything between one marker and the next becomes that cell's content.
+`toolkit ai-payloads render` builds the notebook from `../code_templates/deploy-oss-sagemaker.py`, one cell per `# Cell N:` marker; do not assemble the cells by hand. Render it with the values file described under Placeholders:
+
+```bash
+toolkit ai-payloads render <skill-dir>/references/model-deployment/code_templates/deploy-oss-sagemaker.py --mode notebook --project-dir <project-dir> --values <scratch-dir>/values.json
+```
+
+(`<skill-dir>` is the directory that holds this skill's `references/`; the output rules and the append step are in `../references/code_output_guide.md`.) The cells are:
 
 - **Cell 1**: Setup (pip install)
 - **Cell 2**: Configuration
@@ -162,6 +159,8 @@ Each cell's content comes from `../code_templates/deploy-oss-sagemaker.py`, spli
 
 ### Placeholders
 
+Put these in the values file under `values`, with the names written without brackets (for example `"REGION": "us-east-1"`). `[PROJECT_DIR]` defaults to the project directory:
+
 Cell 2:
 
 - `[REGION]` → AWS region
@@ -169,13 +168,13 @@ Cell 2:
 - `[TRAINING_JOB_NAME]` → Training job name (used to look up JumpStart model ID from tags)
 - `[ROLE_ARN]` → IAM execution role ARN
 - `[ENDPOINT_NAME]` → Name for the endpoint (agent should generate a reasonable default)
-- `[ACCEPT_EULA]` → **Meta/Llama models only.** Set to `True` if the user accepted the license in Step 4 of the main workflow. For all other models (Apache 2.0, MIT, Qwen License, etc.), remove the `ACCEPT_EULA` variable and the `model_builder.accept_eula` line entirely — they do not apply and must not appear in the generated code.
+- `[ACCEPT_EULA]` → **Meta/Llama models only.** Put `true` under `values` only if the user explicitly accepted the license in Step 4 of the main workflow, and render with `--consent ACCEPT_EULA`; otherwise put `false` and leave out `--consent`. For all other models (Apache 2.0, MIT, Qwen License, etc.), put `false`, then remove the `ACCEPT_EULA` variable and the `model_builder.accept_eula` line from the rendered notebook entirely — they do not apply and must not appear in the generated code.
 
 ### Step 7: Confirm EULA Acceptance (Meta/Llama models only)
 
 **Skip this step for non-Meta models** — the `ACCEPT_EULA` variable and `model_builder.accept_eula` are only relevant for Meta/Llama models. For all other models they must not appear in the generated code.
 
-For Meta/Llama models: confirm the EULA acceptance from Step 4 of the main workflow. Tell the user: "Since you accepted the license agreement, I've set EULA acceptance to `True` in the deployment code." If the user did not accept the license, tell them deployment cannot continue without license acceptance.
+For Meta/Llama models: confirm the EULA acceptance from Step 4 of the main workflow. The render command carries it: `"ACCEPT_EULA": true` in the values file and `--consent ACCEPT_EULA` on the command line (without the flag, `true` is refused). Tell the user: "Since you accepted the license agreement, I've set EULA acceptance to `True` in the deployment code." If the user did not accept the license, tell them deployment cannot continue without license acceptance.
 
 ### Step 8: Provide Run Instructions
 

@@ -1,6 +1,6 @@
 # Deploy from ModelPackage
 
-Deployment is **Cell 6** of `../../code_templates/optimize-recommendation.py`:
+Deployment is **Cell 6** of `../../code_templates/optimize-recommendation.py`, rendered by `toolkit ai-payloads render` (see `recommendation-workflow.md`):
 `model_builder.deploy(endpoint_name=[ENDPOINT_NAME], recommendation_index=0, role=ROLE_ARN, auto_approve=True, wait=True)`.
 It reuses the `ModelBuilder` that ran `generate_deployment_recommendations` (no job-name lookup),
 creates the Model/EndpointConfig/Endpoint from the selected row's ModelPackage, and blocks until InService.
