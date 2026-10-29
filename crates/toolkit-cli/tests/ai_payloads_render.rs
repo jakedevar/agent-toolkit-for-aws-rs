@@ -985,8 +985,6 @@ fn ap_cell_04_08_multiline_normalization_and_unsafe_characters() {
       "cell_type": "markdown",
       "metadata": {},
       "source": [
-        "Example\n",
-        "\n",
         "Description"
       ]
     },
