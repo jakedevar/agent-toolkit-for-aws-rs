@@ -102,6 +102,24 @@ fn helper_announces_loopback_and_retains_transport_failure() {
     {
         let closed = TcpStream::connect(("127.0.0.1", port)).unwrap();
         drop(closed);
+        // A completed later request proves the earlier closed peer was serviced.
+        let mut barrier = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        barrier
+            .set_read_timeout(Some(Duration::from_secs(3)))
+            .unwrap();
+        write!(
+            barrier,
+            "GET /?state=wrong&code=x HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\r\n"
+        )
+        .unwrap();
+        let mut ignored = String::new();
+        barrier.read_to_string(&mut ignored).unwrap();
+        assert!(ignored.starts_with("HTTP/1.1 400"));
+        assert_eq!(
+            std::fs::read(&record_path).unwrap(),
+            before,
+            "closed peer changed pending record"
+        );
         let mut malformed = TcpStream::connect(("127.0.0.1", port)).unwrap();
         malformed
             .set_read_timeout(Some(Duration::from_secs(3)))
@@ -110,7 +128,11 @@ fn helper_announces_loopback_and_retains_transport_failure() {
         let mut response = String::new();
         malformed.read_to_string(&mut response).unwrap();
         assert!(response.starts_with("HTTP/1.1 400"));
-        assert_eq!(std::fs::read(&record_path).unwrap(), before);
+        assert_eq!(
+            std::fs::read(&record_path).unwrap(),
+            before,
+            "malformed peer changed pending record"
+        );
     }
     for query in ["state=wrong&code=abc", "state=wrong&error=denied"] {
         let mut bad = TcpStream::connect(("127.0.0.1", port)).unwrap();
