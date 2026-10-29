@@ -309,6 +309,16 @@ mod tests {
         );
     }
 
+    #[test]
+    fn t_br_out_timestamp_offset_at_calendar_bounds() {
+        for input in ["0001-01-01T00:00:00+01:00", "9999-12-31T23:59:59-01:00"] {
+            assert_eq!(
+                timestamp(&Json::string(input)).unwrap().as_str(),
+                Some(input)
+            );
+        }
+    }
+
     // T-BR-OUT-CAP: the encoded document and the final LF share the cap.
     #[test]
     fn t_br_out_cap_ascii_and_escapes() {
