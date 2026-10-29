@@ -2,10 +2,10 @@
 //!
 //! Test IDs from `docs/migration/x402-payments-design.md` (section 8.2, S1):
 //! - Python classes of `test_x402_policy.py`, ported as behaviour:
-//!   RecipientAndValue (`recipient_and_value_*`), RecipientValidation
-//!   (`recipient_validation_*`), OptionalOrigin, pure part
-//!   (`optional_origin_*`), Authorize (`authorize_*`), Idempotency
-//!   (`idempotency_*`), SignerInput, pure part (`signer_input_*`).
+//!   `RecipientAndValue` (`recipient_and_value_*`), `RecipientValidation`
+//!   (`recipient_validation_*`), `OptionalOrigin`, pure part
+//!   (`optional_origin_*`), `Authorize` (`authorize_*`), `Idempotency`
+//!   (`idempotency_*`), `SignerInput`, pure part (`signer_input_*`).
 //! - R-TOK golden vectors (`r_tok_golden_*`).
 //! - T-POL-UNI (`t_pol_uni_*`), T-VER (`t_ver_*`), the R-ORIGIN texts
 //!   (`r_origin_*`), R-RESBIND (`authorize_resource_*`), D4 and D11
@@ -163,6 +163,10 @@ struct SpendLog {
 }
 
 impl SpendLog {
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "the stand-in keeps the by-value signature of the real spending call"
+    )]
     fn process_payment(&mut self, approved: Approved) {
         self.tokens.push(approved.token().to_owned());
     }
@@ -1168,7 +1172,7 @@ fn t_ver_follows_python_int_with_truthiness_fallbacks() {
     let ok = [
         (r#"{"x402Version":2}"#, 2),
         (r#"{"x402Version":1}"#, 1),
-        (r#"{}"#, 1),
+        ("{}", 1),
         (r#"{"version":2}"#, 2),
         (r#"{"x402Version":0,"version":2}"#, 2),
         (r#"{"x402Version":false,"version":2}"#, 2),
