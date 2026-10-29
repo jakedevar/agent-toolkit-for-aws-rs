@@ -429,3 +429,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
   4/4 busy: 160f8b97 (#4393), 8dc00bed (#4396 repair), 9b10f7cf (#4961), b1cc4adc (#4941 repair).
 - 10-29 00:27Z: #4396 repair 9b6d90b8f9dc1c8af594803d9937d97b1d80d52b (8dc00bed; COVERS #4972 #4973 #4974 #4976; red 59cc7fb0 at c9bd134c = 12 new fails; scoped 2acf2d3b ok cli 3194, fmt 2ce41754, clippy 404b3d25). Ruling: whole-run fail on out-of-range record ACCEPTED (fail-closed). Re-review #4969 r2 worker 0c8302c4 (Codex sol high, pinned, op 23fce780).
   4/4 busy: 160f8b97 (#4393), 9b10f7cf (#4961), b1cc4adc (#4941 repair), 0c8302c4 (#4969 r2).
+- 10-29 00:29Z: #4961 ACCEPTED on PM inspection at 2a0173c04d8888ca65d2cc24a9810806a3ff4f8c (9b10f7cf; screen()/is_hook() in telemetry run_action, value_flags declared, passthrough kept; red f46f9928 = 5 new fails; scoped d947d70e ok cli 3259, fmt ff0fd00a, clippy 1d951c85; USAGE unchanged).
+  ROUND 17: integration Issue #4983, worker a1adff0a (Opus high, base e312d923, op 4fef0842): merge #4961 now; mail #4396 (on #4969 r2 ACCEPT) and #4941 (on #4971 r2 ACCEPT). It hands off with #4961 alone if no mail arrives. Close on land: #4983 #4961 (+ the #4396 and #4941 sets).
+  4/4 busy: 160f8b97 (#4393), b1cc4adc (#4941 repair), 0c8302c4 (#4969 r2), a1adff0a (r17).
