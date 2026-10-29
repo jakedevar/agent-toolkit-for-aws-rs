@@ -26,7 +26,7 @@ pub fn read_request(reader: &mut impl Read) -> Result<Json, BridgeError> {
     }
     let text = std::str::from_utf8(&bytes).map_err(|_| BridgeError::Input)?;
     let request = parse_json(text).map_err(|_| BridgeError::Input)?;
-    let keys = [
+    let common = [
         "operation",
         "region",
         "payment_manager_arn",
@@ -34,13 +34,28 @@ pub fn read_request(reader: &mut impl Read) -> Result<Json, BridgeError> {
         "user_id",
         "agent_name",
     ];
-    let Json::Object(members) = &request else {
-        return Err(BridgeError::Input);
+    let operation = request
+        .get("operation")
+        .and_then(Json::as_str)
+        .ok_or(BridgeError::Input)?;
+    if operation == "sanitize_output" {
+        validate_candidate(&request)?;
+        return Ok(request);
+    }
+    let extra = [
+        "payment_instrument_id",
+        "version",
+        "request_url",
+        "accepted",
+        "resource",
+        "policy",
+    ];
+    let keys: Vec<&str> = match operation {
+        "get_payment_session" => common.to_vec(),
+        "process_payment" => common.iter().chain(extra.iter()).copied().collect(),
+        _ => return Err(BridgeError::Input),
     };
-    if members.len() != keys.len()
-        || members.iter().any(|(key, _)| !keys.contains(&key.as_str()))
-        || request.get("operation").and_then(Json::as_str) != Some("get_payment_session")
-    {
+    if !exact_keys(&request, &keys) {
         return Err(BridgeError::Input);
     }
     let field = |name: &str, max: usize| -> Result<&str, BridgeError> {
@@ -64,13 +79,99 @@ pub fn read_request(reader: &mut impl Read) -> Result<Json, BridgeError> {
     if field("agent_name", 256)? != "openclaw-aws-agents-pay" {
         return Err(BridgeError::Input);
     }
+    let instrument = if operation == "process_payment" {
+        let instrument = field("payment_instrument_id", 2048)?;
+        if field("version", 8)? != "2" {
+            return Err(BridgeError::Input);
+        }
+        field("request_url", 2048)?;
+        if !matches!(request.get("accepted"), Some(Json::Object(_))) {
+            return Err(BridgeError::Input);
+        }
+        let resource = request.get("resource").ok_or(BridgeError::Input)?;
+        let url = resource
+            .get("url")
+            .and_then(Json::as_str)
+            .ok_or(BridgeError::Input)?;
+        if url.chars().count() > 2048 || url.chars().all(super::super::pyval::is_python_whitespace)
+        {
+            return Err(BridgeError::Input);
+        }
+        super::super::policy::openclaw::from_openclaw(
+            request.get("policy").ok_or(BridgeError::Input)?,
+        )?;
+        Some(instrument)
+    } else {
+        None
+    };
     if !(66..=2048).contains(&manager.chars().count())
         || session.chars().count() != 31
         || user.chars().count() > 120
+        || instrument.is_some_and(|value| value.chars().count() != 34)
     {
         return Err(BridgeError::AgentCore);
     }
     Ok(request)
+}
+
+fn exact_keys(value: &Json, keys: &[&str]) -> bool {
+    matches!(value, Json::Object(members) if members.len() == keys.len() && members.iter().all(|(key, _)| keys.contains(&key.as_str())))
+}
+
+fn same_value(a: &Json, b: &Json) -> bool {
+    match (a, b) {
+        (Json::Object(left), Json::Object(right)) => {
+            left.len() == right.len()
+                && left
+                    .iter()
+                    .all(|(key, value)| b.get(key).is_some_and(|v| same_value(value, v)))
+        }
+        (Json::Array(left), Json::Array(right)) => {
+            left.len() == right.len() && left.iter().zip(right).all(|(a, b)| same_value(a, b))
+        }
+        _ => a == b,
+    }
+}
+
+fn validate_candidate(request: &Json) -> Result<(), BridgeError> {
+    if !exact_keys(request, &["operation", "candidate", "secrets"]) {
+        return Err(BridgeError::Input);
+    }
+    let Some(Json::Array(secrets)) = request.get("secrets") else {
+        return Err(BridgeError::Input);
+    };
+    if secrets
+        .iter()
+        .any(|value| !matches!(value, Json::String(_)))
+    {
+        return Err(BridgeError::Input);
+    }
+    let candidate = request.get("candidate").ok_or(BridgeError::Input)?;
+    if !exact_keys(candidate, &["content", "details"]) {
+        return Err(BridgeError::Input);
+    }
+    let details = candidate
+        .get("details")
+        .filter(|v| matches!(v, Json::Object(_)))
+        .ok_or(BridgeError::Input)?;
+    let Some(Json::Array(content)) = candidate.get("content") else {
+        return Err(BridgeError::Input);
+    };
+    if content.len() != 1
+        || !exact_keys(&content[0], &["type", "text"])
+        || content[0].get("type").and_then(Json::as_str) != Some("text")
+    {
+        return Err(BridgeError::Input);
+    }
+    let text = content[0]
+        .get("text")
+        .and_then(Json::as_str)
+        .ok_or(BridgeError::Input)?;
+    let parsed = parse_json(text).map_err(|_| BridgeError::Input)?;
+    if !same_value(&parsed, details) {
+        return Err(BridgeError::Input);
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -119,12 +220,24 @@ mod tests {
         let payment = VALID.replace("get_payment_session", "process_payment").replace(
             "\"user_id\":", "\"payment_instrument_id\":\"iiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii\",\"version\":\"2\",\"request_url\":\"https://merchant.test\",\"accepted\":{},\"resource\":{\"url\":\"https://merchant.test\"},\"policy\":{\"maxPaymentAmountAtomic\":\"1\",\"allowAnyRecipient\":true},\"user_id\":");
         assert!(read_request(&mut Cursor::new(&payment)).is_ok());
-        for bad in [payment.replace("\"version\":\"2\"", "\"version\":2"), payment.replace("\"accepted\":{}", "\"accepted\":[]"), payment.replace("\"resource\":{\"url\":\"https://merchant.test\"}", "\"resource\":{}"), payment.replace("\"version\":\"2\"", "\"payload\":{},\"client_token\":\"x\"")] {
+        for bad in [
+            payment.replace("\"version\":\"2\"", "\"version\":2"),
+            payment.replace("\"accepted\":{}", "\"accepted\":[]"),
+            payment.replace(
+                "\"resource\":{\"url\":\"https://merchant.test\"}",
+                "\"resource\":{}",
+            ),
+            payment.replace("\"version\":\"2\"", "\"payload\":{},\"client_token\":\"x\""),
+        ] {
             assert_eq!(read_request(&mut Cursor::new(bad)), Err(BridgeError::Input));
         }
         let clean = r#"{"operation":"sanitize_output","candidate":{"content":[{"type":"text","text":"{\"paid\":false}"}],"details":{"paid":false}},"secrets":["abcdefgh"]}"#;
         assert!(read_request(&mut Cursor::new(clean)).is_ok());
-        for bad in [clean.replace("\"paid\":false}", "\"paid\":true}"), clean.replace("\"secrets\":[\"abcdefgh\"]", "\"secrets\":[1]"), clean.replace("\"type\":\"text\"", "\"type\":\"image\"")] {
+        for bad in [
+            clean.replace("\"paid\":false}", "\"paid\":true}"),
+            clean.replace("\"secrets\":[\"abcdefgh\"]", "\"secrets\":[1]"),
+            clean.replace("\"type\":\"text\"", "\"type\":\"image\""),
+        ] {
             assert_eq!(read_request(&mut Cursor::new(bad)), Err(BridgeError::Input));
         }
     }
