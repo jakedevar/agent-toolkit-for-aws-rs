@@ -87,13 +87,12 @@ pub(super) fn report_authenticated(
     output: &mut Output<'_>,
     base: &str,
 ) -> (Option<Result<(), ToolkitError>>, bool) {
-    let result = output.line(&crate::launch::text::ok_text(&toolkit_core::Json::object(
-        vec![
+    let (result, delivered) = output.line_delivered(&crate::launch::text::ok_text(
+        &toolkit_core::Json::object(vec![
             ("authenticated", toolkit_core::Json::Bool(true)),
             ("baseUrl", toolkit_core::Json::string(base)),
-        ],
-    )));
-    let delivered = result.is_ok() && !output.is_closed();
+        ]),
+    ));
     (Some(result), delivered)
 }
 

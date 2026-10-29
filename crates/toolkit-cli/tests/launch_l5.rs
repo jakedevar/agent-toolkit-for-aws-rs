@@ -454,3 +454,194 @@ fn t_tok_early_refusals_with_a_stored_session_never_echo_its_secrets() {
         leaked.len()
     );
 }
+
+/// [`early_home`] with its client secret replaced by `client_secret` (a
+/// proper JSON string, so it may hold a quote).
+#[cfg(unix)]
+fn early_home_with_client_secret(
+    client_secret: &str,
+) -> (std::path::PathBuf, std::path::PathBuf, String) {
+    let (home, state_dir, session) = early_home();
+    let mut record: serde_json::Value = serde_json::from_str(&session).unwrap();
+    record["client_secret"] = serde_json::json!(client_secret);
+    let session = record.to_string();
+    std::fs::write(state_dir.join("session.json"), &session).unwrap();
+    (home, state_dir, session)
+}
+
+/// `%XX` decoding (either hex case, `+` as space) of `text`.
+#[cfg(unix)]
+fn percent_decoded(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let hex = bytes
+            .get(i + 1..i + 3)
+            .and_then(|h| std::str::from_utf8(h).ok())
+            .and_then(|h| u8::from_str_radix(h, 16).ok());
+        match (bytes[i], hex) {
+            (b'%', Some(byte)) => {
+                out.push(byte);
+                i += 3;
+            }
+            (b'+', _) => {
+                out.push(b' ');
+                i += 1;
+            }
+            (byte, _) => {
+                out.push(byte);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Whether `secret` can be recovered from `stream`: in its raw text, in any
+/// string of a JSON line once decoded, or in either after percent-decoding.
+#[cfg(unix)]
+fn recoverable(stream: &[u8], secret: &str) -> bool {
+    fn strings(value: &serde_json::Value, found: &mut Vec<String>) {
+        match value {
+            serde_json::Value::String(text) => found.push(text.clone()),
+            serde_json::Value::Array(items) => {
+                for item in items {
+                    strings(item, found);
+                }
+            }
+            serde_json::Value::Object(members) => {
+                for (key, member) in members {
+                    found.push(key.clone());
+                    strings(member, found);
+                }
+            }
+            _ => {}
+        }
+    }
+    let text = String::from_utf8_lossy(stream).into_owned();
+    let mut found = vec![text.clone()];
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) {
+        strings(&value, &mut found);
+    }
+    for line in text.lines() {
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(line) {
+            strings(&value, &mut found);
+        }
+    }
+    found
+        .iter()
+        .any(|t| t.contains(secret) || percent_decoded(t).contains(secret))
+}
+
+/// Run each early-refusal case with `home` and assert the #5406/#5426
+/// contract: exit 1, empty stdout, the generic failure on stderr, `secret`
+/// not recoverable from either stream after JSON- and percent-decoding, and
+/// the session record unchanged. Returns the leaking cases (route, label);
+/// assertion messages never print the inspected text.
+#[cfg(unix)]
+fn decoded_refusals(
+    home: &std::path::Path,
+    session_path: &std::path::Path,
+    session: &str,
+    secret: &str,
+    cases: Vec<EarlyCase>,
+) -> Vec<String> {
+    const GENERIC: &str =
+        "{\"error\": \"The operation failed. Re-run with logging enabled for details.\"}\n";
+    let mut leaked = Vec::new();
+    for case in cases {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_toolkit"));
+        command
+            .args(&case.args)
+            .env("HOME", home)
+            .env_remove("LAUNCH_WITH_AWS_REGION")
+            .env_remove("LAUNCH_WITH_AWS_BASE_URL")
+            .env_remove("AWS_REGION")
+            .env_remove("AWS_DEFAULT_REGION")
+            .env_remove("AWS_PROFILE");
+        for (name, value) in &case.env {
+            command.env(name, value);
+        }
+        let output = command.output().unwrap();
+        let (route, label) = (&case.args[1], case.label);
+        if recoverable(&output.stdout, secret) || recoverable(&output.stderr, secret) {
+            leaked.push(format!("{route} {label}"));
+            continue;
+        }
+        assert!(
+            output.status.code() == Some(1)
+                && output.stdout.is_empty()
+                && output.stderr == GENERIC.as_bytes(),
+            "{route} {label}: expected the generic failure"
+        );
+        assert!(
+            std::fs::read(session_path).unwrap() == session.as_bytes(),
+            "{route} {label}: the session record changed"
+        );
+    }
+    leaked
+}
+
+/// #5426 (reviewer reproducer 1): a stored client secret holding a double
+/// quote, passed back as the region (argument or environment) or in a
+/// no-host base URL, is JSON-escaped by the error line; it is still refused,
+/// and the decoded message does not carry it.
+#[cfg(unix)]
+#[test]
+fn t_tok_json_escaped_client_secret_is_refused() {
+    const SECRET: &str = "opaque-client-\"-secret-0001";
+    let (home, state_dir, session) = early_home_with_client_secret(SECRET);
+    let cases = early_route_cases(SECRET)
+        .into_iter()
+        .filter(|case| case.label != "repository URL")
+        .collect();
+    let leaked = decoded_refusals(
+        &home,
+        &state_dir.join("session.json"),
+        &session,
+        SECRET,
+        cases,
+    );
+    std::fs::remove_dir_all(home).unwrap();
+    assert!(
+        leaked.is_empty(),
+        "{} routes printed a recoverable client secret: {leaked:?}",
+        leaked.len()
+    );
+}
+
+/// #5426 (reviewer reproducer 2): a stored client secret holding `/`, `+`
+/// and `=`, percent-encoded (upper- and lower-case hex) in the path of a
+/// no-host base URL, is still refused, and the percent-decoded output does
+/// not carry it.
+#[cfg(unix)]
+#[test]
+fn t_tok_percent_encoded_client_secret_is_refused() {
+    const SECRET: &str = "opaque/client+secret=0001";
+    let (home, state_dir, session) = early_home_with_client_secret(SECRET);
+    let mut cases = Vec::new();
+    for encoded in [
+        "opaque%2Fclient%2Bsecret%3D0001",
+        "opaque%2fclient%2bsecret%3d0001",
+    ] {
+        cases.extend(
+            early_route_cases(encoded)
+                .into_iter()
+                .filter(|case| case.label == "base URL override"),
+        );
+    }
+    let leaked = decoded_refusals(
+        &home,
+        &state_dir.join("session.json"),
+        &session,
+        SECRET,
+        cases,
+    );
+    std::fs::remove_dir_all(home).unwrap();
+    assert!(
+        leaked.is_empty(),
+        "{} routes printed a recoverable client secret: {leaked:?}",
+        leaked.len()
+    );
+}

@@ -57,6 +57,16 @@ unreadable session record means an empty set: output and exit status are unchang
 The API commands also seed their own scrub set from the stored session before any
 check; it then grows with a refreshed token, each `clientToken` and the upload URL.
 
+Each value of 8 bytes or more is matched in every form the launch code itself renders
+(#5426): raw; with the escaping of the Python-style `repr` (either quote) used in
+messages; percent-encoded and form-encoded (`+` for space) with upper- and lower-case
+hex; and each of those inside a JSON string, as the output lines and `serde_json` write
+it. So an error line whose JSON escaping changed a quote or backslash in a secret, or a
+URL that carries a secret percent-encoded, is refused like the raw value. Arbitrary
+other transforms are out of scope. A refused line counts as reported only when the
+refusal itself reached stderr: `auth-wait` keeps its pending sign-in record when
+neither stream delivered anything (#5427), so a retry can still read the result.
+
 Order of work in every API command: argument checks (missing argument, repository URL,
 name 1..128, id 1..2048), then region and `LAUNCH_WITH_AWS_BASE_URL` validation
 (including its DNS check), then the single access-token fetch (and refresh), then the

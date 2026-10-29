@@ -39,6 +39,16 @@ pub fn shown(value: &str) -> String {
     out
 }
 
+/// The escaping of [`repr`] (with `quote`) or [`shown`] (without), applied
+/// to `value` as it is: no redaction, bounding or surrounding quotes. The
+/// output sink registers a live secret in each of these forms (#5426).
+#[must_use]
+pub(crate) fn escaped(value: &str, quote: Option<char>) -> String {
+    let mut out = String::with_capacity(value.len());
+    push_escaped(&mut out, value, quote);
+    out
+}
+
 fn push_escaped(out: &mut String, text: &str, quote: Option<char>) {
     for c in text.chars() {
         match c {

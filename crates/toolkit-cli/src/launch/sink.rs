@@ -17,6 +17,15 @@
 //! against an opaque live secret a caller passed back in. The values a
 //! command learns later (a refreshed token, clientTokens, the presigned
 //! upload URL) are scrubbed by [`super::flow::run`] with the same [`Secrets`].
+//!
+//! Each value is registered in every form launch code itself renders a value
+//! into output text (#5426): raw; with the escaping of `text::repr` (either
+//! quote) and `text::shown`; percent-encoded and form-encoded with upper- and
+//! lower-case hex; and each of those inside a JSON string, as `pyfmt::dumps`
+//! (`ensure_ascii`) and `serde_json` write it. So an error whose JSON escaping
+//! changed a secret's quote or backslash, or a URL that carries it
+//! percent-encoded, is refused like the raw secret. Arbitrary third-party
+//! transforms are out of scope.
 
 use std::path::Path;
 
@@ -45,19 +54,134 @@ pub fn guard_in(dir: Option<&Path>, output: &mut Output<'_>) {
     output.refuse_known(secrets.0, super::text::error_text(GENERIC_FAILURE));
 }
 
+/// One way launch code escapes or encodes a value into output text (#5426).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Escape {
+    /// The value as it is.
+    Raw,
+    /// `text::shown`: `text::repr` escaping without a quote.
+    Shown,
+    /// `text::repr` inside `'` quotes.
+    ReprSingle,
+    /// `text::repr` inside `"` quotes.
+    ReprDouble,
+    /// RFC 3986 percent-encoding (`toolkit_aws::transport::percent_encode`),
+    /// upper-case hex.
+    PercentUpper,
+    /// Percent-encoding with lower-case hex.
+    PercentLower,
+    /// Form encoding (`+` for space, as the sign-in token request), upper-case
+    /// hex.
+    FormUpper,
+    /// Form encoding with lower-case hex.
+    FormLower,
+}
+
+/// Every [`Escape`].
+pub(crate) const ESCAPES: [Escape; 8] = [
+    Escape::Raw,
+    Escape::Shown,
+    Escape::ReprSingle,
+    Escape::ReprDouble,
+    Escape::PercentUpper,
+    Escape::PercentLower,
+    Escape::FormUpper,
+    Escape::FormLower,
+];
+
+impl Escape {
+    pub(crate) fn render(self, value: &str) -> String {
+        match self {
+            Self::Raw => value.to_owned(),
+            Self::Shown => super::text::escaped(value, None),
+            Self::ReprSingle => super::text::escaped(value, Some('\'')),
+            Self::ReprDouble => super::text::escaped(value, Some('"')),
+            Self::PercentUpper => url_encode(value, true, false),
+            Self::PercentLower => url_encode(value, false, false),
+            Self::FormUpper => url_encode(value, true, true),
+            Self::FormLower => url_encode(value, false, true),
+        }
+    }
+}
+
+/// The JSON string an escaped value may be written inside (#5426).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Layer {
+    /// Not inside a JSON string.
+    Bare,
+    /// A launch output line: Python `json.dumps` (`ensure_ascii`), as
+    /// `text::error_text` and `text::ok_text` write it.
+    PyJson,
+    /// `serde_json` (non-ASCII written as it is).
+    SerdeJson,
+}
+
+/// Every [`Layer`].
+pub(crate) const LAYERS: [Layer; 3] = [Layer::Bare, Layer::PyJson, Layer::SerdeJson];
+
+impl Layer {
+    pub(crate) fn render(self, value: &str) -> String {
+        let quoted = match self {
+            Self::Bare => return value.to_owned(),
+            Self::PyJson => crate::aurora::pyfmt::dumps(&Json::String(value.to_owned())),
+            Self::SerdeJson => serde_json::to_string(value).unwrap_or_default(),
+        };
+        quoted
+            .strip_prefix('"')
+            .and_then(|q| q.strip_suffix('"'))
+            .unwrap_or(&quoted)
+            .to_owned()
+    }
+}
+
+/// Percent-encoding of every byte but the RFC 3986 unreserved characters,
+/// with upper- or lower-case hex; `form` writes a space as `+`.
+fn url_encode(value: &str, upper: bool, form: bool) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~') {
+            out.push(char::from(byte));
+        } else if form && byte == b' ' {
+            out.push('+');
+        } else if upper {
+            let _ = write!(out, "%{byte:02X}");
+        } else {
+            let _ = write!(out, "%{byte:02x}");
+        }
+    }
+    out
+}
+
 /// The live secret values of one command (R-API-CODE second layer): the
 /// access token, the session's refresh token and client secret (before and
 /// after a refresh), each clientToken and the presigned upload URL with each
-/// of its query values (raw and percent-decoded). Values shorter than 8
-/// bytes are ignored.
+/// of its query values (raw and percent-decoded). Each is held in every
+/// rendered form (each [`Escape`] inside each [`Layer`], #5426). Values
+/// shorter than 8 bytes are ignored.
 #[derive(Default)]
 pub struct Secrets(Vec<String>);
 
 impl Secrets {
-    /// Register one value.
+    /// Register one value in every rendered form.
     pub fn add(&mut self, value: &str) {
-        if value.len() >= 8 && !self.0.iter().any(|v| v == value) {
-            self.0.push(value.to_owned());
+        self.add_forms(value, &ESCAPES, &LAYERS);
+    }
+
+    /// Register `value` in each of `escapes` inside each of `layers` (tests
+    /// leave one out to show it is needed).
+    pub(crate) fn add_forms(&mut self, value: &str, escapes: &[Escape], layers: &[Layer]) {
+        if value.len() < 8 {
+            return;
+        }
+        for escape in escapes {
+            let escaped = escape.render(value);
+            for layer in layers {
+                let form = layer.render(&escaped);
+                if !self.0.contains(&form) {
+                    self.0.push(form);
+                }
+            }
         }
     }
 
@@ -100,7 +224,7 @@ impl Secrets {
         }
     }
 
-    /// Whether `text` contains any registered secret.
+    /// Whether `text` contains any registered secret, in any rendered form.
     #[must_use]
     pub fn contains(&self, text: &str) -> bool {
         self.0.iter().any(|secret| text.contains(secret.as_str()))

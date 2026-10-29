@@ -78,7 +78,9 @@ pub struct Output<'a> {
 struct KnownSecrets {
     values: Vec<String>,
     refusal: String,
-    tripped: bool,
+    /// `None` until a refused write; then whether the one refusal reached an
+    /// open diagnostics writer (#5427).
+    refusal_delivered: Option<bool>,
 }
 
 impl<'a> Output<'a> {
@@ -128,7 +130,7 @@ impl<'a> Output<'a> {
         self.known = (!values.is_empty()).then_some(KnownSecrets {
             values,
             refusal,
-            tripped: false,
+            refusal_delivered: None,
         });
     }
 
@@ -139,27 +141,32 @@ impl<'a> Output<'a> {
             .is_some_and(|known| known.values.iter().any(|v| text.contains(v.as_str())))
     }
 
-    /// The text a diagnostic write puts on stderr, or `None` when nothing is
-    /// written (a refused write after the refusal was already written).
-    fn screened_diagnostic(&mut self, text: &str) -> Option<String> {
+    /// [`Output::diagnostic`] that reports whether the text (or the refusal
+    /// that replaced it) was written to an open diagnostics writer. A refused
+    /// write after the first reports the first refusal's own delivery, so a
+    /// refusal that never reached stderr is never counted as delivered
+    /// (#5427).
+    pub(crate) fn diagnostic_delivered(&mut self, text: &str) -> bool {
         if !self.carries_known(text) {
-            return Some(self.caller.diagnostic(text).into_owned());
+            let text = self.caller.diagnostic(text).into_owned();
+            return self.write_diagnostic(&text);
         }
         self.status = 1;
-        let known = self.known.as_mut()?;
-        if known.tripped {
-            return None;
+        let Some(known) = self.known.as_ref() else {
+            return false;
+        };
+        if let Some(delivered) = known.refusal_delivered {
+            return delivered;
         }
-        known.tripped = true;
-        Some(known.refusal.clone())
+        let refusal = known.refusal.clone();
+        let delivered = self.write_diagnostic(&refusal);
+        if let Some(known) = self.known.as_mut() {
+            known.refusal_delivered = Some(delivered);
+        }
+        delivered
     }
 
-    /// [`Output::diagnostic`] that reports whether the text (or the refusal
-    /// that replaced it) was written to an open diagnostics writer.
-    pub(crate) fn diagnostic_delivered(&mut self, text: &str) -> bool {
-        let Some(text) = self.screened_diagnostic(text) else {
-            return true;
-        };
+    fn write_diagnostic(&mut self, text: &str) -> bool {
         self.diagnostics.as_mut().is_some_and(|writer| {
             writer
                 .write_all(text.as_bytes())
@@ -217,18 +224,28 @@ impl<'a> Output<'a> {
     /// handler redacts each command-line value where it builds stdout data
     /// (`safe_text::redacted_value`, #4941, #4981).
     pub fn line(&mut self, text: &str) -> Result<(), ToolkitError> {
+        self.line_delivered(text).0
+    }
+
+    /// [`Output::line`] that also reports whether a report reached the caller:
+    /// the line itself on an open stdout, or, for a line refused by
+    /// [`Output::refuse_known`], the refusal on an open diagnostics writer
+    /// (#5427). A caller that makes a result final only once it is delivered
+    /// (auth-wait's pending record) keeps it when this is false.
+    pub(crate) fn line_delivered(&mut self, text: &str) -> (Result<(), ToolkitError>, bool) {
         if self.carries_known(text) {
-            let _ = self.diagnostic_delivered(text);
-            return Ok(());
+            return (Ok(()), self.diagnostic_delivered(text));
         }
         if self.closed {
-            return Ok(());
+            return (Ok(()), false);
         }
         let result = self
             .sink
             .write_all(text.as_bytes())
             .and_then(|()| self.sink.write_all(b"\n"));
-        self.settle(result)
+        let result = self.settle(result);
+        let delivered = result.is_ok() && !self.closed;
+        (result, delivered)
     }
 
     /// Flushes buffered output with the same error contract as [`Output::line`].
