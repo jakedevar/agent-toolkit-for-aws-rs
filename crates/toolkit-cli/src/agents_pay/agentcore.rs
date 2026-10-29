@@ -670,7 +670,7 @@ mod wire_contracts {
     fn deadline_timeout_never_retries() {
         let transport = FakeStreamingTransport::new()
             .open_error(AwsError::timeout(
-                toolkit_aws::TimeoutPhase::Deadline,
+                toolkit_aws::error::TimeoutPhase::Deadline,
                 "expired",
             ))
             .respond(200, &[], vec![]);
