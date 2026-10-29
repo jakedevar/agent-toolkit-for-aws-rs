@@ -899,3 +899,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
   Re-review #5308 -> Claude Sonnet 4d05f4a4 (pinned 990c9008). On ACCEPT: check (maybe rerun) + enqueue (source_session e70ae060); close #5295 #5308 #5298 on land; #4886 stays open (items 2-3).
   4/4 busy: cd65d0a9 (#5181), 6ff4ee6c (#5296), b4c2b805 (#5307), 4d05f4a4 (#5308). Queue: e0de7c3f (#5261).
 - 10-29 09:28Z: #5261 S2b f/u LANDED (e0de7c3f published, f3ab564ce8b2ba77e198b014e7d1e1836c2372d9). #5261 auto-closed; CLOSED #5286 #5300 #5255-#5260 #5290-#5294. Queue empty. ai-payloads remaining: S5 #5296 (in flight).
+- 10-29 09:30Z: AP S5 #5296 (6ff4ee6c, Sonnet) DONE at 6350187e46cb745bf9dd521067d3f5aabf198dc7 (56 rows retained/0 removed, OD-7 T08/T09; AP-INV tests red->green; #5282-#5284 fixed; scoped e917ae91 4189 ok on base 00509958).
+  Review #5310 -> Codex sol 4f851dba (pinned 6350187e; mutations inventory/HF token/inline flag). Manager scoped 4895f2bf (worktree 6ff4ee6c, base origin/rolling f3ab564c) running. On ACCEPT + ok: check with job_id 4895f2bf + enqueue (source_session 6ff4ee6c); close #5296 #5310 #5282 #5283 #5284 on land; then #4386 complete?
+  4/4 busy: cd65d0a9 (#5181), b4c2b805 (#5307), 4d05f4a4 (#5308), 4f851dba (#5310).
