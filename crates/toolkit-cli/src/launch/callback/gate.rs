@@ -170,6 +170,13 @@ mod tests {
     }
 
     #[test]
+    fn publication_admission_precedes_rename_and_watchdog_never_waits() {
+        // Placeholder for the injected publication hook.
+        let calls: Vec<&str> = Vec::new();
+        assert_eq!(calls, vec!["prepared", "admitted", "watchdog:1", "rename"]);
+    }
+
+    #[test]
     fn cutoff_and_watchdog_close_admission() {
         let cutoff = Instant::now() + Duration::from_secs(1);
         let gate = CommitGate::default();
