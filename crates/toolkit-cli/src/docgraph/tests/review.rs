@@ -1128,3 +1128,146 @@ fn a_bad_recording_or_analysis_file_is_one_line_and_names_no_value() {
     assert!(ran.stderr.contains("analysis data, database 1, collection 1: count must be a number when present (it is string)"), "{}", ran.stderr);
     assert!(!ran.stderr.contains(SECRET) && !ran.stdout.contains(SECRET));
 }
+
+// ------------------------------------------------- #5344 private report files
+
+const RESULTS_NAME: &str = "wa_review_results.json";
+const REPORT_NAME: &str = "wa_review_report.md";
+
+/// `wa-review` arguments with `--analysis-data` (R-DG-08, #5344).
+fn private_review_args<'a>(recorded: &'a str, analysis: &'a str, out: &'a str) -> Vec<&'a str> {
+    vec![
+        "documentdb",
+        "wa-review",
+        "--cluster-id",
+        "prod-docdb",
+        "--region",
+        "us-east-1",
+        "--recorded",
+        recorded,
+        "--analysis-data",
+        analysis,
+        "--output",
+        out,
+        "--now",
+        NOW,
+    ]
+}
+
+/// Runs `wa-review` with a fully permissive process umask, restoring it after.
+#[cfg(unix)]
+fn run_with_open_umask(words: &[&str]) -> super::Ran {
+    use rustix::fs::Mode;
+    use rustix::process::umask;
+
+    let before = umask(Mode::empty());
+    let ran = run(words);
+    umask(before);
+    ran
+}
+
+#[cfg(unix)]
+#[test]
+fn r_dg_08_analysis_data_reports_are_created_0600_under_a_permissive_umask() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = TempDir::new("private-mode");
+    let recorded = dir.write("recorded.json", &Cluster::default().recording());
+    let analysis = dir.write("analysis.json", ANALYSIS);
+    let out = dir.join("out");
+    let out_text = out.to_string_lossy().into_owned();
+    let ran = run_with_open_umask(&private_review_args(&recorded, &analysis, &out_text));
+    assert_eq!(ran.status, 0, "{}", ran.stderr);
+    for name in [RESULTS_NAME, REPORT_NAME] {
+        let mode = std::fs::metadata(out.join(name))
+            .expect("report file")
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o7777, 0o600, "{name} is {:o}", mode & 0o7777);
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn r_dg_08_analysis_data_refuses_an_existing_report_and_leaves_it_unchanged() {
+    let dir = TempDir::new("private-exists");
+    let recorded = dir.write("recorded.json", &Cluster::default().recording());
+    let analysis = dir.write("analysis.json", ANALYSIS);
+    let out = dir.join("out");
+    std::fs::create_dir_all(&out).expect("out dir");
+    for (name, other) in [(REPORT_NAME, RESULTS_NAME), (RESULTS_NAME, REPORT_NAME)] {
+        let existing = out.join(name);
+        std::fs::write(&existing, "keep me\n").expect("existing file");
+        let out_text = out.to_string_lossy().into_owned();
+        let ran = run(&private_review_args(&recorded, &analysis, &out_text));
+        assert_eq!(ran.status, 1, "{name}: {}", ran.stdout);
+        assert!(ran.stderr.contains(name), "{name}: {}", ran.stderr);
+        assert_eq!(
+            std::fs::read_to_string(&existing).expect("existing file"),
+            "keep me\n",
+            "{name} was modified"
+        );
+        std::fs::remove_file(&existing).expect("cleanup");
+        let _ = std::fs::remove_file(out.join(other));
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn r_dg_08_analysis_data_refuses_a_symlink_report_and_leaves_its_target_untouched() {
+    let dir = TempDir::new("private-symlink");
+    let recorded = dir.write("recorded.json", &Cluster::default().recording());
+    let analysis = dir.write("analysis.json", ANALYSIS);
+    let out = dir.join("out");
+    std::fs::create_dir_all(&out).expect("out dir");
+    let target = dir.join("target.txt");
+    std::fs::write(&target, "target\n").expect("target");
+    let dangling = dir.join("absent-target.txt");
+    for (name, pointee) in [(RESULTS_NAME, &target), (REPORT_NAME, &dangling)] {
+        let link = out.join(name);
+        std::os::unix::fs::symlink(pointee, &link).expect("symlink");
+        let out_text = out.to_string_lossy().into_owned();
+        let ran = run(&private_review_args(&recorded, &analysis, &out_text));
+        assert_eq!(ran.status, 1, "{name}: {}", ran.stdout);
+        assert!(ran.stderr.contains(name), "{name}: {}", ran.stderr);
+        assert_eq!(
+            std::fs::read_to_string(&target).expect("target"),
+            "target\n"
+        );
+        assert!(!dangling.exists(), "{name}: the link was followed");
+        assert!(std::fs::symlink_metadata(&link)
+            .expect("link")
+            .file_type()
+            .is_symlink());
+        std::fs::remove_file(&link).expect("cleanup");
+        let _ = std::fs::remove_file(out.join(RESULTS_NAME));
+        let _ = std::fs::remove_file(out.join(REPORT_NAME));
+    }
+}
+
+#[test]
+fn r_dg_08_without_analysis_data_an_existing_report_is_still_overwritten() {
+    let dir = TempDir::new("private-absent");
+    let recorded = dir.write("recorded.json", &Cluster::default().recording());
+    let out = dir.join("out");
+    std::fs::create_dir_all(&out).expect("out dir");
+    std::fs::write(out.join(REPORT_NAME), "old\n").expect("existing file");
+    let out_text = out.to_string_lossy().into_owned();
+    let ran = run(&[
+        "documentdb",
+        "wa-review",
+        "--cluster-id",
+        "prod-docdb",
+        "--region",
+        "us-east-1",
+        "--recorded",
+        &recorded,
+        "--output",
+        &out_text,
+        "--now",
+        NOW,
+    ]);
+    assert_eq!(ran.status, 0, "{}", ran.stderr);
+    let md = std::fs::read_to_string(out.join(REPORT_NAME)).expect("report");
+    assert!(md.contains("## Sustainability"), "{md}");
+}
