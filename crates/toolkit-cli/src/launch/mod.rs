@@ -17,6 +17,7 @@ pub mod buffer;
 pub mod callback;
 pub mod clock;
 pub mod config;
+pub mod download;
 pub mod http;
 pub mod oidc;
 pub mod state;

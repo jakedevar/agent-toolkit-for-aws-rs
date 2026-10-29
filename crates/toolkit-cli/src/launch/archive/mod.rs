@@ -17,6 +17,8 @@
 pub mod casefold;
 pub mod crc32;
 #[cfg(unix)]
+pub mod apply;
+#[cfg(unix)]
 pub mod extract;
 #[cfg(unix)]
 pub mod fsops;

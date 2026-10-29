@@ -117,3 +117,79 @@ pub fn tree(dir: &Path) -> Vec<String> {
     out.sort();
     out
 }
+
+/// Run the test's own `git` in `dir`, isolated from the user's
+/// configuration; returns its stdout.
+pub fn run_git(dir: &Path, args: &[&str]) -> String {
+    let output = std::process::Command::new("git")
+        .args([
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@example.invalid",
+            "-c",
+            "init.defaultBranch=main",
+        ])
+        .args(args)
+        .current_dir(dir)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CEILING_DIRECTORIES", std::env::temp_dir())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .expect("run git");
+    assert!(output.status.success(), "git {args:?} in {dir:?}");
+    String::from_utf8(output.stdout).expect("utf-8")
+}
+
+/// A temporary repository with one commit (`README.md`).
+pub struct Repo {
+    /// The work tree.
+    pub dir: crate::launch::tests_support::Scratch,
+}
+
+/// A fresh repository with one commit.
+pub fn repo(label: &str) -> Repo {
+    let dir = crate::launch::tests_support::Scratch::new(label);
+    run_git(dir.path(), &["init", "-q", "."]);
+    dir.write("README.md", b"base\n");
+    run_git(dir.path(), &["add", "README.md"]);
+    run_git(dir.path(), &["commit", "-q", "-m", "base"]);
+    Repo { dir }
+}
+
+/// `(relative path, SHA-256 of the bytes | "dir" | "link:<target>")` of
+/// every entry below `dir`, metadata included, sorted; the "unchanged"
+/// measure of T-APPLY.
+pub fn sha_tree(dir: &Path) -> Vec<(String, String)> {
+    fn walk(base: &Path, dir: &Path, out: &mut Vec<(String, String)>) {
+        for entry in fs::read_dir(dir).expect("list").map(|e| e.expect("entry")) {
+            let path = entry.path();
+            let relative = path.strip_prefix(base).expect("below").to_string_lossy().into_owned();
+            let meta = fs::symlink_metadata(&path).expect("stat");
+            if meta.file_type().is_symlink() {
+                let target = fs::read_link(&path).expect("link");
+                out.push((relative, format!("link:{}", target.display())));
+            } else if meta.is_dir() {
+                out.push((relative, format!("dir {:o}", meta.permissions().mode() & 0o7777)));
+                walk(base, &path, out);
+            } else if meta.is_file() {
+                let bytes = fs::read(&path).expect("read");
+                out.push((
+                    relative,
+                    format!(
+                        "{} {:o}",
+                        toolkit_core::sha256_hex(&bytes),
+                        meta.permissions().mode() & 0o7777
+                    ),
+                ));
+            } else {
+                out.push((relative, "special".to_string()));
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(dir, dir, &mut out);
+    out.sort();
+    out
+}
