@@ -405,3 +405,7 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 10-29 00:03Z: #4390 repair 3d96dd1e584e47dfbeafaf7b4b16a37152ffbeab (b7e56ccf; COVERS #4956 #4957 #4958; banner redact/bound/escape, write_private atomic 0600, strict seed types; red fd1af9f5 at 29f1df7 = 5 new fails; scoped d0d7b7bc clippy 81b31fc7 fmt db7882f5 ok). Re-review #4954 r2 worker 640f3f93 (Codex sol high, pinned 3d96dd1e, op 84d76dd8). On ACCEPT mail r16 092f281f to merge 3d96dd1e.
   Friction from b7e56ccf: at_commit job a90ab88e exit 127, scripts/at-commit-test.sh missing in this repo (check kaizen).
   4/4 busy: 092f281f (r16), ff7ae0b8 (#4396), f8244a11 (#4941), 640f3f93 (#4954 r2).
+- 10-29 00:07Z: #4954 r2 ACCEPT #4390 at 3d96dd1e584e47dfbeafaf7b4b16a37152ffbeab (640f3f93). Mailed r16 092f281f (msg fe9361e2): r15 landed + merge 3d96dd1e after #4780/#4404. Close on r16 land: #4390 #4954 #4956 #4957 #4958 (+ #4780 set #4927 #4934 #4935 #4936 #4955; #4404 set #4937 #4938 #4939 #4940; check #4787 vs #4780).
+  Closed #4749 #4750 #4755 #4757 #4758 (CloudWatch r1 findings fixed in #4381, landed). #4865 recurrence noted (at_commit exit 127, 5th report).
+  #4653 worker 504a76ba (Sonnet high, rolling; op 607ad51d). Rolling already has cd80d723 "fix (#4652, #4653)", so the worker verifies first and may report it already fixed.
+  4/4 busy: 092f281f (r16), ff7ae0b8 (#4396), f8244a11 (#4941), 504a76ba (#4653).
