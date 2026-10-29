@@ -857,3 +857,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 10-29 07:4xZ: L4 LANDED (a5145150 published, cd611010393d526f611e5815b71f163501647f3e). #5216 auto-closed; CLOSED #5262 #5228 #5229 #5230. L4 f/u f4e513e0 already based on cd611010 (now rolling). Queue: 1dc25c73 (#5244 test hardening).
 - 10-29 07:50Z: test hardening LANDED (1dc25c73 published, a3ecaf77c1a2e28dd4cecad2654fe3496aa8be03). #5244 auto-closed; CLOSED #5245 #5253 #5254 #5274. Queue empty. Open nonblocking #5279.
   4/4 busy: 0dcdafea (#5181 S4 cont), f40721c4 (#5278 AP S4), dc5cd37d (#5261 cont), f4e513e0 (#5273 L4 f/u).
+- 10-29 07:52Z: AP S4 #5278 (f40721c4, Sonnet) DONE at 37abb7674f14230757eda7170ce7e039ee579ffa (prose -> render/reward check; AP-DOC-01..10, 14 tests; mirrors synced; scoped 8b934375 4121 ok, clean).
+  Review #5280 -> Codex sol 641e0107 (review_of 5278; mutation AP-DOC-04/05). On ACCEPT: check+enqueue (source_session f40721c4); close #5278 #5280 on land. Then ai-payloads S5 inventory.
+  4/4 busy: 0dcdafea (#5181 S4 cont), dc5cd37d (#5261 cont), f4e513e0 (#5273 L4 f/u), 641e0107 (#5280 review).
