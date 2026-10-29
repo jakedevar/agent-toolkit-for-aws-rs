@@ -159,3 +159,45 @@ mod tests {
         assert!(literal("METRICS_LIST", &Json::Array(names), false).is_err());
     }
 }
+
+#[cfg(test)]
+mod scalar_tests {
+    use super::*;
+    #[test]
+    fn ap_sub_10_12_scalar_quotes_backslashes_and_rejects_controls() {
+        assert_eq!(
+            quoted_literal(&Json::string("a'\\b"), '\'').unwrap(),
+            "'a\\'\\\\b'"
+        );
+        assert_eq!(
+            quoted_literal(&Json::string("a\"b"), '"').unwrap(),
+            "\"a\\\"b\""
+        );
+        for text in ["a\nb", "a\tb", "\u{202e}", "\u{feff}"] {
+            assert!(quoted_literal(&Json::string(text), '"').is_err());
+        }
+        assert!(quoted_literal(&Json::Int(1), '"').is_err());
+        assert!(quoted_literal(&Json::string("x".repeat(4097)), '"').is_err());
+    }
+    #[test]
+    fn ap_sec_01_02_03_secret_is_none_or_a_secrets_manager_arn() {
+        assert_eq!(secret_literal(&Json::Null, '"').unwrap(), "None");
+        assert_eq!(
+            secret_literal(&Json::string("None"), '"').unwrap(),
+            "\"None\""
+        );
+        assert!(secret_literal(
+            &Json::string("arn:aws:secretsmanager:us-east-1:123456789012:secret:my-secret"),
+            '"'
+        )
+        .is_ok());
+        for text in [
+            "token-value",
+            "arn:aws:secretsmanager:us-east-1:123:secret:x",
+            "arn:aws:s3:us-east-1:123456789012:secret:x",
+            "arn:aws:secretsmanager:us-east-1:123456789012:secret:",
+        ] {
+            assert!(secret_literal(&Json::string(text), '"').is_err());
+        }
+    }
+}
