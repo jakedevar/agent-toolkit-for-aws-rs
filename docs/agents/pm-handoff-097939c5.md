@@ -871,3 +871,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
   4/4 busy: 0dcdafea (#5181 S4 cont), f4e513e0 (#5273 L4 f/u), 0740a0b0 (#4886 item 1), cbeef549 (#5286 review). Pending: manager scoped b7b29708 (AP S4).
 - 10-29 08:22Z: manager scoped b7b29708 on AP S4 37abb767 (base a3ecaf77) OK 4121; check ok. ENQUEUED ade50d7b (seq 2978, #5278). On land close #5278 #5280. Then AP S5 inventory (fold #5282 #5283 #5284).
 - 10-29 08:28Z: worker_context_cap 0dcdafea (#5181 x402 S4 cont, 60% ctx) still running its baton turn; on terminal: continue_from 0dcdafea (Codex terra).
+- 10-29 08:35Z: #5286 (cbeef549, Opus) CHANGES_REQUESTED #5261 4a7de934: BLOCKER #5290 (NFKC-before-lex lets fullwidth quote swallow a real ACCEPT_EULA = True; regression vs 79ecfcd1; kept as BLOCKER, fix monotone raw OR NFKC). #5255-#5257 mutations all caught. Nonblocking #5291 (PEP701/t-strings) #5292 (%%bash, x = !cmd) #5293 (--consent case; PM RULING keep exact-case) #5294 (assert codes, leading BOM).
+  Repair 1 -> Codex terra d2668841 (continue_from dc5cd37d) with #5290-#5294. Then narrow re-review (Claude Opus, pinned sandbox_source) -> land.
+  4/4 busy: 0dcdafea (#5181 S4 cont, ctx cap, finishing), f4e513e0 (#5273 L4 f/u), 0740a0b0 (#4886 item 1), d2668841 (#5261 repair 1). Queue: ade50d7b (AP S4).
