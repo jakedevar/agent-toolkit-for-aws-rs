@@ -356,6 +356,40 @@ pub(crate) fn parse(text: &str) -> Template {
     occurrences.extend(string_occurrences(&tokens));
     occurrences.sort_by_key(|occurrence| (occurrence.line, occurrence.column));
 
+    magic_slot_violations(
+        &lines,
+        &markers,
+        &tokens,
+        &occurrences,
+        &mut template.violations,
+    );
+    template.slots = summarize(&occurrences);
+    template.violations.extend(slot_violations(&occurrences));
+    template.targets = find_targets(&tokens, &template.cells);
+    template.manual_edits = lexed
+        .comments
+        .iter()
+        .filter(|comment| {
+            MANUAL_MARKERS
+                .iter()
+                .any(|marker| comment.text.contains(marker))
+        })
+        .map(|comment| manual_edit(comment, &template.cells))
+        .collect();
+    template.occurrences = occurrences;
+    template
+        .violations
+        .sort_by_key(|violation| (violation.line, violation.column));
+    template
+}
+
+fn magic_slot_violations(
+    lines: &[&str],
+    markers: &[Marker],
+    tokens: &[Token],
+    occurrences: &[Occurrence],
+    violations: &mut Vec<Violation>,
+) {
     let magic_cells: Vec<(usize, usize)> = markers
         .iter()
         .enumerate()
@@ -381,7 +415,7 @@ pub(crate) fn parse(text: &str) -> Template {
         })
         .collect();
 
-    for occurrence in &occurrences {
+    for occurrence in occurrences {
         if occurrence.context != Context::Comment
             && (magic_cells
                 .iter()
@@ -391,7 +425,7 @@ pub(crate) fn parse(text: &str) -> Template {
                     .get(occurrence.line - 1)
                     .is_some_and(|line| line.trim_start().starts_with(['!', '%'])))
         {
-            template.violations.push(Violation {
+            violations.push(Violation {
                 code: "magic_line_slot",
                 line: occurrence.line,
                 column: occurrence.column,
@@ -402,24 +436,6 @@ pub(crate) fn parse(text: &str) -> Template {
             });
         }
     }
-    template.slots = summarize(&occurrences);
-    template.violations.extend(slot_violations(&occurrences));
-    template.targets = find_targets(&tokens, &template.cells);
-    template.manual_edits = lexed
-        .comments
-        .iter()
-        .filter(|comment| {
-            MANUAL_MARKERS
-                .iter()
-                .any(|marker| comment.text.contains(marker))
-        })
-        .map(|comment| manual_edit(comment, &template.cells))
-        .collect();
-    template.occurrences = occurrences;
-    template
-        .violations
-        .sort_by_key(|violation| (violation.line, violation.column));
-    template
 }
 
 fn source_char_violation(line: usize, column: usize, character: char) -> Violation {
