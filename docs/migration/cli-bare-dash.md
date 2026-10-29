@@ -164,6 +164,18 @@ not a valid region, product code, account, event source or bus name. Left refuse
 | --- | --- | --- |
 | `marketplace/mod.rs` | `--region` | `marketplace query-metering` / `test-events --region -` are refused by the router; the entries belong to other slices |
 
+x402 S6 (#5462), `agents-pay admin` and `agents-build setup-payment-user`. Every
+route is `strict_values`, not passthrough, with no `STDIO_DASH` or `LITERAL_DASH`
+entry, so the router refuses a bare `-` for every value flag before the handler runs
+(`--path` and `--project-dir` are paths). `--region` only selects the `AgentCore` and
+STS endpoints and is stored as a config value; it never forms a path. Two
+flag-name-only rows:
+
+| File | Flag | Why it is listed |
+| --- | --- | --- |
+| `agents_pay/admin/mod.rs` | `--region` | `agents-pay admin * --region -` is refused by the router; the entries belong to other slices |
+| `agents_pay/admin/setup_payment_user.rs` | `--region` | `agents-build setup-payment-user --region -` is refused by the router |
+
 Round-19 integration (#5015), `elasticache-tunnel` (#4393). Its three commands
 (`elasticache find-tunnel-host`, `start-tunnel`, `test-connection`) are `strict_values`,
 not passthrough, and have no `STDIO_DASH` or `LITERAL_DASH` entry, so the router refuses

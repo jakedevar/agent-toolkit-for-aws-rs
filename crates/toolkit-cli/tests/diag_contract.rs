@@ -2231,7 +2231,7 @@ fn filesystem_bearing_consumers() -> BTreeSet<(String, String)> {
 /// file name or a directory name. A file that is not about a listed command
 /// (`elasticache`, `relational`, `ai-data`, `cloudwatch region`) is
 /// there for the flag name only.
-const AUDITED_FILESYSTEM_CONSUMERS: [(&str, &str); 26] = [
+const AUDITED_FILESYSTEM_CONSUMERS: [(&str, &str); 28] = [
     ("startup/model_path.rs", "--workload"),
     ("bedrock_agent.rs", "--agent-id"),
     ("bedrock_agent.rs", "--agent-version"),
@@ -2262,6 +2262,10 @@ const AUDITED_FILESYSTEM_CONSUMERS: [(&str, &str); 26] = [
     ("launch/callback/start.rs", "--region"),
     ("launch/callback/wait.rs", "--region"),
     ("launch/snapshot.rs", "--region"),
+    // Flag name only (#5462): no agents-pay admin or agents-build command has a
+    // LITERAL_DASH entry; --region is an endpoint key and a config value.
+    ("agents_pay/admin/mod.rs", "--region"),
+    ("agents_pay/admin/setup_payment_user.rs", "--region"),
 ];
 
 /// A `LITERAL_DASH` flag that shares a source file with filesystem code must be

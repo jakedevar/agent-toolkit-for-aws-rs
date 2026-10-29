@@ -177,13 +177,12 @@ pub(super) fn run(
     out.line(&format!("  export PAYMENT_USER_ID={}", shown_value(user)))?;
     out.line(&format!("  export AWS_REGION={}", shown_value(&region)))?;
     out.line("\nOne-time per wallet:")?;
-    match redirect {
-        Some(url) => out.line(&format!(
+    if let Some(url) = redirect {
+        out.line(&format!(
             "  1. Delegation (Coinbase): visit {url}, log in, grant access to {wallet}"
-        ))?,
-        None => {
-            out.line("  1. Delegation (Privy): approve delegation via the Privy frontend SDK")?
-        }
+        ))?;
+    } else {
+        out.line("  1. Delegation (Privy): approve delegation via the Privy frontend SDK")?;
     }
     out.line(&format!(
         "  2. Funding: send testnet USDC to {wallet} via https://faucet.circle.com/ (Base Sepolia)"
