@@ -889,6 +889,36 @@ mod operation_contracts {
     }
 
     #[test]
+    fn process_response_rejects_non_model_echoed_identifiers() {
+        let manager =
+            "arn:aws:bedrock-agentcore:us-east-1:111111111111:payment-manager/test-abcdefghij";
+        let session = "payment-session-TEST12345678901";
+        let instrument = "payment-instrument-TEST12345678901";
+        let good = format!(
+            r#"{{"processPaymentId":"12345678-abcd-1234-abcd-123456789abc","paymentManagerArn":"{manager}","paymentSessionId":"{session}","paymentInstrumentId":"{instrument}","paymentType":"CRYPTO_X402","status":"PROOF_GENERATED","paymentOutput":{{"cryptoX402":{{"version":"2","payload":{{}}}}}},"createdAt":1,"updatedAt":1}}"#
+        );
+        assert!(valid_process_response(&good, manager, session, instrument));
+        assert!(!valid_process_response(
+            &good.replace(instrument, "pi"),
+            manager,
+            session,
+            "pi"
+        ));
+        assert!(!valid_process_response(
+            &good.replace(session, "ps"),
+            manager,
+            "ps",
+            instrument
+        ));
+        assert!(!valid_process_response(
+            &good.replace(manager, "arn"),
+            "arn",
+            session,
+            instrument
+        ));
+    }
+
+    #[test]
     fn session_response_rejects_integer_outside_model_range() {
         let good = r#"{"paymentSession":{"paymentSessionId":"payment-session-TEST12345678901","paymentManagerArn":"arn:aws:bedrock-agentcore:us-east-1:123456789012:payment-manager/test-abcdefghij","userId":"user","expiryTimeInMinutes":60,"createdAt":1,"updatedAt":1}}"#;
         assert!(valid_session_response(
