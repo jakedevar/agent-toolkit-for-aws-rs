@@ -648,14 +648,29 @@ fn helper_lifetime_has_no_process_spawns_and_opened_descriptors_are_cloexec() {
         }
         Ok("runner") => {}
         _ => {
-            let output = Command::new(std::env::current_exe().unwrap())
+            let child = Command::new(std::env::current_exe().unwrap())
                 .args([
                     "--exact",
                     "helper_lifetime_has_no_process_spawns_and_opened_descriptors_are_cloexec",
                     "--nocapture",
                 ])
                 .env(MODE, "runner")
-                .output()
+                .process_group(0)
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .unwrap();
+            let group = Pid::from_raw(i32::try_from(child.id()).unwrap());
+            let (tx, rx) = std::sync::mpsc::sync_channel(1);
+            std::thread::spawn(move || {
+                let _ = std::sync::mpsc::SyncSender::send(&tx, child.wait_with_output());
+            });
+            let output = rx
+                .recv_timeout(Duration::from_secs(30))
+                .unwrap_or_else(|error| {
+                    let _ = signal::killpg(group, signal::Signal::SIGKILL);
+                    panic!("trace runner did not finish: {error}");
+                })
                 .unwrap();
             assert!(
                 output.status.success(),
@@ -727,12 +742,12 @@ fn helper_lifetime_has_no_process_spawns_and_opened_descriptors_are_cloexec() {
         socket.read_to_string(&mut response).unwrap();
         assert!(response.starts_with("HTTP/1.1 400"));
     });
-    assert!(matches!(
-        wait::waitpid(pid, None).unwrap(),
-        wait::WaitStatus::Stopped(_, signal::Signal::SIGSTOP)
-    ));
+    let trace_tid = match wait::waitpid(None, Some(wait::WaitPidFlag::__WALL)).unwrap() {
+        wait::WaitStatus::Stopped(tid, signal::Signal::SIGSTOP) => tid,
+        other => panic!("unexpected initial trace event: {other:?}"),
+    };
     ptrace::setoptions(
-        pid,
+        trace_tid,
         ptrace::Options::PTRACE_O_TRACESYSGOOD
             | ptrace::Options::PTRACE_O_TRACEEXEC
             | ptrace::Options::PTRACE_O_TRACEFORK
@@ -741,8 +756,8 @@ fn helper_lifetime_has_no_process_spawns_and_opened_descriptors_are_cloexec() {
             | ptrace::Options::PTRACE_O_EXITKILL,
     )
     .unwrap();
-    ptrace::syscall(pid, None).unwrap();
-    let mut tids = HashSet::from([pid]);
+    ptrace::syscall(trace_tid, None).unwrap();
+    let mut tids = HashSet::from([trace_tid]);
     let mut entering = HashMap::new();
     let mut running_helper = false;
     let mut opens = 0;
@@ -804,6 +819,9 @@ fn helper_lifetime_has_no_process_spawns_and_opened_descriptors_are_cloexec() {
                 if event == libc::PTRACE_EVENT_EXEC {
                     if running_helper {
                         spawns += 1;
+                    } else {
+                        tids.clear();
+                        tids.insert(tid);
                     }
                     running_helper = true;
                 } else if [
