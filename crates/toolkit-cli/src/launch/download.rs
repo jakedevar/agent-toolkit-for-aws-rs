@@ -51,7 +51,7 @@ pub struct DownloadDeps<'a> {
     pub random: &'a dyn Random,
     /// The R-AR-STAGE race seam.
     pub hook: &'a mut dyn ExtractHook,
-    /// The default destination's parent (`std::env::temp_dir()`).
+    /// The default destination's parent (the system temporary directory).
     pub temp_dir: &'a Path,
     /// Archive limits.
     pub limits: ArchiveLimits,
@@ -170,6 +170,92 @@ fn fetch(url: &str, deps: &DownloadDeps<'_>) -> Result<Vec<u8>, LaunchError> {
     Ok(response.body)
 }
 
+/// Hosts a snapshot may be downloaded from (Q19).
+pub const DOWNLOAD_HOST_SUFFIXES: [&str; 2] = [".amazonaws.com", ".api.aws"];
+
+fn url_error(text: &str) -> LaunchError {
+    download_error(format!("The snapshot download URL {text}."))
+}
+
+/// The download URL rules: https, no user information, no fragment, a
+/// well-formed host on the allowlist with a valid port, and only public DNS
+/// answers. The URL (it carries a presigned signature) is never echoed.
+///
+/// # Errors
+/// [`LaunchError::Download`] with a fixed message.
+pub fn check_download_url(url: &str, resolver: &dyn HostResolver) -> Result<(), LaunchError> {
+    let malformed = || url_error("is malformed");
+    let Some((scheme, rest)) = url.split_once("://") else {
+        return Err(url_error("must use https"));
+    };
+    if !scheme.eq_ignore_ascii_case("https") {
+        return Err(url_error("must use https"));
+    }
+    let authority_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let authority = &rest[..authority_end];
+    if authority.contains('@') {
+        return Err(url_error("must not contain user information"));
+    }
+    if url.chars().any(|c| c.is_control() || c.is_whitespace() || c == '\\') || url.contains('#')
+    {
+        return Err(malformed());
+    }
+    if authority.starts_with('[') {
+        return Err(download_error(
+            "The snapshot download URL's host is not an allowed AWS host.",
+        ));
+    }
+    let (host, port) = match authority.rsplit_once(':') {
+        Some((host, port)) => (host, Some(port)),
+        None => (authority, None),
+    };
+    if let Some(port) = port {
+        if !matches!(port.parse::<u16>(), Ok(port) if port != 0) {
+            return Err(malformed());
+        }
+    }
+    let host = host.to_ascii_lowercase();
+    let well_formed = !host.is_empty()
+        && host
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'.')
+        && host.split('.').all(|label| {
+            !label.is_empty() && label.len() <= 63 && !label.starts_with('-') && !label.ends_with('-')
+        });
+    if !well_formed {
+        return Err(malformed());
+    }
+    if !DOWNLOAD_HOST_SUFFIXES
+        .iter()
+        .any(|suffix| host.len() > suffix.len() && host.ends_with(suffix))
+    {
+        return Err(download_error(
+            "The snapshot download URL's host is not an allowed AWS host.",
+        ));
+    }
+    toolkit_aws::endpoint::public_addresses(&host, resolver).map_err(|_| {
+        download_error(
+            "The snapshot download URL's host does not resolve only to public addresses.",
+        )
+    })?;
+    Ok(())
+}
+
+/// The success output `{"outputDir", "files", "directories", "bytes",
+/// "region"}`, in that order.
+#[must_use]
+pub fn render_downloaded(downloaded: &Downloaded) -> String {
+    let text = |value: &str| serde_json::Value::String(value.to_string()).to_string();
+    format!(
+        "{{\"outputDir\":{},\"files\":{},\"directories\":{},\"bytes\":{},\"region\":{}}}",
+        text(&downloaded.output_dir.to_string_lossy()),
+        downloaded.files,
+        downloaded.directories,
+        downloaded.bytes,
+        text(&downloaded.region)
+    )
+}
+
 /// Download, validate, extract and publish the launch's snapshot.
 ///
 /// # Errors
@@ -188,7 +274,8 @@ pub fn download_snapshot(
     let Some(url) = (deps.download_url)()? else {
         return Err(download_error(NO_URL_MESSAGE));
     };
-    // 3. The download, into memory only.
+    check_download_url(&url, deps.resolver)?;
+    // 3. The download (no redirect, bounded), into memory only.
     let body = fetch(&url, deps)?;
     // 4. The whole validation and the plan, before anything is created.
     let archive = read_archive(
@@ -214,14 +301,6 @@ pub fn download_snapshot(
         bytes: extracted.bytes,
         region: request.region.to_string(),
     })
-}
-
-/// The success output `{"outputDir", "files", "directories", "bytes", "region"}`
-/// in that order.
-#[must_use]
-pub fn render_downloaded(downloaded: &Downloaded) -> String {
-    let _ = downloaded;
-    todo!("R-AR-EXT step 8")
 }
 
 #[cfg(all(test, unix))]

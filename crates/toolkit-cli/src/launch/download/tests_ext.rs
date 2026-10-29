@@ -148,7 +148,7 @@ pub fn default_outputs(temp: &Path) -> Vec<PathBuf> {
 // ---------------------------------------------------------------------------
 
 use crate::launch::archive::tests_snapshot::{mode, sample_bytes, sample_entries, tree};
-use crate::launch::archive::tests_zipfx::{deflate, extra_item, noise, put16, put32, put64, EndFx};
+use crate::launch::archive::tests_zipfx::{extra_item, noise, put16, put32, put64, EndFx};
 use crate::launch::archive::zip_read::{decode_entry, read_archive, Profile, ReadStats};
 use crate::launch::archive::plan::{plan, PlanStats};
 use std::cell::Cell;
