@@ -100,9 +100,14 @@ impl Timeouts {
 
 /// HTTP headers: names are lowercased, a later insert replaces an earlier one,
 /// and `Debug` hides the value of every secret-bearing header name
-/// ([`hides_header_value`]) and scrubs all other values.
+/// ([`hides_header_value`]), of every name marked sensitive on this instance
+/// ([`Headers::insert_sensitive`]) and scrubs all other values.
 #[derive(Clone, PartialEq, Eq, Default)]
-pub struct Headers(Vec<(String, String)>);
+pub struct Headers {
+    entries: Vec<(String, String)>,
+    /// Lowercased names whose values `Debug` hides on this instance only.
+    sensitive: Vec<String>,
+}
 
 impl Headers {
     /// No headers.
@@ -135,9 +140,13 @@ impl Headers {
             ));
         }
         let lower = name.to_ascii_lowercase();
-        match self.0.iter_mut().find(|(existing, _)| *existing == lower) {
+        match self
+            .entries
+            .iter_mut()
+            .find(|(existing, _)| *existing == lower)
+        {
             Some(entry) => entry.1 = value.to_string(),
-            None => self.0.push((lower, value.to_string())),
+            None => self.entries.push((lower, value.to_string())),
         }
         Ok(())
     }
@@ -146,7 +155,7 @@ impl Headers {
     #[must_use]
     pub fn get(&self, name: &str) -> Option<&str> {
         let lower = name.to_ascii_lowercase();
-        self.0
+        self.entries
             .iter()
             .find(|(existing, _)| *existing == lower)
             .map(|(_, value)| value.as_str())
@@ -154,7 +163,7 @@ impl Headers {
 
     /// Headers in insertion order.
     pub fn entries(&self) -> impl Iterator<Item = (&str, &str)> {
-        self.0
+        self.entries
             .iter()
             .map(|(name, value)| (name.as_str(), value.as_str()))
     }
@@ -162,14 +171,72 @@ impl Headers {
     /// Number of headers.
     #[must_use]
     pub fn len(&self) -> usize {
-        self.0.len()
+        self.entries.len()
     }
 
     /// Whether there are no headers.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
+        self.entries.is_empty()
     }
+
+    /// Set a header like [`Headers::insert`] and mark its name sensitive on
+    /// this instance: `Debug` hides its value from now on, whatever is
+    /// inserted under that name later (an `--header` value, which may be a
+    /// bearer credential such as an agentaccess streaming URL).
+    ///
+    /// # Errors
+    /// The same as [`Headers::insert`]; nothing is marked on an error.
+    pub fn insert_sensitive(&mut self, name: &str, value: &str) -> Result<(), AwsError> {
+        self.insert(name, value)?;
+        let lower = name.to_ascii_lowercase();
+        if !self.sensitive.contains(&lower) {
+            self.sensitive.push(lower);
+        }
+        Ok(())
+    }
+
+    /// Whether `Debug` hides the value of `name` (any case) on this instance,
+    /// by the global rule or by a per-instance mark.
+    #[must_use]
+    pub fn is_sensitive(&self, name: &str) -> bool {
+        let lower = name.to_ascii_lowercase();
+        hides_header_value(&lower) || self.sensitive.contains(&lower)
+    }
+}
+
+/// Request headers only the HTTP stack may produce (R-HDR, #5000): the
+/// authority and message framing. A request that carries one is refused before
+/// it is signed or sent, so the signed and emitted `Host` and the body length
+/// always come from the URL and the body.
+pub const FRAMING_HEADERS: &[&str] = &[
+    "host",
+    "content-length",
+    "transfer-encoding",
+    "te",
+    "trailer",
+    "connection",
+    "keep-alive",
+    "proxy-connection",
+    "upgrade",
+];
+
+/// Refuse `headers` when they include any [`FRAMING_HEADERS`] name. The error
+/// is `InvalidConfig` and names no header value.
+///
+/// # Errors
+/// `InvalidConfig` (field `header`) for an authority or framing header.
+pub fn refuse_framing_headers(headers: &Headers) -> Result<(), AwsError> {
+    if headers
+        .entries()
+        .any(|(name, _)| FRAMING_HEADERS.contains(&name))
+    {
+        return Err(AwsError::invalid_config(
+            "header",
+            "authority and message-framing headers are set by the HTTP stack, not by the request",
+        ));
+    }
+    Ok(())
 }
 
 impl fmt::Debug for Headers {
@@ -177,7 +244,7 @@ impl fmt::Debug for Headers {
         write_scrubbed_debug(f, |f| {
             let mut map = f.debug_map();
             for (name, value) in self.entries() {
-                if hides_header_value(name) {
+                if self.is_sensitive(name) {
                     map.entry(&Scrubbed(name), &REDACTED);
                 } else {
                     map.entry(&Scrubbed(name), &Scrubbed(value));
@@ -775,5 +842,105 @@ mod tests {
             inserted >= 30,
             "only {inserted} adversarial values were insertable"
         );
+    }
+}
+
+#[cfg(test)]
+mod framing_tests {
+    //! T-HDR (S1): transport-level refusal of authority and framing headers,
+    //! and the per-instance sensitive-header set.
+    use super::*;
+
+    #[test]
+    fn authority_and_framing_headers_are_refused_by_name_in_any_case() {
+        assert_eq!(FRAMING_HEADERS.len(), 9);
+        for name in [
+            "host",
+            "Host",
+            "HOST",
+            "hOsT",
+            "content-length",
+            "Content-Length",
+            "Transfer-Encoding",
+            "te",
+            "trailer",
+            "connection",
+            "keep-alive",
+            "proxy-connection",
+            "upgrade",
+        ] {
+            let mut headers = Headers::new();
+            headers.insert("accept", "application/json").unwrap();
+            headers.insert(name, "FRAMINGCANARY77").unwrap();
+            let error = refuse_framing_headers(&headers).unwrap_err();
+            assert_eq!(error.code(), "aws_invalid_config", "{name}");
+            assert!(!error.is_retryable(), "{name}");
+            for shown in [error.to_string(), format!("{error:?}")] {
+                assert!(!shown.contains("FRAMINGCANARY77"), "{shown}");
+            }
+        }
+    }
+
+    #[test]
+    fn other_headers_pass_the_framing_check() {
+        let mut headers = Headers::new();
+        for name in [
+            "accept",
+            "content-type",
+            "mcp-session-id",
+            "mcp-protocol-version",
+            "authorization",
+            "x-amz-date",
+            "x-amz-security-token",
+            "user-agent",
+            "X-Amzn-AgentAccess-Streaming-Session-Url",
+            "x-hosted",
+            "content-lengthy",
+        ] {
+            headers.insert(name, "v").unwrap();
+        }
+        assert_eq!(refuse_framing_headers(&headers), Ok(()));
+        assert_eq!(refuse_framing_headers(&Headers::new()), Ok(()));
+    }
+
+    #[test]
+    fn per_instance_sensitive_headers_hide_their_values_in_debug() {
+        let mut marked = Headers::new();
+        marked
+            .insert_sensitive("X-Route-Hint", "STREAMCANARY1")
+            .unwrap();
+        marked.insert("x-plain", "visible-value").unwrap();
+        assert!(marked.is_sensitive("x-route-hint"));
+        assert!(!marked.is_sensitive("x-plain"));
+        assert_eq!(marked.get("X-ROUTE-HINT"), Some("STREAMCANARY1"));
+        // A later plain insert under the same name stays hidden.
+        marked.insert("x-route-hint", "STREAMCANARY2").unwrap();
+        let request = HttpRequest {
+            method: Method::Post,
+            url: "https://aws-mcp.us-east-1.api.aws/mcp".to_string(),
+            headers: marked.clone(),
+            body: Vec::new(),
+            timeouts: Timeouts::default(),
+        };
+        for shown in [
+            format!("{marked:?}"),
+            format!("{marked:#?}"),
+            format!("{request:?}"),
+        ] {
+            assert!(!shown.contains("STREAMCANARY"), "{shown}");
+            assert!(shown.contains("visible-value"), "{shown}");
+        }
+        // Per instance: the same name in another header set is not hidden
+        // by this mark (the name is not on the global sensitive list).
+        let mut other = Headers::new();
+        other.insert("x-route-hint", "PLAINVALUE3").unwrap();
+        assert!(!other.is_sensitive("x-route-hint"));
+        // The agentaccess streaming URL is hidden by the global rule anyway.
+        assert!(other.is_sensitive("X-Amzn-AgentAccess-Streaming-Session-Url"));
+        assert!(format!("{other:?}").contains("PLAINVALUE3"));
+        // Invalid names and values are refused like `insert`.
+        assert!(marked.insert_sensitive("bad name", "v").is_err());
+        assert!(marked.insert_sensitive("x-ok", "a\r\nb").is_err());
+        assert!(!marked.is_sensitive("bad name"));
     }
 }

@@ -9,6 +9,8 @@ use std::collections::{BTreeMap, VecDeque};
 use std::fmt;
 use std::net::IpAddr;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use crate::credentials::{Credentials, CredentialsProvider};
@@ -16,7 +18,10 @@ use crate::endpoint::HostResolver;
 use crate::error::AwsError;
 use crate::redact::{write_scrubbed_debug, Scrubbed};
 use crate::retry::Sleeper;
-use crate::transport::{HttpRequest, HttpResponse, Signer, SigningScope, Transport};
+use crate::stream::{ChunkLimiter, ResponseStream, StreamError, StreamLimits, StreamingTransport};
+use crate::transport::{
+    refuse_framing_headers, Headers, HttpRequest, HttpResponse, Signer, SigningScope, Transport,
+};
 
 /// A resolver with fixed answers that records every lookup.
 #[derive(Debug, Default)]
@@ -294,6 +299,156 @@ impl Signer for FakeSigner {
             "authorization",
             &format!("FAKE-SIGNED {}/{}", scope.region, scope.service),
         )
+    }
+}
+
+/// One scripted body event of a [`FakeStreamingTransport`] response.
+#[derive(Debug, Clone)]
+pub enum FakeChunk {
+    /// A frame of body bytes, as the connection would deliver it.
+    Data(Vec<u8>),
+    /// The read timeout passes before the next bytes.
+    IdleTimeout,
+    /// The connection fails.
+    Fail(AwsError),
+}
+
+impl FakeChunk {
+    /// A data frame.
+    #[must_use]
+    pub fn data(bytes: &[u8]) -> Self {
+        Self::Data(bytes.to_vec())
+    }
+}
+
+/// A scripted response: status, headers and body events.
+type FakeStreamOutcome = Result<(u16, Headers, Vec<FakeChunk>), AwsError>;
+
+/// A [`StreamingTransport`] that replays scripted streamed responses, records
+/// every request and counts the frames its streams pulled (to prove no
+/// read-ahead). It applies the same framing-header refusal as the SDK
+/// transport. `Send` and `Sync`, so protocol code may use it from workers.
+#[derive(Debug, Default)]
+pub struct FakeStreamingTransport {
+    script: Mutex<VecDeque<FakeStreamOutcome>>,
+    requests: Mutex<Vec<HttpRequest>>,
+    pulled: Arc<AtomicUsize>,
+}
+
+impl FakeStreamingTransport {
+    /// A transport with an empty script.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Queue a streamed response.
+    ///
+    /// # Panics
+    /// When a header is invalid (a broken test fixture).
+    #[must_use]
+    pub fn respond(self, status: u16, headers: &[(&str, &str)], body: Vec<FakeChunk>) -> Self {
+        let mut map = Headers::new();
+        for (name, value) in headers {
+            map.insert(name, value)
+                .expect("test fixture header is valid");
+        }
+        self.push(Ok((status, map, body)))
+    }
+
+    /// Queue a failure of `open` itself.
+    #[must_use]
+    pub fn open_error(self, error: AwsError) -> Self {
+        self.push(Err(error))
+    }
+
+    fn push(self, outcome: FakeStreamOutcome) -> Self {
+        self.script
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push_back(outcome);
+        self
+    }
+
+    /// Requests received so far, in order (refused ones are not recorded).
+    #[must_use]
+    pub fn requests(&self) -> Vec<HttpRequest> {
+        self.requests
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Body frames pulled by every stream so far.
+    #[must_use]
+    pub fn frames_pulled(&self) -> usize {
+        self.pulled.load(Ordering::SeqCst)
+    }
+}
+
+impl StreamingTransport for FakeStreamingTransport {
+    fn open<'a>(
+        &'a self,
+        request: &HttpRequest,
+        limits: &StreamLimits,
+    ) -> Result<Box<dyn ResponseStream + 'a>, AwsError> {
+        refuse_framing_headers(&request.headers)?;
+        self.requests
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(request.clone());
+        let next = self
+            .script
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .pop_front();
+        let (status, headers, body) = next.unwrap_or_else(|| {
+            Err(AwsError::invalid_config(
+                "fake streaming transport",
+                "the scripted responses are exhausted",
+            ))
+        })?;
+        Ok(Box::new(FakeStream {
+            status,
+            headers,
+            body: body.into(),
+            limiter: ChunkLimiter::new(*limits),
+            pulled: Arc::clone(&self.pulled),
+        }))
+    }
+}
+
+struct FakeStream {
+    status: u16,
+    headers: Headers,
+    body: VecDeque<FakeChunk>,
+    limiter: ChunkLimiter,
+    pulled: Arc<AtomicUsize>,
+}
+
+impl ResponseStream for FakeStream {
+    fn status(&self) -> u16 {
+        self.status
+    }
+
+    fn headers(&self) -> &Headers {
+        &self.headers
+    }
+
+    fn next_chunk(&mut self) -> Result<Option<Vec<u8>>, StreamError> {
+        let body = &mut self.body;
+        let pulled = &self.pulled;
+        self.limiter.next(|| {
+            let Some(event) = body.pop_front() else {
+                return Ok(None);
+            };
+            pulled.fetch_add(1, Ordering::SeqCst);
+            match event {
+                FakeChunk::Data(bytes) => Ok(Some(bytes)),
+                FakeChunk::IdleTimeout => Err(StreamError::IdleTimeout),
+                FakeChunk::Fail(error) => Err(StreamError::Failed(error)),
+            }
+        })
     }
 }
 

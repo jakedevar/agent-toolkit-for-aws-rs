@@ -10,6 +10,13 @@ description = "Read-only Agent Toolkit command-line interface (bootstrap slice #
 name = "toolkit"
 path = "src/main.rs"
 
+[features]
+default = []
+# The AWS SDK binding (#4413 S1): the real SigV4 signer and HTTPS transport for
+# the `asm exec` MCP fallback (#4582) and the MCP proxy. Off by default so the
+# ordinary build compiles no AWS SDK crate.
+aws-sdk = ["toolkit-aws/sdk"]
+
 [dependencies]
 toolkit-aws = { path = "../toolkit-aws" }
 toolkit-core = { path = "../toolkit-core" }
