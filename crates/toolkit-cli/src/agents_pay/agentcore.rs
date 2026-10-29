@@ -1052,6 +1052,14 @@ impl PaymentsApi for FakePaymentsApi {
 #[allow(clippy::needless_pass_by_value)] // Consuming Approved permits only one logical spend.
 /// Consume an approval once and bind the returned proof to its approved terms.
 ///
+/// ```compile_fail,E0382
+/// use toolkit_cli::agents_pay::{agentcore::{process_payment, PaymentsApi}, policy::Approved};
+/// fn twice(api: &dyn PaymentsApi, approved: Approved) {
+///     let _ = process_payment(api, approved);
+///     let _ = process_payment(api, approved);
+/// }
+/// ```
+///
 /// # Errors
 /// Returns a sanitized failure if the request or response is invalid.
 pub fn process_payment(
@@ -1538,6 +1546,21 @@ mod wire_contracts {
         testing::{FakeChunk, FakeStreamingTransport},
         NoSigner,
     };
+
+    #[test]
+    fn fake_session_read_is_scripted_and_records_calls() {
+        let manager = "arn:aws:bedrock-agentcore:us-east-1:111111111111:payment-manager/test";
+        let fixture = Json::object(vec![("marker", Json::string("fixture"))]);
+        let api = FakePaymentsApi::with_session(fixture.clone());
+        let payments: &dyn PaymentsApi = &api;
+        assert_eq!(
+            payments
+                .get_session(manager, "payment-session-TEST12345678901", "user")
+                .unwrap(),
+            fixture
+        );
+        assert_eq!(api.session_calls(), 1);
+    }
 
     #[test]
     fn payment_error_class_mapping_is_exhaustive_and_value_free() {
