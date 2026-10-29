@@ -1,4 +1,7 @@
 //! Offline Launch L5 command contracts.
+#[cfg(feature = "agents-pay-live")]
+compile_error!("agents-pay-live is never built for tests (AC3)");
+
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 

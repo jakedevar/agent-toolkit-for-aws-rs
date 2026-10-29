@@ -5,7 +5,7 @@
 
 use std::time::{Duration, Instant};
 use toolkit_aws::endpoint::HostResolver;
-use toolkit_aws::error::{AwsError, TimeoutPhase};
+use toolkit_aws::error::AwsError;
 use toolkit_aws::stream::{StreamError, StreamLimits, StreamingTransport};
 use toolkit_aws::transport::{Headers, HttpRequest, Method, Timeouts};
 
@@ -57,19 +57,19 @@ fn timeout() -> NetError {
     NetError("ReadTimeout during payment flow.".into())
 }
 fn aws_error(error: &AwsError) -> NetError {
-    let name = match error {
-        AwsError::Timeout {
-            phase: TimeoutPhase::Connect,
-            ..
-        } => "ConnectTimeout",
-        AwsError::Timeout { .. } => "ReadTimeout",
-        AwsError::Connect { .. } => "ConnectError",
-        _ => "RuntimeError",
-    };
+    // R-ERR: the one exhaustive class-name table (T-ERR).
+    let name = super::agentcore::aws_error_class(error);
     NetError(format!("{name} during payment flow."))
 }
 fn safe_method(method: &str) -> bool {
     method.eq_ignore_ascii_case("GET") || method.eq_ignore_ascii_case("HEAD")
+}
+
+/// The legacy refusal for a method other than GET or HEAD (case-insensitive),
+/// or `None` when the method is allowed.
+#[must_use]
+pub fn method_refusal(method: &str) -> Option<String> {
+    (!safe_method(method)).then(|| format!("Method {} is not allowed; this skill fetches paid content with GET or HEAD. A request body would let the agent send data to an arbitrary origin, which the policy gate does not validate.", shown_value(&method.to_uppercase())))
 }
 
 /// An opaque payment proof header. Only the payment module can create one.
@@ -84,10 +84,18 @@ pub struct ProofHeader {
 }
 
 impl ProofHeader {
-    // S5 constructs this from its verified proof.
-    #[allow(dead_code)]
-    pub(super) fn new(name: String, value: String) -> Self {
+    /// Built only by `proof::VerifiedProof::header` (R-HDR, the proof gate).
+    pub(in crate::agents_pay) fn new(name: String, value: String) -> Self {
         Self { name, value }
+    }
+    /// The header name (`PAYMENT-SIGNATURE` or `X-PAYMENT`); not a secret.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+    /// The secret header value, for the merchant request and the scrub only.
+    pub(in crate::agents_pay) fn value(&self) -> &str {
+        &self.value
     }
 }
 
@@ -133,8 +141,8 @@ pub struct StreamingMerchant<T, R, C> {
 }
 impl<T: StreamingTransport, R: HostResolver, C: Clock> MerchantHttp for StreamingMerchant<T, R, C> {
     fn request(&self, input: &MerchantRequest<'_>) -> Result<MerchantResponse, NetError> {
-        if !safe_method(input.method) {
-            return Err(NetError(format!("Method {} is not allowed; this skill fetches paid content with GET or HEAD. A request body would let the agent send data to an arbitrary origin, which the policy gate does not validate.", shown_value(&input.method.to_uppercase()))));
+        if let Some(refusal) = method_refusal(input.method) {
+            return Err(NetError(refusal));
         }
         if self.clock.now() >= input.operation_deadline {
             return Err(timeout());

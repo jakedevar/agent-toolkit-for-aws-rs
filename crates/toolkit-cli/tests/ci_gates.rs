@@ -8,6 +8,9 @@
 //! tree (read-only). A task that drifts back to Python, names a command that
 //! no longer routes, or fails on the committed tree fails here.
 
+#[cfg(feature = "agents-pay-live")]
+compile_error!("agents-pay-live is never built for tests (AC3)");
+
 use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};

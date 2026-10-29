@@ -19,6 +19,11 @@
 //!
 //! The full user-facing contract is in `crates/toolkit-cli/README.md`.
 
+// G1a (x402 #5352): the live payment constructors are never compiled into a
+// test or doctest artifact (AC3, design section 7).
+#[cfg(all(any(test, doctest), feature = "agents-pay-live"))]
+compile_error!("agents-pay-live is never built for tests (AC3)");
+
 use std::ffi::OsString;
 use std::fmt;
 use std::io::{self, Write};

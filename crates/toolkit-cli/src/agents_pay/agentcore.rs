@@ -1105,7 +1105,7 @@ mod operation_contracts {
 }
 
 /// `AgentCore` call failure, containing no server-supplied text.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PaymentError {
     /// A service error, reduced to a fixed code.
     Service(&'static str),
@@ -1218,39 +1218,136 @@ impl std::fmt::Debug for PaymentProof {
 }
 
 impl PaymentProof {
-    /// Inspect the sensitive document for verification. Never log this value.
-    #[must_use]
-    pub fn payload(&self) -> &Json {
+    /// The sensitive document, for `proof::verify` only (#5332, R-SPEND-ORDER
+    /// rule 5). Never log this value.
+    pub(in crate::agents_pay) fn payload(&self) -> &Json {
         &self.0
     }
 }
 
 /// A service proof bound to its approved terms; it still needs verification.
+///
+/// It can only be consumed by `proof::verify` (#5332): its parts are not
+/// reachable outside the payment modules.
+///
+/// ```compile_fail
+/// use toolkit_cli::agents_pay::agentcore::Authorized;
+/// fn unwrap(authorized: Authorized) { let _ = authorized.into_parts(); }
+/// ```
+///
+/// ```compile_fail
+/// use toolkit_cli::agents_pay::agentcore::PaymentProof;
+/// fn read(proof: &PaymentProof) { let _ = proof.payload(); }
+/// ```
 pub struct Authorized {
     proof: PaymentProof,
+    entry: Json,
+    resource: Option<Json>,
     amount: String,
     version: i64,
     recipient: String,
 }
+
+/// The parts of an [`Authorized`], for `proof::verify` only.
+pub(in crate::agents_pay) struct AuthorizedParts {
+    pub(in crate::agents_pay) proof: PaymentProof,
+    pub(in crate::agents_pay) entry: Json,
+    pub(in crate::agents_pay) resource: Option<Json>,
+    pub(in crate::agents_pay) amount: String,
+    pub(in crate::agents_pay) version: i64,
+    pub(in crate::agents_pay) recipient: String,
+}
+
 impl Authorized {
     /// Consume this authorization for proof verification.
-    #[must_use]
-    pub fn into_parts(self) -> (PaymentProof, String, i64, String) {
-        (self.proof, self.amount, self.version, self.recipient)
+    pub(in crate::agents_pay) fn into_parts(self) -> AuthorizedParts {
+        AuthorizedParts {
+            proof: self.proof,
+            entry: self.entry,
+            resource: self.resource,
+            amount: self.amount,
+            version: self.version,
+            recipient: self.recipient,
+        }
     }
 }
+
+/// A scripted outcome for the next [`FakePaymentsApi`] payment or session
+/// read (#5330).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FakeOutcome {
+    /// Fail without recording anything at the service.
+    Fail(PaymentError),
+    /// Record the authorization as the service would, then lose the
+    /// response (an unknown outcome to the caller).
+    RecordThenFail(PaymentError),
+}
+
+/// One `ProcessPayment` request as the fake received it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecordedPayment {
+    /// The request's `clientToken`.
+    pub token: String,
+    /// The exact request body bytes.
+    pub body: Vec<u8>,
+}
+
+/// One admin call with its arguments, for the S6 admin tests.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AdminCall {
+    /// `CreatePaymentSession`.
+    CreateSession {
+        /// Manager ARN.
+        manager: String,
+        /// User id.
+        user: String,
+        /// Budget text.
+        budget: String,
+        /// Expiry in minutes.
+        expiry: i64,
+        /// Idempotency token.
+        token: String,
+    },
+    /// `CreatePaymentInstrument`.
+    CreateInstrument {
+        /// Manager ARN.
+        manager: String,
+        /// User id.
+        user: String,
+        /// Connector id.
+        connector: String,
+        /// Network family.
+        network: String,
+        /// Linked email.
+        email: String,
+        /// Idempotency token.
+        token: String,
+    },
+}
+
 /// An in-memory payment fake limited to the fixture account.
+///
+/// It keeps the service's idempotency table (`token -> (body, proof)`) and an
+/// authorization ledger. A fixed proof (`with_proof`) is returned for every
+/// new authorization; `signing()` instead derives a well-formed proof from
+/// each request's approved terms, with a fresh signature per authorization.
 #[derive(Default)]
 pub struct FakePaymentsApi {
     calls: std::cell::Cell<usize>,
     proof: std::cell::RefCell<Option<Json>>,
+    signing: bool,
     idempotency: std::cell::RefCell<std::collections::HashMap<String, (Vec<u8>, Json)>>,
     authorizations: std::cell::Cell<usize>,
     session: Option<Json>,
+    sessions: Vec<(String, Json)>,
     instrument_response: Option<Json>,
-    session_reads: std::cell::Cell<usize>,
+    session_reads: std::cell::RefCell<Vec<(String, String, String)>>,
     session_creates: std::cell::Cell<usize>,
     instrument_creates: std::cell::Cell<usize>,
+    outcomes: std::cell::RefCell<std::collections::VecDeque<FakeOutcome>>,
+    recorded: std::cell::RefCell<Vec<RecordedPayment>>,
+    admin: std::cell::RefCell<Vec<AdminCall>>,
+    regions: std::cell::RefCell<Vec<String>>,
 }
 impl FakePaymentsApi {
     /// Return a supplied proof document for fixture-account requests.
@@ -1258,6 +1355,14 @@ impl FakePaymentsApi {
     pub fn with_proof(proof: Json) -> Self {
         Self {
             proof: std::cell::RefCell::new(Some(proof)),
+            ..Self::default()
+        }
+    }
+    /// Derive a valid proof from each request's approved terms.
+    #[must_use]
+    pub fn signing() -> Self {
+        Self {
+            signing: true,
             ..Self::default()
         }
     }
@@ -1269,16 +1374,31 @@ impl FakePaymentsApi {
             ..Self::default()
         }
     }
+    /// Answer reads of one session id with `session` (before the default).
+    #[must_use]
+    pub fn with_session_for(mut self, session_id: &str, session: Json) -> Self {
+        self.sessions.push((session_id.to_owned(), session));
+        self
+    }
     /// Supply a deterministic instrument response.
     #[must_use]
     pub fn with_instrument(mut self, instrument: Json) -> Self {
         self.instrument_response = Some(instrument);
         self
     }
+    /// Script the outcome of the next payment or session read.
+    pub fn push_outcome(&self, outcome: FakeOutcome) {
+        self.outcomes.borrow_mut().push_back(outcome);
+    }
     /// Number of session reads observed by this fake.
     #[must_use]
     pub fn session_calls(&self) -> usize {
-        self.session_reads.get()
+        self.session_reads.borrow().len()
+    }
+    /// Every session read as `(manager, session, user)`.
+    #[must_use]
+    pub fn session_reads(&self) -> Vec<(String, String, String)> {
+        self.session_reads.borrow().clone()
     }
     /// Number of session creations observed by this fake.
     #[must_use]
@@ -1290,10 +1410,20 @@ impl FakePaymentsApi {
     pub fn instrument_create_calls(&self) -> usize {
         self.instrument_creates.get()
     }
-    /// Number of logical calls observed by this fake.
+    /// Every admin call with its arguments, in order.
+    #[must_use]
+    pub fn admin_calls(&self) -> Vec<AdminCall> {
+        self.admin.borrow().clone()
+    }
+    /// Number of logical payment calls observed by this fake.
     #[must_use]
     pub fn calls(&self) -> usize {
         self.calls.get()
+    }
+    /// Every payment request (token and body bytes), in order.
+    #[must_use]
+    pub fn recorded_requests(&self) -> Vec<RecordedPayment> {
+        self.recorded.borrow().clone()
     }
     /// Set the proof produced by the next new authorization.
     pub fn set_proof(&self, proof: Json) {
@@ -1307,6 +1437,57 @@ impl FakePaymentsApi {
     /// Simulate expiry of the service's idempotency retention window.
     pub fn expire_idempotency_records(&self) {
         self.idempotency.borrow_mut().clear();
+    }
+    /// How many times a client was opened through `PaymentsConnector`.
+    #[must_use]
+    pub fn opens(&self) -> usize {
+        self.regions.borrow().len()
+    }
+    /// The region of every client opened through `PaymentsConnector`.
+    #[must_use]
+    pub fn opened_regions(&self) -> Vec<String> {
+        self.regions.borrow().clone()
+    }
+    pub(in crate::agents_pay) fn record_open(&self, region: &str) {
+        self.regions.borrow_mut().push(region.to_owned());
+    }
+    fn next_outcome(&self) -> Option<FakeOutcome> {
+        self.outcomes.borrow_mut().pop_front()
+    }
+    // recorded-shape: the fake signs its own request body, not an AWS response.
+    fn signed_proof(&self, body: &Json, token: &str) -> Json {
+        let payload = body
+            .get("paymentInput")
+            .and_then(|v| v.get("cryptoX402"))
+            .and_then(|v| v.get("payload"));
+        let field = |key: &str| {
+            payload
+                .and_then(|p| p.get(key))
+                .and_then(Json::as_str)
+                .unwrap_or_default()
+                .to_owned()
+        };
+        let serial = self.authorizations.get() + 1;
+        Json::object(vec![
+            (
+                "signature",
+                Json::string(format!("0xsig{serial:04}{token}")),
+            ),
+            (
+                "authorization",
+                Json::object(vec![
+                    (
+                        "from",
+                        Json::string("0x2222222222222222222222222222222222222222"),
+                    ),
+                    ("to", Json::string(field("payTo"))),
+                    ("value", Json::string(field("amount"))),
+                    ("validAfter", Json::string("0")),
+                    ("validBefore", Json::string("4102444800")),
+                    ("nonce", Json::string(format!("0x{token}"))),
+                ]),
+            ),
+        ])
     }
 }
 /// Payment operation interface; requests can only originate from `Approved`.
@@ -1356,41 +1537,97 @@ fn assert_fixture_account(manager: &str) {
         "fake payments require fixture account"
     );
 }
-impl PaymentsApi for FakePaymentsApi {
-    fn get_session(
-        &self,
-        manager: &str,
-        _session: &str,
-        _user: &str,
-    ) -> Result<Json, PaymentError> {
-        assert_fixture_account(manager);
-        self.session_reads.set(self.session_reads.get() + 1);
-        self.session.clone().ok_or(PaymentError::InvalidResponse)
+impl<T: PaymentsApi + ?Sized> PaymentsApi for &T {
+    fn get_session(&self, manager: &str, session: &str, user: &str) -> Result<Json, PaymentError> {
+        (**self).get_session(manager, session, user)
     }
     fn create_session(
         &self,
         manager: &str,
-        _user: &str,
-        _budget: &str,
-        _expiry: i64,
-        _token: &str,
+        user: &str,
+        budget: &str,
+        expiry: i64,
+        token: &str,
+    ) -> Result<Json, PaymentError> {
+        (**self).create_session(manager, user, budget, expiry, token)
+    }
+    fn create_instrument(
+        &self,
+        manager: &str,
+        user: &str,
+        connector: &str,
+        network: &str,
+        email: &str,
+        token: &str,
+    ) -> Result<Json, PaymentError> {
+        (**self).create_instrument(manager, user, connector, network, email, token)
+    }
+    fn process_payment(
+        &self,
+        request: &ProcessPaymentRequest,
+    ) -> Result<PaymentProof, PaymentError> {
+        (**self).process_payment(request)
+    }
+}
+impl PaymentsApi for FakePaymentsApi {
+    fn get_session(&self, manager: &str, session: &str, user: &str) -> Result<Json, PaymentError> {
+        assert_fixture_account(manager);
+        self.session_reads.borrow_mut().push((
+            manager.to_owned(),
+            session.to_owned(),
+            user.to_owned(),
+        ));
+        if let Some(FakeOutcome::Fail(error) | FakeOutcome::RecordThenFail(error)) =
+            self.next_outcome()
+        {
+            return Err(error);
+        }
+        self.sessions
+            .iter()
+            .find(|(id, _)| id == session)
+            .map(|(_, value)| value.clone())
+            .or_else(|| self.session.clone())
+            .ok_or(PaymentError::InvalidResponse)
+    }
+    fn create_session(
+        &self,
+        manager: &str,
+        user: &str,
+        budget: &str,
+        expiry: i64,
+        token: &str,
     ) -> Result<Json, PaymentError> {
         assert_fixture_account(manager);
         self.session_creates.set(self.session_creates.get() + 1);
+        self.admin.borrow_mut().push(AdminCall::CreateSession {
+            manager: manager.to_owned(),
+            user: user.to_owned(),
+            budget: budget.to_owned(),
+            expiry,
+            token: token.to_owned(),
+        });
         self.session.clone().ok_or(PaymentError::InvalidResponse)
     }
     fn create_instrument(
         &self,
         manager: &str,
-        _user: &str,
-        _connector: &str,
-        _network: &str,
-        _email: &str,
-        _token: &str,
+        user: &str,
+        connector: &str,
+        network: &str,
+        email: &str,
+        token: &str,
     ) -> Result<Json, PaymentError> {
         assert_fixture_account(manager);
         self.instrument_creates
             .set(self.instrument_creates.get() + 1);
+        self.admin.borrow_mut().push(AdminCall::CreateInstrument {
+            manager: manager.to_owned(),
+            user: user.to_owned(),
+            connector: connector.to_owned(),
+            network: network.to_owned(),
+            email: email.to_owned(),
+            token: token.to_owned(),
+        });
         self.instrument_response
             .clone()
             .ok_or(PaymentError::InvalidResponse)
@@ -1408,21 +1645,35 @@ impl PaymentsApi for FakePaymentsApi {
             .get("clientToken")
             .and_then(Json::as_str)
             .ok_or(PaymentError::InvalidResponse)?;
+        self.recorded.borrow_mut().push(RecordedPayment {
+            token: token.to_owned(),
+            body: request.body().to_vec(),
+        });
+        let lost = match self.next_outcome() {
+            Some(FakeOutcome::Fail(error)) => return Err(error),
+            Some(FakeOutcome::RecordThenFail(error)) => Some(error),
+            None => None,
+        };
         let mut records = self.idempotency.borrow_mut();
-        if let Some((previous_body, proof)) = records.get(token) {
+        let proof = if let Some((previous_body, proof)) = records.get(token) {
             if previous_body != request.body() {
                 return Err(PaymentError::Service("ConflictException"));
             }
-            return Ok(PaymentProof(proof.clone()));
+            proof.clone()
+        } else {
+            let proof = match self.proof.borrow().clone() {
+                Some(proof) => proof,
+                None if self.signing => self.signed_proof(&parsed, token),
+                None => Json::object(vec![]),
+            };
+            records.insert(token.to_owned(), (request.body().to_vec(), proof.clone()));
+            self.authorizations.set(self.authorizations.get() + 1);
+            proof
+        };
+        match lost {
+            Some(error) => Err(error),
+            None => Ok(PaymentProof(proof)),
         }
-        let proof = self
-            .proof
-            .borrow()
-            .clone()
-            .unwrap_or_else(|| Json::object(vec![]));
-        records.insert(token.to_owned(), (request.body().to_vec(), proof.clone()));
-        self.authorizations.set(self.authorizations.get() + 1);
-        Ok(PaymentProof(proof))
     }
 }
 #[allow(clippy::needless_pass_by_value)] // Consuming Approved permits only one logical spend.
@@ -1446,14 +1697,14 @@ pub fn process_payment(
         .map_err(|_| PaymentError::InvalidResponse)?
         .ok_or(PaymentError::InvalidResponse)?
         .to_owned();
-    let amount = approved.amount().to_owned();
-    let version = approved.version();
     let request = ProcessPaymentRequest::from_approved(&approved);
     let proof = api.process_payment(&request)?;
     Ok(Authorized {
         proof,
-        amount,
-        version,
+        entry: approved.entry().clone(),
+        resource: approved.resource().cloned(),
+        amount: approved.amount().to_owned(),
+        version: approved.version(),
         recipient,
     })
 }
@@ -2796,5 +3047,113 @@ mod wire_contracts {
             Err(PaymentError::Service("ConflictException"))
         );
         assert_eq!(transport.requests().len(), 1);
+    }
+}
+
+/// T-ORDER-POST over the real client: transport attempts are bounded by the
+/// retry policy and carry byte-identical bodies, and one logical
+/// authorization is all the flow ever makes.
+#[cfg(test)]
+mod flow_contracts {
+    use super::*;
+    use crate::agents_pay::deps::fixtures::{FakeClock, FakeMerchant, TempConfigStore};
+    use crate::agents_pay::deps::{Deps, PaymentsConnector};
+    use crate::agents_pay::flow;
+    use crate::agents_pay::policy::FixedResolver;
+    use std::cell::Cell;
+    use std::time::{Duration, Instant};
+    use toolkit_aws::testing::{FakeChunk, FakeStreamingTransport};
+
+    struct Clocked(Cell<Instant>);
+    impl PaymentClock for Clocked {
+        fn now(&self) -> Instant {
+            self.0.get()
+        }
+        fn sleep(&self, duration: Duration) {
+            self.0.set(self.0.get() + duration);
+        }
+    }
+
+    struct Connector<'a> {
+        transport: &'a FakeStreamingTransport,
+        clock: &'a Clocked,
+    }
+    impl PaymentsConnector for Connector<'_> {
+        fn profile_region(&self) -> Option<String> {
+            None
+        }
+        fn open<'s>(
+            &'s self,
+            region: &str,
+            _manager_arn: &str,
+            deadline: Instant,
+        ) -> Result<Box<dyn PaymentsApi + 's>, String> {
+            Ok(Box::new(PaymentClient {
+                transport: self.transport,
+                signer: &toolkit_aws::NoSigner,
+                region: region.to_owned(),
+                clock: self.clock,
+                jitter: Some(&toolkit_aws::NoJitter),
+                operation_deadline: Some(deadline),
+            }))
+        }
+    }
+
+    #[test]
+    fn t_order_post_throttling_after_retries_is_one_logical_authorization() {
+        let mut transport = FakeStreamingTransport::new();
+        for _ in 0..6 {
+            transport = transport.respond(
+                400,
+                &[("x-amzn-ErrorType", "ThrottlingException")],
+                vec![FakeChunk::data(
+                    br#"{"message":"slow down payment-session-TEST"}"#,
+                )],
+            );
+        }
+        let clock = Clocked(Cell::new(Instant::now()));
+        let connector = Connector {
+            transport: &transport,
+            clock: &clock,
+        };
+        let store = TempConfigStore::new(
+            "throttle",
+            &parse_json(r#"{"resources":{"payment_manager_arn":"arn:aws:bedrock-agentcore:us-east-1:111111111111:payment-manager/test-abcdefghij","payment_instrument_id":"payment-instrument-TEST12345678901","payment_session_id":"ps-1","user_id":"agents-pay-0123456789ab"},"policy":{"max_per_payment_usd":"0.50","allowed_networks":["eip155:84532"],"allowed_assets":{"eip155:84532":["0x036cbd53842c5426634e7929541ec2318f3dcf7e"]},"allowed_recipients":["0x1111111111111111111111111111111111111111"]}}"#).unwrap(),
+        );
+        let merchant = FakeMerchant::new();
+        merchant.respond(
+            402,
+            &[],
+            br#"{"x402Version":2,"accepts":[{"scheme":"exact","network":"eip155:84532","asset":"0x036cbd53842c5426634e7929541ec2318f3dcf7e","payTo":"0x1111111111111111111111111111111111111111","amount":"100000"}]}"#,
+        );
+        merchant.respond(200, &[], b"never");
+        let resolver =
+            FixedResolver::new().with_host("merchant.test", vec!["93.184.216.34".parse().unwrap()]);
+        let flow_clock = FakeClock::at_unix(1_800_000_000);
+        let deps = Deps {
+            config: &store,
+            payments: &connector,
+            merchant: &merchant,
+            resolver: &resolver,
+            clock: &flow_clock,
+        };
+        let out = flow::fetch(&deps, "https://merchant.test/v1/x402-test", None, "GET");
+        assert_eq!(
+            out.get("reason").and_then(Json::as_str),
+            Some("ClientError during payment flow.")
+        );
+        let requests = transport.requests();
+        assert_eq!(
+            requests.len(),
+            usize::try_from(toolkit_aws::RetryPolicy::default().total_attempts()).unwrap()
+        );
+        assert!(requests.iter().all(|r| r.body == requests[0].body));
+        let body = String::from_utf8(requests[0].body.clone()).unwrap();
+        assert!(body.contains(
+            r#""clientToken":"c4293dfd364640b953d5ab169ea31f99eed39e706ace87581a511c65b06c2a87""#
+        ));
+        assert_eq!(merchant.proof_sends(), 0);
+        assert_eq!(merchant.requests().len(), 1);
+        assert!(!flow::render(&out).contains("slow down"));
     }
 }

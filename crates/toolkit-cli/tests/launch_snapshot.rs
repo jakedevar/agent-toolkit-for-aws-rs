@@ -2,6 +2,8 @@
 //! binary level (#5317): missing arguments, the output check before any
 //! request, the default build's network refusal and one real apply into a
 //! temporary repository built with the `git` binary. No network.
+#[cfg(feature = "agents-pay-live")]
+compile_error!("agents-pay-live is never built for tests (AC3)");
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};

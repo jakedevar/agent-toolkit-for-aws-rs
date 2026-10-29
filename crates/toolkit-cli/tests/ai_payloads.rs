@@ -15,6 +15,9 @@
 //! The tests go through the real binary, so they pin the command's JSON and
 //! text contract rather than a private API.
 
+#[cfg(feature = "agents-pay-live")]
+compile_error!("agents-pay-live is never built for tests (AC3)");
+
 use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};

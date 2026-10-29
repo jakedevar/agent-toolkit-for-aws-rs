@@ -90,6 +90,9 @@
 //! function or constant block too (#4880). The README section "Slices without a live
 //! AWS client" is the guide for slice authors.
 
+#[cfg(feature = "agents-pay-live")]
+compile_error!("agents-pay-live is never built for tests (AC3)");
+
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};

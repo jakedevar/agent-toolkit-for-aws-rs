@@ -1,4 +1,7 @@
 //! Contract cases AP-RW-01 through AP-RW-27; no service or Python execution.
+#[cfg(feature = "agents-pay-live")]
+compile_error!("agents-pay-live is never built for tests (AC3)");
+
 use serde_json::{json, Value};
 use std::{
     fs,
