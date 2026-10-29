@@ -24,8 +24,8 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use plugin_stage::launcher::{check_launchers, launcher_snippet};
 use plugin_stage::declaration::check_package_root;
+use plugin_stage::launcher::{check_launchers, launcher_snippet};
 use plugin_stage::manifest::{tracked_package_files, verify_package, verify_staged};
 use plugin_stage::stage::{self, Probe};
 use plugin_stage::{Declaration, Destination, DECLARATION_PATH};

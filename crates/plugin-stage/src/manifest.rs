@@ -190,9 +190,7 @@ impl StagingManifest {
                 required_str(&root, "package_root", "manifest")?.to_string(),
             ),
             _ => {
-                return Err(
-                    "manifest: needs exactly one of `plugin` or `package_root`".to_string(),
-                )
+                return Err("manifest: needs exactly one of `plugin` or `package_root`".to_string())
             }
         };
         Ok(Self {

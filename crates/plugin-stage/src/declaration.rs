@@ -61,7 +61,9 @@ impl Destination {
     #[must_use]
     pub fn label(&self) -> String {
         match self {
-            Self::Plugin(plugin) => format!("plugin {}", escape_untrusted(plugin, DEFAULT_MAX_CHARS)),
+            Self::Plugin(plugin) => {
+                format!("plugin {}", escape_untrusted(plugin, DEFAULT_MAX_CHARS))
+            }
             Self::PackageRoot(root) => {
                 format!("package_root {}", escape_untrusted(root, DEFAULT_MAX_CHARS))
             }
@@ -249,8 +251,9 @@ impl Declaration {
     /// package binary is never resolved by a plugin launcher).
     #[must_use]
     pub fn binary(&self, plugin: &str, name: &str) -> Option<&BinarySpec> {
-        self.plugin_binaries(plugin)
-            .find(|binary| binary.name == name)
+        self.binaries
+            .iter()
+            .find(|binary| binary.plugin() == Some(plugin) && binary.name == name)
     }
 
     /// The declared binaries of one plugin.
@@ -262,9 +265,9 @@ impl Declaration {
 
     /// The declared binaries of one package destination.
     pub fn package_binaries<'a>(&'a self, root: &'a str) -> impl Iterator<Item = &'a BinarySpec> {
-        self.binaries.iter().filter(move |binary| {
-            matches!(&binary.destination, Destination::PackageRoot(r) if r == root)
-        })
+        self.binaries.iter().filter(
+            move |binary| matches!(&binary.destination, Destination::PackageRoot(r) if r == root),
+        )
     }
 
     /// The declared binaries of one destination.
@@ -280,7 +283,10 @@ impl Declaration {
     /// Distinct plugins that ship at least one binary.
     #[must_use]
     pub fn plugins(&self) -> BTreeSet<&str> {
-        self.binaries.iter().filter_map(BinarySpec::plugin).collect()
+        self.binaries
+            .iter()
+            .filter_map(BinarySpec::plugin)
+            .collect()
     }
 
     /// Distinct package destinations.
@@ -521,8 +527,7 @@ pub fn check_package_root(repo_root: &Path, root: &str) -> Vec<String> {
     }
     let mut problems = Vec::new();
     let regular = |name: &str| {
-        std::fs::symlink_metadata(dir.join(name))
-            .is_ok_and(|meta| meta.file_type().is_file())
+        std::fs::symlink_metadata(dir.join(name)).is_ok_and(|meta| meta.file_type().is_file())
     };
     if !regular("package.json") {
         problems.push(format!(

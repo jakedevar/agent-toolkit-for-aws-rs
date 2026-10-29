@@ -226,7 +226,13 @@ fn t_pkg_decl_package_root_paths_are_refused() {
         "plugins/aws-agents/bin/pkg",
         "plugins/aws-agents/bin/linux-x86_64/pkg",
     ] {
-        let entry = ENTRY.replace("pkgs/demo", &root.replace('\\', "\\\\").replace('\n', "\\n").replace('\u{1b}', "\\u001b"));
+        let entry = ENTRY.replace(
+            "pkgs/demo",
+            &root
+                .replace('\\', "\\\\")
+                .replace('\n', "\\n")
+                .replace('\u{1b}', "\\u001b"),
+        );
         let error = parse(&[&entry]).expect_err(root);
         assert!(error.contains("package_root"), "{root:?}: {error}");
         assert!(
@@ -248,10 +254,8 @@ fn t_pkg_decl_package_root_paths_are_refused() {
 
 #[test]
 fn t_pkg_decl_subprocess_is_the_role_of_package_destinations() {
-    let plugin_subprocess = ENTRY.replace(
-        "\"package_root\": \"pkgs/demo\"",
-        "\"plugin\": \"demo\"",
-    );
+    let plugin_subprocess =
+        ENTRY.replace("\"package_root\": \"pkgs/demo\"", "\"plugin\": \"demo\"");
     let error = parse(&[&plugin_subprocess]).expect_err("plugin subprocess");
     assert!(error.contains("subprocess"), "{error}");
     for role in ["mcp-server", "hook"] {
@@ -346,7 +350,11 @@ fn t_pkg_decl_launcher_refuses_the_subprocess_role() {
     );
     assert_eq!(output.status.code(), Some(1), "{}", stderr(&output));
     assert!(output.stdout.is_empty());
-    assert!(stderr(&output).contains("subprocess"), "{}", stderr(&output));
+    assert!(
+        stderr(&output).contains("subprocess"),
+        "{}",
+        stderr(&output)
+    );
 }
 
 #[test]
@@ -399,7 +407,10 @@ fn t_pkg_stage_a_package_destination_uses_the_plugin_layout() {
         dispatcher_script("toolkit")
     );
     let manifest = fs::read_to_string(bin.join("manifest.json")).expect("manifest");
-    assert!(manifest.contains("\"package_root\": \"pkgs/demo\""), "{manifest}");
+    assert!(
+        manifest.contains("\"package_root\": \"pkgs/demo\""),
+        "{manifest}"
+    );
     assert!(!manifest.contains("\"plugin\""), "{manifest}");
     assert!(manifest.contains("\"agents-pay-live\""), "{manifest}");
     #[cfg(unix)]
@@ -417,7 +428,11 @@ fn t_pkg_stage_a_package_destination_uses_the_plugin_layout() {
         }
         assert_eq!(mode("manifest.json"), 0o644);
     }
-    assert!(fixture.verify(true).is_empty(), "{:#?}", fixture.verify(true));
+    assert!(
+        fixture.verify(true).is_empty(),
+        "{:#?}",
+        fixture.verify(true)
+    );
     assert!(
         fixture.verify_package().is_empty(),
         "{:#?}",
@@ -490,21 +505,35 @@ fn t_pkg_verify_covers_package_destinations() {
     assert_flags(&fixture.verify(false), "pkgs/demo/bin/extra: not listed");
 
     let fixture = Fixture::staged();
-    fs::write(fixture.bin().join("linux-x86_64/toolkit"), "#!/bin/sh\nexit 9\n").expect("write");
+    fs::write(
+        fixture.bin().join("linux-x86_64/toolkit"),
+        "#!/bin/sh\nexit 9\n",
+    )
+    .expect("write");
     assert_flags(&fixture.verify(false), "sha256 differs");
 
     let fixture = Fixture::new();
     fixture
         .stage(&[Platform::LinuxX86_64], &provenance(false))
         .expect("stage one platform");
-    assert!(fixture.verify(false).is_empty(), "{:#?}", fixture.verify(false));
+    assert!(
+        fixture.verify(false).is_empty(),
+        "{:#?}",
+        fixture.verify(false)
+    );
     let missing = fixture.verify(true);
     assert_eq!(missing.len(), 4, "{missing:#?}");
-    assert!(missing.iter().all(|p| p.contains("toolkit is not staged for")));
+    assert!(missing
+        .iter()
+        .all(|p| p.contains("toolkit is not staged for")));
 
     let fixture = Fixture::new();
     assert_flags(&fixture.verify(true), "pkgs/demo/bin: not staged");
-    assert!(fixture.verify(false).is_empty(), "{:#?}", fixture.verify(false));
+    assert!(
+        fixture.verify(false).is_empty(),
+        "{:#?}",
+        fixture.verify(false)
+    );
 }
 
 #[cfg(unix)]
@@ -562,7 +591,10 @@ fn t_pkg_verify_check_refuses_a_tracked_file_under_a_package_bin() {
     let output = plugin_stage(&fixture.dir, &["check", "--root", &root], None);
     assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
 
-    git(&fixture.dir, &["add", "--force", "pkgs/demo/bin/manifest.json"]);
+    git(
+        &fixture.dir,
+        &["add", "--force", "pkgs/demo/bin/manifest.json"],
+    );
     let problems = tracked_package_files(&fixture.dir, &declaration);
     assert_flags(&problems, "pkgs/demo/bin/manifest.json");
     assert_flags(&problems, "tracked");
@@ -619,17 +651,26 @@ fn t_pkg_pack_negatives_fail_and_agree_with_verify_complete() {
         ),
         (
             "dirty manifest",
-            Box::new(|f: &Fixture| f.edit_manifest("\"source_dirty\": false", "\"source_dirty\": true")),
+            Box::new(|f: &Fixture| {
+                f.edit_manifest("\"source_dirty\": false", "\"source_dirty\": true")
+            }),
             "dirty tree",
         ),
         (
             "manifest of another destination",
-            Box::new(|f: &Fixture| f.edit_manifest("\"package_root\": \"pkgs/demo\"", "\"package_root\": \"pkgs/other\"")),
+            Box::new(|f: &Fixture| {
+                f.edit_manifest(
+                    "\"package_root\": \"pkgs/demo\"",
+                    "\"package_root\": \"pkgs/other\"",
+                )
+            }),
             "names package_root",
         ),
         (
             "manifest of a plugin",
-            Box::new(|f: &Fixture| f.edit_manifest("\"package_root\": \"pkgs/demo\"", "\"plugin\": \"demo\"")),
+            Box::new(|f: &Fixture| {
+                f.edit_manifest("\"package_root\": \"pkgs/demo\"", "\"plugin\": \"demo\"")
+            }),
             "names plugin",
         ),
         (
@@ -684,17 +725,32 @@ fn t_pkg_pack_negatives_fail_and_agree_with_verify_complete() {
         ),
         (
             "wrong layout",
-            Box::new(|f: &Fixture| f.edit_manifest("\"path\": \"linux-x86_64/toolkit\"", "\"path\": \"linux-x86_64/toolkit2\"")),
+            Box::new(|f: &Fixture| {
+                f.edit_manifest(
+                    "\"path\": \"linux-x86_64/toolkit\"",
+                    "\"path\": \"linux-x86_64/toolkit2\"",
+                )
+            }),
             "expected layout path",
         ),
         (
             "wrong target",
-            Box::new(|f: &Fixture| f.edit_manifest("\"triple\": \"x86_64-apple-darwin\"", "\"triple\": \"x86_64-apple-ios\"")),
+            Box::new(|f: &Fixture| {
+                f.edit_manifest(
+                    "\"triple\": \"x86_64-apple-darwin\"",
+                    "\"triple\": \"x86_64-apple-ios\"",
+                )
+            }),
             "but the declaration says",
         ),
         (
             "wrong platform",
-            Box::new(|f: &Fixture| f.edit_manifest("\"platform\": \"macos-x86_64\"", "\"platform\": \"plan9-x86_64\"")),
+            Box::new(|f: &Fixture| {
+                f.edit_manifest(
+                    "\"platform\": \"macos-x86_64\"",
+                    "\"platform\": \"plan9-x86_64\"",
+                )
+            }),
             "unknown platform",
         ),
         (
@@ -704,7 +760,9 @@ fn t_pkg_pack_negatives_fail_and_agree_with_verify_complete() {
         ),
         (
             "wrong package",
-            Box::new(|f: &Fixture| f.edit_manifest("\"package\": \"toolkit-cli\"", "\"package\": \"other\"")),
+            Box::new(|f: &Fixture| {
+                f.edit_manifest("\"package\": \"toolkit-cli\"", "\"package\": \"other\"")
+            }),
             "but the declaration says",
         ),
     ];
@@ -812,7 +870,11 @@ fn t_pkg_pack_a_dirty_stage_is_refused() {
         Some(&path),
     );
     assert_eq!(output.status.code(), Some(1), "{}", stderr(&output));
-    assert!(stderr(&output).contains("dirty tree"), "{}", stderr(&output));
+    assert!(
+        stderr(&output).contains("dirty tree"),
+        "{}",
+        stderr(&output)
+    );
 }
 
 #[test]
@@ -849,7 +911,11 @@ fn t_pkg_pack_undeclared_roots_and_missing_declarations_fail_closed() {
         Some(&path),
     );
     assert_eq!(output.status.code(), Some(1), "{}", stderr(&output));
-    assert!(stderr(&output).contains(DECLARATION_PATH), "{}", stderr(&output));
+    assert!(
+        stderr(&output).contains(DECLARATION_PATH),
+        "{}",
+        stderr(&output)
+    );
 
     // A missing package root fails closed.
     let output = plugin_stage(
@@ -867,10 +933,21 @@ fn t_pkg_pack_usage_errors_and_hostile_arguments() {
     for args in [
         &["verify-package", "--package-root", "."][..],
         &["verify-package", "--complete"][..],
-        &["verify-package", "--package-root", ".", "--complete", "extra"][..],
+        &[
+            "verify-package",
+            "--package-root",
+            ".",
+            "--complete",
+            "extra",
+        ][..],
     ] {
         let output = plugin_stage(&fixture.package(), args, Some(&path));
-        assert_eq!(output.status.code(), Some(2), "{args:?}: {}", stderr(&output));
+        assert_eq!(
+            output.status.code(),
+            Some(2),
+            "{args:?}: {}",
+            stderr(&output)
+        );
     }
     let hostile = "x\u{1b}[2J\nplugin-stage: forged OK";
     let output = plugin_stage(
@@ -882,7 +959,9 @@ fn t_pkg_pack_usage_errors_and_hostile_arguments() {
     let text = stderr(&output);
     assert!(!text.contains('\u{1b}'), "{text:?}");
     assert!(
-        !text.lines().any(|line| line.starts_with("plugin-stage: forged")),
+        !text
+            .lines()
+            .any(|line| line.starts_with("plugin-stage: forged")),
         "{text:?}"
     );
 }
@@ -927,8 +1006,12 @@ fn t_pkg_inv_the_launcher_contract_is_identical_with_and_without_packages() {
         assert_eq!(
             launcher_snippet(binary).expect("plugin launcher"),
             launcher_snippet(
-                with.select(&format!("{}/{}", binary.plugin().expect("plugin"), binary.name))
-                    .expect("same binary")
+                with.select(&format!(
+                    "{}/{}",
+                    binary.plugin().expect("plugin"),
+                    binary.name
+                ))
+                .expect("same binary")
             )
             .expect("plugin launcher")
         );
@@ -963,7 +1046,10 @@ fn t_pkg_nolive_no_test_target_stages_the_real_declaration() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut sources = Vec::new();
     for dir in ["tests", "tests/common", "src"] {
-        for entry in fs::read_dir(crate_dir.join(dir)).expect("list").filter_map(Result::ok) {
+        for entry in fs::read_dir(crate_dir.join(dir))
+            .expect("list")
+            .filter_map(Result::ok)
+        {
             if entry.path().extension().is_some_and(|ext| ext == "rs") {
                 sources.push(entry.path());
             }
