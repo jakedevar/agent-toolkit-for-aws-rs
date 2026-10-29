@@ -1181,3 +1181,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
   Filed docgraph S2 #5489 -> Claude Opus a0ab0de1 (sandbox cdc468a2; also #5484 if cheap).
   4/4: a0ab0de1 S2, 9441f443 #5478, 27f4dc18 #5360, cfb95bf6 L7. Queue: #5472 (3042), S1 (3044).
 - 21:50Z: #5472 shard script LANDED (landed_sha e19a06879a1b2914d6d5a08ed33fa2942c0b347a). Shard job lane now usable. Queue: S1 (3044).
+- 22:15Z: docgraph S1 LANDED (e04f364b, landed_sha 233902a613d2a3b9b3718779e273998f6e73f29b); #5366 auto-closed. CLOSED #5428 #5429 #5465 #5482. #4886 open: S2 #5489 in flight, then S3/S4/S6; P3 #5484.
+  S6+B2 integration -> Claude Sonnet ce95436a (continue_from be2767ad on #5462; action 7016abd8 QUEUED for a slot, 4/4 busy). Produces A (S6 on rolling) then B (B2 on A). Enqueue A (issue 5462, source ce95436a), then B (issue 5443). On land close #5462 #5474 #5475 #5487 / #5443 #5483.
+  Queue empty.
