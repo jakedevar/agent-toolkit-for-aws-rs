@@ -22,21 +22,6 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use toolkit_core::is_unsafe_char;
 
-/// The bare-slot names that exist in the 23 real templates (section 1.4). A
-/// bare slot is a typed expression, so a name without a row in the type table
-/// of section 4.4.1 is a lint error (rule 6). The table itself (`types.rs`) is
-/// slice S2b; until then this closed list is the type table's name column.
-pub(crate) const TYPED_BARE_SLOTS: [&str; 9] = [
-    "ACCEPT_EULA",
-    "CONCURRENCY",
-    "INPUT_TOKENS_MEAN",
-    "INPUT_TOKENS_STDDEV",
-    "METRICS_LIST",
-    "OUTPUT_TOKENS_MEAN",
-    "OUTPUT_TOKENS_STDDEV",
-    "REQUEST_COUNT",
-    "TRUE_OR_FALSE",
-];
 
 /// Characters of a comment kept for a manual edit point.
 const MANUAL_TEXT_CHARS: usize = 60;
@@ -1149,7 +1134,7 @@ fn slot_violations(occurrences: &[Occurrence]) -> Vec<Violation> {
     for occurrence in occurrences {
         match occurrence.context {
             Context::Bare => {
-                if !TYPED_BARE_SLOTS.contains(&occurrence.name.as_str()) {
+                if super::types::slot_type(&occurrence.name).is_none() {
                     violations.push(Violation {
                         code: "untyped_bare_slot",
                         line: occurrence.line,

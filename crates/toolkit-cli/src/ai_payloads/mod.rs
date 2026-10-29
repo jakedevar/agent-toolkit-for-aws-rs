@@ -23,6 +23,7 @@ use crate::{Invocation, Output};
 
 mod place;
 mod template;
+mod types;
 
 use template::Template;
 
