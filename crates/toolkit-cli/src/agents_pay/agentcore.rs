@@ -1087,6 +1087,46 @@ mod wire_contracts {
     }
 
     #[test]
+    fn instrument_response_rejects_invalid_nested_and_required_members() {
+        let good = r#"{"paymentInstrument":{"paymentInstrumentId":"pi","paymentManagerArn":"arn","paymentConnectorId":"connector","userId":"user","paymentInstrumentType":"EMBEDDED_CRYPTO_WALLET","paymentInstrumentDetails":{"embeddedCryptoWallet":{"network":"ETHEREUM","linkedAccounts":[{"email":{"emailAddress":"user@example.com"}}]}},"createdAt":1,"status":"ACTIVE","updatedAt":1}}"#;
+        for bad in [
+            good.replace(
+                r#""paymentInstrumentId":"pi""#,
+                r#""paymentInstrumentId":null"#,
+            ),
+            good.replace(r#""createdAt":1"#, r#""createdAt":"invalid""#),
+            good.replace(r#""status":"ACTIVE""#, r#""status":null"#),
+            good.replace(r#""network":"ETHEREUM""#, r#""network":null"#),
+            good.replace(
+                r#","linkedAccounts":[{"email":{"emailAddress":"user@example.com"}}]"#,
+                "",
+            ),
+            good.replace(
+                r#""linkedAccounts":[{"email":{"emailAddress":"user@example.com"}}]"#,
+                r#""linkedAccounts":null"#,
+            ),
+        ] {
+            let transport = FakeStreamingTransport::new().respond(
+                201,
+                &[],
+                vec![FakeChunk::data(bad.as_bytes())],
+            );
+            let client = PaymentClient::new("us-east-1", &transport, &NoSigner).unwrap();
+            assert_eq!(
+                client.create_instrument(
+                    "arn",
+                    "user",
+                    "connector",
+                    "ETHEREUM",
+                    "user@example.com",
+                    "token"
+                ),
+                Err(PaymentError::InvalidResponse)
+            );
+        }
+    }
+
+    #[test]
     fn deadline_timeout_never_retries() {
         let transport = FakeStreamingTransport::new()
             .open_error(AwsError::timeout(
