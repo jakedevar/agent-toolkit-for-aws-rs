@@ -223,6 +223,63 @@ fn t_ar_read_13b_simple_case_folding_sharp_s_collides_5132() {
     );
 }
 
+/// Upload is divergence-free parity with Python (decision 1; #5504 PM ruling):
+/// the duplicate and file/directory-prefix policy is the Snapshot extraction
+/// boundary, so Upload still reads a case pair, an NFC pair and a folded
+/// file/directory prefix pair, while Snapshot refuses each.
+#[test]
+fn t_ar_read_12_13_upload_keeps_case_nfc_and_prefix_parity_snapshot_refuses_5504() {
+    let cases: [(&str, Vec<FxEntry>); 6] = [
+        (
+            "case pair",
+            vec![
+                FxEntry::stored("root/README", b"1"),
+                FxEntry::stored("root/readme", b"2"),
+            ],
+        ),
+        (
+            "NFC pair",
+            vec![
+                FxEntry::stored("root/caf\u{e9}", b"1"),
+                FxEntry::stored("root/cafe\u{301}", b"2"),
+            ],
+        ),
+        (
+            "sharp s pair",
+            vec![
+                FxEntry::stored("root/\u{df}.txt", b"1"),
+                FxEntry::stored("root/\u{1e9e}.txt", b"2"),
+            ],
+        ),
+        (
+            "file and directory prefix",
+            vec![
+                FxEntry::stored("root/a", b"1"),
+                FxEntry::stored("root/a/b", b"2"),
+            ],
+        ),
+        (
+            "folded file and directory prefix",
+            vec![
+                FxEntry::stored("root/A", b"1"),
+                FxEntry::stored("root/a/b", b"2"),
+            ],
+        ),
+        (
+            "directory entry and folded file",
+            vec![FxEntry::dir("root/x/"), FxEntry::stored("root/X", b"1")],
+        ),
+    ];
+    for (label, entries) in cases {
+        let count = entries.len();
+        assert_eq!(upload(entries.clone()), Ok(count), "upload parity: {label}");
+        assert!(
+            message(snapshot(entries)).starts_with("Archive contains"),
+            "snapshot refuses: {label}"
+        );
+    }
+}
+
 #[test]
 fn t_ar_read_13c_simple_case_folding_file_directory_conflict_5132() {
     // The file ß and the directory path ẞ/x, in either order and with an

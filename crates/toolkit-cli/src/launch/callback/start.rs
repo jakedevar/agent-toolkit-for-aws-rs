@@ -68,7 +68,7 @@ pub fn command(invocation: &Invocation, output: &mut Output<'_>) -> Result<(), T
         {
             return output.line(&started(true, &base));
         }
-        let client = match obtain_client(&env, &dir, session.as_ref(), now) {
+        let client = match obtain_client(&env, &dir, session.as_ref(), now, output) {
             Ok(StartClient::Refreshed) => return output.line(&started(false, &base)),
             Ok(StartClient::Interactive(client)) => client,
             Err(message) => return failure(output, message),
@@ -151,6 +151,7 @@ fn obtain_client(
     _dir: &std::path::Path,
     session: Option<&state::StoredSession>,
     now: i64,
+    _output: &mut Output<'_>,
 ) -> Result<StartClient, &'static str> {
     let Some(session) = session.filter(|s| s.client_expires_at > now) else {
         return Err("The sign-in service transport is unavailable.");
@@ -169,6 +170,7 @@ fn obtain_client(
     dir: &std::path::Path,
     session: Option<&state::StoredSession>,
     now: i64,
+    output: &mut Output<'_>,
 ) -> Result<StartClient, &'static str> {
     use crate::launch::http::SystemClock;
     use toolkit_aws::{
@@ -206,7 +208,25 @@ fn obtain_client(
             scopes: session.scopes.clone(),
         }));
     }
-    let (issuer, _) = config::resolve_issuer_url(env).map_err(|_| "Invalid sign-in issuer.")?;
+    register_client(&oidc, env, now, output).map(StartClient::Interactive)
+}
+
+/// Interactive client registration. For a `LAUNCH_WITH_AWS_IDC_ISSUER_URL`
+/// override the `Using non-default IdC issuer URL: <shown>` warning goes to
+/// stderr through the guarded output before the request (design section 1.4
+/// item 10 and R-TOK-OIDC; #5504).
+#[cfg(any(test, feature = "aws-sdk"))]
+fn register_client(
+    oidc: &oidc::Oidc<'_>,
+    env: &dyn Env,
+    now: i64,
+    output: &mut Output<'_>,
+) -> Result<Client, &'static str> {
+    let (issuer, warning) =
+        config::resolve_issuer_url(env).map_err(|_| "Invalid sign-in issuer.")?;
+    if let Some(warning) = warning {
+        output.diagnostic(&warning);
+    }
     let scopes = env
         .var(config::ENV_SCOPES)
         .filter(|s| !s.is_empty())
@@ -226,6 +246,107 @@ fn obtain_client(
         now,
         std::time::Instant::now() + std::time::Duration::from_secs(30),
     )
-    .map(StartClient::Interactive)
     .map_err(|_| "Could not register the sign-in client.")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::launch::http::SystemClock;
+    use toolkit_aws::env::MapEnv;
+    use toolkit_aws::retry::{NoJitter, RetryPolicy};
+    use toolkit_aws::testing::{FakeChunk, FakeStreamingTransport, RecordingSleeper};
+
+    const ISSUER: &str = "https://my-org.awsapps.com/start";
+
+    /// Run `register_client` behind the stored-session sink with a scripted
+    /// registration response; return the result, stdout, stderr, exit status
+    /// and the request bodies.
+    fn register(
+        env: &MapEnv,
+        status: u16,
+    ) -> (
+        Result<Client, &'static str>,
+        String,
+        String,
+        u8,
+        Vec<String>,
+    ) {
+        let fake = FakeStreamingTransport::new().respond(
+            status,
+            &[],
+            vec![FakeChunk::Data(
+                br#"{"clientId":"id","clientSecret":"FAKE-L7-CLIENT-SECRET"}"#.to_vec(),
+            )],
+        );
+        let sleeper = RecordingSleeper::new();
+        let oidc = oidc::Oidc {
+            transport: &fake,
+            clock: &SystemClock,
+            sleeper: &sleeper,
+            jitter: &NoJitter,
+            policy: RetryPolicy::none(),
+        };
+        let (mut out, mut err) = (Vec::new(), Vec::new());
+        let (result, status) = {
+            let mut output = Output::with_diagnostics(&mut out, &mut err);
+            crate::launch::sink::guard_in(None, &mut output);
+            let result = register_client(&oidc, env, 0, &mut output);
+            (result, output.exit_status())
+        };
+        let bodies = fake
+            .requests()
+            .iter()
+            .map(|request| String::from_utf8(request.body.clone()).unwrap())
+            .collect();
+        (
+            result,
+            String::from_utf8(out).unwrap(),
+            String::from_utf8(err).unwrap(),
+            status,
+            bodies,
+        )
+    }
+
+    /// R-TOK-OIDC (#5504): an issuer override prints the documented warning on
+    /// stderr, once, on registration (also when registration then fails); the
+    /// default issuer prints nothing; a refused override prints nothing and
+    /// sends no request; stdout stays empty.
+    #[test]
+    fn t_url_issuer_override_warning_is_emitted_on_registration() {
+        let warning = format!("Using non-default IdC issuer URL: {ISSUER}\n");
+        let custom = MapEnv::new().with(config::ENV_IDC_ISSUER_URL, ISSUER);
+
+        let (result, stdout, stderr, status, bodies) = register(&custom, 200);
+        assert_eq!(result.expect("registered").id, "id");
+        assert_eq!(
+            (stdout.as_str(), stderr.as_str(), status),
+            ("", warning.as_str(), 0)
+        );
+        assert_eq!(bodies.len(), 1);
+        assert!(
+            bodies[0].contains(&format!(r#""issuerUrl":"{ISSUER}""#)),
+            "{}",
+            bodies[0]
+        );
+
+        let (result, stdout, stderr, _, bodies) = register(&custom, 503);
+        assert_eq!(result.err(), Some("Could not register the sign-in client."));
+        assert_eq!((stdout.as_str(), stderr.as_str()), ("", warning.as_str()));
+        assert_eq!(bodies.len(), 1);
+
+        let (result, stdout, stderr, status, bodies) = register(&MapEnv::new(), 200);
+        assert!(result.is_ok());
+        assert_eq!((stdout.as_str(), stderr.as_str(), status), ("", "", 0));
+        assert!(bodies[0].contains(&format!(r#""issuerUrl":"{}""#, config::IDC_ISSUER_URL)));
+
+        let refused = MapEnv::new().with(
+            config::ENV_IDC_ISSUER_URL,
+            "http://my-org.awsapps.com/start",
+        );
+        let (result, stdout, stderr, _, bodies) = register(&refused, 200);
+        assert_eq!(result.err(), Some("Invalid sign-in issuer."));
+        assert_eq!((stdout.as_str(), stderr.as_str()), ("", ""));
+        assert!(bodies.is_empty());
+    }
 }

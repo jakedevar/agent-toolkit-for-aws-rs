@@ -117,10 +117,20 @@ exec "$b" "$@"
 
 /// A JSON launcher snippet for one declared binary, ready to paste into
 /// `hooks.json` (guard and hook roles) or `.mcp.json` (MCP role).
-#[must_use]
-pub fn launcher_snippet(binary: &BinarySpec) -> String {
+///
+/// # Errors
+///
+/// A `subprocess` binary (R-PKG-2) is spawned by code and has no launcher.
+pub fn launcher_snippet(binary: &BinarySpec) -> Result<String, String> {
     let root = ROOT_VARS[0];
     let value = match &binary.role {
+        Role::Subprocess => {
+            return Err(format!(
+                "{}/{} is declared subprocess: code spawns it directly and no launcher string may run it",
+                binary.destination.key(),
+                binary.name
+            ))
+        }
         Role::GuardHook { deny_reason } => Json::object(vec![
             ("type", Json::string("command")),
             (
@@ -142,7 +152,7 @@ pub fn launcher_snippet(binary: &BinarySpec) -> String {
             ),
         ]),
     };
-    value.to_pretty_string()
+    Ok(value.to_pretty_string())
 }
 
 /// Which host configuration a launcher string came from.
@@ -189,18 +199,20 @@ pub struct TemplateMatch {
 }
 
 impl LauncherReport {
-    /// Declared binaries no launcher references yet (informational: a
-    /// binary may be staged before its launcher switch lands).
+    /// Declared plugin binaries no launcher references yet (informational: a
+    /// binary may be staged before its launcher switch lands). Package
+    /// destinations have no launchers, so they are never listed.
     #[must_use]
     pub fn unreferenced<'a>(&self, declaration: &'a Declaration) -> Vec<&'a BinarySpec> {
         declaration
             .binaries
             .iter()
+            .filter(|binary| binary.plugin().is_some())
             .filter(|binary| {
                 !self
                     .references
                     .iter()
-                    .any(|r| r.plugin == binary.plugin && r.name == binary.name)
+                    .any(|r| binary.plugin() == Some(r.plugin.as_str()) && r.name == binary.name)
             })
             .collect()
     }
@@ -966,6 +978,7 @@ fn canonical_forms(binary: &BinarySpec) -> Vec<(String, &'static str)> {
                 (reference, "bin-hook"),
             ]
         }
+        Role::Subprocess => Vec::new(),
     }
 }
 
@@ -993,7 +1006,7 @@ fn role_problem(
             (!canonical).then(|| {
                 format!(
                     "guard hook bin/{name} must use the canonical fail-closed launcher (print it with `plugin-stage launcher {}/{name}`)",
-                    binary.plugin
+                    binary.destination.key()
                 )
             })
         }

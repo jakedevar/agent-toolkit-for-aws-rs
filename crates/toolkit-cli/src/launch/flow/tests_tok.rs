@@ -277,6 +277,11 @@ fn t_tok_6_debug_of_every_launch_error_and_secret_holder() {
         ),
         format!("{:?}", Secret::new(ACCESS)),
         format!("{:?}", crate::launch::oidc::OidcError::SessionExpired),
+        // The callback's authorization-code holder (#5504).
+        format!(
+            "{:?}",
+            crate::launch::callback::Outcome::Code(REFRESH.into())
+        ),
     ];
     let joined = shown.join(" ");
     assert_clean("debug", &[&joined], &SEEDED);
