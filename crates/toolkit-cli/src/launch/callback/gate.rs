@@ -93,7 +93,11 @@ pub fn start_watchdog(
     });
 }
 
-fn watchdog_step(gate: &CommitGate, record_timeout: impl FnOnce(), exit: impl FnOnce(i32)) {
+pub(super) fn watchdog_step(
+    gate: &CommitGate,
+    record_timeout: impl FnOnce(),
+    exit: impl FnOnce(i32),
+) {
     let code = match gate.watchdog() {
         WatchdogAction::RecordTimeoutAndExit => {
             record_timeout();
@@ -129,7 +133,7 @@ pub fn publish_session(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn publish_with(
+pub(super) fn publish_with(
     gate: &CommitGate,
     cutoff: Instant,
     dir: &std::path::Path,

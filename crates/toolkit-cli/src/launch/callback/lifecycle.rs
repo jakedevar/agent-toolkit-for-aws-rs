@@ -51,7 +51,31 @@ pub fn run(
     announce: impl FnOnce(u16) -> io::Result<()>,
     exchange: impl FnOnce(&str, &str, Instant) -> Result<Vec<u8>, &'static str>,
 ) -> io::Result<HelperResult> {
-    let start = Instant::now();
+    run_with(
+        dir,
+        state,
+        wall_deadline,
+        announce,
+        exchange,
+        Instant::now,
+        |gate, deadline, record| gate::start_watchdog(gate, deadline, record),
+        listener::serve,
+    )
+}
+
+#[cfg(unix)]
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+fn run_with(
+    dir: &Path,
+    state: &str,
+    wall_deadline: i64,
+    announce: impl FnOnce(u16) -> io::Result<()>,
+    exchange: impl FnOnce(&str, &str, Instant) -> Result<Vec<u8>, &'static str>,
+    now: impl Fn() -> Instant,
+    watchdog: impl FnOnce(Arc<CommitGate>, Instant, Box<dyn FnOnce() + Send>),
+    serve: impl FnOnce(std::net::TcpListener, &str, Instant) -> io::Result<Option<Outcome>>,
+) -> io::Result<HelperResult> {
+    let start = now();
     let wall_now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|_| io::Error::other("clock unavailable"))?
@@ -76,10 +100,10 @@ pub fn run(
     )?;
     let gate = Arc::new(CommitGate::default());
     let watchdog_custody = Arc::clone(&custody);
-    gate::start_watchdog(
+    watchdog(
         Arc::clone(&gate),
         cutoff + Duration::from_secs(2),
-        move || {
+        Box::new(move || {
             let _ = watchdog_custody.write(
                 port,
                 wall_deadline,
@@ -88,10 +112,10 @@ pub fn run(
                 None,
                 &OsRandom,
             );
-        },
+        }),
     );
     announce(port)?;
-    let outcome = listener::serve(listener, state, flow_end)?;
+    let outcome = serve(listener, state, flow_end)?;
     let (status, reason, result) = match outcome {
         None => (PendingStatus::TimedOut, None, HelperResult::TimedOut),
         Some(Outcome::Denied(error)) => {
@@ -126,7 +150,16 @@ pub fn run(
             )?;
             let redirect = format!("http://127.0.0.1:{port}");
             match exchange(&code, &redirect, cutoff) {
-                Ok(bytes) => match gate::publish_session(&gate, cutoff, dir, &bytes, &OsRandom) {
+                Ok(bytes) => match gate::publish_with(
+                    &gate,
+                    cutoff,
+                    dir,
+                    &bytes,
+                    &OsRandom,
+                    &now,
+                    || {},
+                    |from, to| std::fs::rename(from, to),
+                ) {
                     Ok(()) => (PendingStatus::Succeeded, None, HelperResult::Succeeded),
                     Err(e) if e.kind() == io::ErrorKind::TimedOut => {
                         match publication_timeout(&gate) {
@@ -136,7 +169,7 @@ pub fn run(
                     }
                     Err(e) => return Err(e),
                 },
-                Err(reason) => match exchange_failure(&gate, Instant::now(), cutoff) {
+                Err(reason) => match exchange_failure(&gate, now(), cutoff) {
                     None => return Ok(HelperResult::TimedOut),
                     Some(HelperResult::TimedOut) => {
                         (PendingStatus::TimedOut, None, HelperResult::TimedOut)
@@ -156,6 +189,148 @@ pub fn run(
 #[cfg(test)]
 mod deadline_tests {
     use super::*;
+    fn wall_deadline() -> i64 {
+        i64::try_from(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+        )
+        .unwrap()
+            + 30
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn lifecycle_rejects_exchange_response_after_cutoff() {
+        use crate::launch::{callback::pending::read_record, tests_support::Scratch};
+        let scratch = Scratch::new("late-lifecycle");
+        let clock = std::cell::Cell::new(Instant::now());
+        let result = run_with(
+            scratch.path(),
+            "s",
+            wall_deadline(),
+            |_| Ok(()),
+            |_, _, cutoff| {
+                clock.set(cutoff + Duration::from_millis(1));
+                Ok(b"session".to_vec())
+            },
+            || clock.get(),
+            |_, _, _| {},
+            |_, _, _| Ok(Some(Outcome::Code("ok".into()))),
+        )
+        .unwrap();
+        assert_eq!(result, HelperResult::TimedOut);
+        assert!(!scratch.join("session.json").exists());
+        assert_eq!(
+            read_record(scratch.path(), std::process::id())
+                .unwrap()
+                .status,
+            PendingStatus::TimedOut
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn real_socket_lifecycle_records_exchange_and_success() {
+        use crate::launch::{callback::pending::read_record, tests_support::Scratch};
+        use std::io::Write;
+        let scratch = Scratch::new("real-lifecycle");
+        let result = run_with(
+            scratch.path(),
+            "s",
+            wall_deadline(),
+            |port| {
+                let mut stream =
+                    std::net::TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, port))?;
+                write!(
+                    stream,
+                    "GET /?state=s&code=ok HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\r\n"
+                )?;
+                Ok(())
+            },
+            |code, _, _| {
+                assert_eq!(code, "ok");
+                assert_eq!(
+                    read_record(scratch.path(), std::process::id())
+                        .unwrap()
+                        .status,
+                    PendingStatus::Exchanging
+                );
+                Ok(b"session".to_vec())
+            },
+            Instant::now,
+            |_, _, _| {},
+            listener::serve,
+        )
+        .unwrap();
+        assert_eq!(result, HelperResult::Succeeded);
+        assert_eq!(
+            read_record(scratch.path(), std::process::id())
+                .unwrap()
+                .status,
+            PendingStatus::Succeeded
+        );
+        assert_eq!(
+            std::fs::read(scratch.join("session.json")).unwrap(),
+            b"session"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn watchdog_aborts_blocked_exchange_without_late_publication() {
+        use crate::launch::{callback::pending::read_record, tests_support::Scratch};
+        let scratch = Scratch::new("blocked-lifecycle");
+        let (watch_tx, watch_rx) = std::sync::mpsc::sync_channel(1);
+        let (entered_tx, entered_rx) = std::sync::mpsc::sync_channel(0);
+        let (release_tx, release_rx) = std::sync::mpsc::sync_channel(0);
+        std::thread::scope(|scope| {
+            let path = scratch.path();
+            let worker = scope.spawn(move || {
+                run_with(
+                    path,
+                    "s",
+                    wall_deadline(),
+                    |_| Ok(()),
+                    |_, _, _| {
+                        entered_tx.send(()).unwrap();
+                        release_rx.recv().unwrap();
+                        Ok(b"session".to_vec())
+                    },
+                    Instant::now,
+                    |gate, _, record| {
+                        watch_tx.send((gate, record)).unwrap();
+                    },
+                    |_, _, _| Ok(Some(Outcome::Code("ok".into()))),
+                )
+            });
+            let (gate, record) = watch_rx.recv().unwrap();
+            entered_rx.recv().unwrap();
+            assert_eq!(
+                read_record(scratch.path(), std::process::id())
+                    .unwrap()
+                    .status,
+                PendingStatus::Exchanging
+            );
+            gate::watchdog_step(&gate, record, |code| assert_eq!(code, 1));
+            assert_eq!(
+                read_record(scratch.path(), std::process::id())
+                    .unwrap()
+                    .status,
+                PendingStatus::TimedOut
+            );
+            release_tx.send(()).unwrap();
+            assert_eq!(worker.join().unwrap().unwrap(), HelperResult::TimedOut);
+        });
+        assert!(!scratch.join("session.json").exists());
+        assert_eq!(
+            read_record(scratch.path(), std::process::id())
+                .unwrap()
+                .status,
+            PendingStatus::TimedOut
+        );
+    }
     #[test]
     fn exchange_failure_at_cutoff_reports_timeout() {
         let gate = CommitGate::default();
