@@ -191,4 +191,17 @@ mod tests {
             r#"{"ok":true,"result":{"paymentOutput":{"cryptoX402":{"payload":{"signature":"abc"}}}}}"#
         );
     }
+
+    #[test]
+    fn t_br_out_timestamp_and_nested_shapes() {
+        let session = toolkit_core::parse_json(r#"{"paymentSessionId":"s","paymentManagerArn":"m","userId":"u","expiryTimeInMinutes":10,"createdAt":"2026-08-07T00:00:00+0530","updatedAt":"2026-08-07T00:00:00Z"}"#).unwrap();
+        let result = session_result(&session).unwrap();
+        assert_eq!(result.get("result").unwrap().get("paymentSession").unwrap().get("createdAt").and_then(Json::as_str), Some("2026-08-07T00:00:00+05:30"));
+        let mut bad = session.clone();
+        if let Json::Object(fields) = &mut bad { fields.push(("availableLimits".into(), Json::Null)); }
+        assert!(session_result(&bad).is_err());
+        let mut bad = session;
+        if let Json::Object(fields) = &mut bad { fields.iter_mut().find(|(key, _)| key == "createdAt").unwrap().1 = Json::Int(1); }
+        assert!(session_result(&bad).is_err());
+    }
 }
