@@ -503,3 +503,7 @@ Friction: #4727, Rsi #4694, Rsi #4704
   4/4 busy: 41854b6c (#5017 S1), e91ab9e3 (#5018), 9b110cd7 (r20), 7f30f191 (#4497 repair).
 - 10-29 01:38Z: #5018 (e91ab9e3) on #4487 91ec1890: CHANGES_REQUESTED: #5022 P1 (fail-open guard via quoted/relative bin paths), #5023 (symlinked bin/manifest), #5024 (mcpServers path arrays skipped), #5025 (unsupported platform runs unlisted file), #5027 (untracked build inputs counted clean). RULINGS: #5022 fail closed (unresolvable bin mention rejected; guard hook byte-equal to canonical deny launcher); #5027 untracked non-ignored inputs => dirty. Repair 1 worker 9c9ccc2e (Opus high, continue_from 0f2c005c). Then narrow #5018 r2 (Codex sol high).
   4/4 busy: 41854b6c (#5017 S1), 9b110cd7 (r20), 7f30f191 (#4497 repair), 9c9ccc2e (#4487 repair).
+- 10-29 01:41Z: #4497 ACCEPTED on PM inspection at 6be5d3795c65170ea1174eb235d5659880d5b233 (7f30f191 repair; branch rsi/3843c957-...; count_node moved before key string(); check_landing ok scoped 31dfb7fe). Mailed r20 9b110cd7 (msg c36c2f3d): merge 6be5d379 + duty #5020. ON LAND close: #4497 #4998 #5021 #5026 #5020.
+  #4382 (launch-with-aws, wave 2) DESIGN worker fbfd341e (Opus high, build_free, rolling): docs/migration/launch-with-aws-design.md (OAuth callback, token, archive boundaries). Then pre-review (Codex sol high) per AC1, then slices.
+  Unstarted ports after #4382: #4397 #4410 #4411 #4386 (wave 3), #4414/#4415 (wave 4).
+  4/4 busy: 41854b6c (#5017 S1), 9b110cd7 (r20), 9c9ccc2e (#4487 repair), fbfd341e (#4382 design).
