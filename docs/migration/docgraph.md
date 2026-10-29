@@ -794,6 +794,39 @@ not authorization for a network experiment:
    If any bridge criterion fails, stop live enablement and revise the design;
    do not bypass signer checks, add a second stack or invent protocol codecs.
 
+#### S1 spike record, 2026-10-29 (#5366): gate not passed
+
+At `baee1137478b1b19eb099ce52fac31bfc1359f0b`, offline inspection did not
+establish the required bridge. The local Cargo registry contained
+`aws-sdk-dynamodb` 1.134.0 but no `aws-sdk-docdb`, `aws-sdk-cloudwatch`,
+`aws-sdk-ec2` or `aws-sdk-secretsmanager` source. No service dependencies were
+added, no service versions or features were selected, and no generated client
+was constructed. Consequently the HTTP boundary, auth/identity and retry spies,
+service feature closure, lockfile delta, licence/MSRV and dependency-size costs
+remain unverified. The absence of local sources is an evidence gap, not proof
+that a suitable bridge is impossible. Q4 remains open; the spike gate fails
+until those demonstrations exist. Follow-up: #5367.
+
+The current `FRAMING_HEADERS` list is host, content-length, transfer-encoding,
+te, trailer, connection, keep-alive, proxy-connection and upgrade. The existing
+signer refuses those headers and signs `request.body` as bytes; this source
+inspection does not prove generated-versus-sent equivalence or streaming safety.
+No signer check was changed. The base lockfile already contains `ring` 0.17.14:
+`cargo tree --offline --locked -i ring` traces it through example packages and
+the old rustls 0.21 stack. The scoped `cargo tree --offline --locked -p
+toolkit-cli --features aws-sdk -i ring` reports no dependency. An eventual audit
+must check the actual new closure and lockfile delta against this baseline; it
+cannot truthfully assert that the entire existing workspace lockfile is ring-free.
+
+The synthetic capture fixtures identify DocumentDB 5.0 with mongosh 2.3.1 and
+MongoDB 7.0 with mongosh 1.10.6, using canonical Extended JSON and capture
+envelope version 1. They are reconstructed, not live shell exports, as noted
+in S5. The design proposes GraphSON v2, but this inspection establishes no live
+endpoint/engine interoperability or GraphSON wire fixture matrix. Q5 remains
+open; these fixtures alone do not satisfy the support-matrix exit criterion.
+No network, DNS, credentials, live database or SDK bridge test was used for
+this record. S1 implementation must not proceed on the strength of it.
+
 Implementation slices remain Rust, use scoped optional service dependencies,
 daemon-owned jobs and independent exact-SHA review. Each owns a requirement/test
 matrix and deliberate CLI/output changes; no worker may treat this proposal as
