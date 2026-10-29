@@ -63,7 +63,7 @@ fn string_field(v: &Json, name: &str, pos: &str, errors: &mut Vec<String>) {
 fn reference(v: &Json, pos: &str, errors: &mut Vec<String>) {
     match v.get("reference_answer") {
         Some(r @ Json::Object(_)) => {
-            string_field(r, "text", &format!("{pos}.reference_answer"), errors)
+            string_field(r, "text", &format!("{pos}.reference_answer"), errors);
         }
         _ => errors.push(format!("{pos}.reference_answer.text: expected string")),
     }
@@ -132,7 +132,7 @@ fn validate_event(event: &Json, format: &str, batch: bool, errors: &mut Vec<Stri
                     _ => errors.push(format!(
                         "{p}.extra_info.reference_answer.text: expected string"
                     )),
-                };
+                }
                 if v.get("reward_model")
                     .is_some_and(|x| !matches!(x, Json::Object(_)))
                 {
@@ -183,12 +183,11 @@ fn validate_response(
                 errors.push("body: expected JSON string, not a nested value".into());
                 return None;
             };
-            match parse_json(s) {
-                Ok(Json::Array(a)) => (a, "B"),
-                _ => {
-                    errors.push("body: expected JSON string containing a result list".into());
-                    return None;
-                }
+            if let Ok(Json::Array(a)) = parse_json(s) {
+                (a, "B")
+            } else {
+                errors.push("body: expected JSON string containing a result list".into());
+                return None;
             }
         }
         _ => {
