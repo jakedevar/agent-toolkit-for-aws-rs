@@ -190,6 +190,40 @@ mod tests {
 
     const VALID: &str = r#"{"operation":"get_payment_session","region":"us-east-1","payment_manager_arn":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","payment_session_id":"sssssssssssssssssssssssssssssss","user_id":"user","agent_name":"openclaw-aws-agents-pay"}"#;
 
+    // Shared inputs and expected outcomes for the B2 final-output matcher.
+    #[test]
+    fn t_oc_final_shared_registry_cases() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../plugins/aws-agents/skills/agents-pay/packages/openclaw/test/fixtures/bridge-contract/final-output/registry-cases.json");
+        let fixture = parse_json(&std::fs::read_to_string(path).unwrap()).unwrap();
+        let Json::Array(cases) = fixture.get("cases").unwrap() else {
+            panic!("cases")
+        };
+        for case in cases {
+            let request = case.get("request").unwrap().to_compact_string();
+            assert!(
+                read_request(&mut Cursor::new(request)).is_ok(),
+                "{}",
+                case.get("name").unwrap().as_str().unwrap()
+            );
+            assert!(matches!(case.get("expected"), Some(Json::Object(_))));
+        }
+        for name in [
+            "public-prefix",
+            "short-fragment",
+            "literal-fragment",
+            "base64-fragment",
+            "percent-fragment",
+            "metadata-refusal",
+        ] {
+            assert!(
+                cases
+                    .iter()
+                    .any(|case| case.get("name").and_then(Json::as_str) == Some(name)),
+                "{name}"
+            );
+        }
+    }
+
     #[test]
     fn t_br_req_field_and_payment_matrix() {
         let payment = VALID.replace("get_payment_session", "process_payment").replace(
