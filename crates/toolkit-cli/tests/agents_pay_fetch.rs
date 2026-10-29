@@ -177,6 +177,11 @@ fn toolkit(args: &[&str]) -> std::process::Output {
         .unwrap()
 }
 
+/// The one document every `fetch` form prints without the live feature.
+fn d32_document() -> String {
+    format!("{{\"paid\": false, \"refused\": true, \"reason\": \"{NO_PAYMENT_SUPPORT}\"}}\n")
+}
+
 #[test]
 fn harness_cli_binary_refuses_without_payment_support() {
     for args in [
@@ -187,44 +192,39 @@ fn harness_cli_binary_refuses_without_payment_support() {
             "--browser-handle",
             "https://merchant.test/x",
         ],
+        // --status gets the same refusal: argv is never parsed (D32 first).
+        &["agents-pay", "fetch", "--status"],
     ] {
         let out = toolkit(args);
         assert_eq!(out.status.code(), Some(2), "{args:?}");
-        let stdout = String::from_utf8(out.stdout).unwrap();
-        assert_eq!(
-            stdout,
-            format!(
-                "{{\"paid\": false, \"refused\": true, \"reason\": \"{NO_PAYMENT_SUPPORT}\"}}\n"
-            )
-        );
+        assert_eq!(String::from_utf8(out.stdout).unwrap(), d32_document());
         assert!(out.stderr.is_empty());
     }
-    let out = toolkit(&["agents-pay", "fetch", "--status"]);
-    assert_eq!(out.status.code(), Some(2));
-    assert_eq!(
-        String::from_utf8(out.stdout).unwrap(),
-        format!("{{\"usable\": false, \"reason\": \"{NO_PAYMENT_SUPPORT}\"}}\n")
-    );
 }
 
 #[test]
 fn harness_cli_binary_usage_errors() {
-    let out = toolkit(&["agents-pay", "fetch"]);
-    assert_eq!(out.status.code(), Some(1));
-    assert!(out.stdout.is_empty());
-    assert_eq!(
-        String::from_utf8(out.stderr).unwrap(),
-        format!("{USAGE}\n\nGive a URL, or --status.\n")
-    );
+    // The handler's own usage errors (no URL, a bad --method, a credential
+    // flag the router accepts) lose to D32 in a build without the feature;
+    // run_with keeps them for the live handler (see the tests above).
     for args in [
+        &["agents-pay", "fetch"][..],
         &[
             "agents-pay",
             "fetch",
             "https://merchant.test/x",
             "--method",
             "POST",
-        ][..],
-        &["agents-pay", "fetch", "a", "b"],
+        ],
+    ] {
+        let out = toolkit(args);
+        assert_eq!(out.status.code(), Some(2), "{args:?}");
+        assert_eq!(String::from_utf8(out.stdout).unwrap(), d32_document());
+        assert!(out.stderr.is_empty(), "{args:?}");
+    }
+    // The generic router still refuses malformed argv before any handler.
+    for args in [
+        &["agents-pay", "fetch", "a", "b"][..],
         &["agents-pay", "fetch", "--unknown"],
         &[
             "agents-pay",

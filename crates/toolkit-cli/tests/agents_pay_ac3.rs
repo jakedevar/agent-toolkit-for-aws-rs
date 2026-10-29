@@ -4,7 +4,8 @@
 //! the built binary under a hostile, non-fixture environment whose endpoint
 //! and credential variables point at a loopback recorder owned by this test.
 //! A verification build has no payment support (D32), so each route must
-//! print the D32 text, accept zero connections and leave every file alone.
+//! print the one D32 document, accept zero connections and leave every file
+//! alone, whatever else argv says.
 //! Runs in the default and the `aws-sdk` verification builds.
 #[cfg(feature = "agents-pay-live")]
 compile_error!("agents-pay-live is never built for tests (AC3)");
@@ -119,14 +120,22 @@ const ROUTES: &[&[&str]] = &[
         "--browser-handle",
         "https://merchant.example/paid",
     ],
+    // D32 wins over the handler's own usage errors: argv is never parsed.
+    &["agents-pay", "fetch"],
+    &[
+        "agents-pay",
+        "fetch",
+        "https://merchant.example/paid",
+        "--method",
+        "POST",
+    ],
+    &["agents-pay", "fetch", "--status", "--method", "PUT"],
 ];
 
-fn expected(route: &[&str]) -> String {
-    if route.contains(&"--status") {
-        format!("{{\"usable\": false, \"reason\": \"{NO_PAYMENT_SUPPORT}\"}}\n")
-    } else {
-        format!("{{\"paid\": false, \"refused\": true, \"reason\": \"{NO_PAYMENT_SUPPORT}\"}}\n")
-    }
+/// The one document every `fetch` form prints in a build without the live
+/// feature (D32), `--status` included.
+fn expected(_route: &[&str]) -> String {
+    format!("{{\"paid\": false, \"refused\": true, \"reason\": \"{NO_PAYMENT_SUPPORT}\"}}\n")
 }
 
 #[test]
