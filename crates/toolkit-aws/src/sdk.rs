@@ -1728,6 +1728,31 @@ mod tests {
     }
 
     #[test]
+    fn guarded_dns_refuses_answers_returned_after_deadline() {
+        struct SlowResolver(std::sync::atomic::AtomicUsize);
+        impl HostResolver for SlowResolver {
+            fn resolve(&self, _: &str) -> Result<Vec<IpAddr>, String> {
+                self.0.fetch_add(1, Ordering::SeqCst);
+                std::thread::sleep(Duration::from_millis(40));
+                Ok(vec!["8.8.8.8".parse().unwrap()])
+            }
+        }
+        let inner = Arc::new(SlowResolver(std::sync::atomic::AtomicUsize::new(0)));
+        let guard = GuardedResolver {
+            inner: inner.clone(),
+            deadline: Some(std::time::Instant::now() + Duration::from_millis(10)),
+        };
+        assert!(runtime()
+            .block_on(guard.resolve_dns("merchant.example"))
+            .is_err());
+        assert_eq!(inner.0.load(Ordering::SeqCst), 1);
+        assert!(runtime()
+            .block_on(guard.resolve_dns("merchant.example"))
+            .is_err());
+        assert_eq!(inner.0.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
     fn the_production_transport_builds_without_touching_the_network() {
         // Building a connector loads TLS roots but opens no socket.
         let transport = SdkTransport::with_resolver(
