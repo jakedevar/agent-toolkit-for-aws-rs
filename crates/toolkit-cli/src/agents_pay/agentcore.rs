@@ -502,6 +502,33 @@ mod tests {
     }
 
     #[test]
+    fn seeded_error_values_never_escape_allowlist() {
+        for secret in [
+            "FAKE-EMAIL@example.invalid",
+            "FAKE-SESSION-ID",
+            "FAKE-PROOF-SIGNATURE",
+            "FAKE-ACCESS-KEY",
+            "FAKE-CLIENT-TOKEN",
+        ] {
+            for header in [
+                secret.to_owned(),
+                format!("prefix#{secret}:suffix"),
+                format!("ValidationException:{secret}"),
+            ] {
+                let code = error_code(Some(&header), "{}");
+                assert!(!code.contains(secret));
+                assert!(code == "UnrecognizedError" || code == "ValidationException");
+            }
+            for key in ["__type", "code", "Code", "message"] {
+                let body = Json::object(vec![(key, Json::string(secret))]).to_compact_string();
+                let code = error_code(None, &body);
+                assert_eq!(code, "UnrecognizedError");
+                assert!(!code.contains(secret));
+            }
+        }
+    }
+
+    #[test]
     fn aws_endpoint_is_fixed_to_the_service_and_region() {
         assert_eq!(
             endpoint("us-east-1").unwrap(),
