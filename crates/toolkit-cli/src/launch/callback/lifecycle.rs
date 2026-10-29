@@ -54,6 +54,15 @@ mod deadline_tests {
         assert_eq!(gate.watchdog(), gate::WatchdogAction::RecordTimeoutAndExit);
         assert_eq!(exchange_failure(&gate, now, now), None);
     }
+
+    #[test]
+    fn refused_publication_after_cutoff_records_timeout() {
+        let gate = CommitGate::default();
+        assert!(gate.start_exchange());
+        // Current timeout branch returns without recording a terminal status.
+        let status: Option<PendingStatus> = None;
+        assert_eq!(status, Some(PendingStatus::TimedOut));
+    }
 }
 
 /// Run a helper in its own process, retaining lock custody through return.
