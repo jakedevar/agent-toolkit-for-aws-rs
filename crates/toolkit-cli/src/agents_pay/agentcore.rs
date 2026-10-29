@@ -558,7 +558,7 @@ impl<'a> PaymentClient<'a> {
                 .with_deadline(deadline);
             let outcome = self.transport.open(&request, &limits);
             let error = match outcome {
-                Ok(mut stream) => {
+                Ok(mut stream) => 'response: {
                     let status = stream.status();
                     let error_header = stream.headers().get("x-amzn-ErrorType").map(str::to_owned);
                     if (300..400).contains(&status) {
@@ -596,6 +596,17 @@ impl<'a> PaymentClient<'a> {
                                 bytes.extend_from_slice(&chunk);
                             }
                             Ok(None) => break,
+                            Err(toolkit_aws::StreamError::IdleTimeout) => {
+                                break 'response PaymentError::Transport;
+                            }
+                            Err(toolkit_aws::StreamError::Failed(error))
+                                if error.is_retryable() =>
+                            {
+                                break 'response PaymentError::Transport;
+                            }
+                            Err(toolkit_aws::StreamError::TooLarge) => {
+                                return Err(PaymentError::InvalidResponse);
+                            }
                             Err(_) => return Err(PaymentError::Transport),
                         }
                     }
