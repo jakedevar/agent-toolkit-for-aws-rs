@@ -785,124 +785,68 @@ fn credential_arguments_are_rejected_without_echo() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
-/// The T-DG-01e table: (args, exit status, required stderr text).
+/// The T-DG-01e table: (args, exit status, required stderr text). `@` in an
+/// argument list stands for the carrier file.
 #[cfg(feature = "docgraph-live")]
 fn carrier_rows(c: &str) -> Vec<(Vec<&str>, i32, &'static str)> {
+    const UNAVAILABLE: &str = "live docgraph adapters are not available";
     let endpoint = "db.cluster-abc.us-east-1.neptune.amazonaws.com";
-    vec![
+    let table: [(&'static str, i32, &'static str); 8] = [
         (
-            vec![
-                "neptune",
-                "seed",
-                "--live",
-                "--endpoint",
-                endpoint,
-                "--network-policy",
-                c,
-            ],
+            "neptune seed --live --endpoint ENDPOINT --network-policy @",
             1,
             "--confirm-wipe",
         ),
         (
-            vec![
-                "neptune",
-                "memory",
-                "--live",
-                "--operation",
-                "consolidate",
-                "--input",
-                c,
-                "--network-policy",
-                c,
-            ],
+            "neptune memory --live --operation consolidate --input @ --network-policy @",
             1,
             "--confirm-delete",
         ),
         (
-            vec![
-                "neptune",
-                "memory",
-                "--live",
-                "--operation",
-                "query",
-                "--input",
-                c,
-            ],
+            "neptune memory --live --operation query --input @",
             1,
             "--confirm-write",
         ),
         (
-            vec![
-                "neptune",
-                "memory",
-                "--live",
-                "--operation",
-                "create-memory",
-                "--input",
-                c,
-            ],
+            "neptune memory --live --operation create-memory --input @",
             1,
             "--confirm-create",
         ),
         (
-            vec![
-                "documentdb",
-                "wa-review",
-                "--live",
-                "--cluster-id",
-                "c1",
-                "--region",
-                "us-east-1",
-                "--analysis-data",
-                c,
-            ],
+            "documentdb wa-review --live --cluster-id c1 --region us-east-1 --analysis-data @",
             2,
-            "live docgraph adapters are not available",
+            UNAVAILABLE,
         ),
         // A collection capture manifest has no live mode at all.
         (
-            vec![
-                "documentdb",
-                "normalize-capture",
-                "--live",
-                "--capture",
-                c,
-                "--output",
-                c,
-            ],
+            "documentdb normalize-capture --live --capture @ --output @",
             2,
             "",
         ),
         (
-            vec![
-                "neptune",
-                "seed",
-                "--live",
-                "--confirm-wipe",
-                "--endpoint",
-                endpoint,
-                "--network-policy",
-                c,
-            ],
+            "neptune seed --live --confirm-wipe --endpoint ENDPOINT --network-policy @",
             2,
-            "live docgraph adapters are not available",
+            UNAVAILABLE,
         ),
         (
-            vec![
-                "neptune",
-                "memory",
-                "--live",
-                "--operation",
-                "consolidate",
-                "--confirm-write",
-                "--confirm-delete",
-                "--input",
-                c,
-                "--network-policy",
-                c,
-            ],
+            "neptune memory --live --operation consolidate --confirm-write --confirm-delete \
+             --input @ --network-policy @",
             2,
-            "live docgraph adapters are not available",
+            UNAVAILABLE,
         ),
-    ]
+    ];
+    table
+        .iter()
+        .map(|(args, status, required)| {
+            let args = args
+                .split_whitespace()
+                .map(|word| match word {
+                    "@" => c,
+                    "ENDPOINT" => endpoint,
+                    word => word,
+                })
+                .collect();
+            (args, *status, *required)
+        })
+        .collect()
 }
