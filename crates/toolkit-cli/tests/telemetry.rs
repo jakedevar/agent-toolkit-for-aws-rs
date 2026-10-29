@@ -3,6 +3,9 @@
 //! with an empty environment plus an isolated HOME; nothing reaches a network
 //! and no Python runs.
 
+#[cfg(feature = "agents-pay-live")]
+compile_error!("agents-pay-live is never built for tests (AC3)");
+
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};

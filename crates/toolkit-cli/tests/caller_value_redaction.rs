@@ -13,6 +13,9 @@
 //! - JSON stdout stays valid and keeps its typed and fixed fields when a
 //!   credential value collides with one of their literals (#4981).
 
+#[cfg(feature = "agents-pay-live")]
+compile_error!("agents-pay-live is never built for tests (AC3)");
+
 use std::fs;
 use std::io::Read;
 use std::path::PathBuf;

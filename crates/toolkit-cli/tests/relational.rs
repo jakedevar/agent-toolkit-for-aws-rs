@@ -3,6 +3,9 @@
 //! real exit codes and separated stdout/stderr. Nothing contacts AWS or a
 //! database; recordings are temporary files.
 
+#[cfg(feature = "agents-pay-live")]
+compile_error!("agents-pay-live is never built for tests (AC3)");
+
 use std::fs;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};

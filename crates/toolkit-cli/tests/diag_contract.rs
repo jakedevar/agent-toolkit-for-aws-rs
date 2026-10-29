@@ -18,6 +18,9 @@
 //! test is offline and cannot write outside it. Commands that need the network
 //! or credentials must fail closed, which is exactly what is asserted.
 
+#[cfg(feature = "agents-pay-live")]
+compile_error!("agents-pay-live is never built for tests (AC3)");
+
 use std::collections::BTreeSet;
 use std::fs;
 use std::io::Read;

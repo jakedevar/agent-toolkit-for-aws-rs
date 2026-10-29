@@ -14,6 +14,9 @@
 //! The cap boundary table (T-AMT-CAP-1..6) runs through the whole gate and
 //! lives in `agents_pay_policy.rs`.
 
+#[cfg(feature = "agents-pay-live")]
+compile_error!("agents-pay-live is never built for tests (AC3)");
+
 use toolkit_cli::agents_pay::amount::{
     base_units, exceeds_cap, usd_text, validated_amount_units, AmountError, CapDecimal,
 };

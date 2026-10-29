@@ -1,5 +1,8 @@
 #![cfg(unix)]
 
+#[cfg(feature = "agents-pay-live")]
+compile_error!("agents-pay-live is never built for tests (AC3)");
+
 use std::fs;
 use std::os::unix::fs::{symlink, MetadataExt, PermissionsExt};
 use std::path::PathBuf;

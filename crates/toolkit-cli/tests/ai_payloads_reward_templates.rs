@@ -13,6 +13,9 @@
 //!   `ap_rwt_04_sync_plugin_skills_check_is_clean`
 //! - AP-RWT-05: `ap_rwt_05_python_inventory_has_no_additions`,
 //!   `ap_rwt_05_these_tests_never_launch_python`
+#[cfg(feature = "agents-pay-live")]
+compile_error!("agents-pay-live is never built for tests (AC3)");
+
 use serde_json::{json, Value};
 use std::{
     fs,
