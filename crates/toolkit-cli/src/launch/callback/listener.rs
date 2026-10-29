@@ -998,6 +998,91 @@ mod scripted_tests {
     }
 
     #[test]
+    fn each_turn_bounds_admissions_slots_and_head_buffers() {
+        #[derive(Default)]
+        struct Stats {
+            accepts: usize,
+            reads: usize,
+            max_read: usize,
+            max_live: usize,
+        }
+        struct TrackedClock {
+            now: Cell<Instant>,
+            turns: Rc<std::cell::RefCell<Vec<Stats>>>,
+        }
+        impl Clock for TrackedClock {
+            fn now(&self) -> Instant {
+                self.now.get()
+            }
+            fn sleep(&self, d: Duration) {
+                self.now.set(self.now.get() + d);
+                self.turns.borrow_mut().push(Stats::default());
+            }
+        }
+        struct Listener(Rc<std::cell::RefCell<Vec<Stats>>>, Rc<Cell<usize>>);
+        struct Stream(Rc<std::cell::RefCell<Vec<Stats>>>, Rc<Cell<usize>>);
+        impl ListenerIo for Listener {
+            type Stream = Stream;
+            fn accept_stream(&self) -> io::Result<Stream> {
+                let live = self.1.get() + 1;
+                self.1.set(live);
+                let mut turns = self.0.borrow_mut();
+                let s = turns.last_mut().unwrap();
+                s.accepts += 1;
+                s.max_live = s.max_live.max(live);
+                Ok(Stream(self.0.clone(), self.1.clone()))
+            }
+        }
+        impl Drop for Stream {
+            fn drop(&mut self) {
+                self.1.set(self.1.get() - 1);
+            }
+        }
+        impl Read for Stream {
+            fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+                let mut turns = self.0.borrow_mut();
+                let s = turns.last_mut().unwrap();
+                s.reads += 1;
+                s.max_read = s.max_read.max(bytes.len());
+                bytes[0] = b'x';
+                Ok(1)
+            }
+        }
+        impl Write for Stream {
+            fn write(&mut self, b: &[u8]) -> io::Result<usize> {
+                Ok(b.len())
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        let start = Instant::now();
+        let turns = Rc::new(std::cell::RefCell::new(vec![Stats::default()]));
+        let clock = TrackedClock {
+            now: Cell::new(start),
+            turns: turns.clone(),
+        };
+        assert_eq!(
+            serve_with(
+                Listener(turns.clone(), Rc::new(Cell::new(0))),
+                1234,
+                "s",
+                start + Duration::from_millis(20),
+                &clock
+            )
+            .unwrap(),
+            None
+        );
+        let turns = turns.borrow();
+        assert!(turns.iter().any(|s| s.reads == 16));
+        for turn in turns.iter() {
+            assert!(turn.accepts <= 8 && turn.reads <= 16 && turn.max_read <= MAX_HEAD);
+            // One excess connection can exist momentarily before it is dropped unread.
+            assert!(turn.max_live <= 17);
+        }
+    }
+
+    #[test]
     fn head_finishing_at_slot_deadline_is_not_accepted() {
         struct SlowListener {
             now: Rc<Cell<Instant>>,
