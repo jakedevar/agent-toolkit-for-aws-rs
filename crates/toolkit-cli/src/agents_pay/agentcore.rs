@@ -686,6 +686,27 @@ mod wire_contracts {
     }
 
     #[test]
+    fn read_timeout_retries_identical_payment_bytes() {
+        let response = br#"{"processPaymentId":"id","paymentManagerArn":"arn","paymentSessionId":"ps","paymentInstrumentId":"pi","paymentType":"CRYPTO_X402","status":"PROOF_GENERATED","paymentOutput":{"cryptoX402":{"version":"2","payload":{"signature":"secret"}}},"createdAt":1,"updatedAt":1}"#;
+        let transport = FakeStreamingTransport::new()
+            .respond(200, &[], vec![FakeChunk::IdleTimeout])
+            .respond(200, &[], vec![FakeChunk::data(response)]);
+        let clock = FakeClock(Cell::new(Instant::now()));
+        let mut client = PaymentClient::new("us-east-1", &transport, &NoSigner).unwrap();
+        client.clock = &clock;
+        assert!(client
+            .process_payment(super::operation_contracts::approved())
+            .is_ok());
+        let requests = transport.requests();
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[0].body, requests[1].body);
+        assert_eq!(
+            transport.open_limits()[0].deadline(),
+            transport.open_limits()[1].deadline()
+        );
+    }
+
+    #[test]
     fn declared_oversize_is_refused_before_pulling() {
         let transport = FakeStreamingTransport::new().respond(
             200,
