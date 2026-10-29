@@ -320,6 +320,16 @@ fn valid_process_response(body: &str, manager: &str, session: &str, instrument: 
     };
     matches!(payload, Json::Object(_)) && payload.to_compact_string().len() <= 16_384
 }
+
+#[cfg(test)]
+fn valid_session_response(
+    _body: &str,
+    _manager: &str,
+    _session: Option<&str>,
+    _user: &str,
+) -> bool {
+    false
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -476,6 +486,46 @@ mod operation_contracts {
             "arn",
             "ps",
             "pi"
+        ));
+    }
+
+    #[test]
+    fn session_response_requires_model_members_and_matching_resources() {
+        let good = r#"{"paymentSession":{"paymentSessionId":"ps","paymentManagerArn":"arn","userId":"user","expiryTimeInMinutes":60,"createdAt":"2026-10-28T12:00:00Z","updatedAt":"2026-10-28T12:00:00Z","limits":{"maxSpendAmount":{"value":"10","currency":"USD"}},"availableLimits":{"availableSpendAmount":{"value":"9","currency":"USD"},"updatedAt":"2026-10-28T12:00:00Z"}}}"#;
+        assert!(valid_session_response(good, "arn", Some("ps"), "user"));
+        assert!(valid_session_response(good, "arn", None, "user"));
+        assert!(!valid_session_response(good, "wrong", Some("ps"), "user"));
+        assert!(!valid_session_response(good, "arn", Some("other"), "user"));
+        assert!(!valid_session_response(good, "arn", Some("ps"), "other"));
+        for fragment in [
+            r#""paymentSessionId":"ps","#,
+            r#""userId":"user","#,
+            r#""updatedAt":"2026-10-28T12:00:00Z","#,
+        ] {
+            assert!(!valid_session_response(
+                &good.replacen(fragment, "", 1),
+                "arn",
+                Some("ps"),
+                "user"
+            ));
+        }
+        assert!(!valid_session_response(
+            &good.replace(
+                r#""expiryTimeInMinutes":60"#,
+                r#""expiryTimeInMinutes":null"#
+            ),
+            "arn",
+            Some("ps"),
+            "user"
+        ));
+        assert!(!valid_session_response(
+            &good.replace(
+                r#""limits":{"maxSpendAmount":{"value":"10","currency":"USD"}}"#,
+                r#""limits":null"#
+            ),
+            "arn",
+            Some("ps"),
+            "user"
         ));
     }
 }
