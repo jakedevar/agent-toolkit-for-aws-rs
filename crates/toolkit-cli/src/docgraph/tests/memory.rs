@@ -246,3 +246,81 @@ fn graph_ids_and_vector_filter_boundaries() {
         Some(&json(r#""Custom'""#))
     );
 }
+
+#[test]
+fn replay_matches_response_requests_in_library_and_cli() {
+    use crate::docgraph::memory::{execute, plan, RecordedMemory};
+    use toolkit_core::Json;
+    let input =
+        json(r#"{"graph_id":"g-abc123def4","query":"RETURN $x","parameters":{"x":1,"y":2}}"#);
+    let requests = plan("query", &input).unwrap();
+    let request = requests[0].clone();
+    let mut reordered = request.clone();
+    if let Json::Object(ref mut fields) = reordered {
+        fields.reverse();
+        if let Some((_, Json::Object(params))) = fields.iter_mut().find(|(k, _)| k == "parameters")
+        {
+            params.reverse();
+        }
+    }
+    let wrong = json(r#"{"queryString":"wrong","parameters":{}}"#);
+    let dir = TempDir::new("memory-request-match");
+    let input_path = dir.write("input.json", &input.to_compact_string());
+    for (name, recorded_request, matches) in [
+        ("match", request, true),
+        ("reordered", reordered, true),
+        ("wrong", wrong, false),
+    ] {
+        let recording = Json::object(vec![(
+            "calls",
+            Json::Array(vec![Json::object(vec![
+                ("request", recorded_request),
+                ("response", json(r#"{"results":[]}"#)),
+            ])]),
+        )]);
+        let mut client = RecordedMemory::from_document(&recording).unwrap();
+        let result = execute(&mut client, "query", &requests);
+        let path = dir.write(&format!("{name}.json"), &recording.to_compact_string());
+        let cli = run(&[
+            "neptune",
+            "memory",
+            "--operation",
+            "query",
+            "--input",
+            &input_path,
+            "--recorded",
+            &path,
+        ]);
+        if matches {
+            assert!(result.is_ok(), "{name}: {result:?}");
+            assert_eq!(cli.status, 0, "{name}: {}", cli.stderr);
+        } else {
+            assert!(result.unwrap_err().contains("mismatch"));
+            assert_ne!(cli.status, 0);
+            assert!(cli.stderr.contains("mismatch"), "{}", cli.stderr);
+        }
+    }
+}
+
+#[test]
+fn recording_requires_request_and_creation_numbers_are_integers() {
+    use crate::docgraph::memory::{plan, RecordedMemory};
+    assert!(
+        RecordedMemory::from_document(&json(r#"{"calls":[{"response":{"results":[]}}]}"#)).is_err()
+    );
+    assert!(RecordedMemory::from_document(&json(r#"{"calls":[{"error":{}}]}"#)).is_err());
+    for op in ["create-memory", "create-graphrag"] {
+        for key in ["memory_gb", "embedding_dimension"] {
+            for value in [r#""32""#, "1.5", "null", "true"] {
+                let input = json(&format!(r#"{{"graph_name":"g","{key}":{value}}}"#));
+                assert!(plan(op, &input).is_err(), "{op} {key} {value}");
+            }
+        }
+        assert!(plan(op, &json(r#"{"graph_name":"g"}"#)).is_ok());
+        assert!(plan(
+            op,
+            &json(r#"{"graph_name":"g","memory_gb":32,"embedding_dimension":1536}"#)
+        )
+        .is_ok());
+    }
+}
