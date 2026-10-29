@@ -624,3 +624,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 10-29 05:00Z: #4386 design repair 2 (e8c32b72) at 07ab2cde13da9cc1f9bfbaf6070b5f8a3c182a66: all 9 bare slots never unresolved (OD-14, typed_slot_unresolved), consent literals only, --cell can't touch consent; --append = new versioned file, original untouched (B-12); recovery machinery removed; #5120 fix planned as slice S3r; #5124 carried.
   #5119 r3 (final, narrow) -> Codex 2dcbc9ca pinned 07ab2cde.
   4/4 busy: 4cbe8435 (#5118), f698fe4e (#5085 repair 1), 8c9c4a04 (#5079 repair 2), 2dcbc9ca (#5119 r3).
+- 10-29 05:10Z: L0-L2 repair 1 (f698fe4e) at d8bc813910355095794625ccbb601348268406cf: #5132 CaseFolding C+S table, #5133 RawConfigParser indent, #5134 ensure_ascii, #5135 bounded skipped ledger. Red e0c1cb6b (0/17); fmt 4a9e6613, clippy a937918b, scoped fd4666eb ok, merges clean.
+  #5131 r2 (narrow) -> Codex bcf134de pinned d8bc8139. On ACCEPT: enqueue d8bc8139 directly (merges clean onto rolling c27549a6) as #5085 landing.
+  4/4 busy: 4cbe8435 (#5118), 8c9c4a04 (#5079 repair 2), 2dcbc9ca (#5119 r3), bcf134de (#5131 r2).
