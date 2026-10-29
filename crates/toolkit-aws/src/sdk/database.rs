@@ -952,6 +952,9 @@ impl fmt::Display for BodyBoundError {
 
 impl std::error::Error for BodyBoundError {}
 
+/// One poll of a [`BoundedBody`].
+type FramePoll = Poll<Option<Result<Frame<Bytes>, Box<dyn std::error::Error + Send + Sync>>>>;
+
 /// How a [`BoundedBody`] ended.
 #[derive(Debug, Clone, Copy)]
 enum BodyEnd {
@@ -987,10 +990,7 @@ impl BoundedBody {
         self.driver.release();
     }
 
-    fn fail(
-        &mut self,
-        reason: &'static str,
-    ) -> Poll<Option<Result<Frame<Bytes>, Box<dyn std::error::Error + Send + Sync>>>> {
+    fn fail(&mut self, reason: &'static str) -> FramePoll {
         self.end(BodyEnd::Failed(reason));
         Poll::Ready(Some(Err(Box::new(BodyBoundError(reason)))))
     }
@@ -1000,10 +1000,7 @@ impl Body for BoundedBody {
     type Data = Bytes;
     type Error = Box<dyn std::error::Error + Send + Sync>;
 
-    fn poll_frame(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-    ) -> Poll<Option<Result<Frame<Bytes>, Self::Error>>> {
+    fn poll_frame(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> FramePoll {
         match self.ended {
             Some(BodyEnd::Complete) => return Poll::Ready(None),
             Some(BodyEnd::Failed(reason)) => {
