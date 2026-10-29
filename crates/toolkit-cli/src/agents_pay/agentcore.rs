@@ -930,9 +930,43 @@ pub fn process_payment(
 }
 
 impl<'a> PaymentClient<'a> {
-    #[cfg(test)]
-    fn sts_check(&self) -> Result<(), PaymentError> {
-        Err(PaymentError::InvalidResponse)
+    /// Check the configured identity with the standard regional STS endpoint.
+    ///
+    /// # Errors
+    /// Returns a sanitized failure for an unsuccessful or malformed response.
+    pub fn sts_check(&self) -> Result<(), PaymentError> {
+        let mut headers = toolkit_aws::Headers::new();
+        headers
+            .insert("content-type", "application/x-www-form-urlencoded")
+            .map_err(|error| transport_error(&error))?;
+        let url = toolkit_aws::Endpoint::for_service("sts", &self.region)
+            .map_err(|error| transport_error(&error))?
+            .url();
+        let body = self.send(
+            &format!("{url}/"),
+            "sts",
+            headers,
+            b"Action=GetCallerIdentity&Version=2011-06-15".to_vec(),
+            200,
+            self.operation_deadline,
+        )?;
+        let doc = roxmltree::Document::parse(&body).map_err(|_| PaymentError::InvalidResponse)?;
+        let root = doc.root_element();
+        const STS_NS: &str = "https://sts.amazonaws.com/doc/2011-06-15/";
+        if root.tag_name().name() != "GetCallerIdentityResponse"
+            || root.tag_name().namespace() != Some(STS_NS)
+        {
+            return Err(PaymentError::InvalidResponse);
+        }
+        let mut results = root.children().filter(|node| {
+            node.is_element()
+                && node.tag_name().name() == "GetCallerIdentityResult"
+                && node.tag_name().namespace() == Some(STS_NS)
+        });
+        if results.next().is_none() || results.next().is_some() {
+            return Err(PaymentError::InvalidResponse);
+        }
+        Ok(())
     }
     #[cfg(test)]
     fn process_payment_until(
@@ -1162,14 +1196,7 @@ impl<'a> PaymentClient<'a> {
         expected: u16,
         operation_deadline: Option<std::time::Instant>,
     ) -> Result<String, PaymentError> {
-        use std::time::Duration;
-        use toolkit_aws::{
-            FullJitter, Headers, HttpRequest, Method, RetryPolicy, SigningScope, StreamLimits,
-            Timeouts,
-        };
-        let limit = self.clock.now() + Duration::from_secs(60);
-        let deadline = operation_deadline.map_or(limit, |cutoff| cutoff.min(limit));
-        let mut headers = Headers::new();
+        let mut headers = toolkit_aws::Headers::new();
         headers
             .insert_sensitive("x-amzn-bedrock-agentcore-payments-user-id", user)
             .map_err(|error| transport_error(&error))?;
@@ -1182,6 +1209,40 @@ impl<'a> PaymentClient<'a> {
         headers
             .insert("content-type", "application/json")
             .map_err(|error| transport_error(&error))?;
+        let url = format!(
+            "{}/payments/{path}",
+            endpoint(&self.region).map_err(|error| transport_error(&error))?
+        );
+        self.send(
+            &url,
+            "bedrock-agentcore",
+            headers,
+            request_body,
+            expected,
+            operation_deadline,
+        )
+    }
+
+    #[allow(
+        clippy::too_many_lines,
+        clippy::too_many_arguments,
+        clippy::needless_pass_by_value
+    )]
+    fn send(
+        &self,
+        url: &str,
+        service: &str,
+        headers: toolkit_aws::Headers,
+        request_body: Vec<u8>,
+        expected: u16,
+        operation_deadline: Option<std::time::Instant>,
+    ) -> Result<String, PaymentError> {
+        use std::time::Duration;
+        use toolkit_aws::{
+            FullJitter, HttpRequest, Method, RetryPolicy, SigningScope, StreamLimits, Timeouts,
+        };
+        let limit = self.clock.now() + Duration::from_secs(60);
+        let deadline = operation_deadline.map_or(limit, |cutoff| cutoff.min(limit));
         let policy = RetryPolicy::default();
         let jitter = FullJitter::new();
         for attempt in 1..=policy.total_attempts() {
@@ -1192,10 +1253,7 @@ impl<'a> PaymentClient<'a> {
             let timeout = remaining.min(Duration::from_secs(30));
             let mut request = HttpRequest {
                 method: Method::Post,
-                url: format!(
-                    "{}/payments/{path}",
-                    endpoint(&self.region).map_err(|error| transport_error(&error))?
-                ),
+                url: url.to_owned(),
                 headers: headers.clone(),
                 body: request_body.clone(),
                 timeouts: Timeouts::new(timeout, timeout)
@@ -1206,7 +1264,7 @@ impl<'a> PaymentClient<'a> {
                     &mut request,
                     &SigningScope {
                         region: self.region.clone(),
-                        service: "bedrock-agentcore".into(),
+                        service: service.into(),
                     },
                 )
                 .map_err(|error| transport_error(&error))?;
@@ -1396,6 +1454,24 @@ mod wire_contracts {
                 .get("x-amzn-bedrock-agentcore-payments-user-id"),
             None
         );
+    }
+
+    #[test]
+    fn sts_identity_rejects_malformed_or_wrong_response() {
+        for body in [
+            "<GetCallerIdentityResponse>",
+            "<GetCallerIdentityResponse><GetCallerIdentityResult/></GetCallerIdentityResponse>",
+            "<GetCallerIdentityResponse xmlns=\"https://sts.amazonaws.com/doc/2011-06-15/\"/>",
+            "<GetCallerIdentityResponse xmlns=\"https://sts.amazonaws.com/doc/2011-06-15/\"><GetCallerIdentityResult/><GetCallerIdentityResult/></GetCallerIdentityResponse>",
+        ] {
+            let transport = FakeStreamingTransport::new().respond(
+                200,
+                &[],
+                vec![FakeChunk::data(body.as_bytes())],
+            );
+            let client = PaymentClient::new("us-east-1", &transport, &NoSigner).unwrap();
+            assert_eq!(client.sts_check(), Err(PaymentError::InvalidResponse));
+        }
     }
 
     #[test]
