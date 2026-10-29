@@ -278,3 +278,202 @@ fn a_declared_plugin_must_exist() {
         report.problems
     );
 }
+
+/// #5022: every spelling of a plugin `bin/` path the checker cannot resolve
+/// to exactly one canonical launcher reference is rejected (fail closed),
+/// including the fail-open guard `"${CLAUDE_PLUGIN_ROOT}"/bin/guard || true`.
+#[test]
+fn unresolvable_plugin_bin_spellings_are_rejected() {
+    let hook_forms = [
+        r#""${CLAUDE_PLUGIN_ROOT}"/bin/guard || true"#,
+        r#""$CLAUDE_PLUGIN_ROOT"/bin/guard"#,
+        r#""./bin/undeclared""#,
+        "exec ./bin/undeclared",
+        r#"sh -c "./bin/undeclared""#,
+        "${CLAUDE_PLUGIN_ROOT}/./bin/undeclared",
+        "${CLAUDE_PLUGIN_ROOT}//bin/guard",
+        "${CLAUDE_PLUGIN_ROOT}/BIN/guard",
+        r#"cd "${CLAUDE_PLUGIN_ROOT}" && bin/guard || true"#,
+        r#"cd "${CLAUDE_PLUGIN_ROOT}" && ./bin/guard"#,
+        r#""${CLAUDE_PLUGIN_ROOT}/b""in/guard""#,
+        r"${CLAUDE_PLUGIN_ROOT}/b\in/guard",
+        "${CLAUDE_PLUGIN_ROOT}/../demo/bin/guard",
+        r#"sh -c '"$0"/bin/guard || true' "${CLAUDE_PLUGIN_ROOT}""#,
+        r#"sh -c '"$0"/guard || true' "${CLAUDE_PLUGIN_ROOT}/bin""#,
+        "${CLAUDE_PLUGIN_ROOT}/${SUB}/guard",
+        "${CLAUDE_PLUGIN_ROOT}/b?n/guard",
+        "${CLAUDE_PLUGIN_ROOT}/b*/guard",
+        "${CLAUDE_PLUGIN_ROOT}/{bin,x}/guard",
+        "${CLAUDE_PLUGIN_ROOT:-.}/bin/guard",
+        r#"D="${CLAUDE_PLUGIN_ROOT}"; "$D"/bin/guard || true"#,
+        "PATH=${CLAUDE_PLUGIN_ROOT}/bin:$PATH guard",
+        r#"x=$(echo bin); "${CLAUDE_PLUGIN_ROOT}/$x/guard""#,
+        r#""${CLAUDE_PLUGIN_ROOT}/bin/note" "${CLAUDE_PLUGIN_ROOT}/bin/note""#,
+    ];
+    for command in hook_forms {
+        for event in ["PreToolUse", "Stop"] {
+            let (problems, references) =
+                problems_for(&[("hooks/hooks.json", hooks(event, command))]);
+            assert!(
+                !problems.is_empty(),
+                "{event} {command}: accepted with {references} references"
+            );
+            assert_eq!(references, 0, "{event} {command}: {problems:#?}");
+        }
+    }
+    // A canonical guard with anything appended is no longer canonical.
+    for suffix in [" || true", "; true", " &"] {
+        let command = format!("{}{suffix}", guard());
+        let (problems, _) = problems_for(&[("hooks/hooks.json", hooks("PreToolUse", &command))]);
+        assert!(
+            problems
+                .iter()
+                .any(|p| p.contains("canonical fail-closed launcher")),
+            "{command}: {problems:#?}"
+        );
+    }
+    for (command, args) in [
+        (r#""./bin/tool""#, "[]"),
+        ("exec ./bin/tool", "[]"),
+        ("${CLAUDE_PLUGIN_ROOT}/./bin/tool", "[]"),
+        ("sh", r#"["-c", "./bin/tool"]"#),
+        (
+            "sh",
+            r#"["-c", "exec \"$0\"", "${CLAUDE_PLUGIN_ROOT}/./bin/tool"]"#,
+        ),
+    ] {
+        let (problems, references) = problems_for(&[(".mcp.json", mcp(command, args))]);
+        assert!(
+            !problems.is_empty(),
+            "{command} {args}: accepted with {references} references"
+        );
+    }
+    // System paths and plugin paths outside bin/ are not plugin binaries.
+    let (problems, references) = problems_for(&[(
+        "hooks/hooks.json",
+        hooks(
+            "PreToolUse",
+            r#"sh -c 'python3 "$0" 2>/dev/null || /usr/bin/env python "$0"' "${CLAUDE_PLUGIN_ROOT}/hooks/guard.py""#,
+        ),
+    )]);
+    assert!(problems.is_empty(), "{problems:#?}");
+    assert_eq!(references, 0);
+}
+
+/// #5022, the reviewer's exact case against the committed declaration: the
+/// fail-open secret-safety registration fails the contract.
+#[test]
+fn the_fail_open_secret_safety_registration_fails_the_contract() {
+    let declaration = repo_declaration();
+    let dir = temp_dir("failopen");
+    let plugins = dir.join("plugins");
+    let deny_reason = match &declaration
+        .binary("aws-core", "secret-safety")
+        .expect("declared")
+        .role
+    {
+        plugin_stage::Role::GuardHook { deny_reason } => deny_reason.clone(),
+        other => panic!("{other:?}"),
+    };
+    for (command, ok) in [
+        (
+            r#""${CLAUDE_PLUGIN_ROOT}"/bin/secret-safety || true"#.to_string(),
+            false,
+        ),
+        (
+            guard_hook_command("CLAUDE_PLUGIN_ROOT", "secret-safety", &deny_reason),
+            true,
+        ),
+    ] {
+        write(
+            &plugins.join("aws-core/hooks/hooks.json"),
+            &hooks("PreToolUse", &command),
+        );
+        let report = check_launchers(&dir, &plugins, &declaration);
+        assert_eq!(
+            report.problems.is_empty(),
+            ok,
+            "{command}: {:#?}",
+            report.problems
+        );
+        assert_eq!(report.references.len(), usize::from(ok), "{command}");
+    }
+}
+
+/// #5024: `hooks` / `mcpServers` path lists keep their kind; every listed
+/// file is resolved and scanned, and malformed members are refused.
+#[test]
+fn manifest_path_lists_are_resolved_and_scanned() {
+    let undeclared =
+        r#"{"mcpServers": {"s": {"command": "${CLAUDE_PLUGIN_ROOT}/bin/undeclared"}}}"#;
+    let (problems, _) = problems_for(&[
+        (
+            ".devin-plugin/plugin.json",
+            r#"{"name": "demo", "mcpServers": ["./custom/servers.json"]}"#.to_string(),
+        ),
+        ("custom/servers.json", undeclared.to_string()),
+    ]);
+    assert!(
+        problems.iter().any(|p| p.contains("bin/undeclared")),
+        "{problems:#?}"
+    );
+    let (problems, _) = problems_for(&[
+        (
+            ".devin-plugin/plugin.json",
+            r#"{"name": "demo", "mcpServers": ["./custom/servers.json"]}"#.to_string(),
+        ),
+        ("custom/servers.json", mcp(r#""./bin/tool""#, "[]")),
+    ]);
+    assert!(!problems.is_empty(), "unsafe launcher in a listed file");
+
+    // A hooks list: each member is scanned as hooks, so the canonical guard
+    // resolves and a second, fail-open file is rejected.
+    let (problems, references) = problems_for(&[
+        (
+            ".claude-plugin/plugin.json",
+            r#"{"name": "demo", "hooks": ["./custom/a.json", "custom/b.json"]}"#.to_string(),
+        ),
+        ("custom/a.json", hooks("PreToolUse", &guard())),
+        (
+            "custom/b.json",
+            hooks("PreToolUse", r#""${CLAUDE_PLUGIN_ROOT}"/bin/guard || true"#),
+        ),
+    ]);
+    assert_eq!(references, 1, "{problems:#?}");
+    assert_eq!(problems.len(), 1, "{problems:#?}");
+    assert!(problems[0].contains("custom/b.json"), "{problems:#?}");
+
+    // Missing and escaping members, and inline objects inside a list.
+    let (problems, references) = problems_for(&[(
+        ".devin-plugin/plugin.json",
+        r#"{"name": "demo", "mcpServers": ["./absent.json", "../escape.json",
+            {"inline": {"command": "${CLAUDE_PLUGIN_ROOT}/bin/tool"}}]}"#
+            .to_string(),
+    )]);
+    assert_eq!(references, 1, "{problems:#?}");
+    assert!(
+        problems.iter().any(|p| p.contains("does not exist")),
+        "{problems:#?}"
+    );
+    assert!(
+        problems
+            .iter()
+            .any(|p| p.contains("points outside the plugin")),
+        "{problems:#?}"
+    );
+
+    // Malformed member and value types are refused, not skipped.
+    for manifest in [
+        r#"{"name": "demo", "mcpServers": [1]}"#,
+        r#"{"name": "demo", "mcpServers": [["./x.json"]]}"#,
+        r#"{"name": "demo", "hooks": [null]}"#,
+        r#"{"name": "demo", "hooks": true}"#,
+        r#"{"name": "demo", "mcpServers": 7}"#,
+    ] {
+        let (problems, _) = problems_for(&[(".devin-plugin/plugin.json", manifest.to_string())]);
+        assert!(
+            problems.iter().any(|p| p.contains("must be a file path")),
+            "{manifest}: {problems:#?}"
+        );
+    }
+}

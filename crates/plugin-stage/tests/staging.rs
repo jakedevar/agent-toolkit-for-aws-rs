@@ -263,6 +263,241 @@ fn an_undeclared_plugin_may_not_have_a_bin_directory() {
     assert_flags(&problems, "plugin other declares no binaries");
 }
 
+/// #5023: a symlinked plugin directory, `bin/` root, platform directory or
+/// manifest is refused by verify (partial and complete) and by stage, before
+/// anything is read through it or written into it.
+#[cfg(unix)]
+mod symlinks {
+    use std::fs;
+    use std::os::unix::fs::symlink;
+
+    use super::*;
+
+    fn staged() -> Fixture {
+        let fixture = Fixture::new();
+        fixture
+            .stage(&Platform::ALL, &provenance(COMMIT, false), false)
+            .expect("stage");
+        assert!(
+            fixture.verify(true).is_empty(),
+            "{:#?}",
+            fixture.verify(true)
+        );
+        fixture
+    }
+
+    /// Moves `path` to `outside` and leaves an absolute symlink behind.
+    fn relink(path: &Path, outside: &Path) {
+        fs::rename(path, outside).expect("move out");
+        symlink(outside, path).expect("symlink");
+    }
+
+    fn assert_refused(fixture: &Fixture, needle: &str) {
+        for complete in [false, true] {
+            let problems = fixture.verify(complete);
+            assert_flags(&problems, needle);
+            assert_flags(&problems, "symlink");
+        }
+    }
+
+    #[test]
+    fn a_symlinked_bin_root_is_refused() {
+        let fixture = staged();
+        relink(&fixture.bin(), &fixture.dir.join("outside-bin"));
+        assert_refused(&fixture, "demo/bin");
+    }
+
+    #[test]
+    fn a_symlinked_manifest_is_refused() {
+        let fixture = staged();
+        relink(
+            &fixture.bin().join("manifest.json"),
+            &fixture.dir.join("outside-manifest.json"),
+        );
+        assert_refused(&fixture, "manifest.json");
+    }
+
+    #[test]
+    fn a_symlinked_platform_directory_is_refused() {
+        let fixture = staged();
+        relink(
+            &fixture.bin().join("linux-x86_64"),
+            &fixture.dir.join("outside-linux"),
+        );
+        assert_refused(&fixture, "linux-x86_64");
+    }
+
+    #[test]
+    fn a_symlinked_plugin_directory_is_refused() {
+        let fixture = staged();
+        relink(
+            &fixture.plugins.join("demo"),
+            &fixture.dir.join("outside-demo"),
+        );
+        assert_refused(&fixture, "plugins/demo");
+    }
+
+    #[test]
+    fn stage_refuses_to_write_through_symlinks() {
+        for clean in [false, true] {
+            let fixture = staged();
+            let outside = fixture.dir.join("outside-bin");
+            relink(&fixture.bin(), &outside);
+            let before = fs::read(outside.join("manifest.json")).expect("manifest");
+            let error = fixture
+                .stage(&[Platform::LinuxX86_64], &provenance(COMMIT, false), clean)
+                .expect_err("symlinked bin");
+            assert!(error.contains("symlink"), "{error}");
+            let error = check_merge(&fixture.plugins, "demo", &provenance(COMMIT, false), clean)
+                .expect_err("check_merge");
+            assert!(error.contains("symlink"), "{error}");
+            assert_eq!(
+                fs::read(outside.join("manifest.json")).expect("manifest"),
+                before
+            );
+            assert!(
+                outside.join("linux-x86_64/guard").is_file(),
+                "clean={clean}"
+            );
+            assert!(fs::symlink_metadata(fixture.bin())
+                .expect("link")
+                .file_type()
+                .is_symlink());
+        }
+        let fixture = staged();
+        let outside = fixture.dir.join("outside-linux");
+        relink(&fixture.bin().join("linux-x86_64"), &outside);
+        for clean in [false, true] {
+            let error = fixture
+                .stage(&[Platform::LinuxX86_64], &provenance(COMMIT, false), clean)
+                .expect_err("symlinked platform directory");
+            assert!(error.contains("symlink"), "{error}");
+            assert!(error.contains("linux-x86_64"), "{error}");
+        }
+        let leftovers: Vec<_> = fs::read_dir(&outside)
+            .expect("outside")
+            .filter_map(Result::ok)
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(leftovers, ["guard"], "nothing written through the link");
+    }
+}
+
+/// #5027: clean provenance means no tracked change and no untracked,
+/// non-ignored file anywhere in the checkout; ignored `plugins/*/bin/`
+/// outputs stay permitted.
+mod provenance_of_untracked_inputs {
+    use std::process::Command;
+
+    use plugin_stage::stage::source_provenance;
+
+    use super::*;
+
+    fn git(dir: &Path, args: &[&str]) {
+        let status = Command::new("git")
+            .args([
+                "-c",
+                "user.name=plugin-stage test",
+                "-c",
+                "user.email=plugin-stage@example.invalid",
+                "-c",
+                "commit.gpgsign=false",
+                "-c",
+                "core.hooksPath=/dev/null",
+                "-c",
+                "init.defaultBranch=main",
+            ])
+            .args(args)
+            .current_dir(dir)
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .env_remove("GIT_INDEX_FILE")
+            .status()
+            .expect("run git");
+        assert!(status.success(), "git {args:?}");
+    }
+
+    fn repo() -> TempDir {
+        let dir = temp_dir("provenance");
+        write(
+            &dir.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"crates/tool\"]\n",
+        );
+        write(
+            &dir.join("crates/tool/Cargo.toml"),
+            "[package]\nname = \"tool\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        );
+        write(&dir.join("crates/tool/src/main.rs"), "fn main() {}\n");
+        write(&dir.join(".gitignore"), "/target/\n/plugins/*/bin/\n");
+        write(&dir.join("plugins/demo/README.md"), "demo\n");
+        git(&dir, &["init", "--quiet"]);
+        git(&dir, &["add", "--all"]);
+        git(&dir, &["commit", "--quiet", "-m", "fixture"]);
+        dir
+    }
+
+    fn dirty(dir: &Path) -> bool {
+        source_provenance(dir, "rustc 1.94.1")
+            .expect("provenance")
+            .source_dirty
+    }
+
+    #[test]
+    fn untracked_build_inputs_make_the_source_dirty() {
+        let dir = repo();
+        assert!(!dirty(&dir), "fresh commit is clean");
+        // Ignored generated outputs keep the source clean.
+        write(&dir.join("plugins/demo/bin/manifest.json"), "{}\n");
+        write(&dir.join("target/release/tool"), "x");
+        assert!(!dirty(&dir), "ignored outputs");
+        for input in [
+            "crates/tool/build.rs",
+            "crates/tool/src/generated.rs",
+            ".cargo/config.toml",
+            "build.rs",
+            "rust-toolchain.toml",
+        ] {
+            write(&dir.join(input), "// untracked\n");
+            assert!(dirty(&dir), "{input} is an untracked build input");
+            fs::remove_file(dir.join(input)).expect("remove");
+            assert!(!dirty(&dir), "{input} removed");
+        }
+        // A tracked modification is still dirty.
+        write(&dir.join("crates/tool/src/main.rs"), "fn main() { }\n");
+        assert!(dirty(&dir));
+    }
+
+    #[test]
+    fn a_stage_with_untracked_inputs_cannot_merge_into_a_clean_stage() {
+        let dir = repo();
+        let plugins = dir.join("plugins");
+        let declaration = declaration();
+        let file = dir.join("target/out/guard");
+        write(&file, "#!/bin/sh\nexit 0\n");
+        let built = Built {
+            step: BuildStep {
+                binary: declaration.binary("demo", "guard").expect("guard").clone(),
+                platform: declaration
+                    .platform(Platform::LinuxX86_64)
+                    .expect("platform")
+                    .clone(),
+                builder: Builder::Zigbuild,
+            },
+            file,
+        };
+        let clean = source_provenance(&dir, "rustc 1.94.1").expect("clean");
+        assert!(!clean.source_dirty);
+        install(&plugins, "demo", &[built], &clean, false).expect("clean stage");
+        assert!(!dirty(&dir), "the staged bin/ is ignored output");
+        write(&dir.join("crates/tool/build.rs"), "fn main() {}\n");
+        let untracked = source_provenance(&dir, "rustc 1.94.1").expect("untracked");
+        assert!(untracked.source_dirty);
+        assert_eq!(untracked.source_commit, clean.source_commit);
+        let error = check_merge(&plugins, "demo", &untracked, false).expect_err("no merge");
+        assert!(error.contains("(dirty)"), "{error}");
+    }
+}
+
 #[cfg(unix)]
 mod sh {
     use std::fs;
@@ -365,7 +600,7 @@ mod sh {
             );
             assert_eq!(output.status.code(), Some(127), "{system} {machine}");
             assert!(
-                text(&output.stderr).contains("no staged binary for"),
+                text(&output.stderr).contains("unsupported platform"),
                 "{}",
                 text(&output.stderr)
             );
@@ -430,5 +665,69 @@ mod sh {
             .output()
             .expect("run");
         assert_eq!(text(&output.stdout), DENY);
+    }
+
+    /// #5025: an unsupported OS or architecture exits non-zero before any
+    /// file lookup, so a planted executable at an unsupported layout path
+    /// never runs and the canonical guard denies.
+    #[test]
+    fn unsupported_platforms_deny_even_with_a_planted_binary() {
+        let fixture = Fixture::new();
+        fixture
+            .stage(&Platform::ALL, &provenance(COMMIT, false), false)
+            .expect("stage");
+        let allow = "#!/bin/sh\nprintf '%s' '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\"}}'\n";
+        for planted in [
+            "unsupported-x86_64",
+            "linux-unsupported",
+            "unsupported-unsupported",
+            "windows-unsupported",
+            "macos-unsupported",
+            "unsupported-aarch64",
+        ] {
+            let file = fixture.bin().join(planted).join("guard");
+            write(&file, allow);
+            fs::set_permissions(&file, fs::Permissions::from_mode(0o755)).expect("chmod");
+        }
+        let plugin_root = fixture.plugins.join("demo");
+        let path = fake_uname(&fixture.dir);
+        let dispatcher = fixture.bin().join("guard");
+        let dispatcher = dispatcher.to_str().expect("utf-8 path");
+        for (system, machine) in [
+            ("FreeBSD", "x86_64"),
+            ("FreeBSD", "amd64"),
+            ("Linux", "armv7l"),
+            ("Linux", "unsupported"),
+            ("SunOS", "sparc64"),
+            ("unsupported", "unsupported"),
+            ("MINGW32_NT-10.0", "i686"),
+            ("Darwin", "ppc"),
+            ("", ""),
+            ("Linux", "../../x"),
+        ] {
+            let env = [("FAKE_S", system), ("FAKE_M", machine)];
+            let output = guard(&plugin_root, &path, &env);
+            assert_eq!(text(&output.stdout), DENY, "{system} {machine}");
+            let mut env = vec![("PATH", path.as_str())];
+            env.extend_from_slice(&[("FAKE_S", system), ("FAKE_M", machine)]);
+            let output = run(dispatcher, &[], &env, "");
+            assert_eq!(output.status.code(), Some(127), "{system} {machine}");
+            assert!(
+                !text(&output.stdout).contains("allow"),
+                "{system} {machine}"
+            );
+            assert!(
+                text(&output.stderr).contains("unsupported platform"),
+                "{system} {machine}: {}",
+                text(&output.stderr)
+            );
+        }
+        // Windows ARM64 keeps running the x86_64 build under emulation.
+        let output = guard(
+            &plugin_root,
+            &path,
+            &[("FAKE_S", "MINGW64_NT-10.0-26100"), ("FAKE_M", "aarch64")],
+        );
+        assert_eq!(text(&output.stdout), "windows-x86_64|{}|");
     }
 }
