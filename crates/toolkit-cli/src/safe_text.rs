@@ -257,6 +257,29 @@ impl CallerText {
         caller
     }
 
+    /// Only the #4639 newline rule, for a passthrough command (`asm exec`):
+    /// its words are another program's arguments, which may hold secret
+    /// *references* such as `{{resolve:secretsmanager:prod/db}}` that the
+    /// shared redactor would take for a labelled credential, and the command
+    /// redacts resolved values itself. Each value with a newline is escaped
+    /// onto one line wherever a diagnostic echoes it; nothing is redacted,
+    /// bounded or hidden from stdout.
+    pub(crate) fn newlines_only(args: &[String]) -> Self {
+        let mut caller = Self::default();
+        for arg in args {
+            let value = arg.split_once('=').map(|(_, value)| value);
+            for text in std::iter::once(arg.as_str()).chain(value) {
+                if text.contains('\n') {
+                    caller
+                        .shown
+                        .push((text.to_string(), neutralize_line(text).into_owned()));
+                }
+            }
+        }
+        caller.shown.sort_by_key(|(value, _)| Reverse(value.len()));
+        caller
+    }
+
     fn learn(&mut self, value: &str) {
         let redacted = redact_text(value);
         let credential = redacted != value;
@@ -458,6 +481,27 @@ mod tests {
             format!("error: {}...", &long[..MAX_PATH_CHARS])
         );
         assert!(matches!(known.stdout(&long), Cow::Borrowed(_)));
+    }
+
+    #[test]
+    fn a_passthrough_command_keeps_secret_references_and_only_escapes_newlines() {
+        let args: Vec<String> = [
+            "asm",
+            "exec",
+            "sh",
+            "{{resolve:secretsmanager:prod/db}}",
+            "a\nb",
+        ]
+        .map(String::from)
+        .to_vec();
+        let known = CallerText::newlines_only(&args);
+        let failure = "asm-exec: ERROR: Failed to resolve: prod/db";
+        assert!(matches!(known.diagnostic(failure), Cow::Borrowed(_)));
+        assert!(matches!(
+            known.stdout("{{resolve:secretsmanager:prod/db}}"),
+            Cow::Borrowed(_)
+        ));
+        assert_eq!(known.diagnostic("x a\nb"), "x a\\nb");
     }
 
     #[test]

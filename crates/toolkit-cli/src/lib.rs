@@ -522,6 +522,14 @@ pub fn run(args: &[OsString], out: &mut dyn Write, err: &mut dyn Write) -> u8 {
             print_static(out, err, &format!("toolkit {}", env!("CARGO_PKG_VERSION")))
         }
         Ok(Routed::Run(spec, invocation)) => {
+            // A passthrough command's words belong to another program and may
+            // be secret references, not secrets; it redacts what it resolves
+            // itself, so only the newline rule applies (#4941).
+            let caller = if spec.passthrough {
+                CallerText::newlines_only(&text_args)
+            } else {
+                caller
+            };
             let mut output = Output::with_diagnostics(out, err);
             output.caller = caller.clone();
             let result = (spec.handler)(&invocation, &mut output).and_then(|()| output.finish());

@@ -121,7 +121,11 @@ The sinks apply the same rule to the command-line values (`CallerText`, replacin
 they echo verbatim redacted, bounded and on one line, and `Output::line`
 (stdout) hides the credential fragment of an argument value (URL userinfo, a
 labelled credential), whole or cut after 8 characters. Only displayed text
-changes; files are still read and written at the exact path given.
+changes; files are still read and written at the exact path given. A
+passthrough command (`asm exec`) keeps only the newline rule at the sinks: its
+words are another program's arguments and may be secret references such as
+`{{resolve:secretsmanager:prod/db}}` (which the redactor would take for a
+labelled credential), and it redacts resolved values itself.
 
 Deliberate behaviour change, only for credential-shaped text (anything the
 shared redactor changes, so for example a `secretsmanager:` ARN segment too) or
