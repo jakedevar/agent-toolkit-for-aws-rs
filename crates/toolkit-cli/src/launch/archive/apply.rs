@@ -17,9 +17,8 @@
 //!   name. Every directory is re-entered `O_NOFOLLOW` with its phase-1
 //!   identity, so a swap after planning stops the apply before that write.
 
-use std::ffi::{CStr, CString, OsStr};
+use std::ffi::{CStr, CString};
 use std::io::{self, Read as _, Write as _};
-use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 
 use super::fsops::{self, DirHandle, EntryStat, EntryType};
@@ -119,6 +118,7 @@ struct Node {
 #[derive(Debug)]
 pub struct SnapshotTree {
     nodes: Vec<Node>,
+    root: Ident,
     /// Files.
     pub files: usize,
     /// Directories.
@@ -183,6 +183,7 @@ pub fn walk_snapshot(snapshot: &Path, limits: &ApplyLimits) -> Result<SnapshotTr
 fn walk_from(root: DirHandle, limits: &ApplyLimits) -> Result<SnapshotTree, LaunchError> {
     let mut tree = SnapshotTree {
         nodes: Vec::new(),
+        root: root.identity(),
         files: 0,
         directories: 0,
         bytes: 0,
@@ -380,7 +381,76 @@ pub fn apply_snapshot(
     options.hook.between_phases();
     // Phase 2: write.
     let source = fsops::open_root(snapshot).map_err(|_| walk_failure())?;
-    write_phase(&tree, &targets, source, &into_handle, options)
+    write_phase(&tree, &targets, source, &into_handle, into, options)
+}
+
+/// The phase-2 stop message.
+fn stopped(files: usize, reason: &str) -> LaunchError {
+    refusal(format!(
+        "Applying the snapshot stopped after {files} files: {reason}. Review the working tree \
+         with git status."
+    ))
+}
+
+/// `.<name>.launch-<8 hex>.tmp`, the name cut to 200 bytes so the result
+/// stays within `NAME_MAX`.
+fn temporary_name(name: &CStr, random: &dyn Random) -> Result<CString, String> {
+    let bytes = name.to_bytes();
+    let mut out = b".".to_vec();
+    out.extend_from_slice(&bytes[..bytes.len().min(200)]);
+    let hex = random_hex(random, 4).map_err(|error| error.message().to_string())?;
+    out.extend_from_slice(format!(".launch-{hex}.tmp").as_bytes());
+    CString::new(out).map_err(|_| "an invalid temporary name".to_string())
+}
+
+/// Copy exactly `size` bytes from `source` to `target`.
+fn copy_exact(source: &mut std::fs::File, target: &mut std::fs::File, size: u64) -> io::Result<()> {
+    let mut remaining = size;
+    let mut buffer = vec![0_u8; 64 * 1024];
+    loop {
+        let read = source.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        if read as u64 > remaining {
+            return Err(io::Error::other("a snapshot file grew while it was applied"));
+        }
+        target.write_all(&buffer[..read])?;
+        remaining -= read as u64;
+    }
+    if remaining != 0 {
+        return Err(io::Error::other("a snapshot file shrank while it was applied"));
+    }
+    Ok(())
+}
+
+/// Write one file through a temporary name in the held target parent.
+fn write_file(
+    target_dir: &DirHandle,
+    source_dir: &DirHandle,
+    node: &Node,
+    index: usize,
+    options: &mut ApplyOptions<'_>,
+) -> Result<(), String> {
+    let mut source = fsops::open_file_at(source_dir, &node.name, &node.source)
+        .map_err(|_| "a snapshot file changed after planning".to_string())?;
+    let mode = if node.source.mode & 0o100 != 0 {
+        0o755
+    } else {
+        0o644
+    };
+    let temporary = temporary_name(&node.name, options.random)?;
+    let (mut file, _) = fsops::create_file_at(target_dir, &temporary, mode)
+        .map_err(|error| error.to_string())?;
+    let result = copy_exact(&mut source, &mut file, node.source.size)
+        .and_then(|()| file.sync_all())
+        .and_then(|()| options.hook.before_rename(index))
+        .and_then(|()| fsops::rename_in(target_dir, &temporary, &node.name));
+    if let Err(error) = result {
+        let _ = fsops::remove_at(target_dir, &temporary, false);
+        return Err(error.to_string());
+    }
+    Ok(())
 }
 
 fn write_phase(
@@ -388,10 +458,71 @@ fn write_phase(
     targets: &[Target],
     source: DirHandle,
     into_handle: &DirHandle,
+    into: &Path,
     options: &mut ApplyOptions<'_>,
 ) -> Result<Applied, LaunchError> {
-    let _ = (tree, targets, source, into_handle, options);
-    todo!("R-AR-APPLY phase 2")
+    if source.identity() != tree.root {
+        return Err(walk_failure());
+    }
+    let mut target_idents: Vec<Option<Ident>> = targets
+        .iter()
+        .map(|target| match target {
+            Target::Directory(ident) => Some(*ident),
+            Target::New | Target::File => None,
+        })
+        .collect();
+    let mut source_idents: Vec<Option<Ident>> = tree
+        .nodes
+        .iter()
+        .map(|node| {
+            (node.source.kind == EntryType::Directory).then_some((node.source.dev, node.source.ino))
+        })
+        .collect();
+    let target_root = fsops::enter_dir(into_handle, c".").map_err(|_| stopped(0, "the target changed"))?;
+    let mut target_nav = Navigator::new(target_root);
+    let mut source_nav = Navigator::new(source);
+    let (mut files, mut directories) = (0_usize, 0_usize);
+    for (id, node) in (0_u32..).zip(&tree.nodes) {
+        let changed = || {
+            format!(
+                "a target directory changed after planning: {}",
+                shown(&into.join(tree.path(node.parent)).to_string_lossy())
+            )
+        };
+        let target_dir = target_nav
+            .goto(tree, node.parent, &mut target_idents)
+            .map_err(|_| stopped(files, &changed()))?;
+        if node.source.kind == EntryType::Directory {
+            if targets[id as usize] != Target::New {
+                continue;
+            }
+            let created = fsops::mkdir_at(target_dir, &node.name, 0o755)
+                .map_err(|error| error.to_string())
+                .and_then(|()| {
+                    fsops::enter_dir(target_dir, &node.name)
+                        .map_err(|_| "a new directory changed".to_string())
+                })
+                .and_then(|dir| {
+                    fsops::chmod_dir(&dir, 0o755).map_err(|error| error.to_string())?;
+                    Ok(dir.identity())
+                })
+                .map_err(|reason| stopped(files, &reason))?;
+            target_idents[id as usize] = Some(created);
+            directories += 1;
+            continue;
+        }
+        let source_dir = source_nav
+            .goto(tree, node.parent, &mut source_idents)
+            .map_err(|_| stopped(files, "a snapshot directory changed after planning"))?;
+        write_file(target_dir, source_dir, node, files, options)
+            .map_err(|reason| stopped(files, &reason))?;
+        files += 1;
+    }
+    Ok(Applied {
+        files,
+        directories,
+        into: into.to_path_buf(),
+    })
 }
 
 #[cfg(test)]
