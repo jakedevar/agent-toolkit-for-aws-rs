@@ -1545,9 +1545,7 @@ mod tests {
         assert!(lines[two.line..three.line - 1]
             .iter()
             .any(|line| line.contains("transform_fn.py")));
-        assert!(lines[three.line..]
-            .iter()
-            .any(|line| *line == "from transform_fn import transform_dataset"));
+        assert!(lines[three.line..].contains(&"from transform_fn import transform_dataset"));
     }
 
     #[test]
