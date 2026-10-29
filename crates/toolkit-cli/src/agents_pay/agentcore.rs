@@ -788,6 +788,25 @@ impl PaymentProof {
 }
 
 #[cfg(test)]
+struct Authorized {
+    proof: PaymentProof,
+    amount: String,
+    version: i64,
+    recipient: String,
+}
+#[cfg(test)]
+struct FakePaymentsApi {
+    calls: std::cell::Cell<usize>,
+}
+#[cfg(test)]
+fn process_approved(
+    _api: &FakePaymentsApi,
+    _approved: Approved,
+) -> Result<Authorized, PaymentError> {
+    Err(PaymentError::InvalidResponse)
+}
+
+#[cfg(test)]
 impl<'a> PaymentClient<'a> {
     fn process_payment_until(
         &self,
@@ -1131,6 +1150,19 @@ mod wire_contracts {
         fn sleep(&self, duration: Duration) {
             self.0.set(self.0.get() + duration);
         }
+    }
+
+    #[test]
+    fn approved_payment_is_consumed_once_and_retains_verified_terms() {
+        let api = FakePaymentsApi {
+            calls: Cell::new(0),
+        };
+        let authorized = process_approved(&api, super::operation_contracts::approved()).unwrap();
+        assert_eq!(api.calls.get(), 1);
+        assert_eq!(authorized.amount, "100000");
+        assert_eq!(authorized.version, 2);
+        assert_eq!(authorized.recipient, "0xB");
+        assert!(matches!(authorized.proof.payload(), Json::Object(_)));
     }
 
     #[test]
