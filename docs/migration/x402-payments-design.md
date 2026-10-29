@@ -1485,6 +1485,7 @@ These are stricter or safety-only unless noted:
   - macOS: a refusal while `SSL_CERT_FILE` or `SSL_CERT_DIR` is set.
   Python and botocore honoured certifi and `AWS_CA_BUNDLE`. Credential-provider HTTP and the
   admin commands keep S1's R-ROOTS.
+- D36 (#5166) use nix =0.29.0 for the same safe getpwuid_r lookup: nix 0.31.1 pins libc =0.2.180, conflicting with the workspace mio requirement >=0.2.183.
 - D35 (#5157) reject `=` after a complete Base64 quartet, although Python 3.11
   `b64decode(validate=True)` accepts it. A header with this padding falls through
   to raw-header and body extraction; it may therefore be refused.

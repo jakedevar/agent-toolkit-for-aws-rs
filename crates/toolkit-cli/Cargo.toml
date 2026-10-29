@@ -28,6 +28,7 @@ miniz_oxide = { version = "=0.8.9", default-features = false, features = ["with-
 # `launch/archive/fsops.rs`.
 [target.'cfg(unix)'.dependencies]
 rustix = { version = "=1.1.5", default-features = false, features = ["std", "fs", "process"] }
+nix = { version = "=0.29.0", default-features = false, features = ["user"] }
 
 # The recorded-response contract (`tests/recorded_contract.rs`, #4751) reads
 # the slices' syntax tree; span locations give it the line of each finding.
