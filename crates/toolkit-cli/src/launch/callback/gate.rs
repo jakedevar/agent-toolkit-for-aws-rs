@@ -116,6 +116,29 @@ pub fn publish_session(
     bytes: &[u8],
     random: &dyn crate::launch::clock::Random,
 ) -> std::io::Result<()> {
+    publish_with(
+        gate,
+        cutoff,
+        dir,
+        bytes,
+        random,
+        Instant::now,
+        || {},
+        |from, to| std::fs::rename(from, to),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn publish_with(
+    gate: &CommitGate,
+    cutoff: Instant,
+    dir: &std::path::Path,
+    bytes: &[u8],
+    random: &dyn crate::launch::clock::Random,
+    now: impl FnOnce() -> Instant,
+    admitted: impl FnOnce(),
+    rename: impl FnOnce(&std::path::Path, &std::path::Path) -> std::io::Result<()>,
+) -> std::io::Result<()> {
     use std::io::Write as _;
     let nonce = crate::launch::clock::random_hex(random, 8)
         .map_err(|e| std::io::Error::other(e.to_string()))?;
@@ -132,13 +155,14 @@ pub fn publish_session(
         file.write_all(bytes)?;
         file.sync_all()?;
         drop(file);
-        if !gate.admit(Instant::now(), cutoff) {
+        if !gate.admit(now(), cutoff) {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::TimedOut,
                 "callback publication not admitted",
             ));
         }
-        std::fs::rename(&temp, dir.join("session.json"))?;
+        admitted();
+        rename(&temp, &dir.join("session.json"))?;
         if !gate.committed() {
             return Err(std::io::Error::other("callback gate state changed"));
         }
@@ -171,9 +195,69 @@ mod tests {
 
     #[test]
     fn publication_admission_precedes_rename_and_watchdog_never_waits() {
-        // Placeholder for the injected publication hook.
-        let calls: Vec<&str> = Vec::new();
-        assert_eq!(calls, vec!["prepared", "admitted", "watchdog:1", "rename"]);
+        use crate::launch::{clock::SeededRandom, tests_support::Scratch};
+        let scratch = Scratch::new("gate-hook");
+        let gate = CommitGate::default();
+        assert!(gate.start_exchange());
+        let cutoff = Instant::now() + Duration::from_secs(1);
+        let calls = std::cell::RefCell::new(Vec::new());
+        publish_with(
+            &gate,
+            cutoff,
+            scratch.path(),
+            b"session",
+            &SeededRandom::new(1),
+            || {
+                let temp = std::fs::read_dir(scratch.path())
+                    .unwrap()
+                    .next()
+                    .unwrap()
+                    .unwrap()
+                    .path();
+                assert_eq!(std::fs::read(temp).unwrap(), b"session");
+                calls.borrow_mut().push("prepared");
+                cutoff - Duration::from_millis(1)
+            },
+            || {
+                calls.borrow_mut().push("admitted");
+                assert_eq!(gate.watchdog(), WatchdogAction::ExitFailure);
+                calls.borrow_mut().push("watchdog:1");
+            },
+            |from, to| {
+                calls.borrow_mut().push("rename");
+                std::fs::rename(from, to)
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            *calls.borrow(),
+            vec!["prepared", "admitted", "watchdog:1", "rename"]
+        );
+        assert_eq!(
+            std::fs::read(scratch.join("session.json")).unwrap(),
+            b"session"
+        );
+    }
+
+    #[test]
+    fn publication_at_cutoff_removes_temp_without_rename() {
+        use crate::launch::{clock::SeededRandom, tests_support::Scratch};
+        let scratch = Scratch::new("gate-cutoff");
+        let gate = CommitGate::default();
+        assert!(gate.start_exchange());
+        let cutoff = Instant::now();
+        let result = publish_with(
+            &gate,
+            cutoff,
+            scratch.path(),
+            b"session",
+            &SeededRandom::new(1),
+            || cutoff,
+            || panic!("admission after cutoff"),
+            |_, _| panic!("rename after cutoff"),
+        );
+        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::TimedOut);
+        assert_eq!(std::fs::read_dir(scratch.path()).unwrap().count(), 0);
     }
 
     #[test]
