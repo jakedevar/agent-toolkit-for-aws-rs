@@ -2423,8 +2423,9 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
 /// commit and says so in the Issue; an incidental one fails here.
 // Neptune memory (#4886) deliberately adds its synopsis and description, and
 // the launch snapshot routes (#5317) theirs.
-const USAGE_BASE_LEN: usize = 45174;
-const USAGE_BASE_FNV1A64: u64 = 0x3ee6_a3a3_9d31_17aa;
+// `documentdb normalize-capture` (#5327) deliberately adds its synopsis and description.
+const USAGE_BASE_LEN: usize = 45543;
+const USAGE_BASE_FNV1A64: u64 = 0x083b_eaeb_e9fa_001b;
 
 #[test]
 fn the_global_usage_text_is_byte_identical_to_the_base() {

@@ -552,7 +552,7 @@ mod tests {
     /// The route paths of the old `COMMANDS` table (commit ce0eaf6a, before the
     /// registry), in table order: the public order of [`COMMANDS`]. The routes of
     /// slices added after the registry follow at the end, ordered by slice name.
-    const LEGACY_COMMAND_ORDER: [&str; 106] = [
+    const LEGACY_COMMAND_ORDER: [&str; 107] = [
         "skills list",
         "manifests validate",
         "spec validate",
@@ -645,6 +645,7 @@ mod tests {
         "bedrock-probes source-baseline",
         // docgraph (#4395):
         "documentdb wa-review",
+        "documentdb normalize-capture",
         "neptune validate-input",
         "neptune seed",
         "neptune memory",
