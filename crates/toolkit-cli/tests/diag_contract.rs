@@ -2228,7 +2228,7 @@ fn filesystem_bearing_consumers() -> BTreeSet<(String, String)> {
 /// file name or a directory name. A file that is not about a listed command
 /// (`elasticache`, `relational`, `ai-data`, `cloudwatch region`) is
 /// there for the flag name only.
-const AUDITED_FILESYSTEM_CONSUMERS: [(&str, &str); 23] = [
+const AUDITED_FILESYSTEM_CONSUMERS: [(&str, &str); 25] = [
     ("startup/model_path.rs", "--workload"),
     ("bedrock_agent.rs", "--agent-id"),
     ("bedrock_agent.rs", "--agent-version"),
@@ -2255,6 +2255,9 @@ const AUDITED_FILESYSTEM_CONSUMERS: [(&str, &str); 23] = [
     ("docgraph/mod.rs", "--region"),
     // Flag name only (#5006): no marketplace command has a LITERAL_DASH entry.
     ("marketplace/mod.rs", "--region"),
+    // Launch validates --region as a region key, never as a path (#5216).
+    ("launch/callback/start.rs", "--region"),
+    ("launch/callback/wait.rs", "--region"),
 ];
 
 /// A `LITERAL_DASH` flag that shares a source file with filesystem code must be
@@ -2416,8 +2419,8 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
 /// The S2b render synopsis is included as well (#5223).
 /// A deliberate usage change updates the pin in the same
 /// commit and says so in the Issue; an incidental one fails here.
-const USAGE_BASE_LEN: usize = 44367;
-const USAGE_BASE_FNV1A64: u64 = 0xe5cc_c5c0_3b51_b63e;
+const USAGE_BASE_LEN: usize = 44714;
+const USAGE_BASE_FNV1A64: u64 = 0xf811_6532_6062_711a;
 
 #[test]
 fn the_global_usage_text_is_byte_identical_to_the_base() {

@@ -1,6 +1,6 @@
 # Launch with AWS: Rust port design and boundary pre-review (#4382, phase 1)
 
-Status: design, revision 3 (pre-review #5038 round 1 at `87a5543` and round 2 at `4d6f61c`
+Status: design, revision 4 (pre-review #5038 round 1 at `87a5543` and round 2 at `4d6f61c`
 answered; tables "Pre-review r1 resolutions" and "Pre-review r2 resolutions" below). No code
 changes. Programme #4369, slice key `launch`, wave 2,
 dependency #4379 (aws-core boundaries, integrated). AC1 of #4382 requires that the OAuth callback
@@ -491,6 +491,16 @@ the pending record only for `auth-wait`.
   records whose recorded cutoff is more than one hour old and whose lock is free, and stale
   `session.json.<hex>.tmp` files of its own pattern older than one hour.
 - The pending record carries `deadline` (wall-clock of `F`) and `cutoff` (wall-clock of `T`).
+  **Revision 4 (#5230):** a missing record on the first read is the immediate unknown-pid
+  error, even if a valid session exists. A present but unreadable record, or one that disappears
+  after a read, has unknown status; never trust fields from it. Its effective cutoff is the last
+  successfully parsed cutoff, or, if none, auth-wait's monotonic start plus 660 seconds (the 600 s
+  maximum flow lifetime plus 60 s exchange window). Apply the table below with unknown treated as
+  a nonterminal status: a valid session wins; a held lock polls until cutoff plus 5 s and then
+  returns non-final `helper_blocked`; a free lock returns timed out at or after cutoff, otherwise
+  ended. A final result permits removal of the pending JSON only while the lock is free, including
+  an unreadable record; do not follow a symlink. Never delete on `helper_blocked` or a valid
+  session while the lock is held. `auth-start` leaves unreadable records alone.
   **`auth-wait` decision table** (polled every second; "valid session" = R-TOK-STORE parse plus a
   token valid for more than the 300 s buffer; the first matching row wins):
 
@@ -516,12 +526,14 @@ the pending record only for `auth-wait`.
 
 - `auth-start` creates `~/.launch-with-aws/pending/` (0700) and the child creates
   `pending/<pid>.json` (0600: `{"pid", "port", "deadline", "cutoff", "status"}`, status one of
-  `listening`, `exchanging`, `succeeded`, `failed`, `timed_out`, plus a fixed `reason` code; never a secret) and
+  `listening`, `exchanging`, `succeeded`, `failed`, `timed_out`, plus a fixed `reason` code;
+  a denial also has `oauth_error`, the validated or substituted error code from R-CB-STATE;
+  never an error description, URI or secret) and
   holds an exclusive lock on `pending/<pid>.lock` for its whole life (`std::fs::File::lock`, stable
   since Rust 1.89; the toolchain is 1.94.1).
-- `auth-wait <pid>` (positional kept for compatibility) reads `pending/<pid>.json`. Missing →
+- `auth-wait <pid>` (positional kept for compatibility) reads `pending/<pid>.json`. Missing on the first read →
   `{"error": "No sign-in is in progress for pid <pid>. Run auth-start again."}`. Then it polls every
-  second and answers by R-CB-TIME's decision table (revision 3): a valid session →
+  second and answers by R-CB-TIME's decision table (revision 4, including unknown status): a valid session →
   `{authenticated:true, baseUrl}`. A final failure or timeout is reported only once the helper's
   lock is free. A lock still held at `cutoff + 5 s` → the non-final `helper_blocked` message.
 - `auth-wait` **never sends a signal**. The Python's `SIGTERM` to a bare pid could hit an unrelated
@@ -2123,3 +2135,9 @@ lookup can overrun an operation deadline by the resolver's own configured limits
   the command refuses rather than writing unprotected (the #5038 round-2 engineering
   interpretation). Product choice for the PM only if a non-Git target must be supported; that
   would need its own reviewed path.
+
+The Rust callback helper is invoked as `toolkit launch auth-callback`; the parent waits with `toolkit launch auth-wait PID`.
+
+Start sign-in with `toolkit launch auth-start` before using the wait command.
+
+Implementation note for L4: #5081 supersedes the earlier per-slot timing and rate derivation above. The listener expires all due slots at each operation clock check and retains the turn's separate pacing deadline after an early slot-expiry wake. #5083 supersedes the earlier T-CB-TIME-9/14 wording: admission authorizes a rename but does not prove the syscall has started; watchdog exit is terminal for user-space code, and lock release is tied to process exit rather than parent reaping.

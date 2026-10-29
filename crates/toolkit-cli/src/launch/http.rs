@@ -333,7 +333,19 @@ mod tests {
                                     "send(read_capped(&mut stdout, cap));"
                                 )
                             || path.ends_with("archive/select/tests_select.rs")
-                                && line.trim() == concat!("let _ = sender", ".", "send(f());");
+                                && line.trim() == concat!("let _ = sender", ".", "send(f());")
+                            || path.ends_with("callback/spawn.rs")
+                                && (line.trim()
+                                    == concat!("let _ = write_send", ".", "send(result);")
+                                    || line.trim() == concat!("let _ = send", ".", "send(line);"))
+                            || path.ends_with("callback/tests.rs")
+                                && line.trim()
+                                    == concat!("let _ = send", ".", "send(child.wait());")
+                            || path.ends_with("callback/gate.rs")
+                                && (line.trim()
+                                    == concat!("entered_tx", ".", "send(()).unwrap();")
+                                    || line.trim()
+                                        == concat!("release_tx", ".", "send(()).unwrap();"));
                         assert!(channel_call, "{}: {line}", path.display());
                     }
                 }

@@ -112,6 +112,11 @@ fn source_gate(source: &str) -> Result<(), String> {
                 "set_var",
                 "remove_var",
                 "AWS_CA_BUNDLE",
+                "libc",
+                "rustix",
+                "getenv",
+                "NativeLoader",
+                "validate_roots",
             ]
             .contains(&word.as_str())
                 || (word == "from_process" && (i == 0 || words[i - 1] != "fn"))
@@ -177,6 +182,11 @@ fn unix_payment_source_does_not_use_environment_sensitive_loaders() {
         "use crate::RootEnv::from_process as read; fn f() { read(); }",
         "fn f() { RootEnv::from_process(); }",
         "#[cfg(test)] fn helper() {} fn f() { openssl_probe::probe(); }",
+        "fn f() { libc::getenv(x); }",
+        "fn f() { rustix::param::getenv(x); }",
+        "fn f() { getenv(x); }",
+        "fn f() { crate::sdk::roots::NativeLoader; }",
+        "fn f() { crate::sdk::roots::validate_roots(); }",
     ] {
         assert!(source_gate(fixture).is_err(), "bypass accepted: {fixture}");
     }
