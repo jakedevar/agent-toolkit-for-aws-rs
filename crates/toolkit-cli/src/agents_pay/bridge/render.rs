@@ -114,9 +114,9 @@ pub fn session_result(session: &Json) -> Result<Json, BridgeError> {
                 amount(value.get("maxSpendAmount").ok_or(BridgeError::AgentCore)?)?,
             )]),
             "availableLimits" => {
-                if !matches!(value, Json::Object(_)) {
-                    return Err(BridgeError::AgentCore);
-                }
+                let value = toolkit_aws::recorded::optional_object(session, key)
+                    .map_err(|_| BridgeError::AgentCore)?
+                    .ok_or(BridgeError::AgentCore)?;
                 let mut parts = Vec::new();
                 if let Some(v) = value.get("availableSpendAmount") {
                     parts.push(("availableSpendAmount", amount(v)?));
@@ -149,6 +149,7 @@ pub fn session_result(session: &Json) -> Result<Json, BridgeError> {
 ///
 /// # Errors
 /// Returns an `AgentCore` error when the payload is not a JSON object.
+// recorded-shape: proof payload is required as an object; every other shape is rejected.
 pub fn payment_result(payload: &Json) -> Result<Json, BridgeError> {
     let normalized = match payload {
         Json::String(text) => toolkit_core::parse_json(text).map_err(|_| BridgeError::AgentCore)?,

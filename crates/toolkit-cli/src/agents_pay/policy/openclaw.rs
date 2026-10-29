@@ -5,6 +5,7 @@ use toolkit_core::Json;
 use crate::agents_pay::bridge::protocol::BridgeError;
 use crate::agents_pay::urlparse::urlparse;
 
+// recorded-shape: OpenClaw policy is input, not a recorded AWS response.
 fn strings(value: &Json) -> Result<Vec<Json>, BridgeError> {
     let Json::Array(items) = value else {
         return Err(BridgeError::Input);
@@ -48,6 +49,7 @@ fn origins(input: &Json) -> Result<Vec<Json>, BridgeError> {
 ///
 /// # Errors
 /// Returns an input error for malformed or unsupported profile fields.
+// recorded-shape: this maps policy input, not a recorded AWS response.
 pub fn from_openclaw(input: &Json) -> Result<Json, BridgeError> {
     let Json::Object(fields) = input else {
         return Err(BridgeError::Input);

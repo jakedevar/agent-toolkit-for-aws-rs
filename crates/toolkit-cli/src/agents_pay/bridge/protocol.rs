@@ -21,6 +21,7 @@ pub enum BridgeError {
 ///
 /// # Errors
 /// Returns an input error for invalid requests or an `AgentCore` error for model length violations.
+// recorded-shape: trusted glue request is input, not a recorded AWS response.
 pub fn read_request(reader: &mut impl Read) -> Result<Json, BridgeError> {
     let mut bytes = Vec::new();
     reader
@@ -119,10 +120,12 @@ pub fn read_request(reader: &mut impl Read) -> Result<Json, BridgeError> {
     Ok(request)
 }
 
+// recorded-shape: exact keys validate trusted glue request input.
 fn exact_keys(value: &Json, keys: &[&str]) -> bool {
     matches!(value, Json::Object(members) if members.len() == keys.len() && members.iter().all(|(key, _)| keys.contains(&key.as_str())))
 }
 
+// recorded-shape: compares the two input channels, not recorded responses.
 fn same_value(a: &Json, b: &Json) -> bool {
     match (a, b) {
         (Json::Object(left), Json::Object(right)) => {
@@ -138,6 +141,7 @@ fn same_value(a: &Json, b: &Json) -> bool {
     }
 }
 
+// recorded-shape: candidate and registry are trusted glue inputs, not AWS responses.
 fn validate_candidate(request: &Json) -> Result<(), BridgeError> {
     if !exact_keys(request, &["operation", "candidate", "secrets"]) {
         return Err(BridgeError::Input);
