@@ -346,3 +346,68 @@ fn stale_cleanup_preserves_held_records_and_unrelated_files() {
     assert!(!temp.exists());
     assert!(scratch.join("session.json.not-owned.tmp").exists());
 }
+#[cfg(unix)]
+#[test]
+fn watchdog_terminates_prepublication_process() {
+    use super::{
+        gate::{start_watchdog, CommitGate},
+        pending::Custody,
+    };
+    use std::io::{BufRead, BufReader, Read, Write};
+    use std::process::{Command, Stdio};
+    use std::sync::Arc;
+    use std::time::Instant;
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+    if let Ok(dir) = std::env::var("RSI_CALLBACK_WATCHDOG_CHILD") {
+        let dir = std::path::PathBuf::from(dir);
+        let _custody = Custody::acquire(&dir, 99).unwrap();
+        let gate = Arc::new(CommitGate::default());
+        assert!(gate.start_exchange());
+        assert!(gate.admit(Instant::now(), Instant::now() + Duration::from_secs(1)));
+        start_watchdog(gate, Instant::now() + Duration::from_millis(100), || {
+            panic!("unexpected record write")
+        });
+        println!("watchdog-ready");
+        std::io::stdout().flush().unwrap();
+        let mut byte = [0];
+        let _ = std::io::stdin().read(&mut byte);
+        std::fs::write(dir.join("published"), b"bad").unwrap();
+        return;
+    }
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("l4-watchdog-{}-{unique}", std::process::id()));
+    std::fs::create_dir(&dir).unwrap();
+    let mut child = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "launch::callback::tests::watchdog_terminates_prepublication_process",
+            "--nocapture",
+        ])
+        .env("RSI_CALLBACK_WATCHDOG_CHILD", &dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let stdin = child.stdin.take().unwrap();
+    let mut stdout = BufReader::new(child.stdout.take().unwrap());
+    loop {
+        let mut line = String::new();
+        assert_ne!(stdout.read_line(&mut line).unwrap(), 0);
+        if line.contains("watchdog-ready") {
+            break;
+        }
+    }
+    let (send, recv) = std::sync::mpsc::sync_channel(1);
+    std::thread::spawn(move || {
+        let _ = send.send(child.wait());
+    });
+    let result = recv.recv_timeout(Duration::from_secs(5));
+    drop(stdin);
+    assert!(!result.unwrap().unwrap().success());
+    assert!(!dir.join("published").exists());
+    assert!(Custody::acquire(&dir, 99).is_ok());
+    std::fs::remove_dir_all(dir).unwrap();
+}
