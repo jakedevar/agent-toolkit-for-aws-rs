@@ -744,6 +744,13 @@ fn uvx_argv_must_match_its_inventory_template() {
             );
         }
     }
+}
+
+/// A `uvx` server object may hold only `type` (`stdio`), `command` and
+/// `args`; args must be an array of strings; args without a string command
+/// are refused. A canonical binary server keeps plain literal args.
+#[test]
+fn mcp_server_objects_are_checked_as_a_whole() {
     let quoted: Vec<String> = SHIPPED_UVX_ARGS
         .iter()
         .map(|arg| format!("\"{arg}\""))
@@ -760,9 +767,9 @@ fn uvx_argv_must_match_its_inventory_template() {
             SHIPPED_UVX_ARGS.join(" ")
         ),
         format!(r#"{{"command": "uvx", "args": [{args}, 7]}}"#),
-        format!(r#"{{"command": "uvx"}}"#),
-        format!(r#"{{"command": ["env", "-S", "sh -c x"], "args": []}}"#),
-        format!(r#"{{"args": ["-S", "sh -c ./b[[:lower:]]n/tool"]}}"#),
+        r#"{"command": "uvx"}"#.to_string(),
+        r#"{"command": ["env", "-S", "sh -c x"], "args": []}"#.to_string(),
+        r#"{"args": ["-S", "sh -c ./b[[:lower:]]n/tool"]}"#.to_string(),
     ] {
         let file = format!(r#"{{"mcpServers": {{"s": {server}}}}}"#);
         let (problems, references) = problems_for(&[(".mcp.json", file)]);
@@ -1012,7 +1019,13 @@ fn metacharacter_insertions_into_templates_are_rejected() {
         }
     }
     assert!(total > 50_000, "only {total} mutants");
+}
 
+/// Property-style over MCP commands (#5088 ruling): each metacharacter
+/// inserted anywhere in a program or binary command is refused, even with
+/// the args its unmutated form accepts.
+#[test]
+fn metacharacter_insertions_into_mcp_commands_are_rejected() {
     // MCP commands: each mutant of a program or binary command is refused
     // even with the args its unmutated form accepts.
     let shipped_args: String = SHIPPED_UVX_ARGS
@@ -1056,7 +1069,13 @@ fn metacharacter_insertions_into_templates_are_rejected() {
             );
         }
     }
+}
 
+/// Property-style over MCP argv (#5088 ruling): every distinct shipped `uvx`
+/// argv with each metacharacter inserted at each position of each element
+/// is refused; each unmutated argv is accepted.
+#[test]
+fn metacharacter_insertions_into_mcp_argv_are_rejected() {
     // MCP argv (#5088 ruling): every distinct shipped uvx argv, with each
     // metacharacter inserted at each position of each element, is refused.
     let entries = inventory();

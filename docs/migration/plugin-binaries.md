@@ -153,7 +153,7 @@ provides.
 `|| true`, because a missing binary there must not block the user. Its only templates
 are `"${CLAUDE_PLUGIN_ROOT}/bin/<name>"` and `"${CLAUDE_PLUGIN_ROOT}/bin/<name>" || true`.
 
-### Launcher allowlist (#5022, #5053, #5069, #5070, #5071)
+### Launcher allowlist (#5022, #5053, #5069, #5070, #5071, #5088)
 
 Three review rounds found ways to spell a path into `bin/` that a classifier missed:
 
@@ -201,12 +201,39 @@ byte. Only the `<...>` parts vary:
   telemetry launchers). A Cursor guard or binary-hook launcher would be a new shape.
 - A guard is also checked to be registered under `PreToolUse`.
 
-**MCP `command`** is either a canonical binary command (above) or a bare program name
-matching `^[A-Za-z0-9_.-]+$`. It may not be all dots, may not be `bin` (as above), and
-may not be a shell: `sh`, `bash`, `dash`, `zsh`, `ksh`, `mksh`, `ash`, `yash`, `fish`,
-`csh`, `tcsh`, `busybox`, `cmd`, `powershell`, `pwsh` or `wsl`, in any case, with or
-without `.exe`. No template runs an MCP server through a shell, so an args element after
-`-c`, `/c` or `-Command` is never shell-evaluated by an accepted configuration.
+**MCP servers** are checked as a whole object, `command` and `args` together (#5088,
+PM ruling after review #5018 round 4). Round 4 showed why one string at a time is not
+enough: `env -C "${CLAUDE_PLUGIN_ROOT}/work" -S "sh -c '../b[[:lower:]]n/x || true'"`
+passed, because `env` looked like a harmless program and the packed argument looked
+like data, yet `env -S` splits that argument into a real shell invocation. The
+`command` must be one of:
+
+- **A canonical binary command** (above) of a declared `mcp-server`. Its `args` go to
+  our own binary and are literal data (below), and the other keys of the object are
+  scanned as literal data too.
+- **Exactly a program of the shipped inventory.** The only one is `uvx` (`MCP_PROGRAMS`
+  in `launcher.rs`). Its whole argv must match its template, and the server object may
+  hold only `type` (`"stdio"`), `command` and `args`, so no `env` or `cwd` can steer it.
+
+| Template id | `uvx` argument |
+| --- | --- |
+| `uvx-package` | first: `mcp-proxy-for-aws-cli==<digits>[.<digits>...]`, a package of the inventory with a pinned version; no `uvx` option (`--from`, `--with`, ...) can come before it |
+| `uvx-url` | second: `https://<host>[/<path>]`; lowercase DNS labels (at least two), path segments `[A-Za-z0-9_-][A-Za-z0-9._-]*`, no user, port, query, fragment or `%` |
+| `uvx-skip-auth` | then any number of: `--skip-auth` |
+| `uvx-metadata`, `uvx-metadata-value` | or `--metadata` followed by `<KEY>=<value>`, `[A-Z][A-Z0-9_]*=[A-Za-z0-9][A-Za-z0-9._-]*` |
+
+Every `uvx` argument must also pass the literal-data rules below, so none names the
+plugin root or holds a `bin` segment. Everything else is refused, whatever its args:
+
+- program launchers such as `env`, `xargs`, `nice`, `nohup`, `timeout`, `stdbuf`,
+  `setsid`, `sudo`, `doas` and `busybox`;
+- shells (`sh`, `bash`, `cmd`, `powershell`, `pwsh`, ...);
+- interpreters (`python`, `node`, `ruby`, `perl`, ...);
+- any other program name or spelling (`UVX`, `uvx.exe`, `/usr/bin/env`, `npx`);
+- a non-string `command`, and `args` with no `command`.
+
+A new MCP program or argument shape needs a reviewed template change and a new
+inventory entry, just like a new hook shape.
 
 **Every other string** (MCP `args`, `matcher`, `type`, `url`, headers and so on) is
 literal data:
@@ -215,8 +242,8 @@ literal data:
   `${CLAUDE_PLUGIN_ROOT}/<relpath>`.
 - It may not hold a `bin` path segment. Segments are split at every character outside
   `[A-Za-z0-9_.-]`.
-- An MCP `args` element may not name a shell. This blocks wrappers such as
-  `env -C <dir> sh -c ...`.
+- An MCP `args` element may not name a shell (a defence in depth for canonical binary
+  servers; program servers are already held to their template).
 - An exact canonical binary launcher outside a `command` key is refused ("may only
   appear in a launcher `command` field").
 
@@ -229,21 +256,31 @@ declared guard with no registration as not enforced.
 **Tests** (`crates/plugin-stage/tests/launcher_allowlist.rs` and
 `packaging_contract.rs`):
 
-- Every reproduction from #5022, #5053, #5069, #5070 and #5071 is rejected, for hooks
-  under `PreToolUse` and `Stop` and for MCP command/args splits.
+- Every reproduction from #5022, #5053, #5069, #5070, #5071 and #5088 is rejected, for
+  hooks under `PreToolUse` and `Stop` and for MCP command/args splits. For #5088 that
+  covers the reviewer's exact JSON on `aws-core`, and split `-S`, attached `-Ssh`,
+  `--split-string` and `--split-string=` wrappers around the fixture guard, MCP server
+  and hook binaries. Each launcher, shell and interpreter the ruling names is refused
+  with any args, and so are `uvx` argv bypasses (`--from`, an unpinned or foreign
+  package, extra flags, a root or `bin` argument, extra `env` or `cwd` keys).
 - A runtime test shows the round-3 forms fail open without the binary and reach a
   marker binary under `sh` and `bash`. The canonical guard denies.
+- A runtime test (where `env` supports `-C` and `-S`) shows the #5088 split, attached
+  and long `-S` forms exit without a deny when no binary is staged and run a marker
+  `bin/guard` when one is.
 - A deterministic exhaustive test inserts each of 31 shell metacharacters at every
   position of every template instance. That is 57,412 mutants, each run under a
-  guard event and a plain event, plus the MCP commands. No mutant is accepted.
+  guard event and a plain event. The same insertions into each MCP command (with the
+  args it accepts) and into every element of each of the three distinct shipped `uvx`
+  argvs (12,183 argv mutants) are refused too. No mutant is accepted.
 
-**Residual.** Literal argv is not shell-evaluated, but a non-shell interpreter can
-still compute a path from arguments without the word `bin` (`python3 -c ...`,
-`node -e ...`). The same goes for Windows programs that expand wildcards in their own
-argv. This is the deferred arbitrary-evaluation class, which no shipped configuration
-uses. Likewise, a template that runs a plugin file (`plugin-file`, the python shapes)
-trusts that file's content: a reviewed plugin script could itself call `bin/`, which
-is a source-review matter, not a launcher spelling.
+**Residual.** An MCP server can no longer start an interpreter or a wrapper: its
+command is `uvx` with that template, or our own binary. What remains is trust in what
+those programs do with their arguments. The pinned `mcp-proxy-for-aws-cli` package and
+the URL it connects to are a supply-chain matter, not a launcher spelling. Likewise, a
+hook template that runs a plugin file (`plugin-file`, the python shapes) trusts that
+file's content: a reviewed plugin script could itself call `bin/`, which is a
+source-review matter.
 
 ## 5. Checksums and provenance
 

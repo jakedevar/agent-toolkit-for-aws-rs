@@ -10,11 +10,12 @@
 //!
 //! The check is a closed allowlist (#4487 PM ruling after review #5018
 //! round 3): every hook command must be byte for byte one reviewed template
-//! instance and every MCP command a canonical binary launcher or a bare
-//! program name; other strings are literal data that may not name the plugin
-//! root (except as a plain relative path) or a `bin` segment. No shell is
-//! parsed or approximated, so an unlisted spelling is refused rather than
-//! classified.
+//! instance; every MCP server object, command and args together, is a
+//! canonical binary launcher or an inventory program (`uvx`) whose argv
+//! matches its template (#5088 ruling); other strings are literal data that
+//! may not name the plugin root (except as a plain relative path) or a `bin`
+//! segment. No shell is parsed or approximated, so an unlisted spelling is
+//! refused rather than classified.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -362,6 +363,14 @@ impl PluginScan<'_> {
                     json_path.pop();
                 }
             }
+            Json::Object(pairs)
+                if kind == Kind::Mcp
+                    && pairs
+                        .iter()
+                        .any(|(key, _)| key == "command" || key == "args") =>
+            {
+                self.scan_server(location, pairs, json_path, report);
+            }
             Json::Object(pairs) => {
                 for (key, item) in pairs {
                     json_path.push(key.clone());
@@ -370,6 +379,114 @@ impl PluginScan<'_> {
                 }
             }
             _ => {}
+        }
+    }
+
+    /// Checks one MCP server object as a whole (#5088 ruling): `command`
+    /// and `args` together. The command is either the canonical launcher of
+    /// a declared `mcp-server` binary, whose args are literal data checked
+    /// one by one, or exactly one [`MCP_PROGRAMS`] name, whose whole argv
+    /// must match that program's template and whose object may hold only
+    /// `type` (`stdio`), `command` and `args`. Program launchers, shells,
+    /// interpreters and every other program are refused, so no accepted
+    /// argument is ever re-split or evaluated by a wrapper (`env -S`).
+    fn scan_server(
+        &self,
+        location: &str,
+        pairs: &[(String, Json)],
+        json_path: &mut Vec<String>,
+        report: &mut LauncherReport,
+    ) {
+        let field = |name: &str| pairs.iter().find(|(key, _)| key == name).map(|(_, v)| v);
+        let at = |json_path: &[String], key: &str| {
+            let mut path = json_path.to_vec();
+            path.push(key.to_string());
+            format!("{location}: {}", path_text(&path))
+        };
+        let command = match field("command") {
+            Some(Json::String(text)) => text,
+            Some(_) => {
+                report
+                    .problems
+                    .push(format!("{}: {REFUSED_MCP_SHAPE}", at(json_path, "command")));
+                return;
+            }
+            None => {
+                report
+                    .problems
+                    .push(format!("{}: {REFUSED_MCP_SHAPE}", at(json_path, "args")));
+                return;
+            }
+        };
+        json_path.push("command".to_string());
+        let resolved = self.resolve_string(Kind::Mcp, command, json_path);
+        json_path.pop();
+        let accepted = match resolved {
+            Ok(accepted) => accepted,
+            Err(message) => {
+                report
+                    .problems
+                    .push(format!("{}: {message}", at(json_path, "command")));
+                return;
+            }
+        };
+        let canonical = accepted.name.is_some();
+        self.record(&at(json_path, "command"), command, accepted, report);
+        if canonical {
+            for (key, item) in pairs.iter().filter(|(key, _)| key != "command") {
+                json_path.push(key.clone());
+                self.scan_value(location, Kind::Mcp, item, json_path, report);
+                json_path.pop();
+            }
+            return;
+        }
+        let Some((program, template)) = MCP_PROGRAMS.iter().find(|(name, _)| name == command)
+        else {
+            report
+                .problems
+                .push(format!("{}: {REFUSED_MCP}", at(json_path, "command")));
+            return;
+        };
+        for (key, item) in pairs {
+            let allowed = match key.as_str() {
+                "command" | "args" => true,
+                "type" => matches!(item, Json::String(kind) if kind == "stdio"),
+                _ => false,
+            };
+            if !allowed {
+                report.problems.push(format!(
+                    "{}: is not allowed in a {program} MCP server, which may hold only `type` \"stdio\", `command` and `args`; refused (fail closed)",
+                    at(json_path, key)
+                ));
+            }
+        }
+        let args: Option<Vec<&str>> = match field("args") {
+            Some(Json::Array(items)) => items.iter().map(Json::as_str).collect(),
+            _ => None,
+        };
+        let ids = args.as_deref().and_then(|args| {
+            let ids = template(args)?;
+            args.iter()
+                .all(|arg| self.literal(arg, true).is_ok())
+                .then_some(ids)
+        });
+        match (args, ids) {
+            (Some(args), Some(ids)) => {
+                for (index, (arg, id)) in args.iter().zip(ids).enumerate() {
+                    let mut path = json_path.clone();
+                    path.extend(["args".to_string(), format!("[{index}]")]);
+                    report.accepted.push(TemplateMatch {
+                        location: format!("{location}: {}", path_text(&path)),
+                        value: (*arg).to_string(),
+                        template: id,
+                    });
+                }
+            }
+            _ => report.problems.push(format!(
+                "{}: do not match the reviewed {program} argument template; refused (fail closed). {}",
+                at(json_path, "args"),
+                REFUSED_UVX_ARGS
+            )),
         }
     }
 
@@ -383,22 +500,26 @@ impl PluginScan<'_> {
     ) {
         let at = format!("{location}: {}", path_text(json_path));
         match self.resolve_string(kind, text, json_path) {
-            Ok(accepted) => {
-                if let Some(name) = accepted.name {
-                    report.references.push(LauncherRef {
-                        plugin: self.plugin.to_string(),
-                        name,
-                        location: at.clone(),
-                    });
-                }
-                report.accepted.push(TemplateMatch {
-                    location: at,
-                    value: text.to_string(),
-                    template: accepted.template,
-                });
-            }
+            Ok(accepted) => self.record(&at, text, accepted, report),
             Err(message) => report.problems.push(format!("{at}: {message}")),
         }
+    }
+
+    /// Records one accepted string and, for a binary launcher, its
+    /// reference.
+    fn record(&self, at: &str, text: &str, accepted: Accepted, report: &mut LauncherReport) {
+        if let Some(name) = accepted.name {
+            report.references.push(LauncherRef {
+                plugin: self.plugin.to_string(),
+                name,
+                location: at.to_string(),
+            });
+        }
+        report.accepted.push(TemplateMatch {
+            location: at.to_string(),
+            value: text.to_string(),
+            template: accepted.template,
+        });
     }
 
     /// Resolves one launcher string against the closed template allowlist
@@ -410,7 +531,8 @@ impl PluginScan<'_> {
     ///   declared binaries (guard deny launcher, plain-hook reference, MCP
     ///   command), then checked for the form its role and key require.
     /// - A hook `command`: one of [`FILE_TEMPLATES`].
-    /// - An MCP `command`: a bare program name that is not a shell.
+    /// - An MCP `command`: exactly one [`MCP_PROGRAMS`] name; the whole
+    ///   server object is then checked by [`Self::scan_server`].
     /// - Any other string (MCP `args`, `matcher`, `url`, headers, ...) is
     ///   literal data: it may not name a plugin-root variable except as
     ///   exactly `${CLAUDE_PLUGIN_ROOT}/<relpath>`, may not hold a `bin`
@@ -487,21 +609,22 @@ impl PluginScan<'_> {
         }
     }
 
-    /// An MCP `command` that is not a binary launcher: a bare program name.
+    /// An MCP `command` that is not a binary launcher: exactly one
+    /// [`MCP_PROGRAMS`] name (#5088 ruling). Its args are checked by
+    /// [`Self::scan_server`] against that program's argv template.
     fn mcp_program(
         &self,
         kind: Kind,
         text: &str,
         json_path: &[String],
     ) -> Result<&'static str, String> {
-        let bare = !text.is_empty()
-            && text
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b'-'));
-        if bare && !text.bytes().all(|b| b == b'.') && !is_bin_segment(text) && !is_shell(text) {
-            return Ok("mcp-program");
-        }
-        Err(self.binary_hint(kind, text, json_path, MCP_BIN_PREFIXES, ' ', REFUSED_MCP))
+        MCP_PROGRAMS
+            .iter()
+            .find(|(program, _)| *program == text)
+            .map(|(program, _)| *program)
+            .ok_or_else(|| {
+                self.binary_hint(kind, text, json_path, MCP_BIN_PREFIXES, ' ', REFUSED_MCP)
+            })
     }
 
     /// Literal data (MCP `args` with `mcp_arg`, or any other key).
@@ -600,7 +723,110 @@ struct Accepted {
 const REFUSED: &str = "is not an allowed launcher template; refused (fail closed). A hook command must be byte for byte one reviewed template: a guard exactly its canonical fail-closed launcher, a declared hook \"${CLAUDE_PLUGIN_ROOT}/bin/<name>\" (optionally followed by \" || true\"), \"${CLAUDE_PLUGIN_ROOT}/<relpath>\" or a shipped script launcher shape; a new shape needs a reviewed template change (docs/migration/plugin-binaries.md section 4). Print a binary's launcher with `plugin-stage launcher PLUGIN/NAME`";
 
 /// The fixed refusal for an MCP `command` that is no template instance.
-const REFUSED_MCP: &str = "MCP server command must be exactly ${CLAUDE_PLUGIN_ROOT}/bin/<name> of a declared mcp-server binary, or a bare program name (ASCII letters, digits, `.`, `_`, `-`) that is not a shell; refused (fail closed)";
+const REFUSED_MCP: &str = "MCP server command must be exactly ${CLAUDE_PLUGIN_ROOT}/bin/<name> of a declared mcp-server binary, or exactly a program of the shipped inventory (uvx); program launchers (env, xargs, nohup, ...), shells and interpreters are refused (fail closed)";
+
+/// The fixed refusal for an MCP server object without a string `command`.
+const REFUSED_MCP_SHAPE: &str = "an MCP server needs a string `command` (args without a command, or a non-string command, run nothing reviewable); refused (fail closed)";
+
+/// What the `uvx` argument template admits, for its refusal message.
+const REFUSED_UVX_ARGS: &str = "uvx args must be exactly: a pinned inventory package (mcp-proxy-for-aws-cli==<digits>[.<digits>...]), an https://<host>[/<path>] URL, then only --skip-auth and --metadata <KEY>=<value> (docs/migration/plugin-binaries.md section 4)";
+
+/// Programs an MCP server `command` may name besides a canonical binary
+/// launcher, each with its argv template (#5088 ruling). Derived from the
+/// shipped inventory (`tests/fixtures/shipped-launchers.json`), whose only
+/// MCP program is `uvx`. A template returns one id per argument, or `None`.
+pub const MCP_PROGRAMS: [(&str, ArgvTemplate); 1] = [("uvx", uvx_argv)];
+
+/// An argv template: the template id of each argument, or `None` when the
+/// argv is not an instance.
+pub type ArgvTemplate = fn(&[&str]) -> Option<Vec<&'static str>>;
+
+/// Packages `uvx` may run: those of the shipped inventory.
+const UVX_PACKAGES: [&str; 1] = ["mcp-proxy-for-aws-cli"];
+
+/// The `uvx` template: `<package>==<version> https://<host>[/<path>]`, then
+/// any of `--skip-auth` and `--metadata <KEY>=<value>`. The package must
+/// come first, so no `uvx` option (`--from`, `--with`, ...) is accepted.
+#[must_use]
+pub fn uvx_argv(args: &[&str]) -> Option<Vec<&'static str>> {
+    let [package, url, rest @ ..] = args else {
+        return None;
+    };
+    let (name, version) = package.split_once("==")?;
+    if !UVX_PACKAGES.contains(&name) || !is_version(version) || !is_https_url(url) {
+        return None;
+    }
+    let mut ids = vec!["uvx-package", "uvx-url"];
+    let mut rest = rest.iter();
+    while let Some(arg) = rest.next() {
+        match *arg {
+            "--skip-auth" => ids.push("uvx-skip-auth"),
+            "--metadata" => {
+                if !is_metadata(rest.next()?) {
+                    return None;
+                }
+                ids.extend(["uvx-metadata", "uvx-metadata-value"]);
+            }
+            _ => return None,
+        }
+    }
+    Some(ids)
+}
+
+/// `<digits>(.<digits>)*`.
+fn is_version(text: &str) -> bool {
+    text.split('.')
+        .all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// `https://<host>[/<segment>...]`: lowercase DNS labels (at least two),
+/// path segments of `[A-Za-z0-9_-][A-Za-z0-9._-]*`; no user, port, query,
+/// fragment or percent escape.
+fn is_https_url(text: &str) -> bool {
+    let Some(rest) = text.strip_prefix("https://") else {
+        return false;
+    };
+    let (host, path) = rest.split_once('/').unwrap_or((rest, ""));
+    let labels: Vec<&str> = host.split('.').collect();
+    let label_ok = |label: &&str| {
+        !label.is_empty()
+            && label
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+            && !label.starts_with('-')
+            && !label.ends_with('-')
+    };
+    let segment_ok = |segment: &str| {
+        segment
+            .bytes()
+            .next()
+            .is_some_and(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
+            && segment
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b'-'))
+    };
+    labels.len() >= 2
+        && labels.iter().all(label_ok)
+        && (path.is_empty() || path.split('/').all(segment_ok))
+}
+
+/// `<KEY>=<value>`: `[A-Z][A-Z0-9_]*` `=` `[A-Za-z0-9][A-Za-z0-9._-]*`.
+fn is_metadata(text: &str) -> bool {
+    let Some((key, value)) = text.split_once('=') else {
+        return false;
+    };
+    key.bytes().next().is_some_and(|b| b.is_ascii_uppercase())
+        && key
+            .bytes()
+            .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_')
+        && value
+            .bytes()
+            .next()
+            .is_some_and(|b| b.is_ascii_alphanumeric())
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+}
 
 /// The fixed refusal for literal data naming the plugin root or `bin`.
 const REFUSED_ROOT_ARG: &str = "names the plugin root or a bin path segment but is not exactly \"${CLAUDE_PLUGIN_ROOT}/<relpath>\" outside bin/; refused (fail closed)";
