@@ -340,6 +340,62 @@ mod tests {
         }
     }
 
+    #[test]
+    fn t_br_out_cap_shared_exact_bytes() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(
+            "../../plugins/aws-agents/skills/agents-pay/packages/openclaw/test/fixtures/bridge-contract/output-frame-cap",
+        );
+        for (name, prefix) in [("ascii", ""), ("bmp", "é"), ("astral", "😀")] {
+            for target in [131_072, 131_073] {
+                let expected = std::fs::read(root.join(format!("{name}-{target}.json"))).unwrap();
+                assert_eq!(expected.len(), target);
+                let session = Json::object(vec![
+                    ("paymentSessionId", Json::string("s")),
+                    ("paymentManagerArn", Json::string("m")),
+                    (
+                        "limits",
+                        Json::object(vec![(
+                            "maxSpendAmount",
+                            Json::object(vec![
+                                ("value", Json::string(prefix)),
+                                ("currency", Json::string("USD")),
+                            ]),
+                        )]),
+                    ),
+                    ("userId", Json::string("u")),
+                    ("expiryTimeInMinutes", Json::Int(10)),
+                    ("createdAt", Json::string("2026-08-07T00:00:00Z")),
+                    ("updatedAt", Json::string("2026-08-07T00:00:00Z")),
+                ]);
+                let base = session_result(&session).unwrap();
+                let padding = target - (crate::aurora::pyfmt::dumps_compact(&base).len() + 1);
+                let mut session = session;
+                if let Json::Object(fields) = &mut session {
+                    let limits = &mut fields.iter_mut().find(|(k, _)| k == "limits").unwrap().1;
+                    if let Json::Object(fields) = limits {
+                        if let Json::Object(amount) = &mut fields[0].1 {
+                            amount[0].1 = Json::string(format!("{prefix}{}", "x".repeat(padding)));
+                        }
+                    }
+                }
+                let value = session_result(&session).unwrap();
+                let encoded = format!("{}\n", crate::aurora::pyfmt::dumps_compact(&value));
+                assert_eq!(encoded.as_bytes(), expected);
+                let (actual, status) = frame(&value);
+                if target == 131_072 {
+                    assert_eq!(actual, expected);
+                    assert_eq!(status, 0);
+                } else {
+                    assert_eq!(
+                        actual,
+                        std::fs::read(root.join("replacement.json")).unwrap()
+                    );
+                    assert_eq!(status, 1);
+                }
+            }
+        }
+    }
+
     // T-BR-OUT-2/3/REQ: model order, timestamp normalization, reduced proof.
     #[test]
     fn t_br_out_session_and_payment() {
