@@ -1,5 +1,5 @@
 //! Secret-bearing callback configuration and helper process handshake.
-use std::io::{self, Read, Write};
+use std::io::{self, BufRead, BufReader, Read, Write};
 use std::process::{Command, Stdio};
 use std::time::Duration;
 use toolkit_aws::Secret;
@@ -116,7 +116,7 @@ pub fn spawn(config: &HelperConfig) -> io::Result<(u32, u16)> {
         let (send, recv) = std::sync::mpsc::sync_channel(1);
         std::thread::spawn(move || {
             let mut line = Vec::new();
-            let _ = stdout.take(17).read_to_end(&mut line);
+            let _ = BufReader::new(stdout.take(17)).read_until(b'\n', &mut line);
             let _ = send.send(line);
         });
         let line = recv

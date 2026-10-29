@@ -292,3 +292,15 @@ fn wait_observes_held_and_free_lock_without_signalling_pid() {
         Observation::Decision(WaitDecision::Failed)
     );
 }
+
+#[test]
+fn child_configuration_is_strict_and_bounded() {
+    use super::spawn::HelperConfig;
+    let valid = br#"{"client_id":"c","client_secret":"s","client_expires_at":1,"scopes":["launch:access"],"code_verifier":"v","state":"n","deadline":10}"#;
+    let config = HelperConfig::read(&valid[..]).unwrap();
+    assert_eq!(config.client_id, "c");
+    let duplicate = br#"{"client_id":"c","client_id":"x","client_secret":"s","client_expires_at":1,"scopes":[],"code_verifier":"v","state":"n","deadline":10}"#;
+    assert!(HelperConfig::read(&duplicate[..]).is_err());
+    assert!(HelperConfig::read(&vec![b' '; 65537][..]).is_err());
+    assert!(HelperConfig::read(&b"{}"[..]).is_err());
+}
