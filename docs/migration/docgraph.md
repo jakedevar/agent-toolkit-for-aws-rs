@@ -438,7 +438,8 @@ versions during implementation, documenting licence, MSRV and lockfile delta.
 The SDK request serializer/endpoint rules are useful; a second credentials,
 TLS, logging or retry stack is not. Configure generated clients to one attempt
 with toolkit signing as the sole signer, and bridge generated HTTP requests
-through toolkit `Signer`/`Transport`; prove no generated signer/provider is built.
+through toolkit `Signer`/`Transport`; prove no generated signer is invoked and
+no generated credential provider is built (PM ruling 3, #5366).
 The bridge is at the generated orchestrator's HTTP-client boundary, not private
 modeled serializer APIs. It must remove generated framing headers before the
 toolkit signer and sign the final body bytes; the transport regenerates framing
@@ -885,10 +886,36 @@ does not undo construction. This is source evidence, not a construction/call
 spy and not proof that an SDK signer signs a request. Neither explicit
 connector injection, absence of default connector construction/calls, nor sole
 toolkit signing, credential resolution and retry ownership has been proven.
-The bridge criterion remains failed under its original no-generated-signer-built
-wording; an approved design repair distinguishing construction from invocation,
-followed by the required spies, is needed before proceeding. No signer guard
-or shared transport was changed.
+PM ruling 3 on #5366 resolves the wording: constructing this stateless scheme
+is permitted, while invoking the SDK signer or constructing an SDK credential
+provider is not. The required spies remain outstanding; source inspection is
+not a substitute. No signer guard or shared transport was changed.
+
+The offline experiment `docgraph_bridge_spike` (job
+`5ba8f79f-1fdd-4dcf-9c2a-81d26c8b0a7d`) constructed each pinned service
+client with `allow_no_auth`, disabled SDK retries and an injected in-memory
+connector. One operation per client reached the connector once on a 503;
+the generated request had no authorization, date, security-token or content
+hash signature headers. The experiment strips the toolkit framing-header
+set and applies the real toolkit SigV4 signer to the buffered bytes using
+synthetic credentials, without sending a request. It confirms the body remains
+unchanged and no framing headers reach the signer. This is a limited spike,
+not proof of signed-versus-sent equivalence, every operation, SDK signer call
+instrumentation, provider construction, explicit production connector or
+toolkit retry ownership. A non-buffered body is refused by the experiment.
+
+Source inspection also shows Smithy runtime 1.16.1's `default_plugins`
+unconditionally constructs a lazy identity cache during generated client
+construction. The config getter's `None` only describes the supplied config;
+it does not prove the default plugin was not constructed. The SDK also builds
+a default HTTP client object; its connector is constructed lazily on selection.
+The injected connector spy shows the chosen connector handled these calls but
+does not instrument construction of default objects. Neither fact proves
+credential resolution or a network call; the invariant requires demonstrating
+their absence, rather than treating config getters as such proof. The PM's
+separate no-identity-cache-construction requirement is not yet demonstrated.
+No live routing is enabled by this experiment; the remaining spike evidence
+and security tests still gate the slice.
 
 Implementation slices remain Rust, use scoped optional service dependencies,
 daemon-owned jobs and independent exact-SHA review. Each owns a requirement/test

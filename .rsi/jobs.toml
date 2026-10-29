@@ -7,6 +7,12 @@
 # path (Issue #4373 AC4).
 version = 1
 
+[recipes.docgraph-spike]
+runner = "make"
+target = "docgraph-spike"
+timeout_minutes = 20
+cpu_quota_percent = 200
+
 [recipes.fmt]
 runner = "make"
 target = "fmt"
