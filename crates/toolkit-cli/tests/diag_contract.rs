@@ -2420,8 +2420,9 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
 /// A deliberate usage change updates the pin in the same
 /// commit and says so in the Issue; an incidental one fails here.
 // Neptune memory (#4886) deliberately adds its synopsis and description.
-const USAGE_BASE_LEN: usize = 44874;
-const USAGE_BASE_FNV1A64: u64 = 0x883e_e68f_92b5_6b07;
+// `documentdb normalize-capture` (#5327) deliberately adds its synopsis and description.
+const USAGE_BASE_LEN: usize = 45243;
+const USAGE_BASE_FNV1A64: u64 = 0x8a94_b23d_4153_3b5e;
 
 #[test]
 fn the_global_usage_text_is_byte_identical_to_the_base() {

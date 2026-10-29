@@ -297,6 +297,7 @@ const JSON_LIMITS: JsonLimits = JsonLimits {
 
 type Pairs = [(String, Json)];
 
+// recorded-shape: a user capture file value, not a response member; a non-object is reported as None.
 fn members(value: &Json) -> Option<&Pairs> {
     match value {
         Json::Object(pairs) => Some(pairs.as_slice()),
@@ -395,6 +396,7 @@ fn check_keys(pairs: &Pairs, read: &[&str], ignored: &[&str]) -> Result<(), Capt
 }
 
 /// An ignored value is dropped unread, but still scanned for secrets.
+// recorded-shape: walks a user capture file value for secrets, not a response member; every shape is scanned.
 fn scan_ignored(value: &Json, depth: usize) -> Result<(), CaptureError> {
     if depth > MAX_IGNORED_DEPTH {
         return Err(CaptureError::Malformed);
@@ -486,6 +488,7 @@ fn parse_double(text: &str) -> Option<f64> {
 
 /// A canonical Extended JSON number. A bare JSON number is the relaxed dialect
 /// and is refused as an unsupported format, never read as a double.
+// recorded-shape: a user capture file number wrapper, not a response member; every other shape is rejected.
 fn ejson_number(value: &Json, signed: bool) -> Result<Num, CaptureError> {
     let pairs = match value {
         Json::Object(pairs) => pairs.as_slice(),
@@ -635,6 +638,7 @@ fn compression_enabled(stats: &Pairs) -> Result<bool, CaptureError> {
 
 /// Index usage by index name; a later entry of the same name wins, as the
 /// script's dict comprehension did.
+// recorded-shape: a user capture file list, not a response member; every other shape is rejected.
 fn index_usage(entries: &Json) -> Result<Vec<(String, Num)>, CaptureError> {
     let Json::Array(items) = entries else {
         return Err(CaptureError::Malformed);
@@ -675,6 +679,7 @@ fn key_json(value: &Json) -> Result<Json, CaptureError> {
     }
 }
 
+// recorded-shape: a user capture file list, not a response member; every other shape is rejected.
 fn index_entries(
     indexes: &Json,
     sizes: &[(String, Num)],
@@ -801,6 +806,7 @@ fn collection_snapshot(
 /// # Errors
 ///
 /// A fixed [`CaptureError`] class; nothing of the capture is carried.
+// recorded-shape: a user capture file envelope, not a response member; every other shape is rejected.
 pub(super) fn normalize(document: &Json, limits: &Limits) -> Result<Normalized, CaptureError> {
     let header = members(document).ok_or(CaptureError::Malformed)?;
     check_header(header)?;

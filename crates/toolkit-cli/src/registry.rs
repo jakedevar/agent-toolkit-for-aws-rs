@@ -645,6 +645,7 @@ mod tests {
         "bedrock-probes source-baseline",
         // docgraph (#4395):
         "documentdb wa-review",
+        "documentdb normalize-capture",
         "neptune validate-input",
         "neptune seed",
         "neptune memory",
