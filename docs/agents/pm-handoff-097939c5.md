@@ -1203,3 +1203,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
   4/4: ce95436a S6+B2 integ, a0ab0de1 docgraph S2, ebb5348d B3 #5505, 545fbb43 #5504. Queue: 3050 #5478.
 - 22:45Z: #5478 LANDED (landed_sha b28340efedc23c2556409b2b148810106facba25); auto-closed. Queue empty.
 - 22:55Z: safety net. Disk 88G free (89%); all 4 workers have test jobs held on the disk floor. Cohort audit: 0 eligible. Build-cache reclaim dry run: 0 bytes. Removed cfb95bf6 target (5.6G). Big users are outside my scope (RSI sandboxes d86cd9f7/d4c57c9c, queue 67G, sccache 51G); reported up (pm-7df6d5c6-disk-2255). Safety net re-armed 0d7fde44.
+- 23:16Z: B3 #5505 (ebb5348d) DONE at a90abec773ad5adf0d76c09664989bac33452fe1 (20 T-PKG red 5d541c67 -> green c8a1f38f; fmt ff89813a, clippy 252ef496, scoped a37b0b59 ok, merges cleanly; T-JS-PKG pending #5158). Friction #5510.
+  Review #5511 -> Codex sol high 1d8e7401, pinned a90abec7. On ACCEPT: check, then enqueue AFTER S6/B2/#5360 if it conflicts (registry/plugin-stage), else enqueue at once. B4 needs B2+B3+#5158.
+  4/4: ce95436a S6+B2 integ, a0ab0de1 docgraph S2, 545fbb43 #5504, 1d8e7401 #5511 review.
