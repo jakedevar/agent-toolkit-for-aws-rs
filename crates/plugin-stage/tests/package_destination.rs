@@ -1016,12 +1016,20 @@ fn t_pkg_pack_usage_diagnostics_escape_caller_text_onto_one_line() {
             ],
         ),
         ("unknown command", vec![bad_command.as_str()]),
-        ("unexpected argument", vec!["check", bad_positional.as_str()]),
+        (
+            "unexpected argument",
+            vec!["check", bad_positional.as_str()],
+        ),
         ("overlong unknown flag", vec!["check", long_flag.as_str()]),
     ];
     for (label, args) in cases {
         let output = plugin_stage(&fixture.package(), &args, Some(&path));
-        assert_eq!(output.status.code(), Some(2), "{label}: {}", stderr(&output));
+        assert_eq!(
+            output.status.code(),
+            Some(2),
+            "{label}: {}",
+            stderr(&output)
+        );
         let text = stderr(&output);
         assert!(
             !text
@@ -1036,7 +1044,10 @@ fn t_pkg_pack_usage_diagnostics_escape_caller_text_onto_one_line() {
             "{label}: the message must be one line plus the usage line: {text:?}"
         );
         assert!(lines[0].starts_with("plugin-stage: "), "{label}: {text:?}");
-        assert!(lines[1].starts_with("usage: plugin-stage"), "{label}: {text:?}");
+        assert!(
+            lines[1].starts_with("usage: plugin-stage"),
+            "{label}: {text:?}"
+        );
         assert!(!text.contains(&long), "{label}: unbounded echo");
     }
 }
