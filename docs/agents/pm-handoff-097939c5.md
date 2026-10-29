@@ -548,3 +548,7 @@ Friction: #4727, Rsi #4694, Rsi #4704
   4/4 busy: 0610b2fa (#4382 design r3), 8bd99aa0 (#4487 repair 3), 374cf704 (r21), de9907bc (S3).
 - 10-29 02:50Z: #4382 design r3 e03640d1ce25b549d1f1cadd455f81631a5152eb (0610b2fa; r2 resolutions for #5061-#5066; new toolkit-aws prereq #5080 TA-STREAM-DL (in-flight deadline); L3 waits for #5017 + #5080). RULINGS (#4382 seq 7): Q23 200000 entries, Q24 git>=2.31 work tree, #5080 own slice after S1 lands, #5038 r3 is the LAST design round (P1 blocks, P2/P3 carried into L reviews). #5038 r3 worker e056e5a2 (Codex sol high, build_free, pinned). On ACCEPT: L0-L2 worker (Opus high) from rolling.
   4/4 busy: 8bd99aa0 (#4487 repair 3), 374cf704 (r21), de9907bc (S3), e056e5a2 (#5038 r3).
+- 10-29 02:52Z: ROUND 21 head d8179823b432ef1243b467697e488168e407a87b (374cf704; = r20 0eff943c + merge #4397 a748f205; no integration commit needed; check_landing ok scoped 71e2ea3c 4158 tests). ENQUEUED 0e7e277a (seq 2937, SUPERSEDES r20 a6460649, issue 5078). Seq 2937 queued since 00:19Z, no daemon hold; reported up (pm-353df56c-status-r21-queue).
+  ON LAND close: everything listed for r20 + #5078 (auto) + #4397 set (#4397 #5059 #5072 #5073 #5074).
+  r21 continuation (374cf704) later: #4487 + #4412 activation -> becomes round 22 if r21 is admitted first.
+  3/4 busy: 8bd99aa0 (#4487 repair 3), de9907bc (S3), e056e5a2 (#5038 r3). 1 free slot.
