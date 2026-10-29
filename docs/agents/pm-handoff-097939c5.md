@@ -837,3 +837,7 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 10-29 07:17Z: S2b LANDED (188e5056 published, f51a06f44d65675c2c2839b5ea2d4a47a53ecc4b). #5223 auto-closed; CLOSED #5252. Queue empty. Reported up (key pm-0efc0d66-report-0715) incl. kaizen relay.
   UNBLOCKED: ai-payloads S4 callers (design row S4; needs S2b+S3, both landed) -> next free slot (Claude Sonnet or Codex; prose + Rust contract tests).
 - 10-29 07:20Z: GM relayed kaizen: #5265->Rsi #5266, #5243->Rsi #5267, #5226->Rsi #5268 (xref notes added). Keep relaying harness items in reports until harness:true works (Rsi #4856/#4857). Project is a named baseline for operator request Rsi #5231 (weekly scorecard + RSI-defect mining).
+- 10-29 07:23Z: #5262 (d9d25099, Opus) ACCEPT L4 1b1655f5 (probes: bind, oversize, slow head, 17th conn, state, held lock, EACCES; all 5 invariants pass). Nonblocking #5269 (MAJOR accept errors terminal, BSD) #5270 #5271 #5272.
+  Check refused: conflicts now with rolling (registry.rs, diag_contract.rs; S2b landed). Merge-only continuation e1167447 (Codex terra, continue_from 8ea9ce8e). Then check+enqueue; close #5216 #5262 #5228 #5229 #5230 on land.
+  Follow-up slice #5273 created (findings + T-CB matrix); launch at next free slot AFTER L4 lands (base rolling). Queue after it: ai-payloads S4 callers.
+  4/4 busy: 0dcdafea (#5181 S4 cont), 2a78b5ff (#5244 tests), 9de1fd5d (#5261 S2b f/u), e1167447 (#5216 merge).
