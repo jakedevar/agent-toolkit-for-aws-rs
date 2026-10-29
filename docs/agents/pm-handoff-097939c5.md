@@ -1065,3 +1065,7 @@ Friction: #4727, Rsi #4694, Rsi #4704
   PM RULINGS (brief): credential resolution cancellable deadline required before live signing; DNS abandoned-lookup residual accepted with cap of 1 outstanding (fail closed); WS/GraphSON limits deferred to S3. Opus continuation 33d730c3.
   Then security review of S1: prefer CLAUDE reviewer (Codex cyber filter risk on network-security mutations, #5060).
   #5344 is P4: stays behind P2 work. 4/4: fbc33b5e L5, 33d730c3 S1, 5fd44a0d x402 r3, ca36147e #5401.
+- 15:00Z: L5 fbc33b5e (Opus) DONE at 6716f6ffbbf1c6abac64b283f76986583206dec1 (override/region before token; shared retry policy, clientToken once, PUT never retried; global preserve_order removed -> toolkit_core::Json; Python output everywhere; T-TOK-1..6 defined as 6 leak sinks; 11 security tests red w/ rule removed). Scoped 2d8f5e25 ok 5240; AgentCheckLandingCandidate ok. Friction #5394 (preserve_order already on in workspace builds), #5396 (past-commit runner script missing).
+  Review #5403 -> Codex sol 63347ce4 pinned 6716f6ff. On ACCEPT: enqueue 6716f6ff (source_session_id fbc33b5e, derive_filters, issue 5345); close #5345 #5335 #5358?(check) #5403. Then L7 security review of all of #4382 at the landed SHA (opposite family), then L8 cutover.
+  Note #5372: tests/launch_l5.rs needs the agents-pay-live guard if x402 S5 lands first (whichever lands second must add it at merge).
+  4/4: 63347ce4 #5403, 33d730c3 S1, 5fd44a0d x402 r3, ca36147e #5401.
