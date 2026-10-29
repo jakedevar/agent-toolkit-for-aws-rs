@@ -241,7 +241,7 @@ Decisions recorded by this slice:
 - **Custody.** The capture must be owner-only before it is parsed (Unix mode `& 0o077
   == 0`; other platforms fail closed, `permissions`). The output is created `0600` with
   `create_new` (no overwrite, no link following). `wa-review` report files are
-  unchanged by this slice; they keep their existing `--output` behaviour.
+  unchanged by this slice (see "wa-review report custody" below for #5344).
 - **Number fidelity.** Integers stay exact `i64`; unused storage is computed in
   integers when both operands are integers, else as `f64`; the percentage is
   `bytes / storageSize * 100` in `f64` (the script's Python int division is correctly
@@ -259,6 +259,20 @@ Decisions recorded by this slice:
 | T-DG-08c | `t08c_*` (three refused flags on both commands with credential-shaped and newline values; no shell/driver/socket/env in sources or manifest) |
 | T-DG-08d | `t08d_*` (manifest equals code allowlist and schema, read-only single-expression commands, recipe rows equal manifest, no loop/helper/secret form, unsupported dialects) |
 | T-DG-08e | `t08e_*` (access policy table, group/world-readable refused before parsing, private 0600 output without overwrite, secret-bearing and unknown fields without echo, transcripts) |
+
+### wa-review report custody (#5344; R-DG-08)
+
+When `documentdb wa-review` is given `--analysis-data`, `wa_review_results.json` and
+`wa_review_report.md` are created `0600` from the first instant (mode passed at
+creation, so no umask can widen it and nothing is chmod-ed afterwards) with
+`create_new`: an existing file or symbolic link (dangling too) at either path is
+refused (`<name> already exists; refusing to overwrite it`, exit 1, `docgraph_report`),
+never truncated or followed. Both paths are checked before either file is created, so
+a refusal leaves no half-written pair. Decisions: the rule is keyed on the flag, since
+the analysis data is what carries collection statistics; without `--analysis-data`
+the existing overwrite behaviour and messages are unchanged. The `--output` directory
+itself is created as before (files inside it are private regardless). Non-Unix
+platforms fail closed. Tests: `docgraph::tests::review::r_dg_08_*`.
 
 ## Live adapter design (#5318; #4886 item 2)
 
