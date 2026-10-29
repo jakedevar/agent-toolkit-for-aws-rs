@@ -122,9 +122,9 @@ struct Ran {
 /// Route `argv` through the real registry, then run the admin route over
 /// the fixture world.
 fn run(world: &World, argv: &[&str]) -> Ran {
-    let args: Vec<String> = argv.iter().map(|s| (*s).to_owned()).collect();
+    let words: Vec<String> = argv.iter().map(|s| (*s).to_owned()).collect();
     let (mut out, mut err) = (Vec::new(), Vec::new());
-    let code = match route(COMMANDS, &args) {
+    let code = match route(COMMANDS, &words) {
         Ok(Routed::Run(spec, invocation)) => {
             let command = AdminCommand::from_path(spec.path).expect("an admin route");
             let mut output = Output::with_diagnostics(&mut out, &mut err);
