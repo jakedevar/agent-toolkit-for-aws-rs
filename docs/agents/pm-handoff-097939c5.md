@@ -794,3 +794,7 @@ Friction: #4727, Rsi #4694, Rsi #4704
   RULING on #5230 (design rev 4): first-read missing -> R-CB-WAIT error; unreadable/disappeared = status unknown with cutoff_eff (last parsed cutoff, else wait-start + max flow lifetime, monotonic); session->auth; held<cutoff_eff+5s poll; held>= -> helper_blocked; free -> final (timeout/ended); auth-wait deletes record only after FINAL w/ lock free.
   Continuation 8ea9ce8e (Codex terra, continue_from 78d863e6). Close #5228 #5229 #5230 with L4 landing.
   4/4 busy: 0dcdafea (#5181 S4 cont), da98439f (#5223 S2b cont), 23ccf6b5 (#5203 P-ROOTS f/u), 8ea9ce8e (#5216 L4 cont2).
+- 10-29 06:34Z: P-ROOTS f/u (23ccf6b5) DONE at 53e3d8ee0881dac8b27aee9e151c11bb490ebc57 (test-only; scoped 4795 ok, clean); no red-first runs recorded.
+  Review #5242 -> Claude Sonnet eb9c7cc9 (pinned 53e3d8e; judge gate effectiveness). On ACCEPT: check+enqueue (source_session 23ccf6b5); close #5203 #5199 #5204 #5242 on land.
+  Kaizen #5243 (Codex workers run python3 despite rule). 
+  4/4 busy: 0dcdafea (#5181 S4 cont), da98439f (#5223 S2b cont), 8ea9ce8e (#5216 L4 cont2), eb9c7cc9 (#5242 review).
