@@ -141,6 +141,8 @@ fn t_cfg_race_and_size() {
 }
 
 #[test]
+// These integer-valued bounds and defaults are exactly representable in f64.
+#[allow(clippy::float_cmp)]
 fn tunables_names_bounds_and_unicode() {
     let none = |_: &str| None;
     assert_eq!(
