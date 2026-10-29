@@ -979,6 +979,45 @@ fn ap_cell_04_08_multiline_normalization_and_unsafe_characters() {
         notebooks.push(bytes);
     }
     assert_eq!(notebooks[0], notebooks[1]);
+    let golden = r#"{
+  "cells": [
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "Example\n",
+        "\n",
+        "Description"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {},
+      "outputs": [],
+      "source": [
+        "def transform_dataset(df):\n",
+        "    x = 1\n",
+        "\n",
+        "\treturn df # comment"
+      ]
+    }
+  ],
+  "metadata": {
+    "kernelspec": {
+      "display_name": "Python 3",
+      "language": "python",
+      "name": "python3"
+    },
+    "language_info": {
+      "name": "python"
+    }
+  },
+  "nbformat": 4,
+  "nbformat_minor": 4
+}
+"#;
+    assert_eq!(notebooks[0], golden.as_bytes());
     for ch in [
         '\r', '\0', '\x1b', '\x7f', '\u{85}', '\u{2028}', '\u{202e}', '\u{2066}', '\u{feff}',
     ] {
