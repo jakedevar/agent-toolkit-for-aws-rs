@@ -30,7 +30,8 @@ fn a_wide_object_is_delivered_with_its_key_order_and_parsed_off_the_protocol_thr
     assert!(members
         .iter()
         .enumerate()
-        .all(|(k, (key, value))| key == &format!("key{k}") && value == &Json::Int(k as i64)));
+        .all(|(k, (key, value))| key == &format!("key{k}")
+            && value == &Json::Int(i64::try_from(k).unwrap())));
     let threads = parse_threads();
     assert!(!threads.is_empty());
     for name in &threads {

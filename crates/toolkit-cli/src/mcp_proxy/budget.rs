@@ -166,7 +166,7 @@ impl Budget {
                     if state.queued == 0 || now >= deadline {
                         return Err(BudgetError::Exhausted);
                     }
-                    wait.clock.wait_slice(deadline - now)
+                    wait.clock.wait_slice(deadline.saturating_sub(now))
                 }
                 // No deadline: the waiter is the stdin reader, which only the
                 // proxy's own producers block; they always finish or fail.

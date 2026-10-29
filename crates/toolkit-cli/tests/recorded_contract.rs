@@ -2104,6 +2104,13 @@ const INVENTORY: &[(&str, Class)] = &[
     ),
     ("marketplace", Class::Recorded),
     (
+        "mcp_proxy",
+        Class::NotRecorded(
+            "bridges live MCP stdio traffic to one HTTPS endpoint and replays no recorded AWS \
+             responses",
+        ),
+    ),
+    (
         "msk",
         Class::NotRecorded("sizing, compatibility and simulation inputs the user writes"),
     ),

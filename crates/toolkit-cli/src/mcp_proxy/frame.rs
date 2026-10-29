@@ -24,8 +24,7 @@ pub(crate) fn to_line(value: &Json) -> String {
 /// allocating it.
 pub(crate) fn compact_len(value: &Json) -> usize {
     match value {
-        Json::Null => 4,
-        Json::Bool(true) => 4,
+        Json::Null | Json::Bool(true) => 4,
         Json::Bool(false) => 5,
         Json::Int(_) | Json::Float(_) => {
             let mut counter = Counter(0);
@@ -290,9 +289,7 @@ pub(crate) fn recover_id(prefix: &[u8]) -> Option<Json> {
             return is_valid_id(&id).then_some(id);
         }
         scan.ws();
-        if scan.eat(b',').is_none() {
-            return None;
-        }
+        scan.eat(b',')?;
     }
 }
 
@@ -482,10 +479,10 @@ mod tests {
     fn to_line_matches_the_compact_form_and_its_length_is_exact() {
         for text in [
             r#"{"a":[1,-2,3.5,1e300,true,false,null,"x\"\\\n\t\u0001é😀"],"b":{}}"#,
-            r#"[]"#,
+            "[]",
             r#""  ""#,
-            r#"0.1"#,
-            r#"123456789012345678901234567890"#,
+            "0.1",
+            "123456789012345678901234567890",
         ] {
             let value = parse_json(text).unwrap();
             let line = to_line(&value);

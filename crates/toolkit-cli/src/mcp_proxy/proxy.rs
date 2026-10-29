@@ -143,6 +143,9 @@ impl Proxy {
     }
 
     /// Run until stdin ends or stdout fails. Diagnostics go to `diag` only.
+    ///
+    /// # Panics
+    /// When the operating system refuses to start a thread.
     #[must_use]
     pub fn run(
         self,
@@ -304,9 +307,10 @@ struct Job {
 struct Delivery<'a> {
     task: &'a Task,
     keys: &'a [String],
-    /// For an `initialize` response: the validated session id from the
-    /// response head, committed with the result.
-    initialize: Option<Option<String>>,
+    /// This answers `initialize`: its session is committed with the result.
+    initialize: bool,
+    /// For `initialize`: the validated session id from the response head.
+    session_id: Option<String>,
     /// Deliver only a JSON-RPC error answering one of `keys` (the body of
     /// an HTTP error response).
     errors_only: bool,
@@ -662,86 +666,88 @@ impl Shared {
         drop(value);
         drop(charge);
 
-        // The concurrency cap: a request beyond it is refused; other
-        // messages wait for a slot.
-        let has_requests = !requests.is_empty();
-        {
-            let mut pending = lock(&self.pending);
-            loop {
-                if self.is_shutdown() {
-                    return;
-                }
-                if pending.slots < limits.max_in_flight {
-                    break;
-                }
-                if has_requests {
-                    drop(pending);
-                    for (id, tool, _) in &requests {
-                        self.send_control(&templates::failure(
-                            id,
-                            tool.as_deref(),
-                            Failure::TooManyRequests,
-                        ));
-                    }
-                    return;
-                }
-                let slice = self.clock.wait_slice(Duration::from_millis(50));
-                pending = self
-                    .pending_changed
-                    .wait_timeout(pending, slice)
-                    .unwrap_or_else(PoisonError::into_inner)
-                    .0;
-            }
-            pending.slots += 1;
-            let now = self.clock.now();
-            let mut task_deadline = now + limits.request_timeout;
-            let mut entries = Vec::new();
-            for (id, tool, _) in &requests {
-                let timeout = if tool.is_some() {
-                    limits.tool_timeout
-                } else {
-                    limits.request_timeout
-                };
-                task_deadline = task_deadline.max(now + timeout);
-                entries.push((id.clone(), tool.clone(), now + timeout, timeout.as_secs()));
-            }
-            let task = Arc::new(Task {
-                aborted: AtomicBool::new(false),
-                deadline: task_deadline,
-            });
-            for (id, tool, deadline, timeout_seconds) in entries {
-                pending.entries.insert(
-                    key_of(&id),
-                    Entry {
-                        id,
-                        tool,
-                        deadline,
-                        timeout_seconds,
-                        task: Arc::clone(&task),
-                        finished: false,
-                    },
-                );
-            }
-            drop(pending);
-            self.pending_changed.notify_all();
+        let job = Job {
+            body,
+            body_hold,
+            keys: std::mem::take(&mut keys),
+            initialize: !batch && requests.first().is_some_and(|(_, _, m)| m == "initialize"),
+            initialized: !batch
+                && matches!(
+                    messages.first(),
+                    Some(ClientMessage::Notification { method }) if method == "notifications/initialized"
+                ),
+        };
+        self.dispatch(&requests, job);
+    }
 
-            let job = Job {
-                body,
-                body_hold,
-                keys: std::mem::take(&mut keys),
-                initialize: !batch && requests.first().is_some_and(|(_, _, m)| m == "initialize"),
-                initialized: !batch
-                    && matches!(
-                        messages.first(),
-                        Some(ClientMessage::Notification { method }) if method == "notifications/initialized"
-                    ),
-            };
-            let shared = Arc::clone(self);
-            let n = self.workers.fetch_add(1, Ordering::SeqCst);
-            spawn(&format!("mcp-proxy-request-{n}"), move || {
-                shared.work(&task, job);
-            });
+    /// The concurrency cap, then registration and the worker: a message
+    /// with requests beyond the cap is refused; other messages wait for a
+    /// slot.
+    fn dispatch(self: &Arc<Self>, requests: &[(Json, Option<String>, String)], job: Job) {
+        let limits = &self.config.limits;
+        let mut pending = lock(&self.pending);
+        loop {
+            if self.is_shutdown() {
+                return;
+            }
+            if pending.slots < limits.max_in_flight {
+                break;
+            }
+            if !requests.is_empty() {
+                drop(pending);
+                for (id, tool, _) in requests {
+                    self.send_control(&templates::failure(
+                        id,
+                        tool.as_deref(),
+                        Failure::TooManyRequests,
+                    ));
+                }
+                return;
+            }
+            let slice = self.clock.wait_slice(Duration::from_millis(50));
+            pending = self
+                .pending_changed
+                .wait_timeout(pending, slice)
+                .unwrap_or_else(PoisonError::into_inner)
+                .0;
         }
+        pending.slots += 1;
+        let now = self.clock.now();
+        let mut task_deadline = now + limits.request_timeout;
+        let mut entries = Vec::new();
+        for (id, tool, _) in requests {
+            let timeout = if tool.is_some() {
+                limits.tool_timeout
+            } else {
+                limits.request_timeout
+            };
+            task_deadline = task_deadline.max(now + timeout);
+            entries.push((id.clone(), tool.clone(), now + timeout, timeout.as_secs()));
+        }
+        let task = Arc::new(Task {
+            aborted: AtomicBool::new(false),
+            deadline: task_deadline,
+        });
+        for (id, tool, deadline, timeout_seconds) in entries {
+            pending.entries.insert(
+                key_of(&id),
+                Entry {
+                    id,
+                    tool,
+                    deadline,
+                    timeout_seconds,
+                    task: Arc::clone(&task),
+                    finished: false,
+                },
+            );
+        }
+        drop(pending);
+        self.pending_changed.notify_all();
+        let shared = Arc::clone(self);
+        let n = self.workers.fetch_add(1, Ordering::SeqCst);
+        spawn(&format!("mcp-proxy-request-{n}"), move || {
+            shared.work(&task, job);
+        });
     }
 
     // ----------------------------------------------------------- requests
@@ -896,7 +902,8 @@ impl Shared {
             let delivery = Delivery {
                 task,
                 keys,
-                initialize: None,
+                initialize: false,
+                session_id: None,
                 errors_only: true,
             };
             if is_json(&*stream) {
@@ -911,7 +918,8 @@ impl Shared {
         let mut delivery = Delivery {
             task,
             keys,
-            initialize: None,
+            initialize: false,
+            session_id: None,
             errors_only: false,
         };
         if initialize {
@@ -922,7 +930,8 @@ impl Shared {
                     return Err(Stop::Fail(Failure::SessionRefused));
                 }
             }
-            delivery.initialize = Some(session_id);
+            delivery.initialize = true;
+            delivery.session_id = session_id;
         }
         if is_json(&*stream) {
             let (bytes, hold) = self.read_body(&mut *stream, task)?;
@@ -1048,8 +1057,8 @@ impl Shared {
         if delivery.errors_only && (answered.is_empty() || value.get("error").is_none()) {
             return Ok(false);
         }
-        if let (Some(session_id), [key]) = (&delivery.initialize, answered.as_slice()) {
-            if !self.commit_session(session_id.clone(), &value) {
+        if let (true, [key]) = (delivery.initialize, answered.as_slice()) {
+            if !self.commit_session(delivery.session_id.clone(), &value) {
                 self.fail_entry(key, Failure::SessionRefused);
                 return Ok(false);
             }
@@ -1127,7 +1136,7 @@ impl Shared {
             if now >= at {
                 return true;
             }
-            let slice = self.clock.wait_slice(at - now);
+            let slice = self.clock.wait_slice(at.saturating_sub(now));
             pending = self
                 .pending_changed
                 .wait_timeout(pending, slice)
@@ -1180,7 +1189,8 @@ impl Shared {
                 let delivery = Delivery {
                     task: &task,
                     keys: &[],
-                    initialize: None,
+                    initialize: false,
+                    session_id: None,
                     errors_only: false,
                 };
                 if let Err(Stop::Fail(failure)) = self.read_events(&mut *stream, &delivery) {

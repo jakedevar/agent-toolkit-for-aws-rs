@@ -259,7 +259,6 @@ fn a_404_on_a_later_post_is_a_session_expired_error() {
         Some("initialize") => {
             Reply::json(&result(seen.id().unwrap(), INIT_RESULT)).header("Mcp-Session-Id", "sess-x")
         }
-        Some("tools/call") => Reply::status(404),
         _ => Reply::status(404),
     });
     let mut h = start(config(), upstream);
