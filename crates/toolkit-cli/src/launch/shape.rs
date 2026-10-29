@@ -88,7 +88,9 @@ fn visit(shapes: &Json, name: &str, value: &Json) -> Result<Json, InvalidRespons
                         return Err(InvalidResponse)
                     }
                     None | Some(Json::Null) => {}
-                    Some(val) => out.push((key.clone(), visit(shapes, text(member, "shape")?, val)?)),
+                    Some(val) => {
+                        out.push((key.clone(), visit(shapes, text(member, "shape")?, val)?));
+                    }
                 }
             }
             Ok(Json::Object(out))

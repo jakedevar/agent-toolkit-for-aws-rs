@@ -158,7 +158,14 @@ fn t_cmd_every_network_command_validates_locally_then_refuses_without_network() 
     let source = source.to_str().unwrap();
     for args in [
         &["launch", "create-launch", source][..],
-        &["launch", "create-launch", source, "name", "--region", "eu-central-1"],
+        &[
+            "launch",
+            "create-launch",
+            source,
+            "name",
+            "--region",
+            "eu-central-1",
+        ],
         &["launch", "get-launch", "l-1", "execution,plan"],
         &["launch", "get-launch-download-url", "l-1"],
         &["launch", "list-launches", "--region", "eu-central-1"],
@@ -190,17 +197,26 @@ fn t_tok_sign_in_and_helper_matrix() {
     let clean = |label: &str, text: &[u8], extra: &[&str]| {
         let text = String::from_utf8_lossy(text);
         for (index, secret) in SECRETS.iter().chain(extra).enumerate() {
-            assert!(!text.contains(secret), "{label}: seeded value #{index} leaked");
+            assert!(
+                !text.contains(secret),
+                "{label}: seeded value #{index} leaked"
+            );
         }
     };
     let home = std::env::temp_dir().join(format!(
         "launch-l5-tok-{}-{}",
         std::process::id(),
-        SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
     ));
     let state_dir = home.join(".launch-with-aws");
     std::fs::create_dir_all(&state_dir).unwrap();
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
     let session = format!(
         "{{\"client_id\":\"client\",\"client_secret\":\"{}\",\"client_expires_at\":{},\"authorize_endpoint\":\"https://oidc.us-east-1.amazonaws.com/authorize\",\"token_endpoint\":\"https://oidc.us-east-1.amazonaws.com/token\",\"scopes\":[\"launch:access\"],\"access_token\":\"{}\",\"refresh_token\":\"{}\",\"token_expires_at\":{}}}",
         SECRETS[0],

@@ -51,7 +51,10 @@ fn t_cmd_python_writers_use_python_separators_and_ascii() {
         error_text("Missing required argument for get-launch"),
         r#"{"error": "Missing required argument for get-launch"}"#
     );
-    assert_eq!(error_text("caf\u{e9} \"q\"\n\u{1f600}"), r#"{"error": "caf\u00e9 \"q\"\n\ud83d\ude00"}"#);
+    assert_eq!(
+        error_text("caf\u{e9} \"q\"\n\u{1f600}"),
+        r#"{"error": "caf\u00e9 \"q\"\n\ud83d\ude00"}"#
+    );
     assert_eq!(
         ok_text(&Json::object(vec![
             ("b", Json::Float(12.0)),

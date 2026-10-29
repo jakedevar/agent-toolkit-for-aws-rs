@@ -4,7 +4,7 @@ use crate::launch::http::SystemClock;
 use serde_json::json;
 use toolkit_core::Json;
 
-fn to_json(value: serde_json::Value) -> Json {
+fn to_json(value: &serde_json::Value) -> Json {
     toolkit_core::parse_json(&value.to_string()).expect("fixture JSON")
 }
 fn from_json(value: &Json) -> serde_json::Value {
@@ -41,7 +41,7 @@ fn call(
         jitter: &NoJitter,
         policy: RetryPolicy::default(),
     }
-    .call(op, id, include, body.map(to_json))
+    .call(op, id, include, body.as_ref().map(to_json))
     .map(|value| from_json(&value))
 }
 fn reply(status: u16, body: &str) -> FakeStreamingTransport {

@@ -223,19 +223,38 @@ fn t_api_override_url_is_validated_before_token_refresh() {
         "https://evil.example.com",
         "https://user:pw@launch.test.api.aws",
     ] {
-        let mut harness = Harness::without_session(&[ok(200, r#"{"accessToken":"FAKE-ACCESS-NEW-0002","expiresIn":3600}"#)]);
+        let mut harness = Harness::without_session(&[ok(
+            200,
+            r#"{"accessToken":"FAKE-ACCESS-NEW-0002","expiresIn":3600}"#,
+        )]);
         harness.seed(&session(NOW - 10));
         harness.env = MapEnv::new().with(config::ENV_BASE_URL, url);
-        let expected = config::validate_base_url(url, &harness.resolver).unwrap_err().to_string();
-        assert_eq!(harness.run(&req("get-launch", Some("l-1"))).unwrap_err(), expected);
-        assert!(harness.fake.requests().is_empty(), "override {url} sent a request");
-        assert_eq!(state::load_session(harness.scratch.path()).unwrap().token_expires_at, NOW - 10);
+        let expected = config::validate_base_url(url, &harness.resolver)
+            .unwrap_err()
+            .to_string();
+        assert_eq!(
+            harness.run(&req("get-launch", Some("l-1"))).unwrap_err(),
+            expected
+        );
+        assert!(
+            harness.fake.requests().is_empty(),
+            "override {url} sent a request"
+        );
+        assert_eq!(
+            state::load_session(harness.scratch.path())
+                .unwrap()
+                .token_expires_at,
+            NOW - 10
+        );
     }
     // A private address is refused after DNS, still before any request.
     let mut harness = Harness::new(&[]);
     harness.env = MapEnv::new().with(config::ENV_BASE_URL, OVERRIDE);
     harness.resolver = FixedResolver::new().answer_any(&["10.0.0.1"]);
-    assert!(harness.run(&req("list-launches", None)).unwrap_err().contains("non-public"));
+    assert!(harness
+        .run(&req("list-launches", None))
+        .unwrap_err()
+        .contains("non-public"));
     assert!(harness.fake.requests().is_empty());
 }
 
@@ -244,11 +263,23 @@ fn t_api_local_checks_precede_configuration_and_token() {
     let harness = Harness::without_session(&[]);
     let long = "x".repeat(129);
     for (request, message) in [
-        (req("get-launch", None), "Missing required argument for get-launch".to_owned()),
-        (req("create-launch", None), "Missing required argument for create-launch".to_owned()),
-        (req("delete-launch", Some("")), ApiError::InvalidLaunchId.to_string()),
         (
-            Request { second: Some(&long), ..req("create-launch", Some("dir")) },
+            req("get-launch", None),
+            "Missing required argument for get-launch".to_owned(),
+        ),
+        (
+            req("create-launch", None),
+            "Missing required argument for create-launch".to_owned(),
+        ),
+        (
+            req("delete-launch", Some("")),
+            ApiError::InvalidLaunchId.to_string(),
+        ),
+        (
+            Request {
+                second: Some(&long),
+                ..req("create-launch", Some("dir"))
+            },
             ApiError::InvalidLaunchName.to_string(),
         ),
     ] {
@@ -292,12 +323,19 @@ fn t_api_client_tokens_are_uuid_v4_distinct_and_stable_across_retry() {
     ]);
     harness.policy = RetryPolicy::default();
     let (stdout, stderr, status) = harness.golden(&req("create-launch", Some("/src/app")));
-    assert_eq!((stdout.as_str(), stderr.as_str(), status), (SMALL_GOLDEN, "", 0));
+    assert_eq!(
+        (stdout.as_str(), stderr.as_str(), status),
+        (SMALL_GOLDEN, "", 0)
+    );
     let requests = harness.fake.requests();
     assert_eq!(requests.len(), 5);
     let token = |i: usize| {
-        let body = toolkit_core::parse_json(std::str::from_utf8(&requests[i].body).unwrap()).unwrap();
-        body.get("clientToken").and_then(Json::as_str).unwrap().to_owned()
+        let body =
+            toolkit_core::parse_json(std::str::from_utf8(&requests[i].body).unwrap()).unwrap();
+        body.get("clientToken")
+            .and_then(Json::as_str)
+            .unwrap()
+            .to_owned()
     };
     let (upload, create) = (token(0), token(3));
     assert_eq!(upload, token(1));
@@ -305,15 +343,25 @@ fn t_api_client_tokens_are_uuid_v4_distinct_and_stable_across_retry() {
     assert_ne!(upload, create);
     for t in [&upload, &create] {
         let parts: Vec<&str> = t.split('-').collect();
-        assert_eq!(parts.iter().map(|p| p.len()).collect::<Vec<_>>(), [8, 4, 4, 4, 12]);
-        assert!(t.chars().all(|c| c == '-' || (c.is_ascii_hexdigit() && !c.is_ascii_uppercase())));
+        assert_eq!(
+            parts.iter().map(|p| p.len()).collect::<Vec<_>>(),
+            [8, 4, 4, 4, 12]
+        );
+        assert!(t
+            .chars()
+            .all(|c| c == '-' || (c.is_ascii_hexdigit() && !c.is_ascii_uppercase())));
         assert!(parts[2].starts_with('4'));
         assert!(matches!(parts[3].as_bytes()[0], b'8' | b'9' | b'a' | b'b'));
     }
     // StartLaunchExecution draws its own token, reused across a 503.
     let mut harness = Harness::new(&[ok(503, "{}"), ok(202, SMALL_LAUNCH)]);
     harness.policy = RetryPolicy::default();
-    assert_eq!(harness.golden(&req("start-launch-execution", Some("l-1"))).0, SMALL_GOLDEN);
+    assert_eq!(
+        harness
+            .golden(&req("start-launch-execution", Some("l-1")))
+            .0,
+        SMALL_GOLDEN
+    );
     let requests = harness.fake.requests();
     assert_eq!(requests.len(), 2);
     assert_eq!(requests[0].body, requests[1].body);
@@ -325,8 +373,14 @@ fn t_api_client_tokens_are_uuid_v4_distinct_and_stable_across_retry() {
 #[test]
 fn t_cmd_create_launch_success_saves_region_and_hides_upload_url() {
     let harness = Harness::new(&[ok(201, UPLOAD), ok(200, "<xml/>"), ok(201, SMALL_LAUNCH)]);
-    let request = Request { second: Some("  my app  "), ..req("create-launch", Some("/src/app/")) };
-    assert_eq!(harness.golden(&request), (SMALL_GOLDEN.to_owned(), String::new(), 0));
+    let request = Request {
+        second: Some("  my app  "),
+        ..req("create-launch", Some("/src/app/"))
+    };
+    assert_eq!(
+        harness.golden(&request),
+        (SMALL_GOLDEN.to_owned(), String::new(), 0)
+    );
     let requests = harness.fake.requests();
     assert_eq!(
         harness.urls(),
@@ -340,8 +394,13 @@ fn t_cmd_create_launch_success_saves_region_and_hides_upload_url() {
     assert!(requests[1].headers.get("authorization").is_none());
     assert_eq!(requests[1].body, b"PK-fake-archive");
     let create = std::str::from_utf8(&requests[2].body).unwrap();
-    assert!(create.starts_with(r#"{"name":"my app","source":{"s3Upload":{"uploadId":"u-1"}},"clientToken":""#));
-    assert_eq!(state::load_saved_region(harness.scratch.path()), Some("us-east-1"));
+    assert!(create.starts_with(
+        r#"{"name":"my app","source":{"s3Upload":{"uploadId":"u-1"}},"clientToken":""#
+    ));
+    assert_eq!(
+        state::load_saved_region(harness.scratch.path()),
+        Some("us-east-1")
+    );
     // The display name falls back to the basename, then to uploaded-app.
     assert_eq!(launch_name("/src/app/", None), "app");
     assert_eq!(launch_name("/", Some(" ")), "uploaded-app");
@@ -352,7 +411,10 @@ fn t_cmd_create_launch_save_region_failure_is_best_effort() {
     let harness = Harness::new(&[ok(201, UPLOAD), ok(200, ""), ok(201, SMALL_LAUNCH)]);
     std::fs::create_dir(harness.scratch.join(state::CONFIG_FILE_NAME)).unwrap();
     assert_eq!(
-        harness.golden(&Request { region: Some("us-east-1"), ..req("create-launch", Some("/src/app")) }),
+        harness.golden(&Request {
+            region: Some("us-east-1"),
+            ..req("create-launch", Some("/src/app"))
+        }),
         (SMALL_GOLDEN.to_owned(), String::new(), 0)
     );
 }
@@ -366,7 +428,9 @@ fn t_cmd_create_launch_repository_url_refusal_redacts_userinfo() {
     ] {
         let (stdout, stderr, status) = harness.golden(&req("create-launch", Some(source)));
         assert_eq!((stdout.as_str(), status), ("", 1));
-        assert!(stderr.starts_with("{\"error\": \"create-launch takes a local directory, not a repository URL. Clone "));
+        assert!(stderr.starts_with(
+            "{\"error\": \"create-launch takes a local directory, not a repository URL. Clone "
+        ));
         assert!(stderr.ends_with(" locally and pass the clone's directory.\"}\n"));
         assert!(!stderr.contains("FAKE-URL-SECRET-0001"));
     }
@@ -377,12 +441,18 @@ fn t_cmd_create_launch_repository_url_refusal_redacts_userinfo() {
 
 #[test]
 fn t_cmd_create_launch_put_and_api_failures() {
-    let harness = Harness::new(&[ok(201, UPLOAD), ok(403, "<Error>FAKE-UPLOAD-SIGNATURE</Error>")]);
+    let harness = Harness::new(&[
+        ok(201, UPLOAD),
+        ok(403, "<Error>FAKE-UPLOAD-SIGNATURE</Error>"),
+    ]);
     assert_eq!(
         harness.golden(&req("create-launch", Some("/src/app"))),
         failed("PUT (presigned S3 upload) failed (403)")
     );
-    let harness = Harness::new(&[ok(201, r#"{"uploadUrl":"http://bucket.s3.amazonaws.com/k?X-Amz-Signature=FAKE-UPLOAD-SIGNATURE","uploadId":"u"}"#)]);
+    let harness = Harness::new(&[ok(
+        201,
+        r#"{"uploadUrl":"http://bucket.s3.amazonaws.com/k?X-Amz-Signature=FAKE-UPLOAD-SIGNATURE","uploadId":"u"}"#,
+    )]);
     let (_, stderr, status) = harness.golden(&req("create-launch", Some("/src/app")));
     assert_eq!(status, 1);
     assert!(!stderr.contains("FAKE-UPLOAD-SIGNATURE") && !stderr.contains("bucket"));
@@ -393,30 +463,53 @@ fn t_cmd_create_launch_put_and_api_failures() {
         failed("POST /api/uploads failed (400): ValidationException")
     );
     let harness = Harness::new(&[ok(201, r#"{"uploadId":"u"}"#)]);
-    assert_eq!(harness.golden(&req("create-launch", Some("/src/app"))), failed(INVALID_RESPONSE));
+    assert_eq!(
+        harness.golden(&req("create-launch", Some("/src/app"))),
+        failed(INVALID_RESPONSE)
+    );
 }
 
 #[test]
 fn t_cmd_get_launch_golden_include_and_hints() {
     let harness = Harness::new(&[ok(200, LAUNCH)]);
-    let request = Request { second: Some(" plan, download_url ,execution"), ..req("get-launch", Some("a/b c")) };
-    assert_eq!(harness.golden(&request), (LAUNCH_GOLDEN.to_owned(), String::new(), 0));
+    let request = Request {
+        second: Some(" plan, download_url ,execution"),
+        ..req("get-launch", Some("a/b c"))
+    };
+    assert_eq!(
+        harness.golden(&request),
+        (LAUNCH_GOLDEN.to_owned(), String::new(), 0)
+    );
     assert_eq!(
         harness.urls(),
-        [format!("{US}/api/launches/a%2Fb%20c?include=plan&include=download_url&include=execution")]
+        [format!(
+            "{US}/api/launches/a%2Fb%20c?include=plan&include=download_url&include=execution"
+        )]
     );
-    let auth = harness.fake.requests()[0].headers.get("authorization").map(str::to_owned);
+    let auth = harness.fake.requests()[0]
+        .headers
+        .get("authorization")
+        .map(str::to_owned);
     assert_eq!(auth.as_deref(), Some(&*format!("Bearer {ACCESS}")));
     // An empty include sends no query (Python `if include:`).
     let harness = Harness::new(&[ok(200, LAUNCH)]);
-    harness.golden(&Request { second: Some(""), ..req("get-launch", Some("l-1")) });
+    harness.golden(&Request {
+        second: Some(""),
+        ..req("get-launch", Some("l-1"))
+    });
     assert_eq!(harness.urls(), [format!("{US}/api/launches/l-1")]);
     for (region, base) in [("us-east-1", US), ("eu-central-1", EU)] {
         let harness = Harness::new(&[ok(404, r#"{"__type":"ResourceNotFoundException"}"#)]);
-        let request = Request { region: Some(region), ..req("get-launch", Some("l-1")) };
+        let request = Request {
+            region: Some(region),
+            ..req("get-launch", Some("l-1"))
+        };
         assert_eq!(
             harness.golden(&request),
-            failed(&format!("GET /api/launches/<id> failed (404): ResourceNotFoundException{}", hint_404(region)))
+            failed(&format!(
+                "GET /api/launches/<id> failed (404): ResourceNotFoundException{}",
+                hint_404(region)
+            ))
         );
         assert_eq!(harness.urls(), [format!("{base}/api/launches/l-1")]);
     }
@@ -434,7 +527,9 @@ fn t_cmd_get_launch_golden_include_and_hints() {
         }
         assert_eq!(
             harness.golden(&req("get-launch", Some("l-1"))),
-            failed(&format!("GET /api/launches/<id> failed (401): UnrecognizedError{HINT_401}"))
+            failed(&format!(
+                "GET /api/launches/<id> failed (401): UnrecognizedError{HINT_401}"
+            ))
         );
     }
 }
@@ -460,12 +555,21 @@ fn t_cmd_list_launches_both_regions_tokens_and_order() {
   }
 }
 "#;
-    assert_eq!(harness.golden(&req("list-launches", None)), (golden.to_owned(), String::new(), 0));
-    assert_eq!(harness.urls(), [format!("{US}/api/launches"), format!("{EU}/api/launches")]);
+    assert_eq!(
+        harness.golden(&req("list-launches", None)),
+        (golden.to_owned(), String::new(), 0)
+    );
+    assert_eq!(
+        harness.urls(),
+        [format!("{US}/api/launches"), format!("{EU}/api/launches")]
+    );
     // --region queries only that region.
     let harness = Harness::new(&[ok(200, eu)]);
     assert_eq!(
-        harness.golden(&Request { region: Some("eu-central-1"), ..req("list-launches", None) }),
+        harness.golden(&Request {
+            region: Some("eu-central-1"),
+            ..req("list-launches", None)
+        }),
         ("{\n  \"items\": []\n}\n".to_owned(), String::new(), 0)
     );
     assert_eq!(harness.urls(), [format!("{EU}/api/launches")]);
@@ -482,8 +586,13 @@ fn t_cmd_list_launches_partial_and_total_failures() {
     // One region unreachable.
     let fake = FakeStreamingTransport::new()
         .respond(200, &[], vec![FakeChunk::data(br#"{"items":[]}"#)])
-        .open_error(AwsError::connect("FAKE connect refused to https://launch-with-aws"));
-    let harness = Harness { fake, ..Harness::new(&[]) };
+        .open_error(AwsError::connect(
+            "FAKE connect refused to https://launch-with-aws",
+        ));
+    let harness = Harness {
+        fake,
+        ..Harness::new(&[])
+    };
     assert_eq!(
         harness.golden(&req("list-launches", None)).0,
         "{\n  \"items\": [],\n  \"errors\": {\n    \"eu-central-1\": \"Could not reach Launch with AWS in eu-central-1.\"\n  }\n}\n"
@@ -492,7 +601,10 @@ fn t_cmd_list_launches_partial_and_total_failures() {
     let fake = FakeStreamingTransport::new()
         .open_error(AwsError::connect("refused"))
         .open_error(AwsError::connect("refused"));
-    let harness = Harness { fake, ..Harness::new(&[]) };
+    let harness = Harness {
+        fake,
+        ..Harness::new(&[])
+    };
     assert_eq!(
         harness.golden(&req("list-launches", None)),
         failed("Could not reach Launch with AWS in us-east-1, eu-central-1.")
@@ -501,25 +613,38 @@ fn t_cmd_list_launches_partial_and_total_failures() {
     let fake = FakeStreamingTransport::new()
         .open_error(AwsError::connect("refused"))
         .respond(401, &[], vec![FakeChunk::data(b"{}")]);
-    let harness = Harness { fake, ..Harness::new(&[]) };
+    let harness = Harness {
+        fake,
+        ..Harness::new(&[])
+    };
     assert_eq!(
         harness.golden(&req("list-launches", None)),
-        failed(&format!("GET /api/launches failed (401): UnrecognizedError{HINT_401}"))
+        failed(&format!(
+            "GET /api/launches failed (401): UnrecognizedError{HINT_401}"
+        ))
     );
     // --region with a service error.
     let harness = Harness::new(&[ok(503, "{}")]);
     assert_eq!(
-        harness.golden(&Request { region: Some("us-east-1"), ..req("list-launches", None) }),
+        harness.golden(&Request {
+            region: Some("us-east-1"),
+            ..req("list-launches", None)
+        }),
         failed("GET /api/launches failed (503): UnrecognizedError")
     );
     // An invalid response ends the command (not a per-region error).
     let harness = Harness::new(&[ok(200, "[]"), ok(200, r#"{"items":[]}"#)]);
-    assert_eq!(harness.golden(&req("list-launches", None)), failed(INVALID_RESPONSE));
+    assert_eq!(
+        harness.golden(&req("list-launches", None)),
+        failed(INVALID_RESPONSE)
+    );
     assert_eq!(harness.fake.requests().len(), 1);
     // The 404 hint never applies to list-launches.
     let harness = Harness::new(&[ok(200, r#"{"items":[]}"#), ok(404, "{}")]);
     let (stdout, _, _) = harness.golden(&req("list-launches", None));
-    assert!(stdout.contains("\"eu-central-1\": \"GET /api/launches failed (404): UnrecognizedError\""));
+    assert!(
+        stdout.contains("\"eu-central-1\": \"GET /api/launches failed (404): UnrecognizedError\"")
+    );
 }
 
 #[test]
@@ -527,7 +652,12 @@ fn t_cmd_delete_launch_golden_and_redacted_id() {
     let harness = Harness::new(&[ok(204, "")]);
     assert_eq!(
         harness.golden(&req("delete-launch", Some("l-1"))),
-        ("{\n  \"deleted\": true,\n  \"id\": \"l-1\",\n  \"region\": \"us-east-1\"\n}\n".to_owned(), String::new(), 0)
+        (
+            "{\n  \"deleted\": true,\n  \"id\": \"l-1\",\n  \"region\": \"us-east-1\"\n}\n"
+                .to_owned(),
+            String::new(),
+            0
+        )
     );
     let requests = harness.fake.requests();
     assert_eq!(requests[0].method, Method::Delete);
@@ -535,14 +665,20 @@ fn t_cmd_delete_launch_golden_and_redacted_id() {
     let harness = Harness::new(&[ok(404, "{}")]);
     assert_eq!(
         harness.golden(&req("delete-launch", Some("l-1"))),
-        failed(&format!("DELETE /api/launches/<id> failed (404): UnrecognizedError{}", hint_404("us-east-1")))
+        failed(&format!(
+            "DELETE /api/launches/<id> failed (404): UnrecognizedError{}",
+            hint_404("us-east-1")
+        ))
     );
 }
 
 #[test]
 fn t_cmd_start_and_status_goldens() {
     let harness = Harness::new(&[ok(202, SMALL_LAUNCH)]);
-    assert_eq!(harness.golden(&req("start-launch-execution", Some("l-1"))), (SMALL_GOLDEN.to_owned(), String::new(), 0));
+    assert_eq!(
+        harness.golden(&req("start-launch-execution", Some("l-1"))),
+        (SMALL_GOLDEN.to_owned(), String::new(), 0)
+    );
     assert_eq!(harness.fake.requests()[0].method, Method::Post);
     let running = r#"{"launch":{"id":"l-1","name":"n","status":"running","source":{"s3Upload":{"uploadId":"u"}},"createdAt":"2026-06-15T12:34:56Z","updatedAt":"2026-06-15T12:34:56Z","execution":{"totalTasks":3,"completedTasks":1},"costEstimate":{"estimatedMonthlyCost":0.1,"region":"us-east-1","services":[]}}}"#;
     let harness = Harness::new(&[ok(200, running)]);
@@ -563,13 +699,24 @@ fn t_cmd_start_and_status_goldens() {
   }
 }
 "#;
-    assert_eq!(harness.golden(&req("get-launch-status", Some("l-1"))), (golden.to_owned(), String::new(), 0));
-    assert_eq!(harness.urls(), [format!("{US}/api/launches/l-1?include=execution&include=cost_estimate")]);
+    assert_eq!(
+        harness.golden(&req("get-launch-status", Some("l-1"))),
+        (golden.to_owned(), String::new(), 0)
+    );
+    assert_eq!(
+        harness.urls(),
+        [format!(
+            "{US}/api/launches/l-1?include=execution&include=cost_estimate"
+        )]
+    );
     let failed_launch = r#"{"launch":{"id":"l-1","name":"n","status":"failed","source":{"s3Upload":{"uploadId":"u"}},"createdAt":"2026-06-15T12:34:56Z","updatedAt":"2026-06-15T12:34:56Z","failureReason":{"message":"Plan failed: quota","code":"QUOTA","phase":"plan"}}}"#;
     let harness = Harness::new(&[ok(200, failed_launch)]);
     let golden = "{\n  \"id\": \"l-1\",\n  \"region\": \"eu-central-1\",\n  \"regionName\": \"Europe (Frankfurt)\",\n  \"status\": \"failed\",\n  \"isComplete\": false,\n  \"isFailed\": true,\n  \"failureReason\": {\n    \"phase\": \"plan\",\n    \"code\": \"QUOTA\",\n    \"message\": \"Plan failed: quota\"\n  }\n}\n";
     assert_eq!(
-        harness.golden(&Request { region: Some("eu-central-1"), ..req("get-launch-status", Some("l-1")) }),
+        harness.golden(&Request {
+            region: Some("eu-central-1"),
+            ..req("get-launch-status", Some("l-1"))
+        }),
         (golden.to_owned(), String::new(), 0)
     );
 }
@@ -579,43 +726,94 @@ fn t_cmd_download_url_printed_or_refused() {
     let harness = Harness::new(&[ok(200, LAUNCH)]);
     assert_eq!(
         harness.golden(&req("get-launch-download-url", Some("l-1"))),
-        ("{\n  \"downloadUrl\": \"https://dl.example/a?X-Amz-Signature=abc\"\n}\n".to_owned(), String::new(), 0)
+        (
+            "{\n  \"downloadUrl\": \"https://dl.example/a?X-Amz-Signature=abc\"\n}\n".to_owned(),
+            String::new(),
+            0
+        )
     );
-    assert_eq!(harness.urls(), [format!("{US}/api/launches/l-1?include=download_url")]);
-    for body in [SMALL_LAUNCH, &SMALL_LAUNCH.replace("\"status\"", "\"downloadUrl\":\"\",\"status\"")] {
+    assert_eq!(
+        harness.urls(),
+        [format!("{US}/api/launches/l-1?include=download_url")]
+    );
+    for body in [
+        SMALL_LAUNCH,
+        &SMALL_LAUNCH.replace("\"status\"", "\"downloadUrl\":\"\",\"status\""),
+    ] {
         let harness = Harness::new(&[ok(200, body)]);
-        assert_eq!(harness.golden(&req("get-launch-download-url", Some("l-1"))), failed(NO_DOWNLOAD_URL));
+        assert_eq!(
+            harness.golden(&req("get-launch-download-url", Some("l-1"))),
+            failed(NO_DOWNLOAD_URL)
+        );
     }
     let harness = Harness::new(&[ok(404, "{}")]);
     assert_eq!(
         harness.golden(&req("get-launch-download-url", Some("l-1"))),
-        failed(&format!("GET /api/launches/<id> failed (404): UnrecognizedError{}", hint_404("us-east-1")))
+        failed(&format!(
+            "GET /api/launches/<id> failed (404): UnrecognizedError{}",
+            hint_404("us-east-1")
+        ))
     );
 }
 
 #[test]
 fn t_cmd_session_expired_and_unreachable_for_every_command() {
     for command in COMMANDS {
-        let first = if command == "create-launch" { Some("/src/app") } else { Some("l-1") };
+        let first = if command == "create-launch" {
+            Some("/src/app")
+        } else {
+            Some("l-1")
+        };
         let harness = Harness::without_session(&[]);
-        assert_eq!(harness.golden(&req(command, first)), failed(crate::launch::oidc::SESSION_EXPIRED));
+        assert_eq!(
+            harness.golden(&req(command, first)),
+            failed(crate::launch::oidc::SESSION_EXPIRED)
+        );
         assert!(harness.fake.requests().is_empty());
         if command == "list-launches" {
             continue;
         }
-        let fake = FakeStreamingTransport::new().open_error(AwsError::connect("FAKE refused https://launch-with-aws.us-east-1.api.aws"));
-        let harness = Harness { fake, ..Harness::new(&[]) };
-        assert_eq!(harness.golden(&req(command, first)), failed("Could not reach Launch with AWS in us-east-1."));
+        let fake = FakeStreamingTransport::new().open_error(AwsError::connect(
+            "FAKE refused https://launch-with-aws.us-east-1.api.aws",
+        ));
+        let harness = Harness {
+            fake,
+            ..Harness::new(&[])
+        };
+        assert_eq!(
+            harness.golden(&req(command, first)),
+            failed("Could not reach Launch with AWS in us-east-1.")
+        );
     }
 }
 
 #[test]
 fn t_cmd_invalid_responses_for_every_json_command() {
-    for command in ["get-launch", "start-launch-execution", "get-launch-status", "get-launch-download-url", "list-launches"] {
-        for body in ["", "not json", "[]", r#"{"launch":null}"#, r#"{"launch":{"id":"l"}}"#, r#"{"items":null}"#] {
+    for command in [
+        "get-launch",
+        "start-launch-execution",
+        "get-launch-status",
+        "get-launch-download-url",
+        "list-launches",
+    ] {
+        for body in [
+            "",
+            "not json",
+            "[]",
+            r#"{"launch":null}"#,
+            r#"{"launch":{"id":"l"}}"#,
+            r#"{"items":null}"#,
+        ] {
             let harness = Harness::new(&[ok(200, body)]);
-            let request = Request { region: Some("us-east-1"), ..req(command, Some("l-1")) };
-            assert_eq!(harness.golden(&request), failed(INVALID_RESPONSE), "{command} {body}");
+            let request = Request {
+                region: Some("us-east-1"),
+                ..req(command, Some("l-1"))
+            };
+            assert_eq!(
+                harness.golden(&request),
+                failed(INVALID_RESPONSE),
+                "{command} {body}"
+            );
         }
     }
 }
@@ -623,7 +821,10 @@ fn t_cmd_invalid_responses_for_every_json_command() {
 #[test]
 fn t_cmd_refresh_happens_once_and_is_persisted() {
     let harness = Harness::without_session(&[
-        ok(200, r#"{"accessToken":"FAKE-ACCESS-NEW-0002","expiresIn":3600}"#),
+        ok(
+            200,
+            r#"{"accessToken":"FAKE-ACCESS-NEW-0002","expiresIn":3600}"#,
+        ),
         ok(200, r#"{"items":[]}"#),
         ok(200, r#"{"items":[]}"#),
     ]);
@@ -633,6 +834,9 @@ fn t_cmd_refresh_happens_once_and_is_persisted() {
     assert_eq!(requests.len(), 3);
     assert!(requests[0].url.ends_with("/token"));
     for request in &requests[1..] {
-        assert_eq!(request.headers.get("authorization"), Some("Bearer FAKE-ACCESS-NEW-0002"));
+        assert_eq!(
+            request.headers.get("authorization"),
+            Some("Bearer FAKE-ACCESS-NEW-0002")
+        );
     }
 }

@@ -134,7 +134,10 @@ fn is_repository_url(source: &str) -> bool {
     let Some((scheme, _)) = source.split_once(':') else {
         return false;
     };
-    let valid = scheme.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
+    let valid = scheme
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic())
         && scheme
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'));
@@ -166,7 +169,11 @@ pub fn client_token(random: &dyn Random) -> Result<String, String> {
     random.fill(&mut bytes).map_err(|_| NO_RANDOM.to_owned())?;
     bytes[6] = (bytes[6] & 0x0f) | 0x40;
     bytes[8] = (bytes[8] & 0x3f) | 0x80;
-    let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+    let hex = bytes.iter().fold(String::new(), |mut hex, b| {
+        use std::fmt::Write as _;
+        let _ = write!(hex, "{b:02x}");
+        hex
+    });
     Ok(format!(
         "{}-{}-{}-{}-{}",
         &hex[..8],
@@ -244,7 +251,14 @@ pub fn run(request: &Request<'_>, deps: &Deps<'_>) -> Result<Json, String> {
         jitter: deps.jitter,
         policy: deps.policy,
     };
-    let result = dispatch(request, deps, &client, &list_regions, &list_bases, &mut secrets);
+    let result = dispatch(
+        request,
+        deps,
+        &client,
+        &list_regions,
+        &list_bases,
+        &mut secrets,
+    );
     match result {
         Ok(value) if secrets.found_in(&value) => Err(GENERIC_FAILURE.into()),
         Ok(value) => Ok(value),
@@ -260,7 +274,10 @@ fn dispatch(
     list_bases: &[String],
     secrets: &mut Secrets,
 ) -> Result<Json, String> {
-    let override_base = deps.env.var(config::ENV_BASE_URL).is_some_and(|s| !s.is_empty());
+    let override_base = deps
+        .env
+        .var(config::ENV_BASE_URL)
+        .is_some_and(|s| !s.is_empty());
     let id = request.first.unwrap_or_default();
     let fail = |error: &ApiError| command_error(error, client.region, override_base);
     match request.command {
@@ -297,7 +314,12 @@ fn dispatch(
         }
         "get-launch-status" => {
             let raw = client
-                .call(ApiOperation::GetLaunch, id, &["execution", "cost_estimate"], None)
+                .call(
+                    ApiOperation::GetLaunch,
+                    id,
+                    &["execution", "cost_estimate"],
+                    None,
+                )
                 .map_err(|e| fail(&e))?;
             status_output(&raw, client.region)
         }
@@ -397,7 +419,10 @@ fn status_output(raw: &Json, region: &str) -> Result<Json, String> {
             .map_err(|_| invalid())?
             .ok_or_else(invalid)?;
         for key in ["completedTasks", "totalTasks", "currentPhase"] {
-            out.push((key.to_owned(), execution.get(key).cloned().unwrap_or(Json::Null)));
+            out.push((
+                key.to_owned(),
+                execution.get(key).cloned().unwrap_or(Json::Null),
+            ));
         }
     }
     for key in ["costEstimate", "failureReason"] {
@@ -425,7 +450,8 @@ fn list_output(
     for (index, region) in regions.iter().enumerate() {
         match call(index, region) {
             Ok(value) => {
-                for item in recorded::optional_object_list(&value, "items").map_err(|_| invalid())?
+                for item in
+                    recorded::optional_object_list(&value, "items").map_err(|_| invalid())?
                 {
                     items.push(with_region(item, region)?);
                 }
@@ -495,7 +521,10 @@ fn create_with_archive(
             ApiOperation::CreateUploadUrl,
             "",
             &[],
-            Some(Json::object(vec![("clientToken", Json::string(upload_token))])),
+            Some(Json::object(vec![(
+                "clientToken",
+                Json::string(upload_token),
+            )])),
         )
         .map_err(|e| fail(&e))?;
     let url = recorded::optional_text(&upload, "uploadUrl")

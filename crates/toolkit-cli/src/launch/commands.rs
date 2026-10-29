@@ -135,7 +135,10 @@ fn request<'a>(invocation: &'a Invocation, command: &'a str) -> flow::Request<'a
 }
 
 /// Print the outcome of a network command.
-pub(crate) fn report(output: &mut Output<'_>, result: Result<Json, String>) -> Result<(), ToolkitError> {
+pub(crate) fn report(
+    output: &mut Output<'_>,
+    result: Result<Json, String>,
+) -> Result<(), ToolkitError> {
     match result {
         Ok(value) => emit(output, &value),
         Err(message) => failure(output, &message),

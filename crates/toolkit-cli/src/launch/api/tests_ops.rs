@@ -4,7 +4,7 @@ use crate::launch::http::SystemClock;
 use serde_json::json;
 use toolkit_core::Json;
 
-fn to_json(value: serde_json::Value) -> Json {
+fn to_json(value: &serde_json::Value) -> Json {
     toolkit_core::parse_json(&value.to_string()).expect("fixture JSON")
 }
 fn from_json(value: &Json) -> serde_json::Value {
@@ -34,7 +34,7 @@ fn call(
         "l-1",
         &[],
         if matches!(operation, ApiOperation::CreateLaunch) {
-            Some(to_json(json!({"name":"n"})))
+            Some(to_json(&json!({"name":"n"})))
         } else {
             None
         },

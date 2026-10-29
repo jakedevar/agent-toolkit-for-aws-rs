@@ -22,9 +22,9 @@ pub mod callback;
 pub mod clock;
 pub mod commands;
 pub mod config;
-pub mod flow;
 #[cfg(unix)]
 pub mod download;
+pub mod flow;
 pub mod http;
 pub mod oidc;
 pub mod shape;
