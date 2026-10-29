@@ -507,3 +507,8 @@ Friction: #4727, Rsi #4694, Rsi #4704
   #4382 (launch-with-aws, wave 2) DESIGN worker fbfd341e (Opus high, build_free, rolling): docs/migration/launch-with-aws-design.md (OAuth callback, token, archive boundaries). Then pre-review (Codex sol high) per AC1, then slices.
   Unstarted ports after #4382: #4397 #4410 #4411 #4386 (wave 3), #4414/#4415 (wave 4).
   4/4 busy: 41854b6c (#5017 S1), 9b110cd7 (r20), 9c9ccc2e (#4487 repair), fbfd341e (#4382 design).
+- 10-29 01:51Z: ROUND 20 head 0eff943c6fb34e4932267f07b5465096d1b5b7e3 (9b110cd7; = f7028a66 r19 + merges #4941 40c71d7e, #4412 44c15ea9 (hooks.json held; crate tests use an in-crate copy of the reviewed registration + a test that the live file still runs secret-safety.py), #4497 6be5d379; #4941 duties: bedrock-probes/marketplace/tunnel clean() onto shared safe_text (SecretGate kept), 16 success-path baselines found 5 stdout routes, fixed; #5020 doc). check_landing ok scoped 32d26fdf (secret-safety-hook 64, aws 186, cli 3521, core 192, msk 110). ENQUEUED a6460649 (seq 2937, SUPERSEDES r19 e7495083, issue 5019).
+  ON LAND close: #5019 (auto), #5015, #5006, #4983, #4960 + r16 set, #4961, #4396 set, #4393 set, #4941 set (#4941 #4971 #4978-#4981 #5008-#5012), #4497 set (#4497 #4998 #5021 #5026 #5020), #4412 crate (keep #4412 open until the hooks.json activation step), #4488.
+  Kaizen #5034 (mailed duty Issue unreadable by bound worker): put every duty #N in the launch brief/related, not only in mail.
+  Round 21: #4487 after #5018 r2 + the #4412 activation step (hooks.json -> plugin-stage launcher).
+  3/4 busy: 41854b6c (#5017 S1), 9c9ccc2e (#4487 repair), fbfd341e (#4382 design).
