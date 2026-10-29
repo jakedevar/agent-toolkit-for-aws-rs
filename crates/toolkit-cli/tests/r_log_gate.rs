@@ -6,11 +6,19 @@
 //! reports every callsite disabled and those field values are never even
 //! formatted. This test keeps it that way:
 //!
-//! 1. `Cargo.lock` holds no `tracing`/`log` backend crate;
-//! 2. `tracing` is built without its `log` (or `log-always`) feature, which
-//!    would show as a `log` dependency of `tracing` in the lock file;
+//! 1. the resolved dependency graph of `toolkit-cli` and `toolkit-aws` holds
+//!    no `tracing`/`log` backend crate;
+//! 2. in that graph `tracing` is built without its `log` (or `log-always`)
+//!    feature;
 //! 3. no workspace source installs a global or scoped dispatcher, subscriber
 //!    or logger.
+//!
+//! Checks 1 and 2 read `cargo tree` for those two packages with every feature
+//! and every edge kind, not the whole-workspace `Cargo.lock`: the lock is
+//! feature-unified across all members, and the Lambda example members
+//! (#4397: `lambda_runtime` brings `tracing-subscriber` and enables
+//! `tracing/log`) are outside the `toolkit` binary, which is built per
+//! package (`cargo build --package toolkit-cli --bin toolkit`, #4487).
 //!
 //! A later slice that needs dependency tracing must follow the design's rule
 //! 5 (an `Interest::never` filter for every foreign target) and update this
@@ -61,37 +69,59 @@ fn workspace() -> PathBuf {
         .to_path_buf()
 }
 
-/// `(name, dependencies)` for every package in the lock file.
-fn lock_packages() -> Vec<(String, Vec<String>)> {
-    let lock = std::fs::read_to_string(workspace().join("Cargo.lock")).expect("Cargo.lock");
+/// Packages whose resolved graph ships in the `toolkit` binary.
+const GATED: &[&str] = &["toolkit-cli", "toolkit-aws"];
+
+/// `(name, enabled features)` for every package in the resolved dependency
+/// graph of each [`GATED`] package, with all its features, every edge kind
+/// and every target, as `cargo tree` resolves it from the locked lock file.
+fn resolved_packages() -> Vec<(String, Vec<String>)> {
     let mut packages = Vec::new();
-    for block in lock.split("[[package]]").skip(1) {
-        let mut name = String::new();
-        let mut dependencies = Vec::new();
-        let mut in_dependencies = false;
-        for line in block.lines() {
-            let line = line.trim();
-            if let Some(value) = line.strip_prefix("name = ") {
-                name = value.trim_matches('"').to_string();
-            } else if line == "dependencies = [" {
-                in_dependencies = true;
-            } else if in_dependencies && line == "]" {
-                in_dependencies = false;
-            } else if in_dependencies {
-                let dependency = line.trim_matches(|c| c == '"' || c == ',');
-                let dependency = dependency.split(' ').next().unwrap_or_default();
-                dependencies.push(dependency.to_string());
-            }
+    for package in GATED {
+        let output = std::process::Command::new(env!("CARGO"))
+            .current_dir(workspace())
+            .args([
+                "tree",
+                "--locked",
+                "--offline",
+                "--package",
+                package,
+                "--all-features",
+                "--target",
+                "all",
+                "--edges",
+                "normal,build,dev",
+                "--prefix",
+                "none",
+                "--format",
+                "{p}|{f}",
+            ])
+            .output()
+            .expect("run cargo tree");
+        assert!(
+            output.status.success(),
+            "cargo tree -p {package}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        for line in String::from_utf8(output.stdout).expect("utf-8").lines() {
+            let (id, features) = line.split_once('|').unwrap_or((line, ""));
+            let name = id.split(' ').next().unwrap_or_default().to_string();
+            let features = features
+                .trim_end_matches(" (*)")
+                .split(',')
+                .filter(|f| !f.is_empty())
+                .map(str::to_string)
+                .collect();
+            packages.push((name, features));
         }
-        packages.push((name, dependencies));
     }
-    assert!(packages.len() > 100, "the lock file was parsed");
+    assert!(packages.len() > 100, "cargo tree listed the graph");
     packages
 }
 
 #[test]
 fn no_logging_backend_is_in_the_dependency_tree() {
-    for (name, _) in lock_packages() {
+    for (name, _) in resolved_packages() {
         assert!(
             !BACKENDS.contains(&name.as_str()),
             "{name} would format dependency events (R-LOG)"
@@ -101,15 +131,15 @@ fn no_logging_backend_is_in_the_dependency_tree() {
 
 #[test]
 fn tracing_is_built_without_its_log_feature() {
-    let packages = lock_packages();
+    let packages = resolved_packages();
     let tracing: Vec<_> = packages
         .iter()
         .filter(|(name, _)| name == "tracing")
         .collect();
     assert!(!tracing.is_empty(), "the SDK tree uses tracing");
-    for (_, dependencies) in tracing {
+    for (_, features) in tracing {
         assert!(
-            !dependencies.iter().any(|d| d == "log"),
+            !features.iter().any(|f| f == "log" || f == "log-always"),
             "tracing's `log`/`log-always` feature is enabled"
         );
     }
