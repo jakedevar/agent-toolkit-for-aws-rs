@@ -232,6 +232,102 @@ mod deadline_tests {
 
     #[cfg(unix)]
     #[test]
+    fn lifecycle_transport_attempt_crossing_cutoff_never_retries() {
+        use crate::launch::{
+            callback::pending::read_record,
+            http::{self, MonotonicClock, Operation},
+            tests_support::Scratch,
+        };
+        use toolkit_aws::{
+            retry::{NoJitter, RetryPolicy, Sleeper},
+            stream::{ResponseStream, StreamLimits, StreamingTransport},
+            testing::FakeStreamingTransport,
+            transport::{Headers, HttpRequest, Method, Timeouts},
+            AwsError,
+        };
+        struct Clock(std::cell::Cell<Instant>);
+        impl MonotonicClock for Clock {
+            fn now(&self) -> Instant {
+                self.0.get()
+            }
+        }
+        impl Sleeper for Clock {
+            fn sleep(&self, duration: Duration) {
+                self.0.set(self.0.get() + duration);
+            }
+        }
+        struct Crossing<'a> {
+            clock: &'a Clock,
+            fake: FakeStreamingTransport,
+            cutoff: Instant,
+        }
+        impl StreamingTransport for Crossing<'_> {
+            fn open<'a>(
+                &'a self,
+                request: &HttpRequest,
+                limits: &StreamLimits,
+            ) -> Result<Box<dyn ResponseStream + 'a>, AwsError> {
+                assert!(self.clock.now() < self.cutoff);
+                self.clock.0.set(self.cutoff + Duration::from_millis(1));
+                self.fake.open(request, limits)
+            }
+        }
+        let scratch = Scratch::new("crossing-attempt");
+        let clock = Clock(std::cell::Cell::new(Instant::now()));
+        let result = run_with(
+            scratch.path(),
+            "s",
+            wall_deadline(),
+            |_| Ok(()),
+            |_, _, cutoff| {
+                let transport = Crossing {
+                    clock: &clock,
+                    cutoff,
+                    fake: FakeStreamingTransport::new()
+                        .respond(503, &[], vec![])
+                        .respond(200, &[], vec![]),
+                };
+                let request = HttpRequest {
+                    method: Method::Post,
+                    url: "https://example.test/token".into(),
+                    headers: Headers::new(),
+                    body: vec![],
+                    timeouts: Timeouts::default(),
+                };
+                let response = http::run(
+                    &transport,
+                    &request,
+                    Operation::Oidc,
+                    cutoff,
+                    Duration::from_secs(30),
+                    true,
+                    &clock,
+                    &clock,
+                    &NoJitter,
+                    &RetryPolicy::default(),
+                )
+                .unwrap();
+                assert_eq!(response.status, 503);
+                assert_eq!(transport.fake.requests().len(), 1);
+                Err("exchange_failed")
+            },
+            || clock.now(),
+            |_, _, _| {},
+            |_, _, _| Ok(Some(Outcome::Code("ok".into()))),
+        )
+        .unwrap();
+        assert_eq!(result, HelperResult::TimedOut);
+        assert!(!scratch.join("session.json").exists());
+        assert_eq!(
+            read_record(scratch.path(), std::process::id())
+                .unwrap()
+                .status,
+            PendingStatus::TimedOut
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn exhausted_listener_records_timeout_without_traffic_status() {
         use crate::launch::{callback::pending::read_record, tests_support::Scratch};
         let scratch = Scratch::new("listener-timeout");

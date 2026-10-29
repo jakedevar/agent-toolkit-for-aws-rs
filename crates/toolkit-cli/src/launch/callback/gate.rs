@@ -143,6 +143,31 @@ pub(super) fn publish_with(
     admitted: impl FnOnce(),
     rename: impl FnOnce(&std::path::Path, &std::path::Path) -> std::io::Result<()>,
 ) -> std::io::Result<()> {
+    publish_observed(
+        gate,
+        cutoff,
+        dir,
+        bytes,
+        random,
+        now,
+        admitted,
+        rename,
+        |_| {},
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn publish_observed(
+    gate: &CommitGate,
+    cutoff: Instant,
+    dir: &std::path::Path,
+    bytes: &[u8],
+    random: &dyn crate::launch::clock::Random,
+    now: impl FnOnce() -> Instant,
+    admitted: impl FnOnce(),
+    rename: impl FnOnce(&std::path::Path, &std::path::Path) -> std::io::Result<()>,
+    mut observed: impl FnMut(&'static str),
+) -> std::io::Result<()> {
     use std::io::Write as _;
     let nonce = crate::launch::clock::random_hex(random, 8)
         .map_err(|e| std::io::Error::other(e.to_string()))?;
@@ -157,8 +182,11 @@ pub(super) fn publish_with(
     let mut file = options.open(&temp)?;
     let result = (|| {
         file.write_all(bytes)?;
+        observed("write");
         file.sync_all()?;
+        observed("sync");
         drop(file);
+        observed("admit");
         if !gate.admit(now(), cutoff) {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::TimedOut,
@@ -262,6 +290,35 @@ mod tests {
         );
         assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::TimedOut);
         assert_eq!(std::fs::read_dir(scratch.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn session_write_and_sync_complete_before_admission() {
+        use crate::launch::{clock::SeededRandom, tests_support::Scratch};
+        let scratch = Scratch::new("prepare-order");
+        let gate = CommitGate::default();
+        assert!(gate.start_exchange());
+        let cutoff = Instant::now() + Duration::from_secs(1);
+        let events = std::cell::RefCell::new(Vec::new());
+        publish_observed(
+            &gate,
+            cutoff,
+            scratch.path(),
+            b"session",
+            &SeededRandom::new(1),
+            || cutoff - Duration::from_millis(1),
+            || events.borrow_mut().push("admitted"),
+            |from, to| {
+                events.borrow_mut().push("rename");
+                std::fs::rename(from, to)
+            },
+            |event| events.borrow_mut().push(event),
+        )
+        .unwrap();
+        assert_eq!(
+            *events.borrow(),
+            ["write", "sync", "admit", "admitted", "rename"]
+        );
     }
 
     #[cfg(unix)]
