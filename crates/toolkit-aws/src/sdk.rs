@@ -609,6 +609,23 @@ struct SdkStream {
     body: ByteStream,
     idle: Duration,
     limiter: ChunkLimiter,
+    deadline: Option<std::time::Instant>,
+    expired: bool,
+}
+
+impl Drop for SdkStream {
+    fn drop(&mut self) {
+        if self.deadline.is_some() {
+            // Hyper runs the connection on this current-thread runtime. Drive
+            // cancellation after releasing the body so it can close the socket.
+            let body = std::mem::replace(&mut self.body, ByteStream::from_static(b""));
+            self.runtime.block_on(async {
+                drop(body);
+                tokio::task::yield_now().await;
+                tokio::task::yield_now().await;
+            });
+        }
+    }
 }
 
 impl ResponseStream for SdkStream {
@@ -620,29 +637,83 @@ impl ResponseStream for SdkStream {
         &self.headers
     }
 
+    fn narrow_body_limit(&mut self, max_body_bytes: u64) {
+        self.limiter.narrow(max_body_bytes);
+    }
+
     fn next_chunk(&mut self) -> Result<Option<Vec<u8>>, StreamError> {
+        if self.expired
+            || self
+                .deadline
+                .is_some_and(|d| std::time::Instant::now() >= d)
+        {
+            self.expired = true;
+            return Err(StreamError::DeadlineExceeded);
+        }
         let (runtime, body, idle) = (&self.runtime, &mut self.body, self.idle);
-        self.limiter.next(|| {
+        let deadline = self.deadline;
+        let remaining = self.limiter.remaining();
+        let mut oversized = false;
+        let result = self.limiter.next(|| {
             // The timer must be created inside the runtime.
-            match runtime.block_on(async { tokio::time::timeout(idle, body.next()).await }) {
+            let now = std::time::Instant::now();
+            let (wait, deadline_binding) = match deadline {
+                Some(d) if d.saturating_duration_since(now) <= idle => {
+                    (d.saturating_duration_since(now), true)
+                }
+                _ => (idle, false),
+            };
+            match runtime.block_on(async { tokio::time::timeout(wait, body.next()).await }) {
+                Err(_) if deadline_binding => Err(StreamError::DeadlineExceeded),
                 Err(_) => Err(StreamError::IdleTimeout),
                 Ok(None) => Ok(None),
                 Ok(Some(Err(error))) => Err(StreamError::Failed(body_error(&error))),
+                Ok(Some(Ok(bytes)))
+                    if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > remaining =>
+                {
+                    oversized = true;
+                    Err(StreamError::TooLarge)
+                }
                 Ok(Some(Ok(bytes))) => Ok(Some(bytes.to_vec())),
             }
-        })
+        });
+        if oversized {
+            self.limiter.refuse();
+        }
+        if result == Err(StreamError::DeadlineExceeded) {
+            self.expired = true;
+        }
+        result
     }
 }
 
 impl StreamingTransport for SdkTransport {
+    /// The blocking system DNS lookup cannot be cancelled, so opening may
+    /// overrun the deadline by one lookup (R-DNS).
     fn open<'a>(
         &'a self,
         request: &HttpRequest,
         limits: &StreamLimits,
     ) -> Result<Box<dyn ResponseStream + 'a>, AwsError> {
+        let deadline_error =
+            || AwsError::timeout(TimeoutPhase::Deadline, "the response deadline elapsed");
+        if limits
+            .deadline()
+            .is_some_and(|d| std::time::Instant::now() >= d)
+        {
+            return Err(deadline_error());
+        }
         let sdk_request = Self::admit(request)?;
         let connector = self.connector_for(&request.timeouts);
-        let response = self.runtime.block_on(self.call(connector, sdk_request))?;
+        let response = self.runtime.block_on(async {
+            if let Some(deadline) = limits.deadline() {
+                tokio::time::timeout_at(deadline.into(), self.call(connector, sdk_request))
+                    .await
+                    .map_err(|_| deadline_error())?
+            } else {
+                self.call(connector, sdk_request).await
+            }
+        })?;
         Ok(Box::new(SdkStream {
             runtime: self.runtime.clone(),
             status: response.status().as_u16(),
@@ -650,6 +721,8 @@ impl StreamingTransport for SdkTransport {
             body: ByteStream::new(response.into_body()),
             idle: request.timeouts.read(),
             limiter: ChunkLimiter::new(*limits),
+            deadline: limits.deadline(),
+            expired: false,
         }))
     }
 }
@@ -673,6 +746,22 @@ mod tests {
     use std::net::{IpAddr, SocketAddr};
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::UNIX_EPOCH;
+
+    #[test]
+    fn sdk_stream_refuses_oversized_frame_before_copy() {
+        let mut stream = SdkStream {
+            runtime: SdkRuntime::new().unwrap(),
+            status: 200,
+            headers: Headers::new(),
+            body: ByteStream::from_static(b"abcdef"),
+            idle: Duration::from_secs(1),
+            limiter: ChunkLimiter::new(StreamLimits::new(5, 2).unwrap()),
+            deadline: None,
+            expired: false,
+        };
+        assert_eq!(stream.next_chunk(), Err(StreamError::TooLarge));
+        assert_eq!(stream.next_chunk(), Err(StreamError::TooLarge));
+    }
 
     /// 2015-08-30T12:36:00Z, the AWS `SigV4` test-suite time.
     fn suite_time() -> SystemTime {

@@ -208,6 +208,8 @@ pub enum Part {
     Bytes(Vec<u8>),
     /// A pause before the next part.
     Pause(Duration),
+    /// Wait for the client to close the connection and report the result.
+    ObserveClose(std::sync::mpsc::Sender<bool>),
 }
 
 /// What the loopback server does with each request (head text, body).
@@ -346,6 +348,20 @@ fn serve(
                 }
             }
             Part::Pause(duration) => std::thread::sleep(duration),
+            Part::ObserveClose(tx) => {
+                let _ = tls.sock.set_read_timeout(Some(Duration::from_secs(10)));
+                let mut byte = [0_u8; 1];
+                let closed = match tls.read(&mut byte) {
+                    Ok(0) => true,
+                    Err(e) => matches!(
+                        e.kind(),
+                        std::io::ErrorKind::UnexpectedEof | std::io::ErrorKind::ConnectionReset
+                    ),
+                    Ok(_) => false,
+                };
+                let _ = tx.send(closed);
+                return;
+            }
         }
     }
     tls.conn.send_close_notify();
