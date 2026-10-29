@@ -810,3 +810,40 @@ fn malformed_http_from_real_connector_has_a_protocol_error_class() {
     assert_eq!(error.code(), "aws_protocol");
     assert!(!error.is_retryable());
 }
+
+#[test]
+fn duplicate_content_length_is_refused_or_detectable_through_real_connector() {
+    let fixture = Fixture::new();
+    let roots = ValidatedRoots::for_tests(vec![fixture.trusted.ca_der.clone()]);
+    let runtime = SdkRuntime::new().unwrap();
+    let transport = SdkTransport::loopback_for_tests(&runtime, &roots, Arc::new(Loopback)).unwrap();
+    for second in ["2", "3"] {
+        let reply =
+            format!("HTTP/1.1 200 OK\r\nContent-Length: 2\r\ncontent-length: {second}\r\n\r\nok");
+        let server = serve_as(
+            &fixture.trusted,
+            HOST,
+            Arc::new(move |_, _| vec![Part::Bytes(reply.as_bytes().to_vec())]),
+        );
+        match transport.open(
+            &request(
+                format!("https://{HOST}:{}/mcp", server.port()),
+                Duration::from_secs(5),
+            ),
+            &StreamLimits::new(10, 10).unwrap(),
+        ) {
+            Ok(stream) => {
+                let value = stream
+                    .headers()
+                    .get("content-length")
+                    .expect("length retained");
+                assert!(
+                    !value.bytes().all(|byte| byte.is_ascii_digit()),
+                    "duplicate became {value:?}"
+                );
+            }
+            Err(crate::AwsError::Protocol) => {}
+            Err(error) => panic!("unexpected refusal class: {error:?}"),
+        }
+    }
+}
