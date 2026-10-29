@@ -168,3 +168,10 @@ fn unsafe_methods_and_nonpublic_answers_never_connect() {
     );
     assert!(m.transport.requests().is_empty());
 }
+
+#[test]
+fn proof_header_is_opaque_and_redacted() {
+    let source = include_str!("../net.rs");
+    assert!(source.contains("pub struct ProofHeader"));
+    assert!(!source.contains("pub proof: Option<(&'a str, &'a str)>"));
+}
