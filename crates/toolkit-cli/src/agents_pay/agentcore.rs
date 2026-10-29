@@ -5,7 +5,7 @@ use toolkit_aws::{AwsError, Endpoint};
 use toolkit_core::parse_json;
 use toolkit_core::Json;
 
-/// Pinned AgentCore payment service-model excerpt used for response contracts.
+/// Pinned `AgentCore` payment service-model excerpt used for response contracts.
 pub const PAYMENT_SERVICE_MODEL: &str = include_str!("model/agentcore-payments.json");
 
 const CODES: &[&str] = &[
@@ -961,7 +961,11 @@ impl<'a> PaymentClient<'a> {
         Ok(PaymentProof(payload))
     }
 
-    #[allow(clippy::too_many_lines, clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_lines,
+        clippy::too_many_arguments,
+        clippy::needless_pass_by_value
+    )]
     fn call(
         &self,
         path: &str,
@@ -1037,7 +1041,10 @@ impl<'a> PaymentClient<'a> {
                             if !value.is_empty() && value.bytes().all(|b| b.is_ascii_digit()) =>
                         {
                             match value.parse::<u64>() {
-                                Ok(n) if n <= 65_536 => Some(n as usize),
+                                Ok(n) if n <= 65_536 => Some(
+                                    usize::try_from(n)
+                                        .map_err(|_| PaymentError::InvalidResponse)?,
+                                ),
                                 Ok(_) | Err(_) if status >= 400 => {
                                     break 'response PaymentError::Service(error_code(
                                         error_header.as_deref(),

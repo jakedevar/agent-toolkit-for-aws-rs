@@ -206,17 +206,12 @@ impl CapDecimal {
         let left = format!(
             "{}{}",
             self.digits,
-            "0".repeat(
-                usize::try_from(self.exponent - exponent).expect("nonnegative exponent difference")
-            )
+            "0".repeat(usize::try_from(self.exponent - exponent).unwrap_or_default())
         );
         let right = format!(
             "{}{}",
             other.digits,
-            "0".repeat(
-                usize::try_from(other.exponent - exponent)
-                    .expect("nonnegative exponent difference")
-            )
+            "0".repeat(usize::try_from(other.exponent - exponent).unwrap_or_default())
         );
         let left_negative = self.negative && self.digits != "0";
         let right_negative = !other.negative && other.digits != "0";
@@ -285,30 +280,6 @@ fn subtract_digits(left: &str, right: &str) -> String {
         "0".to_owned()
     } else {
         stripped.to_owned()
-    }
-}
-
-#[cfg(test)]
-mod subtraction_tests {
-    use super::CapDecimal;
-
-    #[test]
-    fn session_spend_decimal_subtraction_is_exact() {
-        for (budget, available, expected) in [
-            ("1.00", "0.25", "0.75"),
-            (
-                "1000000000000000000000000000000",
-                "0.000001",
-                "999999999999999999999999999999.999999",
-            ),
-            ("1", "2", "-1"),
-            ("1e2", "1e2", "0E+2"),
-            ("-1", "-2", "1"),
-        ] {
-            let left = CapDecimal::parse(budget).unwrap();
-            let right = CapDecimal::parse(available).unwrap();
-            assert_eq!(left.subtract(&right), expected, "{budget} - {available}");
-        }
     }
 }
 
@@ -462,4 +433,28 @@ fn decimal_str(digits: &str, exponent: i64) -> String {
     };
     let sign = if adjusted < 0 { '-' } else { '+' };
     format!("{mantissa}E{sign}{}", adjusted.unsigned_abs())
+}
+
+#[cfg(test)]
+mod subtraction_tests {
+    use super::CapDecimal;
+
+    #[test]
+    fn session_spend_decimal_subtraction_is_exact() {
+        for (budget, available, expected) in [
+            ("1.00", "0.25", "0.75"),
+            (
+                "1000000000000000000000000000000",
+                "0.000001",
+                "999999999999999999999999999999.999999",
+            ),
+            ("1", "2", "-1"),
+            ("1e2", "1e2", "0E+2"),
+            ("-1", "-2", "1"),
+        ] {
+            let left = CapDecimal::parse(budget).unwrap();
+            let right = CapDecimal::parse(available).unwrap();
+            assert_eq!(left.subtract(&right), expected, "{budget} - {available}");
+        }
+    }
 }
