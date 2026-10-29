@@ -771,3 +771,7 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 10-29 06:09Z: x402 S4 #5181 (1d17674d) INCOMPLETE at 960b6df26348cbc12789152cc5a2e72bc048f99d: ops/session/fake/transport still cfg(test) prototypes; no prod client/STS; binding.rs conflict vs rolling; #5219 dup Content-Length seam (all response_headers callers).
   Continuation 0dcdafea (Codex terra, continue_from 1d17674d): merge rolling -> promote to prod + R-ERR -> prod client/STS -> gaps. If it rotates again, consider splitting S4.
   4/4 busy: 573278a7 (#5216 L4), 6f31c7c9 (#5210 S3 cont2), 5752b270 (#5223 S2b), 0dcdafea (#5181 S4 cont).
+- 10-29 06:13Z: x402 S3 cont2 (6f31c7c9) at 4584b5ec11382f13acab192b6bf85dbf5b1f2297: check_peer no-remote_addr refuse+poison; zero-accept literal + guarded-DNS tests; scoped ok, clean. Only open item: prod merchant client wiring test (#5224).
+  RULING on #5224: that test MOVES TO S5 (S5 builds the prod constructor); S5 brief must carry it. S3 not blocked.
+  Review #5225 -> Codex sol xhigh d9924905 (pinned 4584b5ec; MCP proxy impact). On ACCEPT: check+enqueue 4584b5ec (source_session 6f31c7c9); close #5210 #5225 #5217 on land.
+  4/4 busy: 573278a7 (#5216 L4), 5752b270 (#5223 S2b), 0dcdafea (#5181 S4 cont), d9924905 (#5225).
