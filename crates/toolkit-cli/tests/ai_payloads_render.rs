@@ -378,3 +378,186 @@ fn ap_cell_01_replacement_markers_remain_cell_text() {
         .to_compact_string()
         .contains("# Cell 99: Just a comment"));
 }
+
+#[test]
+fn ap_asn_01_04_05_06_09_10_assignment_contracts() {
+    let source = "# Cell 0 [markdown]: Example\n# Desc\n# Cell 1: Config\nBASE_MODEL = 'old' # keep\nWAIT_FOR_COMPLETION = False\nINSTANCE_COUNT = 1\nTHRESHOLD = 0.5\nAPI_TOKEN = ''\nINPUT_LOCATION = '[INPUT_LOCATION]'\n";
+    let f = Fixture::new();
+    let template = f.write("template.py", source);
+    let values = f.write("values.json", r#"{"values":{"INPUT_LOCATION":"s3://ok"},"assign":{"BASE_MODEL":"new","WAIT_FOR_COMPLETION":true,"INSTANCE_COUNT":2,"THRESHOLD":1.25,"API_TOKEN":null}}"#);
+    let result = f.render(&template, "script", &["--values", values.to_str().unwrap()]);
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let output = fs::read_to_string(f.0.join("scripts/01_example.py")).unwrap();
+    for text in [
+        "BASE_MODEL = 'new' # keep",
+        "WAIT_FOR_COMPLETION = True",
+        "INSTANCE_COUNT = 2",
+        "THRESHOLD = 1.25",
+        "API_TOKEN = None",
+        "INPUT_LOCATION = 's3://ok'",
+    ] {
+        assert!(output.contains(text), "{text}");
+    }
+    for (document, error) in [
+        (r#"{"assign":{"BASE_MODEL":1}}"#, "string_value_invalid"),
+        (
+            r#"{"assign":{"WAIT_FOR_COMPLETION":"False"}}"#,
+            "assign_value_invalid",
+        ),
+        (
+            r#"{"assign":{"INSTANCE_COUNT":-1}}"#,
+            "assign_value_invalid",
+        ),
+        (
+            r#"{"assign":{"INPUT_LOCATION":"x"}}"#,
+            "assign_target_invalid",
+        ),
+        (
+            r#"{"assign":{"BASE_MODEL":"x","BASE_MODEL":"y"}}"#,
+            "values_invalid",
+        ),
+        (
+            r#"{"assign":{"API_TOKEN":"literal-secret-sentinel"}}"#,
+            "secret_value_invalid",
+        ),
+    ] {
+        let f = Fixture::new();
+        let template = f.write("template.py", source);
+        let values = f.write("values.json", document);
+        let result = f.render(
+            &template,
+            "script",
+            &["--values", values.to_str().unwrap(), "--allow-unresolved"],
+        );
+        assert_eq!(result.status.code(), Some(1));
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        assert!(stderr.contains(error), "{stderr}");
+        assert!(!stderr.contains("literal-secret-sentinel"));
+        assert!(!f.0.join("scripts").exists());
+    }
+}
+
+#[test]
+fn ap_sub_15_20_21_sec_01_03_unknown_missing_and_secret_do_not_publish() {
+    let text = "# Cell 0 [markdown]: Example\n# Desc\n# Cell 1: Config\ntoken = '[HF_TOKEN_OR_NONE]'\nif token == '[HF_TOKEN_OR_NONE]': pass\nx = '[ROLE_ARN]'\n";
+    for (json, error) in [
+        (
+            r#"{"values":{"HF_TOKEN_OR_NONE":"literal-secret-sentinel"}}"#,
+            "secret_value_invalid",
+        ),
+        (r#"{"values":{"TYPO":"x"}}"#, "unknown_value"),
+    ] {
+        let f = Fixture::new();
+        let template = f.write("template.py", text);
+        let values = f.write("values.json", json);
+        let result = f.render(
+            &template,
+            "script",
+            &["--values", values.to_str().unwrap(), "--allow-unresolved"],
+        );
+        assert_eq!(result.status.code(), Some(1));
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        assert!(stderr.contains(error));
+        assert!(!stderr.contains("literal-secret-sentinel"));
+        assert!(!f.0.join("scripts").exists());
+    }
+    let f = Fixture::new();
+    let template = f.write("template.py", text);
+    let result = f.render(&template, "script", &[]);
+    assert_eq!(result.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&result.stderr).contains("HF_TOKEN_OR_NONE, ROLE_ARN"));
+    let values = f.write("values.json", r#"{"values":{"HF_TOKEN_OR_NONE":null}}"#);
+    assert!(f
+        .render(
+            &template,
+            "script",
+            &["--values", values.to_str().unwrap(), "--allow-unresolved"]
+        )
+        .status
+        .success());
+    let output = fs::read_to_string(f.0.join("scripts/01_example.py")).unwrap();
+    assert!(output.contains("token = None"));
+    assert!(output.contains("token == '[HF_TOKEN_OR_NONE]'"));
+    assert!(output.contains("x = '[ROLE_ARN]'"));
+}
+
+#[test]
+fn ap_fs_01_04_cell_02_usage_and_input_size() {
+    let f = Fixture::new();
+    let template = f.write(
+        "template.py",
+        "# Cell 0 [markdown]: Example\n# Desc\n# Cell 1: Code\npass\n",
+    );
+    for name in ["", "Upper", "../x", "a/b", "example-01"] {
+        let result = Command::new(env!("CARGO_BIN_EXE_toolkit"))
+            .args(["ai-payloads", "render"])
+            .arg(&template)
+            .args(["--mode", "script", "--project-dir"])
+            .arg(&f.0)
+            .args(["--name", name])
+            .output()
+            .unwrap();
+        assert!(!result.status.success(), "{name}");
+        assert!(!f.0.join("scripts").exists());
+    }
+    for arg in ["0=x", "2=x", "bad"] {
+        assert_eq!(
+            f.render(&template, "script", &["--cell", arg])
+                .status
+                .code(),
+            Some(2)
+        );
+    }
+    let large = f.write("large.py", &"x".repeat(1024 * 1024 + 1));
+    let arg = format!("1={}", large.display());
+    assert_eq!(
+        f.render(&template, "script", &["--cell", &arg])
+            .status
+            .code(),
+        Some(1)
+    );
+    assert!(!f.0.join("scripts").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn ap_fs_02_03_symlink_inputs_and_output_directory_are_refused() {
+    use std::os::unix::fs::symlink;
+    let f = Fixture::new();
+    let template = f.write(
+        "template.py",
+        "# Cell 0 [markdown]: Example\n# Desc\n# Cell 1: Code\npass\n",
+    );
+    let link = f.0.join("link.py");
+    symlink(&template, &link).unwrap();
+    assert_eq!(f.render(&link, "script", &[]).status.code(), Some(1));
+    let cell_arg = format!("1={}", link.display());
+    assert_eq!(
+        f.render(&template, "script", &["--cell", &cell_arg])
+            .status
+            .code(),
+        Some(1)
+    );
+    let values = f.write("values.json", "{}");
+    let values_link = f.0.join("values-link.json");
+    symlink(values, &values_link).unwrap();
+    assert_eq!(
+        f.render(
+            &template,
+            "script",
+            &["--values", values_link.to_str().unwrap()]
+        )
+        .status
+        .code(),
+        Some(1)
+    );
+    let outside = f.0.join("outside");
+    fs::create_dir(&outside).unwrap();
+    symlink(&outside, f.0.join("scripts")).unwrap();
+    assert_eq!(f.render(&template, "script", &[]).status.code(), Some(1));
+    assert_eq!(fs::read_dir(outside).unwrap().count(), 0);
+}
