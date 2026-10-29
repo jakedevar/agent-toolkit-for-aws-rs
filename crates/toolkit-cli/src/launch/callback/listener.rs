@@ -810,8 +810,10 @@ mod scripted_tests {
                 self.served.set(self.served.get() + 1);
                 let head: &[u8] = if self.id < 300 {
                     b"INVALID\r\n\r\n"
-                } else if self.id < 600 {
+                } else if self.id < 600 && self.id % 2 == 0 {
                     b"GET /?state=wrong&error=denied HTTP/1.1\r\nHost: 127.0.0.1:1234\r\n\r\n"
+                } else if self.id < 600 {
+                    b"GET /?state=wrong&code=bad HTTP/1.1\r\nHost: 127.0.0.1:1234\r\n\r\n"
                 } else {
                     b"GET /?state=s&code=ok HTTP/1.1\r\nHost: 127.0.0.1:1234\r\n\r\n"
                 };
