@@ -136,6 +136,10 @@ fn child_entry() {
                             report("end", "idle-timeout");
                             break;
                         }
+                        Err(StreamError::DeadlineExceeded) => {
+                            report("end", "deadline");
+                            break;
+                        }
                         Err(StreamError::Failed(error)) => {
                             report("end", error.code());
                             break;
@@ -606,4 +610,145 @@ fn the_streaming_transport_reads_incrementally_over_the_real_connector() {
     outcome.assert_ok();
     assert_eq!(outcome.result("end"), "idle-timeout");
     assert_eq!(outcome.result("body"), r"data: a\n\n");
+}
+
+#[test]
+fn t_sdl_real_deadlines_and_frame_bound() {
+    use crate::error::{AwsError, TimeoutPhase};
+    use std::io::Read;
+    use std::net::TcpListener;
+    use std::time::Instant;
+
+    let fixture = Fixture::new();
+    let roots = ValidatedRoots::for_tests(vec![fixture.trusted.ca_der.clone()]);
+    let runtime = SdkRuntime::new().unwrap();
+    let transport = SdkTransport::loopback_for_tests(&runtime, &roots, Arc::new(Loopback)).unwrap();
+    let make_request = |port| {
+        request(
+            format!("https://{HOST}:{port}/mcp"),
+            Duration::from_secs(120),
+        )
+    };
+    let deadline = || Instant::now() + Duration::from_millis(300);
+    let assert_elapsed = |start: Instant| {
+        assert!(
+            start.elapsed() < Duration::from_millis(550),
+            "elapsed {:?}",
+            start.elapsed()
+        )
+    };
+
+    // T-SDL-1: a real body read is cancelled, and drop closes the socket.
+    let (tx, rx) = std::sync::mpsc::channel();
+    let server = serve_as(
+        &fixture.trusted,
+        HOST,
+        Arc::new(move |_, _| {
+            vec![
+                Part::Bytes(b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\nx".to_vec()),
+                Part::ObserveClose(tx.clone()),
+            ]
+        }),
+    );
+    let start = Instant::now();
+    let limits = StreamLimits::new(10, 10).unwrap().with_deadline(deadline());
+    let mut stream = transport
+        .open(&make_request(server.port()), &limits)
+        .unwrap();
+    assert_eq!(stream.next_chunk().unwrap(), Some(b"x".to_vec()));
+    assert_eq!(stream.next_chunk(), Err(StreamError::DeadlineExceeded));
+    assert_elapsed(start);
+    assert_eq!(stream.next_chunk(), Err(StreamError::DeadlineExceeded));
+    drop(stream);
+    assert!(rx.recv_timeout(Duration::from_secs(2)).unwrap());
+
+    // T-SDL-2: TLS completes but the response head never arrives.
+    let server = serve_as(
+        &fixture.trusted,
+        HOST,
+        Arc::new(|_, _| vec![Part::Pause(Duration::from_millis(700))]),
+    );
+    let start = Instant::now();
+    let result = transport.open(
+        &make_request(server.port()),
+        &StreamLimits::new(10, 10).unwrap().with_deadline(deadline()),
+    );
+    assert!(matches!(
+        result,
+        Err(AwsError::Timeout {
+            phase: TimeoutPhase::Deadline,
+            ..
+        })
+    ));
+    assert_elapsed(start);
+
+    // T-SDL-3: the accepted TCP connection never completes TLS.
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let handle = std::thread::spawn(move || {
+        let (mut socket, _) = listener.accept().unwrap();
+        socket
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        let mut buf = [0; 4096];
+        while let Ok(n) = socket.read(&mut buf) {
+            if n == 0 {
+                break;
+            }
+        }
+    });
+    let start = Instant::now();
+    let result = transport.open(
+        &make_request(port),
+        &StreamLimits::new(10, 10).unwrap().with_deadline(deadline()),
+    );
+    assert!(matches!(
+        result,
+        Err(AwsError::Timeout {
+            phase: TimeoutPhase::Deadline,
+            ..
+        })
+    ));
+    assert_elapsed(start);
+    handle.join().unwrap();
+
+    // T-SDL-6: an expired deadline must not dial.
+    let server = fixture.ok_server();
+    let result = transport.open(
+        &make_request(server.port()),
+        &StreamLimits::new(10, 10)
+            .unwrap()
+            .with_deadline(Instant::now() - Duration::from_secs(1)),
+    );
+    assert!(matches!(
+        result,
+        Err(AwsError::Timeout {
+            phase: TimeoutPhase::Deadline,
+            ..
+        })
+    ));
+    assert_eq!(server.accepted(), 0);
+
+    // T-SDL-7: with a chunk limit above the body, each returned chunk is one raw frame.
+    let server = serve_as(
+        &fixture.trusted,
+        HOST,
+        Arc::new(|_, _| {
+            let mut reply = b"HTTP/1.1 200 OK\r\ncontent-length: 8388608\r\n\r\n".to_vec();
+            reply.extend(vec![b'x'; 8 * 1024 * 1024]);
+            vec![Part::Bytes(reply)]
+        }),
+    );
+    let mut stream = transport
+        .open(
+            &make_request(server.port()),
+            &StreamLimits::new(8 * 1024 * 1024, 8 * 1024 * 1024).unwrap(),
+        )
+        .unwrap();
+    let mut total = 0;
+    while let Some(frame) = stream.next_chunk().unwrap() {
+        assert!(frame.len() <= 512 * 1024, "raw frame {}", frame.len());
+        total += frame.len();
+    }
+    assert_eq!(total, 8 * 1024 * 1024);
 }

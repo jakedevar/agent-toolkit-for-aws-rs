@@ -609,6 +609,8 @@ struct SdkStream {
     body: ByteStream,
     idle: Duration,
     limiter: ChunkLimiter,
+    deadline: Option<std::time::Instant>,
+    expired: bool,
 }
 
 impl ResponseStream for SdkStream {
@@ -620,17 +622,53 @@ impl ResponseStream for SdkStream {
         &self.headers
     }
 
+    fn narrow_body_limit(&mut self, max_body_bytes: u64) {
+        self.limiter.narrow(max_body_bytes);
+    }
+
     fn next_chunk(&mut self) -> Result<Option<Vec<u8>>, StreamError> {
+        if self.expired
+            || self
+                .deadline
+                .is_some_and(|d| std::time::Instant::now() >= d)
+        {
+            self.expired = true;
+            return Err(StreamError::DeadlineExceeded);
+        }
         let (runtime, body, idle) = (&self.runtime, &mut self.body, self.idle);
-        self.limiter.next(|| {
+        let deadline = self.deadline;
+        let remaining = self.limiter.remaining();
+        let mut oversized = false;
+        let result = self.limiter.next(|| {
             // The timer must be created inside the runtime.
-            match runtime.block_on(async { tokio::time::timeout(idle, body.next()).await }) {
+            let now = std::time::Instant::now();
+            let (wait, deadline_binding) = match deadline {
+                Some(d) if d.saturating_duration_since(now) <= idle => {
+                    (d.saturating_duration_since(now), true)
+                }
+                _ => (idle, false),
+            };
+            match runtime.block_on(async { tokio::time::timeout(wait, body.next()).await }) {
+                Err(_) if deadline_binding => Err(StreamError::DeadlineExceeded),
                 Err(_) => Err(StreamError::IdleTimeout),
                 Ok(None) => Ok(None),
                 Ok(Some(Err(error))) => Err(StreamError::Failed(body_error(&error))),
+                Ok(Some(Ok(bytes)))
+                    if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > remaining =>
+                {
+                    oversized = true;
+                    Err(StreamError::TooLarge)
+                }
                 Ok(Some(Ok(bytes))) => Ok(Some(bytes.to_vec())),
             }
-        })
+        });
+        if oversized {
+            self.limiter.refuse();
+        }
+        if result == Err(StreamError::DeadlineExceeded) {
+            self.expired = true;
+        }
+        result
     }
 }
 
@@ -640,9 +678,25 @@ impl StreamingTransport for SdkTransport {
         request: &HttpRequest,
         limits: &StreamLimits,
     ) -> Result<Box<dyn ResponseStream + 'a>, AwsError> {
+        let deadline_error =
+            || AwsError::timeout(TimeoutPhase::Deadline, "the response deadline elapsed");
+        if limits
+            .deadline()
+            .is_some_and(|d| std::time::Instant::now() >= d)
+        {
+            return Err(deadline_error());
+        }
         let sdk_request = Self::admit(request)?;
         let connector = self.connector_for(&request.timeouts);
-        let response = self.runtime.block_on(self.call(connector, sdk_request))?;
+        let response = self.runtime.block_on(async {
+            if let Some(deadline) = limits.deadline() {
+                tokio::time::timeout_at(deadline.into(), self.call(connector, sdk_request))
+                    .await
+                    .map_err(|_| deadline_error())?
+            } else {
+                self.call(connector, sdk_request).await
+            }
+        })?;
         Ok(Box::new(SdkStream {
             runtime: self.runtime.clone(),
             status: response.status().as_u16(),
@@ -650,6 +704,8 @@ impl StreamingTransport for SdkTransport {
             body: ByteStream::new(response.into_body()),
             idle: request.timeouts.read(),
             limiter: ChunkLimiter::new(*limits),
+            deadline: limits.deadline(),
+            expired: false,
         }))
     }
 }

@@ -24,6 +24,7 @@
 //! [`crate::testing::FakeStreamingTransport`].
 
 use std::fmt;
+use std::time::Instant;
 
 use crate::error::AwsError;
 use crate::transport::{Headers, HttpRequest};
@@ -33,6 +34,7 @@ use crate::transport::{Headers, HttpRequest};
 pub struct StreamLimits {
     max_body_bytes: u64,
     max_chunk_bytes: usize,
+    deadline: Option<Instant>,
 }
 
 impl StreamLimits {
@@ -50,6 +52,7 @@ impl StreamLimits {
         Ok(Self {
             max_body_bytes,
             max_chunk_bytes,
+            deadline: None,
         })
     }
 
@@ -64,6 +67,19 @@ impl StreamLimits {
     pub fn max_chunk_bytes(&self) -> usize {
         self.max_chunk_bytes
     }
+
+    /// Set an absolute deadline for opening and reading this response.
+    #[must_use]
+    pub fn with_deadline(mut self, deadline: Instant) -> Self {
+        self.deadline = Some(deadline);
+        self
+    }
+
+    /// Absolute deadline, if configured.
+    #[must_use]
+    pub fn deadline(&self) -> Option<Instant> {
+        self.deadline
+    }
 }
 
 /// Why a stream stopped early. Typed, so callers never classify by text.
@@ -73,6 +89,8 @@ pub enum StreamError {
     TooLarge,
     /// No bytes arrived within the read timeout.
     IdleTimeout,
+    /// The absolute deadline elapsed.
+    DeadlineExceeded,
     /// The connection failed while reading (a redacted boundary error).
     Failed(AwsError),
 }
@@ -82,6 +100,7 @@ impl fmt::Display for StreamError {
         match self {
             Self::TooLarge => f.write_str("the response body exceeded its size limit"),
             Self::IdleTimeout => f.write_str("no response bytes arrived within the read timeout"),
+            Self::DeadlineExceeded => f.write_str("the response deadline elapsed"),
             Self::Failed(error) => write!(f, "{error}"),
         }
     }
@@ -92,6 +111,7 @@ impl fmt::Debug for StreamError {
         match self {
             Self::TooLarge => f.write_str("TooLarge"),
             Self::IdleTimeout => f.write_str("IdleTimeout"),
+            Self::DeadlineExceeded => f.write_str("DeadlineExceeded"),
             Self::Failed(error) => f.debug_tuple("Failed").field(error).finish(),
         }
     }
@@ -106,6 +126,9 @@ pub trait ResponseStream: Send {
 
     /// Response headers.
     fn headers(&self) -> &Headers;
+
+    /// Lower the body cap; raising it has no effect.
+    fn narrow_body_limit(&mut self, max_body_bytes: u64);
 
     /// The next body chunk (at most [`StreamLimits::max_chunk_bytes`]), or
     /// `None` at the end of the body. Reads from the connection only when the
@@ -154,6 +177,27 @@ impl ChunkLimiter {
         }
     }
 
+    /// Lower the body cap, refusing a stream that already exceeded it.
+    pub fn narrow(&mut self, max_body_bytes: u64) {
+        self.limits.max_body_bytes = self.limits.max_body_bytes.min(max_body_bytes);
+        if self.delivered > self.limits.max_body_bytes {
+            self.refused = true;
+            self.pending.clear();
+            self.offset = 0;
+        }
+    }
+
+    /// Bytes still available for a new frame.
+    #[must_use]
+    pub fn remaining(&self) -> u64 {
+        self.limits.max_body_bytes.saturating_sub(self.delivered)
+    }
+
+    /// Mark an oversized raw frame as terminal without retaining it.
+    pub(crate) fn refuse(&mut self) {
+        self.refused = true;
+    }
+
     /// The next chunk: from the remainder of the last frame, else from one
     /// call of `pull` (which yields the next raw frame or `None` at the end).
     ///
@@ -165,6 +209,13 @@ impl ChunkLimiter {
         mut pull: impl FnMut() -> Result<Option<Vec<u8>>, StreamError>,
     ) -> Result<Option<Vec<u8>>, StreamError> {
         if self.refused {
+            return Err(StreamError::TooLarge);
+        }
+        if u64::try_from(self.pending.len().saturating_sub(self.offset)).unwrap_or(u64::MAX)
+            > self.remaining()
+        {
+            self.refused = true;
+            self.pending.clear();
             return Err(StreamError::TooLarge);
         }
         while self.offset >= self.pending.len() {
@@ -180,7 +231,6 @@ impl ChunkLimiter {
                         self.offset = 0;
                         return Err(StreamError::TooLarge);
                     }
-                    self.delivered = total;
                     self.pending = frame;
                     self.offset = 0;
                 }
@@ -192,6 +242,7 @@ impl ChunkLimiter {
             .min(self.offset + self.limits.max_chunk_bytes);
         let chunk = self.pending[self.offset..end].to_vec();
         self.offset = end;
+        self.delivered += u64::try_from(chunk.len()).unwrap_or(u64::MAX);
         Ok(Some(chunk))
     }
 }

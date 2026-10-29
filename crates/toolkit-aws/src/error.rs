@@ -55,6 +55,8 @@ pub enum TimeoutPhase {
     Connect,
     /// Waiting for response bytes.
     Read,
+    /// Absolute operation deadline.
+    Deadline,
 }
 
 impl fmt::Display for TimeoutPhase {
@@ -62,6 +64,7 @@ impl fmt::Display for TimeoutPhase {
         f.write_str(match self {
             Self::Connect => "connect",
             Self::Read => "read",
+            Self::Deadline => "deadline",
         })
     }
 }

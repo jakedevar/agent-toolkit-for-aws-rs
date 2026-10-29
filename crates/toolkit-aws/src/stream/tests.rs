@@ -172,7 +172,11 @@ fn t_sdl_limits_narrow_and_fake_stall() {
     assert_eq!(bounded.deadline(), Some(deadline));
     assert_eq!(limits(10, 4).deadline(), None);
     let transport = FakeStreamingTransport::new()
-        .respond(200, &[], vec![FakeChunk::data(b"abc"), FakeChunk::data(b"def")])
+        .respond(
+            200,
+            &[],
+            vec![FakeChunk::data(b"abc"), FakeChunk::data(b"def")],
+        )
         .respond(200, &[], vec![FakeChunk::Stall])
         .respond(200, &[], vec![FakeChunk::Stall]);
     let mut stream = transport.open(&request(), &bounded).unwrap();
@@ -186,7 +190,10 @@ fn t_sdl_limits_narrow_and_fake_stall() {
     assert_eq!(stalled.next_chunk(), Err(StreamError::DeadlineExceeded));
     let mut idle = transport.open(&request(), &limits(10, 4)).unwrap();
     assert_eq!(idle.next_chunk(), Err(StreamError::IdleTimeout));
-    assert_eq!(transport.open_limits(), vec![bounded, bounded, limits(10, 4)]);
+    assert_eq!(
+        transport.open_limits(),
+        vec![bounded, bounded, limits(10, 4)]
+    );
     assert_eq!(transport.narrow_calls(), vec![5, 100]);
 
     let transport = FakeStreamingTransport::new().respond(200, &[], vec![FakeChunk::data(b"abc")]);
