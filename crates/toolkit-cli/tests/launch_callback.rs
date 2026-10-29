@@ -28,6 +28,7 @@ fn invalid_stdin_fails_silently_before_binding() {
 
 #[cfg(all(unix, not(feature = "aws-sdk")))]
 #[test]
+#[allow(clippy::too_many_lines)]
 fn helper_announces_loopback_and_retains_transport_failure() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -71,6 +72,46 @@ fn helper_announces_loopback_and_retains_transport_failure() {
     assert!(lock.try_lock().is_err());
     let record_path = home.join(format!(".launch-with-aws/pending/{pid}.json"));
     let before = std::fs::read(&record_path).unwrap();
+    #[cfg(target_os = "linux")]
+    {
+        let children = std::fs::read_to_string(format!("/proc/{pid}/task/{pid}/children")).unwrap();
+        assert!(children.trim().is_empty());
+        let descriptors = std::fs::read_dir(format!("/proc/{pid}/fd")).unwrap();
+        let mut found_lock = false;
+        for entry in descriptors.flatten() {
+            let Ok(target) = std::fs::read_link(entry.path()) else {
+                continue;
+            };
+            if target == home.join(format!(".launch-with-aws/pending/{pid}.lock")) {
+                let info = std::fs::read_to_string(format!(
+                    "/proc/{pid}/fdinfo/{}",
+                    entry.file_name().to_string_lossy()
+                ))
+                .unwrap();
+                let flags = info
+                    .lines()
+                    .find_map(|line| line.strip_prefix("flags:\t"))
+                    .unwrap();
+                let flags = u32::from_str_radix(flags, 8).unwrap();
+                assert_ne!(flags & 0o2_000_000, 0);
+                found_lock = true;
+            }
+        }
+        assert!(found_lock);
+    }
+    {
+        let closed = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        drop(closed);
+        let mut malformed = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        malformed
+            .set_read_timeout(Some(Duration::from_secs(3)))
+            .unwrap();
+        malformed.write_all(b"INVALID\r\n\r\n").unwrap();
+        let mut response = String::new();
+        malformed.read_to_string(&mut response).unwrap();
+        assert!(response.starts_with("HTTP/1.1 400"));
+        assert_eq!(std::fs::read(&record_path).unwrap(), before);
+    }
     for query in ["state=wrong&code=abc", "state=wrong&error=denied"] {
         let mut bad = TcpStream::connect(("127.0.0.1", port)).unwrap();
         bad.set_read_timeout(Some(Duration::from_secs(3))).unwrap();

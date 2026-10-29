@@ -146,7 +146,10 @@
       "slice": "ai-payloads",
       "issue": 4386,
       "classification": "external-service-payload",
-      "status": "pending"
+      "status": "retained",
+      "disposition": "retained-customer-language",
+      "language_contract": "C1",
+      "disposition_note": "Kept as external-service-payload: R-CTRL plus K-PY (design section 3). The Rust `toolkit ai-payloads templates` and `render` commands replace cataloguing, placeholder substitution and notebook or script emission; this file is the customer-language template that a Python kernel in the customer project runs through the SageMaker Python SDK v3 (C1). Not counted as removed."
     },
     {
       "path": "plugins/aws-core/skills/aws-ai-ml/references/dataset-transformation/scripts/transformation_tools.py",
@@ -182,7 +185,10 @@
       "slice": "ai-payloads",
       "issue": 4386,
       "classification": "external-service-payload",
-      "status": "pending"
+      "status": "retained",
+      "disposition": "retained-customer-language",
+      "language_contract": "C1",
+      "disposition_note": "Kept as external-service-payload: R-CTRL plus K-PY (design section 3). The Rust `toolkit ai-payloads templates` and `render` commands replace cataloguing, placeholder substitution and notebook or script emission; this file is the customer-language template that a Python kernel in the customer project runs through the SageMaker Python SDK v3 (C1). Not counted as removed."
     },
     {
       "path": "plugins/aws-core/skills/aws-ai-ml/references/finetuning/code_templates/rlaif_builtin.py",
@@ -191,7 +197,10 @@
       "slice": "ai-payloads",
       "issue": 4386,
       "classification": "external-service-payload",
-      "status": "pending"
+      "status": "retained",
+      "disposition": "retained-customer-language",
+      "language_contract": "C1",
+      "disposition_note": "Kept as external-service-payload: R-CTRL plus K-PY (design section 3). The Rust `toolkit ai-payloads templates` and `render` commands replace cataloguing, placeholder substitution and notebook or script emission; this file is the customer-language template that a Python kernel in the customer project runs through the SageMaker Python SDK v3 (C1). Not counted as removed."
     },
     {
       "path": "plugins/aws-core/skills/aws-ai-ml/references/finetuning/code_templates/rlaif_custom_prompt.py",
@@ -200,7 +209,10 @@
       "slice": "ai-payloads",
       "issue": 4386,
       "classification": "external-service-payload",
-      "status": "pending"
+      "status": "retained",
+      "disposition": "retained-customer-language",
+      "language_contract": "C1",
+      "disposition_note": "Kept as external-service-payload: R-CTRL plus K-PY (design section 3). The Rust `toolkit ai-payloads templates` and `render` commands replace cataloguing, placeholder substitution and notebook or script emission; this file is the customer-language template that a Python kernel in the customer project runs through the SageMaker Python SDK v3 (C1). Not counted as removed."
     },
     {
       "path": "plugins/aws-core/skills/aws-ai-ml/references/finetuning/code_templates/rlvr.py",
@@ -209,7 +221,10 @@
       "slice": "ai-payloads",
       "issue": 4386,
       "classification": "external-service-payload",
-      "status": "pending"
+      "status": "retained",
+      "disposition": "retained-customer-language",
+      "language_contract": "C1",
+      "disposition_note": "Kept as external-service-payload: R-CTRL plus K-PY (design section 3). The Rust `toolkit ai-payloads templates` and `render` commands replace cataloguing, placeholder substitution and notebook or script emission; this file is the customer-language template that a Python kernel in the customer project runs through the SageMaker Python SDK v3 (C1). Not counted as removed."
     },
     {
       "path": "plugins/aws-core/skills/aws-ai-ml/references/finetuning/code_templates/sft.py",
@@ -218,7 +233,10 @@
       "slice": "ai-payloads",
       "issue": 4386,
       "classification": "external-service-payload",
-      "status": "pending"
+      "status": "retained",
+      "disposition": "retained-customer-language",
+      "language_contract": "C1",
+      "disposition_note": "Kept as external-service-payload: R-CTRL plus K-PY (design section 3). The Rust `toolkit ai-payloads templates` and `render` commands replace cataloguing, placeholder substitution and notebook or script emission; this file is the customer-language template that a Python kernel in the customer project runs through the SageMaker Python SDK v3 (C1). Not counted as removed."
     },
     {
       "path": "plugins/aws-core/skills/aws-ai-ml/references/finetuning/scripts/mlflow_reference.py",
@@ -227,7 +245,10 @@
       "slice": "ai-payloads",
       "issue": 4386,
       "classification": "toolkit-helper",
-      "status": "pending"
+      "status": "retained",
+      "disposition": "retained-customer-language",
+      "language_contract": "C13",
+      "disposition_note": "K-PY with no Rust replacement in this slice (design section 3, P-3): the only documented SageMaker MLflow client is Python with SigV4 signing by the sagemaker-mlflow plugin (C13). Not counted as removed."
     },
     {
       "path": "plugins/aws-core/skills/aws-ai-ml/references/finetuning/templates/nova_rlvr_reward_function_source_template.py",
@@ -236,7 +257,10 @@
       "slice": "ai-payloads",
       "issue": 4386,
       "classification": "external-service-payload",
-      "status": "pending"
+      "status": "retained",
+      "disposition": "retained-customer-language",
+      "language_contract": "C9",
+      "disposition_note": "Reclassified to external-service-payload (OD-7): an AWS Lambda reward function, and Lambda accepts any runtime (C9, C10, C11). R-CTRL contract checker plus K-PY (design section 3): `toolkit ai-payloads reward sample` and `reward check` replace the manual response checks; the starting template stays customer-edited Python. Not counted as removed."
     },
     {
       "path": "plugins/aws-core/skills/aws-ai-ml/references/finetuning/templates/rlvr_reward_function_source_template.py",
@@ -245,7 +269,10 @@
       "slice": "ai-payloads",
       "issue": 4386,
       "classification": "external-service-payload",
-      "status": "pending"
+      "status": "retained",
+      "disposition": "retained-customer-language",
+      "language_contract": "C9",
+      "disposition_note": "Reclassified to external-service-payload (OD-7): an AWS Lambda reward function, and Lambda accepts any runtime (C9, C10, C11). R-CTRL contract checker plus K-PY (design section 3): `toolkit ai-payloads reward sample` and `reward check` replace the manual response checks; the starting template stays customer-edited Python. Not counted as removed."
     },
     {
       "path": "plugins/aws-core/skills/aws-ai-ml/references/model-deployment/code_templates/deploy-jumpstart-sagemaker.py",
@@ -254,7 +281,10 @@
       "slice": "ai-payloads",
       "issue": 4386,
       "classification": "external-service-payload",
-      "status": "pending"
+      "status": "retained",
+      "disposition": "retained-customer-language",
+      "language_contract": "C1",
+      "disposition_note": "Kept as external-service-payload: R-CTRL plus K-PY (design section 3). The Rust `toolkit ai-payloads templates` and `render` commands replace cataloguing, placeholder substitution and notebook or script emission; this file is the customer-language template that a Python kernel in the customer project runs through the SageMaker Python SDK v3 (C1). Not counted as removed."
     },
     {
       "path": "plugins/aws-core/skills/aws-ai-ml/references/model-deployment/code_templates/deploy-nova-bedrock.py",
@@ -263,7 +293,10 @@
       "slice": "ai-payloads",
       "issue": 4386,
       "classification": "external-service-payload",
-      "status": "pending"
+      "status": "retained",
+      "disposition": "retained-customer-language",
+      "language_contract": "C1",
+      "disposition_note": "Kept as external-service-payload: R-CTRL plus K-PY (design section 3). The Rust `toolkit ai-payloads templates` and `render` commands replace cataloguing, placeholder substitution and notebook or script emission; this file is the customer-language template that a Python kernel in the customer project runs through the SageMaker Python SDK v3 (C1). Not counted as removed."
     },
     {
       "path": "plugins/aws-core/skills/aws-ai-ml/references/model-deployment/code_templates/deploy-nova-sagemaker.py",
@@ -272,7 +305,10 @@
       "slice": "ai-payloads",
       "issue": 4386,
       "classification": "external-service-payload",
-      "status": "pending"
+      "status": "retained",
+      "disposition": "retained-customer-language",
+      "language_contract": "C1",
+      "disposition_note": "Kept as external-service-payload: R-CTRL plus K-PY (design section 3). The Rust `toolkit ai-payloads templates` and `render` commands replace cataloguing, placeholder substitution and notebook or script emission; this file is the customer-language template that a Python kernel in the customer project runs through the SageMaker Python SDK v3 (C1). Not counted as removed."
     },
     {
       "path": "plugins/aws-core/skills/aws-ai-ml/references/model-deployment/code_templates/deploy-oss-bedrock.py",
@@ -281,7 +317,10 @@
       "slice": "ai-payloads",
       "issue": 4386,
       "classification": "external-service-payload",
-      "status": "pending"
+      "status": "retained",
+      "disposition": "retained-customer-language",
+      "language_contract": "C1",
+      "disposition_note": "Kept as external-service-payload: R-CTRL plus K-PY (design section 3). The Rust `toolkit ai-payloads templates` and `render` commands replace cataloguing, placeholder substitution and notebook or script emission; this file is the customer-language template that a Python kernel in the customer project runs through the SageMaker Python SDK v3 (C1). Not counted as removed."
     },
     {
       "path": "plugins/aws-core/skills/aws-ai-ml/references/model-deployment/code_templates/deploy-oss-sagemaker.py",
@@ -290,7 +329,10 @@
       "slice": "ai-payloads",
       "issue": 4386,
       "classification": "external-service-payload",
-      "status": "pending"
+      "status": "retained",
+      "disposition": "retained-customer-language",
+      "language_contract": "C1",
+      "disposition_note": "Kept as external-service-payload: R-CTRL plus K-PY (design section 3). The Rust `toolkit ai-payloads templates` and `render` commands replace cataloguing, placeholder substitution and notebook or script emission; this file is the customer-language template that a Python kernel in the customer project runs through the SageMaker Python SDK v3 (C1). Not counted as removed."
     },
     {
       "path": "plugins/aws-core/skills/aws-ai-ml/references/model-deployment/code_templates/optimize-benchmark.py",
@@ -299,7 +341,10 @@
       "slice": "ai-payloads",
       "issue": 4386,
       "classification": "external-service-payload",
-      "status": "pending"
+      "status": "retained",
+      "disposition": "retained-customer-language",
+      "language_contract": "C1",
+      "disposition_note": "Kept as external-service-payload: R-CTRL plus K-PY (design section 3). The Rust `toolkit ai-payloads templates` and `render` commands replace cataloguing, placeholder substitution and notebook or script emission; this file is the customer-language template that a Python kernel in the customer project runs through the SageMaker Python SDK v3 (C1). Not counted as removed."
     },
     {
       "path": "plugins/aws-core/skills/aws-ai-ml/references/model-deployment/code_templates/optimize-huggingface-to-s3.py",
@@ -308,7 +353,10 @@
       "slice": "ai-payloads",
       "issue": 4386,
       "classification": "external-service-payload",
-      "status": "pending"
+      "status": "retained",
+      "disposition": "retained-customer-language",
+      "language_contract": "C1",
+      "disposition_note": "Kept as external-service-payload: R-CTRL plus K-PY (design section 3). The Rust `toolkit ai-payloads templates` and `render` commands replace cataloguing, placeholder substitution and notebook or script emission; this file is the customer-language template that a Python kernel in the customer project runs through the SageMaker Python SDK v3 (C1). Not counted as removed."
     },
     {
       "path": "plugins/aws-core/skills/aws-ai-ml/references/model-deployment/code_templates/optimize-recommendation.py",
@@ -317,7 +365,10 @@
       "slice": "ai-payloads",
       "issue": 4386,
       "classification": "external-service-payload",
-      "status": "pending"
+      "status": "retained",
+      "disposition": "retained-customer-language",
+      "language_contract": "C1",
+      "disposition_note": "Kept as external-service-payload: R-CTRL plus K-PY (design section 3). The Rust `toolkit ai-payloads templates` and `render` commands replace cataloguing, placeholder substitution and notebook or script emission; this file is the customer-language template that a Python kernel in the customer project runs through the SageMaker Python SDK v3 (C1). Not counted as removed."
     },
     {
       "path": "plugins/aws-core/skills/aws-ai-ml/references/model-evaluation/code_templates/custom_scorer_evaluator.py",
@@ -326,7 +377,10 @@
       "slice": "ai-payloads",
       "issue": 4386,
       "classification": "external-service-payload",
-      "status": "pending"
+      "status": "retained",
+      "disposition": "retained-customer-language",
+      "language_contract": "C1",
+      "disposition_note": "Kept as external-service-payload: R-CTRL plus K-PY (design section 3). The Rust `toolkit ai-payloads templates` and `render` commands replace cataloguing, placeholder substitution and notebook or script emission; this file is the customer-language template that a Python kernel in the customer project runs through the SageMaker Python SDK v3 (C1). Not counted as removed."
     },
     {
       "path": "plugins/aws-core/skills/aws-ai-ml/references/model-evaluation/code_templates/llmaaj_evaluator.py",
@@ -335,7 +389,10 @@
       "slice": "ai-payloads",
       "issue": 4386,
       "classification": "external-service-payload",
-      "status": "pending"
+      "status": "retained",
+      "disposition": "retained-customer-language",
+      "language_contract": "C1",
+      "disposition_note": "Kept as external-service-payload: R-CTRL plus K-PY (design section 3). The Rust `toolkit ai-payloads templates` and `render` commands replace cataloguing, placeholder substitution and notebook or script emission; this file is the customer-language template that a Python kernel in the customer project runs through the SageMaker Python SDK v3 (C1). Not counted as removed."
     },
     {
       "path": "plugins/aws-core/skills/aws-ai-ml/references/model-evaluation/scripts/nova_reward_function_source_template.py",
@@ -343,8 +400,11 @@
       "canonical_identical_path": "skills/core-skills/aws-ai-ml/references/model-evaluation/scripts/nova_reward_function_source_template.py",
       "slice": "ai-payloads",
       "issue": 4386,
-      "classification": "toolkit-helper",
-      "status": "pending"
+      "classification": "external-service-payload",
+      "status": "retained",
+      "disposition": "retained-customer-language",
+      "language_contract": "C9",
+      "disposition_note": "Reclassified to external-service-payload (OD-7): an AWS Lambda reward function, and Lambda accepts any runtime (C9, C10, C11). R-CTRL contract checker plus K-PY (design section 3): `toolkit ai-payloads reward sample` and `reward check` replace the manual response checks; the starting template stays customer-edited Python. Not counted as removed."
     },
     {
       "path": "plugins/aws-core/skills/aws-ai-ml/references/model-evaluation/scripts/reward_function_source_template.py",
@@ -352,8 +412,11 @@
       "canonical_identical_path": "skills/core-skills/aws-ai-ml/references/model-evaluation/scripts/reward_function_source_template.py",
       "slice": "ai-payloads",
       "issue": 4386,
-      "classification": "toolkit-helper",
-      "status": "pending"
+      "classification": "external-service-payload",
+      "status": "retained",
+      "disposition": "retained-customer-language",
+      "language_contract": "C9",
+      "disposition_note": "Reclassified to external-service-payload (OD-7): an AWS Lambda reward function, and Lambda accepts any runtime (C9, C10, C11). R-CTRL contract checker plus K-PY (design section 3): `toolkit ai-payloads reward sample` and `reward check` replace the manual response checks; the starting template stays customer-edited Python. Not counted as removed."
     },
     {
       "path": "plugins/aws-core/skills/aws-ai-ml/references/model-evaluation/scripts/validate_custom_metrics.py",
@@ -407,7 +470,10 @@
       "slice": "ai-payloads",
       "issue": 4386,
       "classification": "external-service-payload",
-      "status": "pending"
+      "status": "retained",
+      "disposition": "retained-customer-language",
+      "language_contract": "C1",
+      "disposition_note": "Kept as external-service-payload: R-CTRL plus K-PY (design section 3). The Rust `toolkit ai-payloads templates` and `render` commands replace cataloguing, placeholder substitution and notebook or script emission; this file is the customer-language template that a Python kernel in the customer project runs through the SageMaker Python SDK v3 (C1). Not counted as removed."
     },
     {
       "path": "plugins/aws-core/skills/aws-ai-ml/references/processing-jobs/code_templates/framework_processing.py",
@@ -416,7 +482,10 @@
       "slice": "ai-payloads",
       "issue": 4386,
       "classification": "external-service-payload",
-      "status": "pending"
+      "status": "retained",
+      "disposition": "retained-customer-language",
+      "language_contract": "C1",
+      "disposition_note": "Kept as external-service-payload: R-CTRL plus K-PY (design section 3). The Rust `toolkit ai-payloads templates` and `render` commands replace cataloguing, placeholder substitution and notebook or script emission; this file is the customer-language template that a Python kernel in the customer project runs through the SageMaker Python SDK v3 (C1). Not counted as removed."
     },
     {
       "path": "plugins/aws-core/skills/aws-ai-ml/references/processing-jobs/code_templates/script_processing.py",
@@ -425,7 +494,10 @@
       "slice": "ai-payloads",
       "issue": 4386,
       "classification": "external-service-payload",
-      "status": "pending"
+      "status": "retained",
+      "disposition": "retained-customer-language",
+      "language_contract": "C1",
+      "disposition_note": "Kept as external-service-payload: R-CTRL plus K-PY (design section 3). The Rust `toolkit ai-payloads templates` and `render` commands replace cataloguing, placeholder substitution and notebook or script emission; this file is the customer-language template that a Python kernel in the customer project runs through the SageMaker Python SDK v3 (C1). Not counted as removed."
     },
     {
       "path": "plugins/aws-core/skills/aws-ai-ml/references/processing-jobs/code_templates/spark_processing.py",
@@ -434,7 +506,10 @@
       "slice": "ai-payloads",
       "issue": 4386,
       "classification": "external-service-payload",
-      "status": "pending"
+      "status": "retained",
+      "disposition": "retained-customer-language",
+      "language_contract": "C1",
+      "disposition_note": "Kept as external-service-payload: R-CTRL plus K-PY (design section 3). The Rust `toolkit ai-payloads templates` and `render` commands replace cataloguing, placeholder substitution and notebook or script emission; this file is the customer-language template that a Python kernel in the customer project runs through the SageMaker Python SDK v3 (C1). Not counted as removed."
     },
     {
       "path": "plugins/aws-core/skills/aws-ai-ml/references/training-jobs/code_templates/custom_training.py",
@@ -443,7 +518,10 @@
       "slice": "ai-payloads",
       "issue": 4386,
       "classification": "external-service-payload",
-      "status": "pending"
+      "status": "retained",
+      "disposition": "retained-customer-language",
+      "language_contract": "C1",
+      "disposition_note": "Kept as external-service-payload: R-CTRL plus K-PY (design section 3). The Rust `toolkit ai-payloads templates` and `render` commands replace cataloguing, placeholder substitution and notebook or script emission; this file is the customer-language template that a Python kernel in the customer project runs through the SageMaker Python SDK v3 (C1). Not counted as removed."
     },
     {
       "path": "plugins/aws-core/skills/aws-ai-ml/references/training-jobs/code_templates/jumpstart_training.py",
@@ -452,7 +530,10 @@
       "slice": "ai-payloads",
       "issue": 4386,
       "classification": "external-service-payload",
-      "status": "pending"
+      "status": "retained",
+      "disposition": "retained-customer-language",
+      "language_contract": "C1",
+      "disposition_note": "Kept as external-service-payload: R-CTRL plus K-PY (design section 3). The Rust `toolkit ai-payloads templates` and `render` commands replace cataloguing, placeholder substitution and notebook or script emission; this file is the customer-language template that a Python kernel in the customer project runs through the SageMaker Python SDK v3 (C1). Not counted as removed."
     },
     {
       "path": "plugins/aws-core/skills/aws-ai-ml/references/training-jobs/code_templates/recipe_training.py",
@@ -461,7 +542,10 @@
       "slice": "ai-payloads",
       "issue": 4386,
       "classification": "external-service-payload",
-      "status": "pending"
+      "status": "retained",
+      "disposition": "retained-customer-language",
+      "language_contract": "C1",
+      "disposition_note": "Kept as external-service-payload: R-CTRL plus K-PY (design section 3). The Rust `toolkit ai-payloads templates` and `render` commands replace cataloguing, placeholder substitution and notebook or script emission; this file is the customer-language template that a Python kernel in the customer project runs through the SageMaker Python SDK v3 (C1). Not counted as removed."
     },
     {
       "path": "plugins/aws-core/skills/aws-observability/scripts/cloudwatch-omni/capture_dataset_from_traces.py",
@@ -2396,7 +2480,10 @@
       "slice": "ai-payloads",
       "issue": 4386,
       "classification": "external-service-payload",
-      "status": "pending"
+      "status": "retained",
+      "disposition": "retained-customer-language",
+      "language_contract": "C1",
+      "disposition_note": "Kept as external-service-payload: R-CTRL plus K-PY (design section 3). The Rust `toolkit ai-payloads templates` and `render` commands replace cataloguing, placeholder substitution and notebook or script emission; this file is the customer-language template that a Python kernel in the customer project runs through the SageMaker Python SDK v3 (C1). Not counted as removed."
     },
     {
       "path": "skills/core-skills/aws-ai-ml/references/dataset-transformation/scripts/transformation_tools.py",
@@ -2432,7 +2519,10 @@
       "slice": "ai-payloads",
       "issue": 4386,
       "classification": "external-service-payload",
-      "status": "pending"
+      "status": "retained",
+      "disposition": "retained-customer-language",
+      "language_contract": "C1",
+      "disposition_note": "Kept as external-service-payload: R-CTRL plus K-PY (design section 3). The Rust `toolkit ai-payloads templates` and `render` commands replace cataloguing, placeholder substitution and notebook or script emission; this file is the customer-language template that a Python kernel in the customer project runs through the SageMaker Python SDK v3 (C1). Not counted as removed."
     },
     {
       "path": "skills/core-skills/aws-ai-ml/references/finetuning/code_templates/rlaif_builtin.py",
@@ -2441,7 +2531,10 @@
       "slice": "ai-payloads",
       "issue": 4386,
       "classification": "external-service-payload",
-      "status": "pending"
+      "status": "retained",
+      "disposition": "retained-customer-language",
+      "language_contract": "C1",
+      "disposition_note": "Kept as external-service-payload: R-CTRL plus K-PY (design section 3). The Rust `toolkit ai-payloads templates` and `render` commands replace cataloguing, placeholder substitution and notebook or script emission; this file is the customer-language template that a Python kernel in the customer project runs through the SageMaker Python SDK v3 (C1). Not counted as removed."
     },
     {
       "path": "skills/core-skills/aws-ai-ml/references/finetuning/code_templates/rlaif_custom_prompt.py",
@@ -2450,7 +2543,10 @@
       "slice": "ai-payloads",
       "issue": 4386,
       "classification": "external-service-payload",
-      "status": "pending"
+      "status": "retained",
+      "disposition": "retained-customer-language",
+      "language_contract": "C1",
+      "disposition_note": "Kept as external-service-payload: R-CTRL plus K-PY (design section 3). The Rust `toolkit ai-payloads templates` and `render` commands replace cataloguing, placeholder substitution and notebook or script emission; this file is the customer-language template that a Python kernel in the customer project runs through the SageMaker Python SDK v3 (C1). Not counted as removed."
     },
     {
       "path": "skills/core-skills/aws-ai-ml/references/finetuning/code_templates/rlvr.py",
@@ -2459,7 +2555,10 @@
       "slice": "ai-payloads",
       "issue": 4386,
       "classification": "external-service-payload",
-      "status": "pending"
+      "status": "retained",
+      "disposition": "retained-customer-language",
+      "language_contract": "C1",
+      "disposition_note": "Kept as external-service-payload: R-CTRL plus K-PY (design section 3). The Rust `toolkit ai-payloads templates` and `render` commands replace cataloguing, placeholder substitution and notebook or script emission; this file is the customer-language template that a Python kernel in the customer project runs through the SageMaker Python SDK v3 (C1). Not counted as removed."
     },
     {
       "path": "skills/core-skills/aws-ai-ml/references/finetuning/code_templates/sft.py",
@@ -2468,7 +2567,10 @@
       "slice": "ai-payloads",
       "issue": 4386,
       "classification": "external-service-payload",
-      "status": "pending"
+      "status": "retained",
+      "disposition": "retained-customer-language",
+      "language_contract": "C1",
+      "disposition_note": "Kept as external-service-payload: R-CTRL plus K-PY (design section 3). The Rust `toolkit ai-payloads templates` and `render` commands replace cataloguing, placeholder substitution and notebook or script emission; this file is the customer-language template that a Python kernel in the customer project runs through the SageMaker Python SDK v3 (C1). Not counted as removed."
     },
     {
       "path": "skills/core-skills/aws-ai-ml/references/finetuning/scripts/mlflow_reference.py",
@@ -2477,7 +2579,10 @@
       "slice": "ai-payloads",
       "issue": 4386,
       "classification": "toolkit-helper",
-      "status": "pending"
+      "status": "retained",
+      "disposition": "retained-customer-language",
+      "language_contract": "C13",
+      "disposition_note": "K-PY with no Rust replacement in this slice (design section 3, P-3): the only documented SageMaker MLflow client is Python with SigV4 signing by the sagemaker-mlflow plugin (C13). Not counted as removed."
     },
     {
       "path": "skills/core-skills/aws-ai-ml/references/finetuning/templates/nova_rlvr_reward_function_source_template.py",
@@ -2486,7 +2591,10 @@
       "slice": "ai-payloads",
       "issue": 4386,
       "classification": "external-service-payload",
-      "status": "pending"
+      "status": "retained",
+      "disposition": "retained-customer-language",
+      "language_contract": "C9",
+      "disposition_note": "Reclassified to external-service-payload (OD-7): an AWS Lambda reward function, and Lambda accepts any runtime (C9, C10, C11). R-CTRL contract checker plus K-PY (design section 3): `toolkit ai-payloads reward sample` and `reward check` replace the manual response checks; the starting template stays customer-edited Python. Not counted as removed."
     },
     {
       "path": "skills/core-skills/aws-ai-ml/references/finetuning/templates/rlvr_reward_function_source_template.py",
@@ -2495,7 +2603,10 @@
       "slice": "ai-payloads",
       "issue": 4386,
       "classification": "external-service-payload",
-      "status": "pending"
+      "status": "retained",
+      "disposition": "retained-customer-language",
+      "language_contract": "C9",
+      "disposition_note": "Reclassified to external-service-payload (OD-7): an AWS Lambda reward function, and Lambda accepts any runtime (C9, C10, C11). R-CTRL contract checker plus K-PY (design section 3): `toolkit ai-payloads reward sample` and `reward check` replace the manual response checks; the starting template stays customer-edited Python. Not counted as removed."
     },
     {
       "path": "skills/core-skills/aws-ai-ml/references/model-deployment/code_templates/deploy-jumpstart-sagemaker.py",
@@ -2504,7 +2615,10 @@
       "slice": "ai-payloads",
       "issue": 4386,
       "classification": "external-service-payload",
-      "status": "pending"
+      "status": "retained",
+      "disposition": "retained-customer-language",
+      "language_contract": "C1",
+      "disposition_note": "Kept as external-service-payload: R-CTRL plus K-PY (design section 3). The Rust `toolkit ai-payloads templates` and `render` commands replace cataloguing, placeholder substitution and notebook or script emission; this file is the customer-language template that a Python kernel in the customer project runs through the SageMaker Python SDK v3 (C1). Not counted as removed."
     },
     {
       "path": "skills/core-skills/aws-ai-ml/references/model-deployment/code_templates/deploy-nova-bedrock.py",
@@ -2513,7 +2627,10 @@
       "slice": "ai-payloads",
       "issue": 4386,
       "classification": "external-service-payload",
-      "status": "pending"
+      "status": "retained",
+      "disposition": "retained-customer-language",
+      "language_contract": "C1",
+      "disposition_note": "Kept as external-service-payload: R-CTRL plus K-PY (design section 3). The Rust `toolkit ai-payloads templates` and `render` commands replace cataloguing, placeholder substitution and notebook or script emission; this file is the customer-language template that a Python kernel in the customer project runs through the SageMaker Python SDK v3 (C1). Not counted as removed."
     },
     {
       "path": "skills/core-skills/aws-ai-ml/references/model-deployment/code_templates/deploy-nova-sagemaker.py",
@@ -2522,7 +2639,10 @@
       "slice": "ai-payloads",
       "issue": 4386,
       "classification": "external-service-payload",
-      "status": "pending"
+      "status": "retained",
+      "disposition": "retained-customer-language",
+      "language_contract": "C1",
+      "disposition_note": "Kept as external-service-payload: R-CTRL plus K-PY (design section 3). The Rust `toolkit ai-payloads templates` and `render` commands replace cataloguing, placeholder substitution and notebook or script emission; this file is the customer-language template that a Python kernel in the customer project runs through the SageMaker Python SDK v3 (C1). Not counted as removed."
     },
     {
       "path": "skills/core-skills/aws-ai-ml/references/model-deployment/code_templates/deploy-oss-bedrock.py",
@@ -2531,7 +2651,10 @@
       "slice": "ai-payloads",
       "issue": 4386,
       "classification": "external-service-payload",
-      "status": "pending"
+      "status": "retained",
+      "disposition": "retained-customer-language",
+      "language_contract": "C1",
+      "disposition_note": "Kept as external-service-payload: R-CTRL plus K-PY (design section 3). The Rust `toolkit ai-payloads templates` and `render` commands replace cataloguing, placeholder substitution and notebook or script emission; this file is the customer-language template that a Python kernel in the customer project runs through the SageMaker Python SDK v3 (C1). Not counted as removed."
     },
     {
       "path": "skills/core-skills/aws-ai-ml/references/model-deployment/code_templates/deploy-oss-sagemaker.py",
@@ -2540,7 +2663,10 @@
       "slice": "ai-payloads",
       "issue": 4386,
       "classification": "external-service-payload",
-      "status": "pending"
+      "status": "retained",
+      "disposition": "retained-customer-language",
+      "language_contract": "C1",
+      "disposition_note": "Kept as external-service-payload: R-CTRL plus K-PY (design section 3). The Rust `toolkit ai-payloads templates` and `render` commands replace cataloguing, placeholder substitution and notebook or script emission; this file is the customer-language template that a Python kernel in the customer project runs through the SageMaker Python SDK v3 (C1). Not counted as removed."
     },
     {
       "path": "skills/core-skills/aws-ai-ml/references/model-deployment/code_templates/optimize-benchmark.py",
@@ -2549,7 +2675,10 @@
       "slice": "ai-payloads",
       "issue": 4386,
       "classification": "external-service-payload",
-      "status": "pending"
+      "status": "retained",
+      "disposition": "retained-customer-language",
+      "language_contract": "C1",
+      "disposition_note": "Kept as external-service-payload: R-CTRL plus K-PY (design section 3). The Rust `toolkit ai-payloads templates` and `render` commands replace cataloguing, placeholder substitution and notebook or script emission; this file is the customer-language template that a Python kernel in the customer project runs through the SageMaker Python SDK v3 (C1). Not counted as removed."
     },
     {
       "path": "skills/core-skills/aws-ai-ml/references/model-deployment/code_templates/optimize-huggingface-to-s3.py",
@@ -2558,7 +2687,10 @@
       "slice": "ai-payloads",
       "issue": 4386,
       "classification": "external-service-payload",
-      "status": "pending"
+      "status": "retained",
+      "disposition": "retained-customer-language",
+      "language_contract": "C1",
+      "disposition_note": "Kept as external-service-payload: R-CTRL plus K-PY (design section 3). The Rust `toolkit ai-payloads templates` and `render` commands replace cataloguing, placeholder substitution and notebook or script emission; this file is the customer-language template that a Python kernel in the customer project runs through the SageMaker Python SDK v3 (C1). Not counted as removed."
     },
     {
       "path": "skills/core-skills/aws-ai-ml/references/model-deployment/code_templates/optimize-recommendation.py",
@@ -2567,7 +2699,10 @@
       "slice": "ai-payloads",
       "issue": 4386,
       "classification": "external-service-payload",
-      "status": "pending"
+      "status": "retained",
+      "disposition": "retained-customer-language",
+      "language_contract": "C1",
+      "disposition_note": "Kept as external-service-payload: R-CTRL plus K-PY (design section 3). The Rust `toolkit ai-payloads templates` and `render` commands replace cataloguing, placeholder substitution and notebook or script emission; this file is the customer-language template that a Python kernel in the customer project runs through the SageMaker Python SDK v3 (C1). Not counted as removed."
     },
     {
       "path": "skills/core-skills/aws-ai-ml/references/model-evaluation/code_templates/custom_scorer_evaluator.py",
@@ -2576,7 +2711,10 @@
       "slice": "ai-payloads",
       "issue": 4386,
       "classification": "external-service-payload",
-      "status": "pending"
+      "status": "retained",
+      "disposition": "retained-customer-language",
+      "language_contract": "C1",
+      "disposition_note": "Kept as external-service-payload: R-CTRL plus K-PY (design section 3). The Rust `toolkit ai-payloads templates` and `render` commands replace cataloguing, placeholder substitution and notebook or script emission; this file is the customer-language template that a Python kernel in the customer project runs through the SageMaker Python SDK v3 (C1). Not counted as removed."
     },
     {
       "path": "skills/core-skills/aws-ai-ml/references/model-evaluation/code_templates/llmaaj_evaluator.py",
@@ -2585,7 +2723,10 @@
       "slice": "ai-payloads",
       "issue": 4386,
       "classification": "external-service-payload",
-      "status": "pending"
+      "status": "retained",
+      "disposition": "retained-customer-language",
+      "language_contract": "C1",
+      "disposition_note": "Kept as external-service-payload: R-CTRL plus K-PY (design section 3). The Rust `toolkit ai-payloads templates` and `render` commands replace cataloguing, placeholder substitution and notebook or script emission; this file is the customer-language template that a Python kernel in the customer project runs through the SageMaker Python SDK v3 (C1). Not counted as removed."
     },
     {
       "path": "skills/core-skills/aws-ai-ml/references/model-evaluation/scripts/nova_reward_function_source_template.py",
@@ -2593,8 +2734,11 @@
       "canonical_identical_path": "skills/core-skills/aws-ai-ml/references/model-evaluation/scripts/nova_reward_function_source_template.py",
       "slice": "ai-payloads",
       "issue": 4386,
-      "classification": "toolkit-helper",
-      "status": "pending"
+      "classification": "external-service-payload",
+      "status": "retained",
+      "disposition": "retained-customer-language",
+      "language_contract": "C9",
+      "disposition_note": "Reclassified to external-service-payload (OD-7): an AWS Lambda reward function, and Lambda accepts any runtime (C9, C10, C11). R-CTRL contract checker plus K-PY (design section 3): `toolkit ai-payloads reward sample` and `reward check` replace the manual response checks; the starting template stays customer-edited Python. Not counted as removed."
     },
     {
       "path": "skills/core-skills/aws-ai-ml/references/model-evaluation/scripts/reward_function_source_template.py",
@@ -2602,8 +2746,11 @@
       "canonical_identical_path": "skills/core-skills/aws-ai-ml/references/model-evaluation/scripts/reward_function_source_template.py",
       "slice": "ai-payloads",
       "issue": 4386,
-      "classification": "toolkit-helper",
-      "status": "pending"
+      "classification": "external-service-payload",
+      "status": "retained",
+      "disposition": "retained-customer-language",
+      "language_contract": "C9",
+      "disposition_note": "Reclassified to external-service-payload (OD-7): an AWS Lambda reward function, and Lambda accepts any runtime (C9, C10, C11). R-CTRL contract checker plus K-PY (design section 3): `toolkit ai-payloads reward sample` and `reward check` replace the manual response checks; the starting template stays customer-edited Python. Not counted as removed."
     },
     {
       "path": "skills/core-skills/aws-ai-ml/references/model-evaluation/scripts/validate_custom_metrics.py",
@@ -2657,7 +2804,10 @@
       "slice": "ai-payloads",
       "issue": 4386,
       "classification": "external-service-payload",
-      "status": "pending"
+      "status": "retained",
+      "disposition": "retained-customer-language",
+      "language_contract": "C1",
+      "disposition_note": "Kept as external-service-payload: R-CTRL plus K-PY (design section 3). The Rust `toolkit ai-payloads templates` and `render` commands replace cataloguing, placeholder substitution and notebook or script emission; this file is the customer-language template that a Python kernel in the customer project runs through the SageMaker Python SDK v3 (C1). Not counted as removed."
     },
     {
       "path": "skills/core-skills/aws-ai-ml/references/processing-jobs/code_templates/framework_processing.py",
@@ -2666,7 +2816,10 @@
       "slice": "ai-payloads",
       "issue": 4386,
       "classification": "external-service-payload",
-      "status": "pending"
+      "status": "retained",
+      "disposition": "retained-customer-language",
+      "language_contract": "C1",
+      "disposition_note": "Kept as external-service-payload: R-CTRL plus K-PY (design section 3). The Rust `toolkit ai-payloads templates` and `render` commands replace cataloguing, placeholder substitution and notebook or script emission; this file is the customer-language template that a Python kernel in the customer project runs through the SageMaker Python SDK v3 (C1). Not counted as removed."
     },
     {
       "path": "skills/core-skills/aws-ai-ml/references/processing-jobs/code_templates/script_processing.py",
@@ -2675,7 +2828,10 @@
       "slice": "ai-payloads",
       "issue": 4386,
       "classification": "external-service-payload",
-      "status": "pending"
+      "status": "retained",
+      "disposition": "retained-customer-language",
+      "language_contract": "C1",
+      "disposition_note": "Kept as external-service-payload: R-CTRL plus K-PY (design section 3). The Rust `toolkit ai-payloads templates` and `render` commands replace cataloguing, placeholder substitution and notebook or script emission; this file is the customer-language template that a Python kernel in the customer project runs through the SageMaker Python SDK v3 (C1). Not counted as removed."
     },
     {
       "path": "skills/core-skills/aws-ai-ml/references/processing-jobs/code_templates/spark_processing.py",
@@ -2684,7 +2840,10 @@
       "slice": "ai-payloads",
       "issue": 4386,
       "classification": "external-service-payload",
-      "status": "pending"
+      "status": "retained",
+      "disposition": "retained-customer-language",
+      "language_contract": "C1",
+      "disposition_note": "Kept as external-service-payload: R-CTRL plus K-PY (design section 3). The Rust `toolkit ai-payloads templates` and `render` commands replace cataloguing, placeholder substitution and notebook or script emission; this file is the customer-language template that a Python kernel in the customer project runs through the SageMaker Python SDK v3 (C1). Not counted as removed."
     },
     {
       "path": "skills/core-skills/aws-ai-ml/references/training-jobs/code_templates/custom_training.py",
@@ -2693,7 +2852,10 @@
       "slice": "ai-payloads",
       "issue": 4386,
       "classification": "external-service-payload",
-      "status": "pending"
+      "status": "retained",
+      "disposition": "retained-customer-language",
+      "language_contract": "C1",
+      "disposition_note": "Kept as external-service-payload: R-CTRL plus K-PY (design section 3). The Rust `toolkit ai-payloads templates` and `render` commands replace cataloguing, placeholder substitution and notebook or script emission; this file is the customer-language template that a Python kernel in the customer project runs through the SageMaker Python SDK v3 (C1). Not counted as removed."
     },
     {
       "path": "skills/core-skills/aws-ai-ml/references/training-jobs/code_templates/jumpstart_training.py",
@@ -2702,7 +2864,10 @@
       "slice": "ai-payloads",
       "issue": 4386,
       "classification": "external-service-payload",
-      "status": "pending"
+      "status": "retained",
+      "disposition": "retained-customer-language",
+      "language_contract": "C1",
+      "disposition_note": "Kept as external-service-payload: R-CTRL plus K-PY (design section 3). The Rust `toolkit ai-payloads templates` and `render` commands replace cataloguing, placeholder substitution and notebook or script emission; this file is the customer-language template that a Python kernel in the customer project runs through the SageMaker Python SDK v3 (C1). Not counted as removed."
     },
     {
       "path": "skills/core-skills/aws-ai-ml/references/training-jobs/code_templates/recipe_training.py",
@@ -2711,7 +2876,10 @@
       "slice": "ai-payloads",
       "issue": 4386,
       "classification": "external-service-payload",
-      "status": "pending"
+      "status": "retained",
+      "disposition": "retained-customer-language",
+      "language_contract": "C1",
+      "disposition_note": "Kept as external-service-payload: R-CTRL plus K-PY (design section 3). The Rust `toolkit ai-payloads templates` and `render` commands replace cataloguing, placeholder substitution and notebook or script emission; this file is the customer-language template that a Python kernel in the customer project runs through the SageMaker Python SDK v3 (C1). Not counted as removed."
     },
     {
       "path": "skills/core-skills/aws-observability/scripts/cloudwatch-omni/capture_dataset_from_traces.py",
@@ -3523,5 +3691,18 @@
       "classification": "toolkit-helper",
       "status": "pending"
     }
-  ]
+  ],
+  "slice_dispositions": {
+    "ai-payloads": {
+      "issue": 4386,
+      "design": "docs/migration/ai-payloads-design.md",
+      "rows": 56,
+      "removed": 0,
+      "retained": 56,
+      "template_rows": 46,
+      "lambda_rows": 8,
+      "reference_rows": 2,
+      "ac3_statement": "56 rows: 0 removed and 56 retained with documented disposition (46 TPL, 8 LAMBDA, 2 REF, mirrors included). No row may be marked as converted to Rust. The R-CTRL commands replace agent-side manual steps, not the Python text."
+    }
+  }
 }

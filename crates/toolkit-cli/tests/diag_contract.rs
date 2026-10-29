@@ -2421,8 +2421,10 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
 /// `download-snapshot` and `apply-snapshot` routes (#5317).
 /// A deliberate usage change updates the pin in the same
 /// commit and says so in the Issue; an incidental one fails here.
-const USAGE_BASE_LEN: usize = 45014;
-const USAGE_BASE_FNV1A64: u64 = 0xcf2c_b846_3038_df2b;
+// Neptune memory (#4886) deliberately adds its synopsis and description, and
+// the launch snapshot routes (#5317) theirs.
+const USAGE_BASE_LEN: usize = 45174;
+const USAGE_BASE_FNV1A64: u64 = 0x3ee6_a3a3_9d31_17aa;
 
 #[test]
 fn the_global_usage_text_is_byte_identical_to_the_base() {

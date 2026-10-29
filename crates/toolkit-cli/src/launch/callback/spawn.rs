@@ -94,23 +94,36 @@ impl HelperConfig {
 /// A fixed error if startup, bounded stdin or the port handshake fails.
 #[cfg(unix)]
 pub fn spawn(config: &HelperConfig) -> io::Result<(u32, u16)> {
-    use std::os::unix::process::CommandExt;
     let fail = || io::Error::other("The sign-in helper failed to start.");
     let bytes = config.to_bytes();
     if bytes.len() as u64 > LIMIT {
         return Err(fail());
     }
-    let mut child = Command::new(std::env::current_exe().map_err(|_| fail())?)
-        .args(["launch", "auth-callback"])
+    let mut command = Command::new(std::env::current_exe().map_err(|_| fail())?);
+    command.args(["launch", "auth-callback"]);
+    spawn_with(&mut command, bytes, Duration::from_secs(10), |_| {})
+}
+
+#[cfg(unix)]
+fn spawn_with(
+    command: &mut Command,
+    bytes: Vec<u8>,
+    timeout: Duration,
+    spawned: impl FnOnce(u32),
+) -> io::Result<(u32, u16)> {
+    use std::os::unix::process::CommandExt;
+    let fail = || io::Error::other("The sign-in helper failed to start.");
+    let mut child = command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .process_group(0)
         .spawn()
         .map_err(|_| fail())?;
+    spawned(child.id());
     let started = (|| {
         let mut stdin = child.stdin.take().ok_or_else(fail)?;
-        let deadline = Instant::now() + Duration::from_secs(10);
+        let deadline = Instant::now() + timeout;
         let (write_send, write_recv) = std::sync::mpsc::sync_channel(1);
         std::thread::spawn(move || {
             let result = stdin.write_all(&bytes);
@@ -149,4 +162,32 @@ pub fn spawn(config: &HelperConfig) -> io::Result<(u32, u16)> {
         let _ = child.wait();
     }
     started
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    #[test]
+    fn handshake_timeout_length_bad_port_and_process_group() {
+        use rustix::process::{getpgid, test_kill_process, Pid};
+        for script in [
+            "exec sleep 60",
+            "printf '12345678901234567'; exec sleep 60",
+            "printf '0\\n'; exec sleep 60",
+        ] {
+            let mut command = Command::new("sh");
+            command.args(["-c", script]);
+            let mut child_pid = None;
+            let result = spawn_with(&mut command, Vec::new(), Duration::from_millis(100), |id| {
+                let pid = Pid::from_raw(i32::try_from(id).unwrap()).unwrap();
+                assert_eq!(getpgid(Some(pid)).unwrap(), pid);
+                child_pid = Some(pid);
+            });
+            assert!(result.is_err(), "{script}");
+            assert!(
+                test_kill_process(child_pid.unwrap()).is_err(),
+                "child must be killed and reaped"
+            );
+        }
+    }
 }

@@ -307,5 +307,5 @@ The launch snapshot routes (#5317) add `launch download-snapshot LAUNCH_ID
 name, never a path). `--output`, `--into` and the snapshot directory are paths;
 the router refuses a bare `-` and `--flag=-` for each value flag, and the
 positionals refuse a bare `-`, so `./-` is the way to name a literal
-directory `-`. Neither command reads stdin. Global usage is 45014 bytes, FNV-1a
-`0xcf2cb8463038df2b`.
+directory `-`. Neither command reads stdin. With Neptune memory (#4886) also
+registered, global usage is 45174 bytes, FNV-1a `0x3ee6a3a39d3117aa`.

@@ -81,56 +81,25 @@ to build, the MCP servers provide runtime tools for agents to *use* what's built
 
 ## Implementation
 
-Full helpers in `scripts/agentic_memory.py`. Key patterns:
+The Rust toolkit plans requests offline and replays recorded responses. This
+build has no live DynamoDB, Gremlin or Neptune Analytics client.
 
-### Short-term (DynamoDB)
-
-```python
-from scripts.agentic_memory import store_message, get_recent_messages
-
-store_message(session_id='sess-123', role='user', content='Tell me about Alice')
-messages = get_recent_messages(session_id='sess-123', limit=20)
+```bash
+cat > request.json <<'JSON'
+{"graph_id":"g-abc123def4"}
+JSON
+toolkit neptune memory --operation consolidate --input request.json --dry-run
+toolkit neptune memory --operation consolidate --input request.json --recorded calls.json
 ```
 
-### Long-term — Neptune Database (Gremlin, persistent)
-
-```python
-from scripts.agentic_memory import (
-    get_gremlin_client, remember_entity_gremlin,
-    remember_relationship_gremlin, recall_entity_gremlin
-)
-
-client = get_gremlin_client()
-remember_entity_gremlin(client, 'Alice', 'Person')
-remember_relationship_gremlin(client, 'Alice', 'Acme Corp', 'WORKS_AT')
-memory = recall_entity_gremlin(client, 'Alice')
-```
-
-Uses Gremlin bindings (parameterized) — no string interpolation.
-
-### Long-term — Neptune Analytics (openCypher + vector)
-
-```python
-from scripts.agentic_memory import (
-    remember_with_embedding, semantic_recall, hybrid_recall
-)
-
-# Store with embedding
-remember_with_embedding(graph_id, 'Alice', 'Engineer at Acme', embedding_vector)
-
-# Recall by similarity
-results = semantic_recall(graph_id, query_embedding, top_k=10)
-
-# Hybrid: graph traversal + vector search
-context = hybrid_recall(graph_id, 'Alice', query_embedding)
-```
-
-### Memory consolidation
-
-```python
-from scripts.agentic_memory import consolidate_memories
-consolidate_memories(graph_id)  # Decay old facts, remove low-confidence
-```
+Use `store-message` and `recent-messages` for short-term DynamoDB request
+plans; the former accepts `now_ms` to make timestamp and 24-hour TTL explicit.
+Use `remember-entity`, `remember-relationship`, and `recall-entity` for
+parameterized Gremlin plans, and `remember-embedding`, `semantic-recall`, and
+`hybrid-recall` for Analytics plans. `consolidate` plans the 90-day decay and
+low-confidence deletion in order. See `docs/migration/docgraph.md` for inputs,
+recorded response shapes, and limitations. A dry run prints requests only; it
+never changes data.
 
 ## Persistence Strategy (Critical for Analytics)
 
@@ -177,7 +146,7 @@ need full control over the graph model and memory architecture.
 
 ## Additional Resources
 
-- Script: `scripts/agentic_memory.py` (full implementation)
+- Offline Rust requests: `toolkit neptune memory` (see `docs/migration/docgraph.md`)
 - AWS docs: "Neptune Analytics vector search", "DynamoDB TTL"
 - Related sub-skills: `analytics-vs-database` (choosing), `connectivity` (setup)
 - Related skills: DynamoDB (short-term memory table design)

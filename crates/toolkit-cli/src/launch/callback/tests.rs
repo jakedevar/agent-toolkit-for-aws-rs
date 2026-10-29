@@ -93,13 +93,97 @@ fn request_head_rules() {
 }
 
 #[test]
+fn request_form_and_header_boundaries() {
+    for query in [
+        "state=secret&code=%",
+        "state=secret&code=%A",
+        "state=secret&code=%XZ",
+    ] {
+        assert_eq!(
+            parse_request(&request(query), 1234, "secret"),
+            Outcome::Ignore(400)
+        );
+    }
+    assert_eq!(
+        parse_request(&request("state=secret&code=a+b"), 1234, "secret"),
+        Outcome::InvalidCode
+    );
+    assert_eq!(
+        parse_request(&request("state=secret&error=a+b"), 1234, "secret"),
+        Outcome::Denied("a b".into())
+    );
+    for head in [
+        "GET / HTTP/1.1 extra\r\nHost: 127.0.0.1:1234\r\n\r\n",
+        "GET /\r\nHost: 127.0.0.1:1234\r\n\r\n",
+        "GET / HTTP/1.1\r\nNoColon\r\nHost: 127.0.0.1:1234\r\n\r\n",
+        "GET / HTTP/1.1\r\nBad@Name: x\r\nHost: 127.0.0.1:1234\r\n\r\n",
+        "GET / HTTP/1.1\r\nHost: 127.0.0.1:1234\r\n",
+    ] {
+        assert_eq!(
+            parse_request(head.as_bytes(), 1234, "secret"),
+            Outcome::Ignore(400),
+            "{head}"
+        );
+    }
+    assert_eq!(
+        parse_request(
+            b"GET /?state=secret&code=x HTTP/1.1\r\nhOsT: 127.0.0.1:1234\r\n\r\n",
+            1234,
+            "secret"
+        ),
+        Outcome::Code("x".into())
+    );
+    assert_eq!(
+        parse_request(
+            &request(&format!("state=secret&code={}", "a".repeat(4096))),
+            1234,
+            "secret"
+        ),
+        Outcome::Code("a".repeat(4096))
+    );
+    for length in [64, 65] {
+        let error = "a".repeat(length);
+        assert_eq!(
+            parse_request(
+                &request(&format!(
+                    "state=secret&error={error}&error_uri=https%3A%2F%2Fexample.test"
+                )),
+                1234,
+                "secret"
+            ),
+            Outcome::Denied(if length == 64 {
+                error
+            } else {
+                "invalid_error_code".into()
+            })
+        );
+    }
+}
+
+#[test]
 fn response_has_fixed_security_headers_and_exact_length() {
-    let bytes = super::response(400);
-    let response = std::str::from_utf8(&bytes).unwrap();
-    let (headers, body) = response.split_once("\r\n\r\n").unwrap();
-    assert!(headers.contains("Cache-Control: no-store\r\n"));
-    assert!(headers.contains("Content-Security-Policy: default-src 'none'\r\n"));
-    assert!(headers.contains(&format!("Content-Length: {}", body.len())));
+    for bytes in [
+        super::response(200),
+        super::response(400),
+        super::response(404),
+        super::response(405),
+        super::authorization_failed_response(),
+    ] {
+        let response = std::str::from_utf8(&bytes).unwrap();
+        let (headers, body) = response.split_once("\r\n\r\n").unwrap();
+        assert!(headers.contains("Cache-Control: no-store\r\n"));
+        assert!(headers.contains("Content-Security-Policy: default-src 'none'\r\n"));
+        assert!(headers.contains("Content-Type: text/html; charset=utf-8\r\n"));
+        assert!(headers.contains("Referrer-Policy: no-referrer\r\n"));
+        assert!(headers.contains("X-Content-Type-Options: nosniff\r\n"));
+        assert!(headers.contains("Connection: close\r\n"));
+        assert_eq!(
+            headers
+                .lines()
+                .find(|line| line.starts_with("Content-Length:")),
+            Some(format!("Content-Length: {}", body.len()).as_str())
+        );
+    }
 }
 
 #[test]
@@ -340,12 +424,16 @@ fn pending_reader_validates_schema_and_lock_custody() {
 #[test]
 fn wait_observes_held_and_free_lock_without_signalling_pid() {
     use super::{
-        pending::{observe, Custody, Observation},
+        pending::{Custody, Observation, WaitTracker},
         PendingStatus, WaitDecision,
     };
     use crate::launch::{clock::SeededRandom, tests_support::Scratch};
     let scratch = Scratch::new("pending-wait");
-    assert_eq!(observe(scratch.path(), 66, 200), Observation::Missing);
+    let mut tracker = WaitTracker::default();
+    assert_eq!(
+        tracker.finish(scratch.path(), 66, 200).0,
+        Observation::Missing
+    );
     let custody = Custody::acquire(scratch.path(), 66).unwrap();
     custody
         .write(
@@ -358,16 +446,16 @@ fn wait_observes_held_and_free_lock_without_signalling_pid() {
         )
         .unwrap();
     assert_eq!(
-        observe(scratch.path(), 66, 164),
+        tracker.finish(scratch.path(), 66, 164).0,
         Observation::Decision(WaitDecision::Poll)
     );
     assert_eq!(
-        observe(scratch.path(), 66, 165),
+        tracker.finish(scratch.path(), 66, 165).0,
         Observation::Decision(WaitDecision::HelperBlocked)
     );
     drop(custody);
     assert_eq!(
-        observe(scratch.path(), 66, 165),
+        tracker.finish(scratch.path(), 66, 165).0,
         Observation::Decision(WaitDecision::Failed)
     );
 }
@@ -531,7 +619,7 @@ fn request_boundary_rejects_wrong_state_and_bad_heads_without_terminal_result() 
 #[test]
 fn unreadable_record_with_free_lock_is_not_missing() {
     use super::{
-        pending::{finish_if_final, Custody, Observation},
+        pending::{Custody, Observation, WaitTracker},
         WaitDecision,
     };
     use crate::launch::tests_support::Scratch;
@@ -540,7 +628,7 @@ fn unreadable_record_with_free_lock_is_not_missing() {
     let path = scratch.join("pending/91.json");
     std::fs::write(&path, b"not json").unwrap();
     drop(custody);
-    let (observation, _) = finish_if_final(scratch.path(), 91, 100);
+    let (observation, _) = WaitTracker::default().finish(scratch.path(), 91, 100);
     assert_eq!(observation, Observation::Decision(WaitDecision::Ended));
     assert!(!path.exists());
 }
@@ -570,8 +658,98 @@ fn terminal_record_remains_until_result_is_reported() {
     WaitTracker::default().finish_after_report(scratch.path(), 91, 99, |_, _| {
         assert!(path.exists());
         assert!(super::pending::acquire_if_free(scratch.path(), 91).is_none());
+        ((), true)
     });
     assert!(!path.exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn failed_report_preserves_final_record_for_retry() {
+    struct Broken;
+    impl std::io::Write for Broken {
+        fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::ErrorKind::BrokenPipe.into())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    use super::{
+        pending::{Custody, WaitTracker},
+        PendingStatus,
+    };
+    use crate::launch::{clock::SeededRandom, tests_support::Scratch};
+    let scratch = Scratch::new("wait-report-failure");
+    let custody = Custody::acquire(scratch.path(), 91).unwrap();
+    custody
+        .write(
+            1234,
+            40,
+            100,
+            PendingStatus::Failed,
+            Some("invalid_code"),
+            &SeededRandom::new(1),
+        )
+        .unwrap();
+    drop(custody);
+    let path = scratch.join("pending/91.json");
+    let mut stdout = Vec::new();
+    let mut stderr = Broken;
+    let mut output = crate::Output::with_diagnostics(&mut stdout, &mut stderr);
+    let result = WaitTracker::default().finish_after_report(scratch.path(), 91, 99, |_, _| {
+        super::wait::report_failure(&mut output, "Sign-in failed.")
+    });
+    assert!(result.unwrap().is_ok());
+    assert_eq!(output.exit_status(), 1);
+    assert!(path.exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn broken_stdout_preserves_authenticated_record_for_retry() {
+    use super::{
+        pending::{Custody, Observation, WaitTracker},
+        PendingStatus, WaitDecision,
+    };
+    use crate::launch::{clock::SeededRandom, tests_support::Scratch};
+    struct Broken;
+    impl std::io::Write for Broken {
+        fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::ErrorKind::BrokenPipe.into())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let scratch = Scratch::new("broken-authenticated");
+    let custody = Custody::acquire(scratch.path(), 91).unwrap();
+    custody
+        .write(
+            1234,
+            40,
+            100,
+            PendingStatus::Succeeded,
+            None,
+            &SeededRandom::new(1),
+        )
+        .unwrap();
+    drop(custody);
+    let session = serde_json::json!({"client_id":"c","client_secret":"s","client_expires_at":9999,"authorize_endpoint":"https://example.com","token_endpoint":"https://example.com","scopes":["launch:access"],"access_token":"a","refresh_token":"r","token_expires_at":9999});
+    std::fs::write(scratch.join("session.json"), session.to_string()).unwrap();
+    let mut stdout = Broken;
+    let mut output = crate::Output::new(&mut stdout);
+    let result =
+        WaitTracker::default().finish_after_report(scratch.path(), 91, 99, |observation, _| {
+            assert_eq!(
+                observation,
+                Observation::Decision(WaitDecision::Authenticated)
+            );
+            super::wait::report_authenticated(&mut output, "https://example.com")
+        });
+    assert!(result.unwrap().is_ok());
+    assert!(output.is_closed());
+    assert!(scratch.join("pending/91.json").exists());
 }
 
 #[cfg(unix)]
@@ -639,6 +817,101 @@ fn revision4_unknown_record_decision_matrix() {
             }
         }
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn revision4_corrupt_record_retains_last_trusted_cutoff() {
+    use super::{
+        pending::{Custody, Observation, WaitTracker},
+        PendingStatus, WaitDecision,
+    };
+    use crate::launch::{clock::SeededRandom, tests_support::Scratch};
+    let scratch = Scratch::new("retained-cutoff");
+    let custody = Custody::acquire(scratch.path(), 91).unwrap();
+    custody
+        .write(
+            1234,
+            40,
+            100,
+            PendingStatus::Listening,
+            None,
+            &SeededRandom::new(1),
+        )
+        .unwrap();
+    let mut tracker = WaitTracker::default();
+    assert_eq!(
+        tracker.finish_at(scratch.path(), 91, 99, 0).0,
+        Observation::Decision(WaitDecision::Poll)
+    );
+    std::fs::write(scratch.join("pending/91.json"), b"{\"cutoff\":999999}").unwrap();
+    assert_eq!(
+        tracker.finish_at(scratch.path(), 91, 105, 1).0,
+        Observation::Decision(WaitDecision::HelperBlocked)
+    );
+    drop(custody);
+    assert_eq!(
+        tracker.finish_at(scratch.path(), 91, 105, 1).0,
+        Observation::Decision(WaitDecision::TimedOut)
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn revision4_directory_record_preserves_contents() {
+    use super::{
+        pending::{Custody, Observation, WaitTracker},
+        WaitDecision,
+    };
+    use crate::launch::tests_support::Scratch;
+    let scratch = Scratch::new("directory-record");
+    let custody = Custody::acquire(scratch.path(), 91).unwrap();
+    let path = scratch.join("pending/91.json");
+    std::fs::create_dir(&path).unwrap();
+    std::fs::write(path.join("keep"), b"data").unwrap();
+    drop(custody);
+    assert_eq!(
+        WaitTracker::default().finish_at(scratch.path(), 91, 0, 0).0,
+        Observation::Decision(WaitDecision::Ended)
+    );
+    assert_eq!(std::fs::read(path.join("keep")).unwrap(), b"data");
+}
+
+#[cfg(unix)]
+#[test]
+fn revision4_permission_denied_record_uses_fallback_cutoff() {
+    use super::{
+        pending::{Custody, Observation, WaitTracker},
+        WaitDecision,
+    };
+    use crate::launch::tests_support::Scratch;
+    use std::os::unix::fs::PermissionsExt;
+    let scratch = Scratch::new("permission-record");
+    let custody = Custody::acquire(scratch.path(), 91).unwrap();
+    let path = scratch.join("pending/91.json");
+    std::fs::write(&path, b"unreadable").unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).unwrap();
+    if !nix::unistd::geteuid().is_root() {
+        assert_eq!(
+            std::fs::read(&path).unwrap_err().kind(),
+            std::io::ErrorKind::PermissionDenied
+        );
+    }
+    let mut tracker = WaitTracker::default();
+    assert_eq!(
+        tracker.finish_at(scratch.path(), 91, 1, 664).0,
+        Observation::Decision(WaitDecision::Poll)
+    );
+    assert_eq!(
+        tracker.finish_at(scratch.path(), 91, 1, 665).0,
+        Observation::Decision(WaitDecision::HelperBlocked)
+    );
+    drop(custody);
+    assert_eq!(
+        tracker.finish_at(scratch.path(), 91, 1, 665).0,
+        Observation::Decision(WaitDecision::TimedOut)
+    );
+    assert!(!path.exists());
 }
 
 #[cfg(unix)]
