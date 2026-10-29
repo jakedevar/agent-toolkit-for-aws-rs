@@ -212,15 +212,93 @@ fn t_ar_read_13b_simple_case_folding_sharp_s_collides_5132() {
         .expect("ß and ss are distinct"),
         2
     );
-    // Upload keeps Python's case-sensitive parity (decision 1).
+    // Upload applies the same duplicate rule (design R-AR-READ, both
+    // profiles; #5504 supersedes the earlier case-sensitive upload parity).
+    assert!(message(upload(vec![
+        FxEntry::stored("app/\u{df}.txt", b"1"),
+        FxEntry::stored("app/\u{1e9e}.txt", b"2"),
+    ]))
+    .starts_with("Archive contains entries whose names collide"));
     assert_eq!(
         upload(vec![
             FxEntry::stored("app/\u{df}.txt", b"1"),
-            FxEntry::stored("app/\u{1e9e}.txt", b"2"),
+            FxEntry::stored("app/ss.txt", b"2"),
         ])
-        .expect("upload parity"),
+        .expect("ß and ss are distinct on upload too"),
         2
     );
+}
+
+/// T-AR-READ-12/13 under both profiles (#5504): case, NFC and file/directory
+/// prefix collisions are refused by Upload exactly as by Snapshot, with the
+/// same message; distinct names under one root still read.
+#[test]
+fn t_ar_read_12_13_upload_and_snapshot_refuse_the_same_collisions_5504() {
+    let collide = |name: &str| {
+        format!(
+            "Archive contains entries whose names collide after case folding or Unicode \
+             normalisation: {}",
+            crate::launch::text::repr(name)
+        )
+    };
+    let cases: [(Vec<FxEntry>, String); 5] = [
+        (
+            vec![
+                FxEntry::stored("root/A", b"1"),
+                FxEntry::stored("root/a", b"2"),
+            ],
+            collide("root/a"),
+        ),
+        (
+            vec![
+                FxEntry::stored("root/caf\u{e9}", b"1"),
+                FxEntry::stored("root/cafe\u{301}", b"2"),
+            ],
+            collide("root/cafe\u{301}"),
+        ),
+        (
+            vec![
+                FxEntry::stored("root/a", b"1"),
+                FxEntry::stored("root/a/b", b"2"),
+            ],
+            "Archive contains a file that another entry uses as a directory: 'root/a'".into(),
+        ),
+        (
+            vec![
+                FxEntry::stored("root/A", b"1"),
+                FxEntry::stored("root/a/b", b"2"),
+            ],
+            "Archive contains a file that another entry uses as a directory: 'root/A'".into(),
+        ),
+        (
+            vec![FxEntry::dir("root/x/"), FxEntry::stored("root/X", b"1")],
+            collide("root/X"),
+        ),
+    ];
+    for (entries, expected) in cases {
+        for profile in [Profile::Upload, Profile::Snapshot] {
+            assert_eq!(
+                message(read_with(entries.clone(), profile, &LIMITS)),
+                expected,
+                "{profile:?}"
+            );
+        }
+    }
+    for profile in [Profile::Upload, Profile::Snapshot] {
+        assert_eq!(
+            read_with(
+                vec![
+                    FxEntry::stored("root/a", b"1"),
+                    FxEntry::stored("root/b", b"2"),
+                    FxEntry::stored("root/ab/c", b"3"),
+                ],
+                profile,
+                &LIMITS
+            ),
+            Ok(3),
+            "{profile:?}"
+        );
+    }
 }
 
 #[test]

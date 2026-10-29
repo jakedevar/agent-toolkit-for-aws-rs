@@ -235,6 +235,30 @@ fn t_stage_8_directory_created_at_the_destination_before_publication() {
     assert_eq!(stats.removed, stats.len_at_stop);
 }
 
+/// T-STAGE-8 with an *empty* intruding directory (#5504): an ordinary
+/// `rename(2)` would replace an empty directory, so only RENAME_NOREPLACE
+/// refuses this. The intruder is preserved and nothing partial remains.
+#[test]
+fn t_stage_8b_empty_directory_created_at_the_destination_before_publication() {
+    let scratch = Scratch::new("stage8b");
+    let out = scratch.join("out");
+    let out_for_hook = out.clone();
+    let mut hook = at(HookPoint::BeforePublish, move || {
+        fs::create_dir(&out_for_hook).unwrap();
+    });
+    let (result, stats) = extract_to(&sample_bytes(), &out, &mut hook);
+    assert_eq!(
+        result,
+        Err(LaunchError::Archive(exists_message(&shown(
+            &out.to_string_lossy()
+        ))))
+    );
+    assert!(out.is_dir(), "the intruding directory is preserved");
+    assert!(names(&out).is_empty(), "nothing was published into it");
+    assert!(partials(scratch.path()).is_empty());
+    assert_eq!(stats.removed, stats.len_at_stop);
+}
+
 #[test]
 fn t_stage_9_symlinked_parent_is_followed_once_and_bad_final_components_refused() {
     let scratch = Scratch::new("stage9");

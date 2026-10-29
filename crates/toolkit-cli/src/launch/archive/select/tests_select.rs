@@ -525,6 +525,34 @@ fn t_ar_open_2_file_swapped_for_a_same_sized_outside_symlink() {
     assert!(!error.message().contains("SECRT"));
 }
 
+/// R-AR-OPEN `open_file_at` identity (#5504): a different regular inode of the
+/// same size under the walked name is refused. The old inode stays alive
+/// (renamed away, not unlinked) so its number cannot be reused by the new file.
+#[test]
+fn t_ar_open_2b_same_sized_regular_file_with_another_inode_is_refused() {
+    let tree = tree();
+    let keep_alive = Scratch::new("open2b-old-inode");
+    let target = tree.join("a.txt");
+    let old = keep_alive.join("a.txt-original");
+    let hook = SwapHook::at_open("a.txt", move || {
+        fs::rename(&target, &old).expect("move the original inode away");
+        fs::write(&target, b"SECRT").expect("same-sized regular replacement");
+        assert_eq!(
+            fs::metadata(&target).expect("stat").len(),
+            5,
+            "same size as alpha"
+        );
+    });
+    let result = build_with(tree.path().to_str().expect("utf-8"), &hook, None);
+    let error = result.map(|_| ()).expect_err("refused");
+    assert_eq!(error, changed("a.txt"));
+    assert!(!error.message().contains("SECRT"));
+    assert_eq!(
+        fs::read(keep_alive.join("a.txt-original")).expect("old inode kept"),
+        b"alpha"
+    );
+}
+
 #[test]
 fn t_ar_open_3_ancestor_swapped_for_a_symlink_to_a_lookalike_directory() {
     let tree = tree();
