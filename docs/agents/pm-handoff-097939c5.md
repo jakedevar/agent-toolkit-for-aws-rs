@@ -1109,3 +1109,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
   Merge worker 1d185138 (Sonnet, continue_from c4766db7): merge b9e7980b (B1) + 67154493 (#4865) into x402, registrations only, re-verify. Enqueue the merge head after B1 + #4865 land.
   Then #5344: relaunch continue_from 1a36fb6d to merge rolling (with S5) + add guard to docgraph_review_private.rs; same for L5 tests/launch_l5.rs (#5372).
   Queue: 3022 B1, 3023 #4865. 4/4: 0c08b166 L5 r2, 51b3c3c9 #5425, c35bc7f4 #5394, 1d185138 x402 merge.
+- 17:05Z: S1 security review #5425 (51b3c3c9, Codex sol; no filter kill) CHANGES_REQUESTED fe7ae039: 5/5 guard reverts caught; P1 #5428 (listed ULA admits fd00:ec2::254 metadata, 1517 TLS bytes) and P1 #5429 (abort-only drop keeps socket alive on idle current-thread runtime; 2 s close budget unenforced).
+  PM RULINGS (brief): forbidden-address check first + refuse listed ranges containing forbidden addrs; driver must release socket before sync API returns. S1 repair 1 -> Opus f59917b1 (continue_from 33d730c3). Then narrow Codex re-review.
+  4/4: 0c08b166 L5 r2, f59917b1 S1 r1, c35bc7f4 #5394, 1d185138 x402 merge. Queue: 3022 B1, 3023 #4865.
