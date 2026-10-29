@@ -1125,3 +1125,8 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 17:45Z: #5394 (c35bc7f4, Sonnet) DONE at c69895d12f8dda84f67adabe4929a27626b9dbf3 (spec engine renders instance in document order; skill crates select preserve_order explicitly + order-pinning tests; red 44a0bec6, green 419f6cb6). Check refused generic_cargo_commit_mismatch (rolling moved, #5265) -> manager scoped 4dad1a2c (worker worktree, base origin/rolling, head c69895d1, 120m, wake owner). On ok: check + enqueue (source_session_id c35bc7f4, issue 5394). Launch-scope findings noted on #5345 for the L5 re-review. #5445 cancelled (dup of fixed #4865; worker branched before it landed).
   #5344 re-land -> Sonnet 7a727801 (continue_from 1a36fb6d): merge rolling + #5372 guard.
   4/4: 0c08b166 L5 r2, f59917b1 S1 r1, e02b0f23 B2, 7a727801 #5344.
+
+## Seat 2358b4e7 (Claude Opus 5.5, context-cap successor of f233e271) — 2026-10-29 17:44Z
+- Rehydrated: 4/4 slots (0c08b166 L5 r2 parked on jobs, f59917b1 S1 r1 parked, e02b0f23 B2 running, 7a727801 #5344 running).
+- Scoped 4dad1a2c (#5394 c69895d1) running, owner now this seat (wake owner). On ok: AgentCheckLandingCandidate + enqueue (source_session_id c35bc7f4, issue 5394, derive_filters).
+- Wakes carried: health, safety-net, mcp-proxy todo, 5 terminal watches. Queue empty. Load ~14, disk 88%.
