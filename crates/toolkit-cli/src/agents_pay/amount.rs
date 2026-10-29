@@ -457,4 +457,19 @@ mod subtraction_tests {
             assert_eq!(left.subtract(&right), expected, "{budget} - {available}");
         }
     }
+
+    #[test]
+    fn decimal_subtraction_agrees_with_integer_arithmetic_across_signs() {
+        for left in -50_i64..=50 {
+            for right in -50_i64..=50 {
+                let a = CapDecimal::parse(&left.to_string()).unwrap();
+                let b = CapDecimal::parse(&right.to_string()).unwrap();
+                assert_eq!(
+                    a.subtract(&b),
+                    (left - right).to_string(),
+                    "{left} - {right}"
+                );
+            }
+        }
+    }
 }

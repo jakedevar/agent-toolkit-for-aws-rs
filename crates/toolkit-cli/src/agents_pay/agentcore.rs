@@ -655,6 +655,27 @@ mod tests {
         .unwrap();
         assert!(!session_status(&missing, 1_000_000_000).usable);
     }
+
+    #[test]
+    fn session_status_handles_expiry_and_balance_boundaries() {
+        let make = |balance: &str| {
+            parse_json(&format!(r#"{{"createdAt":1000,"expiryTimeInMinutes":15,"limits":{{"maxSpendAmount":{{"value":"10.00"}}}},"availableLimits":{{"availableSpendAmount":{{"value":"{balance}"}}}}}}"#)).unwrap()
+        };
+        let session = make("0.01");
+        assert_eq!(session_status(&session, 1_899_999_999).status, "ACTIVE");
+        assert_eq!(session_status(&session, 1_900_000_000).status, "EXPIRED");
+        for balance in ["0", "-0.00", "-1", "not-a-number"] {
+            let status = session_status(&make(balance), 1_000_000_000);
+            assert_eq!(status.status, "DRAINED");
+            assert!(!status.usable);
+        }
+        let missing = parse_json(r#"{"expiryTimeInMinutes":15}"#).unwrap();
+        assert_eq!(session_status(&missing, 0).status, "unknown");
+        assert!(!session_status(&missing, 0).usable);
+        let overflow =
+            parse_json(r#"{"createdAt":1,"expiryTimeInMinutes":9223372036854775807}"#).unwrap();
+        assert_eq!(session_status(&overflow, 0).status, "unknown");
+    }
 }
 
 #[cfg(test)]
