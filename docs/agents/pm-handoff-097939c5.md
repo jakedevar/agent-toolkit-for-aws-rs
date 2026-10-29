@@ -961,3 +961,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
   RULINGS: empty-capture refusal accepted; wa-review report perms -> follow-up #5344 (P4).
   Review #5343 -> Codex sol 42d60f19 (pinned 95ddaccf; mut perms check, key echo, overwrite, relaxed number). On ACCEPT + 9a1639d3 ok: check + enqueue (source_session e1de11f0); close #5327 #5343 #5318 #5321 #5322 #5324 #5325 on land; #4886 stays open (S1-S4, S6).
   4/4 busy: 35dfe5c8 (#5317 repair 1), 8139c2ea (#5329), 4bb37d21 (#5342), 42d60f19 (#5343). Jobs: 2e934e0e (#5306), 9a1639d3 (#5327). Queue: 81c0c481 (#5181).
+- 10-29 11:24Z: L6 repair 1 (35dfe5c8) at 228380194bba256bfd1f13875e74906d00d69494, test-only. PM VERIFIED from the job logs, no re-review session (creation cap): 0e30594e downward check off -> 4 FAILED; 08f64f9b upward off -> 1 FAILED; 59f61743 restored 6/6 ok. Check ok (243fe36c, 4308). ENQUEUED dc9fd4ea (seq 2993, issue 5317). On land: close #5317 #5336 #5340; #4382 stays open (L5, L7, L8).
+  Filed L5 #5345 -> Codex terra 6c9b74b6 (sandbox 22838019; includes #5335). Then L7 security review (opposite family, exact SHA L0-L6) and L8 cutover.
+  4/4 busy: 8139c2ea (#5329), 4bb37d21 (#5342), 42d60f19 (#5343), 6c9b74b6 (#5345). Queue: 81c0c481 (#5181), dc9fd4ea (#5317). Jobs: 2e934e0e (#5306), 9a1639d3 (#5327).
