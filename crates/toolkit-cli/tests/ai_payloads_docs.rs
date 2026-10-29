@@ -19,7 +19,11 @@
 //! - AP-DOC-04: documented command lines parse against the real CLI usage:
 //!   `ap_doc_04_documented_command_lines_parse_against_the_real_cli`,
 //!   `ap_doc_04_documented_flags_are_in_the_cli_synopsis`,
-//!   `ap_doc_04_documented_command_forms_are_all_present`
+//!   `ap_doc_04_documented_command_forms_are_all_present`; inline code-span commands
+//!   (#5282) are checked like fenced ones, each against its own route:
+//!   `ap_doc_04_inline_commands_are_documented_commands`,
+//!   `ap_doc_04_bare_inline_mentions_name_real_routes`,
+//!   `ap_doc_04_inline_render_with_a_foreign_route_flag_fails`
 //! - AP-DOC-05: no page still instructs hand rendering:
 //!   `ap_doc_05_no_page_instructs_hand_rendering`
 //! - AP-DOC-06: the EULA step names `--consent ACCEPT_EULA` (OD-12):
@@ -33,6 +37,10 @@
 //!   `ap_doc_09_manual_edit_points_stay_prose`
 //! - AP-DOC-10: templates are untouched and these tests never launch Python:
 //!   `ap_doc_10_templates_match_their_mirrors_and_tests_never_launch_python`
+//! - AP-DOC-11 (#5283): one values/assign/manual paragraph per configuration page:
+//!   `ap_doc_11_configuration_pages_keep_one_values_paragraph`
+//! - AP-DOC-12 (#5284): the HuggingFace guide collects an ARN, never a token:
+//!   `ap_doc_12_huggingface_guide_collects_an_arn_never_a_token`
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -273,9 +281,40 @@ fn ap_doc_03_reward_pages_name_the_checker_and_their_formats() {
 fn documented_commands() -> Vec<(String, String)> {
     let mut found = Vec::new();
     for rel in all_pages() {
+        for line in commands_in(&page(&rel)) {
+            found.push((rel.clone(), line));
+        }
+    }
+    found
+}
+/// Single-backtick code spans outside fenced blocks, one per `...` pair on a line.
+fn code_spans(body: &str) -> Vec<String> {
+    let mut found = Vec::new();
+    let mut fenced = false;
+    for raw in body.lines() {
+        if raw.trim_start().starts_with("```") {
+            fenced = !fenced;
+            continue;
+        }
+        if fenced {
+            continue;
+        }
+        let mut parts = raw.split('`');
+        parts.next();
+        while let (Some(span), Some(_)) = (parts.next(), parts.next()) {
+            found.push(span.trim().to_string());
+        }
+    }
+    found
+}
+
+/// The command lines of one page body (see `documented_commands`).
+fn commands_in(body: &str) -> Vec<String> {
+    let mut found = Vec::new();
+    {
         let mut fenced = false;
         let mut pending: Option<String> = None;
-        for raw in page(&rel).lines() {
+        for raw in body.lines() {
             if raw.trim_start().starts_with("```") {
                 fenced = !fenced;
                 pending = None;
@@ -299,11 +338,80 @@ fn documented_commands() -> Vec<(String, String)> {
             if let Some(stripped) = joined.strip_suffix('\\') {
                 pending = Some(stripped.trim_end().to_string());
             } else {
-                found.push((rel.clone(), joined));
+                found.push(joined);
             }
         }
     }
     found
+}
+
+/// Run one documented command line against the real `toolkit` binary in a scratch
+/// directory; returns the exit code and the combined output.
+fn cli_exit(line: &str) -> (Option<i32>, String) {
+    let scratch = std::env::temp_dir().join(format!(
+        "ap-doc-04-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    let project = scratch.join("docs-project");
+    fs::create_dir_all(&project).unwrap();
+    let args = concrete_args(line, &project, &scratch);
+    assert_eq!(&args[..2], ["toolkit", "ai-payloads"], "{line}");
+    let out = Command::new(env!("CARGO_BIN_EXE_toolkit"))
+        .args(&args[1..])
+        .current_dir(root())
+        .output()
+        .unwrap();
+    fs::remove_dir_all(&scratch).unwrap();
+    (out.status.code(), text(&out))
+}
+
+/// The routes of `toolkit ai-payloads`, as the words after the command name.
+const ROUTES: [&str; 4] = ["templates", "render", "reward sample", "reward check"];
+
+/// The words of a command line after `toolkit ai-payloads`: its route, if any, and
+/// the arguments after it.
+fn split_route(line: &str) -> Option<(&'static str, Vec<&str>)> {
+    let words: Vec<&str> = line.split_whitespace().skip(2).collect();
+    ROUTES.iter().find_map(|route| {
+        let n = route.split(' ').count();
+        (words.len() >= n && words[..n].join(" ") == *route).then(|| (*route, words[n..].to_vec()))
+    })
+}
+
+/// The synopsis lines of one route in the real CLI usage text: the route line and
+/// its indented continuation lines.
+fn route_synopsis(route: &str) -> String {
+    let head = format!("  toolkit ai-payloads {route}");
+    let mut found = String::new();
+    let mut inside = false;
+    for line in toolkit_cli::USAGE.lines() {
+        if line.starts_with(&head) {
+            inside = true;
+        } else if inside && !line.starts_with("    ") {
+            break;
+        }
+        if inside {
+            found.push_str(line);
+            found.push('\n');
+        }
+    }
+    assert!(!found.is_empty(), "no usage line for `{route}`");
+    found
+}
+
+/// Flags of a command line that its own route does not take (a flag valid on
+/// another route does not count).
+fn route_flag_errors(line: &str) -> Vec<String> {
+    let Some((route, args)) = split_route(line) else {
+        return vec![format!("no known route in `{line}`")];
+    };
+    let synopsis = route_synopsis(route);
+    args.iter()
+        .filter(|a| a.starts_with("--"))
+        .filter(|a| !synopsis.contains(a.split('=').next().unwrap()))
+        .map(|a| format!("`{a}` is not a flag of `toolkit ai-payloads {route}`"))
+        .collect()
 }
 
 /// Replace the documentation placeholders with real, safe paths.
@@ -340,31 +448,103 @@ fn ap_doc_04_documented_command_lines_parse_against_the_real_cli() {
             !line.contains('\'') && !line.contains('"'),
             "{rel}: `{line}`"
         );
-        let scratch = std::env::temp_dir().join(format!(
-            "ap-doc-04-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
-        let project = scratch.join("docs-project");
-        fs::create_dir_all(&project).unwrap();
-        let args = concrete_args(&line, &project, &scratch);
-        assert_eq!(&args[..2], ["toolkit", "ai-payloads"], "{rel}: {line}");
-        let out = Command::new(env!("CARGO_BIN_EXE_toolkit"))
-            .args(&args[1..])
-            .current_dir(root())
-            .output()
-            .unwrap();
-        let code = out.status.code();
+        let (code, output) = cli_exit(&line);
         // Exit 2 is the shared router's usage error: an unknown flag, a missing
         // required argument or a bad value shape. Any other exit proves the line
         // parses; missing files (values, event, response) are data errors, exit 1.
         assert!(
             code == Some(0) || code == Some(1),
-            "{rel}: `{line}` is not valid against the real CLI usage (exit {code:?})\n{}",
-            text(&out)
+            "{rel}: `{line}` is not valid against the real CLI usage (exit {code:?})\n{output}"
         );
-        fs::remove_dir_all(&scratch).unwrap();
+        let wrong = route_flag_errors(&line);
+        assert!(wrong.is_empty(), "{rel}: `{line}`: {wrong:?}");
     }
+}
+
+/// The slice-5 follow-up #5282: full inline commands (code spans in prose, outside
+/// fences) are documented commands too and go through the same checks.
+#[test]
+fn ap_doc_04_inline_commands_are_documented_commands() {
+    let commands = documented_commands();
+    for (page_suffix, needle) in [
+        ("continuous_customization.md", "dpo.py"),
+        ("benchmark-workflow.md", "optimize-benchmark.py"),
+        ("huggingface-to-s3.md", "optimize-huggingface-to-s3.py"),
+        ("recommendation-workflow.md", "optimize-recommendation.py"),
+        ("training-jobs/overview.md", "recipe_training.py"),
+        ("processing-jobs/overview.md", "script_processing.py"),
+    ] {
+        assert!(
+            commands.iter().any(|(rel, line)| rel.ends_with(page_suffix)
+                && line.contains("toolkit ai-payloads render")
+                && line.contains(needle)),
+            "no inline render command with `{needle}` is extracted from {page_suffix}"
+        );
+    }
+    assert!(
+        commands
+            .iter()
+            .any(|(_, l)| l.starts_with("toolkit ai-payloads templates --root ")),
+        "the inline `templates --root <skill-dir>` command is not extracted"
+    );
+}
+
+/// Bare mentions such as `toolkit ai-payloads render` are not commands to run, but
+/// each must still name a route the CLI really has.
+#[test]
+fn ap_doc_04_bare_inline_mentions_name_real_routes() {
+    let mut seen = 0;
+    for rel in all_pages() {
+        for span in code_spans(&page(&rel)) {
+            if !span.starts_with("toolkit ai-payloads") {
+                continue;
+            }
+            seen += 1;
+            let (route, args) = split_route(&span)
+                .unwrap_or_else(|| panic!("{rel}: `{span}` names no route of the CLI"));
+            assert!(
+                !route_synopsis(route).is_empty(),
+                "{rel}: `{span}` ({args:?})"
+            );
+        }
+    }
+    assert!(seen >= 40, "only {seen} inline mentions");
+}
+
+/// A flag that is valid on another route must not pass: changing an inline render
+/// example to use `--batch` (a `reward check` flag) fails AP-DOC-04 twice, in the
+/// route-specific synopsis check and against the real CLI.
+#[test]
+fn ap_doc_04_inline_render_with_a_foreign_route_flag_fails() {
+    let rel = "finetuning/references/continuous_customization.md";
+    let body = page(rel);
+    let inline = commands_in(&body)
+        .into_iter()
+        .find(|l| l.starts_with("toolkit ai-payloads render") && l.contains("--append"))
+        .expect("the inline render example of continuous_customization.md is extracted");
+    assert!(route_flag_errors(&inline).is_empty(), "{inline}");
+    assert!(
+        toolkit_cli::USAGE.contains("--batch"),
+        "--batch must exist on another route for this regression to mean anything"
+    );
+
+    let mutated_body = body.replace(&inline, &format!("{inline} --batch"));
+    assert_ne!(mutated_body, body, "the mutation changed nothing");
+    let mutated = commands_in(&mutated_body)
+        .into_iter()
+        .find(|l| l.contains("--batch"))
+        .expect("the mutated inline render example is extracted");
+    let wrong = route_flag_errors(&mutated);
+    assert!(
+        wrong.iter().any(|e| e.contains("--batch")),
+        "route check did not flag --batch: {wrong:?}"
+    );
+    let (code, output) = cli_exit(&mutated);
+    assert_eq!(
+        code,
+        Some(2),
+        "the real CLI accepted --batch on render\n{output}"
+    );
 }
 
 #[test]
@@ -593,5 +773,82 @@ fn ap_doc_10_templates_match_their_mirrors_and_tests_never_launch_python() {
     // The needles are escaped in this source, so the test does not match itself.
     for needle in ["Command::new(\"py", "Command::new(\"python"] {
         assert_eq!(source.matches(needle).count(), 0, "{needle}");
+    }
+}
+
+// ---- S5 follow-ups (#5296): #5283 and #5284 --------------------------------
+
+/// #5283: each training and processing configuration page keeps one complete
+/// values/assign/manual/NOTEBOOK_ONLY/missing-value paragraph, in the canonical
+/// page and in its mirror.
+#[test]
+fn ap_doc_11_configuration_pages_keep_one_values_paragraph() {
+    for rel in CONFIGS {
+        for (label, body) in [("canonical", page(rel)), ("mirror", mirror_page(rel))] {
+            let paragraphs: Vec<&str> = body
+                .split("\n\n")
+                .filter(|p| p.starts_with("Every bracketed placeholder below"))
+                .collect();
+            assert_eq!(
+                paragraphs.len(),
+                1,
+                "{label} {rel} repeats the values-file paragraph"
+            );
+            let paragraph = paragraphs[0];
+            for needle in [
+                "a key under `values` in the values file",
+                "written without the brackets",
+                "`{\"values\": {\"INSTANCE_TYPE\": \"ml.m5.xlarge\"}}`",
+                "`[PROJECT_DIR]` defaults to the project directory",
+                "`toolkit ai-payloads templates --root <skill-dir>`",
+                "`target` lines",
+                "`assign`",
+                "`manual:`",
+                "`# NOTEBOOK_ONLY`",
+                "A missing value stops the render before any file is written.",
+            ] {
+                assert!(
+                    paragraph.contains(needle),
+                    "{label} {rel}: the kept paragraph lacks `{needle}`"
+                );
+            }
+            for sentence in ["`# NOTEBOOK_ONLY`", "A missing value stops the render"] {
+                assert_eq!(
+                    body.matches(sentence).count(),
+                    1,
+                    "{label} {rel}: `{sentence}` is stated more than once"
+                );
+            }
+        }
+    }
+}
+
+/// #5284: the HuggingFace download guide collects the Secrets Manager secret ARN
+/// (or `null` for a public model) and never asks the agent for a token.
+#[test]
+fn ap_doc_12_huggingface_guide_collects_an_arn_never_a_token() {
+    let rel = "model-deployment/references/optimization/huggingface-to-s3.md";
+    for (label, body) in [("canonical", page(rel)), ("mirror", mirror_page(rel))] {
+        let step1 = body
+            .split("## Step 1")
+            .nth(1)
+            .and_then(|s| s.split("## Step 2").next())
+            .unwrap_or_else(|| panic!("{label}: Step 1 is missing"));
+        assert!(
+            !step1.contains("ask the user for a HuggingFace access token"),
+            "{label}: Step 1 still asks the user for the token itself"
+        );
+        for needle in ["Secrets Manager", "ARN", "`null`"] {
+            assert!(step1.contains(needle), "{label}: Step 1 lacks `{needle}`");
+        }
+        assert!(
+            step1.contains("never ask for") && step1.contains("token itself"),
+            "{label}: Step 1 must forbid collecting the token itself"
+        );
+        // The Step 2 slot text keeps its own rule.
+        assert!(
+            body.contains("`render` refuses a literal token"),
+            "{label}: Step 2 lost the literal-token refusal"
+        );
     }
 }
