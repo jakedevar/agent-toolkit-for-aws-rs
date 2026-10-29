@@ -775,7 +775,7 @@ fn review_scrub_eight_byte_prefix_in_body_is_redacted() {
     );
     let header = paid_header(&world);
     world.merchant.respond(402, &[], &challenge());
-    world.merchant.respond(200, &[], header[..8].as_bytes());
+    world.merchant.respond(200, &[], &header.as_bytes()[..8]);
     let out = world.fetch();
     let rendered = flow::render(&out);
     assert!(
@@ -823,7 +823,7 @@ fn t_scrub_body_fragments_at_every_offset_and_length_are_redacted() {
     }
     // Seven bytes are below the fragment bound: returned unchanged.
     world.merchant.respond(402, &[], &challenge());
-    world.merchant.respond(200, &[], header[3..10].as_bytes());
+    world.merchant.respond(200, &[], &header.as_bytes()[3..10]);
     let out = world.fetch();
     assert_eq!(text(&out, "body"), &header[3..10]);
     assert!(out.get("redacted").is_none());
