@@ -540,6 +540,27 @@ impl<'a> PaymentClient<'a> {
                 Ok(mut stream) => {
                     let status = stream.status();
                     let error_header = stream.headers().get("x-amzn-ErrorType").map(str::to_owned);
+                    if (300..400).contains(&status) {
+                        return Err(PaymentError::InvalidResponse);
+                    }
+                    let length = match stream.headers().get("content-length") {
+                        Some(value)
+                            if !value.is_empty() && value.bytes().all(|b| b.is_ascii_digit()) =>
+                        {
+                            match value.parse::<u64>() {
+                                Ok(n) if n <= 65_536 => Some(n as usize),
+                                Ok(_) | Err(_) if status >= 400 => {
+                                    return Err(PaymentError::Service(error_code(
+                                        error_header.as_deref(),
+                                        "",
+                                    )));
+                                }
+                                _ => return Err(PaymentError::InvalidResponse),
+                            }
+                        }
+                        Some(_) => return Err(PaymentError::InvalidResponse),
+                        None => None,
+                    };
                     let mut bytes = Vec::new();
                     loop {
                         if Instant::now() >= deadline {
@@ -547,7 +568,8 @@ impl<'a> PaymentClient<'a> {
                         }
                         match stream.next_chunk() {
                             Ok(Some(chunk)) => {
-                                if bytes.len().saturating_add(chunk.len()) > 65_536 {
+                                let total = bytes.len().saturating_add(chunk.len());
+                                if total > 65_536 || length.is_some_and(|len| total > len) {
                                     return Err(PaymentError::InvalidResponse);
                                 }
                                 bytes.extend_from_slice(&chunk);
