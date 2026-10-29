@@ -18,7 +18,7 @@ pub mod manifest;
 pub mod platform;
 pub mod stage;
 
-pub use declaration::{BinarySpec, Declaration, PlatformSpec, Role, DECLARATION_PATH};
+pub use declaration::{BinarySpec, Declaration, Destination, PlatformSpec, Role, DECLARATION_PATH};
 pub use platform::Platform;
 
 /// Name of the generated staging manifest inside each plugin `bin/` directory.

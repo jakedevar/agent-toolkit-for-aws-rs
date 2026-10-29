@@ -9,7 +9,7 @@
     "stage-skill": "node scripts/stage-skill.mjs",
     "test": "npm run build && npm run stage-skill && python3 -m unittest discover -s test -p 'test_*.py' && node --test test/*.test.mjs",
     "clean": "rm -rf dist",
-    "prepack": "npm run build && npm run stage-skill"
+    "prepack": "plugin-stage verify-package --package-root . --complete && npm run build && npm run stage-skill"
   },
   "dependencies": {
     "typebox": "1.1.39"
