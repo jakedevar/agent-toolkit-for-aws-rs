@@ -1226,3 +1226,8 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 23:46Z: S6+B2 LANDED (6b036cfa, landed_sha d4d7b69a9adb4ccff7ac385c11013cba37ab63ad). #5462 auto-closed; CLOSED #5443 #5483 #5474 #5475 #5487. #4410 open (S7 cutover now unblocked); #4411 open (B3 queued, B4 needs #5158, B5 needs S7).
   #5360 merge-only -> Claude Sonnet high 0830cd5f (continue_from 27f4dc18), queued for a slot. Then check and enqueue issue 5360.
   NEXT free slot: x402 S7 cutover (file it from docs/migration/x402-payments-design.md S7 row).
+- 23:48Z: #5158 (dc2bb4e7) DONE at e7ab29701755d31f54c8c5a109b6c6d46fc58922: recipe openclaw-node-test (make; offline cache outside the repo checked against the lock's sha512; unshare --net; Python shimmed; exit 3 without the cache / exit 4 without a namespace). 20/20 node tests (460d9182); fail-closed shown (107eba6c). PM reviewed the script and ACCEPTED it, no separate review (test tooling, no network exposure added).
+  Check refused only on commit_mismatch (rolling moved); scoped 6518e7b3 green, merges cleanly. ENQUEUED seq 3060 (c3551d0b, issue 5158). Operator to-do cf540992 (fill the npm cache on other hosts, P4).
+  Kaizen filed by the worker: #5518, #5519 (harness:true filing refused agent_create_issue_harness_project_unresolved).
+  Workers: fe94684e docgraph S3, 6be15885 S2 review, 4d40e01a #5514, 0830cd5f #5360 merge (taking the freed slot). Queue: 3057 B3, 3058 #5504, 3060 #5158.
+  After #5158 + B3 land: B4 is unblocked once B2+B3+#5158 are all on rolling (B2 already landed).
