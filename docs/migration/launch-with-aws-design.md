@@ -1,6 +1,7 @@
 # Launch with AWS: Rust port design and boundary pre-review (#4382, phase 1)
 
-Status: design, revision 1. No code changes. Programme #4369, slice key `launch`, wave 2,
+Status: design, revision 2 (pre-review #5038 at `87a5543` answered; table "Pre-review r1
+resolutions" below). No code changes. Programme #4369, slice key `launch`, wave 2,
 dependency #4379 (aws-core boundaries, integrated). AC1 of #4382 requires that the OAuth callback
 and archive boundaries are reviewed **before** implementation; sections 3-6 are the material for
 that pre-review and every requirement there has an ID (`R-...`) and a test (`T-...`) so a reviewer
@@ -30,7 +31,35 @@ Evidence base, all read and never executed (no Python, network or AWS call was r
 - the botocore `sso-oidc` 2019-06-10 service model installed on the build host (botocore
   1.43.108, `botocore/data/sso-oidc/2019-06-10/service-2.json`, read with `jq` as data): it has
   `RegisterClient`, `CreateToken`, `CreateTokenWithIAM` and `StartDeviceAuthorization`, and **no**
-  `RevokeToken` (relevant to `sign-out`, section 2.4).
+  `RevokeToken` (relevant to `sign-out`, section 2.4);
+- revision 2 only: the #5017 (#4413 S1) commit `be0a06df33a2985e96af3444f9a10e56e1efc668`
+  (not yet on rolling at `87a5543`), for `toolkit_aws::stream` (`StreamingTransport`,
+  `ResponseStream`, `StreamLimits`, `ChunkLimiter`, `StreamError`), `SdkTransport`'s
+  `StreamingTransport` implementation and `toolkit_aws::testing::FakeStreamingTransport`, and for
+  its pin `rustix = "=1.1.5"` (a `cfg(unix)` dependency of `toolkit-aws` behind the `sdk`
+  feature). The `rustix` 1.1.5 sources in the local registry were read for `openat`, `statat`,
+  `fstat`, `mkdirat`, `unlinkat`, `Dir` and `renameat_with` (`cfg(any(apple, linux_kernel))`);
+- revision 2 only: the PM rulings on #4382 (sequence 2, and the sequence-3 amendment putting a
+  strict ZIP64 subset in scope for writer and reader) and the ten #5038 findings #5039-#5047, #5051.
+
+## Pre-review r1 resolutions
+
+Pre-review #5038 (Codex, CHANGES_REQUESTED at `87a5543`) filed ten findings. Each is closed by a
+requirement in this revision and by offline tests named here; section 7.2 places the tests in
+slices, section 9 records the resulting divergences and residuals.
+
+| Finding | Requirement (section) | Offline tests |
+| --- | --- | --- |
+| #5039 P1 post-open checks cannot stop a FIFO hang or symlink disclosure | R-AR-OPEN (5): descriptor-relative walk from a held root fd, `openat(O_NOFOLLOW \| O_NONBLOCK \| O_NOCTTY)` on every component, `fstat` type and `(dev, ino)` identity on the opened handle before any read, read bounded by the walked size; Unix only, other targets refused (D16) | T-AR-OPEN-1..9 (injected swap to FIFO, same-size outside symlink, symlinked ancestor, directory swapped after listing, file grown or shrunk, FIFO and socket present at walk time, ordinary tree, root symlink parity, non-Unix platform refusal; every swap case asserts zero upload requests) |
+| #5040 P1 overlay can install `.git` control files | R-AR-VCS (5): VCS denylist on normalised components (NFC, case fold, HFS ignorables, trailing dot/space, `:` stream suffix, `GIT~1`) refuses the snapshot before extraction; R-AR-APPLY (5): new `launch apply-snapshot` replaces `rsync -a`, re-walks the tree with the same denylist, never writes through a link, refuses before the first write | T-AR-VCS-1..8, T-APPLY-1..10 |
+| #5041 P2 per-read timeouts do not bound the callback lifetime | R-CB-TIME (3): monotonic flow deadline F, per-connection head and write deadlines, every blocking call capped by the remaining time, exchange grace to a fixed cutoff T = F + 60 s, commit gate and watchdog so no session write after T, terminal status kept for `auth-wait` | T-CB-TIME-1..8 |
+| #5042 P2 accept cap lets unauthenticated traffic cancel sign-in | R-CB-LOAD (3): no traffic counter of any kind ends the flow; bounded slots (16), per-slot buffers and deadlines; only a state-matching callback, the deadline or helper failure are terminal; residual R-CB-DOS (delay, never abort) | T-CB-LOAD-1..5 |
+| #5043 P2 ZIP framing and exact consumption unspecified | R-ZIP-FRAME (5): checked u64 arithmetic, unique EOCD, exact central count and span, byte-contiguous layout, flag/version/method allowlists, extra-field framing, local/central and data-descriptor consistency, exact stored/deflate consumption with a terminal decoder state, directory syntax and mode reconciliation | T-ZIP-FRAME-1..34 (invariant table in R-ZIP-FRAME) |
+| #5044 P2 caps need a bounded transport seam | R-API-BODY (6): every network body read goes through #5017 S1 `StreamingTransport` (`be0a06df`) and a launch `BoundedBody` collector with a per-operation cap, Content-Length pre-check, cumulative count, lifetime deadline and cancellation by drop; `Transport::send` is never used by the slice | T-BODY-1..10 |
+| #5045 P2 error code can echo an opaque bearer token | R-API-CODE (6): codes allowlisted per service (model exceptions plus a fixed AWS protocol list); the printed code is our constant, unknown → `UnrecognizedError`; request id and service message never passed; a final known-secret scrub replaces any message containing a live secret | T-CODE-1..8 |
+| #5046 P2 ZIP64 versus 100 000-entry upload parity | R-ZIP-FRAME ZIP64 rules per the PM amendment (seq 3): strict ZIP64 in writer and both reader profiles; the writer emits the ZIP64 EOCD record and locator only at 65 535 entries or more (a classic count field equal to `0xFFFF` is always a sentinel); the 100 000 limit is unchanged | T-ZIP-64-1..10 |
+| #5047 P1 staging path replaceable through a writable parent | R-AR-STAGE (5): parent opened once and held, parent ownership/permission policy (refuse group/other-writable without sticky), all creation `mkdirat`/`openat(O_EXCL \| O_NOFOLLOW)` relative to held fds, identity checks, publication by `renameat_with(RENAME_NOREPLACE)` of the held staging tree with before/after identity checks, fd-relative cleanup | T-STAGE-1..9 |
+| #5051 P2 DeleteLaunch 204 | R-API-OPS (6): per-operation status and body table from the embedded model; `DeleteLaunch` 2xx with an empty body is success and prints the existing JSON; presigned PUT success never parses a body | T-OPS-1..7 |
 
 ## 1. Inventory: entry points, arguments, outputs
 
@@ -269,7 +298,8 @@ without sockets) and `launch/flow.rs` (process lifecycle).
 
 ### R-CB-REQ. Request handling
 
-- Each accepted connection gets a 5 s read timeout and a 5 s write timeout; the server reads at
+- Each accepted connection gets an absolute head deadline and an absolute write deadline
+  (R-CB-TIME); the server reads at
   most 8 KiB of request head (up to the first `\r\n\r\n`), never a body. Over the cap, a malformed
   request line, a non-`GET` method, or a non-`HTTP/1.x` version → `400` (or `405` for a method),
   `Connection: close`, and the connection does not affect the flow.
@@ -281,9 +311,34 @@ without sockets) and `launch/flow.rs` (process lifecycle).
   invalid UTF-8 → `400`). Parameters other than `code`, `state`, `error`, `error_description`,
   `error_uri`, `iss` are ignored. A **repeated** `code`, `state` or `error` → `400`, ignored
   (Python took the first).
-- Connections are handled one at a time on the child's single thread; an accept cap of 256
-  connections per flow ends the flow as failed (`too_many_requests`) so a local flood cannot keep
-  the child spinning until the deadline.
+- Connections are served by the bounded slot loop of R-CB-LOAD. Revision 1's 256-connection cap
+  that ended the flow (`too_many_requests`) is **removed** (#5042): no count of connections or
+  requests ends the flow.
+
+### R-CB-LOAD. Bounded work without a traffic-driven terminal state (#5042)
+
+- The child's single thread runs one loop over a non-blocking `TcpListener` and at most
+  **16 connection slots** (`TcpStream::set_nonblocking(true)`). Each slot owns an 8 KiB head buffer,
+  a head deadline and, once a response is queued, a write deadline (R-CB-TIME). Memory is bounded
+  by 16 × (8 KiB + one fixed page of at most 1 KiB) whatever the traffic.
+- Each turn: accept every pending connection; a connection arriving while all 16 slots are busy is
+  closed at once (no bytes read, no response) and **not counted**. Then each slot makes whatever
+  non-blocking progress is available; a slot past its deadline is dropped (closed without a
+  response). When no slot made progress the loop sleeps 10 ms (`std::thread::sleep`), so an idle or
+  flooded listener costs at most about 100 wake-ups per second.
+- A slot is never kept beyond its head deadline (2 s from accept) plus its write deadline (2 s), so
+  a slot frees within 4 s; a peer must keep reconnecting to hold slots.
+- Terminal transitions, the complete list: a state-matching callback (`code` → exchange; `error` →
+  `authorization_denied`; invalid code → `invalid_code`), the flow deadline (`timed_out`), and a
+  local failure of the helper itself (bind, record write, exchange: `failed` with a fixed reason).
+  Malformed requests, wrong or missing state, wrong path or Host, slot exhaustion and resets are
+  answered or dropped and change **nothing** in the flow state. The status enum has no
+  `too_many_requests` member.
+- Residual R-CB-DOS (section 9): a local process that can connect to `127.0.0.1:<port>` can keep
+  the 16 slots busy and so delay the browser's callback, possibly until the deadline, which ends the
+  flow as `timed_out`. It cannot end the flow early, learn the code or state, or make the child use
+  more memory or CPU than the bounds above. The same local process could equally kill the user's
+  browser connection; no loopback design prevents that.
 
 ### R-CB-STATE. State and PKCE validation
 
@@ -293,7 +348,7 @@ without sockets) and `launch/flow.rs` (process lifecycle).
 - A request whose `state` is absent or wrong is answered `400` (fixed page) and **does not end the
   flow**, whether it carries `code` or `error` (Python: `error` ended the flow without any state
   check, and a wrong state with a code ended it; both let any web page that finds the port abort a
-  sign-in). Guessing a 256-bit state is infeasible, and the accept cap bounds the work.
+  sign-in). Guessing a 256-bit state is infeasible, and R-CB-LOAD bounds the work.
 - Only a request with the right state ends the flow: with `code` → success path; with `error` →
   failed (`authorization_denied`). The `error` value is kept only if it matches the RFC 6749
   `error` grammar (`%x20-21 / %x23-5B / %x5D-7E`) and is at most 64 characters, otherwise
@@ -314,32 +369,62 @@ without sockets) and `launch/flow.rs` (process lifecycle).
   response (the code is single-use at the IdP); a connect failure before any byte was sent may be
   retried by the shared `RetryPolicy`, as botocore did.
 
-### R-CB-TIME. Timeouts and lifetime
+### R-CB-TIME. Timeouts and lifetime (#5041)
 
-- The child computes one deadline at start: `now + 600 s` (`CALLBACK_TIMEOUT_SECS`); the accept
-  loop uses non-blocking accept with a 200 ms sleep (or `set_nonblocking` + poll) and stops at the
-  deadline. The deadline is written into the pending-flow record (R-CB-WAIT) so `auth-wait` uses the
-  same instant.
-- After the deadline the child marks the flow `timed_out`, removes its pending record and exits 1.
-  It never needs a signal from the parent.
+All deadlines in the child are **absolute monotonic instants** (`std::time::Instant`, read through
+the injected `Clock`), never per-call idle timeouts alone. Wall-clock equivalents are written to
+the pending record only for `auth-wait`.
+
+- **Flow deadline** `F = start + 600 s` (`CALLBACK_TIMEOUT_SECS`). The slot loop (R-CB-LOAD) stops
+  accepting and drops every slot at `F`. A callback is eligible only if its complete head was read
+  before `F`.
+- **Per-connection deadlines**: head deadline `min(accept + 2 s, F)`; write deadline
+  `min(response queued + 2 s, F + 2 s)`. Sockets are non-blocking, so no read or write can block;
+  a peer trickling one byte at a time is dropped at its head deadline however many bytes it sends
+  (the 8 KiB cap is a second, independent bound).
+- **Exchange cutoff** `T = F + 60 s`, fixed at start. Engineering decision: a callback accepted
+  before `F` gets a bounded grace period for the token exchange instead of being discarded, because
+  the IdP has already issued a single-use code and discarding it near the deadline forces a second
+  sign-in. The exchange runs with `Timeouts` connect/read set to `min(30 s, T − now)` on every
+  attempt, the shared `RetryPolicy` gives up when the next backoff would end after `T`, and no
+  attempt starts after `T`.
+- **Commit gate**: the session file is published by the atomic rename of R-TOK-MODE only after a
+  compare-and-swap of an `AtomicU8` from `Exchanging` to `Committing`, done only while
+  `now < T`. A **watchdog thread** started with the helper sleeps until `T + 2 s` and then swaps
+  `Exchanging`/`Listening` to `Aborted`, writes status `timed_out` to the pending record and calls
+  `std::process::exit(1)`; if it finds `Committing` it waits for the commit to finish (one
+  `rename`) and exits after it. Either the commit happened before the cutoff or no session is ever
+  written; a DNS lookup or TLS handshake that ignores its timeout cannot extend the helper's life
+  past `T + 2 s`.
+- **Terminal status kept**: after `succeeded`, `failed` (any reason) or `timed_out`
+  the child rewrites the pending record with the status and reason, releases its lock and exits;
+  it does **not** delete the record. `auth-wait` deletes it after reporting; `auth-start` deletes
+  records whose recorded cutoff is more than one hour old and whose lock is free.
+- The pending record carries `deadline` (wall-clock of `F`) and `cutoff` (wall-clock of `T`).
+  `auth-wait` polls until `cutoff + 5 s`; a terminal status wins whenever it appears; past that
+  instant with no terminal status it reports "Sign-in did not finish in time. Run auth-start
+  again." (the watchdog guarantees the helper is gone by then on a sane clock).
+- The child never needs a signal from the parent.
 
 ### R-CB-WAIT. Parent/child handshake without signalling a pid
 
 - `auth-start` creates `~/.launch-with-aws/pending/` (0700) and the child creates
-  `pending/<pid>.json` (0600: `{"pid", "port", "deadline", "status"}`, status one of `listening`,
-  `exchanging`, `succeeded`, `failed`, `timed_out`, plus a fixed `reason` code; never a secret) and
+  `pending/<pid>.json` (0600: `{"pid", "port", "deadline", "cutoff", "status"}`, status one of
+  `listening`, `exchanging`, `succeeded`, `failed`, `timed_out`, plus a fixed `reason` code; never a secret) and
   holds an exclusive lock on `pending/<pid>.lock` for its whole life (`std::fs::File::lock`, stable
   since Rust 1.89; the toolchain is 1.94.1).
 - `auth-wait <pid>` (positional kept for compatibility) reads `pending/<pid>.json`. Missing →
   `{"error": "No sign-in is in progress for pid <pid>. Run auth-start again."}`. Then it polls every
-  second until the recorded deadline: a valid session → `{authenticated:true, baseUrl}`; status
+  second until the recorded `cutoff` + 5 s (R-CB-TIME): a valid session →
+  `{authenticated:true, baseUrl}`; status
   `failed`/`timed_out` → a fixed message per reason; the lock can be taken (the child is gone)
   without a valid session → "Sign-in ended without completing authentication. Run auth-start
   again.".
 - `auth-wait` **never sends a signal**. The Python's `SIGTERM` to a bare pid could hit an unrelated
   process after pid reuse; in Rust it would also need `unsafe` (`libc::kill`), which the workspace
   forbids. The child's own deadline replaces it.
-- Stale records (lock free, status `listening`) are deleted by the next `auth-start`.
+- Stale records (lock free, cutoff more than one hour past) are deleted by the next `auth-start`
+  (R-CB-TIME); a record with a terminal status is otherwise kept for `auth-wait`.
 - Concurrent flows are allowed (one record per pid), as in the Python.
 
 ### R-CB-SPAWN. Child process hygiene
@@ -426,12 +511,14 @@ See Q4.
 - **Request side**: the bearer token goes only into the `authorization` header, which
   `toolkit_aws::transport::Headers` hides in `Debug` (`hides_header_value`). OIDC bodies are built
   as JSON and never logged; `HttpRequest` `Debug` prints the body length only.
-- **Response side**: OIDC errors surface only the error **code** (`x-amzn-ErrorType` or JSON
-  `error`, matched against the model's exception names, else `UnknownError`); the
-  `error_description`/`message` is dropped (it can echo submitted values). Launch API errors keep
-  the Python `ApiError` text: `"{METHOD} {sanitized path} failed ({status})[: {code}]"`, produced
-  by `toolkit_aws::error::ServiceError`, whose path is scrubbed before `<id>` rewriting; the
-  service message is never printed (parity).
+- **Response side**: OIDC and Launch API errors surface only an **allowlisted** error code
+  (R-API-CODE, #5045): the printed code is always one of our own constants, never bytes received;
+  the `error_description`/`message` and the request id are dropped (they can echo submitted
+  values). Launch API errors keep the Python `ApiError` text shape:
+  `"{METHOD} {sanitized path} failed ({status})[: {code}]"`, produced by
+  `toolkit_aws::error::ServiceError`, whose path is scrubbed before `<id>` rewriting; the service
+  message is never printed (parity). A final known-secret scrub (R-API-CODE) runs on every
+  rendered error and `list-launches` `errors` value.
 - **The presigned upload URL** (`uploadUrl`, a `SensitiveUrl`) appears in no output or error: a
   failed PUT reads "PUT (presigned S3 upload) failed ({status})" (parity), a transport failure
   "Could not upload the archive: {connect|timeout}" (fixed text). `HttpRequest` `Debug` uses
@@ -469,7 +556,8 @@ for tests.
 ### R-TOK-OIDC. OIDC endpoint
 
 - Fixed: `https://oidc.us-east-1.amazonaws.com` (`/client/register`, `/token`), sent through the
-  same `Transport` as the API with `NoSigner` (both operations are `authtype: none`). Authorize URL
+  same bounded request runner as the API (R-API-BODY, `StreamingTransport`, 64 KiB cap) with
+  `NoSigner` (both operations are `authtype: none`). Authorize URL
   `https://oidc.us-east-1.amazonaws.com/authorize` (parity: the Python ignored the registration's
   `authorizationEndpoint`).
 - `AWS_ENDPOINT_URL`, `AWS_ENDPOINT_URL_SSO_OIDC` and profile `endpoint_url` are **ignored** for
@@ -483,7 +571,8 @@ for tests.
 ## 5. Archive boundaries (AC1, AC2)
 
 Two directions: building the upload (parity port of `zip_local_repo`, inputs are the user's own
-files) and, if Q1 is accepted, extracting the migrated snapshot (new command, input is untrusted).
+files) and, Q1 being accepted, extracting the migrated snapshot and applying it (new commands,
+input is untrusted).
 Both share one ZIP reader with a strict policy.
 
 ### R-AR-SEL. Source selection (upload)
@@ -498,8 +587,58 @@ Both share one ZIP reader with a strict policy.
   (deterministic; the Python used filesystem order, which the server does not depend on).
 - A path that is not valid UTF-8 → `ArchiveError` ("Archive cannot include a file whose name is not
   valid UTF-8: <lossy shown_path>"); the Python failed with the generic message on surrogates.
-- Each opened file is re-checked after `open` (`File::metadata` must be a regular file, same size
-  as walked) so a file swapped for a FIFO between walk and read is refused, not read.
+- Every directory listing, metadata read and open below the root goes through R-AR-OPEN.
+  Revision 1's "re-check `File::metadata` after a pathname `open`" is withdrawn (#5039): a blocking
+  pathname open of a FIFO never returns, and a same-sized symlink or a symlinked ancestor passes a
+  leaf-only post-open check.
+
+### R-AR-OPEN. Race-resistant rooted traversal and open (#5039)
+
+Threat: another local user or process can write inside the source tree while `create-launch`
+reads it. The toolkit process itself is not compromised. Requirement: no read blocks on a special
+file, no byte from outside the tree selected at walk time is read, and any change seen during the
+walk fails the command before any upload request.
+
+- **Platform scope (bounded compatibility decision, D16).** The guarantee needs descriptor-relative
+  `openat` with `O_NOFOLLOW`, `O_NONBLOCK` and `fstat`, which safe `std` does not offer (and the
+  workspace forbids `unsafe`). It comes from `rustix` `=1.1.5` (`fs` feature; the version #5017 S1
+  already pins), compiled on `cfg(unix)` only. On any non-Unix target, `create-launch`,
+  `download-snapshot` and `apply-snapshot` fail closed before any network request with "This
+  command is not supported on this platform." (exit 1). No supported caller runs the toolkit on
+  Windows today: the workspace has no `cfg(windows)` code path.
+- **Root.** The caller's path is opened once with `openat(CWD, path, O_RDONLY | O_DIRECTORY |
+  O_CLOEXEC)`, following a symlink at the root (parity with `os.path.isdir`) and in the
+  caller-named ancestors. Its `fstat` identity `(st_dev, st_ino)` is recorded. Every later
+  operation is relative to this held descriptor or to descriptors opened from it; the path string
+  is never resolved again. Git (R-AR-GIT) still receives the path, but its output only selects
+  names; Git never supplies bytes for the archive.
+- **Directories.** A directory is listed with `rustix::fs::Dir::read_from(&dirfd)`. Each name is
+  classified with `statat(dirfd, name, AT_SYMLINK_NOFOLLOW)` (skip tables first, then type). A
+  subdirectory is entered with `openat(dirfd, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW |
+  O_CLOEXEC)`, then `fstat` on the new descriptor must report a directory with the same
+  `(st_dev, st_ino)` as the `statat` result. A symlink swapped in at any ancestor fails at its own
+  `openat` (`ELOOP` or `ENOTDIR`) because no component is ever resolved by path. Open directory
+  descriptors are a stack along the current path (depth ≤ 4096 / 2, bounded by the name-length rule
+  of R-AR-READ).
+- **Files.** A regular file selected at walk time is opened with `openat(dirfd, name, O_RDONLY |
+  O_NOFOLLOW | O_NONBLOCK | O_NOCTTY | O_CLOEXEC)`. `O_NONBLOCK` makes an open of a FIFO return at
+  once instead of waiting for a writer; `O_NOFOLLOW` makes a symlink leaf fail with `ELOOP`;
+  `O_NOCTTY` keeps a terminal device from becoming the controlling terminal. Before any read,
+  `fstat` on the handle must show `S_IFREG` and the walked `(st_dev, st_ino)`. A mismatch of type or
+  identity is not skipped silently: the command fails with "A file changed while the archive was
+  being built: <shown_path>. Re-run create-launch." and makes no request.
+- **Reads.** The descriptor becomes a `std::fs::File` (`From<OwnedFd>`). It is read up to
+  `min(walked size, 100 MiB) + 1` bytes; more bytes than the walked size, or fewer, is the same
+  "changed" error. The 100 MiB entry limit therefore cannot be bypassed by growing a file.
+- **Residual R-2** (section 9): a writer who swaps a walked regular file for a device node it
+  controls can cause one non-blocking, no-controlling-terminal `open` of that device before `fstat`
+  refuses it. Placing a device node in the tree needs `CAP_MKNOD` or a hard link to an existing
+  node on the same file system, so it is not available to an ordinary local user.
+- Hard links inside the tree are read like any regular file (parity); they are files the tree's
+  owner already linked.
+- **Race seam for tests.** The walker takes a `WalkHook` (no-op in production) called between
+  classification and open of each entry, and between listing and entering each directory. Tests use
+  it to swap entries on the real file system at exactly that point.
 
 ### R-AR-GIT. Git ignore rules
 
@@ -524,10 +663,17 @@ Both share one ZIP reader with a strict policy.
   limited to `0o100644`/`0o100755` (regular-file type, permission from the user-exec bit; never
   setuid/setgid/sticky or world-writable), DOS time from `mtime` clamped to 1980-01-01..2107
   (Python raised before 1980), CRC-32 (IEEE, table-driven, tested against the standard check value
-  `0xCBF43926`), ZIP64 records when the entry count exceeds 65 535 or an offset exceeds 4 GiB.
+  `0xCBF43926`). Layout: local header, data, next local header, with no data descriptors (flag
+  bit 3 never set), no gaps, then the central directory, then the EOCD, exactly the shape
+  R-ZIP-FRAME requires. ZIP64 (PM amendment, #5046): the writer emits a ZIP64 EOCD record and
+  locator **only** when the entry count is 65 535 or more (so a classic count of `0xFFFF` is never a
+  real count, which removes the sentinel ambiguity); the classic EOCD then carries `0xFFFF` in
+  both count fields and the real 32-bit central-directory size and offset (they always fit: the
+  archive is capped at 500 MiB). No per-entry ZIP64 extra field is ever written, because every
+  per-entry size and offset is below 500 MiB. The 100 000-entry upload limit is unchanged.
 - Limits are enforced **while building**, not after, with the Python's messages: entry count
-  100 000; per-entry uncompressed 100 MiB (checked from `metadata` before reading and again on the
-  bytes read); per-entry ratio 100:1 (after compressing that entry, compressed size > 0); total
+  100 000; per-entry uncompressed 100 MiB (checked from the walked `statat` size before
+  reading and on the bytes read); per-entry ratio 100:1 (after compressing that entry, compressed size > 0); total
   uncompressed 2 GiB; compressed archive 500 MiB (running). Memory is therefore bounded by the
   500 MiB archive plus one entry, as in the Python's success case, and a pathological tree fails
   early instead of after the whole archive is in memory.
@@ -536,77 +682,374 @@ Both share one ZIP reader with a strict policy.
 - `sanitize_root_name` is ported with Python's Unicode `\w` (alphanumeric per Unicode or `_`;
   parity fixtures for ASCII, Latin-1, CJK, combining marks and digits from other scripts).
 
-### R-AR-READ. The ZIP reader policy (shared)
+### R-AR-READ. The ZIP reader: profiles and entry policy (shared)
 
-Every check fails closed with a fixed `ArchiveError` that names the entry through `shown_value`:
+One reader, `launch/archive/zip_read.rs`, over an in-memory `&[u8]` of at most 500 MiB (the upload
+cap, and the download cap of R-AR-EXT). It runs R-ZIP-FRAME first and the entry policy below
+second. It has two profiles. Both accept the strict ZIP64 subset (PM amendment, #5046).
 
-- Locate the end-of-central-directory record in the last 65 557 bytes; exactly one EOCD signature
-  candidate whose comment length reaches the end of the data, else invalid. ZIP64 locator and record
-  honoured. Multi-disk archives → refused. Central directory must lie inside the data.
-- Entry count ≤ 100 000 (checked from the EOCD **before** reading entries), central-directory size
-  ≤ 64 MiB.
-- Per entry: compression method 0 (stored) or 8 (deflate) only; encrypted (flag bit 0 or strong
-  encryption bit 6) → refused; the local header at the recorded offset must exist, carry the same
-  name bytes, method and flags as the central record; the byte ranges `[local header, end of
-  data)` of all entries must not overlap and must lie before the central directory (blocks
-  overlapping-entry "quoted" zip bombs).
+- **Upload** (self-check of the writer's own bytes before the upload, as the Python's
+  `validate_archive_bytes`): framing, names, types, declared limits, single top-level directory.
+  The writer computed every CRC and size itself, so stored/deflate data is not decoded again in
+  production. The round-trip tests decode it with the Snapshot path.
+- **Snapshot** (hostile input from the AWS-hosted agent): framing, names, types, declared limits,
+  R-AR-VCS, then during extraction the exact decode of R-ZIP-FRAME step 8. No single-root rule (the
+  snapshot is a repository root).
+
+Every check fails closed with a fixed `ArchiveError`. Framing failures read "The archive is not a
+valid ZIP file (<reason>)." with `<reason>` one of the fixed codes of R-ZIP-FRAME. Entry failures
+name the entry through `shown_value`.
+
 - Names: UTF-8 (flag bit 11, or pure ASCII); non-UTF-8 CP437 names → refused. Refused: empty, NUL
   or other control characters, `\` anywhere, a leading `/`, a drive prefix (`[A-Za-z]:`), `.` or
   `..` segments, empty segments (`a//b`), a segment longer than 255 bytes, a name longer than
-  4096 bytes. On Windows targets additionally `:` and reserved device names (`CON`, `NUL`, `AUX`,
-  `PRN`, `COM1-9`, `LPT1-9`, any extension) and segments ending in `.` or space.
+  4096 bytes. **Directory syntax** (#5043): a directory entry's name ends in exactly one `/`.
+  Splitting on `/` then leaves one final empty string, which is the directory marker and not an
+  empty segment. Every other segment must be non-empty, so `a//` and `/` are refused. (Windows name
+  rules are not needed: the archive commands are Unix-only, D16.)
 - Duplicates: two entries whose names are equal after Unicode NFC normalisation and simple case
   folding (`unicode-normalization` is already a `toolkit-cli` dependency) → refused, on every
-  platform (case-insensitive and normalising file systems would otherwise merge them).
-- Type: when version-made-by is Unix (3), the `external_attr` high 16 bits: symlink (`S_IFLNK`),
-  character or block device, FIFO, socket → refused; a regular file or directory (or type 0) is
-  accepted. A name ending in `/` is a directory and must have size 0. ZIP has no hardlink entry
-  type; an Info-ZIP "UNIX extra field" or any extra field claiming a link target is ignored (it
-  never becomes a link because the extractor only ever creates regular files and directories).
-- Sizes (declared, from the central directory): per entry ≤ 100 MiB, ratio ≤ 100:1, running total
-  ≤ 2 GiB. While inflating (extraction only), the actual output is counted and must equal the
-  declared size exactly (stop reading at declared + 1 byte), and the CRC-32 must match.
+  platform (case-insensitive and normalising file systems would otherwise merge them). Directory
+  markers are removed before comparing, so `a` and `a/` collide. A file entry whose folded name is
+  a proper prefix-path of another entry (`a` and `a/b`) → refused (file/directory conflict).
+- Type and mode reconciliation (#5043): version-made-by host 3 (Unix) with non-zero type bits in
+  `external_attr >> 16`: `S_IFREG` or `S_IFDIR` only. Symlink (`S_IFLNK`), character or block
+  device, FIFO and socket → refused. `S_IFDIR` requires the trailing `/`, and a trailing `/`
+  requires `S_IFDIR`. Host 0 (MS-DOS) or zero type bits: the name decides. If the DOS directory
+  attribute (`external_attr & 0x10`) is set, the name must end in `/`. A directory entry has
+  uncompressed size 0 and CRC 0. ZIP has no hardlink entry type; link-like extra fields are
+  ignored, except the Info-ZIP Unicode Path field 0x7075, which R-ZIP-FRAME refuses. The extractor
+  only ever creates regular files and directories.
+- Declared limits, applied to the resolved central values (ZIP64 included) **before any entry
+  data is read**: per entry uncompressed ≤ 100 MiB; ratio: compressed size 0 requires
+  uncompressed 0, otherwise uncompressed ≤ 100 × compressed (Python's `> 100` refusal); running
+  total ≤ 2 GiB; entry count ≤ 100 000 (from the EOCD, R-ZIP-FRAME step 3). Because step 8 also
+  requires exact consumption of the compressed span, padding cannot inflate the compressed size
+  that the ratio uses.
+
+### R-ZIP-FRAME. Container framing for hostile input (#5043, #5046)
+
+`N` is the data length. All offsets and lengths are `u64`, and every sum uses `checked_add`
+(overflow → `bounds`). Every read is a bounds-checked slice of `data[a..b]` with `a ≤ b ≤ N`
+established first. No allocation is sized from a declared value before that value has passed its
+limit. Little-endian throughout. The result is a fixed list of entries whose byte ranges cover the
+data exactly.
+
+1. **EOCD.** `N ≥ 22`, else `eocd_missing`. Window: the last `min(N, 22 + 65 535)` bytes.
+   Candidates: every position `p` in the window with signature `0x06054b50` and
+   `p + 22 + comment_len == N`. Zero candidates → `eocd_missing`; more than one → `eocd_ambiguous`
+   (a forged EOCD inside a comment). The comment's bytes are not interpreted.
+2. **Classic fields and ZIP64.** Disk number and central-directory disk must be 0, and entries on
+   this disk must equal total entries, else `multi_disk`. ZIP64 is **required** exactly when a
+   classic field equals its sentinel (count `0xFFFF`, central size or offset `0xFFFFFFFF`), and is
+   **not consulted** otherwise. When required:
+   - the ZIP64 locator (`0x07064b50`, 20 bytes) must start exactly at `p − 20`; its disk-of-record
+     field must be 0 and its total-disks field 1 (else `multi_disk`);
+   - the ZIP64 EOCD record must start at the locator's offset `q`, carry signature `0x06064b50`
+     and size-of-record exactly 44 (no extensible data), with version needed ≤ 45, disk fields 0,
+     and entries-on-disk equal to total entries. It must end exactly at the locator
+     (`q + 56 == p − 20`);
+   - per field, **sentinel iff out of range** (PM rule): if the ZIP64 value does not fit the
+     classic width (count ≥ `0xFFFF`, size or offset ≥ `0xFFFFFFFF`), the classic field must be
+     the sentinel. Otherwise the classic field must equal the ZIP64 value. Any other combination,
+     a missing or misplaced locator, or a wrong record → `zip64_inconsistent`.
+   The effective values (`count`, `cd_size`, `cd_offset`) come from ZIP64 when it is used,
+   otherwise from the classic EOCD. `cd_end` is the start of the ZIP64 record when ZIP64 is used,
+   otherwise `p`.
+3. **Limits before parsing** (no central record is read yet): `1 ≤ count ≤ 100 000` (else
+   `empty` or the Python entry-count message); `cd_size ≤ 64 MiB`; `cd_size ≥ 46 × count`;
+   `cd_offset + cd_size == cd_end` **exactly** (no gap and no overlap between the central directory
+   and the EOCD structures; else `layout`). These apply to the ZIP64 values when ZIP64 is used.
+4. **Central directory: exact count and span.** The cursor starts at `cd_offset`. For `i` in
+   `0..count`: `cursor + 46 ≤ cd_end` and signature `0x02014b50` (else `cd_record`); the record
+   length `46 + n + m + k` (name, extra and comment lengths) must end at or before `cd_end` (else
+   `cd_record`). After exactly `count` records the cursor must equal `cd_end` (else `cd_count`):
+   neither fewer records than declared nor trailing bytes. Per record:
+   - version made by: host byte 0 (MS-DOS) or 3 (Unix), else `version`; version needed ≤ 45, else
+     `version` (widened only from live-run evidence, Q19-style).
+   - general-purpose flags: **allowlist** bit 1 and bit 2 (deflate options, method 8 only), bit 3
+     (data descriptor, step 6) and bit 11 (UTF-8). Any other bit set → `flags`. That covers
+     encryption (bit 0), enhanced deflate (bit 4), patched data (bit 5), strong encryption (bit 6),
+     the masked central directory (bit 13) and the reserved bits.
+   - method 0 (stored) or 8 (deflate), else `method`. Stored requires compressed size equal to
+     uncompressed size (`stored_size`).
+   - disk number start must be 0 (a `0xFFFF` disk sentinel is refused: single disk only,
+     `multi_disk`).
+   - the modification time and date, internal attributes and file comment are not interpreted (the
+     comment only counts toward the record length).
+5. **Extra fields** (central and local, #5043). The `m`-byte region must parse exactly into
+   `(id: u16, len: u16, data[len])` items. A header must fit (a 1-3 byte remainder → `extra_field`),
+   each `data` must end inside the region, and the items must consume it exactly. Each id at most
+   once per region. Id `0x7075` (Info-ZIP Unicode Path: a second, competing name) → `extra_field`.
+   Other ids are skipped uninterpreted, except ZIP64 `0x0001`:
+   - **central ZIP64 extra**, present **iff** at least one of uncompressed size, compressed size or
+     local-header offset is `0xFFFFFFFF`. It holds exactly one 8-byte value per sentinel field, in
+     the order uncompressed, compressed, offset (length `8 × sentinels`), and nothing else (no disk
+     field). A ZIP64 extra without a sentinel, a sentinel without the extra, or a wrong length →
+     `zip64_extra`. The resolved values then go through every limit;
+   - **local ZIP64 extra**, present **iff** both local size fields are `0xFFFFFFFF`, length exactly
+     16 (uncompressed, compressed); it never carries an offset.
+6. **Local header and data descriptor.** Resolved offset `o`: `o + 30 ≤ cd_offset` and signature
+   `0x04034b50`, else `local_header`. Name length and bytes, method and flags must equal the central
+   record (else `local_mismatch`); local version needed ≤ 45; the local extra region is parsed by
+   step 5 (its length may differ from the central one). Data starts at
+   `d = o + 30 + n_local + m_local` and spans `[d, d + compressed)`.
+   - Bit 3 clear: local CRC, compressed and uncompressed sizes (ZIP64-resolved) equal the central
+     values, else `local_mismatch`.
+   - Bit 3 set (data descriptor, accepted and fully validated): local CRC and both sizes must be 0,
+     else `descriptor`. The descriptor sits at `d + compressed`, must start with the signature
+     `0x08074b50` (the unsigned form is refused, removing the ambiguity), then CRC-32, then the two
+     sizes: 8 bytes each **iff** the central record carries ZIP64 sizes, else 4 bytes each.
+     Descriptor values must equal the central values (`descriptor`). The descriptor belongs to the
+     entry's byte range.
+   - The entry's range is `[o, end)`, `end = d + compressed (+ 16 or 24 descriptor bytes)`.
+7. **Exact layout, no overlap** (#5043). The entries sorted by `o` must tile the data before the
+   central directory exactly: the first `o == 0`, each `end` equals the next entry's `o`, the last
+   `end == cd_offset`. A gap (prepended stub, hidden bytes, `layout`) or an overlap (two records
+   sharing bytes, the "quoted" overlap bomb, `overlap`) is refused. With steps 3 and 4, every byte
+   of the input belongs to exactly one structure.
+8. **Data: exact consumption** (Snapshot extraction; tests also run it on writer output).
+   - Stored: the span is the content; length equals the uncompressed size (step 4).
+   - Deflate: `miniz_oxide::inflate::core::decompress` on a `DecompressorOxide`, raw deflate (no
+     zlib header flag), **without** `TINFL_FLAG_HAS_MORE_INPUT`, with input exactly the span and a
+     64 KiB wrapping output buffer drained to the sink. It must end in `TINFLStatus::Done` with
+     total consumed input equal to the compressed size. `Done` with input left (a stream that ends
+     early and is followed by padding) → `trailing_data`. Input exhausted without `Done`
+     (`NeedsMoreInput`, `FailedCannotMakeProgress`) → `truncated_stream`; any other failure →
+     `deflate`.
+   - Output is counted as it is produced. The sink accepts at most the declared uncompressed size,
+     and the first byte beyond it stops decoding (`size_mismatch`); fewer bytes at `Done` is also
+     `size_mismatch`. CRC-32 over the output must equal the central CRC (`crc_mismatch`).
+   - Directory entries: uncompressed size 0, CRC 0; stored with compressed size 0, or deflate whose
+     exact decode yields 0 bytes.
+
+Invariant → test (all fixtures are byte-built in the test; the "no record read" checks use a reader
+instrumented with a read counter):
+
+| Invariant | Test |
+| --- | --- |
+| `N < 22`; no EOCD in the window; EOCD farther than 65 557 bytes from the end | T-ZIP-FRAME-1, 2 |
+| two EOCD candidates ending at `N` (forged one in the comment) | T-ZIP-FRAME-3 |
+| comment length one short / one long | T-ZIP-FRAME-4 |
+| non-zero disk fields; entries-on-disk ≠ total | T-ZIP-FRAME-5 |
+| count 0 | T-ZIP-FRAME-6 |
+| count 100 001 refused with zero central records read | T-ZIP-FRAME-7 |
+| `cd_size` > 64 MiB; `cd_size < 46 × count` (refused before parse) | T-ZIP-FRAME-8 |
+| `cd_offset + cd_size` overflows or passes `N` (`0xFFFFFFFF` values) | T-ZIP-FRAME-9 |
+| gap bytes between the central directory and the EOCD | T-ZIP-FRAME-10 |
+| declared count larger than the records present | T-ZIP-FRAME-11 |
+| declared count smaller (a trailing extra record) | T-ZIP-FRAME-12 |
+| name, extra or comment length overrunning `cd_end` (three cases) | T-ZIP-FRAME-13 |
+| wrong signature in the middle of the central directory | T-ZIP-FRAME-14 |
+| host byte other than 0/3; version needed > 45 | T-ZIP-FRAME-15 |
+| each refused flag bit (0, 4, 5, 6, 12, 13, reserved); bits 1/2 on a stored entry | T-ZIP-FRAME-16 |
+| method other than 0/8 | T-ZIP-FRAME-17 |
+| extra region: 1-3 byte remainder, item overrun, duplicate id, `0x7075` present | T-ZIP-FRAME-18 |
+| central ZIP64 extra without sentinel, sentinel without extra, wrong length, disk sentinel | T-ZIP-FRAME-19 |
+| local offset past `cd_offset`; `o + 30` overflow | T-ZIP-FRAME-20 |
+| wrong local signature | T-ZIP-FRAME-21 |
+| local name, method or flags differ from central | T-ZIP-FRAME-22 |
+| local CRC, compressed or uncompressed size differ (bit 3 clear) | T-ZIP-FRAME-23 |
+| local extra framing invalid; local ZIP64 extra with an offset or wrong length | T-ZIP-FRAME-24 |
+| descriptor: non-zero local fields, missing signature, values ≠ central, 8-byte sizes on a non-ZIP64 entry; a valid descriptor accepted with its bytes in the range | T-ZIP-FRAME-25 |
+| first entry not at offset 0 (prepended stub) | T-ZIP-FRAME-26 |
+| gap between an entry's end and the next local header | T-ZIP-FRAME-27 |
+| two central records sharing one local entry; partially overlapping ranges | T-ZIP-FRAME-28 |
+| last entry ending before `cd_offset` | T-ZIP-FRAME-29 |
+| stored compressed ≠ uncompressed | T-ZIP-FRAME-30 |
+| deflate ends early, padding fills the declared compressed size (ratio would pass) | T-ZIP-FRAME-31 |
+| deflate truncated | T-ZIP-FRAME-32 |
+| output one byte longer (stopped at declared + 1) / shorter than declared; CRC mismatch | T-ZIP-FRAME-33 |
+| directory syntax and modes: `a/` stored and deflate-empty accepted, `a//`, `/`, size > 0, `S_IFDIR` without `/`, `S_IFREG` with `/`, DOS 0x10 without `/`, `a` + `a/b`, `a` + `a/`; valid stored and deflate archives still extract | T-ZIP-FRAME-34 |
+
+ZIP64 (PM amendment seq 3, #5046):
+
+| Case | Test |
+| --- | --- |
+| writer at 65 534 entries: no ZIP64 records; reader accepts | T-ZIP-64-1 |
+| writer at 65 535: ZIP64 record and locator, classic count `0xFFFF`, real size/offset; reader accepts | T-ZIP-64-2 |
+| writer at 65 536 and at 100 000: round trip through both profiles | T-ZIP-64-3 |
+| 100 001 entries: the Python entry-count message while building, no archive emitted | T-ZIP-64-4 |
+| classic count `0xFFFF` without a locator | T-ZIP-64-5 |
+| locator not at `p − 20`; record not ending at the locator; record size ≠ 44; version needed > 45 | T-ZIP-64-6 |
+| sentinel where the ZIP64 value fits; real classic value differing from the ZIP64 value | T-ZIP-64-7 |
+| locator disk ≠ 0 or total disks ≠ 1; ZIP64 entries-on-disk ≠ total | T-ZIP-64-8 |
+| ZIP64 count 100 001 (zero records read); ZIP64 `cd_size` > 64 MiB; `u64::MAX` offset (checked arithmetic) | T-ZIP-64-9 |
+| a ZIP64 record and locator present with no classic sentinel (`layout`); a 70 000-entry ZIP64 snapshot fixture extracts | T-ZIP-64-10 |
+
+### R-AR-VCS. Version-control paths in snapshots (#5040)
+
+Product decision recorded here (from the #5038 review): a downloaded snapshot may **never** create
+or overwrite repository administrative metadata through the automatic path. A migration that
+really needs a metadata change goes through a separate, explicitly reviewed path outside this
+command. General source changes stay reviewable: they are never silently dropped. A snapshot
+carrying VCS metadata is refused as a whole, not filtered, so nothing disappears unseen.
+
+- **Denylist** (component names, at any depth, file or directory): `.git`, `.hg`, `.svn`, `.bzr`,
+  `_darcs`, `CVS`, `.jj`, `.pijul`, `.sl`, `.fslckout`, `_FOSSIL_`.
+- **Normalisation before comparing** (the aliases Git itself guards against in
+  `is_hfs_dotgit`/`is_ntfs_dotgit`): NFC; simple case folding; removal of the HFS+ ignorable code
+  points U+200C-U+200F, U+202A-U+202E, U+206A-U+206F, U+FEFF; truncation at the first `:` (NTFS
+  stream syntax `.git::$INDEX_ALLOCATION`); removal of trailing `.` and space. The folded component
+  also matches when it is an 8.3 short name `git~N`, `hg~N`, `svn~N` or `bzr~N` (`N` digits).
+- **Where it applies**: in R-AR-READ's Snapshot profile, before anything is created on disk, with
+  "The snapshot contains version-control metadata and was not extracted: <shown_value(name)>.",
+  and again independently in R-AR-APPLY's walk of the extracted tree. A validated extraction is not
+  approval to overwrite repository metadata.
+- **Not denied** (ordinary tracked content; Git runs nothing from them without configuration in
+  `.git/config`, which cannot be written; `.gitmodules` `update = !command` is refused by Git
+  itself): `.gitignore`, `.gitattributes`, `.gitmodules`, `.github/`, and names that only contain
+  `git` (`git/`, `my.git/`).
+- Tests T-AR-VCS-1..8: (1) `.git/config` with `core.fsmonitor = ./helper` plus `helper` and
+  `.git/hooks/post-checkout` → refused, nothing created at the destination; (2) nested `sub/.git`
+  as a file and as a directory; (3) case aliases `.GIT/config`, `.Git/hooks/x`; (4) HFS ignorable
+  `.g\u{200c}it/config`; (5) NTFS aliases `.git./x`, `.git /x`, `git~1/config`, `.git::$DATA/x`;
+  (6) `.hg/hgrc`, `.svn/x`, `.bzr/x`, `_darcs/x`, `CVS/Entries`, `.jj/x`; (7) the "not denied"
+  names extract normally; (8) a table test of the normaliser: every denylist entry × every alias
+  transformation.
 
 ### R-AR-EXT. Safe extraction (new `launch download-snapshot`, Q1)
 
-- `toolkit launch download-snapshot <launch-id> [--output DIR] --region R`:
-  1. `GetLaunch include=download_url`; no URL → the Python's "Download URL not available yet..."
-     message.
-  2. Download over the shared HTTPS `Transport`: https only, no userinfo, host allowlist
-     `.amazonaws.com` and `.api.aws` (Q19: confirm the real host in the operator's live run), the
-     public-address guard, no redirects (a 3xx is an error naming the status only), 300 s timeout,
-     body cap 500 MiB (declared `Content-Length` checked first, running count always). The URL is
-     never printed in an error.
-  3. The bytes go to a private temporary file (`create_new`, 0600) inside a fresh private staging
-     directory, never a fixed `/tmp` name.
-  4. Validate with R-AR-READ (no single-root requirement: the snapshot is a repository root).
-  5. Extract into the staging directory `<parent>/.launch-snapshot-<random>.partial/` created with
-     `create_dir` and mode 0700 on the same file system as the destination. Directories are created
-     one level at a time with `create_dir` (never `create_dir_all` through existing components);
-     files with `create_new` (O_EXCL), so a duplicate or pre-existing path fails instead of being
-     overwritten. The staging tree contains only what the extractor created, and it never creates a
-     symlink, so no component can redirect a later write (no traversal through links). Files 0644,
-     or 0755 when the entry's Unix mode has the owner-exec bit; directories 0755; no setuid,
-     setgid, sticky or world-writable bit, no ownership change, no timestamps restored.
-  6. Atomic placement: `rename(staging, destination)` after a check that the destination does not
-     exist. Default destination: a fresh private directory under `std::env::temp_dir()`
-     (`launch-snapshot-<id-safe>-<random>`), so the default never races with other users. With
-     `--output DIR`, `DIR` must not exist and its parent must exist; `--output -` is refused by the
-     #4780 router policy, `./-` is a literal path. Residual R-1: `rename` replaces an **empty**
-     directory created at `DIR` between the check and the rename on Linux (there is no
-     `RENAME_NOREPLACE` in `std`); an attacker needs write access to the parent, and the content
-     placed is the validated snapshot.
-  7. Any failure removes the staging directory with `std::fs::remove_dir_all` (symlink-safe since
-     Rust 1.58.1) and the temporary archive.
+- `toolkit launch download-snapshot <launch-id> [--output DIR] --region R` (Unix only, Linux and
+  macOS for the exclusive rename of R-AR-STAGE; elsewhere the platform message of R-AR-OPEN):
+  1. `--output` checks first, before any request: R-AR-STAGE opens and checks the parent and
+     refuses an existing destination name. Then `GetLaunch include=download_url`; no URL → the
+     Python's "Download URL not available yet..." message.
+  2. Download over the #5017 S1 `StreamingTransport` with the R-API-BODY collector: https only, no
+     userinfo, host allowlist `.amazonaws.com` and `.api.aws` (Q19), the public-address guard, no
+     redirects (a 3xx is an error naming the status only), a 300 s whole-download deadline, cap
+     500 MiB (declared `Content-Length` checked first, running count always). The URL is never
+     printed in an error.
+  3. The archive stays in memory under that cap (bounded like the upload archive). **No temporary
+     archive file exists**, so there is no `/tmp` name to race.
+  4. Full validation with the Snapshot profile: R-ZIP-FRAME steps 1-7, R-AR-READ entry policy and
+     R-AR-VCS. All of it completes **before** anything is created on disk.
+  5. Extraction into held-descriptor staging, then exclusive publication, per R-AR-STAGE; data
+     decoded per R-ZIP-FRAME step 8. Files 0644, or 0755 when the entry's Unix mode has the
+     owner-exec bit; directories 0755 inside a 0700 output root; no setuid, setgid, sticky or
+     world-writable bit, no ownership change, no timestamps restored.
+  6. Default destination: `launch-snapshot-<id-safe>-<random>` under `std::env::temp_dir()`, a
+     sticky, root-owned directory that passes R-AR-STAGE's policy. With `--output DIR`, the final
+     component of `DIR` must be a normal name (not empty, `.` or `..`) that does not exist; its
+     parent must exist. `--output -` is refused by the #4780 router policy; `./-` is a literal path.
+  7. Any failure cleans up through R-AR-STAGE's descriptor-relative cleanup; nothing appears at the
+     destination.
   8. Output `{"outputDir": "<path>", "files": N, "directories": M, "bytes": B, "region": R}`.
-- `SKILL.md` step 8A becomes this one command; step C keeps `rsync -a <outputDir>/ .` (now from a
-  private, link-free tree). The prose rewrite ships in the cutover slice.
+- `SKILL.md` step 8A becomes this one command, and step C becomes `toolkit launch apply-snapshot
+  <outputDir>` (R-AR-APPLY) instead of `rsync -a <outputDir>/ .`. The user-consent step before
+  applying and the `git status`/`git diff --stat` review after it are kept unchanged. The prose
+  rewrite ships in the cutover slice.
+
+### R-AR-STAGE. Held-descriptor staging and publication (#5047)
+
+Threat: another local user with write access to the destination's parent renames or replaces the
+staging directory or the destination name to redirect writes or publication. Requirement:
+nothing is written outside the staging tree that was created, nothing but that tree is
+published, and cleanup removes only what this process created.
+
+- **Parent, opened once.** The parent path is opened with `openat(CWD, parent, O_RDONLY |
+  O_DIRECTORY | O_CLOEXEC)`. That one open follows symlinks in the caller-named path (the approved
+  explicit-parent behaviour). Every later operation is relative to this held descriptor `P`.
+  Renaming or replacing an ancestor of `P` after that point changes nothing about where writes go.
+- **Parent policy** on `fstat(P)`, so that no other user can rename our entries in `P`: the owner
+  must be the effective uid (`rustix::process::geteuid`) or root; if the mode has a group- or
+  other-write bit, the sticky bit must be set. Anything else is refused before any request: "The
+  parent of the output directory can be modified by other users: <shown_path>. Choose a private
+  directory." (compatibility decision, D18: the Python used fixed `/tmp` names and had no
+  `--output`). `/tmp` (sticky, root-owned) and the user's own directories pass.
+- **Staging.** `S = .launch-snapshot-<16 hex>.partial`: `mkdirat(P, S, 0o700)`, then
+  `openat(P, S, O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)`. `fstat` must show a directory owned by the
+  euid with no group or other bits, and its identity `(dev, ino)` is recorded. Inside it,
+  `mkdirat(S, "tree", 0o700)` is opened and checked the same way. All entries go under `tree`.
+- **Creation inside the tree**, entries in name order (parents before children): each path is
+  walked from the held `tree` descriptor one component at a time with `openat(O_DIRECTORY |
+  O_NOFOLLOW)`. A missing directory is created with `mkdirat(parent, seg, 0o755)`, then opened
+  `O_NOFOLLOW` and checked (`fstat`: directory, euid owner, and the identity of the inode just
+  created). Files: `openat(parent, seg, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC,
+  mode)`, then `fchmod` to exactly 0644/0755 (the umask can only narrow the create mode). `EEXIST`
+  is a duplicate and fails. Since `S` is 0700 and owned by us, no other user can create, rename or
+  replace anything inside it. Since `P` passed the policy, no other user can rename `S`. Even so, no
+  write depends on either: every write uses held descriptors.
+- **Publication, exclusive and verified.** (1) `statat(P, S, AT_SYMLINK_NOFOLLOW)` must still show
+  the identity of `S`; (2) `renameat_with(tree_parent = S, "tree", P, final_name,
+  RenameFlags::NOREPLACE)` (Linux `renameat2`, macOS `renameatx_np(RENAME_EXCL)`). `EEXIST` or
+  `ENOTEMPTY` → "Output directory already exists: <shown_path>."; `EINVAL` (a file system without
+  exclusive rename) → "The output file system does not support an exclusive rename; choose another
+  --output."; (3) `statat(P, final_name, AT_SYMLINK_NOFOLLOW)` must show the `tree` identity, else
+  the command fails and reports that the result could not be verified; (4) `unlinkat(P, S,
+  REMOVEDIR)` after an identity check. A symlink can never be published as `outputDir`: the only
+  rename source is the `tree` entry inside our private `S`. This also removes revision 1's
+  residual R-1 (rename over a racing empty directory).
+- **Cleanup**, descriptor-relative only. The extractor records each entry it created (parent path
+  inside `tree`, name, identity). On failure it removes them deepest first with `unlinkat` relative
+  to re-opened `O_NOFOLLOW` parents inside `S`, then `tree` and `S` after identity checks. An entry
+  whose identity no longer matches is left alone and reported. `remove_dir_all` on a path is never
+  used.
+- **Race seam for tests.** An `ExtractHook` (no-op in production) runs before each creation and
+  before publication.
+- Tests T-STAGE-1..9: (1) private parent: success, `outputDir` 0700, entry modes exact, no
+  `.partial` left; (2) parent group- or other-writable without the sticky bit → refused before any
+  request (the transport fake records none); (3) sticky other-writable parent owned by the euid →
+  accepted; (4) policy function over injected `stat` values: another non-root owner refused, root
+  owner with sticky accepted; (5) hook: before the first creation, `S` is renamed away and replaced
+  by a symlink to an outside directory → nothing appears in the outside directory, nothing is
+  published, cleanup touches only identity-matched entries; (6) the same swap before the next file
+  in the middle of extraction; (7) hook: an ancestor of `P` is renamed and replaced by a symlink
+  after `P` was opened → every write lands in the original `P` inode, none at the symlink target;
+  (8) a directory created at the destination name just before publication → `NOREPLACE` refusal,
+  the intruding directory untouched, staging cleaned; (9) a caller-named parent path containing a
+  symlink is followed once and succeeds; `--output` with a final `.`, `..` or empty component is
+  refused.
+
+### R-AR-APPLY. Applying a snapshot to the repository (new `launch apply-snapshot`, #5040)
+
+`toolkit launch apply-snapshot <snapshot-dir> [--into DIR]` (default `--into .`; Unix only)
+replaces `rsync -a <outputDir>/ .`:
+
+- **Phase 1, plan; nothing is written.** `<snapshot-dir>` and `DIR` are opened as roots (R-AR-OPEN:
+  followed once at the caller-named path, held afterwards). The snapshot is walked with R-AR-OPEN's
+  descriptor-relative, no-follow machinery. Only directories and regular files are allowed.
+  Refused: a symlink, a special file, a non-UTF-8 name, an R-AR-READ name-rule violation, an
+  R-AR-VCS hit, more than 100 000 entries or more than 2 GiB in total. On the target side each
+  planned path is checked with `statat(AT_SYMLINK_NOFOLLOW)` along its components. An existing
+  symlink at any component, a non-directory where a directory is needed, a directory where a file
+  goes, or a special file → refused (D17: `rsync -a` would have replaced user symlinks). Any
+  refusal happens before the first write.
+- **Phase 2, write.** Missing directories: `mkdirat(parent, seg, 0o755)`, then opened `O_NOFOLLOW`
+  and checked. Files: a temporary `.<name>.launch-<8 hex>.tmp` created with `openat(O_CREAT |
+  O_EXCL | O_NOFOLLOW)` in the held target parent, `fchmod` 0644/0755 (owner-exec bit of the
+  source),
+  filled from the held source descriptor under R-AR-OPEN's read rules, `sync_all`, then
+  `renameat(parent, tmp, parent, name)`. That atomically replaces an existing regular file. If a
+  symlink appears there after phase 1, the rename replaces the link itself and never writes through
+  it. Target directories are entered only with `openat(O_DIRECTORY | O_NOFOLLOW)`, so a component
+  swapped for a symlink after planning fails the write instead of escaping.
+- Never deletes target files (parity: `rsync -a` without `--delete`). Existing directories keep
+  their modes and timestamps are not preserved (D17).
+- A failure in phase 2 stops at once, removes the current temporary file and reports "Applying the
+  snapshot stopped after N files: <reason>. Review the working tree with git status." The overlay is
+  on the migration branch that `SKILL.md` step C creates first, so it is reviewable and revertable
+  with Git, as a partial `rsync` was.
+- Output `{"applied": true, "files": N, "directories": M, "into": "<path>"}`.
+- Tests T-APPLY-1..10 (temporary repositories built with the `git` binary; no real user
+  repository): (1) normal snapshot: files added and replaced byte-exact, modes 0644/0755, nothing
+  deleted, exact output; (2) `.git/config` with `core.fsmonitor` plus a marker-writing helper
+  planted in the extracted tree → refused before any write; the repository's `.git/config` and
+  `.git/hooks` bytes unchanged; a following `git status` (test `git`, the repository's own config)
+  never creates the marker; (3) `.GIT/hooks/pre-commit` planted → refused; (4) a symlink planted in
+  the snapshot tree → refused, no write; (5) a FIFO planted → refused within a 2 s bound; (6) target
+  `docs -> <outside dir>` where the snapshot has `docs/x` → refused, outside untouched; (7) target
+  symlink at a file position → refused; (8) file/directory type conflicts → refused before writes;
+  (9) hook after planning swaps a target directory for a symlink → that write fails `ELOOP`, outside
+  untouched, temporary file removed; (10) an injected write failure halfway → stops, reports the
+  count, temporary file removed.
 
 ### R-AR-PERM. Permissions summary
 
-Upload: the archive records 0644/0755 only. Extraction: as R-AR-EXT step 5; the staging root and
-default destination are 0700. The process umask is not changed (no `umask` in safe `std`; explicit
-modes are set with `OpenOptionsExt::mode`/`DirBuilderExt::mode`, which the umask can only narrow).
+Upload: the archive records 0644/0755 only. Extraction: `outputDir` 0700, inside it directories
+0755 and files 0644/0755, all set exactly with `fchmod` on the held descriptor (R-AR-STAGE). Apply:
+new directories 0755, files 0644/0755 (R-AR-APPLY). The process umask is not changed (no `umask`
+in safe `std`). Create modes can only be narrowed by it, and `fchmod` then sets the exact mode.
 
 ## 6. API client failure handling
 
@@ -616,10 +1059,14 @@ modes are set with `OpenOptionsExt::mode`/`DirBuilderExt::mode`, which the umask
   `toolkit_aws::endpoint::validate_endpoint` with `EndpointPolicy::aws_public()` (stricter than the
   Python as recorded in `aws-core-contracts.md`: no userinfo, query or fragment; the wider
   non-public range table). DNS uses `SystemResolver`.
-- Requests through `toolkit_aws::client::ApiClient` with a `BearerSigner` (adds
-  `authorization: Bearer <token>`; token fetched once per command by `get_access_token`, so a
-  refresh happens at most once), `Timeouts` 120 s/120 s, the shared `RetryPolicy` default
-  (3 retries, throttling/5xx/connect/timeout; `Adaptive` label as documented).
+- Requests are built with the `toolkit_aws` request types (`HttpRequest`, `Headers`,
+  `percent_encode`) and a launch `BearerSigner` (adds `authorization: Bearer <token>`; the token is
+  fetched once per command by `get_access_token`, so a refresh happens at most once). They are
+  **sent only through #5017 S1 `StreamingTransport::open`** and collected by R-API-BODY. The
+  shared `RetryPolicy` default makes the retry decision and backoff (3 retries,
+  throttling/5xx/connect/timeout; `Adaptive` label as documented) inside a small launch runner
+  (`launch/http.rs`), because `ApiClient` sends through the collected `Transport::send`. Each
+  attempt's `Timeouts` are 120 s/120 s, capped by the remaining operation deadline (R-API-BODY).
 - Paths: `/api/uploads`, `/api/launches`, `/api/launches/{id}`, `/api/launches/{id}/start`; `{id}`
   is `toolkit_aws::transport::percent_encode`d (so `/` becomes `%2F`, as botocore's non-greedy
   label). `include` is sent as repeated `include=<value>` query members, values split on `,` and
@@ -630,19 +1077,157 @@ modes are set with `OpenOptionsExt::mode`/`DirBuilderExt::mode`, which the umask
   characters, name 1..128 characters (Python: generic message, and for `create-launch` only after
   the upload). `create-launch` also obtains the token **before** building the archive, so an
   expired session fails before minutes of zipping. Both are recorded divergences (D9).
-- Response bodies are capped at 64 MiB (Q12) and must be UTF-8 JSON objects; anything else is
-  `InvalidResponse` ("The Launch with AWS service returned an invalid response.").
+- Response status and body rules are **per operation** (R-API-OPS, #5051); every body is
+  collected under a per-operation cap before it is parsed (R-API-BODY, #5044).
 - Presigned PUT: the `uploadUrl` is validated (https, no userinfo, host ends with
   `.amazonaws.com`, public-address guard), sent as one `PUT` with `Content-Type: application/zip`,
-  300 s timeout, **no retry** (parity with `urllib`), no redirect.
+  a 300 s whole-request deadline, **no retry** (parity with `urllib`), no redirect. Its success body
+  is never read (R-API-OPS).
+
+### R-API-BODY. Bounded body collection before parsing (#5044)
+
+`Transport::send` returns a fully collected body (`toolkit-aws` `sdk.rs` collects a `ByteStream`
+with no byte bound), so a cap checked afterwards cannot bound memory. The slice therefore never
+calls `Transport::send` or `ApiClient` sends for network traffic. Every network body is read
+through `StreamingTransport::open(request, &StreamLimits)` from #5017 S1
+(`be0a06df33a2985e96af3444f9a10e56e1efc668`, `toolkit_aws::stream`). There, `ChunkLimiter`
+refuses the first frame that would pass `max_body_bytes` (`StreamError::TooLarge`, nothing past
+the cap is handed over) and each chunk is at most `max_chunk_bytes`. On top of that seam, a
+launch `BoundedBody` collector:
+
+- **Per-operation cap**, passed as `StreamLimits::new(cap, 64 KiB)` **at open time**, so the
+  limiter applies before any byte is collected:
+
+  | Body | Cap | Destination |
+  | --- | --- | --- |
+  | Launch API success (`GetLaunch`, `ListLaunches`, ...) | 64 MiB (Q12) | `Vec`, then JSON |
+  | Launch API error status | 64 KiB | `Vec`, only to read the error code (R-API-CODE) |
+  | OIDC `RegisterClient`/`CreateToken`, success or error | 64 KiB | `Vec`, then JSON |
+  | presigned PUT, any status | 0: the body is never read; the stream is dropped after the status | none |
+  | snapshot download (R-AR-EXT) | 500 MiB | `Vec` (the in-memory archive) |
+  | `DeleteLaunch` success | 0: never read (R-API-OPS) | none |
+
+- **Content-Length**: when the header parses as an integer greater than the cap, the stream is
+  dropped before the first `next_chunk` (`TooLarge`). A declared length within the cap is used only
+  to pre-allocate `min(length, 64 KiB)`. It is never trusted: if more bytes arrive than declared,
+  the collector stops at the first extra byte with `InvalidResponse` (the SDK transport also
+  enforces the framing; the collector does not rely on it). A malformed or duplicated
+  Content-Length is `InvalidResponse`.
+- **Cumulative count**: the collector keeps its own running total next to the limiter's and never
+  holds more than `cap` bytes plus one chunk of at most 64 KiB.
+- **Lifetime**: every operation has an absolute monotonic deadline (API 120 s per attempt and
+  360 s for all attempts, OIDC 30 s (inside R-CB-TIME's cutoff for the callback exchange), PUT
+  300 s, download 300 s). The collector checks the deadline before each `next_chunk`, and the
+  request's read timeout is set to `min(configured, remaining)`, so a trickling server is cut off
+  at the deadline plus at most one read timeout.
+- **Cancellation**: on `TooLarge`, deadline, excess bytes or any error, the `ResponseStream` is
+  dropped at once, which closes the connection (`SdkStream` owns the hyper body). No retry follows
+  a cap violation (it is not a transient condition).
+- **Default build**: without the `aws-sdk` feature the slice's `StreamingTransport` is an
+  `Unavailable` implementation that returns the Q20 message from `open`. There is no unbounded
+  fallback.
+- **Dependency**: production network use of L3-L6 waits until S1 is on rolling (Q20). The offline
+  tests need `StreamingTransport` and `FakeStreamingTransport` from the same commit, so L3 starts
+  after S1 is integrated (section 7.2).
+- Tests T-BODY-1..10: (1) a launch `GeneratingStream` test double that synthesises chunks lazily,
+  without end, and counts pulls; on an API success without Content-Length the collector stops at
+  cap + 1 with `TooLarge`, keeps ≤ cap + 64 KiB, pulls at most `cap / 64 KiB + 1` chunks and drops
+  the stream (the double records the drop); (2) a false small Content-Length (10) followed by more
+  bytes → `InvalidResponse` at byte 11, no further pull; (3) Content-Length above the cap → refused
+  with zero pulls; (4) exactly `cap` bytes → success (boundary); (5) a 500 status with an endless
+  body → stopped at 64 KiB, the code still taken from the header and allowlisted, retry decided
+  from the status only; (6) an endless OIDC `CreateToken` body → 64 KiB stop, flow `failed`
+  (`invalid_response`), no session written; (7) a PUT answered 200 with an endless body → success
+  with zero pulls, and answered 403 → fixed text with zero pulls; (8) an endless download, with the
+  cap injected small in the unit and the production constant asserted separately → stopped at cap
+  + 1, nothing on disk; (9) one byte per read timeout minus epsilon (fake clock) → stopped at the
+  operation deadline with the timeout error; (10) a source gate in the style of `r_log_gate`: no
+  file under `src/launch/` names `Transport::send`, `.send(` on a `Transport`, or `ApiClient`, and
+  the network constructors take `&dyn StreamingTransport`. None of these tests uses a prebuilt
+  oversized `Vec` as evidence; only the collector's retained bytes and pull counts are asserted.
+
+### R-API-OPS. Expected status and body per operation (#5051)
+
+From the embedded model (`http.responseCode`, `output`), with botocore's acceptance of any 2xx kept:
+
+| Operation | Modelled success | Success rule | Body on success |
+| --- | --- | --- | --- |
+| `CreateUploadUrl` | 201, `CreateUploadUrlOutput` | any 2xx | required JSON object, 64 MiB cap, shaped |
+| `CreateLaunch` | 201, `CreateLaunchOutput` | any 2xx | required JSON object |
+| `GetLaunch` | 200, `GetLaunchOutput` | any 2xx | required JSON object |
+| `ListLaunches` | 200, `ListLaunchesOutput` | any 2xx | required JSON object |
+| `StartLaunchExecution` | 202, `StartLaunchExecutionOutput` | any 2xx | required JSON object |
+| `DeleteLaunch` | 204, no output shape | any 2xx | **not read**, never parsed; stdout `{"deleted": true, "id": <redacted_value(id)>, "region": R}` exactly as the Python |
+| presigned S3 `PUT` | (outside the model) | any 2xx | **not read**; success as the Python |
+
+- For the JSON operations an empty, non-UTF-8, non-JSON or non-object body is `InvalidResponse`
+  ("The Launch with AWS service returned an invalid response."), with no retry.
+- 3xx on any operation is an error with the status (`... failed (307)` / `PUT (presigned S3
+  upload) failed (307)`). No redirect is followed (urllib does not redirect a `PUT` either).
+- ≥ 400: R-API-ERR with the allowlisted code. Retries follow the shared policy on the status alone.
+- Tests T-OPS-1..7: (1) `DeleteLaunch` 204 with an empty body → the exact Python JSON (indent 2),
+  exit 0, one request, no retry; (2) `DeleteLaunch` 200 with an arbitrary non-JSON body → the same
+  success, zero body pulls; (3) each JSON operation with an empty body, malformed JSON, a JSON array
+  → `InvalidResponse`, one request; (4) a non-modelled 2xx (200 for `CreateLaunch`) → success;
+  (5) a 3xx for an API operation → error naming the status, no second request; (6) a PUT 200 with
+  an empty body and with an XML body → success, zero pulls; a PUT 307 → the fixed PUT failure text;
+  (7) 4xx/5xx per operation → `ServiceError` text and hints, retried only for retryable statuses.
+
+### R-API-CODE. Error codes are allowlisted, never echoed (#5045)
+
+A server, or anything in the path, can put arbitrary text in `x-amzn-ErrorType` or the body's
+`__type`/`code`/`Code`/`errorCode` (and OIDC `error`), including an echoed bearer token, which
+generic pattern redaction cannot recognise. So no received code string is ever printed:
+
+- **Normalisation** of the candidate (header first, then the body keys in that order, from the
+  64 KiB error body of R-API-BODY): take the text after the last `#` and before the first `:`.
+  Compare it byte-exactly with the allowlist.
+- **Allowlists**: Launch API: the six model exceptions (`ConflictException`,
+  `InternalServerException`, `ResourceNotFoundException`, `ServiceUnavailableException`,
+  `ThrottlingException`, `ValidationException`) plus a fixed list of AWS protocol codes
+  (`AccessDeniedException`, `UnauthorizedException`, `UnrecognizedClientException`,
+  `ExpiredTokenException`, `ForbiddenException`, `BadRequestException`, `NotFoundException`,
+  `TooManyRequestsException`, `LimitExceededException`, `ServiceQuotaExceededException`,
+  `RequestTimeoutException`, `InternalFailure`, `ServiceUnavailable`). OIDC: the 14 `sso-oidc`
+  model exceptions (`AccessDeniedException`, `AuthorizationPendingException`,
+  `ExpiredTokenException`, `InternalServerException`, `InvalidClientException`,
+  `InvalidClientMetadataException`, `InvalidGrantException`, `InvalidRedirectUriException`,
+  `InvalidRequestException`, `InvalidRequestRegionException`, `InvalidScopeException`,
+  `SlowDownException`, `UnauthorizedClientException`, `UnsupportedGrantTypeException`) and the
+  RFC 6749 section 5.2 `error` values.
+- **What is printed**: the matching `&'static str` constant from the allowlist table, never the
+  received bytes. No match, or no code → `UnrecognizedError` (D15: the Python printed any code).
+  The constant is what goes into `ServiceError`'s `code`. The request id and the service message
+  are never passed to `ServiceError` (empty message, no request id), so neither can reach
+  `Display` or `Debug`, and nothing received is truncated by `snippet` and then printed.
+- **Retry classification** uses the status and the allowlisted constant only.
+- **Known-secret scrub** (second layer, R-TOK-RED): before any stderr write, any `errors[region]`
+  value, any pending-record `reason` and any `Debug` rendering of a launch error, the text is
+  checked for every live secret value of the command (access token, refresh token, client secret,
+  PKCE verifier, code, state; each at least 8 bytes). A hit replaces the whole message with the
+  generic "The operation failed. Re-run with logging enabled for details." This guards future
+  code, not the allowlist.
+- Tests T-CODE-1..8: (1) each seeded secret (`FAKE-ACCESS-…`, `FAKE-REFRESH-…`,
+  `FAKE-CLIENT-SECRET-…`, verifier, code, state; unlabeled) returned verbatim in
+  `x-amzn-ErrorType` → `UnrecognizedError`; the secret is absent from stdout, stderr, the pending
+  record and every `Debug`; (2) the same in each body key `__type`, `code`, `Code`, `errorCode` and
+  OIDC `error`; (3) decorated allowlisted codes (`com.amazon.launch#ResourceNotFoundException`,
+  `ResourceNotFoundException:http://internal/`) → `ResourceNotFoundException` and the 404 hint;
+  (4) `list-launches` with one region failing with a secret code → `errors[region]` holds
+  `UnrecognizedError`, no secret; (5) 120 bytes of allowlist-looking prefix followed by a secret
+  (the truncation case) → absent; (6) `x-amzn-RequestId` echoing a secret → absent; (7) an injected
+  internal error whose text contains the access token → replaced by the generic message;
+  (8) `Debug` of `ServiceError` and of every launch error type built from these inputs → no
+  secret.
 
 ### R-API-ERR. Error mapping (stderr `{"error": ...}`, exit 1)
 
 | Condition | Message |
 | --- | --- |
-| HTTP ≥ 400 | `ServiceError` text (`POST /api/launches/<id> failed (404): ResourceNotFoundException`) + the 401 or 404 hint exactly as section 1.3 |
+| HTTP ≥ 300 (R-API-OPS) | `ServiceError` text with the allowlisted code or `UnrecognizedError` (R-API-CODE), e.g. `POST /api/launches/<id> failed (404): ResourceNotFoundException`, + the 401 or 404 hint exactly as section 1.3 |
 | connect failure / timeout after retries | "Could not reach Launch with AWS in {region}." (Python: botocore text naming the URL, or the generic message) |
-| invalid response | as above |
+| invalid response, body over its cap, more bytes than Content-Length (R-API-BODY, R-API-OPS) | "The Launch with AWS service returned an invalid response." |
+| operation deadline passed while reading a body (R-API-BODY) | "Could not reach Launch with AWS in {region}." |
 | session missing/expired | "Session expired or not authenticated. Run auth-start to sign in." |
 | endpoint/issuer/region configuration | the Python `ConfigError` text with caller values through `shown_value` |
 | archive | the Python `ArchiveError` text (R-AR-*) |
@@ -674,20 +1259,24 @@ in L5).
 
 | Module | Contents |
 | --- | --- |
-| `launch/mod.rs` | `SLICE`, the 13 routes (`launch resolve-region`, `auth-start`, `auth-wait`, `auth-callback` (internal), `session-status`, `sign-out`, `create-launch`, `get-launch`, `list-launches`, `delete-launch`, `start-launch-execution`, `get-launch-status`, `get-launch-download-url`; plus `download-snapshot` if Q1), output and error rendering |
+| `launch/mod.rs` | `SLICE`, the 15 routes (`launch resolve-region`, `auth-start`, `auth-wait`, `auth-callback` (internal), `session-status`, `sign-out`, `create-launch`, `get-launch`, `list-launches`, `delete-launch`, `start-launch-execution`, `get-launch-status`, `get-launch-download-url`, `download-snapshot` (Q1, accepted), `apply-snapshot` (R-AR-APPLY, Q21)), output and error rendering |
 | `launch/config.rs` | constants, regions, region chain, AWS profile region reader, base/issuer URL validation |
 | `launch/state.rs` | state directory, private atomic writes, session and region files, pending-flow records and locks |
 | `launch/oidc.rs` | PKCE, state, `RegisterClient`, `CreateToken` (code, refresh), `get_access_token`, `session_status`, `sign_out` |
 | `launch/callback.rs` | request parser, validation, response pages (pure, no sockets) |
 | `launch/flow.rs` | `auth-start` spawn, `auth-callback` child loop, `auth-wait` |
-| `launch/api.rs` | `BearerSigner`, the six operations, presigned PUT, error mapping and hints |
+| `launch/http.rs` | request runner over `StreamingTransport`, `BoundedBody` collector, deadlines, retry loop over the shared `RetryPolicy` (R-API-BODY) |
+| `launch/api.rs` | `BearerSigner`, the six operations, per-operation status/body table, presigned PUT, error-code allowlists, known-secret scrub, error mapping and hints (R-API-OPS, R-API-CODE) |
 | `launch/shape.rs` | embedded-model response shaping |
-| `launch/archive/select.rs`, `git.rs`, `zip_write.rs`, `zip_read.rs`, `extract.rs`, `crc32.rs` | R-AR-* |
-| `launch/clock.rs` | `Clock`, `Random` seams (production: system time, `getrandom`) |
+| `launch/archive/fsops.rs` | the only `rustix` user: held-descriptor root/walk/open (R-AR-OPEN), staging, creation, exclusive publication and cleanup (R-AR-STAGE), apply writes (R-AR-APPLY), parent policy; `WalkHook`/`ExtractHook` seams |
+| `launch/archive/select.rs`, `git.rs`, `zip_write.rs`, `zip_read.rs` (R-ZIP-FRAME and the profiles), `vcs.rs` (R-AR-VCS), `extract.rs`, `apply.rs`, `crc32.rs` | R-AR-* |
+| `launch/clock.rs` | `Clock`, `Random`, `Exit` seams (production: monotonic and system time, `getrandom`, `process::exit`) |
 
-Seams for offline tests: `Transport` (`toolkit_aws::testing::MockTransport`), `HostResolver`
-(`FixedResolver`), `Env` (`MapEnv`), `Clock`, `Random` (seeded fake), state directory, `git`
-program path and a `Spawner` for the helper.
+Seams for offline tests: `StreamingTransport` (`toolkit_aws::testing::FakeStreamingTransport`
+from S1, plus the launch `GeneratingStream` double), `HostResolver` (`FixedResolver`), `Env`
+(`MapEnv`), `Clock`, `Random` (seeded fake), `Exit` (watchdog), the callback slot I/O (`SlotIo`,
+so trickling and blocked peers are scripted without real timing), state directory, `git` program
+path, a `Spawner` for the helper, and the `WalkHook`/`ExtractHook` race seams.
 
 Router facts the port must live with (recorded divergences D1-D4):
 
@@ -704,8 +1293,9 @@ Router facts the port must live with (recorded divergences D1-D4):
   (exit 2) instead of the Python's usage on stdout/exit 0 and stderr/exit 1.
 
 #4780 bare `-`: no launch parameter enters `STDIO_DASH` or `LITERAL_DASH`. `<dir>` (a path; `./-`
-works), `[name]` (Q11), launch ids, `include`, `<pid>`, `--region`, `--aws-mcp-url` and `--output`
-refuse `-` through the router; the `diag_contract` enumeration covers them automatically.
+works), `[name]` (Q11), launch ids, `include`, `<pid>`, `--region`, `--aws-mcp-url`, `--output`,
+`apply-snapshot`'s `<snapshot-dir>` and `--into` refuse `-` through the router; the `diag_contract`
+enumeration covers them automatically.
 
 #4751 inventory: add `("launch", Class::Recorded)` to `recorded_contract.rs` `INVENTORY` and import
 `toolkit_aws::recorded` for every response-member read (`optional_text`, `optional_object`,
@@ -740,16 +1330,28 @@ Each slice is one verified commit set: tests written first, then code, then the 
     root, non-repository with `.gitignore`, `core.fsmonitor` in `.git/config` pointing at a script
     that would create a marker file: the marker never appears; git missing via a non-existent
     program path; timeout via a fake `git` script that sleeps, killed at the limit in a test-only
-    shortened limit); T-AR-ZIP-1..8 (round trip through the reader, CRC check value, mode mapping,
-    pre-1980 mtime clamped, ZIP64 at 65 536 entries, each limit and its exact Python message,
-    `sanitize_root_name` parity table); T-AR-READ-1..20 (fixture archives built in the test from
-    bytes: traversal `../x`, `a/../../x`, absolute `/etc/x`, `\x`, `C:x`, `a\..\x`, NUL, control
-    characters, `.` segments, empty segments, overlong names, duplicates by case and by NFC,
-    symlink/FIFO/device modes, encrypted flag, unknown method, local/central name mismatch,
-    overlapping entries, declared-size and ratio bombs, entry-count bomb refused from the EOCD
-    before any entry is read, truncated and multi-EOCD archives).
-- **L3. OIDC and token lifecycle**
-  - Tests: T-OIDC-1..10 over `MockTransport` (exact `RegisterClient` and `CreateToken` request
+    shortened limit); T-AR-OPEN-1..9 (R-AR-OPEN, `WalkHook` swaps on the real file system, each
+    under a 2 s watchdog bound with the transport fake asserting zero requests: (1) selected file
+    → FIFO, (2) → same-sized symlink to an outside file, whose bytes then appear in no archive byte
+    and no message, (3) ancestor directory → symlink to an outside directory with the same names,
+    (4) directory replaced by another directory (identity mismatch), (5) file grown or shrunk
+    between walk and read, (6) FIFO and Unix socket present at walk time skipped without any open,
+    (7) ordinary tree byte-exact in name order, (8) root path that is a symlink followed (parity),
+    (9) the non-Unix dispatch returns the platform message (unit test on the platform switch));
+    T-AR-ZIP-1..8 (round trip through the reader, CRC check value, mode mapping,
+    pre-1980 mtime clamped, layout with no descriptors and no gaps, each limit and its exact Python
+    message, `sanitize_root_name` parity table); T-ZIP-64-1..10 (R-ZIP-FRAME ZIP64 table, upload
+    boundaries 65 534/65 535/65 536/100 000/100 001); T-AR-READ-1..20 (entry policy, fixture
+    archives built in the test from bytes: traversal `../x`, `a/../../x`, absolute `/etc/x`, `\x`,
+    `C:x`, `a\..\x`, NUL, control characters, `.` segments, empty segments, overlong names,
+    duplicates by case and by NFC, symlink/FIFO/device modes, declared-size and ratio bombs, upload
+    single-root rule, Snapshot profile without it); T-ZIP-FRAME-1..34 (the R-ZIP-FRAME invariant
+    table, including exact deflate consumption through `miniz_oxide`); T-AR-VCS-1..8 (R-AR-VCS).
+- **L3. OIDC and token lifecycle** (starts once #5017 S1 is on rolling: its `StreamingTransport`
+  and `FakeStreamingTransport` are the test seam)
+  - Tests: T-BODY-1..10 (R-API-BODY, `launch/http.rs`); T-CODE-1..8 (R-API-CODE; the OIDC half
+    here, the Launch API half re-run in L5); T-OIDC-1..10 over `FakeStreamingTransport` (exact
+    `RegisterClient` and `CreateToken` request
     bodies and paths; no `authorization` header; response missing tokens; client-lifetime cap;
     `expiresIn` absent/0/negative/huge; refresh keeps the old refresh token when none is returned;
     refresh failure → `SessionExpiredError` text; OIDC error bodies whose `error_description`
@@ -765,16 +1367,35 @@ Each slice is one verified commit set: tests written first, then code, then the 
     never stored or reflected, invalid code characters, constant-time comparison used (a counter in
     the comparison helper), fixed headers and exact `Content-Length`); T-CB-NET-1..8 on a real
     loopback listener (bound address is `127.0.0.1`, port non-zero; a second callback after success
-    is refused at TCP level; the accept cap; read timeout on a silent client; deadline expiry with a
+    is refused at TCP level; a silent client dropped at its head deadline; deadline expiry with a
     test clock; pending record states; lock held while alive and free after exit; stale record
-    cleanup); T-FLOW-1..8 at binary level using `CARGO_BIN_EXE_toolkit` (`auth-callback` with
+    cleanup); T-CB-TIME-1..8 (R-CB-TIME, injected `Clock`, `SlotIo` and `Exit`: (1) one byte every
+    1.9 s keeps no slot past its 2 s head deadline; (2) a valid head trickled over more than 2 s is
+    dropped and the flow stays `listening`; (3) a callback complete just before `F` is eligible and
+    one completing at `F` is not (`timed_out`); (4) a peer that never reads the page: the slot is
+    dropped at its write deadline and a state-matching callback's exchange still proceeds; (5) the
+    exchange through a fake transport whose attempts cross `T`: no attempt starts after `T`,
+    `timed_out`, no session file; (6) the exchange response arriving at `T` + ε: the commit gate
+    refuses, no session file; (7) the main thread blocked forever in the transport: the watchdog
+    writes `timed_out` and calls `Exit` at `T + 2 s`, and a commit in progress at that moment
+    completes first; (8) `auth-wait` reports a kept terminal record and deletes it, reports "did not
+    finish in time" after `cutoff + 5 s`, and `auth-start` removes records older than one hour);
+    T-CB-LOAD-1..5 (R-CB-LOAD: (1) 300 malformed plus 300 wrong-state requests (with `code` and with
+    `error`), then a state-matching callback → success; (2) 16 idle connections hold every slot, a
+    17th is closed unread and the callback is served after a slot frees; (3) a continuous flood
+    until `F` → `timed_out` and no other status; an exhaustive `match` shows the status enum has no
+    traffic-driven member; (4) instrumented bounds: never more than 16 slots or 8 KiB per buffer, and
+    the loop sleeps when idle; (5) closed-unread and malformed connections leave the flow state
+    byte-identical in the pending record); T-FLOW-1..8 at binary level using
+    `CARGO_BIN_EXE_toolkit` (`auth-callback` with
     valid stdin prints one port line and serves; empty, oversized, invalid stdin → exit 1 without
     binding; helper argv contains no secret (read from `/proc/<pid>/cmdline` on Linux, skipped
     elsewhere); `auth-wait` for an unknown pid; helper exit without session; timeout message;
     success when a session file appears; the exchange path in the default build ends `failed` with
     reason `transport_unavailable`).
 - **L5. API client, shaping and the commands**
-  - Tests: T-API-1..14 over `MockTransport` (paths, percent-encoded ids, repeated `include`,
+  - Tests: T-OPS-1..7 (R-API-OPS, `DeleteLaunch` 204 first); T-CODE-1..8 (Launch API half);
+    T-API-1..14 over `FakeStreamingTransport` (paths, percent-encoded ids, repeated `include`,
     bearer header, `clientToken` present and identical across a 503-then-201 retry, no retry of the
     presigned PUT, PUT URL validation refusals, PUT failure text without the URL, 401 and 404 hints
     with and without `LAUNCH_WITH_AWS_BASE_URL`, local id/name validation before any request,
@@ -787,21 +1408,26 @@ Each slice is one verified commit set: tests written first, then code, then the 
     T-CLI-1..6 (routes registered and documented, `every_slice_documents_its_commands`, usage
     re-pin, bare `-` refusals, missing-argument JSON, `#4751` inventory entry, #4941
     `diag_contract` cases).
-  - Docs: `docs/migration/launch-with-aws.md` (commands, divergences D1-D14, residuals), the
+  - Docs: `docs/migration/launch-with-aws.md` (commands, divergences D1-D18, residuals), the
     `docs/migration/README.md` row.
-- **L6. Snapshot download and extraction** (only if Q1 is accepted)
-  - Tests: T-EXT-1..14 (every R-AR-READ fixture refused **with nothing created** at the destination
-    and the staging directory removed; a valid snapshot lands atomically with the exact modes;
-    destination exists → refused before download; a parent that is a symlink is followed only at
-    the destination path the caller named, never inside the tree; size bomb stopped at declared + 1
-    byte; CRC mismatch; download: non-https, userinfo, disallowed host, 3xx, oversize
-    `Content-Length`, oversize body without `Content-Length`, error text without the URL).
+- **L6. Snapshot download, extraction and apply** (Q1 accepted)
+  - Tests: T-STAGE-1..9 (R-AR-STAGE); T-APPLY-1..10 (R-AR-APPLY); T-EXT-1..14 (every
+    T-ZIP-FRAME, T-ZIP-64, T-AR-READ and T-AR-VCS refusal run end to end through
+    `download-snapshot` **with nothing created** at the destination and no `.partial` left; a
+    valid snapshot lands atomically with the exact modes; destination exists → refused before
+    download; a failure in the middle of extraction (CRC on the last entry) → descriptor-relative
+    cleanup, nothing at the destination; size bomb stopped at declared + 1 byte; download:
+    non-https, userinfo, disallowed host, 3xx, oversize `Content-Length`, endless body without
+    `Content-Length` (R-API-BODY double), error text without the URL; no temporary archive file is
+    ever created).
 - **L7. Security review** at the exact SHA of L0-L6 by the opposite model family, checklist =
   sections 3-6 and the T- list (AC1 for the implementation; this document is the pre-review input).
 - **L8. Cutover** (with #4414/#4487/#4415 and after the operator's live run, section 9): rewrite
   `SKILL.md` invocation (`toolkit launch <command>`), the required-files list, the dependency line,
-  step 8; resync the `plugins/aws-core` mirror through `toolkit sync`; retire the six scripts and
-  their mirrors in the retirement slice once callers and tests are verified.
+  step 8 (8A `download-snapshot`, step C `apply-snapshot` in place of `rsync -a`, keeping the
+  explicit user consent before applying and the `git status`/`git diff --stat` review); resync
+  the `plugins/aws-core` mirror through `toolkit sync`; retire the six scripts and their mirrors
+  in the retirement slice once callers and tests are verified.
 
 ### 7.3 Dependencies
 
@@ -809,19 +1435,22 @@ Prefer what the workspace compiles already; every addition is pinned with `=`.
 
 | Crate | Status | Why |
 | --- | --- | --- |
-| `toolkit-aws` (workspace) | existing | endpoint validation, `Transport`/`ApiClient`/`RetryPolicy`, `redact`, `Secret`, `ServiceError`, `recorded`, testing doubles |
+| `toolkit-aws` (workspace) | existing | endpoint validation, request types, `RetryPolicy`, `redact`, `Secret`, `ServiceError`, `recorded`, testing doubles (`Transport::send`/`ApiClient` are not used by the slice, R-API-BODY) |
 | `toolkit-core` (workspace) | existing, extended in L0 | JSON, SHA-256 (raw digest added), base64url |
 | `unicode-normalization` | existing direct dependency of `toolkit-cli` | NFC duplicate detection in R-AR-READ |
 | `getrandom` `=0.3.4` | **new direct**, already compiled in the default build (transitively, `cargo tree -p toolkit-cli`) | OS CSPRNG for PKCE verifier, state, `clientToken` UUIDs and temporary names; `std` has no stable CSPRNG |
-| `miniz_oxide` (exact version fixed at implementation, 0.8.x or 0.9.x already in the local registry) | **new**, pure Rust, one transitive crate (`adler2`) | raw deflate/inflate with bounded output buffers; hand-writing deflate is out of the question (Q2) |
-| `toolkit-cli` feature `aws-sdk` | from #4413 S1 (accepted design `fd7e7ffd`) | the real HTTPS `SdkTransport` with R-ROOTS; the default build uses an `Unavailable` transport like `asm exec` |
+| `miniz_oxide` (exact version fixed at implementation, 0.8.x or 0.9.x already in the local registry) | **new**, pure Rust, one transitive crate (`adler2`) | raw deflate/inflate through `inflate::core` with a bounded wrapping output buffer and an exact-consumption check (R-ZIP-FRAME step 8); hand-writing deflate is out of the question (Q2) |
+| `rustix` `=1.1.5`, features `std`, `fs`, `process`, `cfg(unix)` only | **new to the default build**; the same version #5017 S1 already pins as an optional `cfg(unix)` dependency of `toolkit-aws` (`std`, `stdio`). Its dependencies `bitflags`, `errno` and `libc` are already in `Cargo.lock`; `linux-raw-sys` arrives with S1 | safe `openat`/`statat`/`fstat`/`mkdirat`/`unlinkat`/`fchmod`/`Dir`/`renameat_with(NOREPLACE)` and `geteuid` for R-AR-OPEN, R-AR-STAGE and R-AR-APPLY (#5039, #5047); safe `std` has no descriptor-relative file API, and the workspace forbids `unsafe`. Used only in `launch/archive/fsops.rs` |
+| `toolkit-aws` `stream` module and `testing::FakeStreamingTransport` | from #5017 S1 (`be0a06df`), ungated (not behind `sdk`) | the bounded body seam of R-API-BODY (#5044) |
+| `toolkit-cli` feature `aws-sdk` | from #4413 S1 (accepted design `fd7e7ffd`, implementation #5017) | the real HTTPS `SdkTransport` (`Transport` and `StreamingTransport`) with R-ROOTS; the default build uses an `Unavailable` streaming transport like `asm exec` |
 
 Not added: an HTTP server crate (the callback needs one request line; `std::net` is enough and
 smaller to review), a URL crate (`toolkit-aws` already parses and validates URLs), `zip`
 (alternative to `miniz_oxide` + own container code, Q2), `zeroize` (strings are dropped; the
 guarantee it adds over that is small and it would touch every secret type), `webbrowser` (Q4),
-`libc`/`nix` (no signals needed, R-CB-WAIT), `tempfile` (private directories are three lines with
-`DirBuilderExt::mode` and `getrandom` names).
+`libc`/`nix` as direct dependencies (no signals needed, R-CB-WAIT; file-system calls go through
+`rustix`), `cap-std` (it would do the job too, but `rustix` is already pinned by S1 and the slice
+needs only nine calls), `tempfile` (private directories are `mkdirat` with `getrandom` names).
 
 Python `json.dumps(indent=2)` emulation: the workspace has several slice-local copies
 (`aurora/pyfmt.rs` `dumps`, `ai_data/mod.rs` `dumps`, `bedrock_agent.rs`, `dynamodb/pyfmt.rs`
@@ -832,9 +1461,18 @@ handoff).
 ## 8. What is offline-testable and what needs the operator's live run
 
 Offline (default daemon test job, no network, no AWS, no browser): every T- test above. Loopback
-sockets on `127.0.0.1` are used by T-CB-NET and T-FLOW only (as #4413's T-TLS harness); the `git`
-binary is used by T-AR-GIT on temporary repositories; `mkfifo` by one Unix-only test. Nothing reads
-the real `HOME`, `~/.aws` or environment (injected seams, `MapEnv`).
+sockets on `127.0.0.1` are used by T-CB-NET, T-CB-LOAD and T-FLOW only (as #4413's T-TLS
+harness; T-CB-TIME uses the scripted `SlotIo` and a fake clock, so no test waits real minutes);
+the `git` binary is used by T-AR-GIT and T-APPLY on temporary repositories; `mkfifo` and Unix
+sockets by the Unix-only T-AR-SEL, T-AR-OPEN and T-APPLY cases; the race tests swap entries on
+temporary directories through the `WalkHook`/`ExtractHook` seams. Nothing reads the real `HOME`,
+`~/.aws` or environment (injected seams, `MapEnv`), and nothing touches a real user repository.
+The pre-review resolution tests (T-AR-OPEN, T-AR-VCS, T-APPLY, T-CB-TIME, T-CB-LOAD,
+T-ZIP-FRAME, T-ZIP-64, T-BODY, T-CODE, T-STAGE, T-OPS) are all offline.
+
+Live-run additions from revision 2: record the snapshot ZIP's version-made-by host, flags and
+whether it uses data descriptors or ZIP64 (R-ZIP-FRAME may only be widened from that evidence,
+through a new Issue); run `apply-snapshot` on the sample app's migration branch.
 
 Needs the operator's live run (an operator to-do filed by the PM after L5, a disposable sample app,
 never CI):
@@ -872,11 +1510,31 @@ at no cost to the user, but any spend or data upload stays an operator decision.
 - D12: no HTTP proxy and no `AWS_CA_BUNDLE`; trust roots per #4413 R-ROOTS (Q7).
 - D13: connect failures read "Could not reach Launch with AWS in {region}." (R-API-ERR).
 - D14: `download-snapshot` is new; `parse_github_url`/`download_github_zip` are not ported (Q1, Q10).
+- D15: an error code that is not on the R-API-CODE allowlist prints `UnrecognizedError` (the Python
+  printed any code received); the request id is never printed (it never was in `ApiError` text).
+- D16: `create-launch`, `download-snapshot` and `apply-snapshot` are Unix-only (the exclusive
+  rename makes `download-snapshot` Linux and macOS only); elsewhere they fail closed with "This
+  command is not supported on this platform." (R-AR-OPEN). The Python ran anywhere, without these
+  guarantees.
+- D17: `rsync -a <outputDir>/ .` is replaced by `apply-snapshot`, which refuses VCS metadata,
+  links and special files in the snapshot, refuses existing symlinks and type conflicts in the
+  target instead of replacing them, does not preserve timestamps and keeps existing directory modes
+  (R-AR-APPLY).
+- D18: `download-snapshot --output` refuses a parent directory that other users can modify
+  without the sticky bit, or that another non-root user owns (R-AR-STAGE). The Python had no
+  `--output`; its fixed `/tmp` names were the weakness this replaces.
+- D19: the callback serves at most 16 connections at a time with 2 s head and write deadlines,
+  and a token exchange started before the deadline may finish up to 60 s after it (R-CB-LOAD,
+  R-CB-TIME). The Python served one connection at a time with no per-connection timeout.
 
-Residuals: W-1 Windows file permissions (R-TOK-MODE); R-1 rename over an empty racing directory
-(R-AR-EXT); L-1 advisory locks on network home directories (NFS) may not reflect liveness, in which
-case `auth-wait` falls back to the recorded deadline; S-1 the bearer token and secrets live in
-process memory as ordinary strings until dropped.
+Residuals: W-1 Windows file permissions (R-TOK-MODE; tokens only, since the archive commands are
+Unix-only); R-2 one non-blocking `open` of a device node that a writer with `CAP_MKNOD` swaps into
+the source tree (R-AR-OPEN); R-CB-DOS a local process can keep the callback's 16 slots busy and
+delay sign-in until the deadline, never end it early (R-CB-LOAD); L-1 advisory locks on network
+home directories (NFS) may not reflect liveness, in which case `auth-wait` falls back to the
+recorded cutoff; S-1 the bearer token and secrets live in process memory as ordinary strings until
+dropped. Revision 1's R-1 (rename over an empty racing directory) is closed by
+`renameat_with(NOREPLACE)` (R-AR-STAGE).
 
 ## 10. Open questions, each with the recommended answer
 
@@ -889,6 +1547,13 @@ process memory as ordinary strings until dropped.
   everything unusual (local/central mismatch, overlaps, CP437, ZIP64 oddities) and a small reader
   written to that policy is easier to review than adapting a general reader; the `zip` crate
   (2.x/6.x in the local registry) is the alternative, never with its `extract` helpers.
+  **PM ruling (seq 2, amended seq 3): `miniz_oxide` (raw deflate) plus our own strict container,
+  stored and deflate only, single disk, no encryption; ZIP64 in scope for writer and reader under
+  strict rules.** Revision 2 specifies the container fully in R-ZIP-FRAME (#5043) and the ZIP64
+  subset there (#5046): ZIP64 EOCD record and locator only, written at 65 535 entries or more,
+  per-field sentinels exactly where the ZIP64 value is out of range, per-entry ZIP64 extras only
+  for sentinel fields, all limits applied to the ZIP64 values before any record is read. The
+  `zip` crate stays out.
 - **Q3. #4751 inventory class.** Recommended: `Recorded` (responses are external input and the
   #4727 null/type rules should apply), with markers in `shape.rs`. Alternative: `NotRecorded` with
   the reason "live Launch API responses shaped by the bundled service model".
@@ -908,6 +1573,8 @@ process memory as ordinary strings until dropped.
 - **Q12. Response body cap.** Recommended: 64 MiB for API responses (task logs are the largest
   member), 500 MiB for the snapshot download; streamed through #4413's `StreamingTransport` when it
   exists, otherwise collected under the cap.
+  **PM ruling: yes.** Revision 2 (#5044) removes the "otherwise collected" fallback: every body
+  goes through S1's `StreamingTransport` and R-API-BODY, with no unbounded path.
 - **Q13. Session-file compatibility.** Recommended: **yes**, byte-compatible schema both ways
   (R-TOK-STORE).
 - **Q14. Windows ACLs.** Recommended: rely on the profile directory ACL (W-1), as the Python did.
@@ -925,3 +1592,18 @@ process memory as ordinary strings until dropped.
   build with the `Unavailable` transport (as `asm exec`), offline commands (`resolve-region`,
   `session-status`, `sign-out`) work, network commands fail with the fixed message; the shipped
   binary for cutover is built with `aws-sdk` (#4413 S1, #4487).
+  **PM ruling (seq 2), refined in revision 2:** L0-L2 proceed now. L3-L6 offline work starts once
+  #5017 S1 (`be0a06df` or its landed successor) is on rolling, because R-API-BODY and its tests
+  are built on S1's `StreamingTransport` and `FakeStreamingTransport`. Production network use
+  needs the `aws-sdk` build.
+- **Q21. `apply-snapshot` instead of `rsync -a` (revision 2, #5040).** Recommended: **yes**. A
+  denylist in the extractor alone would leave the apply step trusting whatever is in `outputDir` at
+  apply time. The command enforces the same denylist where the repository is written and refuses
+  rather than replaces user symlinks. Product choice for the PM: hostile snapshots may never write
+  repository metadata through the automatic path (R-AR-VCS); any exceptional metadata migration
+  needs its own reviewed path. Alternative: keep `rsync -a` with `--exclude` rules. That is weaker
+  (textual, case-sensitive matching, follows the target's links) and is not recommended.
+- **Q22. Platform scope of the file-system boundary (revision 2, #5039, #5047).** Recommended:
+  Unix-only archive commands through `rustix` (D16), rather than claiming a guarantee that safe
+  `std` cannot give. No supported caller runs the toolkit on Windows today; a Windows port would
+  need its own handle-relative design and review.
