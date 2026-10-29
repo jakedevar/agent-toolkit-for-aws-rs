@@ -114,6 +114,93 @@ fn ap_rw_03_10_11_round_trips() {
         }
     }
 }
+// Each row is a source golden and each column is a target format.
+const MISSING: [[&[&str]; 6]; 6] = [
+    [
+        &[],
+        &[
+            "data_source",
+            "response",
+            "prompt",
+            "extra_info.reference_answer.text",
+        ],
+        &["prompt", "completion"],
+        &["prompt", "completion", "chosen", "rejected"],
+        &["model_response", "query", "response"],
+        &[],
+    ],
+    [
+        &["id", "messages", "reference_answer.text"],
+        &[],
+        &["id", "completion", "reference_answer.text"],
+        &[
+            "id",
+            "completion",
+            "chosen",
+            "rejected",
+            "reference_answer.text",
+        ],
+        &["id", "model_response", "query", "reference_answer.text"],
+        &["id", "messages"],
+    ],
+    [
+        &["messages"],
+        &[
+            "data_source",
+            "response",
+            "extra_info.reference_answer.text",
+        ],
+        &[],
+        &["chosen", "rejected"],
+        &["model_response", "query", "response"],
+        &["messages"],
+    ],
+    [
+        &["messages"],
+        &[
+            "data_source",
+            "response",
+            "extra_info.reference_answer.text",
+        ],
+        &[],
+        &[],
+        &["model_response", "query", "response"],
+        &["messages"],
+    ],
+    [
+        &["messages"],
+        &["data_source", "prompt", "extra_info.reference_answer.text"],
+        &["prompt", "completion"],
+        &["prompt", "completion", "chosen", "rejected"],
+        &[],
+        &["messages"],
+    ],
+    [
+        &["reference_answer.text"],
+        &[
+            "data_source",
+            "response",
+            "prompt",
+            "extra_info.reference_answer.text",
+        ],
+        &["prompt", "completion", "reference_answer.text"],
+        &[
+            "prompt",
+            "completion",
+            "chosen",
+            "rejected",
+            "reference_answer.text",
+        ],
+        &[
+            "model_response",
+            "query",
+            "response",
+            "reference_answer.text",
+        ],
+        &[],
+    ],
+];
+
 #[test]
 fn ap_rw_04_cross_format_matrix() {
     for (i, source) in FORMATS.iter().enumerate() {
@@ -128,7 +215,14 @@ fn ap_rw_04_cross_format_matrix() {
             if ok {
                 assert_out(o, 0, "ok:");
             } else {
-                assert_out(o, 1, "event[0].");
+                let output = String::from_utf8_lossy(&o.stderr);
+                assert_eq!(o.status.code(), Some(1), "{source} -> {target}: {output}");
+                for field in MISSING[i][j] {
+                    assert!(
+                        output.contains(&format!("event[0].{field}")),
+                        "{source} -> {target}: missing {field}: {output}"
+                    );
+                }
             }
         }
     }
@@ -229,6 +323,47 @@ fn ap_rw_17_metrics_and_scores() {
     }
     let r = r#"[{"id":"123","aggregate_reward_score":1,"metrics_list":[{"name":"m","value":0.5,"type":"Reward"},{"name":"n","value":-1,"type":"Metric"}]}]"#;
     assert_out(check("openai", GOLDENS[0], r, false), 0, "envelope A");
+}
+#[test]
+fn ap_rw_17_raw_nonfinite_numbers_are_rejected() {
+    for token in ["NaN", "Infinity", "-Infinity", "1e999"] {
+        for metric in [false, true] {
+            let body = if metric {
+                format!(
+                    r#"[{{"id":"123","aggregate_reward_score":1,"metrics_list":[{{"name":"secret-sentinel","value":{token},"type":"Reward"}}]}}]"#
+                )
+            } else {
+                format!(
+                    r#"[{{"id":"123","aggregate_reward_score":{token},"marker":"secret-sentinel"}}]"#
+                )
+            };
+            for response in [
+                body.clone(),
+                json!({"statusCode":200,"body":body}).to_string(),
+            ] {
+                let out = check("openai", GOLDENS[0], &response, false);
+                let output = format!(
+                    "{}{}",
+                    String::from_utf8_lossy(&out.stdout),
+                    String::from_utf8_lossy(&out.stderr)
+                );
+                assert_eq!(
+                    out.status.code(),
+                    Some(1),
+                    "{token} metric={metric}: {output}"
+                );
+                assert!(!output.contains("ok:"), "{output}");
+                assert!(!output.contains("secret-sentinel"), "{output}");
+            }
+        }
+    }
+    let body = r#"[{"id":"123","aggregate_reward_score":1e2,"metrics_list":[{"name":"m","value":-2.5e-2,"type":"Metric"}]}]"#;
+    for r in [
+        body.to_string(),
+        json!({"statusCode":200,"body":body}).to_string(),
+    ] {
+        assert_out(check("openai", GOLDENS[0], &r, false), 0, "ok:");
+    }
 }
 #[test]
 fn ap_rw_18_19_private_diagnostics_and_strict_json() {
