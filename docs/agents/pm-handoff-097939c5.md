@@ -727,3 +727,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
   x402 S3 merchant net = #5210 -> Codex terra 8a575dd5, base 776c032c163aeac31ed9d3b8cf7b21d8a2226b67 (PM commit-tree: rolling 9e919839 + #5080 069ab1b).
   4/4 busy: 1d17674d (#5181 S4), 2664b229 (#5190 L3), 2547894a (#5198 S2a repair), 8a575dd5 (#5210 S3).
   Queue: #5080 14dcba91 (2959), r23 ed167018 (2960), P-ROOTS 515bb023 (2961).
+- 10-29 06:00Z: #5190 L3 continuation (2664b229) at 6df5ce1cd782b0b8003c12247cd2806b11e13057, self-marked blocked (wanted allocator-event instrumentation + exhaustive seeded-secret matrix). D23/D24 + #5197 move recorded in design. Receipts: fmt 3b29d898, clippy bada54e6, clippy-sdk 6ac0bded, test-sdk 712d5b5e, scoped 104f47d1 (4069) ok. RULING: capacity-based peak test sufficient for D24/#5082; no allocator instrumentation; stop coverage loop and send to review. Review #5211 -> Claude Sonnet 1a697726 (pinned 6df5ce1).
+  NOTE for briefs: Codex terra workers tend to self-block on "exhaustive" coverage; state the acceptance bar explicitly and say "list remaining gaps, do not block".
+  4/4 busy: 1d17674d (#5181 S4), 2547894a (#5198 S2a repair), 8a575dd5 (#5210 S3), 1a697726 (#5211).
