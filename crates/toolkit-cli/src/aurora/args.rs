@@ -8,7 +8,7 @@
 use toolkit_core::ToolkitError;
 
 use crate::manifests::py_repr_str;
-use crate::safe_text::shown_value;
+use crate::safe_text::{redacted_value, shown_value};
 use crate::Invocation;
 
 /// Output format of an analyzer.
@@ -99,12 +99,19 @@ pub(crate) fn format_value(invocation: &Invocation) -> Result<Format, ToolkitErr
     }
 }
 
-/// `--region`, defaulting to `us-east-1`.
+/// `--region`, defaulting to `us-east-1`, redacted whole (#4971 round 2): it
+/// is echoed in reports, and a credential-shaped value is never a region.
 pub(crate) fn region_value(invocation: &Invocation) -> String {
+    redacted_value(invocation.value("--region").unwrap_or("us-east-1")).into_owned()
+}
+
+/// `--instance`, redacted whole (#4971 round 2): it is echoed as the
+/// `instance_type` of stdout reports, and a credential-shaped value is never
+/// an instance class, so no valid value changes.
+pub(crate) fn instance_value(invocation: &Invocation) -> Option<String> {
     invocation
-        .value("--region")
-        .unwrap_or("us-east-1")
-        .to_string()
+        .value("--instance")
+        .map(|value| redacted_value(value).into_owned())
 }
 
 /// The `argparse` message for required options that are missing.

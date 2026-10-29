@@ -13,7 +13,8 @@ use super::api::{
     ApiResult, AwsApi,
 };
 use super::args::{
-    float_value, format_value, int_value, parse_py_float, region_value, required, Format,
+    float_value, format_value, instance_value, int_value, parse_py_float, region_value, required,
+    Format,
 };
 use super::pyfmt::{
     dumps, fmt_f, get_f64, get_str, py_max, py_min, round_num, round_to, title_case, Num,
@@ -1036,7 +1037,7 @@ pub(crate) fn estimate_command(
     }
     required(&missing)?;
     let (Some(engine), Some(instance), Some(cpu_p95), Some(cpu_max)) =
-        (engine, invocation.value("--instance"), cpu_p95, cpu_max)
+        (engine, instance_value(invocation), cpu_p95, cpu_max)
     else {
         return Ok(());
     };

@@ -628,8 +628,16 @@ pub(crate) fn sim_render(
         return sim_error(output, error.message());
     }
     // The report shows the path redacted; the file was written at the real
-    // path (#5010).
-    let result = render_result_json(&rendered, &redacted_value(&out.display().to_string()));
+    // path (#5010). Resolving the path collapses `//`, which hides URL
+    // userinfo from the redactor, so a credential-shaped `--output` is shown
+    // as given, redacted whole, instead of resolved.
+    let given = redacted_value(raw_output);
+    let shown = if given == raw_output {
+        redacted_value(&out.display().to_string()).into_owned()
+    } else {
+        given.into_owned()
+    };
+    let result = render_result_json(&rendered, &shown);
     output.line(&json_dumps(&result))
 }
 

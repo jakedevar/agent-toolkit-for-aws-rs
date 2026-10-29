@@ -12,7 +12,8 @@ use super::api::{
     AwsApi,
 };
 use super::args::{
-    float_value, format_value, int_value, region_value, reject_unrecognized, usage, Format,
+    float_value, format_value, instance_value, int_value, region_value, reject_unrecognized, usage,
+    Format,
 };
 use super::pyfmt::{dumps, fmt_f, fmt_grouped, get_f64, get_str, round_num, round_to, truthy, Num};
 use super::{
@@ -1044,10 +1045,7 @@ pub(crate) fn command(
                 None,
             )
         } else {
-            let Some(instance) = invocation
-                .value("--instance")
-                .filter(|name| !name.is_empty())
-            else {
+            let Some(instance) = instance_value(invocation).filter(|name| !name.is_empty()) else {
                 return Err(usage("offline mode requires --instance (or --serverless)"));
             };
             build_comparison(
@@ -1055,7 +1053,7 @@ pub(crate) fn command(
                 engine,
                 &region,
                 &Workload {
-                    instance_type: instance,
+                    instance_type: &instance,
                     num_instances,
                     io_optimized,
                     serverless: false,

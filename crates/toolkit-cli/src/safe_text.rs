@@ -216,41 +216,41 @@ fn hidden_lines(text: &str) -> String {
 /// `pattern`, a separator byte that UTF-8 never holds, and `text`), however
 /// much the occurrences overlap (#5012).
 fn prefix_matches(pattern: &str, text: &str, mut found: impl FnMut(usize, usize)) {
-    let (p, t) = (pattern.as_bytes(), text.as_bytes());
-    let m = p.len();
-    if m == 0 {
+    let (head, tail) = (pattern.as_bytes(), text.as_bytes());
+    let width = head.len();
+    if width == 0 {
         return;
     }
-    let n = m + 1 + t.len();
-    let byte = |i: usize| match i.cmp(&m) {
-        std::cmp::Ordering::Less => p[i],
+    let total = width + 1 + tail.len();
+    let byte = |index: usize| match index.cmp(&width) {
+        std::cmp::Ordering::Less => head[index],
         std::cmp::Ordering::Equal => 0xff,
-        std::cmp::Ordering::Greater => t[i - m - 1],
+        std::cmp::Ordering::Greater => tail[index - width - 1],
     };
     // Z values are only ever looked up inside the pattern: a match never
-    // crosses the separator, so `i - left < right - left <= m`.
-    let mut z = vec![0_usize; m + 1];
+    // crosses the separator, so `pos - left < right - left <= width`.
+    let mut zeta = vec![0_usize; width + 1];
     let (mut left, mut right) = (0_usize, 0_usize);
-    for i in 1..n {
-        let mut k = if i < right {
-            (right - i).min(z[i - left])
+    for pos in 1..total {
+        let mut run = if pos < right {
+            (right - pos).min(zeta[pos - left])
         } else {
             0
         };
-        while i + k < n && byte(k) == byte(i + k) {
+        while pos + run < total && byte(run) == byte(pos + run) {
             tick(1);
-            k += 1;
+            run += 1;
         }
         tick(1);
-        if i + k > right {
-            left = i;
-            right = i + k;
+        if pos + run > right {
+            left = pos;
+            right = pos + run;
         }
-        if i <= m {
-            z[i] = k;
-        } else if k > 0 {
-            let at = i - m - 1;
-            let mut len = k;
+        if pos <= width {
+            zeta[pos] = run;
+        } else if run > 0 {
+            let at = pos - width - 1;
+            let mut len = run;
             while !text.is_char_boundary(at + len) {
                 len -= 1;
             }
