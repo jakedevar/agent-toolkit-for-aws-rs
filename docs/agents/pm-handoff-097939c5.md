@@ -485,3 +485,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
   S0 = #4497 worker (Sonnet high, rolling): indexed dup-key + parse_json_with_limits, COVERS #4497 #4998.
   4/4 busy: 0f2c005c (#4487), 544ef79b (#4941 repair 2), 8f33aeb1 (#4413 design r3), #4497 worker.
 - 10-29 02:2xZ: #4413 design r3 fd7e7ffd296336159ddeb061a66fa4efe7f7a08a (8f33aeb1; COVERS #5013 #5014: R-SRC guarded single-source composition in SDK order, root validation fail closed; T-ABS with ECS/IMDS canary fallbacks). Narrow #4994 r3 (Codex sol high, build_free, pinned). On ACCEPT: S1 (streaming seam + SDK wiring + #4582 swap) after S0 #4497 lands.
+- 10-29 02:3xZ: #4994 r3 (13680baa): #5013 ACCEPT; one P2 #5016 (empty SSL_CERT_* on macOS/Windows: design refuses, contradicting the empty=unset ruling). PM AMENDED the ruling (#4413 seq 8): on macOS/Windows empty fails closed, on Linux empty = unset. #4413 DESIGN ACCEPTED at fd7e7ffd296336159ddeb061a66fa4efe7f7a08a. Closed #5016, #4994 and the design findings #4995-#4997, #4999-#5003, #5013, #5014. #4998 stays open until S0 (#4497) lands.
+  S1 = #5017 worker (Opus high, rolling): streaming seam + SDK wiring R-SRC/R-LOGIN/R-ROOTS/R-LOG + #4582 swap. Then S2 and S3 (new Issues), then S4 security review, then operator signed-run to-do, then S5.
+  4/4 busy: 0f2c005c (#4487), 544ef79b (#4941 repair 2), 3843c957 (#4497 S0), #5017 S1 worker.
