@@ -1151,3 +1151,5 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 20:02Z: #5469 (d1131e30) DONE at cbff06e1db60629113652041e423e45cd43a8286 (test-only: sort keys; sweep found no others; ws 498c9f46 + -p 4a6d0659 green). check refused generic_cargo_commit_mismatch (#5265, rolling moved) -> one-line test change, ENQUEUED directly seq 3037 (70f2cbda; gate re-runs toolkit-cli). Note: generic_cargo entries refuse fixes_tests (queue_generic_cargo_filters_unsupported). On land close #5469.
   Kaizen filed #5472 (missing scripts/run-rsid-test-shards.sh breaks shard lane) -> Claude Sonnet f962147b.
   4/4: f962147b #5472, 0311ca3f S1 r2, e02b0f23 B2, 1a973465 S6. Queue: 34df36a3 L5 (3036), 70f2cbda #5469 (3037).
+- 20:05Z: L5 LANDED (34df36a3, landed_sha 988d48d5a8a2722b26813615b7fca523346c3768); #5345 auto-closed. CLOSED #5403 #5424 #5468 #5406 #5426 #5427. #4382 next: L7 security review, then L8 cutover (next free slot). #5038 (design pre-review) still InProgress: verify and close.
+  Queue: 70f2cbda #5469 (3037).
