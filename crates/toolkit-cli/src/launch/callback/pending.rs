@@ -13,6 +13,24 @@ pub struct Custody {
     pid: u32,
 }
 
+#[cfg(all(test, unix))]
+mod custody_tests {
+    use super::*;
+    #[test]
+    fn lock_descriptors_are_close_on_exec() {
+        let scratch = crate::launch::tests_support::Scratch::new("lock-cloexec");
+        let custody = Custody::acquire(scratch.path(), 81).unwrap();
+        assert!(rustix::io::fcntl_getfd(&custody._lock)
+            .unwrap()
+            .contains(rustix::io::FdFlags::CLOEXEC));
+        drop(custody);
+        let lock = acquire_if_free(scratch.path(), 81).unwrap();
+        assert!(rustix::io::fcntl_getfd(&lock)
+            .unwrap()
+            .contains(rustix::io::FdFlags::CLOEXEC));
+    }
+}
+
 impl Custody {
     /// Create a private pending directory and acquire the helper's lock.
     ///

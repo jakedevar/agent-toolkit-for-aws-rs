@@ -232,6 +232,37 @@ mod deadline_tests {
 
     #[cfg(unix)]
     #[test]
+    fn exhausted_listener_records_timeout_without_traffic_status() {
+        use crate::launch::{callback::pending::read_record, tests_support::Scratch};
+        let scratch = Scratch::new("listener-timeout");
+        let result = run_with(
+            scratch.path(),
+            "s",
+            wall_deadline(),
+            |_| Ok(()),
+            |_, _, _| panic!("no exchange"),
+            Instant::now,
+            |_, _, _| {},
+            |_, _, _| Ok(None),
+        )
+        .unwrap();
+        assert_eq!(result, HelperResult::TimedOut);
+        let status = read_record(scratch.path(), std::process::id())
+            .unwrap()
+            .status;
+        assert_eq!(status, PendingStatus::TimedOut);
+        // An exhaustive match makes adding a traffic-driven state visible here.
+        match status {
+            PendingStatus::Listening
+            | PendingStatus::Exchanging
+            | PendingStatus::Succeeded
+            | PendingStatus::Failed
+            | PendingStatus::TimedOut => {}
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn real_socket_lifecycle_records_exchange_and_success() {
         use crate::launch::{callback::pending::read_record, tests_support::Scratch};
         use std::io::Write;
