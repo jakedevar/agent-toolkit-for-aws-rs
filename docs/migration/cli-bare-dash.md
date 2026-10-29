@@ -253,7 +253,7 @@ marketplace has empty exit notes, and the merge changes no other slice's help te
 it to 42243 bytes, `0x874fc84f07b07a26`: the round-18 text plus the elasticache-tunnel
 (#4393) synopsis (512 bytes, 8 lines) and description (564 bytes, 8 lines),
 41167 + 512 + 564 = 42243. The tunnel has empty exit notes, and the merge changes no
-other slice's help text, `USAGE_HEAD` or the assembly in `registry.rs`.
+other slice's help text, `USAGE_HEAD` or the assembly in `registry.rs`. The `ai-payloads` slice (#5143, S1 of #4386) moves it to 42766 bytes, `0xe6b46895dd2aaf18`: the same text plus the ai-payloads synopsis (64 bytes, 1 line) and description (459 bytes, 7 lines), 42243 + 64 + 459 = 42766; it has empty exit notes. Its only path flag, `ai-payloads templates --root`, is a directory and has no `LITERAL_DASH` or `STDIO_DASH` entry: `-` and `--root=-` are refused with exit 2 by the router (`ap_cli_03_exit_codes_and_usage_errors`).
 
 ## The four reproductions
 

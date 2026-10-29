@@ -74,6 +74,7 @@ pub(crate) struct Slice {
 pub(crate) const SLICES: &[Slice] = &[
     crate::ai_data::SLICE,
     crate::ai_models::SLICE,
+    crate::ai_payloads::SLICE,
     crate::asm_exec::SLICE,
     crate::aurora::SLICE,
     crate::bedrock_agent::SLICE,

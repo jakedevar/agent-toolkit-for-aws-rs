@@ -15,6 +15,7 @@
 //! The tests go through the real binary, so they pin the command's JSON and
 //! text contract rather than a private API.
 
+use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -377,7 +378,7 @@ fn ap_tpl_04_a_cell_comment_without_a_colon_after_the_number_is_text() {
 # Cell 2 is intentionally SDK-free (stdlib only) so it runs without the SDK.\n\
 # Cell structure for a notebook.\n\
 x = 1  # Cell 9: not a marker either\n\
-    # Cell 7: indented, not a marker\n\
+\x20\x20\x20\x20# Cell 7: indented, not a marker\n\
 #Cell 8: no space after the hash\n\n\
 # Cell 2: Real\n";
     let template = catalog_of(text);
@@ -502,11 +503,11 @@ fn ap_tpl_09_secret_names_are_matched_by_segment() {
         "TOKENIZER",
         "CREDENTIALED",
     ];
+    // INPUT_TOKENS_MEAN is a typed bare slot elsewhere; a quoted slot is fine
+    // for the kind check.
     let mut body = String::new();
     for name in secrets.iter().chain(plain.iter()) {
-        // INPUT_TOKENS_MEAN is a typed bare slot elsewhere; a quoted slot is
-        // fine for the kind check.
-        body.push_str(&format!("V_{name} = \"[{name}]\"\n"));
+        writeln!(body, "V_{name} = \"[{name}]\"").expect("write to a String");
     }
     let template = catalog_of(&demo(&body));
     assert_eq!(violations_of(&template), vec![]);
@@ -591,7 +592,7 @@ fn ap_tpl_11_an_untyped_bare_slot_is_a_lint_error() {
     ];
     let mut body = String::new();
     for name in typed {
-        body.push_str(&format!("v_{} = [{name}]\n", name.to_lowercase()));
+        writeln!(body, "v_{} = [{name}]", name.to_lowercase()).expect("write to a String");
     }
     assert_eq!(violations_of(&catalog_of(&demo(&body))), vec![]);
 
@@ -953,6 +954,10 @@ D = \"[ROLE_ARN]\"\n",
 /// AP-CAT-06 (section 4.4.3 rules): which top-level literal assignments are
 /// listed as assignable targets.
 #[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one fixture text and the expected table, kept side by side"
+)]
 fn ap_cat_06_assignable_targets_follow_the_section_443_rules() {
     let text = "# Cell 0 [markdown]: Demo\nMD_NAME = 1\n\n\
 # Cell 1: Config\n\n\
@@ -1374,7 +1379,7 @@ Z = \"[AA{hostile}]\"\n"
         "missing root is an error"
     );
     for run in &runs[4..] {
-        assert!(!run.stderr.contains("\u{1b}"), "{:?}", run.stderr);
+        assert!(!run.stderr.contains('\u{1b}'), "{:?}", run.stderr);
     }
 }
 
