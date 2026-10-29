@@ -137,6 +137,22 @@ FIFO canary alone cannot see a composed name (a FIFO called `./-` is not
 value is used), which is why `a_dash_report_date_suffix_is_refused_and_selects_no_report`
 runs the complete offline command with a repository holding `MIGRATION_REPORT_-.md`.
 
+Flag-name-only rows added at the round-16 integration (#4960). Three slices
+registered after `f597a058` spell a `LITERAL_DASH` flag name in a file that holds
+filesystem code. None of their commands has a `LITERAL_DASH` entry, so the router
+refuses `-` for these flags (exit 2, `--F does not accept -`, no `./-` created).
+The scan lists them only because it matches by flag name:
+
+| File | Flag | Why it is listed |
+| --- | --- | --- |
+| `bedrock_probes/mod.rs` | `--models` | `bedrock-probes iam-policy` / `preflight` / `api-path` / `classify --models -` are refused by the router; the only entry is `bedrock-resolve pricing --models` |
+| `bedrock_probes/mod.rs` | `--region` | `bedrock-probes iam-policy` / `preflight` / `classify --region -` are refused; the entries belong to other slices |
+| `docgraph/mod.rs` | `--region` | `documentdb wa-review --region -` is refused; the entries belong to other slices |
+
+`telemetry` is a passthrough command that parses its own words, so neither the
+router policy nor these scans see its `--telemetry-dir` and `bundles --plugin-root=`
+values (#4961).
+
 ### Divergence: `bedrock-report render --date-suffix -` is refused (#4955)
 
 `render_report.py:113` takes `--date-suffix` as an arbitrary string and `:74-75`
@@ -181,8 +197,12 @@ usage error, so a slice's description edit would change the help bytes of every
 other command (#4936). The #4780 change adds no help text: the CloudWatch
 description keeps the base wording (`stdin is not accepted`), and
 `the_global_usage_text_is_byte_identical_to_the_base` pins the length and the
-FNV-1a hash of `USAGE` to the base `f597a058`, next to
-`every_command_help_is_the_global_usage_text`.
+FNV-1a hash of `USAGE`, next to `every_command_help_is_the_global_usage_text`.
+At the base `f597a058` the pin was 35200 bytes, `0xa95b3df510f48191`. The round-16
+integration (#4960) moves it to 39130 bytes, `0xefe662a12a0a07aa`. The new text is
+the base text plus the synopsis and description of bedrock-probes (#4404),
+docgraph (#4395) and telemetry (#4398). Deleting exactly those lines gives back
+the base length and hash.
 
 ## The four reproductions
 

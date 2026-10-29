@@ -1309,7 +1309,7 @@ fn filesystem_bearing_consumers() -> BTreeSet<(String, String)> {
 /// file name or a directory name. A file that is not about a listed command
 /// (`elasticache`, `relational`, `ai-data`, `cloudwatch region`) is
 /// there for the flag name only.
-const AUDITED_FILESYSTEM_CONSUMERS: [(&str, &str); 19] = [
+const AUDITED_FILESYSTEM_CONSUMERS: [(&str, &str); 22] = [
     ("startup/model_path.rs", "--workload"),
     ("bedrock_agent.rs", "--agent-id"),
     ("bedrock_agent.rs", "--agent-version"),
@@ -1329,6 +1329,11 @@ const AUDITED_FILESYSTEM_CONSUMERS: [(&str, &str); 19] = [
     ("ai_data/mod.rs", "--region"),
     ("elasticache/mod.rs", "--region"),
     ("relational/mod.rs", "--region"),
+    // Flag name only (#4960): these slices have no LITERAL_DASH entry, so the
+    // router refuses `-` for their --models / --region before the handler runs.
+    ("bedrock_probes/mod.rs", "--models"),
+    ("bedrock_probes/mod.rs", "--region"),
+    ("docgraph/mod.rs", "--region"),
 ];
 
 /// A `LITERAL_DASH` flag that shares a source file with filesystem code must be
@@ -1483,7 +1488,7 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
 /// every usage error, so one slice's description edit changes the help bytes of
 /// every other command (#4936). Its length and FNV-1a hash are pinned to the
 /// text at the round-16 integration head (#4960): the f597a058 text (35200
-/// bytes, 0xa95b_3df5_10f4_8191) plus the synopsis and description of the
+/// bytes, `0xa95b_3df5_10f4_8191`) plus the synopsis and description of the
 /// three slices registered since, bedrock-probes (#4404), docgraph (#4395) and
 /// telemetry (#4398). A deliberate usage change updates the pin in the same
 /// commit and says so in the Issue; an incidental one fails here.

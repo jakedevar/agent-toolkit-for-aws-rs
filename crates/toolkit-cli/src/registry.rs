@@ -626,6 +626,12 @@ mod tests {
         "timestream-influxdb validate-input",
         "timestream-influxdb instance-types",
         // Slices added after the registry (NEW_RANK), by slice name.
+        // bedrock-probes (#4404):
+        "bedrock-probes iam-policy",
+        "bedrock-probes preflight",
+        "bedrock-probes api-path",
+        "bedrock-probes classify",
+        "bedrock-probes source-baseline",
         // docgraph (#4395):
         "documentdb wa-review",
         "neptune validate-input",
