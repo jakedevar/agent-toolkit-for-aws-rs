@@ -309,3 +309,14 @@ the router refuses a bare `-` and `--flag=-` for each value flag, and the
 positionals refuse a bare `-`, so `./-` is the way to name a literal
 directory `-`. Neither command reads stdin. With Neptune memory (#4886) also
 registered, global usage is 45174 bytes, FNV-1a `0x3ee6a3a39d3117aa`.
+
+The L5 launch routes (#5345) add `launch resolve-region`, `session-status`,
+`sign-out`, `create-launch DIR [NAME]`, `get-launch ID [INCLUDE]`,
+`list-launches`, `delete-launch ID`, `start-launch-execution ID`,
+`get-launch-status ID` and `get-launch-download-url ID`. `--region` and
+`--aws-mcp-url` go only to `resolve_region` (a supported-region name, never a
+path); `launch/commands.rs` is audited for `--region` on that basis. The
+router refuses a bare `-` and `--flag=-` for both value flags and a bare `-`
+positional; `create-launch` reads `./-` as a literal directory named `-`. No
+command reads stdin. With `documentdb normalize-capture` (#5327) also
+registered, global usage is 46570 bytes, FNV-1a `0xed8510a22d18f7eb`.

@@ -45,7 +45,7 @@ The table and issues.json preserve the initial owner map. Bootstrap substitution
 | #4379 | aws-core | deepseek | #4374 |
 | #4380 | cw-domain | glm | #4374 |
 | #4381 | cw-api | deepseek | #4379, #4380 |
-| #4382 | launch | deepseek | #4379 |
+| #4382 | launch ([status and divergences](launch-with-aws.md); L5 implemented, awaiting review; L7-L8 open) | deepseek | #4379 |
 | #4383 | bedrock-fetch | glm | #4379 |
 | #4384 | ai-models | deepseek | #4379 |
 | #4385 | ai-data | glm | #4374 |

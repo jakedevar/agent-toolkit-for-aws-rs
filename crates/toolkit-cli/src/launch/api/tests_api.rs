@@ -1,0 +1,465 @@
+//! Request construction and retry restrictions (R-API-HTTP).
+use super::{ApiError, ApiOperation, Client};
+use crate::launch::http::SystemClock;
+use serde_json::json;
+use toolkit_core::Json;
+
+fn to_json(value: &serde_json::Value) -> Json {
+    toolkit_core::parse_json(&value.to_string()).expect("fixture JSON")
+}
+fn from_json(value: &Json) -> serde_json::Value {
+    serde_json::from_str(&value.to_compact_string()).expect("shaped JSON")
+}
+use toolkit_aws::retry::{NoJitter, RetryPolicy};
+use toolkit_aws::testing::{FakeChunk, FakeStreamingTransport, RecordingSleeper};
+use toolkit_aws::Secret;
+
+fn call(
+    fake: &FakeStreamingTransport,
+    op: ApiOperation,
+    id: &str,
+    include: &[&str],
+    body: Option<serde_json::Value>,
+) -> Result<serde_json::Value, ApiError> {
+    let sleeper = RecordingSleeper::new();
+    let body = if matches!(op, ApiOperation::CreateLaunch) {
+        let mut body = body.unwrap_or_else(|| json!({}));
+        if let Some(object) = body.as_object_mut() {
+            object.entry("name").or_insert_with(|| json!("n"));
+        }
+        Some(body)
+    } else {
+        body
+    };
+    Client {
+        transport: fake,
+        base: "https://launch-with-aws.us-east-1.api.aws",
+        region: "us-east-1",
+        token: &Secret::new("FAKE-ACCESS-TOKEN"),
+        clock: &SystemClock,
+        sleeper: &sleeper,
+        jitter: &NoJitter,
+        policy: RetryPolicy::default(),
+    }
+    .call(op, id, include, body.as_ref().map(to_json))
+    .map(|value| from_json(&value))
+}
+fn reply(status: u16, body: &str) -> FakeStreamingTransport {
+    FakeStreamingTransport::new().respond(status, &[], vec![FakeChunk::data(body.as_bytes())])
+}
+const LAUNCH: &str = r#"{"launch":{"id":"l","name":"n","status":"created","source":{"s3Upload":{"uploadId":"u"}},"createdAt":"2026-06-15T12:34:56Z","updatedAt":"2026-06-15T12:34:56Z"}}"#;
+#[test]
+fn t_api_path_query_and_bearer_header() {
+    let fake = reply(200, LAUNCH);
+    call(
+        &fake,
+        ApiOperation::GetLaunch,
+        "a/b x",
+        &["execution", "cost estimate"],
+        None,
+    )
+    .unwrap();
+    let requests = fake.requests();
+    assert_eq!(requests[0].url, "https://launch-with-aws.us-east-1.api.aws/api/launches/a%2Fb%20x?include=execution&include=cost%20estimate");
+    assert!(requests[0].headers.get("authorization") == Some("Bearer FAKE-ACCESS-TOKEN"));
+}
+#[test]
+fn t_api_local_id_validation_precedes_request() {
+    for id in [String::new(), "a".repeat(2049)] {
+        for op in [
+            ApiOperation::GetLaunch,
+            ApiOperation::Delete,
+            ApiOperation::StartExecution,
+        ] {
+            let fake = reply(200, "{}");
+            assert_eq!(
+                call(&fake, op, &id, &[], None),
+                Err(ApiError::InvalidLaunchId)
+            );
+            assert!(fake.requests().is_empty());
+        }
+    }
+}
+#[test]
+fn t_api_retry_policy_client_token_is_stable_and_put_is_never_retried() {
+    for op in [
+        ApiOperation::CreateUploadUrl,
+        ApiOperation::CreateLaunch,
+        ApiOperation::StartExecution,
+    ] {
+        let valid = if matches!(op, ApiOperation::CreateUploadUrl) {
+            r#"{"uploadUrl":"https://bucket.amazonaws.com/x","uploadId":"u"}"#
+        } else {
+            LAUNCH
+        };
+        let fake = reply(503, "{}").respond(201, &[], vec![FakeChunk::data(valid.as_bytes())]);
+        call(
+            &fake,
+            op,
+            "l-1",
+            &[],
+            Some(json!({"clientToken":"12345678"})),
+        )
+        .unwrap();
+        let requests = fake.requests();
+        assert_eq!(requests.len(), 2);
+        assert!(requests[0].body == requests[1].body);
+    }
+    // Operations without a token follow the shared policy on the status
+    // alone (R-API-HTTP, botocore retries every operation); the presigned
+    // PUT is never retried.
+    for (op, body) in [
+        (ApiOperation::GetLaunch, LAUNCH),
+        (ApiOperation::ListLaunches, r#"{"items":[]}"#),
+        (ApiOperation::Delete, ""),
+    ] {
+        let fake = reply(503, "{}").respond(200, &[], vec![FakeChunk::data(body.as_bytes())]);
+        assert!(call(&fake, op, "l-1", &[], None).is_ok());
+        assert_eq!(fake.requests().len(), 2);
+        let fake = reply(400, "{}").respond(200, &[], vec![FakeChunk::data(body.as_bytes())]);
+        assert!(call(&fake, op, "l-1", &[], None).is_err());
+        assert_eq!(fake.requests().len(), 1);
+    }
+    let fake = reply(503, "{}").respond(200, &[], vec![FakeChunk::data(b"{}")]);
+    assert!(call(&fake, ApiOperation::Put, "l-1", &[], None).is_err());
+    assert_eq!(fake.requests().len(), 1);
+}
+#[test]
+fn t_api_missing_client_token_never_retries() {
+    let fake = reply(503, "{}").respond(201, &[], vec![FakeChunk::data(b"{}")]);
+    assert!(call(
+        &fake,
+        ApiOperation::CreateLaunch,
+        "l-1",
+        &[],
+        Some(json!({}))
+    )
+    .is_err());
+    assert_eq!(fake.requests().len(), 1);
+}
+
+#[cfg(unix)]
+#[test]
+fn t_api_put_validates_url_and_never_echoes_signature() {
+    use toolkit_aws::testing::FixedResolver;
+    let resolver = FixedResolver::new().answer_any(&["8.8.8.8"]);
+    for url in [
+        "http://bucket.amazonaws.com/x?signature=FAKE-SIGNATURE",
+        "https://user:FAKE-SECRET@bucket.amazonaws.com/x",
+        "https://evil.example/x?signature=FAKE-SIGNATURE",
+        "https://service.api.aws/x?signature=FAKE-SIGNATURE",
+    ] {
+        let fake = reply(200, "{}");
+        let sleeper = RecordingSleeper::new();
+        let client = Client {
+            transport: &fake,
+            base: "https://launch-with-aws.us-east-1.api.aws",
+            region: "us-east-1",
+            token: &Secret::new("FAKE-ACCESS-TOKEN"),
+            clock: &SystemClock,
+            sleeper: &sleeper,
+            jitter: &NoJitter,
+            policy: RetryPolicy::default(),
+        };
+        let error = client.put_archive(url, b"archive", &resolver).unwrap_err();
+        assert!(!format!("{error} {error:?}").contains("FAKE-"));
+        assert!(fake.requests().is_empty());
+    }
+    let fake = reply(503, "{}").respond(200, &[], vec![]);
+    let sleeper = RecordingSleeper::new();
+    let client = Client {
+        transport: &fake,
+        base: "https://launch-with-aws.us-east-1.api.aws",
+        region: "us-east-1",
+        token: &Secret::new("FAKE-ACCESS-TOKEN"),
+        clock: &SystemClock,
+        sleeper: &sleeper,
+        jitter: &NoJitter,
+        policy: RetryPolicy::default(),
+    };
+    let error = client
+        .put_archive(
+            "https://bucket.amazonaws.com/x?signature=FAKE-SIGNATURE",
+            b"archive",
+            &resolver,
+        )
+        .unwrap_err();
+    assert!(!format!("{error} {error:?}").contains("FAKE-SIGNATURE"));
+    assert_eq!(fake.requests().len(), 1);
+    assert_eq!(fake.frames_pulled(), 0);
+    assert_eq!(
+        fake.requests()[0].headers.get("content-type"),
+        Some("application/zip")
+    );
+    assert_eq!(fake.requests()[0].headers.get("authorization"), None);
+    assert_eq!(fake.requests()[0].body, b"archive");
+}
+
+#[cfg(unix)]
+#[test]
+fn t_api_put_connect_failure_is_fixed_and_does_not_echo_url() {
+    let fake = FakeStreamingTransport::new()
+        .open_error(toolkit_aws::AwsError::connect("FAKE-TRANSPORT-DETAIL"));
+    let sleeper = RecordingSleeper::new();
+    let token = Secret::new("FAKE-ACCESS-TOKEN");
+    let client = Client {
+        transport: &fake,
+        base: "https://example.test",
+        region: "us-east-1",
+        token: &token,
+        clock: &SystemClock,
+        sleeper: &sleeper,
+        jitter: &NoJitter,
+        policy: RetryPolicy::none(),
+    };
+    let resolver = toolkit_aws::testing::FixedResolver::new().answer_any(&["8.8.8.8"]);
+    let error = client
+        .put_archive(
+            "https://bucket.amazonaws.com/x?signature=FAKE-SIGNATURE",
+            b"zip",
+            &resolver,
+        )
+        .unwrap_err();
+    let text = error.to_string();
+    assert_eq!(text, "Could not upload the archive: connect");
+    assert!(!format!("{error:?}").contains("FAKE-"));
+    assert_eq!(fake.requests().len(), 1);
+}
+
+#[cfg(unix)]
+#[test]
+fn t_api_put_timeout_is_fixed_and_not_retried() {
+    let fake = FakeStreamingTransport::new().open_error(toolkit_aws::AwsError::timeout(
+        toolkit_aws::error::TimeoutPhase::Read,
+        "FAKE-URL-DETAIL",
+    ));
+    let sleeper = RecordingSleeper::new();
+    let token = Secret::new("FAKE-ACCESS-TOKEN");
+    let client = Client {
+        transport: &fake,
+        base: "https://example.test",
+        region: "us-east-1",
+        token: &token,
+        clock: &SystemClock,
+        sleeper: &sleeper,
+        jitter: &NoJitter,
+        policy: RetryPolicy::none(),
+    };
+    let resolver = toolkit_aws::testing::FixedResolver::new().answer_any(&["8.8.8.8"]);
+    let error = client
+        .put_archive(
+            "https://bucket.amazonaws.com/x?signature=FAKE-SIGNATURE",
+            b"zip",
+            &resolver,
+        )
+        .unwrap_err();
+    assert_eq!(error.to_string(), "Could not upload the archive: timeout");
+    assert!(!format!("{error:?}").contains("FAKE-"));
+    assert_eq!(fake.requests().len(), 1);
+}
+
+#[test]
+fn t_api_snapshot_lookup_uses_launch_envelope_and_error_hints() {
+    let sleeper = RecordingSleeper::new();
+    let token = Secret::new("FAKE-ACCESS-TOKEN");
+    let fake = reply(
+        200,
+        r#"{"launch":{"id":"l","name":"n","status":"created","source":{"s3Upload":{"uploadId":"u"}},"createdAt":"2026-06-15T12:34:56Z","updatedAt":"2026-06-15T12:34:56Z","downloadUrl":"https://b.amazonaws.com/x?signature=FAKE-SIGNATURE"}}"#,
+    );
+    let client = Client {
+        transport: &fake,
+        base: "https://launch-with-aws.us-east-1.api.aws",
+        region: "us-east-1",
+        token: &token,
+        clock: &SystemClock,
+        sleeper: &sleeper,
+        jitter: &NoJitter,
+        policy: RetryPolicy::default(),
+    };
+    assert!(
+        client.download_url("l/1", false).unwrap().as_deref()
+            == Some("https://b.amazonaws.com/x?signature=FAKE-SIGNATURE")
+    );
+    assert_eq!(
+        fake.requests()[0].url,
+        "https://launch-with-aws.us-east-1.api.aws/api/launches/l%2F1?include=download_url"
+    );
+    for (status, hint) in [
+        (401, "backend rejected the Bearer token"),
+        (404, "no launch with this ID exists in us-east-1"),
+    ] {
+        let fake = reply(
+            status,
+            r#"{"code":"ResourceNotFoundException","message":"FAKE-ACCESS-TOKEN"}"#,
+        )
+        .respond(
+            status,
+            &[],
+            vec![FakeChunk::data(br#"{"code":"ResourceNotFoundException"}"#)],
+        );
+        let client = Client {
+            transport: &fake,
+            base: "https://launch-with-aws.us-east-1.api.aws",
+            region: "us-east-1",
+            token: &token,
+            clock: &SystemClock,
+            sleeper: &sleeper,
+            jitter: &NoJitter,
+            policy: RetryPolicy::default(),
+        };
+        let error = client.download_url("l-1", false).unwrap_err();
+        let text = format!("{error} {error:?}");
+        assert!(text.contains(hint));
+        assert!(text.contains("GET /api/launches/<id> failed"));
+        assert!(!text.contains("FAKE-ACCESS-TOKEN"));
+        if status == 404 {
+            assert!(!client
+                .download_url("l-1", true)
+                .unwrap_err()
+                .to_string()
+                .contains(hint));
+        }
+    }
+}
+
+#[test]
+fn t_api_output_is_shaped_and_required_members_validated() {
+    let fake = reply(200, r#"{"ignored":"extra","nextToken":null,"items":[]}"#);
+    assert_eq!(
+        call(&fake, ApiOperation::ListLaunches, "", &[], None).unwrap(),
+        json!({"items":[]})
+    );
+    let fake = reply(200, r#"{"items":null}"#);
+    assert_eq!(
+        call(&fake, ApiOperation::ListLaunches, "", &[], None),
+        Err(ApiError::InvalidResponse)
+    );
+}
+
+#[test]
+fn t_api_service_errors_identify_operation_without_echoing_id() {
+    for (op, expected) in [
+        (ApiOperation::CreateUploadUrl, "POST /api/uploads"),
+        (ApiOperation::CreateLaunch, "POST /api/launches"),
+        (ApiOperation::GetLaunch, "GET /api/launches/<id>"),
+        (ApiOperation::ListLaunches, "GET /api/launches"),
+        (
+            ApiOperation::StartExecution,
+            "POST /api/launches/<id>/start",
+        ),
+        (ApiOperation::Delete, "DELETE /api/launches/<id>"),
+    ] {
+        let fake = reply(403, r#"{"code":"AccessDeniedException"}"#);
+        let error = call(&fake, op, "FAKE-PRIVATE-ID", &[], None).unwrap_err();
+        let message = error.to_string();
+        assert!(message.contains(expected));
+        assert!(message.contains("403"));
+        assert!(message.contains("AccessDeniedException"));
+        assert!(!message.contains("FAKE-PRIVATE-ID"));
+    }
+}
+
+#[test]
+fn t_api_error_hints_cover_each_launch_id_operation() {
+    for op in [
+        ApiOperation::GetLaunch,
+        ApiOperation::Delete,
+        ApiOperation::StartExecution,
+    ] {
+        let fake = reply(404, r#"{"code":"ResourceNotFoundException"}"#);
+        let error = call(&fake, op, "l-1", &[], None).unwrap_err();
+        let message = super::command_error(&error, "us-east-1", false);
+        assert!(message.contains("no launch with this ID exists in us-east-1"));
+        let fake = reply(404, "{}");
+        let error = call(&fake, op, "l-1", &[], None).unwrap_err();
+        assert!(!super::command_error(&error, "us-east-1", true).contains("no launch with this ID"));
+    }
+    for op in [
+        ApiOperation::CreateUploadUrl,
+        ApiOperation::CreateLaunch,
+        ApiOperation::GetLaunch,
+        ApiOperation::ListLaunches,
+        ApiOperation::StartExecution,
+        ApiOperation::Delete,
+    ] {
+        let fake = reply(401, "{}");
+        let error = call(&fake, op, "l-1", &[], None).unwrap_err();
+        assert!(super::command_error(&error, "eu-central-1", false)
+            .contains("backend rejected the Bearer token"));
+    }
+}
+
+#[test]
+fn t_api_snapshot_lookup_missing_malformed_transport_and_id_boundaries() {
+    let sleeper = RecordingSleeper::new();
+    let token = Secret::new("FAKE-ACCESS-TOKEN");
+    for body in [LAUNCH, "{}", "not json"] {
+        let fake = reply(200, body);
+        let client = Client {
+            transport: &fake,
+            base: "https://example.test",
+            region: "us-east-1",
+            token: &token,
+            clock: &SystemClock,
+            sleeper: &sleeper,
+            jitter: &NoJitter,
+            policy: RetryPolicy::none(),
+        };
+        let result = client.download_url("l-1", false);
+        if body == LAUNCH {
+            assert!(result.unwrap().is_none());
+        } else {
+            assert!(matches!(result, Err(ApiError::InvalidResponse)));
+        }
+    }
+    let fake = FakeStreamingTransport::new()
+        .open_error(toolkit_aws::AwsError::connect("seeded transport error"));
+    let client = Client {
+        transport: &fake,
+        base: "https://example.test",
+        region: "us-east-1",
+        token: &token,
+        clock: &SystemClock,
+        sleeper: &sleeper,
+        jitter: &NoJitter,
+        policy: RetryPolicy::none(),
+    };
+    assert!(matches!(
+        client.download_url("l-1", false),
+        Err(ApiError::Unreachable)
+    ));
+    for id in [String::new(), "x".repeat(2049)] {
+        let fake = reply(200, LAUNCH);
+        let client = Client {
+            transport: &fake,
+            base: "https://example.test",
+            region: "us-east-1",
+            token: &token,
+            clock: &SystemClock,
+            sleeper: &sleeper,
+            jitter: &NoJitter,
+            policy: RetryPolicy::none(),
+        };
+        assert!(matches!(
+            client.download_url(&id, false),
+            Err(ApiError::InvalidLaunchId)
+        ));
+        assert!(fake.requests().is_empty());
+    }
+}
+
+#[test]
+fn t_api_invalid_launch_name_is_refused_before_request() {
+    for name in [String::new(), "x".repeat(129)] {
+        let fake = reply(200, LAUNCH);
+        let result = call(
+            &fake,
+            ApiOperation::CreateLaunch,
+            "",
+            &[],
+            Some(json!({"name":name,"clientToken":"fixture-token"})),
+        );
+        assert!(result.is_err());
+        assert!(fake.requests().is_empty());
+    }
+}
