@@ -619,3 +619,243 @@ fn shipped_binary_exchange_publishes_session() {
     assert_eq!(session["refresh_token"], "test-refresh");
     std::fs::remove_dir_all(home).unwrap();
 }
+
+/// Trace the real helper from exec to exit: no sampling window can hide a
+/// short-lived descriptor or a process that is spawned and immediately exits.
+#[cfg(all(target_os = "linux", target_arch = "x86_64", not(feature = "aws-sdk")))]
+#[test]
+#[allow(clippy::too_many_lines)]
+fn helper_lifetime_has_no_process_spawns_and_opened_descriptors_are_cloexec() {
+    use nix::libc;
+    use nix::sys::{ptrace, signal, wait};
+    use nix::unistd::Pid;
+    use std::collections::{HashMap, HashSet};
+    use std::io::{BufRead, BufReader, Read};
+    use std::os::unix::process::CommandExt;
+    use std::time::Duration;
+
+    const MODE: &str = "RSI_CALLBACK_CUSTODY_TRACE";
+    match std::env::var(MODE).as_deref() {
+        Ok("helper") => {
+            ptrace::traceme().unwrap();
+            signal::raise(signal::Signal::SIGSTOP).unwrap();
+            panic!(
+                "helper exec failed: {}",
+                Command::new(env!("CARGO_BIN_EXE_toolkit"))
+                    .args(["launch", "auth-callback"])
+                    .exec()
+            );
+        }
+        Ok("runner") => {}
+        _ => {
+            let output = Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "helper_lifetime_has_no_process_spawns_and_opened_descriptors_are_cloexec",
+                    "--nocapture",
+                ])
+                .env(MODE, "runner")
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "trace runner failed: {} {}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+    }
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let home = std::env::temp_dir().join(format!("callback-trace-{}-{unique}", std::process::id()));
+    std::fs::create_dir(&home).unwrap();
+    let mut child = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "helper_lifetime_has_no_process_spawns_and_opened_descriptors_are_cloexec",
+            "--nocapture",
+        ])
+        .env(MODE, "helper")
+        .env("HOME", &home)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let pid = Pid::from_raw(i32::try_from(child.id()).unwrap());
+    let deadline = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        + 30;
+    let input = format!(
+        r#"{{"client_id":"c","client_secret":"s","client_expires_at":1,"scopes":["launch:access"],"code_verifier":"v","state":"secret","deadline":{deadline}}}"#
+    );
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(input.as_bytes())
+        .unwrap();
+    let stdout = child.stdout.take().unwrap();
+    let controller = std::thread::spawn(move || {
+        let mut lines = BufReader::new(stdout);
+        let port = loop {
+            let mut line = String::new();
+            assert_ne!(lines.read_line(&mut line).unwrap(), 0);
+            if let Some(port) = line
+                .split_whitespace()
+                .last()
+                .and_then(|part| part.parse::<u16>().ok())
+            {
+                break port;
+            }
+        };
+        let mut socket = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+        socket
+            .set_read_timeout(Some(Duration::from_secs(10)))
+            .unwrap();
+        write!(
+            socket,
+            "GET /?state=secret&error=access_denied HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\r\n"
+        )
+        .unwrap();
+        let mut response = String::new();
+        socket.read_to_string(&mut response).unwrap();
+        assert!(response.starts_with("HTTP/1.1 400"));
+    });
+    assert!(matches!(
+        wait::waitpid(pid, None).unwrap(),
+        wait::WaitStatus::Stopped(_, signal::Signal::SIGSTOP)
+    ));
+    ptrace::setoptions(
+        pid,
+        ptrace::Options::PTRACE_O_TRACESYSGOOD
+            | ptrace::Options::PTRACE_O_TRACEEXEC
+            | ptrace::Options::PTRACE_O_TRACEFORK
+            | ptrace::Options::PTRACE_O_TRACEVFORK
+            | ptrace::Options::PTRACE_O_TRACECLONE
+            | ptrace::Options::PTRACE_O_EXITKILL,
+    )
+    .unwrap();
+    ptrace::syscall(pid, None).unwrap();
+    let mut tids = HashSet::from([pid]);
+    let mut entering = HashMap::new();
+    let mut running_helper = false;
+    let mut opens = 0;
+    let mut spawns = 0;
+    let mut violations = Vec::new();
+    let mut root_exit = None;
+    while !tids.is_empty() {
+        let status = wait::waitpid(None, Some(wait::WaitPidFlag::__WALL)).unwrap();
+        match status {
+            wait::WaitStatus::PtraceSyscall(tid) => {
+                let regs = ptrace::getregs(tid).unwrap();
+                let syscall = i64::try_from(regs.orig_rax).unwrap();
+                if regs.rax == (-i64::from(libc::ENOSYS)) as u64 {
+                    entering.insert(tid, (syscall, regs.rdi));
+                } else if running_helper && (regs.rax as i64) >= 0 {
+                    let is_fd = [
+                        libc::SYS_open,
+                        libc::SYS_openat,
+                        libc::SYS_openat2,
+                        libc::SYS_creat,
+                        libc::SYS_socket,
+                        libc::SYS_accept,
+                        libc::SYS_accept4,
+                        libc::SYS_eventfd,
+                        libc::SYS_eventfd2,
+                        libc::SYS_epoll_create,
+                        libc::SYS_epoll_create1,
+                        libc::SYS_dup,
+                        libc::SYS_dup2,
+                        libc::SYS_dup3,
+                        libc::SYS_memfd_create,
+                    ]
+                    .contains(&syscall)
+                        || (syscall == libc::SYS_fcntl
+                            && matches!(regs.rsi as i32, libc::F_DUPFD | libc::F_DUPFD_CLOEXEC));
+                    if is_fd {
+                        let fd = regs.rax;
+                        opens += 1;
+                        match std::fs::read_to_string(format!("/proc/{tid}/fdinfo/{fd}")) {
+                            Ok(info) => {
+                                let flags = info
+                                    .lines()
+                                    .find_map(|line| line.strip_prefix("flags:\t"))
+                                    .unwrap();
+                                let flags = u64::from_str_radix(flags, 8).unwrap();
+                                if flags & (libc::O_CLOEXEC as u64) == 0 {
+                                    violations.push(format!("syscall {syscall} fd {fd}"));
+                                }
+                            }
+                            Err(error) => {
+                                violations.push(format!("could not audit fd {fd}: {error}"))
+                            }
+                        }
+                    }
+                }
+                ptrace::syscall(tid, None).unwrap();
+            }
+            wait::WaitStatus::PtraceEvent(tid, _, event) => {
+                if event == libc::PTRACE_EVENT_EXEC {
+                    if running_helper {
+                        spawns += 1;
+                    }
+                    running_helper = true;
+                } else if [
+                    libc::PTRACE_EVENT_FORK,
+                    libc::PTRACE_EVENT_VFORK,
+                    libc::PTRACE_EVENT_CLONE,
+                ]
+                .contains(&event)
+                {
+                    let new_tid =
+                        Pid::from_raw(i32::try_from(ptrace::getevent(tid).unwrap()).unwrap());
+                    tids.insert(new_tid);
+                    let is_thread = entering.get(&tid).is_some_and(|(call, flags)| {
+                        *call == libc::SYS_clone && flags & (libc::CLONE_THREAD as u64) != 0
+                    });
+                    if running_helper && !is_thread {
+                        spawns += 1;
+                    }
+                }
+                ptrace::syscall(tid, None).unwrap();
+            }
+            wait::WaitStatus::Stopped(tid, sig) => {
+                ptrace::syscall(
+                    tid,
+                    if sig == signal::Signal::SIGSTOP || sig == signal::Signal::SIGTRAP {
+                        None
+                    } else {
+                        Some(sig)
+                    },
+                )
+                .unwrap();
+            }
+            wait::WaitStatus::Exited(tid, code) => {
+                tids.remove(&tid);
+                if tid == pid {
+                    root_exit = Some(code);
+                }
+            }
+            wait::WaitStatus::Signaled(tid, sig, _) => panic!("traced task {tid} died: {sig}"),
+            other => panic!("unexpected trace event: {other:?}"),
+        }
+    }
+    controller.join().unwrap();
+    assert_eq!(root_exit, Some(1)); // Denial is a normal unsuccessful sign-in.
+    assert_eq!(spawns, 0, "helper spawned a process");
+    assert!(
+        opens >= 4,
+        "trace did not observe the helper's file/socket opens"
+    );
+    assert!(
+        violations.is_empty(),
+        "non-CLOEXEC descriptors: {violations:?}"
+    );
+    std::fs::remove_dir_all(home).unwrap();
+}
