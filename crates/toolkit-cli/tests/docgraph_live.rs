@@ -371,7 +371,11 @@ fn ordinary_and_live_shaped_runs_never_reach_the_network() {
     .unwrap();
     let input = dir.join("input.json");
     std::fs::write(&input, "{}").unwrap();
-    let (policy, input) = (policy.to_str().unwrap(), input.to_str().unwrap());
+    let (policy, input) = (
+        policy.to_str().unwrap().to_string(),
+        input.to_str().unwrap().to_string(),
+    );
+    let (policy, input) = (policy.as_str(), input.as_str());
     let invocations: Vec<Vec<&str>> = vec![
         vec!["documentdb", "wa-review", "--cluster-id", "c1", "--region", "us-east-1"],
         vec!["documentdb", "wa-review", "--cluster-id", "c1", "--region", "us-east-1", "--live"],
@@ -403,6 +407,7 @@ fn ordinary_and_live_shaped_runs_never_reach_the_network() {
     ];
     for args in &invocations {
         let out = Command::new(env!("CARGO_BIN_EXE_toolkit"))
+            .current_dir(&dir)
             .env_clear()
             .env(concat!("TOOLKIT_DOCGRAPH_", "LIVE_TESTS"), "1")
             .env("AWS_ACCESS_KEY_ID", "AKIAFORBIDDENCANARY0")

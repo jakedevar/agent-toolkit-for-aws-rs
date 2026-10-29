@@ -51,6 +51,8 @@ mod dbchecks;
 mod infra;
 pub mod memory;
 mod neptune_input;
+#[cfg(feature = "docgraph-live")]
+pub mod network_policy;
 mod report;
 mod seed;
 mod snapshot;

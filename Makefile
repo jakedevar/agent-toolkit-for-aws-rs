@@ -62,6 +62,7 @@ docgraph-database-admission:
 docgraph-live-suite:
 	cargo test -p toolkit-cli --locked --test docgraph_live
 	cargo test -p toolkit-cli --features docgraph-live --locked --test docgraph_live
+	cargo test -p toolkit-cli --features docgraph-live --locked --lib docgraph::network_policy::
 
 docgraph-live-modes:
 	cargo test -p toolkit-cli --features docgraph-live --locked --test docgraph_live live_rejects_recorded_and_dry_run_before_files -- --exact

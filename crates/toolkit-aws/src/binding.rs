@@ -157,6 +157,7 @@ impl GuardRejection {
     /// Carry a fixed boundary error through a connector failure chain (the
     /// database connector's pre-send admission and deadline verdicts, #5387),
     /// so [`find_guard_rejection`] returns it unchanged.
+    #[cfg(feature = "sdk")]
     pub(crate) fn carrying(error: AwsError) -> Self {
         Self(error)
     }

@@ -991,6 +991,105 @@ R-DG-03 for private database targets. S1 must add a connector-level check
 before signed HTTP bytes are written, using the validated DNS answer set; it
 must not rely on the current post-response check or an unguarded connector.
 
+#### S1 continuation: database endpoint capability and bounds (#5387)
+
+PM ruling 4 on #5366 permits an additive connector-level pre-send peer
+check in toolkit-aws for the database capability only. It is delivered as
+`toolkit_aws::sdk::database` (feature `sdk`):
+
+- `DatabaseEndpoint::new(host, port, region, private_ranges)` is the narrow
+  capability. The host must be a lowercase standard-partition Neptune
+  (`<…>.<region>.neptune.amazonaws.com`) or Neptune Analytics
+  (`<…>.<region>.neptune-graph.amazonaws.com`) name; wildcards, trailing
+  dots, userinfo/ports in the host, FIPS, `.amazonaws.com.cn` and custom
+  domains are refused until reviewed. The region must be a standard name and
+  equal the host's region label; the port is fixed and non-zero. Private
+  ranges must be canonical and lie inside RFC 1918 with a `/16` or longer
+  prefix, or inside `fc00::/7` with a `/48` or longer prefix; at most 16.
+  `admits` accepts any public address (the shared public predicate) or a
+  listed private one, judging IPv4-mapped IPv6 as IPv4; loopback, link-local
+  and metadata, unspecified, multicast, CGNAT, NAT64 and every other
+  non-public block cannot be listed and are refused.
+- `toolkit-cli` `docgraph::network_policy::parse` (feature `docgraph-live`)
+  reads the `--network-policy` JSON schema: exactly `host`, `port`, `region`
+  and optional `private_ranges`. Unknown keys, including `live` and every
+  `confirm_*` shape, are refused rather than ignored (T-DG-01e for policy
+  files). It is not yet called: `--live` is still refused before any file.
+- `SdkTransport::for_database(runtime, roots, endpoint, bounds)` is a new
+  constructor. Its connector owns the TCP dial: it checks the URL (https, no
+  userinfo, exact policy host and port, no framing header, buffered body
+  only), resolves the host afresh for every request, refuses empty, more
+  than 16, or **any** non-admitted answer (mixed sets are not filtered),
+  dials only validated answers and then compares the socket's actual peer
+  with the dialed answer and the policy **before writing any byte**, not
+  even a TLS ClientHello. TLS uses rustls with aws-lc, Smithy's cipher-suite
+  list, safe default protocol versions, exactly the `ValidatedRoots`
+  certificates and the original host name for SNI and verification. One
+  HTTP/1.1 exchange runs per connection (no pool), so a reconnect is always
+  revalidated. Redirects are returned, never followed; no environment
+  variable (proxy or endpoint override) is read.
+- `SdkTransport::new`, `with_resolver`, `with_connector`, the public DNS
+  guard, the post-response `check_peer` and `PaymentRoots` are unchanged;
+  their existing tests still pass. The only shared edit is a
+  `GuardRejection::carrying` constructor so the database verdicts travel the
+  existing `map_connector_error` path unchanged.
+
+Dependency decision: the connector uses hyper's HTTP/1 client connection,
+hyper-util `TokioIo`, tokio-rustls, http, http-body, http-body-util and bytes,
+all already resolved in the `aws-sdk` graph through aws-smithy-http-client.
+They are pinned to the resolved versions with default features disabled
+(tokio-rustls without `logging`, so R-LOG holds). The lockfile change is six
+dependency edges on `toolkit-aws` and no new package; no TLS, root or crypto
+crate is added. Smithy's TCP connector hook is crate-private in
+aws-smithy-http-client 1.5.1, so wrapping Smithy's connector could not run a
+check between connect and the first write; owning the dial was the only
+additive way to meet ruling 4.
+
+R-DG-07 decisions: `DatabaseBounds::default()` is the design's 10 s
+connect-phase budget (DNS, TCP connect and TLS/HTTP handshake each), 30 s
+idle (response head and between body frames), 60 s per operation and
+16 MiB per response. Every phase runs inside one absolute deadline: the
+earlier of the operation budget and a caller deadline (the streaming
+`StreamLimits` deadline). All waits are async and dropped at the deadline,
+and the HTTP connection task is aborted when the response or a failed call is
+dropped. A declared `content-length` above the limit fails before any body
+byte is read; undeclared bodies fail at the first frame that would exceed the
+remaining allowance. A deadline after the request was handed to the
+connection is a non-retryable `Timeout(Deadline)` that says the outcome is
+unknown; a missing response head after sending is a `Timeout(Read)` with the
+same wording; neither claims a rollback. `server_query_timeout` derives a
+server-side query timeout from the remaining budget, a return margin and a
+cap (55 s for Analytics), refusing to send when nothing useful remains.
+Tests stall the injected resolver, dialer and in-memory TLS server with
+Tokio's real timer and short budgets; Tokio's paused clock (`test-util`) was
+not added. Residual: the production resolver is the operating system's on
+Tokio's blocking pool. The deadline abandons the lookup and discards its
+answer, but that `getaddrinfo` thread ends only when the system resolver
+returns, and dropping the runtime waits for it. No asynchronous DNS crate was
+added; S3 must decide whether this residual is acceptable before live
+enablement.
+
+Not delivered in S1, by decision: WebSocket frame, GraphSON depth and bulk
+limits (T-DG-07b) need the S3 codecs that do not exist yet; the constants are
+recorded above and S3 must test them at the boundary and boundary plus one.
+Credential-provider deadlines (T-DG-07a provider phase) remain open:
+`GuardedCredentials::resolve_required` is synchronous and its SDK providers
+are driven by `SdkRuntime::block_on`, so an outer async deadline cannot drop
+them without a provider-level change. S2 must not wire live signing before
+that bound exists.
+
+T-DG-09a: `docgraph_live::test_inventories_hold_no_unignored_live_entry`
+parses every test in toolkit-cli and toolkit-aws with `syn` and requires any
+test naming `for_database`, `SystemDatabaseResolver`, `TcpDialer` or the
+exact `TOOLKIT_DOCGRAPH_LIVE_TESTS` variable to be both `#[ignore]` and
+`cfg(feature = "docgraph-live")`; a fixture test proves the rule flags an
+unguarded test. `ordinary_and_live_shaped_runs_never_reach_the_network`
+runs default and live-shaped invocations with every proxy, endpoint and
+metadata variable aimed at a loopback listener that only counts connection
+attempts, with canary credentials and the acceptance flag set; it asserts
+zero connections, no canary in output and no live success. Both run under
+the default and `docgraph-live` features. No live test exists yet.
+
 The `.rsi/jobs.toml` additions in this slice declare bounded daemon recipes
 for the offline spike, consent, environment-selection, credential and
 feature-specific clippy checks. Their Makefile targets use the daemon-stamped
