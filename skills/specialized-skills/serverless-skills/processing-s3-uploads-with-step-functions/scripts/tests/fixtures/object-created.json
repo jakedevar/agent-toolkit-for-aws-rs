@@ -1,0 +1,24 @@
+{
+  "version": "0",
+  "id": "17793124-05d4-b198-2fde-7ededc63b103",
+  "detail-type": "Object Created",
+  "source": "aws.s3",
+  "account": "123456789012",
+  "time": "2024-03-04T12:34:56Z",
+  "region": "us-east-1",
+  "resources": ["arn:aws:s3:::example-uploads"],
+  "detail": {
+    "version": "0",
+    "bucket": { "name": "example-uploads" },
+    "object": {
+      "key": "uploads/2024/report.csv",
+      "size": 5368,
+      "etag": "b1946ac92492d2347c6235b4d2611184",
+      "sequencer": "0055AED6DCD90281E5"
+    },
+    "request-id": "N4N7GDK58NMKJ12R",
+    "requester": "123456789012",
+    "source-ip-address": "203.0.113.10",
+    "reason": "PutObject"
+  }
+}
