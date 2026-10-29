@@ -134,6 +134,21 @@ fn ap_pub_15_dry_run_creates_no_output() {
 }
 
 #[test]
+fn ap_con_05_quoted_and_lowercase_consent_are_refused() {
+    for (source, values) in [
+        ("model.accept_eula = \"[ACCEPT_EULA]\"\n", r#"{"values":{"ACCEPT_EULA":"true"}}"#),
+        ("accept_eula = False\n", r#"{"assign":{"accept_eula":true}}"#),
+    ] {
+        let f = Fixture::new();
+        let template = f.write("template.py", &format!("# Cell 0 [markdown]: Example\n# Description\n# Cell 1: Code\n{source}"));
+        let values = f.write("values.json", values);
+        let result = f.render(&template, "script", &["--values", values.to_str().unwrap()]);
+        assert_eq!(result.status.code(), Some(1), "{source}");
+        assert!(!f.0.join("scripts/01_example.py").exists());
+    }
+}
+
+#[test]
 fn ap_con_06_normalized_and_fstring_consent_identifiers_are_guarded() {
     for code in ["ＡCCEPT_EULA = True\n", "print(f\"{(ACCEPT_EULA := True)}\")\n"] {
         let f = Fixture::new();
