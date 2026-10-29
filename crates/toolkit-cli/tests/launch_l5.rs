@@ -498,8 +498,27 @@ fn percent_decoded(text: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
+/// The quoted-value escaping of the launch messages (`text::repr`: `\\`,
+/// `\'`, `\"`) undone.
+#[cfg(unix)]
+fn repr_unescaped(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars();
+    while let Some(c) = chars.next() {
+        match (c, chars.clone().next()) {
+            ('\\', Some(next @ ('\\' | '\'' | '"'))) => {
+                out.push(next);
+                chars.next();
+            }
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
 /// Whether `secret` can be recovered from `stream`: in its raw text, in any
-/// string of a JSON line once decoded, or in either after percent-decoding.
+/// string of a JSON line once decoded, or in either after undoing the
+/// message quoting or percent-decoding.
 #[cfg(unix)]
 fn recoverable(stream: &[u8], secret: &str) -> bool {
     fn strings(value: &serde_json::Value, found: &mut Vec<String>) {
@@ -529,9 +548,11 @@ fn recoverable(stream: &[u8], secret: &str) -> bool {
             strings(&value, &mut found);
         }
     }
-    found
-        .iter()
-        .any(|t| t.contains(secret) || percent_decoded(t).contains(secret))
+    found.iter().any(|t| {
+        t.contains(secret)
+            || repr_unescaped(t).contains(secret)
+            || percent_decoded(t).contains(secret)
+    })
 }
 
 /// Run each early-refusal case with `home` and assert the #5406/#5426
@@ -586,24 +607,39 @@ fn decoded_refusals(
 /// #5426 (reviewer reproducer 1): a stored client secret holding a double
 /// quote, passed back as the region (argument or environment) or in a
 /// no-host base URL, is JSON-escaped by the error line; it is still refused,
-/// and the decoded message does not carry it.
+/// and the decoded message does not carry it. The second secret also holds
+/// a backslash, which the message quoting doubles and the JSON line doubles
+/// again, so only the JSON forms of the sink match it (the first one's
+/// JSON escape equals its `"`-quoted message escape).
 #[cfg(unix)]
 #[test]
 fn t_tok_json_escaped_client_secret_is_refused() {
-    const SECRET: &str = "opaque-client-\"-secret-0001";
-    let (home, state_dir, session) = early_home_with_client_secret(SECRET);
-    let cases = early_route_cases(SECRET)
-        .into_iter()
-        .filter(|case| case.label != "repository URL")
-        .collect();
-    let leaked = decoded_refusals(
-        &home,
-        &state_dir.join("session.json"),
-        &session,
-        SECRET,
-        cases,
-    );
-    std::fs::remove_dir_all(home).unwrap();
+    let mut leaked = Vec::new();
+    for (number, secret) in [
+        "opaque-client-\"-secret-0001",
+        "opaque\\client-\"-secret-0002",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let (home, state_dir, session) = early_home_with_client_secret(secret);
+        let cases = early_route_cases(secret)
+            .into_iter()
+            .filter(|case| case.label != "repository URL")
+            .collect();
+        leaked.extend(
+            decoded_refusals(
+                &home,
+                &state_dir.join("session.json"),
+                &session,
+                secret,
+                cases,
+            )
+            .into_iter()
+            .map(|case| format!("{case} (secret #{number})")),
+        );
+        std::fs::remove_dir_all(home).unwrap();
+    }
     assert!(
         leaked.is_empty(),
         "{} routes printed a recoverable client secret: {leaked:?}",
