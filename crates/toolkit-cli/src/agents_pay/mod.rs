@@ -24,3 +24,5 @@ pub mod urlparse;
 
 pub mod agentcore;
 pub mod net;
+
+pub mod bridge;
