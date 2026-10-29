@@ -2340,8 +2340,13 @@ fn t_ac3_noread_catches_raw_identifier_mutations() {
                 .text
                 .replacen(PARSE_ANCHOR, &format!("{insert}{PARSE_ANCHOR}"), 1)
         } else {
-            format!("{insert}{}", sources[at].text)
+            // After the inner `//!` docs: an item before them does not parse.
+            format!("{}\n{insert}", sources[at].text)
         };
+        assert!(
+            syn::parse_file(&sources[at].text).is_ok(),
+            "the fixture does not parse: {insert}"
+        );
         sources
     };
     let route_killed = |sources: &[Source]| {
@@ -2406,7 +2411,10 @@ fn t_ac3_noread_catches_raw_identifier_mutations() {
     let anchor = "    fn g3_test_identities_are_recognized() {\n";
     for (label, live) in [
         ("G4 Deps::r#for_process", "let _ = Deps::r#for_process();"),
-        ("G4 r#SystemResolver", "let _ = toolkit_aws::r#SystemResolver;"),
+        (
+            "G4 r#SystemResolver",
+            "let _ = toolkit_aws::r#SystemResolver;",
+        ),
     ] {
         let bad = deps.replacen(anchor, &format!("{anchor}        {live}\n"), 1);
         let mut modules = Vec::new();
