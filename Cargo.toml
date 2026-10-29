@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/toolkit-aws", "crates/toolkit-cli", "crates/toolkit-core", "crates/toolkit-msk"]
+members = ["crates/plugin-stage", "crates/toolkit-aws", "crates/toolkit-cli", "crates/toolkit-core", "crates/toolkit-msk"]
 
 [workspace.package]
 version = "0.1.0"

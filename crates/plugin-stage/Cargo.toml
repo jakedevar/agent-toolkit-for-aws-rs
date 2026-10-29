@@ -1,0 +1,22 @@
+[package]
+name = "plugin-stage"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Builds and stages per-plugin ./bin binaries and checks the plugin launcher contract (#4487)."
+publish = false
+
+[lib]
+name = "plugin_stage"
+path = "src/lib.rs"
+
+[[bin]]
+name = "plugin-stage"
+path = "src/main.rs"
+
+[dependencies]
+toolkit-core = { path = "../toolkit-core" }
+
+[lints]
+workspace = true
