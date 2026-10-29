@@ -247,6 +247,36 @@ mod tests {
         }
     }
 
+    #[test]
+    fn t_br_req_keys_each_operation() {
+        let payment = VALID.replace("get_payment_session", "process_payment").replace(
+            "\"user_id\":", "\"payment_instrument_id\":\"iiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii\",\"version\":\"2\",\"request_url\":\"https://merchant.test\",\"accepted\":{},\"resource\":{\"url\":\"https://merchant.test\"},\"policy\":{\"maxPaymentAmountAtomic\":\"1\",\"allowAnyRecipient\":true},\"user_id\":");
+        let sanitize = r#"{"operation":"sanitize_output","candidate":{"content":[{"type":"text","text":"{}"}],"details":{}},"secrets":[]}"#;
+        for text in [VALID, payment.as_str(), sanitize] {
+            let parsed = parse_json(text).unwrap();
+            let Json::Object(fields) = parsed else {
+                unreachable!()
+            };
+            assert!(read_request(&mut Cursor::new(text)).is_ok());
+            for index in 0..fields.len() {
+                let mut missing = fields.clone();
+                missing.remove(index);
+                assert_eq!(
+                    read_request(&mut Cursor::new(Json::Object(missing).to_compact_string())),
+                    Err(BridgeError::Input)
+                );
+            }
+            for key in ["unexpected", "payload", "client_token"] {
+                let mut extra = fields.clone();
+                extra.push((key.into(), Json::Null));
+                assert_eq!(
+                    read_request(&mut Cursor::new(Json::Object(extra).to_compact_string())),
+                    Err(BridgeError::Input)
+                );
+            }
+        }
+    }
+
     // T-BR-REQ-PAY, T-BR-REQ-LEG, T-OC-FINAL-BOUND (pure shapes).
     #[test]
     fn t_br_req_pay_and_final_bound() {
