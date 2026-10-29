@@ -422,6 +422,14 @@ fn pending_reader_validates_schema_and_lock_custody() {
 
 #[cfg(unix)]
 #[test]
+fn wait_tracker_exposes_no_unreported_finish_api() {
+    let source = include_str!("pending.rs");
+    assert!(source.contains("#[cfg(test)]\n    pub(super) fn finish("));
+    assert!(source.contains("#[cfg(test)]\n    pub(super) fn finish_at("));
+}
+
+#[cfg(unix)]
+#[test]
 fn wait_observes_held_and_free_lock_without_signalling_pid() {
     use super::{
         pending::{Custody, Observation, WaitTracker},
