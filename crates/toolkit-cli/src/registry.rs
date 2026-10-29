@@ -551,7 +551,7 @@ mod tests {
     /// The route paths of the old `COMMANDS` table (commit ce0eaf6a, before the
     /// registry), in table order: the public order of [`COMMANDS`]. The routes of
     /// slices added after the registry follow at the end, ordered by slice name.
-    const LEGACY_COMMAND_ORDER: [&str; 99] = [
+    const LEGACY_COMMAND_ORDER: [&str; 100] = [
         "skills list",
         "manifests validate",
         "spec validate",
