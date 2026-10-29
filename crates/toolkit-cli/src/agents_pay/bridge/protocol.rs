@@ -348,6 +348,60 @@ mod tests {
                 "{field}"
             );
         }
+        for (field, limit) in [
+            ("payment_session_id", 2048),
+            ("payment_instrument_id", 2048),
+            ("user_id", 512),
+        ] {
+            assert_eq!(
+                read_request(&mut Cursor::new(change(
+                    field,
+                    Json::string("é".repeat(limit))
+                ))),
+                Err(BridgeError::AgentCore),
+                "{field}"
+            );
+            assert_eq!(
+                read_request(&mut Cursor::new(change(
+                    field,
+                    Json::string("é".repeat(limit + 1))
+                ))),
+                Err(BridgeError::Input),
+                "{field}"
+            );
+        }
+        for (field, length) in [("region", 129), ("agent_name", 257), ("version", 9)] {
+            assert_eq!(
+                read_request(&mut Cursor::new(change(
+                    field,
+                    Json::string("x".repeat(length))
+                ))),
+                Err(BridgeError::Input),
+                "{field}"
+            );
+        }
+        let zero_width = "\u{200b}";
+        assert_eq!(
+            read_request(&mut Cursor::new(change(
+                "user_id",
+                Json::string(zero_width)
+            )))
+            .unwrap()
+            .get("user_id")
+            .and_then(Json::as_str),
+            Some(zero_width)
+        );
+        for field in [
+            "payment_session_id",
+            "payment_instrument_id",
+            "payment_manager_arn",
+        ] {
+            assert_eq!(
+                read_request(&mut Cursor::new(change(field, Json::string(zero_width)))),
+                Err(BridgeError::AgentCore),
+                "{field} is not whitespace but fails the model length"
+            );
+        }
         let padded = " user ";
         let parsed =
             read_request(&mut Cursor::new(change("user_id", Json::string(padded)))).unwrap();
@@ -384,12 +438,18 @@ mod tests {
         for bad in [
             "",
             "[]",
+            "\"string\"",
+            "not-json",
             "NaN",
             "\u{feff}{}",
             r#"{"operation":"x","operation":"x"}"#,
         ] {
             assert_eq!(read_request(&mut Cursor::new(bad)), Err(BridgeError::Input));
         }
+        assert_eq!(
+            read_request(&mut Cursor::new([0xff, 0xfe, b'{', 0, b'}', 0])),
+            Err(BridgeError::Input)
+        );
         for bad in [
             VALID.replace("\"user_id\":\"user\",", ""),
             VALID.replace("\"user\"", "\"\\u001c\""),
