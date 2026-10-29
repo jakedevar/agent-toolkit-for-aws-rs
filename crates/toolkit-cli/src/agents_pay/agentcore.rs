@@ -1220,6 +1220,15 @@ mod wire_contracts {
     }
 
     #[test]
+    fn transport_preserves_credential_error_class_without_leaking_details() {
+        let transport = FakeStreamingTransport::new().open_error(AwsError::NoCredentials);
+        let client = PaymentClient::new("us-east-1", &transport, &NoSigner).unwrap();
+        let error = client.get_session("arn", "session", "user").unwrap_err();
+        assert_eq!(format!("{error:?}"), "Transport(NoCredentialsError)");
+        assert_eq!(transport.requests().len(), 1);
+    }
+
+    #[test]
     fn approved_payment_is_consumed_once_and_retains_verified_terms() {
         let api = FakePaymentsApi {
             calls: Cell::new(0),
