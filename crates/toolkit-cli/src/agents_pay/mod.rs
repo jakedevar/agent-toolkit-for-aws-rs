@@ -33,7 +33,9 @@ pub mod wiring;
 use toolkit_core::{Json, ToolkitError};
 
 use crate::{Invocation, Output};
-use deps::{Deps, Unavailable};
+use deps::Deps;
+#[cfg(feature = "agents-pay-live")]
+use deps::Unavailable;
 
 /// Registration of the `agents-pay` slice (see `crate::registry`).
 pub(crate) const SLICE: crate::registry::Slice = crate::registry::Slice {
@@ -160,8 +162,8 @@ fn run_request(
     }
 }
 
-/// The `fetch` route over an injected world (G1b): what the registry
-/// handler runs with [`Deps::for_process`], and what tests run with the
+/// The `fetch` route over an injected world (G1b): what the live registry
+/// handler runs with the process world, and what tests run with the
 /// [`deps::fixtures`].
 ///
 /// # Errors
@@ -178,9 +180,9 @@ pub fn run_with(
     }
 }
 
-/// The registry handler: argv first, then the process world. Without
-/// `agents-pay-live` that world is unavailable (D32) and nothing else is
-/// read.
+/// The registry handler of a live build: argv first, then the process
+/// world, which can still be unavailable (for example R-PROOTS).
+#[cfg(feature = "agents-pay-live")]
 fn fetch_command(invocation: &Invocation, out: &mut Output<'_>) -> Result<(), ToolkitError> {
     let Some(request) = parse(invocation, out)? else {
         return Ok(());
@@ -203,4 +205,27 @@ fn fetch_command(invocation: &Invocation, out: &mut Output<'_>) -> Result<(), To
             emit(out, &document, 2)
         }
     }
+}
+
+/// The whole stdout of `toolkit agents-pay fetch` in a build without
+/// `agents-pay-live` (D32), for every argv, `--status` included: the
+/// refusal document with [`deps::NO_PAYMENT_SUPPORT`], as [`flow::render`]
+/// prints it.
+pub const D32_REFUSAL: &str = "{\"paid\": false, \"refused\": true, \"reason\": \"This toolkit build has no payment support; install a release build of toolkit.\"}";
+
+/// The registry handler of a build without `agents-pay-live` (D32): one
+/// call to the fixed refusal. Argv is not parsed, no world is built, and no
+/// file, variable, credential or terminal is read. `tests/agents_pay_gate.rs`
+/// pins this body token for token.
+#[cfg(not(feature = "agents-pay-live"))]
+fn fetch_command(_invocation: &Invocation, out: &mut Output<'_>) -> Result<(), ToolkitError> {
+    refuse_without_payment_support(out)
+}
+
+/// D32: print the refusal literal and exit 2. Nothing else runs.
+#[cfg(not(feature = "agents-pay-live"))]
+fn refuse_without_payment_support(out: &mut Output<'_>) -> Result<(), ToolkitError> {
+    out.line(D32_REFUSAL)?;
+    out.set_exit_status(2);
+    Ok(())
 }

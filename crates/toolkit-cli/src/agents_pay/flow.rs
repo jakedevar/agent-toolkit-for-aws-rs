@@ -102,18 +102,18 @@ impl FlowError {
     /// The class of an `AgentCore` failure.
     #[must_use]
     pub fn from_payment(error: &PaymentError) -> Self {
-        use agentcore::PaymentErrorClass as C;
+        use agentcore::PaymentErrorClass;
         match error {
             PaymentError::Service(_) => Self::Service,
             PaymentError::InvalidResponse => Self::Runtime,
             PaymentError::Transport(class) => match class {
-                C::ConnectError => Self::Connect,
-                C::ConnectTimeout => Self::ConnectTimeout,
-                C::ReadTimeout => Self::Timeout,
-                C::RemoteProtocolError => Self::Protocol,
-                C::NoCredentialsError => Self::NoCredentials,
-                C::ClientError => Self::Service,
-                C::RuntimeError => Self::Runtime,
+                PaymentErrorClass::ConnectError => Self::Connect,
+                PaymentErrorClass::ConnectTimeout => Self::ConnectTimeout,
+                PaymentErrorClass::ReadTimeout => Self::Timeout,
+                PaymentErrorClass::RemoteProtocolError => Self::Protocol,
+                PaymentErrorClass::NoCredentialsError => Self::NoCredentials,
+                PaymentErrorClass::ClientError => Self::Service,
+                PaymentErrorClass::RuntimeError => Self::Runtime,
             },
         }
     }

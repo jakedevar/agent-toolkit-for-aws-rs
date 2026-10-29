@@ -28,18 +28,46 @@ constructs live pieces (the OS-account config, credentials, system DNS,
 payment TLS roots, transports) is in `agents_pay/live.rs`, compiled only with
 the Cargo feature `agents-pay-live`. No verification build (`make test`,
 `make test-sdk`, `make clippy-sdk`, the daemon `scoped_test`) enables it, and
-every test target refuses to compile with it (G1a). Without it every route
-prints `This toolkit build has no payment support; install a release build of
-toolkit.` and exits 2, after argv parsing and before any file, variable,
-credential or network access. A source gate holds that order
-(`t_ac3_noread_*` in `tests/agents_pay_gate.rs`, #5376): the no-feature arm
-of `Deps::for_process` must be exactly the D32 error, and the route functions
-(`fetch_command`, `parse`, `emit`) may evaluate only an allowlist of paths,
-methods and macros (argv, the credential-flag check, the D32 call, the JSON
-document), so an added read fails the gate. `make clippy-live`
-lints the live module (library and binaries only). G4 also scans the inline
-`#[cfg(test)]` modules of the payment sources (#5377); the D32 unit test in
-`deps.rs` is the one allowed naming of `Deps::for_process`.
+every test target refuses to compile with it (G1a). Without it every
+`agents-pay fetch` form, `--status` included, prints the one document
+`{"paid": false, "refused": true, "reason": "This toolkit build has no
+payment support; install a release build of toolkit."}` and exits 2.
+
+The refusal is structural (PM ruling on re-review #5389, #5390, #5391). In a
+build without the feature the registry handler `fetch_command` is a separate
+`#[cfg(not(feature = "agents-pay-live"))]` function whose body is one call,
+`refuse_without_payment_support(out)`, and that function prints the string
+literal `D32_REFUSAL` and sets exit 2. Nothing else runs: argv is not parsed,
+`Deps::for_process` does not exist (it is live-only), and no helper, file,
+variable, credential or terminal is reached. The live handler (argv, then the
+process world) is the `#[cfg(feature = "agents-pay-live")]` twin.
+
+Behaviour change: in a build without the feature, D32 now wins over the
+handler's own usage errors and over `--status`. `toolkit agents-pay fetch`
+with no URL, a bad `--method` or a credential flag the router accepts gets
+the D32 document and exit 2, not the usage text (exit 1) or a usage error;
+`--status` gets the same refusal, not `{"usable": false, ...}`. This is
+"refuse before reading anything", and it departs from the design's G1b text
+(D32 "after argv parsing"). The generic router still rejects malformed argv
+(an unknown flag, a second positional, a `-` value) before any handler, and
+a live build keeps every row of the table above.
+
+A source gate pins that surface, token for token (`t_ac3_noread_*` in
+`tests/agents_pay_gate.rs`): exactly one live and one disabled
+`fetch_command`, the disabled body and the D32 function exactly as above,
+`D32_REFUSAL` a plain `&str` literal equal to the rendered D32 document, the
+registry handler `fetch_command`, and no top-level binding in `mod.rs` that
+could shadow a name the surface resolves (`Ok`, `Result`, `Invocation`,
+`Output`, `ToolkitError`, the two functions and the literal; no glob import,
+no item macro). Under `src/agents_pay/` it forbids every `macro_rules!`
+definition, every `use .. as` rename (so no aliased std/core macro), `extern
+crate`, and the `link_section`, `used`, `no_mangle`, `export_name`,
+`macro_use` and `macro_export` attributes. It is not an allowlist over
+general code: the reviewer's helper (#5390) and `matches!` shadow (#5391)
+mutations are committed negative fixtures. `make clippy-live` lints the live
+module (library and binaries only). G4 also scans the inline `#[cfg(test)]`
+modules of the payment sources (#5377), with no allowance: no default-build
+test can name `Deps::for_process`.
 
 ## Flow (S5)
 

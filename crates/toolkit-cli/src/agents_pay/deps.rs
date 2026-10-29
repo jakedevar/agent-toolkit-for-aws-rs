@@ -3,10 +3,12 @@
 //! A route obtains every side effect through one [`Deps`] value: the runtime
 //! config and environment ([`ConfigStore`]), the `AgentCore` client
 //! ([`PaymentsConnector`]), the merchant ([`MerchantHttp`]), DNS
-//! ([`HostResolver`]) and time ([`PayClock`]). The registry handler calls
-//! [`Deps::for_process`], which returns [`Unavailable`] in every build without
-//! the `agents-pay-live` feature (D32), before it reads any file, variable,
-//! credential or terminal. Tests call `run_with` with the [`fixtures`] instead.
+//! ([`HostResolver`]) and time ([`PayClock`]). Only a live build has a
+//! process world (`Deps::for_process`, `agents-pay-live`). A build without
+//! the feature has none: its registry handler prints the D32 refusal literal
+//! (`agents_pay::D32_REFUSAL`) before it parses argv or reads any file,
+//! variable, credential or terminal. Tests call `run_with` with the
+//! [`fixtures`] instead.
 
 use std::time::{Duration, Instant};
 
@@ -75,45 +77,38 @@ pub struct Deps<'a> {
     pub clock: &'a dyn PayClock,
 }
 
-/// No live payment world: the reason is D32 in a verification build, or a
-/// fixed failure text (for example the R-PROOTS one) in a live build.
+/// No live payment world: a fixed failure text (for example the R-PROOTS
+/// one) in a live build.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Unavailable(pub String);
 
-/// The process world of a live build; uninhabited without the feature.
+/// The process world of a live build (G1).
+#[cfg(feature = "agents-pay-live")]
 pub enum ProcessWorld {
     /// The real constructors (G1).
-    #[cfg(feature = "agents-pay-live")]
     Live(Box<super::live::World>),
 }
 
+#[cfg(feature = "agents-pay-live")]
 impl ProcessWorld {
     /// The world's injected dependencies.
     #[must_use]
     pub fn deps(&self) -> Deps<'_> {
         match *self {
-            #[cfg(feature = "agents-pay-live")]
             Self::Live(ref world) => world.deps(),
         }
     }
 }
 
+#[cfg(feature = "agents-pay-live")]
 impl Deps<'static> {
-    /// The live process world. Without `agents-pay-live` this returns
-    /// [`Unavailable`] and touches nothing (D32, G1b).
+    /// The live process world. A build without `agents-pay-live` has no
+    /// such function: its route refuses with the D32 literal instead.
     ///
     /// # Errors
-    /// [`Unavailable`] in a verification build, or when the live world
-    /// cannot be built.
+    /// [`Unavailable`] when the live world cannot be built.
     pub fn for_process() -> Result<ProcessWorld, Unavailable> {
-        #[cfg(feature = "agents-pay-live")]
-        {
-            super::live::World::for_process().map(|world| ProcessWorld::Live(Box::new(world)))
-        }
-        #[cfg(not(feature = "agents-pay-live"))]
-        {
-            Err(Unavailable(NO_PAYMENT_SUPPORT.to_owned()))
-        }
+        super::live::World::for_process().map(|world| ProcessWorld::Live(Box::new(world)))
     }
 }
 
@@ -512,13 +507,5 @@ mod tests {
         for url in ["https://merchant.example.com/x", "https://testnet.com/x"] {
             assert!(!is_test_identity(Some(real), Some(url)), "{url}");
         }
-    }
-
-    #[test]
-    fn d32_for_process_is_unavailable_in_verification_builds() {
-        assert_eq!(
-            Deps::for_process().err(),
-            Some(Unavailable(NO_PAYMENT_SUPPORT.to_owned()))
-        );
     }
 }
