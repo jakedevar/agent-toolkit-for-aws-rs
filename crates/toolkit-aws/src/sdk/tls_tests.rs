@@ -628,7 +628,7 @@ fn t_sdl_real_deadlines_and_frame_bound() {
         request(
             format!("https://{HOST}:{port}/mcp"),
             Duration::from_secs(120),
-        );
+        )
     };
     let deadline = || Instant::now() + Duration::from_millis(300);
     let assert_elapsed = |start: Instant| {
@@ -636,7 +636,7 @@ fn t_sdl_real_deadlines_and_frame_bound() {
             start.elapsed() < Duration::from_millis(550),
             "elapsed {:?}",
             start.elapsed()
-        )
+        );
     };
 
     // T-SDL-1: a real body read is cancelled, and drop closes the socket.
