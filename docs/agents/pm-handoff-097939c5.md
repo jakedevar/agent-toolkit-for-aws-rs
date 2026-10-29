@@ -676,3 +676,5 @@ Friction: #4727, Rsi #4694, Rsi #4704
   4/4 busy: d4591cd7 (#5166), af98d414 (#4411 design repair 1), cbfc944e (#5167), 12652329 (#5080 repair 1).
 - 10-29 05:00Z: #5167 (cbfc944e, Codex sol) CHANGES_REQUESTED on ai-payloads S1 6af87905: P2 #5170 (is_sentinel ignores parenthesised/addition operand boundaries), P2 #5171 (inline match/case assignment not counted -> COUNT wrongly assignable). RULING #5171: soft keywords contextual where unambiguous, else fail closed. Repair 1 -> Codex terra 191d9d7a (continue_from f43fddbd). Re-review: Claude Sonnet (cross-family vs Codex repair).
   4/4 busy: d4591cd7 (#5166), af98d414 (#4411 design repair 1), 12652329 (#5080 repair 1), 191d9d7a (#5143 repair 1).
+- 10-29 05:01Z: #4411 design repair 1 (af98d414, Codex sol) at e3fa85bfe2428abac3395c5fc139e98dc3d5ab4a: R-OC-FINAL + pure sanitize_output bridge route (Rust R-SCRUB reuse, fail closed), Rust pack verifier, LF in frame cap, buffer cleanup, ensure_ascii goldens; section 14 table. Re-review #5175 -> Claude Sonnet high 2fa1793f (pinned e3fa85bf, build_free).
+  4/4 busy: d4591cd7 (#5166), 12652329 (#5080 repair 1), 191d9d7a (#5143 repair 1), 2fa1793f (#5175).
