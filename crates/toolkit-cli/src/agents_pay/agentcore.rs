@@ -2038,6 +2038,19 @@ mod wire_contracts {
     }
 
     #[test]
+    fn unexpected_success_status_is_an_invalid_response() {
+        let response = br#"{"processPaymentId":"id","paymentManagerArn":"arn","paymentSessionId":"ps","paymentInstrumentId":"pi","paymentType":"CRYPTO_X402","status":"PROOF_GENERATED","paymentOutput":{"cryptoX402":{"version":"2","payload":{}}},"createdAt":1,"updatedAt":1}"#;
+        let transport =
+            FakeStreamingTransport::new().respond(201, &[], vec![FakeChunk::data(response)]);
+        let client = PaymentClient::new("us-east-1", &transport, &NoSigner).unwrap();
+        assert_eq!(
+            client.process_payment(super::operation_contracts::approved()),
+            Err(PaymentError::InvalidResponse)
+        );
+        assert_eq!(transport.requests().len(), 1);
+    }
+
+    #[test]
     fn conflict_does_not_mint_or_send_again_and_error_is_redacted() {
         let transport = FakeStreamingTransport::new().respond(
             409,
