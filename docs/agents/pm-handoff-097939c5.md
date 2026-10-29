@@ -1084,3 +1084,7 @@ Friction: #4727, Rsi #4694, Rsi #4704
   ENQUEUED seq 3022 entry 09811136 (derive_filters, issue 5363). On landing close (confirm): #5363 #5401 #5409 #5410 #5411 #5412 #5413 #5180; design e3fa85bf lands with it (#5159/#5175 can close).
   Kaizen worker ef029147 (Sonnet) on #4865: add scripts/at-commit-test.sh to runner contract.
   4/4: 91a6981f L5 r1, 33d730c3 S1, c08ce82a #5419, ef029147 #4865. #5344 (P4) waits.
+- 16:50Z: re-review #5419 (c08ce82a, Opus) CHANGES_REQUESTED x402 S5 84fd9fb0: #5400 FIXED; new #5421 (registry pin satisfiable by dead-code lines), #5422 (Drop impl on CallerText runs pre-handler), #5423 (global_allocator/global_asm! if workspace unsafe lint removed). Runtime child test caught #5421/#5422.
+  PM STANDARD (handoff on #5352): static gate = regression guard, not adversary-proof; BLOCKER only if it passes both gate and runtime child test, or cheap precise fix. FIX #5421 #5423, ACCEPT #5422 as documented residual. PM verifies narrow diff itself (no more review sessions unless diff widens).
+  Repair 4 -> Opus c4766db7 (continue_from 5fd44a0d). On done: verify diff + red/green, AgentCheckLandingCandidate, enqueue.
+  4/4: 91a6981f L5 r1, 33d730c3 S1, ef029147 #4865, c4766db7 x402 r4. Queue: B1 seq 3022.
