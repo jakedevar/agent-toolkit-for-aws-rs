@@ -843,3 +843,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
   4/4 busy: 0dcdafea (#5181 S4 cont), 2a78b5ff (#5244 tests), 9de1fd5d (#5261 S2b f/u), e1167447 (#5216 merge).
 - 10-29 07:26Z: test hardening (2a78b5ff) DONE at 2b95608d23da73dd182483747676bf470a9e898b (test-only; scoped 4781 ok, clean; mutation reds). Review #5274 -> Claude Sonnet 74c74e8d (pinned 2b95608d). On ACCEPT: check+enqueue (source_session 2a78b5ff); close #5244 #5245 #5253 #5254 #5274.
   4/4 busy: 0dcdafea (#5181 S4 cont), 9de1fd5d (#5261 S2b f/u), e1167447 (#5216 merge), 74c74e8d (#5274 review).
+- 10-29 07:35Z: L4 merge (e1167447) at cd611010393d526f611e5815b71f163501647f3e: remerge-diff verified by PM (only LEGACY_COMMAND_ORDER 103 + USAGE_BASE pins). Scoped b375b6f3 4160 ok; check ok. ENQUEUED a5145150 (seq 2974, #5216). On land close #5216 #5262 #5228 #5229 #5230; then launch L4 f/u #5273 from rolling.
+  ai-payloads S4 callers = #5278 -> Claude Sonnet f40721c4 (rolling; AP-DOC-*).
+  4/4 busy: 0dcdafea (#5181 S4 cont), 9de1fd5d (#5261 S2b f/u), 74c74e8d (#5274 review), f40721c4 (#5278 AP S4).
