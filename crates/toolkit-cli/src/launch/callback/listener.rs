@@ -316,4 +316,68 @@ mod scripted_tests {
         assert_eq!(accepts.get(), 24);
         assert_eq!(clock.now().duration_since(now), Duration::from_millis(4));
     }
+
+    #[test]
+    fn head_finishing_at_slot_deadline_is_not_accepted() {
+        struct SlowListener {
+            now: Rc<Cell<Instant>>,
+            accepted: Cell<bool>,
+        }
+        struct SlowStream {
+            now: Rc<Cell<Instant>>,
+        }
+        impl ListenerIo for SlowListener {
+            type Stream = SlowStream;
+            fn accept_stream(&self) -> io::Result<SlowStream> {
+                if self.accepted.replace(true) {
+                    return Err(io::ErrorKind::WouldBlock.into());
+                }
+                Ok(SlowStream {
+                    now: self.now.clone(),
+                })
+            }
+        }
+        impl Read for SlowStream {
+            fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+                self.now.set(self.now.get() + SLOT_TIMEOUT);
+                let request = b"GET /?state=s&code=ok HTTP/1.1\r\nHost: 127.0.0.1:1234\r\n\r\n";
+                bytes[..request.len()].copy_from_slice(request);
+                Ok(request.len())
+            }
+        }
+        impl Write for SlowStream {
+            fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        struct SharedClock(Rc<Cell<Instant>>);
+        impl Clock for SharedClock {
+            fn now(&self) -> Instant {
+                self.0.get()
+            }
+            fn sleep(&self, duration: Duration) {
+                self.0.set(self.0.get() + duration);
+            }
+        }
+        let start = Instant::now();
+        let now = Rc::new(Cell::new(start));
+        let listener = SlowListener {
+            now: now.clone(),
+            accepted: Cell::new(false),
+        };
+        assert_eq!(
+            serve_with(
+                listener,
+                1234,
+                "s",
+                start + Duration::from_secs(3),
+                &SharedClock(now)
+            )
+            .unwrap(),
+            None
+        );
+    }
 }
