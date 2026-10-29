@@ -20,3 +20,5 @@ pub mod challenge;
 pub mod policy;
 pub mod pyval;
 pub mod urlparse;
+
+pub mod agentcore;
