@@ -5,6 +5,9 @@ use std::path::{Path, PathBuf};
 use toolkit_core::{parse_json, Json};
 
 /// Resolve the current account's home independently of caller-controlled environment.
+///
+/// # Errors
+/// Returns an error when account lookup fails or the home is relative.
 #[cfg(unix)]
 pub fn runtime_config_path() -> Result<PathBuf, String> {
     let user = nix::unistd::User::from_uid(nix::unistd::Uid::current())
@@ -22,17 +25,26 @@ pub fn runtime_config_path() -> Result<PathBuf, String> {
     Ok(user.dir.join(".agents-pay/config.json"))
 }
 /// Resolve the current account's home independently of caller-controlled environment.
+///
+/// # Errors
+/// Always returns an error on this platform.
 #[cfg(not(unix))]
 pub fn runtime_config_path() -> Result<PathBuf, String> {
     Err("Cannot resolve the runtime payment config from the OS account on this platform. Payments are refused.".to_owned())
 }
 
 /// Load a checked config file.
+///
+/// # Errors
+/// Returns an error if the file or policy fails validation.
 #[cfg(unix)]
 pub fn load_config(path: &Path) -> Result<Json, String> {
     load_config_with_hook(path, || {})
 }
 /// Load a config with a hook after the parent descriptor is checked, for race testing.
+///
+/// # Errors
+/// Returns an error if the file or policy fails validation.
 #[cfg(unix)]
 #[doc(hidden)]
 pub fn load_config_with_hook(path: &Path, hook: impl FnOnce()) -> Result<Json, String> {
@@ -110,10 +122,13 @@ pub fn load_config_with_hook(path: &Path, hook: impl FnOnce()) -> Result<Json, S
         .map_err(|_| format!("Payment config {display} is not valid JSON: invalid UTF-8"))?;
     let raw =
         parse_json(text).map_err(|e| format!("Payment config {display} is not valid JSON: {e}"))?;
-    normalize(raw, &display)
+    normalize(&raw, &display)
 }
 #[cfg(not(unix))]
 /// This platform cannot securely open runtime payment configs.
+///
+/// # Errors
+/// Always returns an error.
 pub fn load_config(_path: &Path) -> Result<Json, String> {
     Err("Cannot resolve the runtime payment config from the OS account on this platform. Payments are refused.".to_owned())
 }
@@ -123,7 +138,7 @@ fn missing(path: &str) -> String {
 }
 #[cfg(unix)]
 fn filemode(mode: u32) -> String {
-    let mut s = String::from(if mode & 0o170000 == 0o040000 {
+    let mut s = String::from(if mode & 0o170_000 == 0o040_000 {
         "d"
     } else {
         "-"
@@ -136,7 +151,7 @@ fn filemode(mode: u32) -> String {
     }
     s
 }
-fn normalize(raw: Json, path: &str) -> Result<Json, String> {
+fn normalize(raw: &Json, path: &str) -> Result<Json, String> {
     if !matches!(raw, Json::Object(_)) {
         return Err(format!("Payment config {path} must be a JSON object."));
     }
@@ -146,7 +161,7 @@ fn normalize(raw: Json, path: &str) -> Result<Json, String> {
     };
     let policy = match raw.get("policy") {
         Some(v @ Json::Object(_)) => v.clone(),
-        _ => raw.clone(),
+        _ => (*raw).clone(),
     };
     let Json::Object(mut fields) = policy else {
         unreachable!()
@@ -163,6 +178,9 @@ fn normalize(raw: Json, path: &str) -> Result<Json, String> {
     Ok(Json::Object(fields))
 }
 /// Resolve a resource with the file winning over injected environment values.
+///
+/// # Errors
+/// Returns an error for a truthy non-scalar resource.
 pub fn resolve_resource(
     policy: &Json,
     key: &str,
@@ -210,11 +228,17 @@ pub fn bounded_env(raw: Option<&str>, default: f64, min: f64, max: f64) -> f64 {
 }
 
 /// Load the runtime account's configuration without consulting path environment variables.
+///
+/// # Errors
+/// Returns an error if account lookup or config validation fails.
 pub fn load_runtime_config() -> Result<Json, String> {
     load_config(&runtime_config_path()?)
 }
 
 /// Resolve a required resource or explain how to provision it.
+///
+/// # Errors
+/// Returns an error when the resource is missing or invalid.
 pub fn require_resource(
     policy: &Json,
     key: &str,
@@ -246,6 +270,8 @@ pub struct Tunables {
 impl Tunables {
     /// Read the named values from an injected environment source.
     #[must_use]
+    // Values are bounded positive and truncation matches Python int().
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     pub fn from_env(env: &impl Fn(&str) -> Option<String>) -> Self {
         Self {
             max_body_bytes: bounded_env(
