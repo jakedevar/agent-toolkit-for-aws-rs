@@ -746,3 +746,78 @@ fn ap_t28_03_05_module_mismatch_missing_definition_and_unsafe_project() {
     assert!(String::from_utf8_lossy(&result.stderr).contains("writefile_path_unsafe"));
     assert!(!unsafe_dir.join("notebooks").exists());
 }
+
+#[test]
+fn ap_nb_01_02_03_04_and_scr_01_02_output_shape() {
+    use toolkit_core::{parse_json, Json};
+    let source = "# Cell 0 [markdown]: Example\n# Heading\n#\n# Text\n\n# Cell 1: Work\nx = 1\n\nshow() # NOTEBOOK_ONLY\nlast()\n";
+    let f = Fixture::new();
+    let template = f.write("template.py", source);
+    let result = f.render(&template, "notebook", &[]);
+    assert!(result.status.success());
+    let text = fs::read_to_string(f.0.join("notebooks/example.ipynb")).unwrap();
+    let notebook = parse_json(&text).unwrap();
+    assert_eq!(notebook.get("nbformat"), Some(&Json::Int(4)));
+    assert_eq!(notebook.get("nbformat_minor"), Some(&Json::Int(4)));
+    let Json::Array(cells) = notebook.get("cells").unwrap() else {
+        panic!()
+    };
+    assert_eq!(cells.len(), 2);
+    assert_eq!(
+        cells[0].get("cell_type").unwrap().as_str(),
+        Some("markdown")
+    );
+    assert!(cells[0].get("outputs").is_none());
+    assert_eq!(
+        cells[0].get("source"),
+        Some(&Json::Array(vec![
+            Json::string("Heading\n"),
+            Json::string("\n"),
+            Json::string("Text")
+        ]))
+    );
+    assert_eq!(
+        cells[1].get("source"),
+        Some(&Json::Array(vec![
+            Json::string("x = 1\n"),
+            Json::string("\n"),
+            Json::string("show() # NOTEBOOK_ONLY\n"),
+            Json::string("last()")
+        ]))
+    );
+    assert_eq!(cells[1].get("execution_count"), Some(&Json::Null));
+    assert_eq!(cells[1].get("outputs"), Some(&Json::Array(vec![])));
+    assert!(f.render(&template, "script", &[]).status.success());
+    assert_eq!(
+        fs::read_to_string(f.0.join("scripts/01_example.py")).unwrap(),
+        "\"\"\"Example\n\nHeading\n\nText\n\"\"\"\n\n# %% Cell 1: Work\nx = 1\n\nlast()\n"
+    );
+}
+
+#[test]
+fn ap_sub_11_12_invalid_scalars_never_echo_values() {
+    let f = Fixture::new();
+    let template = f.write(
+        "template.py",
+        "# Cell 0 [markdown]: Example\n# Desc\n# Cell 1: Code\nx = '[ROLE_ARN]'\n",
+    );
+    for value in [
+        toolkit_core::Json::string("sensitive-value\nnext"),
+        toolkit_core::Json::string("\u{202e}"),
+        toolkit_core::Json::string("x".repeat(4097)),
+        toolkit_core::Json::Bool(true),
+        toolkit_core::Json::Int(12),
+    ] {
+        let document = toolkit_core::Json::object(vec![(
+            "values",
+            toolkit_core::Json::object(vec![("ROLE_ARN", value)]),
+        )]);
+        let file = f.write("values.json", &document.to_compact_string());
+        let result = f.render(&template, "script", &["--values", file.to_str().unwrap()]);
+        assert_eq!(result.status.code(), Some(1));
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        assert!(stderr.contains("ROLE_ARN"));
+        assert!(!stderr.contains("sensitive-value"));
+        assert!(!f.0.join("scripts").exists());
+    }
+}
