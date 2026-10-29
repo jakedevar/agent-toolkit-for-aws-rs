@@ -26,6 +26,8 @@ pub mod fsops;
 pub mod nav;
 #[cfg(unix)]
 pub mod git;
+#[cfg(unix)]
+pub mod meta;
 pub mod plan;
 #[cfg(unix)]
 pub mod select;

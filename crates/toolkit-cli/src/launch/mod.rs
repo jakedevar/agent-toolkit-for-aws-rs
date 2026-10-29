@@ -38,6 +38,9 @@ pub enum LaunchError {
     Config(String),
     /// The Python `ArchiveError`: the source tree or an archive was refused.
     Archive(String),
+    /// A launch lookup or the snapshot download failed (never naming the
+    /// URL).
+    Download(String),
     /// A command that needs the Unix file-system boundary on another
     /// platform ([`PLATFORM_MESSAGE`]).
     Platform,
@@ -48,7 +51,7 @@ impl LaunchError {
     #[must_use]
     pub fn message(&self) -> &str {
         match self {
-            Self::Config(message) | Self::Archive(message) => message,
+            Self::Config(message) | Self::Archive(message) | Self::Download(message) => message,
             Self::Platform => PLATFORM_MESSAGE,
         }
     }
@@ -65,6 +68,7 @@ impl fmt::Debug for LaunchError {
         let kind = match self {
             Self::Config(_) => "Config",
             Self::Archive(_) => "Archive",
+            Self::Download(_) => "Download",
             Self::Platform => "Platform",
         };
         write!(f, "LaunchError::{kind}({:?})", self.message())
