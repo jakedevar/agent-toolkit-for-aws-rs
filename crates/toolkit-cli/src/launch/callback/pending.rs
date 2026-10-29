@@ -99,6 +99,13 @@ impl Custody {
         })
     }
 
+    /// A descriptor copy sharing the lock's open file description, as a
+    /// concurrent test's `fork` makes until its `exec` (test fixtures only).
+    #[cfg(all(test, unix))]
+    pub(super) fn inherited_copy(&self) -> File {
+        self._lock.try_clone().expect("clone lock descriptor")
+    }
+
     /// Drop the lock, then wait until it is observably free (test fixtures only).
     #[cfg(all(test, unix))]
     pub(super) fn release_settled(self) {
