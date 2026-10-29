@@ -20,6 +20,17 @@ pub enum HelperResult {
     Failed,
 }
 
+fn exchange_failure(gate: &CommitGate, now: Instant, cutoff: Instant) -> Option<HelperResult> {
+    if !gate.fail_exchange() {
+        return None;
+    }
+    Some(if now >= cutoff {
+        HelperResult::TimedOut
+    } else {
+        HelperResult::Failed
+    })
+}
+
 #[cfg(test)]
 mod deadline_tests {
     use super::*;
@@ -28,12 +39,20 @@ mod deadline_tests {
         let gate = CommitGate::default();
         assert!(gate.start_exchange());
         let now = Instant::now();
-        let result = if gate.fail_exchange() {
-            HelperResult::Failed
-        } else {
-            HelperResult::TimedOut
-        };
-        assert_eq!(result, HelperResult::TimedOut, "at cutoff {now:?}");
+        assert_eq!(
+            exchange_failure(&gate, now, now),
+            Some(HelperResult::TimedOut)
+        );
+        let gate = CommitGate::default();
+        assert!(gate.start_exchange());
+        assert_eq!(
+            exchange_failure(&gate, now, now + Duration::from_secs(1)),
+            Some(HelperResult::Failed)
+        );
+        let gate = CommitGate::default();
+        assert!(gate.start_exchange());
+        assert_eq!(gate.watchdog(), gate::WatchdogAction::RecordTimeoutAndExit);
+        assert_eq!(exchange_failure(&gate, now, now), None);
     }
 }
 
@@ -135,8 +154,16 @@ pub fn run(
                     }
                     Err(e) => return Err(e),
                 },
-                Err(_) if !gate.fail_exchange() => return Ok(HelperResult::TimedOut),
-                Err(reason) => (PendingStatus::Failed, Some(reason), HelperResult::Failed),
+                Err(reason) => match exchange_failure(&gate, Instant::now(), cutoff) {
+                    None => return Ok(HelperResult::TimedOut),
+                    Some(HelperResult::TimedOut) => {
+                        (PendingStatus::TimedOut, None, HelperResult::TimedOut)
+                    }
+                    Some(HelperResult::Failed) => {
+                        (PendingStatus::Failed, Some(reason), HelperResult::Failed)
+                    }
+                    Some(HelperResult::Succeeded) => unreachable!("failure cannot succeed"),
+                },
             }
         }
     };
