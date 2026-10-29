@@ -985,11 +985,16 @@ impl Authorized {
 #[derive(Default)]
 pub struct FakePaymentsApi {
     calls: std::cell::Cell<usize>,
+    proof: Option<Json>,
 }
 impl FakePaymentsApi {
-    #[cfg(test)]
-    fn with_proof(_proof: Json) -> Self {
-        Self::default()
+    /// Return a supplied proof document for fixture-account requests.
+    #[must_use]
+    pub fn with_proof(proof: Json) -> Self {
+        Self {
+            calls: std::cell::Cell::new(0),
+            proof: Some(proof),
+        }
     }
     /// Number of logical calls observed by this fake.
     #[must_use]
@@ -1019,7 +1024,9 @@ impl PaymentsApi for FakePaymentsApi {
             "fake payments require fixture account"
         );
         self.calls.set(self.calls.get() + 1);
-        Ok(PaymentProof(Json::object(vec![])))
+        Ok(PaymentProof(
+            self.proof.clone().unwrap_or_else(|| Json::object(vec![])),
+        ))
     }
 }
 #[allow(clippy::needless_pass_by_value)] // Consuming Approved permits only one logical spend.
@@ -1598,6 +1605,7 @@ mod wire_contracts {
     fn fake_payments_rejects_non_fixture_manager_account() {
         let api = FakePaymentsApi {
             calls: Cell::new(0),
+            ..FakePaymentsApi::default()
         };
         let request = ProcessPaymentRequest::from_approved(&super::operation_contracts::approved());
         let _ = api.process_payment(&request);
@@ -1607,6 +1615,7 @@ mod wire_contracts {
     fn approved_payment_is_consumed_once_and_retains_verified_terms() {
         let api = FakePaymentsApi {
             calls: Cell::new(0),
+            ..FakePaymentsApi::default()
         };
         let authorized = process_payment(
             &api,
