@@ -18,7 +18,7 @@
 //! diagnostic quotes a line of the template (section 4.2: diagnostics name
 //! placeholders, cells and positions, never values).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use toolkit_core::is_unsafe_char;
 
@@ -939,43 +939,72 @@ fn is_operator(token: &Token, text: &str) -> bool {
     matches!(&token.kind, Kind::Op(operator) if operator == text)
 }
 
-/// The nearest token before index `at` that is not a line end.
-fn previous_token(tokens: &[Token], at: usize) -> Option<&Token> {
-    tokens[..at]
+/// For every token, the index of the nearest token before it that is not a
+/// line end (one pass, so a long run of blank lines is not rescanned).
+fn previous_significant(tokens: &[Token]) -> Vec<Option<usize>> {
+    let mut last = None;
+    tokens
         .iter()
-        .rev()
-        .find(|token| !matches!(token.kind, Kind::Newline))
+        .enumerate()
+        .map(|(at, token)| {
+            let previous = last;
+            if !matches!(token.kind, Kind::Newline) {
+                last = Some(at);
+            }
+            previous
+        })
+        .collect()
 }
 
-fn next_token(tokens: &[Token], at: usize) -> Option<&Token> {
-    tokens[at + 1..]
-        .iter()
-        .find(|token| !matches!(token.kind, Kind::Newline))
+/// For every token, the index of the nearest token after it that is not a
+/// line end.
+fn next_significant(tokens: &[Token]) -> Vec<Option<usize>> {
+    let mut following = vec![None; tokens.len()];
+    let mut next = None;
+    for (at, token) in tokens.iter().enumerate().rev() {
+        following[at] = next;
+        if !matches!(token.kind, Kind::Newline) {
+            next = Some(at);
+        }
+    }
+    following
 }
 
 /// Rule 4: a quoted occurrence is a sentinel when it is an operand of `==` or
 /// `!=`, or a direct element of the bracketed right operand of `in`.
-fn is_sentinel(tokens: &[Token], at: usize) -> bool {
-    let comparison = |token: Option<&Token>| {
-        token.is_some_and(|token| is_operator(token, "==") || is_operator(token, "!="))
+/// The line-end-free neighbours of every token (see `previous_significant`).
+struct Neighbours {
+    before: Vec<Option<usize>>,
+    after: Vec<Option<usize>>,
+}
+
+fn is_sentinel(tokens: &[Token], neighbours: &Neighbours, at: usize) -> bool {
+    let comparison = |index: Option<usize>| {
+        index.is_some_and(|index| {
+            is_operator(&tokens[index], "==") || is_operator(&tokens[index], "!=")
+        })
     };
-    if comparison(previous_token(tokens, at)) || comparison(next_token(tokens, at)) {
+    if comparison(neighbours.before[at]) || comparison(neighbours.after[at]) {
         return true;
     }
     tokens[at].open.is_some_and(|open| {
-        previous_token(tokens, open)
-            .is_some_and(|token| matches!(&token.kind, Kind::Name(name) if name == "in"))
+        neighbours.before[open]
+            .is_some_and(|index| matches!(&tokens[index].kind, Kind::Name(name) if name == "in"))
     })
 }
 
 fn string_occurrences(tokens: &[Token]) -> Vec<Occurrence> {
+    let neighbours = Neighbours {
+        before: previous_significant(tokens),
+        after: next_significant(tokens),
+    };
     tokens
         .iter()
         .enumerate()
         .filter_map(|(at, token)| match &token.kind {
             Kind::Str(literal) => literal.slot.as_ref().map(|name| Occurrence {
                 name: name.clone(),
-                context: if is_sentinel(tokens, at) {
+                context: if is_sentinel(tokens, &neighbours, at) {
                     Context::Sentinel
                 } else {
                     Context::Quoted
@@ -1026,7 +1055,7 @@ fn summarize(occurrences: &[Occurrence]) -> Vec<Slot> {
 fn slot_violations(occurrences: &[Occurrence]) -> Vec<Violation> {
     let mut violations = Vec::new();
     let mut first_code: BTreeMap<&str, Context> = BTreeMap::new();
-    let mut reported: Vec<&str> = Vec::new();
+    let mut reported: BTreeSet<&str> = BTreeSet::new();
     for occurrence in occurrences {
         match occurrence.context {
             Context::Bare => {
@@ -1048,8 +1077,7 @@ fn slot_violations(occurrences: &[Occurrence]) -> Vec<Violation> {
         let first = *first_code
             .entry(occurrence.name.as_str())
             .or_insert(occurrence.context);
-        if first != occurrence.context && !reported.contains(&occurrence.name.as_str()) {
-            reported.push(occurrence.name.as_str());
+        if first != occurrence.context && reported.insert(occurrence.name.as_str()) {
             violations.push(Violation {
                 code: "mixed_slot_kinds",
                 line: occurrence.line,
@@ -1356,6 +1384,18 @@ mod tests {
         assert!(parse(&deep).violations.iter().any(|v| v.code == "no_cells"));
         let newlines = format!("x = (\n{}\"[ROLE_ARN]\"\n)\n", "\n".repeat(100_000));
         assert_eq!(parse(&newlines).occurrences.len(), 1);
+    }
+
+    #[test]
+    fn many_strings_after_a_long_run_of_blank_lines_stay_linear() {
+        // A neighbour search that rescans the blank lines before the opening
+        // bracket for every string would need billions of steps here.
+        let text = format!(
+            "{}f(\n{})\n",
+            "\n".repeat(200_000),
+            "\"[ROLE_ARN]\",\n".repeat(20_000)
+        );
+        assert_eq!(parse(&text).occurrences.len(), 20_000);
     }
 
     #[test]

@@ -155,6 +155,10 @@ Decisions taken in S1 where the design is silent:
   implicit concatenation and a negative number written with a space are not
   targets (no real template has one; an `assign` rewrite would have to
   reproduce the escape rules of each);
+- the lexer is not a full Python tokenizer: it does not understand the nested
+  same-quote replacement fields of Python 3.12 f-strings (`f"{x["a"]}"`), which
+  no real template uses; such a string would be mis-split and reported
+  (`placeholder_in_string` or `unterminated_string`) rather than accepted;
 - `None` literals are never listed (the design admits them only with a type
   row, and none exists);
 - `line` is the line of the `N =` statement, also for the parenthesized form;
