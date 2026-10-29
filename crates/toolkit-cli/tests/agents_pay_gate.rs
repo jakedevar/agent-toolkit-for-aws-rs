@@ -2197,7 +2197,7 @@ fn t_ac3_noread_catches_a_read_before_the_d32_refusal() {
         (
             "no disabled handler",
             route_with(
-                "#[cfg(not(feature = \"agents-pay-live\"))]\nfn fetch_command",
+                &format!("#[cfg(not(feature = \"{LIVE_FEATURE}\"))]\nfn fetch_command"),
                 |a| a.replace("not(", "all("),
             ),
         ),
