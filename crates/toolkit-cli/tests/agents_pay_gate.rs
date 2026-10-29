@@ -1739,6 +1739,16 @@ fn r_tok_nofresh_catches_a_fresh_token_source() {
 // identifiers, `macro_rules!`, `use .. as` renames, `extern crate` and
 // attributes that run code outside a call. Every gate in this file compares
 // identifiers after unraw ([`tokens`], #5400).
+//
+// Repair 4 (PM ruling on #5419): the registry pin is bound to the entries
+// `SLICE` compiles ([`slice_findings`], #5421); `global_allocator`,
+// `global_asm!`, `asm!` and `naked` are banned in the whole crate, and the
+// `unsafe_code = "forbid"` lint the crate inherits is pinned
+// ([`premain_findings`], [`lint_findings`], #5423). The gate is a regression
+// guard against honest mistakes, not an adversary-proof sandbox: the
+// runtime hostile-environment child test (`agents_pay_ac3.rs`) is the
+// second, independent layer, and `docs/migration/agents-pay.md` records
+// what each covers and the accepted residuals (#5422).
 
 const ROUTE_FILE: &str = "agents_pay/mod.rs";
 const NO_PAYMENT_FILE: &str = "agents_pay/no_payment.rs";
@@ -2213,7 +2223,8 @@ fn root_crate_findings(sources: &[Source], manifest: &str) -> Vec<String> {
     // A root crate name is never bound, and `toolkit_core` is never a rename.
     let mut table = String::new();
     let mut dependency: Option<String> = None;
-    for line in manifest.lines().map(str::trim) {
+    for line in manifest.lines().map(toml_line) {
+        let line = line.as_str();
         let key = if let Some(header) = line.strip_prefix('[') {
             header.trim_end_matches(']').clone_into(&mut table);
             dependency = table
@@ -2250,6 +2261,366 @@ fn root_crate_findings(sources: &[Source], manifest: &str) -> Vec<String> {
     found
 }
 
+/// A path with no leading `::` and no generic arguments, as text.
+fn plain_path(path: &syn::Path) -> Option<String> {
+    (path.leading_colon.is_none() && path.segments.iter().all(|s| s.arguments.is_none()))
+        .then(|| path_text(path))
+}
+
+/// A `cfg(..)` attribute whose whitespace-free arguments are `args`.
+fn is_cfg(attr: &syn::Attribute, args: &str) -> bool {
+    matches!(attr.style, syn::AttrStyle::Outer)
+        && matches!(&attr.meta, syn::Meta::List(list)
+            if plain_path(&list.path).as_deref() == Some("cfg")
+                && list.tokens.to_string().chars().filter(|c| !c.is_whitespace()).collect::<String>() == args)
+}
+
+/// `expr` is the struct literal `path { .. }`, every field named in full
+/// (no shorthand) and none taken by `..` struct update (#5421).
+fn full_literal<'a>(
+    expr: &'a syn::Expr,
+    path: &str,
+    found: &mut Vec<String>,
+) -> Option<&'a syn::ExprStruct> {
+    let syn::Expr::Struct(literal) = expr else {
+        found.push(format!("{ROUTE_FILE}: `{path}` is not a struct literal"));
+        return None;
+    };
+    if literal.qself.is_some() || plain_path(&literal.path).as_deref() != Some(path) {
+        found.push(format!(
+            "{ROUTE_FILE}: a `{path}` literal names `{}`",
+            path_text(&literal.path)
+        ));
+    }
+    if !literal.attrs.is_empty() {
+        found.push(format!(
+            "{ROUTE_FILE}: the `{path}` literal has an attribute"
+        ));
+    }
+    if literal.dot2_token.is_some() || literal.rest.is_some() {
+        found.push(format!(
+            "{ROUTE_FILE}: the `{path}` literal takes fields by `..` struct update"
+        ));
+    }
+    for field in &literal.fields {
+        if field.colon_token.is_none() {
+            found.push(format!(
+                "{ROUTE_FILE}: the `{path}` literal has a shorthand field"
+            ));
+        }
+    }
+    Some(literal)
+}
+
+fn field_name(field: &syn::FieldValue) -> String {
+    match &field.member {
+        syn::Member::Named(name) => name.to_string(),
+        syn::Member::Unnamed(index) => index.index.to_string(),
+    }
+}
+
+/// `&[a, b, ..]`, with no attribute: its elements.
+fn array_ref(expr: &syn::Expr) -> Option<&Punctuated<syn::Expr, Token![,]>> {
+    match expr {
+        syn::Expr::Reference(r) if r.attrs.is_empty() && r.mutability.is_none() => match &*r.expr {
+            syn::Expr::Array(array) if array.attrs.is_empty() => Some(&array.elems),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// The registry pin is bound to what the registry compiles (#5421):
+/// `crate::registry::SLICES` lists `crate::agents_pay::SLICE` (and no other
+/// payment table); `mod.rs` has one top-level `const SLICE` with docs only,
+/// a `crate::registry::Slice` literal whose `commands` is `&[..]` of one
+/// `crate::CommandSpec` literal for `agents-pay fetch`; both literals name
+/// every field in full, with no `..` struct update; and the only
+/// attributes in either are the two pinned `cfg`s, one on each of the two
+/// `handler` fields, which name the pinned handlers. Together with the
+/// token pin of every `handler:` field in `mod.rs`, a pinned entry cannot
+/// sit in dead code while another handler is compiled.
+#[allow(clippy::too_many_lines)] // One walk down the registry table.
+fn slice_findings(sources: &[Source]) -> Vec<String> {
+    let text = |path: &str| {
+        sources
+            .iter()
+            .find(|s| s.path == path)
+            .map(|s| s.text.as_str())
+    };
+    let mut found = Vec::new();
+
+    // The shared registry lists this slice, and no other payment table.
+    let listed: Option<Vec<String>> = text("registry.rs")
+        .and_then(|t| parse_source(t).ok())
+        .and_then(|file| {
+            file.items.into_iter().find_map(|item| match item {
+                syn::Item::Const(c) if c.ident == "SLICES" => Some(c),
+                _ => None,
+            })
+        })
+        .and_then(|slices| {
+            array_ref(&slices.expr).map(|elems| {
+                elems
+                    .iter()
+                    .map(|e| match e {
+                        syn::Expr::Path(p) if p.attrs.is_empty() && p.qself.is_none() => {
+                            plain_path(&p.path).unwrap_or_default()
+                        }
+                        _ => "<not a plain path>".to_owned(),
+                    })
+                    .filter(|p| !p.starts_with("crate::") || p.starts_with("crate::agents_pay"))
+                    .collect()
+            })
+        });
+    if listed.as_deref() != Some(&["crate::agents_pay::SLICE".to_owned()][..]) {
+        found.push(format!(
+            "registry.rs: `SLICES` must list `crate::agents_pay::SLICE` as the one payment table; found {listed:?}"
+        ));
+    }
+
+    let Some(Ok(file)) = text(ROUTE_FILE).map(parse_source) else {
+        found.push(format!("{ROUTE_FILE}: does not parse"));
+        return found;
+    };
+    let slices: Vec<&syn::ItemConst> = file
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            syn::Item::Const(c) if c.ident == "SLICE" => Some(c),
+            _ => None,
+        })
+        .collect();
+    let [slice] = slices.as_slice() else {
+        found.push(format!(
+            "{ROUTE_FILE}: needs exactly one top-level `const SLICE`, found {}",
+            slices.len()
+        ));
+        return found;
+    };
+    if !slice.attrs.iter().all(|a| a.path().is_ident("doc")) {
+        found.push(format!(
+            "{ROUTE_FILE}: `SLICE` has an attribute other than docs"
+        ));
+    }
+    let Some(table) = full_literal(&slice.expr, "crate::registry::Slice", &mut found) else {
+        return found;
+    };
+    let mut commands = Vec::new();
+    for field in &table.fields {
+        if !field.attrs.is_empty() {
+            found.push(format!(
+                "{ROUTE_FILE}: the `SLICE` field `{}` has an attribute",
+                field_name(field)
+            ));
+        }
+        if field_name(field) == "commands" {
+            commands.push(&field.expr);
+        }
+    }
+    let specs = match commands.as_slice() {
+        [expr] => array_ref(expr),
+        _ => None,
+    };
+    let Some(spec) = specs
+        .filter(|elems| elems.len() == 1)
+        .and_then(|elems| elems.first())
+    else {
+        found.push(format!(
+            "{ROUTE_FILE}: `SLICE.commands` must be `&[crate::CommandSpec {{ .. }}]`, one literal for `agents-pay fetch`"
+        ));
+        return found;
+    };
+    let Some(spec) = full_literal(spec, "crate::CommandSpec", &mut found) else {
+        return found;
+    };
+    let pinned = [
+        (format!("feature=\"{LIVE_FEATURE}\""), "fetch_command"),
+        (
+            format!("not(feature=\"{LIVE_FEATURE}\")"),
+            "self::no_payment::fetch_command",
+        ),
+    ];
+    let mut handlers = Vec::new();
+    let mut paths = Vec::new();
+    for field in &spec.fields {
+        match field_name(field).as_str() {
+            "handler" => handlers.push(field),
+            name => {
+                if !field.attrs.is_empty() {
+                    found.push(format!(
+                        "{ROUTE_FILE}: the fetch `CommandSpec` field `{name}` has an attribute"
+                    ));
+                }
+                if name == "path" {
+                    paths.push(&field.expr);
+                }
+            }
+        }
+    }
+    let path_words: Option<Vec<String>> = match paths.as_slice() {
+        [expr] => array_ref(expr).and_then(|elems| {
+            elems
+                .iter()
+                .map(|e| match e {
+                    syn::Expr::Lit(syn::ExprLit {
+                        lit: syn::Lit::Str(s),
+                        attrs,
+                    }) if attrs.is_empty() => Some(s.value()),
+                    _ => None,
+                })
+                .collect()
+        }),
+        _ => None,
+    };
+    if path_words.as_deref() != Some(&["agents-pay".to_owned(), "fetch".to_owned()][..]) {
+        found.push(format!(
+            "{ROUTE_FILE}: the one `CommandSpec` must have `path: &[\"agents-pay\", \"fetch\"]`"
+        ));
+    }
+    let bound = handlers.len() == pinned.len()
+        && handlers.iter().zip(&pinned).all(|(field, (cfg, handler))| {
+            matches!(field.attrs.as_slice(), [attr] if is_cfg(attr, cfg))
+                && matches!(&field.expr, syn::Expr::Path(p)
+                    if p.attrs.is_empty() && p.qself.is_none()
+                        && plain_path(&p.path).as_deref() == Some(*handler))
+        });
+    if !bound {
+        found.push(format!(
+            "{ROUTE_FILE}: the fetch `CommandSpec` must hold exactly the two pinned `handler` entries {:?}",
+            registry_handlers()
+        ));
+    }
+    found
+}
+
+/// Code that runs before `main` or outside a call, anywhere in the crate
+/// (#5423): `#[global_allocator]`, `global_asm!`, `asm!`, `naked_asm!` and
+/// `#[naked]` / `#[unsafe(naked)]` are banned by name, after unraw. The
+/// workspace `unsafe_code = "forbid"` lint rejects them too ([`lint_findings`]
+/// pins it); this ban does not rest on it.
+fn premain_findings(sources: &[Source]) -> Vec<String> {
+    let mut found = Vec::new();
+    for source in sources {
+        let Ok(stream) = tokens(&source.text) else {
+            found.push(format!("{}: does not tokenize", source.path));
+            continue;
+        };
+        let mut words = Vec::new();
+        idents(stream, &mut words);
+        for (at, word) in words.iter().enumerate() {
+            let banned = match word.as_str() {
+                "global_allocator" | "global_asm" | "naked_asm" | "naked" => true,
+                // `asm` is an ordinary name; the macro is `asm!` or `arch::asm`.
+                "asm" => {
+                    words.get(at + 1).is_some_and(|w| w == "!")
+                        || (at >= 2 && words[at - 1] == ":" && words[at - 2] == ":")
+                }
+                _ => false,
+            };
+            if banned {
+                found.push(format!(
+                    "{}: names `{word}`, which runs code outside a call",
+                    source.path
+                ));
+            }
+        }
+    }
+    found
+}
+
+/// One manifest line with comments and the whitespace outside strings
+/// removed, so `[dependencies . core]` reads `[dependencies.core]`.
+fn toml_line(line: &str) -> String {
+    let mut out = String::new();
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    for c in line.chars() {
+        match quote {
+            Some(q) => {
+                out.push(c);
+                if escaped {
+                    escaped = false;
+                } else if c == '\\' && q == '"' {
+                    escaped = true;
+                } else if c == q {
+                    quote = None;
+                }
+            }
+            None if c == '#' => break,
+            None if c.is_whitespace() => {}
+            None => {
+                if c == '"' || c == '\'' {
+                    quote = Some(c);
+                }
+                out.push(c);
+            }
+        }
+    }
+    out
+}
+
+/// The manifest as (table, normalised line) pairs; a header has its own
+/// table name.
+fn toml_lines(manifest: &str) -> Vec<(String, String)> {
+    let mut table = String::new();
+    let mut out = Vec::new();
+    for line in manifest.lines().map(toml_line) {
+        if line.is_empty() {
+            continue;
+        }
+        if let Some(header) = line.strip_prefix('[') {
+            header
+                .trim_start_matches('[')
+                .trim_end_matches(']')
+                .clone_into(&mut table);
+        }
+        out.push((table.clone(), line));
+    }
+    out
+}
+
+/// The unsafe lint is pinned (#5423): the crate manifest inherits the
+/// workspace lints (`[lints]` holds exactly `workspace = true`, and no
+/// other line names `lints`), and the workspace sets `unsafe_code =
+/// "forbid"` in `[workspace.lints.rust]`, its only `unsafe_code` setting.
+/// `forbid` cannot be lowered by an attribute in the source.
+fn lint_findings(manifest: &str, workspace: &str) -> Vec<String> {
+    let mut found = Vec::new();
+    let lines = toml_lines(manifest);
+    let headers = lines.iter().filter(|(_, l)| l == "[lints]").count();
+    let in_lints: Vec<&str> = lines
+        .iter()
+        .filter(|(t, l)| t == "lints" && !l.starts_with('['))
+        .map(|(_, l)| l.as_str())
+        .collect();
+    let elsewhere = lines.iter().any(|(t, l)| {
+        l != "[lints]"
+            && (t.starts_with("lints.") || l.trim_start_matches('[').starts_with("lints"))
+    });
+    if headers != 1 || in_lints != ["workspace=true"] || elsewhere {
+        found.push(
+            "Cargo.toml: the crate must inherit the workspace lints, exactly `[lints]` `workspace = true`"
+                .to_owned(),
+        );
+    }
+    let unsafe_lines: Vec<(String, String)> = toml_lines(workspace)
+        .into_iter()
+        .filter(|(_, l)| l.contains("unsafe_code"))
+        .collect();
+    if unsafe_lines
+        != [(
+            "workspace.lints.rust".to_owned(),
+            "unsafe_code=\"forbid\"".to_owned(),
+        )]
+    {
+        found.push(format!(
+            "../../Cargo.toml: the workspace must set `unsafe_code = \"forbid\"` in `[workspace.lints.rust]`, and nowhere else; found {unsafe_lines:?}"
+        ));
+    }
+    found
+}
+
 fn crate_manifest() -> String {
     fs::read_to_string(manifest_dir().join("Cargo.toml")).expect("the toolkit-cli manifest")
 }
@@ -2265,11 +2636,14 @@ fn route_gate(sources: &[Source]) -> Vec<String> {
 
 /// The whole D32 gate over a source set, the crate manifest and the
 /// workspace manifest.
-fn full_gate(sources: &[Source], manifest: &str, _workspace: &str) -> Vec<String> {
+fn full_gate(sources: &[Source], manifest: &str, workspace: &str) -> Vec<String> {
     d32_findings(sources)
         .into_iter()
+        .chain(slice_findings(sources))
         .chain(pay_dir_findings(sources))
+        .chain(premain_findings(sources))
         .chain(root_crate_findings(sources, manifest))
+        .chain(lint_findings(manifest, workspace))
         .collect()
 }
 

@@ -82,6 +82,68 @@ the live module (library and binaries only). G4 also scans the inline
 `#[cfg(test)]` modules of the payment sources (#5377), with no allowance: no
 default-build test can name `Deps::for_process`.
 
+Repair 4 (PM ruling on re-review #5419) adds two checks. First, the registry
+pin is bound to the entries that are compiled (#5421). `registry::SLICES`
+lists `crate::agents_pay::SLICE` as the one payment table, and `mod.rs` has
+one top-level `const SLICE` with docs only. Its `commands` is `&[..]` holding
+one `crate::CommandSpec` literal, for `agents-pay fetch`. Both literals name
+every field in full, with no shorthand and no `..` struct update. Their only
+attributes are the two pinned `cfg`s on the two `handler` fields. A pinned
+entry kept in dead code (`#[cfg(any())]`), or a handler or table taken from
+another module, fails. Second, nothing may run before `main` (#5423).
+`#[global_allocator]`, `global_asm!`, `asm!` (or a `::asm` path),
+`naked_asm!` and `naked` are banned anywhere in the crate's `src/`. The gate
+also checks two manifest settings: the crate manifest keeps exactly
+`[lints] workspace = true`, and the workspace keeps `unsafe_code = "forbid"`
+in `[workspace.lints.rust]` as its only `unsafe_code` setting. `forbid`
+cannot be lowered by a source attribute. Manifest lines are read with
+comments and the whitespace outside strings removed, so
+`[dependencies . core]` is `[dependencies.core]`. The reviewer's mutations
+are committed negative fixtures.
+
+### What each layer covers
+
+The no-read-before-D32 property rests on two independent layers.
+
+1. **The static source gate** (`t_ac3_noread_*`) guards against honest
+   mistakes. It is not an adversary-proof sandbox: whoever can edit the
+   source can edit the gate. It guarantees three things:
+   - the default-build route is exactly the pinned `no_payment.rs`;
+   - that route is the one the registry compiles;
+   - no source under `src/agents_pay/` defines a macro, renames an import,
+     uses a raw identifier or an `.init_array`-style attribute, and no
+     source in the crate holds pre-main or inline-assembly code.
+2. **The runtime test**
+   (`t_ac3_inh_fetch_routes_as_a_child_under_a_hostile_environment` in
+   `tests/agents_pay_ac3.rs`) runs the real `toolkit agents-pay fetch` as a
+   child under a hostile environment. It requires the D32 document on
+   stdout, exit 2 and an empty stderr. So it catches any code on the default
+   path that prints, whatever the gate missed.
+
+A change is a blocker only if it passes both layers, or if a cheap, precise
+check can close it.
+
+### Accepted residuals
+
+- **A trait impl on a crate type, written under `agents_pay` (#5422).**
+  `toolkit_cli::run` drops the default `CallerText` (`output.caller =
+  caller.clone();`) before the handler runs. So a safe `impl Drop for
+  crate::safe_text::CallerText` in any payment file runs on every route,
+  before D32. It needs no `unsafe`, attribute or macro. The gate does not
+  ban it, because banning `Drop` would also forbid legitimate
+  zeroize-on-drop code in the live module. The runtime child test caught
+  the reviewer's mutation (job `69e09e65`). A Drop impl that reads but
+  prints nothing would pass both layers. Review is the guard for it.
+- **Code outside `src/agents_pay/` and outside `src/`.**
+  - Changes to `lib.rs`, `registry.rs` or `safe_text.rs` can reroute or
+    precede any command. The gate pins only that `SLICES` lists
+    `crate::agents_pay::SLICE`.
+  - A dependency, existing or newly added, can run its own pre-main
+    constructor. A token gate over this crate's `src/` cannot see that.
+  - A `build.rs` or a `RUSTFLAGS` cap on lints is also outside it.
+
+  These need review of the manifest and the crate root.
+
 ## Flow (S5)
 
 - Order: config, R-ORIGIN (with deadline admission around each lookup), the
