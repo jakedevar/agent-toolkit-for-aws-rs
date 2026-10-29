@@ -28,6 +28,14 @@ const MANUAL_TEXT_CHARS: usize = 60;
 /// The words that mark a comment as a manual edit point (section 1.4).
 const MANUAL_MARKERS: [&str; 2] = ["NOTE FOR AGENT", "Uncomment"];
 
+/// The template section whose body is a caller-owned Python module (§4.4.4).
+pub(crate) const MODULE_CELLS: &[(&str, usize, &str, &str)] = &[(
+    "dataset-transformation/code_templates/transformation.py",
+    2,
+    "scripts/transform_fn.py",
+    "def transform_dataset(",
+)];
+
 /// How a placeholder occurrence is used in the template text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Context {

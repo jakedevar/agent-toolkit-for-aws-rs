@@ -178,7 +178,10 @@ pub(crate) fn command(inv: &Invocation, out: &mut Output<'_>) -> Result<(), Tool
             return Err(fail("consent_name_invalid", name));
         }
     }
-    let module = path.ends_with("dataset-transformation/code_templates/transformation.py");
+    let module_spec = template::MODULE_CELLS
+        .iter()
+        .find(|(suffix, _, _, _)| path.ends_with(suffix));
+    let module = module_spec.is_some();
     let mut replacements = BTreeMap::new();
     for arg in inv.values_of("--cell") {
         let (n, file) = arg
@@ -216,8 +219,8 @@ pub(crate) fn command(inv: &Invocation, out: &mut Output<'_>) -> Result<(), Tool
         {
             return Err(fail("cell_replaces_consent", format!("cell {n}")));
         }
-        if module && n == 2 {
-            let expected = project.join("scripts/transform_fn.py");
+        if let Some((_, _, module_path, _)) = module_spec.filter(|(_, number, _, _)| n == *number) {
+            let expected = project.join(module_path);
             let resolved =
                 fs::canonicalize(file).map_err(|_| fail("module_missing", "module missing"))?;
             if resolved != expected {
@@ -226,7 +229,7 @@ pub(crate) fn command(inv: &Invocation, out: &mut Output<'_>) -> Result<(), Tool
                     "module must be scripts/transform_fn.py",
                 ));
             }
-            toolkit_core::resolve_within(&project, "scripts/transform_fn.py")
+            toolkit_core::resolve_within(&project, module_path)
                 .map_err(|_| fail("module_missing", "module is missing or symlinked"))?;
         }
         let body = source_ok(&read(
@@ -243,11 +246,11 @@ pub(crate) fn command(inv: &Invocation, out: &mut Output<'_>) -> Result<(), Tool
         }
         replacements.insert(n, (file.to_owned(), body));
     }
-    if module {
+    if let Some((_, number, module_path, definition)) = module_spec {
         let (file, body) = replacements
-            .get_mut(&2)
+            .get_mut(number)
             .ok_or_else(|| fail("module_cell_required", "cell 2 must name the module"))?;
-        let expected = project.join("scripts/transform_fn.py");
+        let expected = project.join(module_path);
         let resolved =
             fs::canonicalize(&*file).map_err(|_| fail("module_missing", "module missing"))?;
         if resolved != expected {
@@ -256,10 +259,7 @@ pub(crate) fn command(inv: &Invocation, out: &mut Output<'_>) -> Result<(), Tool
                 "module must be scripts/transform_fn.py",
             ));
         }
-        if !body
-            .lines()
-            .any(|l| l.starts_with("def transform_dataset("))
-        {
+        if !body.lines().any(|l| l.starts_with(*definition)) {
             return Err(fail(
                 "module_definition_missing",
                 "module definition missing",

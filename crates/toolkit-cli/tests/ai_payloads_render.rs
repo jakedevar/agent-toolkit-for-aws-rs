@@ -223,3 +223,122 @@ fn ap_cat_10_all_real_templates_render_in_both_modes() {
         }
     }
 }
+
+#[test]
+fn ap_cell_04_08_multiline_normalization_and_unsafe_characters() {
+    let template_text = "# Cell 0 [markdown]: Example\n# Description\n# Cell 1: Code\npass\n";
+    let body = "def transform_dataset(df):\n    x = 1\n\n\treturn df # comment";
+    let mut outputs = Vec::new();
+    for contents in [body.to_owned(), body.replace('\n', "\r\n")] {
+        let f = Fixture::new();
+        let template = f.write("template.py", template_text);
+        let cell = f.write("cell.py", &contents);
+        let arg = format!("1={}", cell.display());
+        let result = f.render(&template, "script", &["--cell", &arg]);
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        outputs.push(fs::read_to_string(f.0.join("scripts/01_example.py")).unwrap());
+    }
+    assert_eq!(outputs[0], outputs[1]);
+    assert!(outputs[0].contains(body));
+    for ch in [
+        '\r', '\0', '\x1b', '\x7f', '\u{85}', '\u{2028}', '\u{202e}', '\u{2066}', '\u{feff}',
+    ] {
+        let f = Fixture::new();
+        let template = f.write("template.py", template_text);
+        let cell = f.write("cell.py", &format!("x{ch}y"));
+        let arg = format!("1={}", cell.display());
+        let result = f.render(&template, "script", &["--cell", &arg]);
+        assert_eq!(result.status.code(), Some(1));
+        assert!(String::from_utf8_lossy(&result.stderr).contains("source_char"));
+        assert!(!f.0.join("scripts").exists());
+    }
+}
+
+#[test]
+fn ap_app_02_nb_08_10_12_versioned_append_and_invalid_ids() {
+    use toolkit_core::{parse_json, Json};
+    let f = Fixture::new();
+    let template = f.write(
+        "template.py",
+        "# Cell 0 [markdown]: Example\n# Desc\n# Cell 1: Code\npass\n",
+    );
+    let base = r#"{"cells":[{"cell_type":"code","id":"a1","source":["x"]}],"metadata":{"keep":true},"nbformat":4,"nbformat_minor":5}"#;
+    let source = f.write("notebooks/example-03.ipynb", base);
+    f.write("notebooks/example-01.ipynb", base);
+    f.write("notebooks/example-001.ipynb", "ignored");
+    let result = f.render(&template, "notebook", &["--append"]);
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert_eq!(fs::read_to_string(source).unwrap(), base);
+    let copy =
+        parse_json(&fs::read_to_string(f.0.join("notebooks/example-04.ipynb")).unwrap()).unwrap();
+    assert_eq!(copy.get("nbformat_minor"), Some(&Json::Int(5)));
+    let Json::Array(cells) = copy.get("cells").unwrap() else {
+        panic!("cells")
+    };
+    assert_eq!(cells[0].get("id").unwrap().as_str(), Some("a1"));
+    for cell in &cells[1..] {
+        assert_eq!(cell.get("id").unwrap().as_str().unwrap().len(), 8);
+    }
+    let bad = Fixture::new();
+    let t = bad.write(
+        "template.py",
+        "# Cell 0 [markdown]: Example\n# Desc\n# Cell 1: Code\npass\n",
+    );
+    bad.write(
+        "notebooks/example.ipynb",
+        &base.replace("\"a1\"", "\"bad id!\""),
+    );
+    let result = bad.render(&t, "notebook", &["--append"]);
+    assert_eq!(result.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&result.stderr).contains("notebook_cell_ids_invalid"));
+    assert!(!bad.0.join("notebooks/example-01.ipynb").exists());
+}
+
+#[test]
+fn ap_t28_01_02_03_04_cat_11_module_contract() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../skills/core-skills/aws-ai-ml/references/dataset-transformation/code_templates/transformation.py");
+    let original = fs::read_to_string(&root).unwrap();
+    assert!(original.contains("transform_fn.py"));
+    assert!(original.contains("from transform_fn import transform_dataset"));
+    for mode in ["script", "notebook"] {
+        let f = Fixture::new();
+        let missing = f.render(&root, mode, &[]);
+        assert_eq!(missing.status.code(), Some(1));
+        assert!(String::from_utf8_lossy(&missing.stderr).contains("module_cell_required"));
+        let module = f.write(
+            "scripts/transform_fn.py",
+            "def transform_dataset(df):\n    return df\n",
+        );
+        let before = fs::read(&module).unwrap();
+        let arg = format!("2={}", module.display());
+        let result = f.render(&root, mode, &["--cell", &arg]);
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        assert_eq!(fs::read(module).unwrap(), before);
+        let output = fs::read_to_string(f.0.join(if mode == "script" {
+            "scripts/01_example.py"
+        } else {
+            "notebooks/example.ipynb"
+        }))
+        .unwrap();
+        assert!(output.contains("from transform_fn import transform_dataset"));
+        if mode == "script" {
+            assert!(!output.contains("%%writefile"));
+            assert!(output.contains("# transform_dataset is defined"));
+        } else {
+            assert!(output.contains("%%writefile"));
+            assert!(output.contains("def transform_dataset(df):"));
+        }
+    }
+}
