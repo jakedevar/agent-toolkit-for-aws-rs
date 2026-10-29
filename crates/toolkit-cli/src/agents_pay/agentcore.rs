@@ -1714,6 +1714,34 @@ mod wire_contracts {
     }
 
     #[test]
+    fn fake_replays_matching_token_and_expires_idempotency_record() {
+        let manager = "arn:aws:bedrock-agentcore:us-east-1:111111111111:payment-manager/test";
+        let request = ProcessPaymentRequest::from_approved(
+            &super::operation_contracts::approved_for(manager),
+        );
+        let first = Json::object(vec![("proof", Json::string("first"))]);
+        let second = Json::object(vec![("proof", Json::string("second"))]);
+        let api = FakePaymentsApi::with_proof(first.clone());
+        assert_eq!(api.process_payment(&request).unwrap().payload(), &first);
+        api.set_proof(second.clone());
+        assert_eq!(api.process_payment(&request).unwrap().payload(), &first);
+        assert_eq!(api.calls(), 2);
+        assert_eq!(api.authorizations(), 1);
+        let mut conflicting = ProcessPaymentRequest::from_approved(
+            &super::operation_contracts::approved_for(manager),
+        );
+        conflicting.body.push(b' ');
+        assert_eq!(
+            api.process_payment(&conflicting).err(),
+            Some(PaymentError::Service("ConflictException"))
+        );
+        assert_eq!(api.authorizations(), 1);
+        api.expire_idempotency_records();
+        assert_eq!(api.process_payment(&request).unwrap().payload(), &second);
+        assert_eq!(api.authorizations(), 2);
+    }
+
+    #[test]
     fn fake_admin_and_reads_reject_other_accounts_before_recording() {
         let api = FakePaymentsApi::default();
         let manager = "arn:aws:bedrock-agentcore:us-east-1:123456789012:payment-manager/test";
