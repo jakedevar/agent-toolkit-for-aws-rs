@@ -70,7 +70,7 @@ fn safe_dir(project: &Path, part: &str) -> Result<PathBuf, ToolkitError> {
         Err(_) => Err(fail("path_invalid", "cannot inspect output directory")),
     }
 }
-fn source_ok(text: &str) -> Result<String, ToolkitError> {
+fn source_ok(text: &str, path: &Path) -> Result<String, ToolkitError> {
     let normalized = text.replace("\r\n", "\n");
     let mut line = 1;
     let mut col = 1;
@@ -78,7 +78,11 @@ fn source_ok(text: &str) -> Result<String, ToolkitError> {
         if ch != '\n' && ch != '\t' && toolkit_core::is_unsafe_char(ch) {
             return Err(fail(
                 "source_char",
-                format!("line {line}, column {col}: U+{:04X}", ch as u32),
+                format!(
+                    "{} line {line}, column {col}: U+{:04X}",
+                    crate::safe_text::safe_path(&path.display().to_string()),
+                    ch as u32
+                ),
             ));
         }
         if ch == '\n' {
@@ -142,7 +146,7 @@ fn command_with_hooks(
             "choose a name without a version suffix",
         ));
     }
-    let text = source_ok(&read(path, MAX_TEXT_FILE_BYTES, "template_invalid")?)?;
+    let text = source_ok(&read(path, MAX_TEXT_FILE_BYTES, "template_invalid")?, path)?;
     let original = template::parse(&text);
     if let Some(v) = original.violations.first() {
         return Err(fail(
@@ -208,6 +212,13 @@ fn command_with_hooks(
             .iter()
             .find(|c| c.number == n + 1)
             .map_or(usize::MAX, |c| c.line);
+        let original_lines: Vec<_> = text.lines().collect();
+        let section_end = if end == usize::MAX {
+            original_lines.len()
+        } else {
+            end - 1
+        };
+        let section = original_lines[cell.line..section_end].join("\n");
         if original.occurrences.iter().any(|o| {
             o.line > cell.line
                 && o.line < end
@@ -216,10 +227,11 @@ fn command_with_hooks(
                     o.context,
                     template::Context::Quoted | template::Context::Bare
                 )
-        }) || original
-            .targets
-            .iter()
-            .any(|t| t.cell == n && types::slot_type(&t.name) == Some(types::SlotType::Consent))
+        }) || template::contains_consent_binding(&section)
+            || original
+                .targets
+                .iter()
+                .any(|t| t.cell == n && types::slot_type(&t.name) == Some(types::SlotType::Consent))
         {
             return Err(fail("cell_replaces_consent", format!("cell {n}")));
         }
@@ -239,15 +251,18 @@ fn command_with_hooks(
             toolkit_core::resolve_within(&project, module_path)
                 .map_err(|_| fail("module_missing", "module is missing or symlinked"))?;
         }
-        let body = source_ok(&read(
+        let body = source_ok(
+            &read(
+                Path::new(file),
+                MAX_TEXT_FILE_BYTES,
+                if module && n == 2 {
+                    "module_missing"
+                } else {
+                    "cell_invalid"
+                },
+            )?,
             Path::new(file),
-            MAX_TEXT_FILE_BYTES,
-            if module && n == 2 {
-                "module_missing"
-            } else {
-                "cell_invalid"
-            },
-        )?)?;
+        )?;
         if template::contains_consent_identifier(&body) {
             return Err(fail("cell_binds_consent", format!("cell {n}")));
         }

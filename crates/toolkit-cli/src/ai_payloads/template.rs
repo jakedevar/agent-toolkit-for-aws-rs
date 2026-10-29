@@ -215,6 +215,23 @@ pub(crate) fn contains_consent_identifier(text: &str) -> bool {
     lexed.occurrences.iter().any(|occurrence| occurrence.context == Context::Bare && super::types::slot_type(&occurrence.name) == Some(super::types::SlotType::Consent)) || lexed.tokens.iter().any(|token| matches!(&token.kind, Kind::Name(name) if super::types::slot_type(name) == Some(super::types::SlotType::Consent)))
 }
 
+/// Whether this section assigns a consent identifier, including duplicates.
+pub(crate) fn contains_consent_binding(text: &str) -> bool {
+    let lexed = lex(text);
+    statements(&lexed.tokens).iter().any(|statement| {
+        let mut names = BTreeMap::new();
+        let mut start = 0;
+        for (index, at) in statement.iter().enumerate() {
+            let token = &lexed.tokens[*at];
+            if token.depth == 0 && matches!(&token.kind, Kind::Op(op) if op == "=" || AUGMENTED.contains(&op.as_str())) {
+                bound_names(&lexed.tokens, &statement[start..index], &mut names);
+                start = index + 1;
+            }
+        }
+        names.keys().any(|name| super::types::slot_type(name) == Some(super::types::SlotType::Consent))
+    })
+}
+
 /// Reject a consent binding other than a false literal or its typed slot.
 pub(crate) fn invalid_consent_binding(text: &str) -> bool {
     let lexed = lex(text);

@@ -153,6 +153,12 @@ fn ap_con_06_cell_consent_identifier_guard() {
         .render(&template, "script", &["--cell", &arg])
         .status
         .success());
+    let f = Fixture::new();
+    let template = f.write("template.py", "# Cell 0 [markdown]: Example\n# Description\n# Cell 1: Code\nACCEPT_EULA = False\nACCEPT_EULA = False\n");
+    let cell = f.write("cell.py", "pass\n");
+    let arg = format!("1={}", cell.display());
+    let result = f.render(&template, "script", &["--cell", &arg]);
+    assert!(String::from_utf8_lossy(&result.stderr).contains("cell_replaces_consent"));
 }
 
 #[test]
