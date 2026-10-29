@@ -201,7 +201,7 @@ mod tests {
     #[test]
     fn ap_nb_10_missing_and_duplicate_ids_refused() {
         let mut ids = ContentIds("hash".into());
-        for cells in [r#"[{}]"#, r#"[{"id":"x"},{"id":"x"}]"#] {
+        for cells in [r"[{}]", r#"[{"id":"x"},{"id":"x"}]"#] {
             let source =
                 format!(r#"{{"cells":{cells},"metadata":{{}},"nbformat":4,"nbformat_minor":5}}"#);
             assert_eq!(

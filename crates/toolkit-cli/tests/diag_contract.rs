@@ -2416,8 +2416,8 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
 /// The S2b render synopsis is included as well (#5223).
 /// A deliberate usage change updates the pin in the same
 /// commit and says so in the Issue; an incidental one fails here.
-const USAGE_BASE_LEN: usize = 44244;
-const USAGE_BASE_FNV1A64: u64 = 0x5f2d_79a3_a6eb_6626;
+const USAGE_BASE_LEN: usize = 44367;
+const USAGE_BASE_FNV1A64: u64 = 0xe5cc_c5c0_3b51_b63e;
 
 #[test]
 fn the_global_usage_text_is_byte_identical_to_the_base() {

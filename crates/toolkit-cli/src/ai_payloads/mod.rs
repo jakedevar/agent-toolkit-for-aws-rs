@@ -58,7 +58,7 @@ pub(crate) const SLICE: crate::registry::Slice = crate::registry::Slice {
         passthrough: false,
         handler: render::command,
     }],
-    synopsis: "  toolkit ai-payloads templates [--root DIR] [--json] [--check]\n  toolkit ai-payloads render TEMPLATE --mode notebook|script --project-dir DIR [options]\n  toolkit ai-payloads reward sample --format FORMAT\n  toolkit ai-payloads reward check --format FORMAT --event FILE --response FILE [--batch]\n",
+    synopsis: "  toolkit ai-payloads templates [--root DIR] [--json] [--check]\n  toolkit ai-payloads render TEMPLATE --mode notebook|script --project-dir DIR\n      [--name NAME] [--values FILE] [--cell N=FILE]... [--append | --new]\n      [--consent NAME]... [--allow-unresolved] [--dry-run]\n  toolkit ai-payloads reward sample --format FORMAT\n  toolkit ai-payloads reward check --format FORMAT --event FILE --response FILE [--batch]\n",
     description: r"  ai-payloads   Payload templates of the AWS AI/ML skill (#4386).
                 templates lists the code_templates/*.py files under
                 ROOT/references (default: skills/core-skills/aws-ai-ml) with
