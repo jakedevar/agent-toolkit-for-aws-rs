@@ -103,6 +103,7 @@ pub fn run(
                     }
                     Err(e) => return Err(e),
                 },
+                Err(()) if !gate.fail_exchange() => return Ok(HelperResult::TimedOut),
                 Err(()) => (
                     PendingStatus::Failed,
                     Some("exchange_failed"),

@@ -43,6 +43,13 @@ impl CommitGate {
                 .is_ok()
     }
 
+    /// Claim an exchange failure only if the watchdog has not aborted it.
+    pub fn fail_exchange(&self) -> bool {
+        self.0
+            .compare_exchange(EXCHANGING, ABORTED, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok()
+    }
+
     /// Mark a successful rename complete.
     pub fn committed(&self) -> bool {
         self.0

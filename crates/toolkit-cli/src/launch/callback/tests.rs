@@ -225,3 +225,34 @@ fn pending_custody_keeps_private_record_and_exclusive_lock() {
     drop(custody);
     assert!(Custody::acquire(scratch.path(), 12345).is_ok());
 }
+
+#[cfg(unix)]
+#[test]
+fn pending_reader_validates_schema_and_lock_custody() {
+    use super::{
+        pending::{acquire_if_free, read_record, Custody},
+        PendingStatus,
+    };
+    use crate::launch::{clock::SeededRandom, tests_support::Scratch};
+    let scratch = Scratch::new("pending-read");
+    let custody = Custody::acquire(scratch.path(), 55).unwrap();
+    custody
+        .write(
+            1234,
+            100,
+            160,
+            PendingStatus::Failed,
+            Some("invalid_code"),
+            &SeededRandom::new(1),
+        )
+        .unwrap();
+    assert_eq!(
+        read_record(scratch.path(), 55).unwrap().reason.as_deref(),
+        Some("invalid_code")
+    );
+    assert!(acquire_if_free(scratch.path(), 55).is_none());
+    drop(custody);
+    assert!(acquire_if_free(scratch.path(), 55).is_some());
+    std::fs::write(scratch.join("pending/55.json"), b"{\"pid\":55,\"pid\":55}").unwrap();
+    assert!(read_record(scratch.path(), 55).is_none());
+}
