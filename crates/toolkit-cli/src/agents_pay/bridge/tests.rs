@@ -414,6 +414,7 @@ fn t_br_svc_1_get_payment_session_golden_request_bytes() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)] // One table of pre-authorization classes.
 fn t_br_pre_every_pre_authorization_class_refuses_with_zero_calls() {
     let http = "http://merchant.test/pay/weather?city=sydney";
     let userinfo = "https://u:p@merchant.test/pay/weather?city=sydney";
@@ -651,7 +652,8 @@ fn t_br_post_wire_failures_are_one_logical_call() {
         .into_bytes()
     };
     let big = Json::object(vec![("signature", Json::string("s".repeat(17_000)))]);
-    let cases: Vec<(&str, u16, Vec<(&str, &str)>, Vec<u8>)> = vec![
+    type WireCase<'a> = (&'a str, u16, Vec<(&'a str, &'a str)>, Vec<u8>);
+    let cases: Vec<WireCase<'_>> = vec![
         (
             "ConflictException",
             409,
@@ -919,7 +921,7 @@ fn t_br_quiet_no_stderr_on_any_path() {
         );
         assert!(err.is_empty(), "stderr: {}", String::from_utf8_lossy(&err));
         assert!(out.ends_with(b"\n") && out.is_ascii());
-        assert_eq!(out.iter().filter(|b| **b == b'\n').count(), 1, "one frame");
+        assert_eq!(out.split(|b| *b == b'\n').count(), 2, "one frame");
     }
     // A panicking world is the AgentCore failure, still with no stderr.
     let panicking = |_: &Json| -> Frame { panic!("synthetic bridge panic") };

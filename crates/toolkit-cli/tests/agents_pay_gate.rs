@@ -1818,15 +1818,13 @@ pub(in crate::agents_pay) fn bridge_command(
     out: &mut crate::Output<'_>,
 ) -> ::core::result::Result<(), ::toolkit_core::ToolkitError> {
     super::serve(
-        &mut ::std::io::stdin().lock(),
+        &mut super::process_stdin(),
         out,
         &self::refuse_without_payment_support,
     )
 }
 
-fn refuse_without_payment_support(
-    _request: &::toolkit_core::Json,
-) -> (::std::vec::Vec<u8>, i32) {
+fn refuse_without_payment_support(_request: &::toolkit_core::Json) -> (::std::vec::Vec<u8>, i32) {
     (::std::vec::Vec::from(super::UNAVAILABLE_FRAME), 1)
 }
 ";
@@ -1840,7 +1838,7 @@ pub(in crate::agents_pay) fn live_command(
     out: &mut crate::Output<'_>,
 ) -> ::core::result::Result<(), ::toolkit_core::ToolkitError> {
     self::serve(
-        &mut ::std::io::stdin().lock(),
+        &mut self::process_stdin(),
         out,
         &|request| match super::deps::Deps::for_process() {
             ::core::result::Result::Ok(world) => self::handle_service(&world.deps(), request),
@@ -1849,6 +1847,22 @@ pub(in crate::agents_pay) fn live_command(
             }
         },
     )
+}
+";
+
+/// The bridge's unbuffered stdin in `bridge/mod.rs` (R-BR-IN: at most
+/// 131073 bytes leave the pipe), without its attributes.
+const BRIDGE_STDIN_PIN: &str = r"
+pub(in crate::agents_pay) fn process_stdin() -> ::std::boxed::Box<dyn ::std::io::Read> {
+    #[cfg(unix)]
+    let owned = ::std::os::fd::AsFd::as_fd(&::std::io::stdin()).try_clone_to_owned();
+    #[cfg(windows)]
+    let owned =
+        ::std::os::windows::io::AsHandle::as_handle(&::std::io::stdin()).try_clone_to_owned();
+    match owned {
+        ::core::result::Result::Ok(owned) => ::std::boxed::Box::new(::std::fs::File::from(owned)),
+        ::core::result::Result::Err(_) => ::std::boxed::Box::new(::std::io::empty()),
+    }
 }
 ";
 
@@ -1864,6 +1878,7 @@ fn bridge_no_payment_decl() -> String {
 const BRIDGE_SURFACE_ITEMS: &[(&str, &str)] = &[
     ("no_payment", "mod"),
     ("serve", "fn"),
+    ("process_stdin", "fn"),
     ("UNAVAILABLE_FRAME", "const"),
 ];
 
@@ -1978,46 +1993,62 @@ fn bridge_route_findings(sources: &[Source]) -> Vec<String> {
             "{BRIDGE_FILE}: `UNAVAILABLE_FRAME` is not one `const UNAVAILABLE_FRAME: &[u8] = b\"..\";` literal of the R-BR-D32 frame"
         ));
     }
-    let lives: Vec<usize> = trees
-        .windows(2)
-        .enumerate()
-        .filter(|(_, w)| {
-            matches!((&w[0], &w[1]), (TokenTree::Ident(f), TokenTree::Ident(n)) if f == "fn" && n == "live_command")
-        })
-        .map(|(at, _)| at)
-        .collect();
-    let live_ok = match lives.as_slice() {
-        [at] => {
-            let mut start = *at;
-            if start >= 2
-                && matches!(&trees[start - 1], TokenTree::Group(g) if g.delimiter() == proc_macro2::Delimiter::Parenthesis)
-                && matches!(&trees[start - 2], TokenTree::Ident(p) if p == "pub")
-            {
-                start -= 2;
-            }
-            let attrs: Vec<String> = trees[attr_start(&trees, start)..start]
-                .iter()
-                .filter_map(|t| match t {
-                    TokenTree::Group(g) => Some(compact(&g.stream())),
-                    _ => None,
-                })
-                .filter(|attr| !attr.starts_with("doc="))
-                .collect();
-            let end = trees[*at..]
-                .iter()
-                .position(|t| matches!(t, TokenTree::Group(g) if g.delimiter() == proc_macro2::Delimiter::Brace))
-                .map_or(trees.len(), |p| at + p + 1);
-            attrs == [format!("cfg(feature=\"{LIVE_FEATURE}\")")]
-                && list_of_trees(&trees[start..end]) == list_of_text(BRIDGE_LIVE_PIN)
-        }
-        _ => false,
-    };
-    if !live_ok {
+    let live_cfg = [format!("cfg(feature=\"{LIVE_FEATURE}\")")];
+    if !pinned_fn(&trees, "live_command", &live_cfg, BRIDGE_LIVE_PIN) {
         found.push(format!(
             "{BRIDGE_FILE}: `live_command` must be one `#[cfg(feature = \"{LIVE_FEATURE}\")]` fn, exactly the pinned live entry"
         ));
     }
+    if !pinned_fn(
+        &trees,
+        "process_stdin",
+        &["must_use".to_owned()],
+        BRIDGE_STDIN_PIN,
+    ) {
+        found.push(format!(
+            "{BRIDGE_FILE}: `process_stdin` must be one `#[must_use]` fn, exactly the pinned unbuffered stdin"
+        ));
+    }
     found
+}
+
+/// Whether `trees` define `fn name` exactly once at the top level, with
+/// exactly the non-doc attributes `attrs`, and the tokens of `pin` from its
+/// visibility to the end of its body.
+fn pinned_fn(trees: &[TokenTree], name: &str, attrs: &[String], pin: &str) -> bool {
+    let found: Vec<usize> = trees
+        .windows(2)
+        .enumerate()
+        .filter(|(_, w)| {
+            matches!((&w[0], &w[1]), (TokenTree::Ident(f), TokenTree::Ident(n)) if f == "fn" && n == name)
+        })
+        .map(|(at, _)| at)
+        .collect();
+    let [at] = found.as_slice() else {
+        return false;
+    };
+    let mut start = *at;
+    if start >= 2
+        && matches!(&trees[start - 1], TokenTree::Group(g) if g.delimiter() == proc_macro2::Delimiter::Parenthesis)
+        && matches!(&trees[start - 2], TokenTree::Ident(p) if p == "pub")
+    {
+        start -= 2;
+    }
+    let actual: Vec<String> = trees[attr_start(trees, start)..start]
+        .iter()
+        .filter_map(|t| match t {
+            TokenTree::Group(g) => Some(compact(&g.stream())),
+            _ => None,
+        })
+        .filter(|attr| !attr.starts_with("doc="))
+        .collect();
+    let end = trees[*at..]
+        .iter()
+        .position(
+            |t| matches!(t, TokenTree::Group(g) if g.delimiter() == proc_macro2::Delimiter::Brace),
+        )
+        .map_or(trees.len(), |p| at + p + 1);
+    actual == attrs && list_of_trees(&trees[start..end]) == list_of_text(pin)
 }
 
 /// What may bind a name at the top of `mod.rs`: `no_payment` and
@@ -2875,6 +2906,35 @@ fn is_bridge_production(path: &str) -> bool {
     path.starts_with("agents_pay/bridge/") && !path.ends_with("tests.rs")
 }
 
+/// `stream` without its inline or declared `#[cfg(test)] mod NAME { .. }`
+/// / `#[cfg(test)] mod NAME;` items: a production file's own unit tests
+/// (fixture files, `env!`) are not its route.
+fn without_test_modules(stream: TokenStream) -> TokenStream {
+    let trees: Vec<TokenTree> = stream.into_iter().collect();
+    let mut out = Vec::new();
+    let mut at = 0;
+    while at < trees.len() {
+        let is_test_attr = matches!(&trees[at], TokenTree::Punct(p) if p.as_char() == '#')
+            && matches!(trees.get(at + 1), Some(TokenTree::Group(g))
+                if g.delimiter() == proc_macro2::Delimiter::Bracket && compact(&g.stream()) == "cfg(test)")
+            && matches!(trees.get(at + 2), Some(TokenTree::Ident(m)) if m == "mod");
+        if is_test_attr {
+            let end = trees[at..]
+                .iter()
+                .position(|t| {
+                    matches!(t, TokenTree::Group(g) if g.delimiter() == proc_macro2::Delimiter::Brace)
+                        || matches!(t, TokenTree::Punct(p) if p.as_char() == ';')
+                })
+                .map_or(trees.len(), |p| at + p + 1);
+            at = end;
+            continue;
+        }
+        out.push(trees[at].clone());
+        at += 1;
+    }
+    out.into_iter().collect()
+}
+
 fn bridge_world_findings(sources: &[Source]) -> Vec<String> {
     let mut found = Vec::new();
     for source in sources {
@@ -2885,6 +2945,7 @@ fn bridge_world_findings(sources: &[Source]) -> Vec<String> {
             found.push(format!("{}: does not tokenize", source.path));
             continue;
         };
+        let stream = without_test_modules(stream);
         let mut words = Vec::new();
         idents(stream.clone(), &mut words);
         for word in &words {
@@ -2900,9 +2961,8 @@ fn bridge_world_findings(sources: &[Source]) -> Vec<String> {
             pure = words;
         } else if source.path == BRIDGE_FILE {
             for name in BRIDGE_PURE_FNS {
-                let before = pure.len();
                 fn_bodies(stream.clone(), name, &mut pure);
-                if pure.len() == before {
+                if !words.windows(2).any(|w| w[0] == "fn" && w[1] == *name) {
                     found.push(format!(
                         "{BRIDGE_FILE}: the pure route `fn {name}` is missing"
                     ));
@@ -3298,9 +3358,9 @@ fn t_ac3_noread_the_disabled_route_reads_nothing_before_d32() {
 #[test]
 #[allow(clippy::too_many_lines)] // A table of mutations, each reported by label.
 fn t_ac3_noread_catches_a_read_before_the_d32_refusal() {
-    let disabled_entry = format!("#[cfg(not(feature = \"{LIVE_FEATURE}\"))]\n        handler:");
+    let disabled_entry = format!("#[cfg(not(feature = \"{LIVE_FEATURE}\"))]\n            handler:");
     let live_entry =
-        format!("#[cfg(feature = \"{LIVE_FEATURE}\")]\n        handler: fetch_command,");
+        format!("#[cfg(feature = \"{LIVE_FEATURE}\")]\n            handler: fetch_command,");
     let decl = no_payment_decl();
     let np = NO_PAYMENT_FILE;
     let mutations: Vec<(&str, Vec<Source>)> = vec![
@@ -3825,7 +3885,7 @@ fn t_ac3_noread_absolute_paths_resolve_to_the_real_crates() {
 #[allow(clippy::too_many_lines)] // A table of mutations, each reported by label.
 fn t_ac3_noread_catches_the_review_5419_mutations() {
     let entries = format!(
-        "        #[cfg(feature = \"{LIVE_FEATURE}\")]\n        handler: fetch_command,\n        #[cfg(not(feature = \"{LIVE_FEATURE}\"))]\n        handler: self::no_payment::fetch_command,\n"
+        "            #[cfg(feature = \"{LIVE_FEATURE}\")]\n            handler: fetch_command,\n            #[cfg(not(feature = \"{LIVE_FEATURE}\"))]\n            handler: self::no_payment::fetch_command,\n"
     );
     // The pinned entries, kept in a never-compiled item.
     let dead_pin = format!(
@@ -3861,7 +3921,7 @@ fn t_ac3_noread_catches_the_review_5419_mutations() {
     let shorthand = edit(real_sources(), ROUTE_FILE, &|text| {
         format!(
             "{}\n{env_handler}{dead_pin}",
-            text.replacen(&entries, "        handler,\n", 1)
+            text.replacen(&entries, "            handler,\n", 1)
         )
     });
     let struct_update = edit(
@@ -3880,8 +3940,8 @@ fn t_ac3_noread_catches_the_review_5419_mutations() {
     );
     let foreign_table = edit(
         edit(real_sources(), ROUTE_FILE, &|text| {
-            let start = text.find("    commands: &[crate::CommandSpec {\n").unwrap();
-            let end = start + text[start..].find("    }],\n").unwrap() + "    }],\n".len();
+            let start = text.find("    commands: &[\n").unwrap();
+            let end = start + text[start..].find("    ],\n").unwrap() + "    ],\n".len();
             let table = &text[start + "    commands: ".len()..end - ",\n".len()];
             format!(
                 "{}    commands: &[crate::agents_pay::flow::SPEC],\n{}\n#[cfg(any())]\nconst _REVIEW_5419_PINNED: &[crate::CommandSpec] = {table};\n",
@@ -4060,6 +4120,14 @@ fn t_br_d32_catches_bridge_route_mutations() {
                 BRIDGE_FILE,
                 "self::handle_service(&world.deps(), request)",
                 |_| "self::render::error_frame(self::protocol::BridgeError::Input)".to_owned(),
+            ),
+        ),
+        (
+            "the bridge reads a buffered stdin",
+            sources_with(
+                BRIDGE_FILE,
+                "::std::boxed::Box::new(::std::fs::File::from(owned))",
+                |_| "::std::boxed::Box::new(::std::io::stdin())".to_owned(),
             ),
         ),
         (

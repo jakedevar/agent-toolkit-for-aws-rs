@@ -136,7 +136,7 @@ fn tree_hit(value: &Json, matcher: &FinalSecrets, budget: &mut usize) -> Option<
 }
 
 /// `value` with its member `key` set to `member`.
-fn replaced(value: &Json, key: &str, member: Json) -> Json {
+fn replaced(value: &Json, key: &str, member: &Json) -> Json {
     match value {
         Json::Object(members) => Json::Object(
             members
@@ -209,10 +209,10 @@ fn sanitized(candidate: &Json, matcher: &FinalSecrets, budget: &mut usize) -> Op
     if tree_hit(&details, matcher, budget)? || matcher.found_in(&new_text, budget)? {
         return None;
     }
-    let item = replaced(item, "text", Json::string(new_text));
+    let item = replaced(item, "text", &Json::string(new_text));
     Some(replaced(
-        &replaced(candidate, "content", Json::Array(vec![item])),
+        &replaced(candidate, "content", &Json::Array(vec![item])),
         "details",
-        details,
+        &details,
     ))
 }

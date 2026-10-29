@@ -16,7 +16,7 @@ pub(in crate::agents_pay) fn bridge_command(
     out: &mut crate::Output<'_>,
 ) -> ::core::result::Result<(), ::toolkit_core::ToolkitError> {
     super::serve(
-        &mut ::std::io::stdin().lock(),
+        &mut super::process_stdin(),
         out,
         &self::refuse_without_payment_support,
     )

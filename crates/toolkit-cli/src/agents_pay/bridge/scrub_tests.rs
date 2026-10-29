@@ -257,7 +257,11 @@ fn with(details: &Json, key: &str, value: Json) -> Json {
 }
 
 fn percent(text: &str) -> String {
-    text.bytes().map(|b| format!("%{b:02X}")).collect()
+    use std::fmt::Write as _;
+    text.bytes().fold(String::new(), |mut out, b| {
+        let _ = write!(out, "%{b:02X}");
+        out
+    })
 }
 
 #[test]

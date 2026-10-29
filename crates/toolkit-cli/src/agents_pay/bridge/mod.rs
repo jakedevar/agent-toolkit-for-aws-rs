@@ -99,6 +99,25 @@ pub fn serve_quiet(
     Ok(())
 }
 
+/// The process stdin, unbuffered (R-BR-IN): a duplicate of the standard
+/// input descriptor, sharing its file offset, read directly. `io::Stdin`
+/// reads ahead in 8 KiB blocks, which would consume up to 139264 bytes of a
+/// longer stream; this reader takes at most the 131073 the bounded read asks
+/// for. A descriptor that cannot be duplicated reads as empty (an invalid
+/// request).
+#[must_use]
+pub(in crate::agents_pay) fn process_stdin() -> ::std::boxed::Box<dyn ::std::io::Read> {
+    #[cfg(unix)]
+    let owned = ::std::os::fd::AsFd::as_fd(&::std::io::stdin()).try_clone_to_owned();
+    #[cfg(windows)]
+    let owned =
+        ::std::os::windows::io::AsHandle::as_handle(&::std::io::stdin()).try_clone_to_owned();
+    match owned {
+        ::core::result::Result::Ok(owned) => ::std::boxed::Box::new(::std::fs::File::from(owned)),
+        ::core::result::Result::Err(_) => ::std::boxed::Box::new(::std::io::empty()),
+    }
+}
+
 /// The live registry entry: the process world is built only for a valid
 /// service request, after the pure route (R-BR-WORLD).
 ///
@@ -110,7 +129,7 @@ pub(in crate::agents_pay) fn live_command(
     out: &mut crate::Output<'_>,
 ) -> ::core::result::Result<(), ::toolkit_core::ToolkitError> {
     self::serve(
-        &mut ::std::io::stdin().lock(),
+        &mut self::process_stdin(),
         out,
         &|request| match super::deps::Deps::for_process() {
             ::core::result::Result::Ok(world) => self::handle_service(&world.deps(), request),
