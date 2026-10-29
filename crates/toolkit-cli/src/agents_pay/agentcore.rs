@@ -1819,6 +1819,32 @@ mod wire_contracts {
     }
 
     #[test]
+    fn operation_deadline_rejects_expired_session_and_admin_calls() {
+        let transport = FakeStreamingTransport::new();
+        let client = PaymentClient::new("us-east-1", &transport, &NoSigner)
+            .unwrap()
+            .with_operation_deadline(Instant::now() - Duration::from_secs(1));
+        let expected = Err(PaymentError::Transport(PaymentErrorClass::ReadTimeout));
+        assert_eq!(client.get_session("arn", "ps", "user"), expected);
+        assert_eq!(
+            client.create_session("arn", "user", "1", 15, "token"),
+            expected
+        );
+        assert_eq!(
+            client.create_instrument(
+                "arn",
+                "user",
+                "connector",
+                "ETHEREUM",
+                "a@example.com",
+                "token"
+            ),
+            expected
+        );
+        assert!(transport.requests().is_empty());
+    }
+
+    #[test]
     fn retry_backoff_that_reaches_deadline_is_not_slept() {
         let now = Instant::now();
         let clock = FakeClock(Cell::new(now));
