@@ -698,6 +698,10 @@ fn names_request(ty: &Type) -> bool {
     matches!(ty, Type::Path(p) if p.path.segments.last().is_some_and(|s| s.ident == "ProcessPaymentRequest"))
 }
 
+fn protected_field(expr: &syn::Expr) -> bool {
+    matches!(expr, syn::Expr::Field(field) if matches!(&field.member, syn::Member::Named(name) if ["body", "manager", "session", "instrument", "user"].contains(&name.to_string().as_str())))
+}
+
 #[derive(Default)]
 struct RequestScanner {
     request_impl: bool,
@@ -785,16 +789,22 @@ impl<'ast> Visit<'ast> for RequestScanner {
         visit::visit_macro(self, mac);
     }
     fn visit_expr_assign(&mut self, expr: &'ast syn::ExprAssign) {
-        if let syn::Expr::Field(field) = &*expr.left {
-            if let syn::Member::Named(name) = &field.member {
-                if ["body", "manager", "session", "instrument", "user"]
-                    .contains(&name.to_string().as_str())
-                {
-                    self.field_writes += 1;
-                }
-            }
+        if protected_field(&expr.left) {
+            self.field_writes += 1;
         }
         visit::visit_expr_assign(self, expr);
+    }
+    fn visit_expr_reference(&mut self, expr: &'ast syn::ExprReference) {
+        if expr.mutability.is_some() && protected_field(&expr.expr) {
+            self.field_writes += 1;
+        }
+        visit::visit_expr_reference(self, expr);
+    }
+    fn visit_expr_method_call(&mut self, expr: &'ast syn::ExprMethodCall) {
+        if protected_field(&expr.receiver) && expr.method != "clone" {
+            self.field_writes += 1;
+        }
+        visit::visit_expr_method_call(self, expr);
     }
 }
 

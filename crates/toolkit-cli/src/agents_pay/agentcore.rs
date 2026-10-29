@@ -181,6 +181,11 @@ fn process_body(approved: &Approved) -> String {
 /// use toolkit_cli::agents_pay::{agentcore::ProcessPaymentRequest, policy::Approved};
 /// fn forge(approved: &Approved) { let _ = ProcessPaymentRequest::from_approved(approved); }
 /// ```
+///
+/// ```compile_fail
+/// use toolkit_cli::agents_pay::agentcore::ProcessPaymentRequest;
+/// fn forge() { let _ = ProcessPaymentRequest { body: vec![] }; }
+/// ```
 pub struct ProcessPaymentRequest {
     body: Vec<u8>,
     manager: String,
