@@ -1215,3 +1215,7 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 23:24Z: #5511 review (1d8e7401) ACCEPT B3 a90abec7 (3/3 guard mutations caught; nonblocking #5514). Check ok (a37b0b59, 5395 across 9 packages); merges cleanly onto rolling AND onto the S6+B2 tip. ENQUEUED seq 3057 (ac9e0f9d, issue 5505). On land, close #5505 #5511.
   Filed docgraph S3 #5515 (Gremlin; depends only on S1) -> Claude Opus high fe94684e.
   4/4: a0ab0de1 docgraph S2, dc2bb4e7 #5158, 9482d07f #5504 revert, fe94684e S3. Queue: 3056 S6+B2, 3057 B3.
+- 23:26Z: docgraph S2 #5489 (a0ab0de1) DONE at 817eb1eeef0744d1f7fd3edf07bbe5692b4c4ba3 (15 tests; also covers #5484 inner-release tests; fmt/clippy x3/suite/scoped 909415fe ok; Cargo files unchanged; --live still refused #5507). Friction #5509.
+  Security review #5516 -> Codex sol xhigh 6be15885, pinned 817eb1ee. On ACCEPT: check, enqueue issue 5489; on land close #5489 #5516 #5484.
+  RULING #5508: keep parity (writer-only checks unevaluated live); left open as a post-cutover enhancement.
+  4/4: dc2bb4e7 #5158, 9482d07f #5504 revert, fe94684e docgraph S3, 6be15885 S2 review. Queue: 3056 S6+B2, 3057 B3.
