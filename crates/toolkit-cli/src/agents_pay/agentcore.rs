@@ -374,7 +374,11 @@ fn valid_process_response(body: &str, manager: &str, session: &str, instrument: 
         || text("paymentInstrumentId") != Some(instrument)
         || text("paymentType") != Some("CRYPTO_X402")
         || text("status") != Some("PROOF_GENERATED")
-        || text("processPaymentId").is_none()
+        || !text("processPaymentId").is_some_and(|id| {
+            parse_json(PAYMENT_SERVICE_MODEL).is_ok_and(|model| {
+                valid_wallet_shape(&model, "ProcessPaymentId", &Json::string(id))
+            })
+        })
     {
         return false;
     }
@@ -768,7 +772,7 @@ mod operation_contracts {
 
     #[test]
     fn process_response_requires_status_echo_and_object_payload() {
-        let ok = r#"{"processPaymentId":"id","paymentManagerArn":"arn","paymentSessionId":"ps","paymentInstrumentId":"pi","paymentType":"CRYPTO_X402","status":"PROOF_GENERATED","paymentOutput":{"cryptoX402":{"version":"2","payload":{"signature":"secret"}}},"createdAt":1,"updatedAt":1}"#;
+        let ok = r#"{"processPaymentId":"12345678-abcd-1234-abcd-123456789abc","paymentManagerArn":"arn","paymentSessionId":"ps","paymentInstrumentId":"pi","paymentType":"CRYPTO_X402","status":"PROOF_GENERATED","paymentOutput":{"cryptoX402":{"version":"2","payload":{"signature":"secret"}}},"createdAt":1,"updatedAt":1}"#;
         assert!(valid_process_response(ok, "arn", "ps", "pi"));
         assert!(!valid_process_response(
             &ok.replace("PROOF_GENERATED", "OTHER"),
@@ -800,7 +804,7 @@ mod operation_contracts {
 
     #[test]
     fn process_response_accepts_iso8601_model_timestamps() {
-        let body = r#"{"processPaymentId":"id","paymentManagerArn":"arn","paymentSessionId":"ps","paymentInstrumentId":"pi","paymentType":"CRYPTO_X402","status":"PROOF_GENERATED","paymentOutput":{"cryptoX402":{"version":"2","payload":{"signature":"secret"}}},"createdAt":"2026-10-28T12:00:00Z","updatedAt":"2026-10-28T12:00:00Z"}"#;
+        let body = r#"{"processPaymentId":"12345678-abcd-1234-abcd-123456789abc","paymentManagerArn":"arn","paymentSessionId":"ps","paymentInstrumentId":"pi","paymentType":"CRYPTO_X402","status":"PROOF_GENERATED","paymentOutput":{"cryptoX402":{"version":"2","payload":{"signature":"secret"}}},"createdAt":"2026-10-28T12:00:00Z","updatedAt":"2026-10-28T12:00:00Z"}"#;
         assert!(valid_process_response(body, "arn", "ps", "pi"));
         assert!(!valid_process_response(
             &body.replace("2026-10-28T12:00:00Z", "not-a-timestamp"),
@@ -812,7 +816,7 @@ mod operation_contracts {
 
     #[test]
     fn process_response_rejects_multiple_or_unknown_union_arms() {
-        let body = r#"{"processPaymentId":"id","paymentManagerArn":"arn","paymentSessionId":"ps","paymentInstrumentId":"pi","paymentType":"CRYPTO_X402","status":"PROOF_GENERATED","paymentOutput":{"cryptoX402":{"version":"2","payload":{}},"future":{}},"createdAt":1,"updatedAt":1}"#;
+        let body = r#"{"processPaymentId":"12345678-abcd-1234-abcd-123456789abc","paymentManagerArn":"arn","paymentSessionId":"ps","paymentInstrumentId":"pi","paymentType":"CRYPTO_X402","status":"PROOF_GENERATED","paymentOutput":{"cryptoX402":{"version":"2","payload":{}},"future":{}},"createdAt":1,"updatedAt":1}"#;
         assert!(!valid_process_response(body, "arn", "ps", "pi"));
     }
 
@@ -2260,7 +2264,7 @@ mod wire_contracts {
 
     #[test]
     fn read_timeout_retries_identical_payment_bytes() {
-        let response = br#"{"processPaymentId":"id","paymentManagerArn":"arn","paymentSessionId":"ps","paymentInstrumentId":"pi","paymentType":"CRYPTO_X402","status":"PROOF_GENERATED","paymentOutput":{"cryptoX402":{"version":"2","payload":{"signature":"secret"}}},"createdAt":1,"updatedAt":1}"#;
+        let response = br#"{"processPaymentId":"12345678-abcd-1234-abcd-123456789abc","paymentManagerArn":"arn","paymentSessionId":"ps","paymentInstrumentId":"pi","paymentType":"CRYPTO_X402","status":"PROOF_GENERATED","paymentOutput":{"cryptoX402":{"version":"2","payload":{"signature":"secret"}}},"createdAt":1,"updatedAt":1}"#;
         let transport = FakeStreamingTransport::new()
             .respond(200, &[], vec![FakeChunk::IdleTimeout])
             .respond(200, &[], vec![FakeChunk::data(response)]);
@@ -2281,7 +2285,7 @@ mod wire_contracts {
 
     #[test]
     fn oversized_error_uses_header_and_retries_without_reading_it() {
-        let response = br#"{"processPaymentId":"id","paymentManagerArn":"arn","paymentSessionId":"ps","paymentInstrumentId":"pi","paymentType":"CRYPTO_X402","status":"PROOF_GENERATED","paymentOutput":{"cryptoX402":{"version":"2","payload":{"signature":"secret"}}},"createdAt":1,"updatedAt":1}"#;
+        let response = br#"{"processPaymentId":"12345678-abcd-1234-abcd-123456789abc","paymentManagerArn":"arn","paymentSessionId":"ps","paymentInstrumentId":"pi","paymentType":"CRYPTO_X402","status":"PROOF_GENERATED","paymentOutput":{"cryptoX402":{"version":"2","payload":{"signature":"secret"}}},"createdAt":1,"updatedAt":1}"#;
         let transport = FakeStreamingTransport::new()
             .respond(
                 503,
@@ -2349,7 +2353,7 @@ mod wire_contracts {
 
     #[test]
     fn declared_short_length_is_not_trusted() {
-        let response = br#"{"processPaymentId":"id","paymentManagerArn":"arn","paymentSessionId":"ps","paymentInstrumentId":"pi","paymentType":"CRYPTO_X402","status":"PROOF_GENERATED","paymentOutput":{"cryptoX402":{"version":"2","payload":{"signature":"secret"}}},"createdAt":1,"updatedAt":1}"#;
+        let response = br#"{"processPaymentId":"12345678-abcd-1234-abcd-123456789abc","paymentManagerArn":"arn","paymentSessionId":"ps","paymentInstrumentId":"pi","paymentType":"CRYPTO_X402","status":"PROOF_GENERATED","paymentOutput":{"cryptoX402":{"version":"2","payload":{"signature":"secret"}}},"createdAt":1,"updatedAt":1}"#;
         let transport = FakeStreamingTransport::new().respond(
             200,
             &[("content-length", "1")],
@@ -2364,7 +2368,7 @@ mod wire_contracts {
 
     #[test]
     fn t_aws_process_wire_and_response() {
-        let response = br#"{"processPaymentId":"id","paymentManagerArn":"arn","paymentSessionId":"ps","paymentInstrumentId":"pi","paymentType":"CRYPTO_X402","status":"PROOF_GENERATED","paymentOutput":{"cryptoX402":{"version":"2","payload":{"signature":"secret"}}},"createdAt":1,"updatedAt":1}"#;
+        let response = br#"{"processPaymentId":"12345678-abcd-1234-abcd-123456789abc","paymentManagerArn":"arn","paymentSessionId":"ps","paymentInstrumentId":"pi","paymentType":"CRYPTO_X402","status":"PROOF_GENERATED","paymentOutput":{"cryptoX402":{"version":"2","payload":{"signature":"secret"}}},"createdAt":1,"updatedAt":1}"#;
         let transport =
             FakeStreamingTransport::new().respond(200, &[], vec![FakeChunk::data(response)]);
         let client = PaymentClient::new("us-east-1", &transport, &NoSigner).unwrap();
@@ -2394,7 +2398,7 @@ mod wire_contracts {
 
     #[test]
     fn unexpected_success_status_is_an_invalid_response() {
-        let response = br#"{"processPaymentId":"id","paymentManagerArn":"arn","paymentSessionId":"ps","paymentInstrumentId":"pi","paymentType":"CRYPTO_X402","status":"PROOF_GENERATED","paymentOutput":{"cryptoX402":{"version":"2","payload":{}}},"createdAt":1,"updatedAt":1}"#;
+        let response = br#"{"processPaymentId":"12345678-abcd-1234-abcd-123456789abc","paymentManagerArn":"arn","paymentSessionId":"ps","paymentInstrumentId":"pi","paymentType":"CRYPTO_X402","status":"PROOF_GENERATED","paymentOutput":{"cryptoX402":{"version":"2","payload":{}}},"createdAt":1,"updatedAt":1}"#;
         let transport =
             FakeStreamingTransport::new().respond(201, &[], vec![FakeChunk::data(response)]);
         let client = PaymentClient::new("us-east-1", &transport, &NoSigner).unwrap();
