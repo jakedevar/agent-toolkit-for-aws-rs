@@ -1243,7 +1243,7 @@ pub struct FakePaymentsApi {
     idempotency: std::cell::RefCell<std::collections::HashMap<String, (Vec<u8>, Json)>>,
     authorizations: std::cell::Cell<usize>,
     session: Option<Json>,
-    instrument: Option<Json>,
+    instrument_response: Option<Json>,
     session_reads: std::cell::Cell<usize>,
     session_creates: std::cell::Cell<usize>,
     instrument_creates: std::cell::Cell<usize>,
@@ -1268,7 +1268,7 @@ impl FakePaymentsApi {
     /// Supply a deterministic instrument response.
     #[must_use]
     pub fn with_instrument(mut self, instrument: Json) -> Self {
-        self.instrument = Some(instrument);
+        self.instrument_response = Some(instrument);
         self
     }
     /// Number of session reads observed by this fake.
@@ -1378,7 +1378,9 @@ impl PaymentsApi for FakePaymentsApi {
         assert_fixture_account(manager);
         self.instrument_creates
             .set(self.instrument_creates.get() + 1);
-        self.instrument.clone().ok_or(PaymentError::InvalidResponse)
+        self.instrument_response
+            .clone()
+            .ok_or(PaymentError::InvalidResponse)
     }
     fn process_payment(
         &self,
