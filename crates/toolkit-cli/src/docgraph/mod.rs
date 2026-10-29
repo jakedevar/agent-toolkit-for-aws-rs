@@ -47,6 +47,7 @@ mod checks;
 mod client;
 mod dbchecks;
 mod infra;
+mod memory;
 mod neptune_input;
 mod report;
 mod seed;
@@ -108,7 +109,12 @@ pub const NEPTUNE_SEED: CommandSpec = CommandSpec {
 /// [`crate::registry::NEW_RANK`].
 pub(crate) const SLICE: crate::registry::Slice = crate::registry::Slice {
     name: "docgraph",
-    commands: &[WA_REVIEW, NEPTUNE_VALIDATE_INPUT, NEPTUNE_SEED],
+    commands: &[
+        WA_REVIEW,
+        NEPTUNE_VALIDATE_INPUT,
+        NEPTUNE_SEED,
+        NEPTUNE_MEMORY,
+    ],
     synopsis: r"  toolkit documentdb wa-review --cluster-id ID --region R [--recorded FILE]
       [--analysis-data FILE] [--output DIR] [--now TS]
   toolkit neptune validate-input [KEY=VALUE...]
@@ -381,3 +387,66 @@ pub fn seed_command(invocation: &Invocation, out: &mut Output<'_>) -> Result<(),
     }
     Ok(())
 }
+
+/// Offline memory request planning and replay.
+pub fn memory_command(invocation: &Invocation, out: &mut Output<'_>) -> Result<(), ToolkitError> {
+    let op = invocation
+        .value("--operation")
+        .ok_or_else(|| usage("--operation is required"))?;
+    let input_path = invocation
+        .value("--input")
+        .ok_or_else(|| usage("--input is required"))?;
+    let input =
+        read_document(input_path).map_err(|e| ToolkitError::runtime("docgraph_memory", e))?;
+    let requests = memory::plan(op, &input).map_err(usage)?;
+    if invocation.has_flag("--dry-run") {
+        if invocation.value("--recorded").is_some() {
+            return Err(usage("--dry-run and --recorded cannot be combined"));
+        }
+        return out.line(&Json::Array(requests).to_compact_string());
+    }
+    let path = invocation
+        .value("--recorded")
+        .ok_or_else(|| usage("this build has no live client; supply --dry-run or --recorded"))?;
+    let document = load_recorded(path)?;
+    let mut replay =
+        RecordedSession::from_document(&document).map_err(|e| recorded_error(path, &e))?;
+    let result = if op == "retrieve" {
+        memory::retrieve(
+            &mut replay,
+            input
+                .get("graph_id")
+                .and_then(Json::as_str)
+                .unwrap_or_default(),
+            &requests[0],
+        )
+        .map_err(|e| ToolkitError::runtime("docgraph_memory", e))?
+    } else {
+        let mut results = Vec::new();
+        for request in &requests {
+            results.push(Json::Array(replay.submit(request).map_err(|_| {
+                ToolkitError::runtime("docgraph_memory", "recorded request failed")
+            })?));
+        }
+        Json::Array(results)
+    };
+    if replay.unused() != 0 {
+        return Err(ToolkitError::runtime(
+            "docgraph_recorded",
+            "unused recorded calls",
+        ));
+    }
+    out.line(&result.to_compact_string())
+}
+
+/// `neptune memory` offline request builder and replay.
+pub const NEPTUNE_MEMORY: CommandSpec = CommandSpec {
+    path: &["neptune", "memory"],
+    flags: &["--dry-run"],
+    value_flags: &["--operation", "--input", "--recorded"],
+    strict_values: true,
+    repeatable_flags: &[],
+    max_positionals: 0,
+    passthrough: false,
+    handler: memory_command,
+};
