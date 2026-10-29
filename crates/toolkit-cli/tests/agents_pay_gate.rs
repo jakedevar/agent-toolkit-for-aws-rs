@@ -2254,12 +2254,22 @@ fn crate_manifest() -> String {
     fs::read_to_string(manifest_dir().join("Cargo.toml")).expect("the toolkit-cli manifest")
 }
 
-/// The whole D32 gate over a source set and the real manifest.
+fn workspace_manifest() -> String {
+    fs::read_to_string(repo_root().join("Cargo.toml")).expect("the workspace manifest")
+}
+
+/// The whole D32 gate over a source set and the real manifests.
 fn route_gate(sources: &[Source]) -> Vec<String> {
+    full_gate(sources, &crate_manifest(), &workspace_manifest())
+}
+
+/// The whole D32 gate over a source set, the crate manifest and the
+/// workspace manifest.
+fn full_gate(sources: &[Source], manifest: &str, _workspace: &str) -> Vec<String> {
     d32_findings(sources)
         .into_iter()
         .chain(pay_dir_findings(sources))
-        .chain(root_crate_findings(sources, &crate_manifest()))
+        .chain(root_crate_findings(sources, manifest))
         .collect()
 }
 
@@ -2832,6 +2842,153 @@ fn t_ac3_noread_absolute_paths_resolve_to_the_real_crates() {
     ] {
         assert_ne!(edit, manifest, "{label}: the manifest anchor moved");
         if root_crate_findings(&sources, &edit).is_empty() {
+            survived.push(label);
+        }
+    }
+    assert!(survived.is_empty(), "survived the gate: {survived:#?}");
+}
+
+/// The re-review #5419 mutations (#5421, #5423), verbatim, and their
+/// variants: each is a committed negative fixture, appended at a file end
+/// (or replacing the registry entries) so the mutated file still parses,
+/// and each is reported by label when it survives [`full_gate`].
+#[test]
+#[allow(clippy::too_many_lines)] // A table of mutations, each reported by label.
+fn t_ac3_noread_catches_the_review_5419_mutations() {
+    let entries = format!(
+        "        #[cfg(feature = \"{LIVE_FEATURE}\")]\n        handler: fetch_command,\n        #[cfg(not(feature = \"{LIVE_FEATURE}\"))]\n        handler: self::no_payment::fetch_command,\n"
+    );
+    // The pinned entries, kept in a never-compiled item.
+    let dead_pin = format!(
+        "\n#[cfg(any())]\nconst _REVIEW_5419_PINNED: () = crate::CommandSpec {{\n{entries}}};\n"
+    );
+    let env_handler = "fn handler(invocation: &Invocation, out: &mut Output<'_>) -> Result<(), ToolkitError> {\n    if std::env::var_os(\"PAYMENT_MANAGER_ARN\").is_some() { eprint!(\"RSI_REVIEW_5419_ENV_READ_BEFORE_D32\"); }\n    self::no_payment::fetch_command(invocation, out)\n}\n";
+    let flow_spec = "\npub(crate) const REVIEW_BASE: crate::CommandSpec = crate::CommandSpec {\n    path: &[\"agents-pay\", \"fetch\"],\n    flags: &[],\n    value_flags: &[],\n    strict_values: true,\n    repeatable_flags: &[],\n    max_positionals: 1,\n    passthrough: false,\n    handler: review_handler,\n};\npub(crate) const SPEC: crate::CommandSpec = REVIEW_BASE;\nfn review_handler(_: &crate::Invocation, out: &mut crate::Output<'_>) -> Result<(), toolkit_core::ToolkitError> {\n    let _ = std::env::var_os(\"PAYMENT_MANAGER_ARN\");\n    out.line(super::D32_REFUSAL)\n}\n";
+    let edit = |mut sources: Vec<Source>, path: &str, change: &dyn Fn(&str) -> String| {
+        let at = sources
+            .iter()
+            .position(|s| s.path == path)
+            .unwrap_or_else(|| panic!("{path} is missing"));
+        let changed = change(&sources[at].text);
+        assert_ne!(changed, sources[at].text, "the {path} anchor moved");
+        assert!(
+            syn::parse_file(&changed).is_ok(),
+            "the fixture does not parse: {path}"
+        );
+        sources[at].text = changed;
+        sources
+    };
+    let append = |insert: String| move |text: &str| format!("{text}{insert}");
+    let manifest = crate_manifest();
+    let workspace = workspace_manifest();
+    let lints = "[lints]\nworkspace = true\n";
+    let forbid = "unsafe_code = \"forbid\"\n";
+    assert!(manifest.contains(lints), "the crate lints moved");
+    assert!(workspace.contains(forbid), "the workspace lint moved");
+    let no_lints = manifest.replacen(lints, "", 1);
+    let mut survived: Vec<&str> = Vec::new();
+
+    // #5421: the registry pin binds to the entries `SLICE` dispatches.
+    let shorthand = edit(real_sources(), ROUTE_FILE, &|text| {
+        format!(
+            "{}\n{env_handler}{dead_pin}",
+            text.replacen(&entries, "        handler,\n", 1)
+        )
+    });
+    let struct_update = edit(
+        edit(real_sources(), ROUTE_FILE, &|text| {
+            format!(
+                "{}{dead_pin}",
+                text.replacen(
+                    &entries,
+                    "        ..crate::agents_pay::flow::REVIEW_BASE\n",
+                    1
+                )
+            )
+        }),
+        "agents_pay/flow.rs",
+        &append(flow_spec.to_owned()),
+    );
+    let foreign_table = edit(
+        edit(real_sources(), ROUTE_FILE, &|text| {
+            let start = text.find("    commands: &[crate::CommandSpec {\n").unwrap();
+            let end = start + text[start..].find("    }],\n").unwrap() + "    }],\n".len();
+            let table = &text[start + "    commands: ".len()..end - ",\n".len()];
+            format!(
+                "{}    commands: &[crate::agents_pay::flow::SPEC],\n{}\n#[cfg(any())]\nconst _REVIEW_5419_PINNED: &[crate::CommandSpec] = {table};\n",
+                &text[..start],
+                &text[end..]
+            )
+        }),
+        "agents_pay/flow.rs",
+        &append(flow_spec.to_owned()),
+    );
+    let foreign_slice = edit(
+        edit(real_sources(), "registry.rs", &|text| {
+            text.replacen(
+                "    crate::agents_pay::SLICE,\n",
+                "    crate::agents_pay::flow::REVIEW_SLICE,\n",
+                1,
+            )
+        }),
+        "agents_pay/flow.rs",
+        &append(format!(
+            "{flow_spec}pub(crate) const REVIEW_SLICE: crate::registry::Slice = crate::registry::Slice {{ commands: &[SPEC], ..crate::agents_pay::SLICE }};\n"
+        )),
+    );
+    let cfg_attr_slice = edit(real_sources(), ROUTE_FILE, &|text| {
+        text.replacen(
+            "pub(crate) const SLICE",
+            "#[cfg_attr(all(), cfg(any()))]\npub(crate) const SLICE",
+            1,
+        )
+    });
+    let extra_attr = edit(real_sources(), ROUTE_FILE, &|text| {
+        text.replacen(
+            "        passthrough: false,\n",
+            "        #[cfg(all())]\n        passthrough: false,\n",
+            1,
+        )
+    });
+    // #5423: no pre-main code, and the unsafe lint that also forbids it is
+    // pinned.
+    let premain_asm = "\nextern \"C\" fn review_premain() { let _ = std::env::var_os(\"PAYMENT_MANAGER_ARN\"); }\n::core::arch::global_asm!(\".pushsection .init_array,\\\"aw\\\"\", \".balign 8\", \".quad {f}\", \".popsection\", f = sym review_premain);\n";
+    let premain_alloc = "\nstruct ReviewAlloc;\nunsafe impl ::core::alloc::GlobalAlloc for ReviewAlloc {\n    unsafe fn alloc(&self, layout: ::core::alloc::Layout) -> *mut u8 {\n        let _ = std::env::var_os(\"PAYMENT_MANAGER_ARN\");\n        unsafe { std::alloc::System.alloc(layout) }\n    }\n    unsafe fn dealloc(&self, ptr: *mut u8, layout: ::core::alloc::Layout) {\n        unsafe { std::alloc::System.dealloc(ptr, layout) }\n    }\n}\n#[global_allocator]\nstatic REVIEW_ALLOC: ReviewAlloc = ReviewAlloc;\n";
+    let in_flow = |insert: &str| {
+        edit(
+            real_sources(),
+            "agents_pay/flow.rs",
+            &append(insert.to_owned()),
+        )
+    };
+    let in_lib = |insert: &str| edit(real_sources(), "lib.rs", &append(insert.to_owned()));
+    let real = real_sources;
+
+    let cases: Vec<(&str, Vec<Source>, String, String)> = vec![
+        ("#5421 A: handler shorthand + dead pinned entries", shorthand, manifest.clone(), workspace.clone()),
+        ("#5421 B: struct update from flow.rs", struct_update, manifest.clone(), workspace.clone()),
+        ("#5421: command table from flow.rs", foreign_table, manifest.clone(), workspace.clone()),
+        ("#5421: the registry lists another slice", foreign_slice, manifest.clone(), workspace.clone()),
+        ("#5421: cfg_attr on SLICE", cfg_attr_slice, manifest.clone(), workspace.clone()),
+        ("#5421: an attribute on another fetch field", extra_attr, manifest.clone(), workspace.clone()),
+        ("#5423 C1: lints dropped + global_asm! in flow.rs", in_flow(premain_asm), no_lints.clone(), workspace.clone()),
+        ("#5423 C2: lints dropped + #[global_allocator] in flow.rs", in_flow(premain_alloc), no_lints.clone(), workspace.clone()),
+        ("#5423: global_asm! in flow.rs", in_flow(premain_asm), manifest.clone(), workspace.clone()),
+        ("#5423: #[global_allocator] in lib.rs", in_lib(premain_alloc), manifest.clone(), workspace.clone()),
+        ("#5423: asm! in lib.rs", in_lib("\nfn review_asm() { unsafe { ::core::arch::asm!(\"nop\") } }\n"), manifest.clone(), workspace.clone()),
+        ("#5423: an asm import in lib.rs", in_lib("\nuse ::core::arch::asm as review_asm;\n"), manifest.clone(), workspace.clone()),
+        ("#5423: a naked fn in lib.rs", in_lib("\n#[unsafe(naked)]\nextern \"C\" fn review_naked() { ::core::arch::naked_asm!(\"ret\") }\n"), manifest.clone(), workspace.clone()),
+        ("#5423: crate lints dropped", real(), no_lints.clone(), workspace.clone()),
+        ("#5423: crate lints not inherited", real(), manifest.replacen(lints, "[lints]\nworkspace = false\n", 1), workspace.clone()),
+        ("#5423: crate lints overridden", real(), format!("{manifest}\n[lints.rust]\nunsafe_code = \"allow\"\n"), workspace.clone()),
+        ("#5423: workspace allows unsafe", real(), manifest.clone(), workspace.replacen(forbid, "unsafe_code = \"allow\"\n", 1)),
+        ("#5423: workspace only warns on unsafe", real(), manifest.clone(), workspace.replacen(forbid, "unsafe_code = \"warn\"\n", 1)),
+        // #5423, non-blocking: TOML whitespace in a dependency table header.
+        ("#5423 E: [dependencies . core]", real(), format!("{manifest}\n[dependencies . core]\npath = \"../evil\"\n"), workspace.clone()),
+        ("#5423 E: [dependencies . toolkit-core] renamed", real(), format!("{manifest}\n[dependencies . toolkit-core]\npackage = \"evil\"\npath = \"../evil\"\n"), workspace.clone()),
+    ];
+    for (label, sources, manifest, workspace) in &cases {
+        if full_gate(sources, manifest, workspace).is_empty() {
             survived.push(label);
         }
     }
