@@ -231,4 +231,18 @@ mod tests {
         }
         assert!(session_result(&bad).is_err());
     }
+
+    #[test]
+    fn t_br_out_error_vocabulary() {
+        for (error, expected, status) in [
+            (BridgeError::Input, "invalid bridge request", 2),
+            (BridgeError::AgentCore, "AgentCore request failed", 1),
+            (BridgeError::Unavailable, "payment support unavailable", 1),
+        ] {
+            let (actual, exit) = error_frame(error);
+            assert_eq!(actual, format!("{{\"ok\":false,\"error\":\"{expected}\"}}\n").as_bytes());
+            assert_eq!(exit, status);
+            assert!(actual.len() <= 131072);
+        }
+    }
 }
