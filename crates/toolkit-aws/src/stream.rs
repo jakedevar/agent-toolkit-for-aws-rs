@@ -194,6 +194,7 @@ impl ChunkLimiter {
     }
 
     /// Mark an oversized raw frame as terminal without retaining it.
+    #[cfg(feature = "sdk")]
     pub(crate) fn refuse(&mut self) {
         self.refused = true;
     }
