@@ -190,6 +190,95 @@ mod tests {
 
     const VALID: &str = r#"{"operation":"get_payment_session","region":"us-east-1","payment_manager_arn":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","payment_session_id":"sssssssssssssssssssssssssssssss","user_id":"user","agent_name":"openclaw-aws-agents-pay"}"#;
 
+    #[test]
+    fn t_br_req_field_and_payment_matrix() {
+        let payment = VALID.replace("get_payment_session", "process_payment").replace(
+            "\"user_id\":", "\"payment_instrument_id\":\"iiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii\",\"version\":\"2\",\"request_url\":\"https://merchant.test\",\"accepted\":{},\"resource\":{\"url\":\"https://merchant.test\"},\"policy\":{\"maxPaymentAmountAtomic\":\"1\",\"allowAnyRecipient\":true},\"user_id\":");
+        let base = parse_json(&payment).unwrap();
+        let change = |key: &str, value: Json| {
+            let Json::Object(mut fields) = base.clone() else {
+                unreachable!()
+            };
+            fields.iter_mut().find(|(k, _)| k == key).unwrap().1 = value;
+            Json::Object(fields).to_compact_string()
+        };
+        for field in [
+            "region",
+            "agent_name",
+            "payment_manager_arn",
+            "payment_session_id",
+            "user_id",
+            "payment_instrument_id",
+            "version",
+            "request_url",
+        ] {
+            for value in [
+                Json::Int(1),
+                Json::string(""),
+                Json::string("   "),
+                Json::string("\u{3000}"),
+                Json::string("\u{1c}"),
+            ] {
+                assert_eq!(
+                    read_request(&mut Cursor::new(change(field, value))),
+                    Err(BridgeError::Input),
+                    "{field}"
+                );
+            }
+        }
+        for value in [Json::Array(vec![]), Json::string("invalid")] {
+            assert_eq!(
+                read_request(&mut Cursor::new(change("accepted", value))),
+                Err(BridgeError::Input)
+            );
+        }
+        for version in ["1", "02"] {
+            assert_eq!(
+                read_request(&mut Cursor::new(change("version", Json::string(version)))),
+                Err(BridgeError::Input)
+            );
+        }
+        for policy in [
+            r#"{"maxPaymentAmountAtomic":"0","allowAnyRecipient":true}"#.to_owned(),
+            r#"{"maxPaymentAmountAtomic":"01","allowAnyRecipient":true}"#.to_owned(),
+            r#"{"maxPaymentAmountAtomic":"1.0","allowAnyRecipient":true}"#.to_owned(),
+            format!(
+                "{{\"maxPaymentAmountAtomic\":\"{}\",\"allowAnyRecipient\":true}}",
+                "1".repeat(1001)
+            ),
+            r#"{"maxPaymentAmountAtomic":"1","allowAnyRecipient":true,"allowedRecipients":["x"]}"#
+                .to_owned(),
+            r#"{"maxPaymentAmountAtomic":"1"}"#.to_owned(),
+            r#"{"maxPaymentAmountAtomic":"1","allowAnyRecipient":true,"unknown":1}"#.to_owned(),
+        ] {
+            assert_eq!(
+                read_request(&mut Cursor::new(change(
+                    "policy",
+                    parse_json(&policy).unwrap()
+                ))),
+                Err(BridgeError::Input)
+            );
+        }
+        for field in ["payment_manager_arn", "request_url"] {
+            let good = "é".repeat(2048);
+            let request = change(field, Json::string(&good));
+            assert_eq!(
+                read_request(&mut Cursor::new(request))
+                    .unwrap()
+                    .get(field)
+                    .and_then(Json::as_str),
+                Some(good.as_str())
+            );
+            assert_eq!(
+                read_request(&mut Cursor::new(change(
+                    field,
+                    Json::string("é".repeat(2049))
+                ))),
+                Err(BridgeError::Input)
+            );
+        }
+    }
+
     // T-BR-REQ-SIZE, JSON, KEYS, STR, AGENT, REGION and PARAM.
     #[test]
     fn t_br_req_and_param() {

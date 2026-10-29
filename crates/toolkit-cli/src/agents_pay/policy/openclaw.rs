@@ -218,6 +218,7 @@ mod tests {
             ("scheme", "upto"),
             ("network", "eip155:1"),
             ("amount", "0"),
+            ("amount", "-1"),
             ("amount", "1.0"),
             ("amount", "1e3"),
             ("amount", " 1000 "),
