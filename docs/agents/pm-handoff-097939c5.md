@@ -424,3 +424,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
   #4961 RULING recorded (interactive refuse '-', hook treats '-' as absent, contract test covers telemetry). Worker 9b10f7cf (Sonnet high, pinned e312d923, op ab672b62).
   #4977 cancelled as dup of #4874.
   4/4 busy: 160f8b97 (#4393), c5dd6313 (#4971), 8dc00bed (#4396 repair), 9b10f7cf (#4961).
+- 10-29 00:3xZ: #4971 (c5dd6313) on #4941 449c309c: CHANGES_REQUESTED #4978 P1 (sequential prefix masking eats overlapping secret), #4979 P1 (escaped quotes defeat learned spellings), #4980 P2 (short labelled secrets dropped), #4981 P1 (stdout substitution after JSON serialization breaks typed fields/valid JSON). Implementer choices accepted (200 cut, asm exec exempt, model_path test, superset coverage).
+  RULING on #4941 (handoff seq 2): redact at value before format/serialize; no post-serialization substitution on stdout; labelled secrets any length; span-safe net only on stderr. Repair worker b1cc4adc (Opus high, continue_from f8244a11, op a120630e). Then narrow re-review #4971.
+  4/4 busy: 160f8b97 (#4393), 8dc00bed (#4396 repair), 9b10f7cf (#4961), b1cc4adc (#4941 repair).
