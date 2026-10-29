@@ -1167,3 +1167,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 21:17Z: OpenClaw B2 (e02b0f23) DONE at b0f6dd2e6e264458ea208c9aa9d8a7f7894f2c98 (bridge route, R-OC-FINAL scrub, flow::prove shared, stdin cap fix, AC3 gate extended; scoped eeb8d1b6 4641). Design: #5160 resolved rev2 §5.1 (TS side owed by B4); #5179 still open for B4. Review #5483 -> Codex sol 457c73c0 pinned b0f6dd2e. On ACCEPT: check + enqueue (source_session_id e02b0f23, issue 5443).
   Kaizen: #5481 cancelled as dup of #5360 (3rd report; suggestions carried).
   4/4: 457c73c0 #5483, 7fb40ec3 #5482, be2767ad S6 r1, cfb95bf6 L7. Waiting: #5360 (P2), #5478 flake.
+- 21:23Z: re-review #5482 (7fb40ec3) ACCEPT S1 cdc468a2 (2/3 guard reverts caught; inner-release masked by outer wrapper -> P3 coverage follow-up #5484, non-blocking). check ok (874c8e18). S1 ENQUEUED seq 3044 (e04f364b). On land close #5366 #5428 #5429 #5465 #5482; #4886 stays open (S2+ next; #5484 follow-up).
+  #5360 usage-pin kaizen -> Claude Sonnet 27f4dc18 (rolling).
+  4/4: 27f4dc18 #5360, 457c73c0 #5483, be2767ad S6 r1, cfb95bf6 L7. Queue: 58fcd064 #5472 (3042), e04f364b S1 (3044). Waiting: #5478 flake, #5484.
