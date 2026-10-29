@@ -976,3 +976,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
   Kaizen: #5315 #5333 cancelled as dups of #5302; #5341 cancelled (covered by #5154 + #5353); #5353 gains test_no_run evidence. Open harness relays: #5154 #5265 #5353 #5302.
   #5306 merge+fold continuation -> Codex terra c057ddb0 (continue_from acde8672): merge 424fe183 (S4) + rolling, Cargo.lock regen, fold #5349 with red/green. Then check + enqueue behind 81c0c481; close #5306 #5342 #5312 #5314 #5349 on land.
   4/4 busy: 6c9b74b6 (#5345 L5), 9e585ee2 (#5327 r1), f6287c21 (#5352 x402 S5), c057ddb0 (#5306 merge). Queue: 81c0c481 (#5181), dc9fd4ea (#5317), 1a3750bd (#5329).
+- 10-29 11:42Z: L5 #5345 (6c9b74b6, Codex terra) stopped INCOMPLETE at 51a741c0848c2573eabf9ba45ed1699f8cf69aeb (35% ctx) on a brief/design conflict #5358. PM RULING (#5358 closed): design R-TOK-RED wins. uploadUrl, tokens and signatures never appear in output or errors; downloadUrl/previewUrl ARE printed on stdout by get-launch-download-url / get-launch download_url and never in errors. My L5 brief was over-broad (lesson: quote the design's invariant, not a paraphrase).
+  Continuation -> Codex terra 4ca3337b (continue_from 6c9b74b6).
+  4/4 busy: 4ca3337b (#5345), 9e585ee2 (#5327 r1), f6287c21 (#5352), c057ddb0 (#5306 merge).
