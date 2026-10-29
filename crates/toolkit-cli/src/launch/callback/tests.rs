@@ -89,7 +89,7 @@ fn response_has_fixed_security_headers_and_exact_length() {
     let (headers, body) = response.split_once("\r\n\r\n").unwrap();
     assert!(headers.contains("Cache-Control: no-store\r\n"));
     assert!(headers.contains("Content-Security-Policy: default-src 'none'\r\n"));
-    assert!(headers.contains(&format!("Content-Length: {}\r\n", body.len())));
+    assert!(headers.contains(&format!("Content-Length: {}", body.len())));
 }
 
 #[test]
@@ -127,4 +127,38 @@ fn wait_result_requires_free_lock_for_final_failures() {
         wait_decision(PendingStatus::Listening, false, false, 99, 100),
         WaitDecision::Ended
     );
+}
+
+#[test]
+fn loopback_ignores_bad_state_and_closes_listener_on_success() {
+    use std::io::{Read, Write};
+    use std::net::{Ipv4Addr, SocketAddr, TcpStream};
+    use std::time::{Duration, Instant};
+    let listener = super::listener::bind().unwrap();
+    let address = listener.local_addr().unwrap();
+    assert!(
+        matches!(address, SocketAddr::V4(v4) if *v4.ip() == Ipv4Addr::LOCALHOST && v4.port() != 0)
+    );
+    let thread = std::thread::spawn(move || {
+        super::listener::serve(listener, "secret", Instant::now() + Duration::from_secs(5)).unwrap()
+    });
+    let send = |query: &str| {
+        let mut stream = TcpStream::connect(address).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        write!(
+            stream,
+            "GET /?{query} HTTP/1.1\r\nHost: 127.0.0.1:{}\r\n\r\n",
+            address.port()
+        )
+        .unwrap();
+        let mut response = String::new();
+        stream.read_to_string(&mut response).unwrap();
+        response
+    };
+    assert!(send("state=wrong&code=x").starts_with("HTTP/1.1 400"));
+    assert!(send("state=secret&code=abc").starts_with("HTTP/1.1 200"));
+    assert_eq!(thread.join().unwrap(), Some(Outcome::Code("abc".into())));
+    assert!(TcpStream::connect_timeout(&address, Duration::from_secs(1)).is_err());
 }

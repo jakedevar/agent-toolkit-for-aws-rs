@@ -9,6 +9,8 @@ pub enum Outcome {
     InvalidCode,
 }
 
+pub mod listener;
+
 const MAX_HEAD: usize = 8192;
 
 fn decode(input: &str) -> Option<String> {
@@ -18,7 +20,11 @@ fn decode(input: &str) -> Option<String> {
         match b {
             b'+' => bytes.push(b' '),
             b'%' => {
-                let digit = |b: u8| (b as char).to_digit(16).map(|n| n as u8);
+                let digit = |b: u8| {
+                    char::from(b)
+                        .to_digit(16)
+                        .and_then(|n| u8::try_from(n).ok())
+                };
                 bytes.push(digit(iter.next()?)? * 16 + digit(iter.next()?)?);
             }
             _ => bytes.push(b),
@@ -76,10 +82,8 @@ pub fn parse_request(head: &[u8], port: u16, state: &str) -> Outcome {
         if name.is_empty() || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
             return Outcome::Ignore(400);
         }
-        if name.eq_ignore_ascii_case("host") {
-            if host.replace(value.trim()).is_some() {
-                return Outcome::Ignore(400);
-            }
+        if name.eq_ignore_ascii_case("host") && host.replace(value.trim()).is_some() {
+            return Outcome::Ignore(400);
         }
     }
     if host != Some(expected_host.as_str()) {
