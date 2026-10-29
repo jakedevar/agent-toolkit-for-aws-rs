@@ -116,7 +116,7 @@ pub(super) fn run_with(
     calls: &[String],
     now: &str,
 ) -> Ran {
-    let document = super::exact::parse_recorded(&format!(r#"{{"calls": [{}]}}"#, calls.join(",")))
+    let document = parse_json(&format!(r#"{{"calls": [{}]}}"#, calls.join(",")))
         .expect("recording JSON");
     let mut client = RecordedClient::from_document(&document).expect("recording");
     let config = Config::from_pairs(config);

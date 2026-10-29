@@ -190,31 +190,39 @@ own review before it may run against a real table.
    Python `set` of licenses (iterated in hash order) is iterated in query order.
    The `expiry` and `deprovision-cleanup` pagination reads every page, then
    updates, instead of interleaving the two.
-5. **Quantities are 64-bit, and never clamped or zeroed.** An integer beyond
-   `i64`, or a group sum that overflows, is rejected client-side with the new
-   reason `QuantityOutOfRange` (Python had unbounded integers and
-   `BatchMeterUsage` rejects such a value anyway). The same holds for the
-   allocations: two allocations of one tag set that sum beyond `i64` reject the
-   group with `QuantityOutOfRange` (the merged sum is kept as it was, never
-   clamped), and allocations across tag sets whose total is beyond `i64` are an
-   `AllocationSumMismatch`, because the group quantity is itself an `i64` and
-   the script's exact total would be larger than it (#4972). Every other reason
-   code and the order they are decided in are unchanged. The `submitter` reads
-   stored aggregated records that this aggregator need not have written: a
-   stored `quantity` or `AllocatedUsageQuantity` that is an exact integer
-   beyond `i64` fails the whole run with `QuantityOutOfRange` before any batch
-   is built, so nothing is submitted (not even the valid records beside it) and
-   no `meteringPending` marker is removed; the script kept the exact integer,
-   and a substituted `0` would have lost the usage and finalized it as a
-   success (#4973). A missing or non-integer member is still the script's
-   `strict_int(...) or 0`, and a legitimate `0` is submitted as before. The range is judged on the integer literal as written in
-   the recording: the shared JSON reader turns a literal it cannot hold in an
-   `i64` into a float, and `-9223372036854775809` rounds to exactly
-   `i64::MIN`, so the recording reader (`marketplace/exact.rs`, `--recorded`
-   only) keeps such a literal as its digits, which the existing string path
-   already reports as `QuantityOutOfRange`; `i64::MIN` and `i64::MAX` as
-   literals are in range and unchanged (#4984). A float form (`.` or an
-   exponent) is still the reader's float.
+5. **A metering quantity is an integer with `|q| <= 2^53 - 1`, and is never
+   clamped, zeroed or repaired.** The shared JSON reader keeps an integer it
+   cannot hold in an `i64`, and any float form, into an `f64`, and rounds what it
+   cannot hold. The float nearest `-9223372036854775809` (or `-9223372036854775809.0`,
+   or `-9.223372036854775809e18`) is exactly `i64::MIN`, so a rounded value
+   cannot be told from a legitimate one. A quantity is therefore valid only in
+   the range where an `f64` is exact, `9007199254740991` (`2^53 - 1`) either
+   way. AWS Marketplace `BatchMeterUsage` quantities are far below it, so no
+   real usage is lost, and rounding becomes unobservable. This supersedes the
+   earlier 64-bit boundary and the rewrite of `--recorded` text before parsing
+   (`marketplace/exact.rs`, removed with #4991 and #4992): a recording is read by
+   the ordinary parser, so malformed JSON (such as an unquoted object key) is
+   rejected as before and nothing is repaired.
+   The domain applies at every site. The `submitter` reads stored aggregated
+   records that this aggregator need not have written: a stored `quantity` or
+   `AllocatedUsageQuantity` outside it (an integer beyond `2^53 - 1`, an integer
+   beyond `i64`, a float such as `1e19`, `-9223372036854775809.0` or
+   `9007199254740992.0`, a string of such an integer, and the `i64` boundaries
+   themselves) fails the whole run with `QuantityOutOfRange` before any batch is
+   built, in live and dry-run alike, so nothing is submitted (not even the valid
+   records beside it) and no `meteringPending` marker is removed; the script
+   kept the exact integer, and a substituted `0` would have lost the usage and
+   finalized it as a success (#4973, #4984, #4991). `2^53 - 1` itself is
+   submitted unchanged. A missing or non-integer member is still the script's
+   `strict_int(...) or 0`, and a legitimate `0` is submitted as before. The
+   aggregator holds its totals to the same bound: a group quantity or a merged
+   allocation total (two allocations of one tag set) beyond `2^53 - 1` rejects
+   the group with the new reason `QuantityOutOfRange` (the merged sum is kept as
+   it was, never clamped), and allocations across tag sets whose total differs
+   from the quantity are an `AllocationSumMismatch` (#4972). Every other reason
+   code and the order they are decided in are unchanged. Arithmetic stays
+   checked `i64`. A lossless integer in the JSON reader itself is the separate
+   follow-up #4990.
 6. **Wrong-typed members are invalid, not passed through.** An item member, a
    queue message field or an event section of another type (a number where a
    string is expected, a list where an object is) is an invalid response or a

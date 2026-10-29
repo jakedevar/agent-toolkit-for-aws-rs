@@ -7,8 +7,8 @@ use toolkit_core::Json;
 use super::base::{shown, Ctx, Failure};
 use super::clock::{add_hours, epoch, floor_hour, hour_bucket, parse_hour_bucket};
 use super::core::{
-    self, deprovisioning_licenses, emf_metric, mask, quantity_reason, strict_int, submit_records,
-    AggKey, Outcome, Outcomes, BATCH_SIZE,
+    self, deprovisioning_licenses, emf_metric, in_quantity_domain, mask, quantity_reason,
+    strict_int, submit_records, AggKey, Outcome, Outcomes, BATCH_SIZE,
 };
 use super::ddb::{self, query_each, required_text, Flow, Query, Update};
 use super::pipeline::Handled;
@@ -279,20 +279,27 @@ fn build_batches(
     Ok((chunk(ca), chunk(legacy)))
 }
 
-/// `strict_int(value) or 0` for a stored quantity or allocation. A missing or
-/// non-integer member is the script's `0`; an exact integer beyond 64 bits
-/// (which the script keeps exactly) fails the run before anything is built,
-/// submitted or finalized, because `0` would silently drop the usage.
+/// `strict_int(value) or 0` for a stored quantity or allocation, held to the
+/// metering domain `|q| <= MAX_QUANTITY` (#4991). A missing or non-integer
+/// member is the script's `0`; an integer outside the domain, however it is
+/// written (an integer beyond 64 bits, a float the reader rounded onto an `i64`
+/// boundary, or simply larger than `2^53 - 1`), fails the run before anything is
+/// built, submitted or finalized, because `0` would silently drop the usage and
+/// a rounded value would bill the wrong one.
 fn stored_quantity(value: Option<&Json>) -> Result<i64, Failure> {
     let Some(value) = value else {
         return Ok(0);
     };
+    let out_of_range = || {
+        Failure::message(
+            "a stored usage quantity is outside the metering range of 2^53 - 1 \
+             (QuantityOutOfRange); nothing was submitted and the pending markers were kept",
+        )
+    };
     match strict_int(value) {
-        Some(quantity) => Ok(quantity),
-        None if quantity_reason(value) == "QuantityOutOfRange" => Err(Failure::message(
-            "a stored usage quantity is out of the 64-bit range (QuantityOutOfRange); \
-             nothing was submitted and the pending markers were kept",
-        )),
+        Some(quantity) if in_quantity_domain(quantity) => Ok(quantity),
+        Some(_) => Err(out_of_range()),
+        None if quantity_reason(value) == "QuantityOutOfRange" => Err(out_of_range()),
         None => Ok(0),
     }
 }

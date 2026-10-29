@@ -318,6 +318,19 @@ fn decimal(raw: &str) -> Decimal {
     }
 }
 
+/// The largest magnitude of a metering quantity: `2^53 - 1`, the range where an
+/// `f64` is exact. The JSON reader rounds what it cannot hold exactly to a
+/// float, and the float nearest an integer beyond `i64` can be a legitimate
+/// `i64` (`-9223372036854775809.0` is exactly `i64::MIN`), so no value outside
+/// this range can be told from one the reader rounded. Real usage is far below
+/// it; a quantity outside it fails closed as `QuantityOutOfRange` (#4991).
+pub(super) const MAX_QUANTITY: i64 = 9_007_199_254_740_991;
+
+/// Whether `quantity` lies in the metering domain `|q| <= MAX_QUANTITY`.
+pub(super) fn in_quantity_domain(quantity: i64) -> bool {
+    quantity.unsigned_abs() <= MAX_QUANTITY.unsigned_abs()
+}
+
 /// `strict_int`: the integer value of an exact integer, else `None` (a bool, a
 /// fraction, a non-number, or an integer beyond `i64`).
 pub(super) fn strict_int(value: &Json) -> Option<i64> {
@@ -423,12 +436,18 @@ pub(super) fn merge_allocations(
             .iter_mut()
             .find(|entry| entry.signature == signature)
         {
-            Some(entry) => match entry.qty.checked_add(allocated) {
+            Some(entry) => match entry
+                .qty
+                .checked_add(allocated)
+                .filter(|sum| in_quantity_domain(*sum))
+            {
                 Some(sum) => entry.qty = sum,
-                // The script's exact sum has no 64-bit form; clamping it would
-                // let it pass for a legitimate quantity.
+                // The script's exact sum has no 64-bit form, or lies beyond the
+                // quantity domain; clamping it would let it pass for a
+                // legitimate quantity.
                 None => return Some("QuantityOutOfRange"),
             },
+            None if !in_quantity_domain(allocated) => return Some("QuantityOutOfRange"),
             None => entries.push(Allocation {
                 signature,
                 tags: normalized,
@@ -486,7 +505,11 @@ pub(super) fn fold_rows(
             group.reject_reason = group.reject_reason.or(Some("NegativeQuantity"));
             continue;
         }
-        let Some(sum) = group.quantity.checked_add(quantity) else {
+        let Some(sum) = group
+            .quantity
+            .checked_add(quantity)
+            .filter(|sum| in_quantity_domain(*sum))
+        else {
             group.reject_reason = group.reject_reason.or(Some("QuantityOutOfRange"));
             continue;
         };

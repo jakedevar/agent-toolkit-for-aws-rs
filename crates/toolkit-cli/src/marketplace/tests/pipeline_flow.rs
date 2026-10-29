@@ -541,13 +541,15 @@ fn assert_rejected_with(ran: &Ran, reason: &str) {
 
 #[test]
 fn overflowing_allocations_on_one_tag_set_reject_the_group() {
-    let row = allocated_row(i64::MAX, &[(i64::MAX, "a"), (1, "a")]);
+    let max = 9_007_199_254_740_991_i64;
+    let row = allocated_row(max, &[(max, "a"), (1, "a")]);
     assert_rejected_with(&aggregate_one(&row), "QuantityOutOfRange");
 }
 
 #[test]
 fn overflowing_allocation_totals_across_tag_sets_reject_the_group() {
-    let row = allocated_row(i64::MAX, &[(i64::MAX, "a"), (1, "b")]);
+    let max = 9_007_199_254_740_991_i64;
+    let row = allocated_row(max, &[(max, "a"), (1, "b")]);
     assert_rejected_with(&aggregate_one(&row), "AllocationSumMismatch");
 }
 

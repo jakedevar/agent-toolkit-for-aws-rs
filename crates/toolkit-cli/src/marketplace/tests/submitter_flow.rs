@@ -324,7 +324,7 @@ fn the_submitter_needs_the_aggregated_table() {
     assert_eq!(ran.err(), "AGGREGATED_USAGE_TABLE is not configured");
 }
 
-// ---- exact integers beyond i64 fail closed (#4973) ----------------------------------
+// ---- exact integers beyond the quantity domain fail closed (#4973) ------------
 
 fn item_with(quantity: &str, allocations: &str) -> String {
     let allocations = if allocations.is_empty() {
@@ -403,8 +403,8 @@ fn a_stored_allocation_beyond_i64_fails_the_run_instead_of_becoming_zero() {
 
 #[test]
 fn the_largest_quantity_and_a_legitimate_zero_are_still_submitted() {
-    let max = i64::MAX;
-    let allocations = r#"{"AllocatedUsageQuantity": "0", "Tags": [{"Key": "team", "Value": "a"}]}, {"AllocatedUsageQuantity": 9223372036854775807, "Tags": [{"Key": "team", "Value": "b"}]}"#;
+    let max = SAFE_MAX;
+    let allocations = r#"{"AllocatedUsageQuantity": "0", "Tags": [{"Key": "team", "Value": "a"}]}, {"AllocatedUsageQuantity": 9007199254740991, "Tags": [{"Key": "team", "Value": "b"}]}"#;
     let mut calls = reads_only(vec![
         item_with(&max.to_string(), allocations),
         agg_item(LICENSE, "Zero", "2026-01-31T11", 0),
@@ -537,9 +537,9 @@ fn the_cli_fails_closed_on_a_literal_below_i64_min() {
 }
 
 #[test]
-fn the_i64_boundaries_themselves_are_still_submitted_as_literals() {
-    let min = i64::MIN;
-    let max = i64::MAX;
+fn the_domain_boundaries_themselves_are_still_submitted_as_literals() {
+    let min = -SAFE_MAX;
+    let max = SAFE_MAX;
     let allocations = format!(
         r#"{{"AllocatedUsageQuantity": {min}, "Tags": [{{"Key": "team", "Value": "a"}}]}}, {{"AllocatedUsageQuantity": {max}, "Tags": [{{"Key": "team", "Value": "b"}}]}}"#
     );
@@ -556,7 +556,7 @@ fn the_i64_boundaries_themselves_are_still_submitted_as_literals() {
             batch.contains(&format!(
                 r#""Quantity":{quantity},"UsageAllocations":[{{"AllocatedUsageQuantity":{min},"Tags":[{{"Key":"team","Value":"a"}}]}},{{"AllocatedUsageQuantity":{max},"Tags""#
             )),
-            "i64::MIN and i64::MAX are legitimate integers and are sent unchanged: {batch}"
+            "the domain boundaries are legitimate integers and are sent unchanged: {batch}"
         );
         assert_eq!(ran.requests("dynamodb:UpdateItem").len(), 1);
         assert_eq!(ran.unused, 0);
