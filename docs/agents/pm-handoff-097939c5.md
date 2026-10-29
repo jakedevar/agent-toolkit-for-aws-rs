@@ -413,3 +413,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
   4/4 busy: 092f281f (r16), f8244a11 (#4941), 504a76ba (#4653), 1416bcca (#4969).
 - 10-29 00:12Z: #4653 CLOSED: already fixed by cd80d723 (504a76ba verified, job 3e4db849 5/5 pass). New slice #4393 ElastiCache tunnel worker 160f8b97 (Sonnet high, rolling fa3fa137; op 060cfa83).
   4/4 busy: 092f281f (r16), f8244a11 (#4941), 1416bcca (#4969), 160f8b97 (#4393).
+- 10-29 00:13Z: #4941 impl 449c309c530f376d947d70e48d3a654d6bc56070 (f8244a11; shared safe_path/safe_text/safe_prefix + CallerText sinks: redact whole -> 200-char cut "..." -> escape; docgraph helpers deleted; asm exec exempt; red on bdf1578f: 369 leaks / ~50 cmds; scoped 8bc1a92f ok cli 3080, fmt a147b591, clippy 1a478489). Review #4971 worker c5dd6313 (Codex sol high, pinned, op 81167013). On ACCEPT mail r16 (must also move bedrock_probes diag::path onto shared helper, keeping #4939 env scrub).
+  #4970 cancelled as dup of #4865 (6th report; scripts/rsi-stash also missing).
+  4/4 busy: 092f281f (r16), 1416bcca (#4969), 160f8b97 (#4393), c5dd6313 (#4971).
