@@ -131,12 +131,14 @@ pub(crate) const SLICE: crate::registry::Slice = crate::registry::Slice {
         NEPTUNE_SEED,
         NEPTUNE_MEMORY,
     ],
-    synopsis: r"  toolkit documentdb wa-review --cluster-id ID --region R [--recorded FILE]
-      [--analysis-data FILE] [--output DIR] [--now TS]
+    synopsis: r"  toolkit documentdb wa-review --cluster-id ID --region R [--recorded FILE | --live]
+      [--analysis-data FILE] [--output DIR] [--now TS] [--network-policy FILE]
   toolkit documentdb normalize-capture --capture FILE --output FILE
   toolkit neptune validate-input [KEY=VALUE...]
-  toolkit neptune seed [--confirm-wipe] [--endpoint HOST] [--recorded FILE | --dry-run]
-  toolkit neptune memory --operation OP --input FILE [--recorded FILE | --dry-run]
+  toolkit neptune seed [--confirm-wipe] [--endpoint HOST] [--recorded FILE | --dry-run | --live]
+      [--region R] [--network-policy FILE]
+  toolkit neptune memory --operation OP --input FILE [--recorded FILE | --dry-run | --live]
+      [--confirm-write] [--confirm-delete] [--confirm-create] [--region R] [--network-policy FILE]
 ",
     description: r"  documentdb    DocumentDB Well-Architected review (#4395). wa-review runs the 41
                 infrastructure and database checks over recorded AWS responses
@@ -151,8 +153,9 @@ pub(crate) const SLICE: crate::registry::Slice = crate::registry::Slice {
                 wipes and seeds the test graphs only with --confirm-wipe (or
                 NEPTUNE_SEED_CONFIRM_WIPE=1), replays --recorded responses or
                 prints the statements with --dry-run: this build has no
-                Gremlin or AWS client. memory prints or replays GraphRAG and
-                agent-memory requests. See docs/migration/docgraph.md.
+                Gremlin or AWS client; --live is reserved and currently refused.
+                memory prints or replays GraphRAG and agent-memory requests.
+                See docs/migration/docgraph.md.
 ",
     exit_notes: "",
     doc: "docs/migration/docgraph.md",

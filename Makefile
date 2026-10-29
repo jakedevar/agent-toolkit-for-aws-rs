@@ -37,6 +37,9 @@ docgraph-live-wipe:
 docgraph-live-consent:
 	cargo test -p toolkit-cli --features docgraph-live --locked --test docgraph_live live_consent_precedes_input_files_and_only_argv_counts -- --exact
 
+docgraph-live-modes:
+	cargo test -p toolkit-cli --features docgraph-live --locked --test docgraph_live live_rejects_recorded_and_dry_run_before_files -- --exact
+
 # Per-plugin ./bin binaries (#4487, docs/migration/plugin-binaries.md). Stage
 # every declared binary for every declared platform with the locally
 # installed toolchains (zig + cargo-zigbuild cross-link the non-host targets),

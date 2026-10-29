@@ -2424,8 +2424,10 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
 // Neptune memory (#4886) deliberately adds its synopsis and description, and
 // the launch snapshot routes (#5317) theirs.
 // `documentdb normalize-capture` (#5327) deliberately adds its synopsis and description.
-const USAGE_BASE_LEN: usize = 45543;
-const USAGE_BASE_FNV1A64: u64 = 0x083b_eaeb_e9fa_001b;
+// Docgraph live preflight flags (#5366) are advertised even though adapters
+// are not yet available.
+const USAGE_BASE_LEN: usize = 45794;
+const USAGE_BASE_FNV1A64: u64 = 0x3193_3f57_b1c0_fcff;
 
 #[test]
 fn the_global_usage_text_is_byte_identical_to_the_base() {

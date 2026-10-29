@@ -1,5 +1,3 @@
-#![cfg(feature = "docgraph-live")]
-
 use std::process::Command;
 
 fn run(args: &[&str]) -> (i32, String, String) {
@@ -21,6 +19,7 @@ fn run(args: &[&str]) -> (i32, String, String) {
 }
 
 #[test]
+#[cfg(feature = "docgraph-live")]
 fn live_wipe_ignores_ambient_confirmation() {
     let (status, stdout, stderr) = run(&[
         "neptune",
@@ -37,6 +36,7 @@ fn live_wipe_ignores_ambient_confirmation() {
 }
 
 #[test]
+#[cfg(feature = "docgraph-live")]
 fn live_consent_precedes_input_files_and_only_argv_counts() {
     for (op, required) in [
         ("query", "--confirm-write"),
@@ -73,6 +73,7 @@ fn live_consent_precedes_input_files_and_only_argv_counts() {
 }
 
 #[test]
+#[cfg(feature = "docgraph-live")]
 fn live_rejects_recorded_and_dry_run_before_files() {
     for args in [
         &["neptune", "seed", "--live", "--recorded", "/does/not/exist"][..],
@@ -88,5 +89,20 @@ fn live_rejects_recorded_and_dry_run_before_files() {
         let (status, _, stderr) = run(args);
         assert_eq!(status, 2, "{stderr}");
         assert!(!stderr.contains("/does/not/exist"));
+    }
+}
+
+#[test]
+#[cfg(not(feature = "docgraph-live"))]
+fn live_selection_is_unavailable_without_feature() {
+    for args in [
+        &["neptune", "seed", "--live"][..],
+        &["neptune", "memory", "--live"][..],
+        &["documentdb", "wa-review", "--live"][..],
+    ] {
+        let (status, stdout, stderr) = run(args);
+        assert_eq!(status, 2);
+        assert!(stdout.is_empty());
+        assert!(stderr.contains("--live requires the docgraph-live feature"));
     }
 }
