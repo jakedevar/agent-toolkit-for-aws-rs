@@ -43,6 +43,36 @@ impl Drop for Fixture {
 const TEMPLATE: &str = "# Cell 0 [markdown]: Example\n# Description\n\n# Cell 1: Config\nACCEPT_EULA = [ACCEPT_EULA]\nrole = \"[ROLE_ARN]\"\n";
 
 #[test]
+fn ap_typ_01_04_06_07_valid_literals_golden() {
+    let f = Fixture::new();
+    let template = f.write("template.py", "# Cell 0 [markdown]: Example\n# Desc\n# Cell 1: Config\nACCEPT_EULA = [ACCEPT_EULA]\nflag = [TRUE_OR_FALSE]\na = [INPUT_TOKENS_STDDEV]\nb = [OUTPUT_TOKENS_STDDEV]\nmetrics = [METRICS_LIST]\n");
+    let values = f.write("values.json", r#"{"values":{"ACCEPT_EULA":false,"TRUE_OR_FALSE":true,"INPUT_TOKENS_STDDEV":0,"OUTPUT_TOKENS_STDDEV":0,"METRICS_LIST":["Correctness","Faithfulness"]}}"#);
+    assert!(f.render(&template, "script", &["--values", values.to_str().unwrap()]).status.success());
+    let script = fs::read_to_string(f.0.join("scripts/01_example.py")).unwrap();
+    for expected in ["ACCEPT_EULA = False", "flag = True", "a = 0", "b = 0", "metrics = [\"Correctness\", \"Faithfulness\"]"] { assert!(script.contains(expected)); }
+    let values = f.write("values.json", r#"{"values":{"ACCEPT_EULA":true,"TRUE_OR_FALSE":false,"INPUT_TOKENS_STDDEV":0,"OUTPUT_TOKENS_STDDEV":0,"METRICS_LIST":[]}}"#);
+    assert!(f.render(&template, "script", &["--values", values.to_str().unwrap(), "--consent", "ACCEPT_EULA"]).status.success());
+    let script = fs::read_to_string(f.0.join("scripts/02_example.py")).unwrap();
+    for expected in ["ACCEPT_EULA = True", "flag = False", "metrics = []"] { assert!(script.contains(expected)); }
+    let names = (0..65).map(|i| format!("\"M{i}\"")).collect::<Vec<_>>().join(",");
+    let values = f.write("values.json", &format!("{{\"values\":{{\"ACCEPT_EULA\":false,\"TRUE_OR_FALSE\":false,\"INPUT_TOKENS_STDDEV\":0,\"OUTPUT_TOKENS_STDDEV\":0,\"METRICS_LIST\":[{names}]}}}}"));
+    assert_eq!(f.render(&template, "script", &["--values", values.to_str().unwrap()]).status.code(), Some(1));
+}
+
+#[test]
+fn ap_con_05_template_shaped_consent_sites_require_consent() {
+    for line in ["model.accept_eula = [ACCEPT_EULA]", "ACCEPT_EULA = [ACCEPT_EULA]\nmodel = {'accept_eula': ACCEPT_EULA}"] {
+        let f = Fixture::new();
+        let template = f.write("template.py", &format!("# Cell 0 [markdown]: Example\n# Desc\n# Cell 1: Code\n{line}\n"));
+        let values = f.write("values.json", r#"{"values":{"ACCEPT_EULA":true}}"#);
+        let result = f.render(&template, "script", &["--values", values.to_str().unwrap()]);
+        assert_eq!(result.status.code(), Some(1));
+        assert!(String::from_utf8_lossy(&result.stderr).contains("consent_not_given"));
+        assert!(f.render(&template, "script", &["--values", values.to_str().unwrap(), "--consent", "ACCEPT_EULA"]).status.success());
+    }
+}
+
+#[test]
 fn ap_app_01_02_exact_report_and_ignored_names() {
     let f = Fixture::new();
     let template = f.write("template.py", "# Cell 0 [markdown]: Example\n# Desc\n# Cell 1: Code\npass\n");
