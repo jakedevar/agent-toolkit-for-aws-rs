@@ -641,15 +641,15 @@ mod tests {
             ),
             (
                 "details array",
-                format!(r#"{{"content":[{{"type":"text","text":"[]"}}],"details":[]}}"#),
+                r#"{"content":[{"type":"text","text":"[]"}],"details":[]}"#.to_owned(),
             ),
             (
                 "details string",
-                format!(r#"{{"content":[{{"type":"text","text":"\"x\""}}],"details":"x"}}"#),
+                r#"{"content":[{"type":"text","text":"\"x\""}],"details":"x"}"#.to_owned(),
             ),
             (
                 "details null",
-                format!(r#"{{"content":[{{"type":"text","text":"null"}}],"details":null}}"#),
+                r#"{"content":[{"type":"text","text":"null"}],"details":null}"#.to_owned(),
             ),
             ("details missing", format!(r#"{{"content":[{item}]}}"#)),
             ("content missing", format!(r#"{{"details":{details}}}"#)),
