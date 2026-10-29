@@ -17,7 +17,7 @@ use toolkit_aws::endpoint::HostResolver;
 use toolkit_aws::recorded;
 use toolkit_aws::retry::{Jitter, RetryPolicy, Sleeper};
 use toolkit_aws::stream::StreamingTransport;
-use toolkit_aws::{Env, Secret};
+use toolkit_aws::Env;
 use toolkit_core::Json;
 
 use super::api::{command_error, validate_launch_id, ApiError, ApiOperation, Client};
@@ -25,10 +25,9 @@ use super::clock::Random;
 use super::config::{self, RegionInputs};
 use super::http::MonotonicClock;
 use super::oidc::Oidc;
+pub use super::sink::{Secrets, GENERIC_FAILURE};
 use super::state;
 
-/// The Python catch-all message (`main`, R-API-ERR last row).
-pub const GENERIC_FAILURE: &str = "The operation failed. Re-run with logging enabled for details.";
 /// R-API-ERR: invalid response, body over its cap.
 pub const INVALID_RESPONSE: &str = "The Launch with AWS service returned an invalid response.";
 /// `get-launch-download-url` without a URL (Python `_fail`).
@@ -184,12 +183,30 @@ pub fn client_token(random: &dyn Random) -> Result<String, String> {
     ))
 }
 
-/// Run one network command. Every rendered result and error passes the
-/// known-secret scrub (R-API-CODE second layer) before it is returned.
+/// Run one network command. Every rendered result and error, the early local
+/// and configuration refusals included (#5406), passes the known-secret scrub
+/// (R-API-CODE second layer) before it is returned: the stored session's
+/// secrets are registered by a local read before any check can fail.
 ///
 /// # Errors
 /// The final `{"error": ...}` message.
 pub fn run(request: &Request<'_>, deps: &Deps<'_>) -> Result<Json, String> {
+    let mut secrets = Secrets::default();
+    secrets.add_stored(Some(deps.state_dir));
+    match run_seeded(request, deps, &mut secrets) {
+        Ok(value) if secrets.found_in(&value) => Err(GENERIC_FAILURE.into()),
+        Ok(value) => Ok(value),
+        Err(message) => Err(secrets.scrub(message)),
+    }
+}
+
+/// [`run`] before its final scrub; `secrets` grows with every live value the
+/// command learns (a refreshed token, clientTokens, the upload URL).
+fn run_seeded(
+    request: &Request<'_>,
+    deps: &Deps<'_>,
+    secrets: &mut Secrets,
+) -> Result<Json, String> {
     validate_local(request)?;
     let resolved = config::resolve_region(&RegionInputs {
         explicit: request.region,
@@ -223,8 +240,6 @@ pub fn run(request: &Request<'_>, deps: &Deps<'_>) -> Result<Json, String> {
             });
         }
     }
-    let mut secrets = Secrets::default();
-    secrets.add_session(state::load_session(deps.state_dir).as_ref());
     let oidc = Oidc {
         transport: deps.transport,
         clock: deps.clock,
@@ -238,8 +253,8 @@ pub fn run(request: &Request<'_>, deps: &Deps<'_>) -> Result<Json, String> {
         deps.now,
         deps.clock.now() + Duration::from_secs(30),
     );
-    secrets.add_session(state::load_session(deps.state_dir).as_ref());
-    let token = token.map_err(|e| secrets.scrub(e.to_string()))?;
+    secrets.add_stored(Some(deps.state_dir));
+    let token = token.map_err(|e| e.to_string())?;
     secrets.add(token.expose());
     let client = Client {
         transport: deps.transport,
@@ -251,19 +266,7 @@ pub fn run(request: &Request<'_>, deps: &Deps<'_>) -> Result<Json, String> {
         jitter: deps.jitter,
         policy: deps.policy,
     };
-    let result = dispatch(
-        request,
-        deps,
-        &client,
-        &list_regions,
-        &list_bases,
-        &mut secrets,
-    );
-    match result {
-        Ok(value) if secrets.found_in(&value) => Err(GENERIC_FAILURE.into()),
-        Ok(value) => Ok(value),
-        Err(message) => Err(secrets.scrub(message)),
-    }
+    dispatch(request, deps, &client, &list_regions, &list_bases, secrets)
 }
 
 fn dispatch(
@@ -557,111 +560,6 @@ fn create_with_archive(
         .call(ApiOperation::CreateLaunch, "", &[], Some(body))
         .map_err(|e| fail(&e))?;
     launch_output(raw, client.region)
-}
-
-/// The live secret values of one command (R-API-CODE second layer): the
-/// access token, the session's refresh token and client secret (before and
-/// after a refresh), each clientToken and the presigned upload URL with each
-/// of its query values (raw and percent-decoded). Values shorter than 8
-/// bytes are ignored.
-#[derive(Default)]
-pub struct Secrets(Vec<String>);
-
-impl Secrets {
-    /// Register one value.
-    pub fn add(&mut self, value: &str) {
-        if value.len() >= 8 && !self.0.iter().any(|v| v == value) {
-            self.0.push(value.to_owned());
-        }
-    }
-
-    fn add_secret(&mut self, value: &Secret) {
-        self.add(value.expose());
-    }
-
-    /// Register a stored session's secrets.
-    pub fn add_session(&mut self, session: Option<&state::StoredSession>) {
-        if let Some(session) = session {
-            self.add_secret(&session.access_token);
-            self.add_secret(&session.refresh_token);
-            self.add_secret(&session.client_secret);
-        }
-    }
-
-    /// Register a presigned URL, its query string and each query value, raw
-    /// and percent-decoded.
-    pub fn add_url(&mut self, url: &str) {
-        self.add(url);
-        if let Some((_, query)) = url.split_once('?') {
-            let query = query.split('#').next().unwrap_or_default();
-            self.add(query);
-            for part in query.split('&') {
-                if let Some((_, value)) = part.split_once('=') {
-                    self.add(value);
-                    if let Some(decoded) = percent_decode(value) {
-                        self.add(&decoded);
-                    }
-                }
-            }
-        }
-    }
-
-    /// Whether `text` contains any registered secret.
-    #[must_use]
-    pub fn contains(&self, text: &str) -> bool {
-        self.0.iter().any(|secret| text.contains(secret.as_str()))
-    }
-
-    /// `message`, or the generic message when it carries a secret.
-    #[must_use]
-    pub fn scrub(&self, message: String) -> String {
-        if self.contains(&message) {
-            GENERIC_FAILURE.to_owned()
-        } else {
-            message
-        }
-    }
-
-    /// Whether any key or string anywhere in `value` contains a secret.
-    #[must_use]
-    // recorded-shape: a recursive scan of every key and string the command built for output; it interprets no response member and accepts every shape.
-    pub fn found_in(&self, value: &Json) -> bool {
-        match value {
-            Json::String(text) => self.contains(text),
-            Json::Array(items) => items.iter().any(|v| self.found_in(v)),
-            Json::Object(members) => members
-                .iter()
-                .any(|(k, v)| self.contains(k) || self.found_in(v)),
-            _ => false,
-        }
-    }
-}
-
-/// `%XX` decoding (and `+` as space) of a query value; `None` when nothing
-/// changes or the result is not UTF-8.
-fn percent_decode(value: &str) -> Option<String> {
-    let bytes = value.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        match bytes[i] {
-            b'%' if i + 2 < bytes.len() => {
-                let hex = std::str::from_utf8(&bytes[i + 1..i + 3]).ok()?;
-                out.push(u8::from_str_radix(hex, 16).ok()?);
-                i += 3;
-            }
-            b'+' => {
-                out.push(b' ');
-                i += 1;
-            }
-            b => {
-                out.push(b);
-                i += 1;
-            }
-        }
-    }
-    let decoded = String::from_utf8(out).ok()?;
-    (decoded != value).then_some(decoded)
 }
 
 #[cfg(test)]

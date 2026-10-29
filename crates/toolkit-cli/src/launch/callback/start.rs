@@ -26,6 +26,7 @@ fn started(reused: bool, base: &str) -> String {
 /// Reuse a cached session, otherwise launch an isolated callback helper.
 #[allow(clippy::unnecessary_wraps)]
 pub fn command(invocation: &Invocation, output: &mut Output<'_>) -> Result<(), ToolkitError> {
+    crate::launch::sink::guard(output);
     #[cfg(unix)]
     {
         let env = ProcessEnv;

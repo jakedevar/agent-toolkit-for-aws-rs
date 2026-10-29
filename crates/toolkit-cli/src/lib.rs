@@ -69,6 +69,16 @@ pub struct Output<'a> {
     /// The command-line values the sinks must not echo as given: values with
     /// a newline, credential-shaped values and overlong values (#4639, #4941).
     caller: CallerText,
+    /// Live secret values no write may carry, and the diagnostic written in
+    /// place of a write that would (#5406); see [`Output::refuse_known`].
+    known: Option<KnownSecrets>,
+}
+
+/// The guard of [`Output::refuse_known`].
+struct KnownSecrets {
+    values: Vec<String>,
+    refusal: String,
+    tripped: bool,
 }
 
 impl<'a> Output<'a> {
@@ -80,6 +90,7 @@ impl<'a> Output<'a> {
             closed: false,
             status: 0,
             caller: CallerText::default(),
+            known: None,
         }
     }
 
@@ -92,6 +103,7 @@ impl<'a> Output<'a> {
             closed: false,
             status: 0,
             caller: CallerText::default(),
+            known: None,
         }
     }
 
@@ -102,6 +114,58 @@ impl<'a> Output<'a> {
     /// Ordinary values change nothing.
     pub fn set_untrusted(&mut self, args: &[String]) {
         self.caller = CallerText::from_args(args);
+    }
+
+    /// Refuses every later write that carries one of `values` (#5406): such a
+    /// stdout line is not written, such a diagnostic is not written, and
+    /// `refusal` is written to the diagnostics writer once instead, with exit
+    /// status 1. A route registers the live secrets it knows (for the launch
+    /// routes, the stored session's tokens) before it can render anything, so
+    /// no branch, early or late, can echo one. Values shorter than 8 bytes and
+    /// an empty list change nothing.
+    pub fn refuse_known(&mut self, values: Vec<String>, refusal: String) {
+        let values: Vec<String> = values.into_iter().filter(|v| v.len() >= 8).collect();
+        self.known = (!values.is_empty()).then_some(KnownSecrets {
+            values,
+            refusal,
+            tripped: false,
+        });
+    }
+
+    /// Whether `text` carries a value registered with [`Output::refuse_known`].
+    fn carries_known(&self, text: &str) -> bool {
+        self.known
+            .as_ref()
+            .is_some_and(|known| known.values.iter().any(|v| text.contains(v.as_str())))
+    }
+
+    /// The text a diagnostic write puts on stderr, or `None` when nothing is
+    /// written (a refused write after the refusal was already written).
+    fn screened_diagnostic(&mut self, text: &str) -> Option<String> {
+        if !self.carries_known(text) {
+            return Some(self.caller.diagnostic(text).into_owned());
+        }
+        self.status = 1;
+        let known = self.known.as_mut()?;
+        if known.tripped {
+            return None;
+        }
+        known.tripped = true;
+        Some(known.refusal.clone())
+    }
+
+    /// [`Output::diagnostic`] that reports whether the text (or the refusal
+    /// that replaced it) was written to an open diagnostics writer.
+    pub(crate) fn diagnostic_delivered(&mut self, text: &str) -> bool {
+        let Some(text) = self.screened_diagnostic(text) else {
+            return true;
+        };
+        self.diagnostics.as_mut().is_some_and(|writer| {
+            writer
+                .write_all(text.as_bytes())
+                .and_then(|()| writer.write_all(b"\n"))
+                .is_ok()
+        })
     }
 
     /// Writes `text` and a newline to the diagnostics writer, if there is one.
@@ -119,11 +183,7 @@ impl<'a> Output<'a> {
     /// characters, then escaped (#4941). A handler that echoes other untrusted
     /// text must quote it itself. Safe text is written unchanged.
     pub fn diagnostic(&mut self, text: &str) {
-        if let Some(writer) = self.diagnostics.as_mut() {
-            let _ = writer
-                .write_all(self.caller.diagnostic(text).as_bytes())
-                .and_then(|()| writer.write_all(b"\n"));
-        }
+        let _ = self.diagnostic_delivered(text);
     }
 
     /// Sets the exit status [`run`] returns when the handler itself succeeds.
@@ -157,6 +217,10 @@ impl<'a> Output<'a> {
     /// handler redacts each command-line value where it builds stdout data
     /// (`safe_text::redacted_value`, #4941, #4981).
     pub fn line(&mut self, text: &str) -> Result<(), ToolkitError> {
+        if self.carries_known(text) {
+            let _ = self.diagnostic_delivered(text);
+            return Ok(());
+        }
         if self.closed {
             return Ok(());
         }

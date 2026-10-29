@@ -25,6 +25,7 @@ pub(crate) fn resolve_region(
     invocation: &Invocation,
     output: &mut Output<'_>,
 ) -> Result<(), ToolkitError> {
+    super::sink::guard(output);
     let env = ProcessEnv;
     let dir = match state::state_dir(&env) {
         Ok(dir) => dir,
@@ -95,6 +96,7 @@ fn session_value(session: Option<&state::StoredSession>, now: i64) -> Json {
 }
 
 pub(crate) fn session_status(_: &Invocation, output: &mut Output<'_>) -> Result<(), ToolkitError> {
+    super::sink::guard(output);
     let dir = match state::state_dir(&ProcessEnv) {
         Ok(dir) => dir,
         Err(error) => return failure(output, error.message()),
@@ -108,6 +110,7 @@ pub(crate) fn session_status(_: &Invocation, output: &mut Output<'_>) -> Result<
 }
 
 pub(crate) fn sign_out(_: &Invocation, output: &mut Output<'_>) -> Result<(), ToolkitError> {
+    super::sink::guard(output);
     let dir = match state::state_dir(&ProcessEnv) {
         Ok(dir) => dir,
         Err(error) => return failure(output, error.message()),
@@ -147,12 +150,13 @@ pub(crate) fn report(
 
 /// Dispatch a Launch API command: the local checks always run first, so a
 /// build without network support still refuses bad arguments with the same
-/// messages.
+/// messages. Everything it prints passes the known-secret sink (#5406).
 fn network_command(
     invocation: &Invocation,
     output: &mut Output<'_>,
     command: &str,
 ) -> Result<(), ToolkitError> {
+    super::sink::guard(output);
     let request = request(invocation, command);
     if let Err(message) = flow::validate_local(&request) {
         return failure(output, &message);

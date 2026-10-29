@@ -10,6 +10,7 @@ use super::tests_flow::{
 };
 use super::*;
 use toolkit_aws::testing::{FakeChunk, FakeStreamingTransport};
+use toolkit_aws::Secret;
 
 /// Every value a command may know that must never be shown.
 const SEEDED: [&str; 3] = [ACCESS, REFRESH, CLIENT_SECRET];
@@ -326,4 +327,160 @@ fn t_code_4_list_region_error_with_secret_code_is_unrecognized() {
         );
         assert_clean("list errors", &[&stdout, &stderr], &SEEDED);
     }
+}
+
+/// One early refusal (#5406): the request and the environment it runs in.
+struct Early<'a> {
+    label: String,
+    request: Request<'a>,
+    env: toolkit_aws::MapEnv,
+    /// Whether the refusal message names the offending value (so the
+    /// stored-secret scrub must replace it with the generic failure).
+    echoes: bool,
+}
+
+/// Every refusal `run` makes before the access token, with a stored session
+/// secret as the offending value: an explicit `--region`, the
+/// `LAUNCH_WITH_AWS_REGION` chain, the `LAUNCH_WITH_AWS_BASE_URL` override
+/// (both before and after its host check), the repository URL and the
+/// fixed-message argument checks (launch id, display name).
+fn early_cases<'a>(command: &'a str, secret: &'a str, owned: &'a [String; 4]) -> Vec<Early<'a>> {
+    let first = if command == "create-launch" {
+        "/src/app"
+    } else {
+        "l-1"
+    };
+    let none = toolkit_aws::MapEnv::new;
+    let mut cases = vec![
+        Early {
+            label: format!("{command}: explicit region"),
+            request: Request {
+                region: Some(secret),
+                ..req(command, Some(first))
+            },
+            env: none(),
+            echoes: true,
+        },
+        Early {
+            label: format!("{command}: region environment"),
+            request: req(command, Some(first)),
+            env: none().with(config::ENV_REGION, secret),
+            echoes: true,
+        },
+        Early {
+            label: format!("{command}: base URL without host"),
+            request: req(command, Some(first)),
+            env: none().with(config::ENV_BASE_URL, &owned[0]),
+            echoes: true,
+        },
+        Early {
+            label: format!("{command}: base URL host"),
+            request: req(command, Some(first)),
+            env: none().with(config::ENV_BASE_URL, &owned[1]),
+            echoes: false,
+        },
+    ];
+    if command == "create-launch" {
+        cases.push(Early {
+            label: "create-launch: repository URL".into(),
+            request: req(command, Some(&owned[2])),
+            env: none(),
+            echoes: true,
+        });
+        cases.push(Early {
+            label: "create-launch: display name".into(),
+            request: Request {
+                second: Some(&owned[3]),
+                ..req(command, Some(first))
+            },
+            env: none(),
+            echoes: false,
+        });
+    } else if command != "list-launches" {
+        cases.push(Early {
+            label: format!("{command}: launch id"),
+            request: req(command, Some(&owned[3])),
+            env: none(),
+            echoes: false,
+        });
+    }
+    cases
+}
+
+#[test]
+fn t_tok_7_early_refusals_never_echo_stored_session_secrets() {
+    for secret in SEEDED {
+        let owned = [
+            format!("https:///{secret}"),
+            format!("https://{secret}.example.com"),
+            format!("https://github.com/o/{secret}"),
+            secret.repeat(100),
+        ];
+        for command in COMMANDS {
+            for case in early_cases(command, secret, &owned) {
+                let harness = Harness {
+                    env: case.env,
+                    ..Harness::new(&[])
+                };
+                let (stdout, stderr, status, debug) = harness.golden_debug(&case.request);
+                assert_clean(&case.label, &[&stdout, &stderr, &debug], &SEEDED);
+                assert!(
+                    stdout.is_empty() && status == 1 && stderr.starts_with("{\"error\": \""),
+                    "{}: expected a refusal",
+                    case.label
+                );
+                if case.echoes {
+                    assert!(
+                        stderr == format!("{{\"error\": \"{GENERIC_FAILURE}\"}}\n"),
+                        "{}: expected the generic failure",
+                        case.label
+                    );
+                }
+                assert!(
+                    harness.fake.requests().is_empty(),
+                    "{}: a request was made",
+                    case.label
+                );
+                assert_eq!(
+                    harness.archive_calls.get(),
+                    0,
+                    "{}: archive built",
+                    case.label
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn t_tok_7_missing_or_unreadable_session_keeps_early_refusals() {
+    // No session record: the scrub set is empty and the refusal is the
+    // ordinary message (nothing to hide, exit behaviour unchanged).
+    let harness = Harness::without_session(&[]);
+    let request = Request {
+        region: Some("mars-1"),
+        ..req("get-launch", Some("l-1"))
+    };
+    let expected = config::resolve_region(&RegionInputs {
+        explicit: Some("mars-1"),
+        aws_mcp_url: None,
+        env: &harness.env,
+        state_dir: None,
+        home: None,
+    })
+    .unwrap_err()
+    .to_string();
+    assert_eq!(harness.golden(&request), failed_line(&expected));
+    // An unreadable record (not JSON) is the same empty set.
+    std::fs::write(harness.scratch.path().join(state::SESSION_FILE_NAME), b"{").unwrap();
+    assert_eq!(harness.golden(&request), failed_line(&expected));
+    assert!(harness.fake.requests().is_empty());
+}
+
+fn failed_line(message: &str) -> (String, String, u8) {
+    (
+        String::new(),
+        format!("{}\n", crate::launch::text::error_text(message)),
+        1,
+    )
 }

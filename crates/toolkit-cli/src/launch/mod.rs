@@ -28,6 +28,7 @@ pub mod flow;
 pub mod http;
 pub mod oidc;
 pub mod shape;
+pub mod sink;
 pub mod snapshot;
 pub mod state;
 pub mod text;

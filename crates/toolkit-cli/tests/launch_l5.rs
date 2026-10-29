@@ -286,3 +286,140 @@ fn t_tok_sign_in_and_helper_matrix() {
     }
     std::fs::remove_dir_all(home).unwrap();
 }
+
+/// #5406: with a stored session, a caller or configuration value equal to one
+/// of its secrets is never echoed by any launch route's early refusal
+/// (region, region environment, base-URL override, repository URL), the
+/// route makes no refresh (the session record is unchanged) and starts no
+/// sign-in (no other state file appears). Assertions never print the
+/// inspected text.
+#[cfg(unix)]
+#[test]
+fn t_tok_early_refusals_with_a_stored_session_never_echo_its_secrets() {
+    const SECRETS: [&str; 3] = [
+        "FAKE-ACCESS-TOKEN-0001",
+        "FAKE-REFRESH-TOKEN-0001",
+        "FAKE-CLIENT-SECRET-0001",
+    ];
+    const GENERIC: &str =
+        "{\"error\": \"The operation failed. Re-run with logging enabled for details.\"}\n";
+    let home = std::env::temp_dir().join(format!(
+        "launch-l5-early-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let state_dir = home.join(".launch-with-aws");
+    std::fs::create_dir_all(&state_dir).unwrap();
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    // An expired access token with a live client: any token work would refresh.
+    let session = format!(
+        "{{\"client_id\":\"client\",\"client_secret\":\"{}\",\"client_expires_at\":{},\"authorize_endpoint\":\"https://oidc.us-east-1.amazonaws.com/authorize\",\"token_endpoint\":\"https://oidc.us-east-1.amazonaws.com/token\",\"scopes\":[\"launch:access\"],\"access_token\":\"{}\",\"refresh_token\":\"{}\",\"token_expires_at\":{}}}",
+        SECRETS[2],
+        now + 3600,
+        SECRETS[0],
+        SECRETS[1],
+        now - 1
+    );
+    let session_path = state_dir.join("session.json");
+    std::fs::write(&session_path, &session).unwrap();
+    let listing = || {
+        let mut names: Vec<_> = std::fs::read_dir(&state_dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        names.sort();
+        names
+    };
+    let before = listing();
+    let run = |args: &[&str], env: &[(&str, &str)]| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_toolkit"));
+        command
+            .args(args)
+            .env("HOME", &home)
+            .env_remove("LAUNCH_WITH_AWS_REGION")
+            .env_remove("LAUNCH_WITH_AWS_BASE_URL")
+            .env_remove("AWS_REGION")
+            .env_remove("AWS_DEFAULT_REGION")
+            .env_remove("AWS_PROFILE");
+        for (name, value) in env {
+            command.env(name, value);
+        }
+        command.output().unwrap()
+    };
+    for secret in SECRETS {
+        let no_host = format!("https:///{secret}");
+        let repository = format!("https://github.com/o/{secret}");
+        let mut cases: Vec<(&str, Vec<&str>, Vec<(&str, &str)>)> = Vec::new();
+        for route in [
+            &["launch", "resolve-region"][..],
+            &["launch", "auth-start"],
+            &["launch", "auth-wait", "4242"],
+            &["launch", "download-snapshot", "l-1"],
+        ] {
+            let mut explicit = route.to_vec();
+            explicit.extend(["--region", secret]);
+            cases.push(("explicit region", explicit, vec![]));
+            cases.push((
+                "region environment",
+                route.to_vec(),
+                vec![("LAUNCH_WITH_AWS_REGION", secret)],
+            ));
+            cases.push((
+                "base URL override",
+                route.to_vec(),
+                vec![("LAUNCH_WITH_AWS_BASE_URL", no_host.as_str())],
+            ));
+        }
+        cases.push((
+            "repository URL",
+            vec!["launch", "create-launch", repository.as_str()],
+            vec![],
+        ));
+        #[cfg(feature = "aws-sdk")]
+        for route in [
+            &["launch", "get-launch", "l-1"][..],
+            &["launch", "list-launches"],
+            &["launch", "create-launch", "."],
+        ] {
+            let mut explicit = route.to_vec();
+            explicit.extend(["--region", secret]);
+            cases.push(("explicit region", explicit, vec![]));
+            cases.push((
+                "base URL override",
+                route.to_vec(),
+                vec![("LAUNCH_WITH_AWS_BASE_URL", no_host.as_str())],
+            ));
+        }
+        for (label, args, env) in &cases {
+            let output = run(args, env);
+            let route = args[1];
+            for (index, text) in [&output.stdout, &output.stderr].into_iter().enumerate() {
+                let text = String::from_utf8_lossy(text);
+                for (seeded, value) in SECRETS.iter().enumerate() {
+                    assert!(
+                        !text.contains(value),
+                        "{route} {label}: seeded secret #{seeded} leaked on stream {index}"
+                    );
+                }
+            }
+            assert!(
+                output.status.code() == Some(1)
+                    && output.stdout.is_empty()
+                    && output.stderr == GENERIC.as_bytes(),
+                "{route} {label}: expected the generic failure"
+            );
+            assert!(
+                std::fs::read(&session_path).unwrap() == session.as_bytes(),
+                "{route} {label}: the session record changed"
+            );
+            assert!(listing() == before, "{route} {label}: state files changed");
+        }
+    }
+    std::fs::remove_dir_all(home).unwrap();
+}

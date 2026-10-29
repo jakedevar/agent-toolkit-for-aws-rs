@@ -5,6 +5,7 @@ use toolkit_core::ToolkitError;
 /// Wait without signalling a PID: only lock custody can establish finality.
 #[allow(clippy::unnecessary_wraps)]
 pub fn command(invocation: &Invocation, output: &mut Output<'_>) -> Result<(), ToolkitError> {
+    crate::launch::sink::guard(output);
     #[cfg(unix)]
     {
         use super::{
@@ -101,14 +102,7 @@ pub(super) fn report_failure(
     output: &mut Output<'_>,
     message: &str,
 ) -> (Option<Result<(), ToolkitError>>, bool) {
-    let text = crate::launch::text::error_text(message);
-    let text = output.caller.diagnostic(&text);
-    let delivered = output.diagnostics.as_mut().is_some_and(|writer| {
-        writer
-            .write_all(text.as_bytes())
-            .and_then(|()| writer.write_all(b"\n"))
-            .is_ok()
-    });
+    let delivered = output.diagnostic_delivered(&crate::launch::text::error_text(message));
     output.set_exit_status(1);
     (Some(Ok(())), delivered)
 }

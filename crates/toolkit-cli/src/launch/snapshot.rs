@@ -39,6 +39,7 @@ fn failure(output: &mut Output<'_>, message: &str) -> Result<(), ToolkitError> {
 /// `toolkit launch apply-snapshot <snapshot-dir> [--into DIR]`.
 #[allow(clippy::unnecessary_wraps)]
 pub fn apply_command(invocation: &Invocation, output: &mut Output<'_>) -> Result<(), ToolkitError> {
+    super::sink::guard(output);
     let Some(snapshot) = invocation.positional(0) else {
         return failure(output, "Missing required argument for apply-snapshot");
     };
@@ -82,6 +83,7 @@ pub fn download_command(
     invocation: &Invocation,
     output: &mut Output<'_>,
 ) -> Result<(), ToolkitError> {
+    super::sink::guard(output);
     let Some(launch_id) = invocation.positional(0) else {
         return failure(output, "Missing required argument for download-snapshot");
     };
