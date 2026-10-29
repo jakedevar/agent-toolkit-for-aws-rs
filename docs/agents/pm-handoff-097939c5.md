@@ -849,3 +849,8 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 10-29 07:38Z: S2b f/u #5261 (9de1fd5d, 35% ctx) PARTIAL at 309b8c50251c042a4a6af99d5e922661681f519a: #5255-#5260 fixed (red->green), scoped 4124 ok. Coverage list not done. Continuation dc5cd37d (continue_from 9de1fd5d). Evidence added to #5226 (brief stop rule ignored).
   4/4 busy: 0dcdafea (#5181 S4 cont), 74c74e8d (#5274 review), f40721c4 (#5278 AP S4), dc5cd37d (#5261 cont).
 - 10-29 07:40Z: SEAT ROTATED 0efc0d66 -> ff294c79 (context cap). State verified live: 4/4 busy (0dcdafea #5181, 74c74e8d #5274, f40721c4 #5278, dc5cd37d #5261 cont); queue a5145150 (L4 cd611010) queued, wakes me. Cancelled stale watches 155d0798 (1d17674d, superseded x402 S4 worker) and 12f28db3 (9de1fd5d, handled). Disk-floor hold on 74c74e8d job 3303129c is routine (reservations clear).
+- 10-29 07:41Z: #5274 (74c74e8d, Sonnet) ACCEPT test hardening 2b95608d (7/7 mutations caught; prod unchanged). Nonblocking #5279 (empty cert dir now fails, was skip).
+  Check ok (8132574e, 4781). ENQUEUED 1dc25c73 (seq 2975, #5244). On land close #5244 #5245 #5253 #5254 #5274.
+  L4 f/u #5273 -> Codex terra f4e513e0, sandbox_source cd611010 (queued L4 source; base for scoped). Related #5269-#5272 #5262 #5230.
+  4/4 busy: 0dcdafea (#5181 S4 cont), f40721c4 (#5278 AP S4), dc5cd37d (#5261 cont), f4e513e0 (#5273 L4 f/u).
+  Next slot: x402 S5 after S4; OpenClaw B1 after S4; #5279 (P4).
