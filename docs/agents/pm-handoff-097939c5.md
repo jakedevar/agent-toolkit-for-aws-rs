@@ -1057,3 +1057,7 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 14:52Z: re-review #5397 reviewer 1dab305c (Codex sol) FAILED: provider cyber filter (#5060 recurrence). Before dying it confirmed a gate bypass: module-level `fn r#Ok` shadows Ok, gate 8dc14746 + route 7b2408e2 green with the mutation -> BLOCKER #5400 (PM-filed). Verdict CHANGES_REQUESTED recorded on #5397.
   PM RULING repair 3 (handoff on #5352): default route in own file module, absolute ::core paths, no use/macros/other items, whole-file token pin, unraw everywhere, raw-ident fixtures. Repair 3 -> Opus 5fd44a0d (continue_from e6745f90). Its re-review -> CLAUDE reviewer (Codex filter keeps killing security mutation reviews). Close #5397 with that one.
   4/4: fbc33b5e L5, cf9b5ebf S1, dd250991 B1, 5fd44a0d x402 r3. #5344 still waits.
+- 14:55Z: OpenClaw B1 (dd250991, Codex terra) DONE "not acceptance-ready" at 4424a66227eaa77e9df58614517566b1596e0c90 (scoped 9b546319 ok 5201, fmt/clippy ok). Friction #5385 (worker-filed).
+  PM RULINGS (in #5401 body): grouped matrix w/o own red commits OK if mutation-tested (survivor = BLOCKER); B2 matcher out of scope; dateutil exhaustiveness = accepted residual (needs divergence row, non-blocking).
+  Review #5401 -> Claude Opus ca36147e pinned 4424a662. On ACCEPT: check + enqueue 4424a662 (source_session_id dd250991, derive_filters, issue 5363).
+  4/4: fbc33b5e L5, cf9b5ebf S1, 5fd44a0d x402 r3, ca36147e #5401. #5344 still waits.
