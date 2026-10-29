@@ -877,6 +877,13 @@ pub enum PaymentError {
     Transport(PaymentErrorClass),
 }
 
+impl PaymentError {
+    #[cfg(test)]
+    fn class_name(&self) -> &'static str {
+        "RuntimeError"
+    }
+}
+
 /// Value-free classes used by the generic payment-flow error text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PaymentErrorClass {
@@ -1518,6 +1525,44 @@ mod wire_contracts {
         testing::{FakeChunk, FakeStreamingTransport},
         NoSigner,
     };
+
+    #[test]
+    fn payment_error_class_mapping_is_exhaustive_and_value_free() {
+        for (error, expected) in [
+            (PaymentError::Service("ValidationException"), "ClientError"),
+            (PaymentError::InvalidResponse, "RuntimeError"),
+            (
+                PaymentError::Transport(PaymentErrorClass::ConnectError),
+                "ConnectError",
+            ),
+            (
+                PaymentError::Transport(PaymentErrorClass::ConnectTimeout),
+                "ConnectTimeout",
+            ),
+            (
+                PaymentError::Transport(PaymentErrorClass::ReadTimeout),
+                "ReadTimeout",
+            ),
+            (
+                PaymentError::Transport(PaymentErrorClass::RemoteProtocolError),
+                "RemoteProtocolError",
+            ),
+            (
+                PaymentError::Transport(PaymentErrorClass::NoCredentialsError),
+                "NoCredentialsError",
+            ),
+            (
+                PaymentError::Transport(PaymentErrorClass::ClientError),
+                "ClientError",
+            ),
+            (
+                PaymentError::Transport(PaymentErrorClass::RuntimeError),
+                "RuntimeError",
+            ),
+        ] {
+            assert_eq!(error.class_name(), expected);
+        }
+    }
 
     struct FakeClock(Cell<Instant>);
     impl PaymentClock for FakeClock {
