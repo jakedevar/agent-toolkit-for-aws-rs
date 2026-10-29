@@ -427,3 +427,138 @@ fn the_largest_quantity_and_a_legitimate_zero_are_still_submitted() {
     assert_eq!(ran.requests("dynamodb:UpdateItem").len(), 2);
     assert_eq!(ran.unused, 0);
 }
+
+// ---- an integer literal beyond i64 is judged by its text (#4984) --------------------
+//
+// The JSON reader turns an integer literal it cannot hold in 64 bits into a
+// float, and the float nearest `-9223372036854775809` is `-9223372036854775808`
+// exactly. A range check on the parsed value therefore accepts the literal as
+// `i64::MIN`; the range has to be judged on the literal itself.
+
+/// Integer literals just outside, and well outside, the 64-bit range.
+const WIDE_LITERALS: [&str; 6] = [
+    "-9223372036854775809",
+    "-9223372036854775810",
+    "-9223372036854776832",
+    "-99999999999999999999",
+    "9223372036854775808",
+    "99999999999999999999",
+];
+
+#[test]
+fn a_literal_below_i64_min_is_not_billed_as_i64_min() {
+    for literal in WIDE_LITERALS {
+        let calls = reads_only(vec![item_with(literal, "")]);
+        assert_failed_closed(&run("submitter", "{}", &calls));
+        let dry = config_with(&[("METERING_MODE", "dry-run")]);
+        assert_failed_closed(&run_with("submitter", &dry, "{}", &calls, NOW));
+    }
+}
+
+#[test]
+fn an_allocation_literal_below_i64_min_is_not_billed_as_i64_min() {
+    for literal in WIDE_LITERALS {
+        let allocations = format!(
+            r#"{{"AllocatedUsageQuantity": {literal}, "Tags": [{{"Key": "team", "Value": "a"}}]}}"#
+        );
+        let calls = reads_only(vec![item_with("5", &allocations)]);
+        assert_failed_closed(&run("submitter", "{}", &calls));
+        let dry = config_with(&[("METERING_MODE", "dry-run")]);
+        assert_failed_closed(&run_with("submitter", &dry, "{}", &calls, NOW));
+    }
+}
+
+#[test]
+fn a_wide_literal_stops_the_valid_neighbours_in_its_run_too() {
+    let allocations = r#"{"AllocatedUsageQuantity": -9223372036854775809, "Tags": [{"Key": "team", "Value": "a"}]}"#;
+    for pending in [
+        vec![
+            agg_item(LICENSE, "Fine", "2026-01-31T11", 5),
+            item_with("-9223372036854775809", ""),
+            agg_item(LICENSE, "AlsoFine", "2026-01-31T11", 7),
+        ],
+        vec![
+            agg_item(LICENSE, "Fine", "2026-01-31T11", 5),
+            item_with("5", allocations),
+        ],
+    ] {
+        let calls = reads_only(pending);
+        assert_failed_closed(&run("submitter", "{}", &calls));
+        let dry = config_with(&[("METERING_MODE", "dry-run")]);
+        assert_failed_closed(&run_with("submitter", &dry, "{}", &calls, NOW));
+    }
+}
+
+#[test]
+fn the_cli_fails_closed_on_a_literal_below_i64_min() {
+    let config = TempFile::new(
+        "config",
+        &format!(
+            "{{{}}}",
+            CFG.iter()
+                .map(|(key, value)| format!(r#""{key}": "{value}""#))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    );
+    for pending in [
+        item_with("-9223372036854775809", ""),
+        item_with(
+            "5",
+            r#"{"AllocatedUsageQuantity": -9223372036854775809, "Tags": [{"Key": "team", "Value": "a"}]}"#,
+        ),
+    ] {
+        let mut pending_list = vec![agg_item(LICENSE, "Fine", "2026-01-31T11", 5)];
+        pending_list.push(pending);
+        let recording = TempFile::new(
+            "rec",
+            &format!(r#"{{"calls": [{}]}}"#, reads_only(pending_list).join(",")),
+        );
+        let cli = toolkit(&[
+            "marketplace",
+            "handler",
+            "submitter",
+            "--config",
+            &config.path(),
+            "--recorded",
+            &recording.path(),
+            "--now",
+            NOW,
+        ]);
+        assert_eq!(cli.status, 1, "{}", cli.stderr);
+        assert!(cli.stderr.contains("QuantityOutOfRange"), "{}", cli.stderr);
+        assert!(
+            cli.stderr.contains("nothing was submitted"),
+            "the run stopped at the build, before any billing: {}",
+            cli.stderr
+        );
+        assert!(cli.stdout.is_empty(), "{}", cli.stdout);
+    }
+}
+
+#[test]
+fn the_i64_boundaries_themselves_are_still_submitted_as_literals() {
+    let min = i64::MIN;
+    let max = i64::MAX;
+    let allocations = format!(
+        r#"{{"AllocatedUsageQuantity": {min}, "Tags": [{{"Key": "team", "Value": "a"}}]}}, {{"AllocatedUsageQuantity": {max}, "Tags": [{{"Key": "team", "Value": "b"}}]}}"#
+    );
+    for quantity in [min, max] {
+        let mut calls = reads_only(vec![item_with(&quantity.to_string(), &allocations)]);
+        calls.push(metering(&format!(
+            r#"{{"Results": [{{"MeteringRecordId": "mrec-edge", "Status": "Success", "UsageRecord": {{"Timestamp": 1769857200, "Dimension": "Requests", "Quantity": {quantity}, "CustomerAWSAccountId": "{ACCOUNT}", "LicenseArn": "{LICENSE}"}}}}]}}"#
+        )));
+        calls.push(update());
+        let ran = run("submitter", "{}", &calls);
+        assert_eq!(ran.ok().to_compact_string(), r#"{"submitted":1}"#);
+        let batch = ran.requests("meteringmarketplace:BatchMeterUsage")[0].to_compact_string();
+        assert!(
+            batch.contains(&format!(
+                r#""Quantity":{quantity},"UsageAllocations":[{{"AllocatedUsageQuantity":{min},"Tags":[{{"Key":"team","Value":"a"}}]}},{{"AllocatedUsageQuantity":{max},"Tags""#
+            )),
+            "i64::MIN and i64::MAX are legitimate integers and are sent unchanged: {batch}"
+        );
+        assert_eq!(ran.requests("dynamodb:UpdateItem").len(), 1);
+        assert_eq!(ran.unused, 0);
+    }
+}
