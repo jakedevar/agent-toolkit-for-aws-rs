@@ -457,6 +457,18 @@ mod tests {
     use crate::testing::FixedResolver;
     use std::time::Duration;
 
+    #[test]
+    fn duplicate_content_length_remains_detectable() {
+        let headers = response_headers([
+            ("Content-Length", "5"),
+            ("content-length", "5"),
+            ("x-other", "one"),
+            ("x-other", "two"),
+        ]);
+        assert_eq!(headers.get("content-length"), Some("5,5"));
+        assert_eq!(headers.get("x-other"), Some("two"));
+    }
+
     const LEAKY: &str = "profile failed: aws_secret_access_key=FAKESECRETVALUE0123456789 \
                          Authorization: Bearer FAKE-BEARER-TOKEN-VALUE";
 

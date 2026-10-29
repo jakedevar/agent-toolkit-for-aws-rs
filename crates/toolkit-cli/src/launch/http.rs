@@ -51,6 +51,8 @@ pub struct Response {
     pub status: u16,
     pub body: Vec<u8>,
     pub error_header: Option<String>,
+    pub collector_capacity: usize,
+    pub collector_peak: usize,
 }
 impl std::fmt::Debug for Response {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -79,7 +81,25 @@ pub fn collect_response(
     operation: Operation,
     deadline: Instant,
 ) -> Result<Response, BodyError> {
-    let limits = limits_for(operation, deadline);
+    collect_with_ceiling(transport, request, operation, deadline, operation.ceiling())
+}
+fn collect_with_ceiling(
+    transport: &dyn StreamingTransport,
+    request: &HttpRequest,
+    operation: Operation,
+    deadline: Instant,
+    ceiling: usize,
+) -> Result<Response, BodyError> {
+    let limits = StreamLimits::new(
+        ceiling as u64,
+        if operation == Operation::Put {
+            1
+        } else {
+            SMALL_CAP
+        },
+    )
+    .expect("positive stream limits")
+    .with_deadline(deadline);
     let mut stream = transport.open(request, &limits).map_err(|e| match e {
         toolkit_aws::AwsError::Timeout {
             phase: toolkit_aws::error::TimeoutPhase::Deadline,
@@ -100,9 +120,12 @@ pub fn collect_response(
             status,
             body: Vec::new(),
             error_header,
+            collector_capacity: 0,
+            collector_peak: 0,
         });
     };
-    if cap < operation.ceiling() {
+    let cap = cap.min(ceiling);
+    if cap < ceiling {
         stream.narrow_body_limit(cap as u64);
     }
     let length = stream
@@ -121,6 +144,8 @@ pub fn collect_response(
                 status,
                 body: Vec::new(),
                 error_header,
+                collector_capacity: 0,
+                collector_peak: 0,
             })
         } else {
             Err(BodyError::TooLarge)
@@ -136,6 +161,8 @@ pub fn collect_response(
                     status,
                     body: Vec::new(),
                     error_header,
+                    collector_capacity: buf.capacity(),
+                    collector_peak: buf.peak(),
                 })
             }
             Err(StreamError::TooLarge) => return Err(BodyError::TooLarge),
@@ -155,10 +182,14 @@ pub fn collect_response(
             super::buffer::BufError::Alloc => BodyError::Allocation,
         })?;
     }
+    let collector_capacity = buf.capacity();
+    let collector_peak = buf.peak();
     Ok(Response {
         status,
         body: buf.into_vec(),
         error_header,
+        collector_capacity,
+        collector_peak,
     })
 }
 
@@ -405,5 +436,91 @@ mod tests {
             BodyError::Deadline
         );
         assert_eq!(stalled.requests().len(), 1);
+    }
+
+    #[test]
+    fn non_power_of_two_cap_bounds_allocation_across_growth() {
+        let chunks = (0..10).map(|_| FakeChunk::Data(vec![7; 1000])).collect();
+        let fake = FakeStreamingTransport::new().respond(200, &[], chunks);
+        let result = super::collect_with_ceiling(
+            &fake,
+            &request(),
+            Operation::Download,
+            Instant::now() + Duration::from_secs(30),
+            10003,
+        )
+        .unwrap();
+        assert_eq!(result.body.len(), 10000);
+        assert!(result.collector_capacity <= 10003);
+        assert!(result.collector_peak < 2 * 10003);
+        assert!(result.collector_peak > result.collector_capacity);
+        let fake = FakeStreamingTransport::new().respond(
+            200,
+            &[("content-length", "10001")],
+            vec![FakeChunk::Data(vec![0; 1000]); 11],
+        );
+        assert_eq!(
+            super::collect_with_ceiling(
+                &fake,
+                &request(),
+                Operation::Download,
+                Instant::now() + Duration::from_secs(30),
+                10003
+            )
+            .unwrap_err(),
+            BodyError::TooLarge
+        );
+    }
+
+    #[test]
+    fn retry_backoff_advances_clock_and_clamps_the_next_attempt() {
+        use super::{run, MonotonicClock};
+        use std::cell::Cell;
+        use toolkit_aws::retry::{Jitter, RetryPolicy, Sleeper};
+        struct Time(Cell<Instant>);
+        impl MonotonicClock for Time {
+            fn now(&self) -> Instant {
+                self.0.get()
+            }
+        }
+        impl Sleeper for Time {
+            fn sleep(&self, d: Duration) {
+                self.0.set(self.0.get() + d);
+            }
+        }
+        struct HalfSecond;
+        impl Jitter for HalfSecond {
+            fn pick(&self, _: u64) -> u64 {
+                500
+            }
+        }
+        let start = Instant::now();
+        let clock = Time(Cell::new(start));
+        let fake = FakeStreamingTransport::new()
+            .respond(503, &[], vec![])
+            .respond(200, &[], vec![FakeChunk::Data(b"{}".to_vec())]);
+        let deadline = start + Duration::from_secs(1);
+        let result = run(
+            &fake,
+            &request(),
+            Operation::Oidc,
+            deadline,
+            Duration::from_secs(30),
+            false,
+            &clock,
+            &clock,
+            &HalfSecond,
+            &RetryPolicy::default(),
+        )
+        .unwrap();
+        assert_eq!(result.status, 200);
+        assert_eq!(clock.now(), start + Duration::from_millis(500));
+        assert_eq!(
+            fake.open_limits()
+                .iter()
+                .map(|l| l.deadline())
+                .collect::<Vec<_>>(),
+            vec![Some(deadline), Some(deadline)]
+        );
     }
 }

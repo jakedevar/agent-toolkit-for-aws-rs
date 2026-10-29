@@ -47,7 +47,7 @@ impl std::fmt::Debug for Client {
             .field("id", &"[REDACTED]")
             .field("secret", &self.secret)
             .field("expires_at", &self.expires_at)
-            .field("scopes", &self.scopes)
+            .field("scopes", &"[REDACTED]")
             .finish()
     }
 }
@@ -146,7 +146,7 @@ impl Oidc<'_> {
     fn call(
         &self,
         path: &str,
-        body: Value,
+        body: &Value,
         deadline: Instant,
         single_use: bool,
     ) -> Result<Value, OidcError> {
@@ -159,7 +159,7 @@ impl Oidc<'_> {
             method: Method::Post,
             url: format!("{ENDPOINT}{path}"),
             headers,
-            body: serde_json::to_vec(&body).map_err(|_| OidcError::InvalidResponse)?,
+            body: serde_json::to_vec(body).map_err(|_| OidcError::InvalidResponse)?,
             timeouts: Timeouts::new(timeout, timeout).map_err(|_| OidcError::InvalidResponse)?,
         };
         let response = http::run(
@@ -200,7 +200,7 @@ impl Oidc<'_> {
         now: i64,
         deadline: Instant,
     ) -> Result<Client, OidcError> {
-        let v = self.call("/client/register", json!({"clientName":"Launch with AWS Agent Skill", "clientType":"public", "grantTypes":["authorization_code","refresh_token"], "scopes":scopes, "issuerUrl":issuer, "redirectUris":["http://127.0.0.1"]}), deadline, false)?;
+        let v = self.call("/client/register", &json!({"clientName":"Launch with AWS Agent Skill", "clientType":"public", "grantTypes":["authorization_code","refresh_token"], "scopes":scopes, "issuerUrl":issuer, "redirectUris":["http://127.0.0.1"]}), deadline, false)?;
         let id = required(&v, "clientId")?.to_owned();
         let secret = Secret::new(required(&v, "clientSecret")?);
         let cap = now.saturating_add(MAX_LIFE);
@@ -224,7 +224,7 @@ impl Oidc<'_> {
         now: i64,
         deadline: Instant,
     ) -> Result<Tokens, OidcError> {
-        let v = self.call("/token", json!({"clientId":client.id,"clientSecret":client.secret.expose(),"grantType":"authorization_code","code":code.expose(),"codeVerifier":verifier.expose(),"redirectUri":redirect}), deadline, true)?;
+        let v = self.call("/token", &json!({"clientId":client.id,"clientSecret":client.secret.expose(),"grantType":"authorization_code","code":code.expose(),"codeVerifier":verifier.expose(),"redirectUri":redirect}), deadline, true)?;
         tokens(&v, None, now)
     }
     pub fn refresh(
@@ -233,7 +233,7 @@ impl Oidc<'_> {
         now: i64,
         deadline: Instant,
     ) -> Result<Tokens, OidcError> {
-        let result = self.call("/token", json!({"clientId":session.client_id,"clientSecret":session.client_secret.expose(),"grantType":"refresh_token","refreshToken":session.refresh_token.expose()}), deadline, false).and_then(|v| tokens(&v, Some(&session.refresh_token), now));
+        let result = self.call("/token", &json!({"clientId":session.client_id,"clientSecret":session.client_secret.expose(),"grantType":"refresh_token","refreshToken":session.refresh_token.expose()}), deadline, false).and_then(|v| tokens(&v, Some(&session.refresh_token), now));
         result.map_err(|_| OidcError::SessionExpired)
     }
 }
@@ -252,12 +252,14 @@ fn tokens(v: &Value, old: Option<&Secret>, now: i64) -> Result<Tokens, OidcError
         .map(Secret::new)
         .or_else(|| old.cloned())
         .ok_or(OidcError::InvalidResponse)?;
-    let life = v
-        .get("expiresIn")
-        .and_then(Value::as_i64)
-        .filter(|n| *n > 0)
-        .unwrap_or(DEFAULT_LIFE)
-        .min(MAX_LIFE);
+    let life = match v.get("expiresIn") {
+        Some(value) if value.as_u64().is_some_and(|n| n > MAX_LIFE as u64) => MAX_LIFE,
+        value => value
+            .and_then(Value::as_i64)
+            .filter(|n| *n > 0)
+            .unwrap_or(DEFAULT_LIFE)
+            .min(MAX_LIFE),
+    };
     Ok(Tokens {
         access,
         refresh,
@@ -309,6 +311,11 @@ mod tests {
         assert!(requests
             .iter()
             .all(|r| r.headers.get("authorization").is_none()));
+        let registration: Value = serde_json::from_slice(&requests[0].body).unwrap();
+        assert_eq!(
+            registration,
+            json!({"clientName":"Launch with AWS Agent Skill", "clientType":"public", "grantTypes":["authorization_code","refresh_token"], "scopes":["launch:access"], "issuerUrl":"https://example.awsapps.com/start", "redirectUris":["http://127.0.0.1"]})
+        );
         let body: Value = serde_json::from_slice(&requests[1].body).unwrap();
         assert_eq!(
             body,
@@ -333,6 +340,16 @@ mod tests {
             assert!(tokens(&v, None, 42).is_err());
         }
         assert!(tokens(&json!({"refreshToken":"r"}), None, 42).is_err());
+        assert_eq!(
+            tokens(
+                &json!({"accessToken":"a", "refreshToken":"r", "expiresIn":u64::MAX}),
+                None,
+                42
+            )
+            .unwrap()
+            .expires_at,
+            42 + MAX_LIFE
+        );
     }
     #[test]
     fn error_codes_never_echo_secrets_or_descriptions() {
@@ -405,5 +422,57 @@ mod refresh_tests {
             request,
             json!({"clientId":"id","clientSecret":"FAKE-CLIENT-SECRET","grantType":"refresh_token","refreshToken":"FAKE-REFRESH"})
         );
+    }
+
+    #[test]
+    fn cached_and_refreshed_access_are_persisted_with_expiry_buffer() {
+        let scratch = super::super::tests_support::Scratch::new("oidc-session");
+        let random = super::super::clock::SeededRandom::new(9);
+        let mut session = StoredSession {
+            client_id: "id".into(),
+            client_secret: Secret::new("FAKE-CLIENT-SECRET"),
+            client_expires_at: 5000,
+            authorize_endpoint: format!("{ENDPOINT}/authorize"),
+            token_endpoint: format!("{ENDPOINT}/token"),
+            scopes: vec![],
+            access_token: Secret::new("FAKE-ACCESS"),
+            refresh_token: Secret::new("FAKE-REFRESH"),
+            token_expires_at: 401,
+        };
+        super::super::state::save_session(scratch.path(), &session, &random).unwrap();
+        let fake = FakeStreamingTransport::new().respond(
+            200,
+            &[],
+            vec![FakeChunk::Data(
+                br#"{"accessToken":"FAKE-NEW-ACCESS","expiresIn":3600}"#.to_vec(),
+            )],
+        );
+        let sleeper = RecordingSleeper::new();
+        let oidc = Oidc {
+            transport: &fake,
+            clock: &SystemClock,
+            sleeper: &sleeper,
+            jitter: &NoJitter,
+            policy: RetryPolicy::none(),
+        };
+        let deadline = Instant::now() + Duration::from_secs(30);
+        assert_eq!(
+            oidc.access_token(scratch.path(), &random, 100, deadline)
+                .unwrap(),
+            session.access_token
+        );
+        assert!(fake.requests().is_empty());
+        session.token_expires_at = 400;
+        super::super::state::save_session(scratch.path(), &session, &random).unwrap();
+        assert_eq!(
+            oidc.access_token(scratch.path(), &random, 100, deadline)
+                .unwrap()
+                .expose(),
+            "FAKE-NEW-ACCESS"
+        );
+        let saved = super::super::state::load_session(scratch.path()).unwrap();
+        assert_eq!(saved.token_expires_at, 3700);
+        assert_eq!(saved.refresh_token, session.refresh_token);
+        assert_eq!(fake.requests().len(), 1);
     }
 }
