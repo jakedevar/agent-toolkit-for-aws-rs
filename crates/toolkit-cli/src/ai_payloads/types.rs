@@ -32,7 +32,7 @@ pub(crate) fn slot_type(name: &str) -> Option<SlotType> {
 }
 
 pub(crate) fn consent_given(consent: &std::collections::BTreeSet<String>, name: &str) -> bool {
-    consent.iter().any(|item| item.eq_ignore_ascii_case(name))
+    name.eq_ignore_ascii_case("ACCEPT_EULA") && consent.contains("ACCEPT_EULA")
 }
 
 /// Returns only a literal, never an error containing the supplied value.

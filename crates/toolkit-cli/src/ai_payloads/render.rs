@@ -208,7 +208,7 @@ fn command_with_ids(
     let assignments = object(json.get("assign"))?;
     let consents: BTreeSet<_> = inv.values_of("--consent").map(str::to_owned).collect();
     for name in &consents {
-        if types::slot_type(name) != Some(types::SlotType::Consent)
+        if name != "ACCEPT_EULA"
             || !(original
                 .slots
                 .iter()

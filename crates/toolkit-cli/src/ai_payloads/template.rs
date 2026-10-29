@@ -213,18 +213,26 @@ pub(crate) fn is_secret_name(name: &str) -> bool {
 /// Syntactic consent guard for caller-supplied code, not a sandbox.
 pub(crate) fn contains_consent_identifier(text: &str) -> bool {
     let normalized: String = text.nfkc().collect();
-    let lexed = lex(&normalized);
+    consent_in_lex(text) || consent_in_lex(&normalized)
+}
+
+fn consent_in_lex(text: &str) -> bool {
+    let lexed = lex(text);
     let is_consent =
         |name: &str| super::types::slot_type(name) == Some(super::types::SlotType::Consent);
+    // Quote reuse can split an interpolated string into several tokens. Inspect
+    // all string bodies when one is present, conservatively including literals.
+    let interpolated = lexed.tokens.iter().any(|token| {
+        matches!(&token.kind,
+        Kind::Str(value) if value.prefix.to_ascii_lowercase().contains(['f', 't']))
+    });
     lexed
         .occurrences
         .iter()
         .any(|occurrence| occurrence.context == Context::Bare && is_consent(&occurrence.name))
         || lexed.tokens.iter().any(|token| match &token.kind {
             Kind::Name(name) => is_consent(name),
-            // Conservatively inspect the entire f-string body, including literal text.
-            // This guard is syntactic and does not evaluate caller-owned code.
-            Kind::Str(value) if value.prefix.to_ascii_lowercase().contains('f') => value
+            Kind::Str(value) if interpolated => value
                 .body
                 .split(|c: char| !is_ident_continue(c))
                 .any(is_consent),
@@ -348,11 +356,40 @@ pub(crate) fn parse(text: &str) -> Template {
     occurrences.extend(string_occurrences(&tokens));
     occurrences.sort_by_key(|occurrence| (occurrence.line, occurrence.column));
 
+    let magic_cells: Vec<(usize, usize)> = markers
+        .iter()
+        .enumerate()
+        .filter_map(|(i, marker)| {
+            let end = markers.get(i + 1).map_or(lines.len(), |next| next.index);
+            let first = lines[marker.index + 1..end]
+                .iter()
+                .map(|line| line.trim_start())
+                .find(|line| !line.is_empty() && !line.starts_with('#'))?;
+            (!marker.markdown && first.starts_with("%%")).then_some((marker.index + 2, end))
+        })
+        .collect();
+    let assigned_magic_lines: BTreeSet<usize> = tokens
+        .windows(2)
+        .filter_map(|pair| {
+            let (left, right) = (&pair[0], &pair[1]);
+            (left.line == right.line
+                && left.depth == 0
+                && right.depth == 0
+                && matches!(&left.kind, Kind::Op(op) if op == "=")
+                && matches!(&right.kind, Kind::Op(op) if op == "!" || op == "%"))
+            .then_some(left.line)
+        })
+        .collect();
+
     for occurrence in &occurrences {
         if occurrence.context != Context::Comment
-            && lines
-                .get(occurrence.line - 1)
-                .is_some_and(|line| line.trim_start().starts_with(['!', '%']))
+            && (magic_cells
+                .iter()
+                .any(|(start, end)| (*start..=*end).contains(&occurrence.line))
+                || assigned_magic_lines.contains(&occurrence.line)
+                || lines
+                    .get(occurrence.line - 1)
+                    .is_some_and(|line| line.trim_start().starts_with(['!', '%'])))
         {
             template.violations.push(Violation {
                 code: "magic_line_slot",
@@ -696,7 +733,7 @@ fn is_ident_continue(character: char) -> bool {
 fn is_string_prefix(name: &str) -> bool {
     matches!(
         name.to_ascii_lowercase().as_str(),
-        "r" | "u" | "b" | "f" | "br" | "rb" | "fr" | "rf"
+        "r" | "u" | "b" | "f" | "br" | "rb" | "fr" | "rf" | "t" | "tr" | "rt"
     )
 }
 
