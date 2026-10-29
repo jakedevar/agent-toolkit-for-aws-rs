@@ -1005,10 +1005,15 @@ check in toolkit-aws for the database capability only. It is delivered as
   domains are refused until reviewed. The region must be a standard name and
   equal the host's region label; the port is fixed and non-zero. Private
   ranges must be canonical and lie inside RFC 1918 with a `/16` or longer
-  prefix, or inside `fc00::/7` with a `/48` or longer prefix; at most 16.
-  `admits` accepts any public address (the shared public predicate) or a
-  listed private one, judging IPv4-mapped IPv6 as IPv4; loopback, link-local
-  and metadata, unspecified, multicast, CGNAT, NAT64 and every other
+  prefix, or inside `fc00::/7` with a `/48` or longer prefix; at most 16;
+  and share no address with the forbidden blocks below (#5428).
+  `admits` judges IPv4-mapped IPv6 as IPv4, then refuses the forbidden
+  blocks **first**, before any listed range: IPv4 `0.0.0.0/8`, loopback,
+  link-local (instance metadata `169.254.169.254`, container credentials
+  `169.254.170.2`), multicast and broadcast; IPv6 `::`, `::1`, `fe80::/10`,
+  `ff00::/8` and the AWS instance service block `fd00:ec2::/64` (metadata
+  `fd00:ec2::254`). Only then does it accept any public address (the shared
+  public predicate) or a listed private one; CGNAT, NAT64 and every other
   non-public block cannot be listed and are refused.
 - `toolkit-cli` `docgraph::network_policy::parse` (feature `docgraph-live`)
   reads the `--network-policy` JSON schema: exactly `host`, `port`, `region`
@@ -1051,8 +1056,9 @@ idle (response head and between body frames), 60 s per operation and
 16 MiB per response. Every phase runs inside one absolute deadline: the
 earlier of the operation budget and a caller deadline (the streaming
 `StreamLimits` deadline). All waits are async and dropped at the deadline,
-and the HTTP connection task is aborted when the response or a failed call is
-dropped. A declared `content-length` above the limit fails before any body
+and the HTTP connection is never spawned: it is owned and driven by the
+exchange and then the response body, so dropping either drops the socket
+synchronously (#5429). A declared `content-length` above the limit fails before any body
 byte is read; undeclared bodies fail at the first frame that would exceed the
 remaining allowance. A deadline after the request was handed to the
 connection is a non-retryable `Timeout(Deadline)` that says the outcome is
@@ -1168,11 +1174,12 @@ when the system resolver returns. Accepted residual: one abandoned
 `getaddrinfo` thread per process may outlive its deadline until the system
 resolver returns; it holds no socket of ours and its answer is discarded.
 
-**Close budget (T-DG-07c).** The database connector closes by aborting the
-connection task and dropping the socket when the response or a failed call
-is dropped; no graceful TLS close is awaited. `CLOSE_BUDGET` (2 s) records
-the design bound; the test holds both a completed exchange and a body-limit
-failure against a server that never closes to it.
+**Close budget (T-DG-07c).** The database connector closes by dropping the
+socket synchronously when the response or a failed call is dropped (see
+"S1 repair 1" below: the connection is never a spawned task); no graceful
+TLS close is awaited. `CLOSE_BUDGET` (2 s) records the design bound; the
+tests hold both a completed exchange and a body-limit failure against a
+server that never closes to it.
 
 **Deferred to S3 (ruling 3):** WebSocket frame (1 MiB) and GraphSON depth
 (64) and bulk (100,000) limits, listed in the S3 row of "Delivery slices and
@@ -1239,6 +1246,57 @@ Red/green jobs (mutations uncommitted, restored with `git show HEAD:<path>`):
 The green job ran `docgraph-bounded` (bounded credential tests, `sdk::lookup`
 and all `sdk::database` tests) at `f637417f`; the final verification batch
 reruns each rule's recipe at the final commit.
+
+#### S1 repair 1: security review #5425 blockers #5428 and #5429
+
+**#5428, metadata admission.** `admits` used to OR the shared non-public
+check with listed-range membership, so a policy listing `fd00:ec2::/48` (or
+the exact `/128`) admitted the IPv6 instance metadata address `fd00:ec2::254`
+at both the DNS-answer and connected-peer checks. Per the PM ruling, an
+unconditional forbidden-address check now runs first, after IPv4-mapped
+canonicalisation and before any listed exception, on every DNS answer and
+the connected peer (`DatabaseEndpoint::check_peer`, moved from the connector
+unchanged so it can be tested directly). `DatabaseEndpoint::new` also refuses
+a listed range that overlaps a forbidden block (contains it or lies inside
+it), without echoing it. Decision: the forbidden IPv6 metadata entry is the
+whole `fd00:ec2::/64`, which holds every documented AWS instance service
+address (metadata `::254`, DNS `::253`, time `::123`, pod identity `::23`),
+not only `::254`; neighbouring ULA ranges such as `fd00:ec2:0:1::/64` stay
+listable. The shared public predicate, the public guard and the payment
+plane are unchanged.
+
+**#5429, socket release.** `AbortOnDrop` only aborted the spawned HTTP
+connection task; on the current-thread `SdkRuntime` an aborted task keeps its
+stream until the runtime is next polled, so `Transport::send` could return
+with the socket still open indefinitely. The connection is now never
+spawned: a `Driver` owns hyper's connection future (and so the TLS stream
+and socket); the exchange drives it while waiting for the response head,
+and the `BoundedBody` owns and drives it while the body is read. Dropping
+the body, or the call future on any error or timeout, drops the socket
+synchronously, before the synchronous API returns and with no later runtime
+poll. The open-failure paths (refused peer, TLS failure, failure before the
+head, deadline in `open`) already dropped their stream with the failing
+future, and now hold no task at all. `SdkTransport::send`/`open` and the
+public and payment transports are unchanged.
+
+Regression tests (`sdk::database::tests`):
+`a_policy_cannot_list_a_range_holding_a_forbidden_address`,
+`forbidden_addresses_are_refused_even_inside_a_listed_range` (policies built
+without `new`, `/48` and exact `/128`, admission and peer path, every
+forbidden kind incl. IPv4-mapped forms),
+`forbidden_answers_inside_a_listed_range_are_never_dialed` (DNS path and
+mixed answers: zero dials, zero bytes),
+`every_send_releases_its_socket_before_it_returns` (success, declared and
+mid-body limit failures, timeout after send, TLS failure, refused peer) and
+`a_streamed_response_releases_its_socket_when_dropped_or_failed` (a dropped
+stream without a deadline, and a deadline failure in `open`). The release
+tests read a drop counter on the client stream right after the call returns
+and never drive the runtime again.
+
+| Blocker | Red (tests at `e0f24e41`, fix absent) | Green |
+|---|---|---|
+| #5428 | `08f160f7-a385-4fde-8810-bff71ea15f7e`: `fd00:ec2::/48` accepted by `new`; `fd00:ec2::254` admitted; dialed and reached TLS | GREEN_JOB |
+| #5429 | `08f160f7-a385-4fde-8810-bff71ea15f7e`: "success left the socket open", "dropping the stream left the socket open" | GREEN_JOB |
 
 
 Implementation slices remain Rust, use scoped optional service dependencies,

@@ -38,16 +38,19 @@
 //! only when the system resolver returns. At most one abandoned lookup is
 //! outstanding per process: a new lookup meanwhile fails closed.
 //!
-//! Close (R-DG-07, [`CLOSE_BUDGET`]): dropping the response, or a failed call,
-//! aborts the connection task and drops the socket at once; no graceful TLS
-//! close is awaited, so closing never waits on the server.
+//! Close (R-DG-07, [`CLOSE_BUDGET`]; #5429): the HTTP connection is never
+//! spawned. The exchange drives it in line, then the response body owns and
+//! drives it, so dropping the body, or a failed or timed-out call dropping
+//! its future, drops the socket synchronously, before the synchronous API
+//! returns and without any later runtime poll. No graceful TLS close is
+//! awaited, so closing never waits on the server.
 
 use std::fmt;
 use std::future::Future;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::task::{Context, Poll};
 use std::time::Duration;
 
@@ -76,8 +79,8 @@ use crate::error::{AwsError, TimeoutPhase};
 use crate::transport::{Timeouts, FRAMING_HEADERS};
 
 /// The design's close budget (2 s within the remaining invocation budget).
-/// The connector closes by aborting and dropping, so it needs none of it;
-/// the close test holds it to this bound.
+/// The connector closes by dropping the socket synchronously, so it needs
+/// none of it; the close tests hold it to this bound.
 pub const CLOSE_BUDGET: Duration = Duration::from_secs(2);
 
 /// Most private ranges one policy may list.
@@ -102,6 +105,47 @@ const PRIVATE_V4: [(Ipv4Addr, u8); 3] = [
 ];
 /// IPv6 unique local addresses, `fc00::/7`.
 const ULA: (u128, u8) = (0xfc00_u128 << 112, 7);
+
+/// Addresses signed traffic never reaches, whatever the policy lists (#5428):
+/// `(is IPv6, network, prefix)`. Admission checks them first, after
+/// IPv4-mapped canonicalisation and before any listed range, and
+/// [`DatabaseEndpoint::new`] refuses a listed range overlapping one.
+const FORBIDDEN: [(bool, u128, u8); 10] = [
+    // IPv4 "this network", including the unspecified 0.0.0.0.
+    (false, 0, 8),
+    // IPv4 loopback.
+    (false, 0x7f00_0000, 8),
+    // IPv4 link-local, including instance metadata 169.254.169.254 and the
+    // container credential endpoint 169.254.170.2.
+    (false, 0xa9fe_0000, 16),
+    // IPv4 multicast.
+    (false, 0xe000_0000, 4),
+    // IPv4 limited broadcast.
+    (false, 0xffff_ffff, 32),
+    // IPv6 unspecified `::`.
+    (true, 0, 128),
+    // IPv6 loopback `::1`.
+    (true, 1, 128),
+    // IPv6 link-local `fe80::/10`.
+    (true, 0xfe80_u128 << 112, 10),
+    // IPv6 multicast `ff00::/8`.
+    (true, 0xff00_u128 << 112, 8),
+    // The AWS instance service block inside the unique local range: instance
+    // metadata fd00:ec2::254, DNS ::253, time ::123, pod identity ::23.
+    (true, 0xfd00_0ec2_u128 << 96, 64),
+];
+
+/// Whether `address` (already canonical) is in a [`FORBIDDEN`] block.
+fn forbidden(address: IpAddr) -> bool {
+    let (v6, value) = match address {
+        IpAddr::V4(v4) => (false, u128::from(u32::from(v4))),
+        IpAddr::V6(v6) => (true, u128::from(v6)),
+    };
+    let width = if v6 { 128 } else { 32 };
+    FORBIDDEN
+        .iter()
+        .any(|&(is_v6, network, prefix)| is_v6 == v6 && in_block(value, network, prefix, width))
+}
 
 fn policy_error(reason: &str) -> AwsError {
     AwsError::invalid_config("network_policy", reason)
@@ -176,7 +220,26 @@ impl Range {
                 }
             }
         }
+        if range.overlaps_forbidden() {
+            return Err(policy_error(
+                "a private range overlaps addresses that are never admitted \
+                 (instance metadata, loopback, link-local, unspecified or multicast)",
+            ));
+        }
         Ok(range)
+    }
+
+    /// Whether this range shares any address with a [`FORBIDDEN`] block (one
+    /// of the two contains the other).
+    fn overlaps_forbidden(self) -> bool {
+        let (v6, value) = match self.network {
+            IpAddr::V4(v4) => (false, u128::from(u32::from(v4))),
+            IpAddr::V6(v6) => (true, u128::from(v6)),
+        };
+        let width = if v6 { 128 } else { 32 };
+        FORBIDDEN.iter().any(|&(is_v6, network, prefix)| {
+            is_v6 == v6 && in_block(value, network, self.prefix.min(prefix), width)
+        })
     }
 
     fn contains(self, address: IpAddr) -> bool {
@@ -267,7 +330,9 @@ impl DatabaseEndpoint {
     /// no label may mention FIPS. The region must look like `us-east-1` and
     /// match the host. The port is fixed and non-zero. Each private range must
     /// be canonical, inside RFC 1918 (prefix `/16` or longer) or `fc00::/7`
-    /// (prefix `/48` or longer); at most [`MAX_PRIVATE_RANGES`].
+    /// (prefix `/48` or longer), and share no address with the blocks that are
+    /// never admitted (instance metadata, loopback, link-local, unspecified,
+    /// multicast; #5428); at most [`MAX_PRIVATE_RANGES`].
     ///
     /// # Errors
     /// `InvalidConfig` (field `network_policy`) naming the broken rule; no
@@ -343,12 +408,16 @@ impl DatabaseEndpoint {
 
     /// Whether signed traffic may reach `address`: any public address (the
     /// shared public policy), or a private address inside a listed range.
-    /// IPv4-mapped IPv6 is judged as the IPv4 address it reaches; loopback,
-    /// link-local (including instance metadata), unspecified, multicast and
-    /// every other non-public block can never be listed, so they are refused.
+    /// IPv4-mapped IPv6 is judged as the IPv4 address it reaches. Instance
+    /// metadata (IPv4 and IPv6), loopback, link-local, unspecified, multicast
+    /// and broadcast addresses are refused **first**, before any listed range
+    /// is consulted (#5428), so no listing can admit them.
     #[must_use]
     pub fn admits(&self, address: IpAddr) -> bool {
         let address = canonical(address);
+        if forbidden(address) {
+            return false;
+        }
         !is_non_public(address) || self.ranges.iter().any(|range| range.contains(address))
     }
 
@@ -748,9 +817,9 @@ impl DatabaseConnector {
         let (mut sender, connection) = hyper::client::conn::http1::handshake(TokioIo::new(tls))
             .await
             .map_err(|error| ConnectorError::io(Box::new(error)))?;
-        let driver = AbortOnDrop(tokio::spawn(async move {
-            let _ = connection.await;
-        }));
+        // The connection (and so the socket) is owned here, then by the
+        // response body; it is never spawned (#5429).
+        let mut driver = Driver::new(Box::pin(connection));
 
         // Step 5: one exchange.
         let mut builder = http::Request::builder()
@@ -767,7 +836,7 @@ impl DatabaseConnector {
             ))
         })?;
         sent.store(true, Ordering::SeqCst);
-        let response = tokio::time::timeout(self.idle, sender.send_request(outgoing))
+        let response = tokio::time::timeout(self.idle, driver.drive(sender.send_request(outgoing)))
             .await
             .map_err(|_| {
                 verdict(AwsError::timeout(
@@ -795,7 +864,7 @@ impl DatabaseConnector {
             idle: self.idle,
             idle_timer: Box::pin(tokio::time::sleep(self.idle)),
             deadline_timer: Box::pin(tokio::time::sleep_until(deadline)),
-            _driver: driver,
+            driver,
         };
         let response = http::Response::from_parts(parts, SdkBody::from_body_1_x(bounded));
         SdkHttpResponse::try_from(response).map_err(|_| {
@@ -825,13 +894,41 @@ impl HttpConnector for DatabaseConnector {
     }
 }
 
-/// Aborts the HTTP connection driver when the response (or a failed call)
-/// is dropped, so no socket work outlives its operation.
-struct AbortOnDrop(tokio::task::JoinHandle<()>);
+/// The HTTP/1.1 connection future; it owns the TLS stream and so the socket.
+type Connection = Pin<Box<dyn Future<Output = hyper::Result<()>> + Send>>;
 
-impl Drop for AbortOnDrop {
-    fn drop(&mut self) {
-        self.0.abort();
+/// The connection, driven in line by whatever waits on it (the exchange, then
+/// the response body) instead of a spawned task (#5429). Dropping the owner
+/// drops the socket synchronously, so a call never returns with its socket
+/// still held by a task that needs another runtime poll to close it. The
+/// mutex is only for `Sync` (the body must be); it is never locked.
+struct Driver(Mutex<Option<Connection>>);
+
+impl Driver {
+    fn new(connection: Connection) -> Self {
+        Self(Mutex::new(Some(connection)))
+    }
+
+    /// Poll the connection once while it runs; once it has finished (either
+    /// side closed it) it is dropped and never polled again.
+    fn poll(&mut self, cx: &mut Context<'_>) {
+        let slot = self.0.get_mut().unwrap_or_else(PoisonError::into_inner);
+        if slot
+            .as_mut()
+            .is_some_and(|connection| connection.as_mut().poll(cx).is_ready())
+        {
+            *slot = None;
+        }
+    }
+
+    /// Wait for `future` while driving the connection.
+    async fn drive<F: Future>(&mut self, future: F) -> F::Output {
+        let mut future = std::pin::pin!(future);
+        std::future::poll_fn(|cx| {
+            self.poll(cx);
+            future.as_mut().poll(cx)
+        })
+        .await
     }
 }
 
@@ -855,7 +952,8 @@ struct BoundedBody {
     idle: Duration,
     idle_timer: Pin<Box<Sleep>>,
     deadline_timer: Pin<Box<Sleep>>,
-    _driver: AbortOnDrop,
+    /// The connection: polled with the body, dropped with it.
+    driver: Driver,
 }
 
 impl Body for BoundedBody {
@@ -871,6 +969,7 @@ impl Body for BoundedBody {
                 "the operation deadline elapsed while reading the database response",
             )))));
         }
+        self.driver.poll(cx);
         match Pin::new(&mut self.inner).poll_frame(cx) {
             Poll::Ready(Some(Ok(frame))) => {
                 let length = frame
