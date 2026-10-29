@@ -474,6 +474,10 @@ mod tests {
         drop(custody);
         assert!(acquire_if_free(scratch.path(), 81).is_some());
         assert_eq!(
+            wait_decision(PendingStatus::Exchanging, false, true, 105, 100),
+            WaitDecision::Authenticated
+        );
+        assert_eq!(
             std::fs::read(scratch.join("session.json")).unwrap(),
             b"session"
         );

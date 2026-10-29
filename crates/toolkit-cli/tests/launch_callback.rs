@@ -71,6 +71,33 @@ fn helper_announces_loopback_and_retains_transport_failure() {
     assert!(lock.try_lock().is_err());
     let record_path = home.join(format!(".launch-with-aws/pending/{pid}.json"));
     let before = std::fs::read(&record_path).unwrap();
+    #[cfg(target_os = "linux")]
+    {
+        let children = std::fs::read_to_string(format!("/proc/{pid}/task/{pid}/children")).unwrap();
+        assert!(children.trim().is_empty());
+        let descriptors = std::fs::read_dir(format!("/proc/{pid}/fd")).unwrap();
+        let mut found_lock = false;
+        for entry in descriptors.flatten() {
+            let Ok(target) = std::fs::read_link(entry.path()) else {
+                continue;
+            };
+            if target == home.join(format!(".launch-with-aws/pending/{pid}.lock")) {
+                let info = std::fs::read_to_string(format!(
+                    "/proc/{pid}/fdinfo/{}",
+                    entry.file_name().to_string_lossy()
+                ))
+                .unwrap();
+                let flags = info
+                    .lines()
+                    .find_map(|line| line.strip_prefix("flags:\t"))
+                    .unwrap();
+                let flags = u32::from_str_radix(flags, 8).unwrap();
+                assert_ne!(flags & 0o2000000, 0);
+                found_lock = true;
+            }
+        }
+        assert!(found_lock);
+    }
     {
         let closed = TcpStream::connect(("127.0.0.1", port)).unwrap();
         drop(closed);
