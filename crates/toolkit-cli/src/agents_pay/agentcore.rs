@@ -2148,6 +2148,19 @@ mod wire_contracts {
     }
 
     #[test]
+    fn sts_xml_errors_are_allowlisted_and_never_expose_message() {
+        let body = br#"<ErrorResponse xmlns="https://sts.amazonaws.com/doc/2011-06-15/"><Error><Type>Sender</Type><Code>AccessDeniedException</Code><Message>SECRET_STS_MESSAGE</Message></Error><RequestId>SECRET_REQUEST</RequestId></ErrorResponse>"#;
+        let transport =
+            FakeStreamingTransport::new().respond(403, &[], vec![FakeChunk::data(body)]);
+        let client = PaymentClient::new("us-east-1", &transport, &NoSigner).unwrap();
+        let error = client.sts_check().unwrap_err();
+        assert_eq!(error, PaymentError::Service("AccessDeniedException"));
+        assert_eq!(error.class_name(), "ClientError");
+        assert!(!format!("{error:?}").contains("SECRET"));
+        assert_eq!(transport.requests().len(), 1);
+    }
+
+    #[test]
     #[should_panic(expected = "fake payments require fixture account")]
     fn fake_payments_rejects_non_fixture_manager_account() {
         let api = FakePaymentsApi {
