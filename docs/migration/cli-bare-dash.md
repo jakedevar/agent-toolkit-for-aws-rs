@@ -149,6 +149,21 @@ The scan lists them only because it matches by flag name:
 | `bedrock_probes/mod.rs` | `--region` | `bedrock-probes iam-policy` / `preflight` / `classify --region -` are refused; the entries belong to other slices |
 | `docgraph/mod.rs` | `--region` | `documentdb wa-review --region -` is refused; the entries belong to other slices |
 
+Round-18 integration (#5006), `marketplace` (#4396). Its three commands (`handler`,
+`query-metering`, `test-events`) are `strict_values`, not passthrough, and have no
+`STDIO_DASH` or `LITERAL_DASH` entry, so the router refuses a bare `-` for every value
+flag in both spellings and for the `handler NAME` positional, before any file is read
+(`--event`, `--config` and `--recorded` are paths; `./-` names a file called `-`).
+`query_metering.py` and `test_event_publisher.py` take their options as argparse
+strings with no `-` sentinel, so `--customer-id -` or `--product-code -` were accepted
+there; the slice already refuses every dash-prefixed option value (`strict_values`,
+divergence 11 of `docs/migration/marketplace.md` for `query-metering`), and `-` is
+not a valid region, product code, account, event source or bus name. Left refused; one flag-name-only row:
+
+| File | Flag | Why it is listed |
+| --- | --- | --- |
+| `marketplace/mod.rs` | `--region` | `marketplace query-metering` / `test-events --region -` are refused by the router; the entries belong to other slices |
+
 `telemetry` is a passthrough command that parses its own words, so the router policy
 and the scans above never see its path flags. It declares them (`--telemetry-dir`,
 `--plugin-root`) in `value_flags`, which the router ignores for a passthrough command,
@@ -217,7 +232,11 @@ integration (#4960) moves it to 39862 bytes, `0x586799b8d88de137`. The new text 
 the base text plus the synopsis and description of bedrock-probes (#4404),
 docgraph (#4395), dynamodb-bench (#4390) and telemetry (#4398). Deleting exactly
 those lines gives back
-the base length and hash.
+the base length and hash. The round-18 integration (#5006) moves it to 41167 bytes,
+`0x614d170cb18738c2`: the round-16 text plus the marketplace (#4396) synopsis (650
+bytes, 9 lines) and description (655 bytes, 8 lines), 39862 + 650 + 655 = 41167.
+marketplace has empty exit notes, and the merge changes no other slice's help text,
+`USAGE_HEAD` or the assembly in `registry.rs`.
 
 ## The four reproductions
 
