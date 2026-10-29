@@ -4084,7 +4084,7 @@ fn t_br_d32_catches_bridge_route_mutations() {
             "the bridge takes a flag",
             sources_with(
                 ROUTE_FILE,
-                "path: &[\"agents-pay\", \"bridge\"],\n        flags: &[],",
+                "path: &[\"agents-pay\", \"bridge\"],\n            flags: &[],",
                 |a| a.replace("flags: &[]", "flags: &[\"--debug\"]"),
             ),
         ),

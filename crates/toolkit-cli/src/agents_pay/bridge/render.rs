@@ -259,6 +259,16 @@ pub fn payment_result(payload: &Json) -> Result<Json, BridgeError> {
     ]))
 }
 
+/// R-BR-OUT-3 from a verified proof: the one consumer of
+/// `VerifiedProof::into_trusted_glue` (R-BR-ONE-4), so only a verified
+/// payload reaches the pipe, at its one designated path.
+///
+/// # Errors
+/// Returns an `AgentCore` error when the payload is not an object.
+pub fn glue_result(verified: crate::agents_pay::proof::VerifiedProof) -> Result<Json, BridgeError> {
+    payment_result(&verified.into_trusted_glue().signed_document())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
