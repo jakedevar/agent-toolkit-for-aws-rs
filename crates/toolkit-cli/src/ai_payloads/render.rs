@@ -124,6 +124,16 @@ fn command_with_hooks(
     out: &mut Output<'_>,
     hooks: &mut dyn place::PublishHooks,
 ) -> Result<(), ToolkitError> {
+    command_with_ids(inv, out, hooks, None)
+}
+
+#[allow(clippy::too_many_lines, clippy::if_not_else)]
+fn command_with_ids(
+    inv: &Invocation,
+    out: &mut Output<'_>,
+    hooks: &mut dyn place::PublishHooks,
+    ids_override: Option<&mut dyn notebook::IdSource>,
+) -> Result<(), ToolkitError> {
     let path = Path::new(
         inv.positional(0)
             .ok_or_else(|| usage("TEMPLATE is required"))?,
@@ -430,7 +440,8 @@ fn command_with_hooks(
         let text = read(&source, 16 * 1024 * 1024, "append_source_invalid")?;
         let hash = sha256_hex(text.as_bytes());
         let mut ids = notebook::ContentIds(hash.clone());
-        let value = notebook::append(&text, notebook::cells(&rendered, &parsed), &mut ids)
+        let ids = ids_override.unwrap_or(&mut ids);
+        let value = notebook::append(&text, notebook::cells(&rendered, &parsed), ids)
             .map_err(|e| fail(e, "invalid source notebook"))?;
         source_report = Some((source, hash));
         (

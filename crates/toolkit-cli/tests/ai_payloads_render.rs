@@ -1072,13 +1072,15 @@ fn ap_app_02_nb_08_10_12_versioned_append_and_invalid_ids() {
         "template.py",
         "# Cell 0 [markdown]: Example\n# Desc\n# Cell 1: Code\npass\n",
     );
-    bad.write(
+    let bad_source = bad.write(
         "notebooks/example.ipynb",
         &base.replace("\"a1\"", "\"bad id!\""),
     );
+    let before = fs::read(&bad_source).unwrap();
     let result = bad.render(&t, "notebook", &["--append"]);
     assert_eq!(result.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&result.stderr).contains("notebook_cell_ids_invalid"));
+    assert_eq!(fs::read(bad_source).unwrap(), before);
     assert!(!bad.0.join("notebooks/example-01.ipynb").exists());
 }
 
@@ -1435,6 +1437,21 @@ fn ap_con_03_04_all_bare_slots_are_required_even_when_unresolved_allowed() {
 
 #[test]
 fn ap_nb_10_11_12_unsupported_versions_and_invalid_ids() {
+    for cells in [r"[{}]", r#"[{"id":"x"},{"id":"x"}]"#] {
+        let f = Fixture::new();
+        let template = f.write(
+            "template.py",
+            "# Cell 0 [markdown]: Example\n# Desc\n# Cell 1: Code\npass\n",
+        );
+        let text =
+            format!(r#"{{"cells":{cells},"metadata":{{}},"nbformat":4,"nbformat_minor":5}}"#);
+        let source = f.write("notebooks/example.ipynb", &text);
+        let result = f.render(&template, "notebook", &["--append"]);
+        assert_eq!(result.status.code(), Some(1));
+        assert!(String::from_utf8_lossy(&result.stderr).contains("notebook_cell_ids_invalid"));
+        assert_eq!(fs::read(source).unwrap(), text.as_bytes());
+        assert!(!f.0.join("notebooks/example-01.ipynb").exists());
+    }
     for (version, minor, id, error) in [
         ("4", "5", "", "notebook_cell_ids_invalid"),
         ("4", "5", "bad id!", "notebook_cell_ids_invalid"),
@@ -1952,7 +1969,7 @@ fn ap_app_02_07_latest_symlink_and_over_cap_source_are_refused() {
     );
     let result = f.render(&template, "notebook", &["--append"]);
     assert!(String::from_utf8_lossy(&result.stderr).contains("append_source_invalid"));
-    assert_eq!(fs::metadata(huge).unwrap().len(), 16 * 1024 * 1024 + 1);
+    assert_eq!(fs::read(huge).unwrap(), vec![b'x'; 16 * 1024 * 1024 + 1]);
     assert!(!f.0.join("notebooks/example-07.ipynb").exists());
     let fifo = f.0.join("notebooks/example-08.ipynb");
     assert!(Command::new("mkfifo")
