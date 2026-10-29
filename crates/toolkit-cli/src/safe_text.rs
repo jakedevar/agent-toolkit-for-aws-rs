@@ -515,6 +515,89 @@ mod tests {
         assert_no_secret(&known.stdout("only FAKE_SECRET_ONE here"));
     }
 
+    /// Every 8-character window of `piece` that `shown` still contains.
+    fn surviving_windows(shown: &str, piece: &str) -> Vec<String> {
+        let chars: Vec<char> = piece.chars().collect();
+        chars
+            .windows(8)
+            .map(|window| window.iter().collect::<String>())
+            .filter(|window| shown.contains(window.as_str()))
+            .collect()
+    }
+
+    /// #4978 as a property: distinct credentials that share prefixes of
+    /// several lengths, under different labels, in every order of three, each
+    /// echoed whole, alone, cut and with its label, leave no 8-character
+    /// window of any of them in a diagnostic.
+    #[test]
+    fn overlapping_credentials_are_all_hidden_whatever_their_order() {
+        // Each tail past the shared prefix is longer than the window, so a
+        // tail left behind by a consumed prefix is caught.
+        let pieces = [
+            "SHAREDPFX_ALPHA_LONGER_FIRSTTAIL1",
+            "SHAREDPFX_ALPHA_SECONDTAIL2",
+            "SHAREDPFX_THIRDTAIL3",
+            "SHAREDP_FOURTHTAIL4",
+            "SHAREDPFX_ALPHA_LONGER_FIFTHTAIL",
+        ];
+        let labels = ["password=", "token=", "secret=", "api_key=", "x/pwd="];
+        let mut checked = 0;
+        for a in 0..pieces.len() {
+            for b in 0..pieces.len() {
+                for c in 0..pieces.len() {
+                    if a == b || b == c || a == c {
+                        continue;
+                    }
+                    let chosen = [a, b, c];
+                    let args: Vec<String> = std::iter::once("x".to_string())
+                        .chain(
+                            chosen
+                                .iter()
+                                .map(|&index| format!("{}{}", labels[index], pieces[index])),
+                        )
+                        .collect();
+                    let known = CallerText::from_args(&args);
+                    let mut text = String::from("error:");
+                    for &index in chosen.iter().rev() {
+                        let piece = pieces[index];
+                        let arg = format!("{}{}", labels[index], piece);
+                        let cut: String = piece.chars().take(9).collect();
+                        let nearly: String =
+                            piece.chars().take(piece.chars().count() - 2).collect();
+                        let arg_cut: String =
+                            arg.chars().take(labels[index].len() + 10).collect();
+                        for echo in [arg.as_str(), piece, &cut, &nearly, &arg_cut] {
+                            text.push_str(&format!(" <{echo}...>"));
+                        }
+                    }
+                    let shown = known.diagnostic(&text);
+                    for &index in &chosen {
+                        let left = surviving_windows(&shown, pieces[index]);
+                        assert!(
+                            left.is_empty(),
+                            "{left:?} of {:?} survived for {args:?}:\n{shown}",
+                            pieces[index]
+                        );
+                    }
+                    checked += 1;
+                }
+            }
+        }
+        assert_eq!(checked, 60);
+    }
+
+    /// #4980 at the stderr sink: a complete labelled credential is hidden
+    /// whatever its length, whole or with only its first character echoed.
+    #[test]
+    fn a_short_labelled_credential_is_hidden_in_a_diagnostic() {
+        for value in ["password=abc", "token=ab", "pwd=x", "a/secret=Qz"] {
+            let known = caller(&["x", value]);
+            let shown = known.diagnostic(&format!("cannot connect to {value}:6379"));
+            assert!(!shown.contains(value), "{shown}");
+            assert!(shown.contains(REDACTED), "{shown}");
+        }
+    }
+
     /// `https://user:FAKE_SECRET` + `pad` x characters + `@example.invalid/x.json`.
     fn userinfo(pad: usize) -> String {
         format!(

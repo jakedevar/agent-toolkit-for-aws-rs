@@ -197,6 +197,12 @@ enum Fill {
     /// A 300-character userinfo URL whose `@host` lies past the 200-character
     /// display bound, so a value cut before redaction keeps the password.
     SecretPastBound,
+    /// A labelled credential with a single and a double quote in it, so a
+    /// `repr` or quoting renderer that runs before redaction changes its
+    /// spelling (#4979).
+    SecretQuoted,
+    /// A complete labelled credential of three characters (#4980).
+    SecretShort,
 }
 
 const FILLS: [Fill; 5] = [
@@ -224,8 +230,14 @@ fn value_for(mode: Fill, scratch: &Path, file: &Path, dir: &Path) -> String {
         Fill::SecretUrl => format!("https://user:{PATH_SECRET}@example.invalid/x.json"),
         Fill::SecretLong => long_path_ending_in_a_secret(scratch),
         Fill::SecretPastBound => userinfo_past_the_bound(),
+        Fill::SecretQuoted => format!("password=ab'c\"{PATH_SECRET}"),
+        Fill::SecretShort => format!("password={SHORT_SECRET}"),
     }
 }
+
+/// The three-character credential of [`Fill::SecretShort`]: it may not reach
+/// stdout or stderr in any spelling.
+const SHORT_SECRET: &str = "Zq9";
 
 /// The fake credential of the #4941 path cases. It rides only in argument
 /// values; no 10-character prefix of it may reach stdout or stderr.
@@ -540,8 +552,15 @@ fn every_command_has_hostile_variants() {
     }
 }
 
-/// The credential-shaped path fills of #4941.
-const SECRET_FILLS: [Fill; 3] = [Fill::SecretUrl, Fill::SecretLong, Fill::SecretPastBound];
+/// The credential-shaped path fills of #4941 and of its review findings
+/// #4979 (mixed quotes) and #4980 (a short labelled value).
+const SECRET_FILLS: [Fill; 5] = [
+    Fill::SecretUrl,
+    Fill::SecretLong,
+    Fill::SecretPastBound,
+    Fill::SecretQuoted,
+    Fill::SecretShort,
+];
 
 /// Shortest prefix of [`PATH_SECRET`] whose appearance counts as a leak.
 const LEAK_PREFIX_CHARS: usize = 10;
@@ -551,11 +570,13 @@ const LEAK_PREFIX_CHARS: usize = 10;
 /// shortest one).
 fn secret_leaks(stream: &str, label: &str, args: &[String], found: &mut BTreeSet<String>) {
     let prefix: String = PATH_SECRET.chars().take(LEAK_PREFIX_CHARS).collect();
-    if stream.contains(&prefix) {
-        found.insert(format!(
-            "credential prefix {prefix:?} in {label} for {}",
-            display_args(args)
-        ));
+    for needle in [prefix.as_str(), SHORT_SECRET] {
+        if stream.contains(needle) {
+            found.insert(format!(
+                "credential {needle:?} in {label} for {}",
+                display_args(args)
+            ));
+        }
     }
 }
 
@@ -620,12 +641,18 @@ fn the_secret_path_fills_and_leak_detector_are_not_vacuous() {
     assert!(past.find(PATH_SECRET).expect("password") < 200, "{past}");
     let url = value_for(Fill::SecretUrl, &scratch, &scratch, &scratch);
     assert_eq!(url, "https://user:FAKE_SECRET@example.invalid/x.json");
+    let quoted = value_for(Fill::SecretQuoted, &scratch, &scratch, &scratch);
+    assert!(quoted.contains('\'') && quoted.contains('"'), "{quoted}");
+    let short = value_for(Fill::SecretShort, &scratch, &scratch, &scratch);
+    assert_eq!(short, "password=Zq9");
 
     let args = vec!["x".to_string()];
     for leak in [
         PATH_SECRET.to_string(),
         "error: /p/FAKE_SECRE...".to_string(),
         past.chars().take(200).collect(),
+        "invalid float value: 'password=ab\\'c\"FAKE_SECRET'".to_string(),
+        "\"host\": \"password=Zq9\"".to_string(),
     ] {
         let mut one = BTreeSet::new();
         secret_leaks(&leak, "stderr", &args, &mut one);
