@@ -80,6 +80,7 @@ The table and issues.json preserve the initial owner map. Bootstrap substitution
 | #4414 | cutover | glm | #4378, #4413, #4398, #4386, #4411, #4397, #4412 |
 | #4415 | retire | deepseek | #4414, #4409, #4396, #4394, #4395, #4393, #4391, #4390, #4388, #4387, #4382, #4383 |
 | #4451 | asm-exec (added by audit #4371; status: [asm-exec.md](asm-exec.md)) | sonnet (assigned) | #4374, #4379; gates #4415 together with #4582 |
+| #4487 | plugin-binaries (per-plugin `./bin` build and stage pipeline; design: [plugin-binaries.md](plugin-binaries.md)) | opus (assigned) | serves #4412; reused by #4413 S5 and #4414 |
 
 ## Definition of done
 

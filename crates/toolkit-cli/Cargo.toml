@@ -25,6 +25,16 @@ jsonschema = { version = "0.60", default-features = false }
 unicode-normalization = { version = "0.1", default-features = false, features = ["std"] }
 serde_json = { version = "1", default-features = false, features = ["std"] }
 toolkit-msk = { path = "../toolkit-msk" }
+# Launch with AWS (#4382, L0-L2 #5085): the OS CSPRNG for temporary names and
+# (from L3) PKCE, and raw deflate for the strict ZIP container (Q2).
+getrandom = "=0.3.4"
+miniz_oxide = { version = "=0.8.9", default-features = false, features = ["with-alloc"] }
+
+# Descriptor-relative file-system calls for the launch archive boundary
+# (R-AR-OPEN, #5039); the version #5017 S1 pins. Used only in
+# `launch/archive/fsops.rs`.
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "=1.1.5", default-features = false, features = ["std", "fs", "process"] }
 
 # The recorded-response contract (`tests/recorded_contract.rs`, #4751) reads
 # the slices' syntax tree; span locations give it the line of each finding.

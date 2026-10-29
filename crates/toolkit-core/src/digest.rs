@@ -129,30 +129,40 @@ fn compress(state: &mut [u32; 8], block: &[u8]) {
     }
 }
 
-/// The SHA-256 digest of `data` as 64 lower-case hexadecimal characters.
+/// The raw 32-byte SHA-256 digest of `data` (FIPS 180-4), for callers that
+/// encode the digest themselves (the PKCE `S256` challenge, #4382 L0).
 #[must_use]
-pub fn sha256_hex(data: &[u8]) -> String {
+pub fn sha256(data: &[u8]) -> [u8; 32] {
     let mut state = INITIAL_STATE;
     let mut blocks = data.chunks_exact(64);
     for block in blocks.by_ref() {
         compress(&mut state, block);
     }
     let remainder = blocks.remainder();
-    let mut tail = remainder.to_vec();
-    tail.push(0x80);
-    while tail.len() % 64 != 56 {
-        tail.push(0);
-    }
+    let mut tail = [0_u8; 128];
+    tail[..remainder.len()].copy_from_slice(remainder);
+    tail[remainder.len()] = 0x80;
+    let tail_len = if remainder.len() < 56 { 64 } else { 128 };
     let bit_length = u64::try_from(data.len())
         .unwrap_or(u64::MAX)
         .wrapping_mul(8);
-    tail.extend_from_slice(&bit_length.to_be_bytes());
-    for block in tail.chunks_exact(64) {
+    tail[tail_len - 8..tail_len].copy_from_slice(&bit_length.to_be_bytes());
+    for block in tail[..tail_len].chunks_exact(64) {
         compress(&mut state, block);
     }
+    let mut digest = [0_u8; 32];
+    for (out, word) in digest.chunks_exact_mut(4).zip(state) {
+        out.copy_from_slice(&word.to_be_bytes());
+    }
+    digest
+}
+
+/// The SHA-256 digest of `data` as 64 lower-case hexadecimal characters.
+#[must_use]
+pub fn sha256_hex(data: &[u8]) -> String {
     let mut hex = String::with_capacity(64);
-    for word in state {
-        let _ = write!(hex, "{word:08x}");
+    for byte in sha256(data) {
+        let _ = write!(hex, "{byte:02x}");
     }
     hex
 }
@@ -197,5 +207,51 @@ mod tests {
             sha256_hex(&vec![b'a'; 1_000_000]),
             "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0"
         );
+    }
+}
+
+/// T-SHA-1 (#4382 L0): the raw digest matches the FIPS 180-4 vectors and the
+/// hexadecimal form stays exactly what `sha256_hex` printed before.
+#[cfg(test)]
+mod raw_tests {
+    use super::*;
+
+    fn hex(bytes: &[u8]) -> String {
+        bytes.iter().fold(String::new(), |mut out, byte| {
+            let _ = write!(out, "{byte:02x}");
+            out
+        })
+    }
+
+    #[test]
+    fn t_sha_1_raw_digest_matches_the_fips_vectors_and_the_hex_form() {
+        let vectors: [(&[u8], &str); 4] = [
+            (
+                b"",
+                "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            ),
+            (
+                b"abc",
+                "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+            ),
+            (
+                b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq",
+                "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1",
+            ),
+            (
+                b"abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmnoijklmnopjklmnopqklmnopqrlmnopqrsmnopqrstnopqrstu",
+                "cf5b16a778af8380036ce59e7b0492370b249b11e8f07a51afac45037afee9d1",
+            ),
+        ];
+        for (input, expected) in vectors {
+            let raw = sha256(input);
+            assert_eq!(raw.len(), 32);
+            assert_eq!(hex(&raw), expected);
+            assert_eq!(sha256_hex(input), expected);
+        }
+        for length in [55_usize, 56, 63, 64, 65, 119, 120, 1000] {
+            let input = vec![b'x'; length];
+            assert_eq!(hex(&sha256(&input)), sha256_hex(&input), "length {length}");
+        }
     }
 }
