@@ -7,8 +7,20 @@
 /// `data` in base64url (RFC 4648 section 5) without padding.
 #[must_use]
 pub fn base64url_nopad(data: &[u8]) -> String {
-    let _ = data;
-    todo!("L0: base64url")
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
+    for chunk in data.chunks(3) {
+        let b0 = u32::from(chunk[0]);
+        let b1 = chunk.get(1).copied().map_or(0, u32::from);
+        let b2 = chunk.get(2).copied().map_or(0, u32::from);
+        let group = (b0 << 16) | (b1 << 8) | b2;
+        let symbols = chunk.len() + 1;
+        for index in 0..symbols {
+            let shift = 18 - 6 * index;
+            out.push(char::from(ALPHABET[((group >> shift) & 0x3f) as usize]));
+        }
+    }
+    out
 }
 
 #[cfg(test)]

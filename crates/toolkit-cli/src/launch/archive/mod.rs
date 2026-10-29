@@ -33,6 +33,7 @@ pub const GIB: u64 = 1024 * MIB;
 /// reader profiles. Tests inject smaller values; production uses
 /// [`ArchiveLimits::PRODUCTION`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(clippy::struct_field_names)]
 pub struct ArchiveLimits {
     /// Largest archive, compressed (500 MiB).
     pub max_archive_bytes: u64,

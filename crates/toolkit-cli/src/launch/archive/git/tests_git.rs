@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use super::*;
 use crate::launch::archive::fsops::open_root;
 use crate::launch::clock::SeededRandom;
-use crate::launch::tests_support::Scratch;
+use crate::launch::tests_support::{test_git, Scratch};
 
 /// Run the test's own `git`, isolated from the user's configuration.
 pub fn git(dir: &Path, args: &[&str]) {
@@ -67,7 +67,7 @@ fn t_ar_git_1_tracked_and_untracked_files_minus_ignored() {
     repo.write("debug.log", b"d");
     repo.write("build-out/x", b"x");
     repo.write("dir with space/\u{e9}.txt", b"u");
-    let selected = select(&GitRunner::system(), repo.path(), temp.path()).expect("git");
+    let selected = select(&test_git(), repo.path(), temp.path()).expect("git");
     assert_eq!(
         selected,
         Some(set(&[
@@ -89,7 +89,7 @@ fn t_ar_git_2_ignored_but_tracked_files_are_excluded() {
     git(repo.path(), &["add", "."]);
     git(repo.path(), &["commit", "-q", "-m", "init"]);
     repo.write(".gitignore", b"*.log\n");
-    let selected = select(&GitRunner::system(), repo.path(), temp.path()).expect("git");
+    let selected = select(&test_git(), repo.path(), temp.path()).expect("git");
     assert_eq!(selected, Some(set(&[".gitignore", "a.txt"])));
 }
 
@@ -105,7 +105,7 @@ fn t_ar_git_3_sub_directory_root() {
     repo.write("sub/ignored.txt", b"i");
     git(repo.path(), &["add", "outside.txt"]);
     git(repo.path(), &["commit", "-q", "-m", "init"]);
-    let selected = select(&GitRunner::system(), &repo.join("sub"), temp.path()).expect("git");
+    let selected = select(&test_git(), &repo.join("sub"), temp.path()).expect("git");
     assert_eq!(
         selected,
         Some(set(&["a.txt", "deeper/b.txt", ".gitignore"]))
@@ -121,7 +121,7 @@ fn t_ar_git_4_non_repository_with_a_gitignore() {
     tree.write("b.tmp", b"b");
     tree.write("nested/c.txt", b"c");
     tree.write("nested/d.tmp", b"d");
-    let selected = select(&GitRunner::system(), tree.path(), temp.path()).expect("git");
+    let selected = select(&test_git(), tree.path(), temp.path()).expect("git");
     assert_eq!(
         selected,
         Some(set(&[".gitignore", "a.txt", "nested/c.txt"]))
@@ -135,10 +135,7 @@ fn t_ar_git_4_non_repository_with_a_gitignore() {
     let plain = Scratch::new("git4-plain");
     plain.write("a.txt", b"a");
     plain.write("node_modules/.gitignore", b"*\n");
-    assert_eq!(
-        select(&GitRunner::system(), plain.path(), temp.path()),
-        Ok(None)
-    );
+    assert_eq!(select(&test_git(), plain.path(), temp.path()), Ok(None));
     let handle = open_root(plain.path()).expect("root");
     assert!(!has_gitignore(&handle));
     plain.write("deep/er/.gitignore", b"x\n");
@@ -165,7 +162,7 @@ fn t_ar_git_5_repository_fsmonitor_hook_never_runs() {
         &["config", "core.fsmonitor", hook.to_str().expect("utf-8")],
     );
     repo.write("b.txt", b"b");
-    let selected = select(&GitRunner::system(), repo.path(), temp.path()).expect("git");
+    let selected = select(&test_git(), repo.path(), temp.path()).expect("git");
     assert_eq!(selected, Some(set(&["a.txt", "b.txt"])));
     assert!(
         !marker.exists(),
@@ -177,7 +174,7 @@ fn t_ar_git_5_repository_fsmonitor_hook_never_runs() {
 fn t_ar_git_6_missing_git_timeouts_and_refused_output() {
     let missing = GitRunner {
         program: "/nonexistent/toolkit-test/git".into(),
-        ..GitRunner::system()
+        ..test_git()
     };
     let temp = Scratch::new("git6-tmp");
     // No rules apply: every file.
@@ -197,14 +194,17 @@ fn t_ar_git_6_missing_git_timeouts_and_refused_output() {
         select(&missing, repo.path(), temp.path()),
         Err(LaunchError::Archive(message::REQUIRED.to_string()))
     );
-    assert!(has_git_metadata(&repo.join("x/y")));
-    assert!(!has_git_metadata(plain.path()));
+    assert!(has_git_metadata(
+        &repo.join("x/y"),
+        Some(&std::env::temp_dir())
+    ));
+    assert!(!has_git_metadata(plain.path(), Some(&std::env::temp_dir())));
     // A Git that never answers is killed at the (test-shortened) limit.
     let tools = Scratch::new("git6-tools");
     let sleeper = GitRunner {
         program: script(&tools, "git-sleeps", "#!/bin/sh\nsleep 30\n"),
         timeout: Duration::from_millis(300),
-        ..GitRunner::system()
+        ..test_git()
     };
     let started = Instant::now();
     assert_eq!(
@@ -224,7 +224,7 @@ fn t_ar_git_6_missing_git_timeouts_and_refused_output() {
             "#!/bin/sh\nprintf 'aaaaaaaaaaaaaaaa\\0bbbbbbbb\\0'\n",
         ),
         stdout_cap: 8,
-        ..GitRunner::system()
+        ..test_git()
     };
     assert_eq!(
         select(&chatty, plain.path(), temp.path()),
@@ -237,7 +237,7 @@ fn t_ar_git_6_missing_git_timeouts_and_refused_output() {
             "git-binary",
             "#!/bin/sh\nprintf 'ok\\0bad\\377\\0'\n",
         ),
-        ..GitRunner::system()
+        ..test_git()
     };
     assert_eq!(
         select(&binary, plain.path(), temp.path()),
@@ -248,7 +248,7 @@ fn t_ar_git_6_missing_git_timeouts_and_refused_output() {
     // A Git that fails outside a repository with no rules: every file.
     let failing = GitRunner {
         program: script(&tools, "git-fails", "#!/bin/sh\nexit 128\n"),
-        ..GitRunner::system()
+        ..test_git()
     };
     assert_eq!(select(&failing, plain.path(), temp.path()), Ok(None));
     assert_eq!(

@@ -70,7 +70,7 @@ fn t_plan_1_deep_disjoint_chains_are_refused_at_the_injected_budget() {
 fn t_plan_2_production_budget_against_the_5066_shape() {
     assert_eq!(MAX_SNAPSHOT_NODES, 200_000);
     let entries: Vec<FxEntry> = (0..101)
-        .map(|index| FxEntry::stored(&chain(&format!("t{index:03}"), 1990, "f"), &[b'd']))
+        .map(|index| FxEntry::stored(&chain(&format!("t{index:03}"), 1990, "f"), b"d"))
         .collect();
     assert!(entries.iter().all(|entry| entry.name.len() < 4096));
     let bytes = archive_bytes(entries);

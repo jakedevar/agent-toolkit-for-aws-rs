@@ -155,8 +155,8 @@ fn t_ar_vcs_8_normaliser_table() {
     ];
     for name in VCS_NAMES {
         for (label, alias) in aliases {
-            let aliased = alias(name);
-            assert!(is_vcs_component(&aliased), "{name} / {label}: {aliased:?}");
+            let variant = alias(name);
+            assert!(is_vcs_component(&variant), "{name} / {label}: {variant:?}");
         }
     }
     for short in [

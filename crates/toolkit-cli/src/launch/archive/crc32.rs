@@ -1,6 +1,28 @@
 //! CRC-32 (IEEE 802.3, reflected polynomial `0xEDB88320`), table-driven, as
 //! ZIP uses it (R-AR-ZIP).
 
+/// The byte-wise lookup table of the reflected polynomial.
+#[allow(clippy::cast_possible_truncation)]
+const TABLE: [u32; 256] = {
+    let mut table = [0_u32; 256];
+    let mut index = 0;
+    while index < 256 {
+        let mut value = index as u32;
+        let mut bit = 0;
+        while bit < 8 {
+            value = if value & 1 == 1 {
+                (value >> 1) ^ 0xEDB8_8320
+            } else {
+                value >> 1
+            };
+            bit += 1;
+        }
+        table[index] = value;
+        index += 1;
+    }
+    table
+};
+
 /// A running CRC-32.
 #[derive(Debug, Clone, Copy)]
 pub struct Crc32 {
@@ -22,13 +44,16 @@ impl Crc32 {
 
     /// Feed `bytes`.
     pub fn update(&mut self, bytes: &[u8]) {
-        let _ = bytes;
-        todo!("L2: crc32")
+        let mut state = self.state;
+        for byte in bytes {
+            state = TABLE[usize::from(state.to_le_bytes()[0] ^ byte)] ^ (state >> 8);
+        }
+        self.state = state;
     }
 
     /// The CRC of everything fed so far.
     #[must_use]
-    pub fn finish(&self) -> u32 {
+    pub fn finish(self) -> u32 {
         !self.state
     }
 }

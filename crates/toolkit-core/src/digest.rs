@@ -133,34 +133,36 @@ fn compress(state: &mut [u32; 8], block: &[u8]) {
 /// encode the digest themselves (the PKCE `S256` challenge, #4382 L0).
 #[must_use]
 pub fn sha256(data: &[u8]) -> [u8; 32] {
-    let _ = data;
-    todo!("L0: raw digest")
-}
-
-/// The SHA-256 digest of `data` as 64 lower-case hexadecimal characters.
-#[must_use]
-pub fn sha256_hex(data: &[u8]) -> String {
     let mut state = INITIAL_STATE;
     let mut blocks = data.chunks_exact(64);
     for block in blocks.by_ref() {
         compress(&mut state, block);
     }
     let remainder = blocks.remainder();
-    let mut tail = remainder.to_vec();
-    tail.push(0x80);
-    while tail.len() % 64 != 56 {
-        tail.push(0);
-    }
+    let mut tail = [0_u8; 128];
+    tail[..remainder.len()].copy_from_slice(remainder);
+    tail[remainder.len()] = 0x80;
+    let tail_len = if remainder.len() < 56 { 64 } else { 128 };
     let bit_length = u64::try_from(data.len())
         .unwrap_or(u64::MAX)
         .wrapping_mul(8);
-    tail.extend_from_slice(&bit_length.to_be_bytes());
-    for block in tail.chunks_exact(64) {
+    tail[tail_len - 8..tail_len].copy_from_slice(&bit_length.to_be_bytes());
+    for block in tail[..tail_len].chunks_exact(64) {
         compress(&mut state, block);
     }
+    let mut digest = [0_u8; 32];
+    for (out, word) in digest.chunks_exact_mut(4).zip(state) {
+        out.copy_from_slice(&word.to_be_bytes());
+    }
+    digest
+}
+
+/// The SHA-256 digest of `data` as 64 lower-case hexadecimal characters.
+#[must_use]
+pub fn sha256_hex(data: &[u8]) -> String {
     let mut hex = String::with_capacity(64);
-    for word in state {
-        let _ = write!(hex, "{word:08x}");
+    for byte in sha256(data) {
+        let _ = write!(hex, "{byte:02x}");
     }
     hex
 }
@@ -215,7 +217,10 @@ mod raw_tests {
     use super::*;
 
     fn hex(bytes: &[u8]) -> String {
-        bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+        bytes.iter().fold(String::new(), |mut out, byte| {
+            let _ = write!(out, "{byte:02x}");
+            out
+        })
     }
 
     #[test]

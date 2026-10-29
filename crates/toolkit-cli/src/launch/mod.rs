@@ -73,8 +73,11 @@ impl fmt::Debug for LaunchError {
 /// # Errors
 /// [`LaunchError::Platform`] when `unix` is false.
 pub fn platform_gate(unix: bool) -> Result<(), LaunchError> {
-    let _ = unix;
-    todo!("L2: platform switch")
+    if unix {
+        Ok(())
+    } else {
+        Err(LaunchError::Platform)
+    }
 }
 
 /// [`platform_gate`] for the platform this binary was built for.

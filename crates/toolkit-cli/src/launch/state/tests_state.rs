@@ -49,7 +49,11 @@ fn leftovers(dir: &Path) -> Vec<String> {
                 .to_string_lossy()
                 .into_owned()
         })
-        .filter(|name| name.ends_with(".tmp"))
+        .filter(|name| {
+            Path::new(name)
+                .extension()
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("tmp"))
+        })
         .collect();
     names.sort();
     names

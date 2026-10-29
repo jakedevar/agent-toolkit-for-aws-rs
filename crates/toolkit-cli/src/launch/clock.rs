@@ -6,6 +6,7 @@
 //! and `Exit` seams of the callback helper.
 
 use std::cell::Cell;
+use std::fmt::Write as _;
 
 use super::LaunchError;
 
@@ -25,8 +26,11 @@ pub struct OsRandom;
 
 impl Random for OsRandom {
     fn fill(&self, buf: &mut [u8]) -> Result<(), LaunchError> {
-        let _ = buf;
-        todo!("L1: getrandom")
+        getrandom::fill(buf).map_err(|_| {
+            LaunchError::Config(
+                "The operating system random number generator is unavailable.".to_string(),
+            )
+        })
     }
 }
 
@@ -35,8 +39,13 @@ impl Random for OsRandom {
 /// # Errors
 /// The [`Random`] failure.
 pub fn random_hex(random: &dyn Random, bytes: usize) -> Result<String, LaunchError> {
-    let _ = (random, bytes);
-    todo!("L1: random_hex")
+    let mut buf = vec![0_u8; bytes];
+    random.fill(&mut buf)?;
+    let mut hex = String::with_capacity(2 * bytes);
+    for byte in buf {
+        let _ = write!(hex, "{byte:02x}");
+    }
+    Ok(hex)
 }
 
 /// A deterministic test source: an `xorshift64*` stream from a seed. Never

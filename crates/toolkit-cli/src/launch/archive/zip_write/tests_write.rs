@@ -128,15 +128,18 @@ fn t_ar_zip_4_dos_time_utc_and_clamped() {
     assert_eq!(dos_datetime(1_793_190_896), (25_692, 23_900));
     // Odd seconds round down to the 2-second DOS resolution.
     assert_eq!(dos_datetime(1_793_190_897), (25_692, 23_900));
-    let floor = (0, (1 << 5) | 1);
+    // 1980-01-01 00:00:00: time 0, date (0 << 9) | (1 << 5) | 1.
+    let floor = (0, 0x0021);
     assert_eq!(dos_datetime(DOS_EPOCH_UNIX), floor);
     assert_eq!(dos_datetime(0), floor, "pre-1980 is clamped, not refused");
     assert_eq!(dos_datetime(i64::MIN), floor);
-    let ceiling = ((23 << 11) | (59 << 5) | 29, (127 << 9) | (12 << 5) | 31);
+    // 2107-12-31 23:59:58: time (23 << 11) | (59 << 5) | 29, date (127 << 9) | (12 << 5) | 31.
+    let ceiling = (0xBF7D, 0xFF9F);
     assert_eq!(dos_datetime(DOS_MAX_UNIX), ceiling);
     assert_eq!(dos_datetime(i64::MAX), ceiling);
     // A leap day.
-    assert_eq!(dos_datetime(951_782_400), (0, (20 << 9) | (2 << 5) | 29));
+    // A leap day, 2000-02-29: date (20 << 9) | (2 << 5) | 29.
+    assert_eq!(dos_datetime(951_782_400), (0, 0x285D));
     let mut writer = ZipWriter::new(LIMITS);
     writer
         .add_file("app/old", b"x", 0o100_644, -1)

@@ -1,7 +1,7 @@
 //! Unit tests of the descriptor-relative primitives.
 
 use std::fs;
-use std::os::unix::fs::{symlink, PermissionsExt};
+use std::os::unix::fs::{symlink, MetadataExt, PermissionsExt};
 use std::process::Command;
 
 use super::*;
@@ -24,7 +24,6 @@ fn root_listing_and_classification() {
         .success());
     let root = open_root(tree.path()).expect("root");
     let meta = fs::metadata(tree.path()).expect("stat");
-    use std::os::unix::fs::MetadataExt;
     assert_eq!(root.identity(), (meta.dev(), meta.ino()));
     let names: Vec<String> = list_names(&root)
         .expect("list")

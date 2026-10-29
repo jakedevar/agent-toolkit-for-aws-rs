@@ -11,7 +11,9 @@
 //! (fewer when the archive names fewer segments), and never grow. Nodes
 //! reference their name bytes in the archive buffer; nothing is copied.
 
-use super::zip_read::Archive;
+use std::collections::HashMap;
+
+use super::zip_read::{Archive, EntryKind};
 use crate::launch::LaunchError;
 
 /// The production node budget (Q23, D22).
@@ -112,8 +114,77 @@ pub fn plan(
     budget: usize,
     stats: &mut PlanStats,
 ) -> Result<Plan, LaunchError> {
-    let _ = (archive, budget, stats);
-    todo!("L2: planner")
+    let data = archive.data();
+    // An upper bound on the nodes the archive can name: one per segment.
+    // Reserving `min(budget, segments)` keeps planning memory below the
+    // budget whatever the archive declares, and never more than it needs.
+    let segments: usize = archive
+        .entries()
+        .iter()
+        .map(|entry| archive.name(entry).trim_end_matches('/').split('/').count())
+        .fold(0, usize::saturating_add);
+    let reserve = budget.min(segments);
+    let mut nodes: Vec<Node> = Vec::with_capacity(reserve);
+    let mut index: HashMap<(u32, &[u8]), u32> = HashMap::with_capacity(reserve);
+    stats.index_requested = reserve;
+    stats.index_capacity_reserved = index.capacity();
+    stats.nodes_capacity_reserved = nodes.capacity();
+    let mut entry_nodes = Vec::with_capacity(archive.entries().len());
+    let (mut files, mut directories) = (0_usize, 0_usize);
+    let internal =
+        || LaunchError::Archive("Internal error: the snapshot plan is inconsistent.".to_string());
+    for entry in archive.entries() {
+        let name = archive.name(entry);
+        let body = name.strip_suffix('/').unwrap_or(name);
+        let mut parent = ROOT;
+        let mut offset = entry.name_offset;
+        let segment_count = body.split('/').count();
+        for (position, segment) in body.split('/').enumerate() {
+            let kind = if position + 1 == segment_count && entry.kind == EntryKind::File {
+                NodeKind::File
+            } else {
+                NodeKind::Directory
+            };
+            let bytes = &data[offset..offset + segment.len()];
+            let id = if let Some(&existing) = index.get(&(parent, bytes)) {
+                if kind == NodeKind::File || nodes[existing as usize].kind == NodeKind::File {
+                    return Err(internal());
+                }
+                existing
+            } else {
+                stats.peak_nodes = nodes.len() + 1;
+                if nodes.len() == budget {
+                    stats.index_capacity_final = index.capacity();
+                    stats.nodes_capacity_final = nodes.capacity();
+                    return Err(LaunchError::Archive(budget_message(budget)));
+                }
+                let id = u32::try_from(nodes.len()).map_err(|_| internal())?;
+                nodes.push(Node {
+                    parent,
+                    name_offset: u32::try_from(offset).map_err(|_| internal())?,
+                    name_len: u16::try_from(segment.len()).map_err(|_| internal())?,
+                    kind,
+                });
+                index.insert((parent, bytes), id);
+                match kind {
+                    NodeKind::File => files += 1,
+                    NodeKind::Directory => directories += 1,
+                }
+                id
+            };
+            parent = id;
+            offset += segment.len() + 1;
+        }
+        entry_nodes.push(parent);
+    }
+    stats.index_capacity_final = index.capacity();
+    stats.nodes_capacity_final = nodes.capacity();
+    Ok(Plan {
+        nodes,
+        files,
+        directories,
+        entry_nodes,
+    })
 }
 
 #[cfg(test)]

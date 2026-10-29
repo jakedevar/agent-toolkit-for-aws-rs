@@ -91,7 +91,13 @@ fn t_ar_read_08_control_and_invisible_characters() {
     assert_unsafe("a\u{7f}", "'a\\x7f'");
     assert_unsafe("a\u{85}b", "'a\\x85b'");
     assert_unsafe("a\nb", "'a\\nb'");
-    assert_unsafe("a\u{202e}b", "'a\\u202eb'");
+    // Invisible format characters are not control characters: accepted
+    // (an emoji ZWJ sequence is a legitimate name), but always shown escaped.
+    assert_eq!(
+        snapshot(vec![FxEntry::stored("app/a\u{202e}b\u{200d}", b"x")]),
+        Ok(1)
+    );
+    assert_unsafe("a\u{202e}\u{1}", "'a\\u202e\\x01'");
 }
 
 #[test]

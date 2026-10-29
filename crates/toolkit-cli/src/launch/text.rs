@@ -15,33 +15,52 @@ use crate::safe_text::{is_unsafe, shown_value};
 /// `\n`, `\r`, `\t` and every unsafe character escaped.
 #[must_use]
 pub fn repr(value: &str) -> String {
-    let _ = value;
-    todo!("L1: repr")
+    let shown = shown_value(value);
+    let quote = if shown.contains('\'') && !shown.contains('"') {
+        '"'
+    } else {
+        '\''
+    };
+    let mut out = String::with_capacity(shown.len() + 2);
+    out.push(quote);
+    push_escaped(&mut out, &shown, Some(quote));
+    out.push(quote);
+    out
 }
 
-/// The shown form of `value` without quotes: [`repr`]'s escaping, for a
-/// message that names a value after a colon.
+/// The shown form of `value` without quotes: redacted, bounded, with `\\`,
+/// `\n`, `\r`, `\t` and every unsafe character escaped, for a message that
+/// names a value after a colon.
 #[must_use]
 pub fn shown(value: &str) -> String {
-    let quoted = repr(value);
-    let inner = &quoted[1..quoted.len() - 1];
-    inner.to_string()
+    let shown = shown_value(value);
+    let mut out = String::with_capacity(shown.len());
+    push_escaped(&mut out, &shown, None);
+    out
 }
 
-#[allow(dead_code)]
-fn escape_char(out: &mut String, c: char) {
-    let code = u32::from(c);
-    if code <= 0xff {
-        let _ = write!(out, "\\x{code:02x}");
-    } else if code <= 0xffff {
-        let _ = write!(out, "\\u{code:04x}");
-    } else {
-        let _ = write!(out, "\\U{code:08x}");
+fn push_escaped(out: &mut String, text: &str, quote: Option<char>) {
+    for c in text.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if Some(c) == quote => {
+                out.push('\\');
+                out.push(c);
+            }
+            c if is_unsafe(c) => {
+                let code = u32::from(c);
+                let _ = if code <= 0xff {
+                    write!(out, "\\x{code:02x}")
+                } else if code <= 0xffff {
+                    write!(out, "\\u{code:04x}")
+                } else {
+                    write!(out, "\\U{code:08x}")
+                };
+            }
+            c => out.push(c),
+        }
     }
-}
-
-#[allow(dead_code)]
-fn shown_inner(value: &str) -> String {
-    let _ = (shown_value(value), is_unsafe('a'));
-    String::new()
 }

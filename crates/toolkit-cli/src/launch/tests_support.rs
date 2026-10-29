@@ -72,3 +72,13 @@ fn restore_permissions(dir: &Path) {
         }
     }
 }
+
+/// The production Git runner with the test discovery ceiling at the
+/// temporary directory (see `GitRunner::ceiling`).
+#[cfg(unix)]
+pub fn test_git() -> super::archive::git::GitRunner {
+    super::archive::git::GitRunner {
+        ceiling: Some(std::env::temp_dir()),
+        ..super::archive::git::GitRunner::system()
+    }
+}

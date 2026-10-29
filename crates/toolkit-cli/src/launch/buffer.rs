@@ -64,8 +64,28 @@ impl CappedBuf {
     /// [`BufError::Limit`] past the limit, [`BufError::Alloc`] when the
     /// reservation fails.
     pub fn extend(&mut self, bytes: &[u8]) -> Result<(), BufError> {
-        let _ = bytes;
-        todo!("L2: #5082 growth")
+        let len = self.data.len();
+        let attempted = len.checked_add(bytes.len()).ok_or(BufError::Limit {
+            attempted: usize::MAX,
+        })?;
+        if attempted > self.limit {
+            return Err(BufError::Limit { attempted });
+        }
+        let capacity = self.data.capacity();
+        if attempted > capacity {
+            let target = attempted
+                .max(capacity.saturating_mul(2))
+                .max(MIN_GROWTH)
+                .min(self.limit);
+            self.data
+                .try_reserve_exact(target - len)
+                .map_err(|_| BufError::Alloc)?;
+            let grown = self.data.capacity();
+            self.peak = self.peak.max(capacity + grown);
+            self.growths += 1;
+        }
+        self.data.extend_from_slice(bytes);
+        Ok(())
     }
 
     /// Overwrite `bytes.len()` bytes at `offset` (header fix-ups).

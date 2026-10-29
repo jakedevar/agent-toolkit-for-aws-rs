@@ -17,7 +17,7 @@ use std::time::Duration;
 use super::*;
 use crate::launch::archive::zip_read::{decode_entry, read_archive, Profile, ReadStats};
 use crate::launch::clock::SeededRandom;
-use crate::launch::tests_support::Scratch;
+use crate::launch::tests_support::{test_git, Scratch};
 
 /// Build `path` (absolute) with `hook`, returning the archive or the error.
 fn build_with(
@@ -26,7 +26,7 @@ fn build_with(
     home: Option<&Path>,
 ) -> Result<BuiltArchive, LaunchError> {
     let temp = Scratch::new("sel-git-tmp");
-    let git = GitRunner::system();
+    let git = test_git();
     let random = SeededRandom::new(5);
     let cwd = std::env::temp_dir();
     let options = BuildOptions {
@@ -94,6 +94,26 @@ fn within_2s<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
     receiver
         .recv_timeout(Duration::from_secs(2))
         .expect("the walk blocked (watchdog: 2 s)")
+}
+
+/// A Unix socket named `name` in `dir`. Socket paths are limited to about
+/// 108 bytes, so a long scratch path binds through a short symlink.
+fn bind_socket(dir: &Path, name: &str) -> std::os::unix::net::UnixListener {
+    use std::os::unix::net::UnixListener;
+    if let Ok(listener) = UnixListener::bind(dir.join(name)) {
+        return listener;
+    }
+    let mut nonce = [0_u8; 4];
+    getrandom::fill(&mut nonce).expect("csprng");
+    let link = PathBuf::from(format!(
+        "/tmp/tl-{}-{}",
+        std::process::id(),
+        u32::from_le_bytes(nonce)
+    ));
+    symlink(dir, &link).expect("short link to the scratch directory");
+    let listener = UnixListener::bind(link.join(name)).expect("socket");
+    let _ = fs::remove_file(&link);
+    listener
 }
 
 /// A hook that runs `action` once, when `event` reaches `rel`.
@@ -481,7 +501,7 @@ fn t_ar_open_5_file_grown_or_shrunk_between_walk_and_read() {
 fn t_ar_open_6_fifo_and_socket_at_walk_time_are_never_opened() {
     let tree = tree();
     mkfifo(&tree.join("fifo"));
-    let _listener = std::os::unix::net::UnixListener::bind(tree.join("sock")).expect("socket");
+    let _listener = bind_socket(tree.path(), "sock");
     let path = tree.path().to_path_buf();
     let (names_seen, opened) = within_2s(move || {
         let hook = SwapHook::at_open("never", || {});
