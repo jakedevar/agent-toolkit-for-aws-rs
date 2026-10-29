@@ -1392,7 +1392,8 @@ fn inline_test_modules(stream: TokenStream, out: &mut Vec<String>) {
                 TokenTree::Ident(i) => i != "pub",
                 TokenTree::Literal(_) => true,
             });
-            let at_mod = at_mod.filter(|&at| matches!(&rest[at], TokenTree::Ident(i) if i == "mod"));
+            let at_mod =
+                at_mod.filter(|&at| matches!(&rest[at], TokenTree::Ident(i) if i == "mod"));
             if let Some(at) = at_mod {
                 if let Some(TokenTree::Group(body)) = rest.get(at + 2) {
                     if body.delimiter() == proc_macro2::Delimiter::Brace {
@@ -1476,7 +1477,10 @@ fn g4_scans_inline_test_modules() {
         .into_iter()
         .map(|m| ("agents_pay/deps.rs (inline tests)".to_owned(), m))
         .collect();
-    assert!(!g4_unexpected(&files).is_empty(), "inline mutation survived");
+    assert!(
+        !g4_unexpected(&files).is_empty(),
+        "inline mutation survived"
+    );
     // A second for_process naming is not covered by the one allowance.
     let twice = deps.replacen(
         anchor,
@@ -1874,7 +1878,14 @@ fn for_process_findings(text: &str) -> Vec<String> {
             other => other.to_string(),
         })
         .collect();
-    let expected = ["#", &format!("[{live}]"), "{}", "#", &format!("[{disabled}]"), "{}"];
+    let expected = [
+        "#",
+        &format!("[{live}]"),
+        "{}",
+        "#",
+        &format!("[{disabled}]"),
+        "{}",
+    ];
     if shape != expected {
         return vec![format!(
             "{DEPS_FILE}: for_process is not exactly the two cfg arms: {shape:?}"
@@ -1933,7 +1944,10 @@ fn route_findings(text: &str) -> Vec<String> {
             })
             .collect();
         let [function] = fns.as_slice() else {
-            found.push(format!("{ROUTE_FILE}: {} `fn {name}`, expected 1", fns.len()));
+            found.push(format!(
+                "{ROUTE_FILE}: {} `fn {name}`, expected 1",
+                fns.len()
+            ));
             continue;
         };
         let mut evaluated = Evaluated::default();
@@ -2059,10 +2073,7 @@ fn t_ac3_noread_catches_a_read_in_the_route_functions() {
             "unlisted method",
             "    let _ = invocation.positionals.first().map(|p| p.read_file());\n",
         ),
-        (
-            "nested fn",
-            "    fn hidden() {}\n",
-        ),
+        ("nested fn", "    fn hidden() {}\n"),
         (
             "read inside vec!",
             "    let _ = vec![std::env::var_os(\"X\")];\n",

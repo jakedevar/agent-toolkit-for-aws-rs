@@ -847,11 +847,9 @@ fn t_scrub_content_type_fragments_at_every_offset_and_length_are_refused() {
             piece.to_owned()
         };
         world.merchant.respond(402, &[], &challenge());
-        world.merchant.respond(
-            200,
-            &[("content-type", &format!("text/{spelling}"))],
-            b"ok",
-        );
+        world
+            .merchant
+            .respond(200, &[("content-type", &format!("text/{spelling}"))], b"ok");
         assert_refused(&world.fetch(), "RuntimeError during payment flow.");
     }
     // The whole header cut by the 256-character bound still refuses.

@@ -159,9 +159,18 @@ fn t_scrub_a_session_id_is_secret_after_its_public_head() {
         "TEST12345678901"
     );
     assert_eq!(session_secret("PAYMENT-SESSION-abcdefgh"), "abcdefgh");
-    assert_eq!(session_secret("ps-custom-identifier"), "ps-custom-identifier");
+    assert_eq!(
+        session_secret("ps-custom-identifier"),
+        "ps-custom-identifier"
+    );
     let known = learned(&[session_secret("payment-session-TEST12345678901")]);
-    for fixed in [WITHHELD, MINT_BUDGET, NEW_SESSION, CHECK_SESSION, BROWSER_NEXT] {
+    for fixed in [
+        WITHHELD,
+        MINT_BUDGET,
+        NEW_SESSION,
+        CHECK_SESSION,
+        BROWSER_NEXT,
+    ] {
         assert!(!known.found_in(fixed), "{fixed}");
     }
     assert!(known.found_in("id payment-session-test1234"));
