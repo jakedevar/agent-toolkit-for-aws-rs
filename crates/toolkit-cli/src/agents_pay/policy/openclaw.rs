@@ -381,10 +381,28 @@ mod tests {
         assert!(decide(("maxAmountRequired", Json::string("1001"))));
         assert!(decide(("payTo", Json::Array(vec![]))));
         assert!(parse_json(r#"{"a":1,"a":2}"#).is_err());
-        // D-OC3(b): even a configured non-EVM network cannot be selected.
+        // D-OC3(b): the full gate refuses a configured non-EVM network.
         let other_policy = from_openclaw(&parse_json(r#"{"maxPaymentAmountAtomic":"100000","allowAnyRecipient":true,"networkPreferences":["solana:mainnet"],"allowedAssetsByNetwork":{"solana:mainnet":["asset"]}}"#).unwrap()).unwrap();
         let non_evm = parse_json(r#"{"accepts":[{"scheme":"exact","network":"solana:mainnet","asset":"asset","payTo":"recipient","amount":"1000","maxTimeoutSeconds":60}]}"#).unwrap();
-        assert!(select_accept_entry(&non_evm, &other_policy).is_err());
+        assert!(select_accept_entry(&non_evm, &other_policy).is_ok());
+        let resolver = super::super::FixedResolver::new()
+            .with_host("merchant.example", vec!["8.8.8.8".parse().unwrap()]);
+        let resources = super::super::Resources::default();
+        let error = super::super::authorize(
+            &super::super::PaymentRequest {
+                url: "https://merchant.example/pay",
+                challenge: &non_evm,
+                policy: &other_policy,
+                resources: &resources,
+                purchase_id: None,
+            },
+            &resolver,
+        )
+        .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "Payment network family is not supported by this runtime."
+        );
     }
 
     #[test]
