@@ -423,7 +423,12 @@ pub(super) fn merge_allocations(
             .iter_mut()
             .find(|entry| entry.signature == signature)
         {
-            Some(entry) => entry.qty = entry.qty.saturating_add(allocated),
+            Some(entry) => match entry.qty.checked_add(allocated) {
+                Some(sum) => entry.qty = sum,
+                // The script's exact sum has no 64-bit form; clamping it would
+                // let it pass for a legitimate quantity.
+                None => return Some("QuantityOutOfRange"),
+            },
             None => entries.push(Allocation {
                 signature,
                 tags: normalized,
@@ -560,11 +565,13 @@ pub(super) fn validate_group(group: &Group, now: UtcTime) -> Option<&'static str
         if group.allocations.len() > MAX_ALLOCATIONS_PER_RECORD {
             return Some("TooManyAllocations");
         }
+        // The group quantity is a 64-bit sum, so an allocation total beyond
+        // 64 bits is, as in the script's exact arithmetic, larger than it.
         let total = group
             .allocations
             .iter()
-            .fold(0_i64, |sum, entry| sum.saturating_add(entry.qty));
-        if total != group.quantity {
+            .try_fold(0_i64, |sum, entry| sum.checked_add(entry.qty));
+        if total != Some(group.quantity) {
             return Some("AllocationSumMismatch");
         }
     }
@@ -728,6 +735,11 @@ pub(super) fn deprovisioning_licenses(
 /// `UsageRecordRejected` with a reason and `BatchMeterUsageException` with an
 /// exception carry their own dimension and `MeteringMode`; the rest are plain
 /// `[ProductCode]` counters.
+///
+/// The product code, mode, namespace, reason and exception come from the
+/// configuration or from a service answer, so each goes through `shown`
+/// (redacted, bounded, escaped) before it is serialized; the line stays one
+/// parseable JSON object.
 pub(super) fn emf_metric(
     ctx: &mut Ctx<'_>,
     name: &str,
@@ -735,13 +747,13 @@ pub(super) fn emf_metric(
     reason: Option<&str>,
     exception: Option<&str>,
 ) {
-    let product = Json::string(ctx.product_code());
-    let mode = Json::string(ctx.metering_mode());
+    let product = Json::string(shown(ctx.product_code()));
+    let mode = Json::string(shown(&ctx.metering_mode()));
     let (dimensions, mut fields): (Vec<&str>, Vec<(&str, Json)>) = match (name, reason, exception) {
         ("UsageRecordRejected", Some(reason), _) if !reason.is_empty() => (
             vec!["Reason", "MeteringMode", "ProductCode"],
             vec![
-                ("Reason", Json::string(reason)),
+                ("Reason", Json::string(shown(reason))),
                 ("ProductCode", product),
                 ("MeteringMode", mode),
             ],
@@ -749,7 +761,7 @@ pub(super) fn emf_metric(
         ("BatchMeterUsageException", _, Some(exception)) if !exception.is_empty() => (
             vec!["Exception", "MeteringMode", "ProductCode"],
             vec![
-                ("Exception", Json::string(exception)),
+                ("Exception", Json::string(shown(exception))),
                 ("ProductCode", product),
                 ("MeteringMode", mode),
             ],
@@ -762,7 +774,7 @@ pub(super) fn emf_metric(
         ("Unit", Json::string("Count")),
     ]);
     let directive = Json::object(vec![
-        ("Namespace", Json::string(ctx.metric_namespace())),
+        ("Namespace", Json::string(shown(ctx.metric_namespace()))),
         (
             "Dimensions",
             Json::Array(vec![Json::Array(

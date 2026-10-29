@@ -7,8 +7,8 @@ use toolkit_core::Json;
 use super::base::{shown, Ctx, Failure};
 use super::clock::{add_hours, epoch, floor_hour, hour_bucket, parse_hour_bucket};
 use super::core::{
-    self, deprovisioning_licenses, emf_metric, mask, strict_int, submit_records, AggKey, Outcome,
-    Outcomes, BATCH_SIZE,
+    self, deprovisioning_licenses, emf_metric, mask, quantity_reason, strict_int, submit_records,
+    AggKey, Outcome, Outcomes, BATCH_SIZE,
 };
 use super::ddb::{self, query_each, required_text, Flow, Query, Update};
 use super::pipeline::Handled;
@@ -247,9 +247,7 @@ fn build_batches(
         let license_arn = required_text(item, "licenseArn")?;
         let account_id = ddb::text_or_empty(item, "customerAWSAccountId")?;
         let dimension = required_text(item, "dimension")?;
-        let quantity = item
-            .get("quantity")
-            .map_or(0, |value| strict_int(value).unwrap_or(0));
+        let quantity = stored_quantity(item.get("quantity"))?;
         let bucket = required_text(item, "hourBucket")?;
         let hour_ts = parse_hour_bucket(&bucket)
             .ok_or_else(|| Failure::message("hourBucket must look like 2026-01-31T12"))?;
@@ -281,6 +279,24 @@ fn build_batches(
     Ok((chunk(ca), chunk(legacy)))
 }
 
+/// `strict_int(value) or 0` for a stored quantity or allocation. A missing or
+/// non-integer member is the script's `0`; an exact integer beyond 64 bits
+/// (which the script keeps exactly) fails the run before anything is built,
+/// submitted or finalized, because `0` would silently drop the usage.
+fn stored_quantity(value: Option<&Json>) -> Result<i64, Failure> {
+    let Some(value) = value else {
+        return Ok(0);
+    };
+    match strict_int(value) {
+        Some(quantity) => Ok(quantity),
+        None if quantity_reason(value) == "QuantityOutOfRange" => Err(Failure::message(
+            "a stored usage quantity is out of the 64-bit range (QuantityOutOfRange); \
+             nothing was submitted and the pending markers were kept",
+        )),
+        None => Ok(0),
+    }
+}
+
 fn chunk((records, keys): Batch) -> Vec<Batch> {
     records
         .chunks(BATCH_SIZE)
@@ -295,9 +311,7 @@ fn api_allocations(allocations: &Json) -> Result<Json, Failure> {
         .ok_or_else(|| Failure::message("usageAllocations must be a list"))?;
     let mut out = Vec::with_capacity(list.len());
     for allocation in list {
-        let quantity = allocation
-            .get("AllocatedUsageQuantity")
-            .map_or(0, |value| strict_int(value).unwrap_or(0));
+        let quantity = stored_quantity(allocation.get("AllocatedUsageQuantity"))?;
         let mut tags = Vec::new();
         for tag in toolkit_aws::recorded::optional_list(allocation, "Tags")
             .map_err(|error| Failure::message(format!("invalid item: {error}")))?

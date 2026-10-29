@@ -3,6 +3,8 @@
 //! the filters, the aggregations and the completeness signals of the script.
 //! The events come through the client seam (recorded or no-live).
 
+use std::cmp::Ordering;
+
 use toolkit_aws::next_token_from;
 use toolkit_aws::recorded::{
     list_value, object_members, optional_member, optional_object_list, optional_text,
@@ -57,6 +59,19 @@ impl Num {
         }
     }
 
+    /// Python's exact numeric comparison: an `int` against a `float` is
+    /// compared by value, never by converting the `int` to a `float` first
+    /// (above 2^53 that conversion makes distinct integers equal). A NaN
+    /// compares equal to everything, as every Python comparison with it is false.
+    fn exact_cmp(self, other: Self) -> Ordering {
+        match (self, other) {
+            (Self::Int(a), Self::Int(b)) => a.cmp(&b),
+            (Self::Float(a), Self::Float(b)) => a.partial_cmp(&b).unwrap_or(Ordering::Equal),
+            (Self::Int(a), Self::Float(b)) => int_cmp_float(a, b),
+            (Self::Float(a), Self::Int(b)) => int_cmp_float(b, a).reverse(),
+        }
+    }
+
     fn plus(self, other: Self) -> Self {
         match (self, other) {
             (Self::Int(a), Self::Int(b)) => a
@@ -71,6 +86,28 @@ impl Num {
             Self::Int(number) => Json::Int(number),
             Self::Float(number) => Json::Float(number),
         }
+    }
+}
+
+/// `int` against `float` by exact value.
+fn int_cmp_float(int: i64, float: f64) -> Ordering {
+    // 2^63 and -2^63 are exactly representable.
+    const LIMIT: f64 = 9_223_372_036_854_775_808.0;
+    if float.is_nan() {
+        return Ordering::Equal;
+    }
+    if float >= LIMIT {
+        return Ordering::Less;
+    }
+    if float < -LIMIT {
+        return Ordering::Greater;
+    }
+    let floor = float.floor();
+    #[allow(clippy::cast_possible_truncation)]
+    let whole = floor as i64;
+    match int.cmp(&whole) {
+        Ordering::Equal if float > floor => Ordering::Less,
+        other => other,
     }
 }
 
@@ -424,14 +461,15 @@ fn counted(counter: &Counter<i64>) -> Json {
     )
 }
 
-/// `Counter.most_common(n)` by a numeric sort key, descending and stable.
+/// `Counter.most_common(n)`: the `n` largest by `compare`, descending, with
+/// ties kept in first-seen order (a stable sort, as `heapq.nlargest` is).
 fn most_common<T: Copy>(
     counter: &Counter<T>,
     top_n: i64,
-    value: impl Fn(T) -> f64,
+    compare: impl Fn(T, T) -> Ordering,
 ) -> Vec<(String, T)> {
     let mut entries: Vec<(String, T)> = counter.entries.clone();
-    entries.sort_by(|a, b| value(b.1).total_cmp(&value(a.1)));
+    entries.sort_by(|a, b| compare(b.1, a.1));
     entries.truncate(usize::try_from(top_n).unwrap_or(0));
     entries
 }
@@ -511,7 +549,7 @@ pub(super) fn aggregate(records: &[Record], query_type: &str, top_n: i64, limit:
     };
     let by_usage = || {
         Json::Array(
-            most_common(&cust_qty, top_n, Num::as_f64)
+            most_common(&cust_qty, top_n, Num::exact_cmp)
                 .into_iter()
                 .map(|(customer, quantity)| {
                     Json::object(vec![
@@ -556,19 +594,15 @@ pub(super) fn aggregate(records: &[Record], query_type: &str, top_n: i64, limit:
             out.push((
                 "topCustomersByRecordCount",
                 Json::Array(
-                    most_common(&cust_counts, top_n, |n| {
-                        #[allow(clippy::cast_precision_loss)]
-                        let value = n as f64;
-                        value
-                    })
-                    .into_iter()
-                    .map(|(customer, count)| {
-                        Json::object(vec![
-                            ("customer", Json::string(customer)),
-                            ("records", Json::Int(count)),
-                        ])
-                    })
-                    .collect(),
+                    most_common(&cust_counts, top_n, |a, b| a.cmp(&b))
+                        .into_iter()
+                        .map(|(customer, count)| {
+                            Json::object(vec![
+                                ("customer", Json::string(customer)),
+                                ("records", Json::Int(count)),
+                            ])
+                        })
+                        .collect(),
                 ),
             ));
         }
