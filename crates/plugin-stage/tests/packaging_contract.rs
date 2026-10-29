@@ -348,12 +348,14 @@ fn unresolvable_plugin_bin_spellings_are_rejected() {
             "{command} {args}: accepted with {references} references"
         );
     }
-    // System paths and plugin paths outside bin/ are not plugin binaries.
+    // Plugin paths outside bin/ are not plugin binaries. (A system path
+    // such as /usr/bin/env now touches bin/ under the #5053 ruling and is
+    // refused: see BIN_TOUCHING_FORMS.)
     let (problems, references) = problems_for(&[(
         "hooks/hooks.json",
         hooks(
             "PreToolUse",
-            r#"sh -c 'python3 "$0" 2>/dev/null || /usr/bin/env python "$0"' "${CLAUDE_PLUGIN_ROOT}/hooks/guard.py""#,
+            r#"sh -c 'python3 "$0" 2>/dev/null || python "$0"' "${CLAUDE_PLUGIN_ROOT}/hooks/guard.py""#,
         ),
     )]);
     assert!(problems.is_empty(), "{problems:#?}");
@@ -476,4 +478,267 @@ fn manifest_path_lists_are_resolved_and_scanned() {
             "{manifest}: {problems:#?}"
         );
     }
+}
+
+/// #5053 reproductions (review #5018 round 2) plus the round-1 #5022 forms
+/// they extend: repeated and current-directory separators, shell
+/// backslash-newline continuations (quoted and unquoted, LF and CRLF),
+/// mixed quotes, an unbraced `$CLAUDE_PLUGIN_ROOT`, a second path to the
+/// plugin `bin/` beside one canonical reference, and a system `/bin/` path.
+/// Under the PM ruling on #4487 a string that touches `bin/` after
+/// normalisation is refused unless it is a canonical form (or, for a plain
+/// hook, holds exactly one canonical reference and nothing else touching
+/// `bin/`), so every one of these is rejected for a guard and a plain hook.
+const BIN_TOUCHING_FORMS: [&str; 24] = [
+    "cd \"${CLAUDE_PLUGIN_ROOT}\"; .//bin/guard || true",
+    "cd \"${CLAUDE_PLUGIN_ROOT}\"; .///bin/guard || true",
+    "cd \"${CLAUDE_PLUGIN_ROOT}\"; ././/bin/guard",
+    "cd \"${CLAUDE_PLUGIN_ROOT}\"; .//.//bin//guard",
+    "cd \"${CLAUDE_PLUGIN_ROOT}\" && .//./bin/note",
+    "${CLAUDE_PLUGIN_ROOT}/.//./bin/guard",
+    "${CLAUDE_PLUGIN_ROOT}//.///bin/note || true",
+    "\"${CLAUDE_PLUGIN_ROOT}/b\\\nin/guard\" || true",
+    "${CLAUDE_PLUGIN_ROOT}/b\\\nin/guard || true",
+    "\"${CLAUDE_PLUGIN_ROOT}/b\\\r\nin/guard\" || true",
+    "\"${CLAUDE_PLUGIN_ROOT}\"/\\\nbin/note",
+    "cd \"${CLAUDE_PLUGIN_ROOT}\"; ./b\\\nin/guard",
+    "\"${CLAUDE_PLUGIN_ROOT}\"'/bin'/guard || true",
+    "'\"${CLAUDE_PLUGIN_ROOT}\"'/b\"i\"n/guard",
+    "\"${CLAUDE_PLUGIN_ROOT}\"/'b'in/note || true",
+    "$CLAUDE_PLUGIN_ROOT/bin/guard || true",
+    "\"$CLAUDE_PLUGIN_ROOT/bin/note\"",
+    "\"$CLAUDE_PLUGIN_ROOT\"/bin/note || true",
+    "\"${CLAUDE_PLUGIN_ROOT}/bin/note\" ./bin/guard",
+    "\"${CLAUDE_PLUGIN_ROOT}/bin/note\" \\\n.//bin/guard",
+    "sh -c 'cd \"$0\"/.. && ./guard' \"${CLAUDE_PLUGIN_ROOT}/bin/note\"",
+    "sh -c '\"$0\" || \"${0%/*}\"/guard' \"${CLAUDE_PLUGIN_ROOT}/bin/note\"",
+    "sh -c 'cd \"$(dirname \"$0\")\" && ./guard' \"${CLAUDE_PLUGIN_ROOT}/bin/note\"",
+    "/usr/bin/env sh \"${CLAUDE_PLUGIN_ROOT}/hooks/guard.sh\"",
+];
+
+#[test]
+fn review_5053_spellings_are_rejected_for_every_hook() {
+    for command in BIN_TOUCHING_FORMS {
+        for event in ["PreToolUse", "Stop"] {
+            let (problems, references) =
+                problems_for(&[("hooks/hooks.json", hooks(event, command))]);
+            assert!(
+                !problems.is_empty(),
+                "{event} {command:?}: accepted with {references} references"
+            );
+            assert_eq!(references, 0, "{event} {command:?}: {problems:#?}");
+            // The refusal names the file and key and never echoes the
+            // command (#5053, PM ruling point 5).
+            for problem in &problems {
+                assert!(
+                    problem.contains("plugins/demo/hooks/hooks.json")
+                        && problem.contains(&format!("hooks.{event}[0].hooks[0].command")),
+                    "{command:?}: {problem}"
+                );
+                assert!(
+                    !problem.contains("guard ||")
+                        && !problem.contains("//")
+                        && !problem.contains('\n'),
+                    "{command:?}: the message echoes the command: {problem}"
+                );
+            }
+        }
+    }
+}
+
+/// #5053 against the committed declaration: the reviewer's exact
+/// secret-safety registrations fail the contract.
+#[test]
+fn review_5053_secret_safety_registrations_fail_the_contract() {
+    let declaration = repo_declaration();
+    let dir = temp_dir("r5053");
+    let plugins = dir.join("plugins");
+    for command in [
+        "cd \"${CLAUDE_PLUGIN_ROOT}\"; .//bin/secret-safety || true",
+        "cd \"${CLAUDE_PLUGIN_ROOT}\"; .///bin/secret-safety || true",
+        "\"${CLAUDE_PLUGIN_ROOT}/b\\\nin/secret-safety\" || true",
+        "${CLAUDE_PLUGIN_ROOT}/b\\\nin/secret-safety || true",
+    ] {
+        write(
+            &plugins.join("aws-core/hooks/hooks.json"),
+            &hooks("PreToolUse", command),
+        );
+        let report = check_launchers(&dir, &plugins, &declaration);
+        assert!(
+            !report.problems.is_empty(),
+            "{command:?}: accepted with {} references",
+            report.references.len()
+        );
+        assert!(report.references.is_empty(), "{command:?}");
+    }
+}
+
+/// #5053 on the MCP side: command and args strings, and an inline
+/// mcpServers object inside a Devin path list, all fail closed.
+#[test]
+fn review_5053_mcp_spellings_are_rejected() {
+    for (command, args) in [
+        (r#"".//bin/undeclared""#, "[]"),
+        (".//bin/tool", "[]"),
+        (".///bin/tool", "[]"),
+        ("././/bin/tool", "[]"),
+        ("${CLAUDE_PLUGIN_ROOT}/.//bin/tool", "[]"),
+        ("${CLAUDE_PLUGIN_ROOT}/b\\\nin/tool", "[]"),
+        ("$CLAUDE_PLUGIN_ROOT/bin/tool", "[]"),
+        ("sh", r#"["-c", ".//bin/tool"]"#),
+        ("sh", r#"["-c", "./b\\\nin/tool"]"#),
+        (
+            "sh",
+            r#"["-c", "exec \"$0\"", "${CLAUDE_PLUGIN_ROOT}/.//bin/tool"]"#,
+        ),
+        ("sh", r#"["-c", "./b?n/tool"]"#),
+        ("sh", r#"["-c", "./{b,x}in/tool"]"#),
+    ] {
+        let (problems, references) = problems_for(&[(".mcp.json", mcp(command, args))]);
+        assert!(
+            !problems.is_empty(),
+            "{command:?} {args}: accepted with {references} references"
+        );
+        assert_eq!(references, 0, "{command:?} {args}: {problems:#?}");
+    }
+    let (problems, references) = problems_for(&[(
+        ".devin-plugin/plugin.json",
+        r#"{"name": "demo", "mcpServers": [{"inline": {"command": "\".//bin/undeclared\""}}]}"#
+            .to_string(),
+    )]);
+    assert!(!problems.is_empty(), "inline list object accepted");
+    assert_eq!(references, 0, "{problems:#?}");
+}
+
+/// Controls for the #5053 ruling: ordinary commands that do not touch the
+/// plugin `bin/` directory (every shipped launcher shape among them), the
+/// canonical forms and a wrapped plain-hook reference still pass.
+#[test]
+fn ordinary_commands_and_canonical_forms_still_pass() {
+    let (problems, references) = problems_for(&[
+        (
+            "hooks/hooks.json",
+            hooks(
+                "PreToolUse",
+                r#"sh -c 'python3 "$0" 2>/dev/null || python "$0" 2>/dev/null || py -3 "$0"' "${CLAUDE_PLUGIN_ROOT}/hooks/guard.py""#,
+            ),
+        ),
+        (
+            "a/hooks.json",
+            hooks(
+                "SessionStart",
+                r#"cat "${CLAUDE_PLUGIN_ROOT}/hooks/offer-context.txt" 2>/dev/null || true"#,
+            ),
+        ),
+        (
+            ".cursor-plugin/hooks.json",
+            hooks(
+                "stop",
+                r#"sh -c 'python3 "$0" "$@" 2>/dev/null || true' "${CURSOR_PLUGIN_ROOT}/scripts/x/migration.py" --reconcile"#,
+            ),
+        ),
+        (
+            "b/hooks.json",
+            hooks(
+                "Stop",
+                "echo cabin binary robin ${CLAUDE_PLUGIN_ROOT}/node_modules/.bin-cache",
+            ),
+        ),
+        (
+            ".mcp.json",
+            mcp(
+                "uvx",
+                r#"["mcp-proxy-for-aws-cli==1.7.0", "https://aws-mcp.us-east-1.api.aws/mcp", "--skip-auth", "--metadata", "INSTALL_SOURCE=agent-toolkit-core"]"#,
+            ),
+        ),
+        (
+            "c/.mcp.json",
+            r#"{"mcpServers": {"h": {"type": "http", "url": "https://x.example/mcp?a=1",
+                "headers": {"Authorization": "Bearer ${DEVOPS_AGENT_TOKEN}"}}}}"#
+                .to_string(),
+        ),
+    ]);
+    assert!(problems.is_empty(), "{problems:#?}");
+    assert_eq!(references, 0);
+
+    let (problems, references) = problems_for(&[
+        ("hooks/hooks.json", hooks("PreToolUse", &guard())),
+        (
+            "d/hooks.json",
+            hooks(
+                "PreToolUse",
+                &guard_hook_command(
+                    "CURSOR_PLUGIN_ROOT",
+                    "guard",
+                    "Guard unavailable. Reinstall demo.",
+                ),
+            ),
+        ),
+        (
+            ".mcp.json",
+            mcp(&mcp_command("CLAUDE_PLUGIN_ROOT", "tool"), r#"["serve"]"#),
+        ),
+        ("mcp.json", mcp("./bin/tool", "[]")),
+        (
+            "e/hooks.json",
+            hooks("Stop", r#""${CLAUDE_PLUGIN_ROOT}/bin/note" || true"#),
+        ),
+        (
+            "f/hooks.json",
+            hooks(
+                "Stop",
+                r#"sh -c '"$0" --flush 2>/dev/null || true' "${CLAUDE_PLUGIN_ROOT}/bin/note""#,
+            ),
+        ),
+    ]);
+    assert!(problems.is_empty(), "{problems:#?}");
+    assert_eq!(references, 6);
+}
+
+/// The missing-binary deny contract behind #5053: with no binary staged, the
+/// canonical guard launcher prints the deny and passes the checker, while
+/// every reviewed bypass exits without a deny (fail open at runtime) and is
+/// rejected by the checker. A guard registration passes the checker only if
+/// it denies without its binary.
+#[cfg(unix)]
+#[test]
+fn a_guard_registration_passes_only_if_it_denies_without_its_binary() {
+    use std::process::Command;
+    let dir = temp_dir("denycontract");
+    let root = dir.join("plugins/demo");
+    write(&root.join("README.md"), "demo\n");
+    let run = |command: &str| {
+        let output = Command::new("sh")
+            .arg("-c")
+            .arg(command)
+            .env("CLAUDE_PLUGIN_ROOT", &root)
+            .current_dir(&*dir)
+            .output()
+            .expect("run sh");
+        String::from_utf8_lossy(&output.stdout).contains(r#""permissionDecision":"deny""#)
+    };
+    let canonical = guard();
+    assert!(run(&canonical), "the canonical guard must deny");
+    let (problems, references) =
+        problems_for(&[("hooks/hooks.json", hooks("PreToolUse", &canonical))]);
+    assert!(problems.is_empty(), "{problems:#?}");
+    assert_eq!(references, 1);
+    let mut fail_open = 0;
+    for command in BIN_TOUCHING_FORMS
+        .iter()
+        .filter(|form| form.contains("in/guard") || form.contains("/guard"))
+    {
+        let denies = run(command);
+        fail_open += usize::from(!denies);
+        let (problems, references) =
+            problems_for(&[("hooks/hooks.json", hooks("PreToolUse", command))]);
+        assert!(
+            !problems.is_empty() || denies,
+            "{command:?} passes the checker ({references} references) but does not deny without its binary"
+        );
+    }
+    assert!(
+        fail_open >= 10,
+        "only {fail_open} forms fail open at runtime"
+    );
 }
