@@ -186,7 +186,7 @@ pub(super) fn find_tunnel_hosts(
         Err(other) => return Err(other),
     };
     for instance in &mut instances {
-        instance.ssm = managed.iter().any(|id| *id == instance.id);
+        instance.ssm = managed.contains(&instance.id);
     }
     instances.sort_by(|left, right| {
         (!left.ssm, left.kind.as_str()).cmp(&(!right.ssm, right.kind.as_str()))

@@ -94,6 +94,7 @@ impl From<SeamError> for ToolkitError {
 }
 
 /// The AWS operations of the tunnel commands.
+#[allow(clippy::enum_variant_names)] // the three names are the AWS operation names
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum Operation {
     /// `ec2:DescribeInstances`.

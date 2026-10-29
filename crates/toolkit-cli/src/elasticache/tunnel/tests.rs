@@ -769,7 +769,7 @@ fn check_instance_running_fails_for_a_stopped_or_unknown_instance() {
     for response in [
         r#"{"InstanceStatuses":[{"InstanceState":{"Name":"stopped"}}]}"#,
         r#"{"InstanceStatuses":[]}"#,
-        r#"{}"#,
+        r"{}",
     ] {
         let log: Log = Log::default();
         let mut host = MockHost::ready(&log);
@@ -2004,7 +2004,7 @@ fn a_recording_with_an_unused_step_or_a_different_request_fails() {
 #[test]
 fn a_recording_with_a_wrong_typed_member_is_rejected_by_name() {
     for (text, needle) in [
-        (r#"[]"#, "the recorded document must be an object"),
+        (r"[]", "the recorded document must be an object"),
         (
             r#"{"calls":null}"#,
             "\"calls\" must be a list of objects when present (it is null)",
@@ -2128,16 +2128,16 @@ fn start_tunnel_replays_a_recorded_session_end_to_end() {
 
 #[test]
 fn start_tunnel_recording_with_unused_events_fails() {
-    let recording = write_recording(&format!(
-        r#"{{
+    let recording = write_recording(
+        r#"{
           "calls":[
-            {{"service":"ec2","operation":"DescribeInstanceStatus","response":{{"InstanceStatuses":[{{"InstanceState":{{"Name":"running"}}}}]}}}},
-            {{"service":"ssm","operation":"DescribeInstanceInformation","response":{{"InstanceInformationList":[{{"PingStatus":"Online"}}]}}}}
+            {"service":"ec2","operation":"DescribeInstanceStatus","response":{"InstanceStatuses":[{"InstanceState":{"Name":"running"}}]}},
+            {"service":"ssm","operation":"DescribeInstanceInformation","response":{"InstanceInformationList":[{"PingStatus":"Online"}]}}
           ],
-          "host":{{"programs":["aws","session-manager-plugin"],"port_checks":[true,false]}},
-          "tunnel":{{"events":[{{"interrupt":true}},{{"line":"never read"}}]}}
-        }}"#
-    ));
+          "host":{"programs":["aws","session-manager-plugin"],"port_checks":[true,false]},
+          "tunnel":{"events":[{"interrupt":true},{"line":"never read"}]}
+        }"#,
+    );
     let (status, _, stderr) = exec(&[
         "elasticache",
         "start-tunnel",
