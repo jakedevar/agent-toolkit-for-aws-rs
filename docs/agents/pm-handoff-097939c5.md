@@ -1112,3 +1112,7 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 17:05Z: S1 security review #5425 (51b3c3c9, Codex sol; no filter kill) CHANGES_REQUESTED fe7ae039: 5/5 guard reverts caught; P1 #5428 (listed ULA admits fd00:ec2::254 metadata, 1517 TLS bytes) and P1 #5429 (abort-only drop keeps socket alive on idle current-thread runtime; 2 s close budget unenforced).
   PM RULINGS (brief): forbidden-address check first + refuse listed ranges containing forbidden addrs; driver must release socket before sync API returns. S1 repair 1 -> Opus f59917b1 (continue_from 33d730c3). Then narrow Codex re-review.
   4/4: 0c08b166 L5 r2, f59917b1 S1 r1, c35bc7f4 #5394, 1d185138 x402 merge. Queue: 3022 B1, 3023 #4865.
+- 17:30Z: x402 merge (1d185138) DONE at c8af43d97c5bf7a5c73caf98d753a1ba68ed9d25 (B1 + #4865 merged, registration-only conflicts in agents_pay/mod.rs and Makefile .PHONY; 34 gate tests + fmt/clippy/sdk/live green; scoped b980403b ok 5285). Check ok. ENQUEUED seq 3027 (5a91bf0c), behind 3022 B1 + 3023 #4865 (both overtaken once by another project's expedite).
+  On x402 landing close (confirm): #5352 #5373 #5389 #5397 #5419 #5374 #5375 #5376 #5377 #5390 #5391 #5400 #5421 #5422 #5423 (and #5330 #5332 per earlier plan, verify). Then relaunch #5344 (continue_from 1a36fb6d: merge rolling + #5372 guard) and note L5 r2 needs guard.
+  Created OpenClaw B2 #5443; Opus e02b0f23 from c8af43d9.
+  4/4: 0c08b166 L5 r2, f59917b1 S1 r1, c35bc7f4 #5394, e02b0f23 B2. Queue: 3022, 3023, 3027.
