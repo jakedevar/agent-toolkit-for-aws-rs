@@ -1,3 +1,3 @@
-//! Pure OpenClaw bridge contracts.
+//! Pure `OpenClaw` bridge contracts.
 pub mod protocol;
 pub mod render;

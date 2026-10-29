@@ -7,6 +7,7 @@ const FRAME_CAP: usize = 131_072;
 const FAILURE_FRAME: &[u8] = b"{\"ok\":false,\"error\":\"AgentCore request failed\"}\n";
 
 /// Fixed failure frames never include untrusted input.
+#[must_use]
 pub fn error_frame(error: BridgeError) -> (Vec<u8>, i32) {
     let (bytes, status): (&[u8], i32) = match error {
         BridgeError::Input => (b"{\"ok\":false,\"error\":\"invalid bridge request\"}\n", 2),
@@ -20,6 +21,7 @@ pub fn error_frame(error: BridgeError) -> (Vec<u8>, i32) {
 }
 
 /// Render one complete success frame, replacing an oversized frame atomically.
+#[must_use]
 pub fn frame(value: &Json) -> (Vec<u8>, i32) {
     let mut bytes = crate::aurora::pyfmt::dumps_compact(value).into_bytes();
     bytes.push(b'\n');
@@ -84,6 +86,9 @@ fn amount(value: &Json) -> Result<Json, BridgeError> {
 }
 
 /// Render the S4 session model in service-model member order.
+///
+/// # Errors
+/// Returns an AgentCore error when required model data is missing or malformed.
 pub fn session_result(session: &Json) -> Result<Json, BridgeError> {
     let mut fields = Vec::new();
     for key in [
@@ -141,6 +146,9 @@ pub fn session_result(session: &Json) -> Result<Json, BridgeError> {
 }
 
 /// Render an already verified proof payload as the reduced bridge response.
+///
+/// # Errors
+/// Returns an AgentCore error when the payload is not a JSON object.
 pub fn payment_result(payload: &Json) -> Result<Json, BridgeError> {
     let normalized = match payload {
         Json::String(text) => toolkit_core::parse_json(text).map_err(|_| BridgeError::AgentCore)?,

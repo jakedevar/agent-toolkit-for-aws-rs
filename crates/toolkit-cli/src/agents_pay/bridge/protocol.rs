@@ -18,6 +18,9 @@ pub enum BridgeError {
 }
 
 /// Read and validate a bounded request without consulting the environment.
+///
+/// # Errors
+/// Returns an input error for invalid requests or an AgentCore error for model length violations.
 pub fn read_request(reader: &mut impl Read) -> Result<Json, BridgeError> {
     let mut bytes = Vec::new();
     reader

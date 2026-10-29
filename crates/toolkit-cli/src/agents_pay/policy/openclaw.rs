@@ -1,11 +1,30 @@
-//! Pure OpenClaw policy mapping.
+//! Pure `OpenClaw` policy mapping.
 
 use toolkit_core::Json;
 
 use crate::agents_pay::bridge::protocol::BridgeError;
 use crate::agents_pay::urlparse::urlparse;
 
+fn strings(value: &Json) -> Result<Vec<Json>, BridgeError> {
+    let Json::Array(items) = value else {
+        return Err(BridgeError::Input);
+    };
+    if items.iter().any(|item| !matches!(item, Json::String(_))) {
+        return Err(BridgeError::Input);
+    }
+    Ok(items.clone())
+}
+
+fn valid_cap(cap: &str) -> bool {
+    cap.len() <= 1000
+        && matches!(cap.as_bytes().first(), Some(b'1'..=b'9'))
+        && cap.bytes().all(|c| c.is_ascii_digit())
+}
+
 /// Convert the trusted glue's profile into the existing policy gate's JSON shape.
+///
+/// # Errors
+/// Returns an input error for malformed or unsupported profile fields.
 pub fn from_openclaw(input: &Json) -> Result<Json, BridgeError> {
     let Json::Object(fields) = input else {
         return Err(BridgeError::Input);
@@ -28,20 +47,8 @@ pub fn from_openclaw(input: &Json) -> Result<Json, BridgeError> {
         .get("maxPaymentAmountAtomic")
         .and_then(Json::as_str)
         .ok_or(BridgeError::Input)?;
-    if cap.len() > 1000
-        || !matches!(cap.as_bytes().first(), Some(b'1'..=b'9'))
-        || !cap.bytes().all(|c| c.is_ascii_digit())
-    {
+    if !valid_cap(cap) {
         return Err(BridgeError::Input);
-    }
-    fn strings(value: &Json) -> Result<Vec<Json>, BridgeError> {
-        let Json::Array(items) = value else {
-            return Err(BridgeError::Input);
-        };
-        if items.iter().any(|item| !matches!(item, Json::String(_))) {
-            return Err(BridgeError::Input);
-        }
-        Ok(items.clone())
     }
     let mut networks = input
         .get("networkPreferences")
