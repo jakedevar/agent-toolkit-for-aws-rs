@@ -45,6 +45,7 @@ pub fn bind() -> io::Result<TcpListener> {
 ///
 /// # Errors
 /// Returns an unrecoverable listener error.
+#[allow(clippy::too_many_lines)]
 pub fn serve(listener: TcpListener, state: &str, flow_end: Instant) -> io::Result<Option<Outcome>> {
     let port = listener.local_addr()?.port();
     let mut slots: Vec<Option<Slot>> = (0..SLOT_COUNT).map(|_| None).collect();
@@ -75,7 +76,7 @@ pub fn serve(listener: TcpListener, state: &str, flow_end: Instant) -> io::Resul
                     }
                 }
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
-                Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
                 Err(e) => return Err(e),
             }
         }
@@ -142,7 +143,7 @@ pub fn serve(listener: TcpListener, state: &str, flow_end: Instant) -> io::Resul
                                                 if e.kind() == io::ErrorKind::WouldBlock
                                                     || e.kind() == io::ErrorKind::Interrupted =>
                                             {
-                                                std::thread::sleep(Duration::from_millis(2))
+                                                std::thread::sleep(Duration::from_millis(2));
                                             }
                                             Err(_) => break,
                                         }

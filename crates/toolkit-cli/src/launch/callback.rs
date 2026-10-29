@@ -11,6 +11,7 @@ pub enum Outcome {
 
 pub mod gate;
 pub mod listener;
+pub mod pending;
 
 const MAX_HEAD: usize = 8192;
 

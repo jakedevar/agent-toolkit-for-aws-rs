@@ -194,3 +194,34 @@ fn session_publication_requires_admission_before_cutoff() {
         b"secret"
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn pending_custody_keeps_private_record_and_exclusive_lock() {
+    use super::{pending::Custody, PendingStatus};
+    use crate::launch::{clock::SeededRandom, tests_support::Scratch};
+    use std::os::unix::fs::PermissionsExt;
+    let scratch = Scratch::new("callback-pending");
+    let custody = Custody::acquire(scratch.path(), 12345).unwrap();
+    assert!(Custody::acquire(scratch.path(), 12345).is_err());
+    custody
+        .write(
+            1234,
+            100,
+            160,
+            PendingStatus::Listening,
+            None,
+            &SeededRandom::new(1),
+        )
+        .unwrap();
+    let path = scratch.join("pending/12345.json");
+    assert_eq!(
+        std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+    let record: serde_json::Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    assert_eq!(record["status"], "listening");
+    assert_eq!(record["cutoff"], 160);
+    drop(custody);
+    assert!(Custody::acquire(scratch.path(), 12345).is_ok());
+}

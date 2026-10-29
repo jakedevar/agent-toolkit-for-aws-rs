@@ -51,7 +51,7 @@ pub fn state_dir(env: &dyn Env) -> Result<PathBuf, LaunchError> {
 }
 
 /// Create `dir` 0700 if missing, require a real directory, `chmod 0700`.
-fn prepare_dir(dir: &Path) -> io::Result<()> {
+pub(crate) fn prepare_dir(dir: &Path) -> io::Result<()> {
     match fs::symlink_metadata(dir) {
         Ok(meta) if meta.is_dir() => {}
         Ok(_) => {

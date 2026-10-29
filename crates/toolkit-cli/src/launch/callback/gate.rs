@@ -72,33 +72,6 @@ impl CommitGate {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::time::Duration;
-
-    #[test]
-    fn cutoff_and_watchdog_close_admission() {
-        let cutoff = Instant::now() + Duration::from_secs(1);
-        let gate = CommitGate::default();
-        assert!(gate.start_exchange());
-        assert!(!gate.admit(cutoff, cutoff));
-        assert_eq!(gate.watchdog(), WatchdogAction::RecordTimeoutAndExit);
-        assert!(!gate.admit(cutoff - Duration::from_millis(1), cutoff));
-    }
-
-    #[test]
-    fn admitted_publication_does_not_make_watchdog_wait() {
-        let cutoff = Instant::now() + Duration::from_secs(1);
-        let gate = CommitGate::default();
-        assert!(gate.start_exchange());
-        assert!(gate.admit(cutoff - Duration::from_millis(1), cutoff));
-        assert_eq!(gate.watchdog(), WatchdogAction::ExitFailure);
-        // Production exits immediately on this action; a returning test stub must
-        // not simulate subsequent publication.
-    }
-}
-
 /// Start the process watchdog. The caller must retain its pending-record lock
 /// until process exit. The timeout callback makes one best-effort record write;
 /// the watchdog never joins the worker thread.
@@ -163,4 +136,36 @@ pub fn publish_session(
         let _ = std::fs::remove_file(temp);
     }
     result
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn cutoff_and_watchdog_close_admission() {
+        let cutoff = Instant::now() + Duration::from_secs(1);
+        let gate = CommitGate::default();
+        assert!(gate.start_exchange());
+        assert!(!gate.admit(cutoff, cutoff));
+        assert_eq!(gate.watchdog(), WatchdogAction::RecordTimeoutAndExit);
+        assert!(!gate.admit(
+            cutoff.checked_sub(Duration::from_millis(1)).unwrap(),
+            cutoff
+        ));
+    }
+
+    #[test]
+    fn admitted_publication_does_not_make_watchdog_wait() {
+        let cutoff = Instant::now() + Duration::from_secs(1);
+        let gate = CommitGate::default();
+        assert!(gate.start_exchange());
+        assert!(gate.admit(
+            cutoff.checked_sub(Duration::from_millis(1)).unwrap(),
+            cutoff
+        ));
+        assert_eq!(gate.watchdog(), WatchdogAction::ExitFailure);
+        // Production exits immediately on this action; a returning test stub must
+        // not simulate subsequent publication.
+    }
 }
