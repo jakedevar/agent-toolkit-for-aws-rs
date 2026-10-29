@@ -976,27 +976,109 @@ fn next_significant(tokens: &[Token]) -> Vec<Option<usize>> {
 struct Neighbours {
     before: Vec<Option<usize>>,
     after: Vec<Option<usize>>,
+    bounds: Vec<(usize, usize)>,
 }
 
 fn is_sentinel(tokens: &[Token], neighbours: &Neighbours, at: usize) -> bool {
+    let (left, right) = neighbours.bounds[at];
     let comparison = |index: Option<usize>| {
         index.is_some_and(|index| {
             is_operator(&tokens[index], "==") || is_operator(&tokens[index], "!=")
         })
     };
-    if comparison(neighbours.before[at]) || comparison(neighbours.after[at]) {
+    let boundary = |index: Option<usize>, left_side: bool| {
+        index.is_none_or(|index| match &tokens[index].kind {
+            Kind::Newline => true,
+            Kind::Name(name) => matches!(
+                name.as_str(),
+                "if" | "elif" | "while" | "and" | "or" | "not" | "in"
+            ),
+            Kind::Op(op) => {
+                matches!(
+                    op.as_str(),
+                    "," | ":" | ";" | "==" | "!=" | "<" | ">" | "<=" | ">="
+                ) || if left_side {
+                    matches!(op.as_str(), "(" | "[" | "{")
+                } else {
+                    matches!(op.as_str(), ")" | "]" | "}")
+                }
+            }
+            _ => false,
+        })
+    };
+    let before =
+        if left > 0 && matches!(tokens[left - 1].kind, Kind::Newline) && tokens[left].depth == 0 {
+            None
+        } else {
+            neighbours.before[left]
+        };
+    let after = if right + 1 < tokens.len()
+        && matches!(tokens[right + 1].kind, Kind::Newline)
+        && tokens[right].depth == 0
+    {
+        None
+    } else {
+        neighbours.after[right]
+    };
+    if (comparison(before) && boundary(after, false))
+        || (comparison(after) && boundary(before, true))
+    {
         return true;
     }
-    tokens[at].open.is_some_and(|open| {
-        neighbours.before[open]
+    tokens[left].open.is_some_and(|open| {
+        let element_start = before == Some(open) || before.is_some_and(|i| is_operator(&tokens[i], ",") && tokens[i].open == Some(open));
+        let element_end = after.is_some_and(|i| (is_operator(&tokens[i], ",") && tokens[i].open == Some(open)) || (matches!(&tokens[i].kind, Kind::Op(op) if matches!(op.as_str(), ")" | "]" | "}")) && tokens[i].depth == tokens[open].depth));
+        element_start && element_end && neighbours.before[open]
             .is_some_and(|index| matches!(&tokens[index].kind, Kind::Name(name) if name == "in"))
     })
 }
 
+// Collapse parentheses containing exactly one literal. Each pair is visited once,
+// even for deeply nested input, and calls and membership containers stay intact.
+fn grouped_bounds(
+    tokens: &[Token],
+    before: &[Option<usize>],
+    after: &[Option<usize>],
+) -> Vec<(usize, usize)> {
+    let mut bounds: Vec<_> = (0..tokens.len()).map(|i| (i, i)).collect();
+    let mut representative: Vec<Option<usize>> = tokens
+        .iter()
+        .enumerate()
+        .map(|(i, t)| matches!(t.kind, Kind::Str(_)).then_some(i))
+        .collect();
+    let mut stack = Vec::new();
+    for (i, token) in tokens.iter().enumerate() {
+        if matches!(&token.kind, Kind::Op(op) if matches!(op.as_str(), "(" | "[" | "{")) {
+            stack.push(i);
+        } else if matches!(&token.kind, Kind::Op(op) if matches!(op.as_str(), ")" | "]" | "}")) {
+            let Some(open) = stack.pop() else { continue };
+            if !is_operator(&tokens[open], "(")
+                || !is_operator(token, ")")
+                || before[open].is_some_and(|j| {
+                    ends_value(&tokens[j]) || matches!(&tokens[j].kind, Kind::Name(n) if n == "in")
+                })
+            {
+                continue;
+            }
+            if let Some(atom) = after[open].and_then(|j| representative[j]) {
+                if after[bounds[atom].1] == Some(i) {
+                    bounds[atom] = (open, i);
+                    representative[open] = Some(atom);
+                }
+            }
+        }
+    }
+    bounds
+}
+
 fn string_occurrences(tokens: &[Token]) -> Vec<Occurrence> {
+    let before = previous_significant(tokens);
+    let after = next_significant(tokens);
+    let bounds = grouped_bounds(tokens, &before, &after);
     let neighbours = Neighbours {
-        before: previous_significant(tokens),
-        after: next_significant(tokens),
+        before,
+        after,
+        bounds,
     };
     tokens
         .iter()
@@ -1275,7 +1357,20 @@ fn read_statement(
         let Kind::Name(name) = &tokens[at].kind else {
             break;
         };
-        if !COMPOUND.contains(&name.as_str()) {
+        let soft_header = matches!(name.as_str(), "case" | "match")
+            && statement.get(start + 1).is_some_and(|next| {
+                !is_operator(&tokens[*next], ":")
+                    && !is_operator(&tokens[*next], "=")
+                    && !AUGMENTED.iter().any(|op| is_operator(&tokens[*next], op))
+            })
+            && statement[start + 1..]
+                .iter()
+                .take_while(|index| {
+                    !is_operator(&tokens[**index], "=")
+                        && !AUGMENTED.iter().any(|op| is_operator(&tokens[**index], op))
+                })
+                .any(|index| tokens[*index].depth == 0 && is_operator(&tokens[*index], ":"));
+        if !COMPOUND.contains(&name.as_str()) && !soft_header {
             break;
         }
         let colon = statement[start..]

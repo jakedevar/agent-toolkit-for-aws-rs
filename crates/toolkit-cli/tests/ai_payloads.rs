@@ -831,10 +831,18 @@ fn ap_sub_04_grouped_operands_and_expression_components() {
         "if tok in ((\"[GROUPED_MEMBER]\"),):\n    pass\n",
     )));
     for name in ["GROUPED_RIGHT", "GROUPED_LEFT", "GROUPED_MEMBER"] {
-        assert_eq!(contexts(&occurrences_of(&template, name)), vec!["sentinel"], "{name}");
+        assert_eq!(
+            contexts(&occurrences_of(&template, name)),
+            vec!["sentinel"],
+            "{name}"
+        );
     }
     for name in ["ADDED_MEMBER", "ADDED_EQUALITY"] {
-        assert_eq!(contexts(&occurrences_of(&template, name)), vec!["quoted"], "{name}");
+        assert_eq!(
+            contexts(&occurrences_of(&template, name)),
+            vec!["quoted"],
+            "{name}"
+        );
     }
 }
 
