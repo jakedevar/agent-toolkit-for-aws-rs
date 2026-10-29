@@ -258,6 +258,7 @@ mod scripted_tests {
     struct FakeListener {
         accepts: Rc<Cell<usize>>,
         reads: Rc<Cell<usize>>,
+        callback_at: Option<usize>,
     }
     struct FakeStream {
         callback: bool,
@@ -270,7 +271,7 @@ mod scripted_tests {
             let count = self.accepts.get();
             self.accepts.set(count + 1);
             Ok(FakeStream {
-                callback: count == 5,
+                callback: self.callback_at == Some(count),
                 part: 0,
                 reads: self.reads.clone(),
             })
@@ -311,6 +312,7 @@ mod scripted_tests {
         let listener = FakeListener {
             accepts: accepts.clone(),
             reads: reads.clone(),
+            callback_at: Some(5),
         };
         assert_eq!(
             serve_with(listener, 1234, "s", now + Duration::from_secs(1), &clock).unwrap(),
@@ -319,6 +321,51 @@ mod scripted_tests {
         assert_eq!(reads.get(), 3);
         assert_eq!(accepts.get(), 24);
         assert_eq!(clock.now().duration_since(now), Duration::from_millis(4));
+    }
+
+    #[test]
+    fn always_ready_flood_obeys_two_millisecond_turn_pacing() {
+        let start = Instant::now();
+        let clock = FakeClock(Cell::new(start));
+        let accepts = Rc::new(Cell::new(0));
+        let listener = FakeListener {
+            accepts: accepts.clone(),
+            reads: Rc::new(Cell::new(0)),
+            callback_at: None,
+        };
+        assert_eq!(
+            serve_with(listener, 1234, "s", start + Duration::from_secs(1), &clock).unwrap(),
+            None
+        );
+        assert_eq!(accepts.get(), 4000);
+        assert_eq!(clock.now().duration_since(start), Duration::from_secs(1));
+    }
+
+    #[test]
+    fn idle_listener_obeys_ten_millisecond_turn_pacing() {
+        struct Idle(Rc<Cell<usize>>);
+        impl ListenerIo for Idle {
+            type Stream = FakeStream;
+            fn accept_stream(&self) -> io::Result<FakeStream> {
+                self.0.set(self.0.get() + 1);
+                Err(io::ErrorKind::WouldBlock.into())
+            }
+        }
+        let start = Instant::now();
+        let clock = FakeClock(Cell::new(start));
+        let accepts = Rc::new(Cell::new(0));
+        assert_eq!(
+            serve_with(
+                Idle(accepts.clone()),
+                1234,
+                "s",
+                start + Duration::from_secs(1),
+                &clock
+            )
+            .unwrap(),
+            None
+        );
+        assert_eq!(accepts.get(), 100);
     }
 
     #[test]
