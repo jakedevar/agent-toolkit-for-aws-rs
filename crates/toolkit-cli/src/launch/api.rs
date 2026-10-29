@@ -29,3 +29,7 @@ pub fn error_code(header: Option<&str>, body: &[u8]) -> &'static str {
 #[cfg(test)]
 #[path = "api/tests_code.rs"]
 mod tests_code;
+
+#[cfg(test)]
+#[path = "api/tests_ops.rs"]
+mod tests_ops;
