@@ -24,6 +24,7 @@ use super::checks::{Findings, Status};
 use super::client::RecordedClient;
 use super::infra::run_infra_checks;
 
+mod capture;
 mod neptune;
 mod redaction;
 mod review;

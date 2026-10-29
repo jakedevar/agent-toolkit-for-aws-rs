@@ -43,6 +43,7 @@ use crate::startup::read_text;
 use crate::{CommandSpec, Invocation, Output};
 
 mod access;
+mod capture;
 mod checks;
 mod client;
 mod dbchecks;
