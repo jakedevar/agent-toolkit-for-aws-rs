@@ -21,8 +21,8 @@ use toolkit_core::{
 use crate::safe_text::safe_path;
 use crate::{Invocation, Output};
 
-mod template;
 mod place;
+mod template;
 
 use template::Template;
 
