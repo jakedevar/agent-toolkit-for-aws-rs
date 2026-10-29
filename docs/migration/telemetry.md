@@ -143,6 +143,19 @@ Telemetry defaults to **no emission** and never blocks the host:
     as a holder (anyone could keep it fresh) and is replaced by a private one, as a stale lock is.
     While the Python hooks still share these files, a snapshot they write under a group-writable
     umask is rebuilt the next time the Rust command runs.
+12. **A bare `-` path flag (#4961).** `--telemetry-dir` and `bundles --plugin-root` take the
+    router's bare-`-` policy (#4780), applied by `telemetry::screen` because a passthrough
+    command's words never reach the router (the two flags are declared in the slice's
+    `value_flags`, which the router ignores for a passthrough command and the
+    `passthrough_commands_declare_their_value_flags_and_refuse_dash_unless_a_hook` contract test
+    reads). Python's `argparse` took `-` as a plain directory string; here, for the interactive
+    subcommands (`status`, `reconcile`, `consent show|status|accept|opt-out`, `bundles`, and
+    anything unknown), `--flag -` and `--flag=-` exit 2 with the flag-naming usage error and a bare
+    `-` word is refused too, before any path is read or written. **Divergence for the hooks**
+    (`skill-invoked`, `migration`, `consent session-start`), which must never fail: the flag is
+    treated as absent, so nothing is read from `./-`, nothing is emitted, the exit is 0 and the
+    output is byte-identical to the same hook without the flag (fail-closed: `pluginVersion` is
+    `null`). `./-` remains an explicit literal path.
 
 Unchanged on purpose: the consent file layout, the wire fields, the notice and acknowledge
 wording, the snapshot layout (`runId`, `sessionId`, `started`, `phases`, `gateFailures`,

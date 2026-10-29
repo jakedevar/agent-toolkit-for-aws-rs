@@ -429,7 +429,7 @@ fn value_allowed(
 
 /// The usage error for a bare `-` given to `flag`: one line naming the flag
 /// (always a registered flag name, never caller text).
-fn dash_value_error(flag: &str) -> ToolkitError {
+pub(crate) fn dash_value_error(flag: &str) -> ToolkitError {
     ToolkitError::usage(
         "invalid_arguments",
         format!(
@@ -440,7 +440,7 @@ fn dash_value_error(flag: &str) -> ToolkitError {
 }
 
 /// The usage error for a bare `-` positional argument.
-fn dash_positional_error() -> ToolkitError {
+pub(crate) fn dash_positional_error() -> ToolkitError {
     ToolkitError::usage(
         "invalid_arguments",
         "invalid arguments: a bare - argument is not accepted (standard input/output); \

@@ -1465,6 +1465,16 @@ bundle or `scripts/telemetry`; without it there is no plugin version and nothing
   subcommands (`skill-invoked`, `migration`, `consent session-start`) always exit 0 and are
   silent (`session-start` prints the one instruction a host injects into the agent's context);
   `consent`, `status`, `reconcile` and `bundles` exit 2 on an unknown word.
+- **A bare `-` path flag (#4961).** `--telemetry-dir` and `bundles --plugin-root` follow the
+  repository's bare-`-` policy (#4780), applied by the handler because a passthrough command's
+  words never reach the router. An interactive subcommand (`status`, `reconcile`,
+  `consent show|status|accept|opt-out`, `bundles`) given `-` in either spelling
+  (`--telemetry-dir -`, `--telemetry-dir=-`) exits 2 with the router message
+  `invalid arguments: --telemetry-dir does not accept - ...; use ./- for a file named -` and
+  reads or writes nothing; a bare `-` word is refused the same way. A hook (`skill-invoked`,
+  `migration`, `consent session-start`) never fails: it treats the flag as absent, so the output
+  is that of the hook without the flag, the exit is 0 and no file is touched. `./-` stays an
+  explicit literal path. See `docs/migration/cli-bare-dash.md`.
 - **Consent is fail-closed.** Only `~/.aws-startup-advisor/plugin-telemetry.json` with
   `consentStatus` `ACCEPTED` and a UUID `installId` permits an event. A missing, unreadable,
   malformed or oversized record, an unknown home directory and `OPT_OUT` all mean no emission;
