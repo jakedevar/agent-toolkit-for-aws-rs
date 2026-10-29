@@ -126,9 +126,9 @@ fn ap_rw_04_cross_format_matrix() {
                 || (*source == "openai" && *target == "nova");
             let o = check(target, &e, &response("123"), false);
             if ok {
-                assert_out(o, 0, "ok:")
+                assert_out(o, 0, "ok:");
             } else {
-                assert_out(o, 1, "event[0].")
+                assert_out(o, 1, "event[0].");
             }
         }
     }
