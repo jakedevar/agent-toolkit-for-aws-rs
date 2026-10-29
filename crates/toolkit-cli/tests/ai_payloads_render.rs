@@ -561,3 +561,119 @@ fn ap_fs_02_03_symlink_inputs_and_output_directory_are_refused() {
     assert_eq!(f.render(&template, "script", &[]).status.code(), Some(1));
     assert_eq!(fs::read_dir(outside).unwrap().count(), 0);
 }
+
+#[test]
+fn ap_con_03_04_all_bare_slots_are_required_even_when_unresolved_allowed() {
+    let names = [
+        "ACCEPT_EULA",
+        "TRUE_OR_FALSE",
+        "CONCURRENCY",
+        "REQUEST_COUNT",
+        "INPUT_TOKENS_MEAN",
+        "INPUT_TOKENS_STDDEV",
+        "OUTPUT_TOKENS_MEAN",
+        "OUTPUT_TOKENS_STDDEV",
+        "METRICS_LIST",
+    ];
+    for name in names {
+        let f = Fixture::new();
+        let template = f.write(
+            "template.py",
+            &format!("# Cell 0 [markdown]: Example\n# Desc\n# Cell 1: Code\nx = [{name}]\n"),
+        );
+        let result = f.render(&template, "script", &["--allow-unresolved"]);
+        assert_eq!(result.status.code(), Some(1), "{name}");
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        assert!(stderr.contains("typed_slot_unresolved") && stderr.contains(name));
+        assert!(!f.0.join("scripts").exists());
+    }
+    let f = Fixture::new();
+    let template = f.write("template.py", TEMPLATE);
+    let values = f.write("values.json", r#"{"values":{"ACCEPT_EULA":false}}"#);
+    let result = f.render(
+        &template,
+        "script",
+        &["--values", values.to_str().unwrap(), "--allow-unresolved"],
+    );
+    assert!(result.status.success());
+    let output = fs::read_to_string(f.0.join("scripts/01_example.py")).unwrap();
+    assert!(output.contains("ACCEPT_EULA = False"));
+    assert!(output.contains("\"[ROLE_ARN]\""));
+}
+
+#[test]
+fn ap_nb_10_11_12_unsupported_versions_and_invalid_ids() {
+    for (version, minor, id, error) in [
+        ("4", "5", "", "notebook_cell_ids_invalid"),
+        ("4", "5", "bad id!", "notebook_cell_ids_invalid"),
+        (
+            "4",
+            "5",
+            "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789___",
+            "notebook_cell_ids_invalid",
+        ),
+        ("4", "6", "a1", "notebook_version_unsupported"),
+        ("4", "-1", "a1", "notebook_version_unsupported"),
+        ("4", "\"5\"", "a1", "notebook_version_unsupported"),
+        ("3", "4", "a1", "notebook_version_unsupported"),
+        ("5", "4", "a1", "notebook_version_unsupported"),
+    ] {
+        let f = Fixture::new();
+        let template = f.write(
+            "template.py",
+            "# Cell 0 [markdown]: Example\n# Desc\n# Cell 1: Code\npass\n",
+        );
+        let source = f.write("notebooks/example.ipynb", &format!("{{\"cells\":[{{\"id\":\"{id}\"}}],\"metadata\":{{}},\"nbformat\":{version},\"nbformat_minor\":{minor}}}"));
+        let before = fs::read(&source).unwrap();
+        let result = f.render(&template, "notebook", &["--append"]);
+        assert_eq!(result.status.code(), Some(1));
+        assert!(String::from_utf8_lossy(&result.stderr).contains(error));
+        assert_eq!(fs::read(source).unwrap(), before);
+        assert!(!f.0.join("notebooks/example-01.ipynb").exists());
+    }
+    for minor in [0, 3, 4] {
+        let f = Fixture::new();
+        let template = f.write(
+            "template.py",
+            "# Cell 0 [markdown]: Example\n# Desc\n# Cell 1: Code\npass\n",
+        );
+        f.write("notebooks/example.ipynb", &format!("{{\"cells\":[{{\"source\":[]}}],\"metadata\":{{}},\"nbformat\":4,\"nbformat_minor\":{minor}}}"));
+        assert!(f
+            .render(&template, "notebook", &["--append"])
+            .status
+            .success());
+        let copy = toolkit_core::parse_json(
+            &fs::read_to_string(f.0.join("notebooks/example-01.ipynb")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            copy.get("nbformat_minor"),
+            Some(&toolkit_core::Json::Int(minor))
+        );
+        let toolkit_core::Json::Array(cells) = copy.get("cells").unwrap() else {
+            panic!()
+        };
+        assert!(cells.iter().all(|c| c.get("id").is_none()));
+    }
+}
+
+#[test]
+fn ap_app_02_07_series_invalid_and_exhausted_sources_are_untouched() {
+    let template_text = "# Cell 0 [markdown]: Example\n# Desc\n# Cell 1: Code\npass\n";
+    let f = Fixture::new();
+    let template = f.write("template.py", template_text);
+    let result = f.render(&template, "notebook", &["--append"]);
+    assert!(String::from_utf8_lossy(&result.stderr).contains("append_source_missing"));
+    let base = "{\"cells\":[],\"metadata\":{},\"nbformat\":4,\"nbformat_minor\":4}";
+    let source = f.write("notebooks/example.ipynb", base);
+    fs::create_dir(f.0.join("notebooks/example-05.ipynb")).unwrap();
+    let result = f.render(&template, "notebook", &["--append"]);
+    assert!(String::from_utf8_lossy(&result.stderr).contains("append_source_invalid"));
+    assert_eq!(fs::read_to_string(source).unwrap(), base);
+    let f = Fixture::new();
+    let template = f.write("template.py", template_text);
+    let source = f.write("notebooks/example-99.ipynb", base);
+    let result = f.render(&template, "notebook", &["--append"]);
+    assert!(String::from_utf8_lossy(&result.stderr).contains("notebook_versions_exhausted"));
+    assert_eq!(fs::read_to_string(source).unwrap(), base);
+}
