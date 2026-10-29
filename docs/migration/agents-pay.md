@@ -200,3 +200,101 @@ check can close it.
 - R-SEC: the route refuses credential flags by name
   (`reject_credential_arguments`); the router already refuses every unknown
   flag.
+
+## Admin commands (S6, #5462)
+
+```
+toolkit agents-pay admin init-config (--recipient ADDR ... | --allow-any-recipient)
+                         [--max-per-payment-usd USD] [--network CAIP2]
+                         [--origin URL ...] [--region R] [--user-id ID]
+                         [--path FILE] [--force]
+toolkit agents-pay admin show-config [--path FILE]
+toolkit agents-pay admin create-instrument --email EMAIL [--user-id ID]
+                         [--network-family ETHEREUM|SOLANA] [--manager-arn ARN]
+                         [--connector-id ID] [--region R] [--path FILE]
+toolkit agents-pay admin new-session --budget USD [--expiry-minutes N]
+                         [--user-id ID] [--manager-arn ARN] [--region R] [--path FILE]
+toolkit agents-pay admin preflight [--path FILE]
+toolkit agents-pay admin setup-openclaw [--path FILE] [--project-dir DIR]
+toolkit agents-build setup-payment-user --user-id ID --email EMAIL [--budget USD]
+                         [--expiry-minutes N] [--network ETHEREUM|SOLANA]
+                         [--manager-arn ARN] [--connector-id ID] [--region R]
+```
+
+They replace `agents_pay_admin.py` and `agents-build/scripts/setup_payment_user.py`,
+keeping their flags, texts and resolution chains (R-RES-ADM). A human runs
+them, never the agent. Code: `crates/toolkit-cli/src/agents_pay/admin/`.
+
+- **D32.** In a build without `agents-pay-live` every one of these routes is
+  `self::no_payment::admin_command` (`agents_pay/admin/no_payment.rs`, pinned
+  token for token by `tests/agents_pay_gate.rs` like the fetch route): it
+  prints `This toolkit build has no payment support; install a release build
+  of toolkit.` on stderr and exits 1 before any file, variable, credential,
+  deployed state or terminal is read. Both admin tables (`SLICE`,
+  `agents-pay-admin`, and `BUILD_SLICE`, `agents-build`) live in
+  `admin/mod.rs`, so one file holds every admin registry entry.
+  `tests/agents_pay_ac3.rs` runs every route in process and as the built
+  binary under the hostile environment (T-AC3-INH).
+- **G1b.** Each route takes its world from one `admin::AdminDeps` (env, file
+  system, terminal, admin client, randomness). `admin::fixtures` are harmless:
+  `TempAdminFs` refuses and records any path outside its temporary root, and
+  `FakeAdmin` accepts only the fixture account. The live world
+  (`live::AdminWorld`) uses the S1 provider roots for the `AgentCore` admin
+  plane, STS and credential HTTP (admin keeps R-ROOTS), and G3 refuses a
+  fixture manager before anything is created.
+- **The creating gate (D28, D33).** `create-instrument`, `new-session`,
+  `setup-openclaw` and `setup-payment-user` check the terminal first, before
+  any argument, credential or service check; a headless caller always gets the
+  same refusal and exit 1. Then the arguments (D29), the STS check, the
+  resolution and a summary (values through `shown_value`). The line typed at
+  `Type 'approve' to continue: ` must be exactly `approve` (only the line
+  terminator is removed: `approve ` with a trailing space aborts, which Python's
+  `strip()` accepted). EOF aborts (D28). One approval covers the instrument and
+  the optional session of `setup-payment-user`; the wizard keeps its per-step
+  prompts. No route declares a `yes`, `force`, `non-interactive` or `assume`
+  flag.
+- **D29.** `--budget` must be a positive decimal (`CapDecimal`, no float) and
+  `--expiry-minutes` and the wizard expiry must be in 15..=480, checked before
+  any call or prompt. The budget sent to `CreatePaymentSession` is the
+  fixed-point rendering of the parsed value (`1e1` is sent as `10`; `1.00`
+  stays `1.00`). D30: the wizard prompt reads `(15-480; 480 = 8 hours)`.
+- **D31.** A failed admin call prints `<Operation> failed: <code>` on stderr
+  and exits 1, the code from the R-AWS-CODE allowlist or the R-ERR class name;
+  the STS check prints the legacy credentials text with that code in place of
+  the exception message. A call that succeeded but could not be recorded in
+  the config prints the created id with the write failure.
+- **R-ADM-WRITE.** `admin::write::atomic_write_0600`: final directory created
+  at 0700 and `fchmod`ed through an `O_NOFOLLOW` descriptor (a symlinked
+  directory is refused), a `.config-<16 hex>.tmp` created `O_EXCL` at 0600,
+  written and synced, `renameat` over the target, `fchmod 0600`; the temporary
+  file is removed on any failure (T-WRITE).
+- **D27.** `setup-payment-user` keeps its single candidate
+  (`agentcore/.cli/deployed-state.json`) but reads it with the shared parser,
+  so the 0.26.x dict layout works.
+- `preflight` loads the policy through the runtime's checked opener, reports
+  the `PAYMENT_*` variables and the deploy-record hint, and fails on any
+  variable whose upper-cased name contains `CDP_API_KEY_SECRET`,
+  `WALLET_SECRET`, `APP_SECRET` or `AUTHORIZATION_PRIVATE_KEY` (names only,
+  never values; T-PREFLIGHT). The SDK line reads `AgentCore payments client
+  built in`.
+
+### S6 decisions
+
+- Admin texts name the Rust commands (`toolkit agents-pay admin init-config`,
+  `toolkit agents-pay admin new-session ...`) where Python named the script
+  (D23 applied to the admin plane).
+- `create-instrument` and `setup-payment-user` check the network family
+  (`ETHEREUM` or `SOLANA`) before any call; Python passed it to the service.
+  `setup-payment-user` runs the STS check too (D33 order).
+- Required arguments (`--email`, `--budget`, `--user-id`) and `type=int`
+  values are argparse-style usage errors (exit 2), checked after the terminal
+  gate on the creating routes, so a headless caller sees the same refusal
+  whatever the arguments.
+- A region-less admin client (`create-instrument`, `new-session` and the
+  wizard's STS check with nothing configured) uses `AWS_REGION`,
+  `AWS_DEFAULT_REGION`, the profile region, then `us-east-1`.
+- An unreadable or oversized (over 1 MiB) admin config reads as the empty
+  skeleton, like invalid JSON; a `resources` or `policy` member that is not
+  an object is replaced by `{}` when the config is next written (Python
+  raised there).
+- Deployed-state values that are not strings read as absent.

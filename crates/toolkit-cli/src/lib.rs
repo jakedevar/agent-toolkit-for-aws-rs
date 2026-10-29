@@ -172,6 +172,23 @@ impl<'a> Output<'a> {
         self.settle(result)
     }
 
+    /// Writes `text` without a newline and flushes it: an interactive prompt
+    /// read on the same line (x402 S6). After a closed pipe this is a no-op.
+    ///
+    /// # Errors
+    ///
+    /// Same as [`Output::line`].
+    pub fn prompt(&mut self, text: &str) -> Result<(), ToolkitError> {
+        if self.closed {
+            return Ok(());
+        }
+        let result = self
+            .sink
+            .write_all(text.as_bytes())
+            .and_then(|()| self.sink.flush());
+        self.settle(result)
+    }
+
     /// Flushes buffered output with the same error contract as [`Output::line`].
     ///
     /// # Errors

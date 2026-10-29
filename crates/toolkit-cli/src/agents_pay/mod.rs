@@ -10,7 +10,9 @@
 //! - S5 (#5352): [`proof`] (R-PP-VERIFY, R-HDR), [`flow`] (`fetch`,
 //!   `--status`, `--browser-handle`), [`vault`], [`deps`] (the injected world
 //!   and D32), `wiring` (`aws-sdk`), `live` (`agents-pay-live` only, G1) and
-//!   the `toolkit agents-pay fetch` route.
+//!   the `toolkit agents-pay fetch` route;
+//! - S6 (#5462): [`admin`], the trusted `toolkit agents-pay admin *` commands
+//!   and `toolkit agents-build setup-payment-user`.
 
 pub mod amount;
 pub mod challenge;
@@ -19,6 +21,7 @@ pub mod policy;
 pub mod pyval;
 pub mod urlparse;
 
+pub mod admin;
 pub mod agentcore;
 pub mod bridge;
 pub mod deps;

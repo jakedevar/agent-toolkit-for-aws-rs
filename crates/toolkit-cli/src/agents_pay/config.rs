@@ -155,12 +155,18 @@ pub fn load_config(_path: &Path) -> Result<Json, String> {
 fn missing(path: &str) -> String {
     format!("No payment config at {path}. Payments are refused until an operator creates one (agents_pay_admin.py init-config). This is intentional: there is no permissive default.")
 }
-#[cfg(unix)]
-fn filemode(mode: u32) -> String {
-    let mut s = String::from(if mode & 0o170_000 == 0o040_000 {
-        "d"
-    } else {
-        "-"
+/// Python `stat.filemode`: the type character, then the nine permission
+/// characters with the set-id and sticky bits.
+#[must_use]
+pub(crate) fn filemode(mode: u32) -> String {
+    let mut s = String::from(match mode & 0o170_000 {
+        0o040_000 => "d",
+        0o120_000 => "l",
+        0o020_000 => "c",
+        0o060_000 => "b",
+        0o010_000 => "p",
+        0o140_000 => "s",
+        _ => "-",
     });
     for (i, c) in ['r', 'w', 'x', 'r', 'w', 'x', 'r', 'w', 'x']
         .into_iter()

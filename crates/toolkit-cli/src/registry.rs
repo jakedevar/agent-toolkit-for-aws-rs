@@ -72,7 +72,9 @@ pub(crate) struct Slice {
 /// Every slice, one per line, ascending by [`Slice::name`]. Add a slice by
 /// inserting one line at its alphabetical place.
 pub(crate) const SLICES: &[Slice] = &[
+    crate::agents_pay::admin::BUILD_SLICE,
     crate::agents_pay::SLICE,
+    crate::agents_pay::admin::SLICE,
     crate::ai_data::SLICE,
     crate::ai_models::SLICE,
     crate::ai_payloads::SLICE,
@@ -553,7 +555,7 @@ mod tests {
     /// The route paths of the old `COMMANDS` table (commit ce0eaf6a, before the
     /// registry), in table order: the public order of [`COMMANDS`]. The routes of
     /// slices added after the registry follow at the end, ordered by slice name.
-    const LEGACY_COMMAND_ORDER: [&str; 108] = [
+    const LEGACY_COMMAND_ORDER: [&str; 115] = [
         "skills list",
         "manifests validate",
         "spec validate",
@@ -633,8 +635,17 @@ mod tests {
         "timestream-influxdb validate-input",
         "timestream-influxdb instance-types",
         // Slices added after the registry (NEW_RANK), by slice name.
+        // agents-build (#4410, slice S6 #5462):
+        "agents-build setup-payment-user",
         // agents-pay (#4410, slice S5 #5352):
         "agents-pay fetch",
+        // agents-pay-admin (#4410, slice S6 #5462):
+        "agents-pay admin init-config",
+        "agents-pay admin show-config",
+        "agents-pay admin create-instrument",
+        "agents-pay admin new-session",
+        "agents-pay admin preflight",
+        "agents-pay admin setup-openclaw",
         // ai-payloads (#4386, slice S1 #5143):
         "ai-payloads reward sample",
         "ai-payloads reward check",
