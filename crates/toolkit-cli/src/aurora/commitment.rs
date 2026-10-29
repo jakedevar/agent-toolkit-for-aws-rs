@@ -1017,7 +1017,7 @@ pub(crate) fn command(
         Some(other) => {
             return Err(usage(format!(
                 "argument mode: invalid choice: {} (choose from 'offline')",
-                crate::manifests::py_repr_str(other)
+                crate::manifests::py_repr_str(&crate::safe_text::shown_value(other))
             )))
         }
     };

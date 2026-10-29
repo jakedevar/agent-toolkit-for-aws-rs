@@ -571,10 +571,13 @@ const LEAK_PREFIX_CHARS: usize = 10;
 fn secret_leaks(stream: &str, label: &str, args: &[String], found: &mut BTreeSet<String>) {
     let prefix: String = PATH_SECRET.chars().take(LEAK_PREFIX_CHARS).collect();
     for needle in [prefix.as_str(), SHORT_SECRET] {
-        if stream.contains(needle) {
+        if let Some(line) = stream.lines().find(|line| line.contains(needle)) {
+            // The leaking line, with the credential masked, names the site.
+            let masked = line.replace(needle, "<LEAK>");
             found.insert(format!(
-                "credential {needle:?} in {label} for {}",
-                display_args(args)
+                "credential {needle:?} in {label} for {}: {}",
+                display_args(args),
+                toolkit_core::quote_untrusted_bounded(&masked, 160)
             ));
         }
     }

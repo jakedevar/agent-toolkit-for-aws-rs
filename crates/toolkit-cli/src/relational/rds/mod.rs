@@ -18,6 +18,7 @@ use toolkit_aws::recorded;
 
 use super::members::{response_reason, text_member};
 use crate::aurora::api::json_float;
+use crate::safe_text::redacted_value;
 use crate::aurora::pyfmt::{round_num, round_to, Num};
 
 pub(crate) mod client;
@@ -648,7 +649,8 @@ fn set_member(document: &mut Json, key: &str, value: Json) {
 
 fn error_document(instance_id: &str, reason: String) -> Json {
     Json::object(vec![
-        ("instance_id", Json::string(instance_id)),
+        // Caller text: redacted where the document is built (#4941, #4981).
+        ("instance_id", Json::string(redacted_value(instance_id))),
         ("error", Json::String(reason)),
     ])
 }
@@ -742,7 +744,7 @@ pub(crate) fn analyze_instance_live(
     set_member(
         &mut comparison.document,
         "instance_id",
-        Json::string(instance_id),
+        Json::string(redacted_value(instance_id)),
     );
     set_member(
         &mut comparison.document,

@@ -224,7 +224,14 @@ fn load_or(path: &Path, default: Option<Json>) -> Res<Json> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => match default {
             Some(value) => Ok(value),
             None => Err(die(
-                format!("file not found: {}", pyfmt::normalized_path(path)),
+                format!(
+                    "file not found: {}",
+                    // Redacted before normalizing: `//` becomes `/`, which
+                    // hides URL userinfo from the redactor (#4941).
+                    crate::safe_text::shown_value(&pyfmt::normalized_path(Path::new(
+                        &*crate::safe_text::redacted_value(&path.display().to_string())
+                    )))
+                ),
                 2,
             )),
         },

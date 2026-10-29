@@ -549,7 +549,7 @@ pub fn heroku_report_command(
                 "invalid_argument",
                 format!(
                     "argument --mode: invalid choice: '{}' (choose from 'full', 'decision')",
-                    untrusted(value)
+                    untrusted(&crate::safe_text::shown_value(value))
                 ),
             )
         })?,

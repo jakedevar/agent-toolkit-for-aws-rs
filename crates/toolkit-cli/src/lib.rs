@@ -91,8 +91,8 @@ impl<'a> Output<'a> {
     /// Registers the command-line values the sinks must not echo as given:
     /// a value with a newline is escaped onto one line, a credential-shaped
     /// value is redacted and an overlong one bounded wherever a diagnostic
-    /// echoes it, and a credential is hidden from stdout too (#4941). Ordinary
-    /// values change nothing.
+    /// echoes it (#4941). Stdout is not rewritten (see [`Output::line`]).
+    /// Ordinary values change nothing.
     pub fn set_untrusted(&mut self, args: &[String]) {
         self.caller = CallerText::from_args(args);
     }
@@ -145,15 +145,14 @@ impl<'a> Output<'a> {
     /// Returns a runtime error (`stdout_write`) for any write failure other
     /// than a closed pipe, which is treated as normal completion.
     ///
-    /// The line is written as given, except that a credential a command-line
-    /// value carried (URL userinfo, a labelled credential; see
-    /// [`Output::set_untrusted`]) is replaced by `[REDACTED]` wherever it
-    /// appears, whole or cut (#4941).
+    /// The line is written exactly as given: it is never rewritten after it is
+    /// formatted, so JSON stays valid and typed fields keep their schema. A
+    /// handler redacts each command-line value where it builds stdout data
+    /// (`safe_text::redacted_value`, #4941, #4981).
     pub fn line(&mut self, text: &str) -> Result<(), ToolkitError> {
         if self.closed {
             return Ok(());
         }
-        let text = self.caller.stdout(text);
         let result = self
             .sink
             .write_all(text.as_bytes())
@@ -501,6 +500,9 @@ fn print_static(out: &mut dyn Write, err: &mut dyn Write, text: &str) -> u8 {
 /// Runs the CLI with the given arguments (without the program name) and
 /// writers, returning the process exit status.
 pub fn run(args: &[OsString], out: &mut dyn Write, err: &mut dyn Write) -> u8 {
+    // A path named in a shared file-contract error is redacted, then bounded,
+    // where the message is formatted, not only at the sinks (#4941).
+    toolkit_core::set_path_display(|path: &str| safe_text::shown_value(path).into_owned());
     let mut text_args = Vec::with_capacity(args.len());
     for arg in args {
         let Some(text) = arg.to_str() else {

@@ -8,6 +8,7 @@
 use toolkit_core::ToolkitError;
 
 use crate::manifests::py_repr_str;
+use crate::safe_text::shown_value;
 use crate::Invocation;
 
 /// Output format of an analyzer.
@@ -67,7 +68,7 @@ pub(crate) fn float_value(
         Some(text) => parse_py_float(text).map(Some).ok_or_else(|| {
             usage(format!(
                 "argument {flag}: invalid float value: {}",
-                py_repr_str(text)
+                py_repr_str(&shown_value(text))
             ))
         }),
     }
@@ -80,7 +81,7 @@ pub(crate) fn int_value(invocation: &Invocation, flag: &str) -> Result<Option<i6
         Some(text) => parse_py_int(text).map(Some).ok_or_else(|| {
             usage(format!(
                 "argument {flag}: invalid int value: {}",
-                py_repr_str(text)
+                py_repr_str(&shown_value(text))
             ))
         }),
     }
@@ -93,7 +94,7 @@ pub(crate) fn format_value(invocation: &Invocation) -> Result<Format, ToolkitErr
         Some("table") => Ok(Format::Table),
         Some(other) => Err(usage(format!(
             "argument --format: invalid choice: {} (choose from 'json', 'table')",
-            py_repr_str(other)
+            py_repr_str(&shown_value(other))
         ))),
     }
 }

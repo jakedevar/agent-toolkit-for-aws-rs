@@ -22,9 +22,19 @@
 //! Text without credential-shaped content and within the bound is returned
 //! unchanged, so ordinary output is byte-identical.
 //!
-//! [`CallerText`] applies the same rule at the output sinks to every
-//! command-line value, so a slice that echoes a value raw (or cut before
-//! redaction) still cannot print its credential.
+//! Redaction happens at the value, before it is formatted (#4971 review):
+//! a renderer that quotes or escapes on its own (a Python `repr`, a quoted
+//! name, a JSON string) is given [`shown_value`] (redacted, then bounded) and
+//! a value written into stdout data (a JSON report, a template) is given
+//! [`redacted_value`] (redacted whole, never cut). Stdout is never rewritten
+//! after it is formatted, so its JSON stays valid and its typed fields keep
+//! their schema (#4981).
+//!
+//! [`CallerText`] is a stderr safety net behind that rule, never the only
+//! protection: a diagnostic that still echoes a command-line value raw (or
+//! cut before redaction) does not print its credential. It finds every match
+//! against the original text before replacing any (#4978), and hides a
+//! complete labelled credential whatever its length (#4980).
 
 use std::borrow::Cow;
 use std::cmp::Reverse;
@@ -142,6 +152,36 @@ pub(crate) fn safe_prefix(text: &str, count: usize) -> String {
     escaped(&redacted.chars().take(count).collect::<String>())
 }
 
+/// Steps 1 and 2 for a renderer that escapes on its own (a Python `repr`, a
+/// quoted name): `text` redacted in full, then bounded to [`MAX_PATH_CHARS`]
+/// characters (#4979). Pass the result, never the raw value, to the renderer.
+/// An ordinary value within the bound is returned unchanged.
+pub(crate) fn shown_value(text: &str) -> Cow<'_, str> {
+    match redacted_value(text) {
+        Cow::Borrowed(same) => bounded(same, MAX_PATH_CHARS),
+        Cow::Owned(redacted) => Cow::Owned(bounded(&redacted, MAX_PATH_CHARS).into_owned()),
+    }
+}
+
+/// [`shown_value`] of a caller path, for a message that embeds it before a
+/// sink escapes it (`not found: {}`).
+pub(crate) fn shown_path(path: &std::path::Path) -> String {
+    shown_value(&path.display().to_string()).into_owned()
+}
+
+/// Step 1 only, for a command-line value written into stdout *data* (a JSON
+/// report member, a generated template): `text` redacted in full and never
+/// cut, so a legitimate long value (an SNS topic ARN) stays whole (#4981). The
+/// serializer escapes it. An ordinary value is returned unchanged.
+pub(crate) fn redacted_value(text: &str) -> Cow<'_, str> {
+    let redacted = redact_text(text);
+    if redacted == text {
+        Cow::Borrowed(text)
+    } else {
+        Cow::Owned(redacted)
+    }
+}
+
 /// [`safe_text`] between single quotes, for a name inside a sentence.
 pub(crate) fn safe_quoted(text: &str) -> String {
     format!("'{}'", safe_text(text).replace('\'', "\\'"))
@@ -172,14 +212,14 @@ fn common_suffix_len(a: &str, b: &str) -> usize {
     len
 }
 
-/// The pieces of `original` that the redactor hid in `redacted`: the whole
-/// changed span (between the longest common prefix and suffix), and, when
-/// several values were hidden, each one on its own (the text kept between the
-/// [`REDACTED`] marks is copied from `original` in order).
-fn hidden_pieces<'a>(original: &'a str, redacted: &str) -> Vec<&'a str> {
+/// The byte ranges of `original` that the redactor hid in `redacted`: the
+/// whole changed span (between the longest common prefix and suffix), and,
+/// when several values were hidden, each one on its own (the text kept
+/// between the [`REDACTED`] marks is matched in `original` in order).
+fn hidden_ranges(original: &str, redacted: &str) -> Vec<(usize, usize)> {
     let prefix = common_prefix_len(original, redacted);
     let suffix = common_suffix_len(&original[prefix..], &redacted[prefix..]);
-    let mut pieces = vec![&original[prefix..original.len() - suffix]];
+    let mut ranges = vec![(prefix, original.len() - suffix)];
     let kept: Vec<&str> = redacted.split(REDACTED).collect();
     let mut at = 0;
     for (index, pair) in kept.windows(2).enumerate() {
@@ -201,32 +241,90 @@ fn hidden_pieces<'a>(original: &'a str, redacted: &str) -> Vec<&'a str> {
                 None => break,
             }
         };
-        pieces.push(&original[start..end]);
+        ranges.push((start, end));
         at = end;
     }
-    pieces
+    ranges
 }
 
-/// The command-line values of one run, as the output sinks must show them
+/// Where the label of a hidden credential starts, if one stands right before
+/// byte `piece_start` of `value`: a run of key characters (`password`,
+/// `x-api-key`, `auth.token`) followed by at most four separator characters
+/// (`=`, `:`, `=>`, quotes, spaces).
+fn label_start(value: &str, piece_start: usize) -> Option<usize> {
+    let bytes = value.as_bytes();
+    let mut at = piece_start;
+    let mut separators = 0;
+    while at > 0 && separators < 4 && matches!(bytes[at - 1], b'=' | b':' | b'>' | b'"' | b'\'' | b' ') {
+        at -= 1;
+        separators += 1;
+    }
+    if separators == 0 {
+        return None;
+    }
+    let key_end = at;
+    while at > 0 && (bytes[at - 1].is_ascii_alphanumeric() || matches!(bytes[at - 1], b'_' | b'-' | b'.')) {
+        at -= 1;
+    }
+    (at < key_end).then_some(at)
+}
+
+/// The spellings under which a slice may echo `text`: as given, on one line
+/// (`neutralize_line`) and escaped (`escape_untrusted`, Python `repr` style).
+fn spellings(text: &str) -> [String; 4] {
+    [
+        text.to_string(),
+        neutralize_line(text).into_owned(),
+        escape_untrusted(text, usize::MAX),
+        escaped(text),
+    ]
+}
+
+/// One learned piece of a command-line credential, in one spelling: hidden
+/// wherever at least its first `min_bytes` bytes appear, and as far as the
+/// output keeps matching it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Fragment {
+    text: String,
+    min_bytes: usize,
+}
+
+/// What replaces one matched span of a diagnostic.
+#[derive(Debug, Clone, Copy)]
+enum Replacement<'c> {
+    /// A known value echoed whole: its redacted, bounded, single-line form.
+    /// `redacted` tells whether that form already hides every credential.
+    Shown { shown: &'c str, redacted: bool },
+    /// A credential fragment, or a union of overlapping spans: [`REDACTED`].
+    Hidden,
+}
+
+/// The command-line values of one run, as the stderr sinks must show them
 /// (#4639, #4941).
 ///
-/// [`run`](crate::run) builds it from the arguments and both the final
+/// [`run`](crate::run) builds it from the arguments, and both the final
 /// `error:` report and [`Output::diagnostic`](crate::Output::diagnostic) pass
-/// their text through [`CallerText::diagnostic`]; stdout lines go through
-/// [`CallerText::stdout`]. A value is *known* when it holds a newline, is
-/// credential-shaped (the shared redactor changes it) or is longer than
-/// [`MAX_PATH_CHARS`] characters. Ordinary values are not known, so text that
-/// echoes them stays byte-identical.
+/// their text through [`CallerText::diagnostic`]. Stdout does not: values are
+/// redacted where stdout data is built ([`redacted_value`]). A value is
+/// *known* when it holds a newline, is credential-shaped (the shared redactor
+/// changes it) or is longer than [`MAX_PATH_CHARS`] characters. Ordinary
+/// values are not known, so text that echoes them stays byte-identical.
+///
+/// This is a safety net behind the value-level rule, not a replacement for
+/// it: a renderer that changes a value's spelling (a `repr` that escapes a
+/// quote, #4979) must be handed [`shown_value`] instead.
 #[derive(Debug, Default, Clone)]
 pub(crate) struct CallerText {
-    /// `(value, how it is shown)`, longest value first: a known value echoed
-    /// verbatim in a diagnostic is replaced by its redacted, bounded,
-    /// single-line rendering.
-    shown: Vec<(String, String)>,
-    /// What the redactor hid in a credential-shaped value, in each escaped
-    /// spelling, longest first: hidden wherever it appears in any output, in
-    /// full or cut after at least [`MIN_PARTIAL_CHARS`] characters.
-    fragments: Vec<String>,
+    /// `(value, how it is shown, whether that hides a credential)`: a known
+    /// value echoed verbatim in a diagnostic is replaced by its redacted,
+    /// bounded, single-line rendering.
+    shown: Vec<(String, String, bool)>,
+    /// What the redactor hid in a credential-shaped value, in each spelling:
+    /// the hidden piece alone (at least [`MIN_FRAGMENT_CHARS`] characters,
+    /// matched from [`MIN_PARTIAL_CHARS`] on) and, whatever its length, the
+    /// piece with the label in front of it (matched from the label and the
+    /// first hidden character on, #4980).
+    fragments: Vec<Fragment>,
 }
 
 impl CallerText {
@@ -241,7 +339,7 @@ impl CallerText {
                 if arg.contains('\n') {
                     caller
                         .shown
-                        .push((arg.clone(), neutralize_line(arg).into_owned()));
+                        .push((arg.clone(), neutralize_line(arg).into_owned(), false));
                 }
             } else {
                 caller.learn(arg);
@@ -250,10 +348,6 @@ impl CallerText {
                 caller.learn(value);
             }
         }
-        // Longest first, so a value that contains another is replaced whole.
-        caller.shown.sort_by_key(|(value, _)| Reverse(value.len()));
-        caller.fragments.sort_by_key(|piece| Reverse(piece.len()));
-        caller.fragments.dedup();
         caller
     }
 
@@ -262,21 +356,22 @@ impl CallerText {
     /// *references* such as `{{resolve:secretsmanager:prod/db}}` that the
     /// shared redactor would take for a labelled credential, and the command
     /// redacts resolved values itself. Each value with a newline is escaped
-    /// onto one line wherever a diagnostic echoes it; nothing is redacted,
-    /// bounded or hidden from stdout.
+    /// onto one line wherever a diagnostic echoes it; nothing is redacted or
+    /// bounded.
     pub(crate) fn newlines_only(args: &[String]) -> Self {
         let mut caller = Self::default();
         for arg in args {
             let value = arg.split_once('=').map(|(_, value)| value);
             for text in std::iter::once(arg.as_str()).chain(value) {
                 if text.contains('\n') {
-                    caller
-                        .shown
-                        .push((text.to_string(), neutralize_line(text).into_owned()));
+                    caller.shown.push((
+                        text.to_string(),
+                        neutralize_line(text).into_owned(),
+                        false,
+                    ));
                 }
             }
         }
-        caller.shown.sort_by_key(|(value, _)| Reverse(value.len()));
         caller
     }
 
@@ -285,55 +380,113 @@ impl CallerText {
         let credential = redacted != value;
         if credential || value.contains('\n') || value.chars().count() > MAX_PATH_CHARS {
             let shown = neutralize_line(&bounded(&redacted, MAX_PATH_CHARS)).into_owned();
-            self.shown.push((value.to_string(), shown));
+            self.shown.push((value.to_string(), shown, credential));
         }
         if !credential {
             return;
         }
-        for piece in hidden_pieces(value, &redacted) {
-            let spellings = [
-                piece.to_string(),
-                neutralize_line(piece).into_owned(),
-                escape_untrusted(piece, usize::MAX),
-                escaped(piece),
-            ];
-            for spelling in spellings {
-                if spelling.chars().count() >= MIN_FRAGMENT_CHARS
-                    && !self.fragments.contains(&spelling)
+        for (start, end) in hidden_ranges(value, &redacted) {
+            let piece = &value[start..end];
+            if piece.is_empty() {
+                continue;
+            }
+            if piece.chars().count() >= MIN_FRAGMENT_CHARS {
+                for spelling in spellings(piece) {
+                    let min_bytes = spelling
+                        .char_indices()
+                        .nth(MIN_PARTIAL_CHARS)
+                        .map_or(spelling.len(), |(at, _)| at);
+                    self.add(spelling, min_bytes);
+                }
+            }
+            if let Some(label) = label_start(value, start) {
+                for (whole, label) in spellings(&value[label..end])
+                    .into_iter()
+                    .zip(spellings(&value[label..start]))
                 {
-                    self.fragments.push(spelling);
+                    let min_bytes = whole
+                        .strip_prefix(label.as_str())
+                        .and_then(|rest| rest.chars().next())
+                        .map_or(whole.len(), |first| label.len() + first.len_utf8());
+                    self.add(whole, min_bytes);
                 }
             }
         }
     }
 
-    /// `text` with every credential fragment of a command-line value, whole
-    /// or cut after at least [`MIN_PARTIAL_CHARS`] characters, replaced by
-    /// [`REDACTED`]. Text without one is returned unchanged.
-    fn hide_fragments<'t>(&self, text: Cow<'t, str>) -> Cow<'t, str> {
-        let mut current = text;
-        for fragment in &self.fragments {
-            let need = fragment.chars().count().min(MIN_PARTIAL_CHARS);
-            let anchor_end = fragment
-                .char_indices()
-                .nth(need)
-                .map_or(fragment.len(), |(end, _)| end);
-            let anchor = &fragment[..anchor_end];
-            if !current.contains(anchor) {
-                continue;
-            }
-            let mut out = String::with_capacity(current.len());
-            let mut rest: &str = &current;
-            while let Some(found) = rest.find(anchor) {
-                out.push_str(&rest[..found]);
-                out.push_str(REDACTED);
-                let tail = &rest[found..];
-                rest = &tail[common_prefix_len(tail, fragment)..];
-            }
-            out.push_str(rest);
-            current = Cow::Owned(out);
+    fn add(&mut self, text: String, min_bytes: usize) {
+        let fragment = Fragment { text, min_bytes };
+        if fragment.min_bytes > 0 && !self.fragments.contains(&fragment) {
+            self.fragments.push(fragment);
         }
-        current
+    }
+
+    /// Every span of `text` to replace, found in the original text before any
+    /// replacement (#4978): each verbatim echo of a known value, and each
+    /// place a credential fragment appears, whole or cut.
+    fn spans(&self, text: &str) -> Vec<(usize, usize, Replacement<'_>)> {
+        let mut spans = Vec::new();
+        for (value, shown, redacted) in &self.shown {
+            for (at, _) in text.match_indices(value.as_str()) {
+                let replacement = Replacement::Shown {
+                    shown,
+                    redacted: *redacted,
+                };
+                spans.push((at, at + value.len(), replacement));
+            }
+        }
+        for fragment in &self.fragments {
+            let anchor = &fragment.text[..fragment.min_bytes];
+            let mut from = 0;
+            while let Some(offset) = text[from..].find(anchor) {
+                let at = from + offset;
+                let len = common_prefix_len(&text[at..], &fragment.text);
+                spans.push((at, at + len, Replacement::Hidden));
+                // Overlapping occurrences too: the next character on.
+                from = at + text[at..].chars().next().map_or(1, char::len_utf8);
+            }
+        }
+        spans
+    }
+
+    /// `text` with every span of [`CallerText::spans`] replaced. A span inside
+    /// a known value's rendering that already hides its credential is dropped;
+    /// any other overlap is merged and hidden as one [`REDACTED`].
+    fn replace_spans<'t>(&self, text: &'t str) -> Cow<'t, str> {
+        let mut spans = self.spans(text);
+        if spans.is_empty() {
+            return Cow::Borrowed(text);
+        }
+        spans.sort_by_key(|&(start, end, _)| (start, Reverse(end)));
+        let mut merged: Vec<(usize, usize, Replacement<'_>)> = Vec::new();
+        for (start, end, replacement) in spans {
+            match merged.last_mut() {
+                Some(last) if start < last.1 => {
+                    // A span inside one that already hides every credential,
+                    // or an ordinary known value inside another, adds nothing.
+                    let inside = end <= last.1;
+                    let covered = !matches!(last.2, Replacement::Shown { redacted: false, .. })
+                        || matches!(replacement, Replacement::Shown { redacted: false, .. });
+                    if !(inside && covered) {
+                        last.1 = last.1.max(end);
+                        last.2 = Replacement::Hidden;
+                    }
+                }
+                _ => merged.push((start, end, replacement)),
+            }
+        }
+        let mut out = String::with_capacity(text.len());
+        let mut copied = 0;
+        for (start, end, replacement) in merged {
+            out.push_str(&text[copied..start]);
+            out.push_str(match replacement {
+                Replacement::Shown { shown, .. } => shown,
+                Replacement::Hidden => REDACTED,
+            });
+            copied = end;
+        }
+        out.push_str(&text[copied..]);
+        Cow::Owned(out)
     }
 
     /// A diagnostic or error report made safe for stderr: each known value
@@ -343,24 +496,12 @@ impl CallerText {
     /// (`toolkit_core::neutralize_text`). Text that echoes no known value and
     /// holds no unsafe character is returned unchanged.
     pub(crate) fn diagnostic<'t>(&self, text: &'t str) -> Cow<'t, str> {
-        let mut current = Cow::Borrowed(text);
-        for (value, shown) in &self.shown {
-            if current.contains(value.as_str()) {
-                current = Cow::Owned(current.replace(value.as_str(), shown));
-            }
-        }
-        let current = self.hide_fragments(current);
+        let current = self.replace_spans(text);
         if current.chars().any(|c| c != '\n' && is_unsafe_char(c)) {
             Cow::Owned(neutralize_text(&current).into_owned())
         } else {
             current
         }
-    }
-
-    /// A stdout line with every credential fragment of a command-line value
-    /// hidden. Nothing else changes: stdout is the command's data.
-    pub(crate) fn stdout<'t>(&self, text: &'t str) -> Cow<'t, str> {
-        self.hide_fragments(Cow::Borrowed(text))
     }
 }
 
@@ -433,7 +574,6 @@ mod tests {
         let known = caller(&["neptune", "seed", "--recorded", "/tmp/r.json", "--x=y"]);
         for text in ["error: /tmp/r.json: not found", "plain\nlines", "--x=y"] {
             assert!(matches!(known.diagnostic(text), Cow::Borrowed(_)), "{text}");
-            assert!(matches!(known.stdout(text), Cow::Borrowed(_)), "{text}");
         }
         // Unsafe characters are still escaped, newlines kept (#4639).
         assert_eq!(known.diagnostic("a\u{1b}b\nc"), "a\\u001Bb\nc");
@@ -451,7 +591,7 @@ mod tests {
     }
 
     #[test]
-    fn a_credential_value_echoed_raw_or_cut_is_hidden_at_every_sink() {
+    fn a_credential_value_echoed_raw_or_cut_is_hidden_in_a_diagnostic() {
         let url = userinfo(0);
         let past = userinfo(250);
         let known = caller(&["seed", "--recorded", &url, &format!("--out={past}")]);
@@ -469,7 +609,6 @@ mod tests {
             format!("normalized https:/{}", &past["https://".len()..]),
         ] {
             assert_no_secret(&known.diagnostic(&text));
-            assert_no_secret(&known.stdout(&text));
         }
         // The whole attached argument (an unknown-flag report).
         assert_no_secret(&known.diagnostic(&format!("unknown --out={past}")));
@@ -480,7 +619,6 @@ mod tests {
             known.diagnostic(&format!("error: {long}")),
             format!("error: {}...", &long[..MAX_PATH_CHARS])
         );
-        assert!(matches!(known.stdout(&long), Cow::Borrowed(_)));
     }
 
     #[test]
@@ -497,10 +635,6 @@ mod tests {
         let known = CallerText::newlines_only(&args);
         let failure = "asm-exec: ERROR: Failed to resolve: prod/db";
         assert!(matches!(known.diagnostic(failure), Cow::Borrowed(_)));
-        assert!(matches!(
-            known.stdout("{{resolve:secretsmanager:prod/db}}"),
-            Cow::Borrowed(_)
-        ));
         assert_eq!(known.diagnostic("x a\nb"), "x a\\nb");
     }
 
@@ -508,11 +642,11 @@ mod tests {
     fn each_hidden_value_of_an_argument_is_a_fragment() {
         let value = "a/password=FAKE_SECRET_ONE b/token=FAKE_SECRET_TWO/c";
         let redacted = toolkit_aws::redact_text(value);
-        let pieces = hidden_pieces(value, &redacted);
-        assert!(!pieces.is_empty(), "{redacted}");
+        let ranges = hidden_ranges(value, &redacted);
+        assert!(ranges.len() > 1, "{redacted}");
         let known = caller(&["x", value]);
-        assert_no_secret(&known.stdout("only FAKE_SECRET_TWO here"));
-        assert_no_secret(&known.stdout("only FAKE_SECRET_ONE here"));
+        assert_no_secret(&known.diagnostic("only FAKE_SECRET_TWO here"));
+        assert_no_secret(&known.diagnostic("only FAKE_SECRET_ONE here"));
     }
 
     /// Every 8-character window of `piece` that `shown` still contains.
@@ -567,7 +701,9 @@ mod tests {
                         let arg_cut: String =
                             arg.chars().take(labels[index].len() + 10).collect();
                         for echo in [arg.as_str(), piece, &cut, &nearly, &arg_cut] {
-                            text.push_str(&format!(" <{echo}...>"));
+                            text.push_str(" <");
+                            text.push_str(echo);
+                            text.push_str("...>");
                         }
                     }
                     let shown = known.diagnostic(&text);
@@ -670,6 +806,48 @@ mod tests {
             "./out/wa_review_results.json"
         );
         assert_eq!(safe_path("dir/ü 日本/x.md"), "dir/ü 日本/x.md");
+    }
+
+    #[test]
+    fn a_value_is_redacted_before_a_renderer_quotes_it() {
+        // #4979: the whole value is redacted before `repr` escapes its quote.
+        let value = "password=ab'c\"FAKE_SECRET";
+        assert_eq!(shown_value(value), "password=[REDACTED]");
+        assert_eq!(redacted_value(value), "password=[REDACTED]");
+        // #4980: a labelled credential of any length.
+        for short in ["password=abc", "token=ab", "pwd=x"] {
+            assert!(shown_value(short).ends_with("=[REDACTED]"), "{short}");
+        }
+        // Ordinary values are returned as given, quotes and all.
+        for ordinary in ["ab'c\"d", "mysql", "6379", "", "us-east-1"] {
+            assert!(matches!(shown_value(ordinary), Cow::Borrowed(_)));
+            assert!(matches!(redacted_value(ordinary), Cow::Borrowed(_)));
+        }
+        // Only the display form is bounded; stdout data is never cut.
+        let long = format!("arn:aws:sns:us-east-1:123456789012:{}", "t".repeat(256));
+        assert_eq!(redacted_value(&long), long.as_str());
+        assert_eq!(
+            shown_value(&long),
+            format!("{}...", &long[..MAX_PATH_CHARS])
+        );
+    }
+
+    #[test]
+    fn a_label_is_found_only_in_front_of_a_hidden_piece() {
+        assert_eq!(label_start("password=abc", 9), Some(0));
+        assert_eq!(label_start("a/x-api-key: abc", 13), Some(2));
+        assert_eq!(label_start("https://user:pw@host", 8), None);
+        assert_eq!(label_start("=abc", 1), None);
+    }
+
+    /// A non-credential value with a newline that contains a credential
+    /// fragment is hidden whole, not shown with the fragment inside.
+    #[test]
+    fn a_fragment_inside_an_ordinary_known_value_is_not_shown() {
+        let known = caller(&["x", "password=FRAGMENT_SECRET_1", "FRAGMENT_SECRET_1\nnext"]);
+        let shown = known.diagnostic("error: FRAGMENT_SECRET_1\nnext");
+        assert!(!shown.contains("FRAGMENT"), "{shown}");
+        assert!(!shown.contains('\n'), "{shown}");
     }
 
     #[test]

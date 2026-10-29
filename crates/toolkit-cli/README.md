@@ -384,7 +384,11 @@ escaping, so there is now one helper and one contract test.
    (or `safe_text` / `safe_prefix` for other text): it redacts the whole value,
    then bounds it (200 characters for a path, then `...`), then escapes it, in
    that order, so a credential that crosses the bound is still recognized
-   (#4941). Do not write a slice-local redact/bound/escape helper.
+   (#4941). A renderer that quotes or escapes on its own (a `repr`, a quoted
+   choice) is given `safe_text::shown_value(value)`, never the raw value, and
+   a value written into stdout data (JSON, a template) is given
+   `safe_text::redacted_value(value)` (#4971). Do not write a slice-local
+   redact/bound/escape helper.
 4. **Do not flatten or hand-roll.** Replacing controls with spaces (as
    `skills list` and `asm exec` do for their pinned output) hides the damage
    instead of showing it and each copy drifts; new code uses the helper. Those
@@ -395,8 +399,8 @@ escaping, so there is now one helper and one contract test.
    report pass their text through `safe_text::CallerText::diagnostic` (#4941:
    a credential-shaped or overlong argument value echoed verbatim is shown
    redacted, bounded to 200 characters and on one line, and a credential
-   fragment of an argument value is hidden whole or cut; `Output::line` hides
-   those fragments on stdout too), which, like `toolkit_core::neutralize_text_knowing` before it,
+   fragment of an argument value is hidden whole or cut, every match found
+   before any is replaced; stdout is never rewritten), which, like `toolkit_core::neutralize_text_knowing` before it,
    writes every control character (tab and carriage return included),
    bidirectional override and similar invisible character as `\r`, `\t` or
    `\uXXXX` and changes nothing else. Newlines are kept because several

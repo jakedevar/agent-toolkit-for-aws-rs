@@ -30,6 +30,7 @@ use toolkit_core::{Json, ToolkitError};
 use crate::aurora::args::{parse_py_float, parse_py_int};
 use crate::aurora::pyfmt::{round_to, truthy, Num};
 use crate::manifests::py_repr;
+use crate::safe_text::redacted_value;
 
 use super::text::{group_int, js, kv, py_str, set_member, show};
 
@@ -261,7 +262,12 @@ pub fn run_preflight(
     port: i64,
     snapshot: Option<&Json>,
 ) -> Result<Preflight, ToolkitError> {
-    let mut info = vec![kv("host", js(host)), kv("port", Json::Int(port))];
+    // The host is caller text: redacted where the data is built, never after
+    // serialization, so the JSON keeps its schema (#4981).
+    let mut info = vec![
+        kv("host", js(&redacted_value(host))),
+        kv("port", Json::Int(port)),
+    ];
     let shown_host = show(host);
 
     let Some(snapshot) = snapshot else {

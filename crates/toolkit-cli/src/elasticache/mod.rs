@@ -44,6 +44,7 @@ use toolkit_core::{parse_json, read_regular_file, write_regular_file, Json, Tool
 
 use crate::aurora::args::{float_value, int_value, usage};
 use crate::aurora::pyfmt::{dumps, Num};
+use crate::safe_text::redacted_value;
 use crate::{Invocation, Output};
 
 pub mod audit;
@@ -445,7 +446,7 @@ pub fn estimate_serverless_command(
 
     out.line(&format!(
         "Loading clusters from: {}",
-        escape_controls(input)
+        escape_controls(&redacted_value(input))
     ))?;
     let cluster_text = read_regular_file(Path::new(input), MAX_INPUT_BYTES)?;
     let clusters = serverless::load_clusters(&cluster_text)
@@ -456,7 +457,7 @@ pub fn estimate_serverless_command(
     if let Some(path) = invocation.value("--commandstats") {
         out.line(&format!(
             "Loading commandstats from: {}",
-            escape_controls(path)
+            escape_controls(&redacted_value(path))
         ))?;
         let stats_text = read_regular_file(Path::new(path), MAX_INPUT_BYTES)?;
         let parsed = serverless::parse_commandstats_file(&stats_text)
@@ -486,7 +487,7 @@ pub fn estimate_serverless_command(
         .unwrap_or("serverless_estimate.csv");
     if !results.is_empty() {
         write_regular_file(Path::new(output), &serverless::csv_report(&results))?;
-        out.line(&format!("Output written to: {}", escape_controls(output)))?;
+        out.line(&format!("Output written to: {}", escape_controls(&redacted_value(output))))?;
     }
     for line in serverless::summary_lines(&results) {
         out.line(&line)?;
@@ -502,7 +503,7 @@ pub fn estimate_serverless_command(
                 .collect(),
         );
         write_regular_file(Path::new(&json_path), &dumps(&document))?;
-        out.line(&format!("JSON written to: {}", escape_controls(&json_path)))?;
+        out.line(&format!("JSON written to: {}", escape_controls(&redacted_value(&json_path))))?;
     }
     Ok(())
 }
@@ -653,11 +654,14 @@ pub fn dashboard_command(
     out: &mut Output<'_>,
 ) -> Result<(), ToolkitError> {
     let (mode, identifier) = exclusive(invocation, "--serverless", "--replication-group")?;
+    // Caller values written into the template are redacted where the data is
+    // built, never after serialization (#4941, #4981).
+    let identifier = redacted_value(identifier);
     let node_ids = invocation.value("--node-ids").map(|text| {
         text.split(',')
             .map(str::trim)
             .filter(|id| !id.is_empty())
-            .map(str::to_string)
+            .map(|id| redacted_value(id).into_owned())
             .collect::<Vec<_>>()
     });
     let options = TemplateOptions {
@@ -667,11 +671,10 @@ pub fn dashboard_command(
             CacheType::NodeBased
         },
         identifier: identifier.to_string(),
-        region: invocation
-            .value("--region")
-            .unwrap_or("us-east-1")
-            .to_string(),
-        sns_topic: invocation.value("--sns-topic").map(str::to_string),
+        region: redacted_value(invocation.value("--region").unwrap_or("us-east-1")).into_owned(),
+        sns_topic: invocation
+            .value("--sns-topic")
+            .map(|topic| redacted_value(topic).into_owned()),
         include_dashboard: !invocation.has_flag("--no-dashboard"),
         include_alarms: !invocation.has_flag("--no-alarms"),
         max_storage_gb: finite_float(invocation, "--max-storage-gb")?,
@@ -694,12 +697,12 @@ pub fn dashboard_command(
     match invocation.value("--output") {
         Some(path) => {
             write_regular_file(Path::new(path), &rendered)?;
-            out.line(&format!("Written to {}", escape_controls(path)))?;
+            out.line(&format!("Written to {}", escape_controls(&redacted_value(path))))?;
             out.line("")?;
             out.line("Deploy with:")?;
             out.line(&format!(
                 "  aws cloudformation deploy --template-file {} --stack-name {}",
-                shell_quote(path),
+                shell_quote(&redacted_value(path)),
                 shell_quote(&format!("{identifier}-observability"))
             ))
         }

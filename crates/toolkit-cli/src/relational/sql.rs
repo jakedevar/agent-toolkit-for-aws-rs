@@ -153,8 +153,10 @@ pub(crate) const ISO_DATE: Pattern = Pattern {
     matches: is_iso_date,
 };
 
+/// A caller value inside an SQL safety error: redacted whole, bounded, then
+/// quoted (#4941).
 fn shown(value: &str) -> String {
-    quote_untrusted(value)
+    quote_untrusted(&crate::safe_text::shown_value(value))
 }
 
 /// Allowlist-validates and emits a single-quoted string literal.
