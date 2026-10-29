@@ -1,0 +1,1219 @@
+//! Offline process contracts for the S2b renderer. No payload is executed.
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    process::Command,
+    sync::atomic::{AtomicUsize, Ordering},
+};
+
+static NEXT: AtomicUsize = AtomicUsize::new(0);
+struct Fixture(PathBuf);
+impl Fixture {
+    fn new() -> Self {
+        let dir = std::env::temp_dir().join(format!(
+            "payload-render-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        Self(dir)
+    }
+    fn write(&self, name: &str, text: &str) -> PathBuf {
+        let path = self.0.join(name);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, text).unwrap();
+        path
+    }
+    fn render(&self, template: &Path, mode: &str, extra: &[&str]) -> std::process::Output {
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_toolkit"));
+        cmd.args(["ai-payloads", "render"])
+            .arg(template)
+            .args(["--mode", mode, "--project-dir"])
+            .arg(&self.0)
+            .args(["--name", "example"])
+            .args(extra);
+        cmd.output().unwrap()
+    }
+}
+impl Drop for Fixture {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+const TEMPLATE: &str = "# Cell 0 [markdown]: Example\n# Description\n\n# Cell 1: Config\nACCEPT_EULA = [ACCEPT_EULA]\nrole = \"[ROLE_ARN]\"\n";
+
+#[test]
+fn ap_con_01_missing_typed_consent_is_refused_even_when_unresolved_allowed() {
+    for mode in ["notebook", "script"] {
+        let f = Fixture::new();
+        let template = f.write("template.py", TEMPLATE);
+        let result = f.render(&template, mode, &["--allow-unresolved"]);
+        assert_eq!(result.status.code(), Some(1));
+        assert!(String::from_utf8_lossy(&result.stderr).contains("typed_slot_unresolved"));
+        assert!(!f.0.join("notebooks/example.ipynb").exists());
+        assert!(!f.0.join("scripts/01_example.py").exists());
+    }
+}
+
+#[test]
+fn ap_typ_01_02_consent_requires_explicit_flag_and_emits_boolean() {
+    let f = Fixture::new();
+    let template = f.write("template.py", TEMPLATE);
+    let values = f.write(
+        "values.json",
+        r#"{"values":{"ACCEPT_EULA":true,"ROLE_ARN":"role"}}"#,
+    );
+    let value_path = values.to_str().unwrap();
+    let denied = f.render(&template, "script", &["--values", value_path]);
+    assert_eq!(denied.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&denied.stderr).contains("consent_not_given"));
+    assert!(!f.0.join("scripts/01_example.py").exists());
+    let allowed = f.render(
+        &template,
+        "script",
+        &["--values", value_path, "--consent", "ACCEPT_EULA"],
+    );
+    assert!(
+        allowed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&allowed.stderr)
+    );
+    assert!(fs::read_to_string(f.0.join("scripts/01_example.py"))
+        .unwrap()
+        .contains("ACCEPT_EULA = True"));
+}
+
+#[test]
+fn ap_app_01_historical_consent_is_preserved_and_new_false_needs_no_consent() {
+    let f = Fixture::new();
+    let template = f.write("template.py", TEMPLATE);
+    let values = f.write(
+        "values.json",
+        r#"{"values":{"ACCEPT_EULA":false,"ROLE_ARN":"role"}}"#,
+    );
+    let source = f.write("notebooks/example.ipynb", r#"{"cells":[{"cell_type":"code","execution_count":null,"metadata":{},"outputs":[],"source":["ACCEPT_EULA = True\n","ACCEPT_EULA = historical_expression\n"]}],"metadata":{},"nbformat":4,"nbformat_minor":4}"#);
+    let original = fs::read(&source).unwrap();
+    let result = f.render(
+        &template,
+        "notebook",
+        &["--values", values.to_str().unwrap(), "--append"],
+    );
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert_eq!(fs::read(source).unwrap(), original);
+    let copy = fs::read_to_string(f.0.join("notebooks/example-01.ipynb")).unwrap();
+    assert!(copy.contains("ACCEPT_EULA = True"));
+    assert!(copy.contains("ACCEPT_EULA = historical_expression"));
+    assert!(copy.contains("ACCEPT_EULA = False"));
+    let out = String::from_utf8_lossy(&result.stdout);
+    assert!(out.contains("source:") && out.contains("sha256") && out.contains("open:"));
+}
+
+#[test]
+fn ap_pub_15_dry_run_creates_no_output() {
+    let f = Fixture::new();
+    let template = f.write("template.py", TEMPLATE);
+    let values = f.write(
+        "values.json",
+        r#"{"values":{"ACCEPT_EULA":false,"ROLE_ARN":"role"}}"#,
+    );
+    let result = f.render(
+        &template,
+        "notebook",
+        &["--values", values.to_str().unwrap(), "--dry-run"],
+    );
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert!(!f.0.join("notebooks/example.ipynb").exists());
+}
+
+#[test]
+fn ap_con_06_cell_consent_identifier_guard() {
+    let f = Fixture::new();
+    let template = f.write(
+        "template.py",
+        "# Cell 0 [markdown]: Example\n# Description\n# Cell 1: Code\npass\n",
+    );
+    for code in ["ACCEPT_EULA = True\n", "x = [ACCEPT_EULA]\n"] {
+        let cell = f.write("cell.py", code);
+        let arg = format!("1={}", cell.display());
+        let result = f.render(&template, "script", &["--cell", &arg]);
+        assert_eq!(result.status.code(), Some(1));
+        assert!(String::from_utf8_lossy(&result.stderr).contains("cell_binds_consent"));
+    }
+    let cell = f.write("cell.py", "# ACCEPT_EULA\nx = 'ACCEPT_EULA'\n");
+    let arg = format!("1={}", cell.display());
+    assert!(f
+        .render(&template, "script", &["--cell", &arg])
+        .status
+        .success());
+    let f = Fixture::new();
+    let template = f.write("template.py", "# Cell 0 [markdown]: Example\n# Description\n# Cell 1: Code\nACCEPT_EULA = False\nACCEPT_EULA = False\n");
+    let cell = f.write("cell.py", "pass\n");
+    let arg = format!("1={}", cell.display());
+    let result = f.render(&template, "script", &["--cell", &arg]);
+    assert!(String::from_utf8_lossy(&result.stderr).contains("cell_replaces_consent"));
+}
+
+#[test]
+fn ap_cat_10_all_real_templates_render_in_both_modes() {
+    use toolkit_core::{parse_json, Json};
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../skills/core-skills/aws-ai-ml");
+    let catalog = Command::new(env!("CARGO_BIN_EXE_toolkit"))
+        .args(["ai-payloads", "templates", "--json", "--root"])
+        .arg(&root)
+        .output()
+        .unwrap();
+    assert!(catalog.status.success());
+    let catalog = parse_json(std::str::from_utf8(&catalog.stdout).unwrap()).unwrap();
+    let Json::Array(entries) = catalog.get("templates").unwrap() else {
+        panic!("catalog")
+    };
+    assert_eq!(entries.len(), 23);
+    for entry in entries {
+        let rel = entry.get("path").unwrap().as_str().unwrap();
+        let Json::Array(placeholders) = entry.get("placeholders").unwrap() else {
+            panic!("slots")
+        };
+        for mode in ["script", "notebook"] {
+            let f = Fixture::new();
+            let mut pairs = Vec::new();
+            for slot in placeholders {
+                if slot.get("code") == Some(&Json::Int(0)) {
+                    continue;
+                }
+                let name = slot.get("name").unwrap().as_str().unwrap();
+                let kind = slot.get("kind").unwrap().as_str().unwrap();
+                let value = match kind {
+                    "secret" => Json::Null,
+                    "string" => Json::string("x"),
+                    "value" => match name {
+                        "ACCEPT_EULA" | "TRUE_OR_FALSE" => Json::Bool(false),
+                        "METRICS_LIST" => Json::Array(vec![]),
+                        _ => Json::Int(1),
+                    },
+                    _ => panic!("kind"),
+                };
+                pairs.push((name.to_owned(), value));
+            }
+            let values = f.write(
+                "values.json",
+                &Json::object(vec![("values", Json::Object(pairs))]).to_compact_string(),
+            );
+            let module = f.write(
+                "scripts/transform_fn.py",
+                "def transform_dataset(df):\n    return df\n",
+            );
+            let cell = format!("2={}", module.display());
+            let args = if rel.ends_with("dataset-transformation/code_templates/transformation.py") {
+                vec!["--values", values.to_str().unwrap(), "--cell", &cell]
+            } else {
+                vec!["--values", values.to_str().unwrap()]
+            };
+            let result = f.render(&root.join("references").join(rel), mode, &args);
+            assert!(
+                result.status.success(),
+                "{rel} {mode}: {}",
+                String::from_utf8_lossy(&result.stderr)
+            );
+            if mode == "notebook" {
+                parse_json(&fs::read_to_string(f.0.join("notebooks/example.ipynb")).unwrap())
+                    .unwrap();
+            }
+        }
+    }
+}
+
+#[test]
+fn ap_cell_04_08_multiline_normalization_and_unsafe_characters() {
+    let template_text = "# Cell 0 [markdown]: Example\n# Description\n# Cell 1: Code\npass\n";
+    let body = "def transform_dataset(df):\n    x = 1\n\n\treturn df # comment";
+    let mut outputs = Vec::new();
+    for contents in [body.to_owned(), body.replace('\n', "\r\n")] {
+        let f = Fixture::new();
+        let template = f.write("template.py", template_text);
+        let cell = f.write("cell.py", &contents);
+        let arg = format!("1={}", cell.display());
+        let result = f.render(&template, "script", &["--cell", &arg]);
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        outputs.push(fs::read_to_string(f.0.join("scripts/01_example.py")).unwrap());
+    }
+    assert_eq!(outputs[0], outputs[1]);
+    assert!(outputs[0].contains(body));
+    for ch in [
+        '\r', '\0', '\x1b', '\x7f', '\u{85}', '\u{2028}', '\u{202e}', '\u{2066}', '\u{feff}',
+    ] {
+        let f = Fixture::new();
+        let template = f.write("template.py", template_text);
+        let cell = f.write("cell.py", &format!("x{ch}y"));
+        let arg = format!("1={}", cell.display());
+        let result = f.render(&template, "script", &["--cell", &arg]);
+        assert_eq!(result.status.code(), Some(1));
+        assert!(String::from_utf8_lossy(&result.stderr).contains("source_char"));
+        assert!(!f.0.join("scripts").exists());
+    }
+}
+
+#[test]
+fn ap_app_02_nb_08_10_12_versioned_append_and_invalid_ids() {
+    use toolkit_core::{parse_json, Json};
+    let f = Fixture::new();
+    let template = f.write(
+        "template.py",
+        "# Cell 0 [markdown]: Example\n# Desc\n# Cell 1: Code\npass\n",
+    );
+    let base = r#"{"cells":[{"cell_type":"code","id":"a1","source":["x"]}],"metadata":{"keep":true},"nbformat":4,"nbformat_minor":5}"#;
+    let source = f.write("notebooks/example-03.ipynb", base);
+    f.write("notebooks/example-01.ipynb", base);
+    f.write("notebooks/example-001.ipynb", "ignored");
+    let result = f.render(&template, "notebook", &["--append"]);
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert_eq!(fs::read_to_string(source).unwrap(), base);
+    let copy =
+        parse_json(&fs::read_to_string(f.0.join("notebooks/example-04.ipynb")).unwrap()).unwrap();
+    assert_eq!(copy.get("nbformat_minor"), Some(&Json::Int(5)));
+    let Json::Array(cells) = copy.get("cells").unwrap() else {
+        panic!("cells")
+    };
+    assert_eq!(cells[0].get("id").unwrap().as_str(), Some("a1"));
+    for cell in &cells[1..] {
+        assert_eq!(cell.get("id").unwrap().as_str().unwrap().len(), 8);
+    }
+    let bad = Fixture::new();
+    let t = bad.write(
+        "template.py",
+        "# Cell 0 [markdown]: Example\n# Desc\n# Cell 1: Code\npass\n",
+    );
+    bad.write(
+        "notebooks/example.ipynb",
+        &base.replace("\"a1\"", "\"bad id!\""),
+    );
+    let result = bad.render(&t, "notebook", &["--append"]);
+    assert_eq!(result.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&result.stderr).contains("notebook_cell_ids_invalid"));
+    assert!(!bad.0.join("notebooks/example-01.ipynb").exists());
+}
+
+#[test]
+fn ap_t28_01_02_03_04_cat_11_module_contract() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../skills/core-skills/aws-ai-ml/references/dataset-transformation/code_templates/transformation.py");
+    let original = fs::read_to_string(&root).unwrap();
+    assert!(original.contains("transform_fn.py"));
+    assert!(original.contains("from transform_fn import transform_dataset"));
+    for mode in ["script", "notebook"] {
+        let f = Fixture::new();
+        let missing = f.render(&root, mode, &[]);
+        assert_eq!(missing.status.code(), Some(1));
+        assert!(String::from_utf8_lossy(&missing.stderr).contains("module_cell_required"));
+        let module = f.write(
+            "scripts/transform_fn.py",
+            "def transform_dataset(df):\n    return df\n",
+        );
+        let before = fs::read(&module).unwrap();
+        #[cfg(unix)]
+        let before_meta = fs::metadata(&module).unwrap();
+        let arg = format!("2={}", module.display());
+        let result = f.render(&root, mode, &["--cell", &arg, "--allow-unresolved"]);
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        assert_eq!(fs::read(&module).unwrap(), before);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            let after = fs::metadata(&module).unwrap();
+            assert_eq!(
+                (
+                    before_meta.dev(),
+                    before_meta.ino(),
+                    before_meta.mtime(),
+                    before_meta.mtime_nsec()
+                ),
+                (after.dev(), after.ino(), after.mtime(), after.mtime_nsec())
+            );
+        }
+        let output = fs::read_to_string(f.0.join(if mode == "script" {
+            "scripts/01_example.py"
+        } else {
+            "notebooks/example.ipynb"
+        }))
+        .unwrap();
+        assert!(output.contains("from transform_fn import transform_dataset"));
+        if mode == "script" {
+            assert!(!output.contains("%%writefile"));
+            assert!(output.contains("# transform_dataset is defined"));
+        } else {
+            assert!(output.contains("%%writefile"));
+            assert!(output.contains("def transform_dataset(df):"));
+        }
+    }
+}
+
+#[test]
+fn ap_con_05_template_consent_literal_must_be_false() {
+    let f = Fixture::new();
+    let template = f.write(
+        "template.py",
+        "# Cell 0 [markdown]: Example\n# Description\n# Cell 1: Code\nACCEPT_EULA = True\n",
+    );
+    let result = f.render(&template, "script", &[]);
+    assert_eq!(result.status.code(), Some(1));
+    assert!(!f.0.join("scripts").exists());
+    let duplicate = f.write("duplicate.py", "# Cell 0 [markdown]: Example\n# Description\n# Cell 1: Code\nACCEPT_EULA = False\nACCEPT_EULA = True\n");
+    let result = f.render(&duplicate, "script", &[]);
+    assert_eq!(result.status.code(), Some(1));
+    assert!(!f.0.join("scripts").exists());
+}
+
+#[test]
+fn ap_cell_01_replacement_markers_remain_cell_text() {
+    let f = Fixture::new();
+    let template = f.write("template.py", "# Cell 0 [markdown]: Example\n# Description\n# Cell 1: Code\npass\n# Cell 2: Next\nother()\n");
+    let cell = f.write("cell.py", "# Cell 99: Just a comment\nprint('ok')\n");
+    let arg = format!("1={}", cell.display());
+    let result = f.render(&template, "notebook", &["--cell", &arg]);
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let result =
+        toolkit_core::parse_json(&fs::read_to_string(f.0.join("notebooks/example.ipynb")).unwrap())
+            .unwrap();
+    let toolkit_core::Json::Array(cells) = result.get("cells").unwrap() else {
+        panic!("cells")
+    };
+    assert_eq!(cells.len(), 3);
+    assert!(cells[1]
+        .to_compact_string()
+        .contains("# Cell 99: Just a comment"));
+}
+
+#[test]
+fn ap_asn_01_04_05_06_09_10_assignment_contracts() {
+    let source = "# Cell 0 [markdown]: Example\n# Desc\n# Cell 1: Config\nBASE_MODEL = 'old' # keep\nWAIT_FOR_COMPLETION = False\nINSTANCE_COUNT = 1\nTHRESHOLD = 0.5\nAPI_TOKEN = ''\nINPUT_LOCATION = '[INPUT_LOCATION]'\n";
+    let f = Fixture::new();
+    let template = f.write("template.py", source);
+    let values = f.write("values.json", r#"{"values":{"INPUT_LOCATION":"s3://ok"},"assign":{"BASE_MODEL":"new","WAIT_FOR_COMPLETION":true,"INSTANCE_COUNT":2,"THRESHOLD":1.25,"API_TOKEN":null}}"#);
+    let result = f.render(&template, "script", &["--values", values.to_str().unwrap()]);
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let output = fs::read_to_string(f.0.join("scripts/01_example.py")).unwrap();
+    for text in [
+        "BASE_MODEL = 'new' # keep",
+        "WAIT_FOR_COMPLETION = True",
+        "INSTANCE_COUNT = 2",
+        "THRESHOLD = 1.25",
+        "API_TOKEN = None",
+        "INPUT_LOCATION = 's3://ok'",
+    ] {
+        assert!(output.contains(text), "{text}");
+    }
+    for (document, error) in [
+        (r#"{"assign":{"BASE_MODEL":1}}"#, "string_value_invalid"),
+        (
+            r#"{"assign":{"WAIT_FOR_COMPLETION":"False"}}"#,
+            "assign_value_invalid",
+        ),
+        (
+            r#"{"assign":{"INSTANCE_COUNT":-1}}"#,
+            "assign_value_invalid",
+        ),
+        (
+            r#"{"assign":{"INPUT_LOCATION":"x"}}"#,
+            "assign_target_invalid",
+        ),
+        (
+            r#"{"assign":{"BASE_MODEL":"x","BASE_MODEL":"y"}}"#,
+            "values_invalid",
+        ),
+        (
+            r#"{"assign":{"API_TOKEN":"literal-secret-sentinel"}}"#,
+            "secret_value_invalid",
+        ),
+    ] {
+        let f = Fixture::new();
+        let template = f.write("template.py", source);
+        let values = f.write("values.json", document);
+        let result = f.render(
+            &template,
+            "script",
+            &["--values", values.to_str().unwrap(), "--allow-unresolved"],
+        );
+        assert_eq!(result.status.code(), Some(1));
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        assert!(stderr.contains(error), "{stderr}");
+        if document.contains("INPUT_LOCATION") {
+            assert!(stderr.contains("values.INPUT_LOCATION"));
+        }
+        assert!(!stderr.contains("literal-secret-sentinel"));
+        assert!(!f.0.join("scripts").exists());
+    }
+}
+
+#[test]
+fn ap_sub_15_20_21_sec_01_03_unknown_missing_and_secret_do_not_publish() {
+    let text = "# Cell 0 [markdown]: Example\n# Desc\n# Cell 1: Config\ntoken = '[HF_TOKEN_OR_NONE]'\nif token == '[HF_TOKEN_OR_NONE]': pass\nx = '[ROLE_ARN]'\n";
+    for (json, error) in [
+        (
+            r#"{"values":{"HF_TOKEN_OR_NONE":"literal-secret-sentinel"}}"#,
+            "secret_value_invalid",
+        ),
+        (r#"{"values":{"TYPO":"x"}}"#, "unknown_value"),
+    ] {
+        let f = Fixture::new();
+        let template = f.write("template.py", text);
+        let values = f.write("values.json", json);
+        let result = f.render(
+            &template,
+            "script",
+            &["--values", values.to_str().unwrap(), "--allow-unresolved"],
+        );
+        assert_eq!(result.status.code(), Some(1));
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        assert!(stderr.contains(error));
+        assert!(!stderr.contains("literal-secret-sentinel"));
+        assert!(!f.0.join("scripts").exists());
+    }
+    let f = Fixture::new();
+    let template = f.write("template.py", text);
+    let result = f.render(&template, "script", &[]);
+    assert_eq!(result.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&result.stderr).contains("HF_TOKEN_OR_NONE, ROLE_ARN"));
+    let values = f.write("values.json", r#"{"values":{"HF_TOKEN_OR_NONE":null}}"#);
+    assert!(f
+        .render(
+            &template,
+            "script",
+            &["--values", values.to_str().unwrap(), "--allow-unresolved"]
+        )
+        .status
+        .success());
+    let output = fs::read_to_string(f.0.join("scripts/01_example.py")).unwrap();
+    assert!(output.contains("token = None"));
+    assert!(output.contains("token == '[HF_TOKEN_OR_NONE]'"));
+    assert!(output.contains("x = '[ROLE_ARN]'"));
+}
+
+#[test]
+fn ap_fs_01_04_cell_02_usage_and_input_size() {
+    let f = Fixture::new();
+    let template = f.write(
+        "template.py",
+        "# Cell 0 [markdown]: Example\n# Desc\n# Cell 1: Code\npass\n",
+    );
+    for name in ["", "Upper", "../x", "a/b", "example-01"] {
+        let result = Command::new(env!("CARGO_BIN_EXE_toolkit"))
+            .args(["ai-payloads", "render"])
+            .arg(&template)
+            .args(["--mode", "script", "--project-dir"])
+            .arg(&f.0)
+            .args(["--name", name])
+            .output()
+            .unwrap();
+        assert!(!result.status.success(), "{name}");
+        assert!(!f.0.join("scripts").exists());
+    }
+    for arg in ["0=x", "2=x", "bad"] {
+        assert_eq!(
+            f.render(&template, "script", &["--cell", arg])
+                .status
+                .code(),
+            Some(2)
+        );
+    }
+    let large = f.write("large.py", &"x".repeat(1024 * 1024 + 1));
+    let arg = format!("1={}", large.display());
+    assert_eq!(
+        f.render(&template, "script", &["--cell", &arg])
+            .status
+            .code(),
+        Some(1)
+    );
+    assert!(!f.0.join("scripts").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn ap_fs_02_03_symlink_inputs_and_output_directory_are_refused() {
+    use std::os::unix::fs::symlink;
+    let f = Fixture::new();
+    let template = f.write(
+        "template.py",
+        "# Cell 0 [markdown]: Example\n# Desc\n# Cell 1: Code\npass\n",
+    );
+    let link = f.0.join("link.py");
+    symlink(&template, &link).unwrap();
+    assert_eq!(f.render(&link, "script", &[]).status.code(), Some(1));
+    let cell_arg = format!("1={}", link.display());
+    assert_eq!(
+        f.render(&template, "script", &["--cell", &cell_arg])
+            .status
+            .code(),
+        Some(1)
+    );
+    let values = f.write("values.json", "{}");
+    let values_link = f.0.join("values-link.json");
+    symlink(values, &values_link).unwrap();
+    assert_eq!(
+        f.render(
+            &template,
+            "script",
+            &["--values", values_link.to_str().unwrap()]
+        )
+        .status
+        .code(),
+        Some(1)
+    );
+    let outside = f.0.join("outside");
+    fs::create_dir(&outside).unwrap();
+    symlink(&outside, f.0.join("scripts")).unwrap();
+    assert_eq!(f.render(&template, "script", &[]).status.code(), Some(1));
+    assert_eq!(fs::read_dir(outside).unwrap().count(), 0);
+}
+
+#[test]
+fn ap_con_03_04_all_bare_slots_are_required_even_when_unresolved_allowed() {
+    let names = [
+        "ACCEPT_EULA",
+        "TRUE_OR_FALSE",
+        "CONCURRENCY",
+        "REQUEST_COUNT",
+        "INPUT_TOKENS_MEAN",
+        "INPUT_TOKENS_STDDEV",
+        "OUTPUT_TOKENS_MEAN",
+        "OUTPUT_TOKENS_STDDEV",
+        "METRICS_LIST",
+    ];
+    for name in names {
+        let f = Fixture::new();
+        let template = f.write(
+            "template.py",
+            &format!("# Cell 0 [markdown]: Example\n# Desc\n# Cell 1: Code\nx = [{name}]\n"),
+        );
+        let result = f.render(&template, "script", &["--allow-unresolved"]);
+        assert_eq!(result.status.code(), Some(1), "{name}");
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        assert!(stderr.contains("typed_slot_unresolved") && stderr.contains(name));
+        assert!(!f.0.join("scripts").exists());
+    }
+    let f = Fixture::new();
+    let template = f.write("template.py", TEMPLATE);
+    let values = f.write("values.json", r#"{"values":{"ACCEPT_EULA":false}}"#);
+    let result = f.render(
+        &template,
+        "script",
+        &["--values", values.to_str().unwrap(), "--allow-unresolved"],
+    );
+    assert!(result.status.success());
+    let output = fs::read_to_string(f.0.join("scripts/01_example.py")).unwrap();
+    assert!(output.contains("ACCEPT_EULA = False"));
+    assert!(output.contains("\"[ROLE_ARN]\""));
+}
+
+#[test]
+fn ap_nb_10_11_12_unsupported_versions_and_invalid_ids() {
+    for (version, minor, id, error) in [
+        ("4", "5", "", "notebook_cell_ids_invalid"),
+        ("4", "5", "bad id!", "notebook_cell_ids_invalid"),
+        (
+            "4",
+            "5",
+            "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789___",
+            "notebook_cell_ids_invalid",
+        ),
+        ("4", "6", "a1", "notebook_version_unsupported"),
+        ("4", "-1", "a1", "notebook_version_unsupported"),
+        ("4", "\"5\"", "a1", "notebook_version_unsupported"),
+        ("3", "4", "a1", "notebook_version_unsupported"),
+        ("5", "4", "a1", "notebook_version_unsupported"),
+    ] {
+        let f = Fixture::new();
+        let template = f.write(
+            "template.py",
+            "# Cell 0 [markdown]: Example\n# Desc\n# Cell 1: Code\npass\n",
+        );
+        let source = f.write("notebooks/example.ipynb", &format!("{{\"cells\":[{{\"id\":\"{id}\"}}],\"metadata\":{{}},\"nbformat\":{version},\"nbformat_minor\":{minor}}}"));
+        let before = fs::read(&source).unwrap();
+        let result = f.render(&template, "notebook", &["--append"]);
+        assert_eq!(result.status.code(), Some(1));
+        assert!(String::from_utf8_lossy(&result.stderr).contains(error));
+        assert_eq!(fs::read(source).unwrap(), before);
+        assert!(!f.0.join("notebooks/example-01.ipynb").exists());
+    }
+    for minor in [0, 3, 4] {
+        let f = Fixture::new();
+        let template = f.write(
+            "template.py",
+            "# Cell 0 [markdown]: Example\n# Desc\n# Cell 1: Code\npass\n",
+        );
+        f.write("notebooks/example.ipynb", &format!("{{\"cells\":[{{\"source\":[]}}],\"metadata\":{{}},\"nbformat\":4,\"nbformat_minor\":{minor}}}"));
+        assert!(f
+            .render(&template, "notebook", &["--append"])
+            .status
+            .success());
+        let copy = toolkit_core::parse_json(
+            &fs::read_to_string(f.0.join("notebooks/example-01.ipynb")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            copy.get("nbformat_minor"),
+            Some(&toolkit_core::Json::Int(minor))
+        );
+        let toolkit_core::Json::Array(cells) = copy.get("cells").unwrap() else {
+            panic!()
+        };
+        assert!(cells.iter().all(|c| c.get("id").is_none()));
+    }
+}
+
+#[test]
+fn ap_app_02_07_series_invalid_and_exhausted_sources_are_untouched() {
+    let template_text = "# Cell 0 [markdown]: Example\n# Desc\n# Cell 1: Code\npass\n";
+    let f = Fixture::new();
+    let template = f.write("template.py", template_text);
+    let result = f.render(&template, "notebook", &["--append"]);
+    assert!(String::from_utf8_lossy(&result.stderr).contains("append_source_missing"));
+    let base = "{\"cells\":[],\"metadata\":{},\"nbformat\":4,\"nbformat_minor\":4}";
+    let source = f.write("notebooks/example.ipynb", base);
+    fs::create_dir(f.0.join("notebooks/example-05.ipynb")).unwrap();
+    let result = f.render(&template, "notebook", &["--append"]);
+    assert!(String::from_utf8_lossy(&result.stderr).contains("append_source_invalid"));
+    assert_eq!(fs::read_to_string(source).unwrap(), base);
+    let f = Fixture::new();
+    let template = f.write("template.py", template_text);
+    let source = f.write("notebooks/example-99.ipynb", base);
+    let result = f.render(&template, "notebook", &["--append"]);
+    assert!(String::from_utf8_lossy(&result.stderr).contains("notebook_versions_exhausted"));
+    assert_eq!(fs::read_to_string(source).unwrap(), base);
+}
+
+#[test]
+fn ap_typ_05_con_02_unused_consent_and_existing_kernel_fail_closed() {
+    let f = Fixture::new();
+    let template = f.write("template.py", TEMPLATE);
+    for name in ["ROLE_ARN", "NOT_USED"] {
+        let result = f.render(
+            &template,
+            "script",
+            &["--consent", name, "--allow-unresolved"],
+        );
+        assert_eq!(result.status.code(), Some(1));
+        assert!(String::from_utf8_lossy(&result.stderr).contains("consent_name_invalid"));
+    }
+    let source = f.write("notebooks/example.ipynb", "{\"cells\":[{\"source\":[\"ACCEPT_EULA = False\"]}],\"metadata\":{},\"nbformat\":4,\"nbformat_minor\":4}");
+    let before = fs::read(&source).unwrap();
+    let result = f.render(&template, "notebook", &["--append", "--allow-unresolved"]);
+    assert_eq!(result.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&result.stderr).contains("typed_slot_unresolved"));
+    assert_eq!(fs::read(source).unwrap(), before);
+    assert!(!f.0.join("notebooks/example-01.ipynb").exists());
+}
+
+#[test]
+fn ap_t28_03_05_module_mismatch_missing_definition_and_unsafe_project() {
+    let template = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../skills/core-skills/aws-ai-ml/references/dataset-transformation/code_templates/transformation.py");
+    let f = Fixture::new();
+    let wrong = f.write(
+        "elsewhere.py",
+        "def transform_dataset(df):\n    return df\n",
+    );
+    let arg = format!("2={}", wrong.display());
+    let result = f.render(&template, "script", &["--cell", &arg]);
+    assert!(String::from_utf8_lossy(&result.stderr).contains("module_path_mismatch"));
+    let module = f.write("scripts/transform_fn.py", "pass\n");
+    let arg = format!("2={}", module.display());
+    let result = f.render(&template, "script", &["--cell", &arg]);
+    assert!(String::from_utf8_lossy(&result.stderr).contains("module_definition_missing"));
+    let unsafe_dir = f.0.join("space dir");
+    fs::create_dir(&unsafe_dir).unwrap();
+    fs::create_dir(unsafe_dir.join("scripts")).unwrap();
+    let module = unsafe_dir.join("scripts/transform_fn.py");
+    fs::write(&module, "def transform_dataset(df):\n    return df\n").unwrap();
+    let arg = format!("2={}", module.display());
+    let result = Command::new(env!("CARGO_BIN_EXE_toolkit"))
+        .args(["ai-payloads", "render"])
+        .arg(&template)
+        .args(["--mode", "notebook", "--project-dir"])
+        .arg(&unsafe_dir)
+        .args(["--name", "example", "--cell", &arg, "--allow-unresolved"])
+        .output()
+        .unwrap();
+    assert_eq!(result.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&result.stderr).contains("writefile_path_unsafe"));
+    assert!(!unsafe_dir.join("notebooks").exists());
+}
+
+#[test]
+fn ap_nb_01_02_03_04_and_scr_01_02_output_shape() {
+    use toolkit_core::{parse_json, Json};
+    let source = "# Cell 0 [markdown]: Example\n# Heading\n#\n# Text\n\n# Cell 1: Work\nx = 1\n\nshow() # NOTEBOOK_ONLY\nlast()\n";
+    let f = Fixture::new();
+    let template = f.write("template.py", source);
+    let result = f.render(&template, "notebook", &[]);
+    assert!(result.status.success());
+    let text = fs::read_to_string(f.0.join("notebooks/example.ipynb")).unwrap();
+    let golden = r#"{
+  "cells": [
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "Heading\n",
+        "\n",
+        "Text"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {},
+      "outputs": [],
+      "source": [
+        "x = 1\n",
+        "\n",
+        "show() # NOTEBOOK_ONLY\n",
+        "last()"
+      ]
+    }
+  ],
+  "metadata": {
+    "kernelspec": {
+      "display_name": "Python 3",
+      "language": "python",
+      "name": "python3"
+    },
+    "language_info": {
+      "name": "python"
+    }
+  },
+  "nbformat": 4,
+  "nbformat_minor": 4
+}
+"#;
+    assert_eq!(text, golden);
+    let notebook = parse_json(&text).unwrap();
+    assert_eq!(notebook.get("nbformat"), Some(&Json::Int(4)));
+    assert_eq!(notebook.get("nbformat_minor"), Some(&Json::Int(4)));
+    let Json::Array(cells) = notebook.get("cells").unwrap() else {
+        panic!()
+    };
+    assert_eq!(cells.len(), 2);
+    assert_eq!(
+        cells[0].get("cell_type").unwrap().as_str(),
+        Some("markdown")
+    );
+    assert!(cells[0].get("outputs").is_none());
+    assert_eq!(
+        cells[0].get("source"),
+        Some(&Json::Array(vec![
+            Json::string("Heading\n"),
+            Json::string("\n"),
+            Json::string("Text")
+        ]))
+    );
+    assert_eq!(
+        cells[1].get("source"),
+        Some(&Json::Array(vec![
+            Json::string("x = 1\n"),
+            Json::string("\n"),
+            Json::string("show() # NOTEBOOK_ONLY\n"),
+            Json::string("last()")
+        ]))
+    );
+    assert_eq!(cells[1].get("execution_count"), Some(&Json::Null));
+    assert_eq!(cells[1].get("outputs"), Some(&Json::Array(vec![])));
+    assert!(f.render(&template, "script", &[]).status.success());
+    assert_eq!(
+        fs::read_to_string(f.0.join("scripts/01_example.py")).unwrap(),
+        "\"\"\"Example\n\nHeading\n\nText\n\"\"\"\n\n# %% Cell 1: Work\nx = 1\n\nlast()\n"
+    );
+}
+
+#[test]
+fn ap_sub_11_12_invalid_scalars_never_echo_values() {
+    let f = Fixture::new();
+    let template = f.write(
+        "template.py",
+        "# Cell 0 [markdown]: Example\n# Desc\n# Cell 1: Code\nx = '[ROLE_ARN]'\n",
+    );
+    for value in [
+        toolkit_core::Json::string("sensitive-value\nnext"),
+        toolkit_core::Json::string("\u{202e}"),
+        toolkit_core::Json::string("x".repeat(4097)),
+        toolkit_core::Json::Bool(true),
+        toolkit_core::Json::Int(12),
+    ] {
+        let document = toolkit_core::Json::object(vec![(
+            "values",
+            toolkit_core::Json::object(vec![("ROLE_ARN", value)]),
+        )]);
+        let file = f.write("values.json", &document.to_compact_string());
+        let result = f.render(&template, "script", &["--values", file.to_str().unwrap()]);
+        assert_eq!(result.status.code(), Some(1));
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        assert!(stderr.contains("ROLE_ARN"));
+        assert!(!stderr.contains("sensitive-value"));
+        assert!(!f.0.join("scripts").exists());
+    }
+}
+
+#[test]
+fn ap_asn_05_type_errors_across_values_and_assign_are_collected_sorted() {
+    let f = Fixture::new();
+    let template = f.write("template.py", "# Cell 0 [markdown]: Example\n# Desc\n# Cell 1: Code\nA_FIELD = 1\nZ_FIELD = False\nx = '[MIDDLE]'\n");
+    let values = f.write(
+        "values.json",
+        r#"{"values":{"MIDDLE":false},"assign":{"Z_FIELD":"bad","A_FIELD":-1}}"#,
+    );
+    let result = f.render(&template, "script", &["--values", values.to_str().unwrap()]);
+    assert_eq!(result.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&result.stderr);
+    let a = stderr.find("A_FIELD").unwrap();
+    let middle = stderr.find("MIDDLE").unwrap();
+    let z = stderr.find("Z_FIELD").unwrap();
+    assert!(a < middle && middle < z, "{stderr}");
+    assert!(!f.0.join("scripts").exists());
+}
+
+#[test]
+fn ap_nb_06_existing_notebook_is_never_overwritten() {
+    let f = Fixture::new();
+    let template = f.write(
+        "template.py",
+        "# Cell 0 [markdown]: Example\n# Desc\n# Cell 1: Code\npass\n",
+    );
+    let destination = f.write("notebooks/example.ipynb", "existing bytes");
+    for flags in [&[][..], &["--new"][..]] {
+        let result = f.render(&template, "notebook", flags);
+        assert_eq!(result.status.code(), Some(1));
+        assert!(String::from_utf8_lossy(&result.stderr).contains("destination_exists"));
+        assert_eq!(fs::read_to_string(&destination).unwrap(), "existing bytes");
+    }
+    assert!(fs::read_dir(f.0.join("notebooks"))
+        .unwrap()
+        .all(|entry| !entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .contains("toolkit-render")));
+}
+
+#[test]
+fn ap_app_09_production_sources_do_not_modify_existing_files() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/ai_payloads");
+    for entry in fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.extension().and_then(|x| x.to_str()) != Some("rs") {
+            continue;
+        }
+        let source = fs::read_to_string(&path).unwrap();
+        for forbidden in [
+            "std::fs::rename",
+            "fs::rename(",
+            ".set_len(",
+            ".try_lock(",
+            ".lock(",
+        ] {
+            assert!(
+                !source.contains(forbidden),
+                "{}: {forbidden}",
+                path.display()
+            );
+        }
+        if path.file_name().unwrap() != "place.rs" {
+            assert!(!source.contains("OpenOptions::new()"), "{}", path.display());
+        }
+    }
+}
+
+#[test]
+fn ap_asn_04_07_08_invalid_targets_and_replaced_cells() {
+    let source = "# Cell 0 [markdown]: Example\n# Desc\n# Cell 1: Config\nVALUE = 1\nDUP = 1\nDUP = 2\na, TUPLE = 1, 2\nFSTRING = f'no'\nNONE = None\nEXPR = other + 1\n";
+    for name in ["DUP", "TUPLE", "FSTRING", "NONE", "EXPR", "UNKNOWN"] {
+        let f = Fixture::new();
+        let template = f.write("template.py", source);
+        let values = f.write("values.json", &format!("{{\"assign\":{{\"{name}\":1}}}}"));
+        let result = f.render(&template, "script", &["--values", values.to_str().unwrap()]);
+        assert_eq!(result.status.code(), Some(1));
+        assert!(
+            String::from_utf8_lossy(&result.stderr).contains("assign_target_invalid"),
+            "{name}"
+        );
+    }
+    let f = Fixture::new();
+    let template = f.write("template.py", source);
+    let values = f.write("values.json", r#"{"assign":{"VALUE":2}}"#);
+    let cell = f.write("cell.py", "pass\n");
+    let arg = format!("1={}", cell.display());
+    let result = f.render(
+        &template,
+        "script",
+        &["--values", values.to_str().unwrap(), "--cell", &arg],
+    );
+    assert!(String::from_utf8_lossy(&result.stderr).contains("assign_target_replaced"));
+    let result = f.render(&template, "script", &["--cell", &arg, "--cell", &arg]);
+    assert_eq!(result.status.code(), Some(2));
+}
+
+#[test]
+fn ap_sub_16_sec_04_asn_03_project_default_and_section_three_assignment() {
+    let f = Fixture::new();
+    let template = f.write("template.py", "# Cell 0 [markdown]: Example\n# Desc\n# Cell 1: Config\nx = '[PROJECT_DIR]'\nINPUT_TOKENS_MEAN = [INPUT_TOKENS_MEAN]\n# Cell 2: Other\npass\n# Cell 3: Custom\nCUSTOM_PROMPT_PATH = 'old'\n");
+    let values = f.write(
+        "values.json",
+        r#"{"values":{"INPUT_TOKENS_MEAN":1},"assign":{"CUSTOM_PROMPT_PATH":"new"}}"#,
+    );
+    let result = f.render(&template, "script", &["--values", values.to_str().unwrap()]);
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let output = fs::read_to_string(f.0.join("scripts/01_example.py")).unwrap();
+    assert!(output.contains(&format!(
+        "x = '{}'",
+        fs::canonicalize(&f.0).unwrap().display()
+    )));
+    assert!(output.contains("INPUT_TOKENS_MEAN = 1"));
+    assert!(output.contains("CUSTOM_PROMPT_PATH = 'new'"));
+}
+
+#[cfg(unix)]
+#[test]
+fn ap_t28_03_symlinked_module_is_refused() {
+    use std::os::unix::fs::symlink;
+    let template = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../skills/core-skills/aws-ai-ml/references/dataset-transformation/code_templates/transformation.py");
+    let f = Fixture::new();
+    let target = f.write("target.py", "def transform_dataset(df):\n    return df\n");
+    fs::create_dir(f.0.join("scripts")).unwrap();
+    let module = f.0.join("scripts/transform_fn.py");
+    symlink(target, &module).unwrap();
+    let arg = format!("2={}", module.display());
+    let result = f.render(&template, "notebook", &["--cell", &arg]);
+    assert_eq!(result.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&result.stderr).contains("module_missing"));
+    assert!(!f.0.join("notebooks").exists());
+    fs::remove_file(module).unwrap();
+    let module = f.write(
+        "scripts/transform_fn.py",
+        "def transform_dataset(df):\n    return df\n",
+    );
+    let alias = f.0.join("alias");
+    symlink(f.0.join("scripts"), &alias).unwrap();
+    let arg = format!("2={}", alias.join("transform_fn.py").display());
+    let result = f.render(&template, "notebook", &["--cell", &arg]);
+    assert_eq!(result.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&result.stderr).contains("module_missing"));
+    assert!(module.exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn ap_app_01_08_source_identity_and_readonly_mode_are_preserved() {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    let f = Fixture::new();
+    let template = f.write(
+        "template.py",
+        "# Cell 0 [markdown]: Example\n# Desc\n# Cell 1: Code\npass\n",
+    );
+    let source = f.write(
+        "notebooks/example.ipynb",
+        "{\"cells\":[],\"metadata\":{},\"nbformat\":4,\"nbformat_minor\":4}",
+    );
+    fs::set_permissions(&source, fs::Permissions::from_mode(0o444)).unwrap();
+    let before = fs::metadata(&source).unwrap();
+    let bytes = fs::read(&source).unwrap();
+    let result = f.render(&template, "notebook", &["--append"]);
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let after = fs::metadata(&source).unwrap();
+    assert_eq!(
+        (
+            before.dev(),
+            before.ino(),
+            before.len(),
+            before.mtime(),
+            before.mtime_nsec()
+        ),
+        (
+            after.dev(),
+            after.ino(),
+            after.len(),
+            after.mtime(),
+            after.mtime_nsec()
+        )
+    );
+    assert_eq!(fs::read(source).unwrap(), bytes);
+}
+
+#[test]
+fn ap_asn_11_manual_edits_reported_after_success() {
+    let f = Fixture::new();
+    let template = f.write("template.py", "# Cell 0 [markdown]: Example\n# Desc\n# Cell 1: Code\n# NOTE FOR AGENT: change the config\npass\n");
+    let result = f.render(&template, "script", &[]);
+    assert!(result.status.success());
+    let stdout = String::from_utf8_lossy(&result.stdout);
+    assert!(
+        stdout.contains("manual: Cell 1 line 4: NOTE FOR AGENT: change the config"),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn ap_asn_07_secret_sentinel_is_unchanged_with_values_and_assign() {
+    let f = Fixture::new();
+    let template = f.write("template.py", "# Cell 0 [markdown]: Example\n# Desc\n# Cell 1: Code\nBASE_MODEL = 'old'\nHF_HUB_TOKEN = '[HF_TOKEN_OR_NONE]'\nif HF_HUB_TOKEN in ('', 'None', '[HF_TOKEN_OR_NONE]'): pass\n");
+    let values = f.write(
+        "values.json",
+        r#"{"values":{"HF_TOKEN_OR_NONE":null},"assign":{"BASE_MODEL":"new"}}"#,
+    );
+    let result = f.render(&template, "script", &["--values", values.to_str().unwrap()]);
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let output = fs::read_to_string(f.0.join("scripts/01_example.py")).unwrap();
+    assert!(output.contains("HF_HUB_TOKEN = None"));
+    assert!(output.contains("if HF_HUB_TOKEN in ('', 'None', '[HF_TOKEN_OR_NONE]'): pass"));
+}
+
+#[cfg(unix)]
+#[test]
+fn ap_app_02_07_latest_symlink_and_over_cap_source_are_refused() {
+    use std::os::unix::fs::symlink;
+    let f = Fixture::new();
+    let template = f.write(
+        "template.py",
+        "# Cell 0 [markdown]: Example\n# Desc\n# Cell 1: Code\npass\n",
+    );
+    let base = f.write(
+        "notebooks/example.ipynb",
+        "{\"cells\":[],\"metadata\":{},\"nbformat\":4,\"nbformat_minor\":4}",
+    );
+    symlink(&base, f.0.join("notebooks/example-05.ipynb")).unwrap();
+    let result = f.render(&template, "notebook", &["--append"]);
+    assert!(String::from_utf8_lossy(&result.stderr).contains("append_source_invalid"));
+    assert!(!f.0.join("notebooks/example-06.ipynb").exists());
+    fs::remove_file(f.0.join("notebooks/example-05.ipynb")).unwrap();
+    let huge = f.write(
+        "notebooks/example-06.ipynb",
+        &"x".repeat(16 * 1024 * 1024 + 1),
+    );
+    let result = f.render(&template, "notebook", &["--append"]);
+    assert!(String::from_utf8_lossy(&result.stderr).contains("append_source_invalid"));
+    assert_eq!(fs::metadata(huge).unwrap().len(), 16 * 1024 * 1024 + 1);
+    assert!(!f.0.join("notebooks/example-07.ipynb").exists());
+    let fifo = f.0.join("notebooks/example-08.ipynb");
+    assert!(Command::new("mkfifo")
+        .arg(&fifo)
+        .status()
+        .unwrap()
+        .success());
+    let result = f.render(&template, "notebook", &["--append"]);
+    assert!(String::from_utf8_lossy(&result.stderr).contains("append_source_invalid"));
+    assert!(!f.0.join("notebooks/example-09.ipynb").exists());
+}
+
+#[test]
+fn ap_con_05_consent_slot_and_assignment_emissions() {
+    for mode in ["notebook", "script"] {
+        for (source, json, consent, emitted) in [
+            (
+                "ACCEPT_EULA = [ACCEPT_EULA]",
+                r#"{"values":{"ACCEPT_EULA":false}}"#,
+                false,
+                "False",
+            ),
+            (
+                "ACCEPT_EULA = [ACCEPT_EULA]",
+                r#"{"values":{"ACCEPT_EULA":true}}"#,
+                true,
+                "True",
+            ),
+            (
+                "ACCEPT_EULA = False",
+                r#"{"assign":{"ACCEPT_EULA":false}}"#,
+                false,
+                "False",
+            ),
+            (
+                "ACCEPT_EULA = False",
+                r#"{"assign":{"ACCEPT_EULA":true}}"#,
+                true,
+                "True",
+            ),
+            ("ACCEPT_EULA = False", "{}", false, "False"),
+        ] {
+            let f = Fixture::new();
+            let template = f.write(
+                "template.py",
+                &format!("# Cell 0 [markdown]: Example\n# Desc\n# Cell 1: Code\n{source}\n"),
+            );
+            let values = f.write("values.json", json);
+            let mut args = vec!["--values", values.to_str().unwrap()];
+            if consent {
+                args.extend(["--consent", "ACCEPT_EULA"]);
+            }
+            let result = f.render(&template, mode, &args);
+            assert!(
+                result.status.success(),
+                "{}",
+                String::from_utf8_lossy(&result.stderr)
+            );
+            let output = fs::read_to_string(f.0.join(if mode == "script" {
+                "scripts/01_example.py"
+            } else {
+                "notebooks/example.ipynb"
+            }))
+            .unwrap();
+            assert!(output.contains(&format!("ACCEPT_EULA = {emitted}")));
+            assert!(!output.contains("[ACCEPT_EULA]"));
+        }
+    }
+}
+
+#[test]
+fn ap_asn_01_sub_10_assignment_and_slot_on_same_line() {
+    let f = Fixture::new();
+    let template = f.write(
+        "template.py",
+        "# Cell 0 [markdown]: Example\n# Desc\n# Cell 1: Code\nA = 1; x = \"[ROLE_ARN]\"\n",
+    );
+    let values = f.write(
+        "values.json",
+        r#"{"values":{"ROLE_ARN":"ok"},"assign":{"A":12345}}"#,
+    );
+    let result = f.render(&template, "script", &["--values", values.to_str().unwrap()]);
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert!(fs::read_to_string(f.0.join("scripts/01_example.py"))
+        .unwrap()
+        .contains("A = 12345; x = \"ok\""));
+}
