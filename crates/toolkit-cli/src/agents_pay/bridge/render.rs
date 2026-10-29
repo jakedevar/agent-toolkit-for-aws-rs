@@ -295,6 +295,18 @@ mod tests {
                 .as_str(),
             Some("2026-08-07T12:34:30+00:00")
         );
+        assert_eq!(
+            timestamp(&Json::string("2026-08-07T12.5Z"))
+                .unwrap()
+                .as_str(),
+            Some("2026-08-07T12:30:00+00:00")
+        );
+        assert_eq!(
+            timestamp(&Json::string("2026-08-07T12:34.25+0530"))
+                .unwrap()
+                .as_str(),
+            Some("2026-08-07T12:34:15+05:30")
+        );
     }
 
     // T-BR-OUT-CAP: the encoded document and the final LF share the cap.

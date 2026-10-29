@@ -311,6 +311,55 @@ mod tests {
                 Err(BridgeError::Input)
             );
         }
+        for (field, accepted, rejected, error) in [
+            ("payment_session_id", 31, 30, BridgeError::AgentCore),
+            ("payment_instrument_id", 34, 33, BridgeError::AgentCore),
+            ("user_id", 120, 121, BridgeError::AgentCore),
+            ("payment_manager_arn", 66, 65, BridgeError::AgentCore),
+        ] {
+            let good = "é".repeat(accepted);
+            let parsed =
+                read_request(&mut Cursor::new(change(field, Json::string(&good)))).unwrap();
+            assert_eq!(
+                parsed.get(field).and_then(Json::as_str),
+                Some(good.as_str())
+            );
+            assert_eq!(
+                read_request(&mut Cursor::new(change(
+                    field,
+                    Json::string("é".repeat(rejected))
+                ))),
+                Err(error),
+                "{field}"
+            );
+        }
+        let padded = " user ";
+        let parsed =
+            read_request(&mut Cursor::new(change("user_id", Json::string(padded)))).unwrap();
+        assert_eq!(parsed.get("user_id").and_then(Json::as_str), Some(padded));
+        for value in [
+            Json::Null,
+            Json::Int(1),
+            Json::string(""),
+            Json::string("   "),
+            Json::string("\u{3000}"),
+            Json::string("\u{1c}"),
+            Json::string("é".repeat(2049)),
+        ] {
+            assert_eq!(
+                read_request(&mut Cursor::new(change(
+                    "resource",
+                    Json::object(vec![("url", value)])
+                ))),
+                Err(BridgeError::Input)
+            );
+        }
+        let resource_url = "é".repeat(2048);
+        assert!(read_request(&mut Cursor::new(change(
+            "resource",
+            Json::object(vec![("url", Json::string(&resource_url))])
+        )))
+        .is_ok());
     }
 
     // T-BR-REQ-SIZE, JSON, KEYS, STR, AGENT, REGION and PARAM.
