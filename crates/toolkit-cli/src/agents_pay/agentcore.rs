@@ -60,10 +60,10 @@ pub fn error_code(header: Option<&str>, body: &str) -> &'static str {
 }
 
 fn sts_error_code(header: Option<&str>, body: &str) -> &'static str {
+    const NS: &str = "https://sts.amazonaws.com/doc/2011-06-15/";
     if header.is_some() {
         return error_code(header, "");
     }
-    const NS: &str = "https://sts.amazonaws.com/doc/2011-06-15/";
     let Ok(document) = roxmltree::Document::parse(body) else {
         return "UnrecognizedError";
     };
@@ -1338,9 +1338,15 @@ impl FakePaymentsApi {
 }
 /// Payment operation interface; requests can only originate from `Approved`.
 pub trait PaymentsApi {
-    /// Read a session. Returns a sanitized error on failure.
+    /// Read a session.
+    ///
+    /// # Errors
+    /// Returns a sanitized error on failure.
     fn get_session(&self, manager: &str, session: &str, user: &str) -> Result<Json, PaymentError>;
-    /// Create a session. Returns a sanitized error on failure.
+    /// Create a session.
+    ///
+    /// # Errors
+    /// Returns a sanitized error on failure.
     fn create_session(
         &self,
         manager: &str,
@@ -1349,7 +1355,10 @@ pub trait PaymentsApi {
         expiry: i64,
         token: &str,
     ) -> Result<Json, PaymentError>;
-    /// Create an instrument. Returns a sanitized error on failure.
+    /// Create an instrument.
+    ///
+    /// # Errors
+    /// Returns a sanitized error on failure.
     fn create_instrument(
         &self,
         manager: &str,
