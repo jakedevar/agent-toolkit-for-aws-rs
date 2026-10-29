@@ -982,3 +982,5 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 10-29 11:52Z: docgraph S5 repair (9e585ee2) at 76df7bd55d83f2284532c42de374b05e07b2e4c3, test-only (+143 in capture.rs). PM VERIFIED: red 6cf927eb (key echo leaks passwordKEYCANARY5348) / green 907b0e11; check ok (953bc02c 5038). Enqueued 5f7b4557, then CANCELLED it: conflicts with L6 dc9fd4ea on registry.rs/diag_contract.rs. Merge-only continuation -> Claude Sonnet f429613a (merge 22838019 + rolling, re-pin). Then check + enqueue behind L6.
   Kaizen filed #5360 (the global usage FNV pin and route array serialise parallel CLI slices). This is a project-side candidate for a kaizen worker when a slot is free.
   4/4 busy: 4ca3337b (#5345 L5), f6287c21 (#5352 x402 S5), c057ddb0 (#5306 merge), f429613a (#5327 merge).
+- 10-29 11:54Z: x402 S4 #5181 LANDED (81c0c481 published, e29cffce35c61e0dcfb657ab0465b77c5366a879). #5181 auto-closed; CLOSED #5326 #5339. #4410 stays open (S5 #5352 in flight, S6, S7). OpenClaw B1 is now unblocked: file it from the OpenClaw design at the next free slot.
+  Queue: dc9fd4ea (#5317 L6), 1a3750bd (#5329). The #5306 continuation c057ddb0 merges 424fe183 = now on rolling.
