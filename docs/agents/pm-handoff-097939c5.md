@@ -775,3 +775,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
   RULING on #5224: that test MOVES TO S5 (S5 builds the prod constructor); S5 brief must carry it. S3 not blocked.
   Review #5225 -> Codex sol xhigh d9924905 (pinned 4584b5ec; MCP proxy impact). On ACCEPT: check+enqueue 4584b5ec (source_session 6f31c7c9); close #5210 #5225 #5217 on land.
   4/4 busy: 573278a7 (#5216 L4), 5752b270 (#5223 S2b), 0dcdafea (#5181 S4 cont), d9924905 (#5225).
+- 10-29 06:15Z: S2b (5752b270) stopped PARTIAL at b7f8effa267b8ee76ecc132c1604fc42642f2c99 after 8 min at 22.5% context (type table + scalar/secret validation only; render route red). Kaizen #5226 (early partial handoffs).
+  Continuation da98439f (Codex terra, continue_from 5752b270) with explicit stop rule (>70% context or named design contradiction only).
+  4/4 busy: 573278a7 (#5216 L4), 0dcdafea (#5181 S4 cont), d9924905 (#5225 review S3), da98439f (#5223 S2b cont).
