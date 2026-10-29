@@ -139,6 +139,9 @@ fn t_tune_python_float_and_bounds() {
         ("1__0", 5.0),
         ("0", 5.0),
     ] {
-        assert_eq!(bounded_env(Some(raw), 5.0, 1.0, 10.0), expected, "{raw}");
+        assert!(
+            (bounded_env(Some(raw), 5.0, 1.0, 10.0) - expected).abs() < f64::EPSILON,
+            "{raw}"
+        );
     }
 }
