@@ -1206,3 +1206,7 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 23:16Z: B3 #5505 (ebb5348d) DONE at a90abec773ad5adf0d76c09664989bac33452fe1 (20 T-PKG red 5d541c67 -> green c8a1f38f; fmt ff89813a, clippy 252ef496, scoped a37b0b59 ok, merges cleanly; T-JS-PKG pending #5158). Friction #5510.
   Review #5511 -> Codex sol high 1d8e7401, pinned a90abec7. On ACCEPT: check, then enqueue AFTER S6/B2/#5360 if it conflicts (registry/plugin-stage), else enqueue at once. B4 needs B2+B3+#5158.
   4/4: ce95436a S6+B2 integ, a0ab0de1 docgraph S2, 545fbb43 #5504, 1d8e7401 #5511 review.
+- 23:18Z: S6+B2 integration (ce95436a) DONE: A a6a76a0a, B tip a43506e84f5ae16d2f8b4a7107a8b1a5e477d7ad (B2 merge 0655ae2e + test-only live.rs pin union a43506e8, ACCEPTED). Check ok on a43506e8 (66f7fbf5, 4704). A refused as commit_mismatch only because rolling moved.
+  DECISION: ONE gate for B, which contains A. ENQUEUED seq 3056 (6b036cfa, issue 5462). On land, close #5462 #5474 #5475 #5487 #5443 #5483; then #5360 merge-only continue_from 27f4dc18 (re-pin from failing test output), check, enqueue issue 5360. B3 (#5511 review) also lands after this if it conflicts.
+  #5158 (offline npm route, gates B4) -> Claude Opus high dc2bb4e7. Friction from ce95436a: #5485 (existing).
+  4/4: a0ab0de1 docgraph S2, 545fbb43 #5504, 1d8e7401 #5511 review, dc2bb4e7 #5158. Queue: 3056 S6+B2.
