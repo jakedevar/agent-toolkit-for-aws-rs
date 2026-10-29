@@ -130,13 +130,13 @@ pub fn validate_payment_roots(
     loader: &dyn PaymentRootLoader,
     platform: PaymentRootPlatform,
 ) -> Result<PaymentRoots, PaymentRootsFailure> {
-    let mut loaded = LoadedCerts::default();
+    let mut collected = LoadedCerts::default();
     match platform {
         PaymentRootPlatform::NativeStoreOnly => {
             if presence.file.is_some() || presence.dir.is_some() {
                 return Err(PaymentRootsFailure::OverrideVariablePresent);
             }
-            loaded = loader.native_store();
+            collected = loader.native_store();
         }
         PaymentRootPlatform::UnixFixedTable => {
             let (files, dirs) = locations();
@@ -151,15 +151,19 @@ pub fn validate_payment_roots(
                         .map(|p| loader.load_paths(None, Some(p))),
                 );
             for entry in entries {
-                loaded.certs.extend(entry.certs);
-                loaded.errors += entry.errors;
+                collected.certs.extend(entry.certs);
+                collected.errors += entry.errors;
             }
         }
     }
-    let (certs, rejected) = parsable(loaded.certs);
-    ValidatedRoots::new(certs, RootMode::PaymentPlatform, loaded.errors + rejected)
-        .map(PaymentRoots)
-        .ok_or(PaymentRootsFailure::NoRoots)
+    let (certs, rejected) = parsable(collected.certs);
+    ValidatedRoots::new(
+        certs,
+        RootMode::PaymentPlatform,
+        collected.errors + rejected,
+    )
+    .map(PaymentRoots)
+    .ok_or(PaymentRootsFailure::NoRoots)
 }
 
 impl PaymentRoots {
@@ -210,7 +214,9 @@ impl PaymentRootLoader for PlatformLoader {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sdk::test_support::{child_case, child_command, report, run_child, Pki, TempDir};
+    use crate::sdk::test_support::{
+        child_case, child_command, report, run as run_child, Pki, TempDir,
+    };
     use rustls::{ClientConfig, ClientConnection, RootCertStore, ServerConfig, ServerConnection};
     use std::sync::Arc;
 
