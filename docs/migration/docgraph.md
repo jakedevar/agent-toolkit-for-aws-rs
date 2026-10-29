@@ -193,8 +193,7 @@ name or value of the file.
 
 ## Not in this slice
 
-Tracked in #4886: `graphrag_pipeline.py` and `agentic_memory.py` (helper
-libraries), the live AWS / Gremlin / MongoDB bindings, and retiring the Python
+Tracked in #4886: the live AWS / Gremlin / MongoDB bindings, and retiring the Python
 files and updating `SKILL.md` / `references/well-architected.md` callers. The
 Python stays in place until then: the Rust commands cannot reach AWS or a
 database yet, so replacing the callers now would remove a working path.
@@ -204,8 +203,8 @@ database yet, so replacing the callers now would remove a working path.
 The Rust surface is `docgraph::memory`, with `toolkit neptune memory
 --operation OP --input FILE [--dry-run | --recorded FILE]`. The input is a JSON
 object of operation arguments. Dry run prints a JSON array of ordered request
-objects; replay uses the `calls` format and strict ordered matching of the seed
-session, with `results` in each response. A retrieval dry run cannot predict
+objects; replay uses the `calls` format and strict ordered matching like the seed
+session. A retrieval dry run cannot predict
 response-dependent expansion, so it prints the initial request; replay expands
 from the returned chunks. No live network client is provided.
 
@@ -244,7 +243,7 @@ non-list is invalid. Recorded errors are reported without service messages.
 | --- | --- |
 | `create-graphrag`, `create-memory` | `graph_name` (optional for memory), (`memory_gb`, `embedding_dimension`, `generation_model`) |
 | `query` | `graph_id`, `query`, (`parameters` object) |
-| `vector-search`, `retrieve`, `semantic-recall` | `graph_id`, `embedding`, (`top_k`) |
+| `vector-search`, `retrieve`, `semantic-recall` | `graph_id`, `embedding`, (`top_k`); `vector-search` also accepts `vertex_label` |
 | `ingest-document` | `graph_id`, `doc_id`, `title`, `source` |
 | `ingest-chunk` | `graph_id`, `chunk_id`, `doc_id`, `text`, `sequence`, `embedding`, (`prev_chunk_id`) |
 | `ingest-entity` | `graph_id`, `name`, `entity_type`, `description`, `embedding` |

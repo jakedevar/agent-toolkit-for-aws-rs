@@ -1,4 +1,5 @@
 //! Offline request builders for Neptune GraphRAG and agentic memory.
+use std::fmt::Write;
 use toolkit_core::{sha256_hex, Json};
 
 pub fn chunk_document(
@@ -19,12 +20,14 @@ pub fn chunk_document(
     }
     Ok(chunks)
 }
+#[must_use]
 pub fn escape_cypher_string(value: &str) -> String {
     value
         .replace('\\', "\\\\")
         .replace('\'', "\\'")
         .replace('"', "\\\"")
 }
+#[must_use]
 pub fn entity_id(name: &str) -> String {
     sha256_hex(name.as_bytes())[..32].to_string()
 }
@@ -52,12 +55,14 @@ pub fn query(id: &str, statement: &str, parameters: Json) -> Result<Json, &'stat
     }
     Ok(Json::object(pairs))
 }
+#[must_use]
 pub fn gremlin(statement: &str, bindings: Json) -> Json {
     Json::object(vec![
         ("gremlin", Json::string(statement)),
         ("bindings", bindings),
     ])
 }
+#[must_use]
 pub fn create_graph(name: &str, memory: i64, dimension: i64, model: &str, rag: bool) -> Json {
     let mut p = vec![
         ("graphName", Json::string(name)),
@@ -124,10 +129,10 @@ fn vector(id: &str, input: &Json, label: &str, top: i64, entity: bool) -> Result
         ),
         ("vertex_filter", filter(label)),
     ]);
-    let ret = if !entity {
-        "node.id AS id, node.text AS text, score"
-    } else {
+    let ret = if entity {
         "node.name AS name, node.type AS type, node.description AS description, score"
+    } else {
+        "node.id AS id, node.text AS text, score"
     };
     cypher(id, &format!("CALL neptune.algo.vectors.topK.byEmbedding({{embedding: $embedding, topK: $top_k, vertexFilter: $vertex_filter}}) YIELD node, score RETURN {ret} ORDER BY score DESC"), p)
 }
@@ -198,7 +203,7 @@ pub fn plan(op: &str, input: &Json) -> Result<Vec<Json>, String> {
             for (index, (key, value)) in properties.iter().enumerate() {
                 let k = format!("key_{index}");
                 let v = format!("value_{index}");
-                statement.push_str(&format!(".property({k},{v})"));
+                let _ = write!(statement, ".property({k},{v})");
                 bindings.push((k, Json::string(key)));
                 bindings.push((v, value.clone()));
             }
@@ -386,6 +391,7 @@ impl RecordedMemory {
         Ok(Self { queue })
     }
     /// Number of unmatched entries.
+    #[must_use]
     pub fn unused(&self) -> usize {
         self.queue.unconsumed()
     }

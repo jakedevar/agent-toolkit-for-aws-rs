@@ -174,3 +174,75 @@ fn graph_ingestion_and_hybrid_plans_preserve_sequence() {
     assert_eq!(hybrid.len(), 2);
     assert!(hybrid[1].to_compact_string().contains("notEquals"));
 }
+
+#[test]
+fn recorded_cli_replays_ordered_requests_and_rejects_mismatch() {
+    let dir = TempDir::new("memory-replay");
+    let input = dir.write(
+        "input.json",
+        r#"{"graph_id":"g-abc123def4","embedding":[0.1]}"#,
+    );
+    let recorded = dir.write("calls.json", r#"{"calls":[{"response":{"results":[{"id":"c1","text":"hello","score":0.5}]}},{"response":{"results":[]}},{"response":{"results":[]}},{"response":{"results":[{"text":"next"}]}}]}"#);
+    let result = run(&[
+        "neptune",
+        "memory",
+        "--operation",
+        "retrieve",
+        "--input",
+        &input,
+        "--recorded",
+        &recorded,
+    ]);
+    assert_eq!(result.status, 0, "{}", result.stderr);
+    assert_eq!(
+        json(&result.stdout),
+        json(
+            r#"[{"chunk_text":"hello","score":0.5,"entities":[],"related_entities":[],"neighboring_chunks":["next"]}]"#
+        )
+    );
+    let extra = dir.write(
+        "extra.json",
+        r#"{"calls":[{"response":{"results":[]}},{"response":{"results":[]}}]}"#,
+    );
+    assert_ne!(
+        run(&[
+            "neptune",
+            "memory",
+            "--operation",
+            "retrieve",
+            "--input",
+            &input,
+            "--recorded",
+            &extra
+        ])
+        .status,
+        0
+    );
+}
+
+#[test]
+fn graph_ids_and_vector_filter_boundaries() {
+    use crate::docgraph::memory::plan;
+    for id in [
+        "g-123456789",
+        "g-abcdefghij\n",
+        "g-ABCDEFGHIJ",
+        "g-abcdefghé",
+    ] {
+        assert!(query(id, "RETURN 1", json("{}")).is_err());
+    }
+    assert!(query("g-1234567890a", "RETURN 1", json("{}")).is_ok());
+    assert!(query("g-1234567890", "RETURN 1", json("null")).is_err());
+    let request = plan(
+        "vector-search",
+        &json(r#"{"graph_id":"g-1234567890","embedding":[1],"vertex_label":"Custom'"}"#),
+    )
+    .unwrap()
+    .remove(0);
+    let params = request.get("parameters").unwrap();
+    let filter = json(params.get("vertex_filter").unwrap().as_str().unwrap());
+    assert_eq!(
+        filter.get("equals").unwrap().get("value"),
+        Some(&json(r#""Custom'""#))
+    );
+}
