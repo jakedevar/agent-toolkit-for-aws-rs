@@ -24,6 +24,7 @@ use crate::{Invocation, Output};
 mod place;
 mod assign;
 mod notebook;
+mod script;
 mod template;
 mod types;
 mod values;
