@@ -439,10 +439,14 @@ fn ap_app_02_nb_08_10_12_versioned_append_and_invalid_ids() {
     assert_eq!(fs::read_to_string(source).unwrap(), base);
     let copy =
         parse_json(&fs::read_to_string(f.0.join("notebooks/example-04.ipynb")).unwrap()).unwrap();
+    let original = parse_json(base).unwrap();
+    assert_eq!(copy.get("metadata"), original.get("metadata"));
+    let Json::Array(original_cells) = original.get("cells").unwrap() else { panic!("cells") };
     assert_eq!(copy.get("nbformat_minor"), Some(&Json::Int(5)));
     let Json::Array(cells) = copy.get("cells").unwrap() else {
         panic!("cells")
     };
+    assert_eq!(&cells[..original_cells.len()], original_cells.as_slice());
     assert_eq!(cells[0].get("id").unwrap().as_str(), Some("a1"));
     for cell in &cells[1..] {
         assert_eq!(cell.get("id").unwrap().as_str().unwrap().len(), 8);
