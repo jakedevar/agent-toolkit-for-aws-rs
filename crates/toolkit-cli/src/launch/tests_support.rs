@@ -73,6 +73,35 @@ fn restore_permissions(dir: &Path) {
     }
 }
 
+/// Write the executable script `path` (mode 0755) from a child `sh`, so this
+/// test process never holds a writable descriptor of it. A descriptor this
+/// process held would be copied into a child that another test thread forks
+/// at the same moment, and while that child had not yet reached `exec`,
+/// running the script would fail with `ETXTBSY` (#5370: the fake Git of
+/// T-AR-GIT-6 then looked missing).
+#[cfg(unix)]
+pub fn write_executable(path: &Path, body: &[u8]) -> PathBuf {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).expect("create parent");
+    }
+    let mut child = Command::new("sh")
+        .args(["-c", "cat > \"$1\" && chmod 755 \"$1\"", "sh"])
+        .arg(path)
+        .stdin(Stdio::piped())
+        .spawn()
+        .expect("spawn sh");
+    child
+        .stdin
+        .take()
+        .expect("stdin")
+        .write_all(body)
+        .expect("write script");
+    assert!(child.wait().expect("wait sh").success(), "write script");
+    path.to_path_buf()
+}
+
 /// The production Git runner with the test discovery ceiling at the
 /// temporary directory (see `GitRunner::ceiling`).
 #[cfg(unix)]

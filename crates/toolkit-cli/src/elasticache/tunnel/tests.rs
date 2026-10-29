@@ -2233,7 +2233,7 @@ fn recording_parse_errors_never_carry_a_value() {
 const ALL_KINDS: [CacheErrorKind; 6] = CacheErrorKind::ALL;
 
 /// A password with the characters the reviewers' reproductions used.
-const FORM_PASSWORD: &str = "marmalade 742/synthetic+value";
+const FORM_PASSWORD: &str = "marmalade zqx742qz/synthetic+value";
 
 fn failing_cache(kind: &str, error: CacheErrorKind) -> MockCache {
     let mut cache = MockCache::healthy();
@@ -2267,7 +2267,7 @@ fn a_client_error_kind_prints_only_its_fixed_text_in_every_auth_flow() {
         "mycache.use1.cache.amazonaws.com/?Action=connect&User=iamuser&X-Amz-Signature=Wd8zXk33";
     let parts = [
         "marmalade",
-        "742",
+        "zqx742qz",
         "synthetic",
         "Wd8zXk33",
         "iamuser",
@@ -2331,7 +2331,7 @@ fn the_text_of_a_kind_is_first_party_and_pinned() {
 fn an_injected_server_info_is_printed_through_the_gate_only() {
     let hostile = ServerInfo {
         version: format!("7.1 {FORM_PASSWORD}"),
-        mode: "marmalade+742%2Fsynthetic%2Bvalue".to_string(),
+        mode: "marmalade+zqx742qz%2Fsynthetic%2Bvalue".to_string(),
     };
     let mut cache = MockCache::healthy();
     cache.info = Some(hostile);
@@ -2347,7 +2347,7 @@ fn an_injected_server_info_is_printed_through_the_gate_only() {
         "{}",
         run.stdout
     );
-    assert_no_secret(&run, &["marmalade", "742", "synthetic"], "server info");
+    assert_no_secret(&run, &["marmalade", "zqx742qz", "synthetic"], "server info");
 }
 
 // ----------------------------------------------- the SecretGate itself
@@ -2797,7 +2797,7 @@ fn the_tls_hint_follows_the_typed_kind_and_the_tls_setting() {
 
 #[test]
 fn a_recording_refuses_free_text_error_and_unknown_kinds_without_echoing_them() {
-    let secret = "marmalade 742/synthetic+value";
+    let secret = "marmalade zqx742qz/synthetic+value";
     let echo = "marmalade";
     for recording in [
         // Free text as the init error or the PING message is no longer a recording.
@@ -2814,10 +2814,43 @@ fn a_recording_refuses_free_text_error_and_unknown_kinds_without_echoing_them() 
         assert_eq!(status, 1, "{recording}");
         let all = format!("{stdout}{stderr}");
         assert!(!all.contains(echo), "{recording}: {all}");
-        assert!(!all.contains("742"), "{recording}: {all}");
+        assert!(!all.contains("zqx742qz"), "{recording}: {all}");
         assert!(!all.contains("PING FAILED"), "{recording}: {all}");
         assert!(!all.contains("Client init FAILED"), "{recording}: {all}");
     }
+}
+
+/// #5365: an echo guard fails only when the program echoes the secret, never
+/// because of the host's temp path. The refusal names the recording path, so a
+/// path made of digits and hex letters (a job id, a pid) is in the output.
+#[test]
+fn an_echo_guard_ignores_a_recording_path_holding_digits_and_hex() {
+    let canary = "zqx742qz";
+    let secret = format!("marmalade {canary}/synthetic+value");
+    let path = std::env::temp_dir().join(format!(
+        "toolkit-elasticache-742-baba-{}.json",
+        std::process::id()
+    ));
+    let recording = format!(r#"{{"cache":{{"ping_error":{{"kind":"{secret}"}}}}}}"#);
+    fs::write(&path, recording).expect("write fixture");
+    let file = TempFile(path);
+    let (status, stdout, stderr) = exec(&[
+        "elasticache",
+        "test-connection",
+        "127.0.0.1",
+        "--password",
+        &secret,
+        "--recorded",
+        file.path(),
+    ]);
+    assert_eq!(status, 1, "{stdout}{stderr}");
+    let all = format!("{stdout}{stderr}");
+    assert!(
+        all.contains("742-baba"),
+        "the refusal no longer names the path, so this test proves nothing: {all}"
+    );
+    assert!(!all.contains("marmalade"), "{all}");
+    assert!(!all.contains(canary), "{all}");
 }
 
 /// The text of a server field that the allowlist must refuse.
@@ -2973,28 +3006,28 @@ fn server_text_in_reviewed_encodings_never_shows_the_password() {
     // #5004: form-urlencoded; #5007: overlapping and self-overlapping. A mere
     // fragment of the password is no secret under the ruling (exact containment
     // of the active value only), so it is not listed.
-    let password = "marmalade 742/synthetic+value";
+    let password = "marmalade zqx742qz/synthetic+value";
     for version in [
-        "marmalade+742%2Fsynthetic%2Bvalue",
-        "marmalade%20742%2Fsynthetic%2Bvalue",
-        "marmalade 742/synthetic+value",
+        "marmalade+zqx742qz%2Fsynthetic%2Bvalue",
+        "marmalade%20zqx742qz%2Fsynthetic%2Bvalue",
+        "marmalade zqx742qz/synthetic+value",
     ] {
         let (status, stdout, stderr) =
             server_line(version, "standalone", &["--password", password]);
         assert_eq!(status, 0, "{version}: {stderr}");
         let all = format!("{stdout}{stderr}");
-        for part in ["marmalade", "742", "synthetic", "%2F", "%2B"] {
+        for part in ["marmalade", "zqx742qz", "synthetic", "%2F", "%2B"] {
             assert!(!all.contains(part), "{version}: {part:?} leaked: {all}");
         }
     }
     for (password, text) in [
-        ("ababababababa", "ababababababababa"),
+        ("qzqzqzqzqzqzq", "qzqzqzqzqzqzqzqzq"),
         ("pre-rec", "pre-recorded-token"),
     ] {
         let (_, stdout, stderr) = server_line(text, "cluster", &["--password", password]);
         let all = format!("{stdout}{stderr}");
         assert!(
-            !all.contains("baba") && !all.contains("orded-token"),
+            !all.contains("zqzq") && !all.contains("orded-token"),
             "{text}: {all}"
         );
     }
