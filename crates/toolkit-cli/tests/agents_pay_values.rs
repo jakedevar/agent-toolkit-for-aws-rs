@@ -365,7 +365,7 @@ fn canonical_amounts_resolve_aliases_like_python() {
             r#"{"amount":"0100000","maxAmountRequired":"100000"}"#,
             Err(AmountError::Conflicting),
         ),
-        (r#"{}"#, Err(AmountError::Missing)),
+        ("{}", Err(AmountError::Missing)),
         (
             r#"{"amount":null,"maxAmountRequired":null}"#,
             Err(AmountError::Missing),
