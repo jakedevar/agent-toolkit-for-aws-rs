@@ -85,6 +85,7 @@ pub(crate) const SLICES: &[Slice] = &[
     crate::dynamodb::SLICE,
     crate::dynamodb_deploy::SLICE,
     crate::elasticache::SLICE,
+    crate::elasticache::tunnel::SLICE,
     crate::manifests::SLICE,
     crate::msk::SLICE,
     crate::relational::SLICE,
@@ -545,7 +546,7 @@ mod tests {
     /// The route paths of the old `COMMANDS` table (commit ce0eaf6a, before the
     /// registry), in table order: the public order of [`COMMANDS`]. The routes of
     /// slices added after the registry follow at the end, ordered by slice name.
-    const LEGACY_COMMAND_ORDER: [&str; 82] = [
+    const LEGACY_COMMAND_ORDER: [&str; 85] = [
         "skills list",
         "manifests validate",
         "spec validate",
@@ -629,6 +630,10 @@ mod tests {
         "documentdb wa-review",
         "neptune validate-input",
         "neptune seed",
+        // elasticache-tunnel (#4393):
+        "elasticache find-tunnel-host",
+        "elasticache start-tunnel",
+        "elasticache test-connection",
         // telemetry (#4398):
         "telemetry",
     ];
