@@ -739,34 +739,73 @@ impl PaymentProof {
 
 #[cfg(test)]
 impl<'a> PaymentClient<'a> {
-    fn get_session(
-        &self,
-        _manager: &str,
-        _session: &str,
-        _user: &str,
-    ) -> Result<Json, PaymentError> {
-        Err(PaymentError::InvalidResponse)
+    fn get_session(&self, manager: &str, session: &str, user: &str) -> Result<Json, PaymentError> {
+        let body = self.call(
+            "getPaymentSession",
+            user,
+            true,
+            get_body(manager, session).into_bytes(),
+            200,
+        )?;
+        if !valid_session_response(&body, manager, Some(session), user) {
+            return Err(PaymentError::InvalidResponse);
+        }
+        parse_json(&body).map_err(|_| PaymentError::InvalidResponse)
     }
     fn create_session(
         &self,
-        _manager: &str,
-        _user: &str,
-        _budget: &str,
-        _expiry: i64,
-        _token: &str,
+        manager: &str,
+        user: &str,
+        budget: &str,
+        expiry: i64,
+        token: &str,
     ) -> Result<Json, PaymentError> {
-        Err(PaymentError::InvalidResponse)
+        let body = self.call(
+            "createPaymentSession",
+            user,
+            false,
+            session_body(manager, budget, expiry, token).into_bytes(),
+            201,
+        )?;
+        if !valid_session_response(&body, manager, None, user) {
+            return Err(PaymentError::InvalidResponse);
+        }
+        parse_json(&body).map_err(|_| PaymentError::InvalidResponse)
     }
     fn create_instrument(
         &self,
-        _manager: &str,
-        _user: &str,
-        _connector: &str,
-        _network: &str,
-        _email: &str,
-        _token: &str,
+        manager: &str,
+        user: &str,
+        connector: &str,
+        network: &str,
+        email: &str,
+        token: &str,
     ) -> Result<Json, PaymentError> {
-        Err(PaymentError::InvalidResponse)
+        let body = self.call(
+            "createPaymentInstrument",
+            user,
+            false,
+            instrument_body(manager, connector, network, email, token).into_bytes(),
+            201,
+        )?;
+        let value = parse_json(&body).map_err(|_| PaymentError::InvalidResponse)?;
+        let instrument = toolkit_aws::recorded::optional_object(&value, "paymentInstrument")
+            .map_err(|_| PaymentError::InvalidResponse)?
+            .ok_or(PaymentError::InvalidResponse)?;
+        let text = |key| {
+            toolkit_aws::recorded::optional_text(instrument, key)
+                .ok()
+                .flatten()
+        };
+        if !has_required("PaymentInstrument", instrument)
+            || text("paymentManagerArn") != Some(manager)
+            || text("paymentConnectorId") != Some(connector)
+            || text("userId") != Some(user)
+            || text("paymentInstrumentType") != Some("EMBEDDED_CRYPTO_WALLET")
+        {
+            return Err(PaymentError::InvalidResponse);
+        }
+        Ok(value)
     }
     /// Build an adapter using the conventional endpoint.
     ///
@@ -790,23 +829,60 @@ impl<'a> PaymentClient<'a> {
     ///
     /// # Errors
     /// Refuses invalid responses and transport or service failures.
-    #[allow(clippy::too_many_lines, clippy::needless_pass_by_value)] // Test prototype; consuming Approved is a security boundary.
+    #[allow(clippy::needless_pass_by_value)] // Consuming Approved is a security boundary.
     pub fn process_payment(&self, approved: Approved) -> Result<PaymentProof, PaymentError> {
+        let payment = ProcessPaymentRequest::from_approved(&approved);
+        let body = self.call(
+            "processPayment",
+            &payment.user,
+            true,
+            payment.body.clone(),
+            200,
+        )?;
+        if !valid_process_response(
+            &body,
+            &payment.manager,
+            &payment.session,
+            &payment.instrument,
+        ) {
+            return Err(PaymentError::InvalidResponse);
+        }
+        let value = parse_json(&body).map_err(|_| PaymentError::InvalidResponse)?;
+        let payload = value
+            .get("paymentOutput")
+            .and_then(|v| v.get("cryptoX402"))
+            .and_then(|v| v.get("payload"))
+            .ok_or(PaymentError::InvalidResponse)?;
+        let payload = match payload {
+            Json::String(text) => parse_json(text).map_err(|_| PaymentError::InvalidResponse)?,
+            _ => payload.clone(),
+        };
+        Ok(PaymentProof(payload))
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn call(
+        &self,
+        path: &str,
+        user: &str,
+        runtime: bool,
+        request_body: Vec<u8>,
+        expected: u16,
+    ) -> Result<String, PaymentError> {
         use std::time::Duration;
         use toolkit_aws::{
             FullJitter, Headers, HttpRequest, Method, RetryPolicy, SigningScope, StreamLimits,
             Timeouts,
         };
         let deadline = self.clock.now() + Duration::from_secs(60);
-        let payment = ProcessPaymentRequest::from_approved(&approved);
         let mut headers = Headers::new();
         headers
-            .insert_sensitive("x-amzn-bedrock-agentcore-payments-user-id", &payment.user)
+            .insert_sensitive("x-amzn-bedrock-agentcore-payments-user-id", user)
             .map_err(|_| PaymentError::Transport)?;
         headers
             .insert(
                 "x-amzn-bedrock-agentcore-payments-agent-name",
-                "openclaw-aws-agents-pay",
+                agent_name(runtime),
             )
             .map_err(|_| PaymentError::Transport)?;
         headers
@@ -823,11 +899,11 @@ impl<'a> PaymentClient<'a> {
             let mut request = HttpRequest {
                 method: Method::Post,
                 url: format!(
-                    "{}/payments/processPayment",
+                    "{}/payments/{path}",
                     endpoint(&self.region).map_err(|_| PaymentError::Transport)?
                 ),
                 headers: headers.clone(),
-                body: payment.body.clone(),
+                body: request_body.clone(),
                 timeouts: Timeouts::new(timeout, timeout).map_err(|_| PaymentError::Transport)?,
             };
             self.signer
@@ -901,28 +977,8 @@ impl<'a> PaymentClient<'a> {
                     }
                     let body =
                         std::str::from_utf8(&bytes).map_err(|_| PaymentError::InvalidResponse)?;
-                    if status == 200 {
-                        if !valid_process_response(
-                            body,
-                            &payment.manager,
-                            &payment.session,
-                            &payment.instrument,
-                        ) {
-                            return Err(PaymentError::InvalidResponse);
-                        }
-                        let value = parse_json(body).map_err(|_| PaymentError::InvalidResponse)?;
-                        let payload = value
-                            .get("paymentOutput")
-                            .and_then(|v| v.get("cryptoX402"))
-                            .and_then(|v| v.get("payload"))
-                            .ok_or(PaymentError::InvalidResponse)?;
-                        let payload = match payload {
-                            Json::String(text) => {
-                                parse_json(text).map_err(|_| PaymentError::InvalidResponse)?
-                            }
-                            _ => payload.clone(),
-                        };
-                        return Ok(PaymentProof(payload));
+                    if status == expected {
+                        return Ok(body.to_owned());
                     }
                     PaymentError::Service(error_code(error_header.as_deref(), body))
                 }
