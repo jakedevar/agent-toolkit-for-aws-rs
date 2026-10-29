@@ -11,7 +11,7 @@ use toolkit_core::{
 };
 
 fn fail(code: &'static str, message: impl Into<String>) -> ToolkitError {
-    ToolkitError::runtime(code, format!("{code}: {}", message.into()))
+    ToolkitError::runtime(code, format!("{code}: {}", super::safe(&message.into())))
 }
 fn usage(message: &str) -> ToolkitError {
     ToolkitError::usage("render_usage", message)
@@ -178,6 +178,7 @@ pub(crate) fn command(inv: &Invocation, out: &mut Output<'_>) -> Result<(), Tool
             return Err(fail("consent_name_invalid", name));
         }
     }
+    let module = path.ends_with("dataset-transformation/code_templates/transformation.py");
     let mut replacements = BTreeMap::new();
     for arg in inv.values_of("--cell") {
         let (n, file) = arg
@@ -215,13 +216,33 @@ pub(crate) fn command(inv: &Invocation, out: &mut Output<'_>) -> Result<(), Tool
         {
             return Err(fail("cell_replaces_consent", format!("cell {n}")));
         }
-        let body = source_ok(&read(Path::new(file), MAX_TEXT_FILE_BYTES, "cell_invalid")?)?;
+        if module && n == 2 {
+            let expected = project.join("scripts/transform_fn.py");
+            let resolved =
+                fs::canonicalize(file).map_err(|_| fail("module_missing", "module missing"))?;
+            if resolved != expected {
+                return Err(fail(
+                    "module_path_mismatch",
+                    "module must be scripts/transform_fn.py",
+                ));
+            }
+            toolkit_core::resolve_within(&project, "scripts/transform_fn.py")
+                .map_err(|_| fail("module_missing", "module is missing or symlinked"))?;
+        }
+        let body = source_ok(&read(
+            Path::new(file),
+            MAX_TEXT_FILE_BYTES,
+            if module && n == 2 {
+                "module_missing"
+            } else {
+                "cell_invalid"
+            },
+        )?)?;
         if template::contains_consent_identifier(&body) {
             return Err(fail("cell_binds_consent", format!("cell {n}")));
         }
         replacements.insert(n, (file.to_owned(), body));
     }
-    let module = path.ends_with("dataset-transformation/code_templates/transformation.py");
     if module {
         let (file, body) = replacements
             .get_mut(&2)

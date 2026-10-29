@@ -136,7 +136,10 @@ fn ap_pub_15_dry_run_creates_no_output() {
 #[test]
 fn ap_con_06_cell_consent_identifier_guard() {
     let f = Fixture::new();
-    let template = f.write("template.py", "# Cell 0 [markdown]: Example\n# Description\n# Cell 1: Code\npass\n");
+    let template = f.write(
+        "template.py",
+        "# Cell 0 [markdown]: Example\n# Description\n# Cell 1: Code\npass\n",
+    );
     for code in ["ACCEPT_EULA = True\n", "x = [ACCEPT_EULA]\n"] {
         let cell = f.write("cell.py", code);
         let arg = format!("1={}", cell.display());
@@ -146,5 +149,8 @@ fn ap_con_06_cell_consent_identifier_guard() {
     }
     let cell = f.write("cell.py", "# ACCEPT_EULA\nx = 'ACCEPT_EULA'\n");
     let arg = format!("1={}", cell.display());
-    assert!(f.render(&template, "script", &["--cell", &arg]).status.success());
+    assert!(f
+        .render(&template, "script", &["--cell", &arg])
+        .status
+        .success());
 }

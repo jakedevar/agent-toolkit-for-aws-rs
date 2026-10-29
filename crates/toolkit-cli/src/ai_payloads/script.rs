@@ -97,6 +97,8 @@ pub(crate) fn publish(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
     #[test]
     fn ap_scr_01_02_notebook_only_is_dropped() {
         let source = "# Cell 0 [markdown]: Example\n# Description\n# Cell 1: Code\nkeep()\nmagic() # NOTEBOOK_ONLY\n# Cell 2: Skip # NOTEBOOK_ONLY_SECTION\nsecret()\n";
@@ -106,5 +108,38 @@ mod tests {
         assert!(result.contains("# %% Cell 1: Code\nkeep()"));
         assert!(!result.contains("magic()"));
         assert!(!result.contains("secret()"));
+    }
+
+    #[test]
+    fn ap_pub_03_script_retries_eight_contentions() {
+        struct Take(usize);
+        impl PublishHooks for Take {
+            fn before_commit(&mut self, _: &Path, dest: &Path) {
+                if self.0 > 0 {
+                    fs::write(dest, b"competitor").unwrap();
+                    self.0 -= 1;
+                }
+            }
+        }
+        let dir = std::env::temp_dir().join(format!(
+            "script-pub-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir(&dir).unwrap();
+        let (name, _) = publish(&dir, "example", b"ours", &mut Take(1)).unwrap();
+        assert_eq!(name, "02_example.py");
+        assert_eq!(fs::read(dir.join("01_example.py")).unwrap(), b"competitor");
+        assert_eq!(fs::read(dir.join(name)).unwrap(), b"ours");
+        assert_eq!(
+            publish(&dir, "example", b"ours", &mut Take(8)).unwrap_err(),
+            "script_number_contended"
+        );
+        assert!(fs::read_dir(&dir).unwrap().all(|e| !e
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .contains("toolkit-render")));
+        fs::remove_dir_all(dir).unwrap();
     }
 }
