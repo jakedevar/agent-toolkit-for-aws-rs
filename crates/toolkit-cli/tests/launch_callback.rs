@@ -771,7 +771,12 @@ fn helper_lifetime_has_no_process_spawns_and_opened_descriptors_are_cloexec() {
                 let regs = ptrace::getregs(tid).unwrap();
                 let syscall = i64::try_from(regs.orig_rax).unwrap();
                 if regs.rax == (-i64::from(libc::ENOSYS)) as u64 {
-                    entering.insert(tid, (syscall, regs.rdi));
+                    let flags = if syscall == libc::SYS_clone3 {
+                        ptrace::read(tid, regs.rdi as ptrace::AddressType).unwrap() as u64
+                    } else {
+                        regs.rdi
+                    };
+                    entering.insert(tid, (syscall, flags));
                 } else if running_helper && (regs.rax as i64) >= 0 {
                     let is_fd = [
                         libc::SYS_open,
@@ -835,7 +840,8 @@ fn helper_lifetime_has_no_process_spawns_and_opened_descriptors_are_cloexec() {
                         Pid::from_raw(i32::try_from(ptrace::getevent(tid).unwrap()).unwrap());
                     tids.insert(new_tid);
                     let is_thread = entering.get(&tid).is_some_and(|(call, flags)| {
-                        *call == libc::SYS_clone && flags & (libc::CLONE_THREAD as u64) != 0
+                        (*call == libc::SYS_clone || *call == libc::SYS_clone3)
+                            && flags & (libc::CLONE_THREAD as u64) != 0
                     });
                     if running_helper && !is_thread {
                         spawns += 1;
