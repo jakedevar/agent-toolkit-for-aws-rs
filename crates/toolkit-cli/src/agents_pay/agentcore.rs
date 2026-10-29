@@ -748,6 +748,29 @@ mod wire_contracts {
     }
 
     #[test]
+    fn oversized_error_uses_header_and_retries_without_reading_it() {
+        let response = br#"{"processPaymentId":"id","paymentManagerArn":"arn","paymentSessionId":"ps","paymentInstrumentId":"pi","paymentType":"CRYPTO_X402","status":"PROOF_GENERATED","paymentOutput":{"cryptoX402":{"version":"2","payload":{"signature":"secret"}}},"createdAt":1,"updatedAt":1}"#;
+        let transport = FakeStreamingTransport::new()
+            .respond(
+                503,
+                &[
+                    ("content-length", "65537"),
+                    ("x-amzn-ErrorType", "ThrottlingException"),
+                ],
+                vec![FakeChunk::data(b"must not read")],
+            )
+            .respond(200, &[], vec![FakeChunk::data(response)]);
+        let clock = FakeClock(Cell::new(Instant::now()));
+        let mut client = PaymentClient::new("us-east-1", &transport, &NoSigner).unwrap();
+        client.clock = &clock;
+        assert!(client
+            .process_payment(super::operation_contracts::approved())
+            .is_ok());
+        assert_eq!(transport.requests().len(), 2);
+        assert_eq!(transport.frames_pulled(), 1);
+    }
+
+    #[test]
     fn declared_oversize_is_refused_before_pulling() {
         let transport = FakeStreamingTransport::new().respond(
             200,
