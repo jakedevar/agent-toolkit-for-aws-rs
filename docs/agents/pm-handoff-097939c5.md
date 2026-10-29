@@ -1173,3 +1173,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 21:26Z: S6 repair 1 (be2767ad) DONE at c5132d5158db7dd1490bdfb8a7d92ea780d962c8 (#5475: admin::run_process checks TTY before live world; 4 offline world-factory tests; merged rolling: 125 cmds, 29 bare-dash rows, usage 49451/0x1e6a_60bd_cefc_66a3; scoped 80b290ff 4664). Re-review #5487 -> Codex sol f342da4f pinned c5132d51. On ACCEPT: check + enqueue (source_session_id be2767ad, issue 5462); close #5474 #5475 #5487 on land; #4410 stays open (S7 cutover after).
   Kaizen: #5485 cancelled as dup of #5371. Note: two Claude workers ran python3 trivially (no code) today; #5243 tracks it for Codex.
   4/4: f342da4f #5487, 27f4dc18 #5360, 457c73c0 #5483, cfb95bf6 L7.
+- 21:29Z: re-review #5487 (f342da4f) ACCEPT S6 c5132d51. check ok (80b290ff). Enqueued (e946fe64) but queue warned conflict with S1 e04f364b in diag_contract.rs (usage pin) -> CANCELLED. AFTER S1 LANDS: continue_from be2767ad merge-only (merge rolling, re-pin usage, scoped), check, enqueue; close #5462 #5474 #5475 #5487 on land.
+  #5478 flake -> Claude Sonnet 9441f443 (rolling).
+  4/4: 9441f443 #5478, 27f4dc18 #5360, 457c73c0 #5483 B2 review, cfb95bf6 L7. Queue: 58fcd064 #5472 (3042), e04f364b S1 (3044).
