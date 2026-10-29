@@ -43,6 +43,7 @@ mod dynamodb_bench;
 mod dynamodb_deploy;
 pub mod elasticache;
 pub mod manifests;
+mod marketplace;
 mod msk;
 mod registry;
 mod relational;

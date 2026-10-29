@@ -2099,6 +2099,7 @@ const INVENTORY: &[(&str, Class)] = &[
         "manifests",
         Class::NotRecorded("the repository's marketplace and plugin manifests"),
     ),
+    ("marketplace", Class::Recorded),
     (
         "msk",
         Class::NotRecorded("sizing, compatibility and simulation inputs the user writes"),
