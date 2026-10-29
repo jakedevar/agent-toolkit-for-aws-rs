@@ -361,8 +361,7 @@ fn exhausted_budget_refuses_a_long_first_key_at_its_opening_quote() {
 
 #[test]
 fn exhausted_budget_is_reported_before_a_bad_escape_in_the_first_key() {
-    let error =
-        parse_json_with_limits("{\"\\q\":0}", &limits(MAX_JSON_DEPTH, 1)).expect_err("cap");
+    let error = parse_json_with_limits("{\"\\q\":0}", &limits(MAX_JSON_DEPTH, 1)).expect_err("cap");
     assert_eq!(error.message, NODE_CAP_MESSAGE);
     assert_eq!((error.line, error.column), (1, 2));
 }

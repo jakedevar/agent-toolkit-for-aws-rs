@@ -249,7 +249,8 @@ pub struct JsonLimits {
     /// Greatest number of nodes in the document; a node is every value
     /// (including each array element and object member value) and every
     /// object member. A document with more is rejected with "too many JSON
-    /// values", at the first node past the cap.
+    /// values", at the first node past the cap (for an object member, at its
+    /// opening quote, before its key is scanned, decoded or allocated).
     pub max_nodes: usize,
 }
 
@@ -435,9 +436,12 @@ impl Parser<'_> {
             if self.peek() != Some(b'"') {
                 return Err(self.error("expected a string object key"));
             }
+            // Charge the member before the key is scanned, decoded or
+            // allocated, so an exhausted budget does no key-sized work and is
+            // reported at the member's opening quote.
+            self.count_node()?;
             let key_start = self.pos;
             let key = self.string()?;
-            self.count_node()?;
             if self.is_duplicate_key(&mut index, &pairs, &key) {
                 self.pos = key_start;
                 return Err(self.error("duplicate object key"));
