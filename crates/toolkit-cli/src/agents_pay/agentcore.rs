@@ -394,7 +394,7 @@ fn valid_process_response(body: &str, manager: &str, session: &str, instrument: 
     let Ok(Some(crypto)) = toolkit_aws::recorded::optional_object(output, "cryptoX402") else {
         return false;
     };
-    if output.get("mpp").is_some()
+    if !matches!(output, Json::Object(entries) if entries.len() == 1 && entries[0].0 == "cryptoX402")
         || toolkit_aws::recorded::optional_text(crypto, "version")
             .ok()
             .flatten()
@@ -442,7 +442,7 @@ fn valid_session_response(body: &str, manager: &str, session: Option<&str>, user
         || session.is_some_and(|id| text("paymentSessionId") != Some(id))
         || !matches!(
             optional_member(value, "expiryTimeInMinutes", "an integer", |v| match v {
-                Json::Int(n) => Some(*n),
+                Json::Int(n) => i32::try_from(*n).ok(),
                 _ => None,
             }),
             Ok(Some(_))
