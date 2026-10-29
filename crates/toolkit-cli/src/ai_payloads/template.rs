@@ -340,6 +340,20 @@ pub(crate) fn parse(text: &str) -> Template {
     occurrences.extend(string_occurrences(&tokens));
     occurrences.sort_by_key(|occurrence| (occurrence.line, occurrence.column));
 
+    for occurrence in &occurrences {
+        if occurrence.context != Context::Comment
+            && lines.get(occurrence.line - 1).is_some_and(|line| {
+                line.trim_start().starts_with(['!', '%'])
+            })
+        {
+            template.violations.push(Violation {
+                code: "magic_line_slot",
+                line: occurrence.line,
+                column: occurrence.column,
+                message: format!("placeholder [{}] occurs on an IPython magic line", occurrence.name),
+            });
+        }
+    }
     template.slots = summarize(&occurrences);
     template.violations.extend(slot_violations(&occurrences));
     template.targets = find_targets(&tokens, &template.cells);
