@@ -121,7 +121,7 @@ impl Range {
         let range = Self { network, prefix };
         match network {
             IpAddr::V4(v4) => {
-                if prefix > 32 || prefix < MIN_V4_PREFIX {
+                if !(MIN_V4_PREFIX..=32).contains(&prefix) {
                     return Err(policy_error(
                         "an IPv4 private range must have a prefix between /16 and /32",
                     ));
@@ -149,7 +149,7 @@ impl Range {
                         "write an IPv4 private range in IPv4 form, not IPv4-mapped IPv6",
                     ));
                 }
-                if prefix > 128 || prefix < MIN_V6_PREFIX {
+                if !(MIN_V6_PREFIX..=128).contains(&prefix) {
                     return Err(policy_error(
                         "an IPv6 private range must have a prefix between /48 and /128",
                     ));
@@ -276,7 +276,9 @@ impl DatabaseEndpoint {
         }
         let labels: Vec<&str> = host.split('.').collect();
         if labels.iter().any(|label| label.contains("fips")) {
-            return Err(policy_error("FIPS database endpoints are not supported yet"));
+            return Err(policy_error(
+                "FIPS database endpoints are not supported yet",
+            ));
         }
         let suffix_ok = labels.len() >= 5
             && labels[labels.len() - 2..].join(".") == PARTITION_SUFFIX
@@ -384,8 +386,7 @@ impl Default for DatabaseBounds {
 }
 
 /// A database host lookup that can be abandoned at the deadline.
-pub type ResolveFuture<'a> =
-    Pin<Box<dyn Future<Output = Result<Vec<IpAddr>, String>> + Send + 'a>>;
+pub type ResolveFuture<'a> = Pin<Box<dyn Future<Output = Result<Vec<IpAddr>, String>> + Send + 'a>>;
 
 /// Resolves the database host (async, so the deadline can drop the wait).
 pub trait DatabaseResolver: Send + Sync {
@@ -456,7 +457,8 @@ const SUITES: [rustls::CipherSuite; 7] = [
 
 /// An explicit rustls (aws-lc) client context trusting exactly `roots`.
 fn tls_config(roots: &ValidatedRoots) -> Result<rustls::ClientConfig, AwsError> {
-    let roots_error = || AwsError::invalid_config("tls_roots", "the TLS context could not be built");
+    let roots_error =
+        || AwsError::invalid_config("tls_roots", "the TLS context could not be built");
     let mut store = rustls::RootCertStore::empty();
     for der in roots.certificates() {
         store.add(der.clone()).map_err(|_| roots_error())?;
@@ -723,7 +725,10 @@ impl DatabaseConnector {
             builder = builder.header(name, value);
         }
         let outgoing = builder.body(Full::new(Bytes::from(body))).map_err(|_| {
-            verdict(AwsError::invalid_config("request", "the request could not be built"))
+            verdict(AwsError::invalid_config(
+                "request",
+                "the request could not be built",
+            ))
         })?;
         sent.store(true, Ordering::SeqCst);
         let response = tokio::time::timeout(self.idle, sender.send_request(outgoing))
@@ -771,8 +776,11 @@ impl HttpConnector for DatabaseConnector {
         HttpConnectorFuture::new(async move {
             let deadline = this.deadline(Instant::now());
             let sent = Arc::new(AtomicBool::new(false));
-            match tokio::time::timeout_at(deadline, this.exchange(request, deadline, Arc::clone(&sent)))
-                .await
+            match tokio::time::timeout_at(
+                deadline,
+                this.exchange(request, deadline, Arc::clone(&sent)),
+            )
+            .await
             {
                 Ok(result) => result,
                 Err(_) => Err(verdict(deadline_error(sent.load(Ordering::SeqCst)))),
@@ -899,7 +907,14 @@ impl SdkTransport {
         bounds: DatabaseBounds,
         resolver: Arc<dyn DatabaseResolver>,
     ) -> Result<Self, AwsError> {
-        Self::database(runtime, roots, endpoint, bounds, resolver, Arc::new(TcpDialer))
+        Self::database(
+            runtime,
+            roots,
+            endpoint,
+            bounds,
+            resolver,
+            Arc::new(TcpDialer),
+        )
     }
 
     pub(crate) fn database(
@@ -940,7 +955,11 @@ impl SdkTransport {
 /// capped at `cap`; `None` when no useful budget remains, so the caller must
 /// not send.
 #[must_use]
-pub fn server_query_timeout(remaining: Duration, margin: Duration, cap: Duration) -> Option<Duration> {
+pub fn server_query_timeout(
+    remaining: Duration,
+    margin: Duration,
+    cap: Duration,
+) -> Option<Duration> {
     remaining
         .checked_sub(margin)
         .filter(|left| !left.is_zero())

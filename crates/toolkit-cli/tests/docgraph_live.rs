@@ -234,7 +234,8 @@ impl<'ast> syn::visit::Visit<'ast> for Inventory {
                             && list.tokens.to_string().contains("\"docgraph-live\""))
                 });
                 if !(ignored && gated) {
-                    self.offenders.push(format!("{}::{}", self.file, item.sig.ident));
+                    self.offenders
+                        .push(format!("{}::{}", self.file, item.sig.ident));
                 }
             }
         }
@@ -260,7 +261,12 @@ fn rust_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
 fn test_inventories_hold_no_unignored_live_entry() {
     let crates = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
     let mut files = Vec::new();
-    for dir in ["toolkit-cli/src", "toolkit-cli/tests", "toolkit-aws/src", "toolkit-aws/tests"] {
+    for dir in [
+        "toolkit-cli/src",
+        "toolkit-cli/tests",
+        "toolkit-aws/src",
+        "toolkit-aws/tests",
+    ] {
         rust_files(&crates.join(dir), &mut files);
     }
     let mut inventory = Inventory {
@@ -278,8 +284,15 @@ fn test_inventories_hold_no_unignored_live_entry() {
         saw_database_tests |= path.ends_with("sdk/database/tests.rs");
         syn::visit::Visit::visit_file(&mut inventory, &tree);
     }
-    assert!(saw_database_tests, "the scan covers the database connector tests");
-    assert!(inventory.tests > 500, "the scan found {} tests", inventory.tests);
+    assert!(
+        saw_database_tests,
+        "the scan covers the database connector tests"
+    );
+    assert!(
+        inventory.tests > 500,
+        "the scan found {} tests",
+        inventory.tests
+    );
     assert!(
         inventory.offenders.is_empty(),
         "live tests must be #[ignore] and cfg(feature = \"docgraph-live\"): {:?}",
@@ -308,7 +321,10 @@ fn the_inventory_rule_flags_an_unignored_live_test() {
     assert_eq!(inventory.live, 3);
     assert_eq!(
         inventory.offenders,
-        vec!["fixture::unguarded".to_string(), "fixture::transport".to_string()]
+        vec![
+            "fixture::unguarded".to_string(),
+            "fixture::transport".to_string()
+        ]
     );
 }
 
@@ -377,8 +393,23 @@ fn ordinary_and_live_shaped_runs_never_reach_the_network() {
     );
     let (policy, input) = (policy.as_str(), input.as_str());
     let invocations: Vec<Vec<&str>> = vec![
-        vec!["documentdb", "wa-review", "--cluster-id", "c1", "--region", "us-east-1"],
-        vec!["documentdb", "wa-review", "--cluster-id", "c1", "--region", "us-east-1", "--live"],
+        vec![
+            "documentdb",
+            "wa-review",
+            "--cluster-id",
+            "c1",
+            "--region",
+            "us-east-1",
+        ],
+        vec![
+            "documentdb",
+            "wa-review",
+            "--cluster-id",
+            "c1",
+            "--region",
+            "us-east-1",
+            "--live",
+        ],
         vec!["neptune", "seed", "--dry-run", "--confirm-wipe"],
         vec![
             "neptune",
@@ -390,7 +421,14 @@ fn ordinary_and_live_shaped_runs_never_reach_the_network() {
             "--network-policy",
             policy,
         ],
-        vec!["neptune", "memory", "--operation", "retrieve", "--input", input],
+        vec![
+            "neptune",
+            "memory",
+            "--operation",
+            "retrieve",
+            "--input",
+            input,
+        ],
         vec![
             "neptune",
             "memory",
@@ -417,18 +455,31 @@ fn ordinary_and_live_shaped_runs_never_reach_the_network() {
             .env("HTTP_PROXY", format!("http://{fake}"))
             .env("ALL_PROXY", format!("http://{fake}"))
             .env("AWS_ENDPOINT_URL", format!("https://{fake}"))
-            .env("AWS_EC2_METADATA_SERVICE_ENDPOINT", format!("http://{fake}"))
-            .env("AWS_CONTAINER_CREDENTIALS_FULL_URI", format!("http://{fake}/creds"))
+            .env(
+                "AWS_EC2_METADATA_SERVICE_ENDPOINT",
+                format!("http://{fake}"),
+            )
+            .env(
+                "AWS_CONTAINER_CREDENTIALS_FULL_URI",
+                format!("http://{fake}/creds"),
+            )
             .args(args)
             .output()
             .unwrap();
         let stderr = String::from_utf8_lossy(&out.stderr);
         let stdout = String::from_utf8_lossy(&out.stdout);
         if args.contains(&"--live") {
-            assert_ne!(out.status.code(), Some(0), "{args:?} must not claim live success");
+            assert_ne!(
+                out.status.code(),
+                Some(0),
+                "{args:?} must not claim live success"
+            );
         }
         for canary in ["forbidden-secret-canary", "AKIAFORBIDDENCANARY0"] {
-            assert!(!stderr.contains(canary) && !stdout.contains(canary), "{args:?}");
+            assert!(
+                !stderr.contains(canary) && !stdout.contains(canary),
+                "{args:?}"
+            );
         }
         assert_eq!(network.accepted(), 0, "{args:?} reached the network");
     }

@@ -34,7 +34,9 @@ fn endpoint() -> DatabaseEndpoint {
 
 fn request(url: &str) -> HttpRequest {
     let mut headers = Headers::new();
-    headers.insert("authorization", "AWS4-HMAC-SHA256 synthetic").expect("header");
+    headers
+        .insert("authorization", "AWS4-HMAC-SHA256 synthetic")
+        .expect("header");
     HttpRequest {
         method: Method::Post,
         url: url.to_string(),
@@ -204,10 +206,7 @@ impl AsyncWrite for Counting {
         Pin::new(&mut self.inner).poll_flush(cx)
     }
 
-    fn poll_shutdown(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-    ) -> Poll<std::io::Result<()>> {
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
         Pin::new(&mut self.inner).poll_shutdown(cx)
     }
 }
@@ -237,7 +236,10 @@ impl Dialer for Recorder {
 }
 
 fn head_end(bytes: &[u8]) -> Option<usize> {
-    bytes.windows(4).position(|w| w == b"\r\n\r\n").map(|at| at + 4)
+    bytes
+        .windows(4)
+        .position(|w| w == b"\r\n\r\n")
+        .map(|at| at + 4)
 }
 
 fn content_length(head: &[u8]) -> usize {
@@ -561,8 +563,16 @@ fn every_request_revalidates_so_rebinding_is_refused() {
     let written = dialer.written();
     let error = transport.send(&request(&db_url())).expect_err("rebound");
     assert!(endpoint_refusal(&error), "{error}");
-    assert_eq!(resolver.calls(), 2, "the host is resolved for every request");
-    assert_eq!(dialer.dials().len(), 1, "the rebound answer is never dialed");
+    assert_eq!(
+        resolver.calls(),
+        2,
+        "the host is resolved for every request"
+    );
+    assert_eq!(
+        dialer.dials().len(),
+        1,
+        "the rebound answer is never dialed"
+    );
     assert_eq!(dialer.written(), written);
 }
 
@@ -639,8 +649,14 @@ fn the_request_reaches_a_trusted_server_exactly_as_signed() {
     assert_eq!(response.status, 200);
     assert_eq!(response.body, b"{\"ok\":true}");
     let received = String::from_utf8(dialer.received()).expect("utf-8 request");
-    assert!(received.starts_with("POST /gremlin HTTP/1.1\r\n"), "{received}");
-    assert!(received.contains(&format!("host: {HOST}:{PORT}\r\n")), "{received}");
+    assert!(
+        received.starts_with("POST /gremlin HTTP/1.1\r\n"),
+        "{received}"
+    );
+    assert!(
+        received.contains(&format!("host: {HOST}:{PORT}\r\n")),
+        "{received}"
+    );
     assert!(received.contains("authorization: AWS4-HMAC-SHA256 synthetic\r\n"));
     assert!(received.ends_with("{\"gremlin\":\"g.V().count()\"}"));
 }
@@ -667,8 +683,14 @@ fn untrusted_expired_and_wrong_host_certificates_get_no_request() {
         });
         let transport = fixture.transport(quick(), resolver, Arc::clone(&dialer));
         let error = transport.send(&request(&db_url())).expect_err(label);
-        assert!(matches!(error, AwsError::Connect { .. }), "{label}: {error}");
-        assert!(dialer.received().is_empty(), "{label}: no HTTP byte decrypted");
+        assert!(
+            matches!(error, AwsError::Connect { .. }),
+            "{label}: {error}"
+        );
+        assert!(
+            dialer.received().is_empty(),
+            "{label}: no HTTP byte decrypted"
+        );
     }
 }
 
@@ -679,7 +701,10 @@ fn streaming_request_bodies_and_framing_headers_are_refused_before_dns() {
     let dialer = Recorder::new(Far::Silent);
     let transport = fixture.transport(quick(), Arc::clone(&resolver), Arc::clone(&dialer));
     let mut framed = request(&db_url());
-    framed.headers.insert("transfer-encoding", "chunked").expect("header");
+    framed
+        .headers
+        .insert("transfer-encoding", "chunked")
+        .expect("header");
     transport.send(&framed).expect_err("framing header");
     assert_eq!(resolver.calls(), 0);
     assert!(dialer.dials().is_empty());
@@ -697,10 +722,18 @@ fn a_stalled_resolver_stops_at_the_connect_budget_without_dialing() {
     let dialer = Recorder::new(Far::Silent);
     let transport = fixture.transport(quick(), ScriptedResolver::stalled(), Arc::clone(&dialer));
     let start = std::time::Instant::now();
-    let error = transport.send(&request(&db_url())).expect_err("stalled DNS");
+    let error = transport
+        .send(&request(&db_url()))
+        .expect_err("stalled DNS");
     assert_within(start, Duration::from_secs(3));
     assert!(
-        matches!(error, AwsError::Timeout { phase: TimeoutPhase::Connect, .. }),
+        matches!(
+            error,
+            AwsError::Timeout {
+                phase: TimeoutPhase::Connect,
+                ..
+            }
+        ),
         "{error}"
     );
     assert!(dialer.dials().is_empty());
@@ -713,10 +746,18 @@ fn a_stalled_dial_stops_at_the_connect_budget() {
     let resolver = ScriptedResolver::new(vec![vec![ip(PRIVATE)]]);
     let transport = fixture.transport(quick(), resolver, Arc::clone(&dialer));
     let start = std::time::Instant::now();
-    let error = transport.send(&request(&db_url())).expect_err("stalled dial");
+    let error = transport
+        .send(&request(&db_url()))
+        .expect_err("stalled dial");
     assert_within(start, Duration::from_secs(3));
     assert!(
-        matches!(error, AwsError::Timeout { phase: TimeoutPhase::Connect, .. }),
+        matches!(
+            error,
+            AwsError::Timeout {
+                phase: TimeoutPhase::Connect,
+                ..
+            }
+        ),
         "{error}"
     );
 }
@@ -758,7 +799,10 @@ fn a_silent_server_after_send_is_an_unknown_outcome() {
     let text = message(&error);
     assert!(matches!(error, AwsError::Timeout { .. }), "{error}");
     assert!(text.contains("unknown"), "{text}");
-    assert!(!text.contains("rolled back") && !text.contains("not applied"), "{text}");
+    assert!(
+        !text.contains("rolled back") && !text.contains("not applied"),
+        "{text}"
+    );
     assert!(!dialer.received().is_empty(), "the request was sent");
 }
 
@@ -776,7 +820,13 @@ fn the_operation_deadline_after_send_is_unknown_and_not_retryable() {
     let transport = fixture.transport(bounds, resolver, dialer);
     let error = transport.send(&request(&db_url())).expect_err("deadline");
     assert!(
-        matches!(error, AwsError::Timeout { phase: TimeoutPhase::Deadline, .. }),
+        matches!(
+            error,
+            AwsError::Timeout {
+                phase: TimeoutPhase::Deadline,
+                ..
+            }
+        ),
         "{error}"
     );
     assert!(!error.is_retryable());
@@ -820,7 +870,10 @@ fn server_query_timeout_fits_the_remaining_budget() {
         Some(Duration::from_secs(15))
     );
     assert_eq!(server_query_timeout(margin, margin, cap), None);
-    assert_eq!(server_query_timeout(Duration::from_secs(1), margin, cap), None);
+    assert_eq!(
+        server_query_timeout(Duration::from_secs(1), margin, cap),
+        None
+    );
 }
 
 // ---- response bounds (T-DG-07b) ----
@@ -844,7 +897,9 @@ fn the_body_limit_admits_the_boundary_and_refuses_one_more_byte() {
     let resolver = ScriptedResolver::new(vec![vec![ip(PRIVATE)]]);
     let dialer = Recorder::new(fixture.tls_far(vec![sized_reply(limit + 1, limit + 1)]));
     let transport = fixture.transport(quick(), resolver, dialer);
-    transport.send(&request(&db_url())).expect_err("over the limit");
+    transport
+        .send(&request(&db_url()))
+        .expect_err("over the limit");
 }
 
 #[test]
@@ -856,7 +911,9 @@ fn an_undeclared_body_over_the_limit_is_refused_while_reading() {
     let resolver = ScriptedResolver::new(vec![vec![ip(PRIVATE)]]);
     let dialer = Recorder::new(fixture.tls_far(vec![Act::Write(bytes)]));
     let transport = fixture.transport(quick(), resolver, dialer);
-    let error = transport.send(&request(&db_url())).expect_err("over the limit");
+    let error = transport
+        .send(&request(&db_url()))
+        .expect_err("over the limit");
     assert!(message(&error).contains("size limit"), "{error}");
 }
 

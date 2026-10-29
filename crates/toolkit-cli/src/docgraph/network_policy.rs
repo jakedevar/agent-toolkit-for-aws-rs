@@ -33,8 +33,8 @@ pub fn parse(bytes: &[u8]) -> Result<DatabaseEndpoint, AwsError> {
     if bytes.len() > MAX_POLICY_BYTES {
         return Err(invalid("the network policy file is too large"));
     }
-    let value: Value =
-        serde_json::from_slice(bytes).map_err(|_| invalid("the network policy is not valid JSON"))?;
+    let value: Value = serde_json::from_slice(bytes)
+        .map_err(|_| invalid("the network policy is not valid JSON"))?;
     let Value::Object(map) = value else {
         return Err(invalid("the network policy must be a JSON object"));
     };
@@ -99,6 +99,11 @@ mod tests {
 
     #[test]
     fn consent_and_live_shaped_keys_are_refused_not_ignored() {
+        let reference = parse(
+            format!(r#"{{"host":"{HOST}","port":8182,"region":"us-east-1","zzz":1}}"#).as_bytes(),
+        )
+        .expect_err("unknown key")
+        .to_string();
         for key in [
             "live",
             "confirm_wipe",
@@ -109,13 +114,12 @@ mod tests {
             "allow_any",
             "proxy",
         ] {
-            let text = format!(
-                r#"{{"host":"{HOST}","port":8182,"region":"us-east-1","{key}":true}}"#
-            );
+            let text =
+                format!(r#"{{"host":"{HOST}","port":8182,"region":"us-east-1","{key}":true}}"#);
             let error = parse(text.as_bytes()).expect_err(key);
             assert!(field(&error), "{key}");
             assert!(error.to_string().contains("argv-only"), "{key}");
-            assert!(!error.to_string().contains(key), "{key} is not echoed");
+            assert_eq!(error.to_string(), reference, "{key} is not echoed");
         }
     }
 
@@ -130,9 +134,13 @@ mod tests {
             format!(r#"{{"host":"{HOST}","port":70000,"region":"us-east-1"}}"#),
             format!(r#"{{"host":"{HOST}","port":8182}}"#),
             format!(r#"{{"host":"{HOST}","port":8182,"region":"us-west-2"}}"#),
-            format!(r#"{{"host":"{HOST}","port":8182,"region":"us-east-1","private_ranges":"10.1.0.0/16"}}"#),
+            format!(
+                r#"{{"host":"{HOST}","port":8182,"region":"us-east-1","private_ranges":"10.1.0.0/16"}}"#
+            ),
             format!(r#"{{"host":"{HOST}","port":8182,"region":"us-east-1","private_ranges":[7]}}"#),
-            format!(r#"{{"host":"{HOST}","port":8182,"region":"us-east-1","private_ranges":["127.0.0.0/16"]}}"#),
+            format!(
+                r#"{{"host":"{HOST}","port":8182,"region":"us-east-1","private_ranges":["127.0.0.0/16"]}}"#
+            ),
             " ".repeat(MAX_POLICY_BYTES + 1),
         ] {
             let error = parse(text.as_bytes()).expect_err(&text);
