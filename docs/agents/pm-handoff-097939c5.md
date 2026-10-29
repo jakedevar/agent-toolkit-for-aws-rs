@@ -763,3 +763,8 @@ Friction: #4727, Rsi #4694, Rsi #4704
   Required: check_peer refuses captured-conn with no remote_addr; zero-accept loopback tests (literals + name->127.0.0.1); prod client guarded-only test; MCP proxy green.
   Continuation 6f31c7c9 (Codex terra, continue_from a78c3b01). Then review (Codex sol; cross-check MCP proxy impact).
   4/4 busy: 1d17674d (#5181 S4), 573278a7 (#5216 L4), f4cfc6dd (#5220 review), 6f31c7c9 (#5210 S3 cont2).
+- 10-29 06:07Z: #5220 (f4cfc6dd, Codex sol) ACCEPT #5214 at 5f2c60c2: goldens independently matched to AWS docs C10/C11; gaps 2,3 test-only -> #5221 #5222 (nonblocking). Receipt not permitted to reviewer (known #4877).
+  Check ok (efa1094e, 4038). ENQUEUED 6a5be796 (seq 2965, #5214). On landing close #5214 #5220; keep #5218 #5221 #5222 open (S3r/test follow-up).
+  S2b render = #5223 -> Codex terra 5752b270 (rolling; merge rolling after S3 lands).
+  4/4 busy: 1d17674d (#5181 S4), 573278a7 (#5216 L4), 6f31c7c9 (#5210 S3 cont2), 5752b270 (#5223 S2b).
+  Next slot: P-ROOTS follow-ups #5199 #5203 #5204 (before x402 S5); reward test follow-ups #5221 #5222.
