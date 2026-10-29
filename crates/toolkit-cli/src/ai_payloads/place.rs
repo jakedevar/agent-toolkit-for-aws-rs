@@ -90,7 +90,8 @@ fn cleanup(temp: &Path, mut original: PublishError, hooks: &mut dyn PublishHooks
         Ok(()) => original,
         Err(e) => {
             let detail = format!("cannot remove {}: {e}", temp.display());
-            original.detail.push_str(&format!("; {detail}"));
+            original.detail.push_str("; ");
+            original.detail.push_str(&detail);
             original.cleanup_failure = Some(CleanupFailure {
                 code: "publish_cleanup_failed",
                 detail,

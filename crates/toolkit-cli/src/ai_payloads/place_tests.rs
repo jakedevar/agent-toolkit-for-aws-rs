@@ -126,7 +126,7 @@ fn ap_pub_05_no_hard_links_and_eexist() {
             rustix::io::Errno::EXIST.raw_os_error(),
             "destination_exists",
         ),
-        (rustix::io::Errno::ACCES.raw_os_error(), "publish_io"),
+        (rustix::io::Errno::ACCESS.raw_os_error(), "publish_io"),
     ] {
         let f = Fixture::new();
         let mut h = Hooks::new();
