@@ -383,7 +383,7 @@ impl ApplyHook for GitIntoDocs {
 /// Apply `files` to a repository whose existing `docs` holds `old.md` plus
 /// every directory in `precreate`, swapping `.git` into `docs` after
 /// planning. The only defense left is the Navigator's downward identity
-/// check: the swapped-in `.git` is a real directory (O_NOFOLLOW passes) and
+/// check: the swapped-in `.git` is a real directory (`O_NOFOLLOW` passes) and
 /// every path below it the walk needs already exists, so a missing check
 /// writes into the metadata. The walk stops at `docs`, the first planned
 /// directory it enters.

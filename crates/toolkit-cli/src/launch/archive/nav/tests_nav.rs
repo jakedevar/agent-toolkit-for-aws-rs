@@ -1,5 +1,5 @@
 //! Direct Navigator coverage: each step's identity comparison alone stops a
-//! walk into a real directory (not a symlink, which O_NOFOLLOW already
+//! walk into a real directory (not a symlink, which `O_NOFOLLOW` already
 //! refuses) that differs from the recorded one.
 
 use std::fs;
