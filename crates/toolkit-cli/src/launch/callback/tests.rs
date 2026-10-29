@@ -707,6 +707,53 @@ fn failed_report_preserves_final_record_for_retry() {
 
 #[cfg(unix)]
 #[test]
+fn broken_stdout_preserves_authenticated_record_for_retry() {
+    use super::{
+        pending::{Custody, Observation, WaitTracker},
+        PendingStatus, WaitDecision,
+    };
+    use crate::launch::{clock::SeededRandom, tests_support::Scratch};
+    struct Broken;
+    impl std::io::Write for Broken {
+        fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::ErrorKind::BrokenPipe.into())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let scratch = Scratch::new("broken-authenticated");
+    let custody = Custody::acquire(scratch.path(), 91).unwrap();
+    custody
+        .write(
+            1234,
+            40,
+            100,
+            PendingStatus::Succeeded,
+            None,
+            &SeededRandom::new(1),
+        )
+        .unwrap();
+    drop(custody);
+    let session = serde_json::json!({"client_id":"c","client_secret":"s","client_expires_at":9999,"authorize_endpoint":"https://example.com","token_endpoint":"https://example.com","scopes":["launch:access"],"access_token":"a","refresh_token":"r","token_expires_at":9999});
+    std::fs::write(scratch.join("session.json"), session.to_string()).unwrap();
+    let mut stdout = Broken;
+    let mut output = crate::Output::new(&mut stdout);
+    let result =
+        WaitTracker::default().finish_after_report(scratch.path(), 91, 99, |observation, _| {
+            assert_eq!(
+                observation,
+                Observation::Decision(WaitDecision::Authenticated)
+            );
+            super::wait::report_authenticated(&mut output, "https://example.com")
+        });
+    assert!(result.unwrap().is_ok());
+    assert!(output.is_closed());
+    assert!(scratch.join("pending/91.json").exists());
+}
+
+#[cfg(unix)]
+#[test]
 fn revision4_unknown_record_decision_matrix() {
     use super::{
         pending::{Custody, Observation, WaitTracker},

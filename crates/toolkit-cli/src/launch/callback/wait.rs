@@ -56,11 +56,7 @@ pub fn command(invocation: &Invocation, output: &mut Output<'_>) -> Result<(), T
                 .unwrap_or(0);
             let result = tracker.finish_after_report(&dir, pid, now, |observation, reason| match observation {
                 Observation::Missing => report_failure(output, &format!("No sign-in is in progress for pid {pid}. Run auth-start again.")),
-                Observation::Decision(WaitDecision::Authenticated) => {
-                    let result = output.line(&serde_json::json!({"authenticated":true,"baseUrl":base}).to_string());
-                    let delivered = result.is_ok() && !output.is_closed();
-                    (Some(result), delivered)
-                },
+                Observation::Decision(WaitDecision::Authenticated) => report_authenticated(output, &base),
                 Observation::Decision(WaitDecision::Poll) => (None, false),
                 Observation::Decision(WaitDecision::HelperBlocked) => report_failure(output, "Sign-in has not finished: the sign-in helper is still blocked. Run session-status in a minute; if it does not report a session, run auth-start again."),
                 Observation::Decision(WaitDecision::TimedOut) => report_failure(output, "Sign-in did not finish in time. Run auth-start again."),
@@ -83,6 +79,16 @@ pub fn command(invocation: &Invocation, output: &mut Output<'_>) -> Result<(), T
         let _ = invocation;
         failure(output, "This command is not supported on this platform.")
     }
+}
+
+#[cfg(unix)]
+pub(super) fn report_authenticated(
+    output: &mut Output<'_>,
+    base: &str,
+) -> (Option<Result<(), ToolkitError>>, bool) {
+    let result = output.line(&serde_json::json!({"authenticated":true,"baseUrl":base}).to_string());
+    let delivered = result.is_ok() && !output.is_closed();
+    (Some(result), delivered)
 }
 
 #[cfg(unix)]
