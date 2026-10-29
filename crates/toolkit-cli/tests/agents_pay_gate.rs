@@ -771,7 +771,15 @@ impl<'ast> Visit<'ast> for RequestScanner {
     fn visit_macro(&mut self, mac: &'ast syn::Macro) {
         let mut tokens = Vec::new();
         leaves(mac.tokens.clone(), &mut tokens);
-        if tokens.iter().any(|t| t == "ProcessPaymentRequest") {
+        if tokens.iter().any(|t| t == "ProcessPaymentRequest")
+            || (self.request_impl && tokens.iter().any(|t| t == "Self"))
+            || tokens.windows(3).any(|window| {
+                window[0] == "."
+                    && ["body", "manager", "session", "instrument", "user"]
+                        .contains(&window[1].as_str())
+                    && window[2] == "="
+            })
+        {
             self.macro_mentions += 1;
         }
         visit::visit_macro(self, mac);
