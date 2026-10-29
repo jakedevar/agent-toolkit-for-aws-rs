@@ -49,3 +49,54 @@ fn t_cmd_sign_out_without_session() {
     );
     assert!(output.stderr.is_empty());
 }
+
+#[test]
+fn t_cli_missing_required_arguments_use_json() {
+    for name in [
+        "create-launch",
+        "get-launch",
+        "delete-launch",
+        "start-launch-execution",
+        "get-launch-status",
+        "get-launch-download-url",
+    ] {
+        let output = invoke(&["launch", name]);
+        assert_eq!(output.status.code(), Some(1));
+        assert!(output.stdout.is_empty());
+        assert_eq!(
+            String::from_utf8(output.stderr).unwrap(),
+            format!("{{\"error\":\"Missing required argument for {name}\"}}\n")
+        );
+    }
+}
+#[test]
+fn t_cli_rejects_bare_dash_as_positional() {
+    for name in [
+        "create-launch",
+        "get-launch",
+        "delete-launch",
+        "start-launch-execution",
+        "get-launch-status",
+        "get-launch-download-url",
+    ] {
+        let output = invoke(&["launch", name, "-"]);
+        assert_eq!(output.status.code(), Some(2));
+        assert!(output.stdout.is_empty());
+    }
+}
+#[cfg(not(feature = "aws-sdk"))]
+#[test]
+fn t_cmd_network_commands_fail_without_network_support() {
+    for args in [
+        &["launch", "get-launch", "l-1"][..],
+        &["launch", "delete-launch", "l-1"],
+        &["launch", "start-launch-execution", "l-1"],
+        &["launch", "get-launch-status", "l-1"],
+        &["launch", "list-launches"],
+    ] {
+        let output = invoke(args);
+        assert_eq!(output.status.code(), Some(1));
+        assert!(output.stdout.is_empty());
+        assert_eq!(output.stderr, b"{\"error\":\"This toolkit build has no network support; install a build with the aws-sdk feature.\"}\n");
+    }
+}
