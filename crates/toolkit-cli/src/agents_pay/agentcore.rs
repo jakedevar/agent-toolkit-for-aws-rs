@@ -1005,7 +1005,9 @@ impl Authorized {
 #[derive(Default)]
 pub struct FakePaymentsApi {
     calls: std::cell::Cell<usize>,
-    proof: Option<Json>,
+    proof: std::cell::RefCell<Option<Json>>,
+    idempotency: std::cell::RefCell<std::collections::HashMap<String, (Vec<u8>, Json)>>,
+    authorizations: std::cell::Cell<usize>,
     session: Option<Json>,
     instrument: Option<Json>,
     session_reads: std::cell::Cell<usize>,
@@ -1017,7 +1019,7 @@ impl FakePaymentsApi {
     #[must_use]
     pub fn with_proof(proof: Json) -> Self {
         Self {
-            proof: Some(proof),
+            proof: std::cell::RefCell::new(Some(proof)),
             ..Self::default()
         }
     }
@@ -1054,6 +1056,19 @@ impl FakePaymentsApi {
     #[must_use]
     pub fn calls(&self) -> usize {
         self.calls.get()
+    }
+    /// Set the proof produced by the next new authorization.
+    pub fn set_proof(&self, proof: Json) {
+        *self.proof.borrow_mut() = Some(proof);
+    }
+    /// Count new authorizations, excluding idempotent replays.
+    #[must_use]
+    pub fn authorizations(&self) -> usize {
+        self.authorizations.get()
+    }
+    /// Simulate expiry of the service's idempotency retention window.
+    pub fn expire_idempotency_records(&self) {
+        self.idempotency.borrow_mut().clear();
     }
 }
 /// Payment operation interface; requests can only originate from `Approved`.
@@ -1137,9 +1152,27 @@ impl PaymentsApi for FakePaymentsApi {
     ) -> Result<PaymentProof, PaymentError> {
         assert_fixture_account(&request.manager);
         self.calls.set(self.calls.get() + 1);
-        Ok(PaymentProof(
-            self.proof.clone().unwrap_or_else(|| Json::object(vec![])),
-        ))
+        let body = std::str::from_utf8(&request.body).map_err(|_| PaymentError::InvalidResponse)?;
+        let parsed = parse_json(body).map_err(|_| PaymentError::InvalidResponse)?;
+        let token = parsed
+            .get("clientToken")
+            .and_then(Json::as_str)
+            .ok_or(PaymentError::InvalidResponse)?;
+        let mut records = self.idempotency.borrow_mut();
+        if let Some((previous_body, proof)) = records.get(token) {
+            if previous_body != &request.body {
+                return Err(PaymentError::Service("ConflictException"));
+            }
+            return Ok(PaymentProof(proof.clone()));
+        }
+        let proof = self
+            .proof
+            .borrow()
+            .clone()
+            .unwrap_or_else(|| Json::object(vec![]));
+        records.insert(token.to_owned(), (request.body.clone(), proof.clone()));
+        self.authorizations.set(self.authorizations.get() + 1);
+        Ok(PaymentProof(proof))
     }
 }
 #[allow(clippy::needless_pass_by_value)] // Consuming Approved permits only one logical spend.
