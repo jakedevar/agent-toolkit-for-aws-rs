@@ -785,3 +785,28 @@ fn real_stream_narrow_refuses_pending_remainder() {
     assert_eq!(stream.next_chunk(), Err(StreamError::TooLarge));
     assert_eq!(stream.next_chunk(), Err(StreamError::TooLarge));
 }
+
+#[test]
+fn malformed_http_from_real_connector_has_a_protocol_error_class() {
+    let fixture = Fixture::new();
+    let roots = ValidatedRoots::for_tests(vec![fixture.trusted.ca_der.clone()]);
+    let runtime = SdkRuntime::new().unwrap();
+    let transport = SdkTransport::loopback_for_tests(&runtime, &roots, Arc::new(Loopback)).unwrap();
+    let server = serve_as(
+        &fixture.trusted,
+        HOST,
+        Arc::new(|_, _| vec![Part::Bytes(b"HTTP/1.1 nonsense\r\n\r\n".to_vec())]),
+    );
+    let error = match transport.open(
+        &request(
+            format!("https://{HOST}:{}/mcp", server.port()),
+            Duration::from_secs(5),
+        ),
+        &StreamLimits::new(1024, 1024).unwrap(),
+    ) {
+        Ok(_) => panic!("malformed response was accepted"),
+        Err(error) => error,
+    };
+    assert_eq!(error.code(), "aws_protocol");
+    assert!(!error.is_retryable());
+}
