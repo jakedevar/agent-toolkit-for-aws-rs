@@ -33,6 +33,7 @@ pub(crate) struct Published {
     pub leftover_temp: Option<PathBuf>,
 }
 
+#[allow(clippy::needless_pass_by_value)]
 fn error(code: &'static str, detail: impl ToString) -> PublishError {
     PublishError {
         code,
@@ -52,7 +53,7 @@ fn check_directory(dir: &Path) -> Result<(), PublishError> {
     for part in dir.components() {
         match part {
             Component::Prefix(_) | Component::RootDir | Component::Normal(_) => {
-                path.push(part.as_os_str())
+                path.push(part.as_os_str());
             }
             Component::CurDir => continue,
             Component::ParentDir => {
@@ -117,7 +118,7 @@ pub(crate) fn publish_new(
         ));
         match OpenOptions::new().write(true).create_new(true).open(&temp) {
             Ok(file) => break (temp, file),
-            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
             Err(e) => return Err(error("publish_io", e)),
         }
     };
