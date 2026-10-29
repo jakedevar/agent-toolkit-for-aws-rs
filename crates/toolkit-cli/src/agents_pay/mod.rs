@@ -20,6 +20,7 @@ pub mod pyval;
 pub mod urlparse;
 
 pub mod agentcore;
+pub mod bridge;
 pub mod deps;
 pub mod flow;
 #[cfg(feature = "agents-pay-live")]
