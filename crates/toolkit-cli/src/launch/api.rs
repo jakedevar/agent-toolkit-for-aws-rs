@@ -116,3 +116,7 @@ impl Client<'_> {
         Ok(result)
     }
 }
+
+#[cfg(test)]
+#[path = "api/tests_api.rs"]
+mod tests_api;
