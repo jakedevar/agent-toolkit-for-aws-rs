@@ -21,6 +21,8 @@ pub mod extract;
 #[cfg(unix)]
 pub mod fsops;
 #[cfg(unix)]
+pub mod nav;
+#[cfg(unix)]
 pub mod git;
 pub mod plan;
 #[cfg(unix)]
