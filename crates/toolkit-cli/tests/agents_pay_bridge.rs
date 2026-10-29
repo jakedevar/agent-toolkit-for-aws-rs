@@ -13,7 +13,7 @@ compile_error!("agents-pay-live is never built for tests (AC3)");
 
 use std::collections::BTreeMap;
 use std::fs;
-use std::io::{ErrorKind, Seek, SeekFrom, Write};
+use std::io::{ErrorKind, Seek, Write};
 use std::net::TcpListener;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -242,7 +242,7 @@ fn t_ac3_inh_br_bridge_route_as_a_child_under_a_hostile_environment() {
                 .env("AGENTS_PAY_CONFIG", home.join(".agents-pay/config.json"));
         });
         assert_frame(&out, code, stdout);
-        let read = shared.seek(SeekFrom::Current(0)).unwrap();
+        let read = shared.stream_position().unwrap();
         assert!(read <= 131_073, "{label}: read {read} stdin bytes");
         if code == 1 {
             assert_eq!(read, bytes.len() as u64, "{label}: the whole request");

@@ -148,6 +148,9 @@ fn proof(authorization: &[(&str, &str)]) -> Json {
     ])
 }
 
+/// One scripted wire response: label, status, headers, body.
+type WireCase<'a> = (&'a str, u16, Vec<(&'a str, &'a str)>, Vec<u8>);
+
 const SIGNATURE: &str = "0xb0a1c2d3e4f5061728394a5b6c7d8e9fb0a1c2d3e4f5061728394a5b6c7d8e9f1c";
 
 /// A runtime config and environment that would change every decision if
@@ -652,7 +655,6 @@ fn t_br_post_wire_failures_are_one_logical_call() {
         .into_bytes()
     };
     let big = Json::object(vec![("signature", Json::string("s".repeat(17_000)))]);
-    type WireCase<'a> = (&'a str, u16, Vec<(&'a str, &'a str)>, Vec<u8>);
     let cases: Vec<WireCase<'_>> = vec![
         (
             "ConflictException",

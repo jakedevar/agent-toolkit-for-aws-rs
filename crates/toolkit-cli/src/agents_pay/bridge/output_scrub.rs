@@ -42,6 +42,7 @@ pub fn sanitize_frame(request: &Json) -> Frame {
 /// [`sanitize_frame`] with an explicit matcher work budget: the default is
 /// [`FINAL_MATCH_WORK`]; a smaller one exercises the fail-closed path.
 #[must_use]
+// recorded-shape: the sanitize_output request is trusted-glue input, validated by B1.
 pub fn sanitize_frame_within(request: &Json, budget: usize) -> Frame {
     let secrets: Vec<&str> = match request.get("secrets") {
         Some(Json::Array(items)) => items.iter().filter_map(Json::as_str).collect(),
@@ -112,6 +113,7 @@ fn refusal_frame(matcher: &FinalSecrets) -> Frame {
 
 /// Whether any key or string of `value` holds a secret; `None` past the
 /// budget.
+// recorded-shape: walks a trusted-glue candidate, not an AWS response.
 fn tree_hit(value: &Json, matcher: &FinalSecrets, budget: &mut usize) -> Option<bool> {
     match value {
         Json::String(text) => matcher.found_in(text, budget),
@@ -136,6 +138,7 @@ fn tree_hit(value: &Json, matcher: &FinalSecrets, budget: &mut usize) -> Option<
 }
 
 /// `value` with its member `key` set to `member`.
+// recorded-shape: rebuilds a trusted-glue candidate, not an AWS response.
 fn replaced(value: &Json, key: &str, member: &Json) -> Json {
     match value {
         Json::Object(members) => Json::Object(
@@ -156,6 +159,7 @@ fn replaced(value: &Json, key: &str, member: &Json) -> Json {
 }
 
 /// The sanitized result, or `None` for the fixed refusal.
+// recorded-shape: the candidate shape is B1-validated trusted-glue input; any other shape refuses.
 fn sanitized(candidate: &Json, matcher: &FinalSecrets, budget: &mut usize) -> Option<Json> {
     let Some(Json::Object(members)) = candidate.get("details") else {
         return None;

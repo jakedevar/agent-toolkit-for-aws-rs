@@ -3042,9 +3042,9 @@ fn one_path_findings(sources: &[Source]) -> Vec<String> {
                 .count();
             prove_calls += in_prove;
             if uses != in_prove {
-                found.push(format!(
-                    "agents_pay/flow.rs: `process_payment` is used outside `fn prove`"
-                ));
+                found.push(
+                    "agents_pay/flow.rs: `process_payment` is used outside `fn prove`".to_owned(),
+                );
             }
         } else {
             found.push(format!(
@@ -3065,13 +3065,6 @@ fn one_path_findings(sources: &[Source]) -> Vec<String> {
 const LIVE_PUBLIC_ITEMS: &[&str] = &["World", "for_process", "deps"];
 
 fn live_items_findings(sources: &[Source]) -> Vec<String> {
-    let Some(Ok(file)) = sources
-        .iter()
-        .find(|s| s.path == "agents_pay/live.rs")
-        .map(|s| parse_source(&s.text))
-    else {
-        return vec!["agents_pay/live.rs: is missing or does not parse".to_owned()];
-    };
     struct Public(Vec<String>);
     impl<'ast> Visit<'ast> for Public {
         fn visit_item(&mut self, item: &'ast syn::Item) {
@@ -3101,6 +3094,13 @@ fn live_items_findings(sources: &[Source]) -> Vec<String> {
             visit::visit_impl_item_fn(self, item);
         }
     }
+    let Some(Ok(file)) = sources
+        .iter()
+        .find(|s| s.path == "agents_pay/live.rs")
+        .map(|s| parse_source(&s.text))
+    else {
+        return vec!["agents_pay/live.rs: is missing or does not parse".to_owned()];
+    };
     let mut public = Public(Vec::new());
     public.visit_file(&file);
     if public.0 == LIVE_PUBLIC_ITEMS {
@@ -4132,7 +4132,10 @@ fn t_br_d32_catches_bridge_route_mutations() {
         ),
         (
             "a second live entry",
-            appended(BRIDGE_FILE, "\nmod again { pub fn live_command() {} }\n"),
+            appended(
+                BRIDGE_FILE,
+                "\npub(in crate::agents_pay) fn live_command() {}\n",
+            ),
         ),
         (
             "the default registry entry dispatches elsewhere",

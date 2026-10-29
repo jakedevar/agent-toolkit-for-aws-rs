@@ -635,6 +635,7 @@ mod tests {
         // Slices added after the registry (NEW_RANK), by slice name.
         // agents-pay (#4410, slice S5 #5352):
         "agents-pay fetch",
+        "agents-pay bridge",
         // ai-payloads (#4386, slice S1 #5143):
         "ai-payloads reward sample",
         "ai-payloads reward check",

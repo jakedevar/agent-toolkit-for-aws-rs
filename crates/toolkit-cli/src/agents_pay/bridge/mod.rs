@@ -176,6 +176,7 @@ fn scrubbed(document: &Json, secrets: &KnownSecrets) -> Result<(), BridgeError> 
 }
 
 /// `value` with member `key` removed from the object at `path`.
+// recorded-shape: rebuilds the bridge's own rendered document, not an AWS response.
 fn without(value: &Json, path: &[&str], key: &str) -> Json {
     match (value, path.split_first()) {
         (Json::Object(members), None) => Json::Object(

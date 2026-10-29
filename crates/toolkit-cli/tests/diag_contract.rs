@@ -2429,8 +2429,9 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
 // the launch snapshot routes (#5317) theirs.
 // `documentdb normalize-capture` (#5327) deliberately adds its synopsis and description.
 // `agents-pay fetch` (#5352) deliberately adds its synopsis and description.
-const USAGE_BASE_LEN: usize = 46270;
-const USAGE_BASE_FNV1A64: u64 = 0x91e6_f153_fb3c_4da2;
+// `agents-pay bridge` (OpenClaw B2, #5443) deliberately adds its synopsis and description.
+const USAGE_BASE_LEN: usize = 46712;
+const USAGE_BASE_FNV1A64: u64 = 0x5700_8937_b776_0af1;
 
 #[test]
 fn the_global_usage_text_is_byte_identical_to_the_base() {
