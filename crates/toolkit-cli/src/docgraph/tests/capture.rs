@@ -1364,12 +1364,13 @@ fn t08e_secret_bearing_envelopes_fail_without_echo_or_snapshot() {
 /// offending key is visible. The complete stderr is pinned.
 #[test]
 fn t08e_secret_shaped_keys_are_refused_without_echoing_the_key() {
+    type Build<'a> = Box<dyn Fn(&str) -> String + 'a>;
     const KEY_CANARY: &str = "KEYCANARY5348";
     const FIXED_STDERR: &str = "error: capture refused (secret_field): the capture contains a connection, credential or secret-shaped field or value\n";
     let good = r#"{"ordinal":1,"name":"c","collStats":{},"indexStats":[],"indexes":[]}"#;
     let coll = |body: &str| capture_of(&format!(r#"{{"ordinal":1,"name":"c",{body}}}"#));
     // (location, builder from the offending key to the whole capture text)
-    let cases: Vec<(&str, Box<dyn Fn(&str) -> String>)> = vec![
+    let cases: Vec<(&str, Build)> = vec![
         (
             "envelope",
             Box::new(|k| format!(r#"{{{HEAD},"{k}":"x","databases":[]}}"#)),
