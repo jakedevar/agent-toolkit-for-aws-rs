@@ -183,10 +183,8 @@ fn gate_then_spend(
 
 #[test]
 fn recipient_and_value_amount_above_ceiling_is_refused() {
-    let got = select_accept_entry(
-        &challenge_entry("amount", Some(s("5000000"))),
-        &base_policy(),
-    );
+    let ch = challenge_entry("amount", Some(s("5000000")));
+    let got = select_accept_entry(&ch, &base_policy());
     assert_eq!(got.err(), Some(refused(UNIFORM_REFUSAL)));
 }
 
@@ -220,14 +218,16 @@ fn recipient_and_value_unapproved_network_asset_or_scheme_is_refused() {
 #[test]
 fn recipient_and_value_explicitly_empty_scheme_list_refuses_every_payment() {
     let policy = policy_with("allowed_schemes", Some(json("[]")));
-    let got = select_accept_entry(&challenge(), &policy);
+    let ch = challenge();
+    let got = select_accept_entry(&ch, &policy);
     assert_eq!(
         got.err(),
         Some(refused("Payment policy allows no schemes."))
     );
     // A null list is present, so it is not the default either.
     let policy = policy_with("allowed_schemes", Some(Json::Null));
-    let got = select_accept_entry(&challenge(), &policy);
+    let ch = challenge();
+    let got = select_accept_entry(&ch, &policy);
     assert_eq!(
         got.err(),
         Some(refused("Payment policy allows no schemes."))
@@ -237,7 +237,8 @@ fn recipient_and_value_explicitly_empty_scheme_list_refuses_every_payment() {
 #[test]
 fn recipient_and_value_absent_scheme_list_uses_the_exact_scheme_default() {
     let policy = policy_with("allowed_schemes", None);
-    let entry = select_accept_entry(&challenge(), &policy).unwrap();
+    let ch = challenge();
+    let entry = select_accept_entry(&ch, &policy).unwrap();
     assert_eq!(entry.get("scheme"), Some(&s("exact")));
     let ch = challenge_entry("scheme", Some(s("upto")));
     assert_eq!(
