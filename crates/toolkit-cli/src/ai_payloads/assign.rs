@@ -92,8 +92,8 @@ fn rewrite_validated(
                     Ok(if *v { "True" } else { "False" }.to_owned())
                 }
                 (LiteralKind::Int, Json::Int(v)) if *v >= 0 => Ok(v.to_string()),
-                (LiteralKind::Float, Json::Int(v)) => Ok(v.to_string()),
-                (LiteralKind::Float, Json::Float(v)) if v.is_finite() => Ok(v.to_string()),
+                (LiteralKind::Float, Json::Int(v)) => Ok(format!("{v}.0")),
+                (LiteralKind::Float, Json::Float(v)) if v.is_finite() => Ok(format!("{v:?}")),
                 _ => Err("assign_value_invalid"),
             }
         }
