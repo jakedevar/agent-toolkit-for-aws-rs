@@ -780,3 +780,7 @@ Friction: #4727, Rsi #4694, Rsi #4704
   4/4 busy: 573278a7 (#5216 L4), 0dcdafea (#5181 S4 cont), d9924905 (#5225 review S3), da98439f (#5223 S2b cont).
 - 10-29 06:19Z: S3 reward LANDED (6a5be796 published, 5f2c60c26893d90185859de2a6f9c3b1b0a275bc). #5214 auto-closed; CLOSED #5220, #5127 (covered). Open: #5218 #5221 #5222 (tests), #5120 (reward template fix, now unblocked -> S3r). Queue empty.
   Next slot order: P-ROOTS follow-ups #5199 #5203 #5204; S3r/#5120; reward tests #5221 #5222.
+- 10-29 06:22Z: #5225 (d9924905, Codex sol xhigh) ACCEPT S3 4584b5ec (SDK + MCP proxy tests pass). Nonblocking #5227 (malformed merchant HTTP -> ConnectError not RemoteProtocolError; shared seam) ROUTED to S4 #5181 (note on #5227); S4 review must check it.
+  Check ok (d4f321ed, 4177). ENQUEUED aa9eba69 (seq 2966, #5210). On landing close #5210 #5225 #5217; keep #5224 (S5) #5227 (S4).
+  P-ROOTS follow-ups: worker 23ccf6b5 (Codex terra) bound #5203 + related #5199 #5204 (test-only). On accept/land close all three.
+  4/4 busy: 573278a7 (#5216 L4), 0dcdafea (#5181 S4 cont), da98439f (#5223 S2b cont), 23ccf6b5 (#5203 P-ROOTS f/u).
