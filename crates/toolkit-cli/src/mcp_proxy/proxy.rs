@@ -1806,7 +1806,9 @@ fn failure_of(error: &AwsError) -> Failure {
 fn stream_stop(error: &StreamError) -> Stop {
     match error {
         StreamError::TooLarge => Stop::Fail(Failure::TooLarge),
-        StreamError::IdleTimeout => Stop::Fail(Failure::Unresponsive),
+        StreamError::IdleTimeout | StreamError::DeadlineExceeded => {
+            Stop::Fail(Failure::Unresponsive)
+        }
         StreamError::Failed(error) => Stop::Fail(failure_of(error)),
     }
 }

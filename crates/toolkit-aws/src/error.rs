@@ -55,6 +55,8 @@ pub enum TimeoutPhase {
     Connect,
     /// Waiting for response bytes.
     Read,
+    /// Absolute operation deadline.
+    Deadline,
 }
 
 impl fmt::Display for TimeoutPhase {
@@ -62,6 +64,7 @@ impl fmt::Display for TimeoutPhase {
         f.write_str(match self {
             Self::Connect => "connect",
             Self::Read => "read",
+            Self::Deadline => "deadline",
         })
     }
 }
@@ -339,12 +342,16 @@ impl AwsError {
     }
 
     /// Whether retrying the same request can succeed: throttling, HTTP
-    /// 429/500/502/503/504, transient service codes, timeouts and connection
-    /// failures. Credential, validation, configuration and pagination errors
-    /// are never retried.
+    /// 429/500/502/503/504, transient service codes, non-deadline timeouts and
+    /// connection failures. An exhausted absolute deadline and credential,
+    /// validation, configuration and pagination errors are never retried.
     #[must_use]
     pub fn is_retryable(&self) -> bool {
         match self {
+            Self::Timeout {
+                phase: TimeoutPhase::Deadline,
+                ..
+            } => false,
             Self::Connect { .. } | Self::Timeout { .. } => true,
             Self::Service(service) => service.is_throttling() || service.is_transient(),
             _ => false,
@@ -700,6 +707,7 @@ mod tests {
             AwsError::invalid_config("region", "bad"),
             AwsError::pagination("loop"),
             AwsError::provider("p", "x"),
+            AwsError::timeout(TimeoutPhase::Deadline, "expired"),
         ] {
             assert!(!fatal.is_retryable(), "{fatal}");
         }

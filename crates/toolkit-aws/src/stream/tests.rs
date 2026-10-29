@@ -163,3 +163,78 @@ fn stream_errors_print_fixed_text() {
     assert!(!wrapped.to_string().contains("FAKESECRETVALUE1"));
     assert!(!format!("{wrapped:?}").contains("FAKESECRETVALUE1"));
 }
+
+#[test]
+fn t_sdl_limits_narrow_and_fake_stall() {
+    use std::time::{Duration, Instant};
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let bounded = limits(10, 4).with_deadline(deadline);
+    assert_eq!(bounded.deadline(), Some(deadline));
+    assert_eq!(limits(10, 4).deadline(), None);
+    let transport = FakeStreamingTransport::new()
+        .respond(
+            200,
+            &[],
+            vec![FakeChunk::data(b"abc"), FakeChunk::data(b"def")],
+        )
+        .respond(200, &[], vec![FakeChunk::Stall])
+        .respond(200, &[], vec![FakeChunk::Stall]);
+    let mut stream = transport.open(&request(), &bounded).unwrap();
+    assert_eq!(stream.next_chunk(), Ok(Some(b"abc".to_vec())));
+    stream.narrow_body_limit(5);
+    stream.narrow_body_limit(100);
+    assert_eq!(stream.next_chunk(), Err(StreamError::TooLarge));
+    assert_eq!(stream.next_chunk(), Err(StreamError::TooLarge));
+    let mut stalled = transport.open(&request(), &bounded).unwrap();
+    assert_eq!(stalled.next_chunk(), Err(StreamError::DeadlineExceeded));
+    assert_eq!(stalled.next_chunk(), Err(StreamError::DeadlineExceeded));
+    let mut idle = transport.open(&request(), &limits(10, 4)).unwrap();
+    assert_eq!(idle.next_chunk(), Err(StreamError::IdleTimeout));
+    assert_eq!(
+        transport.open_limits(),
+        vec![bounded, bounded, limits(10, 4)]
+    );
+    assert_eq!(transport.narrow_calls(), vec![5, 100]);
+
+    let transport = FakeStreamingTransport::new().respond(200, &[], vec![FakeChunk::data(b"abc")]);
+    let mut stream = transport.open(&request(), &limits(10, 4)).unwrap();
+    assert_eq!(stream.next_chunk(), Ok(Some(b"abc".to_vec())));
+    stream.narrow_body_limit(2);
+    assert_eq!(stream.next_chunk(), Err(StreamError::TooLarge));
+}
+
+#[test]
+fn narrowing_pending_and_exactly_delivered() {
+    let mut limiter = ChunkLimiter::new(limits(10, 4));
+    assert_eq!(
+        limiter.next(|| Ok(Some(b"abcdef".to_vec()))),
+        Ok(Some(b"abcd".to_vec()))
+    );
+    limiter.narrow(5);
+    assert_eq!(
+        limiter.next(|| panic!("pending remainder must be checked first")),
+        Err(StreamError::TooLarge)
+    );
+    assert_eq!(
+        limiter.next(|| panic!("refusal is terminal")),
+        Err(StreamError::TooLarge)
+    );
+
+    for extra in [false, true] {
+        let mut limiter = ChunkLimiter::new(limits(10, 4));
+        assert_eq!(
+            limiter.next(|| Ok(Some(b"abc".to_vec()))),
+            Ok(Some(b"abc".to_vec()))
+        );
+        limiter.narrow(3);
+        let result = limiter.next(|| Ok(extra.then(|| b"x".to_vec())));
+        assert_eq!(
+            result,
+            if extra {
+                Err(StreamError::TooLarge)
+            } else {
+                Ok(None)
+            }
+        );
+    }
+}

@@ -330,6 +330,10 @@ impl ResponseStream for ScriptedStream {
         &self.headers
     }
 
+    fn narrow_body_limit(&mut self, max_body_bytes: u64) {
+        self.limiter.narrow(max_body_bytes);
+    }
+
     fn next_chunk(&mut self) -> Result<Option<Vec<u8>>, StreamError> {
         let steps = &mut self.steps;
         let pulled = &self.pulled;

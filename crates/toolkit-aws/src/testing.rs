@@ -309,6 +309,8 @@ pub enum FakeChunk {
     Data(Vec<u8>),
     /// The read timeout passes before the next bytes.
     IdleTimeout,
+    /// Stall until the configured deadline or idle timeout.
+    Stall,
     /// The connection fails.
     Fail(AwsError),
 }
@@ -333,6 +335,8 @@ pub struct FakeStreamingTransport {
     script: Mutex<VecDeque<FakeStreamOutcome>>,
     requests: Mutex<Vec<HttpRequest>>,
     pulled: Arc<AtomicUsize>,
+    limits: Mutex<Vec<StreamLimits>>,
+    narrows: Arc<Mutex<Vec<u64>>>,
 }
 
 impl FakeStreamingTransport {
@@ -384,6 +388,24 @@ impl FakeStreamingTransport {
     pub fn frames_pulled(&self) -> usize {
         self.pulled.load(Ordering::SeqCst)
     }
+
+    /// Limits recorded for each admitted open.
+    #[must_use]
+    pub fn open_limits(&self) -> Vec<StreamLimits> {
+        self.limits
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Requested cap changes in call order.
+    #[must_use]
+    pub fn narrow_calls(&self) -> Vec<u64> {
+        self.narrows
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
 }
 
 impl StreamingTransport for FakeStreamingTransport {
@@ -393,6 +415,10 @@ impl StreamingTransport for FakeStreamingTransport {
         limits: &StreamLimits,
     ) -> Result<Box<dyn ResponseStream + 'a>, AwsError> {
         refuse_framing_headers(&request.headers)?;
+        self.limits
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(*limits);
         self.requests
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -414,6 +440,9 @@ impl StreamingTransport for FakeStreamingTransport {
             body: body.into(),
             limiter: ChunkLimiter::new(*limits),
             pulled: Arc::clone(&self.pulled),
+            narrows: Arc::clone(&self.narrows),
+            deadline: limits.deadline(),
+            expired: false,
         }))
     }
 }
@@ -424,6 +453,9 @@ struct FakeStream {
     body: VecDeque<FakeChunk>,
     limiter: ChunkLimiter,
     pulled: Arc<AtomicUsize>,
+    narrows: Arc<Mutex<Vec<u64>>>,
+    deadline: Option<std::time::Instant>,
+    expired: bool,
 }
 
 impl ResponseStream for FakeStream {
@@ -435,10 +467,22 @@ impl ResponseStream for FakeStream {
         &self.headers
     }
 
+    fn narrow_body_limit(&mut self, max_body_bytes: u64) {
+        self.narrows
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(max_body_bytes);
+        self.limiter.narrow(max_body_bytes);
+    }
+
     fn next_chunk(&mut self) -> Result<Option<Vec<u8>>, StreamError> {
+        if self.expired {
+            return Err(StreamError::DeadlineExceeded);
+        }
         let body = &mut self.body;
         let pulled = &self.pulled;
-        self.limiter.next(|| {
+        let deadline = self.deadline;
+        let result = self.limiter.next(|| {
             let Some(event) = body.pop_front() else {
                 return Ok(None);
             };
@@ -446,9 +490,20 @@ impl ResponseStream for FakeStream {
             match event {
                 FakeChunk::Data(bytes) => Ok(Some(bytes)),
                 FakeChunk::IdleTimeout => Err(StreamError::IdleTimeout),
+                FakeChunk::Stall => {
+                    if deadline.is_some() {
+                        Err(StreamError::DeadlineExceeded)
+                    } else {
+                        Err(StreamError::IdleTimeout)
+                    }
+                }
                 FakeChunk::Fail(error) => Err(StreamError::Failed(error)),
             }
-        })
+        });
+        if result == Err(StreamError::DeadlineExceeded) {
+            self.expired = true;
+        }
+        result
     }
 }
 
