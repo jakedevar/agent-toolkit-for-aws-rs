@@ -798,10 +798,40 @@ impl<'a> PaymentClient<'a> {
                 .flatten()
         };
         if !has_required("PaymentInstrument", instrument)
+            || text("paymentInstrumentId").is_none()
+            || text("status").is_none()
             || text("paymentManagerArn") != Some(manager)
             || text("paymentConnectorId") != Some(connector)
             || text("userId") != Some(user)
             || text("paymentInstrumentType") != Some("EMBEDDED_CRYPTO_WALLET")
+        {
+            return Err(PaymentError::InvalidResponse);
+        }
+        for key in ["createdAt", "updatedAt"] {
+            if !matches!(
+                toolkit_aws::recorded::optional_member(instrument, key, "a timestamp", |v| {
+                    crate::cloudwatch::timefmt::time_from_json(v).ok()
+                }),
+                Ok(Some(_))
+            ) {
+                return Err(PaymentError::InvalidResponse);
+            }
+        }
+        let details =
+            toolkit_aws::recorded::optional_object(instrument, "paymentInstrumentDetails")
+                .map_err(|_| PaymentError::InvalidResponse)?
+                .ok_or(PaymentError::InvalidResponse)?;
+        let wallet = toolkit_aws::recorded::optional_object(details, "embeddedCryptoWallet")
+            .map_err(|_| PaymentError::InvalidResponse)?
+            .ok_or(PaymentError::InvalidResponse)?;
+        if !has_required("EmbeddedCryptoWallet", wallet)
+            || toolkit_aws::recorded::optional_text(wallet, "network")
+                .ok()
+                .flatten()
+                != Some(network)
+            || toolkit_aws::recorded::optional_object_list(wallet, "linkedAccounts").is_err()
+            || toolkit_aws::recorded::optional_text(wallet, "walletAddress").is_err()
+            || toolkit_aws::recorded::optional_text(wallet, "redirectUrl").is_err()
         {
             return Err(PaymentError::InvalidResponse);
         }
