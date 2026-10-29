@@ -1100,3 +1100,7 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 16:58Z: re-review #5424 (bf7a6989, Codex sol) CHANGES_REQUESTED L5 5556d6b9: #5426 P1 (JSON-escaped / percent-encoded secrets bypass guard), #5427 P1 (auth-wait deletes pending record when guarded output delivered nothing). Guard mutations caught.
   PM RULING (handoff on #5345): bounded representation set (raw, JSON, repr both quotes, pct upper/lower, form '+'), skip <8-byte secrets, decoded-output asserts; propagate real delivery result. L5 repair 2 -> Opus 0c08b166 (continue_from 91a6981f). Then narrow re-review (Codex sol).
   4/4: 0c08b166 L5 r2, 51b3c3c9 #5425, c4766db7 x402 r4, 1a36fb6d #5344. Queue 3022 B1, 3023 #4865.
+- 17:00Z: #5344 (1a36fb6d, Sonnet) DONE at 24b91883cde3b65df47ad57cc83116920bd7e094: umask case moved to tests/docgraph_review_private.rs child process (sh -c umask 000 && exec), in-process umask removed; red 56817dca / green 30cd0cc3; scoped e6b730b1 ok; check ok. ENQUEUED seq 3025 (b080c708). NOTE: new toolkit-cli test crate root -> whichever of #5344 / x402 S5 lands second needs the #5372 guard in it.
+  S1 reviewer 51b3c3c9 filed P1 #5428 (listed ULA range admits IPv6 instance metadata before TLS) while still running -> S1 repair after its verdict.
+  Kaizen worker c35bc7f4 (Sonnet) on #5394 (preserve_order build-scope dependence; told not to touch launch/ or the toolkit-cli serde_json line).
+  Queue: 3022 B1, 3023 #4865, 3025 #5344. 4/4: 0c08b166 L5 r2, 51b3c3c9 #5425, c4766db7 x402 r4, c35bc7f4 #5394.
