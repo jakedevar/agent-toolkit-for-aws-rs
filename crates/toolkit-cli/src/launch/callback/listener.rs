@@ -196,3 +196,22 @@ fn expire(slots: &mut [Option<Slot>], now: Instant) {
         }
     }
 }
+
+#[cfg(test)]
+mod scripted_tests {
+    use super::*;
+
+    // Red stub for the injected listener boundary: the scripted callback must
+    // be serviced despite an always-ready admission queue.
+    fn scripted_flood_with_callback() -> Option<Outcome> {
+        None
+    }
+
+    #[test]
+    fn flood_does_not_starve_an_admitted_callback() {
+        assert_eq!(
+            scripted_flood_with_callback(),
+            Some(Outcome::Code("ok".into()))
+        );
+    }
+}
