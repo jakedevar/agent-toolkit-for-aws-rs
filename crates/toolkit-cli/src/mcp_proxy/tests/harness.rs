@@ -14,7 +14,7 @@ use toolkit_aws::diag::Diag;
 use toolkit_aws::stream::ChunkLimiter;
 use toolkit_aws::{
     AwsError, Headers, HttpRequest, Method, ResponseStream, StreamError, StreamLimits,
-    StreamingTransport,
+    StreamingTransport, Timeouts,
 };
 use toolkit_core::{parse_json, Json};
 
@@ -152,7 +152,8 @@ impl Gate {
         self.0 .1.notify_all();
     }
 
-    fn wait(&self) {
+    /// Block until the gate is open.
+    pub fn wait(&self) {
         let (open, changed) = &*self.0;
         let mut open = lock(open);
         while !*open {
@@ -250,6 +251,8 @@ pub struct Seen {
     pub headers: Headers,
     pub body: Vec<u8>,
     pub json: Option<Json>,
+    /// The connect and read timeouts the request was sent with.
+    pub timeouts: Timeouts,
 }
 
 impl Seen {
@@ -363,6 +366,7 @@ impl StreamingTransport for Upstream {
             headers: request.headers.clone(),
             body: request.body.clone(),
             json,
+            timeouts: request.timeouts,
         };
         lock(&self.seen).push(seen.clone());
         let reply = (self.handler)(&seen);
@@ -492,6 +496,13 @@ impl Harness {
     pub fn next(&mut self) -> Json {
         let text = self.next_text();
         parse_json(&text).unwrap_or_else(|e| panic!("stdout line is not JSON ({e}): {text}"))
+    }
+
+    /// The next stdout line, parsed; a timeout fails naming `what`.
+    pub fn next_as(&mut self, what: &str) -> Json {
+        let want = self.cursor + 1;
+        eventually(what, || self.stdout.lines().len() >= want);
+        self.next()
     }
 
     pub fn next_text(&mut self) -> String {
