@@ -1502,6 +1502,21 @@ mod wire_contracts {
     }
 
     #[test]
+    fn duplicate_length_marker_is_refused_before_pulling() {
+        let transport = FakeStreamingTransport::new().respond(
+            200,
+            &[("content-length", "invalid-duplicate")],
+            vec![FakeChunk::data(b"x")],
+        );
+        let client = PaymentClient::new("us-east-1", &transport, &NoSigner).unwrap();
+        assert_eq!(
+            client.process_payment(super::operation_contracts::approved()),
+            Err(PaymentError::InvalidResponse)
+        );
+        assert_eq!(transport.frames_pulled(), 0);
+    }
+
+    #[test]
     fn declared_short_length_is_not_trusted() {
         let response = br#"{"processPaymentId":"id","paymentManagerArn":"arn","paymentSessionId":"ps","paymentInstrumentId":"pi","paymentType":"CRYPTO_X402","status":"PROOF_GENERATED","paymentOutput":{"cryptoX402":{"version":"2","payload":{"signature":"secret"}}},"createdAt":1,"updatedAt":1}"#;
         let transport = FakeStreamingTransport::new().respond(

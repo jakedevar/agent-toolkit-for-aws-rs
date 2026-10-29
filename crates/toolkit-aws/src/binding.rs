@@ -418,14 +418,23 @@ fn parse_ipv4_number(part: &str) -> Option<u64> {
 /// Copy response headers from the wire. Names and values that
 /// [`Headers::insert`] refuses (characters outside its name alphabet, control
 /// characters) are dropped rather than failing the whole response; a repeated
-/// name keeps its last value.
+/// name keeps its last value, except that repeated `Content-Length` values
+/// become a fixed invalid marker so bounded collectors can reject them.
 #[must_use]
 pub fn response_headers<'h, I>(entries: I) -> Headers
 where
     I: IntoIterator<Item = (&'h str, &'h str)>,
 {
     let mut headers = Headers::new();
+    let mut seen_length = false;
     for (name, value) in entries {
+        if name.eq_ignore_ascii_case("content-length") {
+            if seen_length {
+                let _ = headers.insert("content-length", "invalid-duplicate");
+                continue;
+            }
+            seen_length = true;
+        }
         // A refused header is dropped on purpose (see above).
         let _ = headers.insert(name, value);
     }
