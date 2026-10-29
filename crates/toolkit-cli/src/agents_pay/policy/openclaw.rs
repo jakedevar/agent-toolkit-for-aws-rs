@@ -244,4 +244,60 @@ mod tests {
             .unwrap()
         );
     }
+
+    #[test]
+    fn t_ocp_map_cap_boundaries() {
+        use crate::agents_pay::amount::{exceeds_cap, CapDecimal};
+        for (maximum, lower, upper) in [
+            ("1", "0", "2"),
+            ("100000", "99999", "100001"),
+            (
+                "1000000000000000000000000000000000000000",
+                "999999999999999999999999999999999999999",
+                "1000000000000000000000000000000000000001",
+            ),
+        ] {
+            let input = Json::object(vec![
+                ("maxPaymentAmountAtomic", Json::string(maximum)),
+                ("allowAnyRecipient", Json::Bool(true)),
+            ]);
+            let policy = from_openclaw(&input).unwrap();
+            let cap = CapDecimal::from_json(policy.get("max_per_payment_usd").unwrap()).unwrap();
+            assert!(!exceeds_cap(lower, &cap));
+            assert!(!exceeds_cap(maximum, &cap));
+            assert!(exceeds_cap(upper, &cap));
+        }
+    }
+
+    #[test]
+    fn t_ocp_div_strict_entries() {
+        use crate::agents_pay::policy::select_accept_entry;
+        let policy = from_openclaw(
+            &parse_json(r#"{"maxPaymentAmountAtomic":"100000","allowAnyRecipient":true}"#).unwrap(),
+        )
+        .unwrap();
+        let original = parse_json(r#"{"scheme":"exact","network":"eip155:84532","asset":"0x036cbd53842c5426634e7929541ec2318f3dcf7e","payTo":"0xa","amount":"1000","maxTimeoutSeconds":60,"extra":{}}"#).unwrap();
+        let Json::Object(fields) = original else {
+            unreachable!()
+        };
+        let decide = |extra: (&str, Json)| {
+            let mut entry = fields.clone();
+            entry.retain(|(key, _)| key != extra.0);
+            entry.push((extra.0.into(), extra.1));
+            select_accept_entry(
+                &Json::object(vec![("accepts", Json::Array(vec![Json::Object(entry)]))]),
+                &policy,
+            )
+            .is_err()
+        };
+        assert!(decide(("maxTimeoutSeconds", Json::Int(3601))));
+        assert!(decide(("extra", Json::string("invalid"))));
+        assert!(decide((
+            "extra",
+            Json::object(vec![("x", Json::string("a".repeat(4096)))])
+        )));
+        assert!(decide(("maxAmountRequired", Json::string("1001"))));
+        assert!(decide(("payTo", Json::Array(vec![]))));
+        assert!(parse_json(r#"{"a":1,"a":2}"#).is_err());
+    }
 }
