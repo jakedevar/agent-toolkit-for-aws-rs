@@ -98,3 +98,69 @@ mod tests {
         assert_eq!(gate.watchdog(), WatchdogAction::ExitSuccess);
     }
 }
+
+/// Start the process watchdog. The caller must retain its pending-record lock
+/// until process exit. The timeout callback makes one best-effort record write;
+/// the watchdog never joins the worker thread.
+pub fn start_watchdog(
+    gate: std::sync::Arc<CommitGate>,
+    deadline: Instant,
+    record_timeout: impl FnOnce() + Send + 'static,
+) {
+    std::thread::spawn(move || {
+        std::thread::sleep(deadline.saturating_duration_since(Instant::now()));
+        match gate.watchdog() {
+            WatchdogAction::RecordTimeoutAndExit => {
+                record_timeout();
+                std::process::exit(1);
+            }
+            WatchdogAction::ExitFailure => std::process::exit(1),
+            WatchdogAction::ExitSuccess => std::process::exit(0),
+        }
+    });
+}
+
+/// Prepare the private session file, sync it, and authorize one rename.
+///
+/// # Errors
+/// Returns an I/O error or a timeout if publication is not authorized.
+pub fn publish_session(
+    gate: &CommitGate,
+    cutoff: Instant,
+    dir: &std::path::Path,
+    bytes: &[u8],
+    random: &dyn crate::launch::clock::Random,
+) -> std::io::Result<()> {
+    use std::io::Write as _;
+    let nonce = crate::launch::clock::random_hex(random, 8)
+        .map_err(|e| std::io::Error::other(e.to_string()))?;
+    let temp = dir.join(format!("session.json.{nonce}.tmp"));
+    let mut options = std::fs::OpenOptions::new();
+    options.create_new(true).write(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(&temp)?;
+    let result = (|| {
+        file.write_all(bytes)?;
+        file.sync_all()?;
+        drop(file);
+        if !gate.admit(Instant::now(), cutoff) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "callback publication not admitted",
+            ));
+        }
+        std::fs::rename(&temp, dir.join("session.json"))?;
+        if !gate.committed() {
+            return Err(std::io::Error::other("callback gate state changed"));
+        }
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(temp);
+    }
+    result
+}
