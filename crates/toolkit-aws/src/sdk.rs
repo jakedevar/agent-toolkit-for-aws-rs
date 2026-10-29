@@ -305,6 +305,7 @@ impl<P: CredentialsProvider> Signer for SigV4Signer<P> {
 #[derive(Clone)]
 struct GuardedResolver {
     inner: Arc<dyn HostResolver + Send + Sync>,
+    deadline: Option<std::time::Instant>,
 }
 
 impl fmt::Debug for GuardedResolver {
@@ -315,7 +316,25 @@ impl fmt::Debug for GuardedResolver {
 
 impl ResolveDns for GuardedResolver {
     fn resolve_dns<'a>(&'a self, name: &'a str) -> DnsFuture<'a> {
-        DnsFuture::ready(guarded_addresses(name, self.inner.as_ref()).map_err(ResolveDnsError::new))
+        let expired = || {
+            self.deadline
+                .is_some_and(|d| std::time::Instant::now() >= d)
+        };
+        let result = if expired() {
+            Err(ResolveDnsError::new(std::io::Error::other(
+                "DNS deadline elapsed",
+            )))
+        } else {
+            let result = guarded_addresses(name, self.inner.as_ref()).map_err(ResolveDnsError::new);
+            if expired() {
+                Err(ResolveDnsError::new(std::io::Error::other(
+                    "DNS deadline elapsed",
+                )))
+            } else {
+                result
+            }
+        };
+        DnsFuture::ready(result)
     }
 }
 
@@ -345,7 +364,8 @@ impl ResolveDns for UnguardedResolver {
     }
 }
 
-type ConnectorFactory = dyn Fn(&Timeouts) -> SharedHttpConnector + Send + Sync;
+type ConnectorFactory =
+    dyn Fn(&Timeouts, Option<std::time::Instant>) -> SharedHttpConnector + Send + Sync;
 
 /// [`Transport`] and [`StreamingTransport`] over the smithy hyper HTTP client.
 pub struct SdkTransport {
@@ -405,11 +425,16 @@ impl SdkTransport {
         roots: &ValidatedRoots,
         resolver: Arc<dyn HostResolver + Send + Sync>,
     ) -> Result<Self, AwsError> {
-        let guard = GuardedResolver { inner: resolver };
+        let guard = GuardedResolver {
+            inner: resolver,
+            deadline: None,
+        };
         let ctx = roots.tls_context()?;
         let factory_runtime = runtime.clone();
-        let factory = move |timeouts: &Timeouts| {
-            build_connector(&factory_runtime, timeouts, &ctx, guard.clone())
+        let factory = move |timeouts: &Timeouts, deadline| {
+            let mut guard = guard.clone();
+            guard.deadline = deadline;
+            build_connector(&factory_runtime, timeouts, &ctx, guard)
         };
         Ok(Self {
             runtime: runtime.clone(),
@@ -434,7 +459,7 @@ impl SdkTransport {
         let unguarded = UnguardedResolver { inner: resolver };
         let ctx = roots.tls_context()?;
         let factory_runtime = runtime.clone();
-        transport.factory = Box::new(move |timeouts: &Timeouts| {
+        transport.factory = Box::new(move |timeouts: &Timeouts, _deadline| {
             build_connector(&factory_runtime, timeouts, &ctx, unguarded.clone())
         });
         transport.peer_check = false;
@@ -449,7 +474,7 @@ impl SdkTransport {
         let shared = SharedHttpConnector::new(connector);
         Self {
             runtime: runtime.clone(),
-            factory: Box::new(move |_: &Timeouts| shared.clone()),
+            factory: Box::new(move |_: &Timeouts, _deadline| shared.clone()),
             connectors: Mutex::new(Vec::new()),
             roots: None,
             peer_check: true,
@@ -471,7 +496,7 @@ impl SdkTransport {
         if let Some((_, connector)) = cache.iter().find(|(key, _)| key == timeouts) {
             return connector.clone();
         }
-        let connector = (self.factory)(timeouts);
+        let connector = (self.factory)(timeouts, None);
         cache.push((*timeouts, connector.clone()));
         connector
     }
@@ -704,7 +729,10 @@ impl StreamingTransport for SdkTransport {
             return Err(deadline_error());
         }
         let sdk_request = Self::admit(request)?;
-        let connector = self.connector_for(&request.timeouts);
+        let connector = match limits.deadline() {
+            Some(deadline) => (self.factory)(&request.timeouts, Some(deadline)),
+            None => self.connector_for(&request.timeouts),
+        };
         let response = self.runtime.block_on(async {
             if let Some(deadline) = limits.deadline() {
                 tokio::time::timeout_at(deadline.into(), self.call(connector, sdk_request))
@@ -713,7 +741,14 @@ impl StreamingTransport for SdkTransport {
             } else {
                 self.call(connector, sdk_request).await
             }
-        })?;
+        });
+        if limits
+            .deadline()
+            .is_some_and(|d| std::time::Instant::now() >= d)
+        {
+            return Err(deadline_error());
+        }
+        let response = response?;
         Ok(Box::new(SdkStream {
             runtime: self.runtime.clone(),
             status: response.status().as_u16(),
@@ -1674,6 +1709,7 @@ mod tests {
         let rt = runtime();
         let public = GuardedResolver {
             inner: Arc::new(StaticResolver("52.94.0.10")),
+            deadline: None,
         };
         let addresses = rt
             .block_on(public.resolve_dns("logs.us-east-1.amazonaws.com"))
@@ -1681,6 +1717,7 @@ mod tests {
         assert_eq!(addresses, vec!["52.94.0.10".parse::<IpAddr>().unwrap()]);
         let private = GuardedResolver {
             inner: Arc::new(StaticResolver("10.1.2.3")),
+            deadline: None,
         };
         let error = rt
             .block_on(private.resolve_dns("logs.us-east-1.amazonaws.com"))
