@@ -621,3 +621,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 10-29 04:55Z: #5119 r2 (58279180) CHANGES_REQUESTED on #4386 3e46f485: #5122 typed slots closed except new P1 #5139 (--allow-unresolved leaves bare ACCEPT_EULA expr -> truthy [False] in existing kernel); #5123 still P1 for append (check-then-rename); new P2 #5140 (conflict preservation failure). #5124 import gap stays carried P2.
   RULINGS: consent/bool slots never unresolved; --append never modifies in place -> new versioned file via no-replace publish (B-12); drop CAS/.conflict machinery. Repair 2 -> e8c32b72 (Opus high, continue_from 094ad6cf). Then r3 narrow (#5139, #5123 append, #5140 moot).
   4/4 busy: 4cbe8435 (#5118), f698fe4e (#5085 repair 1), 8c9c4a04 (#5079 repair 2), e8c32b72 (#4386 repair 2).
+- 10-29 05:00Z: #4386 design repair 2 (e8c32b72) at 07ab2cde13da9cc1f9bfbaf6070b5f8a3c182a66: all 9 bare slots never unresolved (OD-14, typed_slot_unresolved), consent literals only, --cell can't touch consent; --append = new versioned file, original untouched (B-12); recovery machinery removed; #5120 fix planned as slice S3r; #5124 carried.
+  #5119 r3 (final, narrow) -> Codex 2dcbc9ca pinned 07ab2cde.
+  4/4 busy: 4cbe8435 (#5118), f698fe4e (#5085 repair 1), 8c9c4a04 (#5079 repair 2), 2dcbc9ca (#5119 r3).
