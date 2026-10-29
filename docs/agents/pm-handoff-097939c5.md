@@ -1219,3 +1219,7 @@ Friction: #4727, Rsi #4694, Rsi #4704
   Security review #5516 -> Codex sol xhigh 6be15885, pinned 817eb1ee. On ACCEPT: check, enqueue issue 5489; on land close #5489 #5516 #5484.
   RULING #5508: keep parity (writer-only checks unevaluated live); left open as a post-cutover enhancement.
   4/4: dc2bb4e7 #5158, 9482d07f #5504 revert, fe94684e docgraph S3, 6be15885 S2 review. Queue: 3056 S6+B2, 3057 B3.
+- 23:31Z: #5504 revert (9482d07f) DONE at 899417c7f6ea1573dd9ee6730af12859668ab33d. PM verified zip_read.rs is identical to rolling; parity test covers 6 pairs; check ok (2ad84fdd, 4622). ENQUEUED seq 3058 (10a1f793, issue 5504).
+  #5514 (plugin-stage hardening, B3 review finding, kaizen) -> Claude Sonnet high 4d40e01a from a90abec7.
+  4/4: dc2bb4e7 #5158, fe94684e docgraph S3, 6be15885 S2 review #5516, 4d40e01a #5514. Queue: 3056 S6+B2, 3057 B3, 3058 #5504.
+  Kaizen open (project): #5509 fmt-apply recipe, #5510 red-evidence cost, #5488, #5476. Next free slot: #5509 or x402 S7 (after S6 lands).
