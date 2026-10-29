@@ -130,6 +130,44 @@ fn wait_result_requires_free_lock_for_final_failures() {
 }
 
 #[test]
+fn callback_wait_decision_table_for_all_readable_statuses() {
+    use super::{wait_decision, PendingStatus, WaitDecision};
+    for status in [
+        PendingStatus::Listening,
+        PendingStatus::Exchanging,
+        PendingStatus::Succeeded,
+        PendingStatus::Failed,
+        PendingStatus::TimedOut,
+    ] {
+        for held in [false, true] {
+            for valid in [false, true] {
+                for now in [99, 100, 104, 105, 3600] {
+                    let expected = if valid {
+                        WaitDecision::Authenticated
+                    } else if held && now < 105 {
+                        WaitDecision::Poll
+                    } else if held {
+                        WaitDecision::HelperBlocked
+                    } else {
+                        match status {
+                            PendingStatus::Failed => WaitDecision::Failed,
+                            PendingStatus::TimedOut => WaitDecision::TimedOut,
+                            _ if now >= 100 => WaitDecision::TimedOut,
+                            _ => WaitDecision::Ended,
+                        }
+                    };
+                    assert_eq!(
+                        wait_decision(status, held, valid, now, 100),
+                        expected,
+                        "{status:?}, held={held}, valid={valid}, now={now}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn loopback_ignores_bad_state_and_closes_listener_on_success() {
     use std::io::{Read, Write};
     use std::net::{Ipv4Addr, SocketAddr, TcpStream};

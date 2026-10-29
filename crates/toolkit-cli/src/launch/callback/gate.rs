@@ -274,6 +274,46 @@ mod tests {
     }
 
     #[test]
+    fn aborted_exchange_never_invokes_rename_or_admission_hook() {
+        use crate::launch::{clock::SeededRandom, tests_support::Scratch};
+        let scratch = Scratch::new("gate-abort");
+        let gate = CommitGate::default();
+        assert!(gate.start_exchange());
+        assert_eq!(gate.watchdog(), WatchdogAction::RecordTimeoutAndExit);
+        let cutoff = Instant::now() + Duration::from_secs(5);
+        let result = publish_with(
+            &gate,
+            cutoff,
+            scratch.path(),
+            b"session",
+            &SeededRandom::new(1),
+            Instant::now,
+            || panic!("aborted gate admitted"),
+            |_, _| panic!("aborted gate renamed"),
+        );
+        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::TimedOut);
+        assert_eq!(std::fs::read_dir(scratch.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn watchdog_does_not_write_record_in_committing_or_committed_state() {
+        let cutoff = Instant::now() + Duration::from_secs(5);
+        for committed in [false, true] {
+            let gate = CommitGate::default();
+            assert!(gate.start_exchange());
+            assert!(gate.admit(Instant::now(), cutoff));
+            if committed {
+                assert!(gate.committed());
+            }
+            watchdog_step(
+                &gate,
+                || panic!("unexpected record write"),
+                |code| assert_eq!(code, i32::from(!committed)),
+            );
+        }
+    }
+
+    #[test]
     fn admitted_publication_does_not_make_watchdog_wait() {
         let cutoff = Instant::now() + Duration::from_secs(1);
         let gate = CommitGate::default();
