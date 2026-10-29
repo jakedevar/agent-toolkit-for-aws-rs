@@ -656,3 +656,20 @@ fn process_request_has_private_fields_and_only_approved_constructor() {
     };
     assert!(matches!(&*reference.elem, Type::Path(p) if p.path.is_ident("Approved")));
 }
+
+#[test]
+fn payment_service_model_is_embedded() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/agents_pay/agentcore.rs");
+    let source = fs::read_to_string(path).unwrap();
+    let file = syn::parse_file(&source).unwrap();
+    let embedded = file.items.iter().any(|item| match item {
+        syn::Item::Const(c) if c.ident == "PAYMENT_SERVICE_MODEL" => {
+            matches!(&*c.expr, syn::Expr::Macro(m) if m.mac.path.is_ident("include_str") && m.mac.tokens.to_string().contains("agentcore-payments.json"))
+        }
+        _ => false,
+    });
+    assert!(
+        embedded,
+        "the pinned payment service model must be embedded"
+    );
+}
