@@ -26,11 +26,11 @@ fn recording(requests: &[Json], responses: &[Json]) -> Json {
 
 fn retrieval_recording(first: &Json, responses: &[Json]) -> Json {
     use crate::docgraph::memory::{retrieve, MemoryClient};
-    struct Capture {
+    struct Capture<'a> {
         requests: Vec<Json>,
-        responses: std::vec::IntoIter<Json>,
+        responses: std::iter::Cloned<std::slice::Iter<'a, Json>>,
     }
-    impl MemoryClient for Capture {
+    impl MemoryClient for Capture<'_> {
         fn submit(&mut self, request: &Json) -> Result<Json, String> {
             self.requests.push(request.clone());
             self.responses
@@ -40,7 +40,7 @@ fn retrieval_recording(first: &Json, responses: &[Json]) -> Json {
     }
     let mut capture = Capture {
         requests: vec![],
-        responses: responses.to_vec().into_iter(),
+        responses: responses.iter().cloned(),
     };
     retrieve(&mut capture, "g-abc123def4", first).unwrap();
     recording(&capture.requests, responses)
