@@ -1921,7 +1921,7 @@ mod wire_contracts {
         let transport = FakeStreamingTransport::new();
         let client = PaymentClient::new("us-east-1", &transport, &NoSigner)
             .unwrap()
-            .with_operation_deadline(Instant::now() - Duration::from_secs(1));
+            .with_operation_deadline(Instant::now().checked_sub(Duration::from_secs(1)).unwrap());
         let expected = Err(PaymentError::Transport(PaymentErrorClass::ReadTimeout));
         assert_eq!(client.get_session("arn", "ps", "user"), expected);
         assert_eq!(
