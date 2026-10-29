@@ -197,6 +197,64 @@ mod tests {
         }
     }
 
+    #[test]
+    fn t_br_out_cap_session_fixtures() {
+        let spec = toolkit_core::parse_json(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/data/openclaw/frame-cases.json"
+        )))
+        .unwrap();
+        let Json::Array(cases) = spec.get("cases").unwrap() else {
+            panic!("fixture cases")
+        };
+        let session = |amount: String| {
+            Json::object(vec![
+                ("paymentSessionId", Json::string("s")),
+                ("paymentManagerArn", Json::string("m")),
+                (
+                    "limits",
+                    Json::object(vec![(
+                        "maxSpendAmount",
+                        Json::object(vec![
+                            ("value", Json::string(amount)),
+                            ("currency", Json::string("USD")),
+                        ]),
+                    )]),
+                ),
+                ("userId", Json::string("u")),
+                ("expiryTimeInMinutes", Json::Int(10)),
+                ("createdAt", Json::string("2026-08-07T00:00:00Z")),
+                ("updatedAt", Json::string("2026-08-07T00:00:00Z")),
+            ])
+        };
+        for case in cases {
+            let text = case.get("text").unwrap().as_str().unwrap();
+            let Some(Json::Int(repeat)) = case.get("repeat") else {
+                panic!("repeat")
+            };
+            let prefix = text.repeat(*repeat as usize);
+            let initial = session_result(&session(prefix.clone())).unwrap();
+            let initial_len = crate::aurora::pyfmt::dumps_compact(&initial).len() + 1;
+            for target in [131072, 131073] {
+                let value = session_result(&session(format!(
+                    "{prefix}{}",
+                    "x".repeat(target - initial_len)
+                )))
+                .unwrap();
+                let expected = format!("{}\n", crate::aurora::pyfmt::dumps_compact(&value));
+                assert_eq!(expected.len(), target);
+                let (actual, code) = frame(&value);
+                if target == 131072 {
+                    assert_eq!(actual, expected.as_bytes());
+                    assert_eq!(code, 0);
+                } else {
+                    assert_eq!(actual, FAILURE_FRAME);
+                    assert_eq!(code, 1);
+                }
+            }
+        }
+    }
+
     // T-BR-OUT-2/3/REQ: model order, timestamp normalization, reduced proof.
     #[test]
     fn t_br_out_session_and_payment() {
