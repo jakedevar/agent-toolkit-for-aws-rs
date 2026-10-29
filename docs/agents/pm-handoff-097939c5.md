@@ -641,3 +641,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
   Next #4382: #5080 TA-STREAM-DL after S1 #5017 lands (mcp-proxy integration round 22); then L3; L4-L6 per design.
 - 10-29 05:40Z: S4 r3 (d09ae2af) ACCEPT mcp-proxy stack at 1f8dd6e66fc7d2aac8e660908ffa988a255c9254 (#5136-#5138 closed; lock audit clean). Integration round 22 = #5147 -> 454d9ca4 (Opus high, from 1f8dd6e6, merge rolling ce7bf488, resolve Cargo.lock/Makefile). On handoff: enqueue; on landing close #5017 #5052 #5079 #5105 #5106-#5113 #5136-#5138 #5147; then #5080 TA-STREAM-DL + x402 P-ROOTS/S4 + operator signed-run to-do + mcp-proxy S5.
   4/4 busy: 4cbe8435 (#5118), bc70b368 (#4411 design), f43fddbd (#5143), 454d9ca4 (#5147 r22).
+- 10-29 05:45Z: HEALTH: Claude 7-day window 70% (hub), projected exhaustion ~13:45Z, resets 11-03 03:00Z. Codex 31% (resets 11-04); OpenRouter $88.9 left of $100 cap.
+  POLICY (this seat): running Claude workers finish; NEW implementation -> Codex gpt-6.1-terra high; cross-family review of Codex work -> Claude Sonnet (medium/high); small slices -> OpenRouter z-ai/glm-5.3-flash with Codex review. Keep PM turns lean. Allowed launches: Claude opus/sonnet, Codex sol/terra, OpenRouter glm-5.3-flash only.
+  Health wake re-armed with ignore provider_window_projected_exhaustion:Claude:seven_day:1793674800. GM report 07d80d10 (portfolio rationing question).
