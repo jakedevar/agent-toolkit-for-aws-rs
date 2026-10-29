@@ -8,7 +8,8 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
-use toolkit_core::{parse_json, Json};
+use toolkit_core::diag::DEFAULT_MAX_CHARS;
+use toolkit_core::{escape_untrusted, parse_json, quote_untrusted, Json};
 
 use crate::platform::Platform;
 
@@ -33,8 +34,8 @@ pub struct PlatformSpec {
 pub enum Destination {
     /// `plugins/<plugin>/bin/` (the plugin directory name).
     Plugin(String),
-    /// `<package_root>/bin/` (a repository-relative path to an npm/ClawHub
-    /// package directory inside the source tree).
+    /// `<package_root>/bin/` (a repository-relative path to an npm package
+    /// directory inside the source tree).
     PackageRoot(String),
 }
 
@@ -60,8 +61,10 @@ impl Destination {
     #[must_use]
     pub fn label(&self) -> String {
         match self {
-            Self::Plugin(plugin) => format!("plugin {plugin}"),
-            Self::PackageRoot(root) => format!("package_root {root}"),
+            Self::Plugin(plugin) => format!("plugin {}", escape_untrusted(plugin, DEFAULT_MAX_CHARS)),
+            Self::PackageRoot(root) => {
+                format!("package_root {}", escape_untrusted(root, DEFAULT_MAX_CHARS))
+            }
         }
     }
 }
@@ -211,6 +214,28 @@ impl Declaration {
                 ));
             }
         }
+        let plugins = self.plugins();
+        let roots = self.package_roots();
+        for root in &roots {
+            if plugins.contains(root) {
+                return Err(format!(
+                    "declaration: package_root {root} is also a plugin name, so PLUGIN/NAME selectors would be ambiguous"
+                ));
+            }
+            for other in &roots {
+                let inside_bin = root
+                    .strip_prefix(other)
+                    .and_then(|rest| rest.strip_prefix('/'))
+                    .is_some_and(|rest| {
+                        rest == crate::BIN_DIR || rest.starts_with(&format!("{}/", crate::BIN_DIR))
+                    });
+                if inside_bin {
+                    return Err(format!(
+                        "declaration: package_root {root} lies inside the bin/ of package_root {other}"
+                    ));
+                }
+            }
+        }
         Ok(())
     }
 
@@ -348,14 +373,35 @@ fn parse_binary(value: &Json) -> Result<BinarySpec, String> {
         ],
         "binary",
     )?;
-    if value.get("package_root").is_some() {
-        return Err("binary: `package_root` is not supported yet (B3 skeleton)".to_string());
-    }
-    let plugin = required_str(value, "plugin", "binary")?;
-    let destination = Destination::Plugin(plugin.to_string());
+    let destination = match (value.get("plugin"), value.get("package_root")) {
+        (Some(_), None) => {
+            let plugin = required_str(value, "plugin", "binary")?;
+            if !is_name(plugin) {
+                return Err(format!(
+                    "binary in plugin {}: plugin must be lower-case ASCII letters, digits, `-` or `_`, starting with a letter or digit",
+                    quote_untrusted(plugin)
+                ));
+            }
+            Destination::Plugin(plugin.to_string())
+        }
+        (None, Some(_)) => {
+            let root = required_str(value, "package_root", "binary")?;
+            check_package_root_path(root)?;
+            Destination::PackageRoot(root.to_string())
+        }
+        _ => {
+            return Err(
+                "binary: an entry names exactly one of `plugin` or `package_root`".to_string(),
+            )
+        }
+    };
     let name = required_str(value, "name", "binary")?;
-    let label = format!("binary {plugin}/{name}");
-    if !is_name(plugin) || !is_name(name) {
+    let label = format!(
+        "binary {}/{}",
+        destination.key(),
+        escape_untrusted(name, DEFAULT_MAX_CHARS)
+    );
+    if !is_name(name) {
         return Err(format!(
             "{label}: plugin and name must be lower-case ASCII letters, digits, `-` or `_`, starting with a letter or digit"
         ));
@@ -406,14 +452,32 @@ fn parse_binary(value: &Json) -> Result<BinarySpec, String> {
             match other {
                 "mcp-server" => Role::McpServer,
                 "hook" => Role::Hook,
+                "subprocess" => Role::Subprocess,
                 _ => {
                     return Err(format!(
-                        "{label}: role {other:?} is not guard-hook, mcp-server or hook"
+                        "{label}: role {} is not guard-hook, mcp-server, hook or subprocess",
+                        quote_untrusted(other)
                     ))
                 }
             }
         }
     };
+    // R-PKG-2: a package destination has no launcher files, so its binaries
+    // are spawned by code; a plugin binary always has a launcher role.
+    match (&destination, &role) {
+        (Destination::PackageRoot(_), Role::Subprocess)
+        | (Destination::Plugin(_), Role::GuardHook { .. } | Role::McpServer | Role::Hook) => {}
+        (Destination::PackageRoot(_), _) => {
+            return Err(format!(
+                "{label}: a package_root binary must have role subprocess (code spawns it; no launcher can reach a package bin/)"
+            ))
+        }
+        (Destination::Plugin(_), Role::Subprocess) => {
+            return Err(format!(
+                "{label}: role subprocess is only valid for a package_root destination"
+            ))
+        }
+    }
     let consumer = required_str(value, "consumer", &label)?;
     Ok(BinarySpec {
         destination,
@@ -431,8 +495,88 @@ fn parse_binary(value: &Json) -> Result<BinarySpec, String> {
 /// `package.json` and a regular `.gitignore` that ignores `bin/`. Returns the
 /// problems; empty means the destination is usable.
 #[must_use]
-pub fn check_package_root(_repo_root: &Path, _root: &str) -> Vec<String> {
-    Vec::new()
+pub fn check_package_root(repo_root: &Path, root: &str) -> Vec<String> {
+    let label = format!("package_root {}", quote_untrusted(root));
+    if let Err(problem) = check_package_root_path(root) {
+        return vec![problem];
+    }
+    let mut dir = repo_root.to_path_buf();
+    for component in root.split('/') {
+        dir.push(component);
+        match std::fs::symlink_metadata(&dir) {
+            Ok(meta) if meta.file_type().is_symlink() => {
+                return vec![format!(
+                    "{label}: path component {} is a symlink; a package destination must be a real directory inside the checkout",
+                    quote_untrusted(component)
+                )]
+            }
+            Ok(meta) if meta.is_dir() => {}
+            _ => {
+                return vec![format!(
+                    "{label}: {} is not a directory",
+                    quote_untrusted(component)
+                )]
+            }
+        }
+    }
+    let mut problems = Vec::new();
+    let regular = |name: &str| {
+        std::fs::symlink_metadata(dir.join(name))
+            .is_ok_and(|meta| meta.file_type().is_file())
+    };
+    if !regular("package.json") {
+        problems.push(format!(
+            "{label}: has no regular package.json, so it is not an npm package"
+        ));
+    }
+    if regular(".gitignore") {
+        let text = std::fs::read_to_string(dir.join(".gitignore")).unwrap_or_default();
+        let lines: Vec<&str> = text.lines().map(str::trim).collect();
+        let ignores = lines.iter().any(|line| matches!(*line, "bin/" | "/bin/"));
+        let reincludes = lines
+            .iter()
+            .any(|line| line.starts_with('!') && line.contains("bin"));
+        if !ignores || reincludes {
+            problems.push(format!(
+                "{label}: .gitignore must ignore bin/ (a `bin/` line and no `!bin` re-include), so staged binaries are never committed"
+            ));
+        }
+    } else {
+        problems.push(format!(
+            "{label}: has no regular .gitignore; it must ignore bin/"
+        ));
+    }
+    problems
+}
+
+/// The textual rules for a `package_root` (R-PKG-1): a normalized
+/// repository-relative path of plain segments, not inside a `plugins/*/bin/`.
+fn check_package_root_path(root: &str) -> Result<(), String> {
+    let refused = |why: &str| {
+        Err(format!(
+            "binary: package_root {} {why}",
+            quote_untrusted(root)
+        ))
+    };
+    let segments: Vec<&str> = root.split('/').collect();
+    let plain = |segment: &&str| {
+        !segment.is_empty()
+            && *segment != "."
+            && *segment != ".."
+            && segment.len() <= 128
+            && segment
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
+    };
+    if root.len() > 512 || !segments.iter().all(plain) {
+        return refused(
+            "must be a repository-relative path of plain segments ([A-Za-z0-9._-], no `.`, `..`, empty, absolute or backslash parts)",
+        );
+    }
+    if segments.len() >= 3 && segments[0] == "plugins" && segments[2] == crate::BIN_DIR {
+        return refused("lies inside a plugins/*/bin/ directory");
+    }
+    Ok(())
 }
 
 /// Lower-case plugin or binary name: `[a-z0-9][a-z0-9_-]{0,63}`.

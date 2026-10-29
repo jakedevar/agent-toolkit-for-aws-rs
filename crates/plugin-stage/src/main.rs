@@ -6,12 +6,16 @@
 //! plugin-stage plan    [COMMON] [SELECT]        print the builds; refuse what cannot build here
 //! plugin-stage stage   [COMMON] [SELECT] [--allow-dirty] [--clean]
 //! plugin-stage launcher [COMMON] PLUGIN/NAME    print the canonical launcher JSON
+//! plugin-stage verify-package [COMMON] --package-root DIR --complete
+//!                                               npm prepack guard: verify one declared
+//!                                               package destination (R-PKG-4, #4411)
 //!
 //! COMMON: --root DIR (workspace; default: nearest ancestor with the declaration)
 //!         --plugins-root DIR (default ROOT/plugins)
 //!         --declaration FILE (default ROOT/packaging/plugin-binaries.json)
 //! SELECT: --platform host|all|KEY (repeatable; default host)
-//!         --only PLUGIN/NAME (repeatable; default every declared binary)
+//!         --only PLUGIN/NAME or PACKAGE_ROOT/NAME (repeatable; default every
+//!         declared binary)
 //! ```
 //!
 //! Exit status: 0 success, 1 contract problem or build failure, 2 usage.
@@ -21,12 +25,13 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use plugin_stage::launcher::{check_launchers, launcher_snippet};
-use plugin_stage::manifest::verify_staged;
+use plugin_stage::declaration::check_package_root;
+use plugin_stage::manifest::{tracked_package_files, verify_package, verify_staged};
 use plugin_stage::stage::{self, Probe};
-use plugin_stage::{Declaration, DECLARATION_PATH};
-use toolkit_core::quote_untrusted;
+use plugin_stage::{Declaration, Destination, DECLARATION_PATH};
+use toolkit_core::{neutralize_line, quote_untrusted};
 
-const USAGE: &str = "usage: plugin-stage <check|verify|plan|stage|launcher> [--root DIR] [--plugins-root DIR] [--declaration FILE] [--platform host|all|KEY]... [--only PLUGIN/NAME]... [--complete] [--allow-dirty] [--clean] [PLUGIN/NAME]";
+const USAGE: &str = "usage: plugin-stage <check|verify|plan|stage|launcher|verify-package> [--root DIR] [--plugins-root DIR] [--declaration FILE] [--platform host|all|KEY]... [--only PLUGIN/NAME]... [--complete] [--allow-dirty] [--clean] [--package-root DIR] [PLUGIN/NAME]";
 
 #[derive(Default)]
 struct Args {
@@ -39,6 +44,7 @@ struct Args {
     complete: bool,
     allow_dirty: bool,
     clean: bool,
+    package_root: Option<PathBuf>,
     positional: Vec<String>,
 }
 
@@ -63,6 +69,9 @@ fn parse_args(raw: &[String]) -> Result<Args, String> {
             "--complete" => args.complete = true,
             "--allow-dirty" => args.allow_dirty = true,
             "--clean" => args.clean = true,
+            "--package-root" => {
+                args.package_root = Some(PathBuf::from(value("--package-root")?));
+            }
             other if other.starts_with('-') => return Err(format!("unknown option {other}")),
             other => args.positional.push(other.to_string()),
         }
@@ -115,7 +124,7 @@ fn report(problems: &[String], ok_message: &str) -> ExitCode {
         ExitCode::SUCCESS
     } else {
         for problem in problems {
-            eprintln!("plugin-stage: {problem}");
+            eprintln!("plugin-stage: {}", neutralize_line(problem));
         }
         eprintln!("plugin-stage: {} problem(s)", problems.len());
         ExitCode::from(1)
@@ -131,6 +140,7 @@ fn run_check(ctx: &Context, complete: bool) -> ExitCode {
         &ctx.declaration,
         complete,
     ));
+    problems.extend(tracked_package_files(&ctx.root, &ctx.declaration));
     for reference in &launchers.references {
         println!(
             "launcher {}/{}: {}",
@@ -196,30 +206,39 @@ fn run_plan(ctx: &Context, args: &Args, build_now: bool) -> ExitCode {
             "",
         );
     }
-    let mut by_plugin: BTreeMap<&str, Vec<&stage::BuildStep>> = BTreeMap::new();
+    let mut by_destination: BTreeMap<&Destination, Vec<&stage::BuildStep>> = BTreeMap::new();
     for step in &steps {
-        by_plugin
-            .entry(step.binary.plugin().unwrap_or_default())
+        by_destination
+            .entry(&step.binary.destination)
             .or_default()
             .push(step);
     }
-    for plugin in by_plugin.keys() {
-        if let Err(err) = stage::check_merge(&ctx.plugins_root, plugin, &provenance, args.clean) {
+    for destination in by_destination.keys() {
+        if let Destination::PackageRoot(root) = destination {
+            let problems = check_package_root(&ctx.root, root);
+            if !problems.is_empty() {
+                return report(&problems, "");
+            }
+        }
+        let dest_dir = destination.dir(&ctx.root, &ctx.plugins_root);
+        if let Err(err) = stage::check_merge_at(&dest_dir, &provenance, args.clean) {
             return report(&[err], "");
         }
     }
-    for (plugin, plugin_steps) in by_plugin {
+    for (destination, destination_steps) in by_destination {
         let mut outputs = Vec::new();
-        for step in plugin_steps {
+        for step in destination_steps {
             match stage::build(&ctx.root, step, &probe.target_dir) {
                 Ok(item) => outputs.push(item),
                 Err(err) => return report(&[err], ""),
             }
         }
-        match stage::install(&ctx.plugins_root, plugin, &outputs, &provenance, args.clean) {
+        let dest_dir = destination.dir(&ctx.root, &ctx.plugins_root);
+        match stage::install_at(&dest_dir, destination, &outputs, &provenance, args.clean) {
             Ok(manifest) => println!(
-                "plugin-stage: staged {} file(s) for {plugin} from {}{}",
+                "plugin-stage: staged {} file(s) for {} from {}{}",
                 manifest.binaries.len(),
+                destination.label(),
                 manifest.source_commit,
                 if manifest.source_dirty {
                     " (dirty)"
@@ -270,12 +289,22 @@ fn main() -> ExitCode {
     };
     if !matches!(
         args.command.as_str(),
-        "check" | "verify" | "plan" | "stage" | "launcher"
+        "check" | "verify" | "plan" | "stage" | "launcher" | "verify-package"
     ) {
         return usage(&format!("unknown command {:?}", args.command));
     }
     if args.command != "launcher" && !args.positional.is_empty() {
         return usage(&format!("unexpected argument {:?}", args.positional[0]));
+    }
+    if args.command == "verify-package" {
+        if args.package_root.is_none() {
+            return usage("verify-package needs --package-root DIR");
+        }
+        if !args.complete {
+            return usage("verify-package is the pack guard and needs --complete");
+        }
+    } else if args.package_root.is_some() {
+        return usage("--package-root is only valid for verify-package");
     }
     let ctx = match context(&args) {
         Ok(ctx) => ctx,
@@ -297,6 +326,14 @@ fn main() -> ExitCode {
         }
         "plan" => run_plan(&ctx, &args, false),
         "stage" => run_plan(&ctx, &args, true),
+        "verify-package" => {
+            let dir = args.package_root.as_deref().unwrap_or(Path::new("."));
+            let problems = verify_package(&ctx.root, &ctx.declaration, dir, args.complete);
+            report(
+                &problems,
+                "plugin-stage: package destination verified against its manifest (complete)",
+            )
+        }
         _ => run_launcher(&ctx, &args),
     }
 }

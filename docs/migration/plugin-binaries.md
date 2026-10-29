@@ -89,6 +89,36 @@ a launcher never runs a half-written binary. The Windows binary sits next to the
 dispatcher, not in a platform directory, so that both Windows launch paths in
 section 4 reach it.
 
+### Package destinations (#4411 B3)
+
+A declaration entry carries exactly one of `plugin` or `package_root`. A
+`package_root` is a repository-relative path (plain `[A-Za-z0-9._-]` segments,
+no `.`/`..`, no leading or trailing `/`) to an npm/ClawHub package inside the
+source tree, such as `plugins/aws-agents/skills/agents-pay/packages/openclaw`.
+It stages into `<package_root>/bin/` with exactly the layout, dispatcher,
+manifest (`"package_root"` instead of `"plugin"`), sha256 and modes above.
+
+- The entry's role must be `subprocess` (and only package entries may use it):
+  code spawns the platform file directly, so `plugin-stage launcher` refuses it
+  and the launcher allowlist and inventory of section 4 are unchanged.
+- Every path component must be a real directory (no symlink). The directory must
+  hold a regular `package.json` and a `.gitignore` with a `bin/` line (and no
+  `!bin` re-include). It may not lie inside a `plugins/*/bin/` or another
+  package destination's `bin/`. `verify`, `verify --complete` and `stage` check
+  this before reading or writing anything.
+- `check` also refuses any git-tracked file under a package destination's `bin/`.
+  Package destinations are never force-added to a release tree. The package ships
+  as a tarball (`npm pack`), not from git.
+- `plugin-stage verify-package --package-root DIR --complete` is the npm
+  `prepack` guard (R-PKG-4). It finds the declaration in the nearest ancestor of
+  the current directory (or `--root`), refuses a `DIR` that is not a declared
+  package destination, and runs the same per-destination verifier as
+  `verify --complete` on that destination alone. It needs no git, Cargo or
+  network.
+- No test target stages the real declaration (R-PKG-7, T-PKG-NOLIVE). The
+  OpenClaw entry builds `toolkit-cli` with `agents-pay-live`, so only
+  `make plugin-binaries` (a release target, not a verification target) stages it.
+
 ## 4. Launchers: how hooks.json and .mcp.json pick the binary
 
 Launchers never name a platform directory. They always call the dispatcher
@@ -416,6 +446,8 @@ cargo run --locked -p plugin-stage -- stage --only aws-core/secret-safety --plat
 cargo run --locked -p plugin-stage -- check                   # launcher contract + staged files
 cargo run --locked -p plugin-stage -- verify --complete       # release gate
 cargo run --locked -p plugin-stage -- launcher aws-core/secret-safety
+cd plugins/aws-agents/skills/agents-pay/packages/openclaw && \
+  plugin-stage verify-package --package-root . --complete   # npm prepack guard
 ```
 
 `make plugin-binaries` and `make plugin-binaries-check` wrap the `stage --platform all`
