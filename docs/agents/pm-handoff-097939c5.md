@@ -1136,3 +1136,7 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 18:52Z: safety net. Queue empty. 4 workers parked on jobs; disk_floor holds (88% used, 94G avail, 32G floor). 7a727801 job 307baa7c job_admission_timed_out (worker resumes when its batch ends). Reclaim dry-run (op dcd775b3): 0 reclaimable (52 target_absent). Safety net re-armed 19:52Z.
 - 18:55Z: S1 repair 1 (f59917b1) DONE at e767370306edb44adb8d92a4d50d94d1d072cf1d (#5428 forbidden-before-listed, fd00:ec2::/64; #5429 connection owned by request/body, closes on drop; merged rolling a719edb2 + #5372 guard). scoped b59a9a3b 5292 ok. Friction #5457 (stale secret-safety-hook test binaries). Security re-review #5458 -> Codex sol 805089a2 pinned e7673703 (review_of 5366, related 5425/5428/5429). On ACCEPT: check + enqueue (source_session_id f59917b1, issue 5366); close #5425 #5428 #5429 #5458 on land.
   4/4: 0c08b166 L5 r2, 805089a2 #5458, e02b0f23 B2, 7a727801 #5344.
+- 19:20Z: #5344 re-land (7a727801) DONE at 7b17a0254903606d17986c082f64ae6b96c9e5f6 (net delta vs rolling = #5344's 5 files; guard only change vs 24b91883). check ok (79c61485, 4530). ENQUEUED seq 3033 (e88bfcc1). On land close #5344.
+  Filed x402 S6 #5462 -> Claude Opus 1a973465 (rolling). Then Codex review.
+  Kaizen: #5457 cancelled as dup of #5455 (scoped base phase poisons shared target; related #5154 #4910). Harness mirror refused agent_create_issue_harness_project_unresolved (manager too) -> relay in next report up.
+  4/4: 0c08b166 L5 r2, 805089a2 #5458 re-review, e02b0f23 B2, 1a973465 S6.
