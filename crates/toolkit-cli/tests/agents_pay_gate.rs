@@ -2215,7 +2215,7 @@ fn root_crate_findings(sources: &[Source], manifest: &str) -> Vec<String> {
     let mut dependency: Option<String> = None;
     for line in manifest.lines().map(str::trim) {
         let key = if let Some(header) = line.strip_prefix('[') {
-            table = header.trim_end_matches(']').to_owned();
+            header.trim_end_matches(']').clone_into(&mut table);
             dependency = table
                 .rsplit_once('.')
                 .filter(|(head, _)| head.ends_with("dependencies"))
@@ -2498,7 +2498,8 @@ fn t_ac3_noread_catches_the_review_5389_helper_and_macro_mutations() {
     let np = NO_PAYMENT_FILE;
     let with_helper = |mut sources: Vec<Source>| {
         let at = sources.iter().position(|s| s.path == np).unwrap();
-        sources[at].text.push_str(&format!("\n{HELPER}"));
+        sources[at].text.push('\n');
+        sources[at].text.push_str(HELPER);
         sources
     };
     if !killed(&with_helper(sources_with(np, HANDLER_ANCHOR, |a| {
