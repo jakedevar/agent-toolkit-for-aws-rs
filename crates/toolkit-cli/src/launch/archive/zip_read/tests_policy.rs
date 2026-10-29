@@ -182,6 +182,116 @@ fn t_ar_read_13_duplicates_by_nfc() {
 }
 
 #[test]
+fn t_ar_read_13b_simple_case_folding_sharp_s_collides_5132() {
+    // ẞ (U+1E9E) simple-folds to ß (CaseFolding.txt status S).
+    for (first, second) in [
+        ("\u{df}.txt", "\u{1e9e}.txt"),
+        ("\u{1e9e}.txt", "\u{df}.txt"),
+        ("d/stra\u{df}e", "D/STRA\u{1e9e}E"),
+    ] {
+        let result = snapshot(vec![
+            FxEntry::stored(first, b"1"),
+            FxEntry::stored(second, b"2"),
+        ]);
+        assert_eq!(
+            message(result),
+            format!(
+                "Archive contains entries whose names collide after case folding or Unicode \
+                 normalisation: {}",
+                crate::launch::text::repr(second)
+            ),
+            "{first:?} {second:?}"
+        );
+    }
+    // Simple, not full, folding: ß and ss stay distinct.
+    assert_eq!(
+        snapshot(vec![
+            FxEntry::stored("\u{df}.txt", b"1"),
+            FxEntry::stored("ss.txt", b"2"),
+        ])
+        .expect("ß and ss are distinct"),
+        2
+    );
+    // Upload keeps Python's case-sensitive parity (decision 1).
+    assert_eq!(
+        upload(vec![
+            FxEntry::stored("app/\u{df}.txt", b"1"),
+            FxEntry::stored("app/\u{1e9e}.txt", b"2"),
+        ])
+        .expect("upload parity"),
+        2
+    );
+}
+
+#[test]
+fn t_ar_read_13c_simple_case_folding_file_directory_conflict_5132() {
+    // The file ß and the directory path ẞ/x, in either order and with an
+    // explicit directory entry.
+    for entries in [
+        vec![
+            FxEntry::stored("\u{df}", b"1"),
+            FxEntry::stored("\u{1e9e}/x", b"2"),
+        ],
+        vec![
+            FxEntry::stored("\u{1e9e}/x", b"2"),
+            FxEntry::stored("\u{df}", b"1"),
+        ],
+        vec![
+            FxEntry::stored("a/\u{1e9e}", b"1"),
+            FxEntry::dir("A/\u{df}/"),
+            FxEntry::stored("A/\u{df}/y", b"2"),
+        ],
+    ] {
+        let names: Vec<String> = entries
+            .iter()
+            .map(|entry| String::from_utf8_lossy(&entry.name).into_owned())
+            .collect();
+        let result = snapshot(entries);
+        let text = message(result);
+        assert!(
+            text.starts_with("Archive contains a file that another entry uses as a directory")
+                || text.starts_with("Archive contains entries whose names collide"),
+            "{names:?}: {text}"
+        );
+    }
+    assert_eq!(
+        message(snapshot(vec![
+            FxEntry::stored("\u{df}", b"1"),
+            FxEntry::stored("\u{1e9e}/x", b"2"),
+        ])),
+        "Archive contains a file that another entry uses as a directory: '\u{df}'"
+    );
+}
+
+#[test]
+fn t_ar_read_13d_dotless_i_is_not_a_collision_5132() {
+    // ı (U+0131) has no C or S folding; İ (U+0130) has only F and T. Neither
+    // collides with i or I under simple case folding.
+    for (first, second) in [
+        ("\u{131}.txt", "i.txt"),
+        ("\u{131}.txt", "I.txt"),
+        ("\u{130}.txt", "i.txt"),
+        ("\u{130}.txt", "i\u{307}.txt"),
+        ("\u{131}", "i/x"),
+    ] {
+        assert_eq!(
+            snapshot(vec![
+                FxEntry::stored(first, b"1"),
+                FxEntry::stored(second, b"2"),
+            ])
+            .unwrap_or_else(|error| panic!("{first:?} {second:?}: {error:?}")),
+            2
+        );
+    }
+    // I and i still collide.
+    assert!(snapshot(vec![
+        FxEntry::stored("I.txt", b"1"),
+        FxEntry::stored("i.txt", b"2"),
+    ])
+    .is_err());
+}
+
+#[test]
 fn t_ar_read_14_symlink_entries() {
     let mut link = FxEntry::stored("app/link", b"/etc/passwd");
     link.external = 0o120_777 << 16;

@@ -7,11 +7,14 @@
 //!   R-ZIP-FRAME), including the exact deflate decode of step 8;
 //! - [`vcs`]: the version-control name policy of snapshots (R-AR-VCS);
 //! - [`plan`]: the materialisation plan and node budget (R-AR-PLAN);
+//! - [`casefold`]: Unicode simple case folding (generated table, #5132);
+//! - [`skipped`]: the bounded ledger of skipped secret paths (#5135);
 //! - [`crc32`]: CRC-32 (IEEE).
 //!
 //! Extraction, staging, apply and the Git metadata discovery (R-AR-EXT,
 //! R-AR-STAGE, R-AR-APPLY, R-AR-META) are slice L6.
 
+pub mod casefold;
 pub mod crc32;
 #[cfg(unix)]
 pub mod fsops;
@@ -20,6 +23,7 @@ pub mod git;
 pub mod plan;
 #[cfg(unix)]
 pub mod select;
+pub mod skipped;
 pub mod vcs;
 pub mod zip_read;
 pub mod zip_write;

@@ -25,6 +25,16 @@ fn build_with(
     hook: &dyn WalkHook,
     home: Option<&Path>,
 ) -> Result<BuiltArchive, LaunchError> {
+    build_budget(path, hook, home, SkippedBudget::PRODUCTION)
+}
+
+/// [`build_with`] under the skipped-secret budget `skipped`.
+fn build_budget(
+    path: &str,
+    hook: &dyn WalkHook,
+    home: Option<&Path>,
+    skipped: SkippedBudget,
+) -> Result<BuiltArchive, LaunchError> {
     let temp = Scratch::new("sel-git-tmp");
     let git = test_git();
     let random = SeededRandom::new(5);
@@ -33,6 +43,7 @@ fn build_with(
         git: &git,
         hook,
         limits: ArchiveLimits::PRODUCTION,
+        skipped,
         home,
         cwd: &cwd,
         temp_parent: temp.path(),
@@ -205,7 +216,8 @@ fn t_ar_sel_2_skip_files_case_insensitively() {
     }
     let built = build(tree.path()).expect("build");
     assert_eq!(names(&built), vec!["app/keep.txt"]);
-    assert_eq!(built.skipped_secrets.len(), 2 * SKIP_FILES.len());
+    assert_eq!(built.skipped_secrets.total(), 2 * SKIP_FILES.len() as u64);
+    assert_eq!(built.skipped_secrets.omitted(), 0);
     assert_eq!(built.files, 1);
 }
 
@@ -245,7 +257,68 @@ fn t_ar_sel_3_env_suffix_and_prefix_rules() {
     tree.write(".envrc", b"use nix");
     let built = build(tree.path()).expect("build");
     assert_eq!(names(&built), vec!["app/.envrc"]);
-    assert_eq!(built.skipped_secrets, vec!["server.pem".to_string()]);
+    assert_eq!(
+        built.skipped_secrets.paths().collect::<Vec<_>>(),
+        vec!["server.pem"]
+    );
+}
+
+#[test]
+fn t_ar_sel_3b_skipped_secret_ledger_is_bounded_5135() {
+    // One allowed file and many secret files across directories: the
+    // archive stays tiny and the skipped-path ledger keeps only its budget,
+    // counting the rest (#5135, #5082).
+    let tree = Scratch::new("sel3b");
+    tree.write("keep.txt", b"k");
+    for dir in 0..40 {
+        for file in 0..3 {
+            tree.write(&format!("d{dir:02}/.env.{file}"), b"secret");
+        }
+    }
+    let budget = SkippedBudget {
+        max_paths: 5,
+        max_bytes: 200,
+    };
+    let built = build_budget(tree.path().to_str().expect("utf-8"), &NoHook, None, budget)
+        .expect("skipping never fails the build");
+    assert_eq!(names(&built), vec!["app/keep.txt"]);
+    assert_eq!(built.files, 1);
+    let ledger = &built.skipped_secrets;
+    assert_eq!(ledger.total(), 120);
+    assert_eq!(
+        ledger.paths().collect::<Vec<_>>(),
+        vec![
+            "d00/.env.0",
+            "d00/.env.1",
+            "d00/.env.2",
+            "d01/.env.0",
+            "d01/.env.1"
+        ]
+    );
+    assert_eq!(ledger.omitted(), 115);
+    assert!(
+        ledger.capacity() <= budget.max_bytes,
+        "{}",
+        ledger.capacity()
+    );
+    assert!(ledger
+        .summary()
+        .expect("summary")
+        .ends_with("d01/.env.1, and 115 more not listed"));
+    // A byte budget smaller than the first path keeps none of them.
+    let built = build_budget(
+        tree.path().to_str().expect("utf-8"),
+        &NoHook,
+        None,
+        SkippedBudget {
+            max_paths: 5,
+            max_bytes: 4,
+        },
+    )
+    .expect("build");
+    assert_eq!(built.skipped_secrets.retained(), 0);
+    assert_eq!(built.skipped_secrets.omitted(), 120);
+    assert_eq!(built.skipped_secrets.capacity(), 0);
 }
 
 #[test]

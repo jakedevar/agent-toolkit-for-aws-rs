@@ -258,6 +258,89 @@ fn t_reg_7_profile_region_from_the_config_file() {
 }
 
 #[test]
+fn t_reg_7b_indented_keys_follow_raw_config_parser_5133() {
+    // RawConfigParser: a line is a continuation only when it is indented
+    // deeper than the line that started the current key; an indented line
+    // with no key to continue is itself a key.
+    let home = Scratch::new("reg7b");
+    home.write(".aws/config", b"[default]\n  region = eu-west-1\n");
+    let env = MapEnv::new();
+    assert_eq!(
+        profile_region(&env, Some(home.path())).as_deref(),
+        Some("eu-west-1")
+    );
+    let resolved =
+        resolve_region(&inputs(&env, None, None, None, Some(home.path()))).expect("profile");
+    assert_eq!(
+        (resolved.region, resolved.source),
+        (EU_REGION, RegionSource::AwsProfile)
+    );
+    assert_eq!(EU_REGION, "eu-central-1");
+    for (text, expected) in [
+        // Indented keys after an indented key at the same depth.
+        (
+            "[default]\n  output = json\n  region = eu-west-1\n",
+            Some("eu-west-1"),
+        ),
+        // Shallower than the previous key, but still indented: a key.
+        (
+            "[default]\n    output = json\n  region = eu-west-1\n",
+            Some("eu-west-1"),
+        ),
+        // Tab indentation counts like spaces.
+        (
+            "[profile x]\nregion = a\n[default]\n\tregion = eu-north-1\n",
+            Some("eu-north-1"),
+        ),
+        // Deeper than an indented key: a continuation of it.
+        (
+            "[default]\n  region = us-east-1\n    eu-west-1\n",
+            Some("us-east-1\neu-west-1"),
+        ),
+        ("[default]\n  output = json\n    region = eu-west-1\n", None),
+        // A continuation of an unindented key, as before.
+        (
+            "[default]\nregion = us-east-1\n  extra\n",
+            Some("us-east-1\nextra"),
+        ),
+        // A blank line inside a value is kept; trailing blanks are stripped.
+        (
+            "[default]\nregion = eu-west-1\n\n  more\n",
+            Some("eu-west-1\n\nmore"),
+        ),
+        ("[default]\nregion = eu-west-1\n\n\n", Some("eu-west-1")),
+        // A comment line inside a value adds nothing.
+        ("[default]\nregion = a\n# c\n  b\n", Some("a\nb")),
+        // An indented section header is a header when it continues nothing.
+        (
+            "[profile x]\n  [default]\n  region = eu-west-3\n",
+            Some("eu-west-3"),
+        ),
+        // ...and part of the value when it does.
+        (
+            "[default]\nregion = a\n  [profile x]\n",
+            Some("a\n[profile x]"),
+        ),
+        // A blank line does not end a value: the indented header continues it.
+        (
+            "[default]\nregion = a\n\n  [profile x]\n",
+            Some("a\n\n[profile x]"),
+        ),
+    ] {
+        assert_eq!(
+            parse_profile_region(text, "default").as_deref(),
+            expected,
+            "{text:?}"
+        );
+    }
+    // An indented key before any section is still a missing section header.
+    assert_eq!(
+        parse_profile_region("  region = eu-west-1\n[default]\n", "default"),
+        None
+    );
+}
+
+#[test]
 fn t_reg_8_malformed_config_files_are_no_signal() {
     for text in [
         "region = us-west-2\n[default]\nregion = eu-west-1\n",

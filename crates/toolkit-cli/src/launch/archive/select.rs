@@ -21,6 +21,7 @@ use std::path::{Component, Path, PathBuf};
 
 use super::fsops::{self, DirHandle, EntryType, OpenError};
 use super::git::{git_included_files, GitRunner};
+use super::skipped::{SkippedBudget, SkippedSecrets};
 use super::zip_read::{read_archive, Profile, ReadStats};
 use super::zip_write::{sanitize_root_name, ZipWriter};
 use super::ArchiveLimits;
@@ -131,6 +132,8 @@ pub struct BuildOptions<'a> {
     pub hook: &'a dyn WalkHook,
     /// Archive limits.
     pub limits: ArchiveLimits,
+    /// How much of the skipped-secret list is kept (#5135).
+    pub skipped: SkippedBudget,
     /// `HOME`, for `~` expansion.
     pub home: Option<&'a Path>,
     /// The current directory, for a relative path.
@@ -148,8 +151,9 @@ pub struct BuiltArchive {
     pub bytes: Vec<u8>,
     /// Files archived.
     pub files: usize,
-    /// Relative paths skipped as secrets (Python logged them at INFO).
-    pub skipped_secrets: Vec<String>,
+    /// Relative paths skipped as secrets (Python logged them at INFO),
+    /// bounded by [`BuildOptions::skipped`].
+    pub skipped_secrets: SkippedSecrets,
 }
 
 /// The absolute, lexically normalised form of `path` (Python
@@ -204,7 +208,7 @@ pub fn build_archive(
         prefix,
         limits: options.limits,
         files: 0,
-        skipped_secrets: Vec::new(),
+        skipped_secrets: SkippedSecrets::new(options.skipped),
     };
     walk.directory(&root, "", 0)?;
     if walk.files == 0 {
@@ -241,7 +245,7 @@ struct Walk<'a> {
     prefix: String,
     limits: ArchiveLimits,
     files: usize,
-    skipped_secrets: Vec<String>,
+    skipped_secrets: SkippedSecrets,
 }
 
 fn changed(rel: &str) -> LaunchError {
@@ -317,7 +321,7 @@ impl Walk<'_> {
                 continue;
             }
             if is_secret_file(text) {
-                self.skipped_secrets.push(child);
+                self.skipped_secrets.record(&child);
                 continue;
             }
             let entry_name = format!("{}/{child}", self.prefix);

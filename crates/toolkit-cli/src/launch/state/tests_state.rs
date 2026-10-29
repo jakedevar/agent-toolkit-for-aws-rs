@@ -21,7 +21,7 @@ const PYTHON_SESSION: &str = "{\n  \"client_id\": \"cid-123\",\n  \"client_secre
 \"token_expires_at\": 1797000000\n}";
 
 /// The `ensure_ascii` and empty-list forms of the same writer.
-const PYTHON_SESSION_ESCAPES: &str = "{\n  \"client_id\": \"\\u00e9\\\\\\\"/\\u0001\u{7f}\
+const PYTHON_SESSION_ESCAPES: &str = "{\n  \"client_id\": \"\\u00e9\\\\\\\"/\\u0001\\u007f\
 \\ud83d\\ude00\",\n  \"client_secret\": \"\",\n  \"client_expires_at\": -5,\n  \
 \"authorize_endpoint\": \"\\n\\r\\t\\b\\f\",\n  \"token_endpoint\": \"\",\n  \"scopes\": [],\n  \
 \"access_token\": \"a\",\n  \"refresh_token\": \"\",\n  \"token_expires_at\": 0\n}";
@@ -265,6 +265,42 @@ fn t_state_8_python_session_round_trips_byte_identically() {
         assert!(!debug.contains(secret), "{debug}");
     }
     assert!(debug.contains("cid-123"));
+}
+
+#[test]
+fn py_json_string_escapes_exactly_like_ensure_ascii_5134() {
+    // Python `json.dumps(ensure_ascii=True)`: `"` and `\` escaped, the five
+    // short escapes, every other character outside U+0020..=U+007E as
+    // `\uXXXX` (UTF-16 surrogate pairs above the BMP).
+    for code in 0_u32..=0x7f {
+        let c = char::from_u32(code).expect("ascii");
+        let expected = match c {
+            '"' => "\\\"".to_string(),
+            '\\' => "\\\\".to_string(),
+            '\n' => "\\n".to_string(),
+            '\r' => "\\r".to_string(),
+            '\t' => "\\t".to_string(),
+            '\u{8}' => "\\b".to_string(),
+            '\u{c}' => "\\f".to_string(),
+            ' '..='~' => c.to_string(),
+            _ => format!("\\u{code:04x}"),
+        };
+        assert_eq!(
+            py_json_string(&c.to_string()),
+            format!("\"{expected}\""),
+            "{code:#x}"
+        );
+    }
+    assert_eq!(py_json_string("\u{7f}"), "\"\\u007f\"");
+    assert_eq!(
+        py_json_string("\u{80}\u{a0}\u{e9}"),
+        "\"\\u0080\\u00a0\\u00e9\""
+    );
+    assert_eq!(py_json_string("\u{2028}\u{ffff}"), "\"\\u2028\\uffff\"");
+    assert_eq!(py_json_string("\u{1f600}"), "\"\\ud83d\\ude00\"");
+    // The session fixture holds the escape, never a raw DEL.
+    assert!(!PYTHON_SESSION_ESCAPES.contains('\u{7f}'));
+    assert!(PYTHON_SESSION_ESCAPES.contains("\\u007f"));
 }
 
 #[test]

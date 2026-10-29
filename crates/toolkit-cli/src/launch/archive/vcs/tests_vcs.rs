@@ -193,3 +193,31 @@ fn t_ar_vcs_8_normaliser_table() {
         normalise_component("\u{e9}")
     );
 }
+
+#[test]
+fn t_ar_vcs_9_denylist_folding_covers_every_simple_folding_into_ascii_5132() {
+    use crate::launch::archive::casefold::table::SIMPLE_CASE_FOLDING;
+    // Every code point whose simple case folding is ASCII (A-Z, the long s
+    // and the Kelvin sign) normalises to that ASCII letter, so the
+    // denylist's folding is a superset of simple case folding on the
+    // denylisted (ASCII) names.
+    let mut ascii_targets = 0;
+    for (from, to) in SIMPLE_CASE_FOLDING {
+        if to >= 0x80 {
+            continue;
+        }
+        ascii_targets += 1;
+        let from = char::from_u32(from).expect("scalar");
+        let to = char::from_u32(to).expect("scalar");
+        assert_eq!(
+            normalise_component(&from.to_string()),
+            to.to_string(),
+            "{from:?}"
+        );
+    }
+    assert_eq!(ascii_targets, 28);
+    assert!(is_vcs_component("CV\u{17f}"));
+    // Fail-closed beyond simple folding: the dotless ı alias of `.git` stays
+    // refused for snapshots even though simple folding keeps ı apart from i.
+    assert!(is_vcs_component(".g\u{131}t"));
+}
