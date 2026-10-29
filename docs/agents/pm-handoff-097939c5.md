@@ -1054,3 +1054,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
   PM RULINGS (handoff on #5352): accept stdout-writing D32 fn (3 pinned stmts) over literal error return; default-build --status -> D32 exit 2 (Python not-usable also exits 2), documented divergence, no has_flag.
   Re-review #5397 -> Codex sol 1dab305c pinned 27ea9a1f. On ACCEPT: enqueue 27ea9a1f, source_session_id e6745f90, derive_filters, issue 5352; close #5352 #5373 #5389 #5397 #5374-#5377 #5390 #5391 after landing (confirm each).
   4/4: fbc33b5e L5, cf9b5ebf S1, dd250991 B1, 1dab305c #5397. #5344 umask continuation (continue_from d4a4bacb) still waits.
+- 14:52Z: re-review #5397 reviewer 1dab305c (Codex sol) FAILED: provider cyber filter (#5060 recurrence). Before dying it confirmed a gate bypass: module-level `fn r#Ok` shadows Ok, gate 8dc14746 + route 7b2408e2 green with the mutation -> BLOCKER #5400 (PM-filed). Verdict CHANGES_REQUESTED recorded on #5397.
+  PM RULING repair 3 (handoff on #5352): default route in own file module, absolute ::core paths, no use/macros/other items, whole-file token pin, unraw everywhere, raw-ident fixtures. Repair 3 -> Opus 5fd44a0d (continue_from e6745f90). Its re-review -> CLAUDE reviewer (Codex filter keeps killing security mutation reviews). Close #5397 with that one.
+  4/4: fbc33b5e L5, cf9b5ebf S1, dd250991 B1, 5fd44a0d x402 r3. #5344 still waits.
