@@ -142,7 +142,13 @@ fn session_body(manager: &str, budget: &str, expiry: i64, token: &str) -> String
 }
 
 #[cfg(test)]
-fn instrument_body(manager: &str, connector: &str, network: &str, token: &str) -> String {
+fn instrument_body(
+    manager: &str,
+    connector: &str,
+    network: &str,
+    email: &str,
+    token: &str,
+) -> String {
     Json::object(vec![
         ("paymentManagerArn", Json::string(manager)),
         ("paymentConnectorId", Json::string(connector)),
@@ -154,7 +160,16 @@ fn instrument_body(manager: &str, connector: &str, network: &str, token: &str) -
             "paymentInstrumentDetails",
             Json::object(vec![(
                 "embeddedCryptoWallet",
-                Json::object(vec![("network", Json::string(network))]),
+                Json::object(vec![
+                    ("network", Json::string(network)),
+                    (
+                        "linkedAccounts",
+                        Json::Array(vec![Json::object(vec![(
+                            "email",
+                            Json::object(vec![("emailAddress", Json::string(email))]),
+                        )])]),
+                    ),
+                ]),
             )]),
         ),
         ("clientToken", Json::string(token)),
@@ -335,8 +350,8 @@ mod operation_contracts {
             r#"{"paymentManagerArn":"arn","limits":{"maxSpendAmount":{"value":"10","currency":"USD"}},"expiryTimeInMinutes":15,"clientToken":"token"}"#
         );
         assert_eq!(
-            instrument_body("arn", "connector", "ETHEREUM", "token"),
-            r#"{"paymentManagerArn":"arn","paymentConnectorId":"connector","paymentInstrumentType":"EMBEDDED_CRYPTO_WALLET","paymentInstrumentDetails":{"embeddedCryptoWallet":{"network":"ETHEREUM"}},"clientToken":"token"}"#
+            instrument_body("arn", "connector", "ETHEREUM", "user@example.com", "token"),
+            r#"{"paymentManagerArn":"arn","paymentConnectorId":"connector","paymentInstrumentType":"EMBEDDED_CRYPTO_WALLET","paymentInstrumentDetails":{"embeddedCryptoWallet":{"network":"ETHEREUM","linkedAccounts":[{"email":{"emailAddress":"user@example.com"}}]}},"clientToken":"token"}"#
         );
         assert_eq!(agent_name(true), "openclaw-aws-agents-pay");
         assert_eq!(agent_name(false), "aws-agents-pay");
@@ -517,7 +532,9 @@ impl<'a> PaymentClient<'a> {
             if Instant::now() >= deadline {
                 return Err(PaymentError::Transport);
             }
-            let limits = StreamLimits::new(65_536, 8_192).map_err(|_| PaymentError::Transport)?;
+            let limits = StreamLimits::new(65_536, 8_192)
+                .map_err(|_| PaymentError::Transport)?
+                .with_deadline(deadline);
             let outcome = self.transport.open(&request, &limits);
             let error = match outcome {
                 Ok(mut stream) => {
