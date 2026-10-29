@@ -126,6 +126,8 @@ struct Recorder {
     received: Arc<Mutex<Vec<u8>>>,
     /// Far ends that have finished (the connection closed under them).
     closed: Arc<AtomicUsize>,
+    /// Client ends (the connector's socket) that have been dropped (#5429).
+    dropped: Arc<AtomicUsize>,
 }
 
 impl Recorder {
@@ -138,6 +140,7 @@ impl Recorder {
             written: Arc::new(AtomicUsize::new(0)),
             received: Arc::new(Mutex::new(Vec::new())),
             closed: Arc::new(AtomicUsize::new(0)),
+            dropped: Arc::new(AtomicUsize::new(0)),
         })
     }
 
@@ -150,6 +153,7 @@ impl Recorder {
             written: Arc::new(AtomicUsize::new(0)),
             received: Arc::new(Mutex::new(Vec::new())),
             closed: Arc::new(AtomicUsize::new(0)),
+            dropped: Arc::new(AtomicUsize::new(0)),
         })
     }
 
@@ -162,6 +166,7 @@ impl Recorder {
             written: Arc::new(AtomicUsize::new(0)),
             received: Arc::new(Mutex::new(Vec::new())),
             closed: Arc::new(AtomicUsize::new(0)),
+            dropped: Arc::new(AtomicUsize::new(0)),
         })
     }
 
@@ -176,12 +181,25 @@ impl Recorder {
     fn received(&self) -> Vec<u8> {
         self.received.lock().expect("received").clone()
     }
+
+    /// Whether every dialed socket has been released (dropped by the
+    /// connector), read without driving any runtime.
+    fn released(&self) -> bool {
+        self.dropped.load(Ordering::SeqCst) == self.dials().len()
+    }
 }
 
 /// The connector's end of the in-memory connection, counting writes.
 struct Counting {
     inner: DuplexStream,
     written: Arc<AtomicUsize>,
+    dropped: Arc<AtomicUsize>,
+}
+
+impl Drop for Counting {
+    fn drop(&mut self) {
+        self.dropped.fetch_add(1, Ordering::SeqCst);
+    }
 }
 
 impl AsyncRead for Counting {
@@ -233,6 +251,7 @@ impl Dialer for Recorder {
         let stream = Counting {
             inner: client,
             written: Arc::clone(&self.written),
+            dropped: Arc::clone(&self.dropped),
         };
         let peer = self.peer.unwrap_or(address);
         Box::pin(async move {
@@ -354,10 +373,20 @@ impl Fixture {
         resolver: Arc<ScriptedResolver>,
         dialer: Arc<Recorder>,
     ) -> SdkTransport {
+        self.transport_for(endpoint(), bounds, resolver, dialer)
+    }
+
+    fn transport_for(
+        &self,
+        policy: DatabaseEndpoint,
+        bounds: DatabaseBounds,
+        resolver: Arc<ScriptedResolver>,
+        dialer: Arc<Recorder>,
+    ) -> SdkTransport {
         SdkTransport::database(
             &self.runtime,
             &self.roots(),
-            endpoint(),
+            policy,
             bounds,
             resolver,
             dialer,
@@ -1060,4 +1089,217 @@ fn an_abandoned_lookup_makes_the_next_request_fail_closed_without_a_dial() {
     let response = transport.send(&request(&db_url())).expect("recovered");
     assert_eq!(response.status, 200);
     assert_eq!(calls.load(Ordering::SeqCst), 2);
+}
+
+// ---- unconditional forbidden addresses before listed ranges (#5428) ----
+
+const METADATA_V6: &str = "fd00:ec2::254";
+
+/// A policy built without [`DatabaseEndpoint::new`], so it can list ranges
+/// `new` refuses: admission's own ordering is tested without that layer.
+fn listing_unchecked(ranges: &[(&str, u8)]) -> DatabaseEndpoint {
+    DatabaseEndpoint {
+        host: HOST.to_string(),
+        port: PORT,
+        region: "us-east-1".to_string(),
+        ranges: ranges
+            .iter()
+            .map(|&(network, prefix)| Range {
+                network: ip(network),
+                prefix,
+            })
+            .collect(),
+    }
+}
+
+#[test]
+fn a_policy_cannot_list_a_range_holding_a_forbidden_address() {
+    for bad in [
+        "fd00:ec2::/48",
+        "fd00:ec2::/56",
+        "fd00:ec2::/64",
+        "fd00:ec2::254/128",
+        "fd00:ec2::23/128",
+    ] {
+        let error =
+            DatabaseEndpoint::new(HOST, PORT, "us-east-1", &["10.1.0.0/16", bad]).expect_err(bad);
+        assert!(
+            matches!(&error, AwsError::InvalidConfig { field, .. } if *field == "network_policy"),
+            "{bad}: {error}"
+        );
+        assert!(!message(&error).contains("ec2"), "{bad}: no echo");
+    }
+    // Neighbouring unique-local ranges stay listable.
+    for good in ["fd00:ec2:0:1::/64", "fd00:ec2:0:1::5/128", "fd00:ec3::/48"] {
+        DatabaseEndpoint::new(HOST, PORT, "us-east-1", &[good]).expect(good);
+    }
+}
+
+#[test]
+fn forbidden_addresses_are_refused_even_inside_a_listed_range() {
+    let policy = listing_unchecked(&[
+        ("fd00:ec2::", 48),
+        ("127.0.0.0", 8),
+        ("169.254.0.0", 16),
+        ("0.0.0.0", 8),
+        ("224.0.0.0", 4),
+        ("fe80::", 64),
+        ("::", 128),
+        ("::1", 128),
+        ("ff02::", 16),
+    ]);
+    for forbidden in [
+        METADATA_V6,
+        "fd00:ec2::23",
+        "fd00:ec2::253",
+        "127.0.0.1",
+        "::ffff:127.0.0.1",
+        "169.254.169.254",
+        "::ffff:169.254.169.254",
+        "169.254.170.2",
+        "0.0.0.0",
+        "::ffff:0.0.0.0",
+        "224.0.0.1",
+        "::ffff:224.0.0.1",
+        "fe80::1",
+        "::",
+        "::1",
+        "ff02::1",
+    ] {
+        assert!(!policy.admits(ip(forbidden)), "{forbidden}");
+        let at = SocketAddr::new(ip(forbidden), PORT);
+        let error = policy.check_peer(at, at).expect_err(forbidden);
+        assert!(endpoint_refusal(&error), "{forbidden}: {error}");
+    }
+    // The listed range still admits its ordinary addresses.
+    assert!(policy.admits(ip("fd00:ec2:0:1::5")));
+    let exact = listing_unchecked(&[(METADATA_V6, 128)]);
+    assert!(!exact.admits(ip(METADATA_V6)));
+    let at = SocketAddr::new(ip(METADATA_V6), PORT);
+    assert!(endpoint_refusal(
+        &exact.check_peer(at, at).expect_err("exact /128")
+    ));
+}
+
+#[test]
+fn forbidden_answers_inside_a_listed_range_are_never_dialed() {
+    let fixture = Fixture::new();
+    for listed in [("fd00:ec2::", 48), (METADATA_V6, 128)] {
+        for answers in [
+            vec![ip(METADATA_V6)],
+            vec![ip("fd00:ec2:0:1::5"), ip(METADATA_V6)],
+            vec![ip(PRIVATE), ip(METADATA_V6)],
+            vec![ip("52.94.1.1"), ip(METADATA_V6)],
+            vec![ip(METADATA_V6), ip(PRIVATE)],
+        ] {
+            let policy = listing_unchecked(&[listed, ("10.1.0.0", 16)]);
+            let resolver = ScriptedResolver::new(vec![answers.clone()]);
+            let dialer = Recorder::new(Far::Silent);
+            let transport = fixture.transport_for(policy, quick(), resolver, Arc::clone(&dialer));
+            let error = transport
+                .send(&request(&db_url()))
+                .expect_err("metadata answer");
+            assert!(endpoint_refusal(&error), "{listed:?} {answers:?}: {error}");
+            assert!(dialer.dials().is_empty(), "{listed:?} {answers:?}");
+            assert_eq!(dialer.written(), 0, "{listed:?} {answers:?}");
+        }
+    }
+}
+
+// ---- the socket is released before the call returns (#5429) ----
+//
+// Each case checks the client stream's drop right after the synchronous call
+// returns, without driving the production runtime again: nothing may depend
+// on a later poll to close the socket.
+
+#[test]
+fn every_send_releases_its_socket_before_it_returns() {
+    let fixture = Fixture::new();
+    let send = |far: Far| {
+        let resolver = ScriptedResolver::new(vec![vec![ip(PRIVATE)]]);
+        let dialer = Recorder::new(far);
+        let transport = fixture.transport(quick(), resolver, Arc::clone(&dialer));
+        let result = transport.send(&request(&db_url()));
+        (dialer, result)
+    };
+    // Success; the server holds the connection open after its reply.
+    let (dialer, result) = send(fixture.tls_far(vec![ok_reply("{}")]));
+    assert_eq!(result.expect("exchange").status, 200);
+    assert!(dialer.released(), "success left the socket open");
+    // A declared length over the limit, then a body over it mid-read.
+    let (dialer, result) = send(fixture.tls_far(vec![sized_reply(65, 65)]));
+    result.expect_err("declared over the limit");
+    assert!(
+        dialer.released(),
+        "a declared-length failure left the socket open"
+    );
+    let mut bytes = b"HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\n\r\n".to_vec();
+    for _ in 0..4 {
+        bytes.extend(b"20\r\n");
+        bytes.extend([b'a'; 32]);
+        bytes.extend(b"\r\n");
+    }
+    let (dialer, result) = send(fixture.tls_far(vec![Act::Write(bytes)]));
+    assert!(message(&result.expect_err("mid-body")).contains("size limit"));
+    assert!(dialer.released(), "a body failure left the socket open");
+    // Timeout after send: the server never answers.
+    let (dialer, result) = send(fixture.tls_far(vec![Act::Sleep(Duration::from_secs(30))]));
+    assert!(matches!(result, Err(AwsError::Timeout { .. })));
+    assert!(dialer.released(), "a timeout left the socket open");
+    // Open failure before any response exists: an untrusted certificate.
+    let other = Pki::new("untrusted CA");
+    let (chain, key) = other.server(HOST);
+    let (dialer, result) = send(Far::Tls {
+        chain,
+        key: Arc::new(key),
+        acts: vec![ok_reply("{}")],
+    });
+    result.expect_err("untrusted");
+    assert_eq!(dialer.dials().len(), 1);
+    assert!(dialer.released(), "a TLS failure left the socket open");
+    // A refused peer.
+    let resolver = ScriptedResolver::new(vec![vec![ip(PRIVATE)]]);
+    let dialer = Recorder::reporting_peer(SocketAddr::new(ip("10.9.9.9"), PORT));
+    let transport = fixture.transport(quick(), resolver, Arc::clone(&dialer));
+    transport.send(&request(&db_url())).expect_err("peer");
+    assert!(dialer.released(), "a refused peer left the socket open");
+}
+
+#[test]
+fn a_streamed_response_releases_its_socket_when_dropped_or_failed() {
+    let fixture = Fixture::new();
+    let open = |far: Far, limits: crate::stream::StreamLimits| {
+        let resolver = ScriptedResolver::new(vec![vec![ip(PRIVATE)]]);
+        let dialer = Recorder::new(far);
+        let transport = fixture.transport(quick(), resolver, Arc::clone(&dialer));
+        let opened =
+            crate::stream::StreamingTransport::open(&transport, &request(&db_url()), &limits).map(
+                |mut stream| {
+                    let held = dialer.dropped.load(Ordering::SeqCst);
+                    let first = crate::stream::ResponseStream::next_chunk(stream.as_mut());
+                    drop(stream);
+                    (held, first.is_ok())
+                },
+            );
+        (dialer, opened)
+    };
+    let limits = || crate::stream::StreamLimits::new(64, 64).expect("limits");
+    // A held stream owns its socket; dropping it (no deadline, so no
+    // runtime-driving drop) releases it at once.
+    let (dialer, opened) = open(fixture.tls_far(vec![ok_reply("{}")]), limits());
+    let (held, read) = opened.expect("opened");
+    assert_eq!(held, 0, "the open stream owns its socket");
+    assert!(read);
+    assert!(
+        dialer.released(),
+        "dropping the stream left the socket open"
+    );
+    // The open fails at the caller deadline after the request was sent.
+    let deadline = std::time::Instant::now() + Duration::from_millis(250);
+    let (dialer, opened) = open(
+        fixture.tls_far(vec![Act::Sleep(Duration::from_secs(30))]),
+        limits().with_deadline(deadline),
+    );
+    assert!(opened.is_err(), "deadline");
+    assert!(dialer.released(), "a failed open left the socket open");
 }

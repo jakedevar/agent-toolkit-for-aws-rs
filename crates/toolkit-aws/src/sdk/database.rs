@@ -362,6 +362,25 @@ impl DatabaseEndpoint {
             )))
         }
     }
+
+    /// The pre-send peer check: the socket's actual peer must be the dialed
+    /// answer and be admitted by the policy.
+    fn check_peer(&self, dialed: SocketAddr, peer: SocketAddr) -> Result<(), AwsError> {
+        if canonical(peer.ip()) != canonical(dialed.ip()) || peer.port() != dialed.port() {
+            return Err(refusal(
+                "the connection reached a peer other than the validated database address. \
+                 Refusing to send credentials to it",
+            ));
+        }
+        if !self.admits(peer.ip()) {
+            return Err(refusal(format!(
+                "the connection reached {}, outside the network policy. \
+                 Refusing to send credentials to it",
+                peer.ip()
+            )));
+        }
+        Ok(())
+    }
 }
 
 impl fmt::Debug for DatabaseEndpoint {
@@ -686,30 +705,15 @@ impl DatabaseConnector {
                     }
                     Ok(Ok(dialed)) => dialed,
                 };
-            self.check_peer(dialed_address, dialed.peer)
+            self.shared
+                .endpoint
+                .check_peer(dialed_address, dialed.peer)
                 .map_err(verdict)?;
             return Ok(dialed.stream);
         }
         Err(ConnectorError::io(Box::new(last.unwrap_or_else(|| {
             std::io::Error::other("no database address accepted a connection")
         }))))
-    }
-
-    fn check_peer(&self, dialed: SocketAddr, peer: SocketAddr) -> Result<(), AwsError> {
-        if canonical(peer.ip()) != canonical(dialed.ip()) || peer.port() != dialed.port() {
-            return Err(refusal(
-                "the connection reached a peer other than the validated database address. \
-                 Refusing to send credentials to it",
-            ));
-        }
-        if !self.shared.endpoint.admits(peer.ip()) {
-            return Err(refusal(format!(
-                "the connection reached {}, outside the network policy. \
-                 Refusing to send credentials to it",
-                peer.ip()
-            )));
-        }
-        Ok(())
     }
 
     async fn exchange(
