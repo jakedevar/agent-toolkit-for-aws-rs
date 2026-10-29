@@ -1180,3 +1180,4 @@ Friction: #4727, Rsi #4694, Rsi #4704
   PLAN after S1 lands (wake): ONE integration worker (continue_from be2767ad on #5462): A = merge rolling into S6 c5132d51, re-pin, scoped -> push; B = merge B2 b0f6dd2e into A on the same branch, resolve, re-pin, scoped -> push. Enqueue A (issue 5462), then B (issue 5443, source_session the integration worker). Close #5462 #5474 #5475 #5487 / #5443 #5483 on land.
   Filed docgraph S2 #5489 -> Claude Opus a0ab0de1 (sandbox cdc468a2; also #5484 if cheap).
   4/4: a0ab0de1 S2, 9441f443 #5478, 27f4dc18 #5360, cfb95bf6 L7. Queue: #5472 (3042), S1 (3044).
+- 21:50Z: #5472 shard script LANDED (landed_sha e19a06879a1b2914d6d5a08ed33fa2942c0b347a). Shard job lane now usable. Queue: S1 (3044).
