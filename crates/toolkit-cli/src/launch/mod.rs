@@ -13,6 +13,7 @@
 //! tests, so dead-code analysis is silenced for the module as a whole.
 #![allow(dead_code)]
 
+pub mod api;
 pub mod archive;
 pub mod buffer;
 pub mod callback;
