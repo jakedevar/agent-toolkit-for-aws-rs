@@ -869,3 +869,4 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 10-29 08:21Z: #5261 cont (dc5cd37d) DONE at 4a7de934974a603e3869e26606d6ca7d6f2e7b68 (coverage audit + req-test map on #5261; scoped 4181 ok, clean).
   Review #5286 -> Claude Opus cbeef549 (review_of 5261 + sandbox_source commit 4a7de934; mutations #5255-#5257, 5 req spot-checks). On ACCEPT: check (likely stale base -> manager scoped in dc5cd37d sandbox) + enqueue (source_session dc5cd37d); close #5261 #5286 #5255-#5260 on land.
   4/4 busy: 0dcdafea (#5181 S4 cont), f4e513e0 (#5273 L4 f/u), 0740a0b0 (#4886 item 1), cbeef549 (#5286 review). Pending: manager scoped b7b29708 (AP S4).
+- 10-29 08:22Z: manager scoped b7b29708 on AP S4 37abb767 (base a3ecaf77) OK 4121; check ok. ENQUEUED ade50d7b (seq 2978, #5278). On land close #5278 #5280. Then AP S5 inventory (fold #5282 #5283 #5284).
