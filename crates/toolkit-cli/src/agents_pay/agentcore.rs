@@ -742,9 +742,9 @@ impl<'a> PaymentClient<'a> {
     fn process_payment_until(
         &self,
         approved: Approved,
-        _deadline: std::time::Instant,
+        deadline: std::time::Instant,
     ) -> Result<PaymentProof, PaymentError> {
-        self.process_payment(approved)
+        self.process_payment_inner(approved, Some(deadline))
     }
     fn get_session(&self, manager: &str, session: &str, user: &str) -> Result<Json, PaymentError> {
         let body = self.call(
@@ -753,6 +753,7 @@ impl<'a> PaymentClient<'a> {
             true,
             get_body(manager, session).into_bytes(),
             200,
+            None,
         )?;
         if !valid_session_response(&body, manager, Some(session), user) {
             return Err(PaymentError::InvalidResponse);
@@ -773,6 +774,7 @@ impl<'a> PaymentClient<'a> {
             false,
             session_body(manager, budget, expiry, token).into_bytes(),
             201,
+            None,
         )?;
         if !valid_session_response(&body, manager, None, user) {
             return Err(PaymentError::InvalidResponse);
@@ -794,6 +796,7 @@ impl<'a> PaymentClient<'a> {
             false,
             instrument_body(manager, connector, network, email, token).into_bytes(),
             201,
+            None,
         )?;
         let value = parse_json(&body).map_err(|_| PaymentError::InvalidResponse)?;
         let instrument = toolkit_aws::recorded::optional_object(&value, "paymentInstrument")
@@ -868,6 +871,15 @@ impl<'a> PaymentClient<'a> {
     /// Refuses invalid responses and transport or service failures.
     #[allow(clippy::needless_pass_by_value)] // Consuming Approved is a security boundary.
     pub fn process_payment(&self, approved: Approved) -> Result<PaymentProof, PaymentError> {
+        self.process_payment_inner(approved, None)
+    }
+
+    #[allow(clippy::needless_pass_by_value)]
+    fn process_payment_inner(
+        &self,
+        approved: Approved,
+        deadline: Option<std::time::Instant>,
+    ) -> Result<PaymentProof, PaymentError> {
         let payment = ProcessPaymentRequest::from_approved(&approved);
         let body = self.call(
             "processPayment",
@@ -875,6 +887,7 @@ impl<'a> PaymentClient<'a> {
             true,
             payment.body.clone(),
             200,
+            deadline,
         )?;
         if !valid_process_response(
             &body,
@@ -897,7 +910,7 @@ impl<'a> PaymentClient<'a> {
         Ok(PaymentProof(payload))
     }
 
-    #[allow(clippy::too_many_lines)]
+    #[allow(clippy::too_many_lines, clippy::too_many_arguments)]
     fn call(
         &self,
         path: &str,
@@ -905,13 +918,15 @@ impl<'a> PaymentClient<'a> {
         runtime: bool,
         request_body: Vec<u8>,
         expected: u16,
+        operation_deadline: Option<std::time::Instant>,
     ) -> Result<String, PaymentError> {
         use std::time::Duration;
         use toolkit_aws::{
             FullJitter, Headers, HttpRequest, Method, RetryPolicy, SigningScope, StreamLimits,
             Timeouts,
         };
-        let deadline = self.clock.now() + Duration::from_secs(60);
+        let limit = self.clock.now() + Duration::from_secs(60);
+        let deadline = operation_deadline.map_or(limit, |cutoff| cutoff.min(limit));
         let mut headers = Headers::new();
         headers
             .insert_sensitive("x-amzn-bedrock-agentcore-payments-user-id", user)
