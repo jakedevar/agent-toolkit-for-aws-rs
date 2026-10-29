@@ -279,7 +279,12 @@ fn valid_process_response(body: &str, manager: &str, session: &str, instrument: 
         return false;
     }
     for key in ["createdAt", "updatedAt"] {
-        if !matches!(value.get(key), Some(Json::Int(_) | Json::Float(_))) {
+        if !matches!(
+            toolkit_aws::recorded::optional_member(&value, key, "a timestamp", |member| {
+                crate::cloudwatch::timefmt::time_from_json(member).ok()
+            }),
+            Ok(Some(_))
+        ) {
             return false;
         }
     }
