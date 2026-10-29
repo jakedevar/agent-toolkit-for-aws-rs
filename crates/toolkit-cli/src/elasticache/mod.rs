@@ -663,8 +663,12 @@ pub fn dashboard_command(
     // Caller values written into the template are redacted where the data is
     // built, never after serialization (#4941, #4981).
     let identifier = redacted_value(identifier);
+    // The whole list is redacted before it is split: a comma inside URL
+    // userinfo would otherwise cut the credential from the `@host` that marks
+    // it (#5008).
     let node_ids = invocation.value("--node-ids").map(|text| {
-        text.split(',')
+        redacted_value(text)
+            .split(',')
             .map(str::trim)
             .filter(|id| !id.is_empty())
             .map(|id| redacted_value(id).into_owned())

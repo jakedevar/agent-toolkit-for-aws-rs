@@ -350,7 +350,11 @@ pub(crate) fn pricing_command(
         return Err(usage("pricing takes no positional argument"));
     }
     let region = required(invocation, "--region")?;
-    let models = required(invocation, "--models")?;
+    // Redacted whole before it is split (#4971 round 2): a comma inside URL
+    // userinfo would cut the credential from the `@host` that marks it, and
+    // each id is a key of the stdout report. A credential-shaped value is
+    // never a model id, so no priced id changes.
+    let models = crate::safe_text::redacted_value(required(invocation, "--models")?);
     let price_list = match invocation.value("--price-list") {
         None => None,
         Some(path) => {

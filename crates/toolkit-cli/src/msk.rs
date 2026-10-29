@@ -16,7 +16,7 @@ use toolkit_msk::compat::{assess, format_utc_date, format_utc_timestamp, output_
 use toolkit_msk::pricing::{UnlinkedPricingApi, PRICING_SOURCES};
 use toolkit_msk::pyfmt::{error_json, json_dumps, py_float_parse, py_int_parse, py_str_repr};
 
-use crate::safe_text::{redacted_value, shown_value};
+use crate::safe_text::{redacted_value, shown_path, shown_value};
 use toolkit_msk::simulation::{
     compute, render_result_json, render_template, validate, DEFAULT_BROKER_COUNT,
     DEFAULT_INSTANCE_TYPE, SOURCE_TEMPLATE,
@@ -525,14 +525,17 @@ fn resolve_output_path(raw: &str) -> Result<PathBuf, String> {
                 match fs::symlink_metadata(&candidate) {
                     Ok(_) => {
                         resolved = fs::canonicalize(&candidate).map_err(|error| {
-                            format!("cannot resolve {}: {error}", candidate.display())
+                            format!("cannot resolve {}: {error}", shown_path(&candidate))
                         })?;
                     }
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                         tail.push(name.to_os_string());
                     }
                     Err(error) => {
-                        return Err(format!("cannot resolve {}: {error}", candidate.display()));
+                        return Err(format!(
+                            "cannot resolve {}: {error}",
+                            shown_path(&candidate)
+                        ));
                     }
                 }
             }
@@ -540,7 +543,7 @@ fn resolve_output_path(raw: &str) -> Result<PathBuf, String> {
     }
     resolved.extend(tail);
     if resolved.file_name().is_none() {
-        return Err(format!("{} is not a file path", resolved.display()));
+        return Err(format!("{} is not a file path", shown_path(&resolved)));
     }
     Ok(resolved)
 }
@@ -580,11 +583,20 @@ pub(crate) fn sim_render(
         return Err(arg_error("missing required arguments"));
     };
 
-    let rendered =
-        match render_template(SOURCE_TEMPLATE, instance_type, broker_count, kafka_version) {
-            Ok(rendered) => rendered,
-            Err(message) => return sim_error(output, &message),
-        };
+    // Redacted before strict parsing, as `sim compute` does (#5011): a
+    // credential-shaped value is never a valid instance type or Kafka version,
+    // and the parser error quotes the value it was given.
+    let (instance_type, kafka_version) =
+        (redacted_value(instance_type), redacted_value(kafka_version));
+    let rendered = match render_template(
+        SOURCE_TEMPLATE,
+        &instance_type,
+        broker_count,
+        &kafka_version,
+    ) {
+        Ok(rendered) => rendered,
+        Err(message) => return sim_error(output, &message),
+    };
     let out = match resolve_output_path(raw_output) {
         Ok(path) => path,
         Err(message) => return sim_error(output, &message),
@@ -600,7 +612,7 @@ pub(crate) fn sim_render(
                  ({}); choose an output path under the customer's working \
                  directory instead, e.g. \
                  $(pwd)/migrate-to-msk-skill-artifacts/simulation/simulation-stack.yaml",
-                package.display()
+                shown_path(&package)
             ),
         );
     }
@@ -608,14 +620,16 @@ pub(crate) fn sim_render(
         if let Err(error) = fs::create_dir_all(parent) {
             return sim_error(
                 output,
-                &format!("cannot create {}: {error}", parent.display()),
+                &format!("cannot create {}: {error}", shown_path(parent)),
             );
         }
     }
     if let Err(error) = write_text_file(&out, &rendered.template) {
         return sim_error(output, error.message());
     }
-    let result = render_result_json(&rendered, &out.display().to_string());
+    // The report shows the path redacted; the file was written at the real
+    // path (#5010).
+    let result = render_result_json(&rendered, &redacted_value(&out.display().to_string()));
     output.line(&json_dumps(&result))
 }
 

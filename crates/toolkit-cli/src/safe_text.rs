@@ -34,10 +34,17 @@
 //! protection: a diagnostic that still echoes a command-line value raw (or
 //! cut before redaction) does not print its credential. It finds every match
 //! against the original text before replacing any (#4978), and hides a
-//! complete labelled credential whatever its length (#4980).
+//! complete labelled credential whatever its length (#4980). Its work is
+//! linear in the text and the learned values, however much a credential
+//! overlaps itself, and capped: past [`MAX_MATCH_WORK`] steps it hides every
+//! line of the diagnostic instead of scanning it (#5012).
+//!
+//! A list value is redacted whole before it is split (#5008): a comma inside
+//! URL userinfo would otherwise cut the credential from its `@host`.
 
 use std::borrow::Cow;
 use std::cmp::Reverse;
+use std::collections::HashSet;
 
 use toolkit_aws::{redact_text, REDACTED};
 use toolkit_core::{escape_untrusted, is_unsafe_char, neutralize_line, neutralize_text};
@@ -187,6 +194,73 @@ pub(crate) fn safe_quoted(text: &str) -> String {
     format!("'{}'", safe_text(text).replace('\'', "\\'"))
 }
 
+/// Most matcher steps the stderr net may spend on one diagnostic (#5012).
+/// A diagnostic whose matching could take more is not scanned: every line of
+/// it is hidden instead (fail closed). Ordinary diagnostics are far below it:
+/// it allows, for instance, 64 learned fragments over a 256 KiB text.
+const MAX_MATCH_WORK: usize = 1 << 26;
+
+/// `text` with every non-empty line replaced by [`REDACTED`], line breaks
+/// kept: what a diagnostic past [`MAX_MATCH_WORK`] prints.
+fn hidden_lines(text: &str) -> String {
+    text.split('\n')
+        .map(|line| if line.is_empty() { "" } else { REDACTED })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Calls `found(at, len)`, in increasing `at`, for every byte position `at`
+/// of `text` where `text[at..]` and `pattern` share a non-empty prefix:
+/// `len` is the length of that common prefix in bytes, on a character
+/// boundary. Linear work in `pattern` plus `text` (the Z algorithm over
+/// `pattern`, a separator byte that UTF-8 never holds, and `text`), however
+/// much the occurrences overlap (#5012).
+fn prefix_matches(pattern: &str, text: &str, mut found: impl FnMut(usize, usize)) {
+    let (p, t) = (pattern.as_bytes(), text.as_bytes());
+    let m = p.len();
+    if m == 0 {
+        return;
+    }
+    let n = m + 1 + t.len();
+    let byte = |i: usize| match i.cmp(&m) {
+        std::cmp::Ordering::Less => p[i],
+        std::cmp::Ordering::Equal => 0xff,
+        std::cmp::Ordering::Greater => t[i - m - 1],
+    };
+    // Z values are only ever looked up inside the pattern: a match never
+    // crosses the separator, so `i - left < right - left <= m`.
+    let mut z = vec![0_usize; m + 1];
+    let (mut left, mut right) = (0_usize, 0_usize);
+    for i in 1..n {
+        let mut k = if i < right {
+            (right - i).min(z[i - left])
+        } else {
+            0
+        };
+        while i + k < n && byte(k) == byte(i + k) {
+            tick(1);
+            k += 1;
+        }
+        tick(1);
+        if i + k > right {
+            left = i;
+            right = i + k;
+        }
+        if i <= m {
+            z[i] = k;
+        } else if k > 0 {
+            let at = i - m - 1;
+            let mut len = k;
+            while !text.is_char_boundary(at + len) {
+                len -= 1;
+            }
+            if len > 0 {
+                found(at, len);
+            }
+        }
+    }
+}
+
 // Count of elementary matcher steps, so tests can prove the stderr net's work
 // bound deterministically instead of timing it (#5012). Compiled out of
 // non-test builds.
@@ -306,7 +380,7 @@ fn spellings(text: &str) -> [String; 4] {
 /// One learned piece of a command-line credential, in one spelling: hidden
 /// wherever at least its first `min_bytes` bytes appear, and as far as the
 /// output keeps matching it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct Fragment {
     text: String,
     min_bytes: usize,
@@ -361,6 +435,8 @@ pub(crate) struct CallerText {
     /// piece with the label in front of it (matched from the label and the
     /// first hidden character on, #4980).
     fragments: Vec<Fragment>,
+    /// The fragments already learned, so each is added once.
+    learned: HashSet<Fragment>,
 }
 
 impl CallerText {
@@ -452,17 +528,45 @@ impl CallerText {
 
     fn add(&mut self, text: String, min_bytes: usize) {
         let fragment = Fragment { text, min_bytes };
-        if fragment.min_bytes > 0 && !self.fragments.contains(&fragment) {
+        // A set, not a scan of the list: many credential arguments must not
+        // cost quadratic work to learn (#5012).
+        if fragment.min_bytes > 0 && self.learned.insert(fragment.clone()) {
             self.fragments.push(fragment);
         }
     }
 
+    /// Upper bound, in matcher steps, of [`CallerText::spans`] on a text of
+    /// `len` bytes: each known value is searched once (a linear substring
+    /// search), each fragment is pre-checked by a linear search for its
+    /// anchor and then matched by [`prefix_matches`] in at most
+    /// `2 * (fragment + 1 + text)` steps.
+    fn work_bound(&self, len: usize) -> usize {
+        let known: usize = self
+            .shown
+            .iter()
+            .map(|(value, _, _)| len.saturating_add(value.len()))
+            .fold(0, usize::saturating_add);
+        let fragments: usize = self
+            .fragments
+            .iter()
+            .map(|fragment| {
+                len.saturating_mul(3)
+                    .saturating_add(fragment.text.len().saturating_mul(2))
+                    .saturating_add(2)
+            })
+            .fold(0, usize::saturating_add);
+        known.saturating_add(fragments)
+    }
+
     /// Every span of `text` to replace, found in the original text before any
     /// replacement (#4978): each verbatim echo of a known value, and each
-    /// place a credential fragment appears, whole or cut.
+    /// place a credential fragment appears, whole or cut. Overlapping
+    /// occurrences of one fragment are merged as they are found, in work
+    /// linear in the text and the fragment (#5012).
     fn spans(&self, text: &str) -> Vec<(usize, usize, Replacement<'_>)> {
         let mut spans = Vec::new();
         for (value, shown, redacted) in &self.shown {
+            tick(text.len() + value.len());
             for (at, _) in text.match_indices(value.as_str()) {
                 let replacement = Replacement::Shown {
                     shown,
@@ -472,14 +576,27 @@ impl CallerText {
             }
         }
         for fragment in &self.fragments {
-            let anchor = &fragment.text[..fragment.min_bytes];
-            let mut from = 0;
-            while let Some(offset) = text[from..].find(anchor) {
-                let at = from + offset;
-                let len = common_prefix_len(&text[at..], &fragment.text);
-                spans.push((at, at + len, Replacement::Hidden));
-                // Overlapping occurrences too: the next character on.
-                from = at + text[at..].chars().next().map_or(1, char::len_utf8);
+            tick(text.len());
+            if !text.contains(&fragment.text[..fragment.min_bytes]) {
+                continue;
+            }
+            let mut current: Option<(usize, usize)> = None;
+            prefix_matches(&fragment.text, text, |at, len| {
+                if len < fragment.min_bytes {
+                    return;
+                }
+                let end = at + len;
+                match current.as_mut() {
+                    Some(span) if at < span.1 => span.1 = span.1.max(end),
+                    _ => {
+                        if let Some((start, end)) = current.replace((at, end)) {
+                            spans.push((start, end, Replacement::Hidden));
+                        }
+                    }
+                }
+            });
+            if let Some((start, end)) = current {
+                spans.push((start, end, Replacement::Hidden));
             }
         }
         spans
@@ -487,8 +604,13 @@ impl CallerText {
 
     /// `text` with every span of [`CallerText::spans`] replaced. A span inside
     /// a known value's rendering that already hides its credential is dropped;
-    /// any other overlap is merged and hidden as one [`REDACTED`].
+    /// any other overlap is merged and hidden as one [`REDACTED`]. When
+    /// matching could take more than [`MAX_MATCH_WORK`] steps the text is not
+    /// scanned at all and every line of it is hidden (fail closed, #5012).
     fn replace_spans<'t>(&self, text: &'t str) -> Cow<'t, str> {
+        if self.work_bound(text.len()) > MAX_MATCH_WORK {
+            return Cow::Owned(hidden_lines(text));
+        }
         let mut spans = self.spans(text);
         if spans.is_empty() {
             return Cow::Borrowed(text);
