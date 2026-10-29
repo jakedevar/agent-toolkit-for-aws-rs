@@ -2197,8 +2197,8 @@ fn ap_asn_01_sub_10_assignment_and_slot_on_same_line() {
         .contains("A = 12345; x = \"ok\""));
 }
 
-/// #5301: IPython joins backslash-continued `!`/`%` lines into one shell
-/// command, so a quoted slot on a continuation line reaches the shell.
+/// #5301: backslash-continued `!`/`%` lines are one shell command for `IPython`,
+/// so a quoted slot on a continuation line reaches the shell.
 #[test]
 fn review_5301_backslash_continued_magic_lines_reject_slots() {
     for source in [
