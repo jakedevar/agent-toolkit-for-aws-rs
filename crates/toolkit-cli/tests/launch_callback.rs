@@ -384,7 +384,7 @@ fn shipped_binary_exchange_publishes_session() {
     use rcgen::{BasicConstraints, CertificateParams, IsCa, Issuer, KeyPair};
     use rustls::pki_types::{PrivateKeyDer, PrivatePkcs8KeyDer};
     use std::io::{BufRead, BufReader, Read};
-    use std::net::{TcpListener, TcpStream};
+    use std::net::{TcpListener, TcpStream, ToSocketAddrs};
     use std::sync::{mpsc, Arc};
     use std::time::Duration;
 
@@ -468,7 +468,6 @@ fn shipped_binary_exchange_publishes_session() {
         .status()
         .unwrap()
         .success());
-    use std::net::ToSocketAddrs;
     let resolved: Vec<_> = ("oidc.us-east-1.amazonaws.com", 443)
         .to_socket_addrs()
         .unwrap()
