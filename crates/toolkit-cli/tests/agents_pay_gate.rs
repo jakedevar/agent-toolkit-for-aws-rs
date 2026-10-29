@@ -613,6 +613,10 @@ fn t_order_ctor_catches_randomness_in_the_pure_policy_modules() {
 fn process_request_has_private_fields_and_only_approved_constructor() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/agents_pay/agentcore.rs");
     let source = fs::read_to_string(path).unwrap();
+    check_process_request(&source);
+}
+
+fn check_process_request(source: &str) {
     let file = syn::parse_file(&source).unwrap();
     let structs: Vec<_> = file
         .items
@@ -655,6 +659,20 @@ fn process_request_has_private_fields_and_only_approved_constructor() {
         panic!("constructor must borrow Approved");
     };
     assert!(matches!(&*reference.elem, Type::Path(p) if p.path.is_ident("Approved")));
+}
+
+#[test]
+fn process_request_gate_rejects_extra_trait_constructors() {
+    let source = r"
+        pub struct ProcessPaymentRequest { body: Vec<u8> }
+        impl ProcessPaymentRequest {
+            fn from_approved(approved: &Approved) -> Self { todo!() }
+        }
+        impl Default for ProcessPaymentRequest {
+            fn default() -> Self { Self { body: vec![] } }
+        }
+    ";
+    assert!(std::panic::catch_unwind(|| check_process_request(source)).is_err());
 }
 
 #[test]
