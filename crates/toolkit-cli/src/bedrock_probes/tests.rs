@@ -3634,3 +3634,54 @@ fn the_policy_written_diagnostic_is_redacted_and_bounded() {
     assert!(err.chars().count() < 300, "{}", err.chars().count());
     assert!(Path::new(&long_path).is_file());
 }
+
+/// A URL item whose userinfo holds a comma: split before redaction, neither
+/// half is recognized as a credential.
+const USERINFO_LIST: &str =
+    "alpha,https://user:FAKE_SECRET_head,FAKE_SECRET_tail@example.invalid/x,beta";
+
+/// Integration round 20 (#5019): the extended diag contract found `--models`
+/// split before redaction (classify, iam-policy, preflight and api-path write
+/// each id into stdout data) and a free-form `--plan-path` echoed raw by
+/// api-path. The value is now redacted whole first; an ordinary value is
+/// unchanged.
+#[test]
+fn model_lists_and_plan_paths_are_redacted_whole_before_they_reach_stdout() {
+    for args in [
+        vec!["bedrock-probes", "classify", "--models", USERINFO_LIST],
+        vec!["bedrock-probes", "api-path", "--plan-path", USERINFO_LIST],
+        vec!["bedrock-probes", "api-path", "--plan-path", "password=Zq9"],
+        vec![
+            "bedrock-probes",
+            "iam-policy",
+            "--models",
+            USERINFO_LIST,
+            "--region",
+            REGION,
+            "--account-id",
+            ACCOUNT,
+        ],
+    ] {
+        let (status, out, err) = exec(&args);
+        assert_eq!(status, 0, "{args:?}: {err}");
+        for leak in ["FAKE_SECRET", "Zq9"] {
+            assert!(!out.contains(leak), "{args:?}: {out}");
+            assert!(!err.contains(leak), "{args:?}: {err}");
+        }
+        assert!(out.contains("[REDACTED]"), "{args:?}: {out}");
+    }
+    let (status, out, _) = exec(&["bedrock-probes", "classify", "--models", "alpha, beta"]);
+    assert_eq!(status, 0);
+    let ids: Vec<String> = match json(&out).get("models") {
+        Some(Json::Array(rows)) => rows
+            .iter()
+            .filter_map(|row| row.get("model_id").and_then(Json::as_str))
+            .map(str::to_string)
+            .collect(),
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(ids, ["alpha", "beta"]);
+    let (status, out, _) = exec(&["bedrock-probes", "api-path", "--plan-path", "converse"]);
+    assert_eq!(status, 0);
+    assert_eq!(json(&out), json(r#"{"api_path": "converse"}"#));
+}

@@ -127,6 +127,11 @@ successful recorded run prints.
    a `...` mark (not `...[N more chars]`), then escaped (quotes and backslashes in
    a path are no longer escaped; control, bidirectional and invisible characters
    are). Only the rendering changes: the file is read or written at the path given.
+   The `--models` value is redacted whole before it is split, and a free-form
+   `api-path --plan-path` before it is echoed (integration round 20, #5019: the
+   #4941 delimiter-list probe found ids written raw into the classify, preflight
+   and iam-policy stdout and the plan path echoed by api-path). A credential-shaped
+   model id or plan path is never valid, so no valid output changes.
 7. **A malformed region is `InvalidRegionError`** as botocore reports it, without
    the trailing-newline allowance of Python's `$`; nothing is probed.
 8. **A malformed recorded quota listing is an error.** The script's `fetch_bedrock_quotas`

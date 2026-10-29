@@ -29,6 +29,7 @@ use toolkit_core::{
 use crate::ai_data::parse_failure_text;
 use crate::bedrock_resolve::source;
 use crate::manifests::{read_failure, universal_newlines};
+use crate::safe_text::redacted_value;
 use crate::startup::artifacts::pyjson::dumps;
 use crate::{Invocation, Output};
 
@@ -216,9 +217,13 @@ fn no_positionals(invocation: &Invocation, command: &str) -> Result<(), ToolkitE
     }
 }
 
-/// The model ids of `--models`, at most [`MAX_MODELS`].
+/// The model ids of `--models`, at most [`MAX_MODELS`]. The value is redacted
+/// whole before it is split (#4941; integration round 20, #5019): each id is
+/// written into stdout data (a report, a policy ARN), and a comma inside URL
+/// userinfo would otherwise cut the credential from its `@host`. A
+/// credential-shaped model id is never valid, so no valid id changes.
 fn model_list(models: &str) -> Result<Vec<String>, ToolkitError> {
-    let ids = preflight::split_models(models);
+    let ids = preflight::split_models(&redacted_value(models));
     if ids.len() > MAX_MODELS {
         return Err(usage(&format!(
             "--models takes at most {MAX_MODELS} model ids"
@@ -316,7 +321,9 @@ pub(crate) fn preflight_command(
 ) -> Result<(), ToolkitError> {
     no_positionals(invocation, "preflight")?;
     let region = required(invocation, "--region")?;
-    let models = required(invocation, "--models")?;
+    // Redacted whole before the probe splits it (see [`model_list`]).
+    let models = redacted_value(required(invocation, "--models")?);
+    let models = models.as_ref();
     model_list(models)?;
     let dataset_size = match invocation.value("--dataset-size") {
         None => 0,
@@ -354,8 +361,11 @@ pub(crate) fn api_path_command(
         Some(models) => model_list(models)?,
         None => Vec::new(),
     };
+    // A free-form --plan-path is echoed as the path, so it is redacted whole
+    // first (#4941; integration round 20, #5019).
+    let plan_path = invocation.value("--plan-path").map(redacted_value);
     let path = preflight::normalize_api_path(
-        invocation.value("--plan-path"),
+        plan_path.as_deref(),
         &models,
         invocation.value("--runtime-api"),
     )

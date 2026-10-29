@@ -31,7 +31,7 @@ use toolkit_core::{parse_json, Json, ToolkitError};
 use crate::ai_data::parse_failure_text;
 use crate::aurora::args::usage;
 use crate::cloudwatch::timefmt::{parse_iso_timestamp, UtcTime};
-use crate::safe_text::safe_path;
+use crate::safe_text::{redacted_value, safe_path};
 use crate::startup::read_text;
 use crate::{CommandSpec, Invocation, Output};
 
@@ -539,17 +539,23 @@ pub fn test_events_command(
         )));
     }
     let count = integer_option(invocation, "--count", 1)?;
-    let product_code = invocation.value("--product-code").unwrap_or_default();
-    let source = invocation.value("--event-source").unwrap_or_default();
+    // These values are written into the event data (stdout under
+    // --dry-print, the PutEvents entries otherwise), so each is redacted whole
+    // first, the account list before it is split (#4941; integration round
+    // 20, #5019). A credential-shaped product code, source or account id is
+    // never valid, so no valid value changes.
+    let product_code = redacted_value(invocation.value("--product-code").unwrap_or_default());
+    let product_code = product_code.as_ref();
+    let source = redacted_value(invocation.value("--event-source").unwrap_or_default());
+    let source = source.as_ref();
     events::require_event_source(source).map_err(usage)?;
-    let accounts: Vec<String> = invocation
-        .value("--test-accounts")
-        .unwrap_or_default()
-        .split(',')
-        .map(str::trim)
-        .filter(|account| !account.is_empty())
-        .map(str::to_string)
-        .collect();
+    let accounts: Vec<String> =
+        redacted_value(invocation.value("--test-accounts").unwrap_or_default())
+            .split(',')
+            .map(str::trim)
+            .filter(|account| !account.is_empty())
+            .map(str::to_string)
+            .collect();
     if let Some(region) = invocation.value("--region") {
         if !is_valid_region(region) {
             return Err(usage("--region must look like us-east-1"));

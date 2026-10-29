@@ -251,6 +251,10 @@ own review before it may run against a real table.
    unchanged). Integration round 20 (#5019) moved both onto the shared
    helpers; only a credential-shaped, overlong or control-bearing value is
    shown differently.
+   `test-events` redacts `--product-code`, `--event-source` and the whole
+   `--test-accounts` list (before it is split) before they are written into
+   the events (round 20: found by the #4941 delimiter-list probe); a
+   credential-shaped value is never a valid code, source or account id.
 8. **Timestamps on the wire.** A `datetime` in a request (`Timestamp`,
    `StartTime`, `EndTime`) is epoch seconds, as the JSON protocols send it. A
    recorded response timestamp may be epoch seconds or ISO text; a usage record

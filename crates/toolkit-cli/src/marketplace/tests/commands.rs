@@ -565,3 +565,40 @@ fn query_metering_arguments_are_checked() {
     assert!(live.stderr.contains("aws_connect"));
     assert!(live.stdout.is_empty());
 }
+
+/// Integration round 20 (#5019): the extended diag contract found
+/// `--test-accounts` split before redaction and `--event-source` and
+/// `--product-code` written raw into the printed events. Each is now
+/// redacted whole first; the ordinary dry print is unchanged (see
+/// `dry_print_prints_the_events_without_publishing`).
+#[test]
+fn test_events_values_are_redacted_whole_before_they_reach_the_events() {
+    let list = "111122223333,https://user:FAKE_SECRET_head,FAKE_SECRET_tail@example.invalid/x";
+    let mut words = events_words(&["--dry-print", "--scenario", "duplicate"]);
+    let at = words
+        .iter()
+        .position(|word| *word == "--test-accounts")
+        .expect("accounts flag");
+    words[at + 1] = list;
+    let cli = toolkit(&words);
+    assert_eq!(cli.status, 0, "{}", cli.stderr);
+    assert!(!cli.stdout.contains("FAKE_SECRET"), "{}", cli.stdout);
+    assert!(!cli.stderr.contains("FAKE_SECRET"), "{}", cli.stderr);
+    let code = toolkit(&[
+        "marketplace",
+        "test-events",
+        "--product-code",
+        "password=Zq9",
+        "--test-accounts",
+        "111122223333",
+        "--event-source",
+        "beta.agreement-marketplace",
+        "--now",
+        PINNED,
+        "--seed",
+        "11",
+        "--dry-print",
+    ]);
+    assert!(!code.stdout.contains("Zq9"), "{}", code.stdout);
+    assert!(!code.stderr.contains("Zq9"), "{}", code.stderr);
+}
