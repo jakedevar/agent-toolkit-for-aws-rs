@@ -942,3 +942,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 10-29 10:31Z: #5326 (75a7e4a6, Opus) CHANGES_REQUESTED x402 S4 27a523ba: B1 unknown single union arm untested (mut b survived); B2 syn construction gate misses `use as` alias + indexed/compound field writes (mut d,e survived). Non-blocking filed #5330 #5331 #5332; kaizen #5333.
   PM RULING B2: child module request.rs with private fields (rustc privacy), gate narrowed to it, (d)(e) seeded. Repair 1 -> Codex terra 3c1e60a0 (continue_from cd65d0a9). Then narrow re-review (B1,B2 mutations only).
   4/4 busy: e1de11f0 (#5327), 56c78333 (#5317), acde8672 (#5306), 3c1e60a0 (#5181 repair 1). #5329 still waits for a slot.
+- 10-29 10:56Z: L6 #5317 (56c78333, Opus) COMPLETE at 0330c8857c78e6ac09489d3c426729d501bb52cd (merge of rolling 07a4b4ec); scoped e25befa5 ok 4304, merges clean. 113 tests; decision 2 (moved-descriptor DFS walk replaces design order) flagged for review. Follow-up #5335 (interim GetLaunch -> L5).
+  Review #5336 -> Codex sol 17932ae8 (pinned 0330c885; mutations identity check, ledger cleanup, 3xx, non-public DNS). On ACCEPT: check (job e25befa5, source_session 56c78333) + enqueue; close #5317 #5336 on land.
+  4/4 busy: e1de11f0 (#5327), acde8672 (#5306), 3c1e60a0 (#5181 repair 1), 17932ae8 (#5336). #5329 still waits.
