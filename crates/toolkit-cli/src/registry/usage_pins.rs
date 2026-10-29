@@ -45,7 +45,9 @@ const SHARED_PIN: (usize, u64) = (2172, 0xef10_870b_c95f_9348);
 /// One line per slice, ascending by name. See the module docs for how to edit.
 #[rustfmt::skip]
 const SLICE_PINS: &[Pin] = &[
-    ("agents-pay", 1000, 1000, 727, 0xa59a_cba2_6036_fa20),
+    ("agents-build", 1000, 1000, 592, 0x4475_7d51_e7ec_2dcb),
+    ("agents-pay", 1000, 1000, 1169, 0x8b86_fec8_c506_878d),
+    ("agents-pay-admin", 1000, 1000, 1562, 0xdff6_6e77_9cee_0b4e),
     ("ai-data", 250, 250, 1158, 0x5f1c_538d_8b18_bb70),
     ("ai-models", 260, 260, 1381, 0xf342_7975_5c92_6f4a),
     ("ai-payloads", 1000, 1000, 877, 0xe29c_45f1_2039_1183),
@@ -57,7 +59,7 @@ const SLICE_PINS: &[Pin] = &[
     ("bedrock-resolve", 320, 320, 1639, 0x1a97_5e17_bd8a_74bf),
     ("cloudwatch-api", 300, 300, 2276, 0xc323_55fa_f75f_4211),
     ("cloudwatch-domain", 290, 290, 1120, 0x9d27_7127_6d15_3fe8),
-    ("docgraph", 1000, 1000, 1555, 0xe136_3c00_db21_2ee1),
+    ("docgraph", 1000, 1000, 1806, 0x8c35_d6f6_0c6a_b109),
     ("dynamodb", 220, 220, 610, 0x706f_2bf7_8c4e_bad8),
     ("dynamodb-bench", 1000, 1000, 732, 0x8f36_c2e7_5cfe_58fe),
     ("dynamodb-deploy", 230, 230, 725, 0x820a_1ac1_e8c8_dd42),
