@@ -34,11 +34,59 @@ pub fn frame(value: &Json) -> (Vec<u8>, i32) {
 
 fn timestamp(value: &Json) -> Result<Json, BridgeError> {
     let text = value.as_str().ok_or(BridgeError::AgentCore)?;
-    crate::cloudwatch::timefmt::parse_iso_timestamp(text).map_err(|_| BridgeError::AgentCore)?;
-    if text.len() < 19 || !text.is_ascii() || &text[10..11] != "T" {
+    if !text.is_ascii() {
         return Err(BridgeError::AgentCore);
     }
-    let tail = &text[19..];
+    let date_len = if text.as_bytes().get(4) == Some(&b'-') {
+        10
+    } else {
+        8
+    };
+    if text.len() < date_len {
+        return Err(BridgeError::AgentCore);
+    }
+    let date = &text[..date_len];
+    let date = if date_len == 8 {
+        format!("{}-{}-{}", &date[..4], &date[4..6], &date[6..8])
+    } else {
+        date.to_owned()
+    };
+    let rest = &text[date_len..];
+    let time = if rest.is_empty() {
+        "00:00:00".to_owned()
+    } else {
+        if !matches!(rest.as_bytes().first(), Some(b'T' | b't' | b' ')) {
+            return Err(BridgeError::AgentCore);
+        }
+        let raw = &rest[1..];
+        let split = raw.find(['Z', 'z', '+', '-']).unwrap_or(raw.len());
+        let (clock, zone) = raw.split_at(split);
+        let frac = clock.find(['.', ',']).unwrap_or(clock.len());
+        let (clock, fraction) = clock.split_at(frac);
+        let digits: String = clock.chars().filter(|c| *c != ':').collect();
+        if !matches!(digits.len(), 2 | 4 | 6)
+            || !digits.bytes().all(|b| b.is_ascii_digit())
+            || (clock.contains(':')
+                && !(clock.len() == 5 && clock.as_bytes()[2] == b':'
+                    || clock.len() == 8
+                        && clock.as_bytes()[2] == b':'
+                        && clock.as_bytes()[5] == b':'))
+        {
+            return Err(BridgeError::AgentCore);
+        }
+        let minute = digits.get(2..4).unwrap_or("00");
+        let second = digits.get(4..6).unwrap_or("00");
+        format!(
+            "{}:{minute}:{second}{}{}",
+            &digits[..2],
+            fraction.replace(',', "."),
+            zone.replace('z', "Z")
+        )
+    };
+    let canonical = format!("{date}T{time}");
+    crate::cloudwatch::timefmt::parse_iso_timestamp(&canonical)
+        .map_err(|_| BridgeError::AgentCore)?;
+    let tail = &canonical[19..];
     let (fraction, zone) = if let Some(rest) = tail.strip_prefix('.') {
         let end = rest
             .find(|c: char| !c.is_ascii_digit())
@@ -60,14 +108,17 @@ fn timestamp(value: &Json) -> Result<Json, BridgeError> {
         (String::new(), tail)
     };
     let zone = match zone {
-        "Z" | "+00" | "+0000" | "+00:00" | "-00" | "-0000" | "-00:00" => "+00:00".to_owned(),
+        "Z" | "z" | "+00" | "+0000" | "+00:00" | "-00" | "-0000" | "-00:00" => "+00:00".to_owned(),
         z if z.len() == 3 && (z.starts_with('+') || z.starts_with('-')) => format!("{z}:00"),
         z if z.len() == 5 && (z.starts_with('+') || z.starts_with('-')) => {
             format!("{}:{}", &z[..3], &z[3..])
         }
         z => z.to_owned(),
     };
-    Ok(Json::string(format!("{}{fraction}{zone}", &text[..19])))
+    Ok(Json::string(format!(
+        "{}{fraction}{zone}",
+        &canonical[..19]
+    )))
 }
 
 fn amount(value: &Json) -> Result<Json, BridgeError> {
@@ -187,9 +238,18 @@ mod tests {
             ("2026-08-07T12:34Z", "2026-08-07T12:34:00+00:00"),
             ("20260807T123456+0530", "2026-08-07T12:34:56+05:30"),
         ] {
-            assert_eq!(timestamp(&Json::string(input)).unwrap().as_str(), Some(expected), "{input}");
+            assert_eq!(
+                timestamp(&Json::string(input)).unwrap().as_str(),
+                Some(expected),
+                "{input}"
+            );
         }
-        for input in ["2026-02-30", "2026-08-07T25:00:00Z", "2026-08-07T12:34:60Z", "not-a-date"] {
+        for input in [
+            "2026-02-30",
+            "2026-08-07T25:00:00Z",
+            "2026-08-07T12:34:60Z",
+            "not-a-date",
+        ] {
             assert!(timestamp(&Json::string(input)).is_err(), "{input}");
         }
     }
