@@ -58,6 +58,26 @@ pub struct Tokens {
     pub expires_at: i64,
 }
 
+/// PKCE material and callback state, generated independently from the OS RNG.
+#[derive(Debug, Clone)]
+pub struct Pkce {
+    pub verifier: Secret,
+    pub state: Secret,
+    pub challenge: String,
+}
+pub fn generate_pkce(random: &dyn super::clock::Random) -> Result<Pkce, super::LaunchError> {
+    let mut bytes = [0_u8; 32];
+    random.fill(&mut bytes)?;
+    let verifier = toolkit_core::base64url_nopad(&bytes);
+    let challenge = toolkit_core::base64url_nopad(&toolkit_core::sha256(verifier.as_bytes()));
+    random.fill(&mut bytes)?;
+    Ok(Pkce {
+        verifier: Secret::new(verifier),
+        state: Secret::new(toolkit_core::base64url_nopad(&bytes)),
+        challenge,
+    })
+}
+
 const CODES: &[&str] = &[
     "AccessDeniedException",
     "AuthorizationPendingException",
@@ -200,6 +220,7 @@ impl Oidc<'_> {
         now: i64,
         deadline: Instant,
     ) -> Result<Client, OidcError> {
+        let deadline = deadline.min(self.clock.now() + Duration::from_secs(30));
         let v = self.call("/client/register", &json!({"clientName":"Launch with AWS Agent Skill", "clientType":"public", "grantTypes":["authorization_code","refresh_token"], "scopes":scopes, "issuerUrl":issuer, "redirectUris":["http://127.0.0.1"]}), deadline, false)?;
         let id = required(&v, "clientId")?.to_owned();
         let secret = Secret::new(required(&v, "clientSecret")?);
@@ -233,6 +254,7 @@ impl Oidc<'_> {
         now: i64,
         deadline: Instant,
     ) -> Result<Tokens, OidcError> {
+        let deadline = deadline.min(self.clock.now() + Duration::from_secs(30));
         let result = self.call("/token", &json!({"clientId":session.client_id,"clientSecret":session.client_secret.expose(),"grantType":"refresh_token","refreshToken":session.refresh_token.expose()}), deadline, false).and_then(|v| tokens(&v, Some(&session.refresh_token), now));
         result.map_err(|_| OidcError::SessionExpired)
     }
@@ -352,11 +374,35 @@ mod tests {
         );
     }
     #[test]
+    fn pkce_and_state_are_independent_and_debug_hides_them() {
+        let random = super::super::clock::SeededRandom::new(314);
+        let pkce = generate_pkce(&random).unwrap();
+        assert_eq!(pkce.verifier.expose().len(), 43);
+        assert_eq!(pkce.state.expose().len(), 43);
+        assert_ne!(pkce.verifier.expose(), pkce.state.expose());
+        assert_eq!(
+            pkce.challenge,
+            toolkit_core::base64url_nopad(&toolkit_core::sha256(pkce.verifier.expose().as_bytes()))
+        );
+        let shown = format!("{pkce:?}");
+        assert!(!shown.contains(pkce.verifier.expose()));
+        assert!(!shown.contains(pkce.state.expose()));
+    }
+    #[test]
     fn error_codes_never_echo_secrets_or_descriptions() {
-        for key in ["__type", "code", "Code", "errorCode", "error"] {
-            let body =
-                json!({key:"FAKE-CLIENT-SECRET", "error_description":"FAKE-ACCESS"}).to_string();
-            assert_eq!(error_code(None, body.as_bytes()), "UnrecognizedError");
+        for secret in [
+            "FAKE-CLIENT-SECRET",
+            "FAKE-ACCESS",
+            "FAKE-REFRESH",
+            "FAKE-VERIFIER",
+            "FAKE-CODE",
+            "FAKE-STATE",
+        ] {
+            assert_eq!(error_code(Some(secret), b"{}"), "UnrecognizedError");
+            for key in ["__type", "code", "Code", "errorCode", "error"] {
+                let body = json!({key:secret, "error_description":"FAKE-ACCESS"}).to_string();
+                assert_eq!(error_code(None, body.as_bytes()), "UnrecognizedError");
+            }
         }
         assert_eq!(
             error_code(Some("x#InvalidGrantException:detail"), b"{}"),

@@ -83,6 +83,7 @@ pub fn collect_response(
 ) -> Result<Response, BodyError> {
     collect_with_ceiling(transport, request, operation, deadline, operation.ceiling())
 }
+#[allow(clippy::too_many_lines)]
 fn collect_with_ceiling(
     transport: &dyn StreamingTransport,
     request: &HttpRequest,
@@ -518,9 +519,122 @@ mod tests {
         assert_eq!(
             fake.open_limits()
                 .iter()
-                .map(|l| l.deadline())
+                .map(toolkit_aws::stream::StreamLimits::deadline)
                 .collect::<Vec<_>>(),
             vec![Some(deadline), Some(deadline)]
         );
+    }
+
+    #[test]
+    fn endless_generated_body_is_bounded_and_stream_dropped() {
+        use std::sync::{
+            atomic::{AtomicBool, AtomicUsize, Ordering},
+            Arc,
+        };
+        use toolkit_aws::{
+            stream::{ChunkLimiter, ResponseStream, StreamError, StreamLimits, StreamingTransport},
+            AwsError,
+        };
+        struct Generator {
+            pulls: Arc<AtomicUsize>,
+            dropped: Arc<AtomicBool>,
+        }
+        struct Stream {
+            pulls: Arc<AtomicUsize>,
+            dropped: Arc<AtomicBool>,
+            limiter: ChunkLimiter,
+            headers: Headers,
+        }
+        impl Drop for Stream {
+            fn drop(&mut self) {
+                self.dropped.store(true, Ordering::SeqCst);
+            }
+        }
+        impl ResponseStream for Stream {
+            fn status(&self) -> u16 {
+                200
+            }
+            fn headers(&self) -> &Headers {
+                &self.headers
+            }
+            fn narrow_body_limit(&mut self, cap: u64) {
+                self.limiter.narrow(cap);
+            }
+            fn next_chunk(&mut self) -> Result<Option<Vec<u8>>, StreamError> {
+                self.limiter.next(|| {
+                    self.pulls.fetch_add(1, Ordering::SeqCst);
+                    Ok(Some(vec![1; 1000]))
+                })
+            }
+        }
+        impl StreamingTransport for Generator {
+            fn open<'a>(
+                &'a self,
+                _: &HttpRequest,
+                limits: &StreamLimits,
+            ) -> Result<Box<dyn ResponseStream + 'a>, AwsError> {
+                Ok(Box::new(Stream {
+                    pulls: self.pulls.clone(),
+                    dropped: self.dropped.clone(),
+                    limiter: ChunkLimiter::new(*limits),
+                    headers: Headers::new(),
+                }))
+            }
+        }
+        let fake = Generator {
+            pulls: Arc::new(AtomicUsize::new(0)),
+            dropped: Arc::new(AtomicBool::new(false)),
+        };
+        assert_eq!(
+            super::collect_with_ceiling(
+                &fake,
+                &request(),
+                Operation::Download,
+                Instant::now() + Duration::from_secs(30),
+                10003
+            )
+            .unwrap_err(),
+            BodyError::TooLarge
+        );
+        assert_eq!(fake.pulls.load(Ordering::SeqCst), 11);
+        assert!(fake.dropped.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn error_is_narrowed_on_first_attempt_and_success_uses_full_ceiling() {
+        use super::{run, SystemClock};
+        use toolkit_aws::retry::{NoJitter, RetryPolicy};
+        use toolkit_aws::testing::RecordingSleeper;
+        let fake = FakeStreamingTransport::new()
+            .respond(
+                500,
+                &[("x-amzn-errortype", "InternalServerException")],
+                vec![FakeChunk::Data(vec![0; 65537])],
+            )
+            .respond(200, &[], vec![FakeChunk::Data(vec![7; 1024 * 1024])]);
+        let sleeper = RecordingSleeper::new();
+        let result = run(
+            &fake,
+            &request(),
+            Operation::ApiJson,
+            Instant::now() + Duration::from_secs(30),
+            Duration::from_secs(120),
+            false,
+            &SystemClock,
+            &sleeper,
+            &NoJitter,
+            &RetryPolicy::default(),
+        )
+        .unwrap();
+        assert_eq!(result.body.len(), 1024 * 1024);
+        assert_eq!(fake.narrow_calls(), vec![65536]);
+        assert_eq!(
+            fake.open_limits()
+                .iter()
+                .map(toolkit_aws::stream::StreamLimits::max_body_bytes)
+                .collect::<Vec<_>>(),
+            vec![super::API_CAP as u64; 2]
+        );
+        assert_eq!(sleeper.sleeps(), vec![Duration::from_secs(2)]);
     }
 }
