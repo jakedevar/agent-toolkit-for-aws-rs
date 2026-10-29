@@ -146,7 +146,6 @@ fn process_body(approved: &Approved) -> String {
 /// use toolkit_cli::agents_pay::{agentcore::ProcessPaymentRequest, policy::Approved};
 /// fn forge(approved: &Approved) { let _ = ProcessPaymentRequest::from_approved(approved); }
 /// ```
-#[allow(dead_code)] // The production adapter will consume these fields in S4.
 pub struct ProcessPaymentRequest {
     body: Vec<u8>,
     manager: String,
@@ -156,7 +155,6 @@ pub struct ProcessPaymentRequest {
 }
 
 impl ProcessPaymentRequest {
-    #[allow(dead_code)] // Used by the test prototype until the production adapter is complete.
     fn from_approved(approved: &Approved) -> Self {
         Self {
             body: process_body(approved).into_bytes(),
@@ -174,7 +172,6 @@ impl std::fmt::Debug for ProcessPaymentRequest {
     }
 }
 
-#[cfg(test)]
 fn get_body(manager: &str, session: &str) -> String {
     Json::object(vec![
         ("paymentManagerArn", Json::string(manager)),
@@ -183,7 +180,6 @@ fn get_body(manager: &str, session: &str) -> String {
     .to_compact_string()
 }
 
-#[cfg(test)]
 fn session_body(manager: &str, budget: &str, expiry: i64, token: &str) -> String {
     Json::object(vec![
         ("paymentManagerArn", Json::string(manager)),
@@ -203,7 +199,6 @@ fn session_body(manager: &str, budget: &str, expiry: i64, token: &str) -> String
     .to_compact_string()
 }
 
-#[cfg(test)]
 fn instrument_body(
     manager: &str,
     connector: &str,
@@ -239,7 +234,6 @@ fn instrument_body(
     .to_compact_string()
 }
 
-#[cfg(test)]
 fn agent_name(runtime: bool) -> &'static str {
     if runtime {
         "openclaw-aws-agents-pay"
@@ -248,8 +242,9 @@ fn agent_name(runtime: bool) -> &'static str {
     }
 }
 
-#[cfg(test)]
-fn runtime_region(
+/// Resolve the runtime region in documented precedence order.
+#[must_use]
+pub fn runtime_region(
     config: Option<&str>,
     env: Option<&str>,
     arn: &str,
@@ -267,7 +262,6 @@ fn runtime_region(
     toolkit_aws::is_valid_region(region).then(|| region.to_owned())
 }
 
-#[cfg(test)]
 fn has_required(shape_name: &str, value: &Json) -> bool {
     let Ok(model) = parse_json(PAYMENT_SERVICE_MODEL) else {
         return false;
@@ -281,7 +275,6 @@ fn has_required(shape_name: &str, value: &Json) -> bool {
     !required.is_empty() && required.iter().all(|key| value.get(key).is_some())
 }
 
-#[cfg(test)]
 fn valid_process_response(body: &str, manager: &str, session: &str, instrument: &str) -> bool {
     if body.len() > 65_536 {
         return false;
@@ -349,7 +342,6 @@ fn valid_process_response(body: &str, manager: &str, session: &str, instrument: 
     matches!(payload, Json::Object(_)) && payload.to_compact_string().len() <= 16_384
 }
 
-#[cfg(test)]
 fn valid_session_response(body: &str, manager: &str, session: Option<&str>, user: &str) -> bool {
     use toolkit_aws::recorded::{optional_member, optional_object, optional_text};
     if body.len() > 65_536 {
@@ -414,17 +406,21 @@ fn valid_session_response(body: &str, manager: &str, session: Option<&str>, user
     }
     true
 }
-#[cfg(test)]
 #[derive(Debug, PartialEq, Eq)]
-struct SessionStatus {
-    status: &'static str,
-    usable: bool,
-    budget_usd: Option<String>,
-    spent_usd: Option<String>,
+pub struct SessionStatus {
+    /// Computed session state.
+    pub status: &'static str,
+    /// Whether the session can spend at the supplied time.
+    pub usable: bool,
+    /// Configured budget, if present.
+    pub budget_usd: Option<String>,
+    /// Difference between budget and available balance, if known.
+    pub spent_usd: Option<String>,
 }
 
-#[cfg(test)]
-fn session_status(value: &Json, now_micros: i64) -> SessionStatus {
+/// Compute status using the service model's timestamps and available balance.
+#[must_use]
+pub fn session_status(value: &Json, now_micros: i64) -> SessionStatus {
     use crate::agents_pay::amount::CapDecimal;
     use toolkit_aws::recorded::{optional_member, optional_object, optional_text};
     let amount = |container: &str, member: &str| {
@@ -592,10 +588,14 @@ mod operation_contracts {
     use toolkit_core::parse_json;
 
     pub(super) fn approved() -> crate::agents_pay::policy::Approved {
+        approved_for("arn")
+    }
+
+    pub(super) fn approved_for(manager: &str) -> crate::agents_pay::policy::Approved {
         let policy = parse_json(r#"{"max_per_payment_usd":"0.10","allowed_networks":["eip155:84532"],"allowed_assets":{"eip155:84532":["0xa"]},"allowed_recipients":["0xb"]}"#).unwrap();
         let challenge = parse_json(r#"{"x402Version":2,"accepts":[{"scheme":"exact","network":"eip155:84532","asset":"0xA","payTo":"0xB","amount":"100000"}]}"#).unwrap();
         let resources = Resources {
-            payment_manager_arn: Some("arn".into()),
+            payment_manager_arn: Some(manager.into()),
             payment_instrument_id: Some("pi".into()),
             payment_session_id: Some("ps".into()),
             user_id: Some("user".into()),
@@ -753,7 +753,6 @@ mod operation_contracts {
 
 /// `AgentCore` call failure, containing no server-supplied text.
 #[derive(Debug, PartialEq, Eq)]
-#[cfg(test)]
 pub enum PaymentError {
     /// A service error, reduced to a fixed code.
     Service(&'static str),
@@ -765,7 +764,6 @@ pub enum PaymentError {
 
 /// Value-free classes used by the generic payment-flow error text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg(test)]
 pub enum PaymentErrorClass {
     /// Connection or TLS failure.
     ConnectError,
@@ -781,7 +779,6 @@ pub enum PaymentErrorClass {
     RuntimeError,
 }
 
-#[cfg(test)]
 fn transport_error(error: &AwsError) -> PaymentError {
     use toolkit_aws::error::TimeoutPhase;
     let class = match error {
@@ -808,25 +805,22 @@ fn transport_error(error: &AwsError) -> PaymentError {
 }
 
 /// An adapter over a caller-supplied transport and signer.
-#[cfg(test)]
 pub struct PaymentClient<'a> {
     transport: &'a dyn toolkit_aws::StreamingTransport,
     signer: &'a dyn toolkit_aws::Signer,
     region: String,
     clock: &'a dyn PaymentClock,
     jitter: Option<&'a dyn toolkit_aws::Jitter>,
+    operation_deadline: Option<std::time::Instant>,
 }
 
-#[cfg(test)]
 trait PaymentClock {
     fn now(&self) -> std::time::Instant;
     fn sleep(&self, duration: std::time::Duration);
 }
 
-#[cfg(test)]
 struct SystemPaymentClock;
 
-#[cfg(test)]
 impl PaymentClock for SystemPaymentClock {
     fn now(&self) -> std::time::Instant {
         std::time::Instant::now()
@@ -839,17 +833,14 @@ impl PaymentClock for SystemPaymentClock {
 /// A sensitive authorization returned by the service; it has not yet been
 /// checked against the approved terms by the proof verifier.
 #[derive(PartialEq)]
-#[cfg(test)]
 pub struct PaymentProof(Json);
 
-#[cfg(test)]
 impl std::fmt::Debug for PaymentProof {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("PaymentProof([REDACTED])")
     }
 }
 
-#[cfg(test)]
 impl PaymentProof {
     /// Inspect the sensitive document for verification. Never log this value.
     #[must_use]
@@ -858,37 +849,66 @@ impl PaymentProof {
     }
 }
 
-#[cfg(test)]
-struct Authorized {
+/// A service proof bound to its approved terms; it still needs verification.
+pub struct Authorized {
     proof: PaymentProof,
     amount: String,
     version: i64,
     recipient: String,
 }
-#[cfg(test)]
-struct FakePaymentsApi {
+impl Authorized {
+    /// Consume this authorization for proof verification.
+    #[must_use]
+    pub fn into_parts(self) -> (PaymentProof, String, i64, String) {
+        (self.proof, self.amount, self.version, self.recipient)
+    }
+}
+/// An in-memory payment fake limited to the fixture account.
+#[derive(Default)]
+pub struct FakePaymentsApi {
     calls: std::cell::Cell<usize>,
 }
-#[cfg(test)]
-trait PaymentsApi {
+impl FakePaymentsApi {
+    /// Number of logical calls observed by this fake.
+    #[must_use]
+    pub fn calls(&self) -> usize {
+        self.calls.get()
+    }
+}
+/// Payment operation interface; requests can only originate from `Approved`.
+pub trait PaymentsApi {
+    /// Execute a single logical payment request.
+    ///
+    /// # Errors
+    /// Returns a sanitized transport, service, or response failure.
     fn process_payment(
         &self,
         request: &ProcessPaymentRequest,
     ) -> Result<PaymentProof, PaymentError>;
 }
-#[cfg(test)]
 impl PaymentsApi for FakePaymentsApi {
     fn process_payment(
         &self,
-        _request: &ProcessPaymentRequest,
+        request: &ProcessPaymentRequest,
     ) -> Result<PaymentProof, PaymentError> {
+        assert!(
+            request.manager.starts_with("arn:")
+                && request.manager.split(':').nth(4) == Some("111111111111"),
+            "fake payments require fixture account"
+        );
         self.calls.set(self.calls.get() + 1);
         Ok(PaymentProof(Json::object(vec![])))
     }
 }
-#[cfg(test)]
 #[allow(clippy::needless_pass_by_value)] // Consuming Approved permits only one logical spend.
-fn process_approved(api: &dyn PaymentsApi, approved: Approved) -> Result<Authorized, PaymentError> {
+/// Consume an approval once and bind the returned proof to its approved terms.
+///
+/// # Errors
+/// Returns a sanitized failure if the request or response is invalid.
+pub fn process_payment(
+    api: &dyn PaymentsApi,
+    approved: Approved,
+) -> Result<Authorized, PaymentError> {
     let recipient = toolkit_aws::recorded::optional_text(approved.entry(), "payTo")
         .map_err(|_| PaymentError::InvalidResponse)?
         .ok_or(PaymentError::InvalidResponse)?
@@ -905,8 +925,8 @@ fn process_approved(api: &dyn PaymentsApi, approved: Approved) -> Result<Authori
     })
 }
 
-#[cfg(test)]
 impl<'a> PaymentClient<'a> {
+    #[cfg(test)]
     fn process_payment_until(
         &self,
         approved: Approved,
@@ -914,7 +934,16 @@ impl<'a> PaymentClient<'a> {
     ) -> Result<PaymentProof, PaymentError> {
         self.process_payment_inner(approved, Some(deadline))
     }
-    fn get_session(&self, manager: &str, session: &str, user: &str) -> Result<Json, PaymentError> {
+    /// Read a payment session.
+    ///
+    /// # Errors
+    /// Returns a sanitized failure on transport or invalid response.
+    pub fn get_session(
+        &self,
+        manager: &str,
+        session: &str,
+        user: &str,
+    ) -> Result<Json, PaymentError> {
         let body = self.call(
             "getPaymentSession",
             user,
@@ -928,7 +957,11 @@ impl<'a> PaymentClient<'a> {
         }
         parse_json(&body).map_err(|_| PaymentError::InvalidResponse)
     }
-    fn create_session(
+    /// Create a payment session using the supplied idempotency token.
+    ///
+    /// # Errors
+    /// Returns a sanitized failure on invalid input, transport, or response.
+    pub fn create_session(
         &self,
         manager: &str,
         user: &str,
@@ -952,7 +985,11 @@ impl<'a> PaymentClient<'a> {
         }
         parse_json(&body).map_err(|_| PaymentError::InvalidResponse)
     }
-    fn create_instrument(
+    /// Create a wallet instrument using the supplied idempotency token.
+    ///
+    /// # Errors
+    /// Returns a sanitized failure on invalid input, transport, or response.
+    pub fn create_instrument(
         &self,
         manager: &str,
         user: &str,
@@ -1037,7 +1074,15 @@ impl<'a> PaymentClient<'a> {
             region: region.to_owned(),
             clock: &SystemPaymentClock,
             jitter: None,
+            operation_deadline: None,
         })
+    }
+
+    /// Bound the logical payment call by the enclosing operation deadline.
+    #[must_use]
+    pub fn with_operation_deadline(mut self, deadline: std::time::Instant) -> Self {
+        self.operation_deadline = Some(deadline);
+        self
     }
 
     /// Send one approved payment.
@@ -1045,10 +1090,12 @@ impl<'a> PaymentClient<'a> {
     /// # Errors
     /// Refuses invalid responses and transport or service failures.
     #[allow(clippy::needless_pass_by_value)] // Consuming Approved is a security boundary.
-    pub fn process_payment(&self, approved: Approved) -> Result<PaymentProof, PaymentError> {
+    #[cfg(test)]
+    fn process_payment(&self, approved: Approved) -> Result<PaymentProof, PaymentError> {
         self.process_payment_inner(approved, None)
     }
 
+    #[cfg(test)]
     #[allow(clippy::needless_pass_by_value)]
     fn process_payment_inner(
         &self,
@@ -1056,6 +1103,14 @@ impl<'a> PaymentClient<'a> {
         deadline: Option<std::time::Instant>,
     ) -> Result<PaymentProof, PaymentError> {
         let payment = ProcessPaymentRequest::from_approved(&approved);
+        self.process_request(&payment, deadline)
+    }
+
+    fn process_request(
+        &self,
+        payment: &ProcessPaymentRequest,
+        deadline: Option<std::time::Instant>,
+    ) -> Result<PaymentProof, PaymentError> {
         let body = self.call(
             "processPayment",
             &payment.user,
@@ -1253,6 +1308,15 @@ impl<'a> PaymentClient<'a> {
     }
 }
 
+impl PaymentsApi for PaymentClient<'_> {
+    fn process_payment(
+        &self,
+        request: &ProcessPaymentRequest,
+    ) -> Result<PaymentProof, PaymentError> {
+        self.process_request(request, self.operation_deadline)
+    }
+}
+
 #[cfg(test)]
 mod wire_contracts {
     use super::*;
@@ -1297,7 +1361,13 @@ mod wire_contracts {
         let api = FakePaymentsApi {
             calls: Cell::new(0),
         };
-        let authorized = process_approved(&api, super::operation_contracts::approved()).unwrap();
+        let authorized = process_payment(
+            &api,
+            super::operation_contracts::approved_for(
+                "arn:aws:bedrock-agentcore:us-east-1:111111111111:payment-manager/test",
+            ),
+        )
+        .unwrap();
         assert_eq!(api.calls.get(), 1);
         assert_eq!(authorized.amount, "100000");
         assert_eq!(authorized.version, 2);
