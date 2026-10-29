@@ -262,6 +262,58 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn failed_admitted_rename_preserves_timeout_decision() {
+        use crate::launch::{
+            callback::{
+                pending::{acquire_if_free, Custody},
+                wait_decision, PendingStatus, WaitDecision,
+            },
+            clock::SeededRandom,
+            tests_support::Scratch,
+        };
+        let scratch = Scratch::new("failed-rename");
+        let custody = Custody::acquire(scratch.path(), 81).unwrap();
+        let gate = CommitGate::default();
+        assert!(gate.start_exchange());
+        let cutoff = Instant::now();
+        let result = publish_with(
+            &gate,
+            cutoff,
+            scratch.path(),
+            b"session",
+            &SeededRandom::new(1),
+            || cutoff - Duration::from_millis(1),
+            || {
+                for now in [100, 102] {
+                    assert_eq!(
+                        wait_decision(PendingStatus::Exchanging, true, false, now, 100),
+                        WaitDecision::Poll
+                    );
+                }
+                watchdog_step(
+                    &gate,
+                    || panic!("no record while committing"),
+                    |code| assert_eq!(code, 1),
+                );
+                assert_eq!(
+                    wait_decision(PendingStatus::Exchanging, true, false, 105, 100),
+                    WaitDecision::HelperBlocked
+                );
+            },
+            |_, _| Err(std::io::Error::other("rename failed")),
+        );
+        assert!(result.is_err());
+        assert!(!scratch.join("session.json").exists());
+        drop(custody);
+        assert!(acquire_if_free(scratch.path(), 81).is_some());
+        assert_eq!(
+            wait_decision(PendingStatus::Exchanging, false, false, 105, 100),
+            WaitDecision::TimedOut
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn stalled_rename_keeps_custody_and_watchdog_returns_without_waiting() {
         use crate::launch::{
             callback::{
