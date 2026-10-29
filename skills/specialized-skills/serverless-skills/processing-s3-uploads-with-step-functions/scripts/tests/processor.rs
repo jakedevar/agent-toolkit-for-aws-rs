@@ -305,7 +305,9 @@ async fn lambda_accepts_keys_the_slash_dot_dot_check_does_not_catch() {
 #[tokio::test]
 async fn lambda_limits_the_key_length_in_characters() {
     let dir = WorkDir::new();
-    let ok = "a".repeat(MAX_KEY_LENGTH);
+    // A 1024-character key whose last segment is short (a single path segment of
+    // that length is not a valid file name on Linux either).
+    let ok = format!("{}/f.txt", "a".repeat(MAX_KEY_LENGTH - 6));
     let store = FakeStore::serving(b"x");
     assert!(handle_lambda_event(
         &event(json!("b"), json!(ok), None),
@@ -317,7 +319,7 @@ async fn lambda_limits_the_key_length_in_characters() {
     .is_ok());
 
     // 1024 two-byte characters: 2048 bytes, still 1024 characters.
-    let accented = "é".repeat(MAX_KEY_LENGTH);
+    let accented = format!("{}/f.txt", "é".repeat(MAX_KEY_LENGTH - 6));
     let store = FakeStore::serving(b"x");
     assert!(handle_lambda_event(
         &event(json!("b"), json!(accented), None),
@@ -565,7 +567,7 @@ async fn fargate_rejects_invalid_keys_on_stdout() {
 
 #[tokio::test]
 async fn fargate_accepts_a_key_of_exactly_the_maximum_length() {
-    let key = "a".repeat(MAX_KEY_LENGTH);
+    let key = format!("{}/f.txt", "a".repeat(MAX_KEY_LENGTH - 6));
     let run = run(
         Some(&task_event(json!("b"), json!(key))),
         FakeStore::serving(b"x"),
