@@ -606,3 +606,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 10-29 04:20Z: #5085 L0-L2 (f38bc05f) at 703a8c2f9f968e6658074bca6311eb7d2fb63e8b (on r21 d8179823 + design e03640d1; tests-first red 3f0fef76/a5113d55; scoped 3abcb4dc ok on rolling c27549a6, merges clean; fmt/clippy local only). New deps getrandom =0.3.4, miniz_oxide =0.8.9, rustix =1.1.5. Not registered in SLICES (L5). 7 impl decisions. Worker friction #5130 (sandbox TMPDIR inside worktree; GitRunner ceiling seam) and at_commit exit 127 (#4865).
   Review #5131 -> Codex 2f9c71d4 pinned 703a8c2f (carry #5082).
   4/4 busy: 869fe7ce (#5079 repair 1), 4cbe8435 (#5118), 094ad6cf (#4386 repair 1), 2f9c71d4 (#5131).
+- 10-29 04:25Z: #5131 (2f9c71d4) CHANGES_REQUESTED on L0-L2 703a8c2f, no P1: #5132 (case-fold approx), #5133 (indented INI keys dropped -> US fallback), #5135 (unbounded skipped-secret ledger, part of #5082), P3 #5134 (DEL not \u007f). L0/L1/L2 boundaries otherwise sound; seams inert.
+  Repair 1 (all 4) -> f698fe4e (Opus high, continue_from f38bc05f). Then narrow #5131 r2.
+  4/4 busy: 869fe7ce (#5079 repair 1), 4cbe8435 (#5118), 094ad6cf (#4386 repair 1), f698fe4e (#5085 repair 1).
