@@ -34,11 +34,13 @@ pub mod endpoint;
 pub mod env;
 pub mod error;
 pub mod paginate;
+pub mod preflight;
 pub mod recorded;
 pub mod redact;
 pub mod retry;
 #[cfg(feature = "sdk")]
 pub mod sdk;
+pub mod stream;
 pub mod testing;
 pub mod transport;
 

@@ -52,6 +52,7 @@ use aws_credential_types::Credentials as SdkCredentials;
 use aws_sigv4::http_request::{sign, SignableBody, SignableRequest, SigningSettings};
 use aws_sigv4::sign::v4;
 use aws_smithy_async::rt::sleep::TokioSleep;
+use aws_smithy_http_client::tls::TlsContext;
 use aws_smithy_http_client::{tls, Connector};
 use aws_smithy_runtime_api::client::connection::CaptureSmithyConnection;
 use aws_smithy_runtime_api::client::dns::{DnsFuture, ResolveDns, ResolveDnsError};
@@ -74,7 +75,18 @@ use crate::config::ClientConfig;
 use crate::credentials::CredentialsProvider;
 use crate::endpoint::{HostResolver, SystemResolver};
 use crate::error::{AwsError, TimeoutPhase};
-use crate::transport::{HttpRequest, HttpResponse, Signer, SigningScope, Timeouts, Transport};
+use crate::stream::{ChunkLimiter, ResponseStream, StreamError, StreamLimits, StreamingTransport};
+use crate::transport::{
+    refuse_framing_headers, Headers, HttpRequest, HttpResponse, Signer, SigningScope, Timeouts,
+    Transport,
+};
+use roots::ValidatedRoots;
+
+pub mod roots;
+#[cfg(test)]
+mod test_support;
+#[cfg(test)]
+mod tls_tests;
 
 /// Provider name the signer gives the SDK credentials it builds.
 const SIGNER_PROVIDER_NAME: &str = "toolkit-aws";
@@ -239,6 +251,7 @@ fn signing_error(stage: &'static str) -> AwsError {
 
 impl<P: CredentialsProvider> Signer for SigV4Signer<P> {
     fn sign(&self, request: &mut HttpRequest, scope: &SigningScope) -> Result<(), AwsError> {
+        refuse_framing_headers(&request.headers)?;
         let now = (self.clock)();
         let credentials = self.credentials.load()?;
         if credentials.is_expired_at(now) {
@@ -301,56 +314,131 @@ impl ResolveDns for GuardedResolver {
     }
 }
 
+/// A resolver **without** the public-address guard, for the T-TLS loopback
+/// harness only (test builds).
+#[cfg(test)]
+#[derive(Clone)]
+struct UnguardedResolver {
+    inner: Arc<dyn HostResolver + Send + Sync>,
+}
+
+#[cfg(test)]
+impl fmt::Debug for UnguardedResolver {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("UnguardedResolver")
+    }
+}
+
+#[cfg(test)]
+impl ResolveDns for UnguardedResolver {
+    fn resolve_dns<'a>(&'a self, name: &'a str) -> DnsFuture<'a> {
+        DnsFuture::ready(
+            self.inner
+                .resolve(name)
+                .map_err(|reason| ResolveDnsError::new(std::io::Error::other(reason))),
+        )
+    }
+}
+
 type ConnectorFactory = dyn Fn(&Timeouts) -> SharedHttpConnector + Send + Sync;
 
-/// [`Transport`] over the smithy hyper HTTP client.
+/// [`Transport`] and [`StreamingTransport`] over the smithy hyper HTTP client.
 pub struct SdkTransport {
     runtime: SdkRuntime,
     factory: Box<ConnectorFactory>,
     connectors: Mutex<Vec<(Timeouts, SharedHttpConnector)>>,
+    /// The trust roots the connector was built with (`None` for an injected
+    /// connector).
+    roots: Option<ValidatedRoots>,
+    /// Refuse responses from a non-public socket peer (off only in the
+    /// loopback test harness).
+    peer_check: bool,
+}
+
+/// One rustls (aws-lc) connector over `resolver` that trusts exactly `ctx`:
+/// the explicit R-ROOTS context, never Smithy's native roots.
+fn build_connector<R: ResolveDns + Clone + 'static>(
+    runtime: &SdkRuntime,
+    timeouts: &Timeouts,
+    ctx: &TlsContext,
+    resolver: R,
+) -> SharedHttpConnector {
+    // The hyper client registers timers and its executor with the current
+    // runtime, so build it inside the adapter's runtime.
+    let _entered = runtime.0.enter();
+    let settings = HttpConnectorSettings::builder()
+        .connect_timeout(timeouts.connect())
+        .read_timeout(timeouts.read())
+        .build();
+    let connector = Connector::builder()
+        .connector_settings(settings)
+        .sleep_impl(TokioSleep::new())
+        .tls_provider(tls::Provider::Rustls(
+            tls::rustls_provider::CryptoMode::AwsLc,
+        ))
+        .tls_context(ctx.clone())
+        .build_with_resolver(resolver);
+    SharedHttpConnector::new(connector)
 }
 
 impl SdkTransport {
-    /// The production transport: system DNS behind the public-address guard.
-    #[must_use]
-    pub fn new(runtime: &SdkRuntime) -> Self {
-        Self::with_resolver(runtime, Arc::new(SystemResolver))
+    /// The production transport: system DNS behind the public-address guard,
+    /// trusting exactly `roots`.
+    ///
+    /// # Errors
+    /// `InvalidConfig` (field `tls_roots`) if the TLS context cannot be built.
+    pub fn new(runtime: &SdkRuntime, roots: &ValidatedRoots) -> Result<Self, AwsError> {
+        Self::with_resolver(runtime, roots, Arc::new(SystemResolver))
     }
 
     /// The production transport with an injected resolver (still guarded).
-    #[must_use]
+    ///
+    /// # Errors
+    /// `InvalidConfig` (field `tls_roots`) if the TLS context cannot be built.
     pub fn with_resolver(
         runtime: &SdkRuntime,
+        roots: &ValidatedRoots,
         resolver: Arc<dyn HostResolver + Send + Sync>,
-    ) -> Self {
+    ) -> Result<Self, AwsError> {
         let guard = GuardedResolver { inner: resolver };
+        let ctx = roots.tls_context()?;
         let factory_runtime = runtime.clone();
         let factory = move |timeouts: &Timeouts| {
-            // The hyper client registers timers and its executor with the
-            // current runtime, so build it inside the adapter's runtime.
-            let _entered = factory_runtime.0.enter();
-            let settings = HttpConnectorSettings::builder()
-                .connect_timeout(timeouts.connect())
-                .read_timeout(timeouts.read())
-                .build();
-            let connector = Connector::builder()
-                .connector_settings(settings)
-                .sleep_impl(TokioSleep::new())
-                .tls_provider(tls::Provider::Rustls(
-                    tls::rustls_provider::CryptoMode::AwsLc,
-                ))
-                .build_with_resolver(guard.clone());
-            SharedHttpConnector::new(connector)
+            build_connector(&factory_runtime, timeouts, &ctx, guard.clone())
         };
-        Self {
+        Ok(Self {
             runtime: runtime.clone(),
             factory: Box::new(factory),
             connectors: Mutex::new(Vec::new()),
-        }
+            roots: Some(roots.clone()),
+            peer_check: true,
+        })
+    }
+
+    /// The T-TLS harness transport: the same connector builder, TLS provider
+    /// and `ValidatedRoots` as production, with only the DNS resolver
+    /// replaced (unguarded, so a synthetic name can reach a loopback server)
+    /// and the peer check off. Test builds only.
+    #[cfg(test)]
+    pub(crate) fn loopback_for_tests(
+        runtime: &SdkRuntime,
+        roots: &ValidatedRoots,
+        resolver: Arc<dyn HostResolver + Send + Sync>,
+    ) -> Result<Self, AwsError> {
+        let mut transport = Self::with_resolver(runtime, roots, Arc::clone(&resolver))?;
+        let unguarded = UnguardedResolver { inner: resolver };
+        let ctx = roots.tls_context()?;
+        let factory_runtime = runtime.clone();
+        transport.factory = Box::new(move |timeouts: &Timeouts| {
+            build_connector(&factory_runtime, timeouts, &ctx, unguarded.clone())
+        });
+        transport.peer_check = false;
+        Ok(transport)
     }
 
     /// A transport over a given SDK HTTP connector, whatever the timeouts
-    /// (tests and custom stacks; the DNS guard is the connector's business).
+    /// (tests and custom stacks; the DNS guard and trust roots are the
+    /// connector's business).
     #[must_use]
     pub fn with_connector(runtime: &SdkRuntime, connector: impl HttpConnector + 'static) -> Self {
         let shared = SharedHttpConnector::new(connector);
@@ -358,7 +446,16 @@ impl SdkTransport {
             runtime: runtime.clone(),
             factory: Box::new(move |_: &Timeouts| shared.clone()),
             connectors: Mutex::new(Vec::new()),
+            roots: None,
+            peer_check: true,
         }
+    }
+
+    /// The trust roots this transport's connectors use (`None` for an
+    /// injected connector).
+    #[must_use]
+    pub fn roots(&self) -> Option<&ValidatedRoots> {
+        self.roots.as_ref()
     }
 
     fn connector_for(&self, timeouts: &Timeouts) -> SharedHttpConnector {
@@ -372,6 +469,34 @@ impl SdkTransport {
         let connector = (self.factory)(timeouts);
         cache.push((*timeouts, connector.clone()));
         connector
+    }
+
+    /// The guards every request passes before a connector is called: https,
+    /// a public literal host, and no authority or framing header (R-HDR).
+    fn admit(request: &HttpRequest) -> Result<SdkHttpRequest, AwsError> {
+        require_https(&request.url)?;
+        require_public_host(&request.url)?;
+        refuse_framing_headers(&request.headers)?;
+        to_sdk_request(request)
+    }
+
+    /// Send and wait for the response head (bounded by the connector's read
+    /// timeout); the peer check runs before anything is returned.
+    async fn call(
+        &self,
+        connector: SharedHttpConnector,
+        mut request: SdkHttpRequest,
+    ) -> Result<aws_smithy_runtime_api::client::orchestrator::HttpResponse, AwsError> {
+        let capture = CaptureSmithyConnection::new();
+        request.add_extension(capture.clone());
+        let response = connector
+            .call(request)
+            .await
+            .map_err(|error| map_connector_error(&error))?;
+        if self.peer_check {
+            check_peer(&capture)?;
+        }
+        Ok(response)
     }
 }
 
@@ -433,51 +558,94 @@ fn check_peer(capture: &CaptureSmithyConnection) -> Result<(), AwsError> {
     require_public_peer(peer.ip()).inspect_err(|_| connection.poison())
 }
 
-/// Send one request and read the whole body within the read timeout.
-async fn exchange(
-    connector: SharedHttpConnector,
-    mut request: SdkHttpRequest,
-    read_timeout: Duration,
-) -> Result<HttpResponse, AwsError> {
-    let capture = CaptureSmithyConnection::new();
-    request.add_extension(capture.clone());
-    let response = connector
-        .call(request)
-        .await
-        .map_err(|error| map_connector_error(&error))?;
-    check_peer(&capture)?;
-    let status = response.status().as_u16();
-    let headers = response_headers(response.headers().iter());
-    let collected = tokio::time::timeout(
-        read_timeout,
-        ByteStream::new(response.into_body()).collect(),
-    )
-    .await
-    .map_err(|_| AwsError::timeout(TimeoutPhase::Read, "the response body was not read in time"))?;
-    let body = collected
-        .map_err(|error| {
-            AwsError::connect(format!(
-                "the response body could not be read: {}",
-                DisplayErrorContext(&error)
-            ))
-        })?
-        .into_bytes()
-        .to_vec();
-    Ok(HttpResponse {
-        status,
-        headers,
-        body,
-    })
+/// A body-read failure as a redacted boundary error.
+fn body_error(error: &aws_smithy_types::byte_stream::error::Error) -> AwsError {
+    AwsError::connect(format!(
+        "the response body could not be read: {}",
+        DisplayErrorContext(error)
+    ))
 }
 
 impl Transport for SdkTransport {
     fn send(&self, request: &HttpRequest) -> Result<HttpResponse, AwsError> {
-        require_https(&request.url)?;
-        require_public_host(&request.url)?;
-        let sdk_request = to_sdk_request(request)?;
+        let sdk_request = Self::admit(request)?;
         let connector = self.connector_for(&request.timeouts);
-        self.runtime
-            .block_on(exchange(connector, sdk_request, request.timeouts.read()))
+        let read_timeout = request.timeouts.read();
+        self.runtime.block_on(async {
+            let response = self.call(connector, sdk_request).await?;
+            let status = response.status().as_u16();
+            let headers = response_headers(response.headers().iter());
+            let collected = tokio::time::timeout(
+                read_timeout,
+                ByteStream::new(response.into_body()).collect(),
+            )
+            .await
+            .map_err(|_| {
+                AwsError::timeout(TimeoutPhase::Read, "the response body was not read in time")
+            })?;
+            let body = collected
+                .map_err(|error| body_error(&error))?
+                .into_bytes()
+                .to_vec();
+            Ok(HttpResponse {
+                status,
+                headers,
+                body,
+            })
+        })
+    }
+}
+
+/// A streamed SDK response body.
+struct SdkStream {
+    runtime: SdkRuntime,
+    status: u16,
+    headers: Headers,
+    body: ByteStream,
+    idle: Duration,
+    limiter: ChunkLimiter,
+}
+
+impl ResponseStream for SdkStream {
+    fn status(&self) -> u16 {
+        self.status
+    }
+
+    fn headers(&self) -> &Headers {
+        &self.headers
+    }
+
+    fn next_chunk(&mut self) -> Result<Option<Vec<u8>>, StreamError> {
+        let (runtime, body, idle) = (&self.runtime, &mut self.body, self.idle);
+        self.limiter.next(|| {
+            // The timer must be created inside the runtime.
+            match runtime.block_on(async { tokio::time::timeout(idle, body.next()).await }) {
+                Err(_) => Err(StreamError::IdleTimeout),
+                Ok(None) => Ok(None),
+                Ok(Some(Err(error))) => Err(StreamError::Failed(body_error(&error))),
+                Ok(Some(Ok(bytes))) => Ok(Some(bytes.to_vec())),
+            }
+        })
+    }
+}
+
+impl StreamingTransport for SdkTransport {
+    fn open<'a>(
+        &'a self,
+        request: &HttpRequest,
+        limits: &StreamLimits,
+    ) -> Result<Box<dyn ResponseStream + 'a>, AwsError> {
+        let sdk_request = Self::admit(request)?;
+        let connector = self.connector_for(&request.timeouts);
+        let response = self.runtime.block_on(self.call(connector, sdk_request))?;
+        Ok(Box::new(SdkStream {
+            runtime: self.runtime.clone(),
+            status: response.status().as_u16(),
+            headers: response_headers(response.headers().iter()),
+            body: ByteStream::new(response.into_body()),
+            idle: request.timeouts.read(),
+            limiter: ChunkLimiter::new(*limits),
+        }))
     }
 }
 
@@ -513,6 +681,10 @@ mod tests {
 
     fn runtime() -> SdkRuntime {
         SdkRuntime::new().expect("runtime")
+    }
+
+    fn test_roots() -> ValidatedRoots {
+        ValidatedRoots::for_tests(vec![super::test_support::Pki::new("sdk test CA").ca_der])
     }
 
     /// A fixed SDK credentials outcome.
@@ -1134,8 +1306,12 @@ mod tests {
     fn the_production_transport_refuses_literal_ips_without_connecting() {
         // The guarded production stack: the refusal comes before the hyper
         // connector, which would skip the resolver for a literal IP.
-        let transport =
-            SdkTransport::with_resolver(&runtime(), Arc::new(StaticResolver("52.94.0.10")));
+        let transport = SdkTransport::with_resolver(
+            &runtime(),
+            &test_roots(),
+            Arc::new(StaticResolver("52.94.0.10")),
+        )
+        .expect("transport");
         for url in [
             "https://127.0.0.1/",
             "https://[::1]/",
@@ -1254,8 +1430,12 @@ mod tests {
     #[test]
     fn the_production_transport_builds_without_touching_the_network() {
         // Building a connector loads TLS roots but opens no socket.
-        let transport =
-            SdkTransport::with_resolver(&runtime(), Arc::new(StaticResolver("52.94.0.10")));
+        let transport = SdkTransport::with_resolver(
+            &runtime(),
+            &test_roots(),
+            Arc::new(StaticResolver("52.94.0.10")),
+        )
+        .expect("transport");
         let first = transport.connector_for(&Timeouts::default());
         let again = transport.connector_for(&Timeouts::default());
         let other = transport

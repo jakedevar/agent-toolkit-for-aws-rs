@@ -20,12 +20,19 @@ sdk = [
     "dep:aws-smithy-http-client",
     "dep:aws-smithy-runtime-api",
     "dep:aws-smithy-types",
+    "dep:aws-runtime",
+    "dep:aws-types",
+    "dep:openssl-probe",
+    "dep:rustix",
+    "dep:rustls",
+    "dep:rustls-native-certs",
+    "dep:rustls-pki-types",
     "dep:tokio",
 ]
 
 [dependencies]
 toolkit-core = { path = "../toolkit-core" }
-aws-config = { version = "=1.13.0", optional = true, default-features = false, features = ["rustls", "rt-tokio", "sso", "credentials-process"] }
+aws-config = { version = "=1.13.0", optional = true, default-features = false, features = ["rustls", "rt-tokio", "sso", "credentials-process", "credentials-login"] }
 aws-credential-types = { version = "=1.3.1", optional = true }
 aws-sigv4 = { version = "=1.6.3", optional = true, default-features = false, features = ["sign-http"] }
 aws-smithy-async = { version = "=1.3.1", optional = true, features = ["rt-tokio"] }
@@ -33,6 +40,31 @@ aws-smithy-http-client = { version = "=1.5.1", optional = true, default-features
 aws-smithy-runtime-api = { version = "=1.19.1", optional = true, features = ["client"] }
 aws-smithy-types = { version = "=1.9.0", optional = true }
 tokio = { version = "=1.54.1", optional = true, default-features = false, features = ["rt", "time", "net"] }
+# R-ABS profile adapter (#4413 S1): aws-config's own profile parser over the
+# `Fs`/`Env` shims, and the SDK home-directory rule for the default paths.
+aws-runtime = { version = "=1.10.2", optional = true }
+aws-types = { version = "=1.7.0", optional = true }
+# R-ROOTS (#4413 S1): explicit root validation. No `logging` feature: the R-LOG
+# gate keeps every `log` backend out of the tree.
+rustls = { version = "=0.23.46", optional = true, default-features = false, features = ["std"] }
+rustls-native-certs = { version = "=0.8.5", optional = true }
+rustls-pki-types = { version = "=1.15.1", optional = true, features = ["std"] }
+
+# The Unix platform loader's locations for an empty `SSL_CERT_FILE` (R-ROOTS),
+# and the safe `dup2` that gives `credential_process` children a null stdin (D2).
+[target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
+openssl-probe = { version = "=0.2.2", optional = true }
+
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "=1.1.5", optional = true, default-features = false, features = ["std", "stdio"] }
+
+# Offline T-TLS fixtures: certificates minted at test time (no `ring`, no PEM
+# files on disk beyond temp dirs) and a loopback rustls server; the DPoP key
+# for T-LOGIN.
+[dev-dependencies]
+rcgen = { version = "=0.14.10", default-features = false, features = ["aws_lc_rs", "pem"] }
+rustls = { version = "=0.23.46", default-features = false, features = ["std", "aws_lc_rs"] }
+p256 = { version = "=0.13.2", default-features = false, features = ["arithmetic", "pem"] }
 
 [lints]
 workspace = true
