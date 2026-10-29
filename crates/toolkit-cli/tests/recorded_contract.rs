@@ -2067,6 +2067,13 @@ const INVENTORY: &[(&str, Class)] = &[
     ),
     ("ai_models", Class::Recorded),
     (
+        "ai_payloads",
+        Class::NotRecorded(
+            "the skill's own code_templates files, read-only from the repository tree; no AWS \
+             response is read",
+        ),
+    ),
+    (
         "asm_exec",
         Class::NotRecorded("resolves Secrets Manager references through the live SDK client"),
     ),

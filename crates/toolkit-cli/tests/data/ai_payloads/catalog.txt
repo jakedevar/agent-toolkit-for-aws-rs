@@ -1,0 +1,499 @@
+dataset-transformation/code_templates/transformation.py
+  title: Dataset Transformation
+  cell 0 markdown: Dataset Transformation
+  cell 1: Configuration
+  cell 2: Transformation Function
+  cell 3: Load Dataset
+  cell 4: Transform
+  cell 5: Save Output
+  slot INPUT_LOCATION kind=string code=1 sentinel=0
+  slot OUTPUT_LOCATION kind=string code=1 sentinel=0
+
+finetuning/code_templates/dpo.py
+  title: Fine-Tuning
+  cell 0 markdown: Fine-Tuning
+  cell 1: Install Dependencies
+  cell 2: Setup & Credentials
+  cell 3: Create Dataset and Model Package Group
+  cell 4: Configure Trainer
+  cell 5: Hyperparameter Overrides
+  cell 6: Start Training
+  cell 7: Plot and Display Metrics [NOTEBOOK_ONLY_SECTION]
+  slot PROJECT_DIR kind=string code=1 sentinel=0
+  target BASE_MODEL cell=2 line=30 kind=string literal=""
+  target TRAINING_DATA_S3 cell=2 line=31 kind=string literal=""
+  target ACCEPT_EULA cell=2 line=34 kind=bool literal=False
+  target MODEL_PACKAGE_GROUP_NAME cell=2 line=35 kind=string literal=""
+  manual cell=4 line=77: accept_eula=ACCEPT_EULA, # Uncomment for Meta models
+  manual cell=5 line=97: Uncomment the following line to change the learning rate
+  manual cell=5 line=100: Uncomment the following line to change the batch size
+  manual cell=5 line=103: Uncomment the following line to change the number of epochs
+  manual cell=5 line=106: Uncomment the following line to change the learning rate war
+  manual cell=5 line=109: Uncomment the following line to change Adam Beta
+
+finetuning/code_templates/rlaif_builtin.py
+  title: Fine-Tuning
+  cell 0 markdown: Fine-Tuning
+  cell 1: Install Dependencies
+  cell 2: Setup & Credentials
+  cell 3: Create Dataset and Model Package Group
+  cell 4: Configure Trainer
+  cell 5: Hyperparameter Overrides
+  cell 6: Start Training
+  cell 7: Plot and Display Metrics [NOTEBOOK_ONLY_SECTION]
+  slot PROJECT_DIR kind=string code=1 sentinel=0
+  target BASE_MODEL cell=2 line=32 kind=string literal=""
+  target TRAINING_DATA_S3 cell=2 line=33 kind=string literal=""
+  target ACCEPT_EULA cell=2 line=36 kind=bool literal=False
+  target MODEL_PACKAGE_GROUP_NAME cell=2 line=39 kind=string literal=""
+  target REWARD_MODEL_ID cell=2 line=43 kind=string literal=""
+  target REWARD_PROMPT_VALUE cell=2 line=47 kind=string literal=""
+  manual cell=4 line=86: accept_eula=ACCEPT_EULA,  # Uncomment for Meta models
+  manual cell=5 line=103: Uncomment the following line to change the learning rate
+  manual cell=5 line=106: Uncomment the following line to change the batch size
+  manual cell=5 line=109: Uncomment the following line to change the number of epochs
+
+finetuning/code_templates/rlaif_custom_prompt.py
+  title: Fine-Tuning
+  cell 0 markdown: Fine-Tuning
+  cell 1: Install Dependencies
+  cell 2: Setup & Credentials
+  cell 3: Register Custom Reward Prompt
+  cell 4: Create Dataset and Model Package Group
+  cell 5: Configure Trainer
+  cell 6: Hyperparameter Overrides
+  cell 7: Start Training
+  cell 8: Plot and Display Metrics [NOTEBOOK_ONLY_SECTION]
+  slot GENERATE A NAME FOR THE EVALUATOR HERE kind=string code=1 sentinel=0
+  slot PROJECT_DIR kind=string code=1 sentinel=0
+  target BASE_MODEL cell=2 line=34 kind=string literal=""
+  target TRAINING_DATA_S3 cell=2 line=35 kind=string literal=""
+  target ACCEPT_EULA cell=2 line=38 kind=bool literal=False
+  target MODEL_PACKAGE_GROUP_NAME cell=2 line=41 kind=string literal=""
+  target REWARD_MODEL_ID cell=2 line=45 kind=string literal=""
+  target CUSTOM_PROMPT_PATH cell=3 line=50 kind=string literal=""
+  manual cell=5 line=99: accept_eula=ACCEPT_EULA,  # Uncomment for Meta models
+  manual cell=6 line=116: Uncomment the following line to change the learning rate
+  manual cell=6 line=119: Uncomment the following line to change the batch size
+  manual cell=6 line=122: Uncomment the following line to change the number of epochs
+
+finetuning/code_templates/rlvr.py
+  title: Fine-Tuning
+  cell 0 markdown: Fine-Tuning
+  cell 1: Install Dependencies
+  cell 2: Setup & Credentials
+  cell 3: Register Reward Function
+  cell 4: Create Dataset and Model Package Group
+  cell 5: Configure Trainer
+  cell 6: Hyperparameter Overrides
+  cell 7: Start Training
+  cell 8: Plot and Display Metrics [NOTEBOOK_ONLY_SECTION]
+  slot GENERATE A NAME FOR THE EVALUATOR HERE kind=string code=1 sentinel=0
+  slot PROJECT_DIR kind=string code=1 sentinel=0
+  target BASE_MODEL cell=2 line=30 kind=string literal=""
+  target TRAINING_DATA_S3 cell=2 line=31 kind=string literal=""
+  target ACCEPT_EULA cell=2 line=34 kind=bool literal=False
+  target MODEL_PACKAGE_GROUP_NAME cell=2 line=35 kind=string literal=""
+  target reward_function_path cell=3 line=41 kind=string literal=""
+  manual cell=5 line=92: accept_eula=ACCEPT_EULA, # Uncomment for Meta models
+  manual cell=6 line=111: Uncomment the following line to change the learning rate
+  manual cell=6 line=114: Uncomment the following line to change the batch size
+  manual cell=6 line=117: Uncomment the following line to change the number of epochs
+
+finetuning/code_templates/sft.py
+  title: Fine-Tuning
+  cell 0 markdown: Fine-Tuning
+  cell 1: Install Dependencies
+  cell 2: Setup & Credentials
+  cell 3: Create Dataset and Model Package Group
+  cell 4: Configure Trainer
+  cell 5: Hyperparameter Overrides
+  cell 6: Start Training
+  cell 7: Plot and Display Metrics [NOTEBOOK_ONLY_SECTION]
+  slot PROJECT_DIR kind=string code=1 sentinel=0
+  target BASE_MODEL cell=2 line=30 kind=string literal=""
+  target TRAINING_DATA_S3 cell=2 line=31 kind=string literal=""
+  target ACCEPT_EULA cell=2 line=34 kind=bool literal=False
+  target MODEL_PACKAGE_GROUP_NAME cell=2 line=35 kind=string literal=""
+  manual cell=4 line=77: accept_eula=ACCEPT_EULA, # Uncomment for Meta models
+  manual cell=5 line=96: Uncomment the following line to change the learning rate
+  manual cell=5 line=99: Uncomment the following line to change the batch size
+  manual cell=5 line=102: Uncomment the following line to change the number of epochs
+  manual cell=5 line=105: Uncomment the following line to change the learning rate war
+
+model-deployment/code_templates/deploy-jumpstart-sagemaker.py
+  title: Deploy a JumpStart Foundation Model to SageMaker
+  cell 0 markdown: Deploy a JumpStart Foundation Model to SageMaker
+  cell 1: Setup
+  cell 2: Configuration and validation
+  cell 3: Build the model from the JumpStart config
+  cell 4: Deploy to a real-time endpoint and wait for InService
+  cell 5: Test Inference
+  cell 6: Save Manifest
+  slot ENDPOINT_NAME kind=string code=1 sentinel=0
+  slot INSTANCE_TYPE kind=string code=1 sentinel=0
+  slot MODEL_ID kind=string code=1 sentinel=0
+  slot MODEL_NAME kind=string code=1 sentinel=0
+  slot PROJECT_DIR kind=string code=1 sentinel=0
+  slot REGION kind=string code=1 sentinel=0
+  slot ROLE_ARN kind=string code=1 sentinel=0
+
+model-deployment/code_templates/deploy-nova-bedrock.py
+  title: Model Deployment — Bedrock
+  cell 0 markdown: Model Deployment — Bedrock
+  cell 1: Setup
+  cell 2: Configuration
+  cell 3: Build and Deploy to Bedrock
+  cell 4: Test Inference
+  cell 5: Save Manifest
+  slot CUSTOM_MODEL_NAME kind=string code=1 sentinel=0
+  slot PROJECT_DIR kind=string code=1 sentinel=0
+  slot REGION kind=string code=2 sentinel=0
+  slot ROLE_ARN kind=string code=1 sentinel=0
+  slot TRAINING_JOB_NAME kind=string code=1 sentinel=0
+  target message cell=4 line=47 kind=string literal="What is the capital of France?"
+
+model-deployment/code_templates/deploy-nova-sagemaker.py
+  title: Model Deployment — SageMaker
+  cell 0 markdown: Model Deployment — SageMaker
+  cell 1: Setup
+  cell 2: Configuration
+  cell 3: Build Model
+  cell 4: Deploy Endpoint
+  cell 5: Test Inference
+  cell 6: Save Manifest
+  slot ENDPOINT_NAME kind=string code=1 sentinel=0
+  slot INSTANCE_TYPE kind=string code=1 sentinel=0
+  slot PROJECT_DIR kind=string code=1 sentinel=0
+  slot REGION kind=string code=1 sentinel=0
+  slot ROLE_ARN kind=string code=1 sentinel=0
+  slot TRAINING_JOB_NAME kind=string code=1 sentinel=0
+
+model-deployment/code_templates/deploy-oss-bedrock.py
+  title: Model Deployment — Bedrock
+  cell 0 markdown: Model Deployment — Bedrock
+  cell 1: Setup
+  cell 2: Configuration
+  cell 3: Flatten S3 Structure and Start Import
+  cell 4: Wait for Import to Complete
+  cell 5: Test Inference
+  cell 6: Save Manifest
+  slot MODEL_NAME kind=string code=1 sentinel=0
+  slot PROJECT_DIR kind=string code=1 sentinel=0
+  slot REGION kind=string code=1 sentinel=0
+  slot ROLE_ARN kind=string code=1 sentinel=0
+  slot TRAINING_JOB_NAME kind=string code=1 sentinel=0
+
+model-deployment/code_templates/deploy-oss-sagemaker.py
+  title: Model Deployment — SageMaker
+  cell 0 markdown: Model Deployment — SageMaker
+  cell 1: Setup
+  cell 2: Configuration
+  cell 3: Build Model
+  cell 4: Deploy Endpoint
+  cell 5: Test Inference
+  cell 6: Save Manifest
+  slot ACCEPT_EULA kind=value code=1 sentinel=0
+  slot ENDPOINT_NAME kind=string code=1 sentinel=0
+  slot INSTANCE_TYPE kind=string code=1 sentinel=0
+  slot PROJECT_DIR kind=string code=1 sentinel=0
+  slot REGION kind=string code=1 sentinel=0
+  slot ROLE_ARN kind=string code=1 sentinel=0
+  slot TRAINING_JOB_NAME kind=string code=1 sentinel=0
+  manual cell=2 line=25: NOTE FOR AGENT: Only include the ACCEPT_EULA line below for
+  manual cell=3 line=42: NOTE FOR AGENT: Only include model_builder.accept_eula for M
+
+model-deployment/code_templates/optimize-benchmark.py
+  title: Inference Optimization — Benchmark an Endpoint
+  cell 0 markdown: Inference Optimization — Benchmark an Endpoint
+  cell 1: Setup
+  cell 2: Configuration
+  cell 3: Define the Workload
+  cell 4: Run the Benchmark
+  cell 5: Display Results
+  cell 6: Save Manifest
+  cell 7: Compare Runs (optional)
+  slot BASELINE_JOB_NAME kind=string code=1 sentinel=0
+  slot BASELINE_LABEL kind=string code=1 sentinel=0
+  slot BENCHMARK_JOB_NAME kind=string code=1 sentinel=0
+  slot CONCURRENCY kind=value code=1 sentinel=0
+  slot DATASET_S3_URI kind=string code=0 sentinel=0 comment-only
+  slot ENDPOINT_NAME kind=string code=1 sentinel=0
+  slot EXTRA_PARAMS kind=string code=0 sentinel=0 comment-only
+  slot INFERENCE_COMPONENT_NAME kind=string code=0 sentinel=0 comment-only
+  slot INPUT_TOKENS_MEAN kind=value code=1 sentinel=0
+  slot INPUT_TOKENS_STDDEV kind=value code=1 sentinel=0
+  slot OUTPUT_TOKENS_MEAN kind=value code=1 sentinel=0
+  slot OUTPUT_TOKENS_STDDEV kind=value code=1 sentinel=0
+  slot PROJECT_DIR kind=string code=1 sentinel=0
+  slot REGION kind=string code=1 sentinel=0
+  slot REQUEST_COUNT kind=value code=1 sentinel=0
+  slot REQUEST_TEMPLATE kind=string code=0 sentinel=0 comment-only
+  slot RESPONSE_FIELD kind=string code=0 sentinel=0 comment-only
+  slot ROLE_ARN kind=string code=1 sentinel=0
+  slot S3_OUTPUT_LOCATION kind=string code=1 sentinel=0
+  slot THIS_RUN_LABEL kind=string code=1 sentinel=0
+  slot TOKENIZER kind=string code=1 sentinel=0
+  slot WORKLOAD_CONFIG_NAME kind=string code=1 sentinel=0
+
+model-deployment/code_templates/optimize-huggingface-to-s3.py
+  title: Download a HuggingFace Hub Model to S3 (for optimization)
+  cell 0 markdown: Download a HuggingFace Hub Model to S3 (for optimization)
+  cell 1: Setup
+  cell 2: Configuration
+  cell 3: Download the HuggingFace snapshot to S3
+  slot HF_MODEL_ID kind=string code=1 sentinel=0
+  slot HF_TOKEN_OR_NONE kind=secret code=1 sentinel=1
+  slot REGION kind=string code=1 sentinel=0
+
+model-deployment/code_templates/optimize-recommendation.py
+  title: Inference Optimization — Deployment Recommendations
+  cell 0 markdown: Inference Optimization — Deployment Recommendations
+  cell 1: Setup
+  cell 2: Configuration
+  cell 3: Define the Workload
+  cell 4: Run the Recommendation Job
+  cell 5: Review Recommendations
+  cell 6: Deploy Top Recommendation
+  cell 7: Save Manifest
+  slot CONCURRENCY kind=value code=1 sentinel=0
+  slot DATASET_S3_URI kind=string code=0 sentinel=0 comment-only
+  slot ENDPOINT_NAME kind=string code=1 sentinel=0
+  slot INPUT_TOKENS_MEAN kind=value code=1 sentinel=0
+  slot INPUT_TOKENS_STDDEV kind=value code=1 sentinel=0
+  slot INSTANCE_TYPE kind=string code=0 sentinel=0 comment-only
+  slot JUMPSTART_MODEL_ID kind=string code=0 sentinel=0 comment-only
+  slot MODEL_S3_URI kind=string code=1 sentinel=0
+  slot OUTPUT_TOKENS_MEAN kind=value code=1 sentinel=0
+  slot OUTPUT_TOKENS_STDDEV kind=value code=1 sentinel=0
+  slot PERFORMANCE_METRIC kind=string code=1 sentinel=0
+  slot PROJECT_DIR kind=string code=1 sentinel=0
+  slot RECOMMENDATION_JOB_NAME kind=string code=1 sentinel=0
+  slot REGION kind=string code=1 sentinel=0
+  slot REQUEST_COUNT kind=value code=1 sentinel=0
+  slot ROLE_ARN kind=string code=1 sentinel=0
+  slot S3_OUTPUT_LOCATION kind=string code=1 sentinel=0
+  slot TOKENIZER kind=string code=1 sentinel=0
+  slot WORKLOAD_CONFIG_NAME kind=string code=1 sentinel=0
+
+model-evaluation/code_templates/custom_scorer_evaluator.py
+  title: Model Evaluation
+  cell 0 markdown: Model Evaluation
+  cell 1: Configuration
+  cell 2: Start Evaluation
+  cell 3: Wait for Completion
+  cell 4: Show Results
+  slot DATASET_S3_URI kind=string code=1 sentinel=0
+  slot EVALUATE_BASE kind=string code=1 sentinel=0
+  slot EVALUATOR kind=string code=1 sentinel=0
+  slot MLFLOW_EXPERIMENT_NAME kind=string code=1 sentinel=0
+  slot MODEL kind=string code=1 sentinel=0
+  slot PROJECT_DIR kind=string code=1 sentinel=0
+  slot REGION kind=string code=1 sentinel=0
+  slot S3_OUTPUT_PATH kind=string code=1 sentinel=0
+
+model-evaluation/code_templates/llmaaj_evaluator.py
+  title: Model Evaluation
+  cell 0 markdown: Model Evaluation
+  cell 1: Configuration
+  cell 2: Start Evaluation
+  cell 3: Wait for Completion
+  cell 4: Show Results
+  slot DATASET_S3_URI kind=string code=1 sentinel=0
+  slot JUDGE_MODEL kind=string code=1 sentinel=0
+  slot METRICS_LIST kind=value code=1 sentinel=0
+  slot MLFLOW_EXPERIMENT_NAME kind=string code=1 sentinel=0
+  slot MODEL_ARN kind=string code=1 sentinel=0
+  slot PROJECT_DIR kind=string code=1 sentinel=0
+  slot REGION kind=string code=1 sentinel=0
+  slot S3_OUTPUT_PATH kind=string code=1 sentinel=0
+  slot TRUE_OR_FALSE kind=value code=1 sentinel=0
+  manual cell=1 line=33: NOTE FOR AGENT: If user wishes to use custom metrics,
+  manual cell=1 line=35: Uncomment this code to load the custom metrics from that fil
+
+processing-jobs/code_templates/dataset_definition_processing.py
+  title: Athena or Redshift Dataset Processing
+  cell 0 markdown: Athena or Redshift Dataset Processing
+  cell 1: Install dependencies
+  cell 2: Configure the processing job
+  cell 3: Build the dataset definition and submit
+  cell 4: Report status and optionally wait
+  slot ATHENA_CATALOG kind=string code=1 sentinel=0
+  slot ATHENA_DATABASE kind=string code=1 sentinel=0
+  slot ATHENA_QUERY kind=string code=1 sentinel=0
+  slot BASE_JOB_NAME kind=string code=1 sentinel=0
+  slot IMAGE_FRAMEWORK kind=string code=1 sentinel=0
+  slot INSTANCE_TYPE kind=string code=1 sentinel=0
+  slot OUTPUT_S3_URI kind=string code=1 sentinel=0
+  slot QUERY_PROCESSING_SCRIPT kind=string code=1 sentinel=0
+  slot QUERY_RESULT_S3_URI kind=string code=1 sentinel=0
+  slot REDSHIFT_CLUSTER kind=string code=1 sentinel=0
+  slot REDSHIFT_CLUSTER_ROLE_ARN kind=string code=1 sentinel=0
+  slot REDSHIFT_DATABASE kind=string code=1 sentinel=0
+  slot REDSHIFT_DB_USER kind=string code=1 sentinel=0
+  slot REDSHIFT_QUERY kind=string code=1 sentinel=0
+  slot ROLE_ARN kind=string code=1 sentinel=0
+  target REGION cell=2 line=22 kind=string literal=""
+  target SOURCE_KIND cell=2 line=24 kind=string literal="athena"
+  target CUSTOM_IMAGE_URI cell=2 line=26 kind=string literal=""
+  target IMAGE_VERSION cell=2 line=28 kind=string literal=""
+  target IMAGE_PYTHON_VERSION cell=2 line=29 kind=string literal=""
+  target OUTPUT_FORMAT cell=2 line=32 kind=string literal="PARQUET"
+  target MAX_RUNTIME_SECONDS cell=2 line=34 kind=int literal=86400
+  target WAIT_FOR_COMPLETION cell=2 line=36 kind=bool literal=False
+  target ATHENA_WORK_GROUP cell=2 line=40 kind=string literal="primary"
+
+processing-jobs/code_templates/framework_processing.py
+  title: Framework Processing
+  cell 0 markdown: Framework Processing
+  cell 1: Install dependencies
+  cell 2: Configure the processing job
+  cell 3: Build and submit the processor
+  cell 4: Report status and optionally wait
+  slot BASE_JOB_NAME kind=string code=1 sentinel=0
+  slot ENTRY_SCRIPT kind=string code=1 sentinel=0
+  slot FRAMEWORK kind=string code=1 sentinel=0
+  slot INPUT_S3_URI kind=string code=1 sentinel=0
+  slot INSTANCE_TYPE kind=string code=1 sentinel=0
+  slot OUTPUT_S3_URI kind=string code=1 sentinel=0
+  slot REQUIREMENTS kind=string code=1 sentinel=0
+  slot ROLE_ARN kind=string code=1 sentinel=0
+  slot SOURCE_DIR kind=string code=1 sentinel=0
+  target REGION cell=2 line=20 kind=string literal=""
+  target FRAMEWORK_VERSION cell=2 line=23 kind=string literal=""
+  target PYTHON_VERSION cell=2 line=24 kind=string literal=""
+  target CUSTOM_IMAGE_URI cell=2 line=28 kind=string literal=""
+  target INSTANCE_COUNT cell=2 line=32 kind=int literal=1
+  target MAX_RUNTIME_SECONDS cell=2 line=33 kind=int literal=86400
+  target WAIT_FOR_COMPLETION cell=2 line=36 kind=bool literal=False
+
+processing-jobs/code_templates/script_processing.py
+  title: Script or Custom-Container Processing
+  cell 0 markdown: Script or Custom-Container Processing
+  cell 1: Install dependencies
+  cell 2: Configure the processing job
+  cell 3: Build and submit the processor
+  cell 4: Report status and optionally wait
+  slot BASE_JOB_NAME kind=string code=1 sentinel=0
+  slot IMAGE_FRAMEWORK kind=string code=1 sentinel=0
+  slot INPUT_S3_URI kind=string code=1 sentinel=0
+  slot INSTANCE_TYPE kind=string code=1 sentinel=0
+  slot OUTPUT_S3_URI kind=string code=1 sentinel=0
+  slot ROLE_ARN kind=string code=1 sentinel=0
+  slot SCRIPT_PATH kind=string code=1 sentinel=0
+  target REGION cell=2 line=20 kind=string literal=""
+  target CUSTOM_IMAGE_URI cell=2 line=23 kind=string literal=""
+  target IMAGE_VERSION cell=2 line=25 kind=string literal=""
+  target IMAGE_PYTHON_VERSION cell=2 line=26 kind=string literal=""
+  target INSTANCE_COUNT cell=2 line=30 kind=int literal=1
+  target VOLUME_SIZE_GB cell=2 line=31 kind=int literal=30
+  target MAX_RUNTIME_SECONDS cell=2 line=32 kind=int literal=86400
+  target WAIT_FOR_COMPLETION cell=2 line=35 kind=bool literal=False
+
+processing-jobs/code_templates/spark_processing.py
+  title: Distributed Spark Processing
+  cell 0 markdown: Distributed Spark Processing
+  cell 1: Install dependencies
+  cell 2: Configure the processing job
+  cell 3: Build and submit the Spark processor
+  cell 4: Report status and optionally wait
+  slot BASE_JOB_NAME kind=string code=1 sentinel=0
+  slot INPUT_S3_URI kind=string code=1 sentinel=0
+  slot INSTANCE_TYPE kind=string code=1 sentinel=0
+  slot OUTPUT_S3_URI kind=string code=1 sentinel=0
+  slot ROLE_ARN kind=string code=1 sentinel=0
+  slot SPARK_APPLICATION kind=string code=1 sentinel=0
+  slot SPARK_EVENT_LOGS_S3_URI kind=string code=1 sentinel=0
+  slot SPARK_MAIN_CLASS kind=string code=1 sentinel=0
+  target REGION cell=2 line=21 kind=string literal=""
+  target APPLICATION_KIND cell=2 line=23 kind=string literal="pyspark"
+  target SPARK_VERSION cell=2 line=26 kind=string literal=""
+  target SPARK_PYTHON_VERSION cell=2 line=27 kind=string literal=""
+  target SPARK_CONTAINER_VERSION cell=2 line=28 kind=string literal=""
+  target INSTANCE_COUNT cell=2 line=33 kind=int literal=2
+  target VOLUME_SIZE_GB cell=2 line=34 kind=int literal=100
+  target MAX_RUNTIME_SECONDS cell=2 line=35 kind=int literal=86400
+  target WAIT_FOR_COMPLETION cell=2 line=40 kind=bool literal=False
+
+training-jobs/code_templates/custom_training.py
+  title: Custom Training Job
+  cell 0 markdown: Custom Training Job
+  cell 1: Install dependencies
+  cell 2: Configure the training job
+  cell 3: Build the custom trainer
+  cell 4: Launch and optionally wait
+  slot BASE_JOB_NAME kind=string code=1 sentinel=0
+  slot ENTRY_SCRIPT kind=string code=1 sentinel=0
+  slot INSTANCE_TYPE kind=string code=1 sentinel=0
+  slot OUTPUT_S3_URI kind=string code=1 sentinel=0
+  slot REQUIREMENTS kind=string code=1 sentinel=0
+  slot ROLE_ARN kind=string code=1 sentinel=0
+  slot SOURCE_DIR kind=string code=1 sentinel=0
+  slot TRAINING_IMAGE_URI kind=string code=1 sentinel=0
+  slot TRAINING_S3_URI kind=string code=1 sentinel=0
+  target REGION cell=2 line=28 kind=string literal=""
+  target ALGORITHM_NAME cell=2 line=31 kind=string literal=""
+  target OUTPUT_KMS_KEY_ID cell=2 line=37 kind=string literal=""
+  target INSTANCE_COUNT cell=2 line=39 kind=int literal=1
+  target VOLUME_SIZE_GB cell=2 line=40 kind=int literal=30
+  target MAX_RUNTIME_SECONDS cell=2 line=41 kind=int literal=86400
+  target USE_SPOT cell=2 line=42 kind=bool literal=False
+  target MAX_WAIT_SECONDS cell=2 line=43 kind=int literal=172800
+  target CHECKPOINT_S3_URI cell=2 line=44 kind=string literal=""
+  target ENABLE_NETWORK_ISOLATION cell=2 line=47 kind=bool literal=False
+  target ENABLE_INTER_CONTAINER_TRAFFIC_ENCRYPTION cell=2 line=48 kind=bool literal=False
+  target WAIT_FOR_COMPLETION cell=2 line=51 kind=bool literal=False
+  target WAIT_POLL_SECONDS cell=2 line=52 kind=int literal=60
+  target WAIT_STARTUP_SLACK_SECONDS cell=2 line=53 kind=int literal=600
+
+training-jobs/code_templates/jumpstart_training.py
+  title: JumpStart Traditional ML Training
+  cell 0 markdown: JumpStart Traditional ML Training
+  cell 1: Install dependencies
+  cell 2: Configure the training job
+  cell 3: Build the JumpStart trainer
+  cell 4: Launch and optionally wait
+  slot BASE_JOB_NAME kind=string code=1 sentinel=0
+  slot JUMPSTART_MODEL_ID kind=string code=1 sentinel=0
+  slot OUTPUT_S3_URI kind=string code=1 sentinel=0
+  slot ROLE_ARN kind=string code=1 sentinel=0
+  slot TRAINING_S3_URI kind=string code=1 sentinel=0
+  target REGION cell=2 line=28 kind=string literal=""
+  target MODEL_VERSION cell=2 line=31 kind=string literal=""
+  target OUTPUT_KMS_KEY_ID cell=2 line=34 kind=string literal=""
+  target CHECKPOINT_S3_URI cell=2 line=35 kind=string literal=""
+  target ACCEPT_EULA cell=2 line=37 kind=bool literal=False
+  target OVERRIDE_INSTANCE_TYPE cell=2 line=39 kind=string literal=""
+  target ENABLE_NETWORK_ISOLATION cell=2 line=43 kind=bool literal=False
+  target ENABLE_INTER_CONTAINER_TRAFFIC_ENCRYPTION cell=2 line=44 kind=bool literal=False
+  target MAX_RUNTIME_SECONDS cell=2 line=45 kind=int literal=86400
+  target WAIT_FOR_COMPLETION cell=2 line=46 kind=bool literal=False
+  target WAIT_POLL_SECONDS cell=2 line=47 kind=int literal=60
+  target WAIT_STARTUP_SLACK_SECONDS cell=2 line=48 kind=int literal=600
+
+training-jobs/code_templates/recipe_training.py
+  title: Serverful Recipe Training
+  cell 0 markdown: Serverful Recipe Training
+  cell 1: Install dependencies
+  cell 2: Configure the training job
+  cell 3: Build the recipe trainer
+  cell 4: Launch and optionally wait
+  slot BASE_JOB_NAME kind=string code=1 sentinel=0
+  slot INSTANCE_TYPE kind=string code=1 sentinel=0
+  slot OUTPUT_S3_URI kind=string code=1 sentinel=0
+  slot RECIPE_NAME_OR_YAML kind=string code=1 sentinel=0
+  slot ROLE_ARN kind=string code=1 sentinel=0
+  slot TRAINING_S3_URI kind=string code=1 sentinel=0
+  target REGION cell=2 line=27 kind=string literal=""
+  target TRAINING_IMAGE_URI cell=2 line=30 kind=string literal=""
+  target OUTPUT_KMS_KEY_ID cell=2 line=33 kind=string literal=""
+  target CHECKPOINT_S3_URI cell=2 line=34 kind=string literal=""
+  target TRAINING_PLAN_ARN cell=2 line=38 kind=string literal=""
+  target ENABLE_NETWORK_ISOLATION cell=2 line=41 kind=bool literal=False
+  target ENABLE_INTER_CONTAINER_TRAFFIC_ENCRYPTION cell=2 line=42 kind=bool literal=False
+  target MAX_RUNTIME_SECONDS cell=2 line=43 kind=int literal=86400
+  target WAIT_FOR_COMPLETION cell=2 line=46 kind=bool literal=False
+  target WAIT_POLL_SECONDS cell=2 line=47 kind=int literal=60
+  target WAIT_STARTUP_SLACK_SECONDS cell=2 line=48 kind=int literal=600
+
+templates: 23
