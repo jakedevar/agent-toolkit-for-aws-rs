@@ -89,28 +89,6 @@ fn payment_roots_native_store_refuses_presence_before_loading() {
 fn source_gate(source: &str) -> Result<(), String> {
     use quote::ToTokens;
     use syn::{ImplItem, Item, Stmt};
-    let mut file = syn::parse_file(source).map_err(|e| e.to_string())?;
-    let guard = "cfg (not (all (unix , not (target_os = \"macos\"))))";
-    let guarded = |attrs: &[syn::Attribute]| {
-        attrs
-            .iter()
-            .any(|a| a.meta.to_token_stream().to_string() == guard)
-    };
-    file.items.retain(|item| !matches!(item, Item::Mod(m) if m.ident == "tests" && m.attrs.iter().any(|a| a.meta.to_token_stream().to_string() == "cfg (test)")));
-    for item in &mut file.items {
-        if let Item::Impl(imp) = item {
-            for member in &mut imp.items {
-                if let ImplItem::Fn(f) = member {
-                    if f.sig.ident == "native_store" && guarded(&f.attrs) {
-                        f.block.stmts.clear();
-                    }
-                    if f.sig.ident == "from_process" {
-                        f.block.stmts.retain(|stmt| !matches!(stmt, Stmt::Local(local) if guarded(&local.attrs) && matches!(&local.pat, syn::Pat::Ident(p) if p.ident == "presence") && local.init.as_ref().is_some_and(|i| i.expr.to_token_stream().to_string() == "RootEnv :: from_process ()")));
-                    }
-                }
-            }
-        }
-    }
     fn scan(tokens: proc_macro2::TokenStream) -> Result<(), String> {
         use proc_macro2::TokenTree;
         let mut words = Vec::new();
@@ -148,6 +126,28 @@ fn source_gate(source: &str) -> Result<(), String> {
             }
         }
         Ok(())
+    }
+    let mut file = syn::parse_file(source).map_err(|e| e.to_string())?;
+    let guard = "cfg (not (all (unix , not (target_os = \"macos\"))))";
+    let guarded = |attrs: &[syn::Attribute]| {
+        attrs
+            .iter()
+            .any(|a| a.meta.to_token_stream().to_string() == guard)
+    };
+    file.items.retain(|item| !matches!(item, Item::Mod(m) if m.ident == "tests" && m.attrs.iter().any(|a| a.meta.to_token_stream().to_string() == "cfg (test)")));
+    for item in &mut file.items {
+        if let Item::Impl(imp) = item {
+            for member in &mut imp.items {
+                if let ImplItem::Fn(f) = member {
+                    if f.sig.ident == "native_store" && guarded(&f.attrs) {
+                        f.block.stmts.clear();
+                    }
+                    if f.sig.ident == "from_process" {
+                        f.block.stmts.retain(|stmt| !matches!(stmt, Stmt::Local(local) if guarded(&local.attrs) && matches!(&local.pat, syn::Pat::Ident(p) if p.ident == "presence") && local.init.as_ref().is_some_and(|i| i.expr.to_token_stream().to_string() == "RootEnv :: from_process ()")));
+                    }
+                }
+            }
+        }
     }
     // A from_process import can alias the call and evade path matching.
     for item in &file.items {
@@ -251,6 +251,6 @@ fn recorder_selects_first_file_and_all_directories_for_every_environment() {
         let roots =
             validate_payment_roots(&env, &loader, PaymentRootPlatform::UnixFixedTable).unwrap();
         assert_eq!(*loader.calls.borrow(), expected);
-        assert_eq!(roots.roots().certificates(), &[cert.clone()]);
+        assert_eq!(roots.roots().certificates(), std::slice::from_ref(&cert));
     }
 }
