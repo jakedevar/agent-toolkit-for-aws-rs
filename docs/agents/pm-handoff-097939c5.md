@@ -589,3 +589,7 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 10-29 03:50Z: S4 #5105 (04c6946e) CHANGES_REQUESTED on 9696df86: P1 #5106 (failed re-init clears R-STICKY, old session id + unsigned), #5107 (uncapped detached cancel threads); P2 #5108 (GET loops per generation leak), #5109 (read-only bypass via id-less tools/call), #5110 (approvals survive session replacement), #5111 (unbounded retained tool-name map), #5113 (D1 refresh only on POST); P3 #5112 (unbounded rebuild log). Checklist otherwise clean (creds/secrecy/signing/endpoint/TLS/headers).
   RULING: fix all 8 now (no P2 carry). Repair 1 -> 869fe7ce (Opus high, continue_from de9907bc). Then bounded S4 r2 on #5105.
   4/4 busy: f38bc05f (#5085), b5103711 (#4386 design), ea33032b (#5091 r2), 869fe7ce (#5079 repair 1).
+- 10-29 03:55Z: #5091 r2 (ea33032b) ACCEPT #4410 DESIGN at 07d6a0b950af5f840b52ab57265dfccc86505d39. New P2 #5114 (macOS P-ROOTS rationale), #5115 (mismatch response scope; add ValidationException/matching-proof cases), #5116 (randomness gate scope); P3 #5117 (T-AC3-MAKE lint exception) -> carry into S-slice reviews (P-ROOTS/S4/S5).
+  x402 slices: P-ROOTS (toolkit-aws, needs S1 #5017 on rolling) | S1 pure policy (now) | S2 config (S1) | S3 net (S1, #5017, #5080) | S4 AgentCore (S1, #5017) | S5 flow (P-ROOTS) | S6 admin | S7 cutover.
+  x402 S1 = #5118 -> 4cbe8435 (Opus high, sandbox 07d6a0b9 on fa3fa137). Carry #5097/#5102 into its review.
+  4/4 busy: f38bc05f (#5085), b5103711 (#4386 design), 869fe7ce (#5079 repair 1), 4cbe8435 (#5118 x402 S1).
