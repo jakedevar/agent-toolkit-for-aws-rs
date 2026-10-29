@@ -539,3 +539,7 @@ Friction: #4727, Rsi #4694, Rsi #4704
   4/4 busy: d06901cb (#5052 S2), 9801eac1 (#5059), 0610b2fa (#4382 design r3), 8bd99aa0 (#4487 repair 3).
 - 10-29 02:38Z: #5059 (9801eac1) on #4397 d676f42b: CHANGES_REQUESTED #5073 (S3 download follows dest symlink, deletes existing file on failure), #5072 (null-valued dict bypasses idempotency), #5074 (metric dims/EMF shapes changed). Repair worker 311fde60 (Sonnet high, continue_from e91f616e). Then narrow #5059 r2. Kaizen #5067 #5068 unread (kaizen lane pending a free slot).
   4/4 busy: d06901cb (#5052 S2), 0610b2fa (#4382 design r3), 8bd99aa0 (#4487 repair 3), 311fde60 (#4397 repair).
+- 10-29 02:47Z: #4397 ACCEPTED on PM inspection at a748f2057acc7d5c64c13e8d1d7058a31c1ea9f5 (311fde60 repair; red 167b80b5/76022344; check_landing ok scoped 4d6a7174). ON LAND close: #4397 #5059 #5072 #5073 #5074 (#5058 stays).
+  ROUND 21 = #5078, worker 374cf704 (Opus high, sandbox r20 head 0eff943c): merge #4397 now; continue later with #4487 (after #5018 r4) + #4412 hooks.json activation. When r21 is verified: enqueue with supersedes r20 a6460649 if r20 is still queued.
+  Kaizen: #5067 cancelled (dup #5034); #5068 noted (review probes: use exact-name package jobs, not scoped_test, in review briefs).
+  4/4 busy: d06901cb (#5052 S2), 0610b2fa (#4382 design r3), 8bd99aa0 (#4487 repair 3), 374cf704 (r21).
