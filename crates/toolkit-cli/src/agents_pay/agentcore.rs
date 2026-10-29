@@ -601,10 +601,10 @@ impl<'a> PaymentClient<'a> {
                             match value.parse::<u64>() {
                                 Ok(n) if n <= 65_536 => Some(n as usize),
                                 Ok(_) | Err(_) if status >= 400 => {
-                                    return Err(PaymentError::Service(error_code(
+                                    break 'response PaymentError::Service(error_code(
                                         error_header.as_deref(),
                                         "",
-                                    )));
+                                    ));
                                 }
                                 _ => return Err(PaymentError::InvalidResponse),
                             }
