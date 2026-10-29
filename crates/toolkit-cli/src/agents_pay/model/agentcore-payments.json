@@ -1,0 +1,1242 @@
+{
+  "source": {
+    "botocore": "1.43.108",
+    "api_version": "2024-02-28",
+    "service_model_sha256": "6ae4e07026769e280e7e076cf3096f7291424e99da95e046599a621001f9a6c5"
+  },
+  "operations": {
+    "CreatePaymentInstrument": {
+      "name": "CreatePaymentInstrument",
+      "http": {
+        "method": "POST",
+        "requestUri": "/payments/createPaymentInstrument",
+        "responseCode": 201
+      },
+      "input": {
+        "shape": "CreatePaymentInstrumentRequest"
+      },
+      "output": {
+        "shape": "CreatePaymentInstrumentResponse"
+      },
+      "errors": [
+        {
+          "shape": "ServiceQuotaExceededException"
+        },
+        {
+          "shape": "AccessDeniedException"
+        },
+        {
+          "shape": "ConflictException"
+        },
+        {
+          "shape": "ValidationException"
+        },
+        {
+          "shape": "ThrottlingException"
+        },
+        {
+          "shape": "ResourceNotFoundException"
+        },
+        {
+          "shape": "InternalServerException"
+        },
+        {
+          "shape": "SubscriptionRequiredException"
+        }
+      ],
+      "documentation": "<p>Create a new payment instrument for a connector.</p>",
+      "idempotent": true
+    },
+    "CreatePaymentSession": {
+      "name": "CreatePaymentSession",
+      "http": {
+        "method": "POST",
+        "requestUri": "/payments/createPaymentSession",
+        "responseCode": 201
+      },
+      "input": {
+        "shape": "CreatePaymentSessionRequest"
+      },
+      "output": {
+        "shape": "CreatePaymentSessionResponse"
+      },
+      "errors": [
+        {
+          "shape": "ServiceQuotaExceededException"
+        },
+        {
+          "shape": "AccessDeniedException"
+        },
+        {
+          "shape": "ConflictException"
+        },
+        {
+          "shape": "ValidationException"
+        },
+        {
+          "shape": "ThrottlingException"
+        },
+        {
+          "shape": "InternalServerException"
+        },
+        {
+          "shape": "SubscriptionRequiredException"
+        }
+      ],
+      "documentation": "<p>Create a new payment session.</p>",
+      "idempotent": true
+    },
+    "GetPaymentSession": {
+      "name": "GetPaymentSession",
+      "http": {
+        "method": "POST",
+        "requestUri": "/payments/getPaymentSession",
+        "responseCode": 200
+      },
+      "input": {
+        "shape": "GetPaymentSessionRequest"
+      },
+      "output": {
+        "shape": "GetPaymentSessionResponse"
+      },
+      "errors": [
+        {
+          "shape": "AccessDeniedException"
+        },
+        {
+          "shape": "ValidationException"
+        },
+        {
+          "shape": "ResourceNotFoundException"
+        },
+        {
+          "shape": "ThrottlingException"
+        },
+        {
+          "shape": "InternalServerException"
+        }
+      ],
+      "documentation": "<p>Get a payment session.</p>",
+      "readonly": true
+    },
+    "ProcessPayment": {
+      "name": "ProcessPayment",
+      "http": {
+        "method": "POST",
+        "requestUri": "/payments/processPayment",
+        "responseCode": 200
+      },
+      "input": {
+        "shape": "ProcessPaymentRequest"
+      },
+      "output": {
+        "shape": "ProcessPaymentResponse"
+      },
+      "errors": [
+        {
+          "shape": "ServiceQuotaExceededException"
+        },
+        {
+          "shape": "AccessDeniedException"
+        },
+        {
+          "shape": "ConflictException"
+        },
+        {
+          "shape": "ValidationException"
+        },
+        {
+          "shape": "ResourceNotFoundException"
+        },
+        {
+          "shape": "ThrottlingException"
+        },
+        {
+          "shape": "InternalServerException"
+        },
+        {
+          "shape": "SubscriptionRequiredException"
+        }
+      ],
+      "documentation": "<p>Processes a payment using a payment instrument within a payment session.</p>",
+      "idempotent": true
+    }
+  },
+  "shapes": {
+    "AccessDeniedException": {
+      "type": "structure",
+      "members": {
+        "message": {
+          "shape": "NonBlankString"
+        }
+      },
+      "documentation": "<p>The exception that occurs when you do not have sufficient permissions to perform an action. Verify that your IAM policy includes the necessary permissions for the operation you are trying to perform.</p>",
+      "error": {
+        "httpStatusCode": 403,
+        "senderFault": true
+      },
+      "exception": true
+    },
+    "Amount": {
+      "type": "structure",
+      "required": [
+        "value",
+        "currency"
+      ],
+      "members": {
+        "value": {
+          "shape": "String",
+          "documentation": "<p>The numeric value of the amount.</p>"
+        },
+        "currency": {
+          "shape": "Currency",
+          "documentation": "<p>The currency code for the amount.</p>"
+        }
+      },
+      "documentation": "<p>Represents a monetary amount with a currency.</p>"
+    },
+    "AvailableLimits": {
+      "type": "structure",
+      "members": {
+        "availableSpendAmount": {
+          "shape": "Amount",
+          "documentation": "<p>The remaining available amount that can be spent.</p>"
+        },
+        "updatedAt": {
+          "shape": "DateTimestamp",
+          "documentation": "<p>The timestamp when the available limits were last updated.</p>"
+        }
+      },
+      "documentation": "<p>The available spending limits for a payment session.</p>"
+    },
+    "Boolean": {
+      "type": "boolean",
+      "box": true
+    },
+    "ClientToken": {
+      "type": "string",
+      "max": 256,
+      "min": 33,
+      "pattern": "[a-zA-Z0-9](-*[a-zA-Z0-9]){0,256}"
+    },
+    "ConflictException": {
+      "type": "structure",
+      "members": {
+        "message": {
+          "shape": "NonBlankString"
+        }
+      },
+      "documentation": "<p>The exception that occurs when the request conflicts with the current state of the resource. This can happen when trying to modify a resource that is currently being modified by another request, or when trying to create a resource that already exists.</p>",
+      "error": {
+        "httpStatusCode": 409,
+        "senderFault": true
+      },
+      "exception": true
+    },
+    "CreatePaymentInstrumentRequest": {
+      "type": "structure",
+      "required": [
+        "paymentManagerArn",
+        "paymentConnectorId",
+        "paymentInstrumentType",
+        "paymentInstrumentDetails"
+      ],
+      "members": {
+        "userId": {
+          "shape": "UserId",
+          "documentation": "<p>The user ID associated with this payment instrument.</p>",
+          "location": "header",
+          "locationName": "X-Amzn-Bedrock-AgentCore-Payments-User-Id"
+        },
+        "agentName": {
+          "shape": "PaymentAgentName",
+          "documentation": "<p>The agent name associated with this request, used for observability.</p>",
+          "location": "header",
+          "locationName": "X-Amzn-Bedrock-AgentCore-Payments-Agent-Name"
+        },
+        "paymentManagerArn": {
+          "shape": "PaymentManagerArn",
+          "documentation": "<p>The ARN of the payment manager that owns this payment instrument.</p>"
+        },
+        "paymentConnectorId": {
+          "shape": "PaymentConnectorId",
+          "documentation": "<p>The ID of the payment connector to use for this instrument.</p>"
+        },
+        "paymentInstrumentType": {
+          "shape": "PaymentInstrumentType",
+          "documentation": "<p>The type of payment instrument being created.</p>"
+        },
+        "paymentInstrumentDetails": {
+          "shape": "PaymentInstrumentDetails",
+          "documentation": "<p>The details of the payment instrument.</p>"
+        },
+        "clientToken": {
+          "shape": "ClientToken",
+          "documentation": "<p>A unique, case-sensitive identifier that you provide to ensure the idempotency of the request.</p>",
+          "idempotencyToken": true
+        }
+      },
+      "documentation": "<p>Request structure for creating a payment instrument.</p>"
+    },
+    "CreatePaymentInstrumentResponse": {
+      "type": "structure",
+      "required": [
+        "paymentInstrument"
+      ],
+      "members": {
+        "paymentInstrument": {
+          "shape": "PaymentInstrument",
+          "documentation": "<p>The created payment instrument.</p>"
+        }
+      },
+      "documentation": "<p>Response structure for creating a payment instrument.</p>"
+    },
+    "CreatePaymentSessionRequest": {
+      "type": "structure",
+      "required": [
+        "paymentManagerArn",
+        "expiryTimeInMinutes"
+      ],
+      "members": {
+        "userId": {
+          "shape": "UserId",
+          "documentation": "<p>The user ID associated with this payment session.</p>",
+          "location": "header",
+          "locationName": "X-Amzn-Bedrock-AgentCore-Payments-User-Id"
+        },
+        "agentName": {
+          "shape": "PaymentAgentName",
+          "documentation": "<p>The agent name associated with this request, used for observability.</p>",
+          "location": "header",
+          "locationName": "X-Amzn-Bedrock-AgentCore-Payments-Agent-Name"
+        },
+        "paymentManagerArn": {
+          "shape": "PaymentManagerArn",
+          "documentation": "<p>The ARN of the payment manager that owns this session.</p>"
+        },
+        "limits": {
+          "shape": "SessionLimits",
+          "documentation": "<p>The spending limits for this payment session.</p>"
+        },
+        "expiryTimeInMinutes": {
+          "shape": "CreatePaymentSessionRequestExpiryTimeInMinutesInteger",
+          "documentation": "<p>The session expiry time in minutes. Must be between 15 and 480 minutes.</p>"
+        },
+        "clientToken": {
+          "shape": "ClientToken",
+          "documentation": "<p>A unique, case-sensitive identifier that you provide to ensure the idempotency of the request.</p>",
+          "idempotencyToken": true
+        }
+      },
+      "documentation": "<p>Request structure for creating a payment session.</p>"
+    },
+    "CreatePaymentSessionRequestExpiryTimeInMinutesInteger": {
+      "type": "integer",
+      "box": true,
+      "max": 480,
+      "min": 15
+    },
+    "CreatePaymentSessionResponse": {
+      "type": "structure",
+      "required": [
+        "paymentSession"
+      ],
+      "members": {
+        "paymentSession": {
+          "shape": "PaymentSession",
+          "documentation": "<p>The created payment session.</p>"
+        }
+      },
+      "documentation": "<p>Response structure for creating a payment session.</p>"
+    },
+    "CryptoWalletNetwork": {
+      "type": "string",
+      "documentation": "<p>Supported blockchain networks for crypto wallets.</p>",
+      "enum": [
+        "ETHEREUM",
+        "SOLANA"
+      ]
+    },
+    "CryptoX402PaymentInput": {
+      "type": "structure",
+      "required": [
+        "version",
+        "payload"
+      ],
+      "members": {
+        "version": {
+          "shape": "String",
+          "documentation": "<p>The version of the X402 protocol.</p>"
+        },
+        "payload": {
+          "shape": "PaymentDocument",
+          "documentation": "<p>The X402 payment payload.</p>"
+        },
+        "permit2AllowanceLimit": {
+          "shape": "Permit2AllowanceLimit",
+          "documentation": "<p>The maximum on-chain Permit2 allowance to grant before signing the payment authorization, in the asset's smallest denomination. This field is valid only for the <code>upto</code> (metered) scheme; supplying it for the <code>exact</code> scheme returns a validation error.</p> <p>When set, the service approves an ERC-20 allowance for this amount before processing the payment. The approval sets, rather than adds to, the wallet's allowance. Set this field only when the wallet needs approving, for example on its first <code>upto</code> payment, to avoid a redundant on-chain transaction. Omit the field to skip allowance handling. This is the default, and the only behavior for the <code>exact</code> scheme.</p>"
+        }
+      },
+      "documentation": "<p>The input for a crypto X402 payment.</p>"
+    },
+    "CryptoX402PaymentOutput": {
+      "type": "structure",
+      "required": [
+        "version",
+        "payload"
+      ],
+      "members": {
+        "version": {
+          "shape": "String",
+          "documentation": "<p>The version of the X402 protocol.</p>"
+        },
+        "payload": {
+          "shape": "PaymentDocument",
+          "documentation": "<p>The X402 payment response payload.</p>"
+        }
+      },
+      "documentation": "<p>The output from a crypto X402 payment.</p>"
+    },
+    "Currency": {
+      "type": "string",
+      "documentation": "<p>Supported currency codes.</p>",
+      "enum": [
+        "USD"
+      ]
+    },
+    "DateTimestamp": {
+      "type": "timestamp",
+      "timestampFormat": "iso8601"
+    },
+    "Email": {
+      "type": "string",
+      "documentation": "<p>Email address with validation for standard email format.</p>",
+      "max": 254,
+      "min": 1,
+      "pattern": "[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}",
+      "sensitive": true
+    },
+    "EmbeddedCryptoWallet": {
+      "type": "structure",
+      "required": [
+        "network",
+        "linkedAccounts"
+      ],
+      "members": {
+        "network": {
+          "shape": "CryptoWalletNetwork",
+          "documentation": "<p>The blockchain network for this embedded crypto wallet. Supported networks: ETHEREUM, SOLANA.</p>"
+        },
+        "linkedAccounts": {
+          "shape": "LinkedAccountList",
+          "documentation": "<p>List of linked accounts linked to this wallet. Each represents a way the end user can authenticate to this wallet.</p>"
+        },
+        "walletAddress": {
+          "shape": "String",
+          "documentation": "<p>The wallet address on the specified blockchain network.</p>"
+        },
+        "redirectUrl": {
+          "shape": "EmbeddedCryptoWalletRedirectUrlString",
+          "documentation": "<p>URL for the end user to complete a provider-specific action such as wallet linking or onboarding.</p>"
+        }
+      },
+      "documentation": "<p>Embedded crypto wallet instrument details.</p>"
+    },
+    "EmbeddedCryptoWalletRedirectUrlString": {
+      "type": "string",
+      "max": 2048,
+      "min": 0
+    },
+    "GetPaymentSessionRequest": {
+      "type": "structure",
+      "required": [
+        "paymentManagerArn",
+        "paymentSessionId"
+      ],
+      "members": {
+        "userId": {
+          "shape": "UserId",
+          "documentation": "<p>The user ID associated with this payment session.</p>",
+          "location": "header",
+          "locationName": "X-Amzn-Bedrock-AgentCore-Payments-User-Id"
+        },
+        "agentName": {
+          "shape": "PaymentAgentName",
+          "documentation": "<p>The agent name associated with this request, used for observability.</p>",
+          "location": "header",
+          "locationName": "X-Amzn-Bedrock-AgentCore-Payments-Agent-Name"
+        },
+        "paymentManagerArn": {
+          "shape": "PaymentManagerArn",
+          "documentation": "<p>The ARN of the payment manager that owns this session.</p>"
+        },
+        "paymentSessionId": {
+          "shape": "PaymentSessionId",
+          "documentation": "<p>The ID of the payment session to retrieve.</p>"
+        }
+      },
+      "documentation": "<p>Request structure for getting a payment session.</p>"
+    },
+    "GetPaymentSessionResponse": {
+      "type": "structure",
+      "required": [
+        "paymentSession"
+      ],
+      "members": {
+        "paymentSession": {
+          "shape": "PaymentSession",
+          "documentation": "<p>The payment session details.</p>"
+        }
+      },
+      "documentation": "<p>Response structure for getting a payment session.</p>"
+    },
+    "Integer": {
+      "type": "integer",
+      "box": true
+    },
+    "InternalServerException": {
+      "type": "structure",
+      "members": {
+        "message": {
+          "shape": "NonBlankString"
+        }
+      },
+      "documentation": "<p>The exception that occurs when the service encounters an unexpected internal error. This is a temporary condition that will resolve itself with retries. We recommend implementing exponential backoff retry logic in your application.</p>",
+      "error": {
+        "httpStatusCode": 500
+      },
+      "exception": true,
+      "fault": true
+    },
+    "JwtKeyId": {
+      "type": "string",
+      "documentation": "<p>JWT Key ID (kid) from the JWT header.</p>",
+      "max": 255,
+      "min": 1,
+      "pattern": "[a-zA-Z0-9_-]{1,255}"
+    },
+    "LinkedAccount": {
+      "type": "structure",
+      "members": {
+        "email": {
+          "shape": "LinkedAccountEmail",
+          "documentation": "<p>Email-based linked account.</p>"
+        },
+        "sms": {
+          "shape": "LinkedAccountSms",
+          "documentation": "<p>SMS-based linked account using phone number.</p>"
+        },
+        "developerJwt": {
+          "shape": "LinkedAccountDeveloperJwt",
+          "documentation": "<p>Developer JWT linked account with key ID and subject.</p>"
+        },
+        "oAuth2": {
+          "shape": "LinkedAccountOAuth2",
+          "documentation": "<p>OAuth2 provider linked account (Google, Apple, X, Telegram, GitHub).</p>"
+        }
+      },
+      "documentation": "<p>Represents different linked accounts that can be linked to an embedded wallet. Supports email, SMS, JWT, and OAuth2 approaches.</p>",
+      "sensitive": true,
+      "union": true
+    },
+    "LinkedAccountDeveloperJwt": {
+      "type": "structure",
+      "required": [
+        "kid",
+        "sub"
+      ],
+      "members": {
+        "kid": {
+          "shape": "JwtKeyId",
+          "documentation": "<p>The key ID (kid) from the JWT header. Identifies which key was used to sign the JWT.</p>"
+        },
+        "sub": {
+          "shape": "LinkedAccountDeveloperJwtSubString",
+          "documentation": "<p>The subject (sub) claim from the JWT payload. Identifies the principal that is the subject of the JWT.</p>"
+        }
+      },
+      "documentation": "<p>Authentication method using JWT with key ID and subject claims.</p>"
+    },
+    "LinkedAccountDeveloperJwtSubString": {
+      "type": "string",
+      "max": 255,
+      "min": 1
+    },
+    "LinkedAccountEmail": {
+      "type": "structure",
+      "required": [
+        "emailAddress"
+      ],
+      "members": {
+        "emailAddress": {
+          "shape": "Email",
+          "documentation": "<p>The email address used for the linked account. Must be a valid email format.</p>"
+        }
+      },
+      "documentation": "<p>Linked account using an email address.</p>",
+      "sensitive": true
+    },
+    "LinkedAccountList": {
+      "type": "list",
+      "member": {
+        "shape": "LinkedAccount"
+      },
+      "documentation": "<p>A list of linkedAccount methods linked to an embedded wallet.</p>",
+      "max": 1,
+      "min": 0
+    },
+    "LinkedAccountOAuth2": {
+      "type": "structure",
+      "members": {
+        "google": {
+          "shape": "OAuth2Authentication",
+          "documentation": "<p>Google OAuth2 authentication.</p>"
+        },
+        "apple": {
+          "shape": "OAuth2Authentication",
+          "documentation": "<p>Apple OAuth2 authentication.</p>"
+        },
+        "x": {
+          "shape": "OAuth2Authentication",
+          "documentation": "<p>X (formerly Twitter) OAuth2 authentication.</p>"
+        },
+        "telegram": {
+          "shape": "OAuth2Authentication",
+          "documentation": "<p>Telegram OAuth2 authentication.</p>"
+        },
+        "github": {
+          "shape": "OAuth2Authentication",
+          "documentation": "<p>GitHub OAuth2 authentication.</p>"
+        }
+      },
+      "documentation": "<p>Authentication method using OAuth2 providers. Supports Google, Apple, X, Telegram, and GitHub providers.</p>",
+      "union": true
+    },
+    "LinkedAccountSms": {
+      "type": "structure",
+      "required": [
+        "phoneNumber"
+      ],
+      "members": {
+        "phoneNumber": {
+          "shape": "PhoneNumber",
+          "documentation": "<p>The phone number in E.164 format (e.g., +1234567890).</p>"
+        }
+      },
+      "documentation": "<p>Linked account using a phone number in E.164 format.</p>",
+      "sensitive": true
+    },
+    "MppPaymentCredential": {
+      "type": "string",
+      "documentation": "<p>Ready-to-send <code>Authorization: Payment &lt;base64url-token&gt;</code> value. This is a bearer-like payment credential and must not appear in logs, traces, or error messages.</p>",
+      "max": 32768,
+      "min": 1,
+      "sensitive": true
+    },
+    "MppPaymentInput": {
+      "type": "structure",
+      "required": [
+        "version",
+        "wwwAuthenticateHeaders"
+      ],
+      "members": {
+        "version": {
+          "shape": "Version",
+          "documentation": "<p>The MPP protocol version, for example \"1\" or \"2\".</p>"
+        },
+        "wwwAuthenticateHeaders": {
+          "shape": "WwwAuthenticateHeaderList",
+          "documentation": "<p>The raw <code>WWW-Authenticate: Payment</code> header value from the 402 response, passed verbatim. Provide exactly one entry. The service uses this value to generate the payment credential.</p>"
+        },
+        "buyerPaysGasFees": {
+          "shape": "Boolean",
+          "documentation": "<p>Authorizes the service to sign a payment whose blockchain network (gas) fees are charged to your wallet, on top of the payment amount.</p> <p>The challenge indicates who sponsors the network fees. When the challenge does not sponsor them, the service signs the payment only if this field is <code>true</code>. Otherwise it returns a validation error, so you can decide whether to pay the fees or obtain a challenge that sponsors them.</p> <p>Optional. When omitted or <code>false</code>, you decline to pay network fees. This field has no effect on challenges that already sponsor the fees.</p>"
+        }
+      },
+      "documentation": "<p>Contains the payment challenge from a 402 Payment Required response. Forward the raw <code>WWW-Authenticate: Payment</code> header value verbatim. In response, you receive a payment credential that satisfies the challenge. Provide exactly one challenge per request.</p>"
+    },
+    "MppPaymentOutput": {
+      "type": "structure",
+      "required": [
+        "version",
+        "selectedPaymentId",
+        "paymentCredential"
+      ],
+      "members": {
+        "version": {
+          "shape": "Version",
+          "documentation": "<p>The MPP protocol version, for example \"1\" or \"2\".</p>"
+        },
+        "selectedPaymentId": {
+          "shape": "MppPaymentOutputSelectedPaymentIdString",
+          "documentation": "<p>The id of the challenge that was paid, echoed from the input challenge so you can correlate the result without decoding the credential.</p>"
+        },
+        "paymentCredential": {
+          "shape": "MppPaymentCredential",
+          "documentation": "<p>Ready-to-send value for the <code>Authorization</code> header, in the form \"Payment &lt;base64url-token&gt;\". Attach this header and retry the original request. To inspect the full credential, base64url-decode the token.</p>"
+        }
+      },
+      "documentation": "<p>Contains the payment credential, ready to retry the request.</p>"
+    },
+    "MppPaymentOutputSelectedPaymentIdString": {
+      "type": "string",
+      "max": 512,
+      "min": 1
+    },
+    "NonBlankString": {
+      "type": "string",
+      "pattern": "[\\s\\S]+"
+    },
+    "OAuth2Authentication": {
+      "type": "structure",
+      "required": [
+        "sub"
+      ],
+      "members": {
+        "sub": {
+          "shape": "OAuth2AuthenticationSubString",
+          "documentation": "<p>The subject (sub) claim from the OAuth2 provider. Uniquely identifies the user at the provider.</p>"
+        },
+        "emailAddress": {
+          "shape": "Email",
+          "documentation": "<p>The email address from the OAuth2 provider.</p>"
+        },
+        "name": {
+          "shape": "OAuth2AuthenticationNameString",
+          "documentation": "<p>The user's name from the OAuth2 provider.</p>"
+        },
+        "username": {
+          "shape": "OAuth2AuthenticationUsernameString",
+          "documentation": "<p>The username from the OAuth2 provider.</p>"
+        }
+      },
+      "documentation": "<p>OAuth2 authentication information for third-party providers.</p>",
+      "sensitive": true
+    },
+    "OAuth2AuthenticationNameString": {
+      "type": "string",
+      "max": 255,
+      "min": 1
+    },
+    "OAuth2AuthenticationSubString": {
+      "type": "string",
+      "max": 255,
+      "min": 1
+    },
+    "OAuth2AuthenticationUsernameString": {
+      "type": "string",
+      "max": 255,
+      "min": 1
+    },
+    "PaymentAgentName": {
+      "type": "string",
+      "documentation": "<p>The agent name associated with the payment request.</p>",
+      "max": 256,
+      "min": 0
+    },
+    "PaymentConnectorId": {
+      "type": "string",
+      "max": 211,
+      "min": 12,
+      "pattern": "([0-9a-z][-]?){1,100}-[0-9a-z]{10}"
+    },
+    "PaymentDocument": {
+      "type": "structure",
+      "members": {},
+      "documentation": "<p>Custom document type for payment payloads.</p>",
+      "document": true,
+      "sensitive": true
+    },
+    "PaymentInput": {
+      "type": "structure",
+      "members": {
+        "cryptoX402": {
+          "shape": "CryptoX402PaymentInput",
+          "documentation": "<p>Input for a crypto X402 payment.</p>"
+        },
+        "mpp": {
+          "shape": "MppPaymentInput"
+        }
+      },
+      "documentation": "<p>The payment input details, which vary by payment type.</p>",
+      "union": true
+    },
+    "PaymentInstrument": {
+      "type": "structure",
+      "required": [
+        "paymentInstrumentId",
+        "paymentManagerArn",
+        "paymentConnectorId",
+        "userId",
+        "paymentInstrumentType",
+        "paymentInstrumentDetails",
+        "createdAt",
+        "status",
+        "updatedAt"
+      ],
+      "members": {
+        "paymentInstrumentId": {
+          "shape": "PaymentInstrumentId",
+          "documentation": "<p>The unique identifier for this payment instrument.</p>"
+        },
+        "paymentManagerArn": {
+          "shape": "PaymentManagerArn",
+          "documentation": "<p>The ARN of the payment manager that owns this payment instrument.</p>"
+        },
+        "paymentConnectorId": {
+          "shape": "PaymentConnectorId",
+          "documentation": "<p>The ID of the payment connector associated with this instrument.</p>"
+        },
+        "userId": {
+          "shape": "UserId",
+          "documentation": "<p>The user ID associated with this payment instrument.</p>"
+        },
+        "paymentInstrumentType": {
+          "shape": "PaymentInstrumentType",
+          "documentation": "<p>The type of payment instrument (e.g., EMBEDDED_CRYPTO_WALLET).</p>"
+        },
+        "paymentInstrumentDetails": {
+          "shape": "PaymentInstrumentDetails",
+          "documentation": "<p>The details specific to the payment instrument type.</p>"
+        },
+        "createdAt": {
+          "shape": "DateTimestamp",
+          "documentation": "<p>The timestamp when this payment instrument was created.</p>"
+        },
+        "status": {
+          "shape": "PaymentInstrumentStatus",
+          "documentation": "<p>The current status of this payment instrument.</p>"
+        },
+        "updatedAt": {
+          "shape": "DateTimestamp",
+          "documentation": "<p>The timestamp when this payment instrument was last updated.</p>"
+        }
+      },
+      "documentation": "<p>Represents a payment instrument.</p>"
+    },
+    "PaymentInstrumentDetails": {
+      "type": "structure",
+      "members": {
+        "embeddedCryptoWallet": {
+          "shape": "EmbeddedCryptoWallet",
+          "documentation": "<p>Embedded crypto wallet managed directly by end user.</p>"
+        }
+      },
+      "documentation": "<p>Details specific to the instrument type.</p>",
+      "union": true
+    },
+    "PaymentInstrumentId": {
+      "type": "string",
+      "max": 34,
+      "min": 34,
+      "pattern": "payment-instrument-[0-9a-zA-Z-]{15}"
+    },
+    "PaymentInstrumentStatus": {
+      "type": "string",
+      "documentation": "<p>The status of a payment instrument.</p>",
+      "enum": [
+        "INITIATED",
+        "ACTIVE",
+        "FAILED",
+        "DELETED",
+        "BLOCKED"
+      ]
+    },
+    "PaymentInstrumentType": {
+      "type": "string",
+      "documentation": "<p>The type of payment instrument.</p>",
+      "enum": [
+        "EMBEDDED_CRYPTO_WALLET"
+      ]
+    },
+    "PaymentManagerArn": {
+      "type": "string",
+      "max": 2048,
+      "min": 66,
+      "pattern": "arn:(aws|aws-[a-z0-9-]+):bedrock-agentcore:[a-z0-9-]+:[0-9]{12}:payment-manager/[a-z0-9]([a-z0-9-]{0,47}[a-z0-9])?-[a-z0-9]{10}"
+    },
+    "PaymentOutput": {
+      "type": "structure",
+      "members": {
+        "cryptoX402": {
+          "shape": "CryptoX402PaymentOutput",
+          "documentation": "<p>Output from a crypto X402 payment.</p>"
+        },
+        "mpp": {
+          "shape": "MppPaymentOutput"
+        }
+      },
+      "documentation": "<p>The payment output details, which vary by payment type.</p>",
+      "union": true
+    },
+    "PaymentSession": {
+      "type": "structure",
+      "required": [
+        "paymentSessionId",
+        "paymentManagerArn",
+        "userId",
+        "expiryTimeInMinutes",
+        "createdAt",
+        "updatedAt"
+      ],
+      "members": {
+        "paymentSessionId": {
+          "shape": "PaymentSessionId",
+          "documentation": "<p>The unique identifier of the payment session.</p>"
+        },
+        "paymentManagerArn": {
+          "shape": "PaymentManagerArn",
+          "documentation": "<p>The ARN of the payment manager that owns this session.</p>"
+        },
+        "limits": {
+          "shape": "SessionLimits",
+          "documentation": "<p>The spending limits for the payment session.</p>"
+        },
+        "userId": {
+          "shape": "UserId",
+          "documentation": "<p>The user ID associated with this session.</p>"
+        },
+        "expiryTimeInMinutes": {
+          "shape": "Integer",
+          "documentation": "<p>The session expiry time in minutes.</p>"
+        },
+        "createdAt": {
+          "shape": "DateTimestamp",
+          "documentation": "<p>The timestamp when the session was created.</p>"
+        },
+        "availableLimits": {
+          "shape": "AvailableLimits",
+          "documentation": "<p>The current available spending limits.</p>"
+        },
+        "updatedAt": {
+          "shape": "DateTimestamp",
+          "documentation": "<p>The timestamp when the session was last updated.</p>"
+        }
+      },
+      "documentation": "<p>A payment session for managing payment transactions.</p>"
+    },
+    "PaymentSessionId": {
+      "type": "string",
+      "max": 31,
+      "min": 31,
+      "pattern": "payment-session-[0-9a-zA-Z-]{15}"
+    },
+    "PaymentStatus": {
+      "type": "string",
+      "documentation": "<p>Transaction status enum.</p>",
+      "enum": [
+        "PROOF_GENERATED"
+      ]
+    },
+    "PaymentType": {
+      "type": "string",
+      "documentation": "<p>Payment type enum.</p>",
+      "enum": [
+        "CRYPTO_X402",
+        "MPP"
+      ]
+    },
+    "Permit2AllowanceLimit": {
+      "type": "string",
+      "documentation": "<p>The maximum on-chain Permit2 allowance to grant, in the asset's smallest denomination. Pass the value as a numeric string. For example, \"1000000\" is 1 USDC at 6 decimals. To grant an unlimited allowance, pass the uint256 maximum, which is a 78-digit number.</p>",
+      "max": 78,
+      "min": 1,
+      "pattern": "[0-9]+"
+    },
+    "PhoneNumber": {
+      "type": "string",
+      "documentation": "<p>Phone number in E.164 format (e.g., +1234567890).</p>",
+      "max": 16,
+      "min": 3,
+      "pattern": "\\+[1-9]\\d{1,14}",
+      "sensitive": true
+    },
+    "ProcessPaymentId": {
+      "type": "string",
+      "max": 36,
+      "min": 36,
+      "pattern": "[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}"
+    },
+    "ProcessPaymentRequest": {
+      "type": "structure",
+      "required": [
+        "paymentManagerArn",
+        "paymentSessionId",
+        "paymentInstrumentId",
+        "paymentType",
+        "paymentInput"
+      ],
+      "members": {
+        "userId": {
+          "shape": "UserId",
+          "documentation": "<p>The user ID associated with this payment.</p>",
+          "location": "header",
+          "locationName": "X-Amzn-Bedrock-AgentCore-Payments-User-Id"
+        },
+        "agentName": {
+          "shape": "PaymentAgentName",
+          "documentation": "<p>The agent name associated with this request, used for observability.</p>",
+          "location": "header",
+          "locationName": "X-Amzn-Bedrock-AgentCore-Payments-Agent-Name"
+        },
+        "paymentManagerArn": {
+          "shape": "PaymentManagerArn",
+          "documentation": "<p>The ARN of the payment manager.</p>"
+        },
+        "paymentSessionId": {
+          "shape": "PaymentSessionId",
+          "documentation": "<p>The ID of the payment session.</p>"
+        },
+        "paymentInstrumentId": {
+          "shape": "PaymentInstrumentId",
+          "documentation": "<p>The ID of the payment instrument to use.</p>"
+        },
+        "paymentType": {
+          "shape": "PaymentType",
+          "documentation": "<p>The type of payment to process.</p>"
+        },
+        "paymentInput": {
+          "shape": "PaymentInput",
+          "documentation": "<p>The payment input details specific to the payment type.</p>"
+        },
+        "clientToken": {
+          "shape": "ClientToken",
+          "documentation": "<p>A unique, case-sensitive identifier that you provide to ensure the idempotency of the request.</p>",
+          "idempotencyToken": true
+        }
+      },
+      "documentation": "<p>Request structure for processing a payment.</p>"
+    },
+    "ProcessPaymentResponse": {
+      "type": "structure",
+      "required": [
+        "processPaymentId",
+        "paymentManagerArn",
+        "paymentSessionId",
+        "paymentInstrumentId",
+        "paymentType",
+        "status",
+        "paymentOutput",
+        "createdAt",
+        "updatedAt"
+      ],
+      "members": {
+        "processPaymentId": {
+          "shape": "ProcessPaymentId",
+          "documentation": "<p>The unique identifier of the processed payment.</p>"
+        },
+        "paymentManagerArn": {
+          "shape": "PaymentManagerArn",
+          "documentation": "<p>The ARN of the payment manager.</p>"
+        },
+        "paymentSessionId": {
+          "shape": "PaymentSessionId",
+          "documentation": "<p>The ID of the payment session used.</p>"
+        },
+        "paymentInstrumentId": {
+          "shape": "PaymentInstrumentId",
+          "documentation": "<p>The ID of the payment instrument used.</p>"
+        },
+        "paymentType": {
+          "shape": "PaymentType",
+          "documentation": "<p>The type of payment processed.</p>"
+        },
+        "status": {
+          "shape": "PaymentStatus",
+          "documentation": "<p>The status of the payment.</p>"
+        },
+        "paymentOutput": {
+          "shape": "PaymentOutput",
+          "documentation": "<p>The payment output details specific to the payment type.</p>"
+        },
+        "createdAt": {
+          "shape": "DateTimestamp",
+          "documentation": "<p>The timestamp when the payment was created.</p>"
+        },
+        "updatedAt": {
+          "shape": "DateTimestamp",
+          "documentation": "<p>The timestamp when the payment was last updated.</p>"
+        }
+      },
+      "documentation": "<p>Response structure for processing a payment.</p>"
+    },
+    "ResourceNotFoundException": {
+      "type": "structure",
+      "members": {
+        "message": {
+          "shape": "NonBlankString"
+        }
+      },
+      "documentation": "<p>The exception that occurs when the specified resource does not exist. This can happen when using an invalid identifier or when trying to access a resource that has been deleted.</p>",
+      "error": {
+        "httpStatusCode": 404,
+        "senderFault": true
+      },
+      "exception": true
+    },
+    "ServiceQuotaExceededException": {
+      "type": "structure",
+      "members": {
+        "message": {
+          "shape": "NonBlankString"
+        }
+      },
+      "documentation": "<p>The exception that occurs when the request would cause a service quota to be exceeded. Review your service quotas and either reduce your request rate or request a quota increase.</p>",
+      "error": {
+        "httpStatusCode": 402,
+        "senderFault": true
+      },
+      "exception": true
+    },
+    "SessionLimits": {
+      "type": "structure",
+      "required": [
+        "maxSpendAmount"
+      ],
+      "members": {
+        "maxSpendAmount": {
+          "shape": "Amount",
+          "documentation": "<p>The maximum amount that can be spent in the session.</p>"
+        }
+      },
+      "documentation": "<p>The spending limits configuration for a payment session.</p>"
+    },
+    "String": {
+      "type": "string"
+    },
+    "SubscriptionRequiredException": {
+      "type": "structure",
+      "required": [
+        "message"
+      ],
+      "members": {
+        "message": {
+          "shape": "String"
+        },
+        "subscriptionUrl": {
+          "shape": "SubscriptionRequiredExceptionSubscriptionUrlString",
+          "documentation": "<p>The URL to the Marketplace listing where you can subscribe.</p>"
+        },
+        "productName": {
+          "shape": "SubscriptionRequiredExceptionProductNameString",
+          "documentation": "<p>The name of the product that requires a Marketplace subscription.</p>"
+        }
+      },
+      "documentation": "<p>Returned when you attempt a wallet operation against a Coinbase Marketplace connector whose account does not hold an active Marketplace subscription and is not within the legacy exception period. Subscribe to the Marketplace listing before you retry the operation.</p>",
+      "error": {
+        "httpStatusCode": 403,
+        "senderFault": true
+      },
+      "exception": true
+    },
+    "SubscriptionRequiredExceptionProductNameString": {
+      "type": "string",
+      "max": 256,
+      "min": 1
+    },
+    "SubscriptionRequiredExceptionSubscriptionUrlString": {
+      "type": "string",
+      "max": 2048,
+      "min": 1
+    },
+    "ThrottlingException": {
+      "type": "structure",
+      "members": {
+        "message": {
+          "shape": "NonBlankString"
+        }
+      },
+      "documentation": "<p>The exception that occurs when the request was denied due to request throttling. This happens when you exceed the allowed request rate for an operation. Reduce the frequency of requests or implement exponential backoff retry logic in your application.</p>",
+      "error": {
+        "httpStatusCode": 429,
+        "senderFault": true
+      },
+      "exception": true
+    },
+    "UserId": {
+      "type": "string",
+      "max": 120,
+      "min": 0
+    },
+    "ValidationException": {
+      "type": "structure",
+      "required": [
+        "message",
+        "reason"
+      ],
+      "members": {
+        "message": {
+          "shape": "String"
+        },
+        "reason": {
+          "shape": "ValidationExceptionReason"
+        },
+        "fieldList": {
+          "shape": "ValidationExceptionFieldList"
+        }
+      },
+      "documentation": "<p>The exception that occurs when the input fails to satisfy the constraints specified by the service. Check the error message for details about which input parameter is invalid and correct your request.</p>",
+      "error": {
+        "httpStatusCode": 400,
+        "senderFault": true
+      },
+      "exception": true
+    },
+    "ValidationExceptionField": {
+      "type": "structure",
+      "required": [
+        "name",
+        "message"
+      ],
+      "members": {
+        "name": {
+          "shape": "String",
+          "documentation": "<p>The name of the field.</p>"
+        },
+        "message": {
+          "shape": "String",
+          "documentation": "<p>A message describing why this field failed validation.</p>"
+        }
+      },
+      "documentation": "<p>Stores information about a field passed inside a request that resulted in an exception.</p>"
+    },
+    "ValidationExceptionFieldList": {
+      "type": "list",
+      "member": {
+        "shape": "ValidationExceptionField"
+      }
+    },
+    "ValidationExceptionReason": {
+      "type": "string",
+      "enum": [
+        "CannotParse",
+        "FieldValidationFailed",
+        "IdempotentParameterMismatchException",
+        "EventInOtherSession",
+        "ResourceConflict"
+      ]
+    },
+    "Version": {
+      "type": "string",
+      "documentation": "<p>A protocol version identifier, as a bare numeric string. For example, \"1\" or \"2\".</p>",
+      "max": 10,
+      "min": 1,
+      "pattern": "[0-9]+"
+    },
+    "WwwAuthenticateHeader": {
+      "type": "string",
+      "documentation": "<p>A raw <code>WWW-Authenticate: Payment</code> header value from a 402 response, containing RFC 9110 auth-params such as <code>id</code>, <code>realm</code>, <code>method</code>, <code>intent</code>, and <code>request</code>. Pass this value in the request body, not as an HTTP header.</p>",
+      "max": 16384,
+      "min": 1
+    },
+    "WwwAuthenticateHeaderList": {
+      "type": "list",
+      "member": {
+        "shape": "WwwAuthenticateHeader"
+      },
+      "documentation": "<p>The raw WWW-Authenticate header value to fulfill. Provide exactly one entry.</p>",
+      "max": 1,
+      "min": 1
+    }
+  }
+}
