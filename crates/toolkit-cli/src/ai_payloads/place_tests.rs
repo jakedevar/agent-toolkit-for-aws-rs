@@ -112,6 +112,7 @@ fn ap_pub_05_no_hard_links_and_eexist() {
         (1, "publish_no_atomic_noreplace"),
         (95, "publish_no_atomic_noreplace"),
         (17, "destination_exists"),
+        (13, "publish_io"),
     ] {
         let f = Fixture::new();
         let mut h = Hooks::new();
@@ -175,4 +176,59 @@ fn ap_pub_rejects_symlink_directory_and_invalid_name() {
         "publish_invalid_path"
     );
     assert!(fs::read_dir(real).unwrap().next().is_none());
+}
+
+#[cfg(unix)]
+#[test]
+fn ap_pub_02_two_publish_calls_interleave_and_post_commit_hook_observes_link() {
+    struct Interleave { dir: PathBuf, observed: bool }
+    impl PublishHooks for Interleave {
+        fn before_commit(&mut self, temp: &Path, dest: &Path) {
+            assert_eq!(fs::read(temp).unwrap(), b"loser");
+            assert!(!dest.exists());
+            struct Observe<'a>(&'a mut bool);
+            impl PublishHooks for Observe<'_> {
+                fn after_commit_before_unlink(&mut self, temp: &Path, dest: &Path) {
+                    assert_eq!(fs::read(temp).unwrap(), b"winner");
+                    assert_eq!(fs::read(dest).unwrap(), b"winner");
+                    *self.0 = true;
+                }
+            }
+            publish_new(&self.dir, "x", b"winner", &mut Observe(&mut self.observed)).unwrap();
+        }
+    }
+    let f = Fixture::new();
+    let mut h = Interleave { dir: f.0.clone(), observed: false };
+    assert_eq!(publish_new(&f.0, "x", b"loser", &mut h).unwrap_err().code, "destination_exists");
+    assert!(h.observed);
+    assert_eq!(fs::read(f.0.join("x")).unwrap(), b"winner");
+    assert_eq!(f.entries().len(), 1);
+}
+
+#[cfg(unix)]
+#[test]
+fn ap_pub_invalid_names_never_write_through_symlink() {
+    let f = Fixture::new();
+    let other = Fixture::new();
+    std::os::unix::fs::symlink(&other.0, f.0.join(".x")).unwrap();
+    for name in ["", ".", "..", "x/", "x/.", "x//", "a/b", "x\0y"] {
+        assert_eq!(publish_new(&f.0, name, b"ours", &mut NoHooks).unwrap_err().code, "publish_invalid_path", "{name:?}");
+    }
+    assert!(other.entries().is_empty());
+}
+
+#[cfg(unix)]
+#[test]
+fn ap_pub_cleanup_failure_preserves_link_error() {
+    struct CleanupFailure;
+    impl PublishHooks for CleanupFailure {
+        fn fault(&mut self, stage: &str) -> Option<io::Error> {
+            match stage { "link" => Some(io::Error::from_raw_os_error(17)), "cleanup" => Some(io::Error::from_raw_os_error(5)), _ => None }
+        }
+    }
+    let f = Fixture::new();
+    let e = publish_new(&f.0, "x", b"ours", &mut CleanupFailure).unwrap_err();
+    assert_eq!(e.code, "destination_exists");
+    assert!(e.detail.contains("cannot remove"));
+    assert_eq!(f.entries().len(), 1);
 }
