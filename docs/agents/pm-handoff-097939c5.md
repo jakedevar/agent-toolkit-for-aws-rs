@@ -1088,3 +1088,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
   PM STANDARD (handoff on #5352): static gate = regression guard, not adversary-proof; BLOCKER only if it passes both gate and runtime child test, or cheap precise fix. FIX #5421 #5423, ACCEPT #5422 as documented residual. PM verifies narrow diff itself (no more review sessions unless diff widens).
   Repair 4 -> Opus c4766db7 (continue_from 5fd44a0d). On done: verify diff + red/green, AgentCheckLandingCandidate, enqueue.
   4/4: 91a6981f L5 r1, 33d730c3 S1, ef029147 #4865, c4766db7 x402 r4. Queue: B1 seq 3022.
+- 16:48Z: safety net. Disk 117G free (recovered). B1 seq 3022 queued. L5 repair 1 (91a6981f, Opus) DONE at 5556d6b97f951d1e1cdd49a039417e2b57d98a65: per-write output guard seeded from local session record on every launch route (+ audit found region/base-URL echoes in resolve-region/auth-start/auth-wait/download-snapshot, fixed); lib matrix red c2734233 66/66, binary d4a5aeb0 39/39; scoped bcdc0161 ok. Friction #5393.
+  Re-review #5424 (P1) -> Codex sol bf7a6989 pinned 5556d6b9. On ACCEPT: check + enqueue 5556d6b9 (source_session_id 91a6981f, derive_filters, issue 5345); close #5345 #5335 #5403 #5406 #5424 on landing (confirm). Then L7.
+  4/4: bf7a6989 #5424, 33d730c3 S1, ef029147 #4865, c4766db7 x402 r4.
