@@ -512,3 +512,4 @@ Friction: #4727, Rsi #4694, Rsi #4704
   Kaizen #5034 (mailed duty Issue unreadable by bound worker): put every duty #N in the launch brief/related, not only in mail.
   Round 21: #4487 after #5018 r2 + the #4412 activation step (hooks.json -> plugin-stage launcher).
   3/4 busy: 41854b6c (#5017 S1), 9c9ccc2e (#4487 repair), fbfd341e (#4382 design).
+  #4397 (serverless examples, wave 3) impl worker e91f616e (Sonnet high, rolling). 4/4 busy: 41854b6c (#5017), 9c9ccc2e (#4487 repair), fbfd341e (#4382 design), e91f616e (#4397).
