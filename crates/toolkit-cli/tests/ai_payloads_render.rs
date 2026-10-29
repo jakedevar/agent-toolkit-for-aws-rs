@@ -132,3 +132,19 @@ fn ap_pub_15_dry_run_creates_no_output() {
     );
     assert!(!f.0.join("notebooks/example.ipynb").exists());
 }
+
+#[test]
+fn ap_con_06_cell_consent_identifier_guard() {
+    let f = Fixture::new();
+    let template = f.write("template.py", "# Cell 0 [markdown]: Example\n# Description\n# Cell 1: Code\npass\n");
+    for code in ["ACCEPT_EULA = True\n", "x = [ACCEPT_EULA]\n"] {
+        let cell = f.write("cell.py", code);
+        let arg = format!("1={}", cell.display());
+        let result = f.render(&template, "script", &["--cell", &arg]);
+        assert_eq!(result.status.code(), Some(1));
+        assert!(String::from_utf8_lossy(&result.stderr).contains("cell_binds_consent"));
+    }
+    let cell = f.write("cell.py", "# ACCEPT_EULA\nx = 'ACCEPT_EULA'\n");
+    let arg = format!("1={}", cell.display());
+    assert!(f.render(&template, "script", &["--cell", &arg]).status.success());
+}
