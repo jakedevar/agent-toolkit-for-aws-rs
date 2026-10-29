@@ -46,21 +46,37 @@ use deps::Unavailable;
 /// Registration of the `agents-pay` slice (see `crate::registry`).
 pub(crate) const SLICE: crate::registry::Slice = crate::registry::Slice {
     name: "agents-pay",
-    commands: &[crate::CommandSpec {
-        path: &["agents-pay", "fetch"],
-        flags: &["--status"],
-        value_flags: &["--browser-handle", "--method", "--purchase-id"],
-        strict_values: true,
-        repeatable_flags: &[],
-        max_positionals: 1,
-        passthrough: false,
-        #[cfg(feature = "agents-pay-live")]
-        handler: fetch_command,
-        #[cfg(not(feature = "agents-pay-live"))]
-        handler: self::no_payment::fetch_command,
-    }],
+    commands: &[
+        crate::CommandSpec {
+            path: &["agents-pay", "fetch"],
+            flags: &["--status"],
+            value_flags: &["--browser-handle", "--method", "--purchase-id"],
+            strict_values: true,
+            repeatable_flags: &[],
+            max_positionals: 1,
+            passthrough: false,
+            #[cfg(feature = "agents-pay-live")]
+            handler: fetch_command,
+            #[cfg(not(feature = "agents-pay-live"))]
+            handler: self::no_payment::fetch_command,
+        },
+        crate::CommandSpec {
+            path: &["agents-pay", "bridge"],
+            flags: &[],
+            value_flags: &[],
+            strict_values: true,
+            repeatable_flags: &[],
+            max_positionals: 0,
+            passthrough: false,
+            #[cfg(feature = "agents-pay-live")]
+            handler: self::bridge::live_command,
+            #[cfg(not(feature = "agents-pay-live"))]
+            handler: self::bridge::no_payment::bridge_command,
+        },
+    ],
     synopsis: r"  toolkit agents-pay fetch [URL] [--status] [--browser-handle URL]
                            [--method GET|HEAD] [--purchase-id ID]
+  toolkit agents-pay bridge
 ",
     description: r"  agents-pay fetch
                 Fetch an x402-protected https URL, paying only when the
@@ -69,9 +85,16 @@ pub(crate) const SLICE: crate::registry::Slice = crate::registry::Slice {
                 opaque single-use handle. Prints one JSON object. A build
                 without the agents-pay-live feature has no payment support.
                 See docs/migration/agents-pay.md.
+  agents-pay bridge
+                Trusted OpenClaw plugin glue, not for agents: one JSON
+                request on stdin, one JSON line on stdout. A build without
+                the agents-pay-live feature answers sanitize_output only.
+                See docs/migration/agents-pay.md.
 ",
     exit_notes: r"  agents-pay fetch exits 0 when paid or no payment was needed, 2 on a
   refusal or an unusable session, and 1 when no URL or --status is given.
+  agents-pay bridge exits 0 on success, 2 on an invalid request and 1 on
+  an AgentCore failure or without payment support.
 ",
     doc: "docs/migration/agents-pay.md",
     synopsis_rank: crate::registry::NEW_RANK,

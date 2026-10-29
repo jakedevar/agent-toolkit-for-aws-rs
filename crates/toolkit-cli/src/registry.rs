@@ -555,7 +555,7 @@ mod tests {
     /// The route paths of the old `COMMANDS` table (commit ce0eaf6a, before the
     /// registry), in table order: the public order of [`COMMANDS`]. The routes of
     /// slices added after the registry follow at the end, ordered by slice name.
-    const LEGACY_COMMAND_ORDER: [&str; 125] = [
+    const LEGACY_COMMAND_ORDER: [&str; 126] = [
         "skills list",
         "manifests validate",
         "spec validate",
@@ -639,6 +639,7 @@ mod tests {
         "agents-build setup-payment-user",
         // agents-pay (#4410, slice S5 #5352):
         "agents-pay fetch",
+        "agents-pay bridge",
         // agents-pay-admin (#4410, slice S6 #5462):
         "agents-pay admin init-config",
         "agents-pay admin show-config",

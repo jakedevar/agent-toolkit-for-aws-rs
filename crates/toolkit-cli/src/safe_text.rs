@@ -795,6 +795,335 @@ impl KnownSecrets {
     }
 }
 
+/// The shortest known secret the final model-output scrub accepts (`OpenClaw`
+/// R-OC-FINAL, design D-OC19): a shorter one would match ordinary words.
+pub(crate) const FINAL_MIN_SECRET: usize = 8;
+
+/// The shortest piece of a secret the final scrub recognizes when the whole
+/// secret is not shown (D-OC19): 32 contiguous bytes of the secret itself,
+/// so a public prefix (the `x402` header head, `0x`) is never a pattern.
+pub(crate) const FINAL_MIN_FRAGMENT: usize = 32;
+
+/// The final scrub's default work bound, the same as R-SCRUB's.
+pub(crate) const FINAL_MATCH_WORK: usize = MAX_MATCH_WORK;
+
+/// The known secrets of one `OpenClaw` paid-tool result, for the final
+/// model-output scrub (R-OC-FINAL, #5160).
+///
+/// It is [`KnownSecrets`]' window rule with the D-OC19 thresholds: a secret
+/// is found whole from [`FINAL_MIN_SECRET`] bytes, and in part only as
+/// [`FINAL_MIN_FRAGMENT`] contiguous bytes of the secret, ignoring ASCII
+/// case. Each text is searched as given and through one decoding layer of
+/// each supported encoding ([`decoded_views`]): JSON string escapes, percent
+/// escapes and standard or URL-safe base64 at each of the four alignments.
+/// Every step is charged to a caller budget; past it the caller must fail
+/// closed.
+#[derive(Debug, Default, Clone)]
+pub(crate) struct FinalSecrets {
+    windows: HashSet<[u8; FINAL_MIN_FRAGMENT]>,
+    short: Vec<Vec<u8>>,
+}
+
+/// One searchable form of a text: its bytes, and for each byte the span of
+/// the source text it came from.
+struct View {
+    bytes: Vec<u8>,
+    source: Vec<(usize, usize)>,
+}
+
+impl View {
+    fn with_capacity(len: usize) -> Self {
+        Self {
+            bytes: Vec::with_capacity(len),
+            source: Vec::with_capacity(len),
+        }
+    }
+    fn push(&mut self, byte: u8, from: usize, to: usize) {
+        self.bytes.push(byte.to_ascii_lowercase());
+        self.source.push((from, to));
+    }
+}
+
+fn hex_value(byte: u8) -> Option<u32> {
+    char::from(byte).to_digit(16)
+}
+
+/// `\uXXXX` at `at` (after the backslash at `at - 1` was seen), as a code unit.
+fn json_unit(bytes: &[u8], at: usize) -> Option<u32> {
+    let digits = bytes.get(at + 1..at + 5)?;
+    if bytes.get(at) != Some(&b'u') {
+        return None;
+    }
+    digits
+        .iter()
+        .try_fold(0_u32, |acc, &b| hex_value(b).map(|v| acc * 16 + v))
+}
+
+/// One layer of JSON string escapes undone (a lone surrogate stays as written).
+fn json_view(text: &str) -> View {
+    let bytes = text.as_bytes();
+    let mut view = View::with_capacity(bytes.len());
+    let mut at = 0;
+    while at < bytes.len() {
+        if bytes[at] == b'\\' {
+            let simple = match bytes.get(at + 1) {
+                Some(b'"') => Some(b'"'),
+                Some(b'\\') => Some(b'\\'),
+                Some(b'/') => Some(b'/'),
+                Some(b'b') => Some(0x08),
+                Some(b'f') => Some(0x0c),
+                Some(b'n') => Some(b'\n'),
+                Some(b'r') => Some(b'\r'),
+                Some(b't') => Some(b'\t'),
+                _ => None,
+            };
+            if let Some(byte) = simple {
+                view.push(byte, at, at + 2);
+                at += 2;
+                continue;
+            }
+            if let Some(unit) = json_unit(bytes, at + 1) {
+                let (scalar, end) = if (0xd800..0xdc00).contains(&unit) {
+                    match bytes
+                        .get(at + 6)
+                        .filter(|b| **b == b'\\')
+                        .and_then(|_| json_unit(bytes, at + 7))
+                    {
+                        Some(low) if (0xdc00..0xe000).contains(&low) => (
+                            char::from_u32(0x10000 + ((unit - 0xd800) << 10) + (low - 0xdc00)),
+                            at + 12,
+                        ),
+                        _ => (None, at + 6),
+                    }
+                } else {
+                    (char::from_u32(unit), at + 6)
+                };
+                if let Some(scalar) = scalar {
+                    let mut buffer = [0_u8; 4];
+                    for byte in scalar.encode_utf8(&mut buffer).bytes() {
+                        view.push(byte, at, end);
+                    }
+                    at = end;
+                    continue;
+                }
+            }
+        }
+        view.push(bytes[at], at, at + 1);
+        at += 1;
+    }
+    view
+}
+
+/// One layer of `%XX` escapes undone.
+fn percent_view(text: &str) -> View {
+    let bytes = text.as_bytes();
+    let mut view = View::with_capacity(bytes.len());
+    let mut at = 0;
+    while at < bytes.len() {
+        if bytes[at] == b'%' {
+            if let (Some(high), Some(low)) = (
+                bytes.get(at + 1).copied().and_then(hex_value),
+                bytes.get(at + 2).copied().and_then(hex_value),
+            ) {
+                view.push(u8::try_from(high * 16 + low).unwrap_or(0), at, at + 3);
+                at += 3;
+                continue;
+            }
+        }
+        view.push(bytes[at], at, at + 1);
+        at += 1;
+    }
+    view
+}
+
+fn base64_value(byte: u8) -> Option<u32> {
+    match byte {
+        b'A'..=b'Z' => Some(u32::from(byte - b'A')),
+        b'a'..=b'z' => Some(u32::from(byte - b'a') + 26),
+        b'0'..=b'9' => Some(u32::from(byte - b'0') + 52),
+        b'+' | b'-' => Some(62),
+        b'/' | b'_' => Some(63),
+        _ => None,
+    }
+}
+
+/// One layer of base64 (standard or URL-safe) undone over every maximal run
+/// of the alphabet, starting `offset` characters into each run. Runs are
+/// joined by a 0xff byte, which no UTF-8 secret holds, so no match crosses
+/// two runs. A byte's source is its whole quartet, `=` padding included.
+fn base64_view(text: &str, offset: usize) -> View {
+    let bytes = text.as_bytes();
+    let mut view = View::with_capacity(bytes.len() / 4 * 3 + 1);
+    let mut at = 0;
+    while at < bytes.len() {
+        if base64_value(bytes[at]).is_none() {
+            at += 1;
+            continue;
+        }
+        let start = at;
+        while at < bytes.len() && base64_value(bytes[at]).is_some() {
+            at += 1;
+        }
+        let mut end = at;
+        while end < bytes.len() && bytes[end] == b'=' {
+            end += 1;
+        }
+        let mut quartet = start + offset;
+        while quartet + 2 <= at {
+            let stop = (quartet + 4).min(at);
+            let values: Vec<u32> = bytes[quartet..stop]
+                .iter()
+                .filter_map(|b| base64_value(*b))
+                .collect();
+            let source_end = if stop == at { end } else { stop };
+            let word = values
+                .iter()
+                .chain(std::iter::repeat(&0))
+                .take(4)
+                .fold(0_u32, |acc, v| (acc << 6) | v);
+            for index in 0..values.len() - 1 {
+                let byte = u8::try_from((word >> (16 - 8 * index)) & 0xff).unwrap_or(0);
+                view.push(byte, quartet, source_end);
+            }
+            quartet += 4;
+        }
+        view.bytes.push(0xff);
+        view.source.push((end, end));
+        at = end;
+    }
+    view
+}
+
+/// The literal text and every one-layer decoding of it (D-OC19).
+fn decoded_views(text: &str) -> Vec<View> {
+    let mut literal = View::with_capacity(text.len());
+    for (at, byte) in text.bytes().enumerate() {
+        literal.push(byte, at, at + 1);
+    }
+    let mut views = vec![literal, json_view(text), percent_view(text)];
+    views.extend((0..4).map(|offset| base64_view(text, offset)));
+    views
+}
+
+/// Takes `steps` from `budget`; false when it does not hold that many.
+fn charge(budget: &mut usize, steps: usize) -> bool {
+    match budget.checked_sub(steps) {
+        Some(rest) => {
+            *budget = rest;
+            tick(steps);
+            true
+        }
+        None => false,
+    }
+}
+
+impl FinalSecrets {
+    /// The matcher for `secrets`; `None` when one is shorter than
+    /// [`FINAL_MIN_SECRET`] bytes (a registry it cannot honour).
+    pub(crate) fn new(secrets: &[&str]) -> Option<Self> {
+        let mut matcher = Self::default();
+        for secret in secrets {
+            let lower = secret.as_bytes().to_ascii_lowercase();
+            if lower.len() < FINAL_MIN_SECRET {
+                return None;
+            }
+            if lower.len() < FINAL_MIN_FRAGMENT {
+                if !matcher.short.contains(&lower) {
+                    matcher.short.push(lower);
+                }
+                continue;
+            }
+            for window in lower.windows(FINAL_MIN_FRAGMENT) {
+                let mut key = [0_u8; FINAL_MIN_FRAGMENT];
+                key.copy_from_slice(window);
+                matcher.windows.insert(key);
+            }
+        }
+        Some(matcher)
+    }
+
+    /// The merged byte spans of `text`, widened to character boundaries,
+    /// whose literal or one-layer-decoded form holds a secret or a fragment;
+    /// `None` when that would take more than `budget` steps (the budget is
+    /// spent as the search goes).
+    pub(crate) fn spans(&self, text: &str, budget: &mut usize) -> Option<Vec<(usize, usize)>> {
+        let mut spans: Vec<(usize, usize)> = Vec::new();
+        if self.windows.is_empty() && self.short.is_empty() {
+            return Some(spans);
+        }
+        if !charge(budget, text.len().saturating_mul(8)) {
+            return None;
+        }
+        for view in decoded_views(text) {
+            let bytes = &view.bytes;
+            let mut hit = |from: usize, len: usize| {
+                let start = view.source[from].0;
+                let end = view.source[from + len - 1].1;
+                spans.push((start, end));
+            };
+            if !self.windows.is_empty() {
+                if !charge(budget, bytes.len()) {
+                    return None;
+                }
+                for (at, window) in bytes.windows(FINAL_MIN_FRAGMENT).enumerate() {
+                    if self.windows.contains(window) {
+                        hit(at, FINAL_MIN_FRAGMENT);
+                    }
+                }
+            }
+            for secret in &self.short {
+                if !charge(budget, bytes.len().saturating_mul(secret.len())) {
+                    return None;
+                }
+                for (at, window) in bytes.windows(secret.len()).enumerate() {
+                    if window == secret.as_slice() {
+                        hit(at, secret.len());
+                    }
+                }
+            }
+        }
+        spans.sort_unstable();
+        let mut merged: Vec<(usize, usize)> = Vec::new();
+        for (start, end) in spans {
+            match merged.last_mut() {
+                Some(last) if start <= last.1 => last.1 = last.1.max(end),
+                _ => merged.push((start, end)),
+            }
+        }
+        for span in &mut merged {
+            while !text.is_char_boundary(span.0) {
+                span.0 -= 1;
+            }
+            while !text.is_char_boundary(span.1) {
+                span.1 += 1;
+            }
+        }
+        Some(merged)
+    }
+
+    /// Whether `text` holds a secret in any supported form; `None` past the
+    /// budget.
+    pub(crate) fn found_in(&self, text: &str, budget: &mut usize) -> Option<bool> {
+        self.spans(text, budget).map(|spans| !spans.is_empty())
+    }
+
+    /// `text` with every span of [`FinalSecrets::spans`] replaced by
+    /// [`REDACTED`], and whether anything was replaced; `None` past the
+    /// budget.
+    pub(crate) fn redact(&self, text: &str, budget: &mut usize) -> Option<(String, bool)> {
+        let spans = self.spans(text, budget)?;
+        let mut out = String::with_capacity(text.len());
+        let mut copied = 0;
+        for &(start, end) in &spans {
+            out.push_str(&text[copied..start]);
+            out.push_str(REDACTED);
+            copied = end;
+        }
+        out.push_str(&text[copied..]);
+        Some((out, !spans.is_empty()))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

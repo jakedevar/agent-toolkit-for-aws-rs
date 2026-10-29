@@ -2441,8 +2441,9 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
 // The L5 launch routes (#5345) add theirs.
 // `agents-pay fetch` (#5352) deliberately adds its synopsis and description.
 // The x402 S6 admin routes (#5462) deliberately add their synopses and descriptions.
-const USAGE_BASE_LEN: usize = 49702;
-const USAGE_BASE_FNV1A64: u64 = 0xacea_4bbb_f3d6_7235;
+// `agents-pay bridge` (OpenClaw B2, #5443) deliberately adds its synopsis and description.
+const USAGE_BASE_LEN: usize = 50144;
+const USAGE_BASE_FNV1A64: u64 = 0x0000_0000_0000_0000;
 
 #[test]
 fn the_global_usage_text_is_byte_identical_to_the_base() {

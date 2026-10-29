@@ -303,3 +303,91 @@ them, never the agent. Code: `crates/toolkit-cli/src/agents_pay/admin/`.
   an object is replaced by `{}` when the config is next written (Python
   raised there).
 - Deployed-state values that are not strings read as absent.
+
+## `toolkit agents-pay bridge` (OpenClaw B2, #5443)
+
+Trusted plugin glue for the OpenClaw package, not for agents
+([openclaw-bridge-design.md](openclaw-bridge-design.md) rev 2, sections 4
+and 5.1). It replaces `runtime/agentcore_bridge.py` with the same pipe
+contract: one JSON request on stdin (at most 131072 bytes; at most 131073
+are read), one JSON line on stdout, nothing on stderr. It takes no flag and
+no positional; extra argv is a router usage error (exit 2), and the router
+refuses every credential flag by name.
+
+| Request | Result | Exit |
+| --- | --- | --- |
+| invalid (framing, keys, field rules, policy profile, any pre-authorization refusal, G3) | `{"ok":false,"error":"invalid bridge request"}` | 2 |
+| `get_payment_session` | `{"ok":true,"result":{"paymentSession":{..}}}` in model order | 0 |
+| `process_payment` | `{"ok":true,"result":{"paymentOutput":{"cryptoX402":{"payload":..}}}}` | 0 |
+| any failure after authorization, R-BR-PARAM, the frame cap, an R-BR-SCRUB hit, a panic | `{"ok":false,"error":"AgentCore request failed"}` | 1 |
+| a valid service request in a build without `agents-pay-live` | `{"ok":false,"error":"payment support unavailable"}` | 1 |
+| `sanitize_output` | the candidate unchanged, redacted, or the fixed refusal | 0 (1 over the frame cap) |
+
+**Route.** `agents_pay::bridge::serve_frame` is the pure pipe: the bounded
+read and B1's validation, then `sanitize_output` answered by the pure final
+scrub (`bridge/output_scrub.rs`), then any valid service request handed to
+the build's one service. In a build without the live feature the registry
+entry is `bridge/no_payment.rs`, whose only service returns the
+`UNAVAILABLE_FRAME` literal; `tests/agents_pay_gate.rs` pins that file token
+for token, its declaration, its registry entry (bound to the compiled
+`SLICE`, now two `CommandSpec` literals) and the names it resolves, exactly
+as for `fetch`. The live entry `bridge::live_command` is pinned too: it
+builds the process world only inside its service closure, after the pure
+route. The pure route names no world, constructor or payment step
+(`t_oc_final_route_*`, `t_br_d32_*`).
+
+**Spending (R-BR-ONE).** `process_payment` maps the request's `policy` with
+`policy::openclaw::from_openclaw`, assembles the one-entry challenge
+`{"x402Version":2,"accepts":[accepted],"resource":resource}` and calls
+`flow::prove`, the post-probe half that `fetch` and `--browser-handle` now
+share: deadline admission around `policy::authorize`, the caller's region,
+one `agentcore::process_payment`, then `proof::check` (R-PP-VERIFY without
+the wait). The region is the request's (assumption A2: the AgentCore client
+is opened per call with a region, no S4 change was needed). `proof::verify`
+is `check` plus the wait, so `fetch` still waits for `validAfter`; the
+bridge never sleeps (A3). The verified payload reaches stdout only through
+`VerifiedProof::into_trusted_glue`, called once, in `bridge::render`. Gates:
+the bridge names no `Approved`, `ProcessPaymentRequest`, `process_payment`
+or token producer; `prove` is the only caller of `agentcore::process_payment`;
+`live.rs` keeps its three public items.
+
+**Errors and deadline.** A refusal of the gate, the deadline before
+authorization, or a connector that refuses to open (G3 in a live build) is
+exit 2 with zero `ProcessPayment` calls; anything after it is exit 1 with at
+most one logical call. The deadline is 25 s of the injected clock from the
+start of the handler.
+
+**R-BR-SCRUB.** The rendered success document is checked with R-SCRUB's
+matcher (`safe_text::KnownSecrets`) against the session id's secret part,
+the proof's header value and its signature. The session id is exempt only
+as `paymentSessionId`, the proof only at its payload path. A hit is exit 1.
+
+**R-OC-FINAL (`sanitize_output`).** The registry entries are matched with
+`safe_text::FinalSecrets`, the D-OC19 form of the shared matcher: a whole
+secret from 8 bytes, or 32 contiguous bytes of one, ignoring ASCII case,
+literally and through one decoding layer each of JSON string escapes,
+percent escapes and base64 (standard or URL-safe, all four alignments),
+under the same 2^26-step work bound. A hit only in the top-level string
+`details.body` is redacted span by span, `redacted: true` is appended and
+the text becomes the compact rendering of the new details. Any other hit, a
+`redacted` member already present beside a body hit, a hit left after
+rendering (tree, text and the complete encoded frame are checked again) or
+an exhausted budget gives the fixed refusal
+`{"paid":false,"reason":"Payment flow failed safely without exposing provider or proof details","refused":true}`
+in both channels. A clean candidate is returned unchanged, text bytes
+included.
+
+### B2 decisions
+
+- A registry entry under 8 bytes is a malformed registry: exit 2. An empty
+  registry checks nothing.
+- The refusal's member order is B1's shared fixture order (`paid`,
+  `reason`, `refused`), so TS and Rust compare text bytes against one file.
+- R-BR-SCRUB learns the session id without its public `payment-session-`
+  head, as `fetch` does. AWS credentials never reach the bridge; they stay
+  in the signer.
+- The silent panic hook is installed by the registry entries only (`serve`);
+  in-process tests use `serve_quiet`, so a test failure keeps its message.
+  `serve_frame` catches every panic as exit 1 in both.
+- T-AC3-INH for this route runs only as a child (`tests/agents_pay_bridge.rs`):
+  an in-process `toolkit_cli::run` would read the test runner's own stdin.
