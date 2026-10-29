@@ -34,7 +34,8 @@ fn check(label: &str, command: &str, fake: FakeStreamingTransport, extra: &[&str
 }
 
 fn expect_generic(result: (String, String, u8)) {
-    assert_eq!((result.1.as_str(), result.2), (&*format!("{{\"error\": \"{GENERIC_FAILURE}\"}}\n"), 1));
+    let generic = format!("{{\"error\": \"{GENERIC_FAILURE}\"}}\n");
+    assert!(result.1 == generic && result.2 == 1, "expected the generic failure");
 }
 
 fn error_reply(status: u16, headers: &[(&str, &str)], body: &str) -> FakeStreamingTransport {
@@ -59,7 +60,7 @@ fn t_tok_1_2_6_error_channels_never_echo_seeded_secrets() {
             .collect();
             for (channel, fake) in cases {
                 let (stdout, stderr, status) = check(&format!("{command} via {channel}"), command, fake, &[]);
-                assert_eq!((stdout.as_str(), status), ("", 1));
+                assert!(stdout.is_empty() && status == 1, "{command} via {channel}: expected a failure");
                 assert!(stderr.starts_with("{\"error\": \""));
             }
         }
@@ -72,7 +73,7 @@ fn t_tok_1_2_success_members_echoing_a_secret_fail_closed() {
         let launch = SMALL_LAUNCH.replace("\"name\":\"n\"", &format!("\"name\":\"prefix-{secret}-suffix\""));
         for command in ["get-launch", "start-launch-execution"] {
             let (_, stderr, status) = check(command, command, error_reply(200, &[], &launch), &[]);
-            assert_eq!((stderr.as_str(), status), (&*format!("{{\"error\": \"{GENERIC_FAILURE}\"}}\n"), 1));
+            expect_generic((String::new(), stderr, status));
         }
         let download = SMALL_LAUNCH.replace("\"status\"", &format!("\"downloadUrl\":\"https://dl.example/x?t={secret}\",\"status\""));
         expect_generic(check("download url", "get-launch-download-url", error_reply(200, &[], &download), &[]));
@@ -140,10 +141,8 @@ fn t_tok_refreshed_token_and_internal_errors_are_scrubbed() {
     for secret in SEEDED {
         let harness = Harness::new(&[]);
         *harness.archive_result.borrow_mut() = Err(format!("archive failed near {secret}"));
-        assert_eq!(
-            harness.golden(&req("create-launch", Some("/src/app"))).1,
-            format!("{{\"error\": \"{GENERIC_FAILURE}\"}}\n")
-        );
+        let (_, stderr, status) = harness.golden(&req("create-launch", Some("/src/app")));
+        expect_generic((String::new(), stderr, status));
     }
     // A refresh rejected with a secret as its OIDC error code.
     let harness = Harness::without_session(&[ok(400, &format!(r#"{{"error":"{REFRESH}","error_description":"{CLIENT_SECRET}"}}"#))]);
@@ -171,7 +170,7 @@ fn t_tok_6_debug_of_every_launch_error_and_secret_holder() {
     secrets.add("short");
     assert!(secrets.contains(&format!("x{ACCESS}y")));
     assert!(!secrets.contains("short"));
-    assert_eq!(secrets.scrub(format!("a {ACCESS}")), GENERIC_FAILURE);
+    assert!(secrets.scrub(format!("a {ACCESS}")) == GENERIC_FAILURE, "scrub kept a secret");
     assert_eq!(secrets.scrub("plain".into()), "plain");
     assert!(secrets.found_in(&Json::object(vec![(ACCESS, Json::Null)])));
     assert!(secrets.found_in(&Json::Array(vec![Json::string(format!("[{ACCESS}]"))])));
@@ -191,9 +190,9 @@ fn t_code_4_list_region_error_with_secret_code_is_unrecognized() {
         let harness = Harness { fake, ..Harness::new(&[]) };
         let (stdout, stderr, status) = harness.golden(&req("list-launches", None));
         assert_eq!(status, 0);
-        assert_eq!(
-            stdout,
-            "{\n  \"items\": [],\n  \"errors\": {\n    \"us-east-1\": \"GET /api/launches failed (500): UnrecognizedError\"\n  }\n}\n"
+        assert!(
+            stdout == "{\n  \"items\": [],\n  \"errors\": {\n    \"us-east-1\": \"GET /api/launches failed (500): UnrecognizedError\"\n  }\n}\n",
+            "unexpected list output"
         );
         assert_clean("list errors", &[&stdout, &stderr], &SEEDED);
     }
