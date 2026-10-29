@@ -2419,8 +2419,9 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
 /// The S2b render synopsis is included as well (#5223).
 /// A deliberate usage change updates the pin in the same
 /// commit and says so in the Issue; an incidental one fails here.
-const USAGE_BASE_LEN: usize = 44714;
-const USAGE_BASE_FNV1A64: u64 = 0xf811_6532_6062_711a;
+// Neptune memory (#4886) deliberately adds its synopsis and description.
+const USAGE_BASE_LEN: usize = 44874;
+const USAGE_BASE_FNV1A64: u64 = 0x883e_e68f_92b5_6b07;
 
 #[test]
 fn the_global_usage_text_is_byte_identical_to_the_base() {

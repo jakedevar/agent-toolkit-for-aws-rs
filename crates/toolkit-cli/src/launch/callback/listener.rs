@@ -60,7 +60,10 @@ impl ListenerIo for TcpListener {
     type Stream = TcpStream;
     fn accept_stream(&self) -> io::Result<TcpStream> {
         let (stream, _) = self.accept()?;
-        stream.set_nonblocking(true)?;
+        // A failure belongs to this accepted connection, not the listener.
+        stream.set_nonblocking(true).map_err(|_| {
+            io::Error::new(io::ErrorKind::ConnectionAborted, "connection setup failed")
+        })?;
         Ok(stream)
     }
 }
@@ -116,7 +119,9 @@ fn serve_with<L: ListenerIo>(
                 }
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
                 Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
-                Err(e) => return Err(e),
+                // A reset, a transient network error, or resource exhaustion must
+                // not end the sign-in flow. Pace retries like an idle turn.
+                Err(_) => break,
             }
         }
         for offset in 0..SLOT_COUNT {
@@ -163,11 +168,11 @@ fn serve_with<L: ListenerIo>(
                             match outcome {
                                 Outcome::Ignore(status) => slot.queue(status, now, flow_end),
                                 terminal => {
-                                    let page = response(if matches!(terminal, Outcome::Code(_)) {
-                                        200
+                                    let page = if matches!(terminal, Outcome::Code(_)) {
+                                        response(200)
                                     } else {
-                                        400
-                                    });
+                                        super::authorization_failed_response()
+                                    };
                                     let mut stream =
                                         slots[index].take().expect("occupied slot").stream;
                                     drop(slots);
@@ -318,6 +323,125 @@ mod scripted_tests {
     }
     fn valid_head() -> Vec<u8> {
         b"GET /?state=s&code=ok HTTP/1.1\r\nHost: 127.0.0.1:1234\r\n\r\n".to_vec()
+    }
+
+    #[test]
+    fn real_socket_bind_is_loopback_only_and_fake_clock_expires() {
+        use std::net::{Ipv6Addr, SocketAddrV6};
+        let listener = bind().unwrap();
+        let addr = listener.local_addr().unwrap();
+        assert_eq!(addr.ip(), Ipv4Addr::LOCALHOST);
+        assert_ne!(addr.port(), 0);
+        assert!(TcpStream::connect((Ipv4Addr::new(127, 0, 0, 2), addr.port())).is_err());
+        if std::net::TcpListener::bind((Ipv6Addr::LOCALHOST, 0)).is_ok() {
+            assert!(
+                TcpStream::connect(SocketAddrV6::new(Ipv6Addr::LOCALHOST, addr.port(), 0, 0))
+                    .is_err()
+            );
+        }
+        let start = Instant::now();
+        let clock = FakeClock(Cell::new(start));
+        assert_eq!(
+            serve_with(
+                listener,
+                addr.port(),
+                "s",
+                start + Duration::from_millis(25),
+                &clock
+            )
+            .unwrap(),
+            None
+        );
+        assert_eq!(clock.now(), start + Duration::from_millis(25));
+    }
+
+    #[test]
+    fn denied_and_invalid_code_use_authorization_failed_page() {
+        struct Once(std::cell::RefCell<Option<Stream>>);
+        struct Stream {
+            head: std::io::Cursor<Vec<u8>>,
+            output: Rc<std::cell::RefCell<Vec<u8>>>,
+        }
+        impl ListenerIo for Once {
+            type Stream = Stream;
+            fn accept_stream(&self) -> io::Result<Stream> {
+                self.0
+                    .borrow_mut()
+                    .take()
+                    .ok_or_else(|| io::ErrorKind::WouldBlock.into())
+            }
+        }
+        impl Read for Stream {
+            fn read(&mut self, b: &mut [u8]) -> io::Result<usize> {
+                self.head.read(b)
+            }
+        }
+        impl Write for Stream {
+            fn write(&mut self, b: &[u8]) -> io::Result<usize> {
+                self.output.borrow_mut().extend_from_slice(b);
+                Ok(b.len())
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        for query in ["state=s&error=access_denied", "state=s&code="] {
+            let start = Instant::now();
+            let output = Rc::new(std::cell::RefCell::new(Vec::new()));
+            let head = format!("GET /?{query} HTTP/1.1\r\nHost: 127.0.0.1:1234\r\n\r\n");
+            let listener = Once(std::cell::RefCell::new(Some(Stream {
+                head: std::io::Cursor::new(head.into_bytes()),
+                output: output.clone(),
+            })));
+            let result = serve_with(
+                listener,
+                1234,
+                "s",
+                start + Duration::from_secs(5),
+                &FakeClock(Cell::new(start)),
+            )
+            .unwrap();
+            assert!(matches!(
+                result,
+                Some(Outcome::Denied(_) | Outcome::InvalidCode)
+            ));
+            assert!(String::from_utf8(output.borrow().clone())
+                .unwrap()
+                .contains("Authorization failed"));
+        }
+    }
+
+    #[test]
+    fn accept_errors_do_not_end_flow() {
+        struct ErrorsThenCallback(Cell<usize>, Rc<Cell<Instant>>, Instant);
+        impl ListenerIo for ErrorsThenCallback {
+            type Stream = TimedStream;
+            fn accept_stream(&self) -> io::Result<TimedStream> {
+                let n = self.0.get();
+                self.0.set(n + 1);
+                match n {
+                    0 => Err(io::ErrorKind::ConnectionAborted.into()),
+                    1 => Err(io::Error::from_raw_os_error(24)),
+                    2 => Ok(TimedStream {
+                        now: self.1.clone(),
+                        start: self.2,
+                        chunks: vec![(Duration::ZERO, valid_head())].into(),
+                        write_blocked: false,
+                    }),
+                    _ => Err(io::ErrorKind::WouldBlock.into()),
+                }
+            }
+        }
+        let start = Instant::now();
+        let now = Rc::new(Cell::new(start));
+        let result = serve_with(
+            ErrorsThenCallback(Cell::new(0), now.clone(), start),
+            1234,
+            "s",
+            start + Duration::from_secs(5),
+            &TimedClock(now),
+        );
+        assert_eq!(result.unwrap(), Some(Outcome::Code("ok".into())));
     }
 
     #[test]
@@ -654,6 +778,89 @@ mod scripted_tests {
     }
 
     #[test]
+    fn staggered_trickle_expires_during_always_ready_admission() {
+        struct Flood {
+            now: Rc<Cell<Instant>>,
+            next: Cell<usize>,
+            dropped: Rc<Cell<Option<Instant>>>,
+            reads: Rc<Cell<usize>>,
+        }
+        struct Stream {
+            now: Rc<Cell<Instant>>,
+            dropped: Rc<Cell<Option<Instant>>>,
+            reads: Rc<Cell<usize>>,
+            special: bool,
+            next_byte: Instant,
+        }
+        impl ListenerIo for Flood {
+            type Stream = Stream;
+            fn accept_stream(&self) -> io::Result<Stream> {
+                let special = self.next.get() == 0;
+                self.next.set(self.next.get() + 1);
+                self.now.set(self.now.get() + Duration::from_millis(1));
+                Ok(Stream {
+                    now: self.now.clone(),
+                    dropped: self.dropped.clone(),
+                    reads: self.reads.clone(),
+                    special,
+                    next_byte: self.now.get(),
+                })
+            }
+        }
+        impl Drop for Stream {
+            fn drop(&mut self) {
+                if self.special {
+                    self.dropped.set(Some(self.now.get()));
+                }
+            }
+        }
+        impl Read for Stream {
+            fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+                if !self.special || self.now.get() < self.next_byte {
+                    return Err(io::ErrorKind::WouldBlock.into());
+                }
+                self.reads.set(self.reads.get() + 1);
+                self.next_byte = self.now.get() + Duration::from_millis(500);
+                bytes[0] = b'x';
+                Ok(1)
+            }
+        }
+        impl Write for Stream {
+            fn write(&mut self, _: &[u8]) -> io::Result<usize> {
+                Err(io::ErrorKind::WouldBlock.into())
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        let start = Instant::now();
+        let now = Rc::new(Cell::new(start));
+        let dropped = Rc::new(Cell::new(None));
+        let reads = Rc::new(Cell::new(0));
+        let listener = Flood {
+            now: now.clone(),
+            next: Cell::new(0),
+            dropped: dropped.clone(),
+            reads: reads.clone(),
+        };
+        assert_eq!(
+            serve_with(
+                listener,
+                1234,
+                "s",
+                start + Duration::from_millis(2100),
+                &TimedClock(now)
+            )
+            .unwrap(),
+            None
+        );
+        assert!(reads.get() >= 3);
+        let expiry = start + SLOT_TIMEOUT;
+        let at = dropped.get().unwrap();
+        assert!(at >= expiry && at <= expiry + Duration::from_millis(1));
+    }
+
+    #[test]
     fn malformed_and_wrong_state_flood_never_ends_flow() {
         struct Requests {
             next: Cell<usize>,
@@ -686,8 +893,10 @@ mod scripted_tests {
                 self.served.set(self.served.get() + 1);
                 let head: &[u8] = if self.id < 300 {
                     b"INVALID\r\n\r\n"
-                } else if self.id < 600 {
+                } else if self.id < 600 && self.id.is_multiple_of(2) {
                     b"GET /?state=wrong&error=denied HTTP/1.1\r\nHost: 127.0.0.1:1234\r\n\r\n"
+                } else if self.id < 600 {
+                    b"GET /?state=wrong&code=bad HTTP/1.1\r\nHost: 127.0.0.1:1234\r\n\r\n"
                 } else {
                     b"GET /?state=s&code=ok HTTP/1.1\r\nHost: 127.0.0.1:1234\r\n\r\n"
                 };
@@ -869,6 +1078,91 @@ mod scripted_tests {
         );
         assert!(accepts.get() <= 4000 && accepts.get() > 3900);
         assert!(reads.get() <= 8000 && reads.get() > 7800);
+    }
+
+    #[test]
+    fn each_turn_bounds_admissions_slots_and_head_buffers() {
+        #[derive(Default)]
+        struct Stats {
+            accepts: usize,
+            reads: usize,
+            max_read: usize,
+            max_live: usize,
+        }
+        struct TrackedClock {
+            now: Cell<Instant>,
+            turns: Rc<std::cell::RefCell<Vec<Stats>>>,
+        }
+        impl Clock for TrackedClock {
+            fn now(&self) -> Instant {
+                self.now.get()
+            }
+            fn sleep(&self, d: Duration) {
+                self.now.set(self.now.get() + d);
+                self.turns.borrow_mut().push(Stats::default());
+            }
+        }
+        struct Listener(Rc<std::cell::RefCell<Vec<Stats>>>, Rc<Cell<usize>>);
+        struct Stream(Rc<std::cell::RefCell<Vec<Stats>>>, Rc<Cell<usize>>);
+        impl ListenerIo for Listener {
+            type Stream = Stream;
+            fn accept_stream(&self) -> io::Result<Stream> {
+                let live = self.1.get() + 1;
+                self.1.set(live);
+                let mut turns = self.0.borrow_mut();
+                let s = turns.last_mut().unwrap();
+                s.accepts += 1;
+                s.max_live = s.max_live.max(live);
+                Ok(Stream(self.0.clone(), self.1.clone()))
+            }
+        }
+        impl Drop for Stream {
+            fn drop(&mut self) {
+                self.1.set(self.1.get() - 1);
+            }
+        }
+        impl Read for Stream {
+            fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+                let mut turns = self.0.borrow_mut();
+                let s = turns.last_mut().unwrap();
+                s.reads += 1;
+                s.max_read = s.max_read.max(bytes.len());
+                bytes[0] = b'x';
+                Ok(1)
+            }
+        }
+        impl Write for Stream {
+            fn write(&mut self, b: &[u8]) -> io::Result<usize> {
+                Ok(b.len())
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        let start = Instant::now();
+        let turns = Rc::new(std::cell::RefCell::new(vec![Stats::default()]));
+        let clock = TrackedClock {
+            now: Cell::new(start),
+            turns: turns.clone(),
+        };
+        assert_eq!(
+            serve_with(
+                Listener(turns.clone(), Rc::new(Cell::new(0))),
+                1234,
+                "s",
+                start + Duration::from_millis(20),
+                &clock
+            )
+            .unwrap(),
+            None
+        );
+        let turns = turns.borrow();
+        assert!(turns.iter().any(|s| s.reads == 16));
+        for turn in turns.iter() {
+            assert!(turn.accepts <= 8 && turn.reads <= 16 && turn.max_read <= MAX_HEAD);
+            // One excess connection can exist momentarily before it is dropped unread.
+            assert!(turn.max_live <= 17);
+        }
     }
 
     #[test]

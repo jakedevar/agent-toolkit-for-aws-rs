@@ -8,7 +8,7 @@ The AI recommendation job needs the model weights in **S3** (`ModelBuilder(model
 
 - Confirm the exact HuggingFace repo id with the user (e.g. `mistralai/Mistral-7B-Instruct-v0.3`).
 - Surface the model's license and get acceptance before downloading (gated models — Llama, Mistral, etc. — require accepting terms on HuggingFace and a HF token).
-- If the model is gated, ask the user for a HuggingFace access token (store it securely; never echo it back).
+- If the model is gated, ask the user for the ARN of an existing Secrets Manager secret that holds their HuggingFace access token. If they have no such secret, ask them to create it themselves (outside this conversation) and give you the ARN. For a public model there is nothing to collect: the value is `null`. The agent must never ask for, accept or echo the token itself; only the ARN goes into the values file (Step 2).
 
 ## Step 2: Download the model to S3
 
