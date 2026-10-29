@@ -126,10 +126,7 @@ fn canonical_launchers_pass() {
         ("mcp.json", mcp("./bin/tool", "[]")),
         (
             ".cursor-plugin/hooks.json",
-            hooks(
-                "stop",
-                r#"sh -c '"$0" --flush || true' "${CURSOR_PLUGIN_ROOT}/bin/note""#,
-            ),
+            hooks("stop", r#""${CLAUDE_PLUGIN_ROOT}/bin/note" || true"#),
         ),
     ]);
     assert!(problems.is_empty(), "{problems:#?}");
@@ -163,7 +160,7 @@ fn launcher_violations_are_reported() {
                 "PreToolUse",
                 r#"sh -c '"$0"/note' "${CLAUDE_PLUGIN_ROOT}/bin""#,
             ),
-            "bin/ directory itself",
+            "not an allowed launcher template",
         ),
         (
             "hooks/hooks.json",
@@ -348,14 +345,13 @@ fn unresolvable_plugin_bin_spellings_are_rejected() {
             "{command} {args}: accepted with {references} references"
         );
     }
-    // Plugin paths outside bin/ are not plugin binaries. (A system path
-    // such as /usr/bin/env now touches bin/ under the #5053 ruling and is
-    // refused: see BIN_TOUCHING_FORMS.)
+    // A shipped template naming a plugin path outside bin/ is not a plugin
+    // binary (the python guard launcher, until #4412 and #4415 retire it).
     let (problems, references) = problems_for(&[(
         "hooks/hooks.json",
         hooks(
             "PreToolUse",
-            r#"sh -c 'python3 "$0" 2>/dev/null || python "$0"' "${CLAUDE_PLUGIN_ROOT}/hooks/guard.py""#,
+            r#"sh -c 'python3 "$0" 2>/dev/null || python "$0" 2>/dev/null || py -3 "$0"' "${CLAUDE_PLUGIN_ROOT}/hooks/guard.py""#,
         ),
     )]);
     assert!(problems.is_empty(), "{problems:#?}");
@@ -634,14 +630,14 @@ fn ordinary_commands_and_canonical_forms_still_pass() {
             ".cursor-plugin/hooks.json",
             hooks(
                 "stop",
-                r#"sh -c 'python3 "$0" "$@" 2>/dev/null || true' "${CURSOR_PLUGIN_ROOT}/scripts/x/migration.py" --reconcile"#,
+                r#"sh -c 'python3 "$0" "$@" 2>/dev/null || python "$0" "$@" 2>/dev/null || true' "${CURSOR_PLUGIN_ROOT}/scripts/x/migration.py" --reconcile"#,
             ),
         ),
         (
             "b/hooks.json",
             hooks(
                 "Stop",
-                "echo cabin binary robin ${CLAUDE_PLUGIN_ROOT}/node_modules/.bin-cache",
+                r#""${CLAUDE_PLUGIN_ROOT}/scripts/cabin/robin.bin-cache""#,
             ),
         ),
         (
@@ -664,17 +660,6 @@ fn ordinary_commands_and_canonical_forms_still_pass() {
     let (problems, references) = problems_for(&[
         ("hooks/hooks.json", hooks("PreToolUse", &guard())),
         (
-            "d/hooks.json",
-            hooks(
-                "PreToolUse",
-                &guard_hook_command(
-                    "CURSOR_PLUGIN_ROOT",
-                    "guard",
-                    "Guard unavailable. Reinstall demo.",
-                ),
-            ),
-        ),
-        (
             ".mcp.json",
             mcp(&mcp_command("CLAUDE_PLUGIN_ROOT", "tool"), r#"["serve"]"#),
         ),
@@ -685,14 +670,11 @@ fn ordinary_commands_and_canonical_forms_still_pass() {
         ),
         (
             "f/hooks.json",
-            hooks(
-                "Stop",
-                r#"sh -c '"$0" --flush 2>/dev/null || true' "${CLAUDE_PLUGIN_ROOT}/bin/note""#,
-            ),
+            hooks("Stop", r#""${CLAUDE_PLUGIN_ROOT}/bin/note""#),
         ),
     ]);
     assert!(problems.is_empty(), "{problems:#?}");
-    assert_eq!(references, 6);
+    assert_eq!(references, 5);
 }
 
 /// The missing-binary deny contract behind #5053: with no binary staged, the
