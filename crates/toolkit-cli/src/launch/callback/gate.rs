@@ -381,6 +381,74 @@ mod tests {
     }
 
     #[test]
+    fn failed_watchdog_record_attempt_still_exits_once() {
+        let gate = CommitGate::default();
+        assert!(gate.start_exchange());
+        let calls = std::cell::RefCell::new(Vec::new());
+        watchdog_step(
+            &gate,
+            || {
+                calls.borrow_mut().push("write");
+                let failure: std::io::Result<()> = Err(std::io::Error::other("injected"));
+                let _ = failure;
+            },
+            |code| {
+                assert_eq!(code, 1);
+                calls.borrow_mut().push("exit");
+            },
+        );
+        assert_eq!(*calls.borrow(), vec!["write", "exit"]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn blocked_watchdog_record_keeps_lock_and_attempts_only_once() {
+        use crate::launch::{
+            callback::{
+                pending::{acquire_if_free, Custody},
+                wait_decision, PendingStatus, WaitDecision,
+            },
+            tests_support::Scratch,
+        };
+        let scratch = Scratch::new("blocked-record");
+        let custody = Custody::acquire(scratch.path(), 82).unwrap();
+        let gate = CommitGate::default();
+        let (entered_tx, entered_rx) = std::sync::mpsc::sync_channel(0);
+        let (release_tx, release_rx) = std::sync::mpsc::sync_channel(0);
+        let attempts = std::sync::atomic::AtomicUsize::new(0);
+        std::thread::scope(|scope| {
+            let gate_ref = &gate;
+            let attempts_ref = &attempts;
+            let worker = scope.spawn(move || {
+                watchdog_step(
+                    gate_ref,
+                    || {
+                        attempts_ref.fetch_add(1, Ordering::SeqCst);
+                        entered_tx.send(()).unwrap();
+                        release_rx.recv().unwrap();
+                    },
+                    |code| assert_eq!(code, 1),
+                )
+            });
+            entered_rx.recv().unwrap();
+            assert_eq!(attempts.load(Ordering::SeqCst), 1);
+            assert!(acquire_if_free(scratch.path(), 82).is_none());
+            assert_eq!(
+                wait_decision(PendingStatus::Listening, true, false, 105, 100),
+                WaitDecision::HelperBlocked
+            );
+            release_tx.send(()).unwrap();
+            worker.join().unwrap();
+        });
+        drop(custody);
+        assert!(acquire_if_free(scratch.path(), 82).is_some());
+        assert_eq!(
+            wait_decision(PendingStatus::Listening, false, false, 105, 100),
+            WaitDecision::TimedOut
+        );
+    }
+
+    #[test]
     fn admitted_publication_does_not_make_watchdog_wait() {
         let cutoff = Instant::now() + Duration::from_secs(1);
         let gate = CommitGate::default();
