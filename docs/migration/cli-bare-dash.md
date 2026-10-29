@@ -149,9 +149,23 @@ The scan lists them only because it matches by flag name:
 | `bedrock_probes/mod.rs` | `--region` | `bedrock-probes iam-policy` / `preflight` / `classify --region -` are refused; the entries belong to other slices |
 | `docgraph/mod.rs` | `--region` | `documentdb wa-review --region -` is refused; the entries belong to other slices |
 
-`telemetry` is a passthrough command that parses its own words, so neither the
-router policy nor these scans see its `--telemetry-dir` and `bundles --plugin-root=`
-values (#4961).
+`telemetry` is a passthrough command that parses its own words, so the router policy
+and the scans above never see its path flags. It declares them (`--telemetry-dir`,
+`--plugin-root`) in `value_flags`, which the router ignores for a passthrough command,
+and applies the policy itself (#4961):
+
+| Entry point | `--telemetry-dir -` / `--telemetry-dir=-` and `--plugin-root -` / `=-` |
+| --- | --- |
+| interactive: `status`, `reconcile`, `consent show\|status\|accept\|opt-out`, `bundles`, and an unknown word | exit 2, the router's flag-naming message, a bare `-` word refused as a positional, no path read or written |
+| hooks: `skill-invoked`, `migration`, `consent session-start` | **divergence**: the flag is treated as absent. Exit 0, output identical to the hook without the flag, nothing emitted, no file touched |
+
+The hook contract ("hook subcommands never fail") is why the hooks do not refuse; their
+fail-closed result is `pluginVersion: null` and no event. `./-` stays an explicit literal path.
+The contract test `passthrough_commands_declare_their_value_flags_and_refuse_dash_unless_a_hook`
+(`tests/diag_contract.rs`) covers every passthrough command except `asm exec` (which forwards
+argv): each must declare value flags and have a probe row, and the real binary is spawned with
+both spellings against a `./-` sentinel that must stay unchanged. `tests/telemetry.rs` covers each
+subcommand with a `./-` canary directory.
 
 ### Divergence: `bedrock-report render --date-suffix -` is refused (#4955)
 
