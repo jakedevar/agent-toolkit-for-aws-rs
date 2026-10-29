@@ -470,6 +470,40 @@ mod tests {
     }
 
     #[test]
+    fn t_br_out_shared_wire_and_frame() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../plugins/aws-agents/skills/agents-pay/packages/openclaw/test/fixtures/bridge-contract");
+        let wire = toolkit_core::parse_json(
+            &std::fs::read_to_string(root.join("get_payment_session.wire.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            frame(&session_result(&wire).unwrap()),
+            (
+                std::fs::read(root.join("get_payment_session.bridge-output.json")).unwrap(),
+                0
+            )
+        );
+        let wire = toolkit_core::parse_json(
+            &std::fs::read_to_string(root.join("process_payment.wire.json")).unwrap(),
+        )
+        .unwrap();
+        let payload = wire
+            .get("paymentOutput")
+            .unwrap()
+            .get("cryptoX402")
+            .unwrap()
+            .get("payload")
+            .unwrap();
+        assert_eq!(
+            frame(&payment_result(payload).unwrap()),
+            (
+                std::fs::read(root.join("process_payment.bridge-output.json")).unwrap(),
+                0
+            )
+        );
+    }
+
+    #[test]
     fn t_br_out_timestamp_and_nested_shapes() {
         let session = toolkit_core::parse_json(r#"{"paymentSessionId":"s","paymentManagerArn":"m","userId":"u","expiryTimeInMinutes":10,"createdAt":"2026-08-07T00:00:00+0530","updatedAt":"2026-08-07T00:00:00Z"}"#).unwrap();
         let result = session_result(&session).unwrap();
