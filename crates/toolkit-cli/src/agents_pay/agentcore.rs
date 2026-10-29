@@ -1,10 +1,8 @@
 //! Safe `AgentCore` error classification and endpoint construction.
 
-#[cfg(test)]
 use crate::agents_pay::policy::Approved;
 use toolkit_aws::{AwsError, Endpoint};
 use toolkit_core::parse_json;
-#[cfg(test)]
 use toolkit_core::Json;
 
 const CODES: &[&str] = &[
@@ -81,7 +79,6 @@ pub fn endpoint(region: &str) -> Result<String, AwsError> {
     Endpoint::for_service("bedrock-agentcore", region).map(|endpoint| endpoint.url())
 }
 
-#[cfg(test)]
 fn process_body(approved: &Approved) -> String {
     let mut payload = match approved.entry() {
         Json::Object(entries) => entries.clone(),
@@ -110,6 +107,42 @@ fn process_body(approved: &Approved) -> String {
         ("clientToken", Json::string(approved.token())),
     ])
     .to_compact_string()
+}
+
+/// Immutable payment request derived solely from an approved selection.
+///
+/// The constructor is private to this module.
+///
+/// ```compile_fail
+/// use toolkit_cli::agents_pay::{agentcore::ProcessPaymentRequest, policy::Approved};
+/// fn forge(approved: &Approved) { let _ = ProcessPaymentRequest::from_approved(approved); }
+/// ```
+#[allow(dead_code)] // The production adapter will consume these fields in S4.
+pub struct ProcessPaymentRequest {
+    body: Vec<u8>,
+    manager: String,
+    session: String,
+    instrument: String,
+    user: String,
+}
+
+impl ProcessPaymentRequest {
+    #[allow(dead_code)] // Used by the test prototype until the production adapter is complete.
+    fn from_approved(approved: &Approved) -> Self {
+        Self {
+            body: process_body(approved).into_bytes(),
+            manager: approved.manager_arn().into(),
+            session: approved.session_id().into(),
+            instrument: approved.instrument_id().into(),
+            user: approved.user_id().into(),
+        }
+    }
+}
+
+impl std::fmt::Debug for ProcessPaymentRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ProcessPaymentRequest([REDACTED])")
+    }
 }
 
 #[cfg(test)]
@@ -506,13 +539,10 @@ impl<'a> PaymentClient<'a> {
             Timeouts,
         };
         let deadline = self.clock.now() + Duration::from_secs(60);
-        let body = process_body(&approved).into_bytes();
+        let payment = ProcessPaymentRequest::from_approved(&approved);
         let mut headers = Headers::new();
         headers
-            .insert_sensitive(
-                "x-amzn-bedrock-agentcore-payments-user-id",
-                approved.user_id(),
-            )
+            .insert_sensitive("x-amzn-bedrock-agentcore-payments-user-id", &payment.user)
             .map_err(|_| PaymentError::Transport)?;
         headers
             .insert(
@@ -538,7 +568,7 @@ impl<'a> PaymentClient<'a> {
                     endpoint(&self.region).map_err(|_| PaymentError::Transport)?
                 ),
                 headers: headers.clone(),
-                body: body.clone(),
+                body: payment.body.clone(),
                 timeouts: Timeouts::new(timeout, timeout).map_err(|_| PaymentError::Transport)?,
             };
             self.signer
@@ -615,9 +645,9 @@ impl<'a> PaymentClient<'a> {
                     if status == 200 {
                         if !valid_process_response(
                             body,
-                            approved.manager_arn(),
-                            approved.session_id(),
-                            approved.instrument_id(),
+                            &payment.manager,
+                            &payment.session,
+                            &payment.instrument,
                         ) {
                             return Err(PaymentError::InvalidResponse);
                         }

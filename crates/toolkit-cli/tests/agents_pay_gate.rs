@@ -632,7 +632,7 @@ fn process_request_has_private_fields_and_only_approved_constructor() {
         .iter()
         .all(|field| matches!(field.vis, Visibility::Inherited)));
     let implementations: Vec<_> = file.items.iter().filter_map(|item| match item {
-        syn::Item::Impl(i) if matches!(&*i.self_ty, Type::Path(p) if p.path.is_ident("ProcessPaymentRequest")) => Some(i),
+        syn::Item::Impl(i) if i.trait_.is_none() && matches!(&*i.self_ty, Type::Path(p) if p.path.is_ident("ProcessPaymentRequest")) => Some(i),
         _ => None,
     }).collect();
     assert_eq!(implementations.len(), 1);
