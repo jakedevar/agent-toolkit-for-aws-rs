@@ -14,6 +14,7 @@
 
 pub mod archive;
 pub mod buffer;
+pub mod callback;
 pub mod clock;
 pub mod config;
 pub mod http;
