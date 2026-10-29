@@ -84,6 +84,7 @@ pub(crate) const SLICES: &[Slice] = &[
     crate::cloudwatch::DOMAIN_SLICE,
     crate::docgraph::SLICE,
     crate::dynamodb::SLICE,
+    crate::dynamodb_bench::SLICE,
     crate::dynamodb_deploy::SLICE,
     crate::elasticache::SLICE,
     crate::manifests::SLICE,

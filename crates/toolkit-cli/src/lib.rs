@@ -39,6 +39,7 @@ mod bedrock_resolve;
 pub mod cloudwatch;
 pub mod docgraph;
 pub mod dynamodb;
+mod dynamodb_bench;
 mod dynamodb_deploy;
 pub mod elasticache;
 pub mod manifests;
