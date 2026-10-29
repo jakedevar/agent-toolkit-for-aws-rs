@@ -1044,7 +1044,7 @@ pub(crate) fn estimate_command(
 
     let pricing = load_pricing(invocation, output, api, engine, false);
     let input = EstimateInput {
-        instance: instance.to_string(),
+        instance,
         cpu_p95,
         cpu_max,
         cpu_avg: cpu_avg.map_or(Num::Int(0), Num::Float),
