@@ -82,7 +82,7 @@ pub fn urlparse(url: &str) -> Result<ParsedUrl, UrlError> {
     let mut netloc = String::new();
     if let Some(after) = rest.strip_prefix("//") {
         let end = after.find(['/', '?', '#']).unwrap_or(after.len());
-        netloc = after[..end].to_owned();
+        after[..end].clone_into(&mut netloc);
         rest = &after[end..];
         let open = netloc.contains('[');
         let close = netloc.contains(']');

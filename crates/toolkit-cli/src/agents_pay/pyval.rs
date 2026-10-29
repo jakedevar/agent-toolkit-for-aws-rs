@@ -116,13 +116,13 @@ pub(crate) fn strip_digit_underscores(text: &str) -> Option<String> {
     for (index, &byte) in bytes.iter().enumerate() {
         if byte.is_ascii_digit() {
             out.push(char::from(byte));
-        } else if byte == b'_'
+            continue;
+        }
+        let between_digits = byte == b'_'
             && index > 0
             && bytes[index - 1].is_ascii_digit()
-            && bytes.get(index + 1).is_some_and(u8::is_ascii_digit)
-        {
-            continue;
-        } else {
+            && bytes.get(index + 1).is_some_and(u8::is_ascii_digit);
+        if !between_digits {
             return None;
         }
     }
@@ -173,7 +173,7 @@ pub fn py_int(value: &Json) -> Result<i64, PyValueError> {
         Json::Int(number) => Ok(*number),
         Json::Float(number) => {
             let truncated = number.trunc();
-            if !truncated.is_finite() || truncated >= I64_LIMIT || truncated < -I64_LIMIT {
+            if !truncated.is_finite() || !(-I64_LIMIT..I64_LIMIT).contains(&truncated) {
                 return Err(PyValueError);
             }
             // In range by the check above, so the conversion is exact.
