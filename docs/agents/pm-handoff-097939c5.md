@@ -898,3 +898,4 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 10-29 09:21Z: #4886 repair 1 (e70ae060) DONE at 990c9008a8a9d171e484f8954ef43e322db75ac4 (replay request strict/mismatch/reorder tests; #5298 fixed; scoped 5fb8dc9f 4174 ok).
   Re-review #5308 -> Claude Sonnet 4d05f4a4 (pinned 990c9008). On ACCEPT: check (maybe rerun) + enqueue (source_session e70ae060); close #5295 #5308 #5298 on land; #4886 stays open (items 2-3).
   4/4 busy: cd65d0a9 (#5181), 6ff4ee6c (#5296), b4c2b805 (#5307), 4d05f4a4 (#5308). Queue: e0de7c3f (#5261).
+- 10-29 09:28Z: #5261 S2b f/u LANDED (e0de7c3f published, f3ab564ce8b2ba77e198b014e7d1e1836c2372d9). #5261 auto-closed; CLOSED #5286 #5300 #5255-#5260 #5290-#5294. Queue empty. ai-payloads remaining: S5 #5296 (in flight).
