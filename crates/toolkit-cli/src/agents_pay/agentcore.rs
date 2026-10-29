@@ -779,12 +779,12 @@ mod operation_contracts {
         assert_eq!(
             instrument_body(
                 "arn:aws:bedrock-agentcore:us-east-1:123456789012:payment-manager/test-abcdefghij",
-                "connector",
+                "connector-abcdefghij",
                 "ETHEREUM",
                 "user@example.com",
                 "token"
             ),
-            r#"{"paymentManagerArn":"arn:aws:bedrock-agentcore:us-east-1:123456789012:payment-manager/test-abcdefghij","paymentConnectorId":"connector","paymentInstrumentType":"EMBEDDED_CRYPTO_WALLET","paymentInstrumentDetails":{"embeddedCryptoWallet":{"network":"ETHEREUM","linkedAccounts":[{"email":{"emailAddress":"user@example.com"}}]}},"clientToken":"token"}"#
+            r#"{"paymentManagerArn":"arn:aws:bedrock-agentcore:us-east-1:123456789012:payment-manager/test-abcdefghij","paymentConnectorId":"connector-abcdefghij","paymentInstrumentType":"EMBEDDED_CRYPTO_WALLET","paymentInstrumentDetails":{"embeddedCryptoWallet":{"network":"ETHEREUM","linkedAccounts":[{"email":{"emailAddress":"user@example.com"}}]}},"clientToken":"token"}"#
         );
         assert_eq!(agent_name(true), "openclaw-aws-agents-pay");
         assert_eq!(agent_name(false), "aws-agents-pay");
@@ -1535,6 +1535,20 @@ impl<'a> PaymentClient<'a> {
         let instrument = toolkit_aws::recorded::optional_object(&value, "paymentInstrument")
             .map_err(|_| PaymentError::InvalidResponse)?
             .ok_or(PaymentError::InvalidResponse)?;
+        let model = parse_json(PAYMENT_SERVICE_MODEL).map_err(|_| PaymentError::InvalidResponse)?;
+        for (key, shape) in [
+            ("paymentInstrumentId", "PaymentInstrumentId"),
+            ("paymentManagerArn", "PaymentManagerArn"),
+            ("paymentConnectorId", "PaymentConnectorId"),
+            ("userId", "UserId"),
+        ] {
+            if !instrument
+                .get(key)
+                .is_some_and(|v| valid_wallet_shape(&model, shape, v))
+            {
+                return Err(PaymentError::InvalidResponse);
+            }
+        }
         let text = |key| {
             toolkit_aws::recorded::optional_text(instrument, key)
                 .ok()
@@ -1570,7 +1584,6 @@ impl<'a> PaymentClient<'a> {
         let wallet = toolkit_aws::recorded::optional_object(details, "embeddedCryptoWallet")
             .map_err(|_| PaymentError::InvalidResponse)?
             .ok_or(PaymentError::InvalidResponse)?;
-        let model = parse_json(PAYMENT_SERVICE_MODEL).map_err(|_| PaymentError::InvalidResponse)?;
         if !valid_wallet_shape(&model, "PaymentInstrumentDetails", details)
             || toolkit_aws::recorded::optional_text(wallet, "network")
                 .ok()
@@ -1922,7 +1935,7 @@ mod wire_contracts {
             payments.create_instrument(
                 manager,
                 "user",
-                "connector",
+                "connector-abcdefghij",
                 "ETHEREUM",
                 "test@example.invalid",
                 "token"
@@ -1936,7 +1949,7 @@ mod wire_contracts {
             api.create_instrument(
                 manager,
                 "user",
-                "connector",
+                "connector-abcdefghij",
                 "ETHEREUM",
                 "test@example.invalid",
                 "token"
@@ -1987,7 +2000,7 @@ mod wire_contracts {
                     _ => api.create_instrument(
                         manager,
                         "user",
-                        "connector",
+                        "connector-abcdefghij",
                         "ETHEREUM",
                         "test@example.invalid",
                         "token",
@@ -2185,7 +2198,7 @@ mod wire_contracts {
     #[test]
     fn other_payment_operations_have_golden_wires() {
         let session = br#"{"paymentSession":{"paymentSessionId":"payment-session-TEST12345678901","paymentManagerArn":"arn:aws:bedrock-agentcore:us-east-1:123456789012:payment-manager/test-abcdefghij","userId":"user","expiryTimeInMinutes":60,"createdAt":1,"updatedAt":1}}"#;
-        let instrument = br#"{"paymentInstrument":{"paymentInstrumentId":"payment-instrument-TEST12345678901","paymentManagerArn":"arn:aws:bedrock-agentcore:us-east-1:123456789012:payment-manager/test-abcdefghij","paymentConnectorId":"connector","userId":"user","paymentInstrumentType":"EMBEDDED_CRYPTO_WALLET","paymentInstrumentDetails":{"embeddedCryptoWallet":{"network":"ETHEREUM","linkedAccounts":[{"email":{"emailAddress":"user@example.com"}}]}},"createdAt":1,"status":"ACTIVE","updatedAt":1}}"#;
+        let instrument = br#"{"paymentInstrument":{"paymentInstrumentId":"payment-instrument-TEST12345678901","paymentManagerArn":"arn:aws:bedrock-agentcore:us-east-1:123456789012:payment-manager/test-abcdefghij","paymentConnectorId":"connector-abcdefghij","userId":"user","paymentInstrumentType":"EMBEDDED_CRYPTO_WALLET","paymentInstrumentDetails":{"embeddedCryptoWallet":{"network":"ETHEREUM","linkedAccounts":[{"email":{"emailAddress":"user@example.com"}}]}},"createdAt":1,"status":"ACTIVE","updatedAt":1}}"#;
         let transport = FakeStreamingTransport::new()
             .respond(200, &[], vec![FakeChunk::data(session)])
             .respond(201, &[], vec![FakeChunk::data(session)])
@@ -2211,7 +2224,7 @@ mod wire_contracts {
             .create_instrument(
                 "arn:aws:bedrock-agentcore:us-east-1:123456789012:payment-manager/test-abcdefghij",
                 "user",
-                "connector",
+                "connector-abcdefghij",
                 "ETHEREUM",
                 "user@example.com",
                 "token"
@@ -2232,7 +2245,7 @@ mod wire_contracts {
             (
                 "createPaymentInstrument",
                 "aws-agents-pay",
-                instrument_body("arn:aws:bedrock-agentcore:us-east-1:123456789012:payment-manager/test-abcdefghij", "connector", "ETHEREUM", "user@example.com", "token"),
+                instrument_body("arn:aws:bedrock-agentcore:us-east-1:123456789012:payment-manager/test-abcdefghij", "connector-abcdefghij", "ETHEREUM", "user@example.com", "token"),
             ),
         ];
         assert_eq!(requests.len(), expected.len());
@@ -2285,7 +2298,7 @@ mod wire_contracts {
             client.create_instrument(
                 "arn:aws:bedrock-agentcore:us-east-1:123456789012:payment-manager/test-abcdefghij",
                 "user",
-                "connector",
+                "connector-abcdefghij",
                 "OTHER",
                 "user@example.com",
                 "token"
@@ -2297,7 +2310,7 @@ mod wire_contracts {
 
     #[test]
     fn instrument_response_rejects_invalid_nested_and_required_members() {
-        let good = r#"{"paymentInstrument":{"paymentInstrumentId":"payment-instrument-TEST12345678901","paymentManagerArn":"arn:aws:bedrock-agentcore:us-east-1:123456789012:payment-manager/test-abcdefghij","paymentConnectorId":"connector","userId":"user","paymentInstrumentType":"EMBEDDED_CRYPTO_WALLET","paymentInstrumentDetails":{"embeddedCryptoWallet":{"network":"ETHEREUM","linkedAccounts":[{"email":{"emailAddress":"user@example.com"}}]}},"createdAt":1,"status":"ACTIVE","updatedAt":1}}"#;
+        let good = r#"{"paymentInstrument":{"paymentInstrumentId":"payment-instrument-TEST12345678901","paymentManagerArn":"arn:aws:bedrock-agentcore:us-east-1:123456789012:payment-manager/test-abcdefghij","paymentConnectorId":"connector-abcdefghij","userId":"user","paymentInstrumentType":"EMBEDDED_CRYPTO_WALLET","paymentInstrumentDetails":{"embeddedCryptoWallet":{"network":"ETHEREUM","linkedAccounts":[{"email":{"emailAddress":"user@example.com"}}]}},"createdAt":1,"status":"ACTIVE","updatedAt":1}}"#;
         for bad in [
             good.replace(
                 r#""paymentInstrumentId":"payment-instrument-TEST12345678901""#,
@@ -2325,7 +2338,7 @@ mod wire_contracts {
                 client.create_instrument(
                     "arn:aws:bedrock-agentcore:us-east-1:123456789012:payment-manager/test-abcdefghij",
                     "user",
-                    "connector",
+                    "connector-abcdefghij",
                     "ETHEREUM",
                     "user@example.com",
                     "token"
@@ -2371,7 +2384,7 @@ mod wire_contracts {
 
     #[test]
     fn instrument_response_rejects_invalid_unions_and_enums() {
-        let good = r#"{"paymentInstrument":{"paymentInstrumentId":"payment-instrument-TEST12345678901","paymentManagerArn":"arn:aws:bedrock-agentcore:us-east-1:123456789012:payment-manager/test-abcdefghij","paymentConnectorId":"connector","userId":"user","paymentInstrumentType":"EMBEDDED_CRYPTO_WALLET","paymentInstrumentDetails":{"embeddedCryptoWallet":{"network":"ETHEREUM","linkedAccounts":[{"email":{"emailAddress":"user@example.com"}}]}},"createdAt":1,"status":"ACTIVE","updatedAt":1}}"#;
+        let good = r#"{"paymentInstrument":{"paymentInstrumentId":"payment-instrument-TEST12345678901","paymentManagerArn":"arn:aws:bedrock-agentcore:us-east-1:123456789012:payment-manager/test-abcdefghij","paymentConnectorId":"connector-abcdefghij","userId":"user","paymentInstrumentType":"EMBEDDED_CRYPTO_WALLET","paymentInstrumentDetails":{"embeddedCryptoWallet":{"network":"ETHEREUM","linkedAccounts":[{"email":{"emailAddress":"user@example.com"}}]}},"createdAt":1,"status":"ACTIVE","updatedAt":1}}"#;
         for bad in [
             good.replace("\"status\":\"ACTIVE\"", "\"status\":\"OTHER\""),
             good.replace("{\"email\":{\"emailAddress\":\"user@example.com\"}}", "{}"),
@@ -2382,7 +2395,7 @@ mod wire_contracts {
         ] {
             let transport = FakeStreamingTransport::new().respond(201, &[], vec![FakeChunk::data(bad.as_bytes())]);
             let client = PaymentClient::new("us-east-1", &transport, &NoSigner).unwrap();
-            assert_eq!(client.create_instrument("arn:aws:bedrock-agentcore:us-east-1:123456789012:payment-manager/test-abcdefghij", "user", "connector", "ETHEREUM", "user@example.com", "token"), Err(PaymentError::InvalidResponse), "{bad}");
+            assert_eq!(client.create_instrument("arn:aws:bedrock-agentcore:us-east-1:123456789012:payment-manager/test-abcdefghij", "user", "connector-abcdefghij", "ETHEREUM", "user@example.com", "token"), Err(PaymentError::InvalidResponse), "{bad}");
         }
     }
 
@@ -2479,7 +2492,7 @@ mod wire_contracts {
             client.create_instrument(
                 "arn:aws:bedrock-agentcore:us-east-1:123456789012:payment-manager/test-abcdefghij",
                 "user",
-                "connector",
+                "connector-abcdefghij",
                 "ETHEREUM",
                 "a@example.com",
                 "token"
