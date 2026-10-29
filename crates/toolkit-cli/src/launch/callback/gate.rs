@@ -441,7 +441,7 @@ mod tests {
         );
         assert!(result.is_err());
         assert!(!scratch.join("session.json").exists());
-        drop(custody);
+        custody.release_settled();
         assert!(acquire_if_free(scratch.path(), 81).is_some());
         assert_eq!(
             wait_decision(PendingStatus::Exchanging, false, false, 105, 100),
@@ -547,7 +547,7 @@ mod tests {
             release_tx.send(()).unwrap();
             worker.join().unwrap().unwrap();
         });
-        drop(custody);
+        custody.release_settled();
         assert!(acquire_if_free(scratch.path(), 81).is_some());
         assert_eq!(
             wait_decision(PendingStatus::Exchanging, false, true, 105, 100),
@@ -672,7 +672,7 @@ mod tests {
             release_tx.send(()).unwrap();
             worker.join().unwrap();
         });
-        drop(custody);
+        custody.release_settled();
         assert!(acquire_if_free(scratch.path(), 82).is_some());
         assert_eq!(
             wait_decision(PendingStatus::Listening, false, false, 105, 100),
