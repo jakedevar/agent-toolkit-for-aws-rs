@@ -1,10 +1,8 @@
 //! Safe `AgentCore` error classification and endpoint construction.
 
-#[cfg(test)]
 use crate::agents_pay::policy::Approved;
 use toolkit_aws::{AwsError, Endpoint};
 use toolkit_core::parse_json;
-#[cfg(test)]
 use toolkit_core::Json;
 
 const CODES: &[&str] = &[
@@ -81,7 +79,6 @@ pub fn endpoint(region: &str) -> Result<String, AwsError> {
     Endpoint::for_service("bedrock-agentcore", region).map(|endpoint| endpoint.url())
 }
 
-#[cfg(test)]
 fn process_body(approved: &Approved) -> String {
     let mut payload = match approved.entry() {
         Json::Object(entries) => entries.clone(),
@@ -190,7 +187,6 @@ fn runtime_region(
     toolkit_aws::is_valid_region(region).then(|| region.to_owned())
 }
 
-#[cfg(test)]
 fn valid_process_response(body: &str, manager: &str, session: &str, instrument: &str) -> bool {
     if body.len() > 65_536 {
         return false;
@@ -415,6 +411,25 @@ pub struct PaymentClient<'a> {
     region: String,
 }
 
+/// A sensitive authorization returned by the service; it has not yet been
+/// checked against the approved terms by the proof verifier.
+#[derive(PartialEq)]
+pub struct PaymentProof(Json);
+
+impl std::fmt::Debug for PaymentProof {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("PaymentProof([REDACTED])")
+    }
+}
+
+impl PaymentProof {
+    /// Inspect the sensitive document for verification. Never log this value.
+    #[must_use]
+    pub fn payload(&self) -> &Json {
+        &self.0
+    }
+}
+
 impl<'a> PaymentClient<'a> {
     /// Build an adapter using the conventional endpoint.
     ///
@@ -437,12 +452,126 @@ impl<'a> PaymentClient<'a> {
     ///
     /// # Errors
     /// Refuses invalid responses and transport or service failures.
-    pub fn process_payment(
-        &self,
-        _approved: crate::agents_pay::policy::Approved,
-    ) -> Result<(), PaymentError> {
-        let _ = (&self.transport, &self.signer, &self.region);
-        Err(PaymentError::InvalidResponse)
+    pub fn process_payment(&self, approved: Approved) -> Result<PaymentProof, PaymentError> {
+        use std::time::{Duration, Instant};
+        use toolkit_aws::{
+            FullJitter, Headers, HttpRequest, Method, RetryPolicy, SigningScope, StreamLimits,
+            Timeouts,
+        };
+        let deadline = Instant::now() + Duration::from_secs(60);
+        let body = process_body(&approved).into_bytes();
+        let mut headers = Headers::new();
+        headers
+            .insert_sensitive(
+                "x-amzn-bedrock-agentcore-payments-user-id",
+                approved.user_id(),
+            )
+            .map_err(|_| PaymentError::Transport)?;
+        headers
+            .insert(
+                "x-amzn-bedrock-agentcore-payments-agent-name",
+                "openclaw-aws-agents-pay",
+            )
+            .map_err(|_| PaymentError::Transport)?;
+        headers
+            .insert("content-type", "application/json")
+            .map_err(|_| PaymentError::Transport)?;
+        let policy = RetryPolicy::default();
+        let jitter = FullJitter::new();
+        for attempt in 1..=policy.total_attempts() {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(PaymentError::Transport);
+            }
+            let timeout = remaining.min(Duration::from_secs(30));
+            let mut request = HttpRequest {
+                method: Method::Post,
+                url: format!(
+                    "{}/payments/processPayment",
+                    endpoint(&self.region).map_err(|_| PaymentError::Transport)?
+                ),
+                headers: headers.clone(),
+                body: body.clone(),
+                timeouts: Timeouts::new(timeout, timeout).map_err(|_| PaymentError::Transport)?,
+            };
+            self.signer
+                .sign(
+                    &mut request,
+                    &SigningScope {
+                        region: self.region.clone(),
+                        service: "bedrock-agentcore".into(),
+                    },
+                )
+                .map_err(|_| PaymentError::Transport)?;
+            if Instant::now() >= deadline {
+                return Err(PaymentError::Transport);
+            }
+            let limits = StreamLimits::new(65_536, 8_192).map_err(|_| PaymentError::Transport)?;
+            let outcome = self.transport.open(&request, &limits);
+            let error = match outcome {
+                Ok(mut stream) => {
+                    let status = stream.status();
+                    let error_header = stream.headers().get("x-amzn-ErrorType").map(str::to_owned);
+                    let mut bytes = Vec::new();
+                    loop {
+                        if Instant::now() >= deadline {
+                            return Err(PaymentError::Transport);
+                        }
+                        match stream.next_chunk() {
+                            Ok(Some(chunk)) => {
+                                if bytes.len().saturating_add(chunk.len()) > 65_536 {
+                                    return Err(PaymentError::InvalidResponse);
+                                }
+                                bytes.extend_from_slice(&chunk);
+                            }
+                            Ok(None) => break,
+                            Err(_) => return Err(PaymentError::Transport),
+                        }
+                    }
+                    let body =
+                        std::str::from_utf8(&bytes).map_err(|_| PaymentError::InvalidResponse)?;
+                    if status == 200 {
+                        if !valid_process_response(
+                            body,
+                            approved.manager_arn(),
+                            approved.session_id(),
+                            approved.instrument_id(),
+                        ) {
+                            return Err(PaymentError::InvalidResponse);
+                        }
+                        let value = parse_json(body).map_err(|_| PaymentError::InvalidResponse)?;
+                        let payload = value
+                            .get("paymentOutput")
+                            .and_then(|v| v.get("cryptoX402"))
+                            .and_then(|v| v.get("payload"))
+                            .ok_or(PaymentError::InvalidResponse)?;
+                        let payload = match payload {
+                            Json::String(text) => {
+                                parse_json(text).map_err(|_| PaymentError::InvalidResponse)?
+                            }
+                            _ => payload.clone(),
+                        };
+                        return Ok(PaymentProof(payload));
+                    }
+                    PaymentError::Service(error_code(error_header.as_deref(), body))
+                }
+                Err(_) => PaymentError::Transport,
+            };
+            let retry = match &error {
+                PaymentError::Service(code) => is_retryable(code),
+                PaymentError::Transport => true,
+                PaymentError::InvalidResponse => false,
+            };
+            if !retry || attempt == policy.total_attempts() {
+                return Err(error);
+            }
+            let delay = policy.delay(attempt, &jitter);
+            if delay >= deadline.saturating_duration_since(Instant::now()) {
+                return Err(error);
+            }
+            std::thread::sleep(delay);
+        }
+        Err(PaymentError::Transport)
     }
 }
 
@@ -480,7 +609,7 @@ mod wire_contracts {
                 .get("x-amzn-bedrock-agentcore-payments-agent-name"),
             Some("openclaw-aws-agents-pay")
         );
-        assert!(!format!("{:?}", requests[0]).contains("user"));
+        assert!(format!("{:?}", requests[0]).contains("[REDACTED]"));
     }
 
     #[test]
