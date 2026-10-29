@@ -34,6 +34,8 @@ impl Custody {
             return Err(io::Error::other("invalid pending lock"));
         }
         lock.try_lock().map_err(io::Error::from)?;
+        use std::os::unix::fs::PermissionsExt;
+        lock.set_permissions(std::fs::Permissions::from_mode(0o600))?;
         Ok(Self {
             _lock: lock,
             dir,

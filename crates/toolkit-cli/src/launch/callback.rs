@@ -10,6 +10,7 @@ pub enum Outcome {
 }
 
 pub mod gate;
+pub mod lifecycle;
 pub mod listener;
 pub mod pending;
 

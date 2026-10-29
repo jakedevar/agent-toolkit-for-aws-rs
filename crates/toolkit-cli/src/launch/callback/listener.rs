@@ -101,10 +101,7 @@ pub fn serve(listener: TcpListener, state: &str, flow_end: Instant) -> io::Resul
                     }
                     Err(e)
                         if e.kind() == io::ErrorKind::WouldBlock
-                            || e.kind() == io::ErrorKind::Interrupted =>
-                    {
-                        ()
-                    }
+                            || e.kind() == io::ErrorKind::Interrupted => {}
                     Err(_) => drop_slot = true,
                 }
             } else {
@@ -157,10 +154,7 @@ pub fn serve(listener: TcpListener, state: &str, flow_end: Instant) -> io::Resul
                     }
                     Err(e)
                         if e.kind() == io::ErrorKind::WouldBlock
-                            || e.kind() == io::ErrorKind::Interrupted =>
-                    {
-                        ()
-                    }
+                            || e.kind() == io::ErrorKind::Interrupted => {}
                     Err(_) => drop_slot = true,
                 }
             }
