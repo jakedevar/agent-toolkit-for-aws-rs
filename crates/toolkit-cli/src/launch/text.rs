@@ -64,3 +64,28 @@ fn push_escaped(out: &mut String, text: &str, quote: Option<char>) {
         }
     }
 }
+
+/// The success line of a launch command: Python
+/// `json.dumps(value, indent=2, default=str)` (`ensure_ascii`, Python float
+/// `repr`, the value's own member order).
+#[must_use]
+pub fn ok_text(value: &toolkit_core::Json) -> String {
+    crate::aurora::pyfmt::dumps(value)
+}
+
+/// The failure line of a launch command: Python
+/// `json.dumps({"error": message})` (compact default separators `", "` and
+/// `": "`, `ensure_ascii`).
+#[must_use]
+pub fn error_text(message: &str) -> String {
+    format!(
+        "{{\"error\": {}}}",
+        crate::aurora::pyfmt::dumps(&toolkit_core::Json::String(message.to_owned()))
+    )
+}
+
+/// Write [`error_text`] to the diagnostic stream and set exit status 1.
+pub fn fail(output: &mut crate::Output<'_>, message: &str) {
+    output.diagnostic(&error_text(message));
+    output.set_exit_status(1);
+}

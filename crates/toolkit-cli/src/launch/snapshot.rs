@@ -32,8 +32,7 @@ pub fn render_applied(files: usize, directories: usize, into: &Path) -> String {
 
 #[allow(clippy::unnecessary_wraps)]
 fn failure(output: &mut Output<'_>, message: &str) -> Result<(), ToolkitError> {
-    output.diagnostic(&serde_json::json!({ "error": message }).to_string());
-    output.set_exit_status(1);
+    super::text::fail(output, message);
     Ok(())
 }
 

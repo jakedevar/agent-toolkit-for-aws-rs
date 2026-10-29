@@ -2,6 +2,14 @@
 use super::{ApiError, ApiOperation, Client};
 use crate::launch::http::SystemClock;
 use serde_json::json;
+use toolkit_core::Json;
+
+fn to_json(value: serde_json::Value) -> Json {
+    toolkit_core::parse_json(&value.to_string()).expect("fixture JSON")
+}
+fn from_json(value: &Json) -> serde_json::Value {
+    serde_json::from_str(&value.to_compact_string()).expect("shaped JSON")
+}
 use toolkit_aws::retry::{NoJitter, RetryPolicy};
 use toolkit_aws::testing::{FakeChunk, FakeStreamingTransport, RecordingSleeper};
 use toolkit_aws::Secret;
@@ -26,11 +34,12 @@ fn call(
         "l-1",
         &[],
         if matches!(operation, ApiOperation::CreateLaunch) {
-            Some(json!({"name":"n"}))
+            Some(to_json(json!({"name":"n"})))
         } else {
             None
         },
     )
+    .map(|value| from_json(&value))
 }
 fn response(status: u16, body: &[u8]) -> FakeStreamingTransport {
     FakeStreamingTransport::new().respond(status, &[], vec![FakeChunk::data(body)])

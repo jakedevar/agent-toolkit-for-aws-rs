@@ -12,7 +12,16 @@ use crate::launch::{
 use crate::{Invocation, Output};
 use std::time::{SystemTime, UNIX_EPOCH};
 use toolkit_aws::{Env, ProcessEnv, SystemResolver};
-use toolkit_core::ToolkitError;
+use toolkit_core::{Json, ToolkitError};
+
+/// The `auth-start` success line for an authenticated session (section 1.3).
+fn started(reused: bool, base: &str) -> String {
+    crate::launch::text::ok_text(&Json::object(vec![
+        ("authenticated", Json::Bool(true)),
+        ("reusedCachedSession", Json::Bool(reused)),
+        ("baseUrl", Json::string(base)),
+    ]))
+}
 
 /// Reuse a cached session, otherwise launch an isolated callback helper.
 #[allow(clippy::unnecessary_wraps)]
@@ -56,10 +65,10 @@ pub fn command(invocation: &Invocation, output: &mut Output<'_>) -> Result<(), T
             .as_ref()
             .is_some_and(|s| s.token_expires_at > now.saturating_add(300))
         {
-            return output.line(&serde_json::json!({"authenticated":true,"reusedCachedSession":true,"baseUrl":base}).to_string());
+            return output.line(&started(true, &base));
         }
         let client = match obtain_client(&env, &dir, session.as_ref(), now) {
-            Ok(StartClient::Refreshed) => return output.line(&serde_json::json!({"authenticated":true,"reusedCachedSession":false,"baseUrl":base}).to_string()),
+            Ok(StartClient::Refreshed) => return output.line(&started(false, &base)),
             Ok(StartClient::Interactive(client)) => client,
             Err(message) => return failure(output, message),
         };
@@ -95,7 +104,18 @@ pub fn command(invocation: &Invocation, output: &mut Output<'_>) -> Result<(), T
         .map(|(key, value)| format!("{key}={}", form_encode(value)))
         .collect::<Vec<_>>()
         .join("&");
-        output.line(&serde_json::json!({"authenticated":false,"signInUrl":format!("https://oidc.us-east-1.amazonaws.com/authorize?{query}"),"pid":pid,"port":port,"baseUrl":base}).to_string())
+        output.line(&crate::launch::text::ok_text(&Json::object(vec![
+            ("authenticated", Json::Bool(false)),
+            (
+                "signInUrl",
+                Json::string(format!(
+                    "https://oidc.us-east-1.amazonaws.com/authorize?{query}"
+                )),
+            ),
+            ("pid", Json::Int(i64::from(pid))),
+            ("port", Json::Int(i64::from(port))),
+            ("baseUrl", Json::string(base)),
+        ])))
     }
     #[cfg(not(unix))]
     {

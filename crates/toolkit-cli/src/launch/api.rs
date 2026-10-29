@@ -1,6 +1,6 @@
 //! Launch API client.
 
-use serde_json::Value;
+use toolkit_core::Json;
 
 /// Convert an untrusted service error code to a locally owned constant.
 #[must_use]
@@ -26,12 +26,14 @@ pub fn error_code(header: Option<&str>, body: &[u8]) -> &'static str {
         "InternalFailure",
         "ServiceUnavailable",
     ];
-    let parsed: Option<Value> = serde_json::from_slice(body).ok();
+    let parsed = std::str::from_utf8(body)
+        .ok()
+        .and_then(|text| toolkit_core::parse_json(text).ok());
     let candidate = header.or_else(|| {
         parsed.as_ref().and_then(|value| {
             ["__type", "code", "Code", "errorCode"]
                 .iter()
-                .find_map(|key| value.get(key).and_then(Value::as_str))
+                .find_map(|key| value.get(key).and_then(Json::as_str))
         })
     });
     let normalized = candidate
@@ -187,9 +189,7 @@ impl Client<'_> {
             },
             other => other,
         })?;
-        let parsed =
-            toolkit_core::parse_json(&result.to_string()).map_err(|_| ApiError::InvalidResponse)?;
-        let launch = toolkit_aws::recorded::optional_object(&parsed, "launch")
+        let launch = toolkit_aws::recorded::optional_object(&result, "launch")
             .map_err(|_| ApiError::InvalidResponse)?
             .ok_or(ApiError::InvalidResponse)?;
         let url = toolkit_aws::recorded::optional_text(launch, "downloadUrl")
@@ -202,13 +202,13 @@ impl Client<'_> {
         operation: ApiOperation,
         id: &str,
         include: &[&str],
-        body: Option<Value>,
-    ) -> Result<Value, ApiError> {
+        body: Option<Json>,
+    ) -> Result<Json, ApiError> {
         if matches!(operation, ApiOperation::CreateLaunch)
             && !body
                 .as_ref()
                 .and_then(|value| value.get("name"))
-                .and_then(Value::as_str)
+                .and_then(Json::as_str)
                 .is_some_and(|name| (1..=128).contains(&name.chars().count()))
         {
             return Err(ApiError::InvalidLaunchName);
@@ -219,16 +219,21 @@ impl Client<'_> {
         ) {
             validate_launch_id(id)?;
         }
-        let retry = matches!(
-            operation,
+        // Every operation follows the shared retry policy (R-API-HTTP); an
+        // operation with an idempotency token retries only when the token is
+        // present, so a retry can never create a second resource.
+        let retry = match operation {
             ApiOperation::CreateUploadUrl
-                | ApiOperation::CreateLaunch
-                | ApiOperation::StartExecution
-        ) && body
-            .as_ref()
-            .and_then(|v| v.get("clientToken"))
-            .and_then(Value::as_str)
-            .is_some_and(|s| !s.is_empty());
+            | ApiOperation::CreateLaunch
+            | ApiOperation::StartExecution => body
+                .as_ref()
+                .and_then(|v| v.get("clientToken"))
+                .and_then(Json::as_str)
+                .is_some_and(|s| !s.is_empty()),
+            ApiOperation::GetLaunch | ApiOperation::ListLaunches | ApiOperation::Delete => true,
+            #[cfg(test)]
+            ApiOperation::Put => false,
+        };
         let (method, path, stream_op) = match operation {
             ApiOperation::CreateUploadUrl => {
                 (Method::Post, "/api/uploads".to_owned(), Operation::ApiJson)
@@ -277,7 +282,7 @@ impl Client<'_> {
             method,
             url,
             headers,
-            body: body.map_or_else(Vec::new, |v| v.to_string().into_bytes()),
+            body: body.map_or_else(Vec::new, |v| v.to_compact_string().into_bytes()),
             timeouts: Timeouts::new(timeout, timeout).map_err(|_| ApiError::InvalidRequest)?,
         };
         let put = stream_op == Operation::Put;
@@ -323,12 +328,14 @@ impl Client<'_> {
             });
         }
         if put {
-            return Ok(Value::Null);
+            return Ok(Json::Null);
         }
         if matches!(operation, ApiOperation::Delete) {
-            return Ok(
-                serde_json::json!({"deleted":true,"id":crate::safe_text::redacted_value(id),"region":self.region}),
-            );
+            return Ok(Json::object(vec![
+                ("deleted", Json::Bool(true)),
+                ("id", Json::string(crate::safe_text::redacted_value(id))),
+                ("region", Json::string(self.region)),
+            ]));
         }
         let shape = match operation {
             ApiOperation::CreateUploadUrl => "CreateUploadUrlOutput",
@@ -341,8 +348,7 @@ impl Client<'_> {
             ApiOperation::Put => unreachable!(),
         };
         let body = std::str::from_utf8(&response.body).map_err(|_| ApiError::InvalidResponse)?;
-        let shaped = super::shape::shape(shape, body).map_err(|_| ApiError::InvalidResponse)?;
-        serde_json::from_str(&shaped).map_err(|_| ApiError::InvalidResponse)
+        super::shape::shape(shape, body).map_err(|_| ApiError::InvalidResponse)
     }
 
     #[cfg(unix)]

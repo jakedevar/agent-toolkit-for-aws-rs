@@ -8,9 +8,11 @@
 //! ([`config`], [`state`]), the bounded byte collector of #5082 ([`buffer`])
 //! and the archive boundary ([`archive`]: rooted race-free source walk, Git
 //! ignore rules, the strict ZIP writer and reader, version-control name
-//! policy and the materialisation planner). The API client and its commands
-//! arrive in L5; until then parts of this code are reached only by the unit
-//! tests, so dead-code analysis is silenced for the module as a whole.
+//! policy and the materialisation planner). L5 (#5345) adds the API client
+//! ([`api`]), model-driven shaping ([`shape`]) and the API commands
+//! ([`flow`], routed by [`commands`]). The network commands are compiled into
+//! the default build only for their offline tests, so dead-code analysis is
+//! silenced for the module as a whole.
 #![allow(dead_code)]
 
 pub mod api;
@@ -20,6 +22,7 @@ pub mod callback;
 pub mod clock;
 pub mod commands;
 pub mod config;
+pub mod flow;
 #[cfg(unix)]
 pub mod download;
 pub mod http;
@@ -108,8 +111,8 @@ mod tests_mod;
 #[cfg(test)]
 pub mod tests_support;
 
-/// The sign-in routes (L4) and the snapshot routes (L6); the remaining launch
-/// commands arrive in L5.
+/// Every launch route: the API commands and offline commands (L5), sign-in
+/// (L4) and the snapshot routes (L6).
 pub(crate) const SLICE: crate::registry::Slice = crate::registry::Slice {
     name: "launch",
     commands: &[crate::CommandSpec {

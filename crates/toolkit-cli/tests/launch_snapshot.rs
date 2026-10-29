@@ -49,7 +49,7 @@ fn missing_positionals_keep_the_python_error_json() {
         assert!(output.stdout.is_empty());
         assert_eq!(
             text(&output.stderr),
-            format!("{{\"error\":\"Missing required argument for {name}\"}}\n")
+            format!("{{\"error\": \"Missing required argument for {name}\"}}\n")
         );
     }
     std::fs::remove_dir_all(&home).unwrap();
@@ -78,7 +78,7 @@ fn an_existing_output_is_refused_before_any_request() {
     assert_eq!(
         text(&output.stderr),
         format!(
-            "{{\"error\":\"Output directory already exists: {}.\"}}\n",
+            "{{\"error\": \"Output directory already exists: {}.\"}}\n",
             out.display()
         )
     );
@@ -104,7 +104,7 @@ fn the_default_build_refuses_the_network_and_creates_nothing() {
     assert_eq!(output.status.code(), Some(1));
     assert_eq!(
         text(&output.stderr),
-        "{\"error\":\"This toolkit build has no network support; install a build with the \
+        "{\"error\": \"This toolkit build has no network support; install a build with the \
          aws-sdk feature.\"}\n"
     );
     assert!(!out.exists());
@@ -183,7 +183,7 @@ fn apply_snapshot_overlays_the_work_tree_and_prints_the_summary() {
     assert_eq!(output.status.code(), Some(1));
     assert_eq!(
         text(&output.stderr),
-        "{\"error\":\"The snapshot contains version-control metadata and was not applied: \
+        "{\"error\": \"The snapshot contains version-control metadata and was not applied: \
          .git.\"}\n"
     );
     assert_eq!(

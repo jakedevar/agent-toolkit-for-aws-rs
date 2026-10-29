@@ -86,7 +86,10 @@ pub(super) fn report_authenticated(
     output: &mut Output<'_>,
     base: &str,
 ) -> (Option<Result<(), ToolkitError>>, bool) {
-    let result = output.line(&serde_json::json!({"authenticated":true,"baseUrl":base}).to_string());
+    let result = output.line(&crate::launch::text::ok_text(&toolkit_core::Json::object(vec![
+        ("authenticated", toolkit_core::Json::Bool(true)),
+        ("baseUrl", toolkit_core::Json::string(base)),
+    ])));
     let delivered = result.is_ok() && !output.is_closed();
     (Some(result), delivered)
 }
@@ -96,7 +99,7 @@ pub(super) fn report_failure(
     output: &mut Output<'_>,
     message: &str,
 ) -> (Option<Result<(), ToolkitError>>, bool) {
-    let text = serde_json::json!({"error":message}).to_string();
+    let text = crate::launch::text::error_text(message);
     let text = output.caller.diagnostic(&text);
     let delivered = output.diagnostics.as_mut().is_some_and(|writer| {
         writer
@@ -110,7 +113,6 @@ pub(super) fn report_failure(
 
 #[allow(clippy::unnecessary_wraps)]
 pub(super) fn failure(output: &mut Output<'_>, message: &str) -> Result<(), ToolkitError> {
-    output.diagnostic(&serde_json::json!({"error":message}).to_string());
-    output.set_exit_status(1);
+    crate::launch::text::fail(output, message);
     Ok(())
 }

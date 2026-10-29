@@ -65,7 +65,7 @@ fn t_cli_missing_required_arguments_use_json() {
         assert!(output.stdout.is_empty());
         assert_eq!(
             String::from_utf8(output.stderr).unwrap(),
-            format!("{{\"error\":\"Missing required argument for {name}\"}}\n")
+            format!("{{\"error\": \"Missing required argument for {name}\"}}\n")
         );
     }
 }
@@ -97,7 +97,7 @@ fn t_cmd_network_commands_fail_without_network_support() {
         let output = invoke(args);
         assert_eq!(output.status.code(), Some(1));
         assert!(output.stdout.is_empty());
-        assert_eq!(output.stderr, b"{\"error\":\"This toolkit build has no network support; install a build with the aws-sdk feature.\"}\n");
+        assert_eq!(output.stderr, b"{\"error\": \"This toolkit build has no network support; install a build with the aws-sdk feature.\"}\n");
     }
 }
 
@@ -109,7 +109,7 @@ fn t_api_create_name_validation_precedes_network() {
     assert!(output.stdout.is_empty());
     assert_eq!(
         output.stderr,
-        b"{\"error\":\"Invalid launch name: it must be 1 to 128 characters.\"}\n"
+        b"{\"error\": \"Invalid launch name: it must be 1 to 128 characters.\"}\n"
     );
 }
 
@@ -125,4 +125,148 @@ fn t_cmd_create_rejects_credential_bearing_url_without_echoing_credentials() {
     let diagnostic = String::from_utf8(output.stderr).unwrap();
     assert!(diagnostic.contains("create-launch takes a local directory"));
     assert!(!diagnostic.contains("FAKE-URL-SECRET"));
+}
+
+#[test]
+fn t_cli_invalid_id_extra_positionals_and_dash_values() {
+    let long = "x".repeat(2049);
+    let output = invoke(&["launch", "get-launch", &long]);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert_eq!(
+        output.stderr,
+        b"{\"error\": \"Invalid launch id: it must be 1 to 2048 characters.\"}\n"
+    );
+    for args in [
+        &["launch", "delete-launch", "a", "b"][..],
+        &["launch", "list-launches", "extra"],
+        &["launch", "get-launch", "l-1", "--region", "-"],
+        &["launch", "get-launch", "l-1", "--region=-"],
+        &["launch", "list-launches", "--region"],
+        &["launch", "get-launch", "l-1", "--access-key", "AKIAFAKE"],
+    ] {
+        let output = invoke(args);
+        assert_eq!(output.status.code(), Some(2), "{args:?}");
+        assert!(output.stdout.is_empty(), "{args:?}");
+    }
+}
+
+#[cfg(not(feature = "aws-sdk"))]
+#[test]
+fn t_cmd_every_network_command_validates_locally_then_refuses_without_network() {
+    let source = std::env::temp_dir();
+    let source = source.to_str().unwrap();
+    for args in [
+        &["launch", "create-launch", source][..],
+        &["launch", "create-launch", source, "name", "--region", "eu-central-1"],
+        &["launch", "get-launch", "l-1", "execution,plan"],
+        &["launch", "get-launch-download-url", "l-1"],
+        &["launch", "list-launches", "--region", "eu-central-1"],
+    ] {
+        let output = invoke(args);
+        assert_eq!(output.status.code(), Some(1), "{args:?}");
+        assert!(output.stdout.is_empty());
+        assert_eq!(output.stderr, b"{\"error\": \"This toolkit build has no network support; install a build with the aws-sdk feature.\"}\n");
+    }
+}
+
+/// T-TOK-1..5 for the sign-in commands and the helper (#5197): with a seeded
+/// session (expired access token, live client), `auth-start` spawns the
+/// helper, the browser step is replayed with a seeded code, and `auth-wait`
+/// reports the default build's exchange failure. No seeded secret, code or
+/// state reaches any stdout or stderr, the pending record, the helper's argv
+/// or its environment; the state appears only in the sign-in URL (by design).
+#[cfg(all(target_os = "linux", not(feature = "aws-sdk")))]
+#[test]
+fn t_tok_sign_in_and_helper_matrix() {
+    use std::io::{Read, Write};
+    use std::net::TcpStream;
+    const SECRETS: [&str; 4] = [
+        "FAKE-CLIENT-SECRET-0001",
+        "FAKE-ACCESS-TOKEN-0001",
+        "FAKE-REFRESH-TOKEN-0001",
+        "FAKE-AUTH-CODE-0001",
+    ];
+    let clean = |label: &str, text: &[u8], extra: &[&str]| {
+        let text = String::from_utf8_lossy(text);
+        for (index, secret) in SECRETS.iter().chain(extra).enumerate() {
+            assert!(!text.contains(secret), "{label}: seeded value #{index} leaked");
+        }
+    };
+    let home = std::env::temp_dir().join(format!(
+        "launch-l5-tok-{}-{}",
+        std::process::id(),
+        SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+    ));
+    let state_dir = home.join(".launch-with-aws");
+    std::fs::create_dir_all(&state_dir).unwrap();
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+    let session = format!(
+        "{{\"client_id\":\"client\",\"client_secret\":\"{}\",\"client_expires_at\":{},\"authorize_endpoint\":\"https://oidc.us-east-1.amazonaws.com/authorize\",\"token_endpoint\":\"https://oidc.us-east-1.amazonaws.com/token\",\"scopes\":[\"launch:access\"],\"access_token\":\"{}\",\"refresh_token\":\"{}\",\"token_expires_at\":{}}}",
+        SECRETS[0],
+        now + 3600,
+        SECRETS[1],
+        SECRETS[2],
+        now - 1
+    );
+    std::fs::write(state_dir.join("session.json"), session).unwrap();
+    let run = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_toolkit"))
+            .args(args)
+            .env("HOME", &home)
+            .env_remove("LAUNCH_WITH_AWS_BASE_URL")
+            .output()
+            .unwrap()
+    };
+    let start = run(&["launch", "auth-start"]);
+    assert!(start.status.success());
+    clean("auth-start stdout", &start.stdout, &[]);
+    clean("auth-start stderr", &start.stderr, &[]);
+    let response: serde_json::Value = serde_json::from_slice(&start.stdout).unwrap();
+    let pid = response["pid"].as_u64().unwrap();
+    let port = u16::try_from(response["port"].as_u64().unwrap()).unwrap();
+    let state = response["signInUrl"]
+        .as_str()
+        .unwrap()
+        .split('&')
+        .find_map(|v| v.strip_prefix("state="))
+        .unwrap()
+        .to_owned();
+    assert!(state.len() >= 32);
+    let argv = std::fs::read(format!("/proc/{pid}/cmdline")).unwrap();
+    clean("helper argv", &argv, &[&state]);
+    let environ = std::fs::read(format!("/proc/{pid}/environ")).unwrap();
+    clean("helper environment", &environ, &[&state]);
+    let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    stream
+        .set_read_timeout(Some(std::time::Duration::from_secs(3)))
+        .unwrap();
+    write!(
+        stream,
+        "GET /?state={state}&code={} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\r\n",
+        SECRETS[3]
+    )
+    .unwrap();
+    let mut page = Vec::new();
+    let _ = stream.read_to_end(&mut page);
+    clean("callback page", &page, &[&state]);
+    let wait = run(&["launch", "auth-wait", &pid.to_string()]);
+    assert_eq!(wait.status.code(), Some(1));
+    clean("auth-wait stdout", &wait.stdout, &[&state]);
+    clean("auth-wait stderr", &wait.stderr, &[&state]);
+    assert!(String::from_utf8_lossy(&wait.stderr).starts_with("{\"error\": \""));
+    for entry in std::fs::read_dir(&state_dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.file_name().is_some_and(|n| n == "session.json") || !path.is_file() {
+            continue;
+        }
+        clean("pending record", &std::fs::read(&path).unwrap(), &[&state]);
+    }
+    for args in [&["launch", "session-status"][..], &["launch", "sign-out"]] {
+        let output = run(args);
+        assert!(output.status.success());
+        clean("offline command", &output.stdout, &[&state]);
+        clean("offline command", &output.stderr, &[&state]);
+    }
+    std::fs::remove_dir_all(home).unwrap();
 }

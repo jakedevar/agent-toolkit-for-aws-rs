@@ -2,6 +2,14 @@
 use super::{ApiError, ApiOperation, Client};
 use crate::launch::http::SystemClock;
 use serde_json::json;
+use toolkit_core::Json;
+
+fn to_json(value: serde_json::Value) -> Json {
+    toolkit_core::parse_json(&value.to_string()).expect("fixture JSON")
+}
+fn from_json(value: &Json) -> serde_json::Value {
+    serde_json::from_str(&value.to_compact_string()).expect("shaped JSON")
+}
 use toolkit_aws::retry::{NoJitter, RetryPolicy};
 use toolkit_aws::testing::{FakeChunk, FakeStreamingTransport, RecordingSleeper};
 use toolkit_aws::Secret;
@@ -33,7 +41,8 @@ fn call(
         jitter: &NoJitter,
         policy: RetryPolicy::default(),
     }
-    .call(op, id, include, body)
+    .call(op, id, include, body.map(to_json))
+    .map(|value| from_json(&value))
 }
 fn reply(status: u16, body: &str) -> FakeStreamingTransport {
     FakeStreamingTransport::new().respond(status, &[], vec![FakeChunk::data(body.as_bytes())])
@@ -72,7 +81,7 @@ fn t_api_local_id_validation_precedes_request() {
     }
 }
 #[test]
-fn t_api_only_idempotent_client_token_retries_and_is_stable() {
+fn t_api_retry_policy_client_token_is_stable_and_put_is_never_retried() {
     for op in [
         ApiOperation::CreateUploadUrl,
         ApiOperation::CreateLaunch,
@@ -96,16 +105,24 @@ fn t_api_only_idempotent_client_token_retries_and_is_stable() {
         assert_eq!(requests.len(), 2);
         assert!(requests[0].body == requests[1].body);
     }
-    for op in [
-        ApiOperation::GetLaunch,
-        ApiOperation::ListLaunches,
-        ApiOperation::Delete,
-        ApiOperation::Put,
+    // Operations without a token follow the shared policy on the status
+    // alone (R-API-HTTP, botocore retries every operation); the presigned
+    // PUT is never retried.
+    for (op, body) in [
+        (ApiOperation::GetLaunch, LAUNCH),
+        (ApiOperation::ListLaunches, r#"{"items":[]}"#),
+        (ApiOperation::Delete, ""),
     ] {
-        let fake = reply(503, "{}").respond(200, &[], vec![FakeChunk::data(b"{}")]);
+        let fake = reply(503, "{}").respond(200, &[], vec![FakeChunk::data(body.as_bytes())]);
+        assert!(call(&fake, op, "l-1", &[], None).is_ok());
+        assert_eq!(fake.requests().len(), 2);
+        let fake = reply(400, "{}").respond(200, &[], vec![FakeChunk::data(body.as_bytes())]);
         assert!(call(&fake, op, "l-1", &[], None).is_err());
         assert_eq!(fake.requests().len(), 1);
     }
+    let fake = reply(503, "{}").respond(200, &[], vec![FakeChunk::data(b"{}")]);
+    assert!(call(&fake, ApiOperation::Put, "l-1", &[], None).is_err());
+    assert_eq!(fake.requests().len(), 1);
 }
 #[test]
 fn t_api_missing_client_token_never_retries() {
