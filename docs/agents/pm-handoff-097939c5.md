@@ -878,3 +878,5 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 10-29 08:41Z: #4886 item 1 (0740a0b0) DONE at 885b222371ecc2ae5e0ec9b8de2d422ccf77327d (`toolkit neptune memory`, builders, recorded replay, refs; scoped 2fbb1911 4170 ok, clean).
   Review #5295 -> Claude Sonnet 80111bba (pinned 885b2223; mutations escape/deletionProtection/replay mismatch). On ACCEPT: check (likely rerun scoped) + enqueue (source_session 0740a0b0); close #5295 on land (#4886 stays open for items 2-3).
   4/4 busy: 0dcdafea (#5181, parked), f4e513e0 (#5273), d2668841 (#5261 repair 1), 80111bba (#5295 review).
+- 10-29 08:50Z: AP S4 LANDED (ade50d7b published, 005099589d73d254547f4208347419f2aac1a4c7). #5278 auto-closed; CLOSED #5280. Queue empty.
+  Filed AP S5 #5296 (AP-INV-01..03 / OD-7 inventory + design status + README; folds #5282 #5283 #5284). Launch at next free slot (Claude Sonnet or Codex; prose+JSON+Rust tests). Close #5282-#5284 with it.
