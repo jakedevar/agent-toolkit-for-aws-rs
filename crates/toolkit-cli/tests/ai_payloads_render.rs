@@ -783,6 +783,7 @@ fn ap_con_05_parenthesized_and_training_assignments_emit_booleans() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)] // Inventory and render all catalog entries in both modes.
 fn ap_cat_10_all_real_templates_render_in_both_modes() {
     use toolkit_core::{parse_json, Json};
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../skills/core-skills/aws-ai-ml");
@@ -958,6 +959,7 @@ fn ap_cat_10_all_real_templates_render_in_both_modes() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)] // The notebook golden is deliberately byte-exact.
 fn ap_cell_04_08_multiline_normalization_and_unsafe_characters() {
     let template_text = "# Cell 0 [markdown]: Example\n# Description\n# Cell 1: Code\npass\n";
     let body = "def transform_dataset(df):\n    x = 1\n\n\treturn df # comment";
