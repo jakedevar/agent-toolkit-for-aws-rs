@@ -3,8 +3,8 @@
 Parity document of the `ai-payloads` slice. The design is
 [ai-payloads-design.md](ai-payloads-design.md) (accepted at pre-review #5119,
 round 3). This file records what has landed, the command contract and the
-decisions taken while implementing, slice by slice. It grows with each slice;
-S2b implements the render route; exact-source review and landing remain.
+decisions taken while implementing, slice by slice.
+All slices S1 to S5 are implemented.
 
 The 28 canonical Python files of the slice (and their 28 `plugins/` mirrors)
 **stay in place**: 23 are client-side templates that the customer's own Python
@@ -20,7 +20,9 @@ reference pattern (design sections 1 to 3). Nothing here removes Python rows
 | S2a `ai-payloads-publish` | `place.rs`: no-replace publication | implemented |
 | S2b `ai-payloads-render` | typed substitution, `assign`, notebook and script output, `render` | implemented, pending review |
 | S3 `ai-payloads-reward` | `reward sample` and `reward check` | implemented |
-| S3r, S4, S5 | reward-template fix, caller prose, inventory | not started |
+| S3r `ai-payloads-reward-fix` (#5120) | minimal response-format fix of the two defective reward templates | implemented |
+| S4 `ai-payloads-docs` (#5278) | caller prose names `render` and `reward check` | implemented |
+| S5 `ai-payloads-inventory` (#5296) | `python-inventory.json` dispositions (AP-INV-*, OD-7), status lines | implemented |
 
 ## Commands
 
