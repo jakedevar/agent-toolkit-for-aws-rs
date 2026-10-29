@@ -56,6 +56,32 @@ trait ListenerIo {
     fn accept_stream(&self) -> io::Result<Self::Stream>;
 }
 
+fn connection_accept_error(error: &io::Error) -> bool {
+    if matches!(
+        error.kind(),
+        io::ErrorKind::ConnectionAborted | io::ErrorKind::ConnectionReset
+    ) {
+        return true;
+    }
+    #[cfg(unix)]
+    {
+        use rustix::io::Errno;
+        [
+            Errno::PROTO,
+            Errno::NETDOWN,
+            Errno::NETUNREACH,
+            Errno::HOSTDOWN,
+            Errno::HOSTUNREACH,
+            Errno::NOPROTOOPT,
+            Errno::OPNOTSUPP,
+        ]
+        .into_iter()
+        .any(|errno| error.raw_os_error() == io::Error::from(errno).raw_os_error())
+    }
+    #[cfg(not(unix))]
+    false
+}
+
 impl ListenerIo for TcpListener {
     type Stream = TcpStream;
     fn accept_stream(&self) -> io::Result<TcpStream> {
@@ -119,8 +145,8 @@ fn serve_with<L: ListenerIo>(
                 }
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
                 Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
-                // A reset, a transient network error, or resource exhaustion must
-                // not end the sign-in flow. Pace retries like an idle turn.
+                Err(e) if connection_accept_error(&e) => {}
+                // Listener errors are retried with idle pacing.
                 Err(_) => break,
             }
         }
@@ -243,6 +269,50 @@ fn expire<S>(slots: &mut [Option<Slot<S>>], now: Instant) {
             *slot = None;
         }
     }
+}
+
+#[cfg(test)]
+pub(super) fn serve_scripted_flood(
+    flow_end: Instant,
+    accepts: &std::cell::Cell<usize>,
+    last_accept: &std::cell::Cell<Option<Instant>>,
+) -> io::Result<Option<Outcome>> {
+    struct Flood<'a> {
+        accepts: &'a std::cell::Cell<usize>,
+        last_accept: &'a std::cell::Cell<Option<Instant>>,
+        clock: &'a ClockCell,
+    }
+    impl ListenerIo for Flood<'_> {
+        type Stream = std::io::Cursor<Vec<u8>>;
+        fn accept_stream(&self) -> io::Result<Self::Stream> {
+            self.accepts.set(self.accepts.get() + 1);
+            self.last_accept.set(Some(self.clock.now()));
+            Ok(std::io::Cursor::new(b"invalid\r\n\r\n".to_vec()))
+        }
+    }
+    struct ClockCell(std::cell::Cell<Instant>);
+    impl Clock for ClockCell {
+        fn now(&self) -> Instant {
+            self.0.get()
+        }
+        fn sleep(&self, duration: Duration) {
+            self.0.set(self.0.get() + duration);
+        }
+    }
+    let clock = ClockCell(std::cell::Cell::new(
+        flow_end.checked_sub(Duration::from_millis(50)).unwrap(),
+    ));
+    serve_with(
+        Flood {
+            accepts,
+            last_accept,
+            clock: &clock,
+        },
+        1234,
+        "s",
+        flow_end,
+        &clock,
+    )
 }
 
 #[cfg(test)]
@@ -409,6 +479,48 @@ mod scripted_tests {
                 .unwrap()
                 .contains("Authorization failed"));
         }
+    }
+
+    #[test]
+    fn connection_error_does_not_delay_next_admission() {
+        struct AbortedThenCallback(Cell<usize>, Rc<Cell<Instant>>, Instant);
+        impl ListenerIo for AbortedThenCallback {
+            type Stream = TimedStream;
+            fn accept_stream(&self) -> io::Result<TimedStream> {
+                let n = self.0.get();
+                self.0.set(n + 1);
+                match n {
+                    0 => Err(io::ErrorKind::ConnectionAborted.into()),
+                    1 => {
+                        assert_eq!(
+                            self.1.get(),
+                            self.2,
+                            "callback must be admitted in the same turn"
+                        );
+                        Ok(TimedStream {
+                            now: self.1.clone(),
+                            start: self.2,
+                            chunks: vec![(Duration::ZERO, valid_head())].into(),
+                            write_blocked: false,
+                        })
+                    }
+                    _ => Err(io::ErrorKind::WouldBlock.into()),
+                }
+            }
+        }
+        let start = Instant::now();
+        let now = Rc::new(Cell::new(start));
+        assert_eq!(
+            serve_with(
+                AbortedThenCallback(Cell::new(0), now.clone(), start),
+                1234,
+                "s",
+                start + Duration::from_secs(5),
+                &TimedClock(now)
+            )
+            .unwrap(),
+            Some(Outcome::Code("ok".into()))
+        );
     }
 
     #[test]

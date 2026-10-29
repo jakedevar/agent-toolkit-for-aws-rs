@@ -148,6 +148,7 @@ pub struct PaymentRequest<'a> {
 /// # Errors
 ///
 /// The first refusal, in the legacy order (module documentation).
+// recorded-shape: merchant challenge is policy input, not an AWS response.
 pub fn authorize(
     request: &PaymentRequest<'_>,
     resolver: &dyn HostResolver,
@@ -247,6 +248,7 @@ pub fn check_allowed_origins(policy: &Json, origin: &str) -> Result<(), PolicyEr
 
 /// A list-valued policy key, items through Python `str()` (`None` for an
 /// array or object item, which can never match). Absent or `null` is empty.
+// recorded-shape: operator policy configuration is not an AWS response.
 fn policy_list(policy: &Json, key: &str) -> Result<Vec<Option<String>>, PolicyError> {
     match policy.get(key) {
         None | Some(Json::Null) => Ok(Vec::new()),
@@ -284,6 +286,7 @@ struct Rules<'a> {
 
 impl<'a> Rules<'a> {
     /// The policy shape checks, in the legacy order and texts.
+    // recorded-shape: operator policy configuration is not an AWS response.
     fn from_policy(policy: &'a Json) -> Result<Self, PolicyError> {
         let networks = policy_list(policy, "allowed_networks")?;
         let mut schemes = policy_list(policy, "allowed_schemes")?;
@@ -342,6 +345,7 @@ impl<'a> Rules<'a> {
     }
 
     /// The lower-cased assets allowed on `network` (D3: only strings).
+    // recorded-shape: allowed assets come from operator policy configuration.
     fn assets_for(&self, network: &str) -> Result<Vec<String>, PolicyError> {
         let Some(map) = self.assets else {
             return Ok(Vec::new());
@@ -362,6 +366,7 @@ impl<'a> Rules<'a> {
 
     /// Whether `entry` passes every check. Only a policy error (D3) is an
     /// `Err`; every challenge failure is a skip.
+    // recorded-shape: entry comes from the merchant payment challenge.
     fn eligible(&self, entry: &Json) -> Result<bool, PolicyError> {
         if !matches!(entry, Json::Object(_)) {
             return Ok(false);
@@ -415,6 +420,7 @@ fn contains(list: &[Option<String>], value: &str) -> bool {
 
 /// D11: `maxTimeoutSeconds`, when present, is an integer in 1..=3600, and
 /// `extra`, when present, is an object of at most 4096 bytes.
+// recorded-shape: entry comes from the merchant payment challenge.
 fn bounded_members(entry: &Json) -> bool {
     if let Some(timeout) = entry.get("maxTimeoutSeconds") {
         if !matches!(timeout, Json::Int(seconds) if TIMEOUT_RANGE.contains(seconds)) {
@@ -436,6 +442,7 @@ fn bounded_members(entry: &Json) -> bool {
 /// # Errors
 ///
 /// A policy-shape text, "no accepts entries", or [`UNIFORM_REFUSAL`].
+// recorded-shape: accepts list comes from the merchant payment challenge.
 pub fn select_accept_entry<'c>(
     challenge: &'c Json,
     policy: &Json,
@@ -472,6 +479,7 @@ pub fn x402_version(challenge: &Json) -> Result<i64, PolicyError> {
 
 /// The selected entry in its key order, the aliases removed and the
 /// canonical amount appended under the version's key.
+// recorded-shape: approved entry comes from the merchant payment challenge.
 fn vetted_entry(entry: &Json, amount: &str, version: i64) -> Json {
     let Json::Object(members) = entry else {
         return entry.clone();
@@ -499,6 +507,7 @@ fn vetted_entry(entry: &Json, amount: &str, version: i64) -> Json {
 ///
 /// The mismatch text, or [`PolicyError::ValueError`] where `urlparse`
 /// raises.
+// recorded-shape: resource comes from the merchant payment challenge.
 pub fn validated_resource(challenge: &Json, url: &str) -> Result<Option<Json>, PolicyError> {
     let Some(resource @ Json::Object(_)) = challenge.get("resource") else {
         return Ok(None);

@@ -1,0 +1,11 @@
+{
+  "format": "toolkit-docdb-collection-capture",
+  "version": 1,
+  "dialect": "mongo-legacy-tojson",
+  "shell": {"name": "mongo", "version": "4.0.28"},
+  "databases": [
+    {"ordinal": 1, "name": "app", "collections": [
+      {"ordinal": 1, "name": "users", "collStats": {"count": "NumberLong(\"5\")"}}
+    ]}
+  ]
+}

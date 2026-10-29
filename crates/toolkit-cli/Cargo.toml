@@ -25,6 +25,7 @@ jsonschema = { version = "0.60", default-features = false }
 unicode-normalization = { version = "0.1", default-features = false, features = ["std"] }
 serde_json = { version = "1", default-features = false, features = ["std"] }
 time = { version = "=0.3.55", features = ["parsing"] }
+roxmltree = "=0.14.1"
 toolkit-msk = { path = "../toolkit-msk" }
 # Launch with AWS (#4382, L0-L2 #5085): the OS CSPRNG for temporary names and
 # (from L3) PKCE, and raw deflate for the strict ZIP container (Q2).
@@ -43,6 +44,11 @@ nix = { version = "=0.29.0", default-features = false, features = ["user"] }
 [dev-dependencies]
 proc-macro2 = { version = "1", default-features = false, features = ["span-locations"] }
 syn = { version = "2", default-features = false, features = ["full", "parsing", "printing", "visit"] }
+rcgen = { version = "=0.14.10", default-features = false, features = ["aws_lc_rs", "pem"] }
+rustls = { version = "=0.23.46", default-features = false, features = ["std", "aws_lc_rs"] }
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+nix = { version = "=0.29.0", default-features = false, features = ["process", "ptrace", "signal"] }
 
 [lints]
 workspace = true

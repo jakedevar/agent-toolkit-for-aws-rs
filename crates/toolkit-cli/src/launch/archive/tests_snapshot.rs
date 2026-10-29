@@ -129,7 +129,11 @@ pub fn tree(dir: &Path) -> Vec<String> {
 }
 
 /// Run the test's own `git` in `dir`, isolated from the user's
-/// configuration; returns its stdout.
+/// configuration and with automatic maintenance off; returns its stdout.
+///
+/// `git commit` otherwise starts a detached `git maintenance run --auto`
+/// that briefly holds `.git/objects/maintenance.lock`, so a tree measured
+/// while it runs differs from one measured after it ends (#5370).
 pub fn run_git(dir: &Path, args: &[&str]) -> String {
     let output = std::process::Command::new("git")
         .args([
@@ -139,6 +143,10 @@ pub fn run_git(dir: &Path, args: &[&str]) -> String {
             "user.email=t@example.invalid",
             "-c",
             "init.defaultBranch=main",
+            "-c",
+            "maintenance.auto=false",
+            "-c",
+            "gc.auto=0",
         ])
         .args(args)
         .current_dir(dir)

@@ -1,0 +1,38 @@
+{
+  "app": {
+    "users": {
+      "count": 1000, "size": 2048000, "storageSize": 4096000, "avgObjSize": 2048, "totalIndexSize": 245760,
+      "indexes": [
+        {"name": "_id_", "fields": {"_id": 1}, "ordered_fields": ["_id"], "size": 81920,
+         "usage": {"ops": 17, "potential_unused": false}, "cardinality": {"is_low": false}},
+        {"name": "email_1_created_-1", "fields": {"email": 1, "created": -1}, "ordered_fields": ["email", "created"], "size": 81920,
+         "usage": {"ops": 0, "potential_unused": true}, "cardinality": {"is_low": false}},
+        {"name": "expire_1", "fields": {"expireAt": 1}, "ordered_fields": ["expireAt"], "size": 81920,
+         "usage": {"ops": 5, "potential_unused": false}, "cardinality": {"is_low": false}, "expireAfterSeconds": 0}
+      ],
+      "compression": {"enabled": true},
+      "unusedStorageSize": {"unusedBytes": 2048000, "unusedPercent": 50.0}
+    },
+    "empty": {
+      "count": 0, "size": 0, "storageSize": 0, "avgObjSize": 0, "totalIndexSize": 0,
+      "indexes": [
+        {"name": "_id_", "fields": {"_id": 1}, "ordered_fields": ["_id"], "size": 0,
+         "usage": {"ops": 0, "potential_unused": false}, "cardinality": {"is_low": false}}
+      ],
+      "compression": {"enabled": false},
+      "unusedStorageSize": {"unusedBytes": 0, "unusedPercent": 0}
+    },
+    "denied": {"error": "unauthorized"}
+  },
+  "archive": {
+    "old": {
+      "count": 2500.0, "size": 9007199254740993, "storageSize": 1000, "avgObjSize": 12.5, "totalIndexSize": 64,
+      "indexes": [
+        {"name": "_id_", "fields": {"_id": 1}, "ordered_fields": ["_id"], "size": 64,
+         "usage": {"ops": 0, "potential_unused": false}, "cardinality": {"is_low": false}}
+      ],
+      "compression": {"enabled": false},
+      "unusedStorageSize": {"unusedBytes": 0, "unusedPercent": 0.0}
+    }
+  }
+}

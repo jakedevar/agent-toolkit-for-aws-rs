@@ -385,7 +385,7 @@ fn pending_custody_keeps_private_record_and_exclusive_lock() {
     let record: serde_json::Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
     assert_eq!(record["status"], "listening");
     assert_eq!(record["cutoff"], 160);
-    drop(custody);
+    custody.release_settled();
     assert!(Custody::acquire(scratch.path(), 12345).is_ok());
 }
 
@@ -414,10 +414,18 @@ fn pending_reader_validates_schema_and_lock_custody() {
         Some("invalid_code")
     );
     assert!(acquire_if_free(scratch.path(), 55).is_none());
-    drop(custody);
+    custody.release_settled();
     assert!(acquire_if_free(scratch.path(), 55).is_some());
     std::fs::write(scratch.join("pending/55.json"), b"{\"pid\":55,\"pid\":55}").unwrap();
     assert!(read_record(scratch.path(), 55).is_none());
+}
+
+#[cfg(unix)]
+#[test]
+fn wait_tracker_exposes_no_unreported_finish_api() {
+    let source = include_str!("pending.rs");
+    assert!(source.contains("#[cfg(test)]\n    pub(super) fn finish("));
+    assert!(source.contains("#[cfg(test)]\n    pub(super) fn finish_at("));
 }
 
 #[cfg(unix)]
@@ -453,7 +461,7 @@ fn wait_observes_held_and_free_lock_without_signalling_pid() {
         tracker.finish(scratch.path(), 66, 165).0,
         Observation::Decision(WaitDecision::HelperBlocked)
     );
-    drop(custody);
+    custody.release_settled();
     assert_eq!(
         tracker.finish(scratch.path(), 66, 165).0,
         Observation::Decision(WaitDecision::Failed)
@@ -501,7 +509,7 @@ fn stale_cleanup_preserves_held_records_and_unrelated_files() {
         &SeededRandom::new(2),
     )
     .unwrap();
-    drop(free);
+    free.release_settled();
     let temp = scratch.write("session.json.0123456789abcdef.tmp", b"x");
     let file = std::fs::OpenOptions::new().write(true).open(&temp).unwrap();
     file.set_times(std::fs::FileTimes::new().set_modified(std::time::UNIX_EPOCH))
@@ -627,7 +635,7 @@ fn unreadable_record_with_free_lock_is_not_missing() {
     let custody = Custody::acquire(scratch.path(), 91).unwrap();
     let path = scratch.join("pending/91.json");
     std::fs::write(&path, b"not json").unwrap();
-    drop(custody);
+    custody.release_settled();
     let (observation, _) = WaitTracker::default().finish(scratch.path(), 91, 100);
     assert_eq!(observation, Observation::Decision(WaitDecision::Ended));
     assert!(!path.exists());
@@ -653,7 +661,7 @@ fn terminal_record_remains_until_result_is_reported() {
             &SeededRandom::new(1),
         )
         .unwrap();
-    drop(custody);
+    custody.release_settled();
     let path = scratch.join("pending/91.json");
     WaitTracker::default().finish_after_report(scratch.path(), 91, 99, |_, _| {
         assert!(path.exists());
@@ -692,7 +700,7 @@ fn failed_report_preserves_final_record_for_retry() {
             &SeededRandom::new(1),
         )
         .unwrap();
-    drop(custody);
+    custody.release_settled();
     let path = scratch.join("pending/91.json");
     let mut stdout = Vec::new();
     let mut stderr = Broken;
@@ -734,7 +742,7 @@ fn broken_stdout_preserves_authenticated_record_for_retry() {
             &SeededRandom::new(1),
         )
         .unwrap();
-    drop(custody);
+    custody.release_settled();
     let session = serde_json::json!({"client_id":"c","client_secret":"s","client_expires_at":9999,"authorize_endpoint":"https://example.com","token_endpoint":"https://example.com","scopes":["launch:access"],"access_token":"a","refresh_token":"r","token_expires_at":9999});
     std::fs::write(scratch.join("session.json"), session.to_string()).unwrap();
     let mut stdout = Broken;
@@ -792,7 +800,7 @@ fn revision4_unknown_record_decision_matrix() {
                         std::fs::write(scratch.join("session.json"), session.to_string()).unwrap();
                     }
                     if !held {
-                        drop(custody);
+                        custody.release_settled();
                     }
                     let expected = if valid {
                         WaitDecision::Authenticated
@@ -849,7 +857,7 @@ fn revision4_corrupt_record_retains_last_trusted_cutoff() {
         tracker.finish_at(scratch.path(), 91, 105, 1).0,
         Observation::Decision(WaitDecision::HelperBlocked)
     );
-    drop(custody);
+    custody.release_settled();
     assert_eq!(
         tracker.finish_at(scratch.path(), 91, 105, 1).0,
         Observation::Decision(WaitDecision::TimedOut)
@@ -869,7 +877,7 @@ fn revision4_directory_record_preserves_contents() {
     let path = scratch.join("pending/91.json");
     std::fs::create_dir(&path).unwrap();
     std::fs::write(path.join("keep"), b"data").unwrap();
-    drop(custody);
+    custody.release_settled();
     assert_eq!(
         WaitTracker::default().finish_at(scratch.path(), 91, 0, 0).0,
         Observation::Decision(WaitDecision::Ended)
@@ -906,7 +914,7 @@ fn revision4_permission_denied_record_uses_fallback_cutoff() {
         tracker.finish_at(scratch.path(), 91, 1, 665).0,
         Observation::Decision(WaitDecision::HelperBlocked)
     );
-    drop(custody);
+    custody.release_settled();
     assert_eq!(
         tracker.finish_at(scratch.path(), 91, 1, 665).0,
         Observation::Decision(WaitDecision::TimedOut)
@@ -945,7 +953,7 @@ fn revision4_removes_unreadable_symlink_without_touching_target() {
     std::fs::write(&target, b"keep").unwrap();
     let link = scratch.join("pending/91.json");
     symlink(&target, &link).unwrap();
-    drop(custody);
+    custody.release_settled();
     assert_eq!(
         WaitTracker::default()
             .finish_at(scratch.path(), 91, 100, 660)

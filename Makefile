@@ -27,6 +27,7 @@ test-sdk:
 	cargo test -p toolkit-cli --features aws-sdk --locked --lib asm_exec
 	cargo test -p toolkit-cli --features aws-sdk --locked --lib mcp_proxy
 	cargo test -p toolkit-cli --features aws-sdk --locked --test mcp_proxy_cli
+	cargo test -p toolkit-cli --features aws-sdk --locked --test launch_callback shipped_binary_exchange_publishes_session
 
 # Per-plugin ./bin binaries (#4487, docs/migration/plugin-binaries.md). Stage
 # every declared binary for every declared platform with the locally

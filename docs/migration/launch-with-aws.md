@@ -1,8 +1,8 @@
 # Launch with AWS migration
 
 The Rust `toolkit launch` routes implement the Launch with AWS workflow described in
-[the accepted design](launch-with-aws-design.md). L5 is **in progress**; these
-routes have not yet passed the full acceptance matrix or independent review. The
+[the accepted design](launch-with-aws-design.md). L5 (#5345) is implemented with
+its acceptance tests; it awaits independent exact-source review and the L7 security review. The
 legacy scripts and skill callers remain in place until cutover (L8). Ordinary tests use
 injected transports and fixtures, without credentials, AWS or a live network.
 

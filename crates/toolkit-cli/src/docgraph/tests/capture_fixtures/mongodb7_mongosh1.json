@@ -1,0 +1,26 @@
+{
+  "format": "toolkit-docdb-collection-capture",
+  "version": 1,
+  "dialect": "mongosh-ejson-canonical",
+  "shell": {"name": "mongosh", "version": "1.10.6"},
+  "engine": {"name": "mongodb", "version": "7.0"},
+  "databases": [
+    {"ordinal": 1, "name": "shop", "collections": [
+      {"ordinal": 1, "name": "orders",
+       "collStats": {
+         "ns": "shop.orders", "size": {"$numberInt": "300"}, "count": {"$numberInt": "3"}, "avgObjSize": {"$numberInt": "100"},
+         "storageSize": {"$numberInt": "4096"}, "freeStorageSize": {"$numberInt": "0"}, "capped": false, "scaleFactor": {"$numberInt": "1"},
+         "nindexes": {"$numberInt": "2"}, "totalIndexSize": {"$numberInt": "8192"}, "totalSize": {"$numberInt": "12288"},
+         "indexSizes": {"_id_": {"$numberInt": "4096"}, "sku_1": {"$numberInt": "4096"}},
+         "ok": {"$numberDouble": "1.0"}},
+       "indexStats": [
+         {"name": "sku_1", "key": {"sku": {"$numberInt": "1"}}, "host": "db1:27017", "accesses": {"ops": {"$numberLong": "3"}, "since": {"$date": {"$numberLong": "1767225600000"}}}},
+         {"name": "_id_", "key": {"_id": {"$numberInt": "1"}}, "host": "db1:27017", "accesses": {"ops": {"$numberLong": "0"}, "since": {"$date": {"$numberLong": "1767225600000"}}}}
+       ],
+       "indexes": [
+         {"v": {"$numberInt": "2"}, "key": {"_id": {"$numberInt": "1"}}, "name": "_id_"},
+         {"v": {"$numberInt": "2"}, "key": {"sku": {"$numberInt": "1"}}, "name": "sku_1", "expireAfterSeconds": null}
+       ]}
+    ]}
+  ]
+}

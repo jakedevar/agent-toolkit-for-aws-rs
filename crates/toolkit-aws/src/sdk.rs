@@ -558,6 +558,9 @@ fn map_connector_error(error: &ConnectorError) -> AwsError {
     if let Some(rejection) = find_guard_rejection(error) {
         return rejection.error().clone();
     }
+    if malformed_http(error) {
+        return AwsError::Protocol;
+    }
     let kind = if error.is_timeout() {
         ConnectorFailure::Timeout
     } else if error.is_io() {
@@ -568,6 +571,20 @@ fn map_connector_error(error: &ConnectorError) -> AwsError {
         ConnectorFailure::Other
     };
     connector_error(kind, &DisplayErrorContext(error).to_string())
+}
+
+fn malformed_http(error: &(dyn std::error::Error + 'static)) -> bool {
+    let mut source = Some(error);
+    while let Some(current) = source {
+        if current
+            .downcast_ref::<hyper::Error>()
+            .is_some_and(|error| error.is_parse() && !error.is_parse_too_large())
+        {
+            return true;
+        }
+        source = current.source();
+    }
+    false
 }
 
 /// Refuse a response that came over a socket whose peer is not public, and
@@ -595,6 +612,21 @@ fn check_peer(capture: &CaptureSmithyConnection) -> Result<(), AwsError> {
 
 /// A body-read failure as a redacted boundary error.
 fn body_error(error: &aws_smithy_types::byte_stream::error::Error) -> AwsError {
+    let mut source: Option<&(dyn std::error::Error + 'static)> = Some(error);
+    let mut unexpected_eof = false;
+    while let Some(current) = source {
+        if current
+            .downcast_ref::<std::io::Error>()
+            .is_some_and(|error| error.kind() == std::io::ErrorKind::UnexpectedEof)
+        {
+            unexpected_eof = true;
+            break;
+        }
+        source = current.source();
+    }
+    if malformed_http(error) || unexpected_eof {
+        return AwsError::Protocol;
+    }
     AwsError::connect(format!(
         "the response body could not be read: {}",
         DisplayErrorContext(error)

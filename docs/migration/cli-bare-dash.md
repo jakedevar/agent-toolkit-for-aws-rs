@@ -318,4 +318,5 @@ The L5 launch routes (#5345) add `launch resolve-region`, `session-status`,
 path); `launch/commands.rs` is audited for `--region` on that basis. The
 router refuses a bare `-` and `--flag=-` for both value flags and a bare `-`
 positional; `create-launch` reads `./-` as a literal directory named `-`. No
-command reads stdin. Global usage is 46201 bytes, FNV-1a `0x1e9f6b403c121896`.
+command reads stdin. With `documentdb normalize-capture` (#5327) also
+registered, global usage is 46570 bytes, FNV-1a `0xed8510a22d18f7eb`.
