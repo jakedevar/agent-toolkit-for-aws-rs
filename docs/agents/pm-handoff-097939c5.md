@@ -1223,3 +1223,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
   #5514 (plugin-stage hardening, B3 review finding, kaizen) -> Claude Sonnet high 4d40e01a from a90abec7.
   4/4: dc2bb4e7 #5158, fe94684e docgraph S3, 6be15885 S2 review #5516, 4d40e01a #5514. Queue: 3056 S6+B2, 3057 B3, 3058 #5504.
   Kaizen open (project): #5509 fmt-apply recipe, #5510 red-evidence cost, #5488, #5476. Next free slot: #5509 or x402 S7 (after S6 lands).
+- 23:46Z: S6+B2 LANDED (6b036cfa, landed_sha d4d7b69a9adb4ccff7ac385c11013cba37ab63ad). #5462 auto-closed; CLOSED #5443 #5483 #5474 #5475 #5487. #4410 open (S7 cutover now unblocked); #4411 open (B3 queued, B4 needs #5158, B5 needs S7).
+  #5360 merge-only -> Claude Sonnet high 0830cd5f (continue_from 27f4dc18), queued for a slot. Then check and enqueue issue 5360.
+  NEXT free slot: x402 S7 cutover (file it from docs/migration/x402-payments-design.md S7 row).
