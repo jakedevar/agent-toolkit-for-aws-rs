@@ -570,3 +570,7 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 10-29 03:18Z: #5018 r5 (453ccbd7) ACCEPT #4487 at 3d9066158009a7c477e290abab39af0449b4bfb3, no new findings; 3 impl decisions accepted. #4487 ACCEPTED. #5088 left open until #4487 lands.
   r21 continuation db936e31 (Opus high, continue_from 374cf704, from d8179823): item 2 merge #4487 3d906615; item 3 #4412 hooks.json -> plugin-stage launcher (own commit). On handoff: verify, enqueue new r21 head superseding entry 0e7e277a (seq 2937).
   4/4 busy: de9907bc (S3), f38bc05f (#5085 L0-L2), 66f465b5 (#5091), db936e31 (r21 items 2-3).
+- 10-29 03:23Z: #5091 (66f465b5) CHANGES_REQUESTED on #4410 design 0eddbc25: P1 #5097 (amount cap exponent sign), #5098 (ambient CA vars still reach roots), #5099 (test builds can reach live constructors); P2 #5100-#5102 carry; #5103 follow-up (stdio API). Token vectors independently reproduced OK.
+  Design repair 1 -> 336823ec (Opus high, continue_from 4150e82f, build_free). Corrected #5098 ruling mid-run (halt+continue; continue fence raced 5x -> kaizen #5104): S1 R-ROOTS honouring SSL_CERT_* stays for provider HTTP; x402 gets an env-independent payment root seam as a separate toolkit-aws prereq slice.
+  Kaizen this seat: #5104 (continue fence race; harness:true refused agent_create_issue_harness_project_unresolved, same as #5090). Worker-filed: #5089, #5090, #5103.
+  4/4 busy: de9907bc (S3), f38bc05f (#5085 L0-L2), db936e31 (r21 items 2-3), 336823ec (#4410 repair 1).
