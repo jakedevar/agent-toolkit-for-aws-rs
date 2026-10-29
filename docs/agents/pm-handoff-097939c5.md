@@ -580,3 +580,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
   #5090 closed dup of #4874. GM report 3510de10 sent.
   4/4 busy: de9907bc (S3), f38bc05f (#5085 L0-L2), 336823ec (#4410 repair 1), b5103711 (#4386 design).
   Post-land: once r21 lands, close #5088 and the #4487/#4412/#4397 findings that landed; consider a post-land review of the #4412 activation commit c27549a.
+- 10-29 03:33Z: S3 #5079 (de9907bc) 9696df86999826363fe8264a2781af7bc66de4b7 on S2 7d8ffd66 (tests-first red 00aefc21/483ec402; final fmt 2df51785, clippy cc29b3b4, clippy-sdk fc8791b2, test-sdk 03617858, scoped 06e3f9a3 ok, merges clean). Plugin configs untouched.
+  S4 security review = #5105 -> Codex gpt-6.1-sol high 04c6946e (review_of 5079, pinned 9696df86, defensive wording). On ACCEPT: S1-S3 stack lands as one integration round (on top of r21 c27549a); then operator signed-run to-do; then S5 (plugin config switch).
+  4/4 busy: f38bc05f (#5085 L0-L2), 336823ec (#4410 repair 1), b5103711 (#4386 design), 04c6946e (#5105 S4).
