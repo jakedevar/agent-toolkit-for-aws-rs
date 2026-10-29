@@ -739,6 +739,13 @@ impl PaymentProof {
 
 #[cfg(test)]
 impl<'a> PaymentClient<'a> {
+    fn process_payment_until(
+        &self,
+        approved: Approved,
+        _deadline: std::time::Instant,
+    ) -> Result<PaymentProof, PaymentError> {
+        self.process_payment(approved)
+    }
     fn get_session(&self, manager: &str, session: &str, user: &str) -> Result<Json, PaymentError> {
         let body = self.call(
             "getPaymentSession",
@@ -1172,6 +1179,31 @@ mod wire_contracts {
             Err(PaymentError::Transport)
         );
         assert_eq!(transport.requests().len(), 1);
+    }
+
+    #[test]
+    fn operation_deadline_bounds_open_and_rejects_expired_admission() {
+        let now = Instant::now();
+        let clock = FakeClock(Cell::new(now));
+        let expired_transport = FakeStreamingTransport::new();
+        let mut expired = PaymentClient::new("us-east-1", &expired_transport, &NoSigner).unwrap();
+        expired.clock = &clock;
+        assert_eq!(
+            expired.process_payment_until(super::operation_contracts::approved(), now),
+            Err(PaymentError::Transport)
+        );
+        assert!(expired_transport.requests().is_empty());
+        let stalled_transport =
+            FakeStreamingTransport::new().respond(200, &[], vec![FakeChunk::Stall]);
+        let mut stalled = PaymentClient::new("us-east-1", &stalled_transport, &NoSigner).unwrap();
+        stalled.clock = &clock;
+        let cutoff = now + Duration::from_secs(1);
+        assert_eq!(
+            stalled.process_payment_until(super::operation_contracts::approved(), cutoff),
+            Err(PaymentError::Transport)
+        );
+        assert_eq!(stalled_transport.requests().len(), 1);
+        assert_eq!(stalled_transport.open_limits()[0].deadline(), Some(cutoff));
     }
 
     #[test]
