@@ -303,6 +303,14 @@ mod tests {
                 .to_owned(),
             r#"{"maxPaymentAmountAtomic":"1"}"#.to_owned(),
             r#"{"maxPaymentAmountAtomic":"1","allowAnyRecipient":true,"unknown":1}"#.to_owned(),
+            // #5409: allowAnyRecipient is only ever the boolean true; false, other
+            // types and null are input errors, never an open recipient control.
+            r#"{"maxPaymentAmountAtomic":"1","allowAnyRecipient":false}"#.to_owned(),
+            r#"{"maxPaymentAmountAtomic":"1","allowAnyRecipient":"true"}"#.to_owned(),
+            r#"{"maxPaymentAmountAtomic":"1","allowAnyRecipient":1}"#.to_owned(),
+            r#"{"maxPaymentAmountAtomic":"1","allowAnyRecipient":null}"#.to_owned(),
+            r#"{"maxPaymentAmountAtomic":"1","allowAnyRecipient":false,"allowedRecipients":["x"]}"#
+                .to_owned(),
         ] {
             assert_eq!(
                 read_request(&mut Cursor::new(change(
@@ -577,6 +585,85 @@ mod tests {
             clean.replace("\"type\":\"text\"", "\"type\":\"image\""),
         ] {
             assert_eq!(read_request(&mut Cursor::new(bad)), Err(BridgeError::Input));
+        }
+    }
+
+    // #5412, T-OC-FINAL-BOUND (pure part): the sanitize_output candidate is the
+    // complete tool wrapper with exactly one `{type:"text", text}` item and
+    // object `details`; any other shape fails closed before the B2 matcher.
+    #[test]
+    fn t_oc_final_candidate_shape_pinned() {
+        let request = |candidate: &str| {
+            format!(
+                r#"{{"operation":"sanitize_output","candidate":{candidate},"secrets":["abcdefgh"]}}"#
+            )
+        };
+        let item = r#"{"type":"text","text":"{\"paid\":false}"}"#;
+        let details = r#"{"paid":false}"#;
+        let accepted = request(&format!(r#"{{"content":[{item}],"details":{details}}}"#));
+        assert!(read_request(&mut Cursor::new(&accepted)).is_ok());
+        for (name, candidate) in [
+            (
+                "no items",
+                format!(r#"{{"content":[],"details":{details}}}"#),
+            ),
+            (
+                "two identical items",
+                format!(r#"{{"content":[{item},{item}],"details":{details}}}"#),
+            ),
+            (
+                "second item unchecked channel",
+                format!(
+                    r#"{{"content":[{item},{{"type":"text","text":"leak"}}],"details":{details}}}"#
+                ),
+            ),
+            (
+                "extra item key",
+                format!(
+                    r#"{{"content":[{{"type":"text","text":"{{\"paid\":false}}","extra":1}}],"details":{details}}}"#
+                ),
+            ),
+            (
+                "missing type",
+                format!(r#"{{"content":[{{"text":"{{\"paid\":false}}"}}],"details":{details}}}"#),
+            ),
+            (
+                "missing text",
+                format!(r#"{{"content":[{{"type":"text"}}],"details":{details}}}"#),
+            ),
+            (
+                "non-string text",
+                format!(r#"{{"content":[{{"type":"text","text":1}}],"details":{details}}}"#),
+            ),
+            (
+                "content not an array",
+                format!(r#"{{"content":{item},"details":{details}}}"#),
+            ),
+            (
+                "details array",
+                format!(r#"{{"content":[{{"type":"text","text":"[]"}}],"details":[]}}"#),
+            ),
+            (
+                "details string",
+                format!(r#"{{"content":[{{"type":"text","text":"\"x\""}}],"details":"x"}}"#),
+            ),
+            (
+                "details null",
+                format!(r#"{{"content":[{{"type":"text","text":"null"}}],"details":null}}"#),
+            ),
+            ("details missing", format!(r#"{{"content":[{item}]}}"#)),
+            ("content missing", format!(r#"{{"details":{details}}}"#)),
+            (
+                "extra candidate key",
+                format!(r#"{{"content":[{item}],"details":{details},"isError":false}}"#),
+            ),
+            ("candidate not an object", "[]".to_owned()),
+        ] {
+            assert_eq!(
+                read_request(&mut Cursor::new(request(&candidate))),
+                Err(BridgeError::Input),
+                "{name}"
+            );
         }
     }
 

@@ -198,6 +198,109 @@ mod tests {
         assert!(from_openclaw(&input).is_err());
     }
 
+    // #5409, T-OCP-MAP / T-BR-REQ-PAY: the recipient control is `allowedRecipients`
+    // (non-empty) xor the boolean `true`; `false` alone never opens the control.
+    #[test]
+    fn t_ocp_map_allow_any_recipient_only_true() {
+        let cap = r#""maxPaymentAmountAtomic":"1""#;
+        for control in [
+            r#""allowAnyRecipient":false"#,
+            r#""allowAnyRecipient":"true""#,
+            r#""allowAnyRecipient":1"#,
+            r#""allowAnyRecipient":null"#,
+            r#""allowAnyRecipient":[]"#,
+            r#""allowAnyRecipient":false,"allowedRecipients":["a"]"#,
+            r#""allowAnyRecipient":true,"allowedRecipients":["a"]"#,
+            r#""allowedRecipients":[]"#,
+            r#""allowedRecipients":"a""#,
+            r#""allowedRecipients":[1]"#,
+            "",
+        ] {
+            let body = format!("{{{cap},{control}}}").replace(",}", "}");
+            let input = parse_json(&body).unwrap();
+            assert_eq!(from_openclaw(&input), Err(BridgeError::Input), "{control}");
+        }
+        let any =
+            from_openclaw(&parse_json(&format!("{{{cap},\"allowAnyRecipient\":true}}")).unwrap())
+                .unwrap();
+        assert_eq!(any.get("allow_any_recipient"), Some(&Json::Bool(true)));
+        assert!(any.get("allowed_recipients").is_none());
+        let listed = from_openclaw(
+            &parse_json(&format!("{{{cap},\"allowedRecipients\":[\"a\"]}}")).unwrap(),
+        )
+        .unwrap();
+        assert!(listed.get("allow_any_recipient").is_none());
+        assert_eq!(
+            listed.get("allowed_recipients"),
+            Some(&Json::Array(vec![Json::string("a")]))
+        );
+    }
+
+    // #5410, T-OCP-MAP (§4.3 allowedAssetsByNetwork): the configured list wins
+    // when non-empty; the default USDC entry only fills an empty Base Sepolia list.
+    #[test]
+    fn t_ocp_map_configured_assets_enforced() {
+        use crate::agents_pay::policy::select_accept_entry;
+        const USDC: &str = "0x036cbd53842c5426634e7929541ec2318f3dcf7e";
+        let other = format!("0x{}", "ab".repeat(20));
+        let entry = |asset: &str| {
+            Json::object(vec![
+                ("scheme", Json::string("exact")),
+                ("network", Json::string("eip155:84532")),
+                ("asset", Json::string(asset)),
+                ("payTo", Json::string("0xa")),
+                ("amount", Json::string("1000")),
+                ("maxTimeoutSeconds", Json::Int(60)),
+            ])
+        };
+        let challenge =
+            |asset: &str| Json::object(vec![("accepts", Json::Array(vec![entry(asset)]))]);
+        let map = |assets: &str| {
+            from_openclaw(
+                &parse_json(&format!(
+                    r#"{{"maxPaymentAmountAtomic":"100000","allowAnyRecipient":true,"allowedAssetsByNetwork":{assets}}}"#
+                ))
+                .unwrap(),
+            )
+            .unwrap()
+        };
+        let sepolia = |policy: &Json| {
+            policy
+                .get("allowed_assets")
+                .unwrap()
+                .get("eip155:84532")
+                .cloned()
+                .unwrap()
+        };
+        // Configured non-default list: mapped verbatim, default USDC is refused.
+        let configured = map(&format!(r#"{{"eip155:84532":["{other}"]}}"#));
+        assert_eq!(
+            sepolia(&configured),
+            Json::Array(vec![Json::string(&other)])
+        );
+        assert!(select_accept_entry(&challenge(USDC), &configured).is_err());
+        assert_eq!(
+            select_accept_entry(&challenge(&other), &configured)
+                .unwrap()
+                .get("asset")
+                .and_then(Json::as_str),
+            Some(other.as_str())
+        );
+        // Configured empty list, or no entry for the network: the default applies.
+        for defaulted in [map(r#"{"eip155:84532":[]}"#), map("{}")] {
+            assert_eq!(sepolia(&defaulted), Json::Array(vec![Json::string(USDC)]));
+            assert!(select_accept_entry(&challenge(USDC), &defaulted).is_ok());
+            assert!(select_accept_entry(&challenge(&other), &defaulted).is_err());
+        }
+        // Only Base Sepolia has a default; another network stays empty.
+        let input = parse_json(r#"{"maxPaymentAmountAtomic":"1","allowAnyRecipient":true,"networkPreferences":["eip155:1"]}"#).unwrap();
+        let mapped = from_openclaw(&input).unwrap();
+        assert_eq!(
+            mapped.get("allowed_assets").unwrap().get("eip155:1"),
+            Some(&Json::Array(vec![]))
+        );
+    }
+
     // T-OCP-PAR, T-OCP-MAP, T-BR-TOK: fixture, controls and atomic cap.
     #[test]
     fn t_ocp_par_and_token() {

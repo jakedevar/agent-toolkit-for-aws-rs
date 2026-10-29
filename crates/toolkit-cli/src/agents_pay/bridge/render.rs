@@ -555,6 +555,83 @@ mod tests {
         assert!(session_result(&bad).is_err());
     }
 
+    // #5411, T-BR-OUT-REQ: removing exactly one model-required member from an
+    // otherwise valid session is an AgentCore failure (exit 1), member by member.
+    #[test]
+    fn t_br_out_req_each_required_member() {
+        let valid = toolkit_core::parse_json(
+            r#"{"paymentSessionId":"s","paymentManagerArn":"m","limits":{"maxSpendAmount":{"value":"1","currency":"USD"}},"userId":"u","expiryTimeInMinutes":10,"createdAt":"2026-08-07T00:00:00Z","availableLimits":{"availableSpendAmount":{"value":"1","currency":"USD"},"updatedAt":"2026-08-07T00:00:00Z"},"updatedAt":"2026-08-07T00:00:00Z"}"#,
+        )
+        .unwrap();
+        assert!(session_result(&valid).is_ok());
+        let without = |key: &str| {
+            let Json::Object(fields) = &valid else {
+                unreachable!()
+            };
+            Json::Object(fields.iter().filter(|(k, _)| k != key).cloned().collect())
+        };
+        for key in [
+            "paymentSessionId",
+            "paymentManagerArn",
+            "userId",
+            "expiryTimeInMinutes",
+            "createdAt",
+            "updatedAt",
+        ] {
+            let session = without(key);
+            assert_eq!(
+                session_result(&session),
+                Err(BridgeError::AgentCore),
+                "{key}"
+            );
+        }
+        // `limits` and `availableLimits` are optional in the model.
+        assert!(session_result(&without("limits")).is_ok());
+        assert!(session_result(&without("availableLimits")).is_ok());
+        // Required members inside `limits.maxSpendAmount`.
+        let limits_without = |key: &str| {
+            let Json::Object(fields) = &valid else {
+                unreachable!()
+            };
+            let limits = if key == "maxSpendAmount" {
+                Json::object(vec![])
+            } else {
+                let amount = [("value", "1"), ("currency", "USD")]
+                    .into_iter()
+                    .filter(|(k, _)| *k != key)
+                    .map(|(k, v)| (k.to_owned(), Json::string(v)))
+                    .collect();
+                Json::object(vec![("maxSpendAmount", Json::Object(amount))])
+            };
+            Json::Object(
+                fields
+                    .iter()
+                    .map(|(k, v)| {
+                        (
+                            k.clone(),
+                            if k == "limits" {
+                                limits.clone()
+                            } else {
+                                v.clone()
+                            },
+                        )
+                    })
+                    .collect(),
+            )
+        };
+        assert_eq!(
+            error_frame(BridgeError::AgentCore),
+            (FAILURE_FRAME.to_vec(), 1)
+        );
+        for key in ["maxSpendAmount", "value", "currency"] {
+            assert_eq!(
+                session_result(&limits_without(key)),
+                Err(BridgeError::AgentCore),
+                "limits.{key}"
+            );
+        }
+    }
+
     #[test]
     fn t_br_out_error_vocabulary() {
         for (error, expected, status) in [
