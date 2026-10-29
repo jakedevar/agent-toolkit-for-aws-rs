@@ -134,6 +134,18 @@ fn ap_pub_15_dry_run_creates_no_output() {
 }
 
 #[test]
+fn ap_sub_magic_lines_reject_quoted_slots() {
+    for line in ["!aws s3 cp \"[S3_URI]\" .", "  %run \"[S3_URI]\""] {
+        let f = Fixture::new();
+        let template = f.write("template.py", &format!("# Cell 0 [markdown]: Example\n# Description\n# Cell 1: Code\n{line}\n"));
+        let values = f.write("values.json", r#"{"values":{"S3_URI":"$(id)"}}"#);
+        let result = f.render(&template, "notebook", &["--values", values.to_str().unwrap()]);
+        assert_eq!(result.status.code(), Some(1), "{line}");
+        assert!(!f.0.join("notebooks/example.ipynb").exists());
+    }
+}
+
+#[test]
 fn ap_con_05_quoted_and_lowercase_consent_are_refused() {
     for (source, values) in [
         ("model.accept_eula = \"[ACCEPT_EULA]\"\n", r#"{"values":{"ACCEPT_EULA":"true"}}"#),
