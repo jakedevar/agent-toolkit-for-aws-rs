@@ -241,4 +241,27 @@ mod tests {
             assert_eq!(read_request(&mut Cursor::new(bad)), Err(BridgeError::Input));
         }
     }
+
+    // T-OC-FINAL-BOUND: budget shapes and public prefix controls (#5180).
+    #[test]
+    fn t_oc_final_bound_budget_and_prefix() {
+        assert_eq!(MIN_SECRET_FRAGMENT_BYTES, 32);
+        assert!("eyJ4NDAyVmVyc2lvbiI6Mi".len() < MIN_SECRET_FRAGMENT_BYTES);
+        assert!("0x".len() < MIN_SECRET_FRAGMENT_BYTES);
+        let make = |body: &str| {
+            let details = Json::object(vec![("body", Json::string(body))]);
+            let candidate = Json::object(vec![("content", Json::Array(vec![Json::object(vec![("type", Json::string("text")), ("text", Json::string(details.to_pretty_string()))])])), ("details", details)]);
+            Json::object(vec![("operation", Json::string("sanitize_output")), ("candidate", candidate), ("secrets", Json::Array(vec![Json::string("eyJ4NDAyVmVyc2lvbiI6Mi-private-proof-material-12345"), Json::string("0x1234567890abcdef1234567890abcdef")]))]).to_compact_string()
+        };
+        let dense = make(&"\u{1}".repeat(10240));
+        assert!(dense.len() > 131072);
+        assert_eq!(read_request(&mut Cursor::new(dense)), Err(BridgeError::Input));
+        for body in ["é".repeat(10240), "😀".repeat(5120), "eyJ4NDAyVmVyc2lvbiI6Mi 0x".to_owned()] {
+            let clean = make(&body);
+            assert!(clean.len() <= 131072);
+            assert!(read_request(&mut Cursor::new(clean)).is_ok());
+        }
+        let lone_surrogate = r#"{"operation":"sanitize_output","candidate":{"content":[{"type":"text","text":"{}"}],"details":{}},"secrets":["\ud800"]}"#;
+        assert_eq!(read_request(&mut Cursor::new(lone_surrogate)), Err(BridgeError::Input));
+    }
 }
