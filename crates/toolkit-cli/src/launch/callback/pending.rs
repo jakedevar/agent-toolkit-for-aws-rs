@@ -102,6 +102,7 @@ impl Custody {
     /// A descriptor copy sharing the lock's open file description, as a
     /// concurrent test's `fork` makes until its `exec` (test fixtures only).
     #[cfg(all(test, unix))]
+    #[allow(clippy::used_underscore_binding)]
     pub(super) fn inherited_copy(&self) -> File {
         self._lock.try_clone().expect("clone lock descriptor")
     }
