@@ -17,6 +17,7 @@ pub(crate) fn shape(name: &str, input: &str) -> Result<String, InvalidResponse> 
     serde_json::to_string(&result).map_err(|_| InvalidResponse)
 }
 
+// recorded-shape: the bundled service model drives this recursive validator; each required member and nested type is checked before it is returned.
 fn visit(shapes: &Value, name: &str, value: &Value) -> Result<Value, InvalidResponse> {
     let spec = shapes.get(name).ok_or(InvalidResponse)?;
     let kind = spec
@@ -124,9 +125,13 @@ fn timestamp(value: &Value) -> Result<String, InvalidResponse> {
         if !seconds.is_finite() || seconds.abs() > 253_402_300_799.0 {
             return Err(InvalidResponse);
         }
+        #[allow(clippy::cast_possible_truncation)]
         OffsetDateTime::from_unix_timestamp_nanos((seconds * 1_000_000.0).round() as i128 * 1000)
             .map_err(|_| InvalidResponse)?
     };
+    if !(1..=9999).contains(&time.year()) {
+        return Err(InvalidResponse);
+    }
     let offset = time.offset().whole_seconds();
     let sign = if offset < 0 { '-' } else { '+' };
     let offset = offset.unsigned_abs();

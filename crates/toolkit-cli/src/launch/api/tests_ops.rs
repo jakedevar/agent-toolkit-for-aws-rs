@@ -21,7 +21,16 @@ fn call(
         jitter: &NoJitter,
         policy: RetryPolicy::none(),
     }
-    .call(operation, "l-1", &[], None)
+    .call(
+        operation,
+        "l-1",
+        &[],
+        if matches!(operation, ApiOperation::CreateLaunch) {
+            Some(json!({"name":"n"}))
+        } else {
+            None
+        },
+    )
 }
 fn response(status: u16, body: &[u8]) -> FakeStreamingTransport {
     FakeStreamingTransport::new().respond(status, &[], vec![FakeChunk::data(body)])

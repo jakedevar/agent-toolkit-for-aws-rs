@@ -14,6 +14,15 @@ fn call(
     body: Option<serde_json::Value>,
 ) -> Result<serde_json::Value, ApiError> {
     let sleeper = RecordingSleeper::new();
+    let body = if matches!(op, ApiOperation::CreateLaunch) {
+        let mut body = body.unwrap_or_else(|| json!({}));
+        if let Some(object) = body.as_object_mut() {
+            object.entry("name").or_insert_with(|| json!("n"));
+        }
+        Some(body)
+    } else {
+        body
+    };
     Client {
         transport: fake,
         base: "https://launch-with-aws.us-east-1.api.aws",
@@ -169,6 +178,69 @@ fn t_api_put_validates_url_and_never_echoes_signature() {
     assert_eq!(fake.requests()[0].body, b"archive");
 }
 
+#[cfg(unix)]
+#[test]
+fn t_api_put_connect_failure_is_fixed_and_does_not_echo_url() {
+    let fake = FakeStreamingTransport::new()
+        .open_error(toolkit_aws::AwsError::connect("FAKE-TRANSPORT-DETAIL"));
+    let sleeper = RecordingSleeper::new();
+    let token = Secret::new("FAKE-ACCESS-TOKEN");
+    let client = Client {
+        transport: &fake,
+        base: "https://example.test",
+        region: "us-east-1",
+        token: &token,
+        clock: &SystemClock,
+        sleeper: &sleeper,
+        jitter: &NoJitter,
+        policy: RetryPolicy::none(),
+    };
+    let resolver = toolkit_aws::testing::FixedResolver::new().answer_any(&["8.8.8.8"]);
+    let error = client
+        .put_archive(
+            "https://bucket.amazonaws.com/x?signature=FAKE-SIGNATURE",
+            b"zip",
+            &resolver,
+        )
+        .unwrap_err();
+    let text = error.to_string();
+    assert_eq!(text, "Could not upload the archive: connect");
+    assert!(!format!("{error:?}").contains("FAKE-"));
+    assert_eq!(fake.requests().len(), 1);
+}
+
+#[cfg(unix)]
+#[test]
+fn t_api_put_timeout_is_fixed_and_not_retried() {
+    let fake = FakeStreamingTransport::new().open_error(toolkit_aws::AwsError::timeout(
+        toolkit_aws::error::TimeoutPhase::Read,
+        "FAKE-URL-DETAIL",
+    ));
+    let sleeper = RecordingSleeper::new();
+    let token = Secret::new("FAKE-ACCESS-TOKEN");
+    let client = Client {
+        transport: &fake,
+        base: "https://example.test",
+        region: "us-east-1",
+        token: &token,
+        clock: &SystemClock,
+        sleeper: &sleeper,
+        jitter: &NoJitter,
+        policy: RetryPolicy::none(),
+    };
+    let resolver = toolkit_aws::testing::FixedResolver::new().answer_any(&["8.8.8.8"]);
+    let error = client
+        .put_archive(
+            "https://bucket.amazonaws.com/x?signature=FAKE-SIGNATURE",
+            b"zip",
+            &resolver,
+        )
+        .unwrap_err();
+    assert_eq!(error.to_string(), "Could not upload the archive: timeout");
+    assert!(!format!("{error:?}").contains("FAKE-"));
+    assert_eq!(fake.requests().len(), 1);
+}
+
 #[test]
 fn t_api_snapshot_lookup_uses_launch_envelope_and_error_hints() {
     let sleeper = RecordingSleeper::new();
@@ -245,4 +317,132 @@ fn t_api_output_is_shaped_and_required_members_validated() {
         call(&fake, ApiOperation::ListLaunches, "", &[], None),
         Err(ApiError::InvalidResponse)
     );
+}
+
+#[test]
+fn t_api_service_errors_identify_operation_without_echoing_id() {
+    for (op, expected) in [
+        (ApiOperation::CreateUploadUrl, "POST /api/uploads"),
+        (ApiOperation::CreateLaunch, "POST /api/launches"),
+        (ApiOperation::GetLaunch, "GET /api/launches/<id>"),
+        (ApiOperation::ListLaunches, "GET /api/launches"),
+        (
+            ApiOperation::StartExecution,
+            "POST /api/launches/<id>/start",
+        ),
+        (ApiOperation::Delete, "DELETE /api/launches/<id>"),
+    ] {
+        let fake = reply(403, r#"{"code":"AccessDeniedException"}"#);
+        let error = call(&fake, op, "FAKE-PRIVATE-ID", &[], None).unwrap_err();
+        let message = error.to_string();
+        assert!(message.contains(expected));
+        assert!(message.contains("403"));
+        assert!(message.contains("AccessDeniedException"));
+        assert!(!message.contains("FAKE-PRIVATE-ID"));
+    }
+}
+
+#[test]
+fn t_api_error_hints_cover_each_launch_id_operation() {
+    for op in [
+        ApiOperation::GetLaunch,
+        ApiOperation::Delete,
+        ApiOperation::StartExecution,
+    ] {
+        let fake = reply(404, r#"{"code":"ResourceNotFoundException"}"#);
+        let error = call(&fake, op, "l-1", &[], None).unwrap_err();
+        let message = super::command_error(&error, "us-east-1", false);
+        assert!(message.contains("no launch with this ID exists in us-east-1"));
+        let fake = reply(404, "{}");
+        let error = call(&fake, op, "l-1", &[], None).unwrap_err();
+        assert!(!super::command_error(&error, "us-east-1", true).contains("no launch with this ID"));
+    }
+    for op in [
+        ApiOperation::CreateUploadUrl,
+        ApiOperation::CreateLaunch,
+        ApiOperation::GetLaunch,
+        ApiOperation::ListLaunches,
+        ApiOperation::StartExecution,
+        ApiOperation::Delete,
+    ] {
+        let fake = reply(401, "{}");
+        let error = call(&fake, op, "l-1", &[], None).unwrap_err();
+        assert!(super::command_error(&error, "eu-central-1", false)
+            .contains("backend rejected the Bearer token"));
+    }
+}
+
+#[test]
+fn t_api_snapshot_lookup_missing_malformed_transport_and_id_boundaries() {
+    let sleeper = RecordingSleeper::new();
+    let token = Secret::new("FAKE-ACCESS-TOKEN");
+    for body in [LAUNCH, "{}", "not json"] {
+        let fake = reply(200, body);
+        let client = Client {
+            transport: &fake,
+            base: "https://example.test",
+            region: "us-east-1",
+            token: &token,
+            clock: &SystemClock,
+            sleeper: &sleeper,
+            jitter: &NoJitter,
+            policy: RetryPolicy::none(),
+        };
+        let result = client.download_url("l-1", false);
+        if body == LAUNCH {
+            assert!(result.unwrap().is_none());
+        } else {
+            assert!(matches!(result, Err(ApiError::InvalidResponse)));
+        }
+    }
+    let fake = FakeStreamingTransport::new()
+        .open_error(toolkit_aws::AwsError::connect("seeded transport error"));
+    let client = Client {
+        transport: &fake,
+        base: "https://example.test",
+        region: "us-east-1",
+        token: &token,
+        clock: &SystemClock,
+        sleeper: &sleeper,
+        jitter: &NoJitter,
+        policy: RetryPolicy::none(),
+    };
+    assert!(matches!(
+        client.download_url("l-1", false),
+        Err(ApiError::Unreachable)
+    ));
+    for id in [String::new(), "x".repeat(2049)] {
+        let fake = reply(200, LAUNCH);
+        let client = Client {
+            transport: &fake,
+            base: "https://example.test",
+            region: "us-east-1",
+            token: &token,
+            clock: &SystemClock,
+            sleeper: &sleeper,
+            jitter: &NoJitter,
+            policy: RetryPolicy::none(),
+        };
+        assert!(matches!(
+            client.download_url(&id, false),
+            Err(ApiError::InvalidLaunchId)
+        ));
+        assert!(fake.requests().is_empty());
+    }
+}
+
+#[test]
+fn t_api_invalid_launch_name_is_refused_before_request() {
+    for name in [String::new(), "x".repeat(129)] {
+        let fake = reply(200, LAUNCH);
+        let result = call(
+            &fake,
+            ApiOperation::CreateLaunch,
+            "",
+            &[],
+            Some(json!({"name":name,"clientToken":"fixture-token"})),
+        );
+        assert!(result.is_err());
+        assert!(fake.requests().is_empty());
+    }
 }

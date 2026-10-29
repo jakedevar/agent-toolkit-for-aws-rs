@@ -56,3 +56,16 @@ fn t_shape_8_required_null_and_wrong_type_refused() {
         assert!(shape("ListLaunchesOutput", input).is_err());
     }
 }
+
+#[test]
+fn t_shape_timestamp_epoch_boundaries_and_invalid_year() {
+    assert_eq!(
+        shape("SyntheticTimestamp_date_time", "0").unwrap(),
+        r#""1970-01-01 00:00:00+00:00""#
+    );
+    assert_eq!(
+        shape("SyntheticTimestamp_date_time", "-1").unwrap(),
+        r#""1969-12-31 23:59:59+00:00""#
+    );
+    assert!(shape("SyntheticTimestamp_date_time", r#""0000-01-01T00:00:00Z""#).is_err());
+}

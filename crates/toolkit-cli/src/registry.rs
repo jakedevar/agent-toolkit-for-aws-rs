@@ -552,7 +552,7 @@ mod tests {
     /// The route paths of the old `COMMANDS` table (commit ce0eaf6a, before the
     /// registry), in table order: the public order of [`COMMANDS`]. The routes of
     /// slices added after the registry follow at the end, ordered by slice name.
-    const LEGACY_COMMAND_ORDER: [&str; 109] = [
+    const LEGACY_COMMAND_ORDER: [&str; 116] = [
         "skills list",
         "manifests validate",
         "spec validate",
@@ -657,6 +657,13 @@ mod tests {
         "elasticache test-connection",
         // launch callback and sign-in lifecycle (#5216):
         "launch resolve-region",
+        "launch create-launch",
+        "launch get-launch",
+        "launch list-launches",
+        "launch delete-launch",
+        "launch start-launch-execution",
+        "launch get-launch-status",
+        "launch get-launch-download-url",
         "launch session-status",
         "launch sign-out",
         "launch auth-callback",

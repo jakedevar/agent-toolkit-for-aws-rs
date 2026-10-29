@@ -100,3 +100,29 @@ fn t_cmd_network_commands_fail_without_network_support() {
         assert_eq!(output.stderr, b"{\"error\":\"This toolkit build has no network support; install a build with the aws-sdk feature.\"}\n");
     }
 }
+
+#[test]
+fn t_api_create_name_validation_precedes_network() {
+    let long_name = "x".repeat(129);
+    let output = invoke(&["launch", "create-launch", ".", &long_name]);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert_eq!(
+        output.stderr,
+        b"{\"error\":\"Invalid launch name: it must be 1 to 128 characters.\"}\n"
+    );
+}
+
+#[test]
+fn t_cmd_create_rejects_credential_bearing_url_without_echoing_credentials() {
+    let output = invoke(&[
+        "launch",
+        "create-launch",
+        "https://user:FAKE-URL-SECRET@example.test/repo",
+    ]);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    let diagnostic = String::from_utf8(output.stderr).unwrap();
+    assert!(diagnostic.contains("create-launch takes a local directory"));
+    assert!(!diagnostic.contains("FAKE-URL-SECRET"));
+}

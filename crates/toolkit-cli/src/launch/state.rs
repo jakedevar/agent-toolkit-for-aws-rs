@@ -250,6 +250,7 @@ impl StoredSession {
     /// Parse the session file strictly; `None` for anything but the exact
     /// nine-member schema.
     #[must_use]
+    // recorded-shape: this is a local session file whose exact keys and member types are validated, not an AWS response.
     pub fn from_json_bytes(bytes: &[u8]) -> Option<Self> {
         let text = std::str::from_utf8(bytes).ok()?;
         let Json::Object(members) = parse_json(text).ok()? else {

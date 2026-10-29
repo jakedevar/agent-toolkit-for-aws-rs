@@ -4,13 +4,14 @@
 //!
 
 use std::path::Path;
-#[cfg(unix)]
+#[cfg(any(unix, feature = "aws-sdk"))]
 use std::time::Duration;
 
 use serde_json::Value;
 #[cfg(all(unix, feature = "aws-sdk"))]
 use toolkit_aws::retry::RetryPolicy;
 use toolkit_aws::stream::StreamingTransport;
+#[cfg(not(feature = "aws-sdk"))]
 use toolkit_aws::transport::HttpRequest;
 use toolkit_core::ToolkitError;
 
@@ -165,8 +166,7 @@ fn download(invocation: &Invocation, launch_id: &str) -> Result<String, LaunchEr
 
 /// The production network: the SDK transport with the `aws-sdk` feature,
 /// otherwise a transport that refuses every request with the Q20 message.
-#[cfg(unix)]
-struct Network {
+pub(crate) struct Network {
     #[cfg(feature = "aws-sdk")]
     transport: toolkit_aws::sdk::SdkTransport,
     #[cfg(feature = "aws-sdk")]
@@ -190,10 +190,9 @@ impl StreamingTransport for Unavailable {
     }
 }
 
-#[cfg(unix)]
 impl Network {
     #[cfg(feature = "aws-sdk")]
-    fn open() -> Result<Self, LaunchError> {
+    pub(crate) fn open() -> Result<Self, LaunchError> {
         use toolkit_aws::sdk::{roots::ValidatedRoots, SdkRuntime, SdkTransport};
         let unavailable =
             || LaunchError::Download("The network transport is unavailable.".to_string());
@@ -208,13 +207,13 @@ impl Network {
 
     #[cfg(not(feature = "aws-sdk"))]
     #[allow(clippy::unnecessary_wraps)]
-    fn open() -> Result<Self, LaunchError> {
+    pub(crate) fn open() -> Result<Self, LaunchError> {
         Ok(Self {
             transport: Unavailable,
         })
     }
 
-    fn transport(&self) -> &dyn StreamingTransport {
+    pub(crate) fn transport(&self) -> &dyn StreamingTransport {
         &self.transport
     }
 

@@ -82,9 +82,11 @@ pub(crate) enum ApiError {
     Unreachable,
     InvalidRequest,
     InvalidLaunchId,
+    InvalidLaunchName,
     Status {
         status: u16,
         code: &'static str,
+        operation: &'static str,
     },
     Lookup {
         status: u16,
@@ -92,6 +94,8 @@ pub(crate) enum ApiError {
         hint: &'static str,
     },
     PutStatus(u16),
+    PutConnect,
+    PutTimeout,
 }
 impl std::fmt::Display for ApiError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -106,15 +110,52 @@ impl std::fmt::Display for ApiError {
             Self::InvalidLaunchId => {
                 f.write_str("Invalid launch id: it must be 1 to 2048 characters.")
             }
-            Self::Status { status, code } => {
-                write!(f, "Launch API request failed ({status}): {code}")
+            Self::InvalidLaunchName => {
+                f.write_str("Invalid launch name: it must be 1 to 128 characters.")
+            }
+            Self::Status {
+                status,
+                code,
+                operation,
+            } => {
+                write!(f, "{operation} failed ({status}): {code}")
             }
             Self::Lookup { status, code, hint } => {
                 write!(f, "GET /api/launches/<id> failed ({status}): {code}{hint}")
             }
             Self::PutStatus(status) => write!(f, "PUT (presigned S3 upload) failed ({status})"),
+            Self::PutConnect => f.write_str("Could not upload the archive: connect"),
+            Self::PutTimeout => f.write_str("Could not upload the archive: timeout"),
         }
     }
+}
+
+pub(crate) fn command_error(error: &ApiError, region: &str, override_base: bool) -> String {
+    let mut message = error.to_string();
+    if matches!(error, ApiError::Unreachable) {
+        return match region {
+            "us-east-1" => "Could not reach Launch with AWS in us-east-1.".into(),
+            "eu-central-1" => "Could not reach Launch with AWS in eu-central-1.".into(),
+            _ => message,
+        };
+    }
+    if let ApiError::Status {
+        status, operation, ..
+    } = error
+    {
+        if *status == 401 {
+            message.push_str(
+                " Hint: the backend rejected the Bearer token. Ensure you signed in successfully.",
+            );
+        } else if *status == 404 && !override_base && operation.contains("<id>") {
+            match region {
+                "us-east-1" => message.push_str(" Hint: no launch with this ID exists in us-east-1. A launch exists only in the region it was created in; retry with --region set to that region (one of: us-east-1, eu-central-1)."),
+                "eu-central-1" => message.push_str(" Hint: no launch with this ID exists in eu-central-1. A launch exists only in the region it was created in; retry with --region set to that region (one of: us-east-1, eu-central-1)."),
+                _ => {},
+            }
+        }
+    }
+    message
 }
 
 pub(crate) struct Client<'a> {
@@ -137,7 +178,7 @@ pub(crate) fn validate_launch_id(id: &str) -> Result<(), ApiError> {
 impl Client<'_> {
     pub fn download_url(&self, id: &str, override_base: bool) -> Result<Option<String>, ApiError> {
         let result = self.call(ApiOperation::GetLaunch, id, &["download_url"], None).map_err(|error| match error {
-            ApiError::Status { status, code } => {
+            ApiError::Status { status, code, .. } => {
                 let hint = if status == 401 { " Hint: the backend rejected the Bearer token. Ensure you signed in successfully." }
                 else if status == 404 && !override_base && self.region == "us-east-1" { " Hint: no launch with this ID exists in us-east-1. A launch exists only in the region it was created in; retry with --region set to that region (one of: us-east-1, eu-central-1)." }
                 else if status == 404 && !override_base && self.region == "eu-central-1" { " Hint: no launch with this ID exists in eu-central-1. A launch exists only in the region it was created in; retry with --region set to that region (one of: us-east-1, eu-central-1)." }
@@ -146,17 +187,16 @@ impl Client<'_> {
             },
             other => other,
         })?;
-        let launch = result
-            .get("launch")
-            .and_then(Value::as_object)
+        let parsed =
+            toolkit_core::parse_json(&result.to_string()).map_err(|_| ApiError::InvalidResponse)?;
+        let launch = toolkit_aws::recorded::optional_object(&parsed, "launch")
+            .map_err(|_| ApiError::InvalidResponse)?
             .ok_or(ApiError::InvalidResponse)?;
-        match launch.get("downloadUrl") {
-            None | Some(Value::Null) => Ok(None),
-            Some(Value::String(url)) if url.is_empty() => Ok(None),
-            Some(Value::String(url)) => Ok(Some(url.clone())),
-            _ => Err(ApiError::InvalidResponse),
-        }
+        let url = toolkit_aws::recorded::optional_text(launch, "downloadUrl")
+            .map_err(|_| ApiError::InvalidResponse)?;
+        Ok(url.filter(|url| !url.is_empty()).map(str::to_owned))
     }
+    #[allow(clippy::too_many_lines)]
     pub fn call(
         &self,
         operation: ApiOperation,
@@ -164,6 +204,15 @@ impl Client<'_> {
         include: &[&str],
         body: Option<Value>,
     ) -> Result<Value, ApiError> {
+        if matches!(operation, ApiOperation::CreateLaunch)
+            && !body
+                .as_ref()
+                .and_then(|value| value.get("name"))
+                .and_then(Value::as_str)
+                .is_some_and(|name| (1..=128).contains(&name.chars().count()))
+        {
+            return Err(ApiError::InvalidLaunchName);
+        }
         if matches!(
             operation,
             ApiOperation::GetLaunch | ApiOperation::Delete | ApiOperation::StartExecution
@@ -260,6 +309,16 @@ impl Client<'_> {
                 ApiError::Status {
                     status: response.status,
                     code: error_code(response.error_header.as_deref(), &response.body),
+                    operation: match operation {
+                        ApiOperation::CreateUploadUrl => "POST /api/uploads",
+                        ApiOperation::CreateLaunch => "POST /api/launches",
+                        ApiOperation::GetLaunch => "GET /api/launches/<id>",
+                        ApiOperation::ListLaunches => "GET /api/launches",
+                        ApiOperation::StartExecution => "POST /api/launches/<id>/start",
+                        ApiOperation::Delete => "DELETE /api/launches/<id>",
+                        #[cfg(test)]
+                        ApiOperation::Put => unreachable!(),
+                    },
                 }
             });
         }
@@ -328,7 +387,10 @@ impl Client<'_> {
             self.clock.now() + timeout,
         )
         .map_err(|e| match e {
-            http::BodyError::Deadline | http::BodyError::Transport { .. } => ApiError::Unreachable,
+            http::BodyError::Deadline | http::BodyError::Transport { timeout: true, .. } => {
+                ApiError::PutTimeout
+            }
+            http::BodyError::Transport { .. } => ApiError::PutConnect,
             _ => ApiError::InvalidResponse,
         })?;
         if (200..300).contains(&response.status) {
