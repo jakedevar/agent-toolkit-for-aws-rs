@@ -2972,9 +2972,9 @@ fn server_text_in_reviewed_encodings_never_shows_the_password() {
     // of the active value only), so it is not listed.
     let password = "marmalade 742/synthetic+value";
     for version in [
+        "marmalade+742%2Fsynthetic%2Bvalue",
+        "marmalade%20742%2Fsynthetic%2Bvalue",
         "marmalade 742/synthetic+value",
-        "marmalade",
-        "synthetic+value",
     ] {
         let (status, stdout, stderr) =
             server_line(version, "standalone", &["--password", password]);
