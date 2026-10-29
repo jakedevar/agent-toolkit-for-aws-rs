@@ -252,6 +252,7 @@ fn ap_asn_02_04_06_target_and_secret_matrix() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)] // Explicit per-type process rejection matrix.
 fn ap_typ_03_04_06_07_sub_14_process_rejection_matrix() {
     for (name, cases) in [
         (
