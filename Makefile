@@ -50,3 +50,4 @@ plugin-binaries-check:
 # daemon invokes for AgentSubmitJob test jobs with params.at_commit.
 test-scripts:
 	sh scripts/at-commit-test.selftest.sh
+	sh scripts/run-rsid-test-shards.selftest.sh
