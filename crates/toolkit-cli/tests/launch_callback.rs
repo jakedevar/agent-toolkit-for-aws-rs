@@ -28,6 +28,7 @@ fn invalid_stdin_fails_silently_before_binding() {
 
 #[cfg(all(unix, not(feature = "aws-sdk")))]
 #[test]
+#[allow(clippy::too_many_lines)]
 fn helper_announces_loopback_and_retains_transport_failure() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -92,7 +93,7 @@ fn helper_announces_loopback_and_retains_transport_failure() {
                     .find_map(|line| line.strip_prefix("flags:\t"))
                     .unwrap();
                 let flags = u32::from_str_radix(flags, 8).unwrap();
-                assert_ne!(flags & 0o2000000, 0);
+                assert_ne!(flags & 0o2_000_000, 0);
                 found_lock = true;
             }
         }

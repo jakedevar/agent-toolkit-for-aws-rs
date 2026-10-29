@@ -421,13 +421,13 @@ mod deadline_tests {
                     wall_deadline(),
                     |_| Ok(()),
                     |_, _, _| {
-                        entered_tx.send(()).unwrap();
+                        std::sync::mpsc::SyncSender::send(&entered_tx, ()).unwrap();
                         release_rx.recv().unwrap();
                         Ok(b"session".to_vec())
                     },
                     Instant::now,
                     |gate, _, record| {
-                        watch_tx.send((gate, record)).unwrap();
+                        std::sync::mpsc::SyncSender::send(&watch_tx, (gate, record)).unwrap();
                     },
                     |_, _, _| Ok(Some(Outcome::Code("ok".into()))),
                 )
@@ -447,7 +447,7 @@ mod deadline_tests {
                     .status,
                 PendingStatus::TimedOut
             );
-            release_tx.send(()).unwrap();
+            std::sync::mpsc::SyncSender::send(&release_tx, ()).unwrap();
             assert_eq!(worker.join().unwrap().unwrap(), HelperResult::TimedOut);
         });
         assert!(!scratch.join("session.json").exists());
