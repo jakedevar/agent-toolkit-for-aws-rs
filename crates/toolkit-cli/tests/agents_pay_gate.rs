@@ -2323,3 +2323,137 @@ fn t_ac3_noread_catches_the_review_5389_helper_and_macro_mutations() {
         );
     }
 }
+
+/// The re-review #5397 mutation (#5400), verbatim, and the other raw
+/// identifier forms: a raw spelling names the same item as the plain one,
+/// so every gate compares identifiers after unraw. Each fixture is reported
+/// by label when it survives.
+#[test]
+fn t_ac3_noread_catches_raw_identifier_mutations() {
+    const RAW_OK: &str = "#[allow(non_snake_case)]\nfn r#Ok<T, E>(value: T) -> Result<T, E> {\n    let _ = std::env::var_os(\"RSI_REVIEW_5397_NON_SECRET\");\n    Result::Ok(value)\n}\n\n";
+    const RAW_SHADOW: &str = "macro_rules! r#matches {\n    ($($tokens:tt)*) => {{\n        let _ = std::env::var_os(\"RSI_REVIEW_5397_NON_SECRET\");\n        std::matches!($($tokens)*)\n    }};\n}\n\n";
+    let pay_with = |path: &str, insert: &str| -> Vec<Source> {
+        let mut sources = real_sources();
+        let at = sources.iter().position(|s| s.path == path).unwrap();
+        sources[at].text = if path == ROUTE_FILE {
+            sources[at]
+                .text
+                .replacen(PARSE_ANCHOR, &format!("{insert}{PARSE_ANCHOR}"), 1)
+        } else {
+            format!("{insert}{}", sources[at].text)
+        };
+        sources
+    };
+    let route_killed = |sources: &[Source]| {
+        let route = &sources.iter().find(|s| s.path == ROUTE_FILE).unwrap().text;
+        !d32_findings(route).is_empty() || !pay_dir_findings(sources).is_empty()
+    };
+    let mut survived: Vec<&str> = Vec::new();
+
+    // The route: a raw shadow of a name the D32 surface resolves.
+    for (label, path, insert) in [
+        ("#5400 fn r#Ok in mod.rs", ROUTE_FILE, RAW_OK),
+        (
+            "type r#Result alias in mod.rs",
+            ROUTE_FILE,
+            "type r#Result<T, E> = ::core::result::Result<T, E>;\n\n",
+        ),
+        ("macro_rules! r#matches in mod.rs", ROUTE_FILE, RAW_SHADOW),
+        (
+            "r#thread_local! item macro in mod.rs",
+            ROUTE_FILE,
+            "r#thread_local! { static X: u8 = 0; }\n\n",
+        ),
+        ("macro_rules! r#matches in flow.rs", "agents_pay/flow.rs", RAW_SHADOW),
+        (
+            "raw macro path ::core::r#matches! in deps.rs",
+            "agents_pay/deps.rs",
+            "fn raw_macro() -> bool {\n    ::core::r#matches!(1, 1)\n}\n",
+        ),
+        (
+            "#[r#used] #[r#link_section] static in proof.rs",
+            "agents_pay/proof.rs",
+            "#[r#used]\n#[r#link_section = \".init_array\"]\nstatic INIT: extern \"C\" fn() = init;\nextern \"C\" fn init() {}\n",
+        ),
+        (
+            "#[r#cfg_attr(all(), r#used)] static in proof.rs",
+            "agents_pay/proof.rs",
+            "#[r#cfg_attr(all(), r#used)]\nstatic KEEP: u8 = 0;\n",
+        ),
+        (
+            "#[r#no_mangle] fn in net.rs",
+            "agents_pay/net.rs",
+            "#[r#no_mangle]\npub extern \"C\" fn exported() {}\n",
+        ),
+        (
+            "#[r#export_name] fn in vault.rs",
+            "agents_pay/vault.rs",
+            "#[r#export_name = \"exported\"]\npub extern \"C\" fn exported() {}\n",
+        ),
+        (
+            "#[r#macro_use] extern crate in vault.rs",
+            "agents_pay/vault.rs",
+            "#[r#macro_use]\nextern crate core as std_core;\n",
+        ),
+    ] {
+        if !route_killed(&pay_with(path, insert)) {
+            survived.push(label);
+        }
+    }
+
+    // G4: a raw spelling of a live constructor in a payment test.
+    let deps = real_source("agents_pay/deps.rs");
+    let anchor = "    fn g3_test_identities_are_recognized() {\n";
+    for (label, live) in [
+        ("G4 Deps::r#for_process", "let _ = Deps::r#for_process();"),
+        ("G4 r#SystemResolver", "let _ = toolkit_aws::r#SystemResolver;"),
+    ] {
+        let bad = deps.replacen(anchor, &format!("{anchor}        {live}\n"), 1);
+        let mut modules = Vec::new();
+        inline_test_modules(bad.parse().unwrap(), &mut modules);
+        let files: Vec<(String, String)> = modules
+            .into_iter()
+            .map(|m| ("agents_pay/deps.rs (inline tests)".to_owned(), m))
+            .collect();
+        if g4_unexpected(&files).is_empty() {
+            survived.push(label);
+        }
+    }
+    // The proof gate and R-TOK-NOFRESH.
+    let flow_raw = [
+        (
+            "proof a.r#into_parts()",
+            "fn f(a: Authorized) { let _ = a.r#into_parts(); }",
+        ),
+        (
+            "proof r#VerifiedProof literal",
+            "fn f(p: Json) -> VerifiedProof { r#VerifiedProof { payload: p } }",
+        ),
+    ];
+    for (label, bad) in flow_raw {
+        if proof_findings(&seeded(&[("agents_pay/flow.rs", bad)])).is_empty() {
+            survived.push(label);
+        }
+    }
+    let nofresh = "fn n() -> String { uuid::r#Uuid::new_v4().to_string() }";
+    if nofresh_findings(&seeded(&[("agents_pay/flow.rs", nofresh)])).is_empty() {
+        survived.push("nofresh uuid::r#Uuid");
+    }
+    // T-ORDER-CTOR: a raw constructor path outside `authorize`.
+    for (label, flow) in [
+        (
+            "ctor Approved::r#new",
+            "fn pay(token: String) { let _a = Approved::r#new(token); }",
+        ),
+        (
+            "ctor r#Approved::new",
+            "fn pay(token: String) { let _a = r#Approved::new(token); }",
+        ),
+    ] {
+        let found = findings_with(&[("agents_pay/flow.rs", flow)], GOOD_APPROVED, GOOD_POLICY);
+        if !found.iter().any(|f| f.contains("exactly one use")) {
+            survived.push(label);
+        }
+    }
+    assert!(survived.is_empty(), "survived the gate: {survived:#?}");
+}
