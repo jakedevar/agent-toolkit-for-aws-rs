@@ -3,9 +3,25 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 fn invoke(args: &[&str]) -> std::process::Output {
-    let dir = std::env::temp_dir().join(format!("launch-l5-{}-{}", std::process::id(), SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+    let dir = std::env::temp_dir().join(format!(
+        "launch-l5-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
     std::fs::create_dir(&dir).unwrap();
-    let output = Command::new(env!("CARGO_BIN_EXE_toolkit")).args(args).env("HOME", &dir).env_remove("LAUNCH_WITH_AWS_REGION").env_remove("LAUNCH_WITH_AWS_BASE_URL").env_remove("AWS_REGION").env_remove("AWS_DEFAULT_REGION").env_remove("AWS_PROFILE").output().unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_toolkit"))
+        .args(args)
+        .env("HOME", &dir)
+        .env_remove("LAUNCH_WITH_AWS_REGION")
+        .env_remove("LAUNCH_WITH_AWS_BASE_URL")
+        .env_remove("AWS_REGION")
+        .env_remove("AWS_DEFAULT_REGION")
+        .env_remove("AWS_PROFILE")
+        .output()
+        .unwrap();
     std::fs::remove_dir_all(dir).unwrap();
     output
 }
@@ -27,6 +43,9 @@ fn t_cmd_session_status_without_session() {
 fn t_cmd_sign_out_without_session() {
     let output = invoke(&["launch", "sign-out"]);
     assert!(output.status.success());
-    assert_eq!(output.stdout, b"{\n  \"signedOut\": true,\n  \"sessionRemoved\": false\n}\n");
+    assert_eq!(
+        output.stdout,
+        b"{\n  \"signedOut\": true,\n  \"sessionRemoved\": false\n}\n"
+    );
     assert!(output.stderr.is_empty());
 }

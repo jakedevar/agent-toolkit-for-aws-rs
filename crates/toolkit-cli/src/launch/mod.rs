@@ -18,6 +18,7 @@ pub mod archive;
 pub mod buffer;
 pub mod callback;
 pub mod clock;
+pub mod commands;
 pub mod config;
 #[cfg(unix)]
 pub mod download;
@@ -112,6 +113,12 @@ pub mod tests_support;
 pub(crate) const SLICE: crate::registry::Slice = crate::registry::Slice {
     name: "launch",
     commands: &[crate::CommandSpec {
+        path: &["launch", "resolve-region"], flags: &[], value_flags: &["--region", "--aws-mcp-url"], strict_values: true, repeatable_flags: &[], max_positionals: 0, passthrough: false, handler: commands::resolve_region,
+    }, crate::CommandSpec {
+        path: &["launch", "session-status"], flags: &[], value_flags: &["--region", "--aws-mcp-url"], strict_values: true, repeatable_flags: &[], max_positionals: 0, passthrough: false, handler: commands::session_status,
+    }, crate::CommandSpec {
+        path: &["launch", "sign-out"], flags: &[], value_flags: &["--region", "--aws-mcp-url"], strict_values: true, repeatable_flags: &[], max_positionals: 0, passthrough: false, handler: commands::sign_out,
+    }, crate::CommandSpec {
         path: &["launch", "auth-callback"],
         flags: &[],
         value_flags: &[],
@@ -157,9 +164,9 @@ pub(crate) const SLICE: crate::registry::Slice = crate::registry::Slice {
         passthrough: false,
         handler: snapshot::apply_command,
     }],
-    synopsis: "  toolkit launch auth-callback\n  toolkit launch auth-start [--region REGION] [--aws-mcp-url URL]\n  toolkit launch auth-wait PID [--region REGION] [--aws-mcp-url URL]\n  toolkit launch download-snapshot LAUNCH_ID [--output DIR] [--region REGION]\n  toolkit launch apply-snapshot SNAPSHOT_DIR [--into DIR]\n",
+    synopsis: "  toolkit launch resolve-region [--region REGION] [--aws-mcp-url URL]\n  toolkit launch session-status\n  toolkit launch sign-out\n  toolkit launch auth-callback\n  toolkit launch auth-start [--region REGION] [--aws-mcp-url URL]\n  toolkit launch auth-wait PID [--region REGION] [--aws-mcp-url URL]\n  toolkit launch download-snapshot LAUNCH_ID [--output DIR] [--region REGION]\n  toolkit launch apply-snapshot SNAPSHOT_DIR [--into DIR]\n",
     description:
-        "  launch auth-callback  Internal sign-in helper; reads configuration from stdin.\n  launch auth-start     Start sign-in.\n  launch auth-wait      Wait for a sign-in helper to finish.\n  launch download-snapshot  Download and safely extract a launch's migrated snapshot.\n  launch apply-snapshot     Apply an extracted snapshot to the Git work tree.\n",
+        "  launch resolve-region  Resolve the migration region.\n  launch session-status  Show local session status.\n  launch sign-out  Remove the local session.\n  launch auth-callback  Internal sign-in helper; reads configuration from stdin.\n  launch auth-start     Start sign-in.\n  launch auth-wait      Wait for a sign-in helper to finish.\n  launch download-snapshot  Download and safely extract a launch's migrated snapshot.\n  launch apply-snapshot     Apply an extracted snapshot to the Git work tree.\n",
     exit_notes: "",
     doc: "docs/migration/launch-with-aws-design.md",
     synopsis_rank: crate::registry::NEW_RANK,

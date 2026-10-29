@@ -656,6 +656,9 @@ mod tests {
         "elasticache start-tunnel",
         "elasticache test-connection",
         // launch callback and sign-in lifecycle (#5216):
+        "launch resolve-region",
+        "launch session-status",
+        "launch sign-out",
         "launch auth-callback",
         "launch auth-start",
         "launch auth-wait",
