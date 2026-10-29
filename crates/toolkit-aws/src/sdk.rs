@@ -612,7 +612,19 @@ fn check_peer(capture: &CaptureSmithyConnection) -> Result<(), AwsError> {
 
 /// A body-read failure as a redacted boundary error.
 fn body_error(error: &aws_smithy_types::byte_stream::error::Error) -> AwsError {
-    if malformed_http(error) {
+    let mut source: Option<&(dyn std::error::Error + 'static)> = Some(error);
+    let mut unexpected_eof = false;
+    while let Some(current) = source {
+        if current
+            .downcast_ref::<std::io::Error>()
+            .is_some_and(|error| error.kind() == std::io::ErrorKind::UnexpectedEof)
+        {
+            unexpected_eof = true;
+            break;
+        }
+        source = current.source();
+    }
+    if malformed_http(error) || unexpected_eof {
         return AwsError::Protocol;
     }
     AwsError::connect(format!(
