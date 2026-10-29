@@ -526,7 +526,9 @@ the pending record only for `auth-wait`.
 
 - `auth-start` creates `~/.launch-with-aws/pending/` (0700) and the child creates
   `pending/<pid>.json` (0600: `{"pid", "port", "deadline", "cutoff", "status"}`, status one of
-  `listening`, `exchanging`, `succeeded`, `failed`, `timed_out`, plus a fixed `reason` code; never a secret) and
+  `listening`, `exchanging`, `succeeded`, `failed`, `timed_out`, plus a fixed `reason` code;
+  a denial also has `oauth_error`, the validated or substituted error code from R-CB-STATE;
+  never an error description, URI or secret) and
   holds an exclusive lock on `pending/<pid>.lock` for its whole life (`std::fs::File::lock`, stable
   since Rust 1.89; the toolchain is 1.94.1).
 - `auth-wait <pid>` (positional kept for compatibility) reads `pending/<pid>.json`. Missing on the first read →

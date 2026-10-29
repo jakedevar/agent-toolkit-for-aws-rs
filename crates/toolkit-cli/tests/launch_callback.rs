@@ -212,6 +212,18 @@ fn helper_retains_valid_oauth_error_without_description() {
     assert!(record.contains("access_denied"), "{record}");
     assert!(!record.contains("private_description"));
     assert!(!response.contains("private_description"));
+    let wait = Command::new(env!("CARGO_BIN_EXE_toolkit"))
+        .args(["launch", "auth-wait", &pid.to_string()])
+        .env("HOME", &home)
+        .output()
+        .unwrap();
+    assert!(!wait.status.success());
+    let message = String::from_utf8(wait.stderr).unwrap();
+    assert!(message.contains("Sign-in was denied. Run auth-start again."));
+    assert!(!message.contains("private_description"));
+    assert!(!home
+        .join(format!(".launch-with-aws/pending/{pid}.json"))
+        .exists());
     std::fs::remove_dir_all(home).unwrap();
 }
 
