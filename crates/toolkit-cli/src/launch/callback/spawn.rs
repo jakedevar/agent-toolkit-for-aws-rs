@@ -1,7 +1,7 @@
 //! Secret-bearing callback configuration and helper process handshake.
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::process::{Command, Stdio};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use toolkit_aws::Secret;
 use toolkit_core::{parse_json, Json};
 
@@ -110,8 +110,13 @@ pub fn spawn(config: &HelperConfig) -> io::Result<(u32, u16)> {
         .map_err(|_| fail())?;
     let started = (|| {
         let mut stdin = child.stdin.take().ok_or_else(fail)?;
-        stdin.write_all(&bytes).map_err(|_| fail())?;
-        drop(stdin);
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let (write_send, write_recv) = std::sync::mpsc::sync_channel(1);
+        std::thread::spawn(move || {
+            let result = stdin.write_all(&bytes);
+            drop(stdin);
+            let _ = write_send.send(result);
+        });
         let stdout = child.stdout.take().ok_or_else(fail)?;
         let (send, recv) = std::sync::mpsc::sync_channel(1);
         std::thread::spawn(move || {
@@ -120,7 +125,11 @@ pub fn spawn(config: &HelperConfig) -> io::Result<(u32, u16)> {
             let _ = send.send(line);
         });
         let line = recv
-            .recv_timeout(Duration::from_secs(10))
+            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            .map_err(|_| fail())?;
+        write_recv
+            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            .map_err(|_| fail())?
             .map_err(|_| fail())?;
         if line.len() > 16 || !line.ends_with(b"\n") {
             return Err(fail());

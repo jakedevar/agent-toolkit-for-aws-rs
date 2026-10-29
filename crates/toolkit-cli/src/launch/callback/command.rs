@@ -5,28 +5,25 @@ use super::{
 };
 use crate::{Invocation, Output};
 use std::io::{self, IsTerminal};
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::Instant;
+#[cfg(feature = "aws-sdk")]
+use std::time::{SystemTime, UNIX_EPOCH};
 use toolkit_core::ToolkitError;
 
 /// Internal route. Failures are intentionally silent, including invalid stdin.
+#[allow(clippy::unnecessary_wraps)] // Router handlers share this signature.
 pub fn callback(_invocation: &Invocation, output: &mut Output<'_>) -> Result<(), ToolkitError> {
     if io::stdin().is_terminal() {
         output.set_exit_status(1);
         return Ok(());
     }
-    let config = match HelperConfig::read(io::stdin().lock()) {
-        Ok(config) => config,
-        Err(_) => {
-            output.set_exit_status(1);
-            return Ok(());
-        }
+    let Ok(config) = HelperConfig::read(io::stdin().lock()) else {
+        output.set_exit_status(1);
+        return Ok(());
     };
-    let dir = match crate::launch::state::state_dir(&toolkit_aws::ProcessEnv) {
-        Ok(dir) => dir,
-        Err(_) => {
-            output.set_exit_status(1);
-            return Ok(());
-        }
+    let Ok(dir) = crate::launch::state::state_dir(&toolkit_aws::ProcessEnv) else {
+        output.set_exit_status(1);
+        return Ok(());
     };
     #[cfg(unix)]
     let result = lifecycle::run(

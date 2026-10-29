@@ -1,7 +1,11 @@
 //! Offline tests for the internal sign-in helper.
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::Write;
+#[cfg(all(unix, not(feature = "aws-sdk")))]
+use std::io::{BufRead, BufReader, Read};
+#[cfg(all(unix, not(feature = "aws-sdk")))]
 use std::net::TcpStream;
 use std::process::{Command, Stdio};
+#[cfg(all(unix, not(feature = "aws-sdk")))]
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 #[test]
