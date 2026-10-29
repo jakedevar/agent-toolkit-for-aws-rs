@@ -25,6 +25,7 @@ use super::client::RecordedClient;
 use super::infra::run_infra_checks;
 
 mod neptune;
+mod memory;
 mod redaction;
 mod review;
 mod template;
