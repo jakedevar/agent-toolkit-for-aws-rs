@@ -672,3 +672,5 @@ Friction: #4727, Rsi #4694, Rsi #4704
   4/4 busy: 3819aea9 (#5080), d4591cd7 (#5166), af98d414 (#4411 design repair 1), cbfc944e (#5167).
 - 10-29 04:55Z: #5080 TA-STREAM-DL (3819aea9, Codex terra) at 1f7b4f8ffe79c425118c561429b2e5af79a48685 (on r22 07e945e5; red a338313d at 73348d8; fmt 2d1a66a5, clippy 95c51458, clippy-sdk 8df81028, test-sdk 752af6ac, scoped e9dd047f ok). Review #5169 -> Claude Sonnet high d2a29ea6 (pinned 1f7b4f8, delta from 07e945e5). On ACCEPT + r22 landed: enqueue 1f7b4f8; then #4382 L3, x402 S3.
   4/4 busy: d4591cd7 (#5166), af98d414 (#4411 design repair 1), cbfc944e (#5167), d2a29ea6 (#5169).
+- 10-29 04:58Z: #5169 (d2a29ea6, Sonnet) ACCEPT #5080 at 1f7b4f8f; non-blocking #5172 P3 (Deadline timeout retryable), #5173 P3 (missing narrow/pre-copy tests, R-DNS doc), #5174 P4 (T-SDL-1 300 ms deadline covers TLS -> false fail under load). RULING: fold all 3 before landing (r22 not gating yet, saves a gate). Repair 1 -> Codex terra 12652329 (continue_from 3819aea9). Then narrow re-review (Sonnet); enqueue after r22 lands.
+  4/4 busy: d4591cd7 (#5166), af98d414 (#4411 design repair 1), cbfc944e (#5167), 12652329 (#5080 repair 1).
