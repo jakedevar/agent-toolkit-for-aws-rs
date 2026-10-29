@@ -843,6 +843,7 @@ impl PaymentsApi for FakePaymentsApi {
     }
 }
 #[cfg(test)]
+#[allow(clippy::needless_pass_by_value)] // Consuming Approved permits only one logical spend.
 fn process_approved(api: &dyn PaymentsApi, approved: Approved) -> Result<Authorized, PaymentError> {
     let recipient = toolkit_aws::recorded::optional_text(approved.entry(), "payTo")
         .map_err(|_| PaymentError::InvalidResponse)?
