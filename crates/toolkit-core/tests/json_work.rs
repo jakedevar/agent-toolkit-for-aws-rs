@@ -210,7 +210,10 @@ fn values_stay_attached_to_their_keys_in_a_wide_object() {
     };
     for (position, (key, value)) in pairs.iter().enumerate() {
         assert_eq!(*key, format!("m{}", (position * 37) % 500));
-        assert_eq!(*value, Json::Int(position as i64));
+        assert_eq!(
+            *value,
+            Json::Int(i64::try_from(position).expect("small index"))
+        );
     }
     assert_eq!(json.get("m0"), Some(&Json::Int(0)));
 }
