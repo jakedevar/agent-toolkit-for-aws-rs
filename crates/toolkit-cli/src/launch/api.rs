@@ -271,12 +271,19 @@ impl Client<'_> {
                 serde_json::json!({"deleted":true,"id":crate::safe_text::redacted_value(id),"region":self.region}),
             );
         }
-        let result: Value =
-            serde_json::from_slice(&response.body).map_err(|_| ApiError::InvalidResponse)?;
-        if !result.is_object() {
-            return Err(ApiError::InvalidResponse);
-        }
-        Ok(result)
+        let shape = match operation {
+            ApiOperation::CreateUploadUrl => "CreateUploadUrlOutput",
+            ApiOperation::CreateLaunch => "CreateLaunchOutput",
+            ApiOperation::GetLaunch => "GetLaunchOutput",
+            ApiOperation::ListLaunches => "ListLaunchesOutput",
+            ApiOperation::StartExecution => "StartLaunchExecutionOutput",
+            ApiOperation::Delete => unreachable!(),
+            #[cfg(test)]
+            ApiOperation::Put => unreachable!(),
+        };
+        let body = std::str::from_utf8(&response.body).map_err(|_| ApiError::InvalidResponse)?;
+        let shaped = super::shape::shape(shape, body).map_err(|_| ApiError::InvalidResponse)?;
+        serde_json::from_str(&shaped).map_err(|_| ApiError::InvalidResponse)
     }
 
     #[cfg(unix)]

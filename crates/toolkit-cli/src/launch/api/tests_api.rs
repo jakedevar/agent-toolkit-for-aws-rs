@@ -29,9 +29,10 @@ fn call(
 fn reply(status: u16, body: &str) -> FakeStreamingTransport {
     FakeStreamingTransport::new().respond(status, &[], vec![FakeChunk::data(body.as_bytes())])
 }
+const LAUNCH: &str = r#"{"launch":{"id":"l","name":"n","status":"created","source":{"s3Upload":{"uploadId":"u"}},"createdAt":"2026-06-15T12:34:56Z","updatedAt":"2026-06-15T12:34:56Z"}}"#;
 #[test]
 fn t_api_path_query_and_bearer_header() {
-    let fake = reply(200, "{}");
+    let fake = reply(200, LAUNCH);
     call(
         &fake,
         ApiOperation::GetLaunch,
@@ -42,10 +43,7 @@ fn t_api_path_query_and_bearer_header() {
     .unwrap();
     let requests = fake.requests();
     assert_eq!(requests[0].url, "https://launch-with-aws.us-east-1.api.aws/api/launches/a%2Fb%20x?include=execution&include=cost%20estimate");
-    assert_eq!(
-        requests[0].headers.get("authorization"),
-        Some("Bearer FAKE-ACCESS-TOKEN")
-    );
+    assert!(requests[0].headers.get("authorization") == Some("Bearer FAKE-ACCESS-TOKEN"));
 }
 #[test]
 fn t_api_local_id_validation_precedes_request() {
@@ -71,7 +69,12 @@ fn t_api_only_idempotent_client_token_retries_and_is_stable() {
         ApiOperation::CreateLaunch,
         ApiOperation::StartExecution,
     ] {
-        let fake = reply(503, "{}").respond(201, &[], vec![FakeChunk::data(b"{}")]);
+        let valid = if matches!(op, ApiOperation::CreateUploadUrl) {
+            r#"{"uploadUrl":"https://bucket.amazonaws.com/x","uploadId":"u"}"#
+        } else {
+            LAUNCH
+        };
+        let fake = reply(503, "{}").respond(201, &[], vec![FakeChunk::data(valid.as_bytes())]);
         call(
             &fake,
             op,
@@ -82,7 +85,7 @@ fn t_api_only_idempotent_client_token_retries_and_is_stable() {
         .unwrap();
         let requests = fake.requests();
         assert_eq!(requests.len(), 2);
-        assert_eq!(requests[0].body, requests[1].body);
+        assert!(requests[0].body == requests[1].body);
     }
     for op in [
         ApiOperation::GetLaunch,
@@ -172,7 +175,7 @@ fn t_api_snapshot_lookup_uses_launch_envelope_and_error_hints() {
     let token = Secret::new("FAKE-ACCESS-TOKEN");
     let fake = reply(
         200,
-        r#"{"launch":{"downloadUrl":"https://b.amazonaws.com/x?signature=FAKE-SIGNATURE"}}"#,
+        r#"{"launch":{"id":"l","name":"n","status":"created","source":{"s3Upload":{"uploadId":"u"}},"createdAt":"2026-06-15T12:34:56Z","updatedAt":"2026-06-15T12:34:56Z","downloadUrl":"https://b.amazonaws.com/x?signature=FAKE-SIGNATURE"}}"#,
     );
     let client = Client {
         transport: &fake,
@@ -184,9 +187,9 @@ fn t_api_snapshot_lookup_uses_launch_envelope_and_error_hints() {
         jitter: &NoJitter,
         policy: RetryPolicy::default(),
     };
-    assert_eq!(
-        client.download_url("l/1", false).unwrap().as_deref(),
-        Some("https://b.amazonaws.com/x?signature=FAKE-SIGNATURE")
+    assert!(
+        client.download_url("l/1", false).unwrap().as_deref()
+            == Some("https://b.amazonaws.com/x?signature=FAKE-SIGNATURE")
     );
     assert_eq!(
         fake.requests()[0].url,
@@ -232,10 +235,7 @@ fn t_api_snapshot_lookup_uses_launch_envelope_and_error_hints() {
 
 #[test]
 fn t_api_output_is_shaped_and_required_members_validated() {
-    let fake = reply(
-        200,
-        r#"{"ignored":"FAKE-ACCESS-TOKEN","nextToken":null,"items":[]}"#,
-    );
+    let fake = reply(200, r#"{"ignored":"extra","nextToken":null,"items":[]}"#);
     assert_eq!(
         call(&fake, ApiOperation::ListLaunches, "", &[], None).unwrap(),
         json!({"items":[]})

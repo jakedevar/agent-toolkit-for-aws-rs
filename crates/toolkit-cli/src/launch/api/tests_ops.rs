@@ -60,10 +60,7 @@ fn t_ops_3_json_operations_require_objects() {
 }
 #[test]
 fn t_ops_4_unmodelled_2xx_is_success() {
-    assert_eq!(
-        call(&response(200, b"{}"), ApiOperation::CreateLaunch).unwrap(),
-        json!({})
-    );
+    assert!(call(&response(200, br#"{"launch":{"id":"l","name":"n","status":"created","source":{"s3Upload":{"uploadId":"u"}},"createdAt":"2026-06-15T12:34:56Z","updatedAt":"2026-06-15T12:34:56Z"}}"#), ApiOperation::CreateLaunch).is_ok());
 }
 #[test]
 fn t_ops_5_redirect_is_an_error_without_retry_or_body_read() {
