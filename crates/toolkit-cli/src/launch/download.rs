@@ -216,5 +216,13 @@ pub fn download_snapshot(
     })
 }
 
+/// The success output `{"outputDir", "files", "directories", "bytes", "region"}`
+/// in that order.
+#[must_use]
+pub fn render_downloaded(downloaded: &Downloaded) -> String {
+    let _ = downloaded;
+    todo!("R-AR-EXT step 8")
+}
+
 #[cfg(all(test, unix))]
 mod tests_ext;

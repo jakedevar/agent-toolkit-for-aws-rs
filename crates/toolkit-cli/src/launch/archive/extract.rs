@@ -529,4 +529,4 @@ fn publish(
 }
 
 #[cfg(test)]
-mod tests_stage;
+pub(crate) mod tests_stage;
