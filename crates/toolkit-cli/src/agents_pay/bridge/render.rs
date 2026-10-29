@@ -44,7 +44,14 @@ fn timestamp(value: &Json) -> Result<Json, BridgeError> {
     } else {
         (String::new(), tail)
     };
-    let zone = if zone == "Z" { "+00:00" } else { zone };
+    let zone = match zone {
+        "Z" | "+00" | "+0000" | "+00:00" | "-00" | "-0000" | "-00:00" => "+00:00".to_owned(),
+        z if z.len() == 3 && (z.starts_with('+') || z.starts_with('-')) => format!("{z}:00"),
+        z if z.len() == 5 && (z.starts_with('+') || z.starts_with('-')) => {
+            format!("{}:{}", &z[..3], &z[3..])
+        }
+        z => z.to_owned(),
+    };
     Ok(Json::string(format!("{}{fraction}{zone}", &text[..19])))
 }
 
@@ -89,6 +96,9 @@ pub fn session_result(session: &Json) -> Result<Json, BridgeError> {
                 amount(value.get("maxSpendAmount").ok_or(BridgeError::AgentCore)?)?,
             )]),
             "availableLimits" => {
+                if !matches!(value, Json::Object(_)) {
+                    return Err(BridgeError::AgentCore);
+                }
                 let mut parts = Vec::new();
                 if let Some(v) = value.get("availableSpendAmount") {
                     parts.push(("availableSpendAmount", amount(v)?));
@@ -196,12 +206,29 @@ mod tests {
     fn t_br_out_timestamp_and_nested_shapes() {
         let session = toolkit_core::parse_json(r#"{"paymentSessionId":"s","paymentManagerArn":"m","userId":"u","expiryTimeInMinutes":10,"createdAt":"2026-08-07T00:00:00+0530","updatedAt":"2026-08-07T00:00:00Z"}"#).unwrap();
         let result = session_result(&session).unwrap();
-        assert_eq!(result.get("result").unwrap().get("paymentSession").unwrap().get("createdAt").and_then(Json::as_str), Some("2026-08-07T00:00:00+05:30"));
+        assert_eq!(
+            result
+                .get("result")
+                .unwrap()
+                .get("paymentSession")
+                .unwrap()
+                .get("createdAt")
+                .and_then(Json::as_str),
+            Some("2026-08-07T00:00:00+05:30")
+        );
         let mut bad = session.clone();
-        if let Json::Object(fields) = &mut bad { fields.push(("availableLimits".into(), Json::Null)); }
+        if let Json::Object(fields) = &mut bad {
+            fields.push(("availableLimits".into(), Json::Null));
+        }
         assert!(session_result(&bad).is_err());
         let mut bad = session;
-        if let Json::Object(fields) = &mut bad { fields.iter_mut().find(|(key, _)| key == "createdAt").unwrap().1 = Json::Int(1); }
+        if let Json::Object(fields) = &mut bad {
+            fields
+                .iter_mut()
+                .find(|(key, _)| key == "createdAt")
+                .unwrap()
+                .1 = Json::Int(1);
+        }
         assert!(session_result(&bad).is_err());
     }
 }
