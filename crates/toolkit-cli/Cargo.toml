@@ -29,6 +29,7 @@ fancy-regex = "0.19"
 jsonschema = { version = "0.60", default-features = false }
 unicode-normalization = { version = "0.1", default-features = false, features = ["std"] }
 serde_json = { version = "1", default-features = false, features = ["std"] }
+time = { version = "=0.3.55", features = ["parsing"] }
 roxmltree = "=0.14.1"
 toolkit-msk = { path = "../toolkit-msk" }
 # Launch with AWS (#4382, L0-L2 #5085): the OS CSPRNG for temporary names and

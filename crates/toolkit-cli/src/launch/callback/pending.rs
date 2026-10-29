@@ -170,6 +170,7 @@ pub struct Record {
 
 /// Read the pending record without following a final symlink.
 /// Malformed or missing records return `None`.
+// recorded-shape: the pending record is local callback state with a fixed, strictly checked schema, not an AWS response.
 pub fn read_record(state_dir: &Path, pid: u32) -> Option<Record> {
     use toolkit_core::{parse_json, Json};
     let bytes =

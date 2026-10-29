@@ -39,6 +39,16 @@ pub fn shown(value: &str) -> String {
     out
 }
 
+/// The escaping of [`repr`] (with `quote`) or [`shown`] (without), applied
+/// to `value` as it is: no redaction, bounding or surrounding quotes. The
+/// output sink registers a live secret in each of these forms (#5426).
+#[must_use]
+pub(crate) fn escaped(value: &str, quote: Option<char>) -> String {
+    let mut out = String::with_capacity(value.len());
+    push_escaped(&mut out, value, quote);
+    out
+}
+
 fn push_escaped(out: &mut String, text: &str, quote: Option<char>) {
     for c in text.chars() {
         match c {
@@ -63,4 +73,29 @@ fn push_escaped(out: &mut String, text: &str, quote: Option<char>) {
             c => out.push(c),
         }
     }
+}
+
+/// The success line of a launch command: Python
+/// `json.dumps(value, indent=2, default=str)` (`ensure_ascii`, Python float
+/// `repr`, the value's own member order).
+#[must_use]
+pub fn ok_text(value: &toolkit_core::Json) -> String {
+    crate::aurora::pyfmt::dumps(value)
+}
+
+/// The failure line of a launch command: Python
+/// `json.dumps({"error": message})` (compact default separators `", "` and
+/// `": "`, `ensure_ascii`).
+#[must_use]
+pub fn error_text(message: &str) -> String {
+    format!(
+        "{{\"error\": {}}}",
+        crate::aurora::pyfmt::dumps(&toolkit_core::Json::String(message.to_owned()))
+    )
+}
+
+/// Write [`error_text`] to the diagnostic stream and set exit status 1.
+pub fn fail(output: &mut crate::Output<'_>, message: &str) {
+    output.diagnostic(&error_text(message));
+    output.set_exit_status(1);
 }

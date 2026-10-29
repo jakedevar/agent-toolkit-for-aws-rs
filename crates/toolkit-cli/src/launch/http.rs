@@ -44,7 +44,7 @@ pub enum BodyError {
     InvalidResponse,
     TooLarge,
     Deadline,
-    Transport { retryable: bool },
+    Transport { retryable: bool, timeout: bool },
     Allocation,
 }
 pub struct Response {
@@ -127,6 +127,7 @@ fn collect_observed(
         } => BodyError::Deadline,
         other => BodyError::Transport {
             retryable: other.is_retryable(),
+            timeout: matches!(other, toolkit_aws::AwsError::Timeout { .. }),
         },
     })?;
     let status = stream.status();
@@ -187,10 +188,16 @@ fn collect_observed(
             }
             Err(StreamError::TooLarge) => return Err(BodyError::TooLarge),
             Err(StreamError::DeadlineExceeded) => return Err(BodyError::Deadline),
-            Err(StreamError::IdleTimeout) => return Err(BodyError::Transport { retryable: true }),
+            Err(StreamError::IdleTimeout) => {
+                return Err(BodyError::Transport {
+                    retryable: true,
+                    timeout: true,
+                })
+            }
             Err(StreamError::Failed(e)) => {
                 return Err(BodyError::Transport {
                     retryable: e.is_retryable(),
+                    timeout: matches!(e, toolkit_aws::AwsError::Timeout { .. }),
                 })
             }
         };
@@ -252,7 +259,7 @@ pub fn run(
         let result = collect_response(transport, request, operation, attempt_deadline);
         let retryable = match &result {
             Ok(r) => !code_exchange && matches!(r.status, 429 | 500 | 502 | 503 | 504),
-            Err(BodyError::Transport { retryable }) => *retryable && !code_exchange,
+            Err(BodyError::Transport { retryable, .. }) => *retryable && !code_exchange,
             _ => false,
         };
         if !retryable || attempt >= policy.total_attempts() {
@@ -482,7 +489,10 @@ mod tests {
                 vec![],
                 vec![FakeChunk::IdleTimeout],
                 Operation::Oidc,
-                Some(BodyError::Transport { retryable: true }),
+                Some(BodyError::Transport {
+                    retryable: true,
+                    timeout: true,
+                }),
             ),
             (
                 403,

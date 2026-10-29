@@ -760,6 +760,104 @@ fn broken_stdout_preserves_authenticated_record_for_retry() {
     assert!(scratch.join("pending/91.json").exists());
 }
 
+/// #5427: auth-wait's authenticated report on a route armed with the stored
+/// session's secrets, where the success line carries the access token (a
+/// base URL with it in the path), so the sink suppresses the line and
+/// writes the generic refusal to stderr instead. Returns (whether the
+/// pending record remains, stdout, stderr bytes, exit status).
+#[cfg(unix)]
+fn guarded_authenticated_report(stderr_broken: bool) -> (bool, Vec<u8>, Vec<u8>, u8) {
+    use super::{
+        pending::{Custody, WaitTracker},
+        PendingStatus,
+    };
+    use crate::launch::{clock::SeededRandom, sink, tests_support::Scratch};
+    const TOKEN: &str = "FAKE-SINK-SECRET-0001";
+    struct Stderr {
+        broken: bool,
+        written: Vec<u8>,
+    }
+    impl std::io::Write for Stderr {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            if self.broken {
+                return Err(std::io::ErrorKind::BrokenPipe.into());
+            }
+            self.written.extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let scratch = Scratch::new("guarded-authenticated");
+    let custody = Custody::acquire(scratch.path(), 91).unwrap();
+    custody
+        .write(
+            1234,
+            40,
+            100,
+            PendingStatus::Succeeded,
+            None,
+            &SeededRandom::new(1),
+        )
+        .unwrap();
+    custody.release_settled();
+    let session = serde_json::json!({"client_id":"c","client_secret":"s","client_expires_at":9999,"authorize_endpoint":"https://example.com","token_endpoint":"https://example.com","scopes":["launch:access"],"access_token":TOKEN,"refresh_token":"r","token_expires_at":9999});
+    std::fs::write(scratch.join("session.json"), session.to_string()).unwrap();
+    let mut stdout = Vec::new();
+    let mut stderr = Stderr {
+        broken: stderr_broken,
+        written: Vec::new(),
+    };
+    let status = {
+        let mut output = crate::Output::with_diagnostics(&mut stdout, &mut stderr);
+        sink::guard_in(Some(scratch.path()), &mut output);
+        let result = WaitTracker::default().finish_after_report(scratch.path(), 91, 99, |_, _| {
+            super::wait::report_authenticated(
+                &mut output,
+                &format!("https://launch.test.api.aws/{TOKEN}"),
+            )
+        });
+        assert!(result.unwrap().is_ok());
+        output.exit_status()
+    };
+    (
+        scratch.join("pending/91.json").exists(),
+        stdout,
+        stderr.written,
+        status,
+    )
+}
+
+#[cfg(unix)]
+#[test]
+fn guarded_success_with_broken_stderr_preserves_record() {
+    let (kept, stdout, stderr, status) = guarded_authenticated_report(true);
+    assert!(
+        stdout.is_empty() && stderr.is_empty() && status == 1,
+        "the guarded success must write nothing and exit 1"
+    );
+    assert!(
+        kept,
+        "guarded success removed its pending record without delivering stdout or stderr"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn guarded_success_with_delivered_refusal_settles_record() {
+    let (kept, stdout, stderr, status) = guarded_authenticated_report(false);
+    let generic = format!(
+        "{{\"error\": \"{}\"}}\n",
+        crate::launch::sink::GENERIC_FAILURE
+    );
+    assert!(
+        stdout.is_empty() && stderr == generic.as_bytes() && status == 1,
+        "the guarded success must deliver the generic refusal once and exit 1"
+    );
+    assert!(!kept, "a delivered refusal is the final report");
+}
+
 #[cfg(unix)]
 #[test]
 fn revision4_unknown_record_decision_matrix() {
