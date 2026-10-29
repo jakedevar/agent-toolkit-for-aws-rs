@@ -3144,6 +3144,7 @@ dependencies = [
  "aws-smithy-runtime-api",
  "aws-smithy-types",
  "aws-types",
+ "hyper 1.12.0",
  "openssl-probe",
  "p256",
  "rcgen",

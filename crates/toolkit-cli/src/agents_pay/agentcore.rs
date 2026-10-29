@@ -80,6 +80,7 @@ pub fn aws_error_class(error: &AwsError) -> &'static str {
     use toolkit_aws::error::TimeoutPhase;
     match error {
         AwsError::Connect { .. } => "ConnectError",
+        AwsError::Protocol => "RemoteProtocolError",
         AwsError::Timeout {
             phase: TimeoutPhase::Connect,
             ..
@@ -771,6 +772,8 @@ pub enum PaymentErrorClass {
     ConnectTimeout,
     /// Idle read or operation deadline elapsed.
     ReadTimeout,
+    /// Malformed HTTP response.
+    RemoteProtocolError,
     /// No credentials were found.
     NoCredentialsError,
     /// AWS service error.
@@ -783,6 +786,7 @@ fn transport_error(error: &AwsError) -> PaymentError {
     use toolkit_aws::error::TimeoutPhase;
     let class = match error {
         AwsError::Connect { .. } => PaymentErrorClass::ConnectError,
+        AwsError::Protocol => PaymentErrorClass::RemoteProtocolError,
         AwsError::Timeout {
             phase: TimeoutPhase::Connect,
             ..
@@ -1343,6 +1347,19 @@ mod wire_contracts {
         let client = PaymentClient::new("us-east-1", &transport, &NoSigner).unwrap();
         let error = client.get_session("arn", "session", "user").unwrap_err();
         assert_eq!(format!("{error:?}"), "Transport(NoCredentialsError)");
+        assert_eq!(transport.requests().len(), 1);
+    }
+
+    #[test]
+    fn malformed_http_is_not_retried_and_retains_its_class() {
+        let transport = FakeStreamingTransport::new().open_error(AwsError::Protocol);
+        let client = PaymentClient::new("us-east-1", &transport, &NoSigner).unwrap();
+        assert_eq!(
+            client.get_session("arn", "session", "user"),
+            Err(PaymentError::Transport(
+                PaymentErrorClass::RemoteProtocolError
+            ))
+        );
         assert_eq!(transport.requests().len(), 1);
     }
 
