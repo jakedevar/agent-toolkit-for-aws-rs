@@ -986,22 +986,30 @@ fn is_sentinel(tokens: &[Token], neighbours: &Neighbours, at: usize) -> bool {
             is_operator(&tokens[index], "==") || is_operator(&tokens[index], "!=")
         })
     };
-    let boundary = |index: Option<usize>, left_side: bool| {
-        index.is_none_or(|index| match &tokens[index].kind {
-            Kind::Newline => true,
-            Kind::Name(name) => matches!(
-                name.as_str(),
-                "if" | "elif" | "while" | "and" | "or" | "not" | "in"
-            ),
+    // Only neighbours that make the literal part of a larger expression
+    // disqualify it. Opening brackets before it are expression boundaries;
+    // after it, parentheses and brackets are call and subscript operators.
+    let component = |index: Option<usize>, left_side: bool| {
+        index.is_some_and(|index| match &tokens[index].kind {
+            Kind::Str(_) => true,
             Kind::Op(op) => {
                 matches!(
                     op.as_str(),
-                    "," | ":" | ";" | "==" | "!=" | "<" | ">" | "<=" | ">="
-                ) || if left_side {
-                    matches!(op.as_str(), "(" | "[" | "{")
-                } else {
-                    matches!(op.as_str(), ")" | "]" | "}")
-                }
+                    "+" | "-"
+                        | "*"
+                        | "**"
+                        | "/"
+                        | "//"
+                        | "%"
+                        | "@"
+                        | "&"
+                        | "|"
+                        | "^"
+                        | "~"
+                        | "<<"
+                        | ">>"
+                        | "."
+                ) || (!left_side && matches!(op.as_str(), "(" | "["))
             }
             _ => false,
         })
@@ -1020,8 +1028,8 @@ fn is_sentinel(tokens: &[Token], neighbours: &Neighbours, at: usize) -> bool {
     } else {
         neighbours.after[right]
     };
-    if (comparison(before) && boundary(after, false))
-        || (comparison(after) && boundary(before, true))
+    if (comparison(before) && !component(after, false))
+        || (comparison(after) && !component(before, true))
     {
         return true;
     }
