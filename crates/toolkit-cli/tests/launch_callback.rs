@@ -79,3 +79,23 @@ fn helper_announces_loopback_and_retains_transport_failure() {
     assert!(!record.contains("secret"));
     std::fs::remove_dir_all(home).unwrap();
 }
+
+#[cfg(unix)]
+#[test]
+fn auth_wait_reports_unknown_pid_without_signalling() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let home = std::env::temp_dir().join(format!("l4-wait-{}-{unique}", std::process::id()));
+    std::fs::create_dir(&home).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_toolkit"))
+        .args(["launch", "auth-wait", "999999"])
+        .env("HOME", &home)
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let message = String::from_utf8(output.stderr).unwrap();
+    assert!(message.contains("No sign-in is in progress for pid 999999"));
+    std::fs::remove_dir_all(home).unwrap();
+}

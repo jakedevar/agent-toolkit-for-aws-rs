@@ -194,3 +194,22 @@ pub fn observe(state_dir: &Path, pid: u32, now: i64) -> Observation {
         record.cutoff,
     ))
 }
+
+/// Evaluate a wait and remove a final record only while the lock is held here.
+#[cfg(unix)]
+pub fn finish_if_final(state_dir: &Path, pid: u32, now: i64) -> (Observation, Option<String>) {
+    let Some(record) = read_record(state_dir, pid) else {
+        return (Observation::Missing, None);
+    };
+    let lock = acquire_if_free(state_dir, pid);
+    let valid = state::load_session(state_dir)
+        .is_some_and(|session| session.token_expires_at > now.saturating_add(300));
+    let decision = super::wait_decision(record.status, lock.is_none(), valid, now, record.cutoff);
+    if lock.is_some()
+        && decision != super::WaitDecision::Poll
+        && decision != super::WaitDecision::HelperBlocked
+    {
+        let _ = state::remove_state_file(&state_dir.join("pending"), &format!("{pid}.json"));
+    }
+    (Observation::Decision(decision), record.reason)
+}

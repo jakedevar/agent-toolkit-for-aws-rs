@@ -2123,3 +2123,5 @@ lookup can overrun an operation deadline by the resolver's own configured limits
   the command refuses rather than writing unprotected (the #5038 round-2 engineering
   interpretation). Product choice for the PM only if a non-Git target must be supported; that
   would need its own reviewed path.
+
+The Rust callback helper is invoked as `toolkit launch auth-callback`; the parent waits with `toolkit launch auth-wait PID`.
