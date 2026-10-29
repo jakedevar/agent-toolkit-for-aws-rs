@@ -276,7 +276,8 @@ fn ap_doc_03_reward_pages_name_the_checker_and_their_formats() {
 
 // ---- AP-DOC-04 ------------------------------------------------------------
 
-/// Command lines in fenced code blocks that start with `toolkit ai-payloads`,
+/// Command lines that start with `toolkit ai-payloads`, in fenced code blocks and
+/// in inline code spans,
 /// with `\` continuations joined, as `(page, line)`.
 fn documented_commands() -> Vec<(String, String)> {
     let mut found = Vec::new();
@@ -308,7 +309,8 @@ fn code_spans(body: &str) -> Vec<String> {
     found
 }
 
-/// The command lines of one page body (see `documented_commands`).
+/// The command lines of one page body: fenced lines and inline code spans that
+/// carry arguments (see `documented_commands`).
 fn commands_in(body: &str) -> Vec<String> {
     let mut found = Vec::new();
     {
@@ -340,6 +342,15 @@ fn commands_in(body: &str) -> Vec<String> {
             } else {
                 found.push(joined);
             }
+        }
+    }
+    // Inline code spans that carry arguments are executable examples too (#5282).
+    // A bare route mention such as `toolkit ai-payloads render` is not a command.
+    for span in code_spans(body) {
+        if span.starts_with("toolkit ai-payloads")
+            && split_route(&span).is_some_and(|(_, args)| !args.is_empty())
+        {
+            found.push(span);
         }
     }
     found
