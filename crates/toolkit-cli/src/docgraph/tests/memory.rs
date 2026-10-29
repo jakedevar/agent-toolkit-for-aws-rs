@@ -103,7 +103,10 @@ fn command_dry_run_and_replay_validate_recording() {
     ]);
     assert_eq!(dry.status, 0, "{}", dry.stderr);
     assert!(dry.stdout.contains("7776000000"));
-    let bad = dir.write("bad.json", r#"{"calls":[{"response":{"results":null}}]}"#);
+    let bad = dir.write(
+        "bad.json",
+        r#"{"calls":[{"request":{},"response":{"results":null}}]}"#,
+    );
     let replay = run(&[
         "neptune",
         "memory",
@@ -140,7 +143,7 @@ fn retrieve_replays_search_then_three_expansions_per_chunk() {
         )
     );
     assert_eq!(client.unused(), 0);
-    let malformed = json(r#"{"calls":[{"response":{"results":null}}]}"#);
+    let malformed = json(r#"{"calls":[{"request":{},"response":{"results":null}}]}"#);
     assert!(RecordedMemory::from_document(&malformed).is_err());
     let mismatch = json(r#"{"calls":[{"request":{"unexpected":true},"error":{}}]}"#);
     let mut client = RecordedMemory::from_document(&mismatch).unwrap();
@@ -307,8 +310,7 @@ fn graph_ids_and_vector_filter_boundaries() {
     );
 }
 
-#[test]
-fn replay_matches_response_requests_in_library_and_cli() {
+fn replay_matches_response_requests(cli_mode: bool) {
     use crate::docgraph::memory::{execute, plan, RecordedMemory};
     use toolkit_core::Json;
     let input =
@@ -338,28 +340,44 @@ fn replay_matches_response_requests_in_library_and_cli() {
                 ("response", json(r#"{"results":[]}"#)),
             ])]),
         )]);
-        let mut client = RecordedMemory::from_document(&recording).unwrap();
-        let result = execute(&mut client, "query", &requests);
-        let path = dir.write(&format!("{name}.json"), &recording.to_compact_string());
-        let cli = run(&[
-            "neptune",
-            "memory",
-            "--operation",
-            "query",
-            "--input",
-            &input_path,
-            "--recorded",
-            &path,
-        ]);
-        if matches {
-            assert!(result.is_ok(), "{name}: {result:?}");
-            assert_eq!(cli.status, 0, "{name}: {}", cli.stderr);
+        if cli_mode {
+            let path = dir.write(&format!("{name}.json"), &recording.to_compact_string());
+            let cli = run(&[
+                "neptune",
+                "memory",
+                "--operation",
+                "query",
+                "--input",
+                &input_path,
+                "--recorded",
+                &path,
+            ]);
+            if matches {
+                assert_eq!(cli.status, 0, "{name}: {}", cli.stderr);
+            } else {
+                assert_ne!(cli.status, 0);
+                assert!(cli.stderr.contains("mismatch"), "{}", cli.stderr);
+            }
         } else {
-            assert!(result.unwrap_err().contains("mismatch"));
-            assert_ne!(cli.status, 0);
-            assert!(cli.stderr.contains("mismatch"), "{}", cli.stderr);
+            let mut client = RecordedMemory::from_document(&recording).unwrap();
+            let result = execute(&mut client, "query", &requests);
+            if matches {
+                assert!(result.is_ok(), "{name}: {result:?}");
+            } else {
+                assert!(result.unwrap_err().contains("mismatch"));
+            }
         }
     }
+}
+
+#[test]
+fn replay_matches_response_requests_in_library() {
+    replay_matches_response_requests(false);
+}
+
+#[test]
+fn replay_matches_response_requests_in_cli() {
+    replay_matches_response_requests(true);
 }
 
 #[test]
