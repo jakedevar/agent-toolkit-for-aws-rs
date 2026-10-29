@@ -16,10 +16,15 @@ default = []
 # the `asm exec` MCP fallback (#4582) and the MCP proxy. Off by default so the
 # ordinary build compiles no AWS SDK crate.
 aws-sdk = ["toolkit-aws/sdk"]
+docgraph-live = ["aws-sdk", "dep:aws-sdk-docdb", "dep:aws-sdk-cloudwatch", "dep:aws-sdk-ec2", "dep:aws-sdk-secretsmanager"]
 
 [dependencies]
 toolkit-aws = { path = "../toolkit-aws" }
 toolkit-core = { path = "../toolkit-core" }
+aws-sdk-docdb = { version = "=1.126.0", optional = true, default-features = false }
+aws-sdk-cloudwatch = { version = "=1.138.0", optional = true, default-features = false }
+aws-sdk-ec2 = { version = "=1.271.0", optional = true, default-features = false }
+aws-sdk-secretsmanager = { version = "=1.123.0", optional = true, default-features = false }
 fancy-regex = "0.19"
 jsonschema = { version = "0.60", default-features = false }
 unicode-normalization = { version = "0.1", default-features = false, features = ["std"] }

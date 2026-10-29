@@ -858,6 +858,38 @@ The spike and Q4/Q5 remain unresolved, including the auth, framing, retry and
 endpoint/version demonstrations. Stop S1 pending resolution of #5368; do not
 weaken the signer or infer approval to change shared transport policy.
 
+#### Spike continuation: corrected delta and signer construction
+
+PM ruling 2 supersedes the absolute hyper-rustls graph exclusion above:
+compare `docgraph-live` against `aws-sdk`, and distinguish dependency presence
+from construction. With the four exact pins now in the manifest, the sorted
+`cargo tree -p toolkit-cli -e normal --prefix none` set difference (after
+removing Cargo's `(*)` duplicate marker) contains the four SDKs,
+aws-smithy-cbor, aws-smithy-compression, bigdecimal, crc32fast, flate2,
+futures-macro, half, http 0.2, http-body 0.4, libm, minicbor, miniz_oxide
+0.9, simd-adler32 and zerocopy-derive. None is a TLS, root, crypto or HTTP
+connector crate. The lockfile adds the 13 packages listed in the preceding
+record and no TLS/root/crypto/connector crate. The docgraph graph has no ring;
+webpki-roots is absent from the resolved lockfile. The existing hyper-rustls
+and default-https-client feature are baseline, not additions. This passes the
+corrected graph-delta criterion, not the connector construction criterion.
+
+The SDK source establishes a separate failure of the design's requirement to
+prove that no generated signer is **built**. Each of the four pinned service
+clients' `Client::from_conf` calls `base_client_runtime_plugins`; its generated
+`ServiceRuntimePlugin::new` unconditionally creates
+`aws_runtime::auth::sigv4::SigV4AuthScheme::new()`. In aws-runtime 1.10.2 that
+scheme contains a `SigV4Signer`, constructed by `Default`. Configured plugins
+are appended afterwards; selecting a different auth scheme can prevent use but
+does not undo construction. This is source evidence, not a construction/call
+spy and not proof that an SDK signer signs a request. Neither explicit
+connector injection, absence of default connector construction/calls, nor sole
+toolkit signing, credential resolution and retry ownership has been proven.
+The bridge criterion remains failed under its original no-generated-signer-built
+wording; an approved design repair distinguishing construction from invocation,
+followed by the required spies, is needed before proceeding. No signer guard
+or shared transport was changed.
+
 Implementation slices remain Rust, use scoped optional service dependencies,
 daemon-owned jobs and independent exact-SHA review. Each owns a requirement/test
 matrix and deliberate CLI/output changes; no worker may treat this proposal as
