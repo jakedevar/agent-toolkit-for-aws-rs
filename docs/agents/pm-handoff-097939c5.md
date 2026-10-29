@@ -537,3 +537,5 @@ Friction: #4727, Rsi #4694, Rsi #4704
   4/4 busy: d06901cb (#5052 S2), 9801eac1 (#5059), 6902109c (#5018 r3), 0610b2fa (#4382 design r3).
 - 10-29 02:37Z: #5018 r3 (6902109c) on #4487 6727baac: CHANGES_REQUESTED, three P1 bypasses #5069 (POSIX char classes), #5070 (brace ranges), #5071 (positional path construction). RULING (#4487 seq 5): blocklist abandoned; closed ALLOWLIST of exact templates derived from the shipped inventory; property test of metachar insertions. Repair 3 worker 8bd99aa0 (Opus high, continue_from e2c08620). Then #5018 r4 (defensive wording for Codex).
   4/4 busy: d06901cb (#5052 S2), 9801eac1 (#5059), 0610b2fa (#4382 design r3), 8bd99aa0 (#4487 repair 3).
+- 10-29 02:38Z: #5059 (9801eac1) on #4397 d676f42b: CHANGES_REQUESTED #5073 (S3 download follows dest symlink, deletes existing file on failure), #5072 (null-valued dict bypasses idempotency), #5074 (metric dims/EMF shapes changed). Repair worker 311fde60 (Sonnet high, continue_from e91f616e). Then narrow #5059 r2. Kaizen #5067 #5068 unread (kaizen lane pending a free slot).
+  4/4 busy: d06901cb (#5052 S2), 0610b2fa (#4382 design r3), 8bd99aa0 (#4487 repair 3), 311fde60 (#4397 repair).
