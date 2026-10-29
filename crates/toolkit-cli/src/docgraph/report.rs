@@ -90,14 +90,28 @@ pub(super) fn write_report(
     cluster_id: &str,
     timestamp: &str,
     date: &str,
+    private: bool,
 ) -> Result<(String, String), String> {
     std::fs::create_dir_all(dir).map_err(|_| "cannot create the output directory".to_string())?;
     let json_path = dir.join(RESULTS_FILE);
     let md_path = dir.join(REPORT_FILE);
-    write_regular_file(&json_path, &results_json(checks, cluster_id, timestamp))
-        .map_err(|_| format!("cannot write {RESULTS_FILE}"))?;
-    write_regular_file(&md_path, &markdown(checks, cluster_id, date))
-        .map_err(|_| format!("cannot write {REPORT_FILE}"))?;
+    let results = results_json(checks, cluster_id, timestamp);
+    let report = markdown(checks, cluster_id, date);
+    if private {
+        // R-DG-08 (#5344): both paths must be free before either is created, so
+        // a refusal leaves no half-written pair.
+        for (path, name) in [(&json_path, RESULTS_FILE), (&md_path, REPORT_FILE)] {
+            if std::fs::symlink_metadata(path).is_ok() {
+                return Err(format!("{name} already exists; refusing to overwrite it"));
+            }
+        }
+        write_private_file(&json_path, &results, RESULTS_FILE)?;
+        write_private_file(&md_path, &report, REPORT_FILE)?;
+    } else {
+        write_regular_file(&json_path, &results)
+            .map_err(|_| format!("cannot write {RESULTS_FILE}"))?;
+        write_regular_file(&md_path, &report).map_err(|_| format!("cannot write {REPORT_FILE}"))?;
+    }
     Ok((shown(dir, RESULTS_FILE), shown(dir, REPORT_FILE)))
 }
 
@@ -106,4 +120,38 @@ fn shown(dir: &Path, name: &str) -> String {
     let joined = dir.join(name);
     let text = joined.display().to_string();
     text.strip_prefix("./").map_or(text.clone(), str::to_string)
+}
+
+/// Creates `path` owner-only (`0600` from the first instant, whatever the
+/// umask) with `create_new`: an existing file or link, even a dangling one, is
+/// refused and never truncated or followed.
+///
+/// # Errors
+///
+/// A reason naming `name`, never the path or contents.
+#[cfg(unix)]
+fn write_private_file(path: &Path, contents: &str, name: &str) -> Result<(), String> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(path)
+        .map_err(|error| {
+            if error.kind() == std::io::ErrorKind::AlreadyExists {
+                format!("{name} already exists; refusing to overwrite it")
+            } else {
+                format!("cannot write {name}")
+            }
+        })?;
+    file.write_all(contents.as_bytes())
+        .map_err(|_| format!("cannot write {name}"))
+}
+
+/// A private file cannot be guaranteed on this platform: fail closed.
+#[cfg(not(unix))]
+fn write_private_file(_path: &Path, _contents: &str, name: &str) -> Result<(), String> {
+    Err(format!("cannot write {name} privately on this platform"))
 }

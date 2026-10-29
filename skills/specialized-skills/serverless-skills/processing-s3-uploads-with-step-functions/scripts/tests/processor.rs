@@ -641,3 +641,39 @@ async fn fargate_download_failure_exits_1_and_leaves_no_file() {
     assert!(run.stdout.is_empty());
     assert!(run.files.is_empty());
 }
+
+/// The metadata log line and the Lambda response keep the field order of the
+/// Python original (insertion order), not `serde_json`'s sorted order. This
+/// crate selects `preserve_order` itself (see Cargo.toml), so the order holds
+/// in a per-package build as well as a workspace-wide one (#5394).
+#[tokio::test]
+async fn metadata_output_keeps_insertion_order() {
+    let dir = WorkDir::new();
+    let store = FakeStore::serving(b"a,b\n1,2\n");
+    let out = Lines::default();
+    let response = handle_lambda_event(&object_created(), &store, dir.path(), &out)
+        .await
+        .unwrap();
+    let local = serde_json::to_string(&dir.path().join("report.csv").to_string_lossy()).unwrap();
+    let body = format!(
+        r#"{{"bucket":"example-uploads","key":"uploads/2024/report.csv","size_bytes":5368,"local_path":{local},"file_size_on_disk":8}}"#
+    );
+    assert_eq!(out.all()[2], format!("File metadata: {body}"));
+    assert_eq!(
+        serde_json::to_string(&response).unwrap(),
+        format!(r#"{{"statusCode":200,"body":{body}}}"#)
+    );
+
+    let dir = WorkDir::new();
+    let store = FakeStore::serving(&[7; 4096]);
+    let (out, errors) = (Lines::default(), Lines::default());
+    let outcome = run_fargate_task(Some(OBJECT_CREATED), &store, dir.path(), &out, &errors).await;
+    assert_eq!(outcome.exit_code, 0);
+    let local = serde_json::to_string(&dir.path().join("report.csv").to_string_lossy()).unwrap();
+    assert_eq!(
+        out.all()[1],
+        format!(
+            r#"File metadata: {{"bucket":"example-uploads","key":"uploads/2024/report.csv","local_path":{local},"file_size_bytes":4096}}"#
+        )
+    );
+}
