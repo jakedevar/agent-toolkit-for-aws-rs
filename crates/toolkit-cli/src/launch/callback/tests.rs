@@ -256,3 +256,39 @@ fn pending_reader_validates_schema_and_lock_custody() {
     std::fs::write(scratch.join("pending/55.json"), b"{\"pid\":55,\"pid\":55}").unwrap();
     assert!(read_record(scratch.path(), 55).is_none());
 }
+
+#[cfg(unix)]
+#[test]
+fn wait_observes_held_and_free_lock_without_signalling_pid() {
+    use super::{
+        pending::{observe, Custody, Observation},
+        PendingStatus, WaitDecision,
+    };
+    use crate::launch::{clock::SeededRandom, tests_support::Scratch};
+    let scratch = Scratch::new("pending-wait");
+    assert_eq!(observe(scratch.path(), 66, 200), Observation::Missing);
+    let custody = Custody::acquire(scratch.path(), 66).unwrap();
+    custody
+        .write(
+            1234,
+            100,
+            160,
+            PendingStatus::Failed,
+            Some("invalid_code"),
+            &SeededRandom::new(1),
+        )
+        .unwrap();
+    assert_eq!(
+        observe(scratch.path(), 66, 164),
+        Observation::Decision(WaitDecision::Poll)
+    );
+    assert_eq!(
+        observe(scratch.path(), 66, 165),
+        Observation::Decision(WaitDecision::HelperBlocked)
+    );
+    drop(custody);
+    assert_eq!(
+        observe(scratch.path(), 66, 165),
+        Observation::Decision(WaitDecision::Failed)
+    );
+}

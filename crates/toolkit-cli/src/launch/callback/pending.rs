@@ -164,3 +164,30 @@ pub fn acquire_if_free(state_dir: &Path, pid: u32) -> Option<File> {
     }
     Some(file)
 }
+
+/// One auth-wait observation; `Poll` and `HelperBlocked` are non-final.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Observation {
+    Missing,
+    Decision(super::WaitDecision),
+}
+
+/// Observe a record while holding the free lock, if available. An unreadable
+/// lock is treated as held so it cannot produce a false final failure.
+#[cfg(unix)]
+#[must_use]
+pub fn observe(state_dir: &Path, pid: u32, now: i64) -> Observation {
+    let Some(record) = read_record(state_dir, pid) else {
+        return Observation::Missing;
+    };
+    let lock = acquire_if_free(state_dir, pid);
+    let valid = state::load_session(state_dir)
+        .is_some_and(|session| session.token_expires_at > now.saturating_add(300));
+    Observation::Decision(super::wait_decision(
+        record.status,
+        lock.is_none(),
+        valid,
+        now,
+        record.cutoff,
+    ))
+}
