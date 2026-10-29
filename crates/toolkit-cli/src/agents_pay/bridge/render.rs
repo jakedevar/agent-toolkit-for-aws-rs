@@ -107,8 +107,16 @@ fn timestamp(value: &Json) -> Result<Json, BridgeError> {
         )
     };
     let canonical = format!("{date}T{time}");
-    crate::cloudwatch::timefmt::parse_iso_timestamp(&canonical)
+    let zone_at = canonical[19..]
+        .find(['Z', '+', '-'])
+        .map_or(canonical.len(), |index| index + 19);
+    crate::cloudwatch::timefmt::parse_iso_timestamp(&canonical[..zone_at])
         .map_err(|_| BridgeError::AgentCore)?;
+    if zone_at < canonical.len() {
+        let offset_probe = format!("2000-01-01T00:00:00{}", &canonical[zone_at..]);
+        crate::cloudwatch::timefmt::parse_iso_timestamp(&offset_probe)
+            .map_err(|_| BridgeError::AgentCore)?;
+    }
     let tail = &canonical[19..];
     let (fraction, zone) = if let Some(rest) = tail.strip_prefix('.') {
         let end = rest
