@@ -552,7 +552,7 @@ mod tests {
     /// The route paths of the old `COMMANDS` table (commit ce0eaf6a, before the
     /// registry), in table order: the public order of [`COMMANDS`]. The routes of
     /// slices added after the registry follow at the end, ordered by slice name.
-    const LEGACY_COMMAND_ORDER: [&str; 105] = [
+    const LEGACY_COMMAND_ORDER: [&str; 107] = [
         "skills list",
         "manifests validate",
         "spec validate",
@@ -660,6 +660,9 @@ mod tests {
         "launch auth-callback",
         "launch auth-start",
         "launch auth-wait",
+        // launch snapshot download and apply (#5317):
+        "launch download-snapshot",
+        "launch apply-snapshot",
         // marketplace (#4396):
         "marketplace handler",
         "marketplace query-metering",
