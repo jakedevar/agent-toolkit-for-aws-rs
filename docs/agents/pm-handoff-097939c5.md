@@ -721,3 +721,9 @@ Friction: #4727, Rsi #4694, Rsi #4704
   OPERATOR TODO 537407cb (mcp-proxy-signed-live-check, issue:#4413): build at 07e945e5 + signed initialize/tools/list. Wake f5a29d4d todo_closed (48h timeout -> GM Q2 ruling). mcp-proxy S5 waits on it.
   Reported up (pm-7bc8ec84-landed-r22-07e945e).
 - 10-29 05:50Z: x402 S1 LANDED: entry 3f8f320a published, landed 034395cf3567ba69ca984c7ec7b104c7b133c248. CLOSED #5118 #5152 #5165 #5155 #5156 #5157. Queue: S2 264d82e1, #5080 14dcba91, r23 ed167018.
+- 10-29 05:58Z: x402 S2 LANDED (rolling 9e919839 = merge 9b544fe9). CLOSED #5178 #5195 #5177 #5182-#5186 (#5166 already closed).
+  #5200 (169dd3a4, Sonnet) ACCEPT P-ROOTS 11fcd793 (no P1/P2; P3 #5203 source gate substring-bypassable, P4 #5204 child S1 controls / no-CA-store unwrap; #5199 P3 "before S5, not before landing"). ENQUEUED 515bb023 (seq 2961, #5196; descends #5080 14dcba91 ahead; if #5080 refuses, CANCEL 515bb023). TODO before x402 S5: one follow-up worker on #5199 #5203 #5204.
+  #5205 (15d38b72, Sonnet) CHANGES_REQUESTED S2a f78ca76 (no P1/P2; #5202 tests + P3 #5207 name '/', #5208 cleanup error masking + EACCES mislabel, #5209 D-note). Repair 1 -> Codex terra 2547894a (continue_from ed423b5f). Then narrow re-review (Sonnet).
+  x402 S3 merchant net = #5210 -> Codex terra 8a575dd5, base 776c032c163aeac31ed9d3b8cf7b21d8a2226b67 (PM commit-tree: rolling 9e919839 + #5080 069ab1b).
+  4/4 busy: 1d17674d (#5181 S4), 2664b229 (#5190 L3), 2547894a (#5198 S2a repair), 8a575dd5 (#5210 S3).
+  Queue: #5080 14dcba91 (2959), r23 ed167018 (2960), P-ROOTS 515bb023 (2961).
