@@ -583,7 +583,11 @@ fn check_peer(capture: &CaptureSmithyConnection) -> Result<(), AwsError> {
         return Ok(());
     };
     let Some(peer) = connection.remote_addr() else {
-        return Ok(());
+        connection.poison();
+        return Err(AwsError::invalid_config(
+            "endpoint",
+            "the connection did not report a remote address",
+        ));
     };
     require_public_peer(peer.ip()).inspect_err(|_| connection.poison())
 }
@@ -1623,6 +1627,69 @@ mod tests {
             assert!(error.to_string().contains("non-public address"), "{error}");
         }
         assert!(transport.connectors.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn production_guard_refuses_nonpublic_destinations_before_connecting() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let transport = SdkTransport::with_resolver(
+            &runtime(),
+            &test_roots(),
+            Arc::new(StaticResolver("127.0.0.1")),
+        )
+        .unwrap();
+        for host in [
+            "127.0.0.1",
+            "[::1]",
+            "0x7f.1",
+            "10.0.0.1",
+            "merchant.example",
+        ] {
+            let mut request = vanilla_request();
+            request.url = format!("https://{host}:{port}/");
+            let error = transport.send(&request).unwrap_err();
+            assert_eq!(error.code(), "aws_invalid_config", "{host}: {error}");
+            assert_eq!(
+                listener.accept().unwrap_err().kind(),
+                std::io::ErrorKind::WouldBlock,
+                "{host}"
+            );
+        }
+        // Merchant streaming opens with a deadline, which creates a fresh
+        // connector through the production factory rather than the cache.
+        let mut request = vanilla_request();
+        request.url = format!("https://merchant.example:{port}/");
+        let limits = StreamLimits::new(1024, 64)
+            .unwrap()
+            .with_deadline(std::time::Instant::now() + Duration::from_secs(5));
+        let error = transport.open(&request, &limits).err().expect("refused");
+        assert_eq!(error.code(), "aws_invalid_config");
+        assert_eq!(
+            listener.accept().unwrap_err().kind(),
+            std::io::ErrorKind::WouldBlock
+        );
+    }
+
+    #[test]
+    fn captured_connection_without_remote_address_is_refused_and_poisoned() {
+        let capture = CaptureSmithyConnection::new();
+        let poisoned = Arc::new(AtomicBool::new(false));
+        let marker = Arc::clone(&poisoned);
+        capture.set_connection_retriever(move || {
+            let marker = Arc::clone(&marker);
+            Some(
+                ConnectionMetadata::builder()
+                    .proxied(false)
+                    .poison_fn(move || marker.store(true, Ordering::SeqCst))
+                    .build(),
+            )
+        });
+        let error = check_peer(&capture).unwrap_err();
+        assert_eq!(error.code(), "aws_invalid_config");
+        assert!(poisoned.load(Ordering::SeqCst));
+        assert!(check_peer(&CaptureSmithyConnection::new()).is_ok());
     }
 
     #[test]
