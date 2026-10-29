@@ -93,6 +93,74 @@ fn request_head_rules() {
 }
 
 #[test]
+fn request_form_and_header_boundaries() {
+    for query in [
+        "state=secret&code=%",
+        "state=secret&code=%A",
+        "state=secret&code=%XZ",
+    ] {
+        assert_eq!(
+            parse_request(&request(query), 1234, "secret"),
+            Outcome::Ignore(400)
+        );
+    }
+    assert_eq!(
+        parse_request(&request("state=secret&code=a+b"), 1234, "secret"),
+        Outcome::InvalidCode
+    );
+    assert_eq!(
+        parse_request(&request("state=secret&error=a+b"), 1234, "secret"),
+        Outcome::Denied("a b".into())
+    );
+    for head in [
+        "GET / HTTP/1.1 extra\r\nHost: 127.0.0.1:1234\r\n\r\n",
+        "GET /\r\nHost: 127.0.0.1:1234\r\n\r\n",
+        "GET / HTTP/1.1\r\nNoColon\r\nHost: 127.0.0.1:1234\r\n\r\n",
+        "GET / HTTP/1.1\r\nBad@Name: x\r\nHost: 127.0.0.1:1234\r\n\r\n",
+        "GET / HTTP/1.1\r\nHost: 127.0.0.1:1234\r\n",
+    ] {
+        assert_eq!(
+            parse_request(head.as_bytes(), 1234, "secret"),
+            Outcome::Ignore(400),
+            "{head}"
+        );
+    }
+    assert_eq!(
+        parse_request(
+            b"GET /?state=secret&code=x HTTP/1.1\r\nhOsT: 127.0.0.1:1234\r\n\r\n",
+            1234,
+            "secret"
+        ),
+        Outcome::Code("x".into())
+    );
+    assert_eq!(
+        parse_request(
+            &request(&format!("state=secret&code={}", "a".repeat(4096))),
+            1234,
+            "secret"
+        ),
+        Outcome::Code("a".repeat(4096))
+    );
+    for length in [64, 65] {
+        let error = "a".repeat(length);
+        assert_eq!(
+            parse_request(
+                &request(&format!(
+                    "state=secret&error={error}&error_uri=https%3A%2F%2Fexample.test"
+                )),
+                1234,
+                "secret"
+            ),
+            Outcome::Denied(if length == 64 {
+                error
+            } else {
+                "invalid_error_code".into()
+            })
+        );
+    }
+}
+
+#[test]
 fn response_has_fixed_security_headers_and_exact_length() {
     for bytes in [
         super::response(200),
