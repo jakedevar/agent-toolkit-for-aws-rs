@@ -875,3 +875,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
   Repair 1 -> Codex terra d2668841 (continue_from dc5cd37d) with #5290-#5294. Then narrow re-review (Claude Opus, pinned sandbox_source) -> land.
   4/4 busy: 0dcdafea (#5181 S4 cont, ctx cap, finishing), f4e513e0 (#5273 L4 f/u), 0740a0b0 (#4886 item 1), d2668841 (#5261 repair 1). Queue: ade50d7b (AP S4).
 - 10-29 08:40Z: safety net: all healthy (0dcdafea parked on its jobs post ctx-cap; AP S4 ade50d7b queued, overtaken by an expedited entry). Reported up (key pm-ff294c79-report-0840) incl. kaizen relay #5281 #5265. Safety net re-armed 9941bf96.
+- 10-29 08:41Z: #4886 item 1 (0740a0b0) DONE at 885b222371ecc2ae5e0ec9b8de2d422ccf77327d (`toolkit neptune memory`, builders, recorded replay, refs; scoped 2fbb1911 4170 ok, clean).
+  Review #5295 -> Claude Sonnet 80111bba (pinned 885b2223; mutations escape/deletionProtection/replay mismatch). On ACCEPT: check (likely rerun scoped) + enqueue (source_session 0740a0b0); close #5295 on land (#4886 stays open for items 2-3).
+  4/4 busy: 0dcdafea (#5181, parked), f4e513e0 (#5273), d2668841 (#5261 repair 1), 80111bba (#5295 review).
