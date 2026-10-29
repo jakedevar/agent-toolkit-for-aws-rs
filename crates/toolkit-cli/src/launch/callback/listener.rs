@@ -60,7 +60,10 @@ impl ListenerIo for TcpListener {
     type Stream = TcpStream;
     fn accept_stream(&self) -> io::Result<TcpStream> {
         let (stream, _) = self.accept()?;
-        stream.set_nonblocking(true)?;
+        // A failure belongs to this accepted connection, not the listener.
+        stream.set_nonblocking(true).map_err(|_| {
+            io::Error::new(io::ErrorKind::ConnectionAborted, "connection setup failed")
+        })?;
         Ok(stream)
     }
 }
@@ -116,7 +119,9 @@ fn serve_with<L: ListenerIo>(
                 }
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
                 Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
-                Err(e) => return Err(e),
+                // A reset, a transient network error, or resource exhaustion must
+                // not end the sign-in flow. Pace retries like an idle turn.
+                Err(_) => break,
             }
         }
         for offset in 0..SLOT_COUNT {
@@ -318,6 +323,39 @@ mod scripted_tests {
     }
     fn valid_head() -> Vec<u8> {
         b"GET /?state=s&code=ok HTTP/1.1\r\nHost: 127.0.0.1:1234\r\n\r\n".to_vec()
+    }
+
+    #[test]
+    fn accept_errors_do_not_end_flow() {
+        struct ErrorsThenCallback(Cell<usize>, Rc<Cell<Instant>>, Instant);
+        impl ListenerIo for ErrorsThenCallback {
+            type Stream = TimedStream;
+            fn accept_stream(&self) -> io::Result<TimedStream> {
+                let n = self.0.get();
+                self.0.set(n + 1);
+                match n {
+                    0 => Err(io::ErrorKind::ConnectionAborted.into()),
+                    1 => Err(io::Error::from_raw_os_error(24)),
+                    2 => Ok(TimedStream {
+                        now: self.1.clone(),
+                        start: self.2,
+                        chunks: vec![(Duration::ZERO, valid_head())].into(),
+                        write_blocked: false,
+                    }),
+                    _ => Err(io::ErrorKind::WouldBlock.into()),
+                }
+            }
+        }
+        let start = Instant::now();
+        let now = Rc::new(Cell::new(start));
+        let result = serve_with(
+            ErrorsThenCallback(Cell::new(0), now.clone(), start),
+            1234,
+            "s",
+            start + Duration::from_secs(5),
+            &TimedClock(now),
+        );
+        assert_eq!(result.unwrap(), Some(Outcome::Code("ok".into())));
     }
 
     #[test]
