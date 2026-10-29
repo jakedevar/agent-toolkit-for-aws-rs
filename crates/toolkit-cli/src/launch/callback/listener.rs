@@ -654,6 +654,162 @@ mod scripted_tests {
     }
 
     #[test]
+    fn malformed_and_wrong_state_flood_never_ends_flow() {
+        struct Requests {
+            next: Cell<usize>,
+            ready: Cell<bool>,
+            served: Rc<Cell<usize>>,
+        }
+        struct RequestStream {
+            id: usize,
+            served: Rc<Cell<usize>>,
+        }
+        impl ListenerIo for Requests {
+            type Stream = RequestStream;
+            fn accept_stream(&self) -> io::Result<RequestStream> {
+                if !self.ready.replace(!self.ready.get()) {
+                    return Err(io::ErrorKind::WouldBlock.into());
+                }
+                let id = self.next.get();
+                if id > 600 {
+                    return Err(io::ErrorKind::WouldBlock.into());
+                }
+                self.next.set(id + 1);
+                Ok(RequestStream {
+                    id,
+                    served: self.served.clone(),
+                })
+            }
+        }
+        impl Read for RequestStream {
+            fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+                self.served.set(self.served.get() + 1);
+                let head: &[u8] = if self.id < 300 {
+                    b"INVALID\r\n\r\n"
+                } else if self.id < 600 {
+                    b"GET /?state=wrong&error=denied HTTP/1.1\r\nHost: 127.0.0.1:1234\r\n\r\n"
+                } else {
+                    b"GET /?state=s&code=ok HTTP/1.1\r\nHost: 127.0.0.1:1234\r\n\r\n"
+                };
+                bytes[..head.len()].copy_from_slice(head);
+                Ok(head.len())
+            }
+        }
+        impl Write for RequestStream {
+            fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        let start = Instant::now();
+        let served = Rc::new(Cell::new(0));
+        let listener = Requests {
+            next: Cell::new(0),
+            ready: Cell::new(true),
+            served: served.clone(),
+        };
+        let clock = FakeClock(Cell::new(start));
+        assert_eq!(
+            serve_with(listener, 1234, "s", start + Duration::from_secs(10), &clock).unwrap(),
+            Some(Outcome::Code("ok".into()))
+        );
+        assert_eq!(served.get(), 601);
+    }
+
+    #[test]
+    fn full_slots_close_excess_unread_then_serve_after_slot_frees() {
+        use std::cell::RefCell;
+        struct Listener {
+            count: Cell<usize>,
+            now: Rc<Cell<Instant>>,
+            start: Instant,
+            reads: Rc<RefCell<Vec<usize>>>,
+            drops: Rc<RefCell<Vec<usize>>>,
+        }
+        struct Stream {
+            id: usize,
+            now: Rc<Cell<Instant>>,
+            start: Instant,
+            reads: Rc<RefCell<Vec<usize>>>,
+            drops: Rc<RefCell<Vec<usize>>>,
+        }
+        impl ListenerIo for Listener {
+            type Stream = Stream;
+            fn accept_stream(&self) -> io::Result<Stream> {
+                let id = self.count.get();
+                let elapsed = self.now.get().duration_since(self.start);
+                if id >= 18 || (id == 17 && elapsed < Duration::from_millis(6)) {
+                    return Err(io::ErrorKind::WouldBlock.into());
+                }
+                self.count.set(id + 1);
+                Ok(Stream {
+                    id,
+                    now: self.now.clone(),
+                    start: self.start,
+                    reads: self.reads.clone(),
+                    drops: self.drops.clone(),
+                })
+            }
+        }
+        impl Read for Stream {
+            fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+                self.reads.borrow_mut().push(self.id);
+                if self.id == 0
+                    && self.now.get().duration_since(self.start) >= Duration::from_millis(4)
+                {
+                    return Ok(0);
+                }
+                if self.id == 17 {
+                    let head = valid_head();
+                    bytes[..head.len()].copy_from_slice(&head);
+                    return Ok(head.len());
+                }
+                Err(io::ErrorKind::WouldBlock.into())
+            }
+        }
+        impl Write for Stream {
+            fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        impl Drop for Stream {
+            fn drop(&mut self) {
+                self.drops.borrow_mut().push(self.id);
+            }
+        }
+        let start = Instant::now();
+        let now = Rc::new(Cell::new(start));
+        let reads = Rc::new(RefCell::new(Vec::new()));
+        let drops = Rc::new(RefCell::new(Vec::new()));
+        let listener = Listener {
+            count: Cell::new(0),
+            now: now.clone(),
+            start,
+            reads: reads.clone(),
+            drops: drops.clone(),
+        };
+        assert_eq!(
+            serve_with(
+                listener,
+                1234,
+                "s",
+                start + Duration::from_secs(1),
+                &TimedClock(now)
+            )
+            .unwrap(),
+            Some(Outcome::Code("ok".into()))
+        );
+        assert!(!reads.borrow().contains(&16));
+        assert!(drops.borrow().contains(&16));
+        assert!(reads.borrow().contains(&17));
+    }
+
+    #[test]
     fn head_finishing_at_slot_deadline_is_not_accepted() {
         struct SlowListener {
             now: Rc<Cell<Instant>>,
