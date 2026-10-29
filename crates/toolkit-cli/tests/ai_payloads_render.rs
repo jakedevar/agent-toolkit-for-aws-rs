@@ -917,6 +917,35 @@ fn ap_cat_10_all_real_templates_render_in_both_modes() {
                 let output = fs::read_to_string(f.0.join("scripts/01_example.py")).unwrap();
                 assert!(output.contains("# %% Cell 1:"), "{rel}");
                 assert!(!output.contains("# NOTEBOOK_ONLY"), "{rel}");
+                for line in template_text
+                    .lines()
+                    .filter(|line| line.trim_end().ends_with("# NOTEBOOK_ONLY"))
+                {
+                    let dropped = line
+                        .trim_end()
+                        .strip_suffix("# NOTEBOOK_ONLY")
+                        .unwrap()
+                        .trim_end();
+                    assert!(
+                        !output.lines().any(|emitted| emitted.trim_end() == dropped),
+                        "{rel}: {dropped}"
+                    );
+                }
+                for line in template_text
+                    .lines()
+                    .filter(|line| line.contains("# NOTEBOOK_ONLY_SECTION"))
+                {
+                    let number = line
+                        .strip_prefix("# Cell ")
+                        .unwrap()
+                        .split(':')
+                        .next()
+                        .unwrap();
+                    assert!(
+                        !output.contains(&format!("# %% Cell {number}:")),
+                        "{rel}: {line}"
+                    );
+                }
                 for line in output
                     .lines()
                     .filter(|line| !line.trim_start().starts_with('#'))
