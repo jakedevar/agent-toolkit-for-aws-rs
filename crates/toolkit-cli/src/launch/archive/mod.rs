@@ -17,6 +17,8 @@
 pub mod casefold;
 pub mod crc32;
 #[cfg(unix)]
+pub mod extract;
+#[cfg(unix)]
 pub mod fsops;
 #[cfg(unix)]
 pub mod git;
@@ -118,5 +120,7 @@ pub fn archive_size_message(size: u64, limits: &ArchiveLimits) -> String {
 
 #[cfg(test)]
 mod tests_zip64;
+#[cfg(all(test, unix))]
+pub mod tests_snapshot;
 #[cfg(test)]
 pub mod tests_zipfx;
