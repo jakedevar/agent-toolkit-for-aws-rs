@@ -708,6 +708,27 @@ fn ap_cat_10_all_real_templates_render_in_both_modes() {
         let Json::Array(placeholders) = entry.get("placeholders").unwrap() else {
             panic!("slots")
         };
+        let template_text = fs::read_to_string(root.join("references").join(rel)).unwrap();
+        let is_site = |line: &str| {
+            let line = line.trim_start();
+            line.starts_with("ACCEPT_EULA =") || line.starts_with("\"accept_eula\":")
+        };
+        let expected_sites = match rel {
+            "model-deployment/code_templates/deploy-oss-sagemaker.py"
+            | "model-deployment/code_templates/deploy-jumpstart-sagemaker.py"
+            | "finetuning/code_templates/rlaif_builtin.py"
+            | "finetuning/code_templates/rlaif_custom_prompt.py"
+            | "finetuning/code_templates/sft.py"
+            | "finetuning/code_templates/rlvr.py"
+            | "finetuning/code_templates/dpo.py"
+            | "training-jobs/code_templates/jumpstart_training.py" => 1,
+            _ => 0,
+        };
+        assert_eq!(
+            template_text.lines().filter(|line| is_site(line)).count(),
+            expected_sites,
+            "consent inventory: {rel}"
+        );
         for mode in ["script", "notebook"] {
             let f = Fixture::new();
             let mut pairs = Vec::new();
@@ -749,10 +770,56 @@ fn ap_cat_10_all_real_templates_render_in_both_modes() {
                 "{rel} {mode}: {}",
                 String::from_utf8_lossy(&result.stderr)
             );
-            if mode == "notebook" {
-                parse_json(&fs::read_to_string(f.0.join("notebooks/example.ipynb")).unwrap())
-                    .unwrap();
+            let code = if mode == "notebook" {
+                let notebook =
+                    parse_json(&fs::read_to_string(f.0.join("notebooks/example.ipynb")).unwrap())
+                        .unwrap();
+                let Json::Array(cells) = notebook.get("cells").unwrap() else {
+                    panic!("cells")
+                };
+                cells
+                    .iter()
+                    .filter(|cell| cell.get("cell_type").and_then(Json::as_str) == Some("code"))
+                    .map(|cell| {
+                        let Json::Array(source) = cell.get("source").unwrap() else {
+                            panic!("source")
+                        };
+                        source
+                            .iter()
+                            .map(|line| line.as_str().unwrap())
+                            .collect::<String>()
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
             } else {
+                fs::read_to_string(f.0.join("scripts/01_example.py")).unwrap()
+            };
+            let sites: Vec<_> = code.lines().filter(|line| is_site(line)).collect();
+            assert_eq!(
+                sites.len(),
+                expected_sites,
+                "emitted consent inventory: {rel} {mode}"
+            );
+            for site in sites {
+                let line = site.trim_start();
+                if line.starts_with("ACCEPT_EULA = (") {
+                    assert!(code.contains("ACCEPT_EULA = (\n    False"), "{rel} {mode}");
+                } else {
+                    assert!(
+                        line.starts_with("ACCEPT_EULA = False")
+                            || line.starts_with("\"accept_eula\": False"),
+                        "{rel} {mode}: {line}"
+                    );
+                }
+            }
+            assert!(
+                !code
+                    .lines()
+                    .filter(|line| !line.trim_start().starts_with('#'))
+                    .any(|line| line.contains("[ACCEPT_EULA]")),
+                "{rel} {mode}"
+            );
+            if mode == "script" {
                 let output = fs::read_to_string(f.0.join("scripts/01_example.py")).unwrap();
                 assert!(output.contains("# %% Cell 1:"), "{rel}");
                 assert!(!output.contains("# NOTEBOOK_ONLY"), "{rel}");
