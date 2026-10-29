@@ -829,6 +829,8 @@ fn process_request_gate_rejects_alias_macro_literal_and_mutation() {
         "fn forge() { let _ = ProcessPaymentRequest { body: vec![] }; }",
         "fn forge() { helper!(ProcessPaymentRequest { body: vec![] }); }",
         "fn change(r: &mut ProcessPaymentRequest) { r.body = vec![]; }",
+        "fn change(r: &mut ProcessPaymentRequest) { mutate(&mut r.body); }",
+        "fn change(r: &mut ProcessPaymentRequest) { r.body.clear(); }",
     ] {
         let bad = format!("{good}\n{extra}");
         assert!(
