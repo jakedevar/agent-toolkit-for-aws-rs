@@ -99,6 +99,10 @@ failures because the transport cannot prove whether request bytes were sent.
 Duplicate Content-Length values now remain detectable at the shared response
 header boundary. Live network use still waits for the S1 integration gate.
 
+## JSON key order (#5394)
+
+`serde_json`'s `preserve_order` feature is enabled for workspace-wide builds (through `aws-config`'s `rustls` in the two skill crates) but not for per-package builds, so `serde_json::Value` object order, and any output built from it, depends on build scope. Output whose key order is observable must not rely on that: render it from `toolkit_core::Json` (insertion order) or sort explicitly. `toolkit-cli`'s schema engine hands the validator keys in sorted order and re-renders the crate's own sentences from the ordered document (tests in `spec/tests.rs`); `powertools-handler` and `s3-upload-processor` select `preserve_order` themselves and pin their output order in tests. `crates/toolkit-cli/src/launch/` still builds output with `serde_json::json!`; L5 (#5345) moves it to `toolkit_core::Json`.
+
 ## Manager continuity
 
 Durable Issues and manager ledger carry assignments/dependencies. [issues.json](issues.json) freezes initial map; daemon state is current. Manager notebook: docs/agents/manager-handoff.md (maintain with Bash cat/tail). Preserve active jobs, topology revisions, exact source/base SHAs, review/queue outcomes and genuine gates during succession. Update active workers explicitly when plan changes.

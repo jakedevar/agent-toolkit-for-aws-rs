@@ -284,6 +284,7 @@ pub fn wa_review_command(
         cluster_id,
         &timestamp,
         &date,
+        invocation.value("--analysis-data").is_some(),
     )
     .map_err(|reason| ToolkitError::runtime("docgraph_report", reason))?;
     out.line("")?;

@@ -1953,3 +1953,46 @@ fn findings_at_one_path_follow_the_schema_keyword_order() {
         ])
     );
 }
+
+// ---- key order never depends on the serde_json map implementation (#5394) ----------
+//
+// `serde_json::Map` sorts its keys in a per-package build and keeps insertion
+// order when another workspace member turns on `preserve_order`, so any text
+// built from a `Value` object differs by build scope. These tests pin the
+// scope-independent result: the first asserts the document's own order, the
+// second that the `Value` handed to the validator iterates the same way in
+// every build.
+
+#[test]
+fn unworded_keywords_render_the_instance_in_document_order() {
+    assert_eq!(
+        evaluate(r#"{"minProperties":3}"#, r#"{"b":1,"a":[{"d":1,"c":2}]}"#),
+        Ok(vec![
+            r#"{"b":1,"a":[{"d":1,"c":2}]} has less than 3 properties (at <root>)"#.to_string()
+        ])
+    );
+    // Scalars have no order to keep; the engine's own sentence is unchanged.
+    assert_eq!(
+        evaluate(r#"{"properties":{"n":{"minimum":5}}}"#, r#"{"n":2}"#),
+        Ok(vec!["2 is less than the minimum of 5 (at n)".to_string()])
+    );
+}
+
+#[test]
+fn values_given_to_the_validator_have_one_key_order_in_every_build() {
+    let value = engine::to_value(&json(r#"{"b":1,"a":{"d":1,"c":2}}"#)).expect("converts");
+    let keys: Vec<&str> = value
+        .as_object()
+        .expect("object")
+        .keys()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(keys, ["a", "b"]);
+    let inner: Vec<&str> = value["a"]
+        .as_object()
+        .expect("object")
+        .keys()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(inner, ["c", "d"]);
+}
