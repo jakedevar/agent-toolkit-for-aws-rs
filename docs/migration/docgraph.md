@@ -452,7 +452,8 @@ versions during implementation, documenting licence, MSRV and lockfile delta.
 The SDK request serializer/endpoint rules are useful; a second credentials,
 TLS, logging or retry stack is not. Configure generated clients to one attempt
 with toolkit signing as the sole signer, and bridge generated HTTP requests
-through toolkit `Signer`/`Transport`; prove no generated signer/provider is built.
+through toolkit `Signer`/`Transport`; prove no generated signer is invoked and
+no generated credential provider is built (PM ruling 3, #5366).
 The bridge is at the generated orchestrator's HTTP-client boundary, not private
 modeled serializer APIs. It must remove generated framing headers before the
 toolkit signer and sign the final body bytes; the transport regenerates framing
@@ -775,7 +776,7 @@ does not grant either. No run is part of this design change.
 | S0 — this design | PM resolves Q1/Q2/Q3 below; manager obtains cross-family pre-review of the committed document. No dependency/code changes. | R-DG-01..09 and T lists reviewed; publication alone is not pre-review acceptance. |
 | S1 — shared boundaries | First resolve Q4/Q5 with the offline S2 spike below and record the version/feature matrix before live code. Optional feature/dependency audit, credential/deadline bridge, explicit TLS contexts and narrow database endpoint capability. Keep existing public/payment policy unchanged. | T-DG-01..03, 07 and 09a; S2 spike exit criteria and exact-source security review before enabling live routing. |
 | S2 — AWS review client | Offline bridge spike runs in the first implementation slice; live client depends on S1 and spike acceptance. Modeled ten-operation codecs, field map, bridge and one retry owner. | All spike exit criteria below, T-DG-04 including 04e; existing report/error/recorded goldens. |
-| S3 — Gremlin | Depends on S1; optional WebSocket/GraphSON adapter, signed upgrade, consent and close/cancellation. | T-DG-05 plus adversarial bounds/TLS cases; seed guard remains enforced before connect. |
+| S3 — Gremlin | Depends on S1; optional WebSocket/GraphSON adapter, signed upgrade, consent and close/cancellation. Owns the R-DG-07 limits deferred from S1 (PM ruling 3 on #5366): the 1 MiB WebSocket frame limit, GraphSON nesting depth 64 and 100,000 decoded results (bulk expansion), each checked before allocation, plus the Gremlin WebSocket TLS context and wiring `network_policy::parse` after argv consent. | T-DG-05 plus adversarial bounds/TLS cases, including T-DG-07b frame/depth/bulk at the boundary and boundary plus one; seed guard remains enforced before connect. |
 | S4 — memory live dispatch | Depends on S1/S3 and integrated item-1 helpers; Analytics, secure gated creation and DynamoDB conversions. | T-DG-06 and all ordered replay/expansion fixtures; no unsupported partial-live plan. |
 | S5 — collection recipe | DELIVERED in #5327 (see "Collection capture (S5)"). Q1 accepted; per-command manual manifest/docs, private capture custody and Rust offline normalization. Can proceed independently of network adapters. | T-DG-08 including 08d/e; explicit manual-work cost and supported engine/shell/export matrix. |
 | S6 — acceptance/callers/retirement | Depends on S2..S5, exact-source review and the relevant operator grants. | T-DG-09, recorded evidence of unverified live cases, caller/mirror verification before Python retirement. |
@@ -808,6 +809,557 @@ not authorization for a network experiment:
    If any bridge criterion fails, stop live enablement and revise the design;
    do not bypass signer checks, add a second stack or invent protocol codecs.
 
+#### S1 spike record, 2026-10-29 (#5366): gate not passed
+
+At `baee1137478b1b19eb099ce52fac31bfc1359f0b`, offline inspection did not
+establish the required bridge. The local Cargo registry contained
+`aws-sdk-dynamodb` 1.134.0 but no `aws-sdk-docdb`, `aws-sdk-cloudwatch`,
+`aws-sdk-ec2` or `aws-sdk-secretsmanager` source. No service dependencies were
+added, no service versions or features were selected, and no generated client
+was constructed. Consequently the HTTP boundary, auth/identity and retry spies,
+service feature closure, lockfile delta, licence/MSRV and dependency-size costs
+remain unverified. The absence of local sources is an evidence gap, not proof
+that a suitable bridge is impossible. Q4 remains open; the spike gate fails
+until those demonstrations exist. Follow-up: #5367.
+
+The current `FRAMING_HEADERS` list is host, content-length, transfer-encoding,
+te, trailer, connection, keep-alive, proxy-connection and upgrade. The existing
+signer refuses those headers and signs `request.body` as bytes; this source
+inspection does not prove generated-versus-sent equivalence or streaming safety.
+No signer check was changed. The base lockfile already contains `ring` 0.17.14:
+`cargo tree --offline --locked -i ring` traces it through example packages and
+the old rustls 0.21 stack. The scoped `cargo tree --offline --locked -p
+toolkit-cli --features aws-sdk -i ring` reports no dependency. An eventual audit
+must check the actual new closure and lockfile delta against this baseline; it
+cannot truthfully assert that the entire existing workspace lockfile is ring-free.
+
+The synthetic capture fixtures identify DocumentDB 5.0 with mongosh 2.3.1 and
+MongoDB 7.0 with mongosh 1.10.6, using canonical Extended JSON and capture
+envelope version 1. They are reconstructed, not live shell exports, as noted
+in S5. The design proposes GraphSON v2, but this inspection establishes no live
+endpoint/engine interoperability or GraphSON wire fixture matrix. Q5 remains
+open; these fixtures alone do not satisfy the support-matrix exit criterion.
+No network, DNS, credentials, live database or SDK bridge test was used for
+this record. S1 implementation must not proceed on the strength of it.
+
+#### Spike continuation: resolved dependency graph fails the stated gate
+
+The PM clarified that fetching crates for resolution is permitted; offline
+means no AWS, DNS or database work by the spike code. A temporary, uncommitted
+`docgraph-live` feature implying `aws-sdk` and four optional service crates
+resolved successfully with defaults disabled and no explicit service features:
+docdb 1.126.0, cloudwatch 1.138.0, ec2 1.271.0, secretsmanager 1.123.0.
+Each reports Apache-2.0 and Rust 1.94.1. The newer attempted cloudwatch 1.139.0
+requires smithy-runtime-api 1.19.2 and conflicts with the shared exact 1.19.1
+pin; the selected versions resolve with the current shared pins. These are
+exploratory pins, not a supported service matrix or committed dependencies.
+
+`cargo tree -p toolkit-cli --features docgraph-live -i ring` reported no
+dependency; `-i webpki-roots` reported no matching package. The lockfile delta
+added the four SDK crates, aws-smithy-cbor, aws-smithy-compression, bigdecimal,
+flate2, libm, minicbor, miniz_oxide 0.9.1, simd-adler32 and zlib-rs; no new
+TLS, root or cryptography package was identified. However the explicitly
+required empty `-i hyper-rustls` check failed: it reports hyper-rustls 0.27.10.
+The feature tree also includes `aws-smithy-runtime/default-https-client`.
+Both occur already in `--features aws-sdk`: `toolkit-aws` enables
+`aws-smithy-http-client/rustls-aws-lc`, and its `aws-config/rustls` enables
+`client-hyper` and `default-https-client`. Graph presence alone does not prove
+a default connector is constructed; no construction spy was run.
+
+The stated feature-graph gate therefore conflicts with the requirement that
+`docgraph-live` imply the existing `aws-sdk` feature. The temporary manifest
+and lockfile changes were discarded; no service client or bridge was added.
+The spike and Q4/Q5 remain unresolved, including the auth, framing, retry and
+endpoint/version demonstrations. Stop S1 pending resolution of #5368; do not
+weaken the signer or infer approval to change shared transport policy.
+
+#### Spike continuation: corrected delta and signer construction
+
+PM ruling 2 supersedes the absolute hyper-rustls graph exclusion above:
+compare `docgraph-live` against `aws-sdk`, and distinguish dependency presence
+from construction. With the four exact pins now in the manifest, the sorted
+`cargo tree -p toolkit-cli -e normal --prefix none` set difference (after
+removing Cargo's `(*)` duplicate marker) contains the four SDKs,
+aws-smithy-cbor, aws-smithy-compression, bigdecimal, crc32fast, flate2,
+futures-macro, half, http 0.2, http-body 0.4, libm, minicbor, miniz_oxide
+0.9, simd-adler32 and zerocopy-derive. None is a TLS, root, crypto or HTTP
+connector crate. The lockfile adds the 13 packages listed in the preceding
+record and no TLS/root/crypto/connector crate. The docgraph graph has no ring;
+webpki-roots is absent from the resolved lockfile. The existing hyper-rustls
+and default-https-client feature are baseline, not additions. This passes the
+corrected graph-delta criterion, not the connector construction criterion.
+
+The SDK source establishes a separate failure of the design's requirement to
+prove that no generated signer is **built**. Each of the four pinned service
+clients' `Client::from_conf` calls `base_client_runtime_plugins`; its generated
+`ServiceRuntimePlugin::new` unconditionally creates
+`aws_runtime::auth::sigv4::SigV4AuthScheme::new()`. In aws-runtime 1.10.2 that
+scheme contains a `SigV4Signer`, constructed by `Default`. Configured plugins
+are appended afterwards; selecting a different auth scheme can prevent use but
+does not undo construction. This is source evidence, not a construction/call
+spy and not proof that an SDK signer signs a request. Neither explicit
+connector injection, absence of default connector construction/calls, nor sole
+toolkit signing, credential resolution and retry ownership has been proven.
+PM ruling 3 on #5366 resolves the wording: constructing this stateless scheme
+is permitted, while invoking the SDK signer or constructing an SDK credential
+provider is not. The required spies remain outstanding; source inspection is
+not a substitute. No signer guard or shared transport was changed.
+
+The offline experiment `docgraph_bridge_spike` (job
+`5ba8f79f-1fdd-4dcf-9c2a-81d26c8b0a7d`) constructed each pinned service
+client with `allow_no_auth`, disabled SDK retries and an injected in-memory
+connector. One operation per client reached the connector once on a 503;
+the generated request had no authorization, date, security-token or content
+hash signature headers. The experiment strips the toolkit framing-header
+set and applies the real toolkit SigV4 signer to the buffered bytes using
+synthetic credentials, without sending a request. It confirms the body remains
+unchanged and no framing headers reach the signer. This is a limited spike,
+not proof of signed-versus-sent equivalence, every operation, SDK signer call
+instrumentation, provider construction, explicit production connector or
+toolkit retry ownership. A non-buffered body is refused by the experiment.
+
+Source inspection also shows Smithy runtime 1.16.1's `default_plugins`
+unconditionally constructs a lazy identity cache during generated client
+construction. The config getter's `None` only describes the supplied config;
+it does not prove the default plugin was not constructed. The SDK also builds
+a default HTTP client object; its connector is constructed lazily on selection.
+The injected connector spy shows the chosen connector handled these calls but
+does not instrument construction of default objects. Neither fact proves
+credential resolution or a network call; the invariant requires demonstrating
+their absence, rather than treating config getters as such proof. The PM's
+separate no-identity-cache-construction requirement is not yet demonstrated.
+No live routing is enabled by this experiment; the remaining spike evidence
+and security tests still gate the slice.
+
+The expanded offline experiment (job `2f57fc64-0956-4bdb-b392-f1a203dbf5e7`)
+prefers `noAuth` explicitly. In a negative-control configuration only, an
+injected credential provider panics if called; none of the four sampled calls
+invoked it. Removing that preference caused the first such call to invoke the
+trap (red job `81b9fb56-7ee2-464f-a45f-474c86b3e5e4`). The preference was
+restored, and the SDK client without an injected provider remains tested too.
+An injected toolkit `SdkTransport` connector then observed the same body and
+all signed headers after framing removal for each sampled request, with a
+synthetic public peer and no socket. This does not prove all operations,
+default connector construction, production connector selection, provider
+construction or absence of the SDK's default identity cache. In particular,
+`allow_no_auth` alone is insufficient in the presence of a provider: the
+explicit preference and the absence of SDK credential sources are both
+necessary to the tested design. S2 must fail closed if no-auth is not selected.
+
+The successor's offline spike wraps the SDK's actual `SigV4AuthScheme` with a
+call counter and installs it under the same scheme ID for all four sampled
+clients. With `noAuth` preferred, the counter remains zero; a separate
+DocumentDB control with synthetic credentials and no preference invokes the
+wrapped SDK signer exactly once (job `8ca768d7-9fbd-4aed-86ed-142f1dcab142`).
+This observes the configured replacement scheme, not the construction or
+invocation of the original generated scheme. The expanded experiment passed
+all ten allowed operations with and without a forbidden credential provider,
+each reaching the injected connector once on a 503 (job
+`75cca6f3-5cd1-4f42-87e7-40ecefa73df2`); the signed toolkit headers and
+buffered body were then observed by an injected toolkit transport connector.
+This is not a production bridge or proof of every input and response shape.
+The direct, optional `aws-runtime` pin exposes this already-resolved
+crate for the spy; it adds no lockfile package. No live adapter uses it.
+The spike also supplies a real file-backed streaming SDK body and verifies that
+the in-memory bridge rejects it before toolkit signing (job
+`bd037b0e-54e3-43a3-b545-74239d319bd0`); the bridge is test code only. The
+`aws-smithy-types/rt-tokio` feature enables that fixture. A renewed offline
+normal-dependency set comparison against `aws-sdk` has the same 19-entry delta
+listed above, and the lockfile has no added package from this feature.
+
+The memory preflight's current mutating-operation table is covered by a test
+that checks argv consent before input or policy file access. Removing the
+`ingest-chunk` guard produced red job `16c931f6-28fc-46db-bbb0-05c11f6a1e2d`;
+the restored guard passed job `10249051-918b-488b-88a9-1cbe16e70d86`. This
+does not establish full T-DG-01e file-source or zero-socket instrumentation.
+With and without the feature, environment-shaped live selection produced the
+same offline outputs as a cleared environment (job
+`9c8e3962-624d-4fc4-914e-84d3c3c0b5cf`); temporarily treating the environment
+variable as live selection failed the default-feature check (red job
+`9c5f305b-763c-42ec-ab92-a5d90ebaa670`).
+
+As a partial R-DG-02 boundary, `GuardedCredentials::resolve_required` converts
+unsigned and source failures to fixed credential errors and rebuilds once when
+the first result is already expired; it samples the clock after resolution and
+again before returning. Its `CredentialsProvider` implementation connects
+this policy to the existing toolkit signer. The expiry mutation job
+`65de334b-11c0-4364-8bf8-4f4c17958ea3` failed as intended; the initial green
+job was `dbbf7a33-6c8c-4d5a-b4e3-a8314c115516`. The caller must check validity
+at signing as well. This synchronous source is not cancellable and the method
+is not wired to a live adapter: R-DG-07's provider deadline and real
+guarded-source expiry/recovery tests remain open. A real guarded-source test
+with injected HTTP covers absent and invalid sources, failing process stderr
+and network error canaries, and fallback refusal (green job
+`c8984212-48f8-4d11-87d1-a52cc8fcab57`). A temporary fixed-diagnostic mutation
+that emitted the same synthetic canary failed the assertion (red job
+`8e2f6ec8-c73d-41b5-a5d0-f2c5824d2c50`). This does not yet cover service
+response messages, reports, or a live adapter's diagnostics.
+Configured-source recovery through the `CredentialsProvider` interface is
+also exercised with an injected provider HTTP client (job
+`eb71f797-9868-4a9c-b4b2-74aae78e4271`).
+
+The existing `SdkTransport::call` awaits `connector.call(request)` before
+`check_peer`, so the peer check is post-send, not a pre-send admission control
+(#5387). The public DNS guard remains in place, but this ordering cannot meet
+R-DG-03 for private database targets. S1 must add a connector-level check
+before signed HTTP bytes are written, using the validated DNS answer set; it
+must not rely on the current post-response check or an unguarded connector.
+
+#### S1 continuation: database endpoint capability and bounds (#5387)
+
+PM ruling 4 on #5366 permits an additive connector-level pre-send peer
+check in toolkit-aws for the database capability only. It is delivered as
+`toolkit_aws::sdk::database` (feature `sdk`):
+
+- `DatabaseEndpoint::new(host, port, region, private_ranges)` is the narrow
+  capability. The host must be a lowercase standard-partition Neptune
+  (`<…>.<region>.neptune.amazonaws.com`) or Neptune Analytics
+  (`<…>.<region>.neptune-graph.amazonaws.com`) name; wildcards, trailing
+  dots, userinfo/ports in the host, FIPS, `.amazonaws.com.cn` and custom
+  domains are refused until reviewed. The region must be a standard name and
+  equal the host's region label; the port is fixed and non-zero. Private
+  ranges must be canonical and lie inside RFC 1918 with a `/16` or longer
+  prefix, or inside `fc00::/7` with a `/48` or longer prefix; at most 16;
+  and share no address with the forbidden blocks below (#5428).
+  `admits` judges IPv4-mapped IPv6 as IPv4, then refuses the forbidden
+  blocks **first**, before any listed range: IPv4 `0.0.0.0/8`, loopback,
+  link-local (instance metadata `169.254.169.254`, container credentials
+  `169.254.170.2`), multicast and broadcast; IPv6 `::`, `::1`, `fe80::/10`,
+  `ff00::/8` and the AWS instance service block `fd00:ec2::/64` (metadata
+  `fd00:ec2::254`). Only then does it accept any public address (the shared
+  public predicate) or a listed private one; CGNAT, NAT64 and every other
+  non-public block cannot be listed and are refused.
+- `toolkit-cli` `docgraph::network_policy::parse` (feature `docgraph-live`)
+  reads the `--network-policy` JSON schema: exactly `host`, `port`, `region`
+  and optional `private_ranges`. Unknown keys, including `live` and every
+  `confirm_*` shape, are refused rather than ignored (T-DG-01e for policy
+  files). It is not yet called: `--live` is still refused before any file.
+- `SdkTransport::for_database(runtime, roots, endpoint, bounds)` is a new
+  constructor. Its connector owns the TCP dial: it checks the URL (https, no
+  userinfo, exact policy host and port, no framing header, buffered body
+  only), resolves the host afresh for every request, refuses empty, more
+  than 16, or **any** non-admitted answer (mixed sets are not filtered),
+  dials only validated answers and then compares the socket's actual peer
+  with the dialed answer and the policy **before writing any byte**, not
+  even a TLS ClientHello. TLS uses rustls with aws-lc, Smithy's cipher-suite
+  list, safe default protocol versions, exactly the `ValidatedRoots`
+  certificates and the original host name for SNI and verification. One
+  HTTP/1.1 exchange runs per connection (no pool), so a reconnect is always
+  revalidated. Redirects are returned, never followed; no environment
+  variable (proxy or endpoint override) is read.
+- `SdkTransport::new`, `with_resolver`, `with_connector`, the public DNS
+  guard, the post-response `check_peer` and `PaymentRoots` are unchanged;
+  their existing tests still pass. The only shared edit is a
+  `GuardRejection::carrying` constructor so the database verdicts travel the
+  existing `map_connector_error` path unchanged.
+
+Dependency decision: the connector uses hyper's HTTP/1 client connection,
+hyper-util `TokioIo`, tokio-rustls, http, http-body, http-body-util and bytes,
+all already resolved in the `aws-sdk` graph through aws-smithy-http-client.
+They are pinned to the resolved versions with default features disabled
+(tokio-rustls without `logging`, so R-LOG holds). The lockfile change is six
+dependency edges on `toolkit-aws` and no new package; no TLS, root or crypto
+crate is added. Smithy's TCP connector hook is crate-private in
+aws-smithy-http-client 1.5.1, so wrapping Smithy's connector could not run a
+check between connect and the first write; owning the dial was the only
+additive way to meet ruling 4.
+
+R-DG-07 decisions: `DatabaseBounds::default()` is the design's 10 s
+connect-phase budget (DNS, TCP connect and TLS/HTTP handshake each), 30 s
+idle (response head and between body frames), 60 s per operation and
+16 MiB per response. Every phase runs inside one absolute deadline: the
+earlier of the operation budget and a caller deadline (the streaming
+`StreamLimits` deadline). All waits are async and dropped at the deadline,
+and the HTTP connection is never spawned: it is owned and driven by the
+exchange and then the response body, so dropping either drops the socket
+synchronously (#5429). A streamed read that ends the response (end of body,
+any terminal error or limit refusal) releases the socket before it returns,
+even while the caller keeps the stream (#5465). A declared `content-length` above the limit fails before any body
+byte is read; undeclared bodies fail at the first frame that would exceed the
+remaining allowance. A deadline after the request was handed to the
+connection is a non-retryable `Timeout(Deadline)` that says the outcome is
+unknown; a missing response head after sending is a `Timeout(Read)` with the
+same wording; neither claims a rollback. `server_query_timeout` derives a
+server-side query timeout from the remaining budget, a return margin and a
+cap (55 s for Analytics), refusing to send when nothing useful remains.
+Tests stall the injected resolver, dialer and in-memory TLS server with
+Tokio's real timer and short budgets; Tokio's paused clock (`test-util`) was
+not added. Residual: the production resolver is the operating system's on
+Tokio's blocking pool. The deadline abandons the lookup and discards its
+answer, but that `getaddrinfo` thread ends only when the system resolver
+returns, and dropping the runtime waits for it. No asynchronous DNS crate was
+added. Superseded: the residual is accepted and capped (PM ruling 2), see
+"S1 continuation: credential deadline, DNS cap and remaining evidence".
+
+Not delivered in S1, by decision: WebSocket frame, GraphSON depth and bulk
+limits (T-DG-07b) need the S3 codecs that do not exist yet; the constants are
+recorded above and S3 must test them at the boundary and boundary plus one.
+Credential-provider deadlines (T-DG-07a provider phase) remain open:
+`GuardedCredentials::resolve_required` is synchronous and its SDK providers
+are driven by `SdkRuntime::block_on`, so an outer async deadline cannot drop
+them without a provider-level change. S2 must not wire live signing before
+that bound exists. Superseded: the bound now exists
+(`GuardedCredentials::resolve_required_until`, next section).
+
+T-DG-09a: `docgraph_live::test_inventories_hold_no_unignored_live_entry`
+parses every test in toolkit-cli and toolkit-aws with `syn` and requires any
+test naming `for_database`, `SystemDatabaseResolver`, `TcpDialer` or the
+exact `TOOLKIT_DOCGRAPH_LIVE_TESTS` variable to be both `#[ignore]` and
+`cfg(feature = "docgraph-live")`; a fixture test proves the rule flags an
+unguarded test. `ordinary_and_live_shaped_runs_never_reach_the_network`
+runs default and live-shaped invocations with every proxy, endpoint and
+metadata variable aimed at a loopback listener that only counts connection
+attempts, with canary credentials and the acceptance flag set; it asserts
+zero connections, no canary in output and no live success. Both run under
+the default and `docgraph-live` features. No live test exists yet.
+
+Endpoint-admission red/green jobs (mutations uncommitted, restored with
+`git show HEAD:<path>`): removing the pre-send peer check made
+`a_forbidden_connected_peer_receives_zero_bytes` fail because the connector
+began TLS to the forbidden peer (red `8e4940b3-aae6-4853-92fe-da856707555b`,
+green `ac5a5ddc-46a5-46ae-ba90-85e2c3cd2ed4`). Admitting every DNS answer made
+`forbidden_or_mixed_answers_are_never_dialed` fail on the metadata address
+(red `878a82dc-f8ae-4da3-9ad6-387c766e13d0`, green
+`e604fbfa-6b5f-4def-a939-427147c44110`). The full connector module passed
+in job `86de3b8b-0eec-453c-81e8-50e2fdfa18c8` (25 tests), and the
+`docgraph_live` suite with the policy parser passed under both feature sets
+in job `fcf49e10-7784-45dc-b7a8-7c6198a68500`.
+
+The `.rsi/jobs.toml` additions in this slice declare bounded daemon recipes
+for the offline spike, consent, environment-selection, credential and
+feature-specific clippy checks. Their Makefile targets use the daemon-stamped
+Cargo target and sccache; they do not enable a live test or a network call.
+
+The initial S1 CLI preflight recognizes `--live` but deliberately returns a
+usage error after validation because no live adapter exists in this slice.
+It rejects recorded/dry-run conflicts before file reads, ignores the legacy
+wipe environment variable in live mode, requires an explicit seed endpoint,
+and checks operation-level memory consent before reading its input. These are
+partial T-DG-01 checks, not evidence that the remaining S1 boundaries or all
+file-origin consent cases have been implemented. The ambient-wipe mutation
+red/green jobs were `ff393657-dff0-4d7f-afeb-7a3c2ef620ef` and
+`44ba8156-f0fc-42fa-bb2d-fae216004c7c`; the memory consent guard mutation
+red/green jobs were `08718c7a-172c-42cc-8aac-cf5862bb9659` and
+`77a0bafe-4692-47bb-b041-565ed9ccf080`. Mutations were not committed.
+
+#### S1 continuation: credential deadline, DNS cap and remaining evidence
+
+PM rulings on #5366 (second batch) for the items the previous checkpoint left
+open, and how they are met. Public and payment transports are unchanged;
+no crate is added (the explicit `sync` feature on toolkit-aws's `tokio` was
+already enabled in the resolved graph, so `Cargo.lock` does not change).
+
+**Credential deadline (ruling 1, T-DG-07a provider phase).**
+`GuardedCredentials::resolve_required_until(deadline)` and its
+`CredentialsProvider` view `GuardedCredentials::until(deadline)` bound
+credential resolution by the operation's absolute deadline, further capped
+at `CREDENTIAL_BUDGET` (10 s) from the start of resolution. Each provider
+load, including the D1 rebuild, runs as a future inside `SdkRuntime` under
+`tokio::time::timeout_at` and is dropped when the bound fires, so its STS,
+SSO, Sign-in, ECS or IMDS request is cancelled with it; a deadline already
+past starts no provider request. A timeout is the fixed
+`Timeout(Deadline)` "credential resolution did not finish within its time
+budget; nothing was sent", returned at once: no rebuild, no fallback source,
+no unsigned request. The proxy's `resolve`/`resolve_required` paths are
+unchanged. Live signing must use `until` with the same deadline given to the
+database transport (`StreamLimits` deadline), so credentials, signing and the
+exchange share one monotonic deadline.
+
+Decision: aws-config 1.13.0 runs `credential_process` with
+`tokio::process::Command::output()` and no `kill_on_drop`, so a dropped
+load would leave the child running past the deadline (the design forbids
+detached process work). The bounded path therefore refuses, before building
+it, any selected profile or default-chain source whose profile can reach a
+`credential_process`, with the fixed message `UNBOUNDED_PROCESS_REFUSAL`.
+Product consequence: live docgraph cannot use `credential_process` profiles
+until a kill-on-deadline process runner exists (follow-up #5415). Other sources (environment, static profiles, SSO/login,
+assume-role, web identity, ECS, IMDS) are HTTP or file based and bounded.
+`ProviderHttp::validated_bounded` builds the provider-plane client with the
+gated system resolver below; live wiring must use it with `until`.
+
+**DNS residual (ruling 2): accepted and capped.** `sdk::lookup` runs every
+production system lookup of the bounded paths (`SystemDatabaseResolver` and
+`ProviderHttp::validated_bounded`) through one process-wide `LookupGate`:
+`getaddrinfo` runs on a detached `std` thread (not Tokio's blocking pool, so
+dropping the runtime never waits for it) and the caller waits
+asynchronously, so the deadline drops the wait. The gate admits one blocking
+lookup at a time (others queue under their own deadlines). While a lookup the
+deadline abandoned is still running, a new lookup fails closed at once with
+`ABANDONED_LOOKUP_REFUSAL` and starts no thread; the thread clears the flag
+when the system resolver returns. Accepted residual: one abandoned
+`getaddrinfo` thread per process may outlive its deadline until the system
+resolver returns; it holds no socket of ours and its answer is discarded.
+
+**Close budget (T-DG-07c).** The database connector closes by dropping the
+socket synchronously when the response or a failed call is dropped (see
+"S1 repair 1" below: the connection is never a spawned task); no graceful
+TLS close is awaited. `CLOSE_BUDGET` (2 s) records the design bound; the
+tests hold both a completed exchange and a body-limit failure against a
+server that never closes to it.
+
+**Deferred to S3 (ruling 3):** WebSocket frame (1 MiB) and GraphSON depth
+(64) and bulk (100,000) limits, listed in the S3 row of "Delivery slices and
+gates".
+
+**Spike exit criteria.** PM ruling 3 permits constructing SDK defaults and
+forbids using them. `docgraph_bridge_spike::the_default_connector_identity_cache_and_sdk_retries_are_never_used`
+configures all four pinned clients as S2 will: injected HTTP client,
+pass-through (non-caching) identity cache, `noAuth` preferred, SDK retries and
+timeouts disabled, and a credential provider that panics if called, with
+every client's endpoint set to a loopback listener that counts connections.
+One operation per client: the injected connector sees exactly one call per
+operation on a 503 (the SDK retries nothing, so the toolkit `RetryPolicy` is
+the sole retry owner, as T-DG-04c will prove end to end), the listener
+accepts zero connections (the SDK default connector is never used), and every
+identity goes through the installed cache with none carrying AWS credentials
+(the default lazy identity cache is never consulted and no credential identity
+is resolved). Together with the earlier spike records (no SDK signer call,
+injected connector only, buffered-body bridge), criteria 1-3 are met for the
+sampled operations; S2 must keep this configuration and fail closed if
+`noAuth` is not selected.
+
+**Q5 support matrix (criterion 4), from offline fixtures.**
+
+| Area | Supported (fixture or test evidence) | Everything else |
+|---|---|---|
+| Database endpoint | Standard-partition Neptune `<id>.<region>.neptune.amazonaws.com` and Neptune Analytics `<id>.<region>.neptune-graph.amazonaws.com`, one fixed port, region equal to the host label (`sdk::database` tests) | FIPS, other partitions, custom domains, wildcards: refused |
+| Gremlin wire | GraphSON v2 (design choice; codec and T-DG-05b fixtures are S3) | Other GraphSON/GraphBinary versions fail closed in S3 |
+| DocumentDB / MongoDB capture | DocumentDB 5.0 with mongosh 2.3.1; MongoDB 7.0 with mongosh 1.10.6; canonical Extended JSON; capture envelope version 1 (`capture_fixtures`) | Legacy shell `tojson`, relaxed EJSON and other dialects: `unsupported_format` (T-DG-08d) |
+
+Fixtures are reconstructed, not live exports; operator deployment versions
+remain live-run input (O4), not guesses.
+
+**Remaining T-case coverage added.** T-DG-01a:
+`docgraph_live::golden_replays_are_unchanged_by_hostile_configuration` runs
+the seed dry run and replay (recording rebuilt from the dry-run statements),
+memory dry run and the review fallback with a hostile shared AWS
+configuration (a marker-writing `credential_process`, forbidden endpoint,
+consent-shaped keys), proxy/endpoint variables at a counting listener, canary
+credentials and `RUST_LOG=trace`; output and status equal a cleared
+environment's, the golden lines hold, zero sockets and no provider ran. The
+suite runs it with and without `docgraph-live`, and also runs every docgraph
+unit test (including the review/seed/memory golden replays) under
+`docgraph-live`, while scoped_test runs them under the default features.
+T-DG-01e: `consent_carriers_never_authorize_live_work_or_missing_consent`
+tables recorded responses, memory inputs, analysis envelopes, collection
+capture (no live mode), network-policy files, the shared AWS configuration
+and the environment as carriers. T-DG-02a:
+`bounded_resolution_refreshes_expired_credentials_and_fails_closed` (real
+guarded source, injected Sign-in HTTP). T-DG-02b:
+`network_policy::signing_region` (shared precedence; profile region ignored;
+mismatch refused before signing, no echo) and
+`credential_arguments_are_rejected_without_echo`. T-DG-02c: `RUST_LOG=trace`
+in the hostile runs and the stalled-provider test, canaries absent.
+
+Red/green jobs (mutations uncommitted, restored with `git show HEAD:<path>`):
+
+| Rule | Mutation | Red (fails as intended) | Green |
+|---|---|---|---|
+| Credential deadline | `load_until` deadline pushed out by an hour | `1df3764e-4950-42e1-be4b-6ef448a1c7eb` (stalled STS took 13,890 ms) | `b9078c88-1aea-43c9-9a18-50a35fd5f0e2` |
+| `credential_process` refusal | refusal disabled | `acf6a742-b7c8-4eba-9480-2cb92448a58a` (process ran, `aws_timeout` instead of the refusal) | `b9078c88-1aea-43c9-9a18-50a35fd5f0e2` |
+| Abandoned-lookup cap | abandoned check removed | `4c81459c-1012-4c6e-88e3-89a60623a840` (second lookup waited and timed out instead of failing closed) | `b9078c88-1aea-43c9-9a18-50a35fd5f0e2` |
+
+The green job ran `docgraph-bounded` (bounded credential tests, `sdk::lookup`
+and all `sdk::database` tests) at `f637417f`; the final verification batch
+reruns each rule's recipe at the final commit.
+
+#### S1 repair 1: security review #5425 blockers #5428 and #5429
+
+**#5428, metadata admission.** `admits` used to OR the shared non-public
+check with listed-range membership, so a policy listing `fd00:ec2::/48` (or
+the exact `/128`) admitted the IPv6 instance metadata address `fd00:ec2::254`
+at both the DNS-answer and connected-peer checks. Per the PM ruling, an
+unconditional forbidden-address check now runs first, after IPv4-mapped
+canonicalisation and before any listed exception, on every DNS answer and
+the connected peer (`DatabaseEndpoint::check_peer`, moved from the connector
+unchanged so it can be tested directly). `DatabaseEndpoint::new` also refuses
+a listed range that overlaps a forbidden block (contains it or lies inside
+it), without echoing it. Decision: the forbidden IPv6 metadata entry is the
+whole `fd00:ec2::/64`, which holds every documented AWS instance service
+address (metadata `::254`, DNS `::253`, time `::123`, pod identity `::23`),
+not only `::254`; neighbouring ULA ranges such as `fd00:ec2:0:1::/64` stay
+listable. The shared public predicate, the public guard and the payment
+plane are unchanged.
+
+**#5429, socket release.** `AbortOnDrop` only aborted the spawned HTTP
+connection task; on the current-thread `SdkRuntime` an aborted task keeps its
+stream until the runtime is next polled, so `Transport::send` could return
+with the socket still open indefinitely. The connection is now never
+spawned: a `Driver` owns hyper's connection future (and so the TLS stream
+and socket); the exchange drives it while waiting for the response head,
+and the `BoundedBody` owns and drives it while the body is read. Dropping
+the body, or the call future on any error or timeout, drops the socket
+synchronously, before the synchronous API returns and with no later runtime
+poll. The open-failure paths (refused peer, TLS failure, failure before the
+head, deadline in `open`) already dropped their stream with the failing
+future, and now hold no task at all. `SdkTransport::send`/`open` and the
+public and payment transports are unchanged.
+
+Regression tests (`sdk::database::tests`):
+`a_policy_cannot_list_a_range_holding_a_forbidden_address`,
+`forbidden_addresses_are_refused_even_inside_a_listed_range` (policies built
+without `new`, `/48` and exact `/128`, admission and peer path, every
+forbidden kind incl. IPv4-mapped forms),
+`forbidden_answers_inside_a_listed_range_are_never_dialed` (DNS path and
+mixed answers: zero dials, zero bytes),
+`every_send_releases_its_socket_before_it_returns` (success, declared and
+mid-body limit failures, timeout after send, TLS failure, refused peer) and
+`a_streamed_response_releases_its_socket_when_dropped_or_failed` (a dropped
+stream without a deadline, and a deadline failure in `open`). The release
+tests read a drop counter on the client stream right after the call returns
+and never drive the runtime again.
+
+| Blocker | Red (tests at `e0f24e41`, fix absent) | Green |
+|---|---|---|
+| #5428 | `08f160f7-a385-4fde-8810-bff71ea15f7e`: `fd00:ec2::/48` accepted by `new`; `fd00:ec2::254` admitted; dialed and reached TLS | `78567375-fcaf-426b-9f89-d46d32da4a44` (fix `35126dc5`: `sdk::database` 32 passed, 0 failed) |
+| #5429 | `08f160f7-a385-4fde-8810-bff71ea15f7e`: "success left the socket open", "dropping the stream left the socket open" | `78567375-fcaf-426b-9f89-d46d32da4a44` (fix `35126dc5`: `sdk::database` 32 passed, 0 failed) |
+
+#### S1 repair 2: re-review #5458 blocker #5465
+
+**#5465, a terminal streamed read kept its socket.** Repair 1 made the body
+own the connection, but `BoundedBody` returned its deadline, byte-limit and
+idle errors with the `Driver` still in place, and `SdkStream::next_chunk`
+keeps its body after an error, so a caller that retained the stream after a
+failed read held the socket until it dropped the stream. Two layers now
+release it before the read returns:
+
+- `BoundedBody` releases its `Driver` (connection, TLS stream, socket) at
+  the end of the body and on every terminal failure (operation deadline,
+  byte limit, idle time, connection error), and repeats the failure on any
+  later poll; a failed body never reports a clean end.
+- The database transport wraps its `SdkStream` in `ReleasingStream`, which
+  drops the whole stream the moment `next_chunk` ends the response: end of
+  body, or any error from the database body or the outer `StreamLimits`
+  (deadline, idle time, byte cap, a caller deadline that had already passed
+  before the body was read). A `narrow_body_limit` that refuses the stream
+  releases it too. Later reads repeat the outcome (`Ok(None)` after the end,
+  the same error after a failure). Decision: on the database plane every
+  `StreamError`, `IdleTimeout` included, is terminal.
+
+`SdkStream` itself is unchanged; only the database transport sets the new
+`release_ended_streams` flag, so the public and payment streams behave as
+before. Successful end of body (audit): the red run already released the
+socket when the body ended, because hyper's connection finishes once the
+body is complete and its sender is gone; both layers now release it
+explicitly at that point as well.
+
+Regression tests (`sdk::database::tests`), each with the stream retained and
+the client-stream drop counter read right after the call returns, with no
+runtime poll in between:
+`a_terminal_database_body_error_releases_the_socket_before_it_returns`
+(the reviewer's idle, operation-deadline and 64-byte-cap cases),
+`a_terminal_stream_limit_refusal_releases_the_socket_before_it_returns`
+(stream byte cap, already-expired caller deadline, caller deadline while
+reading, refusing `narrow_body_limit`),
+`a_completed_stream_releases_its_socket_at_the_end_of_the_body`, and, with
+the fix, `the_releasing_stream_drops_its_inner_stream_on_every_terminal_read`
+(a scripted inner stream: every `StreamError` kind, end of body, narrowing).
+
+| Blocker | Red (tests at `3379cc20`, fix absent) | Green (fix `60499087`) |
+|---|---|---|
+| #5465 | `4e9a4a29-3486-474c-988e-b16535d0bdef`: "idle: the read returned Failed(.. stalled ..) with the socket still open"; "stream cap: the read returned TooLarge with the socket still open" (33 passed, 2 failed) | `be0e45aa-b245-4a41-b49d-5eb009458202` (`sdk::database` 36 passed, 0 failed) |
+
+
 Implementation slices remain Rust, use scoped optional service dependencies,
 daemon-owned jobs and independent exact-SHA review. Each owns a requirement/test
 matrix and deliberate CLI/output changes; no worker may treat this proposal as
@@ -822,7 +1374,7 @@ source/requirement review and a docs-only diff check.
 | Q2 | PM CLI compatibility choice — provisionally ACCEPT | PM ff294c79 accepted the proposed flags subject to pre-review tightening. #5322 tightens R-DG-01/05 to argv-only live/consent flags, ignoring environment wipe confirmation for live runs while preserving replay parity. Other proposed region/network-policy, startup-config and timeout changes remain as reviewed. |
 | Q3 | Security pre-review — ACCEPT | Reviewer 887003f3 ruled ACCEPT in #5321: exact standard AWS database host/port/region and operator-listed RFC1918/ULA CIDRs; every DNS answer and connected peer checked before signed bytes, with original hostname for TLS/signing and reconnect revalidation. R-ROOTS infrastructure reuse is correct; PaymentRoots remains payment-only. No global/provider/payment admission change. VPC-interface-endpoint review API use and non-RFC1918/ULA VPC CIDRs fail closed pending review. S1 must move this capability's peer check before transmission; O1 remains required. |
 | Q4 | Engineering choice for implementation review | Resolve in the first implementation slice via the explicit offline S2 spike exit criteria, before live code. Optional official service codecs/WebSocket codec share toolkit signer, credentials, TLS, retries and deadlines; prove framing handling, auth/identity suppression, R-LOG and audited exact feature/lockfile closure. |
-| Q5 | Engineering support matrix | Record fixture-supported standard endpoints, GraphSON v2 and exact DocumentDB/MongoDB/shell/export versions in the first implementation slice before live code, as an S2 spike exit criterion. Unsupported forms fail closed. Operator deployment versions are required for live acceptance, not guessed. |
+| Q5 | Engineering support matrix | Record fixture-supported standard endpoints, GraphSON v2 and exact DocumentDB/MongoDB/shell/export versions in the first implementation slice before live code, as an S2 spike exit criterion. Unsupported forms fail closed. Operator deployment versions are required for live acceptance, not guessed. Recorded for S1 in "S1 continuation: credential deadline, DNS cap and remaining evidence"; GraphSON v2 fixtures follow in S3. |
 | O1 | Operator gate: credentials/access | Supply an approved account/role, target IDs/hosts, signing region, network CIDRs and connectivity. Authorize metadata access and narrowly scoped database actions; do not send secrets in Issues. Credentials are resolved locally through existing approved sources. |
 | O2 | Operator gate: spend | Approve resources/cost ceiling and run duration for live Analytics/Neptune/DynamoDB work, and any graph creation separately. Prefer existing disposable resources; neither `--live` nor a test flag authorizes spending or deployment. |
 | O3 | Operator gate: real database/user data | Approve read-only statistics access and capture custody. Separately identify a disposable graph/table and authorize specific writes/wipe/consolidation; no destructive test on real user data. Operator owns final cleanup/snapshot retention. |
