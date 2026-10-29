@@ -42,8 +42,13 @@ use toolkit_core::{parse_json, read_regular_file, write_regular_file, Json, Tool
 
 use crate::{Invocation, Output};
 
+pub mod bench;
+pub mod bench_fmt;
+pub mod bench_rows;
 pub mod cost;
 pub mod iterate;
+pub mod perf_render;
+pub mod perf_report;
 pub mod pyfmt;
 
 pub use iterate::iterate_design_command;
@@ -257,7 +262,10 @@ pub fn run_calculate_costs(args: &CalculateArgs, out: &mut Output<'_>) -> Result
     write_text(&output_path, &report)?;
     out.line(&format!(
         "Cost report written to {}",
-        pyfmt::normalized_path(&output_path)
+        // Redacted before normalizing hides `//` userinfo (#4941).
+        pyfmt::normalized_path(Path::new(&*crate::safe_text::redacted_value(
+            &output_path.display().to_string()
+        )))
     ))?;
     out.line(&format!(
         "Analyzed {} access patterns across {} tables.",

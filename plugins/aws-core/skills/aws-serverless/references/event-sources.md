@@ -141,7 +141,7 @@ Response edge cases that cause a **complete batch retry**: `itemIdentifier` empt
 
 Streams interaction: an unhandled **exception** triggers `BisectBatchOnFunctionError` (no response returned, so `ReportBatchItemFailures` has no effect); a **success with `batchItemFailures`** checkpoints at the lowest failed sequence number.
 
-The Powertools Batch Processor (`process_partial_response`) handles all of this — prefer it over hand-rolled loops. See [assets/powertools-handler.py](../assets/powertools-handler.py).
+The Powertools Batch Processor (`process_partial_response`) handles all of this in Python, TypeScript, Java and .NET — prefer it over hand-rolled loops. In Rust, build the `batchItemFailures` response yourself.
 
 ---
 

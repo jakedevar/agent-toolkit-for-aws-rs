@@ -45,6 +45,7 @@ use super::validation::{
     is_valid_location_hash, normalize_instrumentation_type, validate_capture_names,
     validate_probe_constraints, validate_snapshot_signal,
 };
+use crate::safe_text::redacted_value;
 use crate::{Invocation, Output};
 
 /// Upper bound for an arguments file (16 MiB).
@@ -555,7 +556,7 @@ pub(super) fn op_name<'a>(
             "unknown_op",
             format!(
                 "argument {kind}: invalid choice: '{}' (choose from {})",
-                safe_text(name),
+                safe_text(&crate::safe_text::shown_value(name)),
                 known.join(", ")
             ),
         ))
@@ -955,7 +956,8 @@ pub fn validate_command(invocation: &Invocation, out: &mut Output<'_>) -> Result
 
 /// `toolkit cloudwatch region [--region R]`.
 pub fn region_command(invocation: &Invocation, out: &mut Output<'_>) -> Result<(), ToolkitError> {
-    out.line(&safe_text(&resolve_region_from_env(
+    // Caller text on stdout: redacted where it is built (#4941).
+    out.line(&safe_text(&redacted_value(&resolve_region_from_env(
         invocation.value("--region"),
-    )))
+    ))))
 }

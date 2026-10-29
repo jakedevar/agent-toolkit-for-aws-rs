@@ -248,9 +248,16 @@ fn error_receipt(message: impl Into<String>) -> Json {
 /// Flattens comma-separated id arguments into a de-duplicated,
 /// order-preserving list. `lower` normalises trace ids (Omni SQL `traceId`
 /// values are lowercase hex); evaluator ids keep their casing.
+///
+/// Each whole value is redacted before it is split (#4971 round 2): a comma
+/// inside URL userinfo would otherwise cut the credential from the `@host`
+/// that marks it, and an invalid id is quoted back in the stdout receipt. A
+/// credential-shaped value is never a valid trace or evaluator id, so no
+/// valid id changes.
 fn split_ids(values: &[Option<&str>], lower: bool) -> Vec<String> {
     let mut ids: Vec<String> = Vec::new();
     for value in values.iter().flatten().filter(|text| !text.is_empty()) {
+        let value = crate::safe_text::redacted_value(value);
         for piece in value.split(',') {
             let piece = strip(piece);
             if piece.is_empty() {

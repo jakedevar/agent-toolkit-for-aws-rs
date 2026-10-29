@@ -523,7 +523,11 @@ pub fn run(
     // Normalize to lowercase once: span trace ids are stored lowercase, the
     // filter is an exact string match and the boundary comparison relies on
     // the query's case-sensitive sort.
-    for piece in options.trace_ids.split(',') {
+    // The whole value is redacted before it is split (#4971 round 2): an
+    // invalid id is quoted back in the receipt, and a comma inside URL
+    // userinfo would cut the credential from its `@host`. A credential-shaped
+    // value is never a hex trace id.
+    for piece in crate::safe_text::redacted_value(&options.trace_ids).split(',') {
         let id = strip(piece).to_lowercase();
         if id.is_empty() || unique.contains(&id) {
             continue;

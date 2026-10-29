@@ -2085,6 +2085,7 @@ const INVENTORY: &[(&str, Class)] = &[
         ),
     ),
     ("bedrock_agent", Class::Recorded),
+    ("bedrock_probes", Class::Recorded),
     (
         "bedrock_report",
         Class::NotRecorded("the skill's own report payloads and phase-result files"),
@@ -2098,12 +2099,17 @@ const INVENTORY: &[(&str, Class)] = &[
             "a pure cost calculator and a design loop over the skill's own state files",
         ),
     ),
+    ("dynamodb_bench", Class::Recorded),
     ("dynamodb_deploy", Class::Recorded),
+    // Includes the tunnel commands of `elasticache/tunnel/` (#4393, round 19): they
+    // replay `--recorded` through `toolkit_aws::recorded`, and their flag constant
+    // `TUNNEL_RECORDED_FLAG` is unique in `src` (#4933).
     ("elasticache", Class::Recorded),
     (
         "manifests",
         Class::NotRecorded("the repository's marketplace and plugin manifests"),
     ),
+    ("marketplace", Class::Recorded),
     (
         "msk",
         Class::NotRecorded("sizing, compatibility and simulation inputs the user writes"),

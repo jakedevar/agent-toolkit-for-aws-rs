@@ -58,7 +58,10 @@ pub(crate) const SLICE: crate::registry::Slice = crate::registry::Slice {
     commands: &[crate::CommandSpec {
         path: &["telemetry"],
         flags: &[],
-        value_flags: &[],
+        // Declared for the #4780 contract test and the audit; the router never
+        // reads them for a passthrough command. `screen` applies the bare `-`
+        // policy to exactly these flags.
+        value_flags: &PATH_FLAGS,
         strict_values: false,
         repeatable_flags: &[],
         max_positionals: usize::MAX,
@@ -130,6 +133,49 @@ fn resolve(value: &str) -> PathBuf {
     std::fs::canonicalize(value).unwrap_or_else(|_| PathBuf::from(value))
 }
 
+/// The value flags that name a filesystem path: `--telemetry-dir` for every
+/// subcommand and `--plugin-root` for `bundles`.
+const PATH_FLAGS: [&str; 2] = ["--plugin-root", "--telemetry-dir"];
+
+/// Whether `words` (path flags already removed) select a hook entry point, which
+/// must never fail: `skill-invoked`, `migration` and `consent session-start`.
+fn is_hook(words: &[String]) -> bool {
+    match words {
+        [first, ..] if first == "skill-invoked" || first == "migration" => true,
+        [first, second, ..] => first == "consent" && second == "session-start",
+        _ => false,
+    }
+}
+
+/// Removes every path flag whose value is exactly `-` (`--flag -` and
+/// `--flag=-`) from `words` and names the first one removed. A bare `-` is the
+/// standard-input/output marker, never a path (#4780); other values pass
+/// through untouched, the flag's value word is never rescanned as a flag.
+fn screen(words: &[String]) -> (Vec<String>, Option<&'static str>) {
+    let mut kept = Vec::new();
+    let mut dash = None;
+    let mut iter = words.iter().peekable();
+    while let Some(word) = iter.next() {
+        if let Some(flag) = PATH_FLAGS.iter().find(|flag| **flag == word) {
+            if iter.peek().is_some_and(|value| *value == "-") {
+                dash.get_or_insert(*flag);
+                iter.next();
+                continue;
+            }
+            kept.push(word.clone());
+            kept.extend(iter.next().cloned());
+        } else if let Some(flag) = PATH_FLAGS
+            .iter()
+            .find(|flag| word.strip_prefix(**flag) == Some("=-"))
+        {
+            dash.get_or_insert(*flag);
+        } else {
+            kept.push(word.clone());
+        }
+    }
+    (kept, dash)
+}
+
 /// Splits `--telemetry-dir DIR` / `--telemetry-dir=DIR` out of `words`.
 fn split_telemetry_dir(words: &[String]) -> (Vec<String>, Option<PathBuf>) {
     let mut rest = Vec::new();
@@ -161,7 +207,20 @@ pub(crate) fn run_action(
     ctx: &Ctx<'_>,
     output: &mut Output<'_>,
 ) -> Result<(), ToolkitError> {
-    let (words, dir) = split_telemetry_dir(words);
+    // The #4780 bare `-` policy, applied here because a passthrough command's
+    // words never reach the router: an interactive subcommand refuses it (exit
+    // 2, the router's message, no path read or written); a hook treats the flag
+    // as absent so it still emits nothing, exits 0 and touches no file (#4961).
+    let (words, dash) = screen(words);
+    if !is_hook(&words) {
+        if let Some(flag) = dash {
+            return Err(crate::dash_value_error(flag));
+        }
+        if words.iter().any(|word| word == "-") {
+            return Err(crate::dash_positional_error());
+        }
+    }
+    let (words, dir) = split_telemetry_dir(&words);
     let ctx = Ctx {
         telemetry_dir: dir.as_deref().or(ctx.telemetry_dir),
         ..*ctx

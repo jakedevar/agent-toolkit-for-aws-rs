@@ -77,15 +77,19 @@ pub(crate) const SLICES: &[Slice] = &[
     crate::asm_exec::SLICE,
     crate::aurora::SLICE,
     crate::bedrock_agent::SLICE,
+    crate::bedrock_probes::SLICE,
     crate::bedrock_report::SLICE,
     crate::bedrock_resolve::SLICE,
     crate::cloudwatch::API_SLICE,
     crate::cloudwatch::DOMAIN_SLICE,
     crate::docgraph::SLICE,
     crate::dynamodb::SLICE,
+    crate::dynamodb_bench::SLICE,
     crate::dynamodb_deploy::SLICE,
     crate::elasticache::SLICE,
+    crate::elasticache::tunnel::SLICE,
     crate::manifests::SLICE,
+    crate::marketplace::SLICE,
     crate::msk::SLICE,
     crate::relational::SLICE,
     crate::skills::SLICE,
@@ -545,7 +549,7 @@ mod tests {
     /// The route paths of the old `COMMANDS` table (commit ce0eaf6a, before the
     /// registry), in table order: the public order of [`COMMANDS`]. The routes of
     /// slices added after the registry follow at the end, ordered by slice name.
-    const LEGACY_COMMAND_ORDER: [&str; 82] = [
+    const LEGACY_COMMAND_ORDER: [&str; 95] = [
         "skills list",
         "manifests validate",
         "spec validate",
@@ -625,10 +629,27 @@ mod tests {
         "timestream-influxdb validate-input",
         "timestream-influxdb instance-types",
         // Slices added after the registry (NEW_RANK), by slice name.
+        // bedrock-probes (#4404):
+        "bedrock-probes iam-policy",
+        "bedrock-probes preflight",
+        "bedrock-probes api-path",
+        "bedrock-probes classify",
+        "bedrock-probes source-baseline",
         // docgraph (#4395):
         "documentdb wa-review",
         "neptune validate-input",
         "neptune seed",
+        // dynamodb-bench (#4390):
+        "dynamodb benchmark-model",
+        "dynamodb generate-perf-report",
+        // elasticache-tunnel (#4393):
+        "elasticache find-tunnel-host",
+        "elasticache start-tunnel",
+        "elasticache test-connection",
+        // marketplace (#4396):
+        "marketplace handler",
+        "marketplace query-metering",
+        "marketplace test-events",
         // telemetry (#4398):
         "telemetry",
     ];

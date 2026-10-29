@@ -1024,10 +1024,11 @@ fn symlinked_inputs_are_refused() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn unported_pipeline_steps_fail_before_any_cloud_action() {
+fn unregistered_pipeline_steps_fail_before_any_cloud_action() {
     let mut buffer: Vec<u8> = Vec::new();
     let mut out = Output::new(&mut buffer);
-    for step in ["benchmark-model", "generate-perf-report", "nonsense"] {
+    {
+        let step = "nonsense";
         let argv: Vec<String> = ["dynamodb", step, "--model", "m.json"]
             .map(String::from)
             .to_vec();
@@ -1040,6 +1041,15 @@ fn unported_pipeline_steps_fail_before_any_cloud_action() {
             )),
             "{error}"
         );
+    }
+    // `benchmark-model` and `generate-perf-report` (#4390) are registered:
+    // missing options are a usage error, not "unavailable".
+    for step in ["benchmark-model", "generate-perf-report"] {
+        let argv: Vec<String> = ["dynamodb", step, "--model", "m.json"]
+            .map(String::from)
+            .to_vec();
+        let error = dispatch_step(&argv, &mut out).expect_err(step);
+        assert_eq!(error.kind(), ErrorKind::Usage, "{step}");
     }
     // A registered step with bad arguments is a usage error, not "unavailable".
     let argv: Vec<String> = ["dynamodb", "calculate-costs", "--bogus"]

@@ -335,6 +335,59 @@ fn arguments_can_come_from_a_file_but_not_from_stdin() {
     assert!(output.stdout.is_empty());
 }
 
+/// Stdin is not an argument source (#4935, PM ruling): `instrumentation` and
+/// `snapshots` refuse a bare `-` for `--json` and `--json-file` like every other
+/// path parameter, in both spellings, never read stdin (it holds a valid document
+/// here) and never open a file named `-`, which stays byte for byte.
+#[test]
+fn a_bare_dash_argument_is_refused_and_stdin_is_never_read() {
+    use std::io::Write as _;
+    const DECOY: &str = "not json at all";
+    let root = temp_root("dash-refused");
+    let recorded = recorded_list(&root);
+    fs::write(root.join("-"), DECOY).expect("write ./-");
+    let arguments =
+        r#"{"service": "svc", "environment": "prod", "instrumentation_type": "BREAKPOINT"}"#;
+    for (command_path, op) in [
+        ("instrumentation", "list"),
+        ("snapshots", "sample"),
+        ("instrumentation", "create"),
+    ] {
+        for flag in ["--json", "--json-file"] {
+            for attached in [false, true] {
+                let mut args = vec!["cloudwatch", command_path, op];
+                let joined = format!("{flag}=-");
+                if attached {
+                    args.push(&joined);
+                } else {
+                    args.extend([flag, "-"]);
+                }
+                args.extend(["--recorded", &recorded]);
+                let mut child = command(&args)
+                    .current_dir(&*root)
+                    .stdin(Stdio::piped())
+                    .spawn()
+                    .expect("spawn toolkit");
+                let mut pipe = child.stdin.take().expect("stdin pipe");
+                let _ = pipe.write_all(arguments.as_bytes());
+                drop(pipe);
+                let output = child.wait_with_output().expect("wait for toolkit");
+                assert_eq!(status(&output), 2, "{args:?}: {}", text(&output.stderr));
+                assert!(output.stdout.is_empty(), "{args:?}");
+                let stderr = text(&output.stderr);
+                let first = stderr.lines().next().unwrap_or_default();
+                assert!(
+                    first.starts_with("error: invalid arguments: ")
+                        && first.contains(flag)
+                        && first.contains("./-"),
+                    "{args:?}: {first}"
+                );
+                assert_eq!(fs::read_to_string(root.join("-")).expect("./-"), DECOY);
+            }
+        }
+    }
+}
+
 #[test]
 fn usage_errors_exit_two_with_stderr_only() {
     let cases: [&[&str]; 6] = [
