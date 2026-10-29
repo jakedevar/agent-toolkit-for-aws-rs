@@ -599,3 +599,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 10-29 04:05Z: LANDED r21 c27549a66c2e03b3040703c033002a7e71149a46 on rolling (d0bb80aa) = rounds 16-21: #4780 #4404 #4390 #4961 #4396 #4393 #4941 #4412 (hooks.json ACTIVE) #4497 #4397 #4487. CLOSED: those 11 + reviews #4927 #4937 #4954 #4969 #4971 #4985 #5018 #5021 #5059 + rounds #4960 #4983 #5006 #5015 #5019 (#5078 auto) + findings #5088 #5026. GM report a6e5485c (landing, main-promotion gate on #4414, #5120 operator decision).
   TODO (free slot, low priority): finding-closure audit. Open review-finding Issues for LANDED slices (#4934-#4936, #4956-#4958, #4972-#4992, #4998, #5004-#5012, #5022-#5027, #5053, #5069-#5071, #5072-#5074) may be fixed by accepted repairs or carried. Close each only with evidence from its accepting review/rolling code; file remaining ones as follow-ups.
   Note: #5119 reviewer already filed #5122-#5128 (ai-payloads; P1 #5122 EULA truthy, #5123 notebook atomic publish).
+- 10-29 04:10Z: #5119 (285b0aad) CHANGES_REQUESTED on #4386 design 779a8ec0: P1 #5122 (truthy non-bool EULA), #5123 (non-atomic notebook publish); P2 #5124-#5128; P3 #5129. Inventory/AC1/AC3 pass.
+  Repair 1 (all 8 now) -> 094ad6cf (Opus high, continue_from b5103711, build_free). Then bounded r2 on #5119.
+  4/4 busy: f38bc05f (#5085), 869fe7ce (#5079 repair 1), 4cbe8435 (#5118), 094ad6cf (#4386 repair 1).
