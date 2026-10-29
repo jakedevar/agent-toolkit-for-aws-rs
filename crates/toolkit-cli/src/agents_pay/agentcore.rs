@@ -276,6 +276,81 @@ fn has_required(shape_name: &str, value: &Json) -> bool {
     !required.is_empty() && required.iter().all(|key| value.get(key).is_some())
 }
 
+// Validate the model closure for wallet details, including nested unions and
+// the constraints on their strings. Unknown structure members are ignored,
+// but a union must contain exactly one known arm.
+fn valid_wallet_shape(model: &Json, name: &str, value: &Json) -> bool {
+    let Some(shape) = model.get("shapes").and_then(|shapes| shapes.get(name)) else {
+        return false;
+    };
+    let bound = |key: &str| match shape.get(key) {
+        Some(Json::Int(n)) => usize::try_from(*n).ok(),
+        _ => None,
+    };
+    let within = |n: usize| {
+        bound("min").is_none_or(|min| n >= min) && bound("max").is_none_or(|max| n <= max)
+    };
+    match (shape.get("type").and_then(Json::as_str), value) {
+        (Some("string"), Json::String(text)) => {
+            if !within(text.chars().count()) {
+                return false;
+            }
+            if let Some(Json::Array(values)) = shape.get("enum") {
+                if !values.iter().any(|value| value.as_str() == Some(text)) {
+                    return false;
+                }
+            }
+            shape
+                .get("pattern")
+                .and_then(Json::as_str)
+                .is_none_or(|pattern| {
+                    fancy_regex::Regex::new(&format!(r"\A(?:{pattern})\z"))
+                        .is_ok_and(|regex| regex.is_match(text).unwrap_or(false))
+                })
+        }
+        (Some("list"), Json::Array(values)) => {
+            let Some(member) = shape
+                .get("member")
+                .and_then(|m| m.get("shape"))
+                .and_then(Json::as_str)
+            else {
+                return false;
+            };
+            within(values.len())
+                && values
+                    .iter()
+                    .all(|value| valid_wallet_shape(model, member, value))
+        }
+        (Some("structure"), Json::Object(entries)) => {
+            let Some(Json::Object(members)) = shape.get("members") else {
+                return false;
+            };
+            if matches!(shape.get("union"), Some(Json::Bool(true)))
+                && (entries.len() != 1 || !members.iter().any(|(key, _)| key == &entries[0].0))
+            {
+                return false;
+            }
+            if let Some(Json::Array(required)) = shape.get("required") {
+                if !required
+                    .iter()
+                    .all(|key| key.as_str().is_some_and(|key| value.get(key).is_some()))
+                {
+                    return false;
+                }
+            }
+            members.iter().all(|(key, member)| {
+                value.get(key).is_none_or(|nested| {
+                    member
+                        .get("shape")
+                        .and_then(Json::as_str)
+                        .is_some_and(|name| valid_wallet_shape(model, name, nested))
+                })
+            })
+        }
+        _ => false,
+    }
+}
+
 fn valid_process_response(body: &str, manager: &str, session: &str, instrument: &str) -> bool {
     if body.len() > 65_536 {
         return false;
@@ -1062,7 +1137,10 @@ impl<'a> PaymentClient<'a> {
         };
         if !has_required("PaymentInstrument", instrument)
             || text("paymentInstrumentId").is_none()
-            || text("status").is_none()
+            || !matches!(
+                text("status"),
+                Some("INITIATED" | "ACTIVE" | "FAILED" | "DELETED" | "BLOCKED")
+            )
             || text("paymentManagerArn") != Some(manager)
             || text("paymentConnectorId") != Some(connector)
             || text("userId") != Some(user)
@@ -1087,14 +1165,12 @@ impl<'a> PaymentClient<'a> {
         let wallet = toolkit_aws::recorded::optional_object(details, "embeddedCryptoWallet")
             .map_err(|_| PaymentError::InvalidResponse)?
             .ok_or(PaymentError::InvalidResponse)?;
-        if !has_required("EmbeddedCryptoWallet", wallet)
+        let model = parse_json(PAYMENT_SERVICE_MODEL).map_err(|_| PaymentError::InvalidResponse)?;
+        if !valid_wallet_shape(&model, "PaymentInstrumentDetails", details)
             || toolkit_aws::recorded::optional_text(wallet, "network")
                 .ok()
                 .flatten()
                 != Some(network)
-            || toolkit_aws::recorded::optional_object_list(wallet, "linkedAccounts").is_err()
-            || toolkit_aws::recorded::optional_text(wallet, "walletAddress").is_err()
-            || toolkit_aws::recorded::optional_text(wallet, "redirectUrl").is_err()
         {
             return Err(PaymentError::InvalidResponse);
         }
@@ -1651,6 +1727,27 @@ mod wire_contracts {
             let transport = FakeStreamingTransport::new().respond(201, &[], vec![FakeChunk::data(bad.as_bytes())]);
             let client = PaymentClient::new("us-east-1", &transport, &NoSigner).unwrap();
             assert_eq!(client.create_instrument("arn", "user", "connector", "ETHEREUM", "user@example.com", "token"), Err(PaymentError::InvalidResponse), "{bad}");
+        }
+    }
+
+    #[test]
+    fn wallet_model_accepts_each_valid_linked_account_variant() {
+        let model = parse_json(PAYMENT_SERVICE_MODEL).unwrap();
+        for accounts in [
+            "[]",
+            r#"[{"email":{"emailAddress":"user@example.com"}}]"#,
+            r#"[{"sms":{"phoneNumber":"+123456789"}}]"#,
+            r#"[{"developerJwt":{"kid":"key-1","sub":"subject"}}]"#,
+            r#"[{"oAuth2":{"google":{"sub":"subject"}}}]"#,
+        ] {
+            let wallet = parse_json(&format!(
+                r#"{{"network":"ETHEREUM","linkedAccounts":{accounts}}}"#
+            ))
+            .unwrap();
+            assert!(
+                valid_wallet_shape(&model, "EmbeddedCryptoWallet", &wallet),
+                "{accounts}"
+            );
         }
     }
 
