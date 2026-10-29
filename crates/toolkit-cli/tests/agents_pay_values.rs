@@ -114,7 +114,6 @@ fn pyval_int_follows_python_int_on_ascii() {
         ("\"0_1\"", 1),
         ("\"007\"", 7),
         ("\"\\t\\n 3 \\f\\r\\u000b\"", 3),
-        ("\"\\u001c3\\u001f\"", 3),
         ("\"9223372036854775807\"", i64::MAX),
         ("\"-9223372036854775808\"", i64::MIN),
     ];
@@ -143,6 +142,11 @@ fn pyval_int_follows_python_int_on_ascii() {
     ];
     for text in refused {
         assert!(py_int(&json(text)).is_err(), "{text} must raise ValueError");
+    }
+    for c in '\u{1c}'..='\u{1f}' {
+        for text in [format!("{c}2"), format!("2{c}")] {
+            assert!(py_int(&Json::string(&text)).is_err(), "{text:?}");
+        }
     }
 }
 
@@ -241,6 +245,10 @@ fn t_urlp_port_follows_python() {
 
 #[test]
 fn t_urlp_canonical_origin_drops_443_and_0_and_lowercases() {
+    assert_eq!(
+        canonical_origin("https://[2606:4700::1%25Eth0]/item").unwrap(),
+        "https://2606:4700::1%25eth0"
+    );
     assert_eq!(
         canonical_origin("https://MERCHANT.test:443/v1/x402-test?x=1").unwrap(),
         "https://merchant.test"
@@ -580,6 +588,16 @@ fn t_ch_header_base64_json_wins() {
         OTHER.as_bytes(),
     );
     assert_eq!(got, Ok(json(CHALLENGE)));
+}
+
+#[test]
+fn t_ch_extra_padding_after_complete_quartet_falls_back_to_body() {
+    let document = r#"{"accepts":[1]}"#;
+    let encoded = encode(document.as_bytes());
+    assert!(!encoded.ends_with('='));
+    let padded = format!("{encoded}=");
+    assert_eq!(extract(&headers(&[("payment-required", &padded)]), b""), refused(NOT_PARSEABLE));
+    assert_eq!(extract(&headers(&[("payment-required", &padded)]), OTHER.as_bytes()), Ok(json(OTHER)));
 }
 
 #[test]
