@@ -1195,3 +1195,25 @@ fn ap_con_05_consent_slot_and_assignment_emissions() {
         }
     }
 }
+
+#[test]
+fn ap_asn_01_sub_10_assignment_and_slot_on_same_line() {
+    let f = Fixture::new();
+    let template = f.write(
+        "template.py",
+        "# Cell 0 [markdown]: Example\n# Desc\n# Cell 1: Code\nA = 1; x = \"[ROLE_ARN]\"\n",
+    );
+    let values = f.write(
+        "values.json",
+        r#"{"values":{"ROLE_ARN":"ok"},"assign":{"A":12345}}"#,
+    );
+    let result = f.render(&template, "script", &["--values", values.to_str().unwrap()]);
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert!(fs::read_to_string(f.0.join("scripts/01_example.py"))
+        .unwrap()
+        .contains("A = 12345; x = \"ok\""));
+}
