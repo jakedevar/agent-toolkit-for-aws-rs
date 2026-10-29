@@ -120,9 +120,13 @@ successful recorded run prints.
    escaped too, so a quoted message reads with `\"`. A message that held a
    secret reads `[REDACTED]` for that part. A caller path in a diagnostic (`cannot
    read ...`, `cannot write ...`, `not valid JSON: ...`, `Policy written to ...`)
-   goes through the same order, bounded at 200 characters, with the env file's key
-   values replaced by `***` first in `source-baseline`; the script printed it raw.
-   Only the rendering changes: the file is read or written at the path given.
+   goes through the same order, with the env file's key values replaced by `***`
+   first in `source-baseline` (on the whole raw path, before any cut); the script
+   printed it raw. Since integration round 20 (#5019) that order is the shared
+   `safe_text::safe_path` of #4941: redacted whole, bounded at 200 characters with
+   a `...` mark (not `...[N more chars]`), then escaped (quotes and backslashes in
+   a path are no longer escaped; control, bidirectional and invisible characters
+   are). Only the rendering changes: the file is read or written at the path given.
 7. **A malformed region is `InvalidRegionError`** as botocore reports it, without
    the trailing-newline allowance of Python's `$`; nothing is probed.
 8. **A malformed recorded quota listing is an error.** The script's `fetch_bedrock_quotas`

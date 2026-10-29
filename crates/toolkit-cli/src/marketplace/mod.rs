@@ -25,7 +25,7 @@
 
 use std::path::Path;
 
-use toolkit_aws::{is_valid_region, redact_text};
+use toolkit_aws::is_valid_region;
 use toolkit_core::{parse_json, Json, ToolkitError};
 
 use crate::ai_data::parse_failure_text;
@@ -148,10 +148,11 @@ pub(crate) const SLICE: crate::registry::Slice = crate::registry::Slice {
     description_rank: crate::registry::NEW_RANK,
 };
 
-/// A caller path as the slice shows it: redacted, then control, bidirectional
-/// and invisible characters escaped. A path is never shortened.
+/// A caller path as the slice shows it: the shared [`safe_path`] (#4941:
+/// redacted whole, bounded to 200 characters, then escaped; integration
+/// round 20, #5019).
 fn shown_path(path: &str) -> String {
-    safe_path(&redact_text(path))
+    safe_path(path)
 }
 
 /// Reads and parses a JSON file named by the caller. The error names the file

@@ -13,6 +13,7 @@ use super::clock::{
 use super::ddb::{self, query_all, Query, Update};
 use crate::cloudwatch::timefmt::UtcTime;
 use crate::dynamodb::pyfmt::{dumps, text, truthy};
+use crate::safe_text::safe_text;
 
 /// `BatchMeterUsage` hard limit: records per call.
 pub(super) const BATCH_SIZE: usize = 25;
@@ -760,9 +761,10 @@ pub(super) fn deprovisioning_licenses(
 /// `[ProductCode]` counters.
 ///
 /// The product code, mode, namespace, reason and exception come from the
-/// configuration or from a service answer, so each goes through `shown`
-/// (redacted, bounded, escaped) before it is serialized; the line stays one
-/// parseable JSON object.
+/// configuration or from a service answer, so each goes through the shared
+/// `safe_text` (#4941: the whole value redacted, then bounded to 120
+/// characters, then escaped; integration round 20, #5019) before it is
+/// serialized; the line stays one parseable JSON object.
 pub(super) fn emf_metric(
     ctx: &mut Ctx<'_>,
     name: &str,
@@ -770,13 +772,13 @@ pub(super) fn emf_metric(
     reason: Option<&str>,
     exception: Option<&str>,
 ) {
-    let product = Json::string(shown(ctx.product_code()));
-    let mode = Json::string(shown(&ctx.metering_mode()));
+    let product = Json::string(safe_text(ctx.product_code()));
+    let mode = Json::string(safe_text(&ctx.metering_mode()));
     let (dimensions, mut fields): (Vec<&str>, Vec<(&str, Json)>) = match (name, reason, exception) {
         ("UsageRecordRejected", Some(reason), _) if !reason.is_empty() => (
             vec!["Reason", "MeteringMode", "ProductCode"],
             vec![
-                ("Reason", Json::string(shown(reason))),
+                ("Reason", Json::string(safe_text(reason))),
                 ("ProductCode", product),
                 ("MeteringMode", mode),
             ],
@@ -784,7 +786,7 @@ pub(super) fn emf_metric(
         ("BatchMeterUsageException", _, Some(exception)) if !exception.is_empty() => (
             vec!["Exception", "MeteringMode", "ProductCode"],
             vec![
-                ("Exception", Json::string(shown(exception))),
+                ("Exception", Json::string(safe_text(exception))),
                 ("ProductCode", product),
                 ("MeteringMode", mode),
             ],
@@ -797,7 +799,7 @@ pub(super) fn emf_metric(
         ("Unit", Json::string("Count")),
     ]);
     let directive = Json::object(vec![
-        ("Namespace", Json::string(shown(ctx.metric_namespace()))),
+        ("Namespace", Json::string(safe_text(ctx.metric_namespace()))),
         (
             "Dimensions",
             Json::Array(vec![Json::Array(

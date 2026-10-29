@@ -658,7 +658,8 @@ fn emf_fields_from_the_caller_are_redacted_bounded_and_escaped() {
         assert!(directive.contains(r#""Unit":"Count""#), "{line}");
         assert!(parsed.get(name).is_some(), "{line}");
         assert!(line.contains("[REDACTED]"), "{line}");
-        assert!(line.contains(r"more chars]"), "{line}");
+        // The shared safe_text bound (#4941, round 20): cut, then `...`.
+        assert!(line.contains(r#"...""#), "{line}");
     }
 }
 

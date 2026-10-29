@@ -240,13 +240,17 @@ own review before it may run against a real table.
    value interpolated into a log line (dimension, hour bucket, reasons, product
    code, region, masked identifiers) is redacted by the shared
    `toolkit_aws::redact_text`, bounded to 120 characters and escaped on one line
-   (`toolkit_core::escape_untrusted` / `neutralize_line`); a caller path is
-   redacted and escaped but never shortened. The EMF metric lines get the same
-   treatment (#4974): the product code, the metering mode, the namespace, the
-   reason and the exception are caller or service text, so each is redacted,
-   bounded and escaped *before* the line is serialized (the line stays one
-   parseable JSON object; legitimate names and dimension sets are unchanged).
-   redacted and escaped but never shortened.
+   (`toolkit_core::escape_untrusted` / `neutralize_line`); a caller path goes
+   through the shared `safe_text::safe_path` (#4941: redacted whole, bounded to
+   200 characters, then escaped). The EMF metric lines get the same treatment
+   (#4974): the product code, the metering mode, the namespace, the reason and
+   the exception are caller or service text, so each goes through the shared
+   `safe_text::safe_text` (redacted whole, bounded to 120 characters with a
+   `...` mark, then escaped) *before* the line is serialized (the line stays
+   one parseable JSON object; legitimate names and dimension sets are
+   unchanged). Integration round 20 (#5019) moved both onto the shared
+   helpers; only a credential-shaped, overlong or control-bearing value is
+   shown differently.
 8. **Timestamps on the wire.** A `datetime` in a request (`Timestamp`,
    `StartTime`, `EndTime`) is epoch seconds, as the JSON protocols send it. A
    recorded response timestamp may be epoch seconds or ISO text; a usage record

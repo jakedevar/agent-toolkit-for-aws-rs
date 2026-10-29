@@ -851,6 +851,321 @@ const BASELINES: &[Baseline] = &[
         ],
         reaches: "[iterate_design] calculate_costs",
     },
+    // Integration round 20 (#5019): one success path per command of every
+    // slice merged since round 15 that has a value flag (bedrock-probes,
+    // dynamodb-bench, docgraph, telemetry, marketplace, elasticache-tunnel).
+    // Their inputs are the `BASELINE_FILES` below; each is offline (a
+    // recording, a dry run or the no-client path) and spends nothing.
+    Baseline {
+        args: &[
+            "bedrock-probes",
+            "iam-policy",
+            "--models",
+            "amazon.nova-lite-v1:0",
+            "--region",
+            "us-east-1",
+            "--account-id",
+            "123456789012",
+        ],
+        reaches: "\"Version\"",
+    },
+    Baseline {
+        args: &[
+            "bedrock-probes",
+            "preflight",
+            "--region",
+            "us-east-1",
+            "--models",
+            "amazon.nova-lite-v1:0",
+            "--dataset-size",
+            "25",
+            "--recorded",
+            "{dir}/bp-preflight.json",
+        ],
+        reaches: "\"rpm_quota\"",
+    },
+    Baseline {
+        args: &[
+            "bedrock-probes",
+            "api-path",
+            "--models",
+            "us.openai.gpt-6-astra",
+        ],
+        reaches: "\"api_path\"",
+    },
+    Baseline {
+        args: &[
+            "bedrock-probes",
+            "classify",
+            "--models",
+            "openai.gpt-6-astra,amazon.nova-lite-v1:0",
+            "--region",
+            "us-west-2",
+        ],
+        reaches: "\"mantle\"",
+    },
+    Baseline {
+        args: &[
+            "bedrock-probes",
+            "source-baseline",
+            "{dir}/bp-source.env",
+            "--source-model-id",
+            "source-model",
+            "--dataset",
+            "{dir}/bp-prompts.jsonl",
+            "--output",
+            "{dir}/out/bp-rows.jsonl",
+        ],
+        reaches: "live source baselines: ",
+    },
+    // benchmark-model writes the summary generate-perf-report reads next.
+    Baseline {
+        args: &[
+            "dynamodb",
+            "benchmark-model",
+            "--model",
+            "{dir}/bench-model.json",
+            "--config",
+            "{dir}/bench-config.json",
+            "--manifest",
+            "{dir}/bench-manifest.json",
+            "--raw-out",
+            "{dir}/out/bench-raw.jsonl",
+            "--summary-out",
+            "{dir}/out/bench-summary.json",
+            "--now",
+            "2026-01-31T12:00:00Z",
+            "--recorded",
+            "{dir}/bench-recorded.json",
+        ],
+        reaches: "Raw rows: ",
+    },
+    Baseline {
+        args: &[
+            "dynamodb",
+            "generate-perf-report",
+            "--model",
+            "{dir}/bench-model.json",
+            "--summary",
+            "{dir}/out/bench-summary.json",
+            "--output",
+            "{dir}/out/perf-report.md",
+            "--findings-out",
+            "{dir}/out/perf-findings.json",
+        ],
+        reaches: "Analyzed 2 patterns",
+    },
+    Baseline {
+        args: &[
+            "documentdb",
+            "wa-review",
+            "--cluster-id",
+            "prod",
+            "--region",
+            "us-east-1",
+            "--output",
+            "{dir}/out/wa-review.txt",
+            "--now",
+            "2026-01-31T12:00:00Z",
+        ],
+        reaches: "Infrastructure: ",
+    },
+    Baseline {
+        args: &["neptune", "seed", "--dry-run"],
+        reaches: "Dry run: nothing is sent to Neptune.",
+    },
+    Baseline {
+        args: &["telemetry", "status", "--telemetry-dir", "{dir}"],
+        reaches: "consentStatus",
+    },
+    Baseline {
+        args: &[
+            "marketplace",
+            "handler",
+            "deprovision-cleanup",
+            "--config",
+            "{dir}/mp-config.json",
+            "--recorded",
+            "{dir}/mp-handler.json",
+            "--now",
+            "2026-01-31T12:30:00Z",
+        ],
+        reaches: "\"finalized\"",
+    },
+    Baseline {
+        args: &[
+            "marketplace",
+            "query-metering",
+            "--region",
+            "us-east-1",
+            "--now",
+            "2026-01-31T12:30:00Z",
+            "--recorded",
+            "{dir}/mp-query.json",
+        ],
+        reaches: "\"totalRecords\"",
+    },
+    Baseline {
+        args: &[
+            "marketplace",
+            "test-events",
+            "--product-code",
+            "prod123",
+            "--test-accounts",
+            "111122223333, 444455556666",
+            "--event-source",
+            "beta.agreement-marketplace",
+            "--now",
+            "2026-01-31T12:30:00Z",
+            "--seed",
+            "11",
+            "--dry-print",
+            "--scenario",
+            "duplicate",
+        ],
+        reaches: "\"DetailType\"",
+    },
+    Baseline {
+        args: &[
+            "elasticache",
+            "find-tunnel-host",
+            "--vpc-id",
+            "vpc-0abc1234",
+            "--region",
+            "eu-west-1",
+            "--profile",
+            "dev",
+            "--recorded",
+            "{dir}/tunnel-find.json",
+        ],
+        reaches: "Recommended: i-0000000a",
+    },
+    Baseline {
+        args: &[
+            "elasticache",
+            "start-tunnel",
+            "--instance-id",
+            "i-0abc12345def",
+            "--cache-host",
+            "my-cache.serverless.use1.cache.amazonaws.com",
+            "--region",
+            "us-west-2",
+            "--recorded",
+            "{dir}/tunnel-start.json",
+        ],
+        reaches: "Tunnel is UP.",
+    },
+    Baseline {
+        args: &[
+            "elasticache",
+            "test-connection",
+            "node.abc.0001.use1.cache.amazonaws.com",
+            "--recorded",
+            "{dir}/tunnel-connect.json",
+        ],
+        reaches: "CONNECTION SUCCESSFUL",
+    },
+];
+
+/// The input files of the round-20 [`BASELINES`], written into `{dir}` before
+/// any baseline runs. Each copies an input the slice's own tests replay.
+const BASELINE_FILES: &[(&str, &str)] = &[
+    (
+        "bp-preflight.json",
+        r#"{"calls": [
+            {"service": "bedrock-runtime", "operation": "Converse",
+             "request": {"modelId": "amazon.nova-lite-v1:0",
+                         "inferenceConfig": {"maxTokens": 1},
+                         "messages": [{"content": [{"text": "ping"}], "role": "user"}]},
+             "response": {}},
+            {"service": "service-quotas", "operation": "ListServiceQuotas",
+             "request": {"ServiceCode": "bedrock"},
+             "response": {"Quotas": [{"QuotaName": "On-demand model inference requests per minute for Amazon Nova Lite", "Value": 20}]}}
+        ]}"#,
+    ),
+    ("bp-source.env", "GEMINI_API_KEY=offline-test-key\n"),
+    ("bp-prompts.jsonl", r#"{"id": "a", "user_prompt": "one"}"#),
+    (
+        "bench-model.json",
+        r#"{
+  "tables": [{"table_name": "Orders",
+    "entities": [{"entity_name": "Order", "estimated_item_size_bytes": 1024,
+                  "attributes": [{"name": "pk", "type": "S"}, {"name": "sk", "type": "S"}]}]}],
+  "access_patterns": [
+    {"pattern_id": "GetOrder", "operation": "GetItem", "table": "Orders", "peak_rps": 100,
+     "estimated_item_size_bytes": 1024},
+    {"pattern_id": "PutOrder", "operation": "PutItem", "table": "Orders", "peak_rps": 50,
+     "estimated_item_size_bytes": 1024}]}"#,
+    ),
+    (
+        "bench-config.json",
+        r#"{"aws_profile": "bench", "region": "us-east-1", "mode": "quick"}"#,
+    ),
+    (
+        "bench-manifest.json",
+        r#"{"account": "111122223333", "region": "us-east-1",
+  "prefix": "ddb-skill-bench-abc-", "run_id": "0123456789abcdef0123456789abcdef",
+  "tables": [{"name": "ddb-skill-bench-abc-Orders", "original_name": "Orders"}],
+  "lambda": {"function_name": "ddb-skill-bench-abc-bench"}}"#,
+    ),
+    (
+        "bench-recorded.json",
+        r#"{"calls": [{"service": "lambda", "operation": "Invoke", "request": {"FunctionName": "ddb-skill-bench-abc-bench"},
+  "response": {"StatusCode": 200, "Payload": {
+  "invocation_index": 0,
+  "phases_run": ["settle", "seed", "warmup", "measure"],
+  "raw_rows": [
+    {"pattern_id": "GetOrder", "op": "GetItem", "phase": "warmup", "latency_ms": 3.0, "consumed_cu": 0.5, "gsi_cu": {}, "throttled": false, "error": null},
+    {"pattern_id": "GetOrder", "op": "GetItem", "phase": "measure", "latency_ms": 2.0, "consumed_cu": 0.5, "gsi_cu": {}, "throttled": false, "error": null},
+    {"pattern_id": "GetOrder", "op": "GetItem", "phase": "measure", "latency_ms": 4.0, "consumed_cu": 0.5, "gsi_cu": {}, "throttled": false, "error": null},
+    {"pattern_id": "GetOrder", "op": "GetItem", "phase": "measure", "latency_ms": 6.0, "consumed_cu": 0.5, "gsi_cu": {}, "throttled": false, "error": null},
+    {"pattern_id": "PutOrder", "op": "PutItem", "phase": "measure", "latency_ms": 5.0, "consumed_cu": 1.0, "gsi_cu": {}, "throttled": false, "error": null},
+    {"pattern_id": "PutOrder", "op": "PutItem", "phase": "measure", "latency_ms": 7.0, "consumed_cu": 1.0, "gsi_cu": {}, "throttled": false, "error": null}],
+  "seed_verification": {"Orders": {"expected": 100, "actual": 100, "sampled": false, "passed": true, "seed_shortfall_ratio": 0.0}},
+  "coverage": {"measured_patterns": ["GetOrder", "PutOrder"], "missing_patterns": [], "coverage_incomplete": false},
+  "measurement_tainted": {},
+  "exact_counts": [
+    {"pattern_id": "GetOrder", "phase": "measure", "calls": 18, "throttles": 0, "errors": 0, "error_codes": {}, "cancellation_reason_codes": {}},
+    {"pattern_id": "PutOrder", "phase": "measure", "calls": 18, "throttles": 0, "errors": 0, "error_codes": {}, "cancellation_reason_codes": {}}],
+  "mode": "quick", "key_sampling": "uniform", "items_per_partition": 1}}}]}"#,
+    ),
+    ("mp-config.json", r#"{"SUBSCRIBERS_TABLE": "subs"}"#),
+    (
+        "mp-handler.json",
+        r#"{"calls": [
+  {"service": "dynamodb", "operation": "Query", "response": {"Items": [{"licenseArn": "arn:aws:license-manager:us-east-1:111122223333:license:l-abc123", "customerAWSAccountId": "111122223333"}]}},
+  {"service": "dynamodb", "operation": "UpdateItem", "response": {}}]}"#,
+    ),
+    (
+        "mp-query.json",
+        r#"{"calls": [{"service": "cloudtrail", "operation": "LookupEvents", "response": {"Events": []}}]}"#,
+    ),
+    (
+        "tunnel-find.json",
+        r#"{"calls":[
+  {"service":"ec2","operation":"DescribeInstances",
+   "response":{"Reservations":[{"Instances":[{"InstanceId":"i-0000000a","InstanceType":"t3.micro","Placement":{"AvailabilityZone":"us-east-1a"},"PrivateIpAddress":"10.0.0.7","Tags":[{"Key":"Env","Value":"x"},{"Key":"Name","Value":"jump"}]}]}]}},
+  {"service":"ssm","operation":"DescribeInstanceInformation",
+   "response":{"InstanceInformationList":[{"InstanceId":"i-0000000a"}]}}]}"#,
+    ),
+    (
+        "tunnel-start.json",
+        r#"{
+  "calls":[
+    {"service":"ec2","operation":"DescribeInstanceStatus",
+     "request":{"InstanceIds":["i-0abc12345def"],"IncludeAllInstances":true},
+     "response":{"InstanceStatuses":[{"InstanceState":{"Name":"running"}}]}},
+    {"service":"ssm","operation":"DescribeInstanceInformation",
+     "response":{"InstanceInformationList":[{"PingStatus":"Online"}]}}
+  ],
+  "host":{"programs":["aws","session-manager-plugin"],"busy_ports":[7000],"port_checks":[true]},
+  "tunnel":{"events":[{"line":"Starting session\n"},{"interrupt":true}],"stops_gracefully":false}
+}"#,
+    ),
+    (
+        "tunnel-connect.json",
+        r#"{"cache":{"address":"54.1.2.3","ping_ms":1.0}}"#,
+    ),
 ];
 
 /// The registered command a baseline runs: the longest path its words start
@@ -922,6 +1237,9 @@ fn every_value_flag_on_a_success_path_hides_a_credential_in_a_file_name_or_list(
     fs::create_dir_all(dir.join("out")).expect("create baseline dir");
     for name in ["model.json", "config.json"] {
         fs::write(dir.join(name), "{}").expect("write baseline input");
+    }
+    for (name, text) in BASELINE_FILES {
+        fs::write(dir.join(name), text).expect("write baseline input");
     }
     let mut found = BTreeSet::new();
     let mut probes = 0_usize;

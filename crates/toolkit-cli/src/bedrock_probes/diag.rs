@@ -1,18 +1,17 @@
 //! Caller-derived text in diagnostics: redacted, then truncated, then escaped
 //! on one line, with the shared helpers (`toolkit_aws::redact_text` and
-//! `toolkit_core::escape_untrusted`).
+//! `toolkit_core::escape_untrusted`; caller paths through the shared
+//! `safe_text::safe_path`, #4941).
 
 use toolkit_aws::redact_text;
 use toolkit_core::escape_untrusted;
 
 use crate::bedrock_resolve::source::redact;
+use crate::safe_text::safe_path;
 
 /// Longest text, in characters, a verdict detail keeps before the
 /// `...[N more chars]` marker.
 pub(crate) const MAX_CHARS: usize = 300;
-
-/// Longest caller path, in characters, a diagnostic keeps.
-pub(crate) const MAX_PATH_CHARS: usize = 200;
 
 /// `text` redacted, cut to `max_chars` characters and escaped on one line.
 pub(crate) fn bounded(text: &str, max_chars: usize) -> String {
@@ -32,9 +31,14 @@ pub(crate) fn scrubbed(text: &str, secrets: &[String], max_chars: usize) -> Stri
     redact(&bounded(&redact(text, secrets), max_chars), secrets)
 }
 
-/// A caller path as a diagnostic shows it: [`scrubbed`] and bounded to
-/// [`MAX_PATH_CHARS`]. Only the rendering changes; the file operation itself
-/// uses the path as given.
+/// A caller path as a diagnostic shows it, on the shared #4941 pipeline
+/// (integration round 20, #5019): the known key values are replaced on the
+/// full raw path first (#4939: no cut or escape runs before this scrub, so
+/// none can split a value), then [`safe_path`] redacts it with the shared
+/// redactor, bounds it to its 200 characters (then `...`) and escapes it, then
+/// the values are replaced again (an escape may have spelled one
+/// differently). Only the rendering changes; the file operation itself uses
+/// the path as given.
 pub(crate) fn path(path: &str, secrets: &[String]) -> String {
-    scrubbed(path, secrets, MAX_PATH_CHARS)
+    redact(&safe_path(&redact(path, secrets)), secrets)
 }

@@ -19,7 +19,7 @@ use std::time::Duration;
 use toolkit_aws::{AwsError, Secret, ServiceError};
 use toolkit_core::{Json, ToolkitError};
 
-use super::clean::{clean, clean_to, SecretGate, GATE_MAX_BYTES};
+use super::clean::{clean, SecretGate, GATE_MAX_BYTES};
 use super::connect::{self, is_private, ConnectArgs};
 use super::discover::{self, DiscoverArgs};
 use super::recorded::Recording;
@@ -1722,13 +1722,16 @@ fn caller_text_is_redacted_then_bounded_then_escaped() {
         "a credential across the bound is redacted first: {shown}"
     );
     assert!(shown.chars().count() <= 203 + 12, "{shown}");
-    let escapes = format!("{}{}", "\u{1b}".repeat(10), "x");
+    // The bound is the shared safe_path bound (#4941, round 20): 200
+    // characters of the redacted text, cut before escaping.
+    let escapes = format!("{}{}", "\u{1b}".repeat(210), "x");
     assert_eq!(
-        clean_to(&escapes, 5),
-        "\\x1b\\x1b\\x1b\\x1b\\x1b...",
+        clean(&escapes),
+        format!("{}...", "\\x1b".repeat(200)),
         "escaping happens after the bound"
     );
-    assert_eq!(clean_to("abc", 3), "abc");
+    let exact = "a".repeat(200);
+    assert_eq!(clean(&exact), exact, "a text at the bound is not cut");
 }
 
 // --------------------------------------------------- argument validation

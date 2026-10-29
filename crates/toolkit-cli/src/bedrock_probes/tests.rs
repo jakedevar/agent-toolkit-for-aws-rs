@@ -3535,7 +3535,14 @@ fn a_failed_read_path_is_redacted_and_bounded_in_the_diagnostic() {
         &format!("{long}absent.json"),
     ]);
     assert_eq!(status, 1);
-    assert!(err.contains("more chars]"), "{err}");
+    // The shared safe_path bound (#4941, round 20): at most 200 characters
+    // of the path, then `...`, then the reason.
+    let shown = err
+        .split_once("cannot read ")
+        .and_then(|(_, rest)| rest.split_once("...: "))
+        .map(|(path, _)| path)
+        .unwrap_or_else(|| panic!("a cut path: {err}"));
+    assert_eq!(shown.chars().count(), 200, "{err}");
     assert!(err.chars().count() < 400, "{}", err.chars().count());
     assert!(err.trim_end().ends_with("file does not exist"), "{err}");
 }
@@ -3617,7 +3624,13 @@ fn the_policy_written_diagnostic_is_redacted_and_bounded() {
         &long_path,
     ]);
     assert_eq!(status, 0, "{err}");
-    assert!(err.contains("more chars]"), "{err}");
+    // The shared safe_path bound (#4941, round 20): the cut path ends in `...`.
+    let shown = err
+        .trim_end()
+        .strip_prefix("Policy written to ")
+        .and_then(|rest| rest.strip_suffix("..."))
+        .unwrap_or_else(|| panic!("a cut path: {err}"));
+    assert_eq!(shown.chars().count(), 200, "{err}");
     assert!(err.chars().count() < 300, "{}", err.chars().count());
     assert!(Path::new(&long_path).is_file());
 }
