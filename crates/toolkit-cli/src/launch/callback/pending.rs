@@ -221,32 +221,6 @@ impl Default for WaitTracker {
     }
 }
 
-/// Observe a record while holding the free lock, if available. An unreadable
-/// lock is treated as held so it cannot produce a false final failure.
-#[cfg(unix)]
-#[must_use]
-pub fn observe(state_dir: &Path, pid: u32, now: i64) -> Observation {
-    let Some(record) = read_record(state_dir, pid) else {
-        return Observation::Missing;
-    };
-    let lock = acquire_if_free(state_dir, pid);
-    let valid = state::load_session(state_dir)
-        .is_some_and(|session| session.token_expires_at > now.saturating_add(300));
-    Observation::Decision(super::wait_decision(
-        record.status,
-        lock.is_none(),
-        valid,
-        now,
-        record.cutoff,
-    ))
-}
-
-/// Evaluate a wait and remove a final record only while the lock is held here.
-#[cfg(unix)]
-pub fn finish_if_final(state_dir: &Path, pid: u32, now: i64) -> (Observation, Option<String>) {
-    WaitTracker::default().finish(state_dir, pid, now)
-}
-
 #[cfg(unix)]
 impl WaitTracker {
     pub(super) fn finish_after_report<R>(

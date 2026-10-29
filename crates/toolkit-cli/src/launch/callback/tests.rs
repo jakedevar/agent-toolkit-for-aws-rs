@@ -356,12 +356,16 @@ fn pending_reader_validates_schema_and_lock_custody() {
 #[test]
 fn wait_observes_held_and_free_lock_without_signalling_pid() {
     use super::{
-        pending::{observe, Custody, Observation},
+        pending::{Custody, Observation, WaitTracker},
         PendingStatus, WaitDecision,
     };
     use crate::launch::{clock::SeededRandom, tests_support::Scratch};
     let scratch = Scratch::new("pending-wait");
-    assert_eq!(observe(scratch.path(), 66, 200), Observation::Missing);
+    let mut tracker = WaitTracker::default();
+    assert_eq!(
+        tracker.finish(scratch.path(), 66, 200).0,
+        Observation::Missing
+    );
     let custody = Custody::acquire(scratch.path(), 66).unwrap();
     custody
         .write(
@@ -374,16 +378,16 @@ fn wait_observes_held_and_free_lock_without_signalling_pid() {
         )
         .unwrap();
     assert_eq!(
-        observe(scratch.path(), 66, 164),
+        tracker.finish(scratch.path(), 66, 164).0,
         Observation::Decision(WaitDecision::Poll)
     );
     assert_eq!(
-        observe(scratch.path(), 66, 165),
+        tracker.finish(scratch.path(), 66, 165).0,
         Observation::Decision(WaitDecision::HelperBlocked)
     );
     drop(custody);
     assert_eq!(
-        observe(scratch.path(), 66, 165),
+        tracker.finish(scratch.path(), 66, 165).0,
         Observation::Decision(WaitDecision::Failed)
     );
 }
@@ -547,7 +551,7 @@ fn request_boundary_rejects_wrong_state_and_bad_heads_without_terminal_result() 
 #[test]
 fn unreadable_record_with_free_lock_is_not_missing() {
     use super::{
-        pending::{finish_if_final, Custody, Observation},
+        pending::{Custody, Observation, WaitTracker},
         WaitDecision,
     };
     use crate::launch::tests_support::Scratch;
@@ -556,7 +560,7 @@ fn unreadable_record_with_free_lock_is_not_missing() {
     let path = scratch.join("pending/91.json");
     std::fs::write(&path, b"not json").unwrap();
     drop(custody);
-    let (observation, _) = finish_if_final(scratch.path(), 91, 100);
+    let (observation, _) = WaitTracker::default().finish(scratch.path(), 91, 100);
     assert_eq!(observation, Observation::Decision(WaitDecision::Ended));
     assert!(!path.exists());
 }
