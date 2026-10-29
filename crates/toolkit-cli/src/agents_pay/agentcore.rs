@@ -59,6 +59,39 @@ pub fn error_code(header: Option<&str>, body: &str) -> &'static str {
         .unwrap_or("UnrecognizedError")
 }
 
+fn sts_error_code(header: Option<&str>, body: &str) -> &'static str {
+    if header.is_some() {
+        return error_code(header, "");
+    }
+    const NS: &str = "https://sts.amazonaws.com/doc/2011-06-15/";
+    let Ok(document) = roxmltree::Document::parse(body) else {
+        return "UnrecognizedError";
+    };
+    let root = document.root_element();
+    if root.tag_name().name() != "ErrorResponse" || root.tag_name().namespace() != Some(NS) {
+        return "UnrecognizedError";
+    }
+    let mut errors = root.children().filter(|n| {
+        n.is_element() && n.tag_name().name() == "Error" && n.tag_name().namespace() == Some(NS)
+    });
+    let Some(error) = errors.next() else {
+        return "UnrecognizedError";
+    };
+    if errors.next().is_some() {
+        return "UnrecognizedError";
+    }
+    let mut codes = error.children().filter(|n| {
+        n.is_element() && n.tag_name().name() == "Code" && n.tag_name().namespace() == Some(NS)
+    });
+    let Some(code) = codes.next().and_then(|n| n.text()) else {
+        return "UnrecognizedError";
+    };
+    if codes.next().is_some() {
+        return "UnrecognizedError";
+    }
+    error_code(Some(code), "")
+}
+
 /// Whether a service error code is eligible for retry. A conflict is final.
 #[must_use]
 pub fn is_retryable(code: &str) -> bool {
@@ -1845,7 +1878,11 @@ impl<'a> PaymentClient<'a> {
                     if status == expected {
                         return Ok(body.to_owned());
                     }
-                    PaymentError::Service(error_code(error_header.as_deref(), body))
+                    PaymentError::Service(if service == "sts" {
+                        sts_error_code(error_header.as_deref(), body)
+                    } else {
+                        error_code(error_header.as_deref(), body)
+                    })
                 }
                 Err(error) if !error.is_retryable() => return Err(transport_error(&error)),
                 Err(error) => transport_error(&error),
@@ -2158,6 +2195,27 @@ mod wire_contracts {
         assert_eq!(error.class_name(), "ClientError");
         assert!(!format!("{error:?}").contains("SECRET"));
         assert_eq!(transport.requests().len(), 1);
+        let xml = std::str::from_utf8(body).unwrap();
+        assert_eq!(
+            sts_error_code(Some("ValidationException:detail"), xml),
+            "ValidationException"
+        );
+        assert_eq!(
+            sts_error_code(Some("SECRET_HEADER"), xml),
+            "UnrecognizedError"
+        );
+        assert_eq!(
+            sts_error_code(None, &xml.replace("AccessDeniedException", "SECRET_CODE")),
+            "UnrecognizedError"
+        );
+        assert_eq!(
+            sts_error_code(
+                None,
+                &xml.replace("<Code>", "<Code>AccessDeniedException</Code><Code>")
+            ),
+            "UnrecognizedError"
+        );
+        assert_eq!(sts_error_code(None, "<ErrorResponse>"), "UnrecognizedError");
     }
 
     #[test]

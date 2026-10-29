@@ -1487,6 +1487,7 @@ These are stricter or safety-only unless noted:
   admin commands keep S1's R-ROOTS.
 - D36 (#5166, #5168) use nix =0.29.0 for the same safe getpwuid_r lookup: nix 0.31.1 pins libc =0.2.180, conflicting with the workspace mio requirement >=0.2.183. This also adds the cfg_aliases 0.2.2 build crate.
 - D37 (#5177, #5186) non-ASCII Unicode decimal digits and ASCII U+001C..U+001F padding are unparseable by the Rust tunable parser and give the bounded default. NBSP and other Unicode whitespace are trimmed as in Python.
+- D38 (#5181): STS uses XML error envelopes, so its error-code fallback reads a single `Error/Code` in the STS namespace when `x-amzn-ErrorType` is absent. It applies the same fixed allowlist and never emits the message or request ID. Malformed, ambiguous, and unknown codes become `UnrecognizedError`; an existing header retains precedence.
 - D35 (#5157) reject `=` after a complete Base64 quartet, although Python 3.11
   `b64decode(validate=True)` accepts it. A header with this padding falls through
   to raw-header and body extraction; it may therefore be refused.
