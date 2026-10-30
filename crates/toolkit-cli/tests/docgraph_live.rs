@@ -981,24 +981,67 @@ fn carrier_rows(c: &str) -> Vec<(Vec<&str>, i32, &'static str)> {
 #[test]
 #[cfg(feature = "docgraph-live")]
 fn live_memory_refuses_policy_region_and_input_failures_before_clients() {
-    let input=policy_file("s4-query.json",r#"{"graph_id":"g-abc123def4","query":"RETURN 1"}"#);
-    let p=policy_file("s4-valid.json",r#"{"host":"g-abc123def4.us-east-1.neptune-graph.amazonaws.com","port":443,"region":"us-east-1"}"#);
-    let consent=policy_file("s4-consent.json",r#"{"host":"g-abc123def4.us-east-1.neptune-graph.amazonaws.com","port":443,"region":"us-east-1","confirm_write":true}"#);
-    let wrong=policy_file("s4-wrong.json",r#"{"host":"g-other00000.us-east-1.neptune-graph.amazonaws.com","port":443,"region":"us-east-1"}"#);
-    let base=["neptune","memory","--live","--operation","query","--confirm-write","--confirm-delete","--input",&input];
-    for (tail,code,expected) in [
-        (vec![],2,"--network-policy is required"),
-        (vec!["--network-policy",&consent],1,"unknown key"),
-        (vec!["--network-policy",&wrong],1,"unsupported or invalid live memory request"),
-        (vec!["--network-policy",&p,"--region","us-west-2"],1,"differs from the network policy"),
+    let input = policy_file(
+        "s4-query.json",
+        r#"{"graph_id":"g-abc123def4","query":"RETURN 1"}"#,
+    );
+    let p = policy_file(
+        "s4-valid.json",
+        r#"{"host":"g-abc123def4.us-east-1.neptune-graph.amazonaws.com","port":443,"region":"us-east-1"}"#,
+    );
+    let consent = policy_file(
+        "s4-consent.json",
+        r#"{"host":"g-abc123def4.us-east-1.neptune-graph.amazonaws.com","port":443,"region":"us-east-1","confirm_write":true}"#,
+    );
+    let wrong = policy_file(
+        "s4-wrong.json",
+        r#"{"host":"g-other00000.us-east-1.neptune-graph.amazonaws.com","port":443,"region":"us-east-1"}"#,
+    );
+    let base = [
+        "neptune",
+        "memory",
+        "--live",
+        "--operation",
+        "query",
+        "--confirm-write",
+        "--confirm-delete",
+        "--input",
+        &input,
+    ];
+    for (tail, code, expected) in [
+        (vec![], 2, "--network-policy is required"),
+        (vec!["--network-policy", &consent], 1, "unknown key"),
+        (
+            vec!["--network-policy", &wrong],
+            1,
+            "unsupported or invalid live memory request",
+        ),
+        (
+            vec!["--network-policy", &p, "--region", "us-west-2"],
+            1,
+            "differs from the network policy",
+        ),
     ] {
-        let args:Vec<_>=base.iter().copied().chain(tail).collect();
-        let (status,stdout,stderr)=run(&args);
-        assert_eq!(status,code,"{stderr}"); assert!(stdout.is_empty());
-        assert!(stderr.contains(expected),"{stderr}");
-        assert!(!stderr.contains(&input)); assert!(!stderr.contains("credentials"));
+        let args: Vec<_> = base.iter().copied().chain(tail).collect();
+        let (status, stdout, stderr) = run(&args);
+        assert_eq!(status, code, "{stderr}");
+        assert!(stdout.is_empty());
+        assert!(stderr.contains(expected), "{stderr}");
+        assert!(!stderr.contains(&input));
+        assert!(!stderr.contains("credentials"));
     }
-    let unsafe_create=policy_file("s4-invalid-create.json",r#"{"memory_gb":15}"#);
-    let (code,stdout,stderr)=run(&["neptune","memory","--live","--operation","create-memory","--confirm-create","--input",&unsafe_create]);
-    assert_eq!(code,1); assert!(stdout.is_empty()); assert!(stderr.contains("unsupported or invalid live memory request"));
+    let unsafe_create = policy_file("s4-invalid-create.json", r#"{"memory_gb":15}"#);
+    let (code, stdout, stderr) = run(&[
+        "neptune",
+        "memory",
+        "--live",
+        "--operation",
+        "create-memory",
+        "--confirm-create",
+        "--input",
+        &unsafe_create,
+    ]);
+    assert_eq!(code, 1);
+    assert!(stdout.is_empty());
+    assert!(stderr.contains("unsupported or invalid live memory request"));
 }

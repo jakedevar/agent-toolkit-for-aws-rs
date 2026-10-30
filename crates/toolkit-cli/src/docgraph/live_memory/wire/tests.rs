@@ -267,34 +267,89 @@ fn http_response_limit_boundary_and_expired_deadline_are_enforced() {
 #[derive(Debug)]
 pub(super) struct ForbiddenProvider;
 impl aws_credential_types::provider::ProvideCredentials for ForbiddenProvider {
-    fn provide_credentials<'a>(&'a self)->aws_credential_types::provider::future::ProvideCredentials<'a> where Self:'a {
+    fn provide_credentials<'a>(
+        &'a self,
+    ) -> aws_credential_types::provider::future::ProvideCredentials<'a>
+    where
+        Self: 'a,
+    {
         panic!("SDK credential provider must not run")
     }
 }
 #[derive(Debug)]
 pub(super) struct SigningTrap;
 impl aws_smithy_runtime_api::client::auth::AuthScheme for SigningTrap {
-    fn scheme_id(&self)->AuthSchemeId {aws_smithy_runtime_api::client::auth::AuthScheme::scheme_id(&aws_runtime::auth::sigv4::SigV4AuthScheme::new())}
-    fn identity_resolver(&self,resolvers:&dyn aws_smithy_runtime_api::client::runtime_components::GetIdentityResolver)->Option<aws_smithy_runtime_api::client::identity::SharedIdentityResolver> {
-        aws_smithy_runtime_api::client::auth::AuthScheme::identity_resolver(&aws_runtime::auth::sigv4::SigV4AuthScheme::new(),resolvers)
+    fn scheme_id(&self) -> AuthSchemeId {
+        aws_smithy_runtime_api::client::auth::AuthScheme::scheme_id(
+            &aws_runtime::auth::sigv4::SigV4AuthScheme::new(),
+        )
     }
-    fn signer(&self)->&dyn aws_smithy_runtime_api::client::auth::Sign {self}
+    fn identity_resolver(
+        &self,
+        resolvers: &dyn aws_smithy_runtime_api::client::runtime_components::GetIdentityResolver,
+    ) -> Option<aws_smithy_runtime_api::client::identity::SharedIdentityResolver> {
+        aws_smithy_runtime_api::client::auth::AuthScheme::identity_resolver(
+            &aws_runtime::auth::sigv4::SigV4AuthScheme::new(),
+            resolvers,
+        )
+    }
+    fn signer(&self) -> &dyn aws_smithy_runtime_api::client::auth::Sign {
+        self
+    }
 }
 impl aws_smithy_runtime_api::client::auth::Sign for SigningTrap {
-    fn sign_http_request(&self,_:&mut ModeledRequest,_:&aws_smithy_runtime_api::client::identity::Identity,_:aws_smithy_runtime_api::client::auth::AuthSchemeEndpointConfig<'_>,_:&aws_smithy_runtime_api::client::runtime_components::RuntimeComponents,_:&aws_smithy_types::config_bag::ConfigBag)->Result<(),aws_smithy_runtime_api::box_error::BoxError> {
+    fn sign_http_request(
+        &self,
+        _: &mut ModeledRequest,
+        _: &aws_smithy_runtime_api::client::identity::Identity,
+        _: aws_smithy_runtime_api::client::auth::AuthSchemeEndpointConfig<'_>,
+        _: &aws_smithy_runtime_api::client::runtime_components::RuntimeComponents,
+        _: &aws_smithy_types::config_bag::ConfigBag,
+    ) -> Result<(), aws_smithy_runtime_api::box_error::BoxError> {
         panic!("SDK signer must not run")
     }
 }
 #[test]
 fn invalid_region_or_target_is_refused_before_encoding() {
-    for p in [policy(true),DatabaseEndpoint::new("g-other00000.us-east-1.neptune-graph.amazonaws.com",443,"us-east-1",&[]).unwrap()] {
-        assert!(encode(Route::Analytics,&query(),"us-east-1",Some(&p),Duration::from_secs(60)).is_err());
+    for p in [
+        policy(true),
+        DatabaseEndpoint::new(
+            "g-other00000.us-east-1.neptune-graph.amazonaws.com",
+            443,
+            "us-east-1",
+            &[],
+        )
+        .unwrap(),
+    ] {
+        assert!(encode(
+            Route::Analytics,
+            &query(),
+            "us-east-1",
+            Some(&p),
+            Duration::from_secs(60)
+        )
+        .is_err());
     }
-    assert!(encode(Route::Analytics,&query(),"us-west-2",Some(&policy(false)),Duration::from_secs(60)).is_err());
+    assert!(encode(
+        Route::Analytics,
+        &query(),
+        "us-west-2",
+        Some(&policy(false)),
+        Duration::from_secs(60)
+    )
+    .is_err());
 }
 #[test]
 fn a_query_timeout_that_no_longer_fits_refuses_before_send() {
-    let transport=FakeStreamingTransport::new();
-    assert!(exchange(&transport,&FakeSigner::new(),Route::Analytics,encoded(),"us-east-1",Instant::now()+Duration::from_millis(3000)).is_err());
+    let transport = FakeStreamingTransport::new();
+    assert!(exchange(
+        &transport,
+        &FakeSigner::new(),
+        Route::Analytics,
+        encoded(),
+        "us-east-1",
+        Instant::now() + Duration::from_millis(3000)
+    )
+    .is_err());
     assert!(transport.requests().is_empty());
 }

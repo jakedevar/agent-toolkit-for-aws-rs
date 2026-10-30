@@ -245,46 +245,109 @@ fn dynamodb_recent_messages_preserves_descending_request_and_chronological_resul
 
 #[test]
 fn insecure_creation_and_mixed_backend_plans_have_zero_calls() {
-    let secure=memory::create_graph("example",32,1536,"model",true);
-    for (key,bad) in [("publicConnectivity",Json::Bool(true)),("deletionProtection",Json::Bool(false)),("tags",json("{}")),("provisionedMemory",Json::Int(15)),("vectorSearchConfiguration",json(r#"{"dimension":65536}"#)),("replicaCount",Json::Int(3))] {
-        let mut request=secure.clone();
-        let Json::Object(fields)=&mut request else {panic!()};
-        fields.iter_mut().find(|(k,_)|k==key).unwrap().1=bad;
-        let mut spy=Spy::default();
-        assert!(execute(&mut spy,"create-graphrag",&json("{}"),&[request],None,Instant::now()+Duration::from_secs(10)).is_err());
-        assert!(spy.calls.is_empty(),"{key}");
+    let secure = memory::create_graph("example", 32, 1536, "model", true);
+    for (key, bad) in [
+        ("publicConnectivity", Json::Bool(true)),
+        ("deletionProtection", Json::Bool(false)),
+        ("tags", json("{}")),
+        ("provisionedMemory", Json::Int(15)),
+        ("vectorSearchConfiguration", json(r#"{"dimension":65536}"#)),
+        ("replicaCount", Json::Int(3)),
+    ] {
+        let mut request = secure.clone();
+        let Json::Object(fields) = &mut request else {
+            panic!()
+        };
+        fields.iter_mut().find(|(k, _)| k == key).unwrap().1 = bad;
+        let mut spy = Spy::default();
+        assert!(execute(
+            &mut spy,
+            "create-graphrag",
+            &json("{}"),
+            &[request],
+            None,
+            Instant::now() + Duration::from_secs(10)
+        )
+        .is_err());
+        assert!(spy.calls.is_empty(), "{key}");
     }
-    let dynamo=memory::plan("recent-messages",&json(r#"{"session_id":"s"}"#)).unwrap().remove(0);
-    let mut spy=Spy::default();
-    assert!(execute(&mut spy,"create-memory",&json("{}"),&[secure,dynamo],None,Instant::now()+Duration::from_secs(10)).is_err());
+    let dynamo = memory::plan("recent-messages", &json(r#"{"session_id":"s"}"#))
+        .unwrap()
+        .remove(0);
+    let mut spy = Spy::default();
+    assert!(execute(
+        &mut spy,
+        "create-memory",
+        &json("{}"),
+        &[secure, dynamo],
+        None,
+        Instant::now() + Duration::from_secs(10)
+    )
+    .is_err());
     assert!(spy.calls.is_empty());
 }
 #[test]
 fn dispatcher_stays_terminal_after_a_backend_failure() {
-    let p=policy(false);
-    let mut spy=Spy::default();
+    let p = policy(false);
+    let mut spy = Spy::default();
     spy.responses.push_back(Err("unknown outcome".into()));
-    let query=memory::query("g-abc123def4","RETURN 1",json("{}")).unwrap();
-    let mut client=Dispatcher {backend:&mut spy,policy:Some(&p),deadline:Instant::now()+Duration::from_secs(20),failed:false};
+    let query = memory::query("g-abc123def4", "RETURN 1", json("{}")).unwrap();
+    let mut client = Dispatcher {
+        backend: &mut spy,
+        policy: Some(&p),
+        deadline: Instant::now() + Duration::from_secs(20),
+        failed: false,
+    };
     assert!(client.submit(&query).is_err());
     assert!(client.submit(&query).is_err());
-    assert_eq!(spy.calls.len(),1);
+    assert_eq!(spy.calls.len(), 1);
 }
 #[test]
 fn all_ingestion_steps_and_successful_consolidation_match_replay() {
-    for (op,input) in [
-        ("ingest-chunk",json(r#"{"graph_id":"g-abc123def4","chunk_id":"c","doc_id":"d","text":"x","sequence":1,"embedding":[0.1],"prev_chunk_id":"p"}"#)),
-        ("ingest-entity",json(r#"{"graph_id":"g-abc123def4","name":"a","entity_type":"person","description":"b","embedding":[0.1]}"#)),
-        ("remember-embedding",json(r#"{"graph_id":"g-abc123def4","entity_name":"a","description":"b","embedding":[1]}"#)),
-        ("consolidate",json(r#"{"graph_id":"g-abc123def4"}"#)),
+    for (op, input) in [
+        (
+            "ingest-chunk",
+            json(
+                r#"{"graph_id":"g-abc123def4","chunk_id":"c","doc_id":"d","text":"x","sequence":1,"embedding":[0.1],"prev_chunk_id":"p"}"#,
+            ),
+        ),
+        (
+            "ingest-entity",
+            json(
+                r#"{"graph_id":"g-abc123def4","name":"a","entity_type":"person","description":"b","embedding":[0.1]}"#,
+            ),
+        ),
+        (
+            "remember-embedding",
+            json(
+                r#"{"graph_id":"g-abc123def4","entity_name":"a","description":"b","embedding":[1]}"#,
+            ),
+        ),
+        ("consolidate", json(r#"{"graph_id":"g-abc123def4"}"#)),
     ] {
-        let requests=memory::plan(op,&input).unwrap();
-        let mut spy=Spy::default();
-        let result=run(&mut spy,op,&input,Some(&policy(false))).unwrap();
-        assert_eq!(spy.calls.iter().map(|(_,r)|r.clone()).collect::<Vec<_>>(),requests);
-        let recording=Json::object(vec![("calls",Json::Array(requests.iter().map(|request|Json::object(vec![("request",request.clone()),("response",json(r#"{"results":[]}"#))])).collect()))]);
-        let mut replay=memory::RecordedMemory::from_document(&recording).unwrap();
-        assert_eq!(memory::execute(&mut replay,op,&requests).unwrap(),result);
-        assert_eq!(replay.unused(),0);
+        let requests = memory::plan(op, &input).unwrap();
+        let mut spy = Spy::default();
+        let result = run(&mut spy, op, &input, Some(&policy(false))).unwrap();
+        assert_eq!(
+            spy.calls.iter().map(|(_, r)| r.clone()).collect::<Vec<_>>(),
+            requests
+        );
+        let recording = Json::object(vec![(
+            "calls",
+            Json::Array(
+                requests
+                    .iter()
+                    .map(|request| {
+                        Json::object(vec![
+                            ("request", request.clone()),
+                            ("response", json(r#"{"results":[]}"#)),
+                        ])
+                    })
+                    .collect(),
+            ),
+        )]);
+        let mut replay = memory::RecordedMemory::from_document(&recording).unwrap();
+        assert_eq!(memory::execute(&mut replay, op, &requests).unwrap(), result);
+        assert_eq!(replay.unused(), 0);
     }
 }

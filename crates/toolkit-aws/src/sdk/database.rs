@@ -1145,14 +1145,21 @@ impl<S: crate::stream::ResponseStream> crate::stream::ResponseStream for Releasi
 }
 
 fn docgraph_service_endpoint(service: &str, region: &str) -> Result<DatabaseEndpoint, AwsError> {
-    if !["dynamodb", "neptune-graph"].contains(&service) || !valid_region(region)
-        || region.starts_with("cn-") || region.starts_with("us-gov-")
-        || region.contains("-iso") {
-        return Err(policy_error("unsupported bounded docgraph service or region"));
+    if !["dynamodb", "neptune-graph"].contains(&service)
+        || !valid_region(region)
+        || region.starts_with("cn-")
+        || region.starts_with("us-gov-")
+        || region.contains("-iso")
+    {
+        return Err(policy_error(
+            "unsupported bounded docgraph service or region",
+        ));
     }
     Ok(DatabaseEndpoint {
-        host: format!("{service}.{region}.amazonaws.com"), port: 443,
-        region: region.to_string(), ranges: Vec::new(),
+        host: format!("{service}.{region}.amazonaws.com"),
+        port: 443,
+        region: region.to_string(),
+        ranges: Vec::new(),
     })
 }
 
@@ -1163,7 +1170,7 @@ impl SdkTransport {
     /// explicit roots and cancellable deadlines. Does not widen policy parsing.
     ///
     /// # Errors
-    /// InvalidConfig for any other service, invalid region or TLS roots.
+    /// `InvalidConfig` for any other service, invalid region or TLS roots.
     pub fn for_docgraph_service(
         runtime: &SdkRuntime,
         roots: &ValidatedRoots,

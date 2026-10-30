@@ -226,7 +226,7 @@ pub(super) fn encode(
         ($service:ident, $endpoint:expr) => {{
             let builder = $service::Config::builder()
                 .behavior_version_latest()
-                .region($service::config::Region::new(region))
+                .region($service::config::Region::new(region.to_string()))
                 .http_client(http)
                 .allow_no_auth()
                 .auth_scheme_preference([AuthSchemeId::new("noAuth")])
@@ -234,7 +234,8 @@ pub(super) fn encode(
                 .timeout_config(TimeoutConfig::disabled())
                 .endpoint_url($endpoint);
             #[cfg(test)]
-            let builder = builder.credentials_provider(tests::ForbiddenProvider)
+            let builder = builder
+                .credentials_provider(tests::ForbiddenProvider)
                 .push_auth_scheme(tests::SigningTrap);
             let config = builder.build();
             #[cfg(test)]
@@ -257,9 +258,10 @@ pub(super) fn encode(
                 .and_then(|d| i32::try_from(d.as_millis()).ok())
                 .filter(|ms| *ms > 0)
                 .ok_or(INVALID)?;
-                let client = aws_sdk_neptunegraph::Client::from_conf(
-                    config!(aws_sdk_neptunegraph, format!("https://{}:443", p.host())),
-                );
+                let client = aws_sdk_neptunegraph::Client::from_conf(config!(
+                    aws_sdk_neptunegraph,
+                    format!("https://{}:443", p.host())
+                ));
                 let parameters = request
                     .get("parameters")
                     .map(|v| {
@@ -284,9 +286,10 @@ pub(super) fn encode(
                     .iter()
                     .map(|(k, v)| Ok((k.clone(), v.as_str().ok_or(INVALID)?.to_string())))
                     .collect::<Result<HashMap<_, _>, String>>()?;
-                let client = aws_sdk_neptunegraph::Client::from_conf(
-                    config!(aws_sdk_neptunegraph, format!("https://neptune-graph.{region}.amazonaws.com")),
-                );
+                let client = aws_sdk_neptunegraph::Client::from_conf(config!(
+                    aws_sdk_neptunegraph,
+                    format!("https://neptune-graph.{region}.amazonaws.com")
+                ));
                 let dimension = integer(
                     request.get("vectorSearchConfiguration").ok_or(INVALID)?,
                     "dimension",
@@ -295,7 +298,8 @@ pub(super) fn encode(
                 )?;
                 let vector = aws_sdk_neptunegraph::types::VectorSearchConfiguration::builder()
                     .dimension(dimension)
-                    .build().map_err(|_| INVALID)?;
+                    .build()
+                    .map_err(|_| INVALID)?;
                 let replica = request
                     .get("replicaCount")
                     .map(|_| integer(request, "replicaCount", 0, 2))
@@ -313,9 +317,10 @@ pub(super) fn encode(
                     .await;
             }
             Route::Dynamo => {
-                let client = aws_sdk_dynamodb::Client::from_conf(
-                    config!(aws_sdk_dynamodb, format!("https://dynamodb.{region}.amazonaws.com")),
-                );
+                let client = aws_sdk_dynamodb::Client::from_conf(config!(
+                    aws_sdk_dynamodb,
+                    format!("https://dynamodb.{region}.amazonaws.com")
+                ));
                 if text(request, "operation")? == "put_item" {
                     let _ = client
                         .put_item()
@@ -341,12 +346,13 @@ pub(super) fn encode(
         }
         Ok::<_, String>(())
     })?;
-    capture
+    let captured = capture
         .0
         .lock()
         .map_err(|_| INVALID)?
         .take()
-        .ok_or_else(|| INVALID.into())
+        .ok_or_else(|| INVALID.into());
+    captured
 }
 fn decode_attribute(value: &Json) -> Result<Json, String> {
     let fields = object(value)?;
