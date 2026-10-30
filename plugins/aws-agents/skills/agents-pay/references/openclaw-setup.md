@@ -1,5 +1,11 @@
 # OpenClaw Setup
 
+Plugin references are plain files; the host does not substitute their variables.
+Get the absolute installed plugin root from the loaded parent skill (its
+`${CLAUDE_PLUGIN_ROOT}` token is substituted there). In your own terminal, set
+`export CLAUDE_PLUGIN_ROOT='/absolute/installed/plugin'` to that actual path.
+The guarded commands below refuse an unset or empty root; never use PATH.
+
 OpenClaw uses the `@aws/aws-agents-pay` package from ClawHub. Its canonical
 source lives at
 `plugins/aws-agents/skills/agents-pay/packages/openclaw/` in this repository.
@@ -55,7 +61,7 @@ On Windows outside Git Bash or MSYS, use `bin\toolkit.exe` in place of
 
 ## Quick Setup (Recommended)
 
-After deploying the AgentCore project, the human runs `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay admin setup-openclaw` in their own terminal using the bundled dispatcher. The interactive wizard creates the payment instrument and session, then generates the OpenClaw configuration:
+After deploying the AgentCore project, the human runs `"${CLAUDE_PLUGIN_ROOT:?Set CLAUDE_PLUGIN_ROOT to the absolute installed plugin root}/libexec/toolkit" agents-pay admin setup-openclaw` in their own terminal using the bundled dispatcher. The interactive wizard creates the payment instrument and session, then generates the OpenClaw configuration:
 
 ```bash
 cd ~/.openclaw/extensions/aws-agents-pay
@@ -141,7 +147,7 @@ USDC with 6 decimals), and no default is supplied.
 
 OpenClaw executes payments through this TypeScript plugin using
 `get_paid_content`. Policy validation, SSRF controls and merchant replay stay
-in TypeScript. Other hosts use `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay fetch`; enable only one path.
+in TypeScript. Other hosts use `"${CLAUDE_PLUGIN_ROOT:?Set CLAUDE_PLUGIN_ROOT to the absolute installed plugin root}/libexec/toolkit" agents-pay fetch`; enable only one path.
 
 The fixed binary table selects the package's platform-specific Rust toolkit;
 unsupported platforms fail closed. The plugin uses a bounded, no-shell bridge.

@@ -1,5 +1,11 @@
 # Deploy a JumpStart Foundation Model to a SageMaker Endpoint
 
+Plugin references are plain files; the host does not substitute their variables.
+Get the absolute installed plugin root from the loaded parent skill (its
+`${CLAUDE_PLUGIN_ROOT}` token is substituted there). In your own terminal, set
+`export CLAUDE_PLUGIN_ROOT='/absolute/installed/plugin'` to that actual path.
+The guarded commands below refuse an unset or empty root; never use PATH.
+
 ## Scenario
 
 - **Model Type**: open-weight foundation model resolved through **SageMaker JumpStart** (a base
@@ -164,14 +170,14 @@ the **directory-management** skill to set one up.
 
 ### Markdown Header
 
-The notebook begins with a markdown cell whose only content is the title `# Deploy a JumpStart Foundation Model to SageMaker`. It is Cell 0 of the template, and `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" ai-payloads render` writes it.
+The notebook begins with a markdown cell whose only content is the title `# Deploy a JumpStart Foundation Model to SageMaker`. It is Cell 0 of the template, and `"${CLAUDE_PLUGIN_ROOT:?Set CLAUDE_PLUGIN_ROOT to the absolute installed plugin root}/libexec/toolkit" ai-payloads render` writes it.
 
 ### Cells
 
-`"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" ai-payloads render` builds the notebook from `../code_templates/deploy-jumpstart-sagemaker.py`, one cell per `# Cell N:` marker; do not assemble the cells by hand. Render it with the values file described under Placeholders:
+`"${CLAUDE_PLUGIN_ROOT:?Set CLAUDE_PLUGIN_ROOT to the absolute installed plugin root}/libexec/toolkit" ai-payloads render` builds the notebook from `../code_templates/deploy-jumpstart-sagemaker.py`, one cell per `# Cell N:` marker; do not assemble the cells by hand. Render it with the values file described under Placeholders:
 
 ```bash
-"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" ai-payloads render <skill-dir>/references/model-deployment/code_templates/deploy-jumpstart-sagemaker.py --mode notebook --project-dir <project-dir> --values <scratch-dir>/values.json
+"${CLAUDE_PLUGIN_ROOT:?Set CLAUDE_PLUGIN_ROOT to the absolute installed plugin root}/libexec/toolkit" ai-payloads render <skill-dir>/references/model-deployment/code_templates/deploy-jumpstart-sagemaker.py --mode notebook --project-dir <project-dir> --values <scratch-dir>/values.json
 ```
 
 (`<skill-dir>` is the directory that holds this skill's `references/`; the output rules and the append step are in `../references/code_output_guide.md`.) The cells are:

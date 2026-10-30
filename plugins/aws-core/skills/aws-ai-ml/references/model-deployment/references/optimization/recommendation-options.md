@@ -1,5 +1,11 @@
 # Recommendation Configuration Options
 
+Plugin references are plain files; the host does not substitute their variables.
+Get the absolute installed plugin root from the loaded parent skill (its
+`${CLAUDE_PLUGIN_ROOT}` token is substituted there). In your own terminal, set
+`export CLAUDE_PLUGIN_ROOT='/absolute/installed/plugin'` to that actual path.
+The guarded commands below refuse an unset or empty root; never use PATH.
+
 ## Instance Types (optional)
 
 For **latency** and **throughput** targets, the user can specify which instance types to evaluate:
@@ -31,11 +37,11 @@ Ask the user for a dataset (an S3 location), then **inspect it yourself** to fig
 
 ⏸ Wait for user.
 
-When the user provides the S3 URI, read a couple of records and identify the schema, then build the workload in Cell 3 of the rendered notebook (`"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" ai-payloads render`, from `../../code_templates/optimize-recommendation.py`) with `Workload.from_dataset(...)` instead of `Workload.synthetic(...)`.
+When the user provides the S3 URI, read a couple of records and identify the schema, then build the workload in Cell 3 of the rendered notebook (`"${CLAUDE_PLUGIN_ROOT:?Set CLAUDE_PLUGIN_ROOT to the absolute installed plugin root}/libexec/toolkit" ai-payloads render`, from `../../code_templates/optimize-recommendation.py`) with `Workload.from_dataset(...)` instead of `Workload.synthetic(...)`.
 
 `custom_dataset_type` is an **optional hint** naming the dataset's schema (not required — omit to let AIPerf auto-detect). See `benchmarking-guidance.md` → "Dataset schema hint (`custom_dataset_type`)" for the schema → value mapping and the dataset-transformation fallback for unsupported formats.
 
-The `Workload.from_dataset(...)` alternative is **Cell 3 of `../../code_templates/optimize-recommendation.py`** (a commented-out block in that cell) — swap it in for `Workload.synthetic(...)` and fill `[DATASET_S3_URI]` and `custom_dataset_type` (from the schema you detected, or omit for auto-detection). It is a manual edit point of the notebook that `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" ai-payloads render` writes (the commented-out block is never filled by the command, so fill `[DATASET_S3_URI]` yourself); edit it there rather than regenerating the notebook.
+The `Workload.from_dataset(...)` alternative is **Cell 3 of `../../code_templates/optimize-recommendation.py`** (a commented-out block in that cell) — swap it in for `Workload.synthetic(...)` and fill `[DATASET_S3_URI]` and `custom_dataset_type` (from the schema you detected, or omit for auto-detection). It is a manual edit point of the notebook that `"${CLAUDE_PLUGIN_ROOT:?Set CLAUDE_PLUGIN_ROOT to the absolute installed plugin root}/libexec/toolkit" ai-payloads render` writes (the commented-out block is never filled by the command, so fill `[DATASET_S3_URI]` yourself); edit it there rather than regenerating the notebook.
 
 ## Workload Config
 

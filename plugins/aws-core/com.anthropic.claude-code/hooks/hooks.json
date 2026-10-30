@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh -c 'if out=$(\"$0\" 2>/dev/null); then printf %s \"$out\"; else printf %s \"{\\\"hookSpecificOutput\\\":{\\\"hookEventName\\\":\\\"PreToolUse\\\",\\\"permissionDecision\\\":\\\"deny\\\",\\\"permissionDecisionReason\\\":\\\"Secret-safety hook is unavailable or failed, so this call is blocked. Reinstall the aws-core plugin.\\\"}}\"; fi' \"${CLAUDE_PLUGIN_ROOT}/bin/secret-safety\"",
+            "command": "sh -c 'if out=$(\"$0\" 2>/dev/null); then printf %s \"$out\"; else printf %s \"{\\\"hookSpecificOutput\\\":{\\\"hookEventName\\\":\\\"PreToolUse\\\",\\\"permissionDecision\\\":\\\"deny\\\",\\\"permissionDecisionReason\\\":\\\"Secret-safety hook is unavailable or failed, so this call is blocked. Reinstall the aws-core plugin.\\\"}}\"; fi' \"${CLAUDE_PLUGIN_ROOT}/libexec/secret-safety\"",
             "timeout": 5
           }
         ]
@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh -c 'if out=$(\"$0\" 2>/dev/null); then printf %s \"$out\"; else printf %s \"{\\\"hookSpecificOutput\\\":{\\\"hookEventName\\\":\\\"PreToolUse\\\",\\\"permissionDecision\\\":\\\"deny\\\",\\\"permissionDecisionReason\\\":\\\"Secret-safety hook is unavailable or failed, so this call is blocked. Reinstall the aws-core plugin.\\\"}}\"; fi' \"${CLAUDE_PLUGIN_ROOT}/bin/secret-safety\"",
+            "command": "sh -c 'if out=$(\"$0\" 2>/dev/null); then printf %s \"$out\"; else printf %s \"{\\\"hookSpecificOutput\\\":{\\\"hookEventName\\\":\\\"PreToolUse\\\",\\\"permissionDecision\\\":\\\"deny\\\",\\\"permissionDecisionReason\\\":\\\"Secret-safety hook is unavailable or failed, so this call is blocked. Reinstall the aws-core plugin.\\\"}}\"; fi' \"${CLAUDE_PLUGIN_ROOT}/libexec/secret-safety\"",
             "timeout": 5
           }
         ]

@@ -1,4 +1,4 @@
-//! `plugin-stage`: build and stage per-plugin `./bin` binaries (#4487).
+//! `plugin-stage`: build and stage per-plugin `./libexec` binaries (#4487).
 //!
 //! ```text
 //! plugin-stage check   [COMMON]                 launcher contract + staged files
@@ -223,7 +223,7 @@ fn run_plan(ctx: &Context, args: &Args, build_now: bool) -> ExitCode {
             }
         }
         let dest_dir = destination.dir(&ctx.root, &ctx.plugins_root);
-        if let Err(err) = stage::check_merge_at(&dest_dir, &provenance, args.clean) {
+        if let Err(err) = stage::check_merge_at(&dest_dir, destination, &provenance, args.clean) {
             return report(&[err], "");
         }
     }

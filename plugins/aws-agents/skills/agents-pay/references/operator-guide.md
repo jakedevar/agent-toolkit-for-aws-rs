@@ -1,5 +1,11 @@
 # agents-pay operator guide
 
+Plugin references are plain files; the host does not substitute their variables.
+Get the absolute installed plugin root from the loaded parent skill (its
+`${CLAUDE_PLUGIN_ROOT}` token is substituted there). In your own terminal, set
+`export CLAUDE_PLUGIN_ROOT='/absolute/installed/plugin'` to that actual path.
+The guarded commands below refuse an unset or empty root; never use PATH.
+
 Operator-facing setup and role guidance. **Read the IAM section before deploying.**
 
 (Kept in `references/` rather than as a skill-level README: in this repo READMEs live
@@ -20,14 +26,14 @@ AgentCore Payments defines a four-role model. Follow the official guide:
 | Role | Purpose | Who uses it |
 |---|---|---|
 | **ControlPlaneRole** | Payment managers, connectors, credential providers | Administrator |
-| **ManagementRole** | Payment instruments and sessions. Carries an explicit `Deny` on `ProcessPayment` | **A human**, running this skill's `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay admin` commands |
+| **ManagementRole** | Payment instruments and sessions. Carries an explicit `Deny` on `ProcessPayment` | **A human**, running this skill's `"${CLAUDE_PLUGIN_ROOT:?Set CLAUDE_PLUGIN_ROOT to the absolute installed plugin root}/libexec/toolkit" agents-pay admin` commands |
 | **ProcessPaymentRole** | Executes payments against an existing session. **No session writes** | **The agent runtime** |
 | **ResourceRetrievalRole** | Service role AgentCore assumes to retrieve credentials | `bedrock-agentcore.amazonaws.com` |
 
 ### The rule
 
 > **The agent must have neither the ManagementRole nor the ability to run
-> `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay admin`.**
+> `"${CLAUDE_PLUGIN_ROOT:?Set CLAUDE_PLUGIN_ROOT to the absolute installed plugin root}/libexec/toolkit" agents-pay admin`.**
 
 A human uses the **ManagementRole** to create the payment instrument and to
 authorize each spending session. The agent runs with the **ProcessPaymentRole**,
@@ -72,10 +78,10 @@ and on why the split exists at all:
 | Step | Command | Role |
 |---|---|---|
 | 1 | `agentcore add payment-manager` / `payment-connector` / `deploy` | ControlPlaneRole |
-| 2 | `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay admin init-config` | none — writes a local file |
-| 3 | `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay admin create-instrument` | **ManagementRole** |
-| 4 | `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay admin new-session` | **ManagementRole** |
-| 5 | agent runs `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay fetch` | **ProcessPaymentRole** |
+| 2 | `"${CLAUDE_PLUGIN_ROOT:?Set CLAUDE_PLUGIN_ROOT to the absolute installed plugin root}/libexec/toolkit" agents-pay admin init-config` | none — writes a local file |
+| 3 | `"${CLAUDE_PLUGIN_ROOT:?Set CLAUDE_PLUGIN_ROOT to the absolute installed plugin root}/libexec/toolkit" agents-pay admin create-instrument` | **ManagementRole** |
+| 4 | `"${CLAUDE_PLUGIN_ROOT:?Set CLAUDE_PLUGIN_ROOT to the absolute installed plugin root}/libexec/toolkit" agents-pay admin new-session` | **ManagementRole** |
+| 5 | agent runs `"${CLAUDE_PLUGIN_ROOT:?Set CLAUDE_PLUGIN_ROOT to the absolute installed plugin root}/libexec/toolkit" agents-pay fetch` | **ProcessPaymentRole** |
 
 ---
 
@@ -83,7 +89,7 @@ and on why the split exists at all:
 
 ```bash
 # 0. Resolve the installed aws-agents plugin root (see setup.md); stop if missing.
-"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" help
+"${CLAUDE_PLUGIN_ROOT:?Set CLAUDE_PLUGIN_ROOT to the absolute installed plugin root}/libexec/toolkit" help
 npm install -g @aws/agentcore
 
 # 1. Provision (ControlPlaneRole; only step that touches provider secrets)
@@ -92,12 +98,12 @@ agentcore add payment-connector                   # NO FLAGS — interactive wiz
 agentcore deploy
 
 # 2. Write the config with at least one approved payee
-"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay admin init-config \
+"${CLAUDE_PLUGIN_ROOT:?Set CLAUDE_PLUGIN_ROOT to the absolute installed plugin root}/libexec/toolkit" agents-pay admin init-config \
   --max-per-payment-usd 0.05 \
   --recipient 0xMerchantWalletAddress
 
 # 3. Create the wallet (ManagementRole) — payer identity comes from the config
-"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay admin create-instrument --email you@example.com
+"${CLAUDE_PLUGIN_ROOT:?Set CLAUDE_PLUGIN_ROOT to the absolute installed plugin root}/libexec/toolkit" agents-pay admin create-instrument --email you@example.com
 
 # 3a/3b. THE END USER now delegates in a browser and funds the wallet with USDC.
 #        Both belong to the wallet, and both must happen BEFORE step 4 —
@@ -105,10 +111,10 @@ agentcore deploy
 #        Step 3 prints the delegation URL and the wallet address.
 
 # 4. Authorize a budget (ManagementRole; interactive — you type "approve")
-"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay admin new-session --budget 1.00
+"${CLAUDE_PLUGIN_ROOT:?Set CLAUDE_PLUGIN_ROOT to the absolute installed plugin root}/libexec/toolkit" agents-pay admin new-session --budget 1.00
 
-# 5. Verify, then let your agent run `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay fetch`
-"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay admin preflight
+# 5. Verify, then let your agent run `"${CLAUDE_PLUGIN_ROOT:?Set CLAUDE_PLUGIN_ROOT to the absolute installed plugin root}/libexec/toolkit" agents-pay fetch`
+"${CLAUDE_PLUGIN_ROOT:?Set CLAUDE_PLUGIN_ROOT to the absolute installed plugin root}/libexec/toolkit" agents-pay admin preflight
 ```
 
 ### The interactive approval, concretely
@@ -117,7 +123,7 @@ Step 4 is an ordinary command that prompts. It is not a web console or a callbac
 you run it in your shell and type one word:
 
 ```text
-$ "${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay admin new-session --budget 1.00
+$ "${CLAUDE_PLUGIN_ROOT:?Set CLAUDE_PLUGIN_ROOT to the absolute installed plugin root}/libexec/toolkit" agents-pay admin new-session --budget 1.00
 
 About to create a payment session:
   manager   : arn:aws:bedrock-agentcore:us-west-2:1234:payment-manager/pm-abc
@@ -145,7 +151,7 @@ Piping `approve` in does not work either.
 ### OpenClaw
 
 If the agent runs on OpenClaw, install the published plugin instead of wiring the
-`"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay fetch` command by hand:
+`"${CLAUDE_PLUGIN_ROOT:?Set CLAUDE_PLUGIN_ROOT to the absolute installed plugin root}/libexec/toolkit" agents-pay fetch` command by hand:
 
 ```bash
 openclaw plugins install clawhub:@aws/aws-agents-pay
@@ -153,7 +159,7 @@ openclaw plugins inspect aws-agents-pay               # confirm what it register
 ```
 
 OpenClaw executes payments through the TypeScript plugin's `get_paid_content`
-tool. Other hosts use the equivalent `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay fetch` command. Choose exactly one
+tool. Other hosts use the equivalent `"${CLAUDE_PLUGIN_ROOT:?Set CLAUDE_PLUGIN_ROOT to the absolute installed plugin root}/libexec/toolkit" agents-pay fetch` command. Choose exactly one
 runtime path; enabling both would make policy enforcement path-dependent. The
 production plugin uses a fixed platform binary and Rust builds the payment
 payload. After a proof, its final output check covers text and details; it
@@ -168,7 +174,7 @@ Two things to confirm before you trust the OpenClaw runtime:
    budget, the per-session cap bounds nothing.
 
 If either is wrong, disable the plugin before switching to the
-`"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay fetch` path.
+`"${CLAUDE_PLUGIN_ROOT:?Set CLAUDE_PLUGIN_ROOT to the absolute installed plugin root}/libexec/toolkit" agents-pay fetch` path.
 
 ### If you use the Strands plugin or LangGraph middleware instead
 
@@ -179,7 +185,7 @@ which is the arrangement the IAM guide warns against.
 
 They are a reasonable choice for a prototype or an agent whose whole tool surface you
 own. For an agent spending your money against the open web, route payments through
-`"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay fetch` instead. Either way, **do not enable both** — the model would choose which one settles
+`"${CLAUDE_PLUGIN_ROOT:?Set CLAUDE_PLUGIN_ROOT to the absolute installed plugin root}/libexec/toolkit" agents-pay fetch` instead. Either way, **do not enable both** — the model would choose which one settles
 a given `402`, and the gate becomes advisory.
 
 See "The gate only covers what routes through it" in
@@ -187,8 +193,8 @@ See "The gate only covers what routes through it" in
 
 ### Registering the tools
 
-There is nothing to import. Expose `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay fetch` and
-`"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay fetch --status` through your host's shell or tool mechanism, or
+There is nothing to import. Expose `"${CLAUDE_PLUGIN_ROOT:?Set CLAUDE_PLUGIN_ROOT to the absolute installed plugin root}/libexec/toolkit" agents-pay fetch` and
+`"${CLAUDE_PLUGIN_ROOT:?Set CLAUDE_PLUGIN_ROOT to the absolute installed plugin root}/libexec/toolkit" agents-pay fetch --status` through your host's shell or tool mechanism, or
 wrap them in a tool that runs the command as a subprocess and returns its JSON. See
 "Known limits" in `SKILL.md` for the import API that no longer exists.
 
@@ -198,9 +204,9 @@ wrap them in a tool that runs the command as a subprocess and returns its JSON. 
 
 | Capability | Command | Causes spending? | Can raise a limit? |
 |---|---|---|---|
-| Pay and fetch | `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay fetch URL` | Yes, within both ceilings | **No** |
-| Check remaining budget | `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay fetch --status` | No — read-only | **No** |
-| Pay for a browser navigation | `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay fetch --browser-handle URL` | Yes, within both ceilings | **No** |
+| Pay and fetch | `"${CLAUDE_PLUGIN_ROOT:?Set CLAUDE_PLUGIN_ROOT to the absolute installed plugin root}/libexec/toolkit" agents-pay fetch URL` | Yes, within both ceilings | **No** |
+| Check remaining budget | `"${CLAUDE_PLUGIN_ROOT:?Set CLAUDE_PLUGIN_ROOT to the absolute installed plugin root}/libexec/toolkit" agents-pay fetch --status` | No — read-only | **No** |
+| Pay for a browser navigation | `"${CLAUDE_PLUGIN_ROOT:?Set CLAUDE_PLUGIN_ROOT to the absolute installed plugin root}/libexec/toolkit" agents-pay fetch --browser-handle URL` | Yes, within both ceilings | **No** |
 
 Out of reach entirely: session creation, infrastructure provisioning, provider
 credentials, and signed payment proofs.
@@ -325,8 +331,8 @@ Full threat model and enforcement table:
 | [`setup.md`](setup.md) | Full provisioning walkthrough and IAM policies |
 | [`troubleshooting.md`](troubleshooting.md) | Refusal and failure diagnosis |
 
-The payment code is the `toolkit` binary: `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay fetch` for the agent and
-`"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay admin` for the human.
+The payment code is the `toolkit` binary: `"${CLAUDE_PLUGIN_ROOT:?Set CLAUDE_PLUGIN_ROOT to the absolute installed plugin root}/libexec/toolkit" agents-pay fetch` for the agent and
+`"${CLAUDE_PLUGIN_ROOT:?Set CLAUDE_PLUGIN_ROOT to the absolute installed plugin root}/libexec/toolkit" agents-pay admin` for the human.
 
 ---
 

@@ -1,5 +1,11 @@
 # RLVR Lambda Reward Function Guide
 
+Plugin references are plain files; the host does not substitute their variables.
+Get the absolute installed plugin root from the loaded parent skill (its
+`${CLAUDE_PLUGIN_ROOT}` token is substituted there). In your own terminal, set
+`export CLAUDE_PLUGIN_ROOT='/absolute/installed/plugin'` to that actual path.
+The guarded commands below refuse an unset or empty root; never use PATH.
+
 ## What Is a Lambda Reward Function?
 
 For RLVR (Reinforcement Learning from Verifiable Rewards) training, a Lambda reward function is an AWS Lambda that evaluates model outputs during training and returns numerical reward scores. SageMaker invokes this Lambda within the training loop to provide learning signals that guide model optimization.
@@ -120,7 +126,7 @@ Test the reward function by executing it against crafted sample data, then check
 1. **Build test input.** Choose the `--format` that matches the training data: `openai` (chat messages), `verl`, or `nova` for Nova 2.0 Lite. Print the documented event for it:
 
    ```bash
-   "${CLAUDE_PLUGIN_ROOT}/bin/toolkit" ai-payloads reward sample --format verl
+   "${CLAUDE_PLUGIN_ROOT:?Set CLAUDE_PLUGIN_ROOT to the absolute installed plugin root}/libexec/toolkit" ai-payloads reward sample --format verl
    ```
 
    Infer the expected Lambda event and response format from that sample and from the `lambda_handler` function in the appropriate source template. Choose one prompt from the training data reviewed in Step 1. Construct four test events that mimic what SageMaker sends to the Lambda:
@@ -153,7 +159,7 @@ Test the reward function by executing it against crafted sample data, then check
 5. **Check the response format.** SageMaker sends one sample per invocation, so `--batch` is needed for the four-sample file (a local test extension). The checker reads both files offline; it does not run the Lambda or call AWS:
 
    ```bash
-   "${CLAUDE_PLUGIN_ROOT}/bin/toolkit" ai-payloads reward check --format verl --event /tmp/test_reward_input.json --response /tmp/test_reward_output.json --batch
+   "${CLAUDE_PLUGIN_ROOT:?Set CLAUDE_PLUGIN_ROOT to the absolute installed plugin root}/libexec/toolkit" ai-payloads reward check --format verl --event /tmp/test_reward_input.json --response /tmp/test_reward_output.json --batch
    ```
 
    Use the same `--format` as in 1 (`--format openai`, `--format nova`). Exit 0 means the response matches one of the two documented envelopes with one result per sample. On exit 1, fix `lambda_handler`'s return value (it must not be changed from the template's schema, so a failure usually means the function was edited incorrectly) and re-run.
@@ -175,7 +181,7 @@ Test the reward function by executing it against crafted sample data, then check
 
 ### Step 9: Register the Reward Function in the Finetuning Output
 
-The registration code is Cell 3 of `code_templates/rlvr.py`. Do not write it by hand: `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" ai-payloads render` renders it with the rest of the finetuning output (see `finetuning/overview.md` section 1.3), so finish this step before that render. After the reward function is written and tested, put the path where `lambda_function.py` was saved in Step 6 and the Evaluator name into the values file:
+The registration code is Cell 3 of `code_templates/rlvr.py`. Do not write it by hand: `"${CLAUDE_PLUGIN_ROOT:?Set CLAUDE_PLUGIN_ROOT to the absolute installed plugin root}/libexec/toolkit" ai-payloads render` renders it with the rest of the finetuning output (see `finetuning/overview.md` section 1.3), so finish this step before that render. After the reward function is written and tested, put the path where `lambda_function.py` was saved in Step 6 and the Evaluator name into the values file:
 
 ```json
 {

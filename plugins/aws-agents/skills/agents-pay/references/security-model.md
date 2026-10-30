@@ -1,5 +1,11 @@
 # agents-pay security model
 
+Plugin references are plain files; the host does not substitute their variables.
+Get the absolute installed plugin root from the loaded parent skill (its
+`${CLAUDE_PLUGIN_ROOT}` token is substituted there). In your own terminal, set
+`export CLAUDE_PLUGIN_ROOT='/absolute/installed/plugin'` to that actual path.
+The guarded commands below refuse an unset or empty root; never use PATH.
+
 The threat model, and how each control is enforced. Read this before changing
 anything in the toolkit's `agents-pay` code — several behaviors that look over-cautious are load-bearing.
 
@@ -33,13 +39,13 @@ way to end up with none of these controls while believing you have them.
 
 Strands and LangGraph ship AgentCore Payments integrations (`AgentCorePaymentsPlugin`,
 `AgentCorePaymentsMiddleware`) that intercept `402` from **any** tool call and settle
-it. They are genuinely more convenient than running `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay fetch`. They also sit
+it. They are genuinely more convenient than running `"${CLAUDE_PLUGIN_ROOT:?Set CLAUDE_PLUGIN_ROOT to the absolute installed plugin root}/libexec/toolkit" agents-pay fetch`. They also sit
 entirely outside this skill: payment happens inside the framework's own wrapper, so
 the toolkit policy is never consulted.
 
 What that costs, concretely:
 
-| Control | Via `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay fetch` | Via native plugin / middleware |
+| Control | Via `"${CLAUDE_PLUGIN_ROOT:?Set CLAUDE_PLUGIN_ROOT to the absolute installed plugin root}/libexec/toolkit" agents-pay fetch` | Via native plugin / middleware |
 |---|---|---|
 | Per-payment ceiling | enforced | **absent** |
 | Origin allowlist and SSRF vetting | enforced | **absent** |
@@ -52,9 +58,9 @@ An agent that can mint a session can replace a spent budget with a larger one, s
 the per-session cap stops bounding anything.
 
 **Do not run both paths in one process.** If the native integration is active *and*
-`"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay fetch` is available, the model chooses which one settles a given `402`, so the
+`"${CLAUDE_PLUGIN_ROOT:?Set CLAUDE_PLUGIN_ROOT to the absolute installed plugin root}/libexec/toolkit" agents-pay fetch` is available, the model chooses which one settles a given `402`, so the
 gate becomes advisory. Pick one. For an agent spending an operator's money against the
-open web, pick `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay fetch`; if the native path is used anyway, at minimum pass an
+open web, pick `"${CLAUDE_PLUGIN_ROOT:?Set CLAUDE_PLUGIN_ROOT to the absolute installed plugin root}/libexec/toolkit" agents-pay fetch`; if the native path is used anyway, at minimum pass an
 explicit `payment_session_id` so budget still comes from a human.
 
 ## Trust boundaries
@@ -62,7 +68,7 @@ explicit `payment_session_id` so budget still comes from a human.
 | Component | Trusted? | Holds credentials? | Who runs it |
 |---|---|---|---|
 | Operator at a terminal | Yes — the root of authority | Yes (via the CLI wizard) | Human |
-| `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay admin` | Yes | Only transiently, from the human | Human |
+| `"${CLAUDE_PLUGIN_ROOT:?Set CLAUDE_PLUGIN_ROOT to the absolute installed plugin root}/libexec/toolkit" agents-pay admin` | Yes | Only transiently, from the human | Human |
 | `~/.agents-pay/config.json` | Yes — the authorization record | No | Written by human, read by runtime |
 | The policy code in `toolkit` | Yes — the decision point | No | In-process, runtime |
 | The fetch and settle code in `toolkit` | Yes — transport | No (proof is transient) | In-process, runtime |
@@ -88,18 +94,18 @@ Two design rules apply throughout this skill:
 
 | Capability | Here | Security property |
 |---|---|---|
-| `get_paid_content` | `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay fetch URL` — agent command | Same capability, now behind the policy gate |
-| Session status | `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay fetch --status` — agent command | Read-only, cannot mint budget |
-| Browser payment | `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay fetch --browser-handle URL` — agent command | The model receives an opaque handle bound to one origin and path; a handle cannot be redeemed after the process exits (no Rust equivalent of the Python import API, follow-up #5103) |
-| Create a payment session | `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay admin new-session` — human at a TTY | A runtime that can mint sessions has no cumulative bound |
-| Provision infrastructure | `agentcore` CLI wizard + `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay admin init-config` | Provider secrets never enter tool parameters, and setup does not exist at runtime |
+| `get_paid_content` | `"${CLAUDE_PLUGIN_ROOT:?Set CLAUDE_PLUGIN_ROOT to the absolute installed plugin root}/libexec/toolkit" agents-pay fetch URL` — agent command | Same capability, now behind the policy gate |
+| Session status | `"${CLAUDE_PLUGIN_ROOT:?Set CLAUDE_PLUGIN_ROOT to the absolute installed plugin root}/libexec/toolkit" agents-pay fetch --status` — agent command | Read-only, cannot mint budget |
+| Browser payment | `"${CLAUDE_PLUGIN_ROOT:?Set CLAUDE_PLUGIN_ROOT to the absolute installed plugin root}/libexec/toolkit" agents-pay fetch --browser-handle URL` — agent command | The model receives an opaque handle bound to one origin and path; a handle cannot be redeemed after the process exits (no Rust equivalent of the Python import API, follow-up #5103) |
+| Create a payment session | `"${CLAUDE_PLUGIN_ROOT:?Set CLAUDE_PLUGIN_ROOT to the absolute installed plugin root}/libexec/toolkit" agents-pay admin new-session` — human at a TTY | A runtime that can mint sessions has no cumulative bound |
+| Provision infrastructure | `agentcore` CLI wizard + `"${CLAUDE_PLUGIN_ROOT:?Set CLAUDE_PLUGIN_ROOT to the absolute installed plugin root}/libexec/toolkit" agents-pay admin init-config` | Provider secrets never enter tool parameters, and setup does not exist at runtime |
 
 The browser flow is worth stating plainly, because it is the one case where a
 proof must reach a caller: the model receives a handle, never proof bytes. The
 handle is single-use, expires in 90 seconds, and is bound to one origin and path,
 so a handle lifted from a transcript cannot be redeemed for another resource or
 redeemed twice. The Python redeem call (`attach_browser_payment`) has no Rust
-equivalent: the handle `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay fetch --browser-handle` prints cannot
+equivalent: the handle `"${CLAUDE_PLUGIN_ROOT:?Set CLAUDE_PLUGIN_ROOT to the absolute installed plugin root}/libexec/toolkit" agents-pay fetch --browser-handle` prints cannot
 be redeemed after the process exits, so a browser-navigation flow needs a
 long-lived trusted host (follow-up #5103). Nothing in the model's tool set may
 return the real header.
@@ -113,8 +119,8 @@ return the real header.
 | Network protection | The network admission check requires HTTPS and reject loopback, RFC1918, link-local, metadata, multicast, reserved, unspecified, CGNAT, and v4-mapped forms. The connection goes to the vetted address; redirects are refused and bodies are capped. |
 | Content isolation | Paid bodies are withheld from model-visible output by default. The runtime returns status, content type, byte count, and SHA-256 hash. An operator may opt in to body return by setting `return_body: true` in the config file (OS-account-bound, 0600); when enabled, content is capped at 10 KiB and marked `untrusted: true`. Authorisation never reads content. The OpenClaw plugin (`get_paid_content`) mirrors this: an optional `returnBody: true` plugin-config field (default unset/false, same behaviour as today) opts a single installation in to the same capped, `untrusted`-marked body return — set per operator, not model-controllable. |
 | Idempotency | The client token hashes session, origin, path, network, asset, recipient, and amount. It excludes a publisher nonce so retries reuse the same authorisation. |
-| Role separation | Session creation exists only in `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay admin new-session`, which refuses without a TTY and has no `--yes` flag. The human uses **ManagementRole** and the agent uses **ProcessPaymentRole** with no session writes. |
-| Proof isolation | `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay fetch` holds the proof locally for one request. The browser path returns an opaque handle bound to one origin and path, which cannot be redeemed after the process exits, and output carries a redacted receipt only. |
+| Role separation | Session creation exists only in `"${CLAUDE_PLUGIN_ROOT:?Set CLAUDE_PLUGIN_ROOT to the absolute installed plugin root}/libexec/toolkit" agents-pay admin new-session`, which refuses without a TTY and has no `--yes` flag. The human uses **ManagementRole** and the agent uses **ProcessPaymentRole** with no session writes. |
+| Proof isolation | `"${CLAUDE_PLUGIN_ROOT:?Set CLAUDE_PLUGIN_ROOT to the absolute installed plugin root}/libexec/toolkit" agents-pay fetch` holds the proof locally for one request. The browser path returns an opaque handle bound to one origin and path, which cannot be redeemed after the process exits, and output carries a redacted receipt only. |
 | Runtime surface | No provisioning or session-creation tool exists in the runtime path. |
 | Reproducible installation | The payment code is the `toolkit` binary, built from a locked dependency graph. Operators requiring full reproducibility should verify the binary they install through their release process. |
 | Local configuration | The config writer creates a `0700` directory and `0600` file atomically. Loading checks ownership, type, symlinks, and writable parents. Runtime path resolution uses the OS account and ignores `HOME`, `AGENTS_PAY_CONFIG`, and `X402_POLICY_FILE`; file resource values win over environment fallbacks. |
@@ -232,7 +238,7 @@ holds in the account:
 | **ProcessPaymentRole** — the agent | `ProcessPayment`, Get instrument/balance/session | Any session **write** |
 
 **The agent must have neither the ManagementRole nor the ability to run
-`"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay admin`.** If it has both, it can mint a fresh budget whenever it
+`"${CLAUDE_PLUGIN_ROOT:?Set CLAUDE_PLUGIN_ROOT to the absolute installed plugin root}/libexec/toolkit" agents-pay admin`.** If it has both, it can mint a fresh budget whenever it
 exhausts one and the per-session cap bounds nothing.
 
 The TTY requirement on `new-session` is defence in depth, not the boundary. An
@@ -273,8 +279,8 @@ trusted code constructed, never data a publisher supplied.
 ## Verification
 
 ```bash
-"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay admin show-config      # confirm 0600 + contents
-"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay admin preflight        # wiring + secret exposure
+"${CLAUDE_PLUGIN_ROOT:?Set CLAUDE_PLUGIN_ROOT to the absolute installed plugin root}/libexec/toolkit" agents-pay admin show-config      # confirm 0600 + contents
+"${CLAUDE_PLUGIN_ROOT:?Set CLAUDE_PLUGIN_ROOT to the absolute installed plugin root}/libexec/toolkit" agents-pay admin preflight        # wiring + secret exposure
 ```
 
 The reproducible evidence is: the toolkit's regression tests passing, a `show-config` transcript,

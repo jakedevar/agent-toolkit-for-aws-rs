@@ -138,7 +138,7 @@ docgraph-env-selection:
 	cargo test -p toolkit-cli --locked --test docgraph_live environment_cannot_select_live_mode -- --exact
 	cargo test -p toolkit-cli --features docgraph-live --locked --test docgraph_live environment_cannot_select_live_mode -- --exact
 
-# Per-plugin ./bin binaries (#4487, docs/migration/plugin-binaries.md). Stage
+# Per-plugin ./libexec binaries (#4487, docs/migration/plugin-binaries.md). Stage
 # every declared binary for every declared platform with the locally
 # installed toolchains (zig + cargo-zigbuild cross-link the non-host targets),
 # then check launchers and staged files. Never commit the staged files.

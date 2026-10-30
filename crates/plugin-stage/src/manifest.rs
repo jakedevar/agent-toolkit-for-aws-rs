@@ -1,9 +1,9 @@
-//! The generated staging manifest, `plugins/<plugin>/bin/manifest.json`,
-//! and the offline verification of a staged `bin/` directory against it.
+//! The generated staging manifest, `plugins/<plugin>/libexec/manifest.json`,
+//! and the offline verification of a staged `libexec/` directory against it.
 //!
 //! The manifest records provenance (source commit, whether the tree was
 //! dirty, the compiler) and, per staged file, its platform, Rust target,
-//! package, bin, features, size and sha256. Every file under `bin/` must be
+//! package, bin, features, size and sha256. Every file under `libexec/` must be
 //! listed: an unlisted file is a hand-placed artifact and fails verification.
 
 use std::collections::BTreeSet;
@@ -36,7 +36,7 @@ pub struct StagedBinary {
     pub features: Vec<String>,
     /// `cargo` or `cargo-zigbuild`.
     pub builder: String,
-    /// Path relative to `bin/`.
+    /// Path relative to `libexec/`.
     pub path: String,
     /// Size in bytes.
     pub size: u64,
@@ -47,7 +47,7 @@ pub struct StagedBinary {
 /// One generated dispatcher.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StagedDispatcher {
-    /// Binary name (the dispatcher path is `bin/<name>`).
+    /// Binary name (the dispatcher path is `libexec/<name>`).
     pub name: String,
     /// Lower-case hex sha256 of the script.
     pub sha256: String,
@@ -264,12 +264,12 @@ fn parse_dispatcher(value: &Json) -> Result<StagedDispatcher, String> {
     })
 }
 
-/// Verifies every staged destination: each plugin `bin/` directory under
+/// Verifies every staged destination: each plugin `libexec/` directory under
 /// `plugins_root` and each declared package destination's `bin/`.
 ///
-/// Always: each plugin `bin/` directory belongs to a plugin that declares
+/// Always: each plugin `libexec/` directory belongs to a plugin that declares
 /// binaries; each package destination passes [`check_package_root`]; each
-/// staged `bin/` has a manifest naming its destination, lists only declared
+/// staged `libexec/` has a manifest naming its destination, lists only declared
 /// binaries and platforms at their layout paths, and every listed file
 /// exists, is a regular executable file and matches its size and sha256;
 /// every dispatcher is the generated script; no unlisted file exists. With
@@ -291,7 +291,13 @@ pub fn verify_staged(
         .collect();
     if let Ok(entries) = fs::read_dir(plugins_root) {
         for entry in entries.filter_map(Result::ok) {
-            // symlink_metadata: a dangling or symlinked bin/ is still found.
+            if fs::symlink_metadata(entry.path().join("bin")).is_ok() {
+                problems.push(format!(
+                    "{}: top-level bin/ is forbidden; stage plugin binaries under libexec/",
+                    display(repo_root, &entry.path())
+                ));
+            }
+            // symlink_metadata: a dangling or symlinked libexec/ is still found.
             if fs::symlink_metadata(entry.path().join(BIN_DIR)).is_ok() {
                 plugins.insert(entry.file_name().to_string_lossy().into_owned());
             }
@@ -371,7 +377,7 @@ pub fn tracked_package_files(repo_root: &Path, declaration: &Declaration) -> Vec
         .arg("ls-files")
         .arg("-z")
         .arg("--")
-        .args(roots.iter().map(|root| format!("{root}/{BIN_DIR}")))
+        .args(roots.iter().map(|root| format!("{root}/bin")))
         .current_dir(repo_root)
         .stdin(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -395,7 +401,7 @@ pub fn tracked_package_files(repo_root: &Path, declaration: &Declaration) -> Vec
     }
 }
 
-/// Verifies one destination's `bin/` (shared by [`verify_staged`] and
+/// Verifies one destination's `libexec/` (shared by [`verify_staged`] and
 /// [`verify_package`], so the pack guard and the release gate cannot drift).
 fn verify_destination(
     repo_root: &Path,
@@ -413,9 +419,9 @@ fn verify_destination(
         }
     }
     let dest_dir = destination.dir(repo_root, plugins_root);
-    let bin_dir = dest_dir.join(BIN_DIR);
+    let bin_dir = dest_dir.join(destination.bin_dir());
     let shown = display(repo_root, &bin_dir);
-    match staged_bin_dir(repo_root, &dest_dir) {
+    match staged_bin_dir(repo_root, &dest_dir, destination.bin_dir()) {
         Ok(true) => {}
         Ok(false) => {
             if complete {
@@ -434,7 +440,7 @@ fn verify_destination(
         .is_none()
     {
         problems.push(format!(
-            "{shown}: {} declares no binaries in {}, so it may not have a bin/ directory",
+            "{shown}: {} declares no binaries in {}, so it may not have a libexec/ directory",
             destination.label(),
             crate::DECLARATION_PATH
         ));
@@ -620,15 +626,19 @@ impl DestinationCheck<'_> {
 
 const MISSING: &str = "is missing";
 
-/// Whether `plugin_dir/bin` is staged. A symlinked (or non-directory)
-/// plugin directory or `bin/` is refused before anything is read through it
+/// Whether `plugin_dir/libexec` is staged. A symlinked (or non-directory)
+/// plugin directory or `libexec/` is refused before anything is read through it
 /// (#5023): the release gate certifies a self-contained package, and a
 /// symlink force-added to the release tree would not ship the verified bytes.
 ///
 /// # Errors
 ///
 /// Names the symlinked or non-directory path.
-pub fn staged_bin_dir(repo_root: &Path, plugin_dir: &Path) -> Result<bool, String> {
+pub fn staged_bin_dir(
+    repo_root: &Path,
+    plugin_dir: &Path,
+    directory: &str,
+) -> Result<bool, String> {
     let real_dir = |path: &Path, what: &str| {
         match fs::symlink_metadata(path) {
         Ok(meta) if meta.file_type().is_symlink() => Err(format!(
@@ -643,14 +653,14 @@ pub fn staged_bin_dir(repo_root: &Path, plugin_dir: &Path) -> Result<bool, Strin
     if !real_dir(plugin_dir, "a plugin with staged binaries")? {
         return Ok(false);
     }
-    real_dir(&plugin_dir.join(BIN_DIR), "bin/")
+    real_dir(&plugin_dir.join(directory), directory)
 }
 
 /// Reads a regular file without following a symlink at `path`.
 pub(crate) fn read_regular(path: &Path) -> Result<Vec<u8>, String> {
     match fs::symlink_metadata(path) {
         Ok(meta) if meta.file_type().is_symlink() => {
-            Err("is a symlink; staged files must be regular files inside bin/".to_string())
+            Err("is a symlink; staged files must be regular files inside libexec/".to_string())
         }
         Ok(meta) if meta.file_type().is_file() => {
             fs::read(path).map_err(|err| format!("cannot read: {err}"))
@@ -670,7 +680,7 @@ fn read_staged(bin_dir: &Path, rel: &str) -> Result<Vec<u8>, String> {
         match fs::symlink_metadata(bin_dir.join(parent)) {
             Ok(meta) if meta.file_type().is_symlink() => {
                 return Err(format!(
-                    "its directory {} is a symlink; platform directories must be real directories inside bin/",
+                    "its directory {} is a symlink; platform directories must be real directories inside libexec/",
                     parent.display()
                 ))
             }
@@ -717,7 +727,7 @@ fn walk_files(
         };
         match entry.file_type() {
             Ok(kind) if kind.is_symlink() => problems.push(format!(
-                "{shown}/{rel}: is a symlink; staged files and platform directories must be real entries inside bin/"
+                "{shown}/{rel}: is a symlink; staged files and platform directories must be real entries inside libexec/"
             )),
             Ok(kind) if kind.is_dir() => {
                 if prefix.is_empty() && Platform::from_key(&name).is_some() {

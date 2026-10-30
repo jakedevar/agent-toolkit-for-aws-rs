@@ -1,5 +1,5 @@
 //! The five platforms a plugin binary can be staged for, and the file layout
-//! each one uses under `plugins/<plugin>/bin/`.
+//! each one uses under `plugins/<plugin>/libexec/`.
 
 use std::fmt;
 
@@ -85,10 +85,10 @@ impl Platform {
         arch_ok && os_ok
     }
 
-    /// The staged path of binary `name`, relative to the plugin `bin/`
+    /// The staged path of binary `name`, relative to the plugin `libexec/`
     /// directory: `<key>/<name>` on Unix platforms and `<name>.exe` on
     /// Windows. The Windows binary sits beside the dispatcher so that a
-    /// native Windows process launch of `bin/<name>` (which appends `.exe`)
+    /// native Windows process launch of `libexec/<name>` (which appends `.exe`)
     /// and the dispatcher under Git Bash both reach it.
     #[must_use]
     pub fn staged_path(self, name: &str) -> String {

@@ -1,6 +1,12 @@
 # Deploy from ModelPackage
 
-Deployment is **Cell 6** of `../../code_templates/optimize-recommendation.py`, rendered by `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" ai-payloads render` (see `recommendation-workflow.md`):
+Plugin references are plain files; the host does not substitute their variables.
+Get the absolute installed plugin root from the loaded parent skill (its
+`${CLAUDE_PLUGIN_ROOT}` token is substituted there). In your own terminal, set
+`export CLAUDE_PLUGIN_ROOT='/absolute/installed/plugin'` to that actual path.
+The guarded commands below refuse an unset or empty root; never use PATH.
+
+Deployment is **Cell 6** of `../../code_templates/optimize-recommendation.py`, rendered by `"${CLAUDE_PLUGIN_ROOT:?Set CLAUDE_PLUGIN_ROOT to the absolute installed plugin root}/libexec/toolkit" ai-payloads render` (see `recommendation-workflow.md`):
 `model_builder.deploy(endpoint_name=[ENDPOINT_NAME], recommendation_index=0, role=ROLE_ARN, auto_approve=True, wait=True)`.
 It reuses the `ModelBuilder` that ran `generate_deployment_recommendations` (no job-name lookup),
 creates the Model/EndpointConfig/Endpoint from the selected row's ModelPackage, and blocks until InService.

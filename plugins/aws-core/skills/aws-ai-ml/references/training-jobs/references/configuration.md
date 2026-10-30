@@ -1,15 +1,21 @@
 # Training Template Configuration
 
-All templates support notebook and script mode. Do not fill them by hand: render the selected template with the Rust command `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" ai-payloads render`. `<skill-dir>` is the directory that holds this skill's `references/` directory, and the values file is written outside the project directory:
+Plugin references are plain files; the host does not substitute their variables.
+Get the absolute installed plugin root from the loaded parent skill (its
+`${CLAUDE_PLUGIN_ROOT}` token is substituted there). In your own terminal, set
+`export CLAUDE_PLUGIN_ROOT='/absolute/installed/plugin'` to that actual path.
+The guarded commands below refuse an unset or empty root; never use PATH.
+
+All templates support notebook and script mode. Do not fill them by hand: render the selected template with the Rust command `"${CLAUDE_PLUGIN_ROOT:?Set CLAUDE_PLUGIN_ROOT to the absolute installed plugin root}/libexec/toolkit" ai-payloads render`. `<skill-dir>` is the directory that holds this skill's `references/` directory, and the values file is written outside the project directory:
 
 ```bash
-"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" ai-payloads templates --root <skill-dir>
-"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" ai-payloads render <skill-dir>/references/training-jobs/code_templates/recipe_training.py --mode notebook --project-dir <project-dir> --values <scratch-dir>/values.json
+"${CLAUDE_PLUGIN_ROOT:?Set CLAUDE_PLUGIN_ROOT to the absolute installed plugin root}/libexec/toolkit" ai-payloads templates --root <skill-dir>
+"${CLAUDE_PLUGIN_ROOT:?Set CLAUDE_PLUGIN_ROOT to the absolute installed plugin root}/libexec/toolkit" ai-payloads render <skill-dir>/references/training-jobs/code_templates/recipe_training.py --mode notebook --project-dir <project-dir> --values <scratch-dir>/values.json
 ```
 
 Use `--mode script` for a script. Mode choice, appending to an existing notebook, consent and manual edit points follow the code output guide, `../../finetuning/references/code_output_guide.md`.
 
-Every bracketed placeholder below is a key under `values` in the values file, written without the brackets (for example `{"values": {"INSTANCE_TYPE": "ml.m5.xlarge"}}`); `[PROJECT_DIR]` defaults to the project directory, so leave it out. Settings without brackets, such as `WAIT_FOR_COMPLETION` or `MAX_RUNTIME_SECONDS`, are literal fields: `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" ai-payloads templates --root <skill-dir>` lists them as `target` lines and they go under `assign`. Each `manual:` line that `render` prints is an edit you make on the rendered file. Notebook-only dependency lines are marked `# NOTEBOOK_ONLY`; script mode drops them. A missing value stops the render before any file is written.
+Every bracketed placeholder below is a key under `values` in the values file, written without the brackets (for example `{"values": {"INSTANCE_TYPE": "ml.m5.xlarge"}}`); `[PROJECT_DIR]` defaults to the project directory, so leave it out. Settings without brackets, such as `WAIT_FOR_COMPLETION` or `MAX_RUNTIME_SECONDS`, are literal fields: `"${CLAUDE_PLUGIN_ROOT:?Set CLAUDE_PLUGIN_ROOT to the absolute installed plugin root}/libexec/toolkit" ai-payloads templates --root <skill-dir>` lists them as `target` lines and they go under `assign`. Each `manual:` line that `render` prints is an edit you make on the rendered file. Notebook-only dependency lines are marked `# NOTEBOOK_ONLY`; script mode drops them. A missing value stops the render before any file is written.
 
 ## Common values
 

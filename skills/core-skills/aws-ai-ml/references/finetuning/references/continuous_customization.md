@@ -1,5 +1,11 @@
 # Continuous Customization (Multi-Round Fine-Tuning)
 
+Plugin references are plain files; the host does not substitute their variables.
+Get the absolute installed plugin root from the loaded parent skill (its
+`${CLAUDE_PLUGIN_ROOT}` token is substituted there). In your own terminal, set
+`export CLAUDE_PLUGIN_ROOT='/absolute/installed/plugin'` to that actual path.
+The guarded commands below refuse an unset or empty root; never use PATH.
+
 Adds a subsequent fine-tuning round on top of an already-customized model. Uses the Model Package ARN from a previous training job as the base model instead of a SageMakerHub model name.
 
 ---
@@ -22,8 +28,8 @@ Adds a subsequent fine-tuning round on top of an already-customized model. Uses 
 
 The output format (notebook or script) should already be established from the conversation context — do not re-ask if it has already been decided. If necessary, the output format guide is in `references/code_output_guide.md`.
 
-- **Notebook mode**: If the user has an existing notebook from the previous round, ask the user to save it, then render the round's template with `--append`, for example `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" ai-payloads render <skill-dir>/references/finetuning/code_templates/dpo.py --mode notebook --project-dir <project-dir> --values <scratch-dir>/values.json --append`. The existing notebook is not modified: `render` publishes a new versioned copy (`<name>-01.ipynb`) that holds the earlier cells and then the template's `# Cell 0 [markdown]:` divider (`## DPO Fine-Tuning (Round 2)` style) and the new cells. Tell the user to open the `open:` path it prints. If no prior notebook exists, render without `--append` and choose a `--name` that reflects the use case and techniques, e.g., `news-app-sft-to-dpo`.
-- **Script mode**: Render with `--mode script` and a `--name` such as `dpo_finetuning_round2`; `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" ai-payloads render` writes the next numbered `.py` file in `<project-dir>/scripts/` (e.g., `02_dpo_finetuning_round2.py`) with `# %%` cell markers between the sections.
+- **Notebook mode**: If the user has an existing notebook from the previous round, ask the user to save it, then render the round's template with `--append`, for example `"${CLAUDE_PLUGIN_ROOT:?Set CLAUDE_PLUGIN_ROOT to the absolute installed plugin root}/libexec/toolkit" ai-payloads render <skill-dir>/references/finetuning/code_templates/dpo.py --mode notebook --project-dir <project-dir> --values <scratch-dir>/values.json --append`. The existing notebook is not modified: `render` publishes a new versioned copy (`<name>-01.ipynb`) that holds the earlier cells and then the template's `# Cell 0 [markdown]:` divider (`## DPO Fine-Tuning (Round 2)` style) and the new cells. Tell the user to open the `open:` path it prints. If no prior notebook exists, render without `--append` and choose a `--name` that reflects the use case and techniques, e.g., `news-app-sft-to-dpo`.
+- **Script mode**: Render with `--mode script` and a `--name` such as `dpo_finetuning_round2`; `"${CLAUDE_PLUGIN_ROOT:?Set CLAUDE_PLUGIN_ROOT to the absolute installed plugin root}/libexec/toolkit" ai-payloads render` writes the next numbered `.py` file in `<project-dir>/scripts/` (e.g., `02_dpo_finetuning_round2.py`) with `# %%` cell markers between the sections.
 
 ---
 

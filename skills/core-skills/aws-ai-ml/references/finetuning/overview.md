@@ -1,5 +1,11 @@
 # Finetuning
 
+Plugin references are plain files; the host does not substitute their variables.
+Get the absolute installed plugin root from the loaded parent skill (its
+`${CLAUDE_PLUGIN_ROOT}` token is substituted there). In your own terminal, set
+`export CLAUDE_PLUGIN_ROOT='/absolute/installed/plugin'` to that actual path.
+The guarded commands below refuse an unset or empty root; never use PATH.
+
 ## Prerequisites
 
 Before starting this workflow, verify:
@@ -43,7 +49,7 @@ The following are supported by SageMaker and AWS but do not have a validated wor
 
 ### Code Generation Rules
 
-- ✅ Generate code only with `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" ai-payloads render`; never write a notebook or script from a template by hand
+- ✅ Generate code only with `"${CLAUDE_PLUGIN_ROOT:?Set CLAUDE_PLUGIN_ROOT to the absolute installed plugin root}/libexec/toolkit" ai-payloads render`; never write a notebook or script from a template by hand
 - ✅ Use EXACTLY the imports shown in each code template
 - ❌ Do NOT add additional imports even if they seem helpful
 - ❌ Do NOT create variables before they're needed in that section
@@ -84,7 +90,7 @@ Read `references/code_output_guide.md` for the output format rules and the rende
 - RLAIF with built-in rewards → `code_templates/rlaif_builtin.py`
 - RLAIF with custom prompt → `code_templates/rlaif_custom_prompt.py`
 
-The template is a Python file where each `# Cell N: Label` comment marks the start of a new section. Do not split or copy it by hand: `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" ai-payloads render` reads it. Run `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" ai-payloads templates --root <skill-dir>` to list the template's placeholders (`slot` lines, filled through `values`), literal fields (`target` lines, filled through `assign`) and manual edit points.
+The template is a Python file where each `# Cell N: Label` comment marks the start of a new section. Do not split or copy it by hand: `"${CLAUDE_PLUGIN_ROOT:?Set CLAUDE_PLUGIN_ROOT to the absolute installed plugin root}/libexec/toolkit" ai-payloads render` reads it. Run `"${CLAUDE_PLUGIN_ROOT:?Set CLAUDE_PLUGIN_ROOT to the absolute installed plugin root}/libexec/toolkit" ai-payloads templates --root <skill-dir>` to list the template's placeholders (`slot` lines, filled through `values`), literal fields (`target` lines, filled through `assign`) and manual edit points.
 
 #### 1.2.1 Validate Hyperparameter Names
 
@@ -112,12 +118,12 @@ This prevents breakage when recipe schemas rename parameters upstream.
 
 #### 1.3 Generate Code
 
-`"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" ai-payloads render` writes a file once and never rewrites it, so collect every input before running it: the values of 1.4, the reward function for RLVR (Section 2), the RLAIF choices (Section 3) and the EULA decision (Section 4).
+`"${CLAUDE_PLUGIN_ROOT:?Set CLAUDE_PLUGIN_ROOT to the absolute installed plugin root}/libexec/toolkit" ai-payloads render` writes a file once and never rewrites it, so collect every input before running it: the values of 1.4, the reward function for RLVR (Section 2), the RLAIF choices (Section 3) and the EULA decision (Section 4).
 
 1. Write the values file and run the render command from the rules in `code_output_guide.md`, for example (SFT, notebook mode):
 
    ```bash
-   "${CLAUDE_PLUGIN_ROOT}/bin/toolkit" ai-payloads render <skill-dir>/references/finetuning/code_templates/sft.py --mode notebook --project-dir <project-dir> --values <scratch-dir>/values.json
+   "${CLAUDE_PLUGIN_ROOT:?Set CLAUDE_PLUGIN_ROOT to the absolute installed plugin root}/libexec/toolkit" ai-payloads render <skill-dir>/references/finetuning/code_templates/sft.py --mode notebook --project-dir <project-dir> --values <scratch-dir>/values.json
    ```
 
    Use the template chosen in 1.2, and `--mode script` for a script. The command keeps the template's order, dependencies, and imports.

@@ -1,5 +1,5 @@
 //! Building the declared bins with locally installed toolchains and
-//! installing them into each plugin's `bin/` layout.
+//! installing them into each plugin's `libexec/` layout.
 //!
 //! Planning is pure ([`plan`] over a [`Probe`]) so every refusal (unknown
 //! binary, package not in the workspace, Rust target not installed, no cross
@@ -20,7 +20,7 @@ use crate::manifest::{
     read_regular, staged_bin_dir, StagedBinary, StagedDispatcher, StagingManifest,
 };
 use crate::platform::Platform;
-use crate::{BIN_DIR, MANIFEST_FILE};
+use crate::MANIFEST_FILE;
 
 /// What the local machine can build, discovered once per run.
 #[derive(Debug, Clone, Default)]
@@ -326,7 +326,7 @@ pub struct Built {
     pub file: PathBuf,
 }
 
-/// Fails when `plugin`'s existing `bin/` cannot be merged with a stage from
+/// Fails when `plugin`'s existing `libexec/` cannot be merged with a stage from
 /// `provenance`: it holds files from another or a dirty commit, or has no
 /// valid manifest. `clean` allows replacing it.
 ///
@@ -339,29 +339,39 @@ pub fn check_merge(
     provenance: &Provenance,
     clean: bool,
 ) -> Result<(), String> {
-    check_merge_at(&plugins_root.join(plugin), provenance, clean)
+    check_merge_at(
+        &plugins_root.join(plugin),
+        &Destination::Plugin(plugin.into()),
+        provenance,
+        clean,
+    )
 }
 
 /// [`check_merge`] for any destination directory `dest_dir` (the parent of
-/// its `bin/`: a plugin directory or a package destination).
+/// its `libexec/`: a plugin directory or a package destination).
 ///
 /// # Errors
 ///
 /// As [`check_merge`].
-pub fn check_merge_at(dest_dir: &Path, provenance: &Provenance, clean: bool) -> Result<(), String> {
-    existing_entries(dest_dir, provenance, clean).map(|_| ())
+pub fn check_merge_at(
+    dest_dir: &Path,
+    destination: &Destination,
+    provenance: &Provenance,
+    clean: bool,
+) -> Result<(), String> {
+    existing_entries(dest_dir, destination, provenance, clean).map(|_| ())
 }
 
 /// Refuses to stage through a symlink (#5023), with or without `--clean`:
-/// the destination directory, `bin/` and every entry of `bin/` and of its
-/// platform directories must be real. Returns whether `bin/` exists.
-fn check_layout(dest_dir: &Path) -> Result<bool, String> {
-    let staged = staged_bin_dir(Path::new(""), dest_dir)
+/// the destination directory, `libexec/` and every entry of `libexec/` and of its
+/// platform directories must be real. Returns whether `libexec/` exists.
+fn check_layout(dest_dir: &Path, destination: &Destination) -> Result<bool, String> {
+    let staged = staged_bin_dir(Path::new(""), dest_dir, destination.bin_dir())
         .map_err(|err| format!("{err}; refusing to stage through it"))?;
     if !staged {
         return Ok(false);
     }
-    let bin_dir = dest_dir.join(BIN_DIR);
+    let bin_dir = dest_dir.join(destination.bin_dir());
     let mut pending = vec![bin_dir.clone()];
     while let Some(dir) = pending.pop() {
         let entries = fs::read_dir(&dir)
@@ -387,11 +397,12 @@ fn check_layout(dest_dir: &Path) -> Result<bool, String> {
 
 fn existing_entries(
     dest_dir: &Path,
+    destination: &Destination,
     provenance: &Provenance,
     clean: bool,
 ) -> Result<Vec<StagedBinary>, String> {
-    let bin_dir = dest_dir.join(BIN_DIR);
-    if !check_layout(dest_dir)? || clean {
+    let bin_dir = dest_dir.join(destination.bin_dir());
+    if !check_layout(dest_dir, destination)? || clean {
         return Ok(Vec::new());
     }
     let remedy = "rerun with --clean to replace it";
@@ -425,7 +436,7 @@ fn existing_entries(
     Ok(manifest.binaries)
 }
 
-/// Installs built files into `plugins_root/<plugin>/bin/`, merging with an
+/// Installs built files into `plugins_root/<plugin>/libexec/`, merging with an
 /// existing stage of the same clean commit (or replacing it with `clean`),
 /// writes one dispatcher per binary name and the manifest, and returns it.
 ///
@@ -449,7 +460,7 @@ pub fn install(
     )
 }
 
-/// [`install`] for any destination: installs into `dest_dir/bin/` (the
+/// [`install`] for any destination: installs into `dest_dir/libexec/` (the
 /// plugin directory or the package destination). Every built step must
 /// belong to `destination`, and the manifest names it.
 ///
@@ -463,6 +474,13 @@ pub fn install_at(
     provenance: &Provenance,
     clean: bool,
 ) -> Result<StagingManifest, String> {
+    if matches!(destination, Destination::Plugin(_))
+        && fs::symlink_metadata(dest_dir.join("bin")).is_ok()
+    {
+        return Err(
+            "top-level bin/ is forbidden; remove the old plugin stage and use libexec/".into(),
+        );
+    }
     let plugin_dir = dest_dir;
     if !plugin_dir.is_dir() {
         return Err(format!(
@@ -472,11 +490,11 @@ pub fn install_at(
         ));
     }
     let mut entries: BTreeMap<(String, Platform), StagedBinary> =
-        existing_entries(dest_dir, provenance, clean)?
+        existing_entries(dest_dir, destination, provenance, clean)?
             .into_iter()
             .map(|binary| ((binary.name.clone(), binary.platform), binary))
             .collect();
-    let bin_dir = plugin_dir.join(BIN_DIR);
+    let bin_dir = plugin_dir.join(destination.bin_dir());
     if clean && bin_dir.exists() {
         fs::remove_dir_all(&bin_dir)
             .map_err(|err| format!("{}: cannot remove: {err}", bin_dir.display()))?;
@@ -692,7 +710,7 @@ pub fn parse_metadata(text: &str) -> Result<(BTreeMap<String, BTreeSet<String>>,
 /// picks up untracked inputs on its own (an auto-discovered `build.rs`, a
 /// new module, `.cargo/config.toml`, `rust-toolchain.toml`), so a build with
 /// one present is not a build of the named commit. Ignored files, such as
-/// `target/` and the generated `plugins/*/bin/`, stay permitted.
+/// `target/` and the generated `plugins/*/libexec/`, stay permitted.
 ///
 /// # Errors
 ///

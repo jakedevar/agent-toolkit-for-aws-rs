@@ -1,5 +1,11 @@
 # Create Reward Function
 
+Plugin references are plain files; the host does not substitute their variables.
+Get the absolute installed plugin root from the loaded parent skill (its
+`${CLAUDE_PLUGIN_ROOT}` token is substituted there). In your own terminal, set
+`export CLAUDE_PLUGIN_ROOT='/absolute/installed/plugin'` to that actual path.
+The guarded commands below refuse an unset or empty root; never use PATH.
+
 Help the user create and register a Lambda reward function as a SageMaker Hub Evaluator.
 
 ## Principles
@@ -64,8 +70,8 @@ Before the user registers the evaluator, check that `lambda_function.py` returns
 1. Print the documented event and use it as the starting point for a test event (fill in realistic values; SageMaker sends one sample per invocation):
 
    ```bash
-   "${CLAUDE_PLUGIN_ROOT}/bin/toolkit" ai-payloads reward sample --format sagemaker-eval
-   "${CLAUDE_PLUGIN_ROOT}/bin/toolkit" ai-payloads reward sample --format nova
+   "${CLAUDE_PLUGIN_ROOT:?Set CLAUDE_PLUGIN_ROOT to the absolute installed plugin root}/libexec/toolkit" ai-payloads reward sample --format sagemaker-eval
+   "${CLAUDE_PLUGIN_ROOT:?Set CLAUDE_PLUGIN_ROOT to the absolute installed plugin root}/libexec/toolkit" ai-payloads reward sample --format nova
    ```
 
 2. Save the event to a temp file (e.g., `/tmp/test_reward_event.json`), run the customized `lambda_handler` on it in the user's environment, and save what it returns to `/tmp/test_reward_response.json`.
@@ -73,8 +79,8 @@ Before the user registers the evaluator, check that `lambda_function.py` returns
 3. Check the response against the documented contract. The checker reads both files offline; it does not run the Lambda or call AWS:
 
    ```bash
-   "${CLAUDE_PLUGIN_ROOT}/bin/toolkit" ai-payloads reward check --format sagemaker-eval --event /tmp/test_reward_event.json --response /tmp/test_reward_response.json
-   "${CLAUDE_PLUGIN_ROOT}/bin/toolkit" ai-payloads reward check --format nova --event /tmp/test_reward_event.json --response /tmp/test_reward_response.json
+   "${CLAUDE_PLUGIN_ROOT:?Set CLAUDE_PLUGIN_ROOT to the absolute installed plugin root}/libexec/toolkit" ai-payloads reward check --format sagemaker-eval --event /tmp/test_reward_event.json --response /tmp/test_reward_response.json
+   "${CLAUDE_PLUGIN_ROOT:?Set CLAUDE_PLUGIN_ROOT to the absolute installed plugin root}/libexec/toolkit" ai-payloads reward check --format nova --event /tmp/test_reward_event.json --response /tmp/test_reward_response.json
    ```
 
    Run the line that matches the template. Exit 0 means the response is one of the two documented envelopes with one result per sample. On exit 1, the output names the position that is wrong (never the value); fix the return statement in `lambda_function.py` and test again.

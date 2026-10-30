@@ -21,7 +21,7 @@ metadata:
 # AWS AI/ML Model Customization
 
 Run toolkit commands through the plugin's staged dispatcher:
-`"${CLAUDE_PLUGIN_ROOT}/bin/toolkit"`. The host supplies `CLAUDE_PLUGIN_ROOT`
+`"${CLAUDE_PLUGIN_ROOT}/libexec/toolkit"`. The host supplies `CLAUDE_PLUGIN_ROOT`
 as the installed plugin directory; use that absolute directory on other hosts.
 The plugin build enables `ai-models-live` and `docgraph-live`. Commands that
 query AWS use the configured account and region; `--recorded FILE` explicitly

@@ -124,7 +124,11 @@ fn root() -> PathBuf {
 /// Skill text names the staged dispatcher by its installed path (#5586);
 /// the contracts below govern the command, so the path prefix is dropped.
 fn without_dispatcher_path(text: &str) -> String {
-    text.replace("\"${CLAUDE_PLUGIN_ROOT}/bin/toolkit\"", "toolkit")
+    text.replace(
+        "${CLAUDE_PLUGIN_ROOT:?Set CLAUDE_PLUGIN_ROOT to the absolute installed plugin root}",
+        "${CLAUDE_PLUGIN_ROOT}",
+    )
+    .replace("\"${CLAUDE_PLUGIN_ROOT}/libexec/toolkit\"", "toolkit")
 }
 fn page(rel: &str) -> String {
     without_dispatcher_path(

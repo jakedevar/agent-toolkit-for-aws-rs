@@ -1,5 +1,11 @@
 # Interpreting Results
 
+Plugin references are plain files; the host does not substitute their variables.
+Get the absolute installed plugin root from the loaded parent skill (its
+`${CLAUDE_PLUGIN_ROOT}` token is substituted there). In your own terminal, set
+`export CLAUDE_PLUGIN_ROOT='/absolute/installed/plugin'` to that actual path.
+The guarded commands below refuse an unset or empty root; never use PATH.
+
 Guide for presenting benchmark and recommendation results to users.
 
 ## Benchmark Job Results
@@ -43,7 +49,7 @@ The default `request_count` is 100, so a default run leads with p50 and no tail 
 
 When the user has more than one run to weigh against each other — synthetic vs. dataset, before vs. after an optimization, instance A vs. B, or a concurrency sweep — do **not** hand-diff the tables. Use the first-class `compare_benchmarks(...)` utility; it aligns every metric across runs and reports a signed percentage change oriented so **`+` is always better** (higher throughput / lower latency), so the reader never has to reason about sign direction per metric.
 
-The code for this is **Cell 7 of `../../code_templates/optimize-benchmark.py`** — use that cell of the notebook rendered by `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" ai-payloads render` (see `benchmark-workflow.md`) rather than writing the call inline. It takes the current run's result plus a baseline reloaded with `BenchmarkJob.get("<job-name>").show_result()` (the FIRST argument is the baseline), and accepts `stat="avg"` (or `"p50"`/`"p90"`/`"p95"`/`"p99"`/`"min"`/`"max"`).
+The code for this is **Cell 7 of `../../code_templates/optimize-benchmark.py`** — use that cell of the notebook rendered by `"${CLAUDE_PLUGIN_ROOT:?Set CLAUDE_PLUGIN_ROOT to the absolute installed plugin root}/libexec/toolkit" ai-payloads render` (see `benchmark-workflow.md`) rather than writing the call inline. It takes the current run's result plus a baseline reloaded with `BenchmarkJob.get("<job-name>").show_result()` (the FIRST argument is the baseline), and accepts `stat="avg"` (or `"p50"`/`"p90"`/`"p95"`/`"p99"`/`"min"`/`"max"`).
 
 Present the printed table as-is; then call out the one or two metrics that moved most (e.g. "+305% throughput but −719% latency at concurrency 150 — the endpoint is saturated"). `compare_benchmarks` rejects concurrency-search/sweep results (they have no single metric profile) — compare the individual winning runs instead. Because deltas are only meaningful at matched sequence lengths, keep ISL/OSL in view (see the note above).
 

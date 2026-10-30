@@ -1,0 +1,32 @@
+'${CLAUDE_PLUGIN_ROOT}/libexec/toolkit' agents-pay fetch URL
+---
+toolkit \
+  agents-pay fetch URL
+---
+toolkit.exe agents-pay fetch URL
+---
+toolkit --verbose agents-pay fetch URL
+---
+TK=toolkit; "$TK" agents-pay fetch URL
+---
+subprocess.run(['toolkit', 'agents-pay', 'fetch', url])
+---
+Command::new( "toolkit" ).args(["agents-pay", "fetch", url])
+---
+let bin = "toolkit"; std::process::Command::new(bin)
+---
+spawn("toolkit", ["agents-pay", "fetch", url])
+---
+toolkit ai-models list-endpoints
+---
+toolkit documentdb wa-review --live
+---
+env PAYMENT_DEBUG=1 command toolkit agents-pay fetch URL
+---
+"${CLAUDE_PLUGIN_ROOT}/libexec/toolkit" ai-models list-endpoints
+---
+"${CLAUDE_PLUGIN_ROOT}/libexec/toolkit" documentdb wa-review --live
+---
+"${CLAUDE_PLUGIN_ROOT}/libexec/toolkit" agents-build other
+---
+'${CLAUDE_PLUGIN_ROOT}/bin/toolkit' agents-pay fetch URL

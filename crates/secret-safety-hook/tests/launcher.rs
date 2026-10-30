@@ -4,7 +4,7 @@
 //!
 //! Integration round 21 (#5078) activates the registration (#4412): the
 //! shipped `plugins/aws-core/.../hooks/hooks.json` runs the canonical #4487
-//! guard-deny launcher on `${CLAUDE_PLUGIN_ROOT}/bin/secret-safety` (the
+//! guard-deny launcher on `${CLAUDE_PLUGIN_ROOT}/libexec/secret-safety` (the
 //! plugin-stage dispatcher), and every test below runs against that live file.
 //! The plugin-stage contract test pins the byte-exact template; these tests
 //! pin its fail-closed behaviour.
@@ -31,8 +31,8 @@ const DECLARATION: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../packaging/plugin-binaries.json"
 );
-/// The plugin-stage layout: launchers always call the `bin/<name>` dispatcher.
-const HOOK_DIR: &str = "bin";
+/// The plugin-stage layout: launchers always call the `libexec/<name>` dispatcher.
+const HOOK_DIR: &str = "libexec";
 const SECRET_INPUT: &str =
     "{\"tool_name\": \"Bash\", \"tool_input\": {\"command\": \"aws secretsmanager get-secret-value --secret-id demo\"}}";
 const SAFE_INPUT: &str = "{\"tool_name\": \"Bash\", \"tool_input\": {\"command\": \"ls\"}}";
@@ -230,7 +230,7 @@ fn the_live_registration_runs_the_rust_launcher() {
         "sh -c 'if out=$(\"$0\" 2>/dev/null); then printf %s \"$out\"; else printf %s \
          \"{{\\\"hookSpecificOutput\\\":{{\\\"hookEventName\\\":\\\"PreToolUse\\\",\
          \\\"permissionDecision\\\":\\\"deny\\\",\\\"permissionDecisionReason\\\":\\\"{reason}\\\"}}}}\"; \
-         fi' \"${{CLAUDE_PLUGIN_ROOT}}/bin/secret-safety\""
+         fi' \"${{CLAUDE_PLUGIN_ROOT}}/libexec/secret-safety\""
     );
     let found = registrations();
     assert_eq!(found.len(), 2);

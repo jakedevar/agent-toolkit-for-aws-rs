@@ -280,11 +280,11 @@ fn plugin_skill_subprocess_cannot_be_registered_as_a_hook_or_mcp_server() {
     for (name, text) in [
         (
             "hooks.json",
-            r#"{"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/bin/toolkit"}]}]}}"#,
+            r#"{"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/libexec/toolkit"}]}]}}"#,
         ),
         (
             ".mcp.json",
-            r#"{"mcpServers":{"toolkit":{"command":"${CLAUDE_PLUGIN_ROOT}/bin/toolkit","args":[]}}}"#,
+            r#"{"mcpServers":{"toolkit":{"command":"${CLAUDE_PLUGIN_ROOT}/libexec/toolkit","args":[]}}}"#,
         ),
     ] {
         let dir = temp_dir("skill-subprocess-launcher");

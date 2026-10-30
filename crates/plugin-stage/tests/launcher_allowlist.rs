@@ -482,7 +482,7 @@ fn review_r3_mcp_reproductions_are_rejected() {
 }
 
 /// The #5088 reproduction (review #5018 round 4): `env -S` splits one
-/// literal-looking argument into a shell invocation that reaches `bin/`.
+/// literal-looking argument into a shell invocation that reaches `libexec/`.
 /// `{plugin}` is a literal plugin directory, `{name}` the binary.
 const R4_ENV_SPLIT_FORMS: [&[&str]; 8] = [
     &[
@@ -738,7 +738,7 @@ fn uvx_argv_must_match_its_inventory_template() {
         ],
         &[
             "mcp-proxy-for-aws-cli==1.7.0",
-            "https://aws-mcp.example/bin/x",
+            "https://aws-mcp.example/libexec/x",
         ],
         &["mcp-proxy-for-aws-cli==1.7.0", "https://localhost/mcp"],
         &["mcp-proxy-for-aws-cli==1.7.0", url, "--metadata"],
@@ -819,7 +819,7 @@ fn mcp_server_objects_are_checked_as_a_whole() {
 
 /// Runtime proof for #5088 (when this host's `env` supports `-S` and `-C`):
 /// with no binary staged the wrapper exits without a deny, and with an
-/// executable marker at `bin/guard` it runs the marker. The checker refuses
+/// executable marker at `libexec/guard` it runs the marker. The checker refuses
 /// every variant.
 #[cfg(unix)]
 #[test]
@@ -864,7 +864,7 @@ fn review_r4_env_split_string_reaches_the_binary_at_runtime_and_is_rejected() {
             "{args:?} denies without its binary"
         );
     }
-    let marker = plugin.join("bin/guard");
+    let marker = plugin.join("libexec/guard");
     write(&marker, "#!/bin/sh\necho REACHED_PLUGIN_BINARY\n");
     std::fs::set_permissions(&marker, std::fs::Permissions::from_mode(0o755)).expect("chmod");
     let reached = forms[..5]
@@ -873,7 +873,7 @@ fn review_r4_env_split_string_reaches_the_binary_at_runtime_and_is_rejected() {
         .count();
     assert_eq!(
         reached, 5,
-        "the split, attached and long -S forms reach bin/guard"
+        "the split, attached and long -S forms reach libexec/guard"
     );
 }
 
@@ -884,14 +884,14 @@ fn review_r4_env_split_string_reaches_the_binary_at_runtime_and_is_rejected() {
 fn mcp_argv_naming_the_root_or_bin_must_be_canonical() {
     let tool = mcp_command("CLAUDE_PLUGIN_ROOT", "tool");
     for args in [
-        &["${CLAUDE_PLUGIN_ROOT}/bin/note"][..],
+        &["${CLAUDE_PLUGIN_ROOT}/libexec/note"][..],
         &["${CLAUDE_PLUGIN_ROOT}"],
         &["--root=${CLAUDE_PLUGIN_ROOT}/x"],
         &["${CLAUDE_PLUGIN_ROOT}/../demo/x"],
         &["${CLAUDE_PLUGIN_ROOT}/BIN/x"],
         &["${claude_plugin_root}/x"],
         &["$CLAUDE_PLUGIN_ROOT/x"],
-        &["./bin/tool"],
+        &["./libexec/tool"],
         &["bin\\tool.exe"],
         &["x/Bin./tool"],
         &["sh", "-c", "x"],
@@ -915,17 +915,17 @@ fn mcp_argv_naming_the_root_or_bin_must_be_canonical() {
 fn non_template_hook_shapes_are_rejected() {
     for command in [
         "echo cabin binary robin ${CLAUDE_PLUGIN_ROOT}/node_modules/.bin-cache",
-        "sh -c '\"$0\" --flush || true' \"${CLAUDE_PLUGIN_ROOT}/bin/note\"",
-        "sh -c '\"$0\" --flush || true' \"${CURSOR_PLUGIN_ROOT}/bin/note\"",
+        "sh -c '\"$0\" --flush || true' \"${CLAUDE_PLUGIN_ROOT}/libexec/note\"",
+        "sh -c '\"$0\" --flush || true' \"${CURSOR_PLUGIN_ROOT}/libexec/note\"",
         "sh -c 'python3 \"$0\" \"$@\" 2>/dev/null || true' \"${CURSOR_PLUGIN_ROOT}/scripts/x/migration.py\" --reconcile",
         "sh -c 'python3 \"$0\" 2>/dev/null || python \"$0\"' \"${CLAUDE_PLUGIN_ROOT}/hooks/guard.py\"",
         "cat \"${CLAUDE_PLUGIN_ROOT}/x.txt\"",
-        "\"${CLAUDE_PLUGIN_ROOT}/scripts/../bin/note\"",
-        "\"${CLAUDE_PLUGIN_ROOT}/scripts/bin/note\"",
+        "\"${CLAUDE_PLUGIN_ROOT}/scripts/../libexec/note\"",
+        "\"${CLAUDE_PLUGIN_ROOT}/scripts/libexec/note\"",
         "\"${CLAUDE_PLUGIN_ROOT}/Bin./note\"",
         "\"${CLAUDE_PLUGIN_ROOT}/.hidden/x\"",
         "\"${CLAUDE_PLUGIN_ROOT}/x\" || true",
-        "\"${CURSOR_PLUGIN_ROOT}/bin/note\"",
+        "\"${CURSOR_PLUGIN_ROOT}/libexec/note\"",
         "python3 x.py",
         "",
     ] {
@@ -946,14 +946,14 @@ fn non_template_hook_shapes_are_rejected() {
 }
 
 /// A plugin-relative path whose components are symlinks could point into
-/// `bin/`; it is refused even though its spelling is a plain relpath.
+/// `libexec/`; it is refused even though its spelling is a plain relpath.
 #[cfg(unix)]
 #[test]
 fn a_symlinked_plugin_path_is_not_a_plain_relpath() {
     let dir = temp_dir("relsymlink");
     let plugins = dir.join("plugins");
-    write(&plugins.join("demo/bin/note"), "#!/bin/sh\n");
-    std::os::unix::fs::symlink("../bin", plugins.join("demo/hooks")).expect("symlink");
+    write(&plugins.join("demo/libexec/note"), "#!/bin/sh\n");
+    std::os::unix::fs::symlink("../libexec", plugins.join("demo/hooks")).expect("symlink");
     write(
         &plugins.join("demo/cfg/hooks.json"),
         &hooks("Stop", "\"${CLAUDE_PLUGIN_ROOT}/hooks/note\""),
@@ -1017,8 +1017,8 @@ fn metacharacter_insertions_into_templates_are_rejected() {
         .collect();
     templates.extend([
         guard_hook_command("CLAUDE_PLUGIN_ROOT", "guard", DENY_REASON),
-        r#""${CLAUDE_PLUGIN_ROOT}/bin/note""#.to_string(),
-        r#""${CLAUDE_PLUGIN_ROOT}/bin/note" || true"#.to_string(),
+        r#""${CLAUDE_PLUGIN_ROOT}/libexec/note""#.to_string(),
+        r#""${CLAUDE_PLUGIN_ROOT}/libexec/note" || true"#.to_string(),
         r#""${CLAUDE_PLUGIN_ROOT}/scripts/run.sh""#.to_string(),
     ]);
     // Controls: every unmutated template is accepted.
@@ -1064,7 +1064,7 @@ fn metacharacter_insertions_into_mcp_commands_are_rejected() {
         .join(", ");
     let mut commands: Vec<(String, String)> = vec![
         ("uvx".to_string(), shipped_args),
-        ("./bin/tool".to_string(), String::new()),
+        ("./libexec/tool".to_string(), String::new()),
     ];
     commands.extend(
         ["CLAUDE_PLUGIN_ROOT", "CURSOR_PLUGIN_ROOT"]
@@ -1176,7 +1176,7 @@ fn metacharacter_insertions_into_mcp_argv_are_rejected() {
 /// Runtime proof that the round-3 forms are real bypasses and that the
 /// guard's missing-binary deny contract holds only for the canonical
 /// launcher: with no binary staged, the canonical guard prints the deny and
-/// no reproduction does; with an executable marker at `bin/guard`, the
+/// no reproduction does; with an executable marker at `libexec/guard`, the
 /// reproductions run it. The checker accepts the canonical guard and
 /// rejects every reproduction.
 #[cfg(unix)]
@@ -1219,7 +1219,7 @@ fn review_r3_forms_bypass_the_guard_at_runtime_and_are_rejected() {
         assert!(!problems.is_empty(), "{form:?} passes the checker");
     }
 
-    let marker = plugin.join("bin/guard");
+    let marker = plugin.join("libexec/guard");
     write(&marker, "#!/bin/sh\necho REACHED_PLUGIN_BINARY\n");
     std::fs::set_permissions(&marker, std::fs::Permissions::from_mode(0o755)).expect("chmod");
     let reached = |shell: &str| {

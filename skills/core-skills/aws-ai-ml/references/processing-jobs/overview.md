@@ -1,5 +1,11 @@
 # Processing Jobs
 
+Plugin references are plain files; the host does not substitute their variables.
+Get the absolute installed plugin root from the loaded parent skill (its
+`${CLAUDE_PLUGIN_ROOT}` token is substituted there). In your own terminal, set
+`export CLAUDE_PLUGIN_ROOT='/absolute/installed/plugin'` to that actual path.
+The guarded commands below refuse an unset or empty root; never use PATH.
+
 Run arbitrary scripts and distributed data workloads on SageMaker managed processing compute with SageMaker Python SDK v3. Covers plain scripts, framework environments, Spark, custom containers, Athena/Redshift dataset definitions, and failure diagnosis.
 
 ## When to use
@@ -68,7 +74,7 @@ Before generating code or submitting a job:
 ## Generate and launch
 
 1. Read `references/configuration.md` for the placeholder values of the selected template.
-2. Render the selected template, for example with `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" ai-payloads render <skill-dir>/references/processing-jobs/code_templates/script_processing.py --mode notebook --project-dir <project-dir> --values <scratch-dir>/values.json` (`--mode script` for a script; command forms and the values file are in `references/configuration.md`). Do not write the notebook or script by hand; make only the edits that `render` prints as `manual:` lines.
+2. Render the selected template, for example with `"${CLAUDE_PLUGIN_ROOT:?Set CLAUDE_PLUGIN_ROOT to the absolute installed plugin root}/libexec/toolkit" ai-payloads render <skill-dir>/references/processing-jobs/code_templates/script_processing.py --mode notebook --project-dir <project-dir> --values <scratch-dir>/values.json` (`--mode script` for a script; command forms and the values file are in `references/configuration.md`). Do not write the notebook or script by hand; make only the edits that `render` prints as `manual:` lines.
 3. Keep `WAIT_FOR_COMPLETION=False` unless the user asks to block.
 4. Templates submit with `wait=False`, print job name/ARN immediately, and use `logs_for_processing_job` only when waiting.
 5. Report output S3 locations after completion.

@@ -28,11 +28,11 @@ pub struct PlatformSpec {
     pub glibc: Option<String>,
 }
 
-/// Where a binary is staged: a plugin `bin/` directory or a package
+/// Where a binary is staged: a plugin `libexec/` directory or a package
 /// destination (#4411 B3, R-PKG-1).
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Destination {
-    /// `plugins/<plugin>/bin/` (the plugin directory name).
+    /// `plugins/<plugin>/libexec/` (the plugin directory name).
     Plugin(String),
     /// `<package_root>/bin/` (a repository-relative path to an npm package
     /// directory inside the source tree).
@@ -40,6 +40,15 @@ pub enum Destination {
 }
 
 impl Destination {
+    /// Directory holding generated executables; packages keep their npm contract.
+    #[must_use]
+    pub fn bin_dir(&self) -> &'static str {
+        match self {
+            Self::Plugin(_) => crate::BIN_DIR,
+            Self::PackageRoot(_) => "bin",
+        }
+    }
+
     /// The plugin name or the package root path.
     #[must_use]
     pub fn key(&self) -> &str {
@@ -48,7 +57,7 @@ impl Destination {
         }
     }
 
-    /// The destination directory (the parent of its `bin/`).
+    /// The destination directory (the parent of its `libexec/`).
     #[must_use]
     pub fn dir(&self, repo_root: &Path, plugins_root: &Path) -> std::path::PathBuf {
         match self {
@@ -108,7 +117,7 @@ impl Role {
 pub struct BinarySpec {
     /// Where it is staged.
     pub destination: Destination,
-    /// Staged name: the dispatcher is `bin/<name>`.
+    /// Staged name: the dispatcher is `libexec/<name>`.
     pub name: String,
     /// Workspace package that builds it.
     pub package: String,
@@ -228,12 +237,10 @@ impl Declaration {
                 let inside_bin = root
                     .strip_prefix(other)
                     .and_then(|rest| rest.strip_prefix('/'))
-                    .is_some_and(|rest| {
-                        rest == crate::BIN_DIR || rest.starts_with(&format!("{}/", crate::BIN_DIR))
-                    });
+                    .is_some_and(|rest| rest == "bin" || rest.starts_with("bin/"));
                 if inside_bin {
                     return Err(format!(
-                        "declaration: package_root {root} lies inside the bin/ of package_root {other}"
+                        "declaration: package_root {root} lies inside the libexec/ of package_root {other}"
                     ));
                 }
             }
@@ -395,7 +402,7 @@ fn check_role_destination(
     match (destination, role) {
         (Destination::PackageRoot(_), Role::Subprocess) | (Destination::Plugin(_), _) => Ok(()),
         (Destination::PackageRoot(_), _) => Err(format!(
-            "{label}: a package_root binary must have role subprocess (code spawns it; no launcher can reach a package bin/)"
+            "{label}: a package_root binary must have role subprocess (code spawns it; no launcher can reach a package libexec/)"
         )),
     }
 }
@@ -500,7 +507,7 @@ fn parse_binary(value: &Json) -> Result<BinarySpec, String> {
 
 /// Checks a declared package destination on disk (R-PKG-1): every path
 /// component is a real directory (no symlink), and it holds a regular
-/// `package.json` and a regular `.gitignore` that ignores `bin/`. Returns the
+/// `package.json` and a regular `.gitignore` that ignores `libexec/`. Returns the
 /// problems; empty means the destination is usable.
 #[must_use]
 pub fn check_package_root(repo_root: &Path, root: &str) -> Vec<String> {
@@ -541,7 +548,7 @@ pub fn check_package_root(repo_root: &Path, root: &str) -> Vec<String> {
         let lines: Vec<&str> = text.lines().map(str::trim).collect();
         let ignores = lines.iter().any(|line| matches!(*line, "bin/" | "/bin/"));
         // verify-package stays git-free, so it cannot evaluate a pattern: any
-        // negation (`!*/`, `!*`, `!b?n`) might re-include bin/ and is refused.
+        // negation (`!*/`, `!*`, `!b?n`) might re-include libexec/ and is refused.
         let reincludes = lines.iter().any(|line| line.starts_with('!'));
         if !ignores || reincludes {
             problems.push(format!(
@@ -550,14 +557,14 @@ pub fn check_package_root(repo_root: &Path, root: &str) -> Vec<String> {
         }
     } else {
         problems.push(format!(
-            "{label}: has no regular .gitignore; it must ignore bin/"
+            "{label}: has no regular .gitignore; it must ignore libexec/"
         ));
     }
     problems
 }
 
 /// The textual rules for a `package_root` (R-PKG-1): a normalized
-/// repository-relative path of plain segments, not inside a `plugins/*/bin/`.
+/// repository-relative path of plain segments, not inside a `plugins/*/libexec/`.
 fn check_package_root_path(root: &str) -> Result<(), String> {
     let refused = |why: &str| {
         Err(format!(
@@ -580,8 +587,8 @@ fn check_package_root_path(root: &str) -> Result<(), String> {
             "must be a repository-relative path of plain segments ([A-Za-z0-9._-], no `.`, `..`, empty, absolute or backslash parts)",
         );
     }
-    if segments.len() >= 3 && segments[0] == "plugins" && segments[2] == crate::BIN_DIR {
-        return refused("lies inside a plugins/*/bin/ directory");
+    if segments.len() >= 3 && segments[0] == "plugins" && matches!(segments[2], "bin" | "libexec") {
+        return refused("lies inside a plugins/*/libexec/ directory");
     }
     Ok(())
 }

@@ -1,5 +1,11 @@
 # RLAIF Fine-Tuning Guide
 
+Plugin references are plain files; the host does not substitute their variables.
+Get the absolute installed plugin root from the loaded parent skill (its
+`${CLAUDE_PLUGIN_ROOT}` token is substituted there). In your own terminal, set
+`export CLAUDE_PLUGIN_ROOT='/absolute/installed/plugin'` to that actual path.
+The guarded commands below refuse an unset or empty root; never use PATH.
+
 RLAIF (Reinforcement Learning from AI Feedback) uses a Bedrock LLM as a judge to score model outputs during training. No human-labeled preference pairs are needed — the judge evaluates responses in real time.
 
 ## How RLAIF Differs from RLVR
@@ -36,7 +42,7 @@ Pass the builtin name directly as the `reward_prompt` parameter:
 
 **Under the hood**: `reward_prompt="Builtin.Summarize"` sets the hyperparameter `judge_prompt_template` to the matching template. No `Evaluator.create()` call needed.
 
-See `code_templates/rlaif_builtin.py` for the full code template; `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" ai-payloads render` writes it into the project (see `code_output_guide.md`).
+See `code_templates/rlaif_builtin.py` for the full code template; `"${CLAUDE_PLUGIN_ROOT:?Set CLAUDE_PLUGIN_ROOT to the absolute installed plugin root}/libexec/toolkit" ai-payloads render` writes it into the project (see `code_output_guide.md`).
 
 ---
 
@@ -82,7 +88,7 @@ The Bedrock judge receives the prompt and evaluates the model output. No Lambda 
 
 3. **Pass the ARN as `reward_prompt`** to `RLAIFTrainer` (instead of the builtin string).
 
-See `code_templates/rlaif_custom_prompt.py` for the full code template; `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" ai-payloads render` writes it into the project (see `code_output_guide.md`).
+See `code_templates/rlaif_custom_prompt.py` for the full code template; `"${CLAUDE_PLUGIN_ROOT:?Set CLAUDE_PLUGIN_ROOT to the absolute installed plugin root}/libexec/toolkit" ai-payloads render` writes it into the project (see `code_output_guide.md`).
 
 ---
 

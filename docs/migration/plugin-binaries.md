@@ -1,4 +1,4 @@
-# Per-plugin `./bin` binaries: build and stage pipeline (#4487)
+# Per-plugin `./libexec` binaries: build and stage pipeline (#4487)
 
 Status: pipeline, contract test and design implemented on the #4487 branch. Nothing is
 released. Integration round 21 (#5078) switched the live aws-core `hooks.json` to the
@@ -7,8 +7,35 @@ the release (#4414).
 
 ## 1. Decision and scope
 
+The binding #5629 ruling relocates plugin executables to `libexec/`. This name
+marks private executables called by explicit path. Top-level plugin `bin/` is
+forbidden: Claude Code adds it to Bash PATH, where identically named builds
+compete, and claude.ai and Cowork reject plugins containing it. `verify` and
+`check` refuse even an empty or symlinked top-level `bin/`, declared or not.
+The separate OpenClaw npm package keeps `<package_root>/bin/`. Do not add any
+plugin `libexec/` to PATH. A bare `toolkit` cannot select a plugin payment build
+through automatic plugin PATH registration after this move.
+
+[Claude Code plugin reference](https://code.claude.com/docs/en/plugins-reference)
+documents root substitution in skill bodies and hook commands. Skill bodies
+must contain the exact `${CLAUDE_PLUGIN_ROOT}` token: Bash tool commands do not
+receive that variable in their environment. The payment preflight tests the
+substituted root itself for emptiness and the executable for presence. Plain
+reference files and a human terminal receive no substitution; copy the resolved
+absolute root shown in the loaded parent skill, export `CLAUDE_PLUGIN_ROOT` in
+that terminal, and use `${CLAUDE_PLUGIN_ROOT:?Set CLAUDE_PLUGIN_ROOT to the absolute installed plugin root}/libexec/toolkit`.
+That expansion refuses unset and empty roots before executing anything. A
+missing binary is a loud error; a flattened skill install must stop.
+
+Code inspection: `launcher::dispatcher_script` computes its directory from
+`$0`, then execs the fixed platform-relative binary beside it; moving that
+directory preserves argument, stdin, exit and platform-refusal behavior.
+`guard_hook_command` and the actual aws-core hook JSON pass the explicit root
+path as `$0` to the existing fail-closed wrapper. No dispatcher constraint
+requires `bin/`. Payment policy, consent and the TTY gate are unchanged.
+
 The GM ruling recorded on #4487, #4413 and #4993 chose option (i) of #4993: each plugin
-ships its own platform binaries under `plugins/<plugin>/bin/`, and one pipeline stages
+ships its own platform binaries under `plugins/<plugin>/libexec/`, and one pipeline stages
 every such binary. It serves the secret-safety PreToolUse hook (`secret-safety-hook`
 crate, bin `secret-safety`, #4412) now. Later it serves the `toolkit` binary that the
 #4413 MCP proxy cutover uses.
@@ -19,7 +46,7 @@ exactly `["agents-pay-live"]`; aws-core and aws-startup-advisor keep exactly
 `["ai-models-live", "docgraph-live"]` on every declared platform. The default
 CLI and shared AWS crate features remain empty and SDK-free. The separately
 distributed OpenClaw package retains its existing `agents-pay-live` build;
-plugin payment commands use `${CLAUDE_PLUGIN_ROOT}/bin/toolkit`, delivered
+plugin payment commands use `${CLAUDE_PLUGIN_ROOT}/libexec/toolkit`, delivered
 in the existing operator-gated plugin release tree. Standalone OpenClaw
 commands use the npm package's own dispatcher. See
 [the invocation inventory and default-build guard](shipped-toolkit.md).
@@ -32,9 +59,9 @@ The pipeline has three parts:
 
 | Part | Path | Committed |
 | --- | --- | --- |
-| Declaration: which binaries each plugin ships, from which package/bin/features, for which platforms, in which launcher role | `packaging/plugin-binaries.json` | yes (hand-edited, reviewed) |
+| Declaration: which binaries each plugin ships, from which package/libexec/features, for which platforms, in which launcher role | `packaging/plugin-binaries.json` | yes (hand-edited, reviewed) |
 | Staging tool (Rust) | `crates/plugin-stage` (bin `plugin-stage`) | yes |
-| Staged binaries, dispatchers and manifest | `plugins/<plugin>/bin/` | no: generated and gitignored |
+| Staged binaries, dispatchers and manifest | `plugins/<plugin>/libexec/` | no: generated and gitignored |
 
 ## 2. Target triples
 
@@ -85,7 +112,7 @@ was added, so no runner is started by this change.
 ## 3. Layout under each plugin
 
 ```text
-plugins/<plugin>/bin/
+plugins/<plugin>/libexec/
   manifest.json              provenance manifest (generated)
   <name>                     POSIX dispatcher (generated, 0755)
   <name>.exe                 windows-x86_64 binary
@@ -114,7 +141,7 @@ manifest (`"package_root"` instead of `"plugin"`), sha256 and modes above.
   and the launcher allowlist and inventory of section 4 are unchanged.
 - Every path component must be a real directory (no symlink). The directory must
   hold a regular `package.json` and a `.gitignore` with a `bin/` line (and no
-  `!` negation line, since verify-package cannot evaluate patterns without git). It may not lie inside a `plugins/*/bin/` or another
+  `!` negation line, since verify-package cannot evaluate patterns without git). It may not lie inside a `plugins/*/libexec/` or another
   package destination's `bin/`. `verify`, `verify --complete` and `stage` check
   this before reading or writing anything.
 - `check` also refuses any git-tracked file under a package destination's `bin/`.
@@ -134,8 +161,8 @@ manifest (`"package_root"` instead of `"plugin"`), sha256 and modes above.
 ## 4. Launchers: how hooks.json and .mcp.json pick the binary
 
 Launchers never name a platform directory. They always call the dispatcher
-`${CLAUDE_PLUGIN_ROOT}/bin/<name>`. The contract test rejects any launcher that reaches
-into `bin/<platform>/`, names `bin/<name>.exe`, or passes the bare `bin` directory.
+`${CLAUDE_PLUGIN_ROOT}/libexec/<name>`. The contract test rejects any launcher that reaches
+into `libexec/<platform>/`, names `libexec/<name>.exe`, or passes the bare `libexec` directory.
 
 **The dispatcher** is a short POSIX `sh` script, generated byte for byte by
 `launcher::dispatcher_script`:
@@ -147,10 +174,10 @@ into `bin/<platform>/`, names `bin/<name>.exe`, or passes the bare `bin` directo
 3. Any other OS or architecture (FreeBSD, `armv7l`, `i686`, an empty or failing
    `uname`) is unsupported: it writes `<name>: unsupported platform ...` to stderr and
    exits 127 before it looks at any file (#5025). No path is ever built from an
-   unsupported value, so a hand-placed `bin/unsupported-x86_64/<name>` can never run.
-4. It runs `bin/<os>-<arch>/<name>` with `exec`, passing its arguments and stdin
+   unsupported value, so a hand-placed `libexec/unsupported-x86_64/<name>` can never run.
+4. It runs `libexec/<os>-<arch>/<name>` with `exec`, passing its arguments and stdin
    through. On Windows (x86_64, or ARM64 through Windows' x86_64 emulation) it runs
-   `bin/<name>.exe`.
+   `libexec/<name>.exe`.
 5. If the file is missing or not executable, it writes
    `<name>: no staged binary for <os>-<arch> ...` to stderr and exits 127.
 
@@ -163,7 +190,7 @@ refused rather than guessed at, so the guard denies there.
 except for the path. `plugin-stage launcher aws-core/secret-safety` prints it:
 
 ```text
-sh -c 'if out=$("$0" 2>/dev/null); then printf %s "$out"; else printf %s "{\"hookSpecificOutput\":{...\"permissionDecision\":\"deny\",...}}"; fi' "${CLAUDE_PLUGIN_ROOT}/bin/secret-safety"
+sh -c 'if out=$("$0" 2>/dev/null); then printf %s "$out"; else printf %s "{\"hookSpecificOutput\":{...\"permissionDecision\":\"deny\",...}}"; fi' "${CLAUDE_PLUGIN_ROOT}/libexec/secret-safety"
 ```
 
 A unit test (`the_guard_command_matches_the_4412_launcher_contract`) pins the string. It
@@ -172,21 +199,21 @@ where it differs only in the path. The contract requires a guard-hook launcher t
 exactly this canonical string and to be registered under `PreToolUse`.
 
 **Windows `.exe` through `sh -c "$0"`.** Claude Code runs hook commands with Git Bash on
-Windows, so `sh -c '... "$0" ...' ".../bin/secret-safety"` runs the dispatcher script.
+Windows, so `sh -c '... "$0" ...' ".../libexec/secret-safety"` runs the dispatcher script.
 `uname -s` reports `MINGW64_NT-...`, and the dispatcher then runs
-`bin/secret-safety.exe`. The extensionless dispatcher file exists, so MSYS runs it and
+`libexec/secret-safety.exe`. The extensionless dispatcher file exists, so MSYS runs it and
 does not go looking for the `.exe` itself; the dispatcher decides. Tests run this path
 with a faked `uname` (`MINGW64_NT`, `MSYS_NT`, `CYGWIN_NT`). A real run on Windows is
 still open.
 
 **MCP servers (role `mcp-server`).** The server `command` must be exactly
-`${CLAUDE_PLUGIN_ROOT}/bin/<name>` (or `./bin/<name>`). `sh -c` wrappers and extra
+`${CLAUDE_PLUGIN_ROOT}/libexec/<name>` (or `./libexec/<name>`). `sh -c` wrappers and extra
 words in `command` are refused, and `args` follow the literal-data rule below.
 
 - On Unix the host spawns the dispatcher script directly.
-- On Windows the host launches `bin/<name>` without a shell. Windows process creation
+- On Windows the host launches `libexec/<name>` without a shell. Windows process creation
   (and Node/libuv `spawn`) appends `.exe` to a name that has no extension, so it reaches
-  `bin/<name>.exe` without needing `sh`.
+  `libexec/<name>.exe` without needing `sh`.
 
 That Windows behaviour must be verified on a Windows host before #4413 S5. If it fails,
 the fallback is a host that runs MCP commands through `sh`, which Git for Windows
@@ -194,14 +221,14 @@ provides.
 
 **Role `hook`** (non-guarding hooks, for example telemetry) may be followed by
 `|| true`, because a missing binary there must not block the user. Its only templates
-are `"${CLAUDE_PLUGIN_ROOT}/bin/<name>"` and `"${CLAUDE_PLUGIN_ROOT}/bin/<name>" || true`.
+are `"${CLAUDE_PLUGIN_ROOT}/libexec/<name>"` and `"${CLAUDE_PLUGIN_ROOT}/libexec/<name>" || true`.
 
 ### Launcher allowlist (#5022, #5053, #5069, #5070, #5071, #5088)
 
-Three review rounds found ways to spell a path into `bin/` that a classifier missed:
+Three review rounds found ways to spell a path into `libexec/` that a classifier missed:
 
-1. Quoting: `"${CLAUDE_PLUGIN_ROOT}"/bin/x || true`.
-2. Repeated separators and continuations: `.//bin/x` and `b\<LF>in`.
+1. Quoting: `"${CLAUDE_PLUGIN_ROOT}"/libexec/x || true`.
+2. Repeated separators and continuations: `.//libexec/x` and `b\<LF>in`.
 3. Shell expansion: POSIX classes `b[[:lower:]]n`, brace ranges `{b..b}in` and
    positional construction `sh -c '"$0/$1$2/x"' "${CLAUDE_PLUGIN_ROOT}" b in`.
 
@@ -223,8 +250,8 @@ byte. Only the `<...>` parts vary:
 | Template id | Shape |
 | --- | --- |
 | `guard-deny` | the canonical guard deny launcher above, for a declared `guard-hook` |
-| `bin-hook` | `"${CLAUDE_PLUGIN_ROOT}/bin/<name>"`, for a declared `hook` |
-| `bin-hook-or-true` | `"${CLAUDE_PLUGIN_ROOT}/bin/<name>" \|\| true`, for a declared `hook` |
+| `bin-hook` | `"${CLAUDE_PLUGIN_ROOT}/libexec/<name>"`, for a declared `hook` |
+| `bin-hook-or-true` | `"${CLAUDE_PLUGIN_ROOT}/libexec/<name>" \|\| true`, for a declared `hook` |
 | `plugin-file` | `"${CLAUDE_PLUGIN_ROOT}/<relpath>"` |
 | `cat-plugin-file` | `cat "${CLAUDE_PLUGIN_ROOT}/<relpath>" 2>/dev/null \|\| true` |
 | `python-guard` | `sh -c 'python3 "$0" 2>/dev/null \|\| python "$0" 2>/dev/null \|\| py -3 "$0"' "${CLAUDE_PLUGIN_ROOT}/<relpath>"` |
@@ -237,7 +264,7 @@ byte. Only the `<...>` parts vary:
   No segment may be `bin` in any case, with trailing dots ignored as on Windows (so
   `Bin.` counts as `bin`). The first-character class already excludes `.`, `..` and
   hidden segments. Any part of the relpath that exists in the plugin as a symlink is
-  refused, so a plain spelling cannot lead into `bin/`.
+  refused, so a plain spelling cannot lead into `libexec/`.
 - The python shapes are exactly as shipped and stay until #4412 activates the binary
   and #4415 retires the scripts.
 - `CURSOR_PLUGIN_ROOT` twins exist only where the inventory has them (the Cursor
@@ -272,7 +299,7 @@ plugin root or holds a `bin` segment. Everything else is refused, whatever its a
   `setsid`, `sudo`, `doas` and `busybox`;
 - shells (`sh`, `bash`, `cmd`, `powershell`, `pwsh`, ...);
 - interpreters (`python`, `node`, `ruby`, `perl`, ...);
-- any other program name or spelling (`UVX`, `uvx.exe`, `/usr/bin/env`, `npx`);
+- any other program name or spelling (`UVX`, `uvx.exe`, `/usr/libexec/env`, `npx`);
 - a non-string `command`, and `args` with no `command`.
 
 A new MCP program or argument shape needs a reviewed template change and a new
@@ -310,7 +337,7 @@ declared guard with no registration as not enforced.
   marker binary under `sh` and `bash`. The canonical guard denies.
 - A runtime test (where `env` supports `-C` and `-S`) shows the #5088 split, attached
   and long `-S` forms exit without a deny when no binary is staged and run a marker
-  `bin/guard` when one is.
+  `libexec/guard` when one is.
 - A deterministic exhaustive test inserts each of 31 shell metacharacters at every
   position of every template instance. That is 52,855 mutants since the #4412 switch
   (57,412 before it, when the inventory still held the aws-core `python-guard` string),
@@ -325,7 +352,7 @@ command is `uvx` with that template, or our own binary. What remains is trust in
 those programs do with their arguments. The pinned `mcp-proxy-for-aws-cli` package and
 the URL it connects to are a supply-chain matter, not a launcher spelling. Likewise, a
 hook template that runs a plugin file (`plugin-file`, the python shapes) trusts that
-file's content: a reviewed plugin script could itself call `bin/`, which is a
+file's content: a reviewed plugin script could itself call `libexec/`, which is a
 source-review matter.
 
 ### Feature-graph gate (#5592, #5603, #5604)
@@ -357,7 +384,7 @@ is a deliberate opt-in this gate does not prevent. See [ai-models.md](ai-models.
 
 ## 5. Checksums and provenance
 
-`plugin-stage stage` writes `bin/manifest.json`:
+`plugin-stage stage` writes `libexec/manifest.json`:
 
 - `source_commit`: the full commit from `git rev-parse HEAD`.
 - `source_dirty`: true when `git status --porcelain --untracked-files=all` reports
@@ -365,7 +392,7 @@ is a deliberate opt-in this gate does not prevent. See [ai-models.md](ai-models.
   the checkout (#5027). Cargo builds untracked inputs without being told to: an
   auto-discovered `build.rs`, a new module, `.cargo/config.toml`,
   `rust-toolchain.toml`. A build with any of them present is therefore not a build of
-  the named commit. Ignored files (`target/` and the generated `plugins/*/bin/`) stay
+  the named commit. Ignored files (`target/` and the generated `plugins/*/libexec/`) stay
   permitted. The check covers the whole checkout, not only the staged packages' paths:
   path dependencies and workspace-root configuration are build inputs too, and a
   narrower list could miss one.
@@ -397,7 +424,7 @@ binary on every declared platform, staged from a clean commit, in addition to th
 normal checks.
 
 Symlinks (#5023). Verify, partial or complete, refuses a symlinked plugin directory,
-`bin/`, platform directory or `manifest.json` before reading through it, using
+`libexec/`, platform directory or `manifest.json` before reading through it, using
 `symlink_metadata`. The gate therefore certifies a self-contained package: a symlink
 force-added to the release tree would not ship the verified bytes. `stage` refuses the
 same layouts before it writes anything, with or without `--clean`, so it never writes
@@ -405,11 +432,11 @@ through a link out of the plugin.
 
 ## 6. Keeping staged binaries out of source review
 
-- `.gitignore` excludes `/plugins/*/bin/` on every source branch, including rolling.
+- `.gitignore` excludes `/plugins/*/libexec/` on every source branch, including rolling.
   Built binaries are never committed to the source tree.
-- `.gitattributes` marks `plugins/*/bin/**` as `linguist-generated` and `binary`. If a
+- `.gitattributes` marks `plugins/*/libexec/**` as `linguist-generated` and `binary`. If a
   release tree ever carries them, they are hidden from diffs and code review.
-- Every file under `bin/` must be listed in the manifest. A hand-placed or hand-edited
+- Every file under `libexec/` must be listed in the manifest. A hand-placed or hand-edited
   file fails `verify` as "not listed" or "sha256 differs", and an edited dispatcher
   fails as "differs from the generated dispatcher". The only hand-edited input is the
   reviewed declaration.
@@ -418,7 +445,7 @@ Why a release tree may carry binaries: plugin marketplaces install a plugin from
 git tree the marketplace entry points at (`"source": "./plugins/aws-core"`). Users
 therefore receive binaries only if that tree contains them. The design keeps them off
 every source branch. Only the operator-gated release step (#4414 packaging, then a
-release or main publication) may add the staged `bin/` directories, with
+release or main publication) may add the staged `libexec/` directories, with
 `git add -f`, after `verify --complete` passes. This change does not do that, and no
 release is published.
 
@@ -430,7 +457,7 @@ that payment-capable binary by name; a general release approval does not cover i
 
 | Situation | Guard hook (secret-safety) | MCP server |
 | --- | --- | --- |
-| `bin/` not staged (fresh source checkout) | launcher prints the deny | spawn fails; server unavailable |
+| `libexec/` not staged (fresh source checkout) | launcher prints the deny | spawn fails; server unavailable |
 | unsupported platform (for example `armv7l`, FreeBSD, `i686`), even with a file planted at an unsupported path | dispatcher exits 127 before any lookup, launcher denies | exits 127; server unavailable |
 | supported platform with no staged binary | dispatcher exits 127, launcher denies | exits 127; server unavailable |
 | binary not executable, wrong architecture, or glibc too old | `exec` fails, launcher denies | server unavailable |
@@ -450,7 +477,7 @@ and it is why the switch ships only together with staged binaries (section 9).
 (`make test`, CI `test:rust`). It is offline and builds no cross target.
 
 - **Launchers.** It walks every plugin's `hooks.json`, `.mcp.json` and `mcp.json`. It
-  skips `skills/`, `fixtures/`, `tests/`, `node_modules/` and `bin/`. It also follows
+  skips `skills/`, `fixtures/`, `tests/`, `node_modules/` and `libexec/`. It also follows
   `hooks` and `mcpServers` in the plugin manifests (`plugin.json` and
   `.claude-plugin/`, `.codex-plugin/`, `.cursor-plugin/` and `.devin-plugin/`). A value
   may be a file path, an inline object, or a list of either (Devin's string-or-list
@@ -458,13 +485,13 @@ and it is why the switch ships only together with staged binaries (section 9).
   and any other value or member type is refused. Every string is checked against
   the launcher allowlist (section 4). Each reference must name a binary that the
   declaration declares for that plugin, and must have the form its role requires.
-  Today it scans 12 launcher files and finds two `bin/` references: the two aws-core
+  Today it scans 12 launcher files and finds two `libexec/` references: the two aws-core
   PreToolUse registrations of `aws-core/secret-safety` (#4412 switch, #5078).
-- **Staged files.** For every `plugins/*/bin/` that exists, the test checks:
+- **Staged files.** For every `plugins/*/libexec/` that exists, the test checks:
   - the plugin declares binaries, and the manifest exists and parses;
   - each entry is declared, has the declared triple, package, bin and features, and
     sits at its layout path;
-  - the plugin directory, `bin/`, platform directories and the manifest are real (not
+  - the plugin directory, `libexec/`, platform directories and the manifest are real (not
     symlinks);
   - each file is a regular file (not a symlink), has the executable bit (Unix), and
     matches its size and sha256;
@@ -520,3 +547,32 @@ Follow-ups:
    build works. Verify the Windows native `.exe` launch.
 3. **#4414.** The release packaging runs `stage --platform all` on the clean release
    commit, then `verify --complete`, then hands off to the operator-gated publication.
+
+## Release host checks (#5628–#5630)
+
+Use the final clean release tree after `stage --platform all` and
+`verify --complete`; generated executables must be present during validation.
+Run `claude plugin validate "$release_root/plugins/$plugin"` for each of
+`aws-core`, `aws-agents`, `aws-startup-advisor`, `aws-data-analytics` and
+`aws-agents-for-devsecops`. Record version, exit status, errors and warnings.
+Validation is a layout check; stand-in binaries cannot prove native execution.
+
+In an authenticated Claude Code terminal with no AWS credentials, load
+`claude --plugin-dir "$release_root/plugins/aws-agents"`. Ask it to load
+`/aws-agents:agents-pay`, then run only the substituted preflight and
+`"${CLAUDE_PLUGIN_ROOT}/libexec/toolkit" help`. Do not run any setup, admin,
+payment or AWS route. Capture the actual Bash command and help result.
+For the hook check load aws-core with `--plugin-dir`, ask for a harmless Bash
+`printf` command, and confirm its shipped PreToolUse hook executes
+`libexec/secret-safety` (use Claude hook diagnostics). Also load a disposable
+probe plugin with a SessionStart hook invoking the relocated aws-agents
+`libexec/toolkit help`; confirm real native help in hook output. Record both
+skill and hook results; an offline substitution test is separate evidence.
+If authentication or local-plugin loading prevents this, record that exact
+error and keep these steps as the #4414 release to-do. No credentials or
+payment approvals may be supplied by an agent.
+
+claude.ai and Cowork installation and native execution remain **unverified**.
+The release operator must install the staged plugin on those hosts and test
+a harmless help/refusal path; record platform and result before claiming
+support. Removing top-level `bin/` alone establishes no native-binary support.

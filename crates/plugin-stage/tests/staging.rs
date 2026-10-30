@@ -58,7 +58,7 @@ impl Fixture {
     }
 
     fn bin(&self) -> PathBuf {
-        self.plugins.join("demo/bin")
+        self.plugins.join("demo/libexec")
     }
 
     /// Builds a stand-in output for `platform`: a shell script that names
@@ -258,12 +258,12 @@ fn a_binary_without_the_executable_bit_is_flagged() {
 #[test]
 fn an_undeclared_plugin_may_not_have_a_bin_directory() {
     let fixture = Fixture::new();
-    write(&fixture.plugins.join("other/bin/tool"), "x");
+    write(&fixture.plugins.join("other/libexec/tool"), "x");
     let problems = fixture.verify(false);
     assert_flags(&problems, "plugin other declares no binaries");
 }
 
-/// #5023: a symlinked plugin directory, `bin/` root, platform directory or
+/// #5023: a symlinked plugin directory, `libexec/` root, platform directory or
 /// manifest is refused by verify (partial and complete) and by stage, before
 /// anything is read through it or written into it.
 #[cfg(unix)]
@@ -304,7 +304,7 @@ mod symlinks {
     fn a_symlinked_bin_root_is_refused() {
         let fixture = staged();
         relink(&fixture.bin(), &fixture.dir.join("outside-bin"));
-        assert_refused(&fixture, "demo/bin");
+        assert_refused(&fixture, "demo/libexec");
     }
 
     #[test]
@@ -384,7 +384,7 @@ mod symlinks {
 }
 
 /// #5027: clean provenance means no tracked change and no untracked,
-/// non-ignored file anywhere in the checkout; ignored `plugins/*/bin/`
+/// non-ignored file anywhere in the checkout; ignored `plugins/*/libexec/`
 /// outputs stay permitted.
 mod provenance_of_untracked_inputs {
     use std::process::Command;
@@ -428,7 +428,7 @@ mod provenance_of_untracked_inputs {
             "[package]\nname = \"tool\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
         );
         write(&dir.join("crates/tool/src/main.rs"), "fn main() {}\n");
-        write(&dir.join(".gitignore"), "/target/\n/plugins/*/bin/\n");
+        write(&dir.join(".gitignore"), "/target/\n/plugins/*/libexec/\n");
         write(&dir.join("plugins/demo/README.md"), "demo\n");
         git(&dir, &["init", "--quiet"]);
         git(&dir, &["add", "--all"]);
@@ -447,7 +447,7 @@ mod provenance_of_untracked_inputs {
         let dir = repo();
         assert!(!dirty(&dir), "fresh commit is clean");
         // Ignored generated outputs keep the source clean.
-        write(&dir.join("plugins/demo/bin/manifest.json"), "{}\n");
+        write(&dir.join("plugins/demo/libexec/manifest.json"), "{}\n");
         write(&dir.join("target/release/tool"), "x");
         assert!(!dirty(&dir), "ignored outputs");
         for input in [
@@ -488,7 +488,7 @@ mod provenance_of_untracked_inputs {
         let clean = source_provenance(&dir, "rustc 1.94.1").expect("clean");
         assert!(!clean.source_dirty);
         install(&plugins, "demo", &[built], &clean, false).expect("clean stage");
-        assert!(!dirty(&dir), "the staged bin/ is ignored output");
+        assert!(!dirty(&dir), "the staged libexec/ is ignored output");
         write(&dir.join("crates/tool/build.rs"), "fn main() {}\n");
         let untracked = source_provenance(&dir, "rustc 1.94.1").expect("untracked");
         assert!(untracked.source_dirty);

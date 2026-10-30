@@ -52,10 +52,14 @@ fn root() -> PathBuf {
 /// the contracts below govern the command, so the path prefix is dropped.
 fn without_dispatcher_path(text: &str) -> String {
     text.replace(
+        "${CLAUDE_PLUGIN_ROOT:?Set CLAUDE_PLUGIN_ROOT to the absolute installed plugin root}",
+        "${CLAUDE_PLUGIN_ROOT}",
+    )
+    .replace(
         "\"${CLAUDE_PLUGIN_ROOT}/skills/agents-pay/packages/openclaw/bin/toolkit\"",
         "toolkit",
     )
-    .replace("\"${CLAUDE_PLUGIN_ROOT}/bin/toolkit\"", "toolkit")
+    .replace("\"${CLAUDE_PLUGIN_ROOT}/libexec/toolkit\"", "toolkit")
 }
 
 fn read(rel: &str) -> String {

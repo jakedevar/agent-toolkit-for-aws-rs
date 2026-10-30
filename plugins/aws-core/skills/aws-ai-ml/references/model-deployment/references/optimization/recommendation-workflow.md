@@ -1,5 +1,11 @@
 # Recommendation Workflow
 
+Plugin references are plain files; the host does not substitute their variables.
+Get the absolute installed plugin root from the loaded parent skill (its
+`${CLAUDE_PLUGIN_ROOT}` token is substituted there). In your own terminal, set
+`export CLAUDE_PLUGIN_ROOT='/absolute/installed/plugin'` to that actual path.
+The guarded commands below refuse an unset or empty root; never use PATH.
+
 Guide the user through creating and running an AI Recommendation Job. A recommendation job takes a model in S3, deploys it on multiple candidate instance types, benchmarks each configuration (with optional optimizations like kernel tuning and speculative decoding), and returns a ranked list of deployment options with expected performance metrics and deployable ModelPackages.
 
 ## Applies to
@@ -80,7 +86,7 @@ Then proceed to generate the notebook. If the user wants to change a value, they
 
 ## Step 5: Generate Code
 
-Generate a Jupyter notebook or a Python script — read `../code_output_guide.md` for the mode choice and output format rules (the template's `# NOTEBOOK_ONLY` markers make it dual-mode). `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" ai-payloads render` builds the output from `../../code_templates/optimize-recommendation.py`, one cell per `# Cell N:` marker; do not assemble the cells by hand. Render it with `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" ai-payloads render <skill-dir>/references/model-deployment/code_templates/optimize-recommendation.py --mode notebook --project-dir <project-dir> --values <scratch-dir>/values.json` (`--mode script` for a script, `--append` to add to an existing notebook; the rules are in `../code_output_guide.md`, and the values file keys are the names below without brackets). The template uses the SageMaker Python SDK (`>=3.20.0`; Cell 1 installs it in notebook mode), not boto3.
+Generate a Jupyter notebook or a Python script — read `../code_output_guide.md` for the mode choice and output format rules (the template's `# NOTEBOOK_ONLY` markers make it dual-mode). `"${CLAUDE_PLUGIN_ROOT:?Set CLAUDE_PLUGIN_ROOT to the absolute installed plugin root}/libexec/toolkit" ai-payloads render` builds the output from `../../code_templates/optimize-recommendation.py`, one cell per `# Cell N:` marker; do not assemble the cells by hand. Render it with `"${CLAUDE_PLUGIN_ROOT:?Set CLAUDE_PLUGIN_ROOT to the absolute installed plugin root}/libexec/toolkit" ai-payloads render <skill-dir>/references/model-deployment/code_templates/optimize-recommendation.py --mode notebook --project-dir <project-dir> --values <scratch-dir>/values.json` (`--mode script` for a script, `--append` to add to an existing notebook; the rules are in `../code_output_guide.md`, and the values file keys are the names below without brackets). The template uses the SageMaker Python SDK (`>=3.20.0`; Cell 1 installs it in notebook mode), not boto3.
 
 - **Cell 0** (markdown): Section header
 - **Cell 1**: Setup (`%pip install` — notebook only)

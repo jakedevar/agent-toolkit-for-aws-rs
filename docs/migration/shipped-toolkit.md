@@ -19,9 +19,9 @@ products. The invocation roots are:
 
 | Plugin | Skill commands | Dispatcher |
 | --- | --- | --- |
-| `aws-core` | `aws-ai-ml` references: `ai-payloads`; future `ai-models` callers in #4720 | `${CLAUDE_PLUGIN_ROOT}/bin/toolkit` |
-| `aws-agents` | `agents-build setup-payment-user`, `agents-pay` setup/admin/fetch | `${CLAUDE_PLUGIN_ROOT}/bin/toolkit` |
-| `aws-startup-advisor` | shared model-lifecycle reference and its vendored copies: `startup model-staleness`; README: `startup skill-refs` | `${CLAUDE_PLUGIN_ROOT}/bin/toolkit` |
+| `aws-core` | `aws-ai-ml` references: `ai-payloads`; future `ai-models` callers in #4720 | `${CLAUDE_PLUGIN_ROOT}/libexec/toolkit` |
+| `aws-agents` | `agents-build setup-payment-user`, `agents-pay` setup/admin/fetch | `${CLAUDE_PLUGIN_ROOT}/libexec/toolkit` |
+| `aws-startup-advisor` | shared model-lifecycle reference and its vendored copies: `startup model-staleness`; README: `startup skill-refs` | `${CLAUDE_PLUGIN_ROOT}/libexec/toolkit` |
 
 `aws-data-analytics` and `aws-agents-for-devsecops` have no toolkit CLI
 invocations. References to a CDK toolkit stack, the ADK toolkit, article
@@ -29,14 +29,27 @@ text and package names are not invocations. Canonical `aws-ai-ml` content
 is mirrored with `toolkit sync plugin-skills`; startup references use
 `toolkit sync vendored`.
 
-The repository documents `CLAUDE_PLUGIN_ROOT` in hook/MCP configuration;
-expansion in skill text is only assumed, not verified. Resolve it to the
-absolute installed plugin directory before execution, or substitute that
-directory explicitly. No command relies on PATH. A flattened skill-only
-copy lacks the dispatcher: stop with an instruction to install the full
-aws-agents plugin release or standalone OpenClaw package and supply its
-absolute dispatcher path. OpenClaw separately ships via npm and uses its
-fixed package-relative binary table (`./bin/toolkit` in its directory).
+Claude Code substitutes the exact `${CLAUDE_PLUGIN_ROOT}` token in skill
+bodies. Bash tool commands do not inherit that variable. Each relevant skill
+shows its resolved absolute root; pass that root to reference readers.
+References are plain files and humans in their own terminal must first export
+`CLAUDE_PLUGIN_ROOT` to that absolute directory. Their commands use
+`${CLAUDE_PLUGIN_ROOT:?Set CLAUDE_PLUGIN_ROOT to the absolute installed plugin root}/libexec/toolkit`
+to refuse unset or empty roots before execution. Skill preflights check the
+exact substituted root and executable; missing delivery fails loudly.
+OpenClaw separately ships via npm and retains `./bin/toolkit` in its directory.
+
+The #5629 ruling uses private `libexec/` executables, with no top-level plugin
+`bin/`. The packaging guard rejects that directory even when empty or a
+symlink. Claude Code adds a plugin's top-level `bin/` to Bash PATH, creating
+name collisions among the three builds; claude.ai and Cowork reject such a
+plugin. An explicit `libexec/toolkit` path avoids that automatic registration.
+Do not add plugin `libexec/` to PATH. A bare `toolkit` cannot select the
+payment build via automatic plugin registration. See the
+[host reference](https://code.claude.com/docs/en/plugins-reference).
+claude.ai and Cowork install/native execution are unverified release checks;
+removing `bin/` does not establish support. The exact Claude validation,
+skill and hook release checks are in [plugin-binaries.md](plugin-binaries.md).
 
 Inventory check: all aws-agents toolkit invocations are `agents-pay` or
 `agents-build setup-payment-user`, both payment routes. No aws-agents skill
@@ -79,3 +92,13 @@ public release is performed by this slice.
 A release that includes the aws-agents plugin binaries ships a payment-capable
 `toolkit` (`agents-pay-live`), a real-money surface. The operator must approve
 that payment-capable binary by name; a general release approval does not cover it.
+
+Docgraph skills under `skills/specialized-skills/` are outside every plugin.
+They deliberately retain bare `toolkit` and the loud `built without
+docgraph-live` refusal on a wrong build. Install their CLI separately from a
+reviewed checkout: `cargo build --release --locked -p toolkit-cli --bin toolkit
+--features docgraph-live`, then install that executable as
+`~/.local/libexec/aws-toolkit-docgraph/toolkit` and prepend that dedicated
+directory to PATH for the docgraph terminal. Do not put any plugin binary
+directory on PATH. Verify `command -v toolkit` before using these skills.
+No payment feature is included in this docgraph install.

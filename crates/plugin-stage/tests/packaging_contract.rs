@@ -2,7 +2,7 @@
 //! every launcher path referenced by a plugin's `hooks.json`, `.mcp.json` or
 //! `mcp.json` resolves to a binary declared in
 //! `packaging/plugin-binaries.json`, with the launcher form its role
-//! requires; and any staged `bin/` directory matches its manifest (presence,
+//! requires; and any staged `libexec/` directory matches its manifest (presence,
 //! executable bit, size, sha256, no unlisted files). Fixture plugins prove
 //! each violation is caught.
 
@@ -68,6 +68,21 @@ fn staged_repository_binaries_match_their_manifests() {
 }
 
 #[test]
+fn packaging_refuses_any_top_level_plugin_bin() {
+    let dir = temp_dir("forbidden-plugin-bin");
+    let plugins = dir.join("plugins");
+    std::fs::create_dir_all(plugins.join("demo/bin")).unwrap();
+    let declaration = Declaration::parse(FIXTURE_DECLARATION).unwrap();
+    let problems = verify_staged(&dir, &plugins, &declaration, false);
+    assert!(
+        problems
+            .iter()
+            .any(|p| p.contains("top-level bin/") && p.contains("forbidden")),
+        "{problems:?}"
+    );
+}
+
+#[test]
 fn the_secret_safety_guard_is_declared_fail_closed() {
     let declaration = repo_declaration();
     let guard = declaration
@@ -80,7 +95,7 @@ fn the_secret_safety_guard_is_declared_fail_closed() {
     };
     let command = guard_hook_command("CLAUDE_PLUGIN_ROOT", "secret-safety", deny_reason);
     assert!(command.contains(r#"\"permissionDecision\":\"deny\""#));
-    assert!(command.ends_with(r#""${CLAUDE_PLUGIN_ROOT}/bin/secret-safety""#));
+    assert!(command.ends_with(r#""${CLAUDE_PLUGIN_ROOT}/libexec/secret-safety""#));
     let keys: Vec<&str> = declaration
         .platforms
         .iter()
@@ -152,10 +167,10 @@ fn canonical_launchers_pass() {
             ".mcp.json",
             mcp(&mcp_command("CLAUDE_PLUGIN_ROOT", "tool"), r#"["serve"]"#),
         ),
-        ("mcp.json", mcp("./bin/tool", "[]")),
+        ("mcp.json", mcp("./libexec/tool", "[]")),
         (
             ".cursor-plugin/hooks.json",
-            hooks("stop", r#""${CLAUDE_PLUGIN_ROOT}/bin/note" || true"#),
+            hooks("stop", r#""${CLAUDE_PLUGIN_ROOT}/libexec/note" || true"#),
         ),
     ]);
     assert!(problems.is_empty(), "{problems:#?}");
@@ -167,33 +182,33 @@ fn launcher_violations_are_reported() {
     let cases: Vec<(&str, String, &str)> = vec![
         (
             "hooks/hooks.json",
-            hooks("PreToolUse", r#""${CLAUDE_PLUGIN_ROOT}/bin/missing""#),
+            hooks("PreToolUse", r#""${CLAUDE_PLUGIN_ROOT}/libexec/missing""#),
             "does not declare for plugin demo",
         ),
         (
             "hooks/hooks.json",
             hooks(
                 "PreToolUse",
-                r#""${CLAUDE_PLUGIN_ROOT}/bin/linux-x86_64/note""#,
+                r#""${CLAUDE_PLUGIN_ROOT}/libexec/linux-x86_64/note""#,
             ),
             "must call the dispatcher",
         ),
         (
             "hooks/hooks.json",
-            hooks("PreToolUse", r#""${CLAUDE_PLUGIN_ROOT}/bin/note.exe""#),
+            hooks("PreToolUse", r#""${CLAUDE_PLUGIN_ROOT}/libexec/note.exe""#),
             "runs the .exe on Windows",
         ),
         (
             "hooks/hooks.json",
             hooks(
                 "PreToolUse",
-                r#"sh -c '"$0"/note' "${CLAUDE_PLUGIN_ROOT}/bin""#,
+                r#"sh -c '"$0"/note' "${CLAUDE_PLUGIN_ROOT}/libexec""#,
             ),
             "not an allowed launcher template",
         ),
         (
             "hooks/hooks.json",
-            hooks("PreToolUse", r#""${CLAUDE_PLUGIN_ROOT}/bin/guard""#),
+            hooks("PreToolUse", r#""${CLAUDE_PLUGIN_ROOT}/libexec/guard""#),
             "canonical fail-closed launcher",
         ),
         (
@@ -215,13 +230,13 @@ fn launcher_violations_are_reported() {
             ".mcp.json",
             mcp(
                 "sh",
-                r#"["-c", "exec \"$0\"", "${CLAUDE_PLUGIN_ROOT}/bin/tool"]"#,
+                r#"["-c", "exec \"$0\"", "${CLAUDE_PLUGIN_ROOT}/libexec/tool"]"#,
             ),
             "only appear in a launcher `command` field",
         ),
         (
             ".mcp.json",
-            mcp("${CLAUDE_PLUGIN_ROOT}/bin/tool --stdio", "[]"),
+            mcp("${CLAUDE_PLUGIN_ROOT}/libexec/tool --stdio", "[]"),
             "must be exactly",
         ),
         (
@@ -231,7 +246,7 @@ fn launcher_violations_are_reported() {
         ),
         (
             "nested/deeper/mcp.json",
-            mcp("bin/missing", "[]"),
+            mcp("libexec/missing", "[]"),
             "does not declare",
         ),
         (".mcp.json", "{not json".to_string(), "invalid JSON"),
@@ -253,14 +268,14 @@ fn manifests_route_launcher_files_and_inline_servers_into_the_scan() {
         (
             ".claude-plugin/plugin.json",
             r#"{"name": "demo", "hooks": "./custom/guards.json",
-                "mcpServers": {"inline": {"command": "${CLAUDE_PLUGIN_ROOT}/bin/undeclared"}}}"#
+                "mcpServers": {"inline": {"command": "${CLAUDE_PLUGIN_ROOT}/libexec/undeclared"}}}"#
                 .to_string(),
         ),
         ("custom/guards.json", hooks("PreToolUse", &guard())),
     ]);
     assert_eq!(references, 1, "{problems:#?}");
     assert_eq!(problems.len(), 1, "{problems:#?}");
-    assert!(problems[0].contains("bin/undeclared"), "{problems:#?}");
+    assert!(problems[0].contains("libexec/undeclared"), "{problems:#?}");
 
     let (problems, _) = problems_for(&[(
         ".claude-plugin/plugin.json",
@@ -282,8 +297,11 @@ fn manifests_route_launcher_files_and_inline_servers_into_the_scan() {
 #[test]
 fn skills_and_fixtures_are_not_launchers() {
     let (problems, references) = problems_for(&[
-        ("skills/x/mcp.json", mcp("bin/missing", "[]")),
-        ("fixtures/hooks.json", hooks("PreToolUse", "bin/missing")),
+        ("skills/x/mcp.json", mcp("libexec/missing", "[]")),
+        (
+            "fixtures/hooks.json",
+            hooks("PreToolUse", "libexec/missing"),
+        ),
     ]);
     assert!(problems.is_empty(), "{problems:#?}");
     assert_eq!(references, 0);
@@ -305,36 +323,36 @@ fn a_declared_plugin_must_exist() {
     );
 }
 
-/// #5022: every spelling of a plugin `bin/` path the checker cannot resolve
+/// #5022: every spelling of a plugin `libexec/` path the checker cannot resolve
 /// to exactly one canonical launcher reference is rejected (fail closed),
-/// including the fail-open guard `"${CLAUDE_PLUGIN_ROOT}"/bin/guard || true`.
+/// including the fail-open guard `"${CLAUDE_PLUGIN_ROOT}"/libexec/guard || true`.
 #[test]
 fn unresolvable_plugin_bin_spellings_are_rejected() {
     let hook_forms = [
-        r#""${CLAUDE_PLUGIN_ROOT}"/bin/guard || true"#,
-        r#""$CLAUDE_PLUGIN_ROOT"/bin/guard"#,
-        r#""./bin/undeclared""#,
-        "exec ./bin/undeclared",
-        r#"sh -c "./bin/undeclared""#,
-        "${CLAUDE_PLUGIN_ROOT}/./bin/undeclared",
-        "${CLAUDE_PLUGIN_ROOT}//bin/guard",
+        r#""${CLAUDE_PLUGIN_ROOT}"/libexec/guard || true"#,
+        r#""$CLAUDE_PLUGIN_ROOT"/libexec/guard"#,
+        r#""./libexec/undeclared""#,
+        "exec ./libexec/undeclared",
+        r#"sh -c "./libexec/undeclared""#,
+        "${CLAUDE_PLUGIN_ROOT}/./libexec/undeclared",
+        "${CLAUDE_PLUGIN_ROOT}//libexec/guard",
         "${CLAUDE_PLUGIN_ROOT}/BIN/guard",
-        r#"cd "${CLAUDE_PLUGIN_ROOT}" && bin/guard || true"#,
-        r#"cd "${CLAUDE_PLUGIN_ROOT}" && ./bin/guard"#,
+        r#"cd "${CLAUDE_PLUGIN_ROOT}" && libexec/guard || true"#,
+        r#"cd "${CLAUDE_PLUGIN_ROOT}" && ./libexec/guard"#,
         r#""${CLAUDE_PLUGIN_ROOT}/b""in/guard""#,
         r"${CLAUDE_PLUGIN_ROOT}/b\in/guard",
-        "${CLAUDE_PLUGIN_ROOT}/../demo/bin/guard",
-        r#"sh -c '"$0"/bin/guard || true' "${CLAUDE_PLUGIN_ROOT}""#,
-        r#"sh -c '"$0"/guard || true' "${CLAUDE_PLUGIN_ROOT}/bin""#,
+        "${CLAUDE_PLUGIN_ROOT}/../demo/libexec/guard",
+        r#"sh -c '"$0"/libexec/guard || true' "${CLAUDE_PLUGIN_ROOT}""#,
+        r#"sh -c '"$0"/guard || true' "${CLAUDE_PLUGIN_ROOT}/libexec""#,
         "${CLAUDE_PLUGIN_ROOT}/${SUB}/guard",
         "${CLAUDE_PLUGIN_ROOT}/b?n/guard",
         "${CLAUDE_PLUGIN_ROOT}/b*/guard",
         "${CLAUDE_PLUGIN_ROOT}/{bin,x}/guard",
-        "${CLAUDE_PLUGIN_ROOT:-.}/bin/guard",
-        r#"D="${CLAUDE_PLUGIN_ROOT}"; "$D"/bin/guard || true"#,
+        "${CLAUDE_PLUGIN_ROOT:-.}/libexec/guard",
+        r#"D="${CLAUDE_PLUGIN_ROOT}"; "$D"/libexec/guard || true"#,
         "PATH=${CLAUDE_PLUGIN_ROOT}/bin:$PATH guard",
         r#"x=$(echo bin); "${CLAUDE_PLUGIN_ROOT}/$x/guard""#,
-        r#""${CLAUDE_PLUGIN_ROOT}/bin/note" "${CLAUDE_PLUGIN_ROOT}/bin/note""#,
+        r#""${CLAUDE_PLUGIN_ROOT}/libexec/note" "${CLAUDE_PLUGIN_ROOT}/libexec/note""#,
     ];
     for command in hook_forms {
         for event in ["PreToolUse", "Stop"] {
@@ -359,13 +377,13 @@ fn unresolvable_plugin_bin_spellings_are_rejected() {
         );
     }
     for (command, args) in [
-        (r#""./bin/tool""#, "[]"),
-        ("exec ./bin/tool", "[]"),
-        ("${CLAUDE_PLUGIN_ROOT}/./bin/tool", "[]"),
-        ("sh", r#"["-c", "./bin/tool"]"#),
+        (r#""./libexec/tool""#, "[]"),
+        ("exec ./libexec/tool", "[]"),
+        ("${CLAUDE_PLUGIN_ROOT}/./libexec/tool", "[]"),
+        ("sh", r#"["-c", "./libexec/tool"]"#),
         (
             "sh",
-            r#"["-c", "exec \"$0\"", "${CLAUDE_PLUGIN_ROOT}/./bin/tool"]"#,
+            r#"["-c", "exec \"$0\"", "${CLAUDE_PLUGIN_ROOT}/./libexec/tool"]"#,
         ),
     ] {
         let (problems, references) = problems_for(&[(".mcp.json", mcp(command, args))]);
@@ -374,7 +392,7 @@ fn unresolvable_plugin_bin_spellings_are_rejected() {
             "{command} {args}: accepted with {references} references"
         );
     }
-    // A shipped template naming a plugin path outside bin/ is not a plugin
+    // A shipped template naming a plugin path outside libexec/ is not a plugin
     // binary (the python guard launcher, until #4412 and #4415 retire it).
     let (problems, references) = problems_for(&[(
         "hooks/hooks.json",
@@ -407,7 +425,7 @@ fn the_fail_open_secret_safety_registration_fails_the_contract() {
     };
     for (command, ok) in [
         (
-            r#""${CLAUDE_PLUGIN_ROOT}"/bin/secret-safety || true"#.to_string(),
+            r#""${CLAUDE_PLUGIN_ROOT}"/libexec/secret-safety || true"#.to_string(),
             false,
         ),
         (
@@ -435,7 +453,7 @@ fn the_fail_open_secret_safety_registration_fails_the_contract() {
 #[test]
 fn manifest_path_lists_are_resolved_and_scanned() {
     let undeclared =
-        r#"{"mcpServers": {"s": {"command": "${CLAUDE_PLUGIN_ROOT}/bin/undeclared"}}}"#;
+        r#"{"mcpServers": {"s": {"command": "${CLAUDE_PLUGIN_ROOT}/libexec/undeclared"}}}"#;
     let (problems, _) = problems_for(&[
         (
             ".devin-plugin/plugin.json",
@@ -444,7 +462,7 @@ fn manifest_path_lists_are_resolved_and_scanned() {
         ("custom/servers.json", undeclared.to_string()),
     ]);
     assert!(
-        problems.iter().any(|p| p.contains("bin/undeclared")),
+        problems.iter().any(|p| p.contains("libexec/undeclared")),
         "{problems:#?}"
     );
     let (problems, _) = problems_for(&[
@@ -452,7 +470,7 @@ fn manifest_path_lists_are_resolved_and_scanned() {
             ".devin-plugin/plugin.json",
             r#"{"name": "demo", "mcpServers": ["./custom/servers.json"]}"#.to_string(),
         ),
-        ("custom/servers.json", mcp(r#""./bin/tool""#, "[]")),
+        ("custom/servers.json", mcp(r#""./libexec/tool""#, "[]")),
     ]);
     assert!(!problems.is_empty(), "unsafe launcher in a listed file");
 
@@ -466,7 +484,10 @@ fn manifest_path_lists_are_resolved_and_scanned() {
         ("custom/a.json", hooks("PreToolUse", &guard())),
         (
             "custom/b.json",
-            hooks("PreToolUse", r#""${CLAUDE_PLUGIN_ROOT}"/bin/guard || true"#),
+            hooks(
+                "PreToolUse",
+                r#""${CLAUDE_PLUGIN_ROOT}"/libexec/guard || true"#,
+            ),
         ),
     ]);
     assert_eq!(references, 1, "{problems:#?}");
@@ -477,7 +498,7 @@ fn manifest_path_lists_are_resolved_and_scanned() {
     let (problems, references) = problems_for(&[(
         ".devin-plugin/plugin.json",
         r#"{"name": "demo", "mcpServers": ["./absent.json", "../escape.json",
-            {"inline": {"command": "${CLAUDE_PLUGIN_ROOT}/bin/tool"}}]}"#
+            {"inline": {"command": "${CLAUDE_PLUGIN_ROOT}/libexec/tool"}}]}"#
             .to_string(),
     )]);
     assert_eq!(references, 1, "{problems:#?}");
@@ -512,35 +533,35 @@ fn manifest_path_lists_are_resolved_and_scanned() {
 /// they extend: repeated and current-directory separators, shell
 /// backslash-newline continuations (quoted and unquoted, LF and CRLF),
 /// mixed quotes, an unbraced `$CLAUDE_PLUGIN_ROOT`, a second path to the
-/// plugin `bin/` beside one canonical reference, and a system `/bin/` path.
-/// Under the PM ruling on #4487 a string that touches `bin/` after
+/// plugin `libexec/` beside one canonical reference, and a system `/libexec/` path.
+/// Under the PM ruling on #4487 a string that touches `libexec/` after
 /// normalisation is refused unless it is a canonical form (or, for a plain
 /// hook, holds exactly one canonical reference and nothing else touching
-/// `bin/`), so every one of these is rejected for a guard and a plain hook.
+/// `libexec/`), so every one of these is rejected for a guard and a plain hook.
 const BIN_TOUCHING_FORMS: [&str; 24] = [
-    "cd \"${CLAUDE_PLUGIN_ROOT}\"; .//bin/guard || true",
-    "cd \"${CLAUDE_PLUGIN_ROOT}\"; .///bin/guard || true",
-    "cd \"${CLAUDE_PLUGIN_ROOT}\"; ././/bin/guard",
-    "cd \"${CLAUDE_PLUGIN_ROOT}\"; .//.//bin//guard",
-    "cd \"${CLAUDE_PLUGIN_ROOT}\" && .//./bin/note",
-    "${CLAUDE_PLUGIN_ROOT}/.//./bin/guard",
-    "${CLAUDE_PLUGIN_ROOT}//.///bin/note || true",
+    "cd \"${CLAUDE_PLUGIN_ROOT}\"; .//libexec/guard || true",
+    "cd \"${CLAUDE_PLUGIN_ROOT}\"; .///libexec/guard || true",
+    "cd \"${CLAUDE_PLUGIN_ROOT}\"; ././/libexec/guard",
+    "cd \"${CLAUDE_PLUGIN_ROOT}\"; .//.//libexec//guard",
+    "cd \"${CLAUDE_PLUGIN_ROOT}\" && .//./libexec/note",
+    "${CLAUDE_PLUGIN_ROOT}/.//./libexec/guard",
+    "${CLAUDE_PLUGIN_ROOT}//.///libexec/note || true",
     "\"${CLAUDE_PLUGIN_ROOT}/b\\\nin/guard\" || true",
     "${CLAUDE_PLUGIN_ROOT}/b\\\nin/guard || true",
     "\"${CLAUDE_PLUGIN_ROOT}/b\\\r\nin/guard\" || true",
-    "\"${CLAUDE_PLUGIN_ROOT}\"/\\\nbin/note",
+    "\"${CLAUDE_PLUGIN_ROOT}\"/\\\nlibexec/note",
     "cd \"${CLAUDE_PLUGIN_ROOT}\"; ./b\\\nin/guard",
     "\"${CLAUDE_PLUGIN_ROOT}\"'/bin'/guard || true",
     "'\"${CLAUDE_PLUGIN_ROOT}\"'/b\"i\"n/guard",
     "\"${CLAUDE_PLUGIN_ROOT}\"/'b'in/note || true",
-    "$CLAUDE_PLUGIN_ROOT/bin/guard || true",
-    "\"$CLAUDE_PLUGIN_ROOT/bin/note\"",
-    "\"$CLAUDE_PLUGIN_ROOT\"/bin/note || true",
-    "\"${CLAUDE_PLUGIN_ROOT}/bin/note\" ./bin/guard",
-    "\"${CLAUDE_PLUGIN_ROOT}/bin/note\" \\\n.//bin/guard",
-    "sh -c 'cd \"$0\"/.. && ./guard' \"${CLAUDE_PLUGIN_ROOT}/bin/note\"",
-    "sh -c '\"$0\" || \"${0%/*}\"/guard' \"${CLAUDE_PLUGIN_ROOT}/bin/note\"",
-    "sh -c 'cd \"$(dirname \"$0\")\" && ./guard' \"${CLAUDE_PLUGIN_ROOT}/bin/note\"",
+    "$CLAUDE_PLUGIN_ROOT/libexec/guard || true",
+    "\"$CLAUDE_PLUGIN_ROOT/libexec/note\"",
+    "\"$CLAUDE_PLUGIN_ROOT\"/libexec/note || true",
+    "\"${CLAUDE_PLUGIN_ROOT}/libexec/note\" ./libexec/guard",
+    "\"${CLAUDE_PLUGIN_ROOT}/libexec/note\" \\\n.//libexec/guard",
+    "sh -c 'cd \"$0\"/.. && ./guard' \"${CLAUDE_PLUGIN_ROOT}/libexec/note\"",
+    "sh -c '\"$0\" || \"${0%/*}\"/guard' \"${CLAUDE_PLUGIN_ROOT}/libexec/note\"",
+    "sh -c 'cd \"$(dirname \"$0\")\" && ./guard' \"${CLAUDE_PLUGIN_ROOT}/libexec/note\"",
     "/usr/bin/env sh \"${CLAUDE_PLUGIN_ROOT}/hooks/guard.sh\"",
 ];
 
@@ -582,8 +603,8 @@ fn review_5053_secret_safety_registrations_fail_the_contract() {
     let dir = temp_dir("r5053");
     let plugins = dir.join("plugins");
     for command in [
-        "cd \"${CLAUDE_PLUGIN_ROOT}\"; .//bin/secret-safety || true",
-        "cd \"${CLAUDE_PLUGIN_ROOT}\"; .///bin/secret-safety || true",
+        "cd \"${CLAUDE_PLUGIN_ROOT}\"; .//libexec/secret-safety || true",
+        "cd \"${CLAUDE_PLUGIN_ROOT}\"; .///libexec/secret-safety || true",
         "\"${CLAUDE_PLUGIN_ROOT}/b\\\nin/secret-safety\" || true",
         "${CLAUDE_PLUGIN_ROOT}/b\\\nin/secret-safety || true",
     ] {
@@ -606,18 +627,18 @@ fn review_5053_secret_safety_registrations_fail_the_contract() {
 #[test]
 fn review_5053_mcp_spellings_are_rejected() {
     for (command, args) in [
-        (r#"".//bin/undeclared""#, "[]"),
-        (".//bin/tool", "[]"),
-        (".///bin/tool", "[]"),
-        ("././/bin/tool", "[]"),
-        ("${CLAUDE_PLUGIN_ROOT}/.//bin/tool", "[]"),
+        (r#"".//libexec/undeclared""#, "[]"),
+        (".//libexec/tool", "[]"),
+        (".///libexec/tool", "[]"),
+        ("././/libexec/tool", "[]"),
+        ("${CLAUDE_PLUGIN_ROOT}/.//libexec/tool", "[]"),
         ("${CLAUDE_PLUGIN_ROOT}/b\\\nin/tool", "[]"),
-        ("$CLAUDE_PLUGIN_ROOT/bin/tool", "[]"),
-        ("sh", r#"["-c", ".//bin/tool"]"#),
+        ("$CLAUDE_PLUGIN_ROOT/libexec/tool", "[]"),
+        ("sh", r#"["-c", ".//libexec/tool"]"#),
         ("sh", r#"["-c", "./b\\\nin/tool"]"#),
         (
             "sh",
-            r#"["-c", "exec \"$0\"", "${CLAUDE_PLUGIN_ROOT}/.//bin/tool"]"#,
+            r#"["-c", "exec \"$0\"", "${CLAUDE_PLUGIN_ROOT}/.//libexec/tool"]"#,
         ),
         ("sh", r#"["-c", "./b?n/tool"]"#),
         ("sh", r#"["-c", "./{b,x}in/tool"]"#),
@@ -631,7 +652,7 @@ fn review_5053_mcp_spellings_are_rejected() {
     }
     let (problems, references) = problems_for(&[(
         ".devin-plugin/plugin.json",
-        r#"{"name": "demo", "mcpServers": [{"inline": {"command": "\".//bin/undeclared\""}}]}"#
+        r#"{"name": "demo", "mcpServers": [{"inline": {"command": "\".//libexec/undeclared\""}}]}"#
             .to_string(),
     )]);
     assert!(!problems.is_empty(), "inline list object accepted");
@@ -639,7 +660,7 @@ fn review_5053_mcp_spellings_are_rejected() {
 }
 
 /// Controls for the #5053 ruling: ordinary commands that do not touch the
-/// plugin `bin/` directory (every shipped launcher shape among them), the
+/// plugin `libexec/` directory (every shipped launcher shape among them), the
 /// canonical forms and a wrapped plain-hook reference still pass.
 #[test]
 fn ordinary_commands_and_canonical_forms_still_pass() {
@@ -669,7 +690,7 @@ fn ordinary_commands_and_canonical_forms_still_pass() {
             "b/hooks.json",
             hooks(
                 "Stop",
-                r#""${CLAUDE_PLUGIN_ROOT}/scripts/cabin/robin.bin-cache""#,
+                r#""${CLAUDE_PLUGIN_ROOT}/scripts/calibexec/robin.bin-cache""#,
             ),
         ),
         (
@@ -695,14 +716,14 @@ fn ordinary_commands_and_canonical_forms_still_pass() {
             ".mcp.json",
             mcp(&mcp_command("CLAUDE_PLUGIN_ROOT", "tool"), r#"["serve"]"#),
         ),
-        ("mcp.json", mcp("./bin/tool", "[]")),
+        ("mcp.json", mcp("./libexec/tool", "[]")),
         (
             "e/hooks.json",
-            hooks("Stop", r#""${CLAUDE_PLUGIN_ROOT}/bin/note" || true"#),
+            hooks("Stop", r#""${CLAUDE_PLUGIN_ROOT}/libexec/note" || true"#),
         ),
         (
             "f/hooks.json",
-            hooks("Stop", r#""${CLAUDE_PLUGIN_ROOT}/bin/note""#),
+            hooks("Stop", r#""${CLAUDE_PLUGIN_ROOT}/libexec/note""#),
         ),
     ]);
     assert!(problems.is_empty(), "{problems:#?}");

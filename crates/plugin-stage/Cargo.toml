@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Builds and stages per-plugin ./bin binaries and checks the plugin launcher contract (#4487)."
+description = "Builds and stages per-plugin ./libexec binaries and checks the plugin launcher contract (#4487)."
 publish = false
 
 [lib]

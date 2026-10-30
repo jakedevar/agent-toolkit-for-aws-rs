@@ -1,5 +1,11 @@
 # Deploying / Optimizing a HuggingFace Hub Model (not on JumpStart)
 
+Plugin references are plain files; the host does not substitute their variables.
+Get the absolute installed plugin root from the loaded parent skill (its
+`${CLAUDE_PLUGIN_ROOT}` token is substituted there). In your own terminal, set
+`export CLAUDE_PLUGIN_ROOT='/absolute/installed/plugin'` to that actual path.
+The guarded commands below refuse an unset or empty root; never use PATH.
+
 Use this when the user wants to deploy or optimize a model that lives on the **HuggingFace Hub** (e.g. `mistralai/Mistral-7B-Instruct-v0.3`) rather than SageMaker JumpStart / the SageMaker Hub.
 
 The AI recommendation job needs the model weights in **S3** (`ModelBuilder(model_path="s3://...")`). So the flow is: **download from HuggingFace → upload to S3 → run a recommendation job on the S3 model → deploy the top recommendation.**
@@ -12,7 +18,7 @@ The AI recommendation job needs the model weights in **S3** (`ModelBuilder(model
 
 ## Step 2: Download the model to S3
 
-Generate a Jupyter notebook or a Python script — read `../code_output_guide.md` for the mode choice and output format rules (the template's `# NOTEBOOK_ONLY` markers make it dual-mode). The code comes from `../../code_templates/optimize-huggingface-to-s3.py`, rendered with `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" ai-payloads render <skill-dir>/references/model-deployment/code_templates/optimize-huggingface-to-s3.py --mode notebook --project-dir <project-dir> --values <scratch-dir>/values.json` (the placeholder names below, without brackets, are the keys under `values`; `--mode script` for a script; do not assemble the cells by hand). Cell 3 calls the SDK's `download_huggingface_model(...)` helper, which pulls the HuggingFace snapshot from the Hub and stages it to the session's default S3 bucket in one call, returning `MODEL_S3_URI`.
+Generate a Jupyter notebook or a Python script — read `../code_output_guide.md` for the mode choice and output format rules (the template's `# NOTEBOOK_ONLY` markers make it dual-mode). The code comes from `../../code_templates/optimize-huggingface-to-s3.py`, rendered with `"${CLAUDE_PLUGIN_ROOT:?Set CLAUDE_PLUGIN_ROOT to the absolute installed plugin root}/libexec/toolkit" ai-payloads render <skill-dir>/references/model-deployment/code_templates/optimize-huggingface-to-s3.py --mode notebook --project-dir <project-dir> --values <scratch-dir>/values.json` (the placeholder names below, without brackets, are the keys under `values`; `--mode script` for a script; do not assemble the cells by hand). Cell 3 calls the SDK's `download_huggingface_model(...)` helper, which pulls the HuggingFace snapshot from the Hub and stages it to the session's default S3 bucket in one call, returning `MODEL_S3_URI`.
 
 Placeholders to fill in Cell 2:
 
