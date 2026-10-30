@@ -52,7 +52,7 @@ fn payment_roots_ignore_unix_environment_and_refuse_empty_store() {
 }
 
 #[test]
-fn payment_roots_native_store_refuses_presence_before_loading() {
+fn payment_roots_native_store_ignores_presence_and_refuses_empty_store() {
     for env in [
         RootEnv {
             file: Some("".into()),
@@ -67,9 +67,9 @@ fn payment_roots_native_store_refuses_presence_before_loading() {
         assert_eq!(
             validate_payment_roots(&env, &recorder, PaymentRootPlatform::NativeStoreOnly)
                 .unwrap_err(),
-            PaymentRootsFailure::OverrideVariablePresent
+            PaymentRootsFailure::NoRoots
         );
-        assert!(recorder.0.borrow().is_empty());
+        assert_eq!(*recorder.0.borrow(), ["native"]);
     }
     let recorder = Recorder::default();
     assert_eq!(
@@ -84,11 +84,11 @@ fn payment_roots_native_store_refuses_presence_before_loading() {
     assert_eq!(*recorder.0.borrow(), ["native"]);
 }
 
-// Parse the file, remove only the two narrowly guarded exceptions, then inspect
-// tokens recursively. Comments and strings cannot hide or create a match.
+// Parse the production file, then inspect tokens recursively on every platform.
+// Comments and strings cannot hide or create a match.
 fn source_gate(source: &str) -> Result<(), String> {
     use quote::ToTokens;
-    use syn::{ImplItem, Item, Stmt};
+    use syn::Item;
     fn scan(tokens: proc_macro2::TokenStream) -> Result<(), String> {
         use proc_macro2::TokenTree;
         let mut words = Vec::new();
@@ -133,27 +133,7 @@ fn source_gate(source: &str) -> Result<(), String> {
         Ok(())
     }
     let mut file = syn::parse_file(source).map_err(|e| e.to_string())?;
-    let guard = "cfg (not (all (unix , not (target_os = \"macos\"))))";
-    let guarded = |attrs: &[syn::Attribute]| {
-        attrs
-            .iter()
-            .any(|a| a.meta.to_token_stream().to_string() == guard)
-    };
     file.items.retain(|item| !matches!(item, Item::Mod(m) if m.ident == "tests" && m.attrs.iter().any(|a| a.meta.to_token_stream().to_string() == "cfg (test)")));
-    for item in &mut file.items {
-        if let Item::Impl(imp) = item {
-            for member in &mut imp.items {
-                if let ImplItem::Fn(f) = member {
-                    if f.sig.ident == "native_store" && guarded(&f.attrs) {
-                        f.block.stmts.clear();
-                    }
-                    if f.sig.ident == "from_process" {
-                        f.block.stmts.retain(|stmt| !matches!(stmt, Stmt::Local(local) if guarded(&local.attrs) && matches!(&local.pat, syn::Pat::Ident(p) if p.ident == "presence") && local.init.as_ref().is_some_and(|i| i.expr.to_token_stream().to_string() == "RootEnv :: from_process ()")));
-                    }
-                }
-            }
-        }
-    }
     // A from_process import can alias the call and evade path matching.
     for item in &file.items {
         if let Item::Use(u) = item {
@@ -189,6 +169,22 @@ fn unix_payment_source_does_not_use_environment_sensitive_loaders() {
         "fn f() { crate::sdk::roots::validate_roots(); }",
     ] {
         assert!(source_gate(fixture).is_err(), "bypass accepted: {fixture}");
+    }
+}
+
+#[test]
+fn every_payment_platform_avoids_environment_sensitive_loaders() {
+    use quote::ToTokens;
+    let mut source = syn::parse_file(include_str!("../src/sdk/roots_payment.rs")).unwrap();
+    source
+        .items
+        .retain(|item| !matches!(item, syn::Item::Mod(m) if m.ident == "tests"));
+    let tokens = source.into_token_stream().to_string();
+    for forbidden in ["load_native_certs", "RootEnv :: from_process", "std :: env"] {
+        assert!(
+            !tokens.contains(forbidden),
+            "payment roots read CA overrides: {forbidden}"
+        );
     }
 }
 

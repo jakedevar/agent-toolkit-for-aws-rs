@@ -21,7 +21,7 @@ pub struct PaymentRoots(ValidatedRoots);
 pub enum PaymentRootPlatform {
     /// Load only the fixed Unix locations.
     UnixFixedTable,
-    /// Refuse overrides before loading the native store.
+    /// Query the native trust store directly, without reading overrides.
     NativeStoreOnly,
 }
 impl PaymentRootPlatform {
@@ -41,7 +41,7 @@ impl PaymentRootPlatform {
 pub enum PaymentRootsFailure {
     /// No parsable roots were found.
     NoRoots,
-    /// An override is present where the native loader would read it.
+    /// Legacy failure retained for API compatibility; platform loading no longer emits it.
     OverrideVariablePresent,
 }
 impl PaymentRootsFailure {
@@ -49,8 +49,12 @@ impl PaymentRootsFailure {
     #[must_use]
     pub fn message(self) -> &'static str {
         match self {
-            Self::NoRoots => "Payment TLS trust roots are unusable (no-roots); install the platform CA certificates.",
-            Self::OverrideVariablePresent => "Payment TLS trust roots ignore SSL_CERT_FILE/SSL_CERT_DIR; unset them to make payments on this platform.",
+            Self::NoRoots => {
+                "Payment TLS trust roots are unusable (no-roots); install the platform CA certificates."
+            }
+            Self::OverrideVariablePresent => {
+                "Payment TLS trust roots ignore SSL_CERT_FILE/SSL_CERT_DIR; unset them to make payments on this platform."
+            }
         }
     }
 }
@@ -59,7 +63,7 @@ impl PaymentRootsFailure {
 pub trait PaymentRootLoader {
     /// Load exactly the supplied file or directory.
     fn load_paths(&self, file: Option<&Path>, dir: Option<&Path>) -> LoadedCerts;
-    /// Load the native store, used only after presence validation.
+    /// Load the native store without consulting environment variables.
     fn native_store(&self) -> LoadedCerts;
     /// Whether a fixed candidate location exists.
     fn exists(&self, path: &Path) -> bool;
@@ -121,21 +125,19 @@ fn locations() -> (&'static [&'static str], &'static [&'static str]) {
     (files, dirs)
 }
 
-/// Validate platform payment roots. Unix ignores the supplied environment view.
+/// Validate platform payment roots. Every platform ignores the environment view.
+/// The presence argument remains for source compatibility with existing callers.
 ///
 /// # Errors
-/// Returns a fixed failure if overrides are present on a native-store target or no usable roots exist.
+/// Returns a fixed failure if no usable platform roots exist.
 pub fn validate_payment_roots(
-    presence: &RootEnv,
+    _presence: &RootEnv,
     loader: &dyn PaymentRootLoader,
     platform: PaymentRootPlatform,
 ) -> Result<PaymentRoots, PaymentRootsFailure> {
     let mut collected = LoadedCerts::default();
     match platform {
         PaymentRootPlatform::NativeStoreOnly => {
-            if presence.file.is_some() || presence.dir.is_some() {
-                return Err(PaymentRootsFailure::OverrideVariablePresent);
-            }
             collected = loader.native_store();
         }
         PaymentRootPlatform::UnixFixedTable => {
@@ -172,10 +174,7 @@ impl PaymentRoots {
     /// # Errors
     /// Returns a fixed payment roots failure if the platform store is unusable.
     pub fn from_process() -> Result<Self, PaymentRootsFailure> {
-        #[cfg(all(unix, not(target_os = "macos")))]
         let presence = RootEnv::default();
-        #[cfg(not(all(unix, not(target_os = "macos"))))]
-        let presence = RootEnv::from_process();
         validate_payment_roots(&presence, &PlatformLoader, PaymentRootPlatform::current())
     }
     /// Borrow the validated roots for an explicit TLS context.
@@ -186,6 +185,36 @@ impl PaymentRoots {
 }
 
 struct PlatformLoader;
+
+#[cfg(any(target_os = "macos", test))]
+type NativeTrustDomain = Result<Vec<(Vec<u8>, bool)>, ()>;
+
+// Domains arrive in platform precedence order. Never lose an explicit distrust
+// by overwriting an earlier domain or by continuing after a failed store read.
+#[cfg(any(target_os = "macos", test))]
+fn native_trust_roots(domains: impl IntoIterator<Item = NativeTrustDomain>) -> LoadedCerts {
+    let mut roots = std::collections::BTreeMap::new();
+    for domain in domains {
+        let Ok(certificates) = domain else {
+            return LoadedCerts {
+                certs: Vec::new(),
+                errors: 1,
+            };
+        };
+        for (der, trusted) in certificates {
+            roots.entry(der).or_insert(trusted);
+        }
+    }
+    LoadedCerts {
+        certs: roots
+            .into_iter()
+            .filter(|(_, trusted)| *trusted)
+            .map(|(der, _)| der.into())
+            .collect(),
+        errors: 0,
+    }
+}
+
 impl PaymentRootLoader for PlatformLoader {
     fn load_paths(&self, file: Option<&Path>, dir: Option<&Path>) -> LoadedCerts {
         let result = rustls_native_certs::load_certs_from_paths(file, dir);
@@ -194,15 +223,39 @@ impl PaymentRootLoader for PlatformLoader {
             errors: result.errors.len(),
         }
     }
-    #[cfg(not(all(unix, not(target_os = "macos"))))]
+    #[cfg(target_os = "macos")]
     fn native_store(&self) -> LoadedCerts {
-        let result = rustls_native_certs::load_native_certs();
-        LoadedCerts {
-            certs: result.certs,
-            errors: result.errors.len(),
-        }
+        use security_framework::trust_settings::{
+            Domain, TrustSettings, TrustSettingsForCertificate,
+        };
+        // Match the platform precedence: User overrides Admin overrides System.
+        // The direct Security framework API never examines SSL_CERT_FILE/DIR.
+        native_trust_roots(
+            [Domain::User, Domain::Admin, Domain::System]
+                .into_iter()
+                .map(|domain| {
+                    let settings = TrustSettings::new(domain);
+                    settings
+                        .iter()
+                        .map_err(|_| ())?
+                        .map(|certificate| {
+                            let trust = settings
+                                .tls_trust_settings_for_certificate(&certificate)
+                                .map_err(|_| ())?;
+                            Ok((
+                                certificate.to_der(),
+                                matches!(
+                                    trust.unwrap_or(TrustSettingsForCertificate::TrustRoot),
+                                    TrustSettingsForCertificate::TrustRoot
+                                        | TrustSettingsForCertificate::TrustAsRoot
+                                ),
+                            ))
+                        })
+                        .collect()
+                }),
+        )
     }
-    #[cfg(all(unix, not(target_os = "macos")))]
+    #[cfg(not(target_os = "macos"))]
     fn native_store(&self) -> LoadedCerts {
         LoadedCerts::default()
     }
@@ -280,6 +333,37 @@ mod tests {
         }
         fn native_store(&self) -> LoadedCerts {
             self.0.clone()
+        }
+    }
+
+    #[test]
+    fn native_platform_precedence_preserves_distrust_and_store_errors_fail_closed() {
+        let user_denied = Pki::new("user denied").ca_der;
+        let admin_denied = Pki::new("admin denied").ca_der;
+        let system = Pki::new("system trusted").ca_der;
+        let user = Pki::new("user trusted").ca_der;
+        let domains = vec![
+            Ok(vec![(user_denied.to_vec(), false), (user.to_vec(), true)]),
+            Ok(vec![
+                (user_denied.to_vec(), true),
+                (admin_denied.to_vec(), false),
+                (user.to_vec(), false),
+            ]),
+            Ok(vec![(admin_denied.to_vec(), true), (system.to_vec(), true)]),
+        ];
+        let roots = native_trust_roots(domains.clone());
+        assert_eq!(roots.errors, 0);
+        assert_eq!(roots.certs.len(), 2);
+        assert!(roots.certs.contains(&user));
+        assert!(roots.certs.contains(&system));
+        assert!(!roots.certs.contains(&user_denied));
+        assert!(!roots.certs.contains(&admin_denied));
+        for failed in 0..domains.len() {
+            let mut failed_domains = domains.clone();
+            failed_domains[failed] = Err(());
+            let roots = native_trust_roots(failed_domains);
+            assert!(roots.certs.is_empty());
+            assert_eq!(roots.errors, 1);
         }
     }
 

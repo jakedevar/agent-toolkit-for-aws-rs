@@ -778,11 +778,11 @@ calls `openssl_probe::probe()`, and openssl-probe 0.2.2 (`src/lib.rs:70-71,120-1
 `ProbeResult::from_env()` as well. Both loaders therefore read the variables again, below any
 `RootEnv` view.
 
-**S1's provider policy is unchanged (PM ruling).** #5017 S1's R-ROOTS deliberately honours
-`SSL_CERT_FILE` and `SSL_CERT_DIR` for AWS provider HTTP, matching the AWS CLI. This design does
-not change `validate_roots`, `RootEnv`, `NativeLoader` or `ValidatedRoots::from_process`, and it
-claims nothing about #5017 or #4382 depending on the new seam. The seam below is an **addition
-for x402 only**.
+**Platform-only payment TLS (r2, #5097 triage of #5098).** The operator's triage brief requires
+every live payment TLS plane, including credential HTTP and admin, to use platform roots and
+never read CA override variables. This supersedes r1's provider/admin exception and macOS
+presence check. General AWS provider behaviour in `validate_roots`, `RootEnv`, `NativeLoader`
+and `ValidatedRoots::from_process` remains unchanged. The seam is specific to x402.
 
 #### R-PROOTS. The payment root seam (`toolkit-aws`, prerequisite slice P-ROOTS)
 
@@ -800,7 +800,7 @@ pub trait PaymentRootLoader {
     fn exists(&self, path: &Path) -> bool;
 }
 pub fn validate_payment_roots(
-    presence: &RootEnv,                          // consulted ONLY on NativeStoreOnly (rule 3)
+    presence: &RootEnv,                          // ignored; retained for source compatibility
     loader: &dyn PaymentRootLoader,
     platform: PaymentRootPlatform,
 ) -> Result<PaymentRoots, PaymentRootsFailure>;
@@ -827,27 +827,20 @@ The rules:
      the value.
 
    No existing behaviour, signature or test of S1 changes.
-3. **macOS (`NativeStoreOnly`).** The only public loader for the system keychain is
-   `load_native_certs()`, and it reads the variables first. The seam therefore makes the
-   variables **unable to influence the roots** by refusing to load when either is present:
-   - if `presence.file` or `presence.dir` is `Some` (set at all, even empty), it fails with
-     `PaymentRootsFailure::OverrideVariablePresent`;
-   - otherwise it calls `native_store()` once.
-
-   The view is taken by `RootEnv::from_process()` immediately before the call. Nothing else can
-   change the environment in between: the workspace forbids `unsafe`, and `set_var` is `unsafe`
-   in edition 2024. No global environment is mutated, and the seam never falls back to
-   `NativeLoader`. Windows needs no branch: the runtime refuses on non-Unix targets already
-   (R-CFG).
+3. **macOS (`NativeStoreOnly`).** Query Security framework's `TrustSettings` directly through
+   the already-locked `security-framework` 3.7.0 crate. Apply User > Admin > System precedence,
+   including explicit distrust, and admit only `TrustRoot`/`TrustAsRoot`. An error reading any
+   domain or certificate fails closed rather than losing a possible distrust decision. Neither
+   `RootEnv::from_process()` nor `load_native_certs()` is called. No environment is read or
+   mutated. The injected `presence` view is ignored on this branch too. Non-Unix targets
+   remain refused by R-CFG; their native loader returns no roots.
 4. **`AWS_CA_BUNDLE`** is read by no code in `toolkit-aws` at `be0a06df` (`git grep`). It cannot
    affect the payment roots, and a regression test pins that.
-5. **Failure texts** are fixed and path-free, and they differ from S1's message because the remedy
-   differs:
+5. **Failure text** is fixed and path-free:
    - `"Payment TLS trust roots are unusable (no-roots); install the platform CA certificates."`
-   - `"Payment TLS trust roots ignore SSL_CERT_FILE/SSL_CERT_DIR; unset them to make payments on this platform."`
 
-   The x402 runtime exits 2 with either text before any network I/O. That makes it a
-   T-ORDER-PRE refusal.
+   The legacy `OverrideVariablePresent` enum variant remains for source compatibility but is
+   never emitted. The runtime exits 2 on unusable roots before network I/O (T-ORDER-PRE).
 6. **Type separation.** `PaymentRoots` cannot be built from a `ValidatedRoots`; its only producers
    are `validate_payment_roots` and `from_process`. The x402 wiring functions take
    `&PaymentRoots`, so passing provider roots where payment roots are required is a type error.
@@ -874,11 +867,11 @@ signs nothing outside these tests.
   discriminates. A second control: a server leaf chained to a root injected into the fake
   loader's platform store succeeds, so platform trust remains usable.
 - **T-PROOTS-8, `NativeStoreOnly` on an injected platform** (runs on every host). With either
-  variable present, even empty, the result is `OverrideVariablePresent` with zero loader calls.
-  With both absent, `native_store` is called once.
+  variable present, even empty, or both absent, `native_store` is called once. An empty native
+  store always returns `NoRoots`.
 - **T-PROOTS-9, source gate.** `roots_payment.rs` does not call `load_native_certs`,
-  `openssl_probe::probe`, `std::env::var*`, `set_var` or `remove_var` on the Unix branch. The
-  only environment read is `RootEnv::from_process()` on the macOS branch.
+  `openssl_probe::probe`, `std::env::var*`, `set_var`, `remove_var` or `RootEnv::from_process()`
+  on any platform, including code excluded by the current host's cfg.
 - **T-PROOTS-10.** `compile_fail` doc-tests: `PaymentRoots(validated)`, and
   `From<ValidatedRoots>` used through `into()`.
 - **T-PROOTS-11, S1 policy unchanged (control).** The existing S1 R-ROOTS tests still pass
@@ -890,7 +883,7 @@ signs nothing outside these tests.
 | --- | --- | --- |
 | Merchant probe and paid replay | `PaymentRoots` | the replay carries the proof header |
 | AgentCore data plane: `ProcessPayment`, `GetPaymentSession` (one `bedrock-agentcore` host and one TLS context) | **`PaymentRoots`** | see below |
-| Credential provider HTTP (STS, SSO, SSO-OIDC, Sign-in, ECS, IMDS) through #5017's `ProviderHttp::Validated` | S1 provider roots (`ValidatedRoots::from_process()`), unchanged | see below |
+| Credential provider HTTP (STS, SSO, SSO-OIDC, Sign-in, ECS, IMDS) through #5017's `ProviderHttp::Validated` | `PaymentRoots` | platform-only payment TLS invariant |
 
 **Decision: `ProcessPayment` uses the payment roots.** The threat is a caller, typically the
 model, that can set environment variables for the `toolkit` process and so install its own CA.
@@ -910,32 +903,19 @@ Against that caller, the AgentCore data plane is as sensitive as the merchant pl
 The reviewer's suggestion to share the validated roots is therefore adopted for every
 proof-bearing plane.
 
-**The credential provider plane keeps S1's provider roots.** That is the accepted provider
-policy, and it is not overridden here. The justification against the same threat model:
-
-- **The caller gains nothing it lacks.** That plane returns AWS credentials, and the caller can
-  already obtain them without TLS interception. It runs as the same OS account with the same
-  environment, so it can read the profile, SSO cache and credential files, run the configured
-  `credential_process`, or set `AWS_*` key variables itself.
-- **The real boundary is IAM.** A caller holding `ProcessPaymentRole` credentials can call
-  `ProcessPayment` directly and bypass the gate whatever the roots are. That is the IAM split's
-  boundary (R-SPEND table, "who may sign"), and this port does not change it.
-- **Diverging would cost consistency.** The shared credential chain would differ from #5017 for
-  one route, for no gain in what the proof boundary protects.
-
-T-PROOTS-USE (S5) asserts this split:
-- the merchant transport's roots and the AgentCore data-plane transport's roots are the **same
-  allocation** as the `PaymentRoots` built by the wiring (`ValidatedRoots::same_allocation`);
-- the provider HTTP client receives `ValidatedRoots::from_process()`.
+**Credential HTTP shares the payment roots (r2).** `PaymentPlanes::build` accepts only
+`&PaymentRoots` and cannot accept a second provider trust set. T-PROOTS-USE asserts that
+merchant, AgentCore and provider HTTP all use the **same allocation** as that payment-root
+value (`ValidatedRoots::same_allocation`). The live-constructor source test also pins that
+both fetch and admin load only `PaymentRoots`.
 
 The wiring helpers are compiled in every `aws-sdk` build, so the test can call them. The test
 performs no I/O, and the G4 gate forbids tests from calling `open` or `send` on what the helpers
 return.
 
-**Admin** commands (`agents-pay admin …`, `agents-build setup-payment-user`) use S1's R-ROOTS
-(`ValidatedRoots::from_process()`) on every plane, because the human's environment is trusted
-there. Roots that cannot be validated fail closed with the S1 `RootsFailure` text. Verification
-is always on in every mode, and no flag disables it.
+**Admin** commands (`agents-pay admin …`, `agents-build setup-payment-user`) share one
+`PaymentRoots` value for AgentCore, STS and credential HTTP too. Unusable platform trust fails
+closed with `PaymentRootsFailure`. Verification is always on; no flag disables it.
 
 ### R-AWS. AgentCore and STS plane
 
@@ -1366,7 +1346,7 @@ r1 replaces the custody model with the following.
 | `net.rs` | `MerchantHttp` trait and the adapter `StreamingMerchant<T: StreamingTransport>`, which receives a built transport (R-NET, R-DNS-ADMIT); no root or transport construction |
 | `agentcore.rs` | `PaymentsApi` trait; the `Approved`-only request builder; response readers for the four operations plus STS; R-AWS-*; `FakePaymentsApi` (public, harmless) |
 | `deps.rs` | `Deps`, `run_with`, `Deps::for_process()` (returns `Unavailable` unless `agents-pay-live`), the public fixtures of G1b |
-| `wiring.rs` | `aws-sdk` only: builds the merchant and AgentCore transports from `&PaymentRoots`, and provider HTTP from S1 roots. No I/O and no credentials (T-PROOTS-USE) |
+| `wiring.rs` | `aws-sdk` only: builds merchant, AgentCore and provider HTTP from the same `&PaymentRoots`. No I/O and no credentials (T-PROOTS-USE) |
 | `proof.rs` | R-PP-VERIFY, R-HDR, `validAfter` |
 | `flow.rs` | `fetch`, `status`, `prepare_browser_payment` orchestration; R-RETRY; R-SCRUB; R-ERR |
 | `vault.rs` | in-process handle vault: 90 s TTL on the injected monotonic clock, single use, origin and path bound; handle `x402h_` plus 32 base64url characters from 24 `getrandom` bytes |
@@ -1394,13 +1374,13 @@ an independent cross-family review at the exact SHA.
 
 | Slice | Content | Tests (ported Python classes → new) | Prerequisites |
 | --- | --- | --- | --- |
-| **P-ROOTS** (`toolkit-aws`, not an x402 slice) | `sdk/roots_payment.rs`: `PaymentRoots`, `validate_payment_roots`, `PaymentRootLoader`, the fixed Unix location table, `RootMode::PaymentPlatform` (R-PROOTS) | T-PROOTS-1..11 (hostile `SSL_CERT_FILE`/`SSL_CERT_DIR`/both/`AWS_CA_BUNDLE`, empty values, the loader recorder, the in-memory handshake with an S1 control, the macOS presence refusal, the source gate, compile_fail, S1 unchanged) | #5017 S1 (`be0a06df`) on rolling. It is not yet an ancestor of the `fa3fa13` base |
+| **P-ROOTS** (`toolkit-aws`, not an x402 slice) | `sdk/roots_payment.rs`: `PaymentRoots`, `validate_payment_roots`, `PaymentRootLoader`, the fixed Unix location table, direct macOS trust settings, `RootMode::PaymentPlatform` (R-PROOTS) | T-PROOTS-1..11 (hostile `SSL_CERT_FILE`/`SSL_CERT_DIR`/both/`AWS_CA_BUNDLE`, empty values, the loader recorder, the in-memory handshake with an S1 control, native trust precedence and fail-closed errors, all-platform source gate, compile_fail, S1 unchanged) | #5017 S1 (`be0a06df`) on rolling |
 | **S1** pure policy | `urlparse`, `amount`, `pyval`, `challenge`, `policy` (no network: `FixedResolver`) | RecipientAndValue, RecipientValidation, OptionalOrigin (pure part), Authorize, Idempotency (+ golden vectors R-TOK), SignerInput (pure part), canonical amounts; T-POL-UNI, T-URLP (params, IPv6, port, case), T-AMT (grammar tables, Infinity/NaN cap D6), **T-AMT-CAP-1..6** (R-AMT-REP/R-AMT-CMP spellings at the cap−1/cap/cap+1 boundaries), T-AMT-USD, T-VER, T-CH (header base64/raw/body, duplicate keys D1, truthiness), **T-ORDER-CTOR** (compile_fail and the in-crate `syn` checks), **T-ORDER-PRE** (policy part, over a recording fake) | #4379 only; can start now |
 | **S2** config | `config.rs`, `nix` user lookup | PolicyFile, ConfigPrecedence, PolicyDirectory, SingleTenantUserId (resolution part), bounded env; T-CFG-RACE (symlink swapped in after the parent check, through a `rustix` test seam), T-CFG-SIZE, T-TUNE (`nan`, `inf`, `1e1`, `5.9`) | S1 |
 | **S3** merchant net | `net.rs` | Ssrf, DnsPinning (resolver returns public then private; peer check), SafeMethod; T-NET: exact request headers, no cookie carry, 3xx reported, Content-Length precheck with zero pulls, cap, deadline trickle (TA-STREAM-DL fake clock), encoding D15, no proxy; **T-DNS-DL-1, -2, -4, -5** (R-DNS-ADMIT, separate from the streaming tests) | S1, #5017 S1 on rolling, **#5080** TA-STREAM-DL. Not P-ROOTS: the adapter receives a built transport |
 | **S4** AgentCore client | `agentcore.rs`, model excerpt | SessionStatus (fake, D19 logic), runtime/admin agent names; T-AWS: golden request bytes (path, both headers, body order, token) for the four ops; response validation (status, echo, required members, payload shape and size); error allowlist (each seeded secret in `x-amzn-ErrorType`/`__type`/`message` → absent, launch T-CODE pattern); fixed endpoint despite `AWS_ENDPOINT_URL*` (D18); `Debug` redaction; `ProcessPaymentRequest` only from `Approved`; `ConflictException` not retryable (R-TOK-NOFRESH) | S1, #5017 S1, **#5080** TA-STREAM-DL. Not P-ROOTS: the adapter receives a built transport |
 | **S5** flow + `fetch` route | `proof`, `flow`, `vault`, `deps`, `wiring`, `live`, the `agents-pay-live` feature and the G1a guards, route | TransientSettlement, BrowserHandle, HarnessCli; **T-ORDER-PRE** (flow part), **T-ORDER-POST** (table in R-SPEND-ORDER), T-RETRY, **T-RESTART-1..8**, T-PROOF (R-PP-VERIFY mismatch on `to`, `value`, expired `validBefore`; `validAfter` wait ≤ 15 s; zero proof sends), T-HDR (v1/v2 bytes), T-SCRUB (merchant echoes the header in its body → `[REDACTED]`; an echo in `content_type` → generic), T-ERR exhaustive, **T-DNS-DL-3**, **T-PROOTS-USE**, CLI process tests (exit 2 on refusal, single JSON, usage exit 1), **T-AC3-INH** (fetch routes), **T-AC3-GUARD**, **T-AC3-FEAT**, **T-AC3-MAKE**; G4 gate | S2-S4, #4941 at `40c71d7e` on rolling, **P-ROOTS on rolling** (the `wiring.rs` and `live.rs` constructors take `&PaymentRoots`) |
-| **S6** admin | `admin/`, `agents-build setup-payment-user` | AdminRecipientMode, test_resource_resolution (all asserts), test_setup_openclaw (`usd_to_atomic`, `build_openclaw_config`, `discover_deployed` with `--project-dir`, `format_duration`); T-TTY (order: TTY first even without credentials; `approve` exact; EOF D28; no `--yes`), **T-TTY-CI-1..5** (D33 for `create-instrument` and `setup-payment-user`), T-WRITE (atomic, modes, temporary file removed on failure), T-VAL (D29, `--budget` through `CapDecimal`), T-PREFLIGHT (secret-name scan), D27, **T-AC3-INH** (all admin and `agents-build` routes) | S2, S4, S5 (it reuses `Deps` and the G1a guards). Not P-ROOTS: admin uses S1 roots |
+| **S6** admin | `admin/`, `agents-build setup-payment-user` | AdminRecipientMode, test_resource_resolution (all asserts), test_setup_openclaw (`usd_to_atomic`, `build_openclaw_config`, `discover_deployed` with `--project-dir`, `format_duration`); T-TTY (order: TTY first even without credentials; `approve` exact; EOF D28; no `--yes`), **T-TTY-CI-1..5** (D33 for `create-instrument` and `setup-payment-user`), T-WRITE (atomic, modes, temporary file removed on failure), T-VAL (D29, `--budget` through `CapDecimal`), T-PREFLIGHT (secret-name scan), D27, **T-AC3-INH** (all admin and `agents-build` routes) | S2, S4, S5 (it reuses `Deps` and the G1a guards), P-ROOTS (r2 platform-only admin TLS) |
 | **S7** cutover docs | `SKILL.md` (both copies), `references/*.md`, `agents-build/references/payments.md` steps that run scripts, `docs/migration/agents-pay.md`, the portability test, inventory rows → `ported` | R-PORT test; `every_slice_documents_its_commands`; the SKILL text carries L-TERMS, the R-DNS residual, the payment-roots boundary (B3, B4) and the B1 import-API boundary | S5, S6; the Q2 and Q3 decisions |
 
 **Which slices wait on P-ROOTS: S5 only**, through `wiring.rs` and `live.rs`; S6 and S7 come
@@ -1478,13 +1458,13 @@ These are stricter or safety-only unless noted:
 - D33 (accepted Q22) `create-instrument` and `setup-payment-user` require a TTY first and a typed
   `approve` before `CreatePaymentInstrument` (and before `CreatePaymentSession` for
   `--budget`). Python had no gate on either.
-- D34 (#5098) the payment runtime's trust roots for the merchant and AgentCore data planes do not
+- D34 (#5098, r2) the payment runtime's trust roots for every payment HTTP plane do not
   depend on the environment:
   - Linux and other Unix: a fixed location table; `SSL_CERT_FILE`, `SSL_CERT_DIR` and
     `AWS_CA_BUNDLE` are ignored;
-  - macOS: a refusal while `SSL_CERT_FILE` or `SSL_CERT_DIR` is set.
-  Python and botocore honoured certifi and `AWS_CA_BUNDLE`. Credential-provider HTTP and the
-  admin commands keep S1's R-ROOTS.
+  - macOS: direct Security framework trust-store queries, ignoring all CA override variables.
+  Python and botocore honoured certifi and `AWS_CA_BUNDLE`. Credential-provider HTTP and admin
+  now share the payment roots; the general AWS provider API remains unchanged.
 - D36 (#5166, #5168) use nix =0.29.0 for the same safe getpwuid_r lookup: nix 0.31.1 pins libc =0.2.180, conflicting with the workspace mio requirement >=0.2.183. This also adds the cfg_aliases 0.2.2 build crate.
 - D37 (#5177, #5186) non-ASCII Unicode decimal digits and ASCII U+001C..U+001F padding are unparseable by the Rust tunable parser and give the bounded default. NBSP and other Unicode whitespace are trimmed as in Python.
 - D38 (#5181): STS uses XML error envelopes, so its error-code fallback reads a single `Error/Code` in the STS namespace when `x-amzn-ErrorType` is absent. It applies the same fixed allowlist and never emits the message or request ID. Malformed, ambiguous, and unknown codes become `UnrecognizedError`; an existing header retains precedence.
@@ -1542,9 +1522,8 @@ verification target (G1), a disposable account or manager, and budget `0.10`:
     `ClientError` text.
 12. Compare with the Python CLI on the same session, captured by the operator. Python stays
     read-only evidence for agents.
-13. With `SSL_CERT_FILE` naming an unrelated CA bundle, run `fetch <v2 sandbox URL>`. On Linux
-    it is paid, because the variable is ignored (D34). On macOS it is refused with the
-    payment-roots text and no AWS call. On a host behind a TLS-inspecting proxy, it is refused
+13. With `SSL_CERT_FILE` naming an unrelated CA bundle, run `fetch <v2 sandbox URL>`. The
+    variable is ignored on Linux and macOS (D34). On a host behind a TLS-inspecting proxy, it is refused
     with a TLS error (boundary B4).
 14. Run `create-instrument` and `setup-payment-user` with stdin redirected (headless): both are
     refused, and CloudTrail shows no `CreatePaymentInstrument` (D33).
@@ -1609,11 +1588,10 @@ verification target (G1), a disposable account or manager, and budget `0.10`:
 
   **Ruled (#5091): accepted**, platform store only for the payment process, as a documented boundary
   (B4). No claim is made that #4382 or #5017 needs the new seam.
-  - **r1 (#5098)** specifies how. The payment roots come from the new P-ROOTS seam, because
+  - **r2 (#5097 triage of #5098)** specifies how. The payment roots come from the P-ROOTS seam, because
     `RootEnv::default()` is not environment-independent. They cover the merchant and AgentCore
-    data planes.
-  - #5017 S1's provider roots, which honour `SSL_CERT_*` as the AWS CLI does, are unchanged and
-    remain in use for credential-provider HTTP and admin.
+    data planes, credential-provider HTTP and admin.
+  - #5017 S1's general provider-root policy remains unchanged; payment constructors no longer use it.
 - **Q16. Endpoint overrides on admin.** **Recommend:** ignore them there too, for one code path.
   Admin users with VPC endpoints can be served by a later reviewed flag.
 - **Q17. Region from the manager ARN (D19).** **Recommend:** yes. It removes the
@@ -1667,9 +1645,9 @@ verification target (G1), a disposable account or manager, and budget `0.10`:
 - **B3. Deadlines exclude blocking system DNS** (R-DNS). The deadline-admission rule prevents any
   work, and in particular any proof send, from starting after the deadline. No async resolver is
   added.
-- **B4. Payment roots are the platform store only** (Q15, D34). TLS-inspecting proxies break the
-  payment runtime. On macOS it refuses while `SSL_CERT_FILE` or `SSL_CERT_DIR` is set.
-  Credential-provider HTTP and admin keep S1's R-ROOTS, which honours them.
+- **B4. Payment roots are the platform store only** (Q15, D34). TLS-inspecting proxies require
+  an operator-installed platform root. All payment HTTP planes, including credential-provider
+  HTTP and admin, ignore CA override variables on Linux and macOS.
 - **B5. IAM is the outer boundary.** A caller that holds `ProcessPaymentRole` credentials can
   call `ProcessPayment` directly, bypassing this runtime's gate. The port does not change IAM
   (R-SPEND, R-TLS-PAY decision).
@@ -1709,7 +1687,7 @@ A reviewer should be able to confirm each of the following from this document al
 | Finding | Severity | Ruling applied | Changed sections | Test IDs |
 | --- | --- | --- | --- | --- |
 | #5097 cap exponent sign | P1 | One decimal representation; corrected comparison; equivalent spellings at exact unit boundaries in S1 | R-AMT (D6 bounds, R-AMT-REP, R-AMT-CMP, worked check), the S1 row, checklist 2a | T-AMT-CAP-1..6; T-ORDER-PRE over-cap rows |
-| #5098 CA variables reach NativeLoader | P1 | As corrected by the PM: S1 provider roots unchanged. A new x402-only payment-root seam in `toolkit-aws` (P-ROOTS) reuses the `validate_roots` shape. `ProcessPayment` and `GetPaymentSession` use the payment roots; credential-provider HTTP and admin keep S1's roots. Only S5 waits on P-ROOTS | R-TLS-PAY (R-PROOTS, the plane decision), section 0, 8.1 (`wiring.rs`), 8.2 (P-ROOTS row and the "which slices wait" note), section 9, D34, Q15, B4, B5, live-run step 13 | T-PROOTS-1..11, T-PROOTS-USE |
+| #5098 CA variables reach NativeLoader | P1 | r2 follows the operator's platform-only invariant for every payment HTTP plane. Direct macOS Security framework queries replace environment-sensitive native loading; fetch, admin and credential HTTP share payment roots. General S1 provider policy remains unchanged | R-TLS-PAY, R-PROOTS, D34, Q15, B4 | T-PROOTS-1..11, T-PROOTS-USE, all-platform source gate and live-constructor source test |
 | #5099 G1/G5 do not cover SDK test and CLI artifacts | P1 | Fixture-only dispatch and artifact custody | Section 7 (G1, G1a, G1b, G1c, G3, G4, G5), 8.1 (`deps.rs`, `live.rs`), 8.2 S5/S6, D32, Q24, section 11 | T-AC3-INH, T-AC3-GUARD, T-AC3-FEAT, T-AC3-MAKE, G4 |
 | #5100 restart claim omits changed terms and body conflicts | P2 | Legacy token bytes kept; restart limitation documented; no fresh token after a conflict; two-invocation cases; a cross-challenge binding is out of scope | R-TOK (R-TOK-SCOPE, L-TERMS, R-TOK-NOFRESH), R-RETRY row, the S4/S5 rows, B2, live-run 6b/6c | T-RESTART-1..8 |
 | #5101 blocking-DNS residual | P2 | The residual is carried into the deadline contract, as #4382 did; no async-resolver prerequisite | R-NET (R-DNS, R-DNS-ADMIT), R-AWS-RETRY, D16, B3, the S3/S5 rows, S7 text | T-DNS-DL-1..5 |
