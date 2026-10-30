@@ -259,6 +259,9 @@ pub enum AwsError {
         /// What was wrong with the response.
         reason: String,
     },
+    /// A sent mutation failed without a trustworthy completion response.
+    /// Keeps the underlying classification while forbidding automatic retry.
+    OutcomeUnknown(Box<Self>),
 }
 
 impl AwsError {
@@ -335,19 +338,25 @@ impl AwsError {
             Self::Service(_) => "aws_service_error",
             Self::Pagination { .. } => "aws_pagination",
             Self::InvalidResponse { .. } => "aws_invalid_response",
+            Self::OutcomeUnknown(source) => source.code(),
         }
     }
 
     /// Whether the failure is a service throttle.
     #[must_use]
     pub fn is_throttling(&self) -> bool {
-        matches!(self, Self::Service(service) if service.is_throttling())
+        match self {
+            Self::OutcomeUnknown(source) => source.is_throttling(),
+            Self::Service(service) => service.is_throttling(),
+            _ => false,
+        }
     }
 
     /// Whether retrying the same request can succeed: throttling, HTTP
     /// 429/500/502/503/504, transient service codes, non-deadline timeouts and
     /// connection failures. An exhausted absolute deadline and credential,
-    /// validation, configuration and pagination errors are never retried.
+    /// validation, configuration, pagination and unknown-outcome errors are
+    /// never retried.
     #[must_use]
     pub fn is_retryable(&self) -> bool {
         match self {
@@ -422,6 +431,10 @@ impl AwsError {
             Self::InvalidResponse { reason } => {
                 write!(f, "invalid response: {}", redact_text(reason))
             }
+            Self::OutcomeUnknown(source) => write!(
+                f,
+                "{source} after the statement was sent; whether the graph applied it is unknown"
+            ),
         }
     }
 
@@ -466,6 +479,7 @@ impl AwsError {
                 .debug_struct("InvalidResponse")
                 .field("reason", &Scrubbed(reason))
                 .finish(),
+            Self::OutcomeUnknown(source) => f.debug_tuple("OutcomeUnknown").field(source).finish(),
         }
     }
 }
@@ -1096,6 +1110,14 @@ TROUBLESHOOTING:
                 Some(text),
             )),
         ]);
+        // Unknown outcomes retain exactly the same redaction guarantees as
+        // their classified causes, including hand-built hostile strings.
+        errors.extend(
+            errors
+                .clone()
+                .into_iter()
+                .map(|error| AwsError::OutcomeUnknown(Box::new(error))),
+        );
         errors
     }
 

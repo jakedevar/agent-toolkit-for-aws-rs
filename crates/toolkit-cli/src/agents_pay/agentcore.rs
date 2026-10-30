@@ -112,6 +112,7 @@ pub fn is_retryable(code: &str) -> bool {
 pub fn aws_error_class(error: &AwsError) -> &'static str {
     use toolkit_aws::error::TimeoutPhase;
     match error {
+        AwsError::OutcomeUnknown(source) => aws_error_class(source),
         AwsError::Connect { .. } => "ConnectError",
         AwsError::Protocol => "RemoteProtocolError",
         AwsError::Timeout {
@@ -1157,6 +1158,7 @@ pub enum PaymentErrorClass {
 fn transport_error(error: &AwsError) -> PaymentError {
     use toolkit_aws::error::TimeoutPhase;
     let class = match error {
+        AwsError::OutcomeUnknown(source) => return transport_error(source),
         AwsError::Connect { .. } => PaymentErrorClass::ConnectError,
         AwsError::Protocol => PaymentErrorClass::RemoteProtocolError,
         AwsError::Timeout {

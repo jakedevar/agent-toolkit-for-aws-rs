@@ -203,6 +203,50 @@ fn auth_wait_reports_unknown_pid_without_signalling() {
     std::fs::remove_dir_all(home).unwrap();
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn auth_wait_preserves_failed_record_when_stderr_write_fails() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let home = std::env::temp_dir().join(format!("l4-wait-stderr-{}-{unique}", std::process::id()));
+    let pending = home.join(".launch-with-aws/pending");
+    std::fs::create_dir_all(&pending).unwrap();
+    std::fs::write(pending.join("91.lock"), b"").unwrap();
+    let record = pending.join("91.json");
+    let contents = br#"{"pid":91,"port":1234,"deadline":40,"cutoff":100,"status":"failed","reason":"invalid_code"}"#;
+    std::fs::write(&record, contents).unwrap();
+    std::fs::set_permissions(&record, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let full = std::fs::OpenOptions::new()
+        .write(true)
+        .open("/dev/full")
+        .unwrap();
+    let status = Command::new(env!("CARGO_BIN_EXE_toolkit"))
+        .args(["launch", "auth-wait", "91", "--region", "us-east-1"])
+        .env("HOME", &home)
+        .env_remove("LAUNCH_WITH_AWS_BASE_URL")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::from(full))
+        .status()
+        .unwrap();
+    assert_eq!(status.code(), Some(1));
+    assert_eq!(std::fs::read(&record).unwrap(), contents);
+
+    let retry = Command::new(env!("CARGO_BIN_EXE_toolkit"))
+        .args(["launch", "auth-wait", "91", "--region", "us-east-1"])
+        .env("HOME", &home)
+        .env_remove("LAUNCH_WITH_AWS_BASE_URL")
+        .output()
+        .unwrap();
+    assert_eq!(retry.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&retry.stderr).contains("invalid authorization code"));
+    assert!(!record.exists());
+    std::fs::remove_dir_all(home).unwrap();
+}
+
 #[cfg(all(unix, not(feature = "aws-sdk")))]
 #[test]
 fn auth_start_spawns_helper_without_secrets_in_argv() {
