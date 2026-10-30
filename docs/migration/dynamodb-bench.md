@@ -199,6 +199,17 @@ configured spend without `--allow-spend`.
 - Process (`crates/toolkit-cli/tests/dynamodb_bench.rs`): end-to-end runs of
   both commands against recordings captured from the handler contract, the
   guardrail, the abort paths, the report goldens, output safety.
+- Revalidation of #4956–#4958 under #4998 found their runtime repairs already
+  landed in `bdb0d57eb7e4d7ff1ad81ef763880aa5c8f6c38a`. Nearby process fixtures
+  exercise hostile text in every displayed preset knob and null/wrong types in
+  every consumed seed member, through both the run and a hand-fed report.
+- The shared private writer now exposes its staging write internally for
+  deterministic tests: partial staging failure preserves an existing report
+  (or leaves a missing report absent), readers see complete old content at every
+  partial staging step and complete new content after publication, and a link
+  swapped into the destination during staging is replaced without following it.
+  Ancestor directories remain trusted and stable, as required by the writer's
+  path-based publication contract. No live AWS or Python execution is involved.
 
 ## Follow-ups
 

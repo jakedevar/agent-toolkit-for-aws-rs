@@ -92,6 +92,41 @@ fn many_small_objects_cost_a_constant_per_key() {
     );
 }
 
+#[test]
+fn hash_bytes_stay_linear_when_a_long_early_key_survives_table_growth() {
+    for n in [64, 512, 2_048] {
+        for at in [0, 7, 8, 15] {
+            let mut keys = scrambled_keys(n);
+            keys[at] = "long".repeat(8_192);
+            let input = wide_object(&keys);
+            let (result, stats) = parse_json_with_stats(&input);
+            assert_eq!(object_keys(&result.expect("distinct keys parse")), keys);
+            assert!(stats.key_bytes_hashed >= keys[at].len() as u64);
+            assert!(
+                stats.key_bytes_hashed <= 3 * input.len() as u64,
+                "{} bytes hashed for {} input bytes and {n} keys (long key at {at})",
+                stats.key_bytes_hashed,
+                input.len(),
+            );
+        }
+    }
+}
+
+#[test]
+fn an_escaped_duplicate_of_a_long_indexed_key_is_rejected_with_bounded_hash_work() {
+    let mut keys = scrambled_keys(512);
+    keys[0] = "a".repeat(32_768);
+    let mut input = wide_object(&keys);
+    input.pop();
+    let quote = input.len() + 1;
+    input.push_str(&format!(",\"\\u0061{}\":0}}", "a".repeat(32_767)));
+    let (result, stats) = parse_json_with_stats(&input);
+    let error = result.expect_err("decoded duplicate must be refused");
+    assert!(error.message.contains("duplicate object key"));
+    assert_eq!(error.column, quote + 1);
+    assert!(stats.key_bytes_hashed <= 3 * input.len() as u64);
+}
+
 // ---- duplicate detection ----------------------------------------------------
 
 /// An object with `n` members, one per line, where member `at` repeats the

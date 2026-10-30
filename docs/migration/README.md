@@ -4,6 +4,16 @@ Operator authorized fully agent-managed conversion on 2026-10-26. Programme: RSI
 
 ## Baseline and scope
 
+Finding revalidation (#4998, #4956–#4958): rolling
+`885d9f666efa97f4ee4f92f6cecf317b06db4ad5` already carries the short-key parser
+index and all three DynamoDB runtime repairs. A counted nearby fixture exposed
+repeated hashing of long early keys during index growth; cached keyed digests
+and hash-byte counters extend the parser work contract. DynamoDB coverage now
+also checks every banner knob and seed member, partial-write failure, complete
+old-or-new visibility and destination-link swaps. See [the parser contract](mcp-proxy-design.md)
+and [benchmark validation](dynamodb-bench.md); exact verification and per-finding
+dispositions are published on #4998. No legacy artifact is retired by this slice.
+
 Baseline commit: 86edeadd0da48e03a8d3045e2775881bd6450e68. Inventory: [python-inventory.json](python-inventory.json), 391 tracked Python paths, 271 distinct blobs. Initial line counts: 127,558 including duplicate paths; 97,599 after exact-blob deduplication, including 28,208 lines in named tests/diagnostics. Counts include comments, fixtures and examples.
 
 Every Python path maps to an assigned slice. Inventory is an auditable baseline, not evidence of a completed port. GLM audit Issue #4371 must check classification, callers, embedded Python, archived payloads and untracked external dependencies. Preserve product documentation and legal attribution while replacing toolkit runtime/development dependencies. Managed-service language restrictions need explicit resolution.

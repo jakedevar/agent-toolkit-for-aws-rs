@@ -1325,6 +1325,47 @@ fn ordinary_numbers_still_print_plainly_in_the_banner() {
     assert!(!stdout.contains("settle=\""), "{stdout}");
 }
 
+#[test]
+fn every_banner_knob_bounds_and_redacts_hostile_text() {
+    const TOKEN: &str = "AKIAIOSFODNN7EXAMPLE";
+    let hostile = format!("\u{1b}[31m\nFORGED {TOKEN} {}", "x".repeat(20_000));
+    for (mode, knobs) in [
+        (
+            "quick",
+            &[
+                "table_settle_seconds",
+                "warmup_seconds",
+                "duration_seconds",
+                "seed_items_per_table",
+            ][..],
+        ),
+        (
+            "representative",
+            &["scale_factor", "max_rps_per_pattern", "items_per_partition"][..],
+        ),
+    ] {
+        for knob in knobs {
+            let config = Json::object(vec![
+                ("aws_profile", Json::string("bench")),
+                ("region", Json::string("us-east-1")),
+                ("mode", Json::string(mode)),
+                (knob, Json::string(&hostile)),
+            ])
+            .to_compact_string();
+            let fixture = Fixture::new("nearby-banner", MODEL, &config, MANIFEST, &[]);
+            let output = fixture.bench(&[]);
+            assert_eq!(status(&output), 2, "{mode}/{knob}");
+            let stdout = text(&output.stdout);
+            assert!(stdout.contains("mode:"), "{mode}/{knob}");
+            assert!(!stdout.contains(TOKEN), "{mode}/{knob}");
+            assert!(!stdout.contains('\u{1b}'), "{mode}/{knob}");
+            assert!(!stdout.lines().any(|line| line.starts_with("FORGED")));
+            assert!(stdout.len() < 4_000, "{mode}/{knob}");
+            assert!(!text(&output.stderr).contains(TOKEN), "{mode}/{knob}");
+        }
+    }
+}
+
 #[cfg(unix)]
 #[test]
 fn outputs_are_published_atomically_and_privately() {
@@ -1500,5 +1541,64 @@ fn malformed_seed_verification_fails_closed_in_the_run_and_the_report() {
             text(&report.stderr)
         );
         assert!(!fixture.root.join("report.md").exists(), "{label}");
+    }
+}
+
+#[test]
+fn every_present_seed_member_rejects_null_and_nearby_wrong_types_without_echoing_values() {
+    const GOOD: &str = r#""Orders": {"expected": 100, "actual": 100, "sampled": false, "passed": true, "seed_shortfall_ratio": 0.0}"#;
+    const HOSTILE: &str = "AKIAIOSFODNN7EXAMPLE\u{1b}\nFORGED";
+    let valid = json(&format!("{{{GOOD}}}"));
+    for member in [
+        "expected",
+        "actual",
+        "passed",
+        "sampled",
+        "seed_shortfall_ratio",
+    ] {
+        for wrong in [
+            Json::Null,
+            Json::string(HOSTILE),
+            Json::Array(vec![]),
+            Json::Object(vec![]),
+            Json::Bool(false),
+            Json::Int(0),
+            Json::Float(0.5),
+        ] {
+            let permitted = match member {
+                "passed" | "sampled" => matches!(wrong, Json::Bool(_)),
+                "seed_shortfall_ratio" => matches!(wrong, Json::Int(_) | Json::Float(_)),
+                _ => matches!(wrong, Json::Int(_)),
+            };
+            if permitted {
+                continue;
+            }
+            let mut entry = valid.get("Orders").unwrap().clone();
+            let Json::Object(fields) = &mut entry else {
+                panic!("object fixture");
+            };
+            fields.iter_mut().find(|(key, _)| key == member).unwrap().1 = wrong;
+            let tables = Json::object(vec![(HOSTILE, entry)]).to_compact_string();
+            let payload = GOOD_PAYLOAD.replace(&format!("{{{GOOD}}}"), &tables);
+            let fixture =
+                Fixture::new("nearby-seed", MODEL, CONFIG, MANIFEST, &[ok_step(&payload)]);
+            let output = fixture.recorded();
+            assert_eq!(status(&output), 2, "{member}: {}", text(&output.stderr));
+            assert!(text(&output.stderr).contains(&format!("\"{member}\"")));
+            assert!(!text(&output.stderr).contains("AKIAIOSFODNN7EXAMPLE"));
+            assert!(!text(&output.stderr).contains("FORGED"));
+            assert!(!fixture.root.join("perf_summary.json").exists());
+            let summary = summary_of(
+                &[pattern("GetOrder", &steady(0.5, ""), COLD_OK, "")],
+                &format!(r#", "seed_verification": {tables}"#),
+            );
+            let report = fixture.report(&summary);
+            assert_eq!(status(&report), 2, "{member}: {}", text(&report.stderr));
+            assert!(text(&report.stderr).contains(&format!("\"{member}\"")));
+            assert!(!text(&report.stderr).contains("AKIAIOSFODNN7EXAMPLE"));
+            assert!(!text(&report.stderr).contains("FORGED"));
+            assert!(!fixture.root.join("report.md").exists());
+            assert!(!fixture.root.join("findings.json").exists());
+        }
     }
 }
