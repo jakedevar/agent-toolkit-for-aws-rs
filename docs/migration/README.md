@@ -143,3 +143,8 @@ Exact-SHA verification and independent review remain the delivery gates
 recorded on the Issue.
 
 Durable Issues and manager ledger carry assignments/dependencies. [issues.json](issues.json) freezes initial map; daemon state is current. Manager notebook: docs/agents/manager-handoff.md (maintain with Bash cat/tail). Preserve active jobs, topology revisions, exact source/base SHAs, review/queue outcomes and genuine gates during succession. Update active workers explicitly when plan changes.
+## Shipped skill CLI
+
+[#5586 packaging and invocation inventory](shipped-toolkit.md) stages
+`toolkit` with `ai-models-live` and `docgraph-live` into consuming plugins
+while guarding the SDK-free default CLI build. #4720 follows after landing.

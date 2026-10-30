@@ -178,10 +178,10 @@ Read `../references/code_output_guide.md` for output format rules.
 
 If no project directory exists, load the **directory-management** reference to set one up.
 
-Render `code_templates/custom_scorer_evaluator.py` with `toolkit ai-payloads render`; do not write the cells by hand. Put the collected values in the values file under `values`, with the placeholder names written without brackets (`toolkit ai-payloads templates --root <skill-dir>` lists them), then run:
+Render `code_templates/custom_scorer_evaluator.py` with `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" ai-payloads render`; do not write the cells by hand. Put the collected values in the values file under `values`, with the placeholder names written without brackets (`"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" ai-payloads templates --root <skill-dir>` lists them), then run:
 
 ```bash
-toolkit ai-payloads render <skill-dir>/references/model-evaluation/code_templates/custom_scorer_evaluator.py --mode notebook --project-dir <project-dir> --values <scratch-dir>/values.json
+"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" ai-payloads render <skill-dir>/references/model-evaluation/code_templates/custom_scorer_evaluator.py --mode notebook --project-dir <project-dir> --values <scratch-dir>/values.json
 ```
 
 Use `--mode script` for a script. `<skill-dir>` is the directory that holds this skill's `references/`.

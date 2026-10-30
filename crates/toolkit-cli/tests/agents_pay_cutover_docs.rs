@@ -48,8 +48,20 @@ fn root() -> PathBuf {
         .unwrap()
 }
 
+/// Skill text names the staged dispatcher by its installed path (#5586);
+/// the contracts below govern the command, so the path prefix is dropped.
+fn without_dispatcher_path(text: &str) -> String {
+    text.replace(
+        "\"${CLAUDE_PLUGIN_ROOT}/skills/agents-pay/packages/openclaw/bin/toolkit\"",
+        "toolkit",
+    )
+    .replace("\"${CLAUDE_PLUGIN_ROOT}/bin/toolkit\"", "toolkit")
+}
+
 fn read(rel: &str) -> String {
-    fs::read_to_string(root().join(rel)).unwrap_or_else(|e| panic!("{rel}: {e}"))
+    without_dispatcher_path(
+        &fs::read_to_string(root().join(rel)).unwrap_or_else(|e| panic!("{rel}: {e}")),
+    )
 }
 
 /// One page of the skill: its repository-relative path and its text.
@@ -671,12 +683,16 @@ fn s7_text_iam_is_the_outer_boundary_b5() {
 }
 
 #[test]
-fn s7_text_toolkit_on_path_q21() {
+fn s7_text_explicit_payment_dispatcher_q21() {
     let skill = skill_text();
     assert_mentions(
         "SKILL.md",
         &skill,
-        &["`toolkit` must be on `PATH`", "toolkit help"],
+        &[
+            "Payment dispatcher unavailable",
+            "Never try a toolkit from PATH",
+            "toolkit help",
+        ],
     );
 }
 

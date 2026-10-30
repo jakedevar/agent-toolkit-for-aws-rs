@@ -1,0 +1,671 @@
+0toolkit-cli v0.1.0 (<workspace>/crates/toolkit-cli)
+1jsonschema v0.60.2
+2fancy-regex feature "default"
+3fancy-regex v0.19.2
+4bit-set v0.8.0
+5bit-vec v0.8.0
+4regex-syntax v0.8.11
+4regex-automata feature "alloc"
+5regex-automata v0.4.18
+6aho-corasick v1.1.5
+7memchr v2.8.3
+6memchr v2.8.3
+6regex-syntax v0.8.11
+4regex-automata feature "dfa-onepass"
+5regex-automata v0.4.18 (*)
+5regex-automata feature "nfa-thompson"
+6regex-automata v0.4.18 (*)
+6regex-automata feature "alloc" (*)
+4regex-automata feature "dfa-search"
+5regex-automata v0.4.18 (*)
+4regex-automata feature "hybrid"
+5regex-automata v0.4.18 (*)
+5regex-automata feature "alloc" (*)
+5regex-automata feature "nfa-thompson" (*)
+4regex-automata feature "meta"
+5regex-automata v0.4.18 (*)
+5regex-automata feature "nfa-pikevm"
+6regex-automata v0.4.18 (*)
+6regex-automata feature "nfa-thompson" (*)
+5regex-automata feature "syntax"
+6regex-automata v0.4.18 (*)
+6regex-automata feature "alloc" (*)
+4regex-automata feature "nfa"
+5regex-automata v0.4.18 (*)
+5regex-automata feature "nfa-backtrack"
+6regex-automata v0.4.18 (*)
+6regex-automata feature "nfa-thompson" (*)
+5regex-automata feature "nfa-pikevm" (*)
+5regex-automata feature "nfa-thompson" (*)
+4regex-automata feature "syntax" (*)
+3fancy-regex feature "perf"
+4fancy-regex v0.19.2 (*)
+4regex-automata feature "perf"
+5regex-automata v0.4.18 (*)
+5regex-automata feature "perf-inline"
+6regex-automata v0.4.18 (*)
+5regex-automata feature "perf-literal"
+6regex-automata v0.4.18 (*)
+6regex-automata feature "perf-literal-multisubstring"
+7regex-automata v0.4.18 (*)
+6regex-automata feature "perf-literal-substring"
+7regex-automata v0.4.18 (*)
+7aho-corasick feature "perf-literal"
+8aho-corasick v1.1.5 (*)
+3fancy-regex feature "std"
+4fancy-regex v0.19.2 (*)
+4bit-set feature "std"
+5bit-set v0.8.0 (*)
+5bit-vec feature "std"
+6bit-vec v0.8.0
+4regex-automata feature "std"
+5regex-automata v0.4.18 (*)
+5regex-automata feature "alloc" (*)
+5aho-corasick feature "std"
+6aho-corasick v1.1.5 (*)
+6memchr feature "std"
+7memchr v2.8.3
+7memchr feature "alloc"
+8memchr v2.8.3
+5memchr feature "std" (*)
+5regex-syntax feature "std"
+6regex-syntax v0.8.11
+4regex-syntax feature "std" (*)
+3fancy-regex feature "unicode"
+4fancy-regex v0.19.2 (*)
+4regex-automata feature "unicode"
+5regex-automata v0.4.18 (*)
+5regex-automata feature "unicode-age"
+6regex-automata v0.4.18 (*)
+6regex-syntax feature "unicode-age"
+7regex-syntax v0.8.11
+5regex-automata feature "unicode-bool"
+6regex-automata v0.4.18 (*)
+6regex-syntax feature "unicode-bool"
+7regex-syntax v0.8.11
+5regex-automata feature "unicode-case"
+6regex-automata v0.4.18 (*)
+6regex-syntax feature "unicode-case"
+7regex-syntax v0.8.11
+5regex-automata feature "unicode-gencat"
+6regex-automata v0.4.18 (*)
+6regex-syntax feature "unicode-gencat"
+7regex-syntax v0.8.11
+5regex-automata feature "unicode-perl"
+6regex-automata v0.4.18 (*)
+6regex-syntax feature "unicode-perl"
+7regex-syntax v0.8.11
+5regex-automata feature "unicode-script"
+6regex-automata v0.4.18 (*)
+6regex-syntax feature "unicode-script"
+7regex-syntax v0.8.11
+5regex-automata feature "unicode-segment"
+6regex-automata v0.4.18 (*)
+6regex-syntax feature "unicode-segment"
+7regex-syntax v0.8.11
+5regex-automata feature "unicode-word-boundary"
+6regex-automata v0.4.18 (*)
+5regex-syntax feature "unicode"
+6regex-syntax v0.8.11
+6regex-syntax feature "unicode-age" (*)
+6regex-syntax feature "unicode-bool" (*)
+6regex-syntax feature "unicode-case" (*)
+6regex-syntax feature "unicode-gencat" (*)
+6regex-syntax feature "unicode-perl" (*)
+6regex-syntax feature "unicode-script" (*)
+6regex-syntax feature "unicode-segment" (*)
+4regex-syntax feature "unicode" (*)
+3fancy-regex feature "variable-lookbehinds"
+4fancy-regex v0.19.2 (*)
+4regex-automata feature "dfa-search" (*)
+2getrandom feature "default"
+3getrandom v0.3.4
+4js-sys v0.3.106
+5wasm-bindgen v0.2.129
+6once_cell v1.21.4
+6cfg-if feature "default"
+7cfg-if v1.0.5
+6wasm-bindgen-macro feature "default"
+7wasm-bindgen-macro v0.2.129 (proc-macro)
+8quote feature "default"
+9quote v1.0.47
+10proc-macro2 v1.0.107
+11unicode-ident feature "default"
+12unicode-ident v1.0.27
+9quote feature "proc-macro"
+10quote v1.0.47 (*)
+10proc-macro2 feature "proc-macro"
+11proc-macro2 v1.0.107 (*)
+8wasm-bindgen-macro-support feature "default"
+9wasm-bindgen-macro-support v0.2.129
+10quote feature "default" (*)
+10proc-macro2 feature "default"
+11proc-macro2 v1.0.107 (*)
+11proc-macro2 feature "proc-macro" (*)
+10bumpalo feature "default"
+11bumpalo v3.20.3
+10syn feature "default"
+11syn v3.0.9
+12proc-macro2 v1.0.107 (*)
+12quote v1.0.47 (*)
+12unicode-ident feature "default" (*)
+11syn feature "clone-impls"
+12syn v3.0.9 (*)
+11syn feature "derive"
+12syn v3.0.9 (*)
+11syn feature "parsing"
+12syn v3.0.9 (*)
+11syn feature "printing"
+12syn v3.0.9 (*)
+11syn feature "proc-macro"
+12syn v3.0.9 (*)
+12quote feature "proc-macro" (*)
+12proc-macro2 feature "proc-macro" (*)
+10syn feature "extra-traits"
+11syn v3.0.9 (*)
+10syn feature "full"
+11syn v3.0.9 (*)
+10syn feature "visit"
+11syn v3.0.9 (*)
+10syn feature "visit-mut"
+11syn v3.0.9 (*)
+10wasm-bindgen-shared feature "default"
+11wasm-bindgen-shared v0.2.129
+12unicode-ident feature "default" (*)
+6wasm-bindgen-shared feature "default" (*)
+6rustversion feature "default"
+7rustversion v1.0.23 (proc-macro)
+5cfg-if feature "default" (*)
+4libc v0.2.191
+4r-efi v5.3.0
+4wasip2 v1.0.4+wasi-0.2.12
+5wit-bindgen v0.57.1
+4wasm-bindgen v0.2.129 (*)
+4cfg-if feature "default" (*)
+2getrandom feature "wasm_js"
+3getrandom v0.3.4 (*)
+2ahash feature "default"
+3ahash v0.8.12
+4getrandom feature "default" (*)
+4cfg-if feature "default" (*)
+4once_cell feature "alloc"
+5once_cell v1.21.4
+5once_cell feature "race"
+6once_cell v1.21.4
+4serde feature "default"
+5serde v1.0.229
+6serde_core feature "result"
+7serde_core v1.0.229
+8serde_derive feature "default"
+9serde_derive v1.0.229 (proc-macro)
+10quote feature "proc-macro" (*)
+10proc-macro2 feature "proc-macro" (*)
+10syn feature "clone-impls" (*)
+10syn feature "derive" (*)
+10syn feature "parsing" (*)
+10syn feature "printing" (*)
+10syn feature "proc-macro" (*)
+6serde_derive feature "default" (*)
+5serde feature "std"
+6serde v1.0.229 (*)
+6serde_core feature "std"
+7serde_core v1.0.229 (*)
+4zerocopy feature "simd"
+5zerocopy v0.8.63
+6zerocopy-derive feature "default"
+7zerocopy-derive v0.8.63 (proc-macro)
+8quote feature "default" (*)
+8proc-macro2 feature "default" (*)
+8syn feature "default"
+9syn v2.0.119
+10proc-macro2 v1.0.107 (*)
+10quote v1.0.47 (*)
+10unicode-ident feature "default" (*)
+9syn feature "clone-impls"
+10syn v2.0.119 (*)
+9syn feature "derive"
+10syn v2.0.119 (*)
+9syn feature "parsing"
+10syn v2.0.119 (*)
+9syn feature "printing"
+10syn v2.0.119 (*)
+9syn feature "proc-macro"
+10syn v2.0.119 (*)
+10quote feature "proc-macro" (*)
+10proc-macro2 feature "proc-macro" (*)
+8syn feature "full"
+9syn v2.0.119 (*)
+4version_check feature "default"
+5version_check v0.9.5
+3ahash feature "runtime-rng"
+4ahash v0.8.12 (*)
+4ahash feature "getrandom"
+5ahash v0.8.12 (*)
+3ahash feature "std"
+4ahash v0.8.12 (*)
+2ahash feature "serde"
+3ahash v0.8.12 (*)
+2serde feature "default" (*)
+2serde feature "derive"
+3serde v1.0.229 (*)
+3serde feature "serde_derive"
+4serde v1.0.229 (*)
+2bytecount feature "default"
+3bytecount v0.6.9
+2bytecount feature "runtime-dispatch-simd"
+3bytecount v0.6.9
+2data-encoding feature "default"
+3data-encoding v2.11.1
+3data-encoding feature "std"
+4data-encoding v2.11.1
+4data-encoding feature "alloc"
+5data-encoding v2.11.1
+2email_address feature "default"
+3email_address v0.2.9
+4serde feature "default" (*)
+3email_address feature "serde_support"
+4email_address v0.2.9 (*)
+4email_address feature "serde"
+5email_address v0.2.9 (*)
+2fraction feature "with-bigint"
+3fraction v0.17.0
+4num v0.4.3
+5num-bigint v0.4.8
+6num-integer feature "i128"
+7num-integer v0.1.47
+8num-traits feature "i128"
+9num-traits v0.2.19
+10autocfg feature "default"
+11autocfg v1.5.1
+6num-traits feature "i128" (*)
+5num-complex v0.4.6
+6num-traits feature "i128" (*)
+5num-rational v0.4.2
+6num-bigint v0.4.8 (*)
+6num-integer feature "i128" (*)
+6num-traits feature "i128" (*)
+5num-integer feature "i128" (*)
+5num-traits feature "i128" (*)
+5num-iter feature "i128"
+6num-iter v0.1.46
+7num-integer feature "i128" (*)
+7num-traits feature "i128" (*)
+4num-bigint feature "default"
+5num-bigint v0.4.8 (*)
+5num-bigint feature "std"
+6num-bigint v0.4.8 (*)
+6num-integer feature "std"
+7num-integer v0.1.47 (*)
+7num-traits feature "std"
+8num-traits v0.2.19 (*)
+6num-traits feature "std" (*)
+3fraction feature "num-bigint"
+4fraction v0.17.0 (*)
+3num feature "num-bigint"
+4num v0.4.3 (*)
+3num feature "std"
+4num v0.4.3 (*)
+4num feature "num-bigint" (*)
+4num-bigint feature "std" (*)
+4num-integer feature "std" (*)
+4num-traits feature "std" (*)
+4num-complex feature "std"
+5num-complex v0.4.6 (*)
+5num-traits feature "std" (*)
+4num-iter feature "std"
+5num-iter v0.1.46 (*)
+5num-integer feature "std" (*)
+5num-traits feature "std" (*)
+4num-rational feature "num-bigint-std"
+5num-rational v0.4.2 (*)
+5num-bigint feature "std" (*)
+5num-rational feature "num-bigint"
+6num-rational v0.4.2 (*)
+4num-rational feature "std"
+5num-rational v0.4.2 (*)
+5num-bigint feature "std" (*)
+5num-integer feature "std" (*)
+5num-traits feature "std" (*)
+2num-traits feature "default"
+3num-traits v0.2.19 (*)
+3num-traits feature "std" (*)
+2itoa feature "default"
+3itoa v1.0.18
+2jsonschema-regex feature "default"
+3jsonschema-regex v0.60.2
+4regex-syntax feature "default"
+5regex-syntax v0.8.11
+5regex-syntax feature "std" (*)
+5regex-syntax feature "unicode" (*)
+2jsonschema-value feature "default"
+3jsonschema-value v0.60.2
+4memchr feature "default"
+5memchr v2.8.3
+5memchr feature "std" (*)
+4getrandom feature "default" (*)
+4getrandom feature "wasm_js" (*)
+4ahash feature "default" (*)
+4ahash feature "serde" (*)
+4bytecount feature "default" (*)
+4bytecount feature "runtime-dispatch-simd" (*)
+4fraction feature "with-bigint" (*)
+4num-traits feature "default" (*)
+4num-cmp feature "default"
+5num-cmp v0.1.0
+4serde_json feature "default"
+5serde_json v1.0.154
+6memchr v2.8.3
+6serde v1.0.229 (*)
+6serde_core v1.0.229 (*)
+6itoa feature "default" (*)
+6zmij feature "default"
+7zmij v1.0.23
+5serde_json feature "std"
+6serde_json v1.0.154 (*)
+6memchr feature "std" (*)
+6serde_core feature "std" (*)
+4serde_json feature "float_roundtrip"
+5serde_json v1.0.154 (*)
+4zmij feature "default" (*)
+3jsonschema-value feature "serde_json"
+4jsonschema-value v0.60.2 (*)
+2num-cmp feature "default" (*)
+2serde_json feature "default" (*)
+2serde_json feature "float_roundtrip" (*)
+2percent-encoding feature "default"
+3percent-encoding v2.3.2
+3percent-encoding feature "std"
+4percent-encoding v2.3.2
+4percent-encoding feature "alloc"
+5percent-encoding v2.3.2
+2referencing feature "default"
+3referencing v0.60.2
+4getrandom feature "default" (*)
+4getrandom feature "wasm_js" (*)
+4ahash feature "default" (*)
+4ahash feature "serde" (*)
+4itoa feature "default" (*)
+4serde_json feature "default" (*)
+4percent-encoding feature "default" (*)
+4fluent-uri feature "default"
+5fluent-uri v0.4.1
+6borrow-or-share v0.2.4
+6serde v1.0.229 (*)
+6ref-cast feature "default"
+7ref-cast v1.0.27
+8ref-cast-impl feature "default"
+9ref-cast-impl v1.0.27 (proc-macro)
+10quote feature "default" (*)
+10proc-macro2 feature "default" (*)
+10syn feature "default" (*)
+5fluent-uri feature "std"
+6fluent-uri v0.4.1 (*)
+6fluent-uri feature "alloc"
+7fluent-uri v0.4.1 (*)
+7serde feature "alloc"
+8serde v1.0.229 (*)
+8serde_core feature "alloc"
+9serde_core v1.0.229 (*)
+7borrow-or-share feature "alloc"
+8borrow-or-share v0.2.4
+6fluent-uri feature "impl-error"
+7fluent-uri v0.4.1 (*)
+4fluent-uri feature "serde"
+5fluent-uri v0.4.1 (*)
+4hashbrown feature "default"
+5hashbrown v0.17.1
+6equivalent v1.0.3
+6foldhash v0.2.0
+6allocator-api2 feature "alloc"
+7allocator-api2 v0.2.21
+5hashbrown feature "allocator-api2"
+6hashbrown v0.17.1 (*)
+5hashbrown feature "default-hasher"
+6hashbrown v0.17.1 (*)
+5hashbrown feature "equivalent"
+6hashbrown v0.17.1 (*)
+5hashbrown feature "inline-more"
+6hashbrown v0.17.1 (*)
+5hashbrown feature "raw-entry"
+6hashbrown v0.17.1 (*)
+4hashbrown feature "equivalent" (*)
+4micromap feature "default"
+5micromap v0.3.0
+4parking_lot feature "default"
+5parking_lot v0.12.5
+6lock_api feature "default"
+7lock_api v0.4.14
+8scopeguard v1.2.0
+7lock_api feature "atomic_usize"
+8lock_api v0.4.14 (*)
+6parking_lot_core feature "default"
+7parking_lot_core v0.9.12
+8cfg-if feature "default" (*)
+8libc feature "default"
+9libc v0.2.191
+9libc feature "std"
+10libc v0.2.191
+8redox_syscall feature "default"
+9redox_syscall v0.5.18
+10bitflags feature "default"
+11bitflags v2.13.2
+9redox_syscall feature "userspace"
+10redox_syscall v0.5.18 (*)
+8smallvec feature "default"
+9smallvec v1.16.4
+8windows-link feature "default"
+9windows-link v0.2.1
+2regex feature "default"
+3regex v1.13.1
+4aho-corasick v1.1.5 (*)
+4memchr v2.8.3
+4regex-syntax v0.8.11
+4regex-automata feature "alloc" (*)
+4regex-automata feature "meta" (*)
+4regex-automata feature "nfa-pikevm" (*)
+4regex-automata feature "syntax" (*)
+3regex-syntax feature "default" (*)
+3regex feature "perf"
+4regex v1.13.1 (*)
+4regex feature "perf-backtrack"
+5regex v1.13.1 (*)
+5regex-automata feature "nfa-backtrack" (*)
+4regex feature "perf-cache"
+5regex v1.13.1 (*)
+4regex feature "perf-dfa"
+5regex v1.13.1 (*)
+5regex-automata feature "hybrid" (*)
+4regex feature "perf-inline"
+5regex v1.13.1 (*)
+5regex-automata feature "perf-inline" (*)
+4regex feature "perf-literal"
+5regex v1.13.1 (*)
+5regex-automata feature "perf-literal" (*)
+4regex feature "perf-onepass"
+5regex v1.13.1 (*)
+5regex-automata feature "dfa-onepass" (*)
+3regex feature "std"
+4regex v1.13.1 (*)
+4regex-automata feature "std" (*)
+4aho-corasick feature "std" (*)
+4memchr feature "std" (*)
+4regex-syntax feature "std" (*)
+3regex feature "unicode"
+4regex v1.13.1 (*)
+4regex-automata feature "unicode" (*)
+4regex-syntax feature "unicode" (*)
+4regex feature "unicode-age"
+5regex v1.13.1 (*)
+5regex-automata feature "unicode-age" (*)
+5regex-syntax feature "unicode-age" (*)
+4regex feature "unicode-bool"
+5regex v1.13.1 (*)
+5regex-automata feature "unicode-bool" (*)
+5regex-syntax feature "unicode-bool" (*)
+4regex feature "unicode-case"
+5regex v1.13.1 (*)
+5regex-automata feature "unicode-case" (*)
+5regex-syntax feature "unicode-case" (*)
+4regex feature "unicode-gencat"
+5regex v1.13.1 (*)
+5regex-automata feature "unicode-gencat" (*)
+5regex-syntax feature "unicode-gencat" (*)
+4regex feature "unicode-perl"
+5regex v1.13.1 (*)
+5regex-automata feature "unicode-perl" (*)
+5regex-automata feature "unicode-word-boundary" (*)
+5regex-syntax feature "unicode-perl" (*)
+4regex feature "unicode-script"
+5regex v1.13.1 (*)
+5regex-automata feature "unicode-script" (*)
+5regex-syntax feature "unicode-script" (*)
+4regex feature "unicode-segment"
+5regex v1.13.1 (*)
+5regex-automata feature "unicode-segment" (*)
+5regex-syntax feature "unicode-segment" (*)
+2strum feature "default"
+3strum v0.28.0
+4strum_macros feature "default"
+5strum_macros v0.28.0 (proc-macro)
+6quote feature "default" (*)
+6proc-macro2 feature "default" (*)
+6syn feature "default" (*)
+6syn feature "parsing" (*)
+6heck feature "default"
+7heck v0.5.0
+3strum feature "std"
+4strum v0.28.0 (*)
+2strum feature "derive"
+3strum v0.28.0 (*)
+3strum feature "strum_macros"
+4strum v0.28.0 (*)
+2unicode-general-category feature "default"
+3unicode-general-category v1.1.0
+2uuid-simd feature "detect"
+3uuid-simd v0.8.0
+4outref feature "default"
+5outref v0.5.2
+4vsimd feature "default"
+5vsimd v0.8.0
+3vsimd feature "detect"
+4vsimd v0.8.0
+4vsimd feature "std"
+5vsimd v0.8.0
+5vsimd feature "alloc"
+6vsimd v0.8.0
+2uuid-simd feature "std"
+3uuid-simd v0.8.0 (*)
+3uuid-simd feature "alloc"
+4uuid-simd v0.8.0 (*)
+4vsimd feature "alloc" (*)
+3vsimd feature "std" (*)
+1fancy-regex feature "default" (*)
+1getrandom feature "default" (*)
+1serde_json feature "std" (*)
+1miniz_oxide feature "with-alloc"
+2miniz_oxide v0.8.9
+3adler2 v2.0.1
+1nix feature "user"
+2nix v0.29.0
+3cfg-if feature "default" (*)
+3libc feature "default" (*)
+3libc feature "extra_traits"
+4libc v0.2.191
+3bitflags feature "default" (*)
+3cfg_aliases feature "default"
+4cfg_aliases v0.2.2
+2nix feature "feature"
+3nix v0.29.0 (*)
+1roxmltree feature "default"
+2roxmltree v0.14.1
+3xmlparser feature "default"
+4xmlparser v0.13.6
+4xmlparser feature "std"
+5xmlparser v0.13.6
+2roxmltree feature "std"
+3roxmltree v0.14.1 (*)
+1rustix feature "fs"
+2rustix v1.1.5
+3bitflags v2.13.2
+3errno v0.3.14
+4libc v0.2.191
+4windows-sys feature "Win32_Foundation"
+5windows-sys v0.61.2
+6windows-link v0.2.1
+5windows-sys feature "Win32"
+6windows-sys v0.61.2 (*)
+6windows-sys feature "Win32_Foundation" (*)
+4windows-sys feature "Win32_System_Diagnostics_Debug"
+5windows-sys v0.61.2 (*)
+5windows-sys feature "Win32_System_Diagnostics"
+6windows-sys v0.61.2 (*)
+6windows-sys feature "Win32_System"
+7windows-sys v0.61.2 (*)
+7windows-sys feature "Win32" (*)
+4windows-sys feature "default"
+5windows-sys v0.61.2 (*)
+3libc v0.2.191
+3windows-sys feature "Win32_Foundation" (*)
+3windows-sys feature "Win32_Networking_WinSock"
+4windows-sys v0.61.2 (*)
+4windows-sys feature "Win32_Networking"
+5windows-sys v0.61.2 (*)
+5windows-sys feature "Win32" (*)
+3windows-sys feature "default" (*)
+3linux-raw-sys feature "auxvec"
+4linux-raw-sys v0.12.1
+3linux-raw-sys feature "elf"
+4linux-raw-sys v0.12.1
+3linux-raw-sys feature "errno"
+4linux-raw-sys v0.12.1
+3linux-raw-sys feature "general"
+4linux-raw-sys v0.12.1
+3linux-raw-sys feature "ioctl"
+4linux-raw-sys v0.12.1
+3linux-raw-sys feature "no_std"
+4linux-raw-sys v0.12.1
+1rustix feature "process"
+2rustix v1.1.5 (*)
+2linux-raw-sys feature "prctl"
+3linux-raw-sys v0.12.1
+1rustix feature "std"
+2rustix v1.1.5 (*)
+2libc feature "std" (*)
+2bitflags feature "std"
+3bitflags v2.13.2
+2rustix feature "alloc"
+3rustix v1.1.5 (*)
+2errno feature "std"
+3errno v0.3.14 (*)
+3libc feature "std" (*)
+1rustix feature "stdio"
+2rustix v1.1.5 (*)
+1time feature "default"
+2time v0.3.55
+3powerfmt v0.2.1
+3deranged feature "default"
+4deranged v0.5.9
+3num-conv feature "default"
+4num-conv v0.2.2
+3time-core feature "default"
+4time-core v0.1.9
+2time feature "std"
+3time v0.3.55 (*)
+3time feature "alloc"
+4time v0.3.55 (*)
+1time feature "parsing"
+2time v0.3.55 (*)
+1toolkit-aws feature "default"
+2toolkit-aws v0.1.0 (<workspace>/crates/toolkit-aws)
+3toolkit-core feature "default"
+4toolkit-core v0.1.0 (<workspace>/crates/toolkit-core)
+1toolkit-core feature "default" (*)
+1toolkit-msk feature "default"
+2toolkit-msk v0.1.0 (<workspace>/crates/toolkit-msk)
+3toolkit-core feature "default" (*)
+1unicode-normalization feature "std"
+2unicode-normalization v0.1.26
+3tinyvec feature "alloc"
+4tinyvec v1.13.3
+3tinyvec feature "default"
+4tinyvec v1.13.3

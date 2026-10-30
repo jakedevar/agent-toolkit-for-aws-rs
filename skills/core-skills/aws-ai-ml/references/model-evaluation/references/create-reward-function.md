@@ -64,8 +64,8 @@ Before the user registers the evaluator, check that `lambda_function.py` returns
 1. Print the documented event and use it as the starting point for a test event (fill in realistic values; SageMaker sends one sample per invocation):
 
    ```bash
-   toolkit ai-payloads reward sample --format sagemaker-eval
-   toolkit ai-payloads reward sample --format nova
+   "${CLAUDE_PLUGIN_ROOT}/bin/toolkit" ai-payloads reward sample --format sagemaker-eval
+   "${CLAUDE_PLUGIN_ROOT}/bin/toolkit" ai-payloads reward sample --format nova
    ```
 
 2. Save the event to a temp file (e.g., `/tmp/test_reward_event.json`), run the customized `lambda_handler` on it in the user's environment, and save what it returns to `/tmp/test_reward_response.json`.
@@ -73,8 +73,8 @@ Before the user registers the evaluator, check that `lambda_function.py` returns
 3. Check the response against the documented contract. The checker reads both files offline; it does not run the Lambda or call AWS:
 
    ```bash
-   toolkit ai-payloads reward check --format sagemaker-eval --event /tmp/test_reward_event.json --response /tmp/test_reward_response.json
-   toolkit ai-payloads reward check --format nova --event /tmp/test_reward_event.json --response /tmp/test_reward_response.json
+   "${CLAUDE_PLUGIN_ROOT}/bin/toolkit" ai-payloads reward check --format sagemaker-eval --event /tmp/test_reward_event.json --response /tmp/test_reward_response.json
+   "${CLAUDE_PLUGIN_ROOT}/bin/toolkit" ai-payloads reward check --format nova --event /tmp/test_reward_event.json --response /tmp/test_reward_response.json
    ```
 
    Run the line that matches the template. Exit 0 means the response is one of the two documented envelopes with one result per sample. On exit 1, the output names the position that is wrong (never the value); fix the return statement in `lambda_function.py` and test again.

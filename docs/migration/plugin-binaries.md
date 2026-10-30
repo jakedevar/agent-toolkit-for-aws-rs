@@ -13,6 +13,17 @@ every such binary. It serves the secret-safety PreToolUse hook (`secret-safety-h
 crate, bin `secret-safety`, #4412) now. Later it serves the `toolkit` binary that the
 #4413 MCP proxy cutover uses.
 
+The #5586 GM ruling adds a subprocess `toolkit` dispatcher to `aws-core`,
+`aws-agents` and `aws-startup-advisor`. The PM repair ruling gives aws-agents
+exactly `["agents-pay-live"]`; aws-core and aws-startup-advisor keep exactly
+`["ai-models-live", "docgraph-live"]` on every declared platform. The default
+CLI and shared AWS crate features remain empty and SDK-free. The separately
+distributed OpenClaw package retains its existing `agents-pay-live` build;
+plugin payment commands use `${CLAUDE_PLUGIN_ROOT}/bin/toolkit`, delivered
+in the existing operator-gated plugin release tree. Standalone OpenClaw
+commands use the npm package's own dispatcher. See
+[the invocation inventory and default-build guard](shipped-toolkit.md).
+
 Each plugin is installed into its own cache directory, and a plugin cannot reach a
 sibling plugin's files. So a binary that two plugins need is staged into both. The
 size cost is: binary size, times five platforms, times the plugins that ship it.
@@ -98,7 +109,7 @@ source tree, such as `plugins/aws-agents/skills/agents-pay/packages/openclaw`.
 It stages into `<package_root>/bin/` with exactly the layout, dispatcher,
 manifest (`"package_root"` instead of `"plugin"`), sha256 and modes above.
 
-- The entry's role must be `subprocess` (and only package entries may use it):
+- The entry's role must be `subprocess` (plugin roots may also use it):
   code spawns the platform file directly, so `plugin-stage launcher` refuses it
   and the launcher allowlist and inventory of section 4 are unchanged.
 - Every path component must be a real directory (no symlink). The directory must
@@ -116,8 +127,9 @@ manifest (`"package_root"` instead of `"plugin"`), sha256 and modes above.
   `verify --complete` on that destination alone. It needs no git, Cargo or
   network.
 - No test target stages the real declaration (R-PKG-7, T-PKG-NOLIVE). The
-  OpenClaw entry builds `toolkit-cli` with `agents-pay-live`, so only
-  `make plugin-binaries` (a release target, not a verification target) stages it.
+  OpenClaw package and aws-agents plugin entries build `toolkit-cli` with
+  `agents-pay-live`, so only `make plugin-binaries` (a release target, not a
+  verification target) stages them. G1/G1a still forbid live test artifacts.
 
 ## 4. Launchers: how hooks.json and .mcp.json pick the binary
 
@@ -409,6 +421,10 @@ every source branch. Only the operator-gated release step (#4414 packaging, then
 release or main publication) may add the staged `bin/` directories, with
 `git add -f`, after `verify --complete` passes. This change does not do that, and no
 release is published.
+
+A release that includes the aws-agents plugin binaries ships a payment-capable
+`toolkit` (`agents-pay-live`), a real-money surface. The operator must approve
+that payment-capable binary by name; a general release approval does not cover it.
 
 ## 7. Fail-closed behaviour
 
