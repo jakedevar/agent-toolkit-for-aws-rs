@@ -1285,6 +1285,19 @@ pub enum FakeOutcome {
     RecordThenFail(PaymentError),
 }
 
+/// Possible service contracts for a reused token with changed request bytes.
+/// These are offline scenarios, not claims about the live service.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum FakeBodyMismatch {
+    /// Reject the changed body with a conflict (the default fake contract).
+    #[default]
+    Conflict,
+    /// Reject the changed body with a validation error.
+    Validation,
+    /// Return the proof already stored for the token.
+    StoredProof,
+}
+
 /// One `ProcessPayment` request as the fake received it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RecordedPayment {
@@ -1333,11 +1346,14 @@ pub enum AdminCall {
 /// authorization ledger. A fixed proof (`with_proof`) is returned for every
 /// new authorization; `signing()` instead derives a well-formed proof from
 /// each request's approved terms, with a fresh signature per authorization.
+/// Body mismatches conflict by default; `with_body_mismatch` selects other
+/// offline service contracts without making any live-service assumption.
 #[derive(Default)]
 pub struct FakePaymentsApi {
     calls: std::cell::Cell<usize>,
     proof: std::cell::RefCell<Option<Json>>,
     signing: bool,
+    body_mismatch: FakeBodyMismatch,
     idempotency: std::cell::RefCell<std::collections::HashMap<String, (Vec<u8>, Json)>>,
     authorizations: std::cell::Cell<usize>,
     session: Option<Json>,
@@ -1352,6 +1368,12 @@ pub struct FakePaymentsApi {
     regions: std::cell::RefCell<Vec<String>>,
 }
 impl FakePaymentsApi {
+    /// Select an offline same-token/different-body service scenario.
+    #[must_use]
+    pub fn with_body_mismatch(mut self, behavior: FakeBodyMismatch) -> Self {
+        self.body_mismatch = behavior;
+        self
+    }
     /// Return a supplied proof document for fixture-account requests.
     #[must_use]
     pub fn with_proof(proof: Json) -> Self {
@@ -1659,7 +1681,15 @@ impl PaymentsApi for FakePaymentsApi {
         let mut records = self.idempotency.borrow_mut();
         let proof = if let Some((previous_body, proof)) = records.get(token) {
             if previous_body != request.body() {
-                return Err(PaymentError::Service("ConflictException"));
+                match self.body_mismatch {
+                    FakeBodyMismatch::Conflict => {
+                        return Err(PaymentError::Service("ConflictException"));
+                    }
+                    FakeBodyMismatch::Validation => {
+                        return Err(PaymentError::Service("ValidationException"));
+                    }
+                    FakeBodyMismatch::StoredProof => {}
+                }
             }
             proof.clone()
         } else {
@@ -2293,6 +2323,14 @@ mod wire_contracts {
             api.process_payment(&request).err(),
             Some(PaymentError::Service("ConflictException"))
         );
+        assert_eq!(api.authorizations(), 1);
+        let api = api.with_body_mismatch(FakeBodyMismatch::Validation);
+        assert_eq!(
+            api.process_payment(&request).err(),
+            Some(PaymentError::Service("ValidationException"))
+        );
+        let api = api.with_body_mismatch(FakeBodyMismatch::StoredProof);
+        assert_eq!(api.process_payment(&request).unwrap().payload(), &first);
         assert_eq!(api.authorizations(), 1);
         api.expire_idempotency_records();
         assert_eq!(api.process_payment(&request).unwrap().payload(), &second);
