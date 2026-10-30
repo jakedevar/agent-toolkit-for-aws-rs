@@ -103,7 +103,7 @@ manifest (`"package_root"` instead of `"plugin"`), sha256 and modes above.
   and the launcher allowlist and inventory of section 4 are unchanged.
 - Every path component must be a real directory (no symlink). The directory must
   hold a regular `package.json` and a `.gitignore` with a `bin/` line (and no
-  `!bin` re-include). It may not lie inside a `plugins/*/bin/` or another
+  `!` negation line, since verify-package cannot evaluate patterns without git). It may not lie inside a `plugins/*/bin/` or another
   package destination's `bin/`. `verify`, `verify --complete` and `stage` check
   this before reading or writing anything.
 - `check` also refuses any git-tracked file under a package destination's `bin/`.

@@ -74,6 +74,63 @@ enforces this. The plugin `mise.toml` now declares `python = "3.12"` and
 owned by other slices (`scripts/*.py`, `tests/`); mise merges the parent tools, so before
 this change they came from the root. They go when those slices land.
 
+## OpenClaw package node tests (daemon recipe, #5158)
+
+The OpenClaw package (`plugins/aws-agents/skills/agents-pay/packages/openclaw`)
+has TypeScript sources and `node --test` suites. The daemon runs them with the
+recipe `openclaw-node-test` (`.rsi/jobs.toml`, `make openclaw-node-test`, i.e.
+AgentSubmitJob `{"kind":"test","params":{"recipe":"openclaw-node-test"}}`).
+`scripts/openclaw-node-test.sh run` does this:
+
+1. It checks that every `package-lock.json` tarball this platform installs is in
+   the offline npm cache, and that each one's sha512 equals the lock
+   `integrity`. A missing cache, a missing tarball or wrong bytes fail closed
+   (exit 3) and name the operator command below.
+2. It copies the cache and the skill root (the package plus the canonical skill
+   that `stage-skill` bundles, minus what the package `.gitignore` names) to a
+   private temporary directory and runs there. The shared cache and the
+   worktree are never written, so no `node_modules`, `dist` or staged skill is
+   left for the real-tree validators (`spec validate`, `manifests validate`).
+   It gives npm empty user and global npmrc files and `offline=true`.
+3. In a fresh network namespace (`unshare --user --map-current-user --net`: one
+   loopback, down) it runs `npm ci --offline --ignore-scripts`, then
+   `npm test`. If the namespace cannot be created it exits 4 rather than run
+   with network.
+4. `python` and `python3` on `PATH` are shims that exit 127. Until #4411 B4
+   removes the `python3 -m unittest` step from the package `test` script, that
+   one `&&` step is skipped and the skip is logged. The other steps
+   (`npm run build`, `npm run stage-skill`, `node --test test/*.test.mjs`) run
+   as written. A script that names no Python runs as `npm test` itself.
+
+The recipe first runs `scripts/openclaw-node-test.selftest.sh`, which uses a
+throwaway package and cache. It checks the fail-closed cases (missing cache,
+missing or tampered tarball, unset `HOME`), the skipped Python step, the Python
+shim, that the network is unreachable, and that the shared cache and the
+package directory stay untouched. `make test-scripts` also runs the self-test.
+
+**Where the dependencies come from.** The cache lives outside the repository at
+`$HOME/.cache/rsi/openclaw-npm-cache` (`OPENCLAW_NPM_CACHE` overrides it). The
+committed `package-lock.json` pins its content: each tarball is addressed and
+checked by its lock sha512, and `npm ci` checks it again. The tarballs are not
+committed. For one platform they total about 10.8 MB, and 9.7 MB of that is the
+native TypeScript 7 compiler (`@typescript/typescript-linux-x64` 7.0.2;
+darwin-arm64 is 9.3 MB). Every TypeScript bump would add that again to the
+history. The platform-independent tarballs (typescript, @types/node, typebox,
+undici-types) are about 1.1 MB.
+
+**One-time operator action per host (uses the network):**
+
+```sh
+make openclaw-npm-cache
+```
+
+It runs `npm ci` from the registry on a copy of `package.json` and
+`package-lock.json` (npm verifies each tarball against the lock). It then checks
+the result as in step 1 and moves it into place. Rerun it after any
+`package-lock.json` change, for example B4's 1.1.0 identity bump if that
+changes a dependency. Until then the recipe fails closed with the same
+message. No daemon recipe uses the network.
+
 ## Retired Python (callers proven gone)
 
 | File | Replacement | Proof |
