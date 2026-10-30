@@ -277,7 +277,7 @@ fn t_api_snapshot_lookup_uses_launch_envelope_and_error_hints() {
         policy: RetryPolicy::default(),
     };
     assert!(
-        client.download_url("l/1", false).unwrap().as_deref()
+        client.download_url("l/1").unwrap().as_deref()
             == Some("https://b.amazonaws.com/x?signature=FAKE-SIGNATURE")
     );
     assert_eq!(
@@ -307,17 +307,18 @@ fn t_api_snapshot_lookup_uses_launch_envelope_and_error_hints() {
             jitter: &NoJitter,
             policy: RetryPolicy::default(),
         };
-        let error = client.download_url("l-1", false).unwrap_err();
-        let text = format!("{error} {error:?}");
+        let error = client.download_url("l-1").unwrap_err();
+        let text = super::command_error(&error, "us-east-1", false);
         assert!(text.contains(hint));
         assert!(text.contains("GET /api/launches/<id> failed"));
         assert!(!text.contains("FAKE-ACCESS-TOKEN"));
         if status == 404 {
-            assert!(!client
-                .download_url("l-1", true)
-                .unwrap_err()
-                .to_string()
-                .contains(hint));
+            assert!(!super::command_error(
+                &client.download_url("l-1").unwrap_err(),
+                "us-east-1",
+                true
+            )
+            .contains(hint));
         }
     }
 }
@@ -405,7 +406,7 @@ fn t_api_snapshot_lookup_missing_malformed_transport_and_id_boundaries() {
             jitter: &NoJitter,
             policy: RetryPolicy::none(),
         };
-        let result = client.download_url("l-1", false);
+        let result = client.download_url("l-1");
         if body == LAUNCH {
             assert!(result.unwrap().is_none());
         } else {
@@ -425,7 +426,7 @@ fn t_api_snapshot_lookup_missing_malformed_transport_and_id_boundaries() {
         policy: RetryPolicy::none(),
     };
     assert!(matches!(
-        client.download_url("l-1", false),
+        client.download_url("l-1"),
         Err(ApiError::Unreachable)
     ));
     for id in [String::new(), "x".repeat(2049)] {
@@ -441,7 +442,7 @@ fn t_api_snapshot_lookup_missing_malformed_transport_and_id_boundaries() {
             policy: RetryPolicy::none(),
         };
         assert!(matches!(
-            client.download_url(&id, false),
+            client.download_url(&id),
             Err(ApiError::InvalidLaunchId)
         ));
         assert!(fake.requests().is_empty());
