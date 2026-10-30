@@ -1,13 +1,19 @@
 # Rust workspace entry points. These targets never override the daemon-stamped
 # build environment (CARGO_TARGET_DIR, RUSTC_WRAPPER/sccache); they rely on it
 # being present in the invoking environment.
-.PHONY: build fmt clippy test test-scripts clippy-sdk test-sdk clippy-live plugin-binaries plugin-binaries-check openclaw-node-test openclaw-npm-cache
+.PHONY: build fmt fmt-patch clippy test test-scripts clippy-sdk test-sdk clippy-live plugin-binaries plugin-binaries-check openclaw-node-test openclaw-npm-cache
 
 build:
 	cargo build --workspace --locked
 
 fmt:
 	cargo fmt --all -- --check
+
+# Diagnostic (#5509): runs `cargo fmt --all` in a scratch copy of the worktree
+# and prints the result as a unified patch between BEGIN/END marker lines.
+# Never writes the worktree; apply the patch with `git apply`.
+fmt-patch:
+	sh scripts/fmt-patch.sh
 
 clippy:
 	cargo clippy --workspace --all-targets -- -D warnings
@@ -110,6 +116,7 @@ plugin-binaries-check:
 test-scripts:
 	sh scripts/at-commit-test.selftest.sh
 	sh scripts/run-rsid-test-shards.selftest.sh
+	sh scripts/fmt-patch.selftest.sh
 	sh scripts/openclaw-node-test.selftest.sh
 
 # OpenClaw package node tests (#5158, design OQ8), the daemon recipe
