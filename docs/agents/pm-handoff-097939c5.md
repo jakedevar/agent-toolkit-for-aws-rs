@@ -1334,3 +1334,4 @@ Friction: #4727, Rsi #4694, Rsi #4704
   Pending plan: #4720 held at 731d27d2 until #4719 lands (then merge rolling, drop no-live caveat, rerun scoped, enqueue). #4411 closes when #5560 lands; #4410 closes after #5563.
 - 02:52Z: #5560 LANDED (3082, landed_sha 021c96aff14a6c9bc2834f22e7fc5f7be45e8bc2); auto-closed. CLOSED #4411 (OpenClaw port complete). Queue empty.
 - 02:50Z: PM seat rotated 4c8bc93d -> ee4a8270 (context cap). Wakes carried (8). Workers parked on jobs: 669e7ef7 #4719, 8ea5b4fb #5570, d8cf3dd0 #5563, 2f5c6291 #5573 S4 sec review. Queue empty. Next: #5507 when slot frees; S4 #5557 c9ff7359 lands after #5573 review.
+- 02:55Z: GM: false-red scoped_test (aws #5455 / Rsi #5565) fixed on rsi rolling, hub still 170772db until hub deploy (~03:51Z+). Workaround: scripts/clean-target in affected sandbox, rerun scoped_test once on same head. Apply to #4720 relaunch and any new false red. GM will notify on deploy.
