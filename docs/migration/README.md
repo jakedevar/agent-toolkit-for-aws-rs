@@ -102,8 +102,10 @@ header boundary. Live network use still waits for the S1 integration gate.
 x402 review triage (#5097, #5098, #5099): the landed amount comparator already uses `E + 6`
 and its equivalent-spelling boundary tables record zero spending calls on over-cap entries.
 The separate `agents-pay-live` feature excludes live constructors from default and SDK test
-artifacts. The platform-only TLS repair extends payment roots to credential HTTP and admin,
-and replaces macOS CA-variable presence checks with direct Security framework trust queries.
+artifacts, and `validate_endpoint` refuses the `AgentCore` payments API for the generic signed
+routes (`mcp-proxy`, `asm-exec`). The platform-only TLS repair extends payment roots to credential HTTP and admin,
+and replaces macOS CA-variable presence checks with direct Security framework trust queries;
+that macOS branch is type-checked only and has not been run on a Mac.
 The r2 trust-plane contract and offline regression lanes are recorded in
 [the x402 design](x402-payments-design.md#r-tls-pay-trust-roots-on-the-payment-runtime-q15).
 Exact verification and integration status are published on #5097; this note is not a landing claim.

@@ -210,6 +210,77 @@ fn t_ac3_inh_fetch_routes_as_a_child_under_a_hostile_environment() {
     assert_eq!(snapshot(&root.0), before, "a file changed or was created");
 }
 
+/// T-AC3-REACH (#5099): the generic signed route of an `aws-sdk` build must
+/// not become a way around D32. Every operation of the payments model, and a
+/// percent-encoded spelling, is refused while parsing argv: before DNS, before
+/// any credential source, before a byte is sent.
+const PAYMENT_ENDPOINTS: &[&str] = &[
+    "https://bedrock-agentcore.us-east-1.amazonaws.com/payments/processPayment",
+    "https://bedrock-agentcore.us-east-1.amazonaws.com/payments/createPaymentInstrument",
+    "https://bedrock-agentcore.us-east-1.amazonaws.com/payments/createPaymentSession",
+    "https://bedrock-agentcore.us-east-1.amazonaws.com/payments/getPaymentSession",
+    "https://bedrock-agentcore.us-east-1.amazonaws.com/%70ayments/processPayment",
+];
+
+fn assert_payment_endpoint_refused(url: &str, code: Option<i32>, out: &[u8], err: &[u8]) {
+    assert_eq!(code, Some(2), "{url}");
+    assert!(out.is_empty(), "{url}");
+    let err = String::from_utf8_lossy(err);
+    assert!(err.starts_with("error: invalid arguments"), "{url}: {err}");
+    assert!(err.contains("AgentCore payments API"), "{url}: {err}");
+}
+
+#[test]
+fn t_ac3_reach_mcp_proxy_in_process_refuses_the_payments_api() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    for url in PAYMENT_ENDPOINTS {
+        let args: Vec<OsString> = ["mcp-proxy", *url].iter().map(OsString::from).collect();
+        let (mut out, mut err) = (Vec::new(), Vec::new());
+        let code = toolkit_cli::run(&args, &mut out, &mut err);
+        assert_payment_endpoint_refused(url, Some(i32::from(code)), &out, &err);
+        assert_no_connection(&listener);
+    }
+}
+
+#[test]
+fn t_ac3_reach_mcp_proxy_as_a_child_under_a_hostile_environment() {
+    let root = scratch();
+    let (home, cwd) = hostile_home(&root.0);
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let recorder = format!("http://{}", listener.local_addr().unwrap());
+    let before = snapshot(&root.0);
+    for url in PAYMENT_ENDPOINTS {
+        let out = Command::new(env!("CARGO_BIN_EXE_toolkit"))
+            .args([
+                "mcp-proxy",
+                *url,
+                "--header",
+                "x-amzn-bedrock-agentcore-payments-user-id=agents-pay-a1b2c3d4e5f6",
+            ])
+            .current_dir(&cwd)
+            .env("HOME", &home)
+            .env("AWS_PROFILE", "hostile")
+            .env("AWS_ACCESS_KEY_ID", "AKIAYYYYYYYYYYYYYYYY")
+            .env(
+                "AWS_SECRET_ACCESS_KEY",
+                "hostileEnvSecrethostileEnvSecrethostile0",
+            )
+            .env("AWS_REGION", "us-east-1")
+            .env("AWS_ENDPOINT_URL", &recorder)
+            .env("AWS_ENDPOINT_URL_BEDROCK_AGENTCORE", &recorder)
+            .env("AWS_EC2_METADATA_SERVICE_ENDPOINT", &recorder)
+            .env("AWS_CONTAINER_CREDENTIALS_FULL_URI", &recorder)
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        assert_payment_endpoint_refused(url, out.status.code(), &out.stdout, &out.stderr);
+        assert_no_connection(&listener);
+    }
+    assert_eq!(snapshot(&root.0), before, "a file changed or was created");
+}
+
 /// Every admin and `agents-build` route (S6), with arguments that would
 /// create a wallet user, a session or a config file in a live build.
 const ADMIN_ROUTES: &[&[&str]] = &[

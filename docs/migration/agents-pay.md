@@ -174,9 +174,8 @@ check can close it.
 - R-ERR: one exhaustive class-name table (`flow::FlowError`); the merchant
   plane maps malformed HTTP to `RemoteProtocolError` (S3 reported
   `RuntimeError`).
-- Trust roots: the merchant and `AgentCore` planes use `PaymentRoots`, and
-  credential-provider HTTP uses the S1 provider roots (`agents_pay::wiring`,
-  T-PROOTS-USE).
+- Trust roots: the merchant, `AgentCore` and credential-provider HTTP planes
+  all use one `PaymentRoots` value (`agents_pay::wiring`, T-PROOTS-USE).
 - G3 (live builds): a fixture manager account or a `.test`, `.example`,
   `.invalid` or `.localhost` host is refused with `Payment resources are test
   fixtures; refusing to contact live services.` A fixture host is never
@@ -239,8 +238,8 @@ them, never the agent. Code: `crates/toolkit-cli/src/agents_pay/admin/`.
   system, terminal, admin client, randomness). `admin::fixtures` are harmless:
   `TempAdminFs` refuses and records any path outside its temporary root, and
   `FakeAdmin` accepts only the fixture account. The live world
-  (`live::AdminWorld`) uses the S1 provider roots for the `AgentCore` admin
-  plane, STS and credential HTTP (admin keeps R-ROOTS), and G3 refuses a
+  (`live::AdminWorld`) uses `PaymentRoots` for the `AgentCore` admin plane, STS
+  and credential HTTP, and G3 refuses a
   fixture manager before anything is created.
 - **The creating gate (D28, D33).** `create-instrument`, `new-session`,
   `setup-openclaw` and `setup-payment-user` check the terminal first, before
@@ -437,8 +436,9 @@ The SKILL text ("Known limits") and `troubleshooting.md` state:
   after the deadline.
 - **Payment roots (B4, D34)**: platform certificate store only; the payment
   runtime ignores `SSL_CERT_FILE`, `SSL_CERT_DIR` and `AWS_CA_BUNDLE`;
-  TLS-inspecting proxies break it; on macOS it refuses while `SSL_CERT_FILE` or
-  `SSL_CERT_DIR` is set.
+  TLS-inspecting proxies break it. macOS queries the Security framework trust
+  settings directly; that branch is type-checked but has not been run on a Mac
+  by this verification.
 - **B1 and Q3**: the Python import API has no Rust equivalent; a
   `--browser-handle` handle cannot be redeemed after the process exits
   (follow-up #5103).

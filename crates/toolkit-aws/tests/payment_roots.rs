@@ -188,6 +188,27 @@ fn every_payment_platform_avoids_environment_sensitive_loaders() {
     }
 }
 
+/// The macOS branch cannot run on a Linux verification host, so its two
+/// decisions are pinned in source: the domain precedence (the pure
+/// `native_trust_roots` test owns what the order means) and which trust
+/// results are admitted. This does not prove the Security framework behaves.
+#[test]
+fn macos_branch_source_keeps_precedence_and_admits_only_trust_roots() {
+    use quote::ToTokens;
+    let mut source = syn::parse_file(include_str!("../src/sdk/roots_payment.rs")).unwrap();
+    source
+        .items
+        .retain(|item| !matches!(item, syn::Item::Mod(m) if m.ident == "tests"));
+    let tokens = source.into_token_stream().to_string().replace(' ', "");
+    for required in [
+        "[Domain::User,Domain::Admin,Domain::System]",
+        "trust.unwrap_or(TrustSettingsForCertificate::TrustRoot)",
+        "TrustSettingsForCertificate::TrustRoot|TrustSettingsForCertificate::TrustAsRoot",
+    ] {
+        assert!(tokens.contains(required), "macOS branch lost: {required}");
+    }
+}
+
 #[cfg(target_os = "linux")]
 #[test]
 fn recorder_selects_first_file_and_all_directories_for_every_environment() {

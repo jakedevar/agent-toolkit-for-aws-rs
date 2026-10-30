@@ -162,8 +162,8 @@ impl World {
     /// Build the live world with shared platform roots for every HTTP plane.
     ///
     /// # Errors
-    /// [`Unavailable`] with the fixed R-PROOTS or R-ROOTS text, or the
-    /// generic text when the runtime cannot start.
+    /// [`Unavailable`] with the fixed R-PROOTS text, or the generic text when
+    /// the runtime cannot start.
     pub fn for_process() -> Result<Self, Unavailable> {
         let payment = PaymentRoots::from_process()
             .map_err(|failure| Unavailable(failure.message().to_owned()))?;
@@ -328,8 +328,8 @@ impl super::admin::AdminRandom for LiveRandom {
     }
 }
 
-/// One opened admin client: S1 roots (design: admin keeps R-ROOTS), a
-/// signer over the guarded chain and the region.
+/// One opened admin client: platform payment roots (R-TLS-PAY r2), a signer
+/// over the guarded chain and the region.
 struct LiveAdminApi<'w> {
     transport: &'w SdkTransport,
     signer: SigV4Signer<Guarded>,
@@ -385,7 +385,7 @@ impl AdminWorld {
     /// a creating route's TTY gate (#5475).
     ///
     /// # Errors
-    /// [`Unavailable`] with the fixed R-ROOTS text, or a generic text when
+    /// [`Unavailable`] with the fixed R-PROOTS text, or a generic text when
     /// the runtime cannot start.
     pub fn for_process() -> Result<Self, Unavailable> {
         let roots = PaymentRoots::from_process()

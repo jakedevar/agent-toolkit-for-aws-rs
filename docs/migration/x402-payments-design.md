@@ -1329,6 +1329,20 @@ r1 replaces the custody model with the following.
   - T-AC3-INH and G4 run in both verification builds.
   - This covers the SDK library tests, `CARGO_BIN_EXE_toolkit` under `aws-sdk`, the admin
     creation routes and `agents-build setup-payment-user` / `setup-openclaw` alike.
+- **G6, T-AC3-REACH: generic signed routes cannot name the payments API (r3, #5097 triage of
+  #5099).** G1 removes the payment constructors, but `aws-sdk` keeps two routes that sign a request
+  to a caller-chosen AWS URL: `toolkit mcp-proxy` (argv, `--header`, JSON-RPC frames from stdin) and
+  `asm-exec` (`ASM_EXEC_MCP_ENDPOINT`). Both accepted
+  `https://bedrock-agentcore.<region>.amazonaws.com/payments/processPayment`.
+  - `validate_endpoint` now refuses a `bedrock-agentcore*` host whose path, percent-decoded until
+    stable and normalized, starts with the segment `payments` (any case), for every policy and
+    every configured endpoint source. `McpTarget` inherits this, so `mcp-proxy` exits 2 while
+    parsing argv, before DNS, credentials or any byte sent. `agents_pay` is unaffected: its client
+    builds its URL from `Endpoint::for_service`.
+  - The guard is in every build, so it also keeps these routes from bypassing the cap in a live
+    build.
+  - **Residual, not closed here:** this is not an IAM boundary. Any process holding
+    `ProcessPayment` credentials can call the API with another tool, as section R-SPEND records.
 
 ## 8. Rust layout, slices and tests (tests first)
 
@@ -1688,7 +1702,7 @@ A reviewer should be able to confirm each of the following from this document al
 | --- | --- | --- | --- | --- |
 | #5097 cap exponent sign | P1 | One decimal representation; corrected comparison; equivalent spellings at exact unit boundaries in S1 | R-AMT (D6 bounds, R-AMT-REP, R-AMT-CMP, worked check), the S1 row, checklist 2a | T-AMT-CAP-1..6; T-ORDER-PRE over-cap rows |
 | #5098 CA variables reach NativeLoader | P1 | r2 follows the operator's platform-only invariant for every payment HTTP plane. Direct macOS Security framework queries replace environment-sensitive native loading; fetch, admin and credential HTTP share payment roots. General S1 provider policy remains unchanged | R-TLS-PAY, R-PROOTS, D34, Q15, B4 | T-PROOTS-1..11, T-PROOTS-USE, all-platform source gate and live-constructor source test |
-| #5099 G1/G5 do not cover SDK test and CLI artifacts | P1 | Fixture-only dispatch and artifact custody | Section 7 (G1, G1a, G1b, G1c, G3, G4, G5), 8.1 (`deps.rs`, `live.rs`), 8.2 S5/S6, D32, Q24, section 11 | T-AC3-INH, T-AC3-GUARD, T-AC3-FEAT, T-AC3-MAKE, G4 |
+| #5099 G1/G5 do not cover SDK test and CLI artifacts | P1 | Fixture-only dispatch and artifact custody | Section 7 (G1, G1a, G1b, G1c, G3, G4, G5, G6), 8.1 (`deps.rs`, `live.rs`), 8.2 S5/S6, D32, Q24, section 11 | T-AC3-REACH (G6), T-AC3-INH, T-AC3-GUARD, T-AC3-FEAT, T-AC3-MAKE, G4 |
 | #5100 restart claim omits changed terms and body conflicts | P2 | Legacy token bytes kept; restart limitation documented; no fresh token after a conflict; two-invocation cases; a cross-challenge binding is out of scope | R-TOK (R-TOK-SCOPE, L-TERMS, R-TOK-NOFRESH), R-RETRY row, the S4/S5 rows, B2, live-run 6b/6c | T-RESTART-1..8 |
 | #5101 blocking-DNS residual | P2 | The residual is carried into the deadline contract, as #4382 did; no async-resolver prerequisite | R-NET (R-DNS, R-DNS-ADMIT), R-AWS-RETRY, D16, B3, the S3/S5 rows, S7 text | T-DNS-DL-1..5 |
 | #5102 T-ORDER phases and `Approved` | P2 | Pre- and post-authorization split; immutable private `Approved` consumed by value; the request only from `Approved` | R-SPEND-ORDER (rules 1-5, both test phases), R-SPEND table, section 7 G2, 8.1 `policy/`, the S1/S5 rows, checklist 1 | T-ORDER-CTOR, T-ORDER-PRE, T-ORDER-POST |
