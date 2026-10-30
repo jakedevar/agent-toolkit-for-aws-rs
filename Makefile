@@ -1,7 +1,7 @@
 # Rust workspace entry points. These targets never override the daemon-stamped
 # build environment (CARGO_TARGET_DIR, RUSTC_WRAPPER/sccache); they rely on it
 # being present in the invoking environment.
-.PHONY: build fmt clippy test test-scripts clippy-sdk test-sdk clippy-live plugin-binaries plugin-binaries-check
+.PHONY: build fmt clippy test test-scripts clippy-sdk test-sdk clippy-live plugin-binaries plugin-binaries-check openclaw-node-test openclaw-npm-cache
 
 build:
 	cargo build --workspace --locked
@@ -110,3 +110,17 @@ plugin-binaries-check:
 test-scripts:
 	sh scripts/at-commit-test.selftest.sh
 	sh scripts/run-rsid-test-shards.selftest.sh
+	sh scripts/openclaw-node-test.selftest.sh
+
+# OpenClaw package node tests (#5158, design OQ8), the daemon recipe
+# openclaw-node-test: no network (fresh network namespace), no Python, npm
+# dependencies only from the offline cache checked against package-lock.json.
+# It fails closed (exit 3) while the cache is missing. Fill the cache once per
+# host with `make openclaw-npm-cache`, an operator action that uses the
+# network and is never a daemon recipe.
+openclaw-node-test:
+	sh scripts/openclaw-node-test.selftest.sh
+	sh scripts/openclaw-node-test.sh run
+
+openclaw-npm-cache:
+	sh scripts/openclaw-node-test.sh populate
