@@ -1829,7 +1829,11 @@ fn p_roots_world_builds_payment_roots_before_runtime_and_provider_roots() {
         Some("PaymentRoots"),
         "{order:?}"
     );
-    assert!(order.iter().any(|w| w == "ValidatedRoots") && order.iter().any(|w| w == "SdkRuntime"));
+    assert_eq!(
+        order,
+        ["PaymentRoots", "SdkRuntime", "PaymentRoots", "SdkRuntime"],
+        "both payment worlds must load payment roots before starting their runtimes"
+    );
     let swapped = "impl W { fn for_process() { let a = SdkRuntime::new(); let b = PaymentRoots::from_process(); } }";
     assert_ne!(
         for_process_order(swapped).first().map(String::as_str),

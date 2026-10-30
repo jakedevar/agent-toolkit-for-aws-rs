@@ -328,6 +328,33 @@ hook template that runs a plugin file (`plugin-file`, the python shapes) trusts 
 file's content: a reviewed plugin script could itself call `bin/`, which is a
 source-review matter.
 
+### Feature-graph gate (#5592, #5603, #5604)
+
+`plugin-stage::feature_graph` rejects `toolkit-aws/testing`, the feature that
+exposes the unsigned `ServiceBridge::with_sender`, in a shipped normal (`-e no-dev`)
+feature graph. It has two scopes:
+
+- **Staging preflight.** `plugin-stage stage` runs `cargo tree --locked --package P
+  --target <the build's triple> -e no-dev [--features <declared>]` before each
+  cargo build. That is exactly the graph the build compiles, and the command follows
+  the staging build's network policy: it adds no `--offline` of its own, so ambient
+  `CARGO_NET_OFFLINE` / `net.offline` decide for both commands. A clean host with an
+  empty registry cache can therefore stage anything the build itself could fetch
+  (#5603; the old shape, `--offline --target all` plus `--all-features`, also demanded
+  packages for other targets and features that a cache populated for the selected
+  build lacks). `--locked` stays. A graph that cannot be resolved, empty output, a
+  root row other than the package, or a malformed row for a guarded package refuses
+  staging; it is never skipped (#5604). A binary that legitimately lacks
+  `toolkit-aws` passes.
+- **Drift lint** (tests only, explicit `Network::Offline`): `--target all` and
+  `--all-features` over every declared binary, so a later feature edit that would
+  pull the feature in is caught before it is declared. Each graph is validated on
+  its own, and a guarded package present with the declared features but missing from
+  the `--all-features` superset fails the lint as untrustworthy output.
+
+Cargo features are additive: a hand-run `cargo build --features toolkit-aws/testing`
+is a deliberate opt-in this gate does not prevent. See [ai-models.md](ai-models.md).
+
 ## 5. Checksums and provenance
 
 `plugin-stage stage` writes `bin/manifest.json`:

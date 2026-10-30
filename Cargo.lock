@@ -3491,6 +3491,7 @@ dependencies = [
  "rustls 0.23.46",
  "rustls-native-certs",
  "rustls-pki-types",
+ "security-framework",
  "sha2 0.10.9",
  "syn 2.0.119",
  "tokio",

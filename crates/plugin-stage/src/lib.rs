@@ -13,6 +13,7 @@
 //! `docs/migration/plugin-binaries.md`.
 
 pub mod declaration;
+pub mod feature_graph;
 pub mod launcher;
 pub mod manifest;
 pub mod platform;
