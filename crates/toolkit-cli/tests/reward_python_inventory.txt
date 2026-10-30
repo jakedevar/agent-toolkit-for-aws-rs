@@ -15,8 +15,6 @@ plugins/aws-core/skills/amazon-bedrock/scripts/fetch_bedrock_agent.py
 plugins/aws-core/skills/aws-ai-ml/references/dataset-evaluation/scripts/format_detector.py
 plugins/aws-core/skills/aws-ai-ml/references/dataset-transformation/code_templates/transformation.py
 plugins/aws-core/skills/aws-ai-ml/references/dataset-transformation/scripts/transformation_tools.py
-plugins/aws-core/skills/aws-ai-ml/references/endpoint-diagnostics/scripts/collect_diagnostics.py
-plugins/aws-core/skills/aws-ai-ml/references/finetuning-technique/scripts/get_recipes.py
 plugins/aws-core/skills/aws-ai-ml/references/finetuning/code_templates/dpo.py
 plugins/aws-core/skills/aws-ai-ml/references/finetuning/code_templates/rlaif_builtin.py
 plugins/aws-core/skills/aws-ai-ml/references/finetuning/code_templates/rlaif_custom_prompt.py
@@ -38,10 +36,6 @@ plugins/aws-core/skills/aws-ai-ml/references/model-evaluation/code_templates/llm
 plugins/aws-core/skills/aws-ai-ml/references/model-evaluation/scripts/nova_reward_function_source_template.py
 plugins/aws-core/skills/aws-ai-ml/references/model-evaluation/scripts/reward_function_source_template.py
 plugins/aws-core/skills/aws-ai-ml/references/model-evaluation/scripts/validate_custom_metrics.py
-plugins/aws-core/skills/aws-ai-ml/references/model-selection/scripts/filter_deployable_models.py
-plugins/aws-core/skills/aws-ai-ml/references/model-selection/scripts/get_deployable_models.py
-plugins/aws-core/skills/aws-ai-ml/references/model-selection/scripts/get_model_names.py
-plugins/aws-core/skills/aws-ai-ml/references/model-selection/scripts/search_deployable_models.py
 plugins/aws-core/skills/aws-ai-ml/references/processing-jobs/code_templates/dataset_definition_processing.py
 plugins/aws-core/skills/aws-ai-ml/references/processing-jobs/code_templates/framework_processing.py
 plugins/aws-core/skills/aws-ai-ml/references/processing-jobs/code_templates/script_processing.py
@@ -261,8 +255,6 @@ skills/core-skills/amazon-bedrock/scripts/fetch_bedrock_agent.py
 skills/core-skills/aws-ai-ml/references/dataset-evaluation/scripts/format_detector.py
 skills/core-skills/aws-ai-ml/references/dataset-transformation/code_templates/transformation.py
 skills/core-skills/aws-ai-ml/references/dataset-transformation/scripts/transformation_tools.py
-skills/core-skills/aws-ai-ml/references/endpoint-diagnostics/scripts/collect_diagnostics.py
-skills/core-skills/aws-ai-ml/references/finetuning-technique/scripts/get_recipes.py
 skills/core-skills/aws-ai-ml/references/finetuning/code_templates/dpo.py
 skills/core-skills/aws-ai-ml/references/finetuning/code_templates/rlaif_builtin.py
 skills/core-skills/aws-ai-ml/references/finetuning/code_templates/rlaif_custom_prompt.py
@@ -284,10 +276,6 @@ skills/core-skills/aws-ai-ml/references/model-evaluation/code_templates/llmaaj_e
 skills/core-skills/aws-ai-ml/references/model-evaluation/scripts/nova_reward_function_source_template.py
 skills/core-skills/aws-ai-ml/references/model-evaluation/scripts/reward_function_source_template.py
 skills/core-skills/aws-ai-ml/references/model-evaluation/scripts/validate_custom_metrics.py
-skills/core-skills/aws-ai-ml/references/model-selection/scripts/filter_deployable_models.py
-skills/core-skills/aws-ai-ml/references/model-selection/scripts/get_deployable_models.py
-skills/core-skills/aws-ai-ml/references/model-selection/scripts/get_model_names.py
-skills/core-skills/aws-ai-ml/references/model-selection/scripts/search_deployable_models.py
 skills/core-skills/aws-ai-ml/references/processing-jobs/code_templates/dataset_definition_processing.py
 skills/core-skills/aws-ai-ml/references/processing-jobs/code_templates/framework_processing.py
 skills/core-skills/aws-ai-ml/references/processing-jobs/code_templates/script_processing.py

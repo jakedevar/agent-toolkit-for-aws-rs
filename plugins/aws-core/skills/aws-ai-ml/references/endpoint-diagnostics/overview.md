@@ -51,15 +51,13 @@ For this step, you need the **endpoint name** and **AWS region**:
 
 ### Step 2: Run diagnostics
 
-Execute `collect_diagnostics.py` with the endpoint name and region. Do not create a notebook — run the script directly:
+Run the registered command with the endpoint name and region. This build has no live AWS client; it requires `--recorded FILE` with recorded responses and cannot diagnose a real account until the live client is available. Identify recorded data as such.
 
-```python
-from collect_diagnostics import collect_endpoint_diagnostics
-results = collect_endpoint_diagnostics(endpoint_name="my-endpoint", region="us-east-1")
-
+```bash
+toolkit ai-models endpoint-diagnostics my-endpoint us-east-1 --recorded <recording-file>
 ```
 
-The script collects:
+The command collects:
 
 - Endpoint status via `DescribeEndpoint`
 - CloudWatch metrics (invocations, errors, latency, utilization) for the last 5 minutes

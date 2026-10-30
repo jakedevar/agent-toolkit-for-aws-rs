@@ -1,10 +1,8 @@
 # Slice `ai-models` (Issue #4384): deployable-model discovery, filtering and diagnostics
 
 Rust replacement for six legacy scripts of the `aws-ai-ml` skill (read-only
-migration evidence; none is deleted or edited here, and the skill text that
-calls them is retired by a later slice after this one is verified, as in
-`dynamo-cost`). The `skills/core-skills` and `plugins/aws-core` copies are
-byte-identical.
+migration evidence; the scripts and bundled copies were retired by #4720).
+The two skill trees remain synchronized.
 
 | Python source (under `references/`) | Rust command | Code (`crates/toolkit-cli/src/ai_models/`) |
 | --- | --- | --- |
@@ -187,7 +185,4 @@ positional words, not `action="append"` flags).
   `aws-sdk-cloudwatchlogs` behind the `toolkit-aws` `sdk` feature; pagination,
   retry and redaction through `toolkit-aws`), including the HubContent Search
   capability check.
-- Retire the six Python scripts and update the skill text that runs them
-  (`model-selection/overview.md`, `references/select-for-deployment.md`,
-  `finetuning-technique/overview.md`, `endpoint-diagnostics/overview.md`, in
-  both trees) to `toolkit ai-models ...` after review of this slice.
+- The six Python scripts and their skill callers were retired by #4720.

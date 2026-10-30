@@ -179,7 +179,7 @@
       "slice": "ai-models",
       "issue": 4384,
       "classification": "toolkit-helper",
-      "status": "pending"
+      "status": "retired"
     },
     {
       "path": "plugins/aws-core/skills/aws-ai-ml/references/finetuning-technique/scripts/get_recipes.py",
@@ -188,7 +188,7 @@
       "slice": "ai-models",
       "issue": 4384,
       "classification": "toolkit-helper",
-      "status": "pending"
+      "status": "retired"
     },
     {
       "path": "plugins/aws-core/skills/aws-ai-ml/references/finetuning/code_templates/dpo.py",
@@ -446,7 +446,7 @@
       "slice": "ai-models",
       "issue": 4384,
       "classification": "toolkit-helper",
-      "status": "pending"
+      "status": "retired"
     },
     {
       "path": "plugins/aws-core/skills/aws-ai-ml/references/model-selection/scripts/get_deployable_models.py",
@@ -455,7 +455,7 @@
       "slice": "ai-models",
       "issue": 4384,
       "classification": "toolkit-helper",
-      "status": "pending"
+      "status": "retired"
     },
     {
       "path": "plugins/aws-core/skills/aws-ai-ml/references/model-selection/scripts/get_model_names.py",
@@ -464,7 +464,7 @@
       "slice": "ai-models",
       "issue": 4384,
       "classification": "toolkit-helper",
-      "status": "pending"
+      "status": "retired"
     },
     {
       "path": "plugins/aws-core/skills/aws-ai-ml/references/model-selection/scripts/search_deployable_models.py",
@@ -473,7 +473,7 @@
       "slice": "ai-models",
       "issue": 4384,
       "classification": "toolkit-helper",
-      "status": "pending"
+      "status": "retired"
     },
     {
       "path": "plugins/aws-core/skills/aws-ai-ml/references/processing-jobs/code_templates/dataset_definition_processing.py",
@@ -2513,7 +2513,7 @@
       "slice": "ai-models",
       "issue": 4384,
       "classification": "toolkit-helper",
-      "status": "pending"
+      "status": "retired"
     },
     {
       "path": "skills/core-skills/aws-ai-ml/references/finetuning-technique/scripts/get_recipes.py",
@@ -2522,7 +2522,7 @@
       "slice": "ai-models",
       "issue": 4384,
       "classification": "toolkit-helper",
-      "status": "pending"
+      "status": "retired"
     },
     {
       "path": "skills/core-skills/aws-ai-ml/references/finetuning/code_templates/dpo.py",
@@ -2780,7 +2780,7 @@
       "slice": "ai-models",
       "issue": 4384,
       "classification": "toolkit-helper",
-      "status": "pending"
+      "status": "retired"
     },
     {
       "path": "skills/core-skills/aws-ai-ml/references/model-selection/scripts/get_deployable_models.py",
@@ -2789,7 +2789,7 @@
       "slice": "ai-models",
       "issue": 4384,
       "classification": "toolkit-helper",
-      "status": "pending"
+      "status": "retired"
     },
     {
       "path": "skills/core-skills/aws-ai-ml/references/model-selection/scripts/get_model_names.py",
@@ -2798,7 +2798,7 @@
       "slice": "ai-models",
       "issue": 4384,
       "classification": "toolkit-helper",
-      "status": "pending"
+      "status": "retired"
     },
     {
       "path": "skills/core-skills/aws-ai-ml/references/model-selection/scripts/search_deployable_models.py",
@@ -2807,7 +2807,7 @@
       "slice": "ai-models",
       "issue": 4384,
       "classification": "toolkit-helper",
-      "status": "pending"
+      "status": "retired"
     },
     {
       "path": "skills/core-skills/aws-ai-ml/references/processing-jobs/code_templates/dataset_definition_processing.py",
