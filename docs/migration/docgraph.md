@@ -1612,7 +1612,7 @@ also cover DOCTYPE-looking text in comments and CDATA for both services.
 
 Red source: tests-only `54697ae9af9e6d5a49dea5ad6f118cd3e9423055`, based on
 merge `9001128661f3783d2ad90f84c7ec91459fb9968c` (repair-1 `87f1c3fa` plus
-rolling `921aa719719982c1cb4c533880b5a562cd537fcf`). Daemon job
+rolling `680cfa08c47689e854a2a8c27d6c65bd0a8ae99d`). Daemon job
 `4c7d5e13-1e8a-4a8d-84bb-5af9fdfbf3b8` ran 23 S2 tests: all five required
 probes decoded as success and the status matrix failed on a 400 service
 error; the other 17 tests passed, including valid comment/CDATA equality.
