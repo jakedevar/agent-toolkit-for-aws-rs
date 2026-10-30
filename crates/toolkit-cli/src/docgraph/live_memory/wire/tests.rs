@@ -101,6 +101,119 @@ fn secure_creation_is_a_distinct_modeled_control_plane_request() {
     }
 }
 #[test]
+fn dynamodb_query_sent_body_matches_the_validated_plan() {
+    for input in [
+        json(r#"{"session_id":"s'雪","limit":2,"table":"custom-messages"}"#),
+        json(r#"{"session_id":"another","limit":37}"#),
+    ] {
+        let plan = memory::plan("recent-messages", &input).unwrap();
+        let planned = &plan[0];
+        let wire = encode(
+            Route::Dynamo,
+            planned,
+            "us-east-1",
+            None,
+            Duration::from_secs(4),
+        )
+        .unwrap();
+        let transport = FakeStreamingTransport::new().respond(
+            200,
+            &[],
+            vec![FakeChunk::data(br#"{"Items":[]}"#)],
+        );
+        exchange(
+            &transport,
+            &FakeSigner::new(),
+            Route::Dynamo,
+            wire,
+            "us-east-1",
+            Instant::now() + Duration::from_secs(5),
+        )
+        .unwrap();
+        let sent = &transport.requests()[0];
+        assert_eq!(
+            sent.headers.get("x-amz-target"),
+            Some("DynamoDB_20120810.Query")
+        );
+        let body = json(std::str::from_utf8(&sent.body).unwrap());
+        assert_eq!(body.get("TableName"), planned.get("table"));
+        for key in ["ScanIndexForward", "Limit", "KeyConditionExpression"] {
+            assert_eq!(body.get(key), planned.get(key), "{key}");
+        }
+        assert_eq!(body.get("ScanIndexForward"), Some(&Json::Bool(false)));
+        // The plan uses plain values; the AWS wire contract uses AttributeValue.
+        let values = body.get("ExpressionAttributeValues").unwrap();
+        assert_eq!(
+            values.get(":sid").unwrap().get("S"),
+            planned
+                .get("ExpressionAttributeValues")
+                .unwrap()
+                .get(":sid")
+        );
+        assert_eq!(
+            decode_attributes(values).unwrap(),
+            *planned.get("ExpressionAttributeValues").unwrap()
+        );
+    }
+}
+#[test]
+fn captured_sdk_endpoint_and_path_deviations_are_refused() {
+    for (route, planned, p, endpoint) in [
+        (
+            Route::Analytics,
+            query(),
+            Some(policy(false)),
+            "https://us-east-1.neptune-graph.amazonaws.com:443/other",
+        ),
+        (
+            Route::Analytics,
+            query(),
+            Some(policy(false)),
+            "https://us-east-1.neptune-graph.amazonaws.com:444",
+        ),
+        (
+            Route::Analytics,
+            query(),
+            Some(policy(false)),
+            "https://us-east-1.example.com:443",
+        ),
+        (
+            Route::Create,
+            memory::create_graph("example", 32, 1536, "model", true),
+            None,
+            "https://neptune-graph.us-east-1.amazonaws.com/other",
+        ),
+        (
+            Route::Dynamo,
+            memory::plan("recent-messages", &json(r#"{"session_id":"s"}"#))
+                .unwrap()
+                .remove(0),
+            None,
+            "https://dynamodb.us-east-1.amazonaws.com/other",
+        ),
+    ] {
+        // Positive control: the plan itself passes admission and SDK encoding.
+        encode(
+            route,
+            &planned,
+            "us-east-1",
+            p.as_ref(),
+            Duration::from_secs(4),
+        )
+        .unwrap();
+        let error = encode_at_endpoint(
+            route,
+            &planned,
+            "us-east-1",
+            p.as_ref(),
+            Duration::from_secs(4),
+            endpoint,
+        )
+        .unwrap_err();
+        assert_eq!(error, INVALID, "{endpoint}");
+    }
+}
+#[test]
 fn dynamodb_typed_encoding_and_decoding_preserve_integers_and_reject_unsupported_types() {
     let plan = memory::plan(
         "store-message",

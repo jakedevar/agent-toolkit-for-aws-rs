@@ -160,6 +160,84 @@ fn ordered_retrieve_expansions_and_hybrid_results_equal_recorded_execution() {
         .starts_with("CALL"));
 }
 #[test]
+fn later_presend_failures_report_partial_plan_and_stop_writes() {
+    let input = json(r#"{"graph_id":"g-abc123def4"}"#);
+    let plan = memory::plan("consolidate", &input).unwrap();
+    assert!(plan.len() > 1);
+    for message in [
+        "required memory credentials could not be resolved; nothing was sent",
+        "the memory request could not be signed; nothing was sent",
+        "the memory request requires valid credentials and remaining time; nothing was sent",
+        "the memory operation deadline elapsed before send",
+        "the server query timeout would exceed the remaining client budget; nothing was sent",
+        "unknown outcome",
+    ] {
+        let mut spy = Spy {
+            responses: [Ok(json(r#"{"results":[]}"#)), Err(message.into())].into(),
+            ..Spy::default()
+        };
+        let error = run(&mut spy, "consolidate", &input, Some(&policy(false))).unwrap_err();
+        assert!(error.contains("partially applied"), "{error}");
+        assert!(error.contains("unknown outcome"), "{error}");
+        assert!(!error.contains("nothing was sent"), "{error}");
+        assert_eq!(spy.calls.len(), 2);
+        assert_eq!(spy.calls[0].1, plan[0]);
+        assert_eq!(spy.calls[1].1, plan[1]);
+
+        // Before any success, the backend's pre-send diagnostic is still valid.
+        let mut spy = Spy {
+            responses: [Err(message.into())].into(),
+            ..Spy::default()
+        };
+        assert_eq!(
+            run(&mut spy, "consolidate", &input, Some(&policy(false))).unwrap_err(),
+            message
+        );
+        assert_eq!(spy.calls.len(), 1);
+    }
+}
+#[test]
+fn response_dependent_requests_are_readmitted_after_success_and_refusal_is_terminal() {
+    let p = policy(false);
+    let first = memory::query("g-abc123def4", "RETURN 1", json("{}")).unwrap();
+    // The planner currently preserves the graph id. Exercise a hypothetical
+    // response-dependent expansion that changes it, without whole-plan preflight.
+    let expansion = memory::query("g-zzzzzzzzzz", "RETURN 2", json("{}")).unwrap();
+    let mut spy = Spy::default();
+    let mut client = Dispatcher {
+        backend: &mut spy,
+        policy: Some(&p),
+        deadline: Instant::now() + Duration::from_secs(20),
+        failed: false,
+        completed: false,
+    };
+    assert!(client.submit(&first).is_ok());
+    assert!(client.submit(&expansion).is_err());
+    assert!(client.submit(&first).is_err());
+    assert_eq!(spy.calls.len(), 1);
+    assert_eq!(spy.calls[0].1, first);
+}
+#[test]
+fn invocation_expiry_after_success_reports_partial_plan_without_another_call() {
+    let p = policy(false);
+    let query = memory::query("g-abc123def4", "RETURN 1", json("{}")).unwrap();
+    let mut spy = Spy::default();
+    let mut client = Dispatcher {
+        backend: &mut spy,
+        policy: Some(&p),
+        deadline: Instant::now() + Duration::from_secs(20),
+        failed: false,
+        completed: false,
+    };
+    client.submit(&query).unwrap();
+    client.deadline = Instant::now();
+    let error = client.submit(&query).unwrap_err();
+    assert!(error.contains("partially applied"), "{error}");
+    assert!(!error.contains("nothing was sent"), "{error}");
+    assert!(client.submit(&query).is_err());
+    assert_eq!(spy.calls.len(), 1);
+}
+#[test]
 fn consolidation_and_multistep_writes_stop_on_the_first_uncertain_failure() {
     for (op, input) in [
         ("consolidate", json(r#"{"graph_id":"g-abc123def4"}"#)),
@@ -301,6 +379,7 @@ fn dispatcher_stays_terminal_after_a_backend_failure() {
         policy: Some(&p),
         deadline: Instant::now() + Duration::from_secs(20),
         failed: false,
+        completed: false,
     };
     assert!(client.submit(&query).is_err());
     assert!(client.submit(&query).is_err());

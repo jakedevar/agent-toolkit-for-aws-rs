@@ -11,6 +11,7 @@ mod wire;
 const OPERATION_BUDGET: Duration = Duration::from_secs(60);
 const UNKNOWN: &str =
     "the memory operation failed after submission; unknown outcome; no later step was sent";
+const PARTIAL: &str = "an earlier memory step completed; the plan may be partially applied; unknown outcome; no later step was sent";
 const INVALID: &str = "unsupported or invalid live memory request; nothing was sent";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -131,11 +132,12 @@ struct Dispatcher<'a> {
     policy: Option<&'a DatabaseEndpoint>,
     deadline: Instant,
     failed: bool,
+    completed: bool,
 }
 impl MemoryClient for Dispatcher<'_> {
     fn submit(&mut self, request: &Json) -> Result<Json, String> {
         if self.failed {
-            return Err(UNKNOWN.into());
+            return Err(if self.completed { PARTIAL } else { UNKNOWN }.into());
         }
         let result = (|| {
             if Instant::now() >= self.deadline {
@@ -147,10 +149,22 @@ impl MemoryClient for Dispatcher<'_> {
             let deadline = (Instant::now() + OPERATION_BUDGET).min(self.deadline);
             self.backend.call(route, request, deadline)
         })();
-        if result.is_err() {
-            self.failed = true;
+        match result {
+            Ok(value) => {
+                self.completed = true;
+                Ok(value)
+            }
+            Err(error) => {
+                self.failed = true;
+                // A pre-send failure applies only to the current request.
+                // Earlier successful steps cannot be rolled back or retried.
+                Err(if self.completed {
+                    PARTIAL.into()
+                } else {
+                    error
+                })
+            }
         }
-        result
     }
 }
 pub(super) fn execute(
@@ -167,6 +181,7 @@ pub(super) fn execute(
         policy,
         deadline,
         failed: false,
+        completed: false,
     };
     if op == "retrieve" {
         memory::retrieve(&mut client, text(input, "graph_id")?, &requests[0])

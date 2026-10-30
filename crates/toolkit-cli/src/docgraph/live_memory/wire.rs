@@ -212,6 +212,25 @@ pub(super) fn encode(
     policy: Option<&DatabaseEndpoint>,
     remaining: Duration,
 ) -> Result<HttpRequest, String> {
+    let endpoint = match route {
+        // The model prepends graphIdentifier as a host label.
+        Route::Analytics => format!("https://{region}.neptune-graph.amazonaws.com:443"),
+        Route::Create => format!("https://neptune-graph.{region}.amazonaws.com"),
+        Route::Dynamo => format!("https://dynamodb.{region}.amazonaws.com"),
+        Route::Gremlin => return Err(INVALID.into()),
+    };
+    encode_at_endpoint(route, request, region, policy, remaining, &endpoint)
+}
+// Keep endpoint injection private to the codec so tests can exercise a real
+// SDK endpoint/path deviation through the same final captured-URL guard.
+fn encode_at_endpoint(
+    route: Route,
+    request: &Json,
+    region: &str,
+    policy: Option<&DatabaseEndpoint>,
+    remaining: Duration,
+    endpoint: &str,
+) -> Result<HttpRequest, String> {
     if admit(request, policy)? != route {
         return Err(INVALID.into());
     }
@@ -255,7 +274,6 @@ pub(super) fn encode(
     runtime.block_on(async {
         match route {
             Route::Analytics => {
-                let p = policy.ok_or(INVALID)?;
                 let timeout = toolkit_aws::sdk::database::server_query_timeout(
                     remaining,
                     Duration::from_secs(1),
@@ -266,8 +284,7 @@ pub(super) fn encode(
                 .ok_or(INVALID)?;
                 let client = aws_sdk_neptunegraph::Client::from_conf(config!(
                     aws_sdk_neptunegraph,
-                    // The model prepends graphIdentifier as a host label.
-                    format!("https://{}.neptune-graph.amazonaws.com:443", p.region())
+                    endpoint
                 ));
                 let parameters = request
                     .get("parameters")
@@ -295,7 +312,7 @@ pub(super) fn encode(
                     .collect::<Result<HashMap<_, _>, String>>()?;
                 let client = aws_sdk_neptunegraph::Client::from_conf(config!(
                     aws_sdk_neptunegraph,
-                    format!("https://neptune-graph.{region}.amazonaws.com")
+                    endpoint
                 ));
                 let dimension = integer(
                     request.get("vectorSearchConfiguration").ok_or(INVALID)?,
@@ -324,10 +341,8 @@ pub(super) fn encode(
                     .await;
             }
             Route::Dynamo => {
-                let client = aws_sdk_dynamodb::Client::from_conf(config!(
-                    aws_sdk_dynamodb,
-                    format!("https://dynamodb.{region}.amazonaws.com")
-                ));
+                let client =
+                    aws_sdk_dynamodb::Client::from_conf(config!(aws_sdk_dynamodb, endpoint));
                 if text(request, "operation")? == "put_item" {
                     let _ = client
                         .put_item()
