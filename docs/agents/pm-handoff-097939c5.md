@@ -1292,3 +1292,5 @@ Friction: #4727, Rsi #4694, Rsi #4704
   #5313 (Launch auth-wait report closure test) -> Codex terra high 2e81a666.
   Reported up 01:38Z (pm-4c8bc93d-report-0138).
   Workers: ec67ec2f B5, ae38f668 #5547, 3a9b6f7a S2 repair 2, 2e81a666 #5313. Queue: 3074 #5331.
+- 01:45Z: OpenClaw B5 #5550 (ec67ec2f, Codex) DONE at 63eb645bc322c12fda5542fe20685ac53e339ca4 (exemption removed, 3 inventory rows ported; node d74eee57 72/72; scoped 6d9b1193 ok). Review #5553 -> Claude Opus high 3e1470b8 (cross-family), pinned. On ACCEPT: check, enqueue issue 5550; close #5550 #5553 #5160 #5161; then #4411 is ready for the programme retirement step (delete runtime/agentcore_bridge.py, test/test_agentcore_bridge.py, test/test_setup_openclaw.py).
+  Workers: ae38f668 #5547, 3a9b6f7a S2 repair 2, 2e81a666 #5313, 3e1470b8 B5 review. Queue: 3074 #5331.
