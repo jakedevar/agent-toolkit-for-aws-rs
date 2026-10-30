@@ -448,6 +448,10 @@ test("public package and runtime identities stay aligned", async () => {
   assert.match(readme, /clawhub:\@aws\/aws-agents-pay/);
   assert.doesNotMatch(readme, /clawhub:\@aws%2Faws-agents-pay/);
   assert.doesNotMatch(readme, /accepts an empty install-time config/);
+  assert.match(readme, /fixed binary table/);
+  assert.match(readme, /owned Buffers/);
+  assert.match(readme, /fixed refusal/);
+  assert.doesNotMatch(readme, /package-local Python|boto3|x402_fetch\.py/);
 });
 
 // T-JS-PKG (#4411 B4, R-TS-5, OQ9): 1.1.0 in both identities, and npm test

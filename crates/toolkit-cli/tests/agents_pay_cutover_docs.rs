@@ -23,10 +23,7 @@
 //! Text obligations: `s7_text_*` (L-TERMS, the R-DNS residual, B1, B3, B4, Q21,
 //! Q2, Q3, D23), `s7_inventory_*` and `s7_migration_doc_*`.
 //!
-//! The `OpenClaw` parts belong to `OpenClaw` B5, which edits them on top of this
-//! slice: the `### OpenClaw` subsection of `SKILL.md` and
-//! `references/openclaw-setup.md` are exempt from the content rules below
-//! (`openclaw_exempt`). B5 deletes that exemption when it rewrites them.
+//! OpenClaw B5 brings both the subsection and setup reference under R-PORT.
 #[cfg(feature = "agents-pay-live")]
 compile_error!("agents-pay-live is never built for tests (AC3)");
 
@@ -83,36 +80,9 @@ fn pay_pages() -> Vec<Page> {
         .collect()
 }
 
-/// The pages whose content rules apply, with the `OpenClaw` parts removed.
-fn openclaw_exempt(rel: &str, text: &str) -> String {
-    if rel.ends_with(OPENCLAW_REFERENCE) {
-        return String::new();
-    }
-    // Only the two `SKILL.md` copies carry the exempt subsection; a same-named
-    // heading in another page is ordinary content.
-    let Some(start) = rel
-        .ends_with("/SKILL.md")
-        .then(|| text.find(OPENCLAW_HEADING))
-        .flatten()
-    else {
-        return text.to_owned();
-    };
-    let after = text[start..]
-        .find(AFTER_OPENCLAW_HEADING)
-        .map_or(text.len(), |at| start + at);
-    format!("{}{}", &text[..start], &text[after..])
-}
-
-/// Every page the content rules cover: the skill pages minus the `OpenClaw`
-/// parts, plus the `agents-build` payments reference.
+/// All skill pages and the agents-build payments reference are governed.
 fn governed_pages() -> Vec<Page> {
-    let mut pages: Vec<Page> = pay_pages()
-        .into_iter()
-        .map(|page| Page {
-            text: openclaw_exempt(&page.rel, &page.text),
-            rel: page.rel,
-        })
-        .collect();
+    let mut pages = pay_pages();
     pages.push(Page {
         rel: PAYMENTS_REFERENCE.to_owned(),
         text: read(PAYMENTS_REFERENCE),
@@ -898,29 +868,39 @@ fn s7_human_only_step6_and_step8_route_through_the_developer() {
 // ------------------------------------------------------- OpenClaw parts
 
 #[test]
-fn s7_openclaw_subsection_and_setup_page_are_left_for_b5() {
+fn b5_openclaw_cutover_contract() {
     let skill = skill_text();
-    let start = skill
-        .find(OPENCLAW_HEADING)
-        .expect("the OpenClaw subsection");
-    let end = skill
-        .find(AFTER_OPENCLAW_HEADING)
-        .expect("the next subsection");
-    let section = &skill[start..end];
-    assert_mentions(
-        "SKILL.md OpenClaw subsection",
-        section,
-        &[
-            "openclaw plugins install clawhub:@aws/aws-agents-pay",
-            "**Choose one runtime path.**",
-            "openclaw plugins inspect aws-agents-pay",
-        ],
-    );
-    assert!(root()
-        .join(SKILL_DIR)
-        .join("references")
-        .join(OPENCLAW_REFERENCE)
-        .is_file());
+    let section = &skill[skill.find(OPENCLAW_HEADING).unwrap()..skill.find(AFTER_OPENCLAW_HEADING).unwrap()];
+    let setup = read(&format!("{SKILL_DIR}/references/{OPENCLAW_REFERENCE}"));
+    let operator = read(&format!("{SKILL_DIR}/references/operator-guide.md"));
+    let package = format!("{SKILL_DIR}/packages/openclaw");
+    let readme = read(&format!("{package}/README.md"));
+    let publishing = read(&format!("{package}/PUBLISHING.md"));
+    for (name, text) in [("skill", section), ("setup", setup.as_str()), ("README", readme.as_str())] {
+        assert_mentions(name, text, &["fixed", "Rust", "owned Buffers", "immutable strings", "fixed refusal"]);
+    }
+    for (name, text) in [("skill", section), ("release notes", publishing.as_str())] {
+        assert_mentions(name, text, &["1.1.0", "authorized again", "per-payment cap", "session budget"]);
+    }
+    assert_mentions("setup", &setup, &["toolkit agents-pay admin setup-openclaw", "get_paid_content", "returnBody"]);
+    assert_mentions("operator", &operator, &["toolkit agents-pay fetch", "get_paid_content"]);
+    assert_mentions("publishing", &publishing, &["plugin-stage verify-package --package-root . --complete", "five platforms", "offline", "1.1.0"]);
+    assert_mentions("README", &readme, &["registerTools", "production", "content", "details"]);
+    for (name, text) in [("README", &readme), ("setup", &setup), ("skill", &skill)] {
+        assert!(!text.contains("package-local Python"), "{name} still claims a Python runtime");
+    }
+}
+
+#[test]
+fn b5_openclaw_inventory_is_ported() {
+    let inv = inventory();
+    let rows: Vec<&Value> = inv["files"].as_array().unwrap().iter()
+        .filter(|row| row["issue"].as_u64() == Some(4411)).collect();
+    assert_eq!(rows.len(), 3);
+    for row in rows {
+        assert_eq!(row["status"].as_str(), Some("ported"), "{}", row["path"]);
+        assert!(row["disposition_note"].as_str().unwrap_or("").contains("B5"));
+    }
 }
 
 // ------------------------------------------------------------ inventory
