@@ -283,9 +283,9 @@ fn ap_inv_03_other_slices_are_untouched() {
     );
     for row in others {
         let path = str_of(row, "path");
-        // The x402 payments-policy rows (#4410) were marked `ported` by slice S7
-        // (#5526), with a `disposition_note`; every other slice stays pending.
-        let ported = row["issue"].as_u64() == Some(4410);
+        // Payment policy S7 (#4410) and OpenClaw B5 (#4411) are ported;
+        // every other slice stays pending.
+        let ported = matches!(row["issue"].as_u64(), Some(4410 | 4411));
         let expected = if ported { "ported" } else { "pending" };
         assert_eq!(str_of(row, "status"), expected, "{path}");
         for key in ["disposition", "disposition_note", "language_contract"] {
