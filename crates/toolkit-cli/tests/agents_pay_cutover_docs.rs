@@ -1038,7 +1038,7 @@ fn b5_openclaw_cutover_contract() {
 }
 
 #[test]
-fn b5_openclaw_inventory_is_ported() {
+fn b5_openclaw_inventory_is_retired() {
     let inv = inventory();
     let rows: Vec<&Value> = inv["files"]
         .as_array()
@@ -1048,7 +1048,7 @@ fn b5_openclaw_inventory_is_ported() {
         .collect();
     assert_eq!(rows.len(), 3);
     for row in rows {
-        assert_eq!(row["status"].as_str(), Some("ported"), "{}", row["path"]);
+        assert_eq!(row["status"].as_str(), Some("retired"), "{}", row["path"]);
         assert!(row["disposition_note"]
             .as_str()
             .unwrap_or("")
@@ -1063,7 +1063,7 @@ fn inventory() -> Value {
 }
 
 #[test]
-fn s7_inventory_payments_policy_rows_are_ported() {
+fn s7_inventory_payments_policy_rows_track_retirement() {
     let inv = inventory();
     let rows: Vec<&Value> = inv["files"]
         .as_array()
@@ -1074,15 +1074,23 @@ fn s7_inventory_payments_policy_rows_are_ported() {
     assert_eq!(rows.len(), 9, "the nine payments-policy rows");
     for row in rows {
         let path = row["path"].as_str().unwrap();
-        assert_eq!(row["status"].as_str(), Some("ported"), "{path}");
+        let expected = if ["agents_pay_admin.py", "x402_fetch.py", "x402_policy.py"]
+            .iter()
+            .any(|name| path.rsplit('/').next() == Some(*name))
+        {
+            "ported"
+        } else {
+            "retired"
+        };
+        assert_eq!(row["status"].as_str(), Some(expected), "{path}");
         let note = row["disposition_note"].as_str().unwrap_or("");
         assert!(
             note.len() >= 40 && note.contains("S7"),
             "{path}: note {note:?}"
         );
         assert!(
-            note.contains("retirement"),
-            "{path}: the note must leave removal to the programme retirement step: {note}"
+            note.contains("Retired") || note.contains("Retained"),
+            "{path}: the note must record retirement: {note}"
         );
     }
 }
@@ -1113,7 +1121,7 @@ fn b5_inventory_bridge_rows_keep_their_classification() {
         assert!(row["disposition_note"]
             .as_str()
             .unwrap_or("")
-            .contains("retirement"));
+            .contains("Retired"));
     }
 }
 
@@ -1137,4 +1145,25 @@ fn s7_migration_doc_records_the_cutover() {
             "agents_pay_cutover_docs",
         ],
     );
+}
+
+#[test]
+fn retirement_5560_covered_python_files_are_absent() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    for path in [
+        "plugins/aws-agents/skills/agents-build/scripts/process_payment_tool.py",
+        "plugins/aws-agents/skills/agents-build/scripts/setup_payment_user.py",
+        "plugins/aws-agents/skills/agents-pay/packages/openclaw/runtime/agentcore_bridge.py",
+        "plugins/aws-agents/skills/agents-pay/packages/openclaw/test/test_agentcore_bridge.py",
+        "plugins/aws-agents/skills/agents-pay/packages/openclaw/test/test_setup_openclaw.py",
+        "plugins/aws-agents/skills/agents-pay/scripts/test_portability.py",
+        "plugins/aws-agents/skills/agents-pay/scripts/test_resource_resolution.py",
+        "plugins/aws-agents/skills/agents-pay/scripts/test_x402_policy.py",
+        "plugins/aws-agents/skills/agents-pay/scripts/x402_fetch_cli.py",
+    ] {
+        assert!(
+            !root.join(path).exists(),
+            "retired file still exists: {path}"
+        );
+    }
 }
