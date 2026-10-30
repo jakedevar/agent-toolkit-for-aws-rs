@@ -665,16 +665,48 @@ fn live_review_argv_preflight_precedes_environment_files_and_network() {
     let dir = workdir("review-preflight");
     for (extra, expected) in [
         (vec![], "--cluster-id, --region"),
-        (vec!["--cluster-id", "c1"], "arguments are required: --region"),
-        (vec!["--region", "us-east-1"], "arguments are required: --cluster-id"),
-        (vec!["--cluster-id", "bad/id", "--region", "us-east-1"], "--cluster-id must"),
-        (vec!["--cluster-id", "c1", "--region", "invalid"], "--region must"),
-        (vec!["--cluster-id", "c1", "--region", "cn-north-1"], "standard AWS partition"),
-        (vec!["--cluster-id", "c1", "--region", "us-east-1", "--now", "invalid"], "--now must"),
+        (
+            vec!["--cluster-id", "c1"],
+            "arguments are required: --region",
+        ),
+        (
+            vec!["--region", "us-east-1"],
+            "arguments are required: --cluster-id",
+        ),
+        (
+            vec!["--cluster-id", "bad/id", "--region", "us-east-1"],
+            "--cluster-id must",
+        ),
+        (
+            vec!["--cluster-id", "c1", "--region", "invalid"],
+            "--region must",
+        ),
+        (
+            vec!["--cluster-id", "c1", "--region", "cn-north-1"],
+            "standard AWS partition",
+        ),
+        (
+            vec![
+                "--cluster-id",
+                "c1",
+                "--region",
+                "us-east-1",
+                "--now",
+                "invalid",
+            ],
+            "--now must",
+        ),
     ] {
         let mut args = vec![
-            "documentdb", "wa-review", "--live", "--analysis-data", "/does/not/exist",
-            "--network-policy", "/also/does/not/exist", "--output", "reports",
+            "documentdb",
+            "wa-review",
+            "--live",
+            "--analysis-data",
+            "/does/not/exist",
+            "--network-policy",
+            "/also/does/not/exist",
+            "--output",
+            "reports",
         ];
         args.extend(extra);
         let out = run_hostile(&args, &dir, &fake);
