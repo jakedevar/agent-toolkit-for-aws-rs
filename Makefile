@@ -10,6 +10,7 @@ build:
 ai-models-sdk:
 	cargo test -p toolkit-cli --features ai-models-live --locked --lib ai_models::
 	cargo test -p toolkit-cli --features ai-models-live --locked --test ai_models
+	cargo test -p toolkit-aws --features sdk --locked --lib sdk::service_bridge::
 
 ai-models-test:
 	cargo test -p toolkit-cli --locked --lib ai_models::
