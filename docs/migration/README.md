@@ -103,6 +103,21 @@ header boundary. Live network use still waits for the S1 integration gate.
 
 `serde_json`'s `preserve_order` feature is enabled for workspace-wide builds (through `aws-config`'s `rustls` in the two skill crates) but not for per-package builds, so `serde_json::Value` object order, and any output built from it, depends on build scope. Output whose key order is observable must not rely on that: render it from `toolkit_core::Json` (insertion order) or sort explicitly. `toolkit-cli`'s schema engine hands the validator keys in sorted order and re-renders the crate's own sentences from the ordered document (tests in `spec/tests.rs`); `powertools-handler` and `s3-upload-processor` select `preserve_order` themselves and pin their output order in tests. `crates/toolkit-cli/src/launch/` still builds output with `serde_json::json!`; L5 (#5345) moves it to `toolkit_core::Json`.
 
+## Toolkit CLI usage and route-order pins (#5360)
+
+Two reviewed-change guards used to be shared single lines that every parallel command slice edited: a global usage-text length and hash, and the length of the route-order array. They conflicted on every rolling merge, and the merged hash could only be learned with a probe build. They are now per slice:
+
+- **Route order.** `LEGACY_COMMAND_ORDER` (`crates/toolkit-cli/src/registry.rs`, test module) is a slice, so adding a route never edits a length. Insert the new route lines at the slice's alphabetical place in the tail. `the_public_route_order_is_pinned` prints the index of the first route that differs.
+- **Usage text.** `crates/toolkit-cli/src/registry/usage_pins.rs` holds `SLICE_PINS`, one sorted line per slice: name, synopsis rank, description rank, and the length and FNV-1a hash of the slice's synopsis, description and exit notes. `SHARED_PIN` pins the shared frame (options and exit codes). A third test rebuilds the whole text from the pinned ranks and compares it with `USAGE`, so a change of the ordering code fails as well. Any unreviewed edit still fails a test; a mutated synopsis fails with the replacement line.
+
+Re-pin procedure, with no probe build and no hand-computed hash:
+
+1. Run (or read the log of) `every_slice_usage_fragment_is_pinned` and `the_shared_usage_frame_is_pinned`. Each failure prints, per slice, the exact line to paste: `replace its line in SLICE_PINS with:`, `add this line ... at its sorted place:` or `delete this line:`. The frame failure prints the whole `SHARED_PIN` line.
+2. Check the printed change is the usage change you meant, paste the lines, keep the table sorted by name, and say in the Issue that the usage text changed deliberately.
+3. After a merge of rolling, git merges disjoint slices' lines without conflict. If two slices landed in the same alphabetical gap, keep both lines in order. If a red run remains, paste what it prints; never merge hash numbers by hand.
+
+The usage text bytes and the routes of the CLI are unchanged by this tooling.
+
 ## Manager continuity
 
 Durable Issues and manager ledger carry assignments/dependencies. [issues.json](issues.json) freezes initial map; daemon state is current. Manager notebook: docs/agents/manager-handoff.md (maintain with Bash cat/tail). Preserve active jobs, topology revisions, exact source/base SHAs, review/queue outcomes and genuine gates during succession. Update active workers explicitly when plan changes.
