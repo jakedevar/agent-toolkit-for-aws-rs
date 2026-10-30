@@ -870,36 +870,95 @@ fn s7_human_only_step6_and_step8_route_through_the_developer() {
 #[test]
 fn b5_openclaw_cutover_contract() {
     let skill = skill_text();
-    let section = &skill[skill.find(OPENCLAW_HEADING).unwrap()..skill.find(AFTER_OPENCLAW_HEADING).unwrap()];
+    let section =
+        &skill[skill.find(OPENCLAW_HEADING).unwrap()..skill.find(AFTER_OPENCLAW_HEADING).unwrap()];
     let setup = read(&format!("{SKILL_DIR}/references/{OPENCLAW_REFERENCE}"));
     let operator = read(&format!("{SKILL_DIR}/references/operator-guide.md"));
     let package = format!("{SKILL_DIR}/packages/openclaw");
     let readme = read(&format!("{package}/README.md"));
     let publishing = read(&format!("{package}/PUBLISHING.md"));
-    for (name, text) in [("skill", section), ("setup", setup.as_str()), ("README", readme.as_str())] {
-        assert_mentions(name, text, &["fixed", "Rust", "owned Buffers", "immutable strings", "fixed refusal"]);
+    for (name, text) in [
+        ("skill", section),
+        ("setup", setup.as_str()),
+        ("README", readme.as_str()),
+    ] {
+        assert_mentions(
+            name,
+            text,
+            &[
+                "fixed",
+                "Rust",
+                "owned Buffers",
+                "immutable strings",
+                "fixed refusal",
+            ],
+        );
     }
     for (name, text) in [("skill", section), ("release notes", publishing.as_str())] {
-        assert_mentions(name, text, &["1.1.0", "authorized again", "per-payment cap", "session budget"]);
+        assert_mentions(
+            name,
+            text,
+            &[
+                "1.1.0",
+                "authorized again",
+                "per-payment cap",
+                "session budget",
+            ],
+        );
     }
-    assert_mentions("setup", &setup, &["toolkit agents-pay admin setup-openclaw", "get_paid_content", "returnBody"]);
-    assert_mentions("operator", &operator, &["toolkit agents-pay fetch", "get_paid_content"]);
-    assert_mentions("publishing", &publishing, &["plugin-stage verify-package --package-root . --complete", "five platforms", "offline", "1.1.0"]);
-    assert_mentions("README", &readme, &["registerTools", "production", "content", "details"]);
+    assert_mentions(
+        "setup",
+        &setup,
+        &[
+            "toolkit agents-pay admin setup-openclaw",
+            "get_paid_content",
+            "returnBody",
+        ],
+    );
+    assert_mentions(
+        "operator",
+        &operator,
+        &["toolkit agents-pay fetch", "get_paid_content"],
+    );
+    assert_mentions(
+        "publishing",
+        &publishing,
+        &[
+            "plugin-stage verify-package --package-root . --complete",
+            "five platforms",
+            "offline",
+            "1.1.0",
+        ],
+    );
+    assert_mentions(
+        "README",
+        &readme,
+        &["registerTools", "production", "content", "details"],
+    );
     for (name, text) in [("README", &readme), ("setup", &setup), ("skill", &skill)] {
-        assert!(!text.contains("package-local Python"), "{name} still claims a Python runtime");
+        assert!(
+            !text.contains("package-local Python"),
+            "{name} still claims a Python runtime"
+        );
     }
 }
 
 #[test]
 fn b5_openclaw_inventory_is_ported() {
     let inv = inventory();
-    let rows: Vec<&Value> = inv["files"].as_array().unwrap().iter()
-        .filter(|row| row["issue"].as_u64() == Some(4411)).collect();
+    let rows: Vec<&Value> = inv["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|row| row["issue"].as_u64() == Some(4411))
+        .collect();
     assert_eq!(rows.len(), 3);
     for row in rows {
         assert_eq!(row["status"].as_str(), Some("ported"), "{}", row["path"]);
-        assert!(row["disposition_note"].as_str().unwrap_or("").contains("B5"));
+        assert!(row["disposition_note"]
+            .as_str()
+            .unwrap_or("")
+            .contains("B5"));
     }
 }
 
