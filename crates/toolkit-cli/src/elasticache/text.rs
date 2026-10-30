@@ -83,7 +83,7 @@ pub fn escape_controls(text: &str) -> String {
 /// credential-shaped content is shown as before.
 #[must_use]
 pub fn show(text: &str) -> String {
-    let escaped = escape_controls(&toolkit_aws::redact_text(text));
+    let escaped = escape_controls(&crate::safe_text::redacted_value(text));
     if escaped.chars().count() <= MAX_SHOWN_CHARS {
         return escaped;
     }

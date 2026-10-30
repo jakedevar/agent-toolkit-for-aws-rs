@@ -294,3 +294,186 @@ fn several_overlapping_credentials_leave_nothing_in_any_order() {
         assert_absent(&run, &args, &markers);
     }
 }
+
+/// #4978's exact reported input, in both orders.
+#[test]
+fn the_reported_shared_prefix_input_leaves_no_suffix() {
+    let longer = "password=xxxxxxxxOTHER_VALUE_MUCH_LONGER";
+    let shorter = "token=xxxxxxxxFAKE_SECRET";
+    for (first, second) in [(longer, shorter), (shorter, longer)] {
+        let args = [
+            "elasticache",
+            "preflight",
+            "--host",
+            first,
+            "--host",
+            second,
+            "--json",
+        ];
+        let run = toolkit(&args);
+        assert_absent(
+            &run,
+            &args,
+            &["xxxxxxxx", "FAKE_SECRET", "OTHER_VALUE", "MUCH_LONGER"],
+        );
+    }
+}
+
+/// #4979's exact reported input, and the route the value rule alone misses:
+/// the flag repeated with the bare credential, which reaches `repr` as an
+/// ordinary value and gets its quote escaped.
+#[test]
+fn a_repeated_flag_cannot_show_an_escaped_credential() {
+    let labelled = "password=ab'c\"FAKE_SECRET";
+    let bare = "ab'c\"FAKE_SECRET";
+    for (command, flag) in [
+        (&["msk", "size"][..], "--avg-data-in-mbs"),
+        (&["elasticache", "price"][..], "--engine"),
+        (&["aurora", "io"][..], "--engine"),
+    ] {
+        for values in [&[labelled][..], &[labelled, bare], &[bare, labelled]] {
+            let mut args = command.to_vec();
+            for value in values {
+                args.extend([flag, value]);
+            }
+            let run = toolkit(&args);
+            assert_absent(&run, &args, &["FAKE_SECRET", "ab\\'c", "ab'c"]);
+            assert!(
+                run.stderr.contains("[REDACTED]"),
+                "{args:?}: {}",
+                run.stderr
+            );
+        }
+    }
+}
+
+/// #4980 across arguments: the bare piece (one to three characters and
+/// longer) of a credential another argument taught, on both streams.
+#[test]
+fn a_repeated_flag_cannot_show_a_bare_credential() {
+    for (labelled, bare) in [
+        ("password=Q", "Q"),
+        ("token=Qz", "Qz"),
+        ("password=Qz9", "Qz9"),
+        ("https://Qz9@h.invalid", "Qz9"),
+        ("https://u:p@h.invalid", "u:p"),
+        ("token=FAKE_SECRET", "FAKE_SECRET"),
+        ("https://user:FAKE_SECRET@h.invalid", "FAKE_SECRET"),
+    ] {
+        for values in [[labelled, bare], [bare, labelled]] {
+            let host = [
+                "elasticache",
+                "preflight",
+                "--host",
+                values[0],
+                "--host",
+                values[1],
+                "--json",
+            ];
+            let run = toolkit(&host);
+            assert_absent(&run, &host, &[bare]);
+            let size = [
+                "msk",
+                "size",
+                "--avg-data-in-mbs",
+                values[0],
+                "--avg-data-in-mbs",
+                values[1],
+            ];
+            let run = toolkit(&size);
+            let first_line = run.stderr.lines().next().unwrap_or_default();
+            assert!(!first_line.contains(bare), "{size:?}: {first_line}");
+        }
+    }
+}
+
+/// #4980 against #4981: the mask is never weakened and the document still
+/// parses, because it applies to caller strings where they are built. Port
+/// and status keep their values when the bare credential equals them.
+#[test]
+fn hiding_a_short_credential_keeps_the_json_schema() {
+    for (labelled, bare) in [
+        ("password=6379", "6379"),
+        ("password=6", "6"),
+        ("token=FAIL", "FAIL"),
+        ("token=F", "F"),
+    ] {
+        for values in [[labelled, bare], [bare, labelled]] {
+            let args = [
+                "elasticache",
+                "preflight",
+                "--host",
+                values[0],
+                "--host",
+                values[1],
+                "--json",
+            ];
+            let run = toolkit(&args);
+            let json = parse_json(&run.stdout).unwrap_or_else(|error| {
+                panic!("not JSON for {args:?} ({error:?}):\n{}", run.stdout)
+            });
+            assert_eq!(
+                member(&json, &["info", "port"]),
+                &Json::Int(6379),
+                "{args:?}"
+            );
+            assert_eq!(first_finding_status(&json), "FAIL", "{args:?}");
+            let host = member(&json, &["info", "host"]).as_str().expect("a host");
+            assert!(host.contains("[REDACTED]"), "{args:?}: {host}");
+            assert!(!host.contains(bare), "{args:?}: {host}");
+        }
+    }
+}
+
+/// #4981 on the one JSON document of stderr: `msk sim`'s `{"error": ...}` keeps
+/// its key and stays valid when a credential equals a part of its syntax.
+#[test]
+fn a_json_error_on_stderr_keeps_its_schema() {
+    for value in ["password=error", "password=e", "password=:", "password=\\"] {
+        let args = ["msk", "sim", "compute", "--instance-type", value];
+        let run = toolkit(&args);
+        let json = parse_json(run.stderr.trim())
+            .unwrap_or_else(|error| panic!("not JSON for {args:?} ({error:?}):\n{}", run.stderr));
+        let message = member(&json, &["error"]).as_str().expect("an error string");
+        assert!(message.contains("[REDACTED]"), "{args:?}: {message}");
+    }
+    // A bare credential taught by the first occurrence is masked inside it.
+    let args = [
+        "msk",
+        "sim",
+        "compute",
+        "--instance-type",
+        "password=FAKE_SECRET",
+        "--instance-type",
+        "FAKE_SECRET",
+    ];
+    let run = toolkit(&args);
+    assert_absent(&run, &args, &["FAKE_SECRET"]);
+    let json = parse_json(run.stderr.trim()).expect("a JSON error");
+    assert!(member(&json, &["error"]).as_str().is_some());
+}
+
+/// #5012's exact reachable input at N = 60000, in both orders, through the real
+/// binary. The operation count is pinned by the unit tests; here the bound only
+/// rules out the quadratic rescan, which would take far longer than this.
+#[test]
+fn the_reported_overlap_input_finishes_and_hides_the_credential() {
+    let secret = "a".repeat(60_000);
+    let labelled = format!("password={secret}");
+    for (first, second) in [
+        (labelled.as_str(), secret.as_str()),
+        (secret.as_str(), labelled.as_str()),
+    ] {
+        let args = [
+            "msk",
+            "size",
+            "--discount-pct",
+            first,
+            "--discount-pct",
+            second,
+        ];
+        let run = toolkit(&args);
+        assert_absent(&run, &["msk", "size"], &["aaaaaaaa"]);
+        assert!(run.stderr.contains("[REDACTED]"), "{:.300}", run.stderr);
+    }
+}

@@ -428,7 +428,7 @@ pub(crate) fn compat(invocation: &Invocation, output: &mut Output<'_>) -> Result
 // Always `Ok`: the handler signature lets call sites tail-return it.
 #[allow(clippy::unnecessary_wraps)]
 fn sim_error(output: &mut Output<'_>, message: &str) -> Result<(), ToolkitError> {
-    output.diagnostic(&error_json(message));
+    output.json_diagnostic(message, error_json);
     output.set_exit_status(2);
     Ok(())
 }

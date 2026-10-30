@@ -171,6 +171,20 @@ impl<'a> Output<'a> {
         delivered
     }
 
+    /// Writes a document with a schema to the diagnostics writer: `message`,
+    /// its only caller text, is masked before `render` puts it in the document,
+    /// so the net can never rewrite the document's own syntax or keys (#4981).
+    /// The rendered text is otherwise treated like [`Output::diagnostic`]: a
+    /// registered known value refuses it and unsafe characters are escaped.
+    pub(crate) fn json_diagnostic(&mut self, message: &str, render: impl Fn(&str) -> String) {
+        let document = render(&self.caller.message_value(message));
+        if self.carries_known(&document) {
+            let _ = self.diagnostic_delivered(&document);
+        } else {
+            let _ = self.write_diagnostic(&toolkit_core::neutralize_text(&document));
+        }
+    }
+
     fn write_diagnostic(&mut self, text: &str) -> bool {
         self.diagnostics.as_mut().is_some_and(|writer| {
             writer
@@ -745,6 +759,8 @@ pub fn run(args: &[OsString], out: &mut dyn Write, err: &mut dyn Write) -> u8 {
         text_args.push(text.to_string());
     }
     let caller = CallerText::from_args(&text_args);
+    // Value helpers hide what another argument taught, for the whole run.
+    let _run = caller.enter_run();
     match route(COMMANDS, &text_args) {
         Ok(Routed::Help) => print_static(out, err, USAGE),
         Ok(Routed::Version) => {
@@ -759,6 +775,7 @@ pub fn run(args: &[OsString], out: &mut dyn Write, err: &mut dyn Write) -> u8 {
             } else {
                 caller
             };
+            let _command = caller.enter_run();
             let mut output = Output::with_diagnostics(out, err);
             output.caller = caller.clone();
             let result = (spec.handler)(&invocation, &mut output).and_then(|()| output.finish());

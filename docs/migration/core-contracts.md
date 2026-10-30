@@ -123,7 +123,12 @@ so an escaped quote cannot change the credential's spelling before it is hidden
 into stdout data (a JSON report member such as `elasticache preflight`'s
 `info.host`, a generated template). Stdout is **never rewritten after it is
 formatted**: `Output::line` writes the line as given, so JSON stays valid and
-numeric, boolean and enum fields keep their schema (#4981). A path named by a
+numeric, boolean and enum fields keep their schema (#4981). Both helpers also
+hide what another argument of the same run taught, so a flag repeated with the
+bare credential (`--host token=S --host S`) is not an ordinary value; a typed or
+fixed field never passes through them and is never rewritten. `msk sim`'s
+`{"error": ...}` on stderr masks its message before it is rendered, for the same
+reason. A path named by a
 shared `toolkit-core` file-contract error (`PathError`, `SkillsError`, plugin
 sync and vendored errors) is shown through the rendering `toolkit-cli`
 registers once with `toolkit_core::set_path_display` (`shown_value`): the core
@@ -134,11 +139,19 @@ The stderr sinks keep a safety net (`CallerText`, replacing
 `error:` report and `Output::diagnostic` show a credential-shaped or overlong
 argument value that they echo verbatim redacted, bounded and on one line, and
 hide what remains of an argument's credential. Every match (each known value,
-each credential piece whole or cut after 8 characters) is found against the
-original text before any is replaced, and overlapping matches are hidden as
-one, so one redaction cannot consume the prefix another needs (#4978). A
-complete labelled credential (`password=abc`, `token=ab`) is hidden whatever its
-length; the 4-character minimum applies only to an unlabelled piece (#4980).
+each credential piece and each part of it, whole or cut after 8 characters) is
+found against the original text before any is replaced, and overlapping matches
+are hidden as one, so one redaction cannot consume the prefix another needs
+(#4978). Backslashes are ignored while matching, so a renderer's escaping
+(`\'`, `\"`, a doubled `\\`) cannot change a credential's spelling (#4979). A
+piece is hidden whatever its length, labelled or not (#4980): one to three
+characters match as a plain substring, so a run that passes such a credential
+may see ordinary letters of its diagnostics hidden. Never leaking wins over a
+readable message there, and a document with a schema is kept valid by masking
+its caller strings where they are built rather than by weakening the mask. A
+cut echo shorter than 8 characters of a longer piece, and an echo that starts in
+the middle of a piece, are not recognized. Past a work or span bound the whole
+diagnostic is hidden line by line (#5012).
 Only displayed text changes; files are still read and written at the exact
 path given. A passthrough command (`asm exec`) keeps only the newline rule at
 the sinks: its words are another program's arguments and may be secret
