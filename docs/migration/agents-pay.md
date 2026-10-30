@@ -418,6 +418,9 @@ programme retirement step removes the `.py` files after S7 is verified).
   runs `toolkit agents-build setup-payment-user`; because that command needs a
   typed `approve` at a terminal (D33), the page now says the developer runs it,
   not the agent.
+  The opening execution model of the page (#5538) lists Step 6 beside Steps 3b
+  and 7 as a developer stop, and Step 8 has the developer set the printed
+  values; no step lets the agent run `setup-payment-user` or type `approve`.
 - **`python-inventory.json`**: the nine `payments-policy` (#4410) rows are
   `ported`, each with a `disposition_note` that leaves removal to the
   retirement step. The `payments-bridge` (#4411) rows are untouched.

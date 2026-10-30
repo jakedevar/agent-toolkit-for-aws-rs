@@ -79,7 +79,7 @@ process, container, OS account, or IAM boundary.
 Two design rules apply throughout this skill:
 
 1. **A control that a model can decline is not a control.** Every limit in this
-   skill is evaluated in Python before signing on the sanctioned runtime path.
+   skill is evaluated in the `toolkit` binary before signing on the sanctioned runtime path.
 2. **Documentation must not claim a guarantee the code does not enforce.** Every
    claim below names the function that implements it, so the two cannot drift
    silently.
@@ -89,8 +89,8 @@ Two design rules apply throughout this skill:
 | Capability | Here | Security property |
 |---|---|---|
 | `get_paid_content` | `toolkit agents-pay fetch URL` — agent command | Same capability, now behind the policy gate |
-| `get_payment_session_status` | `payment_session_status()` — agent tool | Unchanged in spirit: read-only, cannot mint budget |
-| Browser payment | `prepare_browser_payment(url)` + `attach_browser_payment(handle, url)` | The model receives an opaque single-use handle; trusted glue redeems it |
+| Session status | `toolkit agents-pay fetch --status` — agent command | Read-only, cannot mint budget |
+| Browser payment | `toolkit agents-pay fetch --browser-handle URL` — agent command | The model receives an opaque handle bound to one origin and path; a handle cannot be redeemed after the process exits (no Rust equivalent of the Python import API, follow-up #5103) |
 | Create a payment session | `toolkit agents-pay admin new-session` — human at a TTY | A runtime that can mint sessions has no cumulative bound |
 | Provision infrastructure | `agentcore` CLI wizard + `toolkit agents-pay admin init-config` | Provider secrets never enter tool parameters, and setup does not exist at runtime |
 
@@ -98,8 +98,11 @@ The browser flow is worth stating plainly, because it is the one case where a
 proof must reach a caller: the model receives a handle, never proof bytes. The
 handle is single-use, expires in 90 seconds, and is bound to one origin and path,
 so a handle lifted from a transcript cannot be redeemed for another resource or
-redeemed twice. `attach_browser_payment` returns the real header and is therefore
-for trusted glue, not for the model's tool set.
+redeemed twice. The Python redeem call (`attach_browser_payment`) has no Rust
+equivalent: the handle `toolkit agents-pay fetch --browser-handle` prints cannot
+be redeemed after the process exits, so a browser-navigation flow needs a
+long-lived trusted host (follow-up #5103). Nothing in the model's tool set may
+return the real header.
 
 ## Security controls and enforcement
 
@@ -107,14 +110,14 @@ for trusted glue, not for the model's tool set.
 |---|---|
 | Challenge validation | Strict schema, configured scheme and network, exact asset contract, explicit recipient mode, canonical positive amount under `max_per_payment_usd`, and resource/origin checks are enforced before signing. Conflicting `amount` and `maxAmountRequired` aliases are refused; the signer receives one version-canonical amount field. The normal mode requires `payTo` in `allowed_recipients`; the explicit `allow_any_recipient: true` mode delegates beneficiary choice to the publisher. |
 | Secret handling | No script accepts a secret argument. Provider credentials go only to the `agentcore` CLI wizard; signing happens inside AgentCore Payments. `preflight` rejects credential-shaped environment variables. |
-| Network protection | `assert_public_https_url()` and `assert_public_ip()` require HTTPS and reject loopback, RFC1918, link-local, metadata, multicast, reserved, unspecified, CGNAT, and v4-mapped forms. `_PinnedResolverTransport` connects to the vetted address; redirects are refused and bodies are capped. |
+| Network protection | The network admission check requires HTTPS and reject loopback, RFC1918, link-local, metadata, multicast, reserved, unspecified, CGNAT, and v4-mapped forms. The connection goes to the vetted address; redirects are refused and bodies are capped. |
 | Content isolation | Paid bodies are withheld from model-visible output by default. The runtime returns status, content type, byte count, and SHA-256 hash. An operator may opt in to body return by setting `return_body: true` in the config file (OS-account-bound, 0600); when enabled, content is capped at 10 KiB and marked `untrusted: true`. Authorisation never reads content. The OpenClaw plugin (`get_paid_content`) mirrors this: an optional `returnBody: true` plugin-config field (default unset/false, same behaviour as today) opts a single installation in to the same capped, `untrusted`-marked body return — set per operator, not model-controllable. |
-| Idempotency | `derive_client_token()` hashes session, origin, path, network, asset, recipient, and amount. It excludes a publisher nonce so retries reuse the same authorisation. |
+| Idempotency | The client token hashes session, origin, path, network, asset, recipient, and amount. It excludes a publisher nonce so retries reuse the same authorisation. |
 | Role separation | Session creation exists only in `toolkit agents-pay admin new-session`, which refuses without a TTY and has no `--yes` flag. The human uses **ManagementRole** and the agent uses **ProcessPaymentRole** with no session writes. |
 | Proof isolation | `toolkit agents-pay fetch` holds the proof locally for one request. The browser path returns an opaque handle bound to one origin and path, which cannot be redeemed after the process exits, and output carries a redacted receipt only. |
 | Runtime surface | No provisioning or session-creation tool exists in the runtime path. |
-| Reproducible installation | Runtime dependencies and version floors are documented; tests are stdlib-only. Operators requiring full reproducibility should install from a hashed lockfile. |
-| Local configuration | `_atomic_write_0600()` creates a `0700` directory and `0600` file. `load_config()` checks ownership, type, symlinks, and writable parents. Runtime path resolution uses the OS account and ignores `HOME`, `AGENTS_PAY_CONFIG`, and `X402_POLICY_FILE`; file resource values win over environment fallbacks. |
+| Reproducible installation | The payment code is the `toolkit` binary, built from a locked dependency graph. Operators requiring full reproducibility should verify the binary they install through their release process. |
+| Local configuration | The config writer creates a `0700` directory and `0600` file atomically. Loading checks ownership, type, symlinks, and writable parents. Runtime path resolution uses the OS account and ignores `HOME`, `AGENTS_PAY_CONFIG`, and `X402_POLICY_FILE`; file resource values win over environment fallbacks. |
 | Documentation checks | This table names enforcing code; the toolkit's regression tests assert behaviour; `preflight` checks deployed state. |
 
 ### Limits of the controls

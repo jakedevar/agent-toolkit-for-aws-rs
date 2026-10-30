@@ -216,8 +216,11 @@ toolkit help
 agentcore --version
 ```
 
-A `toolkit` build without payment support answers every `toolkit agents-pay`
-command with a refusal document and exit 2: install a release build.
+A `toolkit` build without payment support refuses every payment command:
+`toolkit agents-pay fetch` answers with a refusal document on stdout and exit 2,
+while every `toolkit agents-pay admin` command and `toolkit agents-build
+setup-payment-user` prints one plain line on stderr and exits 1. Install a
+release build.
 
 ### Step 1: Provision payment resources — human runs this outside the LLM loop
 

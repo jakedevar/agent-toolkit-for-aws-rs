@@ -27,12 +27,15 @@ Do NOT use this skill for:
 
 ## Process
 
-**Execution model — minimize human stops.** Run the steps yourself, in order, without pausing between them. There are only **two** points that require the developer; pause at these and resume automatically once the developer confirms:
+**Execution model — minimize human stops, but never take a human-only step.** Run the steps yourself, in order, without pausing between them, except at the **three** points that require the developer. Pause at each and resume once the developer confirms:
 
 - **Step 3b (connector credentials)** — for **Coinbase QuickCreate** (recommended) the developer authorizes through Coinbase in the browser — no secrets; for **Manual** (Coinbase or Stripe) the developer runs the connector command with their secrets. Present the path, then wait for them to confirm the connector is `READY`.
+- **Step 6 (instrument/session)** — the developer runs `toolkit agents-build setup-payment-user` in their own terminal and types `approve` there. You never run it, never feed it the `approve`, and never ask for its output to be pasted into chat. Hand over the exact command with the user id and email, then wait for them to confirm it finished.
 - **Step 7 (delegation + funding)** — the developer authorizes the wallet and funds it (browser + faucet). Surface the instructions, then wait.
 
-Everything else — Steps 0–3a, **4 (deploy), 5 (wire), 6 (instrument/session), 8 (set env + test)** — you run automatically. After the developer confirms 3b, ask them for the **user id** and **email** for the first wallet (Step 6 needs them), then immediately continue through 4 → 5 → 6 (and present Step 7) without asking permission for each. After they confirm 7, run Step 8. Do not stop after every step.
+Everything else — Steps 0–3a, **4 (deploy) and 5 (wire)** — you run automatically, without asking permission for each.
+
+After the developer confirms 3b, ask them for the **user id** and **email** for the first wallet (the Step 6 command needs them), run 4 and 5, then hand the Step 6 command to the developer and wait. After they confirm Step 6, present Step 7 and wait again. After they confirm 7, the developer sets the values their terminal printed in the agent's environment (Step 8) and you run the test. Do not stop after every step, and never stand in for the developer at one of the three stops.
 
 ### Step 0: Install / verify the AgentCore CLI
 
@@ -336,7 +339,7 @@ It creates the instrument (with the email in `linkedAccounts`) and a budget-boun
 
 ### Step 7: Delegation and funding (one-time per wallet) — developer does this
 
-Using the `wallet_address` / `redirect_url` the script printed:
+Using the `wallet_address` / `redirect_url` the Step 6 command printed in the developer's terminal:
 
 1. **Delegation** — authorize the agent to spend from the wallet.
     - **Coinbase CDP**: the end user visits `redirect_url`, logs in, and grants permissions to `wallet_address`.
@@ -460,9 +463,9 @@ Using the `wallet_address` / `redirect_url` the script printed:
     - **x402 (Base Sepolia)**: send testnet USDC via the Circle faucet (<https://faucet.circle.com/>).
     - **MPP on Tempo Moderato** (StripePrivy instruments only): send the canonical test stablecoin **pathUSD** via the Tempo faucet (<https://tempo.xyz/developers/docs/quickstart/faucet>). AgentCore accepts only the network's canonical token — the faucet's other stablecoins (AlphaUSD/BetaUSD/ThetaUSD) are rejected with `MPP_EVM_NON_CANONICAL_USDC`. For buyer-pays challenges (`buyerPaysGasFees: true`) the wallet also needs native Tempo gas. See [MPP networks, providers, and funding](#mpp-networks-providers-and-funding).
 
-### Step 8: Set env vars and test — agent runs
+### Step 8: Set env vars and test — developer sets the values, then the agent tests
 
-Set the tool's config from the `export` lines the Step 6 script printed — it emits all of them (`PAYMENT_MANAGER_ARN`, `PAYMENT_INSTRUMENT_ID`, `PAYMENT_SESSION_ID`, `PAYMENT_USER_ID`, `AWS_REGION`), so just copy them into the agent's environment:
+The developer copies the `export` lines the Step 6 command printed in their own terminal — it emits all of them (`PAYMENT_MANAGER_ARN`, `PAYMENT_INSTRUMENT_ID`, `PAYMENT_SESSION_ID`, `PAYMENT_USER_ID`, `AWS_REGION`) — into the environment the agent runs in. They are not pasted into chat, and the agent does not ask for them or re-run the Step 6 command to get them:
 
 ```bash
 export PAYMENT_MANAGER_ARN=...      # all five printed by `toolkit agents-build setup-payment-user`
