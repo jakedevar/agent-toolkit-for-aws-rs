@@ -29,6 +29,7 @@ fn text<'a>(request: &'a Json, key: &str) -> Result<&'a str, String> {
         .and_then(Json::as_str)
         .ok_or_else(|| INVALID.into())
 }
+// recorded-shape: a required live request/response object; all non-object shapes are errors.
 fn object(request: &Json) -> Result<&[(String, Json)], String> {
     match request {
         Json::Object(fields) => Ok(fields),

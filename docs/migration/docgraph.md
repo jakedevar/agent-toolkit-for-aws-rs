@@ -1714,3 +1714,12 @@ result counts, server/client timeout fit and expired deadlines. The final
 committed-source job receipts are published in the #5557 handoff. No live AWS,
 real credentials or Python were used; operator live acceptance and exact-source
 cross-family review remain required, and S6 owns callers/help/retirement.
+
+S4 verification note: the first scoped run (`c43638df`) found missing
+`recorded-shape` annotations for strict live wire conversions/configuration;
+these are now documented at each boundary without relaxing the contract. It
+also reproduced #5455: the unrelated secret-safety-hook protocol binary held
+compiled Cargo paths into a deleted baseline worktree. The daemon-only
+`docgraph-scoped-prime` recipe cleans/rebuilds that package and runs its
+unchanged tests before scoped verification; no hook, test or harness policy
+is modified. The final handoff records the superseding receipts.

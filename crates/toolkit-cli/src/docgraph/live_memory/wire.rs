@@ -30,6 +30,7 @@ const LIMITS: JsonLimits = JsonLimits {
     max_nodes: 1_000_000,
 };
 
+// recorded-shape: caller query parameters become typed Smithy documents; non-finite numbers are refused.
 pub(super) fn document(value: &Json) -> Result<Document, String> {
     Ok(match value {
         Json::Null => Document::Null,
@@ -50,6 +51,7 @@ pub(super) fn document(value: &Json) -> Result<Document, String> {
         Json::Float(_) => return Err(INVALID.into()),
     })
 }
+// recorded-shape: caller message values become typed AttributeValues; floats and unsupported shapes are refused.
 fn attribute(value: &Json) -> Result<AttributeValue, String> {
     Ok(match value {
         Json::Null => AttributeValue::Null(true),
@@ -225,6 +227,7 @@ pub(super) fn encode(
         .enable_time()
         .build()
         .map_err(|_| INVALID)?;
+    // recorded-shape: SDK configuration only, with no JSON reads or response handling; shared across two generated builder types.
     macro_rules! config {
         ($service:ident, $endpoint:expr) => {{
             let builder = $service::Config::builder()
@@ -367,6 +370,7 @@ pub(super) fn encode(
     }
     Ok(captured)
 }
+// recorded-shape: the required live AttributeValue union has exactly one supported tag; malformed/unsupported values are errors.
 fn decode_attribute(value: &Json) -> Result<Json, String> {
     let fields = object(value)?;
     if fields.len() != 1 {
@@ -405,6 +409,7 @@ pub(super) fn normalize(route: Route, bytes: &[u8]) -> Result<Json, String> {
     match route {
         Route::Analytics => {
             // A missing results member is not a successful live query payload.
+            // recorded-shape: live Analytics requires an actual bounded results list; missing, null and other shapes fail.
             match value.get("results") {
                 Some(Json::Array(a)) if a.len() <= 100_000 => Ok(value),
                 _ => Err(INVALID.into()),
@@ -417,6 +422,7 @@ pub(super) fn normalize(route: Route, bytes: &[u8]) -> Result<Json, String> {
             }
             Ok(Json::object(vec![("id", Json::string(id))]))
         }
+        // recorded-shape: a live Query requires Items (checked in exchange); only a bounded typed list is accepted when present.
         Route::Dynamo => match value.get("Items") {
             Some(Json::Array(items)) if items.len() <= 100_000 => Ok(Json::object(vec![(
                 "Items",

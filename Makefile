@@ -155,3 +155,9 @@ docgraph-memory:
 docgraph-memory-sync:
 	cargo metadata --format-version 1 --features docgraph-live --offline > /dev/null
 	cargo tree -p toolkit-cli --features docgraph-live --locked --offline -e features
+
+# #5455: discard only this package's stale compiled Cargo test paths before
+# scoped verification. Rebuild and run the unchanged security hook tests.
+docgraph-scoped-prime:
+	cargo clean -p secret-safety-hook
+	cargo test -p secret-safety-hook --locked

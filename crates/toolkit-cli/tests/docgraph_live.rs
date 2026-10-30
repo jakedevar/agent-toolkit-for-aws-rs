@@ -983,6 +983,9 @@ fn carrier_rows(c: &str) -> Vec<(Vec<&str>, i32, &'static str)> {
 #[test]
 #[cfg(feature = "docgraph-live")]
 fn live_memory_refuses_policy_region_and_input_failures_before_clients() {
+    let network = ForbiddenNetwork::start();
+    let fake = format!("127.0.0.1:{}", network.port);
+    let dir = workdir("s4-preflight");
     let input = policy_file(
         "s4-query.json",
         r#"{"graph_id":"g-abc123def4","query":"RETURN 1"}"#,
@@ -1025,12 +1028,13 @@ fn live_memory_refuses_policy_region_and_input_failures_before_clients() {
         ),
     ] {
         let args: Vec<_> = base.iter().copied().chain(tail).collect();
-        let (status, stdout, stderr) = run(&args);
-        assert_eq!(status, code, "{stderr}");
-        assert!(stdout.is_empty());
+        let output = run_hostile(&args, &dir, &fake);
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert_eq!(output.status.code(), Some(code), "{stderr}");
+        assert!(output.stdout.is_empty());
         assert!(stderr.contains(expected), "{stderr}");
         assert!(!stderr.contains(&input));
-        assert!(!stderr.contains("credentials"));
+        assert!(!stderr.contains("required memory credentials"));
     }
     let unsafe_create = policy_file("s4-invalid-create.json", r#"{"memory_gb":15}"#);
     let (code, stdout, stderr) = run(&[
@@ -1046,4 +1050,7 @@ fn live_memory_refuses_policy_region_and_input_failures_before_clients() {
     assert_eq!(code, 1);
     assert!(stdout.is_empty());
     assert!(stderr.contains("unsupported or invalid live memory request"));
+    assert_eq!(network.accepted(), 0);
+    assert!(provider_never_ran(&dir));
+    std::fs::remove_dir_all(&dir).unwrap();
 }
