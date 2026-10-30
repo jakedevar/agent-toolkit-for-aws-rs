@@ -44,6 +44,7 @@ impl Backend for LiveBackend<'_> {
                         self.policy.clone().ok_or(INVALID)?,
                         &signer,
                         &self.region,
+                        deadline,
                         self.invocation_deadline,
                     )
                     .map_err(|_| {
