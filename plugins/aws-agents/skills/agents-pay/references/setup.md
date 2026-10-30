@@ -5,27 +5,15 @@ wiring. See the tool inventory in SKILL.md for what the agent can call.
 
 ## 0. Install
 
+`toolkit` must be on `PATH` (a release build of the toolkit; a build without payment support refuses every payment command).
+
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install -r requirements.txt
+toolkit help
 npm install -g @aws/agentcore
 agentcore --version
-python -c "from bedrock_agentcore.payments import PaymentManager; print('payments OK')"
 ```
 
-If that import fails, install a `bedrock-agentcore` release with payments
-support before continuing. Keep the virtual environment active for the Python
-commands below.
-
-`requirements.txt` pins the complete Python runtime graph used by this skill. For
-integrity pinning in your own release process, generate platform-specific hashes
-from that exact graph:
-
-```bash
-python -m pip download -r requirements.txt -d wheels/
-python -m pip hash wheels/*
-```
+The payment code is the `toolkit` binary itself, so there is no Python environment, requirements file or hash pinning to manage for this skill.
 
 ## 1. Obtain provider credentials
 
@@ -131,10 +119,10 @@ This separation keeps payment management and execution in different trusted role
 | Step | Command | Role |
 |---|---|---|
 | 1 | `agentcore add payment-manager` / `payment-connector` / `deploy` | **ControlPlaneRole** |
-| 2 | `agents_pay_admin.py init-config` | none — writes a local file only |
-| 3 | `agents_pay_admin.py create-instrument` | **ManagementRole** |
-| 4 | `agents_pay_admin.py new-session` | **ManagementRole** |
-| 6 | the agent calling `x402_fetch` | **ProcessPaymentRole** |
+| 2 | `toolkit agents-pay admin init-config` | none — writes a local file only |
+| 3 | `toolkit agents-pay admin create-instrument` | **ManagementRole** |
+| 4 | `toolkit agents-pay admin new-session` | **ManagementRole** |
+| 6 | the agent running `toolkit agents-pay fetch` | **ProcessPaymentRole** |
 
 ### ManagementRole — for the human running the admin CLI
 
@@ -230,7 +218,7 @@ guide for the full base and per-connector permissions.
 ## 6. Write the payment policy
 
 ```bash
-python3 scripts/agents_pay_admin.py init-config \
+toolkit agents-pay admin init-config \
   --max-per-payment-usd 0.05 \
   --network eip155:84532 \
   --recipient 0xMerchantWalletAddress
@@ -241,7 +229,7 @@ challenge without paying:
 
 ```bash
 curl -sD - https://<merchant-host>/<path> -o /dev/null \
-  | awk '/^payment-required:/{print $2}' | base64 -d | python3 -m json.tool
+  | awk '/^payment-required:/{print $2}' | base64 -d | jq .
 ```
 
 Inspect `accepts[].payTo`, `.amount` (integer base units; USDC has 6 decimals,
@@ -263,7 +251,7 @@ One wallet for this installation. The payer identity is read from the config, wh
 invent or keep in sync:
 
 ```bash
-python3 scripts/agents_pay_admin.py create-instrument --email you@example.com
+toolkit agents-pay admin create-instrument --email you@example.com
 ```
 
 The manager ARN and connector ID are read from `agentcore/.cli/deployed-state.json`
@@ -301,14 +289,13 @@ plausibly spend: wallet balance is the backstop if every other control fails.
 ## 9. Approve a session and run preflight
 
 ```bash
-python3 scripts/agents_pay_admin.py new-session --budget 1.00 --expiry-minutes 60
+toolkit agents-pay admin new-session --budget 1.00 --expiry-minutes 60
 
 export PAYMENT_MANAGER_ARN=...   PAYMENT_INSTRUMENT_ID=...
 export PAYMENT_SESSION_ID=...    PAYMENT_USER_ID=alice
 export AWS_REGION=us-west-2
 
-python3 scripts/agents_pay_admin.py preflight
-python3 scripts/test_x402_policy.py
+toolkit agents-pay admin preflight
 ```
 
 Keep sessions short (≤60 minutes) and budgets small. When the budget is spent, a

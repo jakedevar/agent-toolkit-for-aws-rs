@@ -283,8 +283,15 @@ fn ap_inv_03_other_slices_are_untouched() {
     );
     for row in others {
         let path = str_of(row, "path");
-        assert_eq!(str_of(row, "status"), "pending", "{path}");
+        // The x402 payments-policy rows (#4410) were marked `ported` by slice S7
+        // (#5526), with a `disposition_note`; every other slice stays pending.
+        let ported = row["issue"].as_u64() == Some(4410);
+        let expected = if ported { "ported" } else { "pending" };
+        assert_eq!(str_of(row, "status"), expected, "{path}");
         for key in ["disposition", "disposition_note", "language_contract"] {
+            if ported && key == "disposition_note" {
+                continue;
+            }
             assert!(
                 row.get(key).is_none(),
                 "{path}: {key} belongs to ai-payloads"

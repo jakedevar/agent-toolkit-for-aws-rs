@@ -1223,7 +1223,7 @@ sampled operations; S2 must keep this configuration and fail closed if
 | Area | Supported (fixture or test evidence) | Everything else |
 |---|---|---|
 | Database endpoint | Standard-partition Neptune `<id>.<region>.neptune.amazonaws.com` and Neptune Analytics `<id>.<region>.neptune-graph.amazonaws.com`, one fixed port, region equal to the host label (`sdk::database` tests) | FIPS, other partitions, custom domains, wildcards: refused |
-| Gremlin wire | GraphSON v2 (design choice; codec and T-DG-05b fixtures are S3) | Other GraphSON/GraphBinary versions fail closed in S3 |
+| Gremlin wire | GraphSON v2 (codec and T-DG-05b fixtures delivered in S3, #5515) | Other GraphSON/GraphBinary versions fail closed in S3 |
 | DocumentDB / MongoDB capture | DocumentDB 5.0 with mongosh 2.3.1; MongoDB 7.0 with mongosh 1.10.6; canonical Extended JSON; capture envelope version 1 (`capture_fixtures`) | Legacy shell `tojson`, relaxed EJSON and other dialects: `unsupported_format` (T-DG-08d) |
 
 Fixtures are reconstructed, not live exports; operator deployment versions
@@ -1580,6 +1580,118 @@ and that wiring must use this constructor.
 | #5522 | `sdk::service::tests::a_blocked_service_lookup_returns_control_at_the_operation_deadline`; `abandoned_service_lookups_are_capped_at_one_and_fail_closed`; `the_service_transport_keeps_the_public_and_private_endpoint_guards`; `the_production_service_transport_queues_on_the_process_wide_gate` (recipe `docgraph-service-dns`) | `ad59b164-5a65-4e34-874e-a88498a1bb86`: the deadline and cap tests fail ("held the caller past its deadline: 5.0013s" against a 100 ms deadline); the guard and process-gate tests pass |
 
 
+#### S3 Gremlin adapter (#5515; R-DG-05, R-DG-07 limits)
+
+**Dependency decision.** `tokio-tungstenite` `=0.29.0` with default features
+off and only `handshake` enabled. It is optional, behind a new toolkit-aws
+feature `gremlin` (`sdk` plus the WebSocket crate). Only toolkit-cli
+`docgraph-live` enables `gremlin`, so the default build and the plain `sdk`
+build compile no WebSocket crate. This is the maintained RFC 6455 codec the
+design asks for, and the smallest option that keeps a reviewed client
+handshake: it checks `101`, `Upgrade`, `Connection` and `Sec-WebSocket-Accept`.
+Hand-rolling the framing was rejected ("do not invent codecs"). `handshake`
+uses only crates already in the lock (http, httparse, sha1, data-encoding).
+No TLS, connect, URL or root feature is enabled. The connection is the
+database capability's rustls/aws-lc stream, so no second TLS or root stack is
+added.
+
+The lockfile adds five packages: tokio-tungstenite 0.29.0, tungstenite
+0.29.0, and rand 0.9.5, rand_chacha 0.9.0 and rand_core 0.9.5. tungstenite
+depends on rand unconditionally to generate masking keys and the
+`Sec-WebSocket-Key`. None of the five is a TLS, root or certificate crate, and
+neither ring nor webpki-roots appears. rand_chacha is a ChaCha CSPRNG used for
+nothing but that masking. The sync job's log shows exactly these five
+`Adding` lines. Gremlin request ids come from the aws-lc `SecureRandom` that
+rustls already carries. Licences are MIT/Apache-2.0; MSRV is 1.71 for
+tungstenite and 1.63 for tokio-tungstenite. `futures-util` (already resolved)
+is a direct optional dependency, used for `StreamExt`/`SinkExt`.
+
+**Shared boundary.** `sdk::database::SecureOpener` (feature `gremlin`) runs
+the database connector's steps 2-4 unchanged. These are fresh resolution,
+validation of every answer and of the actual peer before any byte, and TLS
+that trusts exactly the `ValidatedRoots` and checks the original host name.
+The HTTP exchange now calls the same `secure_stream`, which is a pure
+extraction with no behaviour change. So the Gremlin plane cannot send a signed
+byte before the peer check (#5387). Verdicts keep their fixed `GuardRejection`
+text. Any other dial or TLS failure becomes one fixed message, "the TLS
+connection to the database could not be established", and rustls text is
+never forwarded.
+
+**`sdk::gremlin::GremlinConnection`:**
+- The upgrade `GET https://HOST:8182/gremlin` has an empty body. It is signed
+  with the toolkit `SigV4Signer` (service `neptune-db`) before any DNS or
+  socket work. Missing credentials, an unsigned result, a port other than 8182
+  or a region other than the policy's each send nothing.
+- The handshake carries the signed `host` (with its port), `x-amz-date`,
+  `x-amz-security-token` and `authorization` verbatim. The handshake layer
+  then adds `Connection`, `Upgrade` and `Sec-WebSocket-*`, which are therefore
+  not signed fields.
+- A non-101 answer is reported as a status number only.
+- Each `submit` sends one GraphSON v2 `eval` as a binary frame with the
+  drivers' MIME prefix: traversal source `g`, bindings typed as data, and a
+  fresh v4 request id. It collects 206 batches through the final 200/204 for
+  that id.
+- A foreign id, a Gremlin error status, an unsupported type, malformed JSON, a
+  premature close, idle silence or the deadline fails the statement. Server
+  text is never forwarded.
+- Any failure spends the connection: the socket is dropped at once, later
+  calls fail without sending, and nothing is reconnected or retried. A failure
+  after send says the outcome is unknown.
+- `close` sends a close frame within `CLOSE_BUDGET`, capped by the invocation
+  deadline. Dropping the connection drops the socket synchronously.
+
+**R-DG-07 limits (PM ruling 3 on #5366):**
+- The WebSocket frame limit is 1 MiB (`MAX_FRAME_BYTES`). tungstenite checks
+  the declared length in the frame header before it reserves the payload, so a
+  tiny frame declaring 2^40 bytes fails at once.
+- Messages and the bytes of one operation are capped at 16 MiB.
+- `GraphSON` depth is at most 64 enclosing containers (`MAX_DEPTH`). A typed
+  list counts as one container; a typed scalar wrapper does not. A raw JSON
+  nesting scan runs before parsing, so no tree is built past the limit.
+- At most 100,000 decoded results per operation (`MAX_RESULTS`), counting
+  every bulk copy. A bulk is checked before its value is decoded or copied.
+- Decision: bulk copies are also capped at 16 MiB of compact JSON
+  (`MAX_EXPANDED_BYTES`), so a small frame cannot expand to gigabytes within
+  the count limit.
+- The upgrade and each statement share one absolute deadline: 60 s per
+  operation, capped by the 15-minute invocation deadline, with the 30 s idle
+  bound between frames.
+
+**CLI.** `toolkit neptune seed --live --confirm-wipe --endpoint HOST
+--network-policy FILE [--region R]` (feature `docgraph-live`) checks
+everything below in this order, before roots, credentials, DNS or any socket:
+1. Argv consent and `--endpoint`, as in S1. `NEPTUNE_SEED_CONFIRM_WIPE` is
+   ignored in live mode.
+2. The policy file is read with its 16 KiB bound and parsed with
+   `network_policy::parse`. Consent-shaped keys are refused, and the file path
+   is never echoed.
+3. `--endpoint` must equal the policy host, the policy port must be 8182, and
+   the signing region must equal the policy region.
+
+After those checks, credentials use `GuardedCredentials::until` with the same
+deadline. The connection opens on the first statement, so the output order is
+the script's. The S1 T-DG-01e carrier row for this invocation now expects the
+policy's unknown-key refusal (exit 1) instead of "not available". `memory` and
+`wa-review` stay unavailable in live mode (S4/S2).
+
+Not changed, by decision: the `neptune` help text still says `--live` is
+reserved. Editing it would move the pinned usage hash in `diag_contract.rs`,
+a shared file S2 also touches. Follow-up: S6 caller/help update.
+
+**Tests.** `sdk::gremlin::tests` (17) and `docgraph_live` (2 new):
+
+| Case | Tests |
+|---|---|
+| T-DG-05a | `the_upgrade_is_signed_for_the_exact_authority_path_and_empty_body`: the received head is re-signed independently. `every_connection_is_signed_afresh`. `a_refused_upgrade_sends_no_statement`: a wrong secret gives a 403 and no frame. `missing_credentials_or_a_mismatched_scope_send_nothing`. `a_forbidden_answer_or_peer_never_receives_the_signed_upgrade`. `untrusted_and_wrong_host_certificates_get_no_upgrade`: untrusted, wrong-host and expired certificates. |
+| T-DG-05b | `the_request_is_a_graphson_v2_eval_with_bound_values_and_unique_ids`. `partial_batches_are_collected_in_order_through_the_final_status`: 206/206/200 with bulk, plus 204. `foreign_ids_server_errors_and_invalid_types_fail_and_spend_the_connection`. `graphson_v2_typed_values_decode_and_others_fail_closed`. |
+| T-DG-05c | `a_drop_after_the_statement_is_sent_is_one_send_no_retry_and_no_later_statement`. `a_silent_server_stops_at_the_idle_bound_with_an_unknown_outcome`. `close_is_bounded_against_a_server_that_never_answers_it`. |
+| T-DG-05d | `live_seed_consent_shaped_policy_keys_and_ambient_wipe_confirm_nothing`. `live_seed_refuses_policy_mismatches_before_credentials_or_dns`. Also the S1 `live_wipe_ignores_ambient_confirmation` and the carrier and hostile-network tests. |
+| T-DG-07b | `a_frame_at_the_limit_is_read_and_one_byte_more_is_refused`: exactly 1 MiB, then 1 MiB + 1. `a_tiny_frame_declaring_a_huge_length_fails_at_its_header`. `graphson_depth_is_admitted_at_64_and_refused_at_65`: plain lists, typed lists, maps, and 10,000 raw levels. `bulk_expansion_is_admitted_at_100000_results_and_refused_at_100001`: one past, `i64::MAX`, plain plus bulk, across batches, and the byte cap. |
+
+T-DG-09a: `connect_live`, the production constructor (system resolver and
+TCP dialer), joins the live identifiers. No test names it; the tests use the
+injected `SecureOpener::new`. Recipes: `gremlin-sync` (fmt plus an offline
+lock sync), `docgraph-gremlin` and `clippy-gremlin`.
 
 Implementation slices remain Rust, use scoped optional service dependencies,
 daemon-owned jobs and independent exact-SHA review. Each owns a requirement/test

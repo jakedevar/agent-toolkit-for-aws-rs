@@ -1,23 +1,28 @@
 import { Type } from "typebox";
+import { invokeAgentCoreBridge, type BridgeInvoker } from "./bridge.js";
 import { getConfig, loadConfig, type X402Config } from "./config.js";
 import { getPaymentSessionStatus, processPayment } from "./payments.js";
 import {
   PaymentBlocked,
   probeUrl,
   extractChallenge,
-  buildProcessPaymentPayload,
   buildPaymentPayloadEnvelope,
   sleepPastValidAfter,
   replayWithHeader,
   validateChallengePolicy,
 } from "./x402.js";
 
-function json(payload: unknown) {
+type ToolResult = {
+  content: { type: "text"; text: string }[];
+  details: Record<string, unknown>;
+};
+
+function json(payload: unknown): ToolResult {
   return {
     content: [
       { type: "text" as const, text: JSON.stringify(payload, null, 2) },
     ],
-    details: payload,
+    details: payload as Record<string, unknown>,
   };
 }
 
@@ -28,6 +33,9 @@ function clearObject(value: Record<string, unknown>): void {
 }
 
 export const MAX_RETURNED_BODY_BYTES = 10240;
+
+const FAILED_SAFELY =
+  "Payment flow failed safely without exposing provider or proof details";
 
 /**
  * Build the model-visible `get_paid_content` result from a successfully paid
@@ -73,9 +81,42 @@ export function buildPaidContentResult(
   return response;
 }
 
-async function paidFetch(url: string): Promise<Record<string, unknown>> {
+/**
+ * The seams of the paid tool (#5179). definePluginEntry always passes
+ * PRODUCTION; no environment variable, config value or tool parameter can
+ * replace them. Tests call registerTools with fakes.
+ */
+export interface PaidToolDeps {
+  probe: typeof probeUrl;
+  replay: typeof replayWithHeader;
+  invoke: BridgeInvoker;
+}
+
+const PRODUCTION: PaidToolDeps = Object.freeze({
+  probe: probeUrl,
+  replay: replayWithHeader,
+  invoke: invokeAgentCoreBridge,
+});
+
+/**
+ * The invocation-local proof registry (R-OC-FINAL): the signed payload's
+ * signature and the exact PAYMENT-SIGNATURE header value, kept from the
+ * moment each exists until the final output check. Never logged, global or
+ * persisted.
+ */
+interface ProofRegistry {
+  proof: Record<string, unknown> | null;
+  complete: boolean;
+  secrets: string[];
+}
+
+async function paidOutcome(
+  url: string,
+  deps: PaidToolDeps,
+  registry: ProofRegistry,
+): Promise<Record<string, unknown>> {
   try {
-    const probe = await probeUrl(url);
+    const probe = await deps.probe(url);
     if (probe.status !== 402) {
       return {
         paid: false,
@@ -88,33 +129,40 @@ async function paidFetch(url: string): Promise<Record<string, unknown>> {
     const config = getConfig();
     const parsed = extractChallenge(probe);
     const authorized = validateChallengePolicy(parsed, url, config);
-    const accepted = buildProcessPaymentPayload(authorized.accepted);
-    const payment = await processPayment(authorized.version, accepted, url);
-
-    let signature = "";
-    try {
-      await sleepPastValidAfter(payment.signedPayload);
-      signature = buildPaymentPayloadEnvelope(
-        authorized.resource,
-        authorized.accepted,
-        payment.signedPayload,
-      );
-      const result = await replayWithHeader(url, signature);
-      if (result.status === 402) {
-        return {
-          paid: false,
-          refused: false,
-          status_code: 402,
-          reason:
-            "The merchant still returned 402 after the idempotent paid replay",
-        };
-      }
-
-      return buildPaidContentResult(result, config);
-    } finally {
-      signature = "";
-      clearObject(payment.signedPayload);
+    const payment = await processPayment(
+      authorized.version,
+      authorized.accepted,
+      authorized.resource,
+      url,
+      deps.invoke,
+    );
+    registry.proof = payment.signedPayload;
+    const signature = payment.signedPayload.signature;
+    if (typeof signature === "string" && signature !== "") {
+      registry.secrets.push(signature);
+    } else {
+      registry.complete = false;
     }
+
+    await sleepPastValidAfter(payment.signedPayload);
+    const header = buildPaymentPayloadEnvelope(
+      authorized.resource,
+      authorized.accepted,
+      payment.signedPayload,
+    );
+    registry.secrets.push(header);
+    const result = await deps.replay(url, header);
+    if (result.status === 402) {
+      return {
+        paid: false,
+        refused: false,
+        status_code: 402,
+        reason:
+          "The merchant still returned 402 after the idempotent paid replay",
+      };
+    }
+
+    return buildPaidContentResult(result, config);
   } catch (error) {
     return {
       paid: false,
@@ -122,12 +170,78 @@ async function paidFetch(url: string): Promise<Record<string, unknown>> {
       reason:
         error instanceof PaymentBlocked
           ? error.message
-          : "Payment flow failed safely without exposing provider or proof details",
+          : FAILED_SAFELY,
     };
   }
 }
 
-export function definePluginEntry(api: any) {
+function isToolResult(value: Record<string, unknown>): value is ToolResult {
+  const keys = (object: object) => Object.keys(object).sort().join(",");
+  const content = value.content;
+  const details = value.details;
+  if (keys(value) !== "content,details" || !Array.isArray(content)) {
+    return false;
+  }
+  if (content.length !== 1) return false;
+  const item: unknown = content[0];
+  return (
+    Boolean(item) &&
+    typeof item === "object" &&
+    !Array.isArray(item) &&
+    keys(item as object) === "text,type" &&
+    (item as { type?: unknown }).type === "text" &&
+    typeof (item as { text?: unknown }).text === "string" &&
+    Boolean(details) &&
+    typeof details === "object" &&
+    !Array.isArray(details)
+  );
+}
+
+/**
+ * R-OC-FINAL: once a proof exists, the complete tool result is checked by the
+ * pure Rust sanitize_output operation before it is returned, over both the
+ * text and the details channel. Any failure returns the fixed refusal; the
+ * raw candidate is never returned.
+ */
+async function finalOutput(
+  candidate: ToolResult,
+  registry: ProofRegistry,
+  deps: PaidToolDeps,
+): Promise<ToolResult> {
+  if (registry.proof === null) return candidate;
+  if (!registry.complete) return json(refusal());
+  try {
+    const checked = await deps.invoke({
+      operation: "sanitize_output",
+      candidate,
+      secrets: [...registry.secrets, getConfig().payment_session_id],
+    });
+    return isToolResult(checked) ? checked : json(refusal());
+  } catch {
+    return json(refusal());
+  }
+}
+
+function refusal(): Record<string, unknown> {
+  return { paid: false, refused: true, reason: FAILED_SAFELY };
+}
+
+async function paidFetch(url: string, deps: PaidToolDeps): Promise<ToolResult> {
+  const registry: ProofRegistry = { proof: null, complete: true, secrets: [] };
+  try {
+    const payload = await paidOutcome(url, deps, registry);
+    return await finalOutput(json(payload), registry, deps);
+  } finally {
+    // Drop the registry's references and clear the proof object. The JS
+    // strings themselves cannot be erased (R-TS-CLEAN).
+    registry.secrets.length = 0;
+    if (registry.proof) clearObject(registry.proof);
+    registry.proof = null;
+  }
+}
+
+/** Register both tools against `deps`; definePluginEntry passes PRODUCTION. */
+export function registerTools(api: any, deps: PaidToolDeps): void {
   let configLoaded = false;
   async function ensureConfig() {
     if (!configLoaded) {
@@ -144,7 +258,7 @@ export function definePluginEntry(api: any) {
     parameters: Type.Object({}),
     async execute(_toolCallId: string) {
       await ensureConfig();
-      return json(await getPaymentSessionStatus());
+      return json(await getPaymentSessionStatus(deps.invoke));
     },
   });
 
@@ -158,9 +272,13 @@ export function definePluginEntry(api: any) {
     }),
     async execute(_toolCallId: string, params: { url: string }) {
       await ensureConfig();
-      return json(await paidFetch(params.url));
+      return paidFetch(params.url, deps);
     },
   });
+}
+
+export function definePluginEntry(api: any) {
+  registerTools(api, PRODUCTION);
 }
 
 export default definePluginEntry;

@@ -1,10 +1,6 @@
 # agents-pay troubleshooting
 
-Run Python commands from the virtual environment created during setup:
-
-```bash
-source .venv/bin/activate
-```
+Every command below is a `toolkit` command; `toolkit` must be on `PATH`.
 
 Two different situations, and it matters which one you are in:
 
@@ -12,7 +8,7 @@ Two different situations, and it matters which one you are in:
   policy (deliberately) or accept the refusal.
 - **A failure** — something is misconfigured or broken. Fix the wiring.
 
-`x402_fetch` never raises into the agent loop; it returns JSON. `refused: true`
+`toolkit agents-pay fetch` never raises into the agent loop; it prints JSON. `refused: true`
 means a policy decision, not a bug.
 
 > **For agents reading this:** a refusal is not an obstacle to route around. Do
@@ -30,10 +26,10 @@ your policy. Diagnose locally instead.
 ```bash
 # 1. What is the merchant actually asking for?
 curl -sD - https://<host>/<path> -o /dev/null \
-  | awk '/^payment-required:/{print $2}' | base64 -d | python3 -m json.tool
+  | awk '/^payment-required:/{print $2}' | base64 -d | jq .
 
 # 2. What does the policy allow?
-python3 scripts/agents_pay_admin.py show-config
+toolkit agents-pay admin show-config
 ```
 
 Compare, in this order:
@@ -50,26 +46,13 @@ Amounts are integer base units and USDC has 6 decimals: `2000` = $0.002,
 `500000` = $0.50. A cap of `0.001` refuses a `2000` challenge — that is correct
 arithmetic, not a bug.
 
-To confirm which rule fired, evaluate the real challenge directly:
-
-```bash
-python3 - <<'PY'
-import base64, json, httpx, sys
-sys.path.insert(0, "scripts")
-import x402_policy as pol
-url = "https://<host>/<path>"
-r = httpx.get(url, timeout=15)
-ch = json.loads(base64.b64decode(r.headers["payment-required"]))
-print(json.dumps(ch["accepts"], indent=2))
-try:
-    print("AUTHORIZED:", pol.authorize_payment(url, ch))
-except pol.PolicyError as e:
-    print("REFUSED:", e)
-PY
-```
+Compare the printed challenge with the printed policy field by field. The refusal
+is deliberately uniform, so the comparison is the diagnosis; running
+`toolkit agents-pay fetch` again changes nothing and never pays while the policy
+refuses.
 
 Then widen the policy only if the merchant's values are genuinely expected.
-Re-run `init-config --force` with the corrected allowlists — never hand-edit
+Re-run `toolkit agents-pay admin init-config --force` with the corrected allowlists — never hand-edit
 mode or ownership.
 
 ### "Origin ... is not in the configured allowed_origins"
@@ -95,7 +78,7 @@ valid payment target from this agent.
 There is no permissive default — payments are refused until a policy exists:
 
 ```bash
-python scripts/agents_pay_admin.py init-config \
+toolkit agents-pay admin init-config \
   --max-per-payment-usd 0.05 \
   --recipient 0xMerchantWalletAddress
 ```
@@ -115,7 +98,7 @@ investigate before "fixing" it — something wrote it as another user.
 ### "Payment policy allows no recipients" / recipient modes are mutually exclusive
 
 An empty allowlist denies everything. Absent keys deny rather than allow; there
-is no implicit wildcard. Re-run `init-config` with at least one `--recipient`,
+is no implicit wildcard. Re-run `toolkit agents-pay admin init-config` with at least one `--recipient`,
 or deliberately use `--allow-any-recipient` instead. Never combine the two
 modes. Add `--origin` only when you want to pin the merchant host set.
 
@@ -123,21 +106,22 @@ modes. Add `--origin` only when you want to pin the merchant host set.
 
 ### "PAYMENT_MANAGER_ARN is not set" (or INSTRUMENT/SESSION/USER)
 
-Runtime identifiers are missing. Run `preflight` to see which:
+Runtime identifiers are missing. Run `toolkit agents-pay admin preflight` to see which:
 
 ```bash
-python3 scripts/agents_pay_admin.py preflight
+toolkit agents-pay admin preflight
 ```
 
 Manager ARN and connector ID come from
 `agentcore/.cli/deployed-state.json`; the session ID from `new-session`.
 
-### "bedrock-agentcore with payments support is not installed"
+### "This toolkit build has no payment support"
 
-```bash
-python -m pip install --upgrade 'bedrock-agentcore>=1.19.0'
-python -c "from bedrock_agentcore.payments import PaymentManager; print('OK')"
-```
+The `toolkit` binary was built without the payment feature, so every `toolkit agents-pay` command prints this refusal and exits `2` before it reads anything. Install a release build of `toolkit`; there is nothing to configure.
+
+### "Missing payment resource '...'"
+
+The config and the environment both lack one resource identifier. The refusal reads: "Add it to the config (toolkit agents-pay admin init-config) or set <ENV>. Provision resources with the trusted setup path first." Run `toolkit agents-pay admin init-config` or export the named variable in the human's terminal.
 
 ### "Response exceeded N bytes"
 
@@ -162,16 +146,11 @@ it in a separate context that has no payment tool.
 
 ### `ConnectError` during the payment flow
 
-Usually TLS trust, not the payment path. Check:
+Usually TLS trust, not the payment path. The payment runtime verifies merchants and the payment service against the platform certificate store only. It ignores `SSL_CERT_FILE`, `SSL_CERT_DIR` and `AWS_CA_BUNDLE`, and it has no custom CA bundle option, so a TLS-inspecting proxy breaks it. On macOS it refuses while `SSL_CERT_FILE` or `SSL_CERT_DIR` is set: unset them for the payment command. Verification is never disabled.
 
-```bash
-python3 -c "import ssl; print(ssl.get_default_verify_paths().cafile)"
-python3 -c "import certifi; print(certifi.where())"
-```
+### The command ran longer than `X402_TIMEOUT_SECONDS`
 
-`x402_fetch` prefers certifi's CA bundle when present, because some interpreters
-(notably mise-managed Pythons) have no system CA file. Verification is never
-disabled — install `certifi` rather than working around it.
+The system DNS resolver cannot be cancelled, so a stalled DNS lookup can exceed X402_TIMEOUT_SECONDS. The runtime checks the deadline before and after every lookup: no connection, authorization or proof send starts after the deadline, so a late lookup delays the end of the command but never causes a payment or a late proof send. The command then reports the timeout. Fix the resolver or the network rather than raising the timeout.
 
 ### 30x response instead of content
 
@@ -196,7 +175,7 @@ another origin. Point the agent at the final URL instead.
 
 ### A payment went through that the policy should have refused
 
-Almost always: something other than `x402_fetch` settled it. The gate is only in the
+Almost always: something other than `toolkit agents-pay fetch` settled it. The gate is only in the
 path for calls that route through this skill's tool.
 
 Check whether a framework-native integration is active:
@@ -206,8 +185,8 @@ grep -rn 'AgentCorePaymentsPlugin\|AgentCorePaymentsMiddleware\|payments.integra
 ```
 
 If either is registered, payment happens inside the framework and
-`x402_policy.py` is never consulted — no ceiling, no origin check, no derived token.
-Remove it and register `x402_fetch`, or accept that the controls do not apply. Running
+the toolkit policy is never consulted — no ceiling, no origin check, no derived token.
+Remove it and route payments through `toolkit agents-pay fetch`, or accept that the controls do not apply. Running
 both means the model picks which one settles a given `402`.
 
 Also confirm the runtime role really lacks session-write permission, since
@@ -268,11 +247,7 @@ export X402_MAX_PAYMENT_ATTEMPTS=8
 ```
 
 The retry reuses the same derived `client_token`, so re-attempting replays the
-*same* authorization rather than paying twice. Verify with:
-
-```bash
-python3 scripts/test_x402_policy.py -k IdempotencyTests
-```
+*same* authorization rather than paying twice. This holds only while the merchant's terms stay the same: a retry that meets a different amount or another allowed recipient derives a different token (L-TERMS, see "Known limits" in `SKILL.md`).
 
 If it persists, the merchant's settlement is lagging (common on testnets) or its
 x402 version handling differs. Confirm `x402Version` in the challenge and retry
@@ -282,9 +257,9 @@ happens.
 ## Health check
 
 ```bash
-python3 scripts/test_x402_policy.py                  # all must pass
-python3 scripts/agents_pay_admin.py show-config      # 0600, owned by you
-python3 scripts/agents_pay_admin.py preflight        # wiring + no stray secrets
+toolkit agents-pay admin show-config      # 0600, owned by you
+toolkit agents-pay admin preflight        # wiring + no stray secrets
+toolkit agents-pay fetch --status         # the session is usable
 aws iam get-role-policy --role-name <RuntimeRole> --policy-name <P> \
   | grep -c CreatePaymentSession                     # must be 0
 ```

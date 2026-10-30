@@ -81,6 +81,8 @@ use crate::transport::{
 use roots::ValidatedRoots;
 
 pub mod database;
+#[cfg(feature = "gremlin")]
+pub mod gremlin;
 pub mod lookup;
 pub mod profile;
 pub mod recorder;
