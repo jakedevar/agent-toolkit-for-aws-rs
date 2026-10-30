@@ -1276,3 +1276,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
   #5549 (B4 production-wiring test gap) -> Codex terra high 35c39aec, pinned 9954bc44. Workers: 49f304c4 S2 re-review, 516127c1 #5488, ec67ec2f B5, 35c39aec #5549.
 - 01:25Z: #5528 LANDED (3069, landed_sha c11fc57f0df8b9da892122b02fe1c19656061b5f); auto-closed. Queue: 3070 B4, 3071 S3.
 - 01:26Z: OpenClaw B4 #5535 LANDED (3070, landed_sha 1d5ed049af2ae5199a36934b09932a5697a581a9); auto-closed. Closed #5164 #5163 #5162 #5179. #5160 (P1 R-OC-FINAL) and #5161 (publishing) stay open until B5 #5550. Queue: 3071 S3.
+- 01:28Z: #5488 (516127c1) DONE at caed367cdf881dd28c8de68bbd2e259aeabc1a40 (one negative fixture, 12 lines in agents_pay_gate.rs; mutation red 56546994, green ec382bec, scoped 3e0e7075 ok 4748). PM verified diff. #5265 mismatch only -> ENQUEUED seq 3072 (18fb0fd1, issue 5488).
+  #5547 (S3 P2 follow-ups: signing in op budget, post-send unknown outcome, close fixture, bounded expect_err) -> Codex sol xhigh ae38f668, pinned 291a5b7d. Production change by Codex -> needs a Claude Opus cross-family review.
+  Workers: 49f304c4 S2 re-review, ec67ec2f B5, 35c39aec #5549, ae38f668 #5547. Queue: 3071 S3, 3072 #5488.
