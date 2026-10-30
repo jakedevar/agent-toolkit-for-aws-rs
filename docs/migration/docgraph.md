@@ -1398,9 +1398,11 @@ and an SDK wait on anything but the bridge fails closed. The toolkit path:
 5. the toolkit `StreamingTransport` sends exactly the signed request under
    the same deadline and a 16 MiB response cap, regenerating authority and
    framing from the unchanged URL and body;
-6. a 2xx with an empty body, or a Query/XML 2xx that is not one
+6. any response carrying a document type declaration is refused explicitly
+   as `InvalidResponse`, for every operation and HTTP status (repair #5544).
+   A 2xx with an empty body, or a Query/XML 2xx that is not one
    well-formed XML document rooted at the operation's `{Operation}Response`
-   (repair #5521, below), is `InvalidResponse`; everything else, non-2xx
+   (repair #5521, below), is also `InvalidResponse`; everything else, non-2xx
    included, goes to the modeled decoder.
 
 **One retry owner (T-DG-04c).** `RetryPolicy::default()` (three retries,
@@ -1466,8 +1468,12 @@ Request members accepted: exactly those the checks build (for example
 `ListSecrets` only; `GetSecretValue`, `BatchGetSecretValue` and
 `DescribeSecret` are refused before any request is built (T-DG-04d).
 
-**Dependency audit (spike criterion 3).** S2 changes no manifest and no
-lockfile: `git diff origin/rolling -- Cargo.lock '*Cargo.toml'` is empty.
+**Dependency audit (spike criterion 3).** Original S2 and repair 1 changed
+no manifest or lockfile. Repair 2 (#5544) adds an optional direct
+`xmlparser = "=0.13.6"` dependency to toolkit-cli's `docgraph-live` feature
+and its toolkit-cli dependency edge in Cargo.lock. This is the already
+locked tokenizer used by roxmltree and aws-smithy-xml; it adds no package
+or version to the lockfile and no default-build dependency.
 The four service crates, `aws-credential-types`, `aws-smithy-runtime-api`
 and `aws-smithy-types` are the existing optional `docgraph-live` pins, so
 no TLS, root, crypto or connector crate is added and no SDK HTTP connector
@@ -1518,16 +1524,19 @@ requires every successful Query/XML body to meet all of these:
 - one well-formed XML document: matched nesting, a single root, only
   comments, processing instructions and whitespace outside the root, and
   declared namespace prefixes;
-- no document type declaration;
+- no document type declaration (completed by repair 2's explicit token
+  check below; repair 1's parser-default assumption was incomplete);
 - a root element whose local name is the operation's `{Operation}Response`,
   in any namespace.
 
 Anything else is a non-retried `InvalidResponse` after one send.
 
-- **Parser:** `roxmltree` 0.14.1 with its default options, which refuse a
-  DTD. It is already a direct toolkit-cli dependency, used by the payment
+- **Parser:** `roxmltree` 0.14.1 with its default options. Those options
+  refuse internal-subset DTDs but accept no-subset declarations (#5544);
+  the explicit token check in repair 2 completes the refusal. It is
+  already a direct toolkit-cli dependency, used by the payment
   plane, and is built on `xmlparser` 0.13.6, the same tokenizer the SDK's
-  `aws-smithy-xml` 0.64.0 uses. The manifests and lockfile are unchanged.
+  `aws-smithy-xml` 0.64.0 uses. Repair 1 changed no manifest or lockfile.
 - **Open elements at end of input:** roxmltree 0.14.1 refuses a mismatched
   close, but it accepts end of input while elements are still open. The
   first fix commit, `63e9edb5`, missed this: job
@@ -1579,6 +1588,40 @@ and that wiring must use this constructor.
 | #5521 | `docgraph::tests::live::t_dg_04b_malformed_xml_with_a_closing_root_never_succeeds` (DocumentDB and EC2: mismatched close, second root, missing inner close, crossed closes, trailing text, DTD, undeclared prefix, unclosed item, cut at an element boundary, root never closed); `t_dg_04b_valid_empty_namespaced_and_commented_xml_decodes_unchanged` | `122b243e-0a23-47ca-8263-4bc9cd2f08db`: both fail ("docdb mismatched close: malformed XML became a success … BackupRetentionPeriod 7"; a trailing comment was refused); the other 15 S2 tests pass |
 | #5522 | `sdk::service::tests::a_blocked_service_lookup_returns_control_at_the_operation_deadline`; `abandoned_service_lookups_are_capped_at_one_and_fail_closed`; `the_service_transport_keeps_the_public_and_private_endpoint_guards`; `the_production_service_transport_queues_on_the_process_wide_gate` (recipe `docgraph-service-dns`) | `ad59b164-5a65-4e34-874e-a88498a1bb86`: the deadline and cap tests fail ("held the caller past its deadline: 5.0013s" against a 100 ms deadline); the guard and process-gate tests pass |
 
+
+#### S2 repair 2: explicit document type refusal (#5544)
+
+Re-review #5516 found that roxmltree's default DTD refusal did not cover
+`xmlparser::Token::EmptyDtd`: plain, SYSTEM and PUBLIC declarations without
+an internal subset still decoded as successful review data. The bridge now
+checks the pinned tokenizer's structural stream before any modeled decoder,
+refusing both `DtdStart` and `EmptyDtd` explicitly as a non-retried
+`InvalidResponse` after exactly one send. This applies to all ten operations
+and every HTTP status, including non-2xx service-error bodies. No DTD URL is
+resolved or fetched. Comments, CDATA and processing instructions are distinct
+tokens: their text is never searched for markup. Non-XML bodies continue to
+the same operation validation/decoder as before; valid bytes are unchanged.
+
+Five separate permanent tests cover the review's DocumentDB plain/SYSTEM/
+PUBLIC and EC2 plain/SYSTEM no-subset probes. The all-operation matrix adds
+empty and populated internal subsets, prolog declaration/comment handling,
+and HTTP 200/400/429/500, asserting `InvalidResponse`, non-retryability,
+exactly one send and no backoff. Existing malformed nesting, partial,
+multiple-root and valid-response equality tests remain. The equality tests
+also cover DOCTYPE-looking text in comments and CDATA for both services.
+
+Red source: tests-only `54697ae9af9e6d5a49dea5ad6f118cd3e9423055`, based on
+merge `9001128661f3783d2ad90f84c7ec91459fb9968c` (repair-1 `87f1c3fa` plus
+rolling `921aa719719982c1cb4c533880b5a562cd537fcf`). Daemon job
+`4c7d5e13-1e8a-4a8d-84bb-5af9fdfbf3b8` ran 23 S2 tests: all five required
+probes decoded as success and the status matrix failed on a 400 service
+error; the other 17 tests passed, including valid comment/CDATA equality.
+The final green and gate job IDs are recorded in the #5489 handoff.
+
+The merge keeps both feature-gated modules (`live` for S2 and `live_seed`
+for S3), all S3 Gremlin CLI wiring, and both migration-document sections.
+The accepted #5522 DNS construction and guards are untouched by repair 2.
+The review CLI still refuses `--live`; no live AWS run is authorized here.
 
 #### S3 Gremlin adapter (#5515; R-DG-05, R-DG-07 limits)
 

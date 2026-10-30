@@ -21,7 +21,8 @@
 //!    the toolkit [`StreamingTransport`] under the same deadline and a 16 MiB
 //!    response cap. The transport regenerates authority and framing from the
 //!    unchanged URL and body;
-//! 4. hands the bounded raw response, non-2xx included, back to the SDK's
+//! 4. refuses document type declarations, then hands the bounded raw
+//!    response, non-2xx included, back to the SDK's
 //!    modeled decoder and maps the decoded output onto the seam: only the
 //!    fields the checks read, absent values omitted, never `null`.
 //!
@@ -340,6 +341,13 @@ impl<'a> LiveAwsClient<'a> {
             }
             (stream.status(), stream.headers().clone(), body)
         };
+        // Refuse a real declaration for every operation and HTTP status,
+        // before any modeled success or service-error decoder sees it.
+        if has_document_type(&body) {
+            return Err(AwsError::invalid_response(
+                "the service returned an XML document type declaration",
+            ));
+        }
         if (200..300).contains(&status) {
             if body.is_empty() {
                 return Err(AwsError::invalid_response(
@@ -399,17 +407,38 @@ impl Sleeper for DeadlineSleeper<'_> {
     }
 }
 
+/// Whether an XML body contains a real document type declaration (#5544).
+///
+/// roxmltree 0.14.1's default DTD refusal covers `DtdStart`, but silently
+/// accepts `EmptyDtd` (plain, SYSTEM or PUBLIC without an internal subset).
+/// Check both tokens explicitly, using its same pinned tokenizer. Comments,
+/// CDATA and processing instructions are distinct tokens, never searched as
+/// text. This only detects declarations: non-XML/invalid UTF-8 bodies remain
+/// subject to the operation's existing validation and modeled decoder.
+fn has_document_type(body: &[u8]) -> bool {
+    let Ok(text) = std::str::from_utf8(body) else {
+        return false;
+    };
+    xmlparser::Tokenizer::from(text).any(|token| {
+        matches!(
+            token,
+            Ok(xmlparser::Token::DtdStart { .. } | xmlparser::Token::EmptyDtd { .. })
+        )
+    })
+}
+
 /// Whole-document validation of a successful Query/XML response (#5521).
 ///
 /// The pinned SDK decoder reads only the elements it looks for: it does not
 /// check that closes match their opens, that there is one root, or that
 /// nothing follows it. So the body must first parse as one well-formed XML
 /// document (UTF-8; matched nesting; a single root; only comments, processing
-/// instructions and whitespace around it; declared namespace prefixes; no
-/// document type declaration) whose root element is the operation's own
+/// instructions and whitespace around it; declared namespace prefixes)
+/// whose root element is the operation's own
 /// `{Op}Response`, in any namespace. The parser is `roxmltree` (already a
 /// toolkit-cli dependency, over the same `xmlparser` 0.13.6 tokenizer as the
-/// SDK's `aws-smithy-xml`), with its default options, which refuse a DTD.
+/// SDK's `aws-smithy-xml`). [`has_document_type`] explicitly refuses DTDs
+/// before this check; the parser's defaults do not refuse all DTD forms.
 ///
 /// roxmltree 0.14.1 itself accepts end of input while elements are still
 /// open (it refuses only a mismatched close), so every element must also be
