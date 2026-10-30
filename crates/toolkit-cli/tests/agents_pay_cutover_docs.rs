@@ -734,6 +734,167 @@ fn s7_text_agents_build_step_runs_the_toolkit_command() {
     );
 }
 
+// ------------------------------------------- human-only Step 6 (#5538)
+
+/// Phrases that make an agent the runner of a step.
+const AGENT_RUN_PHRASES: &[&str] = &[
+    "run automatically",
+    "runs automatically",
+    "agent runs",
+    "agent can run",
+    "agent will run",
+    "agent executes",
+    "you run it",
+    "you run the",
+    "run it yourself",
+];
+
+/// Paragraphs of `text` that mention the human-only setup step and also hand it
+/// to the agent.
+fn agent_run_setup_paragraphs(text: &str) -> Vec<String> {
+    text.split("\n\n")
+        .map(flat)
+        .filter(|paragraph| {
+            let lower = paragraph.to_ascii_lowercase();
+            ["setup-payment-user", "step 6", "instrument/session"]
+                .iter()
+                .any(|needle| lower.contains(needle))
+                && AGENT_RUN_PHRASES
+                    .iter()
+                    .any(|phrase| lower.contains(phrase))
+        })
+        .collect()
+}
+
+/// The text from the line starting with `heading` up to the next heading of the
+/// same or a higher level.
+fn section<'a>(text: &'a str, heading: &str) -> &'a str {
+    let start = text
+        .find(heading)
+        .unwrap_or_else(|| panic!("no section {heading:?}"));
+    let level = heading.chars().take_while(|c| *c == '#').count();
+    let rest = &text[start + heading.len()..];
+    let end = rest
+        .lines()
+        .scan(0usize, |offset, line| {
+            let at = *offset;
+            *offset += line.len() + 1;
+            Some((at, line))
+        })
+        .find(|(_, line)| {
+            let hashes = line.chars().take_while(|c| *c == '#').count();
+            hashes > 0 && hashes <= level && line[hashes..].starts_with(' ')
+        })
+        .map_or(rest.len(), |(at, _)| at);
+    &text[start..start + heading.len() + end]
+}
+
+/// Problems with the execution model that opens the `agents-build` payments
+/// page: Step 6 must be a developer terminal action, never an automatic step.
+fn opening_workflow_problems(text: &str) -> Vec<String> {
+    let mut problems = Vec::new();
+    let opening = section(text, "## Process");
+    let opening = opening
+        .find("### Step 0")
+        .map_or(opening, |at| &opening[..at]);
+    let step6_bullet = opening
+        .lines()
+        .find(|line| line.trim_start().starts_with("- **Step 6"));
+    match step6_bullet {
+        None => problems.push("the opening does not list Step 6 as a developer point".to_owned()),
+        Some(line) => {
+            for needle in ["developer", "setup-payment-user", "approve"] {
+                if !line.contains(needle) {
+                    problems.push(format!("the Step 6 bullet lacks {needle:?}"));
+                }
+            }
+        }
+    }
+    for paragraph in opening.split("\n\n").map(flat) {
+        let lower = paragraph.to_ascii_lowercase();
+        if lower.contains("automatically")
+            && ["6 (", "step 6", "instrument/session", "→ 6"]
+                .iter()
+                .any(|needle| lower.contains(needle))
+        {
+            problems.push(format!(
+                "Step 6 sits in an automatic paragraph: {paragraph}"
+            ));
+        }
+        if lower.contains("→ 6") || lower.contains("-> 6") {
+            problems.push(format!("the opening runs on into Step 6: {paragraph}"));
+        }
+    }
+    problems
+}
+
+/// The execution model as shipped at cc3e66a0, before the repair.
+const OLD_OPENING: &str = "## Process\n\n**Execution model — minimize human stops.** Run the steps yourself. There are only **two** points that require the developer:\n\n- **Step 3b (connector credentials)** — the developer authorizes.\n- **Step 7 (delegation + funding)** — the developer funds it.\n\nEverything else — Steps 0–3a, **4 (deploy), 5 (wire), 6 (instrument/session), 8 (set env + test)** — you run automatically. After the developer confirms 3b, continue through 4 → 5 → 6.\n\n### Step 0: x\n";
+
+#[test]
+fn s7_human_only_opening_workflow_makes_step6_a_developer_action() {
+    let problems = opening_workflow_problems(&read(PAYMENTS_REFERENCE));
+    assert!(problems.is_empty(), "{problems:#?}");
+}
+
+#[test]
+fn s7_human_only_opening_check_rejects_the_old_opening() {
+    let problems = opening_workflow_problems(OLD_OPENING);
+    assert!(
+        problems.iter().any(|p| p.contains("automatic paragraph")),
+        "{problems:#?}"
+    );
+    assert!(
+        problems.iter().any(|p| p.contains("developer point")),
+        "{problems:#?}"
+    );
+}
+
+#[test]
+fn s7_human_only_no_page_hands_the_setup_step_to_the_agent() {
+    for page in governed_pages() {
+        let bad = agent_run_setup_paragraphs(&page.text);
+        assert!(bad.is_empty(), "{}: {bad:#?}", page.rel);
+    }
+}
+
+#[test]
+fn s7_human_only_scan_rejects_seeded_agent_run_text() {
+    let seeded = "Everything else, 6 (instrument/session), you run automatically.\n\nThe agent runs setup-payment-user for the user.\n";
+    assert_eq!(agent_run_setup_paragraphs(seeded).len(), 2);
+    let fine = "The agent cannot run setup-payment-user headless; the developer does.\n";
+    assert!(agent_run_setup_paragraphs(fine).is_empty());
+}
+
+#[test]
+fn s7_human_only_step6_and_step8_route_through_the_developer() {
+    let text = read(PAYMENTS_REFERENCE);
+    let step6 = section(&text, "### Step 6");
+    assert!(
+        step6.lines().next().unwrap().contains("developer runs"),
+        "the Step 6 heading no longer says the developer runs it"
+    );
+    assert_mentions(
+        "payments.md Step 6",
+        step6,
+        &[
+            "typing `approve` at that terminal",
+            "must not ask for the output to be pasted into chat",
+        ],
+    );
+    let step8 = section(&text, "### Step 8");
+    let heading = step8.lines().next().unwrap();
+    assert!(
+        !heading.contains("agent runs"),
+        "the Step 8 heading hands the printed values to the agent: {heading}"
+    );
+    assert_mentions(
+        "payments.md Step 8",
+        step8,
+        &["developer", "their own terminal", "not pasted into chat"],
+    );
+}
+
 // ------------------------------------------------------- OpenClaw parts
 
 #[test]
