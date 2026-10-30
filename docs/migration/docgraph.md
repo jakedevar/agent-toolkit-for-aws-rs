@@ -1103,11 +1103,12 @@ that bound exists. Superseded: the bound now exists
 
 T-DG-09a: `docgraph_live::test_inventories_hold_no_unignored_live_entry`
 parses every test in toolkit-cli and toolkit-aws with `syn` and requires any
-test naming `for_database`, `SystemDatabaseResolver`, `TcpDialer` or the
+test naming `for_database`, `SystemDatabaseResolver`, `TcpDialer`, `connect_live`,
+`run_live_review` or the
 exact `TOOLKIT_DOCGRAPH_LIVE_TESTS` variable to be both `#[ignore]` and
 `cfg(feature = "docgraph-live")`; a fixture test proves the rule flags an
 unguarded test. `ordinary_and_live_shaped_runs_never_reach_the_network`
-runs default and live-shaped invocations with every proxy, endpoint and
+runs default and preflight-refused live-shaped invocations with every proxy, endpoint and
 metadata variable aimed at a loopback listener that only counts connection
 attempts, with canary credentials and the acceptance flag set; it asserts
 zero connections, no canary in output and no live success. Both run under
@@ -1621,7 +1622,8 @@ The final green and gate job IDs are recorded in the #5489 handoff.
 The merge keeps both feature-gated modules (`live` for S2 and `live_seed`
 for S3), all S3 Gremlin CLI wiring, and both migration-document sections.
 The accepted #5522 DNS construction and guards are untouched by repair 2.
-The review CLI still refuses `--live`; no live AWS run is authorized here.
+At the S2 repair-2 handoff the review CLI still refused `--live`; #5507 below
+adds routing after S2 acceptance. No live AWS run is authorized here.
 
 #### S3 Gremlin adapter (#5515; R-DG-05, R-DG-07 limits)
 
@@ -1752,7 +1754,8 @@ After those checks, credentials use `GuardedCredentials::until` with the same
 deadline. The connection opens on the first statement, so the output order is
 the script's. The S1 T-DG-01e carrier row for this invocation now expects the
 policy's unknown-key refusal (exit 1) instead of "not available". `memory` and
-`wa-review` stay unavailable in live mode (S4/S2).
+`wa-review` stayed unavailable at the S3 handoff (S4/S2). #5507 below enables
+the review after S2 acceptance; memory live dispatch remains S4.
 
 Not changed, by decision: the `neptune` help text still says `--live` is
 reserved. Editing it would move the pinned usage hash in `diag_contract.rs`,
@@ -1772,6 +1775,64 @@ T-DG-09a: `connect_live`, the production constructor (system resolver and
 TCP dialer), joins the live identifiers. No test names it; the tests use the
 injected `SecureOpener::new`. Recipes: `gremlin-sync` (fmt plus an offline
 lock sync), `docgraph-gremlin` and `clippy-gremlin`.
+
+#### S2 CLI routing (#5507; R-DG-01/02, T-DG-09a)
+
+Prerequisite: the reviewed S2 repair-2 source landed on rolling at
+`4922e6db`. `documentdb wa-review --live` now selects `LiveAwsClient` in a
+`docgraph-live` build. Feature-only, recorded and no-live invocations keep
+their existing clients, output, error classes, statuses and report bytes.
+The "no live AWS client" diagnostic is emitted only by a no-live review.
+
+The command checks argv live selection, incompatible `--recorded`, required
+`--cluster-id` and `--region`, cluster syntax, region syntax/standard partition
+and optional `--now` before entering the production constructor. A profile or
+`AWS_REGION`/`AWS_DEFAULT_REGION` cannot supply the review's required region.
+Read-only infrastructure review needs explicit argv `--live`, with no mutation
+consent flag. Neither input files nor environment/configuration can select it.
+The standard-partition validator is shared with `LiveAwsClient::new`.
+
+Only then does `live_review::run_live_review` construct `SdkRuntime`, one
+`ValidatedRoots` set, the public `SdkTransport::new`,
+`ProviderHttp::validated_bounded`, `GuardedCredentials`, `ThreadSleeper` and
+`FullJitter`. It passes `LiveAwsClient` to the unchanged
+`infra::run_infra_checks`. Signing resolves credentials with
+`GuardedCredentials::until(deadline)` through S2's `DeadlineSigner`
+implementation. The reviewed service allowlist, endpoint admission, codecs,
+bounded responses, operation deadline and sole toolkit retry owner are reused.
+No dependency or lockfile change is needed. `--network-policy` remains the
+database-plane policy option; it cannot redirect the review's public AWS
+endpoints. Private/VPC review API endpoints remain unsupported.
+
+The existing analysis/report path also serves live infrastructure plus
+`--analysis-data`; private reports retain create-new/0600 custody. Adapter
+construction failures are runtime errors (`docgraph_review`, exit 1) without
+analysis reads or report creation. Service/credential failures remain review
+findings with the existing exit-0 report contract, including zero HTTP sends
+when credentials fail. No provider/SDK error is formatted with Debug.
+
+Offline evidence inventory:
+
+- `docgraph::tests::live::cli::t_5507_*` injects the adapter callback with S2's
+  in-memory HTTP seam and fixture signer. Successful dispatch over all four
+  services matches the independent recorded CLI fixture byte for byte for
+  stdout, stderr, JSON and Markdown, both with and without analysis. Other
+  cases count zero factory entries on failed preflight and offline paths,
+  compare no-live/recorded output, and cover credential and setup failures.
+- `docgraph_live::live_review_argv_preflight_precedes_environment_files_and_network`
+  runs only invalid/missing argv under hostile AWS configuration and asserts
+  usage status, no input reads/reports and zero provider/socket activity.
+  The carrier row also omits argv region; a valid live review is exercised
+  exclusively through injected seams, never the production constructor.
+- T-DG-09a recognizes `run_live_review` as a production live entry and its
+  inventory fixture proves an unignored test naming it is rejected. No new
+  ignored/live acceptance test is introduced. Existing replay goldens remain.
+
+The help fragments and usage pins are unchanged to preserve no-live usage
+bytes. The synopsis already lists `--live`; S6 owns the broader help/caller
+refresh, including the historical Neptune description noted above. Default
+tests never run live AWS. T-DG-09b remains an unperformed operator gate;
+routing and offline verification do not claim live acceptance or retirement.
 
 Implementation slices remain Rust, use scoped optional service dependencies,
 daemon-owned jobs and independent exact-SHA review. Each owns a requirement/test

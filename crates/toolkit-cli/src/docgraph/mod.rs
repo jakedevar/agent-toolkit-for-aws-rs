@@ -13,13 +13,12 @@
 //! whose security properties are asserted by this module's tests. No command
 //! creates an environment.
 //!
-//! No command opens a socket, a database connection or reads a credential in
-//! this build. Every AWS or database interaction goes through a seam
-//! ([`client::AwsClient`], [`seed::GremlinSession`]) with a recorded
-//! implementation (`--recorded FILE`) and a "no live client" implementation.
-//! The live AWS review client is `live` (feature `docgraph-live`, not yet
-//! routed from `--live`); the Gremlin binding and the helper libraries
-//! `graphrag_pipeline.py` and `agentic_memory.py` are follow-ups. The `--uri`
+//! Every AWS or database interaction goes through a seam
+//! ([`client::AwsClient`], [`seed::GremlinSession`]) with recorded and no-live
+//! implementations. The non-default `docgraph-live` feature enables the AWS
+//! review client (`live`) and Gremlin seed adapter (`live_seed`), selected
+//! only by argv `--live` after consent and region preflight. Ordinary and
+//! recorded runs never construct these adapters. The `--uri`
 //! database collection of `wa_review.py` is replaced by a user-run shell recipe and
 //! the offline `capture` normalizer (`toolkit documentdb normalize-capture`). Parity
 //! evidence and the intentional changes are in `docs/migration/docgraph.md`.
@@ -54,6 +53,8 @@ mod infra;
 pub mod live;
 #[cfg(feature = "docgraph-live")]
 mod live_memory;
+#[cfg(feature = "docgraph-live")]
+mod live_review;
 #[cfg(feature = "docgraph-live")]
 mod live_seed;
 pub mod memory;
@@ -222,6 +223,7 @@ fn live_selected(invocation: &Invocation) -> Result<bool, ToolkitError> {
     Ok(true)
 }
 
+#[cfg(not(feature = "docgraph-live"))]
 fn unavailable_live() -> ToolkitError {
     usage("live docgraph adapters are not available in this build")
 }
@@ -231,9 +233,27 @@ pub fn wa_review_command(
     invocation: &Invocation,
     out: &mut Output<'_>,
 ) -> Result<(), ToolkitError> {
-    if live_selected(invocation)? {
-        return Err(unavailable_live());
-    }
+    wa_review_with_live(invocation, out, |region, cluster_id, now| {
+        #[cfg(feature = "docgraph-live")]
+        {
+            live_review::run_live_review(region, cluster_id, now)
+        }
+        #[cfg(not(feature = "docgraph-live"))]
+        {
+            let _ = (region, cluster_id, now);
+            Err(unavailable_live())
+        }
+    })
+}
+
+/// The adapter callback is entered only after argv preflight. Production
+/// supplies only `run_live_review`; tests inject an offline implementation.
+fn wa_review_with_live(
+    invocation: &Invocation,
+    out: &mut Output<'_>,
+    run_live: impl FnOnce(&str, &str, i64) -> Result<checks::Findings, ToolkitError>,
+) -> Result<(), ToolkitError> {
+    let live = live_selected(invocation)?;
     let missing: Vec<&str> = ["--cluster-id", "--region"]
         .into_iter()
         .filter(|flag| required(invocation, flag).is_none())
@@ -254,6 +274,10 @@ pub fn wa_review_command(
     if !is_valid_region(region) {
         return Err(usage("--region must look like us-east-1"));
     }
+    #[cfg(feature = "docgraph-live")]
+    if live {
+        live::validate_region(region).map_err(|error| usage(error.to_string()))?;
+    }
     let now = match invocation.value("--now") {
         None => now_seconds(),
         Some(text) => parse_iso_timestamp(text)
@@ -266,24 +290,28 @@ pub fn wa_review_command(
         "Running Well-Architected Review for {cluster_id} in {region}..."
     ))?;
     out.line("  Running infrastructure checks (AWS APIs)...")?;
-    let mut recorded: Option<RecordedClient> = None;
-    if let Some(path) = invocation.value("--recorded") {
-        let document = load_recorded(path)?;
-        recorded = Some(
-            RecordedClient::from_document(&document)
-                .map_err(|reason| recorded_error(path, &reason))?,
-        );
+    let mut results = if live {
+        run_live(region, cluster_id, now)?.checks
     } else {
-        out.diagnostic(
-            "note: this build includes no live AWS client; pass --recorded FILE to replay recorded responses",
-        );
-    }
-    let mut no_live = NoLiveClient;
-    let client: &mut dyn AwsClient = match recorded.as_mut() {
-        Some(recorded) => recorded,
-        None => &mut no_live,
+        let mut recorded: Option<RecordedClient> = None;
+        if let Some(path) = invocation.value("--recorded") {
+            let document = load_recorded(path)?;
+            recorded = Some(
+                RecordedClient::from_document(&document)
+                    .map_err(|reason| recorded_error(path, &reason))?,
+            );
+        } else {
+            out.diagnostic(
+                "note: this build includes no live AWS client; pass --recorded FILE to replay recorded responses",
+            );
+        }
+        let mut no_live = NoLiveClient;
+        let client: &mut dyn AwsClient = match recorded.as_mut() {
+            Some(recorded) => recorded,
+            None => &mut no_live,
+        };
+        infra::run_infra_checks(client, cluster_id, now).checks
     };
-    let mut results = infra::run_infra_checks(client, cluster_id, now).checks;
     out.line(&format!(
         "  Infrastructure: {} checks completed",
         results.len()

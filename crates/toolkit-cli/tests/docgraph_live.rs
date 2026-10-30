@@ -136,6 +136,13 @@ fn live_memory_requires_consent_for_every_mutating_operation() {
 #[cfg(feature = "docgraph-live")]
 fn live_rejects_recorded_and_dry_run_before_files() {
     for args in [
+        &[
+            "documentdb",
+            "wa-review",
+            "--live",
+            "--recorded",
+            "/does/not/exist",
+        ][..],
         &["neptune", "seed", "--live", "--recorded", "/does/not/exist"][..],
         &[
             "neptune",
@@ -288,12 +295,13 @@ fn live_seed_refuses_policy_mismatches_before_credentials_or_dns() {
 /// Identifiers only a live test would use: the production database transport
 /// and resolver. A test naming one, or the exact acceptance gate variable,
 /// must be `#[ignore]` and gated on the `docgraph-live` feature.
-const LIVE_IDENTS: [&str; 5] = [
+const LIVE_IDENTS: [&str; 6] = [
     "for_database",
     "for_docgraph_service",
     "SystemDatabaseResolver",
     "TcpDialer",
     "connect_live",
+    "run_live_review",
 ];
 
 fn live_tokens(stream: proc_macro2::TokenStream, gate: &str) -> bool {
@@ -431,6 +439,7 @@ fn the_inventory_rule_flags_an_unignored_live_test() {
     let source = format!(
         "#[test] fn unguarded() {{ let _ = std::env::var(\"{gate}\"); }}\n\
          #[test] fn transport() {{ SdkTransport::for_database(); }}\n\
+         #[test] fn review() {{ run_live_review(); }}\n\
          #[test] #[ignore] #[cfg(feature = \"docgraph-live\")] fn gated() {{ SystemDatabaseResolver; }}\n\
          #[test] fn ordinary() {{ SdkTransport::for_database_with_resolver(); }}"
     );
@@ -442,13 +451,14 @@ fn the_inventory_rule_flags_an_unignored_live_test() {
         offenders: Vec::new(),
     };
     syn::visit::Visit::visit_file(&mut inventory, &syn::parse_file(&source).unwrap());
-    assert_eq!(inventory.tests, 4);
-    assert_eq!(inventory.live, 3);
+    assert_eq!(inventory.tests, 5);
+    assert_eq!(inventory.live, 4);
     assert_eq!(
         inventory.offenders,
         vec![
             "fixture::unguarded".to_string(),
-            "fixture::transport".to_string()
+            "fixture::transport".to_string(),
+            "fixture::review".to_string()
         ]
     );
 }
@@ -535,6 +545,8 @@ fn run_hostile(args: &[&str], dir: &std::path::Path, fake: &str) -> std::process
         .env("AWS_CONFIG_FILE", hostile_config(dir, fake))
         .env("AWS_SHARED_CREDENTIALS_FILE", hostile_config(dir, fake))
         .env("AWS_PROFILE", "default")
+        .env("AWS_REGION", "eu-west-1")
+        .env("AWS_DEFAULT_REGION", "eu-west-1")
         .env("RUST_LOG", "trace")
         .env("HTTPS_PROXY", format!("http://{fake}"))
         .env("HTTP_PROXY", format!("http://{fake}"))
@@ -586,8 +598,8 @@ fn ordinary_and_live_shaped_runs_never_reach_the_network() {
             "wa-review",
             "--cluster-id",
             "c1",
-            "--region",
-            "us-east-1",
+            // An explicit argv region is required even beside hostile AWS
+            // configuration. A complete live invocation now reaches AWS.
             "--live",
         ],
         vec!["neptune", "seed", "--dry-run", "--confirm-wipe"],
@@ -643,6 +655,71 @@ fn ordinary_and_live_shaped_runs_never_reach_the_network() {
         assert_eq!(network.accepted(), 0, "{args:?} reached the network");
     }
     assert!(provider_never_ran(&dir), "a credential provider ran");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+#[cfg(feature = "docgraph-live")]
+fn live_review_argv_preflight_precedes_environment_files_and_network() {
+    let network = ForbiddenNetwork::start();
+    let fake = format!("127.0.0.1:{}", network.port);
+    let dir = workdir("review-preflight");
+    for (extra, expected) in [
+        (vec![], "--cluster-id, --region"),
+        (
+            vec!["--cluster-id", "c1"],
+            "arguments are required: --region",
+        ),
+        (
+            vec!["--region", "us-east-1"],
+            "arguments are required: --cluster-id",
+        ),
+        (
+            vec!["--cluster-id", "bad/id", "--region", "us-east-1"],
+            "--cluster-id must",
+        ),
+        (
+            vec!["--cluster-id", "c1", "--region", "invalid"],
+            "--region must",
+        ),
+        (
+            vec!["--cluster-id", "c1", "--region", "cn-north-1"],
+            "standard AWS partition",
+        ),
+        (
+            vec![
+                "--cluster-id",
+                "c1",
+                "--region",
+                "us-east-1",
+                "--now",
+                "invalid",
+            ],
+            "--now must",
+        ),
+    ] {
+        let mut args = vec![
+            "documentdb",
+            "wa-review",
+            "--live",
+            "--analysis-data",
+            "/does/not/exist",
+            "--network-policy",
+            "/also/does/not/exist",
+            "--output",
+            "reports",
+        ];
+        args.extend(extra);
+        let out = run_hostile(&args, &dir, &fake);
+        let stderr = String::from_utf8(out.stderr).unwrap();
+        assert_eq!(out.status.code(), Some(2), "{args:?}: {stderr}");
+        assert!(out.stdout.is_empty(), "{args:?}");
+        assert!(stderr.contains(expected), "{args:?}: {stderr}");
+        assert!(!stderr.contains("/does/not/exist"), "{stderr}");
+        assert!(!dir.join("reports").exists());
+    }
+    assert_eq!(network.accepted(), 0);
+    assert!(provider_never_ran(&dir));
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
@@ -914,7 +991,6 @@ fn credential_arguments_are_rejected_without_echo() {
 /// argument list stands for the carrier file.
 #[cfg(feature = "docgraph-live")]
 fn carrier_rows(c: &str) -> Vec<(Vec<&str>, i32, &'static str)> {
-    const UNAVAILABLE: &str = "live docgraph adapters are not available";
     let endpoint = "db.cluster-abc.us-east-1.neptune.amazonaws.com";
     let table: [(&'static str, i32, &'static str); 8] = [
         (
@@ -938,9 +1014,11 @@ fn carrier_rows(c: &str) -> Vec<(Vec<&str>, i32, &'static str)> {
             "--confirm-create",
         ),
         (
-            "documentdb wa-review --live --cluster-id c1 --region us-east-1 --analysis-data @",
+            // Data cannot supply the required argv region (AWS_REGION is
+            // also present). Success routing is tested with injected seams.
+            "documentdb wa-review --live --cluster-id c1 --analysis-data @",
             2,
-            UNAVAILABLE,
+            "arguments are required: --region",
         ),
         // A collection capture manifest has no live mode at all.
         (
