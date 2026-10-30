@@ -143,7 +143,10 @@ name or value of the file.
    raised before any query. The `time.sleep(1)` after the wipe is dropped (no
    session to wait on). Results echoed by the verification are escaped.
    A failed verification is an `error:` line and exit 1 (the script's
-   `AssertionError` traceback). `--dry-run` is new.
+   `AssertionError` traceback). `--dry-run` is new. For `--live` the endpoint
+   must instead be an explicit standard Neptune host. Legacy SSH tunnels and
+   port forwards through loopback are unsupported; loopback remains refused.
+   Any future tunnel mode requires a separate security review.
 8. **`json.dump` parity.** Non-ASCII text in a label is written as UTF-8, not
    `\uXXXX` (`ensure_ascii`), and a float prints as Rust's shortest form.
    Neither occurs in the check texts; stated for completeness.
@@ -341,13 +344,16 @@ compatibility; it is ignored whenever `--live` is present (R-DG-05).
 - T-DG-01a: run existing golden review/seed/memory replay fixtures under both
   feature configurations; identical output and exit status, zero provider,
   resolver and socket calls even with hostile AWS configuration present.
-- T-DG-01b: forbidden mode combinations and unavailable-feature `--live`
-  return usage errors (exit 2) before side effects; feature alone sends nothing.
+- T-DG-01b: forbidden mode combinations, unavailable-feature `--live`, and
+  live seed without an explicit valid standard Neptune `--endpoint` return
+  usage errors (exit 2) before policy, environment, credentials, DNS or
+  network access; feature alone sends nothing.
 - T-DG-01c: malformed/null response members, request mismatch, error steps and
   unused seed/memory recordings retain their existing failure contracts.
-- T-DG-01d: with the live feature and `NEPTUNE_SEED_CONFIRM_WIPE=1`, a live
-  seed lacking argv `--confirm-wipe` is refused with the fixed wipe-refusal
-  message and exit 1; provider, resolver and socket counters all remain zero.
+- T-DG-01d: with the live feature, a valid explicit endpoint and
+  `NEPTUNE_SEED_CONFIRM_WIPE=1`, a live seed lacking argv `--confirm-wipe` is
+  refused with the fixed wipe-refusal message and exit 1; provider, resolver
+  and socket counters all remain zero.
   Supplying argv confirmation reaches only an injected adapter; non-live
   replay retains its existing environment-confirmation contract.
 - T-DG-01e: table-driven attempts to supply `--live` or each `--confirm-*`
@@ -512,6 +518,13 @@ tested typed-value codec over an optional maintained Rust WebSocket crate,
 using the workspace rustls/aws-lc stack. Dependency selection/pins require
 pre-review; do not add a second general graph-query builder.
 
+Live seed requires an explicit `--endpoint` validated as a standard Neptune
+database host at usage time, before consent, policy, environment, credentials,
+DNS or network access. Missing or invalid hosts return exit 2. The non-live
+`localhost` default remains unchanged. Loopback tunnels and port forwards are
+an intentional parity divergence; any future tunnel mode needs separate
+security review.
+
 Connect to `wss://HOST:8182/gremlin`, traversal source `g`. Construct the HTTP
 GET upgrade for that same authority/path, sign its HTTPS representation with
 `SigV4Signer`, service `neptune-db`, selected region and empty body. Preserve
@@ -534,8 +547,8 @@ exit and bound close time. Re-sign every new connection; refresh before expiry
 between operations, never reconnect/resubmit an in-flight statement. A drop
 after send has an unknown outcome and terminates the remaining plan. Preserve
 statement/binding order, counts/assertions and exit 1 on verification failure.
-For a live seed, only argv `--confirm-wipe` confirms the destructive wipe;
-ignore `NEPTUNE_SEED_CONFIRM_WIPE` in live mode. Missing argv confirmation
+For a live seed with a valid explicit endpoint, only argv `--confirm-wipe`
+confirms the destructive wipe; ignore `NEPTUNE_SEED_CONFIRM_WIPE` in live mode. Missing argv confirmation
 returns exit 1 with the fixed message: "Refusing to wipe the graph:
 g.V().drop() requires explicit confirmation. Re-run with --confirm-wipe."
 Do not reuse the replay refusal's suggestion to set an environment variable.
@@ -1224,6 +1237,7 @@ sampled operations; S2 must keep this configuration and fail closed if
 | Area | Supported (fixture or test evidence) | Everything else |
 |---|---|---|
 | Database endpoint | Standard-partition Neptune `<id>.<region>.neptune.amazonaws.com` and Neptune Analytics `<id>.<region>.neptune-graph.amazonaws.com`, one fixed port, region equal to the host label (`sdk::database` tests) | FIPS, other partitions, custom domains, wildcards: refused |
+| Live seed connectivity | Explicit standard Neptune database host, with the network policy and peer checks | Loopback, SSH tunnels and port forwards refused; any future tunnel mode requires separate security review |
 | Gremlin wire | GraphSON v2 (codec and T-DG-05b fixtures delivered in S3, #5515) | Other GraphSON/GraphBinary versions fail closed in S3 |
 | DocumentDB / MongoDB capture | DocumentDB 5.0 with mongosh 2.3.1; MongoDB 7.0 with mongosh 1.10.6; canonical Extended JSON; capture envelope version 1 (`capture_fixtures`) | Legacy shell `tojson`, relaxed EJSON and other dialects: `unsupported_format` (T-DG-08d) |
 
@@ -1742,8 +1756,8 @@ never forwarded.
 **CLI.** `toolkit neptune seed --live --confirm-wipe --endpoint HOST
 --network-policy FILE [--region R]` (feature `docgraph-live`) checks
 everything below in this order, before roots, credentials, DNS or any socket:
-1. Argv consent and `--endpoint`, as in S1. `NEPTUNE_SEED_CONFIRM_WIPE` is
-   ignored in live mode.
+1. Validate explicit standard Neptune `--endpoint` at usage time, then check
+   argv consent. `NEPTUNE_SEED_CONFIRM_WIPE` is ignored in live mode.
 2. The policy file is read with its 16 KiB bound and parsed with
    `network_policy::parse`. Consent-shaped keys are refused, and the file path
    is never echoed.
@@ -1845,7 +1859,7 @@ source/requirement review and a docs-only diff check.
 | ID | Owner/type | Recommendation, assumption and required ruling/grant |
 | --- | --- | --- |
 | Q1 | PM product choice — ACCEPT | PM ff294c79 accepted (b) on #5318: two-step user-run declarative collection plus Rust normalization, no MongoDB driver and continued URI/TLS-flag refusal. This repair specifies a per-command manual procedure and its scale cost; automation would require a separate design/review. |
-| Q2 | PM CLI compatibility choice — provisionally ACCEPT | PM ff294c79 accepted the proposed flags subject to pre-review tightening. #5322 tightens R-DG-01/05 to argv-only live/consent flags, ignoring environment wipe confirmation for live runs while preserving replay parity. Other proposed region/network-policy, startup-config and timeout changes remain as reviewed. |
+| Q2 | PM CLI compatibility choice — provisionally ACCEPT | PM ff294c79 accepted the proposed flags subject to pre-review tightening. #5322 tightens R-DG-01/05 to argv-only live/consent flags, ignoring environment wipe confirmation for live runs while preserving replay parity. #5323 requires an explicit validated standard Neptune endpoint for live seed at usage time; loopback tunnels and port forwards are a deliberate divergence requiring separate security review for any future mode. Other proposed region/network-policy, startup-config and timeout changes remain as reviewed. |
 | Q3 | Security pre-review — ACCEPT | Reviewer 887003f3 ruled ACCEPT in #5321: exact standard AWS database host/port/region and operator-listed RFC1918/ULA CIDRs; every DNS answer and connected peer checked before signed bytes, with original hostname for TLS/signing and reconnect revalidation. R-ROOTS infrastructure reuse is correct; PaymentRoots remains payment-only. No global/provider/payment admission change. VPC-interface-endpoint review API use and non-RFC1918/ULA VPC CIDRs fail closed pending review. S1 must move this capability's peer check before transmission; O1 remains required. |
 | Q4 | Engineering choice for implementation review | Resolve in the first implementation slice via the explicit offline S2 spike exit criteria, before live code. Optional official service codecs/WebSocket codec share toolkit signer, credentials, TLS, retries and deadlines; prove framing handling, auth/identity suppression, R-LOG and audited exact feature/lockfile closure. |
 | Q5 | Engineering support matrix | Record fixture-supported standard endpoints, GraphSON v2 and exact DocumentDB/MongoDB/shell/export versions in the first implementation slice before live code, as an S2 spike exit criterion. Unsupported forms fail closed. Operator deployment versions are required for live acceptance, not guessed. Recorded for S1 in "S1 continuation: credential deadline, DNS cap and remaining evidence"; GraphSON v2 fixtures follow in S3. |

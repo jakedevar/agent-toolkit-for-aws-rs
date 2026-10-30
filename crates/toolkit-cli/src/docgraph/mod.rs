@@ -424,11 +424,20 @@ fn seed_failure(error: &SeedError) -> ToolkitError {
 /// Handler of `toolkit neptune seed`.
 pub fn seed_command(invocation: &Invocation, out: &mut Output<'_>) -> Result<(), ToolkitError> {
     if live_selected(invocation)? {
+        #[cfg(feature = "docgraph-live")]
+        {
+            let endpoint = invocation
+                .value("--endpoint")
+                .ok_or_else(|| usage("--endpoint is required with --live"))?;
+            let region = endpoint
+                .strip_suffix(".neptune.amazonaws.com")
+                .and_then(|prefix| prefix.rsplit('.').next())
+                .ok_or_else(|| usage("--endpoint must be a standard Neptune host"))?;
+            toolkit_aws::sdk::database::DatabaseEndpoint::new(endpoint, 8182, region, &[])
+                .map_err(|_| usage("--endpoint must be a standard Neptune host"))?;
+        }
         if !invocation.has_flag("--confirm-wipe") {
             return Err(ToolkitError::runtime("docgraph_seed", "Refusing to wipe the graph: g.V().drop() requires explicit confirmation. Re-run with --confirm-wipe. Never run this against a graph holding data you need."));
-        }
-        if invocation.value("--endpoint").is_none() {
-            return Err(usage("--endpoint is required with --live"));
         }
         // Only now, after argv consent, may the policy file be read (S3).
         #[cfg(feature = "docgraph-live")]
