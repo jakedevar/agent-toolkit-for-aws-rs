@@ -1311,3 +1311,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
   #4720 (retire six ai-models Python scripts; skill text -> toolkit ai-models) -> Codex terra high c6c496f3. PM verifies the deletions-plus-docs delta. Workers: 3a9b6f7a S2 repair 2, ef1ae215 #5555, 60b47bef S4, c6c496f3 #4720.
 - 02:00Z: #5313 LANDED (3076, landed_sha b3d288ab1d91267f949030da48bc712e06b10e4a); auto-closed. Queue: 3077 #5547.
 - 02:03Z: #5547 LANDED (3077, landed_sha 814f253e48f28b0181cd62e0d9b8b8892fed80b6); auto-closed. #5558 open (P2/P3 from #5554). Queue empty. S2 repair 2 and S4 must merge rolling before final gates (both briefed).
+- 02:09Z: #5555 (ef1ae215) DONE at ee7d8664f1473027e6413d6c49135c601489df9c (agents_pay_cutover_docs.rs +178/-53, README, openclaw-setup.md; review mutations red 40d3080c, green 9677bfa6; node 040498bf ok). Scoped a0426771 + 0f2dc139 RED only in 8 secret-safety-hook launcher tests = #5455 (deleted-baseline-worktree poisoning; delta cannot touch that package). Evidence added to #5455. ENQUEUED seq 3079 (9575bb76, issue 5555); queue gate decides. On land: close #5555 #5539.
+  #5560 retirement -> Codex terra high c928148c, pinned ee7d8664.
+  Workers: 3a9b6f7a S2 repair 2, 60b47bef S4, c6c496f3 #4720, c928148c #5560. Queue: 3079 #5555.
