@@ -63,7 +63,7 @@ worktree and leaves `CARGO_TARGET_DIR` and `RUSTC_WRAPPER` untouched. It exits
 nonzero only on a real failure (for example rustfmt cannot parse a file).
 Copy the lines between the markers to a file and run `git apply FILE`, then
 commit; `fmt` should then pass. `scripts/fmt-patch.selftest.sh` (run by
-`make test-scripts`) covers it with a fake `cargo`.
+`make test-scripts`) covers it with a fake `cargo`. The daemon recipe `test-scripts` runs them all.
 
 ## No Python in the root recipes
 
