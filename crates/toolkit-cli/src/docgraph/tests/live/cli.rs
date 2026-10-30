@@ -202,9 +202,12 @@ fn t_5507_recorded_and_no_live_paths_never_construct_the_live_adapter() {
             let (result, got) = dispatch(&args, |_, _, _| {
                 panic!("missing mode cannot construct an adapter")
             });
-            assert!(result.is_err());
+            let error = result.unwrap_err();
+            assert!(error
+                .message()
+                .contains("live data requires explicit --live"));
+            assert_eq!(got.status, baseline.status);
             assert_eq!(got.stdout, baseline.stdout);
-            assert_eq!(got.stderr, baseline.stderr);
             continue;
         }
         assert_eq!(baseline.status, 0, "{}", baseline.stderr);
