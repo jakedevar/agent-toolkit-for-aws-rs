@@ -485,8 +485,10 @@ service conflicts, validation errors and successful matching stored proofs. The
 last case is accepted by the stateless client; the real service mismatch contract
 still requires the operator validation gate in design step 6c. Repeated browser
 preparations for identical terms keep token/body bytes while generating distinct
-handles. The macOS roots loader's stable-environment assumption remains an open
-design decision (#5114); the edition-2024 enforcement claim has been removed.
+handles. The macOS roots loader's stable-environment assumption is now checked from
+first-party source (no environment mutator in the startup-chain crates; payment
+roots built first); dependency and embedding-host stability stay documented
+assumptions (#5114), and the edition-2024 enforcement claim has been removed.
 Run `make agents-pay-test` and `make agents-pay-test-sdk` for these offline
 contracts. Live payments are not part of either target.
 

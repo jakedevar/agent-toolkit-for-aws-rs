@@ -852,17 +852,22 @@ The rules:
    stable process environment during loading. The workspace is edition 2021; its unsafe-code
    lint does not prohibit `std::env::set_var`, nor constrain dependency internals. Source review
    of `main.rs` → `toolkit_cli::run` → `agents_pay::fetch_command` → `World::for_process` finds no
-   first-party environment mutator. `World::for_process` loads payment roots before constructing
-   the SDK runtime or provider roots. This is a reviewed startup assumption, not an enforced
-   exclusion of concurrent mutation in an embedding host or dependency. T-PROOTS-8 proves
-   presence refusal for a supplied snapshot; T-PROOTS-9 checks the payment module, not this
-   whole call chain. Neither proves environment stability between reads.
+   first-party environment mutator, and `World::for_process` builds the payment roots before the
+   SDK runtime or provider roots. Two source gates now check this (#5114):
+   `p_roots_startup_chain_crates_never_mutate_the_process_environment` scans `toolkit-cli`,
+   `toolkit-core` and `toolkit-aws` for `set_var`, `remove_var` and the C equivalents, with a
+   seeded mutator that a snapshot-only test cannot see, and
+   `p_roots_world_builds_payment_roots_before_runtime_and_provider_roots` pins the order. They are
+   syntax checks over first-party code only: dependency internals and an embedding host that
+   mutates the environment concurrently remain a documented assumption. T-PROOTS-8 proves
+   presence refusal for a supplied snapshot; T-PROOTS-9 checks the payment module.
 
-   **Open design decision (#5114):** either enforce and regression-test a stable-environment
-   startup/call-chain contract (including a stated dependency and embedding-host assumption),
-   or use an environment-independent native-store loader. Recommend the latter to remove the
-   two-read race; it needs a reviewed macOS loader/dependency and platform validation. Retain
-   presence refusal while that decision is pending. Do not mutate the global environment.
+   **Remaining design decision (#5114):** keep the checked first-party stable-environment
+   contract with its dependency and embedding-host assumption (current state, enough for the
+   intended CLI startup), or use an environment-independent native-store loader, which removes
+   the two-read race entirely but needs a reviewed macOS loader/dependency and platform
+   validation. Recommend the latter only if an embedding host is ever supported. Retain
+   presence refusal either way. Do not mutate the global environment.
    The seam never falls back to `NativeLoader`. Windows needs no branch: the runtime refuses
    on non-Unix targets already (R-CFG).
 4. **`AWS_CA_BUNDLE`** is read by no code in `toolkit-aws` at `be0a06df` (`git grep`). It cannot
@@ -1747,7 +1752,7 @@ A reviewer should be able to confirm each of the following from this document al
 | #5100 restart claim omits changed terms and body conflicts | P2 | Legacy token bytes kept; restart limitation documented; no fresh token after a conflict; two-invocation cases; a cross-challenge binding is out of scope | R-TOK (R-TOK-SCOPE, L-TERMS, R-TOK-NOFRESH), R-RETRY row, the S4/S5 rows, B2, live-run 6b/6c | T-RESTART-1..8 |
 | #5101 blocking-DNS residual | P2 | The residual is carried into the deadline contract, as #4382 did; no async-resolver prerequisite | R-NET (R-DNS, R-DNS-ADMIT), R-AWS-RETRY, D16, B3, the S3/S5 rows, S7 text | T-DNS-DL-1..5 |
 | #5102 T-ORDER phases and `Approved` | P2 | Pre- and post-authorization split; immutable private `Approved` consumed by value; the request only from `Approved` | R-SPEND-ORDER (rules 1-5, both test phases), R-SPEND table, section 7 G2, 8.1 `policy/`, the S1/S5 rows, checklist 1 | T-ORDER-CTOR, T-ORDER-PRE, T-ORDER-POST |
-| #5114 macOS environment-race rationale | P2 | Edition claim removed; actual startup path reviewed; stable-environment dependency/host assumption remains an open design decision, with an environment-independent native loader recommended | R-PROOTS macOS branch | T-PROOTS presence/source checks do not prove exclusion of concurrent mutation |
+| #5114 macOS environment-race rationale | P2 | Edition claim removed; first-party startup chain checked by source gates (no mutator; payment roots built first); dependency/embedding-host assumption stays documented, with an environment-independent native loader as the optional stronger fix | R-PROOTS macOS branch | `p_roots_startup_chain_crates_never_mutate_the_process_environment`, `p_roots_environment_gate_catches_a_mutator_a_snapshot_does_not`, `p_roots_world_builds_payment_roots_before_runtime_and_provider_roots` |
 | #5115 successful body-mismatch response | P2 | Service errors fail with no new proof send; a successful matching stored proof is accepted by the stateless client; actual service contract requires operator gate 6c | R-TOK-SCOPE, T-RESTART-6, live-run 6c | `t_restart_6_body_mismatch_service_contract_is_not_assumed` (Conflict, Validation, StoredProof × extra, timeout) |
 | #5116 browser randomness versus client token | P2 | Syntax gate described accurately; vault randomness allowed; identical purchase terms keep token/body bytes while handles differ | R-TOK-NOFRESH | `browser_handle_expires_and_handles_are_unique`, R-TOK-NOFRESH source fixtures |
 | #5117 lint-only live-feature exception | P3 | Executing verification targets reject the feature; only the library/binary clippy recipe is allowed | T-AC3-MAKE, Makefile `clippy-live` | `t_ac3_make_no_test_target_passes_the_live_feature`, `t_ac3_make_catches_a_test_target_with_the_feature` |
