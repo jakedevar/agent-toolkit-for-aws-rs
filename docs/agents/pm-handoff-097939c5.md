@@ -1322,3 +1322,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
   Reported up 02:21Z: #5455 hitting every scoped run; harness:true filing unresolved.
   Workers: 60b47bef S4, c928148c #5560, f0ba73f7 S2 re-review 3, 669e7ef7 #4719. Queue: 3079 #5555.
 - 02:30Z: #5555 LANDED (3079, landed_sha 98d752346df595cf49e1419d9d5f7757ca101829) through the queue's clean gate, confirming the scoped reds were only #5455. Auto-closed; closed #5539. Queue empty.
+- 02:32Z: S2 re-review 3 #5516 (f0ba73f7, Claude Opus): ACCEPT at 8e119395 (10 unlisted DTD variants refused; 6/6 mutations caught; merge 90011286 keeps both sides; new optional dep xmlparser). Nonblocking #5570; PM ruled on its product question (keep: prolog DOCTYPE = non-retried InvalidResponse for every status; lowercase doctype html = normal retry; out-of-prolog ignored). Friction #5571 (git patch-id hook; harness filing unresolved again). #5265 mismatch only -> ENQUEUED seq 3081 (ffea84a7, issue 5489). On land: close #5516 #5521 #5522 #5544 #5484; then launch #5507 (route wa-review --live to S2 client).
+  #5570 + #5523 (S2 test follow-ups) -> Codex terra high, pinned 8e119395.
+  Workers: 60b47bef S4, c928148c #5560, 669e7ef7 #4719, #5570 worker. Queue: 3081 S2.
