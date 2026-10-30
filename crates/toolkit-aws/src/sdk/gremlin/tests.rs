@@ -621,16 +621,30 @@ fn the_caller_operation_deadline_is_not_renewed_by_connect_or_first_submit() {
         std::time::Instant::now() < deadline + Duration::from_secs(1),
         "submit renewed the budget"
     );
-    assert!(matches!(
-        error,
-        AwsError::Timeout {
-            phase: TimeoutPhase::Deadline,
-            ..
-        }
-    ));
+    assert_eq!(error.code(), "aws_timeout");
+    assert!(!error.is_retryable());
     assert!(text(&error).contains("unknown"));
     assert!(wire.released());
     assert_eq!(wire.statements().len(), 1);
+}
+
+#[test]
+fn expired_invocation_refuses_the_next_statement_without_claiming_no_prior_send() {
+    let fixture = Fixture::new();
+    let wire = fixture.wire(fixture.script(vec![Reply::Batches(vec![ok("[]")])]));
+    let mut connection = fixture.connect(&wire, &signer(clock_a)).expect("open");
+    connection.submit("g.V().drop()", None).expect("first");
+    connection.invocation = Instant::now();
+    let error = connection
+        .submit("g.V().count()", None)
+        .expect_refused("expired invocation");
+    assert!(
+        text(&error).contains("before this statement was sent"),
+        "{error}"
+    );
+    assert_eq!(error.code(), "aws_timeout");
+    assert_eq!(wire.statements().len(), 1);
+    assert!(wire.released());
 }
 
 #[test]
@@ -965,6 +979,17 @@ fn foreign_ids_server_errors_and_invalid_types_fail_and_spend_the_connection() {
         ),
         ("frame limit", Reply::Sized(1_048_577), "size limit"),
         ("protocol", Reply::Raw(vec![0x83, 0]), "WebSocket protocol"),
+        ("dropped connection", Reply::Hangup, "connection failed"),
+        (
+            "server close",
+            Reply::Raw(vec![0x88, 0]),
+            "closed before the response completed",
+        ),
+        (
+            "idle timeout",
+            Reply::Silent,
+            "no Gremlin response arrived in time",
+        ),
         (
             "result count",
             Reply::Batches(vec![ok(&format!("[{}]", traverser(100_001, "1")))]),
@@ -982,16 +1007,18 @@ fn foreign_ids_server_errors_and_invalid_types_fail_and_spend_the_connection() {
         let mut connection = fixture.connect(&wire, &signer(clock_a)).expect("open");
         let error = connection
             .submit("g.V().count()", None)
-            .expect_refused("the response fails the statement");
+            .expect_refused(&format!("{case}: the response fails the statement"));
         let message = text(&error);
         assert!(message.contains(expected), "{case}: {message}");
         assert_eq!(
             error.code(),
-            if case == "server error" {
-                "aws_service_error"
-            } else {
-                "aws_invalid_response"
-            }
+            match case {
+                "server error" => "aws_service_error",
+                "dropped connection" | "server close" => "aws_connect",
+                "idle timeout" => "aws_timeout",
+                _ => "aws_invalid_response",
+            },
+            "{case}"
         );
         assert!(
             !error.is_retryable(),
@@ -1100,7 +1127,8 @@ fn a_silent_server_stops_at_the_idle_bound_with_an_unknown_outcome() {
         .submit("g.V().count()", None)
         .expect_refused("no answer");
     assert!(start.elapsed() < Duration::from_secs(3));
-    assert!(matches!(error, AwsError::Timeout { .. }), "{error}");
+    assert_eq!(error.code(), "aws_timeout");
+    assert!(!error.is_retryable());
     assert!(text(&error).contains("unknown"));
     assert!(wire.released());
 }

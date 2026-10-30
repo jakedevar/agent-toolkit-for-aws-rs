@@ -297,6 +297,7 @@ fn live_seed_refuses_policy_mismatches_before_credentials_or_dns() {
 /// must be `#[ignore]` and gated on the `docgraph-live` feature.
 const LIVE_IDENTS: [&str; 5] = [
     "for_database",
+    "for_docgraph_service",
     "SystemDatabaseResolver",
     "TcpDialer",
     "connect_live",
@@ -1036,8 +1037,10 @@ fn carrier_rows(c: &str) -> Vec<(Vec<&str>, i32, &'static str)> {
         (
             "neptune memory --live --operation consolidate --confirm-write --confirm-delete \
              --input @ --network-policy @",
-            2,
-            UNAVAILABLE,
+            1,
+            // S4 reads input only after argv consent. A capture/manifest is
+            // not operation input and cannot confer graph/consent authority.
+            "missing graph_id",
         ),
     ];
     table
@@ -1054,4 +1057,79 @@ fn carrier_rows(c: &str) -> Vec<(Vec<&str>, i32, &'static str)> {
             (args, *status, *required)
         })
         .collect()
+}
+
+#[test]
+#[cfg(feature = "docgraph-live")]
+fn live_memory_refuses_policy_region_and_input_failures_before_clients() {
+    let network = ForbiddenNetwork::start();
+    let fake = format!("127.0.0.1:{}", network.port);
+    let dir = workdir("s4-preflight");
+    let input = policy_file(
+        "s4-query.json",
+        r#"{"graph_id":"g-abc123def4","query":"RETURN 1"}"#,
+    );
+    let p = policy_file(
+        "s4-valid.json",
+        r#"{"host":"g-abc123def4.us-east-1.neptune-graph.amazonaws.com","port":443,"region":"us-east-1"}"#,
+    );
+    let consent = policy_file(
+        "s4-consent.json",
+        r#"{"host":"g-abc123def4.us-east-1.neptune-graph.amazonaws.com","port":443,"region":"us-east-1","confirm_write":true}"#,
+    );
+    let wrong = policy_file(
+        "s4-wrong.json",
+        r#"{"host":"g-other00000.us-east-1.neptune-graph.amazonaws.com","port":443,"region":"us-east-1"}"#,
+    );
+    let base = [
+        "neptune",
+        "memory",
+        "--live",
+        "--operation",
+        "query",
+        "--confirm-write",
+        "--confirm-delete",
+        "--input",
+        &input,
+    ];
+    for (tail, code, expected) in [
+        (vec![], 2, "--network-policy is required"),
+        (vec!["--network-policy", &consent], 1, "unknown key"),
+        (
+            vec!["--network-policy", &wrong],
+            1,
+            "unsupported or invalid live memory request",
+        ),
+        (
+            vec!["--network-policy", &p, "--region", "us-west-2"],
+            1,
+            "differs from the network policy",
+        ),
+    ] {
+        let args: Vec<_> = base.iter().copied().chain(tail).collect();
+        let output = run_hostile(&args, &dir, &fake);
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert_eq!(output.status.code(), Some(code), "{stderr}");
+        assert!(output.stdout.is_empty());
+        assert!(stderr.contains(expected), "{stderr}");
+        assert!(!stderr.contains(&input));
+        assert!(!stderr.contains("required memory credentials"));
+    }
+    let unsafe_create = policy_file("s4-invalid-create.json", r#"{"memory_gb":15}"#);
+    let (code, stdout, stderr) = run(&[
+        "neptune",
+        "memory",
+        "--live",
+        "--operation",
+        "create-memory",
+        "--confirm-create",
+        "--input",
+        &unsafe_create,
+    ]);
+    assert_eq!(code, 1);
+    assert!(stdout.is_empty());
+    assert!(stderr.contains("unsupported or invalid live memory request"));
+    assert_eq!(network.accepted(), 0);
+    assert!(provider_never_ran(&dir));
+    std::fs::remove_dir_all(&dir).unwrap();
 }

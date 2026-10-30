@@ -339,3 +339,7 @@ goes only to `network_policy::signing_region` (`resolve_region`, then equality
 with the policy region), never to a path, and is audited on that basis. The
 only file that module opens is the `--network-policy` value, read whole with
 its 16 KiB bound and parsed; its path is never echoed.
+
+Docgraph S4 (#5557): `docgraph/live_memory/production.rs` uses `--region` only
+as a signing/endpoint key via `resolve_region` or `network_policy::signing_region`.
+Its bounded file reader opens only `--input`; policy reads reuse S3's reader.

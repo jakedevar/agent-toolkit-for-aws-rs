@@ -104,11 +104,11 @@ fn unknown_after_send(reason: &str) -> String {
     format!("{reason} after the statement was sent; whether the graph applied it is unknown")
 }
 
-fn check_deadline(deadline: Instant) -> Result<(), AwsError> {
+fn check_deadline(deadline: Instant, statement: &str) -> Result<(), AwsError> {
     if Instant::now() >= deadline {
         return Err(AwsError::timeout(
             TimeoutPhase::Deadline,
-            "the operation deadline elapsed before any statement was sent",
+            format!("the operation deadline elapsed before {statement} statement was sent"),
         ));
     }
     Ok(())
@@ -217,7 +217,7 @@ fn read_error(error: &tungstenite::Error) -> AwsError {
                 "the Gremlin connection broke the WebSocket protocol",
             ))
         }
-        _ => AwsError::connect(unknown_after_send("the Gremlin connection failed")),
+        _ => AwsError::OutcomeUnknown(Box::new(AwsError::connect("the Gremlin connection failed"))),
     }
 }
 
@@ -229,12 +229,12 @@ async fn exchange(
     deadline: Instant,
     bounds: DatabaseBounds,
 ) -> Result<Vec<Json>, AwsError> {
-    check_deadline(deadline)?;
+    check_deadline(deadline, "this")?;
     let late = || {
-        AwsError::timeout(
+        AwsError::OutcomeUnknown(Box::new(AwsError::timeout(
             TimeoutPhase::Deadline,
-            unknown_after_send("the operation deadline elapsed"),
-        )
+            "the operation deadline elapsed",
+        )))
     };
     match tokio::time::timeout_at(deadline, socket.send(Message::Binary(payload.into()))).await {
         Err(_) => return Err(late()),
@@ -248,15 +248,15 @@ async fn exchange(
         let message = match tokio::time::timeout_at(bound, socket.next()).await {
             Err(_) if Instant::now() >= deadline => return Err(late()),
             Err(_) => {
-                return Err(AwsError::timeout(
+                return Err(AwsError::OutcomeUnknown(Box::new(AwsError::timeout(
                     TimeoutPhase::Read,
-                    unknown_after_send("no Gremlin response arrived in time"),
-                ))
+                    "no Gremlin response arrived in time",
+                ))))
             }
             Ok(None | Some(Ok(Message::Close(_)))) => {
-                return Err(AwsError::connect(unknown_after_send(
+                return Err(AwsError::OutcomeUnknown(Box::new(AwsError::connect(
                     "the Gremlin connection closed before the response completed",
-                )))
+                ))))
             }
             Ok(Some(Err(error))) => return Err(read_error(&error)),
             Ok(Some(Ok(message))) => message,
@@ -328,9 +328,9 @@ impl GremlinConnection {
         let deadline = (Instant::now() + bounds.operation)
             .min(Instant::from_std(operation_deadline))
             .min(invocation);
-        check_deadline(deadline)?;
+        check_deadline(deadline, "any")?;
         let request = upgrade_request(opener.endpoint(), signer, region);
-        check_deadline(deadline)?;
+        check_deadline(deadline, "any")?;
         let request = request?;
         let config = WebSocketConfig::default()
             .max_frame_size(Some(max_frame_bytes))
@@ -339,7 +339,7 @@ impl GremlinConnection {
             ));
         let socket = runtime.block_on(async {
             let upgrade = async {
-                check_deadline(deadline)?;
+                check_deadline(deadline, "any")?;
                 let tls = opener.open(deadline).await?;
                 let bound = deadline.min(Instant::now() + bounds.connect);
                 match tokio::time::timeout_at(

@@ -153,7 +153,7 @@ pub fn load_config(_path: &Path) -> Result<Json, String> {
 }
 #[cfg(unix)]
 fn missing(path: &str) -> String {
-    format!("No payment config at {path}. Payments are refused until an operator creates one (agents_pay_admin.py init-config). This is intentional: there is no permissive default.")
+    format!("No payment config at {path}. Payments are refused until an operator creates one (toolkit agents-pay admin init-config). This is intentional: there is no permissive default.")
 }
 /// Python `stat.filemode`: the type character, then the nine permission
 /// characters with the set-id and sticky bits.

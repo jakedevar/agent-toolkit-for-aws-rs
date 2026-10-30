@@ -1934,3 +1934,127 @@ requests include `operation` and `table` for deterministic matching. A dry run
 of `retrieve` prints the initial vector search only because later requests
 require response IDs; replay executes the expansions. The dry-run and replay
 commands cannot perform live writes or destructive consolidation.
+
+## S4 memory live dispatch (#5557; R-DG-06)
+
+The optional `docgraph-live` build now routes `neptune memory --live` through
+`docgraph::live_memory` and the integrated item-1 `MemoryClient`, `plan`,
+`retrieve` and `execute` helpers. Replay and dry run keep their original plans,
+request shapes and result handling. The S3 statement above that memory stays
+unavailable describes its delivery point; S4 supplies that adapter.
+
+The existing argv-only operation consent table runs before all input/policy
+reads. `query` requires both write/delete confirmation, creation requires
+create confirmation, consolidation requires delete confirmation, and other
+writes require write confirmation. Graph queries additionally require
+`--network-policy FILE`. Analytics requires exactly
+`g-<10 lowercase alphanumeric characters>.<region>.neptune-graph.amazonaws.com`
+on 443; Gremlin requires the existing Neptune host capability on 8182.
+The region must match the policy. Creation and DynamoDB accept no network
+policy and use their fixed public regional AWS service endpoints. A missing
+backend, mixed backend plan, mismatched target or unsupported value refuses
+before any call; every initial request is validated before live assembly.
+Response-dependent retrieval expansions are validated on submission.
+
+**Wire/dependency decision.** Use generated request serializers, with
+`aws-sdk-neptunegraph =1.116.0` and `aws-sdk-dynamodb =1.134.0`, both optional,
+`default-features=false`, enabled only by `docgraph-live`. No service crate
+gets a network connector: the SDK sends into an immediate capture/error
+connector and toolkit later signs/sends those final bytes outside the codec
+runtime. The SDK config chooses `noAuth`, disables retries/timeouts and has
+no credential source. Test-only provider/signer traps exercise the same config;
+config assertions check one attempt and no identity cache. Framing headers are
+removed before signing; semantic headers and final body bytes are preserved.
+No response is decoded by an SDK retry path.
+
+Analytics uses modeled `ExecuteQuery`, signed as `neptune-graph`, POST
+`/queries`. The model maps planner `queryString` to wire `query`, preserves
+`OPEN_CYPHER` and typed parameters, and supplies the graphIdentifier header.
+Its modeled host prefix prepends the graph ID, so the SDK endpoint override
+is the region/service suffix; the captured final URL must equal the policy's
+complete graph endpoint. Creation is modeled `CreateGraph` at the distinct
+control-plane `/graphs` endpoint, normalized to `{"id":"g-..."}`. It requires
+secure defaults, vector dimension, memory capacity and the item-1 tags; it
+never provisions a graph to repair a query.
+
+DynamoDB uses modeled `PutItem`/`Query` and the standard
+`DynamoDB_20120810` target headers, signed as `dynamodb`. AttributeValue
+conversion occurs only in the adapter. Integer timestamps/TTLs retain their
+full i64 precision, query direction/limit are preserved, and the shared
+executor returns the final list in chronological order. Supported values are
+strings, i64 integers, booleans, null, lists and maps. Floats, decimal/out-of-i64
+numeric responses, binary/set/unknown types and invalid AttributeValue shapes
+refuse. The initial message schema also validates its documented string fields.
+This is a deliberate safe default: fractional DynamoDB message attributes need
+a separate precision contract before live admission; replay is unchanged.
+
+**Boundaries and failure behavior.** A new narrowly scoped
+`SdkTransport::for_docgraph_service` reuses S1's database connector for the
+public `dynamodb` and `neptune-graph` control-plane hosts, 443 only, no private
+ranges. Other services/partitions refuse. The original database policy parser,
+public transport, provider and payment planes are unchanged. The same fresh
+DNS, every-answer admission, connected-peer-before-any-byte check, explicit
+roots, bounded async connect and synchronous terminal socket release apply.
+It inherits S1's documented bounded abandoned-system-lookup residual.
+
+Each HTTP operation resolves required credentials via
+`GuardedCredentials::resolve_required_until` before encoding the server timeout,
+then toolkit SigV4 signs those exact bytes with an ephemeral one-request
+provider. Gremlin reuses S3's signed upgrade/GraphSON adapter and the stricter
+#5547 operation deadline argument. There is one attempt for every backend,
+including nominal reads and arbitrary query. Any failed submitted request,
+malformed/truncated payload or ambiguous response reports a fixed unknown
+outcome and stops subsequent steps. A spent dispatcher cannot send again;
+there is no compensation, rollback claim, retry or implicit provisioning.
+
+S4 follow-up #5576 makes failure diagnostics plan-aware: after any successful
+step, every subsequent failure (including admission, deadline, credentials or
+signing before the next send) reports that the plan may be partially applied
+with unknown outcome. It never says that nothing was sent. Before any success,
+the original pre-send diagnostic remains available. A failed dispatcher stays
+terminal. Offline regression tests deliberately reject a changed graph target
+on a response-dependent expansion, pin the DynamoDB Query body actually sent
+against the validated plan (including descending order, limit, condition and
+typed expression values), and refuse SDK endpoint/path deviations through the
+captured-URL check. The #5576 handoff records mutation red/green evidence.
+
+The invocation starts one 15-minute deadline before input parsing; each
+operation gets at most 60 seconds including credentials/encoding/signing and
+transport. The server query timeout is at most 55 seconds and at least one
+second shorter than the remaining budget at encoding. Its fit is checked
+again after signing, before send. Responses have a 16 MiB cap, depth 64,
+100,000 top-level results and a 1,000,000 JSON-node parse cap. Input JSON is
+also bounded to 16 MiB, depth 64 and 1,000,000 nodes. S3 frame/depth/bulk/close
+limits remain enforced. Fixed errors never echo query, bindings, paths,
+credentials, SDK/driver errors or service payloads.
+
+**Dependency audit.** Compared with the allocated base, Cargo.lock adds one
+package: NeptuneGraph 1.116.0 (Apache-2.0, MSRV 1.94.1, 401,760-byte crate
+archive). DynamoDB 1.134.0 was already locked; it becomes a direct optional
+CLI dependency. NeptuneGraph uses already-locked Smithy/runtime dependencies;
+no new TLS, root or crypto package is added. The model crates have no enabled
+features; the shared `aws-sdk`/S3 `gremlin` features retain their reviewed
+rustls/aws-lc stack. The daemon `docgraph-memory-sync` recipe records the
+resolved feature closure. Default builds remain SDK-free.
+
+**Offline evidence.** At 66ce53c4, red job
+`555d3ded-539c-4c75-9c7e-04e7e108f2dc` had four dispatch failures. At 188c0ccd,
+red job `7bfa3082-a6fc-4255-8e21-f3939772a40e` had nine dispatch/wire failures.
+The tests cover T-DG-06a Analytics protocol/typed parameters/scope and malformed
+responses; 06b secure creation, all ordered ingestion, retrieval expansion,
+hybrid and consolidation parity with replay; 06c DynamoDB precision/order and
+unsupported types; 06d whole-plan refusal, terminal failure, argv consent and
+policy/region refusal before clients. Boundary tests cover bytes, depth,
+result counts, server/client timeout fit and expired deadlines. The final
+committed-source job receipts are published in the #5557 handoff. No live AWS,
+real credentials or Python were used; operator live acceptance and exact-source
+cross-family review remain required, and S6 owns callers/help/retirement.
+
+S4 verification note: the first scoped run (`c43638df`) found missing
+`recorded-shape` annotations for strict live wire conversions/configuration;
+these are now documented at each boundary without relaxing the contract. It
+also reproduced #5455: the unrelated secret-safety-hook protocol binary held
+compiled Cargo paths into a deleted baseline worktree. The daemon-only
+`docgraph-scoped-prime` recipe cleans/rebuilds that package and runs its
+unchanged tests before scoped verification; no hook, test or harness policy
+is modified. The final handoff records the superseding receipts.

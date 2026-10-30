@@ -1978,3 +1978,109 @@ fn t_dg_04e_only_toolkit_signing_and_retries_run_for_every_operation() {
         assert_eq!(sleeper.sleeps(), secs(&[2, 4, 8]), "{operation}");
     }
 }
+
+fn dtd_error_fixture(status: u16, body: &str, call: Call) -> (AwsError, usize, usize, usize) {
+    let transport = Wire::new(|_, _| Ok((status, vec![], body.as_bytes().to_vec())));
+    let signer = ToolkitSigner::new();
+    let sleeper = RecordingSleeper::new();
+    let error = call(&mut client(&transport, &signer, &sleeper)).expect_err("error response");
+    (
+        error,
+        transport.sends(),
+        signer.count(),
+        sleeper.sleeps().len(),
+    )
+}
+
+fn assert_prolog_dtd(status: u16, body: &str, call: Call) {
+    let (error, sends, signs, sleeps) = dtd_error_fixture(status, body, call);
+    assert!(
+        matches!(error, AwsError::InvalidResponse { .. }),
+        "{error:?}"
+    );
+    assert!(!error.is_retryable());
+    assert_eq!((sends, signs, sleeps), (1, 1, 0));
+}
+
+#[test]
+fn t_dg_04b_prolog_doctype_refused_on_every_status() {
+    for status in [200, 400, 429, 503] {
+        assert_prolog_dtd(status, "<!DOCTYPE html><html/>", describe_cluster);
+    }
+}
+
+#[test]
+fn t_dg_04b_internal_subset_error_body_is_refused() {
+    for status in [400, 503] {
+        assert_prolog_dtd(
+            status,
+            "<!DOCTYPE ErrorResponse [<!ATTLIST Error id CDATA #IMPLIED>]><ErrorResponse/>",
+            describe_cluster,
+        );
+    }
+}
+
+#[test]
+fn t_dg_04b_declaration_after_prolog_tokens_is_refused() {
+    for prefix in [
+        "<?xml version=\"1.0\"?>",
+        "<!-- fixture -->",
+        "<?fixture value?>",
+    ] {
+        assert_prolog_dtd(
+            400,
+            &format!("{prefix}<!DOCTYPE ErrorResponse><ErrorResponse/>"),
+            describe_cluster,
+        );
+    }
+}
+
+#[test]
+fn t_dg_04b_prolog_doctype_variants_are_refused() {
+    for body in [
+        "\u{feff}<!DOCTYPE html><html/>",
+        " \n\t<!DOCTYPE html><html/>",
+        "<!DOCTYPE html SYSTEM 'https://invalid.example/fixture.dtd'><html/>",
+        "<!DOCTYPE\nhtml\t[<!ATTLIST html id CDATA #IMPLIED>]><html/>",
+        "<!DOCTYPE html><ErrorResponse/>",
+        "<!DOCTYPE html><!DOCTYPE html><html/>",
+    ] {
+        assert_prolog_dtd(400, body, describe_cluster);
+    }
+    assert_prolog_dtd(503, "<!DOCTYPE Response><Response><Errors><Error><Code>RequestLimitExceeded</Code></Error></Errors></Response>", describe_groups);
+}
+
+#[test]
+fn t_dg_04b_lowercase_doctype_uses_status_retry() {
+    let (error, sends, signs, sleeps) =
+        dtd_error_fixture(503, "<!doctype html><html/>", describe_cluster);
+    assert!(matches!(error, AwsError::Service(_)), "{error:?}");
+    assert!(error.is_retryable());
+    assert_eq!((sends, signs, sleeps), (4, 4, 3));
+}
+
+#[test]
+fn t_dg_04b_doctype_outside_prolog_is_ignored() {
+    for (status, code, suffix, attempts) in [
+        (400, "AccessDenied", "<!DOCTYPE ErrorResponse>", 1),
+        (503, "Throttling", "<!DOCTYPE ErrorResponse>", 4),
+    ] {
+        let body =
+            format!("<ErrorResponse><Error><Code>{code}</Code></Error></ErrorResponse>{suffix}");
+        let (error, sends, signs, sleeps) = dtd_error_fixture(status, &body, describe_cluster);
+        let AwsError::Service(detail) = error else {
+            panic!("expected service error")
+        };
+        assert_eq!(detail.status(), status);
+        assert_eq!(detail.code(), Some(code));
+        assert_eq!((sends, signs, sleeps), (attempts, attempts, attempts - 1));
+    }
+    let body =
+        "<ErrorResponse><Error><Code>AccessDenied</Code></Error><!DOCTYPE x></ErrorResponse>";
+    let (error, sends, _, _) = dtd_error_fixture(400, body, describe_cluster);
+    let AwsError::Service(detail) = error else {
+        panic!("expected service error")
+    };
+    assert_eq!(detail.code(), Some("AccessDenied"));
+    assert_eq!(sends, 1);
+}

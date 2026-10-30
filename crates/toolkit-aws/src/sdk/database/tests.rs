@@ -1616,6 +1616,32 @@ fn the_releasing_stream_drops_its_inner_stream_on_every_terminal_read() {
     assert_eq!(stream.next_chunk(), Err(StreamError::TooLarge));
 }
 
+#[test]
+fn bounded_docgraph_services_have_exact_regional_public_only_capabilities() {
+    for service in ["neptune-graph", "dynamodb"] {
+        let p = docgraph_service_endpoint(service, "us-east-1").unwrap();
+        assert_eq!(p.host(), format!("{service}.us-east-1.amazonaws.com"));
+        assert_eq!(p.port(), 443);
+        assert!(p.admits(ip("8.8.8.8")));
+        for address in [
+            "10.1.2.3",
+            "192.168.1.1",
+            "169.254.169.254",
+            "127.0.0.1",
+            "fd12:3456::1",
+            "fd00:ec2::254",
+        ] {
+            assert!(!p.admits(ip(address)));
+        }
+    }
+    for service in ["neptune", "sts", "http://evil", "dynamodb.evil", ""] {
+        assert!(docgraph_service_endpoint(service, "us-east-1").is_err());
+    }
+    for region in ["us-east-1.evil", "cn-north-1", "us-gov-west-1", ""] {
+        assert!(docgraph_service_endpoint("dynamodb", region).is_err());
+    }
+}
+
 // ---- #5484: BoundedBody alone releases its socket on every terminal poll ----
 //
 // These tests poll the connector's response body directly: no `SdkStream` and
