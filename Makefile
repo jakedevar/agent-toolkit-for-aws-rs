@@ -148,6 +148,12 @@ plugin-binaries:
 plugin-binaries-check:
 	cargo run --locked --package plugin-stage -- check
 
+# Offline #5627 reproduction in the invoking clean checkout; preserve the
+# daemon target and sccache, and require clean provenance without --allow-dirty.
+.PHONY: plugin-stage-host
+plugin-stage-host:
+	CARGO_NET_OFFLINE=true cargo run --offline --locked -p plugin-stage -- stage --only aws-core/secret-safety --platform host
+
 # Shell-level self-test of scripts/at-commit-test.sh (#4865): the runner the
 # daemon invokes for AgentSubmitJob test jobs with params.at_commit.
 test-scripts:

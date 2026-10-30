@@ -1159,8 +1159,9 @@ fn t_pkg_nolive_no_test_target_stages_the_real_declaration() {
         }
     }
 
-    // Only the `plugin-binaries` release target stages; no verification
-    // target depends on it (X402 Q24).
+    // Only the release target stages everything. The #5627 diagnostic may
+    // stage exactly the offline secret-safety guard, never the live package.
+    // No verification target depends on either staging target (X402 Q24).
     let makefile = fs::read_to_string(root.join("Makefile")).expect("Makefile");
     let mut target = String::new();
     for line in makefile.lines() {
@@ -1168,13 +1169,19 @@ fn t_pkg_nolive_no_test_target_stages_the_real_declaration() {
             if !line.starts_with(['\t', ' ', '#', '.']) && !name.contains('=') {
                 target = name.trim().to_string();
                 assert!(
-                    !deps.split_whitespace().any(|dep| dep == "plugin-binaries"),
-                    "Makefile target {target} depends on the release staging target"
+                    !deps
+                        .split_whitespace()
+                        .any(|dep| { ["plugin-binaries", "plugin-stage-host"].contains(&dep) }),
+                    "Makefile target {target} depends on a staging target"
                 );
             }
         }
         if line.contains("plugin-stage") && line.contains(" stage") {
-            assert_eq!(target, "plugin-binaries", "{line}");
+            if target == "plugin-stage-host" {
+                assert_eq!(line.trim(), "CARGO_NET_OFFLINE=true cargo run --offline --locked -p plugin-stage -- stage --only aws-core/secret-safety --platform host");
+            } else {
+                assert_eq!(target, "plugin-binaries", "{line}");
+            }
         }
     }
 }

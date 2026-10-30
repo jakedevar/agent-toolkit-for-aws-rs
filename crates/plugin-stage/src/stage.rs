@@ -691,10 +691,10 @@ pub fn parse_metadata(text: &str) -> Result<(BTreeMap<String, BTreeSet<String>>,
 /// tracked change, or any untracked file, including ignored files (#5027). Cargo
 /// picks up untracked inputs on its own (an auto-discovered `build.rs`, a
 /// new module, `.cargo/config.toml`, `rust-toolchain.toml`), so a build with
-/// one present is not a build of the named commit. Only ignored files under
-/// `generated_dirs` stay permitted. These are repository-relative output
-/// directories supplied by the staging caller (Cargo target and declared
-/// destination bin directories), never source directories inferred from ignore
+/// one present is not a build of the named commit. Ignored conventional local
+/// noise and files under `generated_dirs` stay permitted (#5627). The latter
+/// are repository-relative output directories supplied by the staging caller
+/// (Cargo target and declared destination bin directories), never source directories inferred from ignore
 /// rules. Ignoring an input does not make it part of the named commit.
 ///
 /// # Errors
@@ -718,7 +718,7 @@ pub fn source_provenance(
         ],
     )
     .ok_or("`git status` failed")?;
-    // Exclude exact output trees before Git collapses directories. This avoids
+    // Exclude exact output trees before listing files. This avoids
     // enumerating Cargo artifacts without hiding ignored inputs alongside them.
     // NUL delimiters keep names with whitespace or non-UTF-8 bytes unambiguous.
     let mut ignored = Command::new("git");
@@ -727,8 +727,6 @@ pub fn source_provenance(
         "--others",
         "--ignored",
         "--exclude-standard",
-        "--directory",
-        "--no-empty-directory",
         "--full-name",
         "-z",
         "--",
@@ -736,6 +734,7 @@ pub fn source_provenance(
     ]);
     for dir in generated_dirs {
         if !dir.as_os_str().is_empty()
+            && !dir.starts_with(".cargo")
             && dir
                 .components()
                 .all(|part| matches!(part, std::path::Component::Normal(_)))
@@ -752,11 +751,73 @@ pub fn source_provenance(
     if !ignored.status.success() {
         return Err("`git ls-files` failed to list ignored build inputs".to_string());
     }
+    // Do not collapse ignored directories: an exempt name must not hide an
+    // unknown sibling or a Cargo config nested inside it.
+    let mut cache_tags = BTreeMap::new();
+    let mut ignored_input = false;
+    for name in ignored
+        .stdout
+        .split(|byte| *byte == 0)
+        .filter(|name| !name.is_empty())
+    {
+        #[cfg(unix)]
+        let path = {
+            use std::os::unix::ffi::OsStrExt;
+            PathBuf::from(std::ffi::OsStr::from_bytes(name))
+        };
+        #[cfg(not(unix))]
+        let path =
+            PathBuf::from(std::str::from_utf8(name).map_err(|_| "ignored path is not UTF-8")?);
+        if !ignored_non_input(root, &path, &mut cache_tags) {
+            ignored_input = true;
+            break;
+        }
+    }
     Ok(Provenance {
         source_commit: commit,
-        source_dirty: !status.is_empty() || !ignored.stdout.is_empty(),
+        source_dirty: !status.is_empty() || ignored_input,
         rustc: rustc.to_string(),
     })
+}
+
+fn ignored_non_input(root: &Path, path: &Path, cache_tags: &mut BTreeMap<PathBuf, bool>) -> bool {
+    // Cargo runs at root, so only root/.cargo is auto-discovered here. Keep
+    // *all* .cargo components visible anyway, including inside exempt names.
+    if path.iter().any(|part| part == ".cargo") {
+        return false;
+    }
+    if path == Path::new(".rsi-build-env.json") {
+        return true;
+    }
+    if path.iter().any(|part| {
+        ["node_modules", "__pycache__", ".idea", ".vscode"]
+            .iter()
+            .any(|name| part == *name)
+    }) {
+        return true;
+    }
+    if path.file_name().is_some_and(|name| {
+        name == ".DS_Store"
+            || name.as_encoded_bytes().ends_with(b".swp")
+            || name.as_encoded_bytes().ends_with(b"~")
+    }) {
+        return true;
+    }
+    // A directory merely named target is not enough. Require Cargo's cache
+    // marker, read without following a symlink; memoize per directory.
+    let mut prefix = PathBuf::new();
+    for part in path {
+        prefix.push(part);
+        if part == "target"
+            && *cache_tags.entry(prefix.clone()).or_insert_with(|| {
+                read_regular(&root.join(&prefix).join("CACHEDIR.TAG"))
+                    .is_ok_and(|bytes| bytes.starts_with(b"Signature: 8a477f597d28d172789f06886806bc55\n# This file is a cache directory tag created by cargo.\n"))
+            })
+        {
+            return true;
+        }
+    }
+    false
 }
 
 /// #5592/#5603: never compile a shipped binary whose normal graph enables an

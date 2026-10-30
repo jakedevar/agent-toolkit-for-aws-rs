@@ -103,6 +103,12 @@ target = "fmt"
 timeout_minutes = 5
 cpu_quota_percent = 200
 
+[recipes.plugin-stage-host]
+runner = "make"
+target = "plugin-stage-host"
+timeout_minutes = 20
+cpu_quota_percent = 200
+
 [recipes.fmt-patch]
 runner = "make"
 target = "fmt-patch"

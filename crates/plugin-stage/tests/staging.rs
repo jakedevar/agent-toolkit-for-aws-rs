@@ -529,6 +529,176 @@ mod provenance_of_untracked_inputs {
         assert_flags(&fixture.verify(true), "dirty");
     }
 
+    const CARGO_CACHE_TAG: &str = "Signature: 8a477f597d28d172789f06886806bc55\n# This file is a cache directory tag created by cargo.\n";
+
+    #[test]
+    fn conventional_ignored_non_inputs_keep_a_checkout_clean() {
+        let dir = repo();
+        write(&dir.join(".git/info/exclude"), "*\n");
+        for name in [
+            ".rsi-build-env.json",
+            "packages/tool/node_modules/module/index.js",
+            "skills/tool/__pycache__/module.pyc",
+            ".idea/workspace.xml",
+            "crates/tool/.vscode/settings.json",
+            ".DS_Store",
+            "crates/tool/.DS_Store",
+            "crates/tool/.main.rs.swp",
+            "Cargo.toml~",
+        ] {
+            write(&dir.join(name), "ignored non-input\n");
+            assert!(!dirty(&dir), "{name} must not prevent a clean release");
+            // Exemptions never hide an unknown ignored sibling.
+            write(&dir.join("payload.inc"), "ignored input\n");
+            assert!(dirty(&dir), "an exempt {name} must not hide an input");
+            fs::remove_file(dir.join("payload.inc")).expect("remove input");
+            fs::remove_file(dir.join(name)).expect("remove non-input");
+        }
+        // Neither local nor committed ignore rules change the closed list.
+        write(&dir.join(".gitignore"), "*\n");
+        git(&dir, &["add", ".gitignore"]);
+        git(&dir, &["commit", "--quiet", "-m", "ignore local noise"]);
+        write(&dir.join(".rsi-build-env.json"), "{}\n");
+        assert!(!dirty(&dir));
+        write(&dir.join("build.rs"), "fn main() {}\n");
+        assert!(dirty(&dir));
+    }
+
+    #[test]
+    fn ignored_near_misses_and_cargo_configuration_stay_dirty() {
+        let dir = repo();
+        write(&dir.join(".git/info/exclude"), "*\n");
+        for name in [
+            "crates/.rsi-build-env.json",
+            ".rsi-build-env.json2",
+            "node_modules2/input.inc",
+            "__pycache__2/input.inc",
+            ".idea2/input.inc",
+            ".vscode2/input.inc",
+            ".DS_Store2",
+            "file.swp2",
+            "file~2",
+            "crates/tool/mytarget/input.inc",
+            "crates/tool/target/input.inc",
+            "rust-toolchain",
+            "rust-toolchain.toml",
+            "unknown-name",
+            ".cargo/config.toml",
+            ".cargo/config",
+            ".cargo/config.toml~",
+            ".cargo/.config.swp",
+            ".cargo/node_modules/config.toml",
+            "node_modules/.cargo/config.toml",
+            ".vscode/.cargo/config.toml",
+        ] {
+            write(&dir.join(name), "ignored input\n");
+            assert!(dirty(&dir), "{name} is outside the closed exemption list");
+            fs::remove_file(dir.join(name)).expect("remove input");
+            assert!(!dirty(&dir), "{name} removed");
+        }
+    }
+
+    #[test]
+    fn nested_targets_require_a_cargo_cache_tag() {
+        let dir = repo();
+        write(&dir.join(".git/info/exclude"), "*\n");
+        let target = dir.join("crates/tool/target");
+        write(&target.join("debug/tool"), "output\n");
+        assert!(dirty(&dir), "a target name alone cannot hide inputs");
+        write(&target.join("CACHEDIR.TAG"), "not a Cargo tag\n");
+        assert!(dirty(&dir));
+        write(
+            &target.join("CACHEDIR.TAG"),
+            "Signature: 8a477f597d28d172789f06886806bc55\n",
+        );
+        assert!(dirty(&dir), "a generic cache tag is not a Cargo marker");
+        write(&target.join("CACHEDIR.TAG"), CARGO_CACHE_TAG);
+        assert!(!dirty(&dir), "Cargo's nested target is generated output");
+        write(&dir.join("crates/tool/payload.inc"), "input\n");
+        assert!(dirty(&dir), "an input beside the cache stays dirty");
+        fs::remove_file(dir.join("crates/tool/payload.inc")).expect("remove");
+        write(
+            &dir.join("crates/tool/mytarget/CACHEDIR.TAG"),
+            CARGO_CACHE_TAG,
+        );
+        assert!(dirty(&dir), "a tag does not exempt mytarget");
+    }
+
+    #[test]
+    fn metadata_target_output_is_exact_and_requires_ignored_files() {
+        let dir = repo();
+        let custom = PathBuf::from("build-output/cargo");
+        let outputs = [PathBuf::from("target"), custom.clone()];
+        write(&dir.join(".git/info/exclude"), "build-output/\n");
+        write(&dir.join(&custom).join("debug/tool"), "output\n");
+        assert!(dirty(&dir), "unlisted custom directory is an input");
+        assert!(
+            !read_provenance(&dir, "rustc", &outputs)
+                .unwrap()
+                .source_dirty
+        );
+        write(&dir.join("build-output/payload.inc"), "input\n");
+        assert!(
+            read_provenance(&dir, "rustc", &outputs)
+                .unwrap()
+                .source_dirty
+        );
+        fs::remove_file(dir.join("build-output/payload.inc")).expect("remove");
+        write(&dir.join("build-output/cargo2/payload.inc"), "input\n");
+        assert!(
+            read_provenance(&dir, "rustc", &outputs)
+                .unwrap()
+                .source_dirty
+        );
+        fs::remove_file(dir.join("build-output/cargo2/payload.inc")).expect("remove");
+        write(&dir.join(".git/info/exclude"), "");
+        assert!(
+            read_provenance(&dir, "rustc", &outputs)
+                .unwrap()
+                .source_dirty
+        );
+    }
+
+    #[test]
+    fn exemptions_do_not_hide_untracked_noise_or_root_cargo_config() {
+        let dir = repo();
+        for name in [
+            ".rsi-build-env.json",
+            ".DS_Store",
+            ".idea/settings.json",
+            "file.swp",
+            "file~",
+        ] {
+            write(&dir.join(name), "untracked\n");
+            assert!(dirty(&dir), "{name} must be ignored to qualify");
+            fs::remove_file(dir.join(name)).expect("remove");
+        }
+        write(&dir.join(".git/info/exclude"), ".cargo/\n");
+        write(&dir.join(".cargo/config.toml"), "ignored configuration\n");
+        assert!(
+            read_provenance(&dir, "rustc", &[PathBuf::from(".cargo")])
+                .unwrap()
+                .source_dirty,
+            "even a metadata target_directory of .cargo cannot hide root config"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ignored_non_utf8_names_are_checked_without_lossy_conversion() {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+
+        let dir = repo();
+        write(&dir.join(".git/info/exclude"), "*\n");
+        let swap = dir.join(OsStr::from_bytes(b"file-\xff.swp"));
+        write(&swap, "editor noise\n");
+        assert!(!dirty(&dir));
+        let input = dir.join(OsStr::from_bytes(b"input-\xff.inc"));
+        write(&input, "input\n");
+        assert!(dirty(&dir));
+    }
+
     #[test]
     fn generated_output_exemptions_are_exact_and_require_ignored_files() {
         let dir = repo();

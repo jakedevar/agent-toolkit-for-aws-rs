@@ -349,17 +349,29 @@ is a deliberate opt-in this gate does not prevent. See [ai-models.md](ai-models.
 
 - `source_commit`: the full commit from `git rev-parse HEAD`.
 - `source_dirty`: true when `git status --porcelain --untracked-files=all` reports
-  anything, or `git ls-files --others --ignored --exclude-standard --directory -z`
-  finds nonempty ignored paths outside the explicitly allowed generated output directories
+  anything, or `git ls-files --others --ignored --exclude-standard -z`
+  finds ignored files outside the closed exemptions below
   (#5027). Cargo builds untracked inputs without being told to: an
   auto-discovered `build.rs`, a new module, `.cargo/config.toml`,
   `rust-toolchain.toml`. A build with any of them present is therefore not a build of
-  the named commit. Only ignored files in repository-root `target/` and the declared
-  destinations' generated `bin/` directories stay permitted; those directories are
-  reserved for outputs. Other ignored paths, including source and config hidden by
-  committed rules, local excludes or global excludes, count as dirty. An ignored
-  ancestor cannot hide inputs alongside the output: exact output exclusions are
-  applied before Git collapses directories, and empty directories are ignored.
+  the named commit. Ignored files in repository-root `target/`, the declared
+  destinations' generated `bin/` directories, and the metadata probe's
+  `target_directory` when inside the repository stay permitted; these directories
+  are reserved for outputs. Nested directories named exactly `target` are also
+  permitted when their regular `CACHEDIR.TAG` starts with Cargo's signature and
+  creation comment. A directory name alone or a generic cache tag does not suffice.
+  The other exemptions (#5627) are root-only `.rsi-build-env.json`; paths with an
+  exact `node_modules`, `__pycache__`, `.idea` or `.vscode` component; files named
+  `.DS_Store`; and editor swap/backup files ending in `.swp` or `~`.
+  `.cargo` components take precedence over these name exemptions, so even
+  `.cargo/config.toml~` or `node_modules/.cargo/config.toml` stays dirty.
+  Everything else ignored, including `build.rs`, `rust-toolchain*`, `*.rs`,
+  `*.toml`, `*.inc` and unknown names hidden by committed rules, local excludes
+  or global excludes, counts as dirty outside those exempt trees. Exact component
+  matching keeps `node_modules2`, `mytarget` and output-prefix collisions dirty.
+  Exact output exclusions precede enumeration; all other ignored files are
+  checked individually so an ignored ancestor cannot hide an input beside an
+  exempt file. Empty directories have no inputs and do not count.
   The check covers the whole checkout, not only the staged packages' paths:
   path dependencies and workspace-root configuration are build inputs too, and a
   narrower list could miss one.
@@ -369,6 +381,16 @@ is a deliberate opt-in this gate does not prevent. See [ai-models.md](ai-models.
 - For each dispatcher: its `sha256`.
 
 The manifest has no timestamps, so restaging the same bytes produces the same manifest.
+
+This is a Git provenance check, not a proof of all compiler inputs. A committed
+`include!` (or build script) pointing into an exempt name can consume an ignored
+file without this check seeing it. Build inputs outside the repository root,
+including external path dependencies, `[patch]` paths, CARGO_HOME configuration
+and RUSTFLAGS, are not seen by a Git-based check. The staging build separately
+clears RUSTFLAGS as described below. Cargo is invoked from the repository root,
+so a planted `.cargo/config.toml` under an exempt child name is not automatically
+discovered by Cargo; only root `.cargo` and ancestor configuration are searched.
+The name exemptions conservatively still report nested `.cargo` as dirty.
 
 Rules the tool enforces:
 

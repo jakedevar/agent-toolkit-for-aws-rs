@@ -199,6 +199,11 @@ fn run_plan(ctx: &Context, args: &Args, build_now: bool) -> ExitCode {
         );
     }
     let mut generated_dirs = vec![PathBuf::from("target")];
+    if let Ok(root) = ctx.root.canonicalize() {
+        if let Ok(relative) = probe.target_dir.strip_prefix(root) {
+            generated_dirs.push(relative.to_path_buf());
+        }
+    }
     for destination in ctx.declaration.destinations() {
         let dir = destination.dir(&ctx.root, &ctx.plugins_root);
         if let Ok(relative) = dir.strip_prefix(&ctx.root) {
