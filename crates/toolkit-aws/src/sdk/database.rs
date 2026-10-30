@@ -1144,6 +1144,18 @@ impl<S: crate::stream::ResponseStream> crate::stream::ResponseStream for Releasi
     }
 }
 
+fn docgraph_service_endpoint(service: &str, region: &str) -> Result<DatabaseEndpoint, AwsError> {
+    if !["dynamodb", "neptune-graph"].contains(&service) || !valid_region(region)
+        || region.starts_with("cn-") || region.starts_with("us-gov-")
+        || region.contains("-iso") {
+        return Err(policy_error("unsupported bounded docgraph service or region"));
+    }
+    Ok(DatabaseEndpoint {
+        host: format!("{service}.{region}.amazonaws.com"), port: 443,
+        region: region.to_string(), ranges: Vec::new(),
+    })
+}
+
 impl SdkTransport {
     /// Bounded S4 public service plane. Only the two modeled memory services
     /// are admitted, at their regional AWS host on 443, with no private ranges.
@@ -1153,14 +1165,20 @@ impl SdkTransport {
     /// # Errors
     /// InvalidConfig for any other service, invalid region or TLS roots.
     pub fn for_docgraph_service(
-        runtime: &SdkRuntime, roots: &ValidatedRoots, service: &str,
-        region: &str, bounds: DatabaseBounds,
+        runtime: &SdkRuntime,
+        roots: &ValidatedRoots,
+        service: &str,
+        region: &str,
+        bounds: DatabaseBounds,
     ) -> Result<Self, AwsError> {
-        if !["dynamodb", "neptune-graph"].contains(&service) || !valid_region(region) {
-            return Err(policy_error("unsupported bounded docgraph service or region"));
-        }
-        let endpoint = DatabaseEndpoint {host: format!("{service}.{region}.amazonaws.com"), port: 443, region: region.to_string(), ranges: Vec::new()};
-        Self::for_database_with_resolver(runtime, roots, endpoint, bounds, Arc::new(SystemDatabaseResolver))
+        let endpoint = docgraph_service_endpoint(service, region)?;
+        Self::for_database_with_resolver(
+            runtime,
+            roots,
+            endpoint,
+            bounds,
+            Arc::new(SystemDatabaseResolver),
+        )
     }
 
     /// The database transport (R-DG-03): system DNS, TCP and TLS trusting

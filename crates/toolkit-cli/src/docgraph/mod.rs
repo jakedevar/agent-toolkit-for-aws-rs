@@ -50,9 +50,9 @@ mod client;
 mod dbchecks;
 mod infra;
 #[cfg(feature = "docgraph-live")]
-mod live_seed;
-#[cfg(feature = "docgraph-live")]
 mod live_memory;
+#[cfg(feature = "docgraph-live")]
+mod live_seed;
 pub mod memory;
 mod neptune_input;
 #[cfg(feature = "docgraph-live")]
