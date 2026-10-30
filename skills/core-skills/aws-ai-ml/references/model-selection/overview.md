@@ -11,7 +11,7 @@ Guides the user through selecting a base model based on their use case.
 
 ## Prerequisites
 
-The shipped toolkit build lacks the `ai-models-live` feature and has no live AWS client. Commands requiring AWS responses need `--recorded FILE`; they cannot query a real account unless a toolkit build enables that feature. Identify recorded data as such.
+The aws-core plugin ships toolkit with `ai-models-live` enabled. Commands that query AWS use the configured account and region. For offline replay, add `--recorded FILE` and identify the results as recorded data. SDK-free development builds require recorded responses for commands that query AWS.
 
 ---
 
@@ -21,11 +21,11 @@ The shipped toolkit build lacks the `ai-models-live` feature and has no live AWS
 
 2. **Recommend use-case-spec first:** If no `*_use_case_spec.md` file exists for this use case, recommend creating one via `references/use-case-specification/overview.md` before filtering. This produces better results because the spec captures constraints that map to concrete filter values. If the user declines or provides a specific model name/ID, proceed without it. **After making this recommendation, stop and wait for the user's response. Do not continue with model selection in the same turn.**
 
-3. **Base model filtering MUST use select-for-deployment:** When making a final model selection or recommendation for deployment, you MUST follow `references/select-for-deployment.md` and use its commands. `SageMakerPublicHub` uses `toolkit ai-models list-models` for a selection-session catalog snapshot and `toolkit ai-models search` for confirmed candidates; private Hubs keep `toolkit ai-models list-models` plus `toolkit ai-models filter`. Do not make a final model selection or recommendation for deployment ad hoc from your own knowledge.
+3. **Base model filtering MUST use select-for-deployment:** When making a final model selection or recommendation for deployment, you MUST follow `references/select-for-deployment.md` and use its commands. `SageMakerPublicHub` uses `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" ai-models list-models` for a selection-session catalog snapshot and `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" ai-models search` for confirmed candidates; private Hubs keep `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" ai-models list-models` plus `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" ai-models filter`. Do not make a final model selection or recommendation for deployment ad hoc from your own knowledge.
 
 4. **Offer to create a use-case spec after filtering:** If filtering was done without a spec, and no `*_use_case_spec.md` file exists for this use case, offer to create one to refine the criteria for future iterations.
 
-5. **No premature recommendations:** You may provide an initial quick-filtered list of models based on what you know, but do NOT make a recommendation or suggest a specific model as "the best choice" until the full selection workflow (select-for-deployment commands or Step 3A) has been followed. If you have NOT run `toolkit ai-models list-models` or `toolkit ai-models model-names` in this session, you MUST prefix any model list with:
+5. **No premature recommendations:** You may provide an initial quick-filtered list of models based on what you know, but do NOT make a recommendation or suggest a specific model as "the best choice" until the full selection workflow (select-for-deployment commands or Step 3A) has been followed. If you have NOT run `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" ai-models list-models` or `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" ai-models model-names` in this session, you MUST prefix any model list with:
 
 > ⚠️ This is a preliminary list based on general knowledge. I have not yet queried all available models in your Hub. There may be better matches once we run the full selection workflow.
 
@@ -82,18 +82,18 @@ If the intent is ambiguous, ask:
 
 #### Step 3A: Select for Fine-tuning
 
-First, retrieve all available SageMaker Hub model names by running: `toolkit ai-models model-names <hub-name>`. Note how many models the command returns.
+First, retrieve all available SageMaker Hub model names by running: `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" ai-models model-names <hub-name>`. Note how many models the command returns.
 
 Present all available models to the user with their licenses before making any recommendations. Cross-reference the model list with `references/model-licenses.md` and display each as `<model name> - [<license>](<url>)`. For example: "Qwen3-4B - [Apache 2.0](https://huggingface.co/Qwen/Qwen3-4B/blob/main/LICENSE)"
 
 **Display every model — completeness is required:**
 
-- `toolkit ai-models model-names` returns the models in a fixed, deterministic order:
+- `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" ai-models model-names` returns the models in a fixed, deterministic order:
   **alphabetical by name (A→Z, case-insensitive)**. Present them in exactly that
   order — do **not** re-sort or reorder the list. (This applies only to this raw
   availability list; the benchmark ranking tables in `references/model-selection.md`
   keep their performance order and must not be alphabetized.)
-- List **each** model returned by `toolkit ai-models model-names` as its own separate line with its own license URL. The number of models you display MUST equal the number the command returned.
+- List **each** model returned by `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" ai-models model-names` as its own separate line with its own license URL. The number of models you display MUST equal the number the command returned.
 - Do **not** omit, drop, or skip any model — even when the list is long.
 - Do **not** separate models into Text vs VLM categories. Do **not** exclude VLMs from text-only use cases. Present **all** models in a single unified list regardless of modality.
 - Do **not** merge or group models under a shared license, and do **not** collapse similar-looking models into one entry. Models that look like variants of each other are still distinct and each needs its own line. For example:

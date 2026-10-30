@@ -5,7 +5,7 @@ Select a base model to deploy by filtering the catalog against the user's `use_c
 ## Prerequisites
 
 - A `use_case_spec.md` file exists with a **Deployment Constraints** section. If not, activate the `use-case-specification` skill first.
-- The shipped toolkit build lacks the `ai-models-live` feature and has no live AWS client. Commands that query AWS require `--recorded FILE` with recorded responses; do not present recorded data as a live account query. `filter` works on a local models file, and `search` with a snapshot can fall back to local filtering.
+- The aws-core plugin ships toolkit with `ai-models-live` enabled. Commands that query AWS use the configured account and region. For offline replay, add `--recorded FILE`; SDK-free development builds require it for AWS responses. Do not present recorded data as a live account query. `filter` works on a local models file, and `search` with a snapshot can fall back to local filtering.
 
 ## Step 1: Discover Available Filter Values
 
@@ -16,7 +16,7 @@ Branch on the selected Hub.
 Create one unique, short-lived catalog snapshot while discovering values:
 
 ```bash
-toolkit ai-models list-models \
+"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" ai-models list-models \
     SageMakerPublicHub --list-values --create-snapshot <region>
 ```
 
@@ -29,7 +29,7 @@ The snapshot is a per-selection-session cache of compact, normalized `ListHubCon
 Run the existing discovery command without a snapshot:
 
 ```bash
-toolkit ai-models list-models <hub-name> --list-values <region>
+"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" ai-models list-models <hub-name> --list-values <region>
 ```
 
 Both commands return a JSON object showing all unique values available for each filterable field. For example:
@@ -66,7 +66,7 @@ Read `use_case_spec.md` and extract the **Deployment Constraints** section. Thes
 
 ### 2a. Size — soft term → exact `size` value
 
-`toolkit ai-models list-models` normalizes every model into one of five canonical size
+`"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" ai-models list-models` normalizes every model into one of five canonical size
 buckets (`<=10b` / `11b-70b` / `71b-100b` / `>100b` / `unknown`). The four below
 are the selectable values; `unknown` means the model's size could not be
 determined — it is excluded by any size filter and has no soft-term mapping.
@@ -178,7 +178,7 @@ Branch on the selected Hub after the user confirms the complete filter mapping.
 Run Search with the literal snapshot path recorded in Step 1:
 
 ```bash
-toolkit ai-models search \
+"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" ai-models search \
     SageMakerPublicHub --region <region> \
     --snapshot-file <recorded-snapshot-path> \
     <filter1> <filter2> ...
@@ -189,7 +189,7 @@ The adapter uses Search for candidate membership, restores each result's cached 
 Inspect these output fields before presenting candidates:
 
 - `retrieval_backend: "search"` means Search returned the candidate set.
-- `retrieval_backend: "list_fallback"` means an explicit SDK, permission, service, transport, or Search-response failure caused the adapter to apply the complete confirmed filter set to the cached List catalog. The adapter performs this fallback internally from the existing snapshot. Do not call `toolkit ai-models list-models` or `toolkit ai-models filter` after a Search failure, and do not make another List request. Tell the user: "SageMaker Search was unavailable, so I used the existing complete Hub catalog filtering path for this selection."
+- `retrieval_backend: "list_fallback"` means an explicit SDK, permission, service, transport, or Search-response failure caused the adapter to apply the complete confirmed filter set to the cached List catalog. The adapter performs this fallback internally from the existing snapshot. Do not call `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" ai-models list-models` or `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" ai-models filter` after a Search failure, and do not make another List request. Tell the user: "SageMaker Search was unavailable, so I used the existing complete Hub catalog filtering path for this selection."
 - A successful Search with `matched: 0` is a real empty result and does not invoke fallback.
 - Present every entry in `warnings`. In particular, if a Search result lacks cached `OriginalCreationTime`, explain that it was placed after dated models and ordered by name.
 
@@ -200,10 +200,10 @@ Never merge Search and List results. One invocation uses either the Search resul
 Run the List-and-filter path:
 
 ```bash
-toolkit ai-models list-models \
+"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" ai-models list-models \
     <hub-name> <region> > /tmp/deployable_models.json
 
-toolkit ai-models filter \
+"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" ai-models filter \
     /tmp/deployable_models.json <filter1> <filter2> ...
 ```
 
@@ -247,7 +247,7 @@ Show the first 20 (the 20 newest, since the script returns newest-first — pres
 
 ### If results are empty
 
-Re-run the active Hub's candidate command with one constraint removed at a time to identify which filter is most restrictive. For `SageMakerPublicHub`, reuse the same snapshot and rerun `toolkit ai-models search`; for a private Hub, rerun `toolkit ai-models filter`.
+Re-run the active Hub's candidate command with one constraint removed at a time to identify which filter is most restrictive. For `SageMakerPublicHub`, reuse the same snapshot and rerun `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" ai-models search`; for a private Hub, rerun `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" ai-models filter`.
 
 Do not treat a successful zero-result Search as an availability failure and do not switch to List merely because the result is empty. Report:
 

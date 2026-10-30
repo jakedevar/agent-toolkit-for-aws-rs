@@ -41,7 +41,15 @@ fn retired_scripts_and_skill_routes() {
                     "deleted script named in {tree}/{doc}"
                 );
             }
-            let joined = content.replace("\\\n", " ");
+            let invocation = "\"${CLAUDE_PLUGIN_ROOT}/bin/toolkit\" ai-models ";
+            assert!(content.contains(invocation), "no plugin command in {doc}");
+            assert!(
+                !content.contains("toolkit ai-models "),
+                "bare command in {doc}"
+            );
+            let joined = content
+                .replace(invocation, "toolkit ai-models ")
+                .replace("\\\n", " ");
             for line in joined
                 .lines()
                 .filter(|line| line.contains("toolkit ai-models "))
