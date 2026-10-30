@@ -948,8 +948,8 @@ fn carrier_rows(c: &str) -> Vec<(Vec<&str>, i32, &'static str)> {
             "",
         ),
         (
-        // S3 (#5515): with argv consent the live seed reads the policy, which
-        // refuses every consent-shaped key before credentials or DNS.
+            // S3 (#5515): with argv consent the live seed reads the policy, which
+            // refuses every consent-shaped key before credentials or DNS.
             "neptune seed --live --confirm-wipe --endpoint ENDPOINT --network-policy @",
             1,
             "unknown key",
