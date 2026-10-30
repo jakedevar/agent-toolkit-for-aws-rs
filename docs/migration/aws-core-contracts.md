@@ -221,6 +221,14 @@ under `--locked`.
 SDK futures on. The adapters must not be called from inside another tokio
 runtime.
 
+For both buffered and streaming response bodies, `body_error` maps an
+`UnexpectedEof` anywhere in the error chain, and a hyper parse error other than
+too-large, to non-retryable `AwsError::Protocol`. Other body-read failures map
+to retryable `Connect`. This shared classification affects payment, MCP proxy,
+`asm_exec` and other SDK transport consumers; D39 in
+`x402-payments-design.md` records the change from the previous retryable
+classification and its availability tradeoff.
+
 ### SDK-independent half, tested in the default build (`binding`)
 
 Every adapter decision that needs no SDK type lives in `toolkit_aws::binding`,
