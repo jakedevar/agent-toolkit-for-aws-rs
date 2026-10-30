@@ -29,9 +29,10 @@
 //! is buffered; messages and the bytes of one operation are capped at the
 //! database response limit (16 MiB); `GraphSON` depth and bulk expansion are
 //! bounded by [`MAX_DEPTH`] and [`MAX_RESULTS`] ([`graphson`]). The upgrade
-//! and every statement run inside one absolute deadline (the operation
-//! budget, capped by the caller's invocation deadline) with the idle bound
-//! between frames.
+//! and first statement share the absolute deadline established before
+//! credentials/signing. Later statements start a new operation budget, capped
+//! by the invocation deadline, with the idle bound between frames. Close is
+//! capped by the current operation deadline as well as its own close budget.
 //!
 //! Failure: any failed statement spends the connection: its socket is dropped
 //! at once and every later `submit` fails without sending, so a statement is
@@ -40,7 +41,7 @@
 //! unknown. There is no reconnect; a new connection is signed afresh.
 //!
 //! Close: [`GremlinConnection::close`] sends a close frame within
-//! [`CLOSE_BUDGET`] (capped by the invocation deadline) and drops the socket;
+//! [`CLOSE_BUDGET`] (capped by the operation and invocation deadlines) and drops the socket;
 //! dropping the connection drops the socket synchronously, on every exit.
 //! Diagnostics are fixed texts: no server message, frame, URL, header or
 //! WebSocket/TLS error text is forwarded (R-DG-02).
@@ -89,6 +90,8 @@ pub struct GremlinConnection {
     socket: Option<Socket>,
     bounds: DatabaseBounds,
     invocation: Instant,
+    operation_deadline: Instant,
+    first_statement: bool,
 }
 
 impl fmt::Debug for GremlinConnection {
@@ -99,6 +102,16 @@ impl fmt::Debug for GremlinConnection {
 
 fn unknown_after_send(reason: &str) -> String {
     format!("{reason} after the statement was sent; whether the graph applied it is unknown")
+}
+
+fn check_deadline(deadline: Instant) -> Result<(), AwsError> {
+    if Instant::now() >= deadline {
+        return Err(AwsError::timeout(
+            TimeoutPhase::Deadline,
+            "the operation deadline elapsed before any statement was sent",
+        ));
+    }
+    Ok(())
 }
 
 /// A fresh random (version 4) request id from the TLS stack's generator.
@@ -196,11 +209,13 @@ fn upgrade_error(error: &tungstenite::Error) -> AwsError {
 
 fn read_error(error: &tungstenite::Error) -> AwsError {
     match error {
-        tungstenite::Error::Capacity(_) => AwsError::invalid_response(
+        tungstenite::Error::Capacity(_) => AwsError::invalid_response(unknown_after_send(
             "a Gremlin frame or message exceeds its size limit (1 MiB per frame)",
-        ),
+        )),
         tungstenite::Error::Protocol(_) | tungstenite::Error::Utf8(_) => {
-            AwsError::invalid_response("the Gremlin connection broke the WebSocket protocol")
+            AwsError::invalid_response(unknown_after_send(
+                "the Gremlin connection broke the WebSocket protocol",
+            ))
         }
         _ => AwsError::connect(unknown_after_send("the Gremlin connection failed")),
     }
@@ -214,6 +229,7 @@ async fn exchange(
     deadline: Instant,
     bounds: DatabaseBounds,
 ) -> Result<Vec<Json>, AwsError> {
+    check_deadline(deadline)?;
     let late = || {
         AwsError::timeout(
             TimeoutPhase::Deadline,
@@ -252,11 +268,17 @@ async fn exchange(
         };
         received = received.saturating_add(u64::try_from(bytes.len()).unwrap_or(u64::MAX));
         if received > bounds.max_response_bytes {
-            return Err(AwsError::invalid_response(
+            return Err(AwsError::invalid_response(unknown_after_send(
                 "the Gremlin response exceeds the 16 MiB limit of one operation",
-            ));
+            )));
         }
-        if results.add_message(bytes, id)? == graphson::Status::Complete {
+        // The decoder emits fixed classified errors, never peer-controlled
+        // text. Preserve the classification and explain the sent statement's
+        // uncertain outcome even when a response arrived but was unusable.
+        let status = results
+            .add_message(bytes, id)
+            .map_err(|error| AwsError::OutcomeUnknown(Box::new(error)))?;
+        if status == graphson::Status::Complete {
             return Ok(results.items);
         }
     }
@@ -265,6 +287,8 @@ async fn exchange(
 impl GremlinConnection {
     /// Sign the upgrade, then open the connection through the system
     /// resolver and a TCP dial admitted by `endpoint` (default bounds).
+    /// `operation_deadline` must be established before credential resolution;
+    /// it also covers signing, upgrade, the first statement and close.
     ///
     /// # Errors
     /// Signing and credential errors (nothing sent), the capability's
@@ -275,6 +299,7 @@ impl GremlinConnection {
         endpoint: DatabaseEndpoint,
         signer: &dyn Signer,
         region: &str,
+        operation_deadline: std::time::Instant,
         invocation_deadline: std::time::Instant,
     ) -> Result<Self, AwsError> {
         let opener = SecureOpener::system(roots, endpoint, DatabaseBounds::default())?;
@@ -284,6 +309,7 @@ impl GremlinConnection {
             MAX_FRAME_BYTES,
             signer,
             region,
+            operation_deadline,
             invocation_deadline,
         )
     }
@@ -294,19 +320,26 @@ impl GremlinConnection {
         max_frame_bytes: usize,
         signer: &dyn Signer,
         region: &str,
+        operation_deadline: std::time::Instant,
         invocation_deadline: std::time::Instant,
     ) -> Result<Self, AwsError> {
         let bounds = opener.bounds();
         let invocation = Instant::from_std(invocation_deadline);
-        let request = upgrade_request(opener.endpoint(), signer, region)?;
+        let deadline = (Instant::now() + bounds.operation)
+            .min(Instant::from_std(operation_deadline))
+            .min(invocation);
+        check_deadline(deadline)?;
+        let request = upgrade_request(opener.endpoint(), signer, region);
+        check_deadline(deadline)?;
+        let request = request?;
         let config = WebSocketConfig::default()
             .max_frame_size(Some(max_frame_bytes))
             .max_message_size(Some(
                 usize::try_from(bounds.max_response_bytes).unwrap_or(usize::MAX),
             ));
         let socket = runtime.block_on(async {
-            let deadline = (Instant::now() + bounds.operation).min(invocation);
             let upgrade = async {
+                check_deadline(deadline)?;
                 let tls = opener.open(deadline).await?;
                 let bound = deadline.min(Instant::now() + bounds.connect);
                 match tokio::time::timeout_at(
@@ -337,6 +370,8 @@ impl GremlinConnection {
             socket: Some(socket),
             bounds,
             invocation,
+            operation_deadline: deadline,
+            first_statement: true,
         })
     }
 
@@ -359,15 +394,17 @@ impl GremlinConnection {
         let Some(socket) = self.socket.as_mut() else {
             return Err(AwsError::connect(SPENT));
         };
+        if !self.first_statement {
+            self.operation_deadline = (Instant::now() + self.bounds.operation).min(self.invocation);
+        }
+        self.first_statement = false;
+        let deadline = self.operation_deadline;
         let outcome = match request_id() {
             Ok(id) => {
                 let payload = graphson::request_payload(&id, gremlin, bindings);
                 let bounds = self.bounds;
-                let invocation = self.invocation;
-                self.runtime.block_on(async {
-                    let deadline = (Instant::now() + bounds.operation).min(invocation);
-                    exchange(socket, payload, &id, deadline, bounds).await
-                })
+                self.runtime
+                    .block_on(async { exchange(socket, payload, &id, deadline, bounds).await })
             }
             Err(error) => Err(error),
         };
@@ -382,9 +419,14 @@ impl GremlinConnection {
     pub fn close(mut self) {
         if let Some(mut socket) = self.socket.take() {
             let invocation = self.invocation;
+            let deadline = self.operation_deadline;
             self.runtime.block_on(async {
-                let bound = (Instant::now() + CLOSE_BUDGET).min(invocation);
-                let _ = tokio::time::timeout_at(bound, socket.close(None)).await;
+                let bound = (Instant::now() + CLOSE_BUDGET)
+                    .min(invocation)
+                    .min(deadline);
+                if Instant::now() < bound {
+                    let _ = tokio::time::timeout_at(bound, socket.close(None)).await;
+                }
             });
         }
     }

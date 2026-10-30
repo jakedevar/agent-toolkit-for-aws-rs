@@ -119,6 +119,7 @@ pub(super) fn run(invocation: &Invocation, out: &mut Output<'_>) -> Result<(), T
                 policy,
                 &signer,
                 &region,
+                deadline,
                 invocation_deadline,
             )
         })),
