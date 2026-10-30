@@ -31,7 +31,8 @@
       "slice": "payments-bridge",
       "issue": 4411,
       "classification": "toolkit-helper",
-      "status": "pending"
+      "status": "ported",
+      "disposition_note": "Ported by OpenClaw B1-B5 to the Rust bridge, admin commands and contract tests; B5 updates callers and documentation. The legacy file remains until the programme retirement step."
     },
     {
       "path": "plugins/aws-agents/skills/agents-pay/packages/openclaw/test/test_agentcore_bridge.py",
@@ -40,7 +41,8 @@
       "slice": "payments-bridge",
       "issue": 4411,
       "classification": "test-or-diagnostic",
-      "status": "pending"
+      "status": "ported",
+      "disposition_note": "Ported by OpenClaw B1-B5 to the Rust bridge, admin commands and contract tests; B5 updates callers and documentation. The legacy file remains until the programme retirement step."
     },
     {
       "path": "plugins/aws-agents/skills/agents-pay/packages/openclaw/test/test_setup_openclaw.py",
@@ -49,7 +51,8 @@
       "slice": "payments-bridge",
       "issue": 4411,
       "classification": "test-or-diagnostic",
-      "status": "pending"
+      "status": "ported",
+      "disposition_note": "Ported by OpenClaw B1-B5 to the Rust bridge, admin commands and contract tests; B5 updates callers and documentation. The legacy file remains until the programme retirement step."
     },
     {
       "path": "plugins/aws-agents/skills/agents-pay/scripts/agents_pay_admin.py",

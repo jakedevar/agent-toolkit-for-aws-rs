@@ -47,20 +47,20 @@ export AGENTCORE_PROJECT_DIR="$PWD"
 ```
 
 Run both `agentcore add` commands without flags so credentials remain in the
-interactive terminal. Keep `AGENTCORE_PROJECT_DIR` set while running the setup
-wizard from the plugin directory.
+interactive terminal. Run the setup wizard in that same human-controlled
+terminal so `AGENTCORE_PROJECT_DIR` remains set.
 
 ## Quick Setup (Recommended)
 
 After deploying the AgentCore project, run the interactive wizard. It creates
 the payment instrument and session, then generates the OpenClaw configuration:
 
+The human runs `toolkit agents-pay admin setup-openclaw` in their own terminal
+using the bundled dispatcher:
+
 ```bash
-cd ~/.openclaw/extensions/aws-agents-pay/skills/agents-pay
-python3.11 -m venv .venv
-source .venv/bin/activate
-python -m pip install -r requirements.txt
-python scripts/agents_pay_admin.py setup-openclaw \
+cd ~/.openclaw/extensions/aws-agents-pay
+./bin/toolkit agents-pay admin setup-openclaw \
   --project-dir "$AGENTCORE_PROJECT_DIR"
 ```
 
@@ -77,18 +77,16 @@ If payment infrastructure or a session does not exist, stop the LLM workflow.
 Open a separate terminal and run the human setup from the bundled skill:
 
 ```bash
-cd ~/.openclaw/extensions/aws-agents-pay/skills/agents-pay
-python3.11 -m venv .venv
-source .venv/bin/activate
-python -m pip install -r requirements.txt
-python scripts/agents_pay_admin.py init-config \
+cd ~/.openclaw/extensions/aws-agents-pay
+./bin/toolkit agents-pay admin init-config \
   --max-per-payment-usd 0.05 \
   --network eip155:84532 \
   --recipient 0xMerchantWalletAddress
-python scripts/agents_pay_admin.py create-instrument --email you@example.com
-python scripts/agents_pay_admin.py new-session \
+./bin/toolkit agents-pay admin create-instrument --email you@example.com
+./bin/toolkit agents-pay admin new-session \
   --budget 1.00 \
   --expiry-minutes 60
+./bin/toolkit agents-pay admin preflight
 ```
 
 The two `agentcore add` commands must run without flags so credentials remain in
@@ -141,26 +139,34 @@ USDC with 6 decimals), and no default is supplied.
 
 ## How it works
 
-OpenClaw executes payments through this TypeScript plugin, using
-`get_paid_content`. Policy validation, SSRF controls, idempotency, proof
-isolation, and merchant replay remain in TypeScript. The plugin invokes a fixed
-package-relative Python helper, without a shell, only for `GetPaymentSession`
-and `ProcessPayment`; the package-local `.venv` created above supplies boto3 and
-the standard AWS credential chain. It does not invoke the Python `x402_fetch`
-runtime. For other agent hosts, use the Python runtime described in `SKILL.md`
-instead, and never enable both paths at once.
+OpenClaw executes payments through this TypeScript plugin using
+`get_paid_content`. Policy validation, SSRF controls and merchant replay stay
+in TypeScript. Other hosts use `toolkit agents-pay fetch`; enable only one path.
+
+The fixed binary table selects the package's platform-specific Rust toolkit;
+unsupported platforms fail closed. The plugin uses a bounded, no-shell bridge.
+Rust builds the ProcessPayment payload from the selected offer. After a proof is
+obtained, the complete result's text and details pass through a Rust known-secret
+scrub after replay. A matching opt-in body is redacted; a metadata or error hit,
+invalid result, or failed check yields a fixed refusal. The scrub covers known
+secrets and supported encodings, not arbitrary transformations. The bridge zeros
+owned Buffers on success and failure; immutable strings and parsed objects cannot
+be reliably zeroized, so their references are dropped and the proof object cleared.
+
+The default response withholds the body; `returnBody: true` opts in to an
+untrusted body capped at 10 KiB, which can contain prompt injection.
 
 The plugin exposes two scoped OpenClaw runtime tools only:
 
 | Tool | What it does | Permission |
 |---|---|---|
 | `get_payment_session_status` | Check session budget/expiry | Read-only |
-| `get_paid_content` | Pay for an approved x402 URL and return response metadata only | Spend (within pre-approved session budget) |
+| `get_paid_content` | Pay for an approved x402 URL and return metadata; body is opt-in | Spend (within pre-approved session budget) |
 
 ### Security boundaries
 
 - **No general shell access.** The agent cannot choose a command, script, path,
-  or environment variable. The plugin starts only its fixed AgentCore helper
+  or environment variable. The plugin starts only its fixed platform binary
   with `shell: false`, bounded JSON, a timeout, and output limits.
 - **No setup at runtime.** Payment Manager, connector, credential provider,
   instrument, and session creation happen outside the model-visible runtime.
@@ -169,8 +175,8 @@ The plugin exposes two scoped OpenClaw runtime tools only:
 - **No replacement sessions.** The runtime cannot mint a fresh session. If the
   configured session expires or drains, create a new one through the trusted
   management path and update config.
-- **No signed proof exposure.** The signed payment proof is attached only inside
-  trusted request handling code and is never returned as tool output.
+- **Final output check.** Known proof and session secrets are checked in both
+  result channels after replay; failures yield the fixed refusal.
 - **Trusted challenge policy.** Runtime code selects an approved offer instead
   of trusting `accepts[0]`, and enforces HTTPS, public destinations, no
   redirects, configured origin and network, exact asset, positive bounded
@@ -180,9 +186,9 @@ The plugin exposes two scoped OpenClaw runtime tools only:
 - **Stable retries.** The AgentCore client token binds the session, resource,
   network, asset, recipient, and amount while excluding publisher-controlled
   nonces.
-- **Publisher content isolation.** Paid response bodies are not returned to the
-  payment-capable model context. `get_paid_content` returns status, content type,
-  byte count, and SHA-256 hash only.
+- **Publisher content isolation.** By default `get_paid_content` returns status,
+  content type, byte count, and SHA-256 hash, with no body. Opting in to
+  `returnBody` exposes untrusted content to the model.
 - **Budget enforcement.** The AgentCore service enforces `maxSpendAmount` and
   `expiryTimeInMinutes` server-side regardless of what the agent requests.
 

@@ -405,9 +405,9 @@ programme retirement step removes the `.py` files after S7 is verified).
   `packages/openclaw/skills/agents-pay/SKILL.md`) are byte-identical and now
   direct the agent to `toolkit agents-pay fetch` and the human to
   `toolkit agents-pay admin init-config|show-config|create-instrument|new-session|preflight`.
-  `toolkit` must be on `PATH` (Q21, the programme staging decision). The
-  `### OpenClaw` subsection is untouched; OpenClaw B5 edits it, and
-  `references/openclaw-setup.md`, on top of this slice.
+  `toolkit` must be on `PATH` (Q21, the programme staging decision). OpenClaw
+  B5 subsequently updates the `### OpenClaw` subsection and
+  `references/openclaw-setup.md` on top of this slice.
 - **`references/`** (`operator-guide.md`, `security-model.md`, `setup.md`,
   `troubleshooting.md`) no longer mention `scripts/*.py`, a virtual
   environment, `requirements.txt` or `pip`.
@@ -423,7 +423,7 @@ programme retirement step removes the `.py` files after S7 is verified).
   values; no step lets the agent run `setup-payment-user` or type `approve`.
 - **`python-inventory.json`**: the nine `payments-policy` (#4410) rows are
   `ported`, each with a `disposition_note` that leaves removal to the
-  retirement step. The `payments-bridge` (#4411) rows are untouched.
+  retirement step. The `payments-bridge` (#4411) rows are ported by OpenClaw B5.
 
 ### Documented limits
 
@@ -455,7 +455,7 @@ The SKILL text ("Known limits") and `troubleshooting.md` state:
   from the copy" with `s7_port_every_documented_command_is_a_registered_route`
   (each `toolkit` line names a registered route and its own flags),
   `s7_port_no_script_path_remains` and `s7_port_no_python_command_remains`. The
-  OpenClaw subsection and `openclaw-setup.md` are exempt until B5.
+  OpenClaw B5 removes the exemption for the subsection and `openclaw-setup.md`.
 - `s7_text_*`: L-TERMS, the R-DNS residual, B1, B4, B5, Q21, Q2, D23.
 - `s7_inventory_*` and `s7_migration_doc_*`.
 - `every_slice_documents_its_commands` (`registry.rs`) keeps checking this page.
@@ -468,3 +468,13 @@ The SKILL text ("Known limits") and `troubleshooting.md` state:
   runtime change, which S7's fence forbids, so the documents quote the new
   command (`toolkit agents-pay admin init-config`) and the string rename is a
   separate follow-up.
+
+## OpenClaw cutover (B5, #5550)
+
+The package README, publishing guide, OpenClaw setup and skill sections now
+describe the fixed Rust bridge, human-run administration and bounded final-output
+check. The 1.1.0 upgrade changes the token: a retry spanning the upgrade may
+be authorized again within the per-payment cap and session budget. The pack
+guard uses the shared Rust verifier and requires all five staged platforms.
+The three #4411 inventory rows are ported; legacy files remain for retirement.
+R-PORT now covers the OpenClaw subsection and setup reference as well.
