@@ -383,15 +383,22 @@ mod symlinks {
     }
 }
 
-/// #5027: clean provenance means no tracked change and no untracked,
-/// non-ignored file anywhere in the checkout; ignored `plugins/*/bin/`
-/// outputs stay permitted.
+/// #5027: clean provenance includes ignored inputs; only explicitly named,
+/// ignored generated output directories stay permitted.
 mod provenance_of_untracked_inputs {
     use std::process::Command;
 
-    use plugin_stage::stage::source_provenance;
+    use plugin_stage::stage::source_provenance as read_provenance;
 
     use super::*;
+
+    fn source_provenance(dir: &Path, rustc: &str) -> Result<Provenance, String> {
+        read_provenance(
+            dir,
+            rustc,
+            &[PathBuf::from("target"), PathBuf::from("plugins/demo/bin")],
+        )
+    }
 
     fn git(dir: &Path, args: &[&str]) {
         let status = Command::new("git")
@@ -465,6 +472,92 @@ mod provenance_of_untracked_inputs {
         // A tracked modification is still dirty.
         write(&dir.join("crates/tool/src/main.rs"), "fn main() { }\n");
         assert!(dirty(&dir));
+    }
+
+    #[test]
+    fn ignored_build_inputs_make_the_source_dirty() {
+        let dir = repo();
+        // Local excludes must not be able to hide build inputs either.
+        write(
+            &dir.join(".git/info/exclude"),
+            "build.rs\n.cargo/\n*.rs\nbuild/\n*.inc\n",
+        );
+        for input in [
+            "crates/tool/build.rs",
+            "crates/tool/src/generated.rs",
+            ".cargo/config.toml",
+            "build/payload.inc",
+            "crates/tool/src/payload with spaces.inc",
+            "crates/tool/src/payload\nsecond line.inc",
+            "crates/tool/target/build.rs",
+            "plugins/demo/binary/build.rs",
+        ] {
+            write(&dir.join(input), "// ignored build input\n");
+            assert!(dirty(&dir), "{input:?} is ignored but can affect Cargo");
+            fs::remove_file(dir.join(input)).expect("remove");
+            assert!(!dirty(&dir), "{input:?} removed");
+        }
+        // Committed ignore rules are equally unable to establish provenance.
+        write(
+            &dir.join(".gitignore"),
+            "/target/\n/plugins/*/bin/\nbuild.rs\n",
+        );
+        git(&dir, &["add", ".gitignore"]);
+        git(&dir, &["commit", "--quiet", "-m", "ignore build scripts"]);
+        write(&dir.join("crates/tool/build.rs"), "fn main() {}\n");
+        assert!(dirty(&dir), "committed ignore rules cannot hide build.rs");
+    }
+
+    #[test]
+    fn ignored_build_inputs_cannot_merge_or_pass_complete_verification() {
+        let dir = repo();
+        let clean = source_provenance(&dir, "rustc 1.94.1").expect("clean");
+        let fixture = Fixture::new();
+        fixture.stage(&Platform::ALL, &clean, false).expect("stage");
+        assert!(fixture.verify(true).is_empty());
+        write(&dir.join(".git/info/exclude"), "build.rs\n");
+        write(&dir.join("crates/tool/build.rs"), "fn main() {}\n");
+        let ignored = source_provenance(&dir, "rustc 1.94.1").expect("ignored");
+        assert!(ignored.source_dirty, "ignored build.rs must record dirty");
+        assert_eq!(ignored.source_commit, clean.source_commit);
+        let error = check_merge(&fixture.plugins, "demo", &ignored, false)
+            .expect_err("dirty inputs cannot merge");
+        assert!(error.contains("(dirty)"), "{error}");
+        fixture
+            .stage(&Platform::ALL, &ignored, true)
+            .expect("explicit dirty replacement");
+        assert_flags(&fixture.verify(true), "dirty");
+    }
+
+    #[test]
+    fn generated_output_exemptions_are_exact_and_require_ignored_files() {
+        let dir = repo();
+        let package_bin = PathBuf::from("packages/example/bin");
+        write(&dir.join(".git/info/exclude"), "/packages/example/bin/\n");
+        write(&dir.join(&package_bin).join("tool.exe"), "output");
+        assert!(dirty(&dir), "an undeclared output directory stays dirty");
+        let outputs = [PathBuf::from("target"), package_bin];
+        assert!(
+            !read_provenance(&dir, "rustc", &outputs)
+                .expect("provenance")
+                .source_dirty,
+            "a declared package output is allowed"
+        );
+        write(&dir.join(".git/info/exclude"), "");
+        assert!(
+            read_provenance(&dir, "rustc", &outputs)
+                .expect("provenance")
+                .source_dirty,
+            "output exemptions never suppress ordinary untracked files"
+        );
+        write(&dir.join(".git/info/exclude"), "/packages/\n");
+        write(&dir.join("packages/source.inc"), "ignored build input\n");
+        assert!(
+            read_provenance(&dir, "rustc", &outputs)
+                .expect("provenance")
+                .source_dirty,
+            "an ignored ancestor cannot hide inputs alongside the output"
+        );
     }
 
     #[test]

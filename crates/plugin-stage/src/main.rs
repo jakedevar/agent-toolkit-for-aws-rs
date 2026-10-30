@@ -198,13 +198,21 @@ fn run_plan(ctx: &Context, args: &Args, build_now: bool) -> ExitCode {
             &format!("plugin-stage: {} build step(s) can run here", steps.len()),
         );
     }
-    let provenance = match stage::source_provenance(&ctx.root, &probe.rustc_version) {
-        Ok(provenance) => provenance,
-        Err(err) => return report(&[err], ""),
-    };
+    let mut generated_dirs = vec![PathBuf::from("target")];
+    for destination in ctx.declaration.destinations() {
+        let dir = destination.dir(&ctx.root, &ctx.plugins_root);
+        if let Ok(relative) = dir.strip_prefix(&ctx.root) {
+            generated_dirs.push(relative.join(plugin_stage::BIN_DIR));
+        }
+    }
+    let provenance =
+        match stage::source_provenance(&ctx.root, &probe.rustc_version, &generated_dirs) {
+            Ok(provenance) => provenance,
+            Err(err) => return report(&[err], ""),
+        };
     if provenance.source_dirty && !args.allow_dirty {
         return report(
-            &["the checkout has uncommitted changes or untracked files that are not ignored (Cargo may build them, for example an untracked build.rs); commit or remove them, or pass --allow-dirty (the manifest records source_dirty: true, it never merges with a clean stage and the release gate refuses it)".to_string()],
+            &["the checkout has uncommitted changes or untracked inputs, including ignored files outside generated output directories (Cargo may build them, for example an ignored build.rs); commit or remove them, or pass --allow-dirty (the manifest records source_dirty: true, it never merges with a clean stage and the release gate refuses it)".to_string()],
             "",
         );
     }

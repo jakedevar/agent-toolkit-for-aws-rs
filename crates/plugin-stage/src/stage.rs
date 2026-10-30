@@ -688,16 +688,23 @@ pub fn parse_metadata(text: &str) -> Result<(BTreeMap<String, BTreeSet<String>>,
 }
 
 /// Reads the source commit and whether the checkout differs from it: a
-/// tracked change, or any untracked file that is not ignored (#5027). Cargo
+/// tracked change, or any untracked file, including ignored files (#5027). Cargo
 /// picks up untracked inputs on its own (an auto-discovered `build.rs`, a
 /// new module, `.cargo/config.toml`, `rust-toolchain.toml`), so a build with
-/// one present is not a build of the named commit. Ignored files, such as
-/// `target/` and the generated `plugins/*/bin/`, stay permitted.
+/// one present is not a build of the named commit. Only ignored files under
+/// `generated_dirs` stay permitted. These are repository-relative output
+/// directories supplied by the staging caller (Cargo target and declared
+/// destination bin directories), never source directories inferred from ignore
+/// rules. Ignoring an input does not make it part of the named commit.
 ///
 /// # Errors
 ///
 /// When `git` cannot report the commit or the status.
-pub fn source_provenance(root: &Path, rustc: &str) -> Result<Provenance, String> {
+pub fn source_provenance(
+    root: &Path,
+    rustc: &str,
+    generated_dirs: &[PathBuf],
+) -> Result<Provenance, String> {
     let commit = output(root, "git", &["rev-parse", "HEAD"])
         .ok_or("`git rev-parse HEAD` failed; stage from a git checkout")?;
     let status = output(
@@ -711,9 +718,43 @@ pub fn source_provenance(root: &Path, rustc: &str) -> Result<Provenance, String>
         ],
     )
     .ok_or("`git status` failed")?;
+    // Exclude exact output trees before Git collapses directories. This avoids
+    // enumerating Cargo artifacts without hiding ignored inputs alongside them.
+    // NUL delimiters keep names with whitespace or non-UTF-8 bytes unambiguous.
+    let mut ignored = Command::new("git");
+    ignored.args([
+        "ls-files",
+        "--others",
+        "--ignored",
+        "--exclude-standard",
+        "--directory",
+        "--no-empty-directory",
+        "--full-name",
+        "-z",
+        "--",
+        ":/",
+    ]);
+    for dir in generated_dirs {
+        if !dir.as_os_str().is_empty()
+            && dir
+                .components()
+                .all(|part| matches!(part, std::path::Component::Normal(_)))
+        {
+            let dir = dir.to_str().ok_or("generated output path is not UTF-8")?;
+            ignored.arg(format!(":(top,literal,exclude){dir}"));
+        }
+    }
+    let ignored = ignored
+        .current_dir(root)
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|err| format!("cannot list ignored build inputs: {err}"))?;
+    if !ignored.status.success() {
+        return Err("`git ls-files` failed to list ignored build inputs".to_string());
+    }
     Ok(Provenance {
         source_commit: commit,
-        source_dirty: !status.is_empty(),
+        source_dirty: !status.is_empty() || !ignored.stdout.is_empty(),
         rustc: rustc.to_string(),
     })
 }

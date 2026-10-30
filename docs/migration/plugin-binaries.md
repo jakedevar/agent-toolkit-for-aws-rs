@@ -349,12 +349,18 @@ is a deliberate opt-in this gate does not prevent. See [ai-models.md](ai-models.
 
 - `source_commit`: the full commit from `git rev-parse HEAD`.
 - `source_dirty`: true when `git status --porcelain --untracked-files=all` reports
-  anything: a tracked change, or any untracked file that is not ignored, anywhere in
-  the checkout (#5027). Cargo builds untracked inputs without being told to: an
+  anything, or `git ls-files --others --ignored --exclude-standard --directory -z`
+  finds nonempty ignored paths outside the explicitly allowed generated output directories
+  (#5027). Cargo builds untracked inputs without being told to: an
   auto-discovered `build.rs`, a new module, `.cargo/config.toml`,
   `rust-toolchain.toml`. A build with any of them present is therefore not a build of
-  the named commit. Ignored files (`target/` and the generated `plugins/*/bin/`) stay
-  permitted. The check covers the whole checkout, not only the staged packages' paths:
+  the named commit. Only ignored files in repository-root `target/` and the declared
+  destinations' generated `bin/` directories stay permitted; those directories are
+  reserved for outputs. Other ignored paths, including source and config hidden by
+  committed rules, local excludes or global excludes, count as dirty. An ignored
+  ancestor cannot hide inputs alongside the output: exact output exclusions are
+  applied before Git collapses directories, and empty directories are ignored.
+  The check covers the whole checkout, not only the staged packages' paths:
   path dependencies and workspace-root configuration are build inputs too, and a
   narrower list could miss one.
 - `rustc`: the output of `rustc -V`.
