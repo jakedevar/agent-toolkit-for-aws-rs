@@ -543,12 +543,12 @@ pub fn check_package_root(repo_root: &Path, root: &str) -> Vec<String> {
         let text = std::fs::read_to_string(dir.join(".gitignore")).unwrap_or_default();
         let lines: Vec<&str> = text.lines().map(str::trim).collect();
         let ignores = lines.iter().any(|line| matches!(*line, "bin/" | "/bin/"));
-        let reincludes = lines
-            .iter()
-            .any(|line| line.starts_with('!') && line.contains("bin"));
+        // verify-package stays git-free, so it cannot evaluate a pattern: any
+        // negation (`!*/`, `!*`, `!b?n`) might re-include bin/ and is refused.
+        let reincludes = lines.iter().any(|line| line.starts_with('!'));
         if !ignores || reincludes {
             problems.push(format!(
-                "{label}: .gitignore must ignore bin/ (a `bin/` line and no `!bin` re-include), so staged binaries are never committed"
+                "{label}: .gitignore must ignore bin/ (a `bin/` line and no `!` negation line), so staged binaries are never committed"
             ));
         }
     } else {

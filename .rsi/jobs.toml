@@ -67,6 +67,18 @@ target = "fmt"
 timeout_minutes = 5
 cpu_quota_percent = 200
 
+[recipes.fmt-patch]
+runner = "make"
+target = "fmt-patch"
+timeout_minutes = 5
+cpu_quota_percent = 200
+
+[recipes.test-scripts]
+runner = "make"
+target = "test-scripts"
+timeout_minutes = 5
+cpu_quota_percent = 100
+
 [recipes.clippy]
 runner = "make"
 target = "clippy"
@@ -145,4 +157,15 @@ cpu_quota_percent = 200
 runner = "make"
 target = "clippy-live"
 timeout_minutes = 20
+cpu_quota_percent = 200
+
+# OpenClaw package node tests (#5158): `npm ci --offline` and the package's
+# node tests in a fresh network namespace, no Python, dependencies only from
+# the out-of-repo offline cache checked against package-lock.json. Fails
+# closed (exit 3) while the cache is missing; the operator fills it once with
+# `make openclaw-npm-cache` (see docs/migration/ci-gates.md).
+[recipes.openclaw-node-test]
+runner = "make"
+target = "openclaw-node-test"
+timeout_minutes = 10
 cpu_quota_percent = 200
