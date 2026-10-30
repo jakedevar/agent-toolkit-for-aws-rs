@@ -23,7 +23,7 @@
 //! Text obligations: `s7_text_*` (L-TERMS, the R-DNS residual, B1, B3, B4, Q21,
 //! Q2, Q3, D23), `s7_inventory_*` and `s7_migration_doc_*`.
 //!
-//! OpenClaw B5 brings both the subsection and setup reference under R-PORT.
+//! `OpenClaw` B5 brings both the subsection and setup reference under R-PORT.
 #[cfg(feature = "agents-pay-live")]
 compile_error!("agents-pay-live is never built for tests (AC3)");
 
@@ -994,17 +994,19 @@ fn s7_inventory_payments_policy_rows_are_ported() {
 }
 
 #[test]
-fn s7_inventory_bridge_rows_stay_with_their_owner() {
+fn b5_inventory_bridge_rows_keep_their_classification() {
     let inv = inventory();
-    for row in inv["files"].as_array().unwrap() {
-        if row["issue"].as_u64() == Some(4411) {
-            assert_eq!(
-                row["status"].as_str(),
-                Some("pending"),
-                "{}: #4411 owns this row",
-                row["path"]
-            );
-        }
+    let rows: Vec<&Value> = inv["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|row| row["issue"].as_u64() == Some(4411))
+        .collect();
+    assert_eq!(rows.len(), 3);
+    assert_eq!(rows.iter().filter(|row| row["classification"] == "toolkit-helper").count(), 1);
+    assert_eq!(rows.iter().filter(|row| row["classification"] == "test-or-diagnostic").count(), 2);
+    for row in rows {
+        assert!(row["disposition_note"].as_str().unwrap_or("").contains("retirement"));
     }
 }
 
