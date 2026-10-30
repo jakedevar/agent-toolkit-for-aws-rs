@@ -150,3 +150,8 @@ clippy-gremlin:
 # S4 ordered memory dispatch and wire contracts; every backend is injected.
 docgraph-memory:
 	cargo test -p toolkit-cli --features docgraph-live --locked --lib docgraph::live_memory::
+
+# Resolve the optional S4 model crate; no service endpoint is contacted.
+docgraph-memory-sync:
+	cargo metadata --format-version 1 > /dev/null
+	cargo tree -p toolkit-cli --features docgraph-live --locked --offline -e features > /dev/null

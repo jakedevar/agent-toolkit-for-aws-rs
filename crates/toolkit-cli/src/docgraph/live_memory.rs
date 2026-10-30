@@ -3,6 +3,7 @@ use std::time::{Duration, Instant};
 use toolkit_aws::sdk::database::DatabaseEndpoint;
 use toolkit_core::Json;
 use super::memory;
+mod wire;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Route { Analytics, Create, Dynamo, Gremlin }
