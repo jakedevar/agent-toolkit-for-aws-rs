@@ -347,6 +347,25 @@ fn a_repeated_flag_cannot_show_an_escaped_credential() {
     }
 }
 
+/// #4979's reported `elasticache price` input keeps the fixed text around the
+/// value: only the credential is hidden, not letters of the choices.
+#[test]
+fn a_credential_with_quotes_leaves_the_diagnostic_readable() {
+    let args = [
+        "elasticache",
+        "price",
+        "--engine",
+        "password=ab'c\"FAKE_SECRET",
+    ];
+    let run = toolkit(&args);
+    let first_line = run.stderr.lines().next().unwrap_or_default();
+    assert_eq!(
+        first_line,
+        "error: argument --engine: invalid choice: 'password=[REDACTED]' \
+         (choose from 'valkey', 'redis', 'memcached')"
+    );
+}
+
 /// #4980 across arguments: the bare piece (one to three characters and
 /// longer) of a credential another argument taught, on both streams.
 #[test]

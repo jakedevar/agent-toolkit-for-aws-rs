@@ -454,10 +454,11 @@ fn label_start(value: &str, piece_start: usize) -> Option<usize> {
     (at < key_end).then_some(at)
 }
 
-/// Whether `c` separates the parts of a hidden piece (`user:password`,
-/// `Digest a="b", c="d"`).
+/// Whether `c` separates two credentials inside a hidden piece (`user:password`,
+/// `Bearer value`). A quote does not: it is part of a password, and splitting
+/// there would teach one-letter parts that hide a diagnostic's ordinary words.
 fn is_piece_separator(c: char) -> bool {
-    c.is_whitespace() || matches!(c, '"' | '\'' | ':' | ',' | ';' | '=' | '&' | '@')
+    c.is_whitespace() || matches!(c, ':' | ',' | ';' | '@')
 }
 
 /// The spellings under which a slice may echo `text`: as given, on one line
@@ -1774,6 +1775,17 @@ mod tests {
         // The same words are untouched when no credential holds them.
         let known = caller(&["x", "password=Qz9"]);
         assert_eq!(known.diagnostic("plain words"), "plain words");
+    }
+
+    /// A long credential with a quote in it is one credential: its letters
+    /// around the quote are not learned on their own, so the diagnostic's
+    /// ordinary words survive.
+    #[test]
+    fn a_quote_does_not_split_a_credential() {
+        let known = caller(&["x", "password=ab'c\"FAKE_SECRET"]);
+        assert_eq!(known.diagnostic("invalid choice: x"), "invalid choice: x");
+        let known = caller(&["x", "https://user:FAKE_SECRET@h.invalid/x"]);
+        assert_eq!(known.diagnostic("invalid choice: x"), "invalid choice: x");
     }
 
     /// Userinfo hides `user:password` as one piece; each half is a credential
