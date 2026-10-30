@@ -24,6 +24,8 @@ use toolkit_aws::{
 use toolkit_core::Json;
 
 use super::{json, summary, NOW, NOW_SECONDS, SECRET};
+
+mod cli;
 use crate::docgraph::client::{AwsClient, Service};
 use crate::docgraph::infra::run_infra_checks;
 use crate::docgraph::live::{

@@ -11,6 +11,33 @@
   "binaries": [
     {
       "plugin": "aws-core",
+      "name": "toolkit",
+      "package": "toolkit-cli",
+      "bin": "toolkit",
+      "features": ["ai-models-live", "docgraph-live"],
+      "role": "subprocess",
+      "consumer": "#5586"
+    },
+    {
+      "plugin": "aws-agents",
+      "name": "toolkit",
+      "package": "toolkit-cli",
+      "bin": "toolkit",
+      "features": ["agents-pay-live"],
+      "role": "subprocess",
+      "consumer": "#5586"
+    },
+    {
+      "plugin": "aws-startup-advisor",
+      "name": "toolkit",
+      "package": "toolkit-cli",
+      "bin": "toolkit",
+      "features": ["ai-models-live", "docgraph-live"],
+      "role": "subprocess",
+      "consumer": "#5586"
+    },
+    {
+      "plugin": "aws-core",
       "name": "secret-safety",
       "package": "secret-safety-hook",
       "bin": "secret-safety",

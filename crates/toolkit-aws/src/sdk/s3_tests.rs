@@ -41,6 +41,49 @@ impl HostResolver for Loopback {
     }
 }
 
+#[test]
+fn malformed_merchant_response_heads_are_protocol_errors() {
+    for raw in [
+        &b"HTTP/1.1 XYZ secret-status\r\n\r\n"[..],
+        &b"HTTP/1.1 200 OK\r\ninvalid header secret-value\r\n\r\n"[..],
+    ] {
+        let pki = Pki::new("merchant protocol test CA");
+        let (chain, key) = pki.server(HOST);
+        let bytes = raw.to_vec();
+        let respond: Responder = Arc::new(move |_, _| vec![Part::Bytes(bytes.clone())]);
+        let server = TlsServer::start(chain, key, respond);
+        let roots = ValidatedRoots::for_tests(vec![pki.ca_der.clone()]);
+        let transport = SdkTransport::loopback_for_tests(
+            &SdkRuntime::new().unwrap(),
+            &roots,
+            Arc::new(Loopback),
+        )
+        .unwrap();
+        let request = HttpRequest {
+            method: Method::Get,
+            url: format!("https://{HOST}:{}/paid", server.port()),
+            headers: Headers::new(),
+            body: Vec::new(),
+            timeouts: Timeouts::new(Duration::from_secs(2), Duration::from_secs(2)).unwrap(),
+        };
+        let limits = StreamLimits::new(1024, 1024)
+            .unwrap()
+            .with_deadline(std::time::Instant::now() + Duration::from_secs(10));
+        assert!(matches!(
+            transport.open(&request, &limits),
+            Err(crate::error::AwsError::Protocol)
+        ));
+        let requests = server.requests();
+        assert_eq!(requests.len(), 1);
+        assert!(!requests[0]
+            .0
+            .to_ascii_lowercase()
+            .contains("payment-signature:"));
+        assert!(!requests[0].0.to_ascii_lowercase().contains("x-payment:"));
+        assert!(requests[0].1.is_empty());
+    }
+}
+
 // ------------------------------------------------------------- T-TLS-21
 
 fn assume_role_xml() -> String {

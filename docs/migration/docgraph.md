@@ -12,10 +12,10 @@ landed on `origin/rolling` (`b8204e9d`).
 
 | Command | Replaces |
 | --- | --- |
-| `toolkit documentdb wa-review --cluster-id ID --region R [--recorded FILE] [--analysis-data FILE] [--output DIR] [--now TS]` | `amazon-documentdb/scripts/wa_review.py` |
+| `toolkit documentdb wa-review --cluster-id ID --region R (--live \| --recorded FILE) [--analysis-data FILE] [--output DIR] [--now TS]` | `amazon-documentdb/scripts/wa_review.py` |
 | `toolkit documentdb normalize-capture --capture FILE --output FILE` | the `--uri` collection of `amazon-documentdb/scripts/wa_review.py` (user-run shell recipe + offline normalizer, #5327) |
 | `toolkit neptune validate-input [KEY=VALUE...]` | `amazon-neptune/scripts/input_validator.py` |
-| `toolkit neptune seed [--confirm-wipe] [--endpoint HOST] [--recorded FILE \| --dry-run]` | `amazon-neptune/scripts/seed_test_data.py` |
+| `toolkit neptune seed [--confirm-wipe] [--endpoint HOST] (--live \| --recorded FILE \| --dry-run)` | `amazon-neptune/scripts/seed_test_data.py` |
 | `neptune_test_env.cfn.json` (declarative, no command) | `amazon-neptune/scripts/cdk_test_env.py` |
 
 Each command is one registration line in `lib.rs` (`docgraph::WA_REVIEW`,
@@ -91,11 +91,14 @@ name or value of the file.
 
 ## Intentional changes from the Python
 
-1. **Offline only.** No live AWS client or Gremlin driver exists in this build
-   (as for `bedrock-agent`, `ai-models`, `elasticache`). Without `--recorded`,
-   `wa-review` reports `Cannot describe cluster: aws_connect` (a fail check, exit
-   0 like the script) and a stderr note; `seed` fails with `no live Gremlin
-   client` after the wipe guard. Live bindings are the follow-up.
+1. **Explicit mode required (#5586, #5613).** Review, seed and memory
+   require `--live`, `--recorded FILE`, or an allowed `--dry-run`; no mode
+   fails before work. Live adapters require the opt-in `docgraph-live`
+   release build and applicable consent. Without that feature `--live`
+   fails loudly. `--analysis-data` is offline collection statistics, not
+   an AWS infrastructure mode. Offline review needs a supplied AWS
+   recording; the CLI never invents one. This supersedes the original
+   success-with-failed-infrastructure-check report.
 2. **`--uri`, `--tls-ca-file`, `--tls-allow-invalid-certs` are not accepted.** They
    belong to the `pymongo` collection of `collStats`/`$indexStats`; a
    secret-bearing option that does nothing would only mislead. Use
@@ -143,7 +146,10 @@ name or value of the file.
    raised before any query. The `time.sleep(1)` after the wipe is dropped (no
    session to wait on). Results echoed by the verification are escaped.
    A failed verification is an `error:` line and exit 1 (the script's
-   `AssertionError` traceback). `--dry-run` is new.
+   `AssertionError` traceback). `--dry-run` is new. For `--live` the endpoint
+   must instead be an explicit standard Neptune host. Legacy SSH tunnels and
+   port forwards through loopback are unsupported; loopback remains refused.
+   Any future tunnel mode requires a separate security review.
 8. **`json.dump` parity.** Non-ASCII text in a label is written as UTF-8, not
    `\uXXXX` (`ensure_ascii`), and a float prints as Rust's shortest form.
    Neither occurs in the check texts; stated for completeness.
@@ -341,13 +347,16 @@ compatibility; it is ignored whenever `--live` is present (R-DG-05).
 - T-DG-01a: run existing golden review/seed/memory replay fixtures under both
   feature configurations; identical output and exit status, zero provider,
   resolver and socket calls even with hostile AWS configuration present.
-- T-DG-01b: forbidden mode combinations and unavailable-feature `--live`
-  return usage errors (exit 2) before side effects; feature alone sends nothing.
+- T-DG-01b: forbidden mode combinations, unavailable-feature `--live`, and
+  live seed without an explicit valid standard Neptune `--endpoint` return
+  usage errors (exit 2) before policy, environment, credentials, DNS or
+  network access; feature alone sends nothing.
 - T-DG-01c: malformed/null response members, request mismatch, error steps and
   unused seed/memory recordings retain their existing failure contracts.
-- T-DG-01d: with the live feature and `NEPTUNE_SEED_CONFIRM_WIPE=1`, a live
-  seed lacking argv `--confirm-wipe` is refused with the fixed wipe-refusal
-  message and exit 1; provider, resolver and socket counters all remain zero.
+- T-DG-01d: with the live feature, a valid explicit endpoint and
+  `NEPTUNE_SEED_CONFIRM_WIPE=1`, a live seed lacking argv `--confirm-wipe` is
+  refused with the fixed wipe-refusal message and exit 1; provider, resolver
+  and socket counters all remain zero.
   Supplying argv confirmation reaches only an injected adapter; non-live
   replay retains its existing environment-confirmation contract.
 - T-DG-01e: table-driven attempts to supply `--live` or each `--confirm-*`
@@ -512,6 +521,13 @@ tested typed-value codec over an optional maintained Rust WebSocket crate,
 using the workspace rustls/aws-lc stack. Dependency selection/pins require
 pre-review; do not add a second general graph-query builder.
 
+Live seed requires an explicit `--endpoint` validated as a standard Neptune
+database host at usage time, before consent, policy, environment, credentials,
+DNS or network access. Missing or invalid hosts return exit 2. The non-live
+`localhost` default remains unchanged. Loopback tunnels and port forwards are
+an intentional parity divergence; any future tunnel mode needs separate
+security review.
+
 Connect to `wss://HOST:8182/gremlin`, traversal source `g`. Construct the HTTP
 GET upgrade for that same authority/path, sign its HTTPS representation with
 `SigV4Signer`, service `neptune-db`, selected region and empty body. Preserve
@@ -534,8 +550,8 @@ exit and bound close time. Re-sign every new connection; refresh before expiry
 between operations, never reconnect/resubmit an in-flight statement. A drop
 after send has an unknown outcome and terminates the remaining plan. Preserve
 statement/binding order, counts/assertions and exit 1 on verification failure.
-For a live seed, only argv `--confirm-wipe` confirms the destructive wipe;
-ignore `NEPTUNE_SEED_CONFIRM_WIPE` in live mode. Missing argv confirmation
+For a live seed with a valid explicit endpoint, only argv `--confirm-wipe`
+confirms the destructive wipe; ignore `NEPTUNE_SEED_CONFIRM_WIPE` in live mode. Missing argv confirmation
 returns exit 1 with the fixed message: "Refusing to wipe the graph:
 g.V().drop() requires explicit confirmation. Re-run with --confirm-wipe."
 Do not reuse the replay refusal's suggestion to set an environment variable.
@@ -1103,11 +1119,12 @@ that bound exists. Superseded: the bound now exists
 
 T-DG-09a: `docgraph_live::test_inventories_hold_no_unignored_live_entry`
 parses every test in toolkit-cli and toolkit-aws with `syn` and requires any
-test naming `for_database`, `SystemDatabaseResolver`, `TcpDialer` or the
+test naming `for_database`, `SystemDatabaseResolver`, `TcpDialer`, `connect_live`,
+`run_live_review` or the
 exact `TOOLKIT_DOCGRAPH_LIVE_TESTS` variable to be both `#[ignore]` and
 `cfg(feature = "docgraph-live")`; a fixture test proves the rule flags an
 unguarded test. `ordinary_and_live_shaped_runs_never_reach_the_network`
-runs default and live-shaped invocations with every proxy, endpoint and
+runs default and preflight-refused live-shaped invocations with every proxy, endpoint and
 metadata variable aimed at a loopback listener that only counts connection
 attempts, with canary credentials and the acceptance flag set; it asserts
 zero connections, no canary in output and no live success. Both run under
@@ -1223,6 +1240,7 @@ sampled operations; S2 must keep this configuration and fail closed if
 | Area | Supported (fixture or test evidence) | Everything else |
 |---|---|---|
 | Database endpoint | Standard-partition Neptune `<id>.<region>.neptune.amazonaws.com` and Neptune Analytics `<id>.<region>.neptune-graph.amazonaws.com`, one fixed port, region equal to the host label (`sdk::database` tests) | FIPS, other partitions, custom domains, wildcards: refused |
+| Live seed connectivity | Explicit standard Neptune database host, with the network policy and peer checks | Loopback, SSH tunnels and port forwards refused; any future tunnel mode requires separate security review |
 | Gremlin wire | GraphSON v2 (codec and T-DG-05b fixtures delivered in S3, #5515) | Other GraphSON/GraphBinary versions fail closed in S3 |
 | DocumentDB / MongoDB capture | DocumentDB 5.0 with mongosh 2.3.1; MongoDB 7.0 with mongosh 1.10.6; canonical Extended JSON; capture envelope version 1 (`capture_fixtures`) | Legacy shell `tojson`, relaxed EJSON and other dialects: `unsupported_format` (T-DG-08d) |
 
@@ -1621,7 +1639,8 @@ The final green and gate job IDs are recorded in the #5489 handoff.
 The merge keeps both feature-gated modules (`live` for S2 and `live_seed`
 for S3), all S3 Gremlin CLI wiring, and both migration-document sections.
 The accepted #5522 DNS construction and guards are untouched by repair 2.
-The review CLI still refuses `--live`; no live AWS run is authorized here.
+At the S2 repair-2 handoff the review CLI still refused `--live`; #5507 below
+adds routing after S2 acceptance. No live AWS run is authorized here.
 
 #### S3 Gremlin adapter (#5515; R-DG-05, R-DG-07 limits)
 
@@ -1740,8 +1759,8 @@ never forwarded.
 **CLI.** `toolkit neptune seed --live --confirm-wipe --endpoint HOST
 --network-policy FILE [--region R]` (feature `docgraph-live`) checks
 everything below in this order, before roots, credentials, DNS or any socket:
-1. Argv consent and `--endpoint`, as in S1. `NEPTUNE_SEED_CONFIRM_WIPE` is
-   ignored in live mode.
+1. Validate explicit standard Neptune `--endpoint` at usage time, then check
+   argv consent. `NEPTUNE_SEED_CONFIRM_WIPE` is ignored in live mode.
 2. The policy file is read with its 16 KiB bound and parsed with
    `network_policy::parse`. Consent-shaped keys are refused, and the file path
    is never echoed.
@@ -1752,7 +1771,8 @@ After those checks, credentials use `GuardedCredentials::until` with the same
 deadline. The connection opens on the first statement, so the output order is
 the script's. The S1 T-DG-01e carrier row for this invocation now expects the
 policy's unknown-key refusal (exit 1) instead of "not available". `memory` and
-`wa-review` stay unavailable in live mode (S4/S2).
+`wa-review` stayed unavailable at the S3 handoff (S4/S2). #5507 below enables
+the review after S2 acceptance; memory live dispatch remains S4.
 
 Not changed, by decision: the `neptune` help text still says `--live` is
 reserved. Editing it would move the pinned usage hash in `diag_contract.rs`,
@@ -1773,6 +1793,68 @@ TCP dialer), joins the live identifiers. No test names it; the tests use the
 injected `SecureOpener::new`. Recipes: `gremlin-sync` (fmt plus an offline
 lock sync), `docgraph-gremlin` and `clippy-gremlin`.
 
+#### S2 CLI routing (#5507; R-DG-01/02, T-DG-09a)
+
+Prerequisite: the reviewed S2 repair-2 source landed on rolling at
+`4922e6db`. `documentdb wa-review --live` now selects `LiveAwsClient` in a
+`docgraph-live` build. Feature-only, recorded and no-live invocations keep
+their existing clients, output, error classes, statuses and report bytes.
+The "no live AWS client" diagnostic is emitted only by a no-live review.
+
+The command checks argv live selection, incompatible `--recorded`, required
+`--cluster-id` and `--region`, cluster syntax, region syntax/standard partition
+and optional `--now` before entering the production constructor. A profile or
+`AWS_REGION`/`AWS_DEFAULT_REGION` cannot supply the review's required region.
+Read-only infrastructure review needs explicit argv `--live`, with no mutation
+consent flag. Neither input files nor environment/configuration can select it.
+The standard-partition validator is shared with `LiveAwsClient::new`.
+
+Only then does `live_review::run_live_review` construct `SdkRuntime`, one
+`ValidatedRoots` set, the public `SdkTransport::new`,
+`ProviderHttp::validated_bounded`, `GuardedCredentials`, `ThreadSleeper` and
+`FullJitter`. It passes `LiveAwsClient` to the unchanged
+`infra::run_infra_checks`. Signing resolves credentials with
+`GuardedCredentials::until(deadline)` through S2's `DeadlineSigner`
+implementation. The reviewed service allowlist, endpoint admission, codecs,
+bounded responses, operation deadline and sole toolkit retry owner are reused.
+No dependency or lockfile change is needed. `wa-review --live` refuses
+`--network-policy` with a usage error before environment, credentials, or
+network access: review does not connect to a database, so that policy would
+otherwise be ignored. Private/VPC review API endpoints remain unsupported.
+
+The existing analysis/report path also serves live infrastructure plus
+`--analysis-data`; private reports retain create-new/0600 custody. Adapter
+construction failures are runtime errors (`docgraph_review`, exit 1) without
+analysis reads or report creation. Service/credential failures remain review
+findings with the existing exit-0 report contract, including zero HTTP sends
+when credentials fail. No provider/SDK error is formatted with Debug.
+
+Offline evidence inventory:
+
+- `docgraph::tests::live::cli::t_5507_*` injects the adapter callback with S2's
+  in-memory HTTP seam and fixture signer. Successful dispatch over all four
+  services matches the independent recorded CLI fixture byte for byte for
+  stdout, stderr, JSON and Markdown, both with and without analysis. Other
+  cases count zero factory entries on failed preflight and offline paths,
+  compare no-live/recorded output, and cover credential and setup failures.
+- `docgraph_live::live_review_argv_preflight_precedes_environment_files_and_network`
+  runs only invalid/missing argv under hostile AWS configuration and asserts
+  usage status, no input reads/reports and zero provider/socket activity.
+  The carrier row also omits argv region; a review that passes preflight is
+  exercised exclusively through injected seams, never the production constructor.
+- T-DG-09a recognizes `run_live_review` and complete live review argv as live
+  entries. An offline source pin verifies the production constructor's bounded
+  provider, transport, roots, credentials, sleeper and jitter wiring. No new
+  ignored/live acceptance test is introduced. Existing replay goldens remain.
+  The inventory explicitly registers three audited subprocess safety tests:
+  two use incomplete review argv, and the preflight test's complete row is
+  refused for `--network-policy` before environment or network access.
+
+The help text describes recorded and live review. S6 owns the broader help/caller
+refresh, including the historical Neptune description noted above. Default
+tests never run live AWS. T-DG-09b remains an unperformed operator gate;
+routing and offline verification do not claim live acceptance or retirement.
+
 Implementation slices remain Rust, use scoped optional service dependencies,
 daemon-owned jobs and independent exact-SHA review. Each owns a requirement/test
 matrix and deliberate CLI/output changes; no worker may treat this proposal as
@@ -1784,7 +1866,7 @@ source/requirement review and a docs-only diff check.
 | ID | Owner/type | Recommendation, assumption and required ruling/grant |
 | --- | --- | --- |
 | Q1 | PM product choice — ACCEPT | PM ff294c79 accepted (b) on #5318: two-step user-run declarative collection plus Rust normalization, no MongoDB driver and continued URI/TLS-flag refusal. This repair specifies a per-command manual procedure and its scale cost; automation would require a separate design/review. |
-| Q2 | PM CLI compatibility choice — provisionally ACCEPT | PM ff294c79 accepted the proposed flags subject to pre-review tightening. #5322 tightens R-DG-01/05 to argv-only live/consent flags, ignoring environment wipe confirmation for live runs while preserving replay parity. Other proposed region/network-policy, startup-config and timeout changes remain as reviewed. |
+| Q2 | PM CLI compatibility choice — provisionally ACCEPT | PM ff294c79 accepted the proposed flags subject to pre-review tightening. #5322 tightens R-DG-01/05 to argv-only live/consent flags, ignoring environment wipe confirmation for live runs while preserving replay parity. #5323 requires an explicit validated standard Neptune endpoint for live seed at usage time; loopback tunnels and port forwards are a deliberate divergence requiring separate security review for any future mode. Other proposed region/network-policy, startup-config and timeout changes remain as reviewed. |
 | Q3 | Security pre-review — ACCEPT | Reviewer 887003f3 ruled ACCEPT in #5321: exact standard AWS database host/port/region and operator-listed RFC1918/ULA CIDRs; every DNS answer and connected peer checked before signed bytes, with original hostname for TLS/signing and reconnect revalidation. R-ROOTS infrastructure reuse is correct; PaymentRoots remains payment-only. No global/provider/payment admission change. VPC-interface-endpoint review API use and non-RFC1918/ULA VPC CIDRs fail closed pending review. S1 must move this capability's peer check before transmission; O1 remains required. |
 | Q4 | Engineering choice for implementation review | Resolve in the first implementation slice via the explicit offline S2 spike exit criteria, before live code. Optional official service codecs/WebSocket codec share toolkit signer, credentials, TLS, retries and deadlines; prove framing handling, auth/identity suppression, R-LOG and audited exact feature/lockfile closure. |
 | Q5 | Engineering support matrix | Record fixture-supported standard endpoints, GraphSON v2 and exact DocumentDB/MongoDB/shell/export versions in the first implementation slice before live code, as an S2 spike exit criterion. Unsupported forms fail closed. Operator deployment versions are required for live acceptance, not guessed. Recorded for S1 in "S1 continuation: credential deadline, DNS cap and remaining evidence"; GraphSON v2 fixtures follow in S3. |
@@ -1945,6 +2027,17 @@ including nominal reads and arbitrary query. Any failed submitted request,
 malformed/truncated payload or ambiguous response reports a fixed unknown
 outcome and stops subsequent steps. A spent dispatcher cannot send again;
 there is no compensation, rollback claim, retry or implicit provisioning.
+
+S4 follow-up #5576 makes failure diagnostics plan-aware: after any successful
+step, every subsequent failure (including admission, deadline, credentials or
+signing before the next send) reports that the plan may be partially applied
+with unknown outcome. It never says that nothing was sent. Before any success,
+the original pre-send diagnostic remains available. A failed dispatcher stays
+terminal. Offline regression tests deliberately reject a changed graph target
+on a response-dependent expansion, pin the DynamoDB Query body actually sent
+against the validated plan (including descending order, limit, condition and
+typed expression values), and refuse SDK endpoint/path deviations through the
+captured-URL check. The #5576 handoff records mutation red/green evidence.
 
 The invocation starts one 15-minute deadline before input parsing; each
 operation gets at most 60 seconds including credentials/encoding/signing and

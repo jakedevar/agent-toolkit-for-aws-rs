@@ -3,11 +3,10 @@
 //! The Python script called `boto3` clients (`docdb`, `cloudwatch`, `ec2`,
 //! `secretsmanager`). Here every call is one [`Service`] and `PascalCase` API
 //! operation with the request the script built, handed to an [`AwsClient`].
-//! The command wires either [`RecordedClient`] (`--recorded FILE`) or
-//! [`NoLiveClient`], which sends nothing and reads no credentials. The live
-//! client over the `toolkit-aws` signer and transport is `docgraph::live`
-//! (feature `docgraph-live`, S2 #5489); the command does not route `--live`
-//! to it yet (`docs/migration/docgraph.md`).
+//! The command wires [`RecordedClient`] (`--recorded FILE`), [`NoLiveClient`]
+//! (no credentials or sends), or `docgraph::live::LiveAwsClient` (the
+//! non-default `docgraph-live` feature plus argv `--live`, after preflight;
+//! #5507). The live client uses the `toolkit-aws` signer and transport.
 //!
 //! # Recorded file
 //!

@@ -14,6 +14,7 @@ use std::process::{Command, Stdio};
 use toolkit_core::{parse_json, sha256_hex, Json};
 
 use crate::declaration::{BinarySpec, Declaration, Destination, PlatformSpec};
+use crate::feature_graph::Resolver;
 use crate::launcher::dispatcher_script;
 use crate::manifest::{
     read_regular, staged_bin_dir, StagedBinary, StagedDispatcher, StagingManifest,
@@ -717,14 +718,54 @@ pub fn source_provenance(root: &Path, rustc: &str) -> Result<Provenance, String>
     })
 }
 
+/// #5592/#5603: never compile a shipped binary whose normal graph enables an
+/// unsigned test-injection feature. The graph is the one this step compiles,
+/// resolved under `resolver`'s network policy (production: the build's own,
+/// so a cold registry cache that the build could fill is not an error). A
+/// graph that cannot be resolved or validated refuses staging too.
+///
+/// # Errors
+///
+/// When the graph enables a forbidden feature or cannot be resolved.
+pub fn refuse_forbidden_features(
+    root: &Path,
+    step: &BuildStep,
+    resolver: &Resolver,
+) -> Result<(), String> {
+    let graph =
+        crate::feature_graph::preflight(root, resolver, &step.binary, &step.platform.triple)?;
+    if graph.violations.is_empty() {
+        Ok(())
+    } else {
+        Err(graph.violations.join("; "))
+    }
+}
+
 /// Runs one build step, streaming cargo's output to stderr. Ambient
 /// `RUSTFLAGS` and per-target config `rustflags` are cleared so a
 /// developer's local flags never reach a staged artifact.
 ///
 /// # Errors
 ///
-/// When cargo cannot start, fails, or leaves no output file.
+/// When the feature graph enables a forbidden feature, cargo cannot start,
+/// fails, or leaves no output file.
 pub fn build(root: &Path, step: &BuildStep, target_dir: &Path) -> Result<Built, String> {
+    build_with(root, step, target_dir, &Resolver::production())
+}
+
+/// [`build`] with an explicit graph resolver (tests inject a fake cargo for
+/// the preflight; the compile itself always runs `cargo`).
+///
+/// # Errors
+///
+/// As [`build`].
+pub fn build_with(
+    root: &Path,
+    step: &BuildStep,
+    target_dir: &Path,
+    resolver: &Resolver,
+) -> Result<Built, String> {
+    refuse_forbidden_features(root, step, resolver)?;
     eprintln!("plugin-stage: building {}", step.display());
     let status = Command::new("cargo")
         .args(step.cargo_args())

@@ -232,6 +232,27 @@ impl Default for ReviewBounds {
 /// Chunk size of the bounded response read.
 const CHUNK_BYTES: usize = 64 * 1024;
 
+/// Shared by argv preflight and the client constructor, before any roots,
+/// credential configuration, DNS or network work.
+pub(super) fn validate_region(region: &str) -> Result<(), AwsError> {
+    if !is_valid_region(region) {
+        return Err(AwsError::invalid_config(
+            "region",
+            "the region must look like us-east-1",
+        ));
+    }
+    if ["cn-", "us-gov-", "us-iso", "eu-isoe-"]
+        .iter()
+        .any(|prefix| region.starts_with(prefix))
+    {
+        return Err(AwsError::invalid_config(
+            "region",
+            "the live review client supports standard AWS partition regions only",
+        ));
+    }
+    Ok(())
+}
+
 /// The live review client.
 pub struct LiveAwsClient<'a> {
     region: String,
@@ -257,21 +278,7 @@ impl<'a> LiveAwsClient<'a> {
         sleeper: &'a dyn Sleeper,
         jitter: &'a dyn Jitter,
     ) -> Result<Self, AwsError> {
-        if !is_valid_region(region) {
-            return Err(AwsError::invalid_config(
-                "region",
-                "the region must look like us-east-1",
-            ));
-        }
-        if ["cn-", "us-gov-", "us-iso", "eu-isoe-"]
-            .iter()
-            .any(|prefix| region.starts_with(prefix))
-        {
-            return Err(AwsError::invalid_config(
-                "region",
-                "the live review client supports standard AWS partition regions only",
-            ));
-        }
+        validate_region(region)?;
         Ok(Self {
             region: region.to_string(),
             transport,

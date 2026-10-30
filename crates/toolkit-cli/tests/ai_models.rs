@@ -101,7 +101,7 @@ fn the_default_build_sends_nothing_and_exits_one() {
         assert_eq!(output.status.code(), Some(1), "{args:?}");
         assert_eq!(text(&output.stdout), "");
         let stderr = text(&output.stderr);
-        assert!(stderr.contains("no live AWS client"), "{stderr}");
+        assert!(stderr.contains("built without ai-models-live"), "{stderr}");
         assert_eq!(stderr.lines().count(), 1, "{stderr}");
     }
 }

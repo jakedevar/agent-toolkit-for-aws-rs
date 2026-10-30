@@ -8,20 +8,20 @@ If the output format has already been decided in the conversation context, keep 
 
 ## Shared Rules (Both Modes)
 
-- Do not write the notebook or script from a template by hand. `toolkit ai-payloads render` produces it, and its output uses EXACTLY the imports in the template — do not add extras
+- Do not write the notebook or script from a template by hand. `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" ai-payloads render` produces it, and its output uses EXACTLY the imports in the template — do not add extras
 - Fill every `[PLACEHOLDER]` with user-specific configuration through the values file, not by editing the output
 - Keep the `set_attribution(Attribution.SAGEMAKER_AGENT_PLUGIN)` call in the setup cell/section; the template includes it and `render` keeps it
 
 ## Rendering a Template
 
-Code is written by the Rust command `toolkit ai-payloads render`, never by hand. It splits the template on its `# Cell N: Label` markers, fills the placeholders with typed and escaped values, handles `# NOTEBOOK_ONLY` lines and `# NOTEBOOK_ONLY_SECTION` sections for the chosen mode, and publishes the result as a new file. It never overwrites, renames or deletes an existing file.
+Code is written by the Rust command `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" ai-payloads render`, never by hand. It splits the template on its `# Cell N: Label` markers, fills the placeholders with typed and escaped values, handles `# NOTEBOOK_ONLY` lines and `# NOTEBOOK_ONLY_SECTION` sections for the chosen mode, and publishes the result as a new file. It never overwrites, renames or deletes an existing file.
 
 `<skill-dir>` is the directory that holds this skill's `references/` directory. A template is `<skill-dir>/references/<area>/code_templates/<template>.py`, the path the calling reference names.
 
 1. **List the template's fields.**
 
    ```bash
-   toolkit ai-payloads templates --root <skill-dir>
+   "${CLAUDE_PLUGIN_ROOT}/bin/toolkit" ai-payloads templates --root <skill-dir>
    ```
 
    Find the block for your template. `slot NAME` lines are the `[NAME]` placeholders, filled through `values`. `target NAME` lines are literal configuration fields such as `BASE_MODEL = ""`, filled through `assign`. `manual` lines are edit points that stay yours (see Manual Edit Points).
@@ -40,8 +40,8 @@ Code is written by the Rust command `toolkit ai-payloads render`, never by hand.
 3. **Render.**
 
    ```bash
-   toolkit ai-payloads render <skill-dir>/references/dataset-transformation/code_templates/transformation.py --mode notebook --project-dir <project-dir> --values <scratch-dir>/values.json
-   toolkit ai-payloads render <skill-dir>/references/dataset-transformation/code_templates/transformation.py --mode script --project-dir <project-dir> --values <scratch-dir>/values.json
+   "${CLAUDE_PLUGIN_ROOT}/bin/toolkit" ai-payloads render <skill-dir>/references/dataset-transformation/code_templates/transformation.py --mode notebook --project-dir <project-dir> --values <scratch-dir>/values.json
+   "${CLAUDE_PLUGIN_ROOT}/bin/toolkit" ai-payloads render <skill-dir>/references/dataset-transformation/code_templates/transformation.py --mode script --project-dir <project-dir> --values <scratch-dir>/values.json
    ```
 
    Run the one that matches the mode. `--name <name>` chooses the file name (default: the project directory's name; lowercase letters, digits, `_` and `-`, and not ending in `-` and two digits). `--dry-run` prints the output path and writes nothing. `--cell N=FILE` replaces the body of Cell N with a file when the calling reference says so.
@@ -53,7 +53,7 @@ Code is written by the Rust command `toolkit ai-payloads render`, never by hand.
 A placeholder or field named `ACCEPT_EULA` is the user's acceptance of a model license. Never accept for the user, and "proceed without asking" is not acceptance. Only when the user has explicitly accepted the license, set `ACCEPT_EULA` to `true` in the values file (under `values` for a `[ACCEPT_EULA]` placeholder, under `assign` for an `ACCEPT_EULA = False` field) and add `--consent ACCEPT_EULA` to the render command:
 
 ```bash
-toolkit ai-payloads render <skill-dir>/references/dataset-transformation/code_templates/transformation.py --mode notebook --project-dir <project-dir> --values <scratch-dir>/values.json --consent ACCEPT_EULA
+"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" ai-payloads render <skill-dir>/references/dataset-transformation/code_templates/transformation.py --mode notebook --project-dir <project-dir> --values <scratch-dir>/values.json --consent ACCEPT_EULA
 ```
 
 `true` without that flag is refused. Otherwise set `false` and leave the flag out.
@@ -74,7 +74,7 @@ For each `manual:` line, `render` leaves an edit to you: `NOTE FOR AGENT` and `U
   - **Append:** ask the user to save the notebook, and wait. Then run the same command with `--append`:
 
     ```bash
-    toolkit ai-payloads render <skill-dir>/references/dataset-transformation/code_templates/transformation.py --mode notebook --project-dir <project-dir> --values <scratch-dir>/values.json --append
+    "${CLAUDE_PLUGIN_ROOT}/bin/toolkit" ai-payloads render <skill-dir>/references/dataset-transformation/code_templates/transformation.py --mode notebook --project-dir <project-dir> --values <scratch-dir>/values.json --append
     ```
 
     The existing notebook is never modified: `render` publishes a new versioned copy (`<project-name>-01.ipynb`, then `-02`, and so on) that holds the existing cells, the template's `# Cell 0 [markdown]:` cell as the section divider and the new cells. It prints `output:` and `source:`, and `open:` with the path of the new copy. Tell the user to open the `open:` path and continue there; the earlier file stays as it was.

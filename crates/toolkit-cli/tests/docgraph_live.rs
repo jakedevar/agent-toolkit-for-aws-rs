@@ -47,6 +47,8 @@ fn live_wipe_ignores_ambient_confirmation() {
         "neptune",
         "seed",
         "--live",
+        "--endpoint",
+        SEED_HOST,
         "--network-policy",
         "/does/not/exist",
     ]);
@@ -136,6 +138,13 @@ fn live_memory_requires_consent_for_every_mutating_operation() {
 #[cfg(feature = "docgraph-live")]
 fn live_rejects_recorded_and_dry_run_before_files() {
     for args in [
+        &[
+            "documentdb",
+            "wa-review",
+            "--live",
+            "--recorded",
+            "/does/not/exist",
+        ][..],
         &["neptune", "seed", "--live", "--recorded", "/does/not/exist"][..],
         &[
             "neptune",
@@ -163,11 +172,100 @@ fn live_selection_is_unavailable_without_feature() {
         let (status, stdout, stderr) = run(args);
         assert_eq!(status, 2);
         assert!(stdout.is_empty());
-        assert!(stderr.contains("--live requires the docgraph-live feature"));
+        assert!(stderr.contains("built without docgraph-live"), "{stderr}");
+    }
+}
+
+#[test]
+#[cfg(not(feature = "docgraph-live"))]
+fn review_without_recording_fails_before_writing_reports() {
+    let (status, stdout, stderr) = run(&[
+        "documentdb",
+        "wa-review",
+        "--cluster-id",
+        "example",
+        "--region",
+        "us-east-1",
+        "--output",
+        "/does/not/exist",
+    ]);
+    assert_eq!(status, 1, "{stderr}");
+    assert!(stdout.is_empty(), "{stdout}");
+    assert!(stderr.contains("built without docgraph-live"), "{stderr}");
+    assert!(!stderr.contains("/does/not/exist"), "{stderr}");
+}
+
+#[test]
+#[cfg(not(feature = "docgraph-live"))]
+fn neptune_without_recording_fails_before_input_or_network() {
+    for args in [
+        &["neptune", "seed", "--confirm-wipe"][..],
+        &[
+            "neptune",
+            "memory",
+            "--operation",
+            "retrieve",
+            "--input",
+            "/does/not/exist",
+        ][..],
+    ] {
+        let (status, stdout, stderr) = run(args);
+        assert_eq!(status, 1, "{stderr}");
+        assert!(stdout.is_empty(), "{stdout}");
+        assert!(stderr.contains("built without docgraph-live"), "{stderr}");
+        assert!(!stderr.contains("/does/not/exist"), "{stderr}");
     }
 }
 
 // ---- T-DG-05c/d (S3, #5515): live seed consent, then the policy, then the network ----
+
+#[test]
+#[cfg(feature = "docgraph-live")]
+fn live_seed_requires_standard_endpoint_before_side_effects() {
+    let network = ForbiddenNetwork::start();
+    let fake = format!("127.0.0.1:{}", network.port);
+    let dir = std::env::temp_dir().join(format!("docgraph-01b-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    for endpoint in [
+        None,
+        Some("localhost"),
+        Some("127.0.0.1"),
+        Some("example.com"),
+        Some("db.us-east-1.neptune-graph.amazonaws.com"),
+        Some("db.us-east-1.neptune.amazonaws.com:8182"),
+        Some("DB.us-east-1.neptune.amazonaws.com"),
+        Some("db.invalid.neptune.amazonaws.com"),
+    ] {
+        for confirm in [false, true] {
+            let mut args = vec![
+                "neptune",
+                "seed",
+                "--live",
+                "--network-policy",
+                "/does/not/exist",
+            ];
+            if confirm {
+                args.push("--confirm-wipe");
+            }
+            if let Some(host) = endpoint {
+                args.extend(["--endpoint", host]);
+            }
+            let out = run_hostile(&args, &dir, &fake);
+            let stderr = String::from_utf8(out.stderr).unwrap();
+            assert_eq!(
+                out.status.code(),
+                Some(2),
+                "{endpoint:?}, {confirm}: {stderr}"
+            );
+            assert!(out.stdout.is_empty());
+            assert!(stderr.contains("--endpoint"), "{stderr}");
+            assert!(!stderr.contains("/does/not/exist"));
+        }
+    }
+    assert_eq!(network.accepted(), 0);
+    assert!(provider_never_ran(&dir));
+    std::fs::remove_dir_all(&dir).unwrap();
+}
 
 #[cfg(feature = "docgraph-live")]
 const SEED_HOST: &str = "db.cluster-abc.us-east-1.neptune.amazonaws.com";
@@ -288,19 +386,27 @@ fn live_seed_refuses_policy_mismatches_before_credentials_or_dns() {
 /// Identifiers only a live test would use: the production database transport
 /// and resolver. A test naming one, or the exact acceptance gate variable,
 /// must be `#[ignore]` and gated on the `docgraph-live` feature.
-const LIVE_IDENTS: [&str; 5] = [
+const LIVE_IDENTS: [&str; 6] = [
     "for_database",
     "for_docgraph_service",
     "SystemDatabaseResolver",
     "TcpDialer",
     "connect_live",
+    "run_live_review",
 ];
 
-fn live_tokens(stream: proc_macro2::TokenStream, gate: &str) -> bool {
+fn live_tokens(stream: proc_macro2::TokenStream, gate: &str, literals: &mut Vec<String>) -> bool {
     stream.into_iter().any(|tree| match tree {
-        proc_macro2::TokenTree::Group(group) => live_tokens(group.stream(), gate),
+        proc_macro2::TokenTree::Group(group) => live_tokens(group.stream(), gate, literals),
         proc_macro2::TokenTree::Ident(ident) => LIVE_IDENTS.iter().any(|live| ident == live),
-        proc_macro2::TokenTree::Literal(literal) => literal.to_string() == format!("\"{gate}\""),
+        proc_macro2::TokenTree::Literal(literal) => {
+            if let Ok(value) = syn::parse_str::<syn::LitStr>(&literal.to_string()) {
+                literals.push(value.value());
+                value.value() == gate
+            } else {
+                false
+            }
+        }
         proc_macro2::TokenTree::Punct(_) => false,
     })
 }
@@ -310,6 +416,7 @@ fn live_tokens(stream: proc_macro2::TokenStream, gate: &str) -> bool {
 struct BodyScan<'g> {
     gate: &'g str,
     live: bool,
+    literals: Vec<String>,
 }
 
 impl<'ast> syn::visit::Visit<'ast> for BodyScan<'_> {
@@ -319,10 +426,11 @@ impl<'ast> syn::visit::Visit<'ast> for BodyScan<'_> {
 
     fn visit_lit_str(&mut self, literal: &'ast syn::LitStr) {
         self.live |= literal.value() == self.gate;
+        self.literals.push(literal.value());
     }
 
     fn visit_macro(&mut self, mac: &'ast syn::Macro) {
-        self.live |= live_tokens(mac.tokens.clone(), self.gate);
+        self.live |= live_tokens(mac.tokens.clone(), self.gate, &mut self.literals);
         syn::visit::visit_macro(self, mac);
     }
 }
@@ -348,8 +456,34 @@ impl<'ast> syn::visit::Visit<'ast> for Inventory {
             let mut scan = BodyScan {
                 gate: &self.gate,
                 live: false,
+                literals: Vec::new(),
             };
             syn::visit::Visit::visit_block(&mut scan, &item.block);
+            let has = |value: &str| scan.literals.iter().any(|s| s == value);
+            let review_argv = has("wa-review")
+                && has("--live")
+                && has("--cluster-id")
+                && has("--region")
+                && scan.literals.iter().any(|s| {
+                    let parts: Vec<_> = s.split('-').collect();
+                    parts.len() >= 3
+                        && parts
+                            .last()
+                            .is_some_and(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))
+                });
+            // Audited subprocess safety tests: the first and third use incomplete
+            // live review argv; the preflight test has a complete row which is
+            // refused for --network-policy before any environment or network use.
+            // Identifier-based live entry detection is never exempted.
+            let audited_argv = self.file.ends_with("toolkit-cli/tests/docgraph_live.rs")
+                && [
+                    "ordinary_and_live_shaped_runs_never_reach_the_network",
+                    "live_review_argv_preflight_precedes_environment_files_and_network",
+                    "credential_arguments_are_rejected_without_echo",
+                ]
+                .iter()
+                .any(|name| item.sig.ident == *name);
+            scan.live |= review_argv && !audited_argv;
             if scan.live {
                 self.live += 1;
                 let ignored = item.attrs.iter().any(|attr| attr.path().is_ident("ignore"));
@@ -431,6 +565,8 @@ fn the_inventory_rule_flags_an_unignored_live_test() {
     let source = format!(
         "#[test] fn unguarded() {{ let _ = std::env::var(\"{gate}\"); }}\n\
          #[test] fn transport() {{ SdkTransport::for_database(); }}\n\
+         #[test] fn review() {{ run_live_review(); }}\n\
+         #[test] fn argv() {{ run(&[\"documentdb\", \"wa-review\", \"--live\", \"--cluster-id\", \"c1\", \"--region\", \"us-east-1\"]); }}\n\
          #[test] #[ignore] #[cfg(feature = \"docgraph-live\")] fn gated() {{ SystemDatabaseResolver; }}\n\
          #[test] fn ordinary() {{ SdkTransport::for_database_with_resolver(); }}"
     );
@@ -442,13 +578,15 @@ fn the_inventory_rule_flags_an_unignored_live_test() {
         offenders: Vec::new(),
     };
     syn::visit::Visit::visit_file(&mut inventory, &syn::parse_file(&source).unwrap());
-    assert_eq!(inventory.tests, 4);
-    assert_eq!(inventory.live, 3);
+    assert_eq!(inventory.tests, 6);
+    assert_eq!(inventory.live, 5);
     assert_eq!(
         inventory.offenders,
         vec![
             "fixture::unguarded".to_string(),
-            "fixture::transport".to_string()
+            "fixture::transport".to_string(),
+            "fixture::review".to_string(),
+            "fixture::argv".to_string()
         ]
     );
 }
@@ -535,6 +673,8 @@ fn run_hostile(args: &[&str], dir: &std::path::Path, fake: &str) -> std::process
         .env("AWS_CONFIG_FILE", hostile_config(dir, fake))
         .env("AWS_SHARED_CREDENTIALS_FILE", hostile_config(dir, fake))
         .env("AWS_PROFILE", "default")
+        .env("AWS_REGION", "eu-west-1")
+        .env("AWS_DEFAULT_REGION", "eu-west-1")
         .env("RUST_LOG", "trace")
         .env("HTTPS_PROXY", format!("http://{fake}"))
         .env("HTTP_PROXY", format!("http://{fake}"))
@@ -586,8 +726,8 @@ fn ordinary_and_live_shaped_runs_never_reach_the_network() {
             "wa-review",
             "--cluster-id",
             "c1",
-            "--region",
-            "us-east-1",
+            // An explicit argv region is required even beside hostile AWS
+            // configuration. A complete live invocation now reaches AWS.
             "--live",
         ],
         vec!["neptune", "seed", "--dry-run", "--confirm-wipe"],
@@ -643,6 +783,80 @@ fn ordinary_and_live_shaped_runs_never_reach_the_network() {
         assert_eq!(network.accepted(), 0, "{args:?} reached the network");
     }
     assert!(provider_never_ran(&dir), "a credential provider ran");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+#[cfg(feature = "docgraph-live")]
+fn live_review_argv_preflight_precedes_environment_files_and_network() {
+    let network = ForbiddenNetwork::start();
+    let fake = format!("127.0.0.1:{}", network.port);
+    let dir = workdir("review-preflight");
+    for (extra, expected) in [
+        (vec![], "--cluster-id, --region"),
+        (
+            vec!["--cluster-id", "c1"],
+            "arguments are required: --region",
+        ),
+        (
+            vec!["--region", "us-east-1"],
+            "arguments are required: --cluster-id",
+        ),
+        (
+            vec!["--cluster-id", "bad/id", "--region", "us-east-1"],
+            "--cluster-id must",
+        ),
+        (
+            vec!["--cluster-id", "c1", "--region", "invalid"],
+            "--region must",
+        ),
+        (
+            vec!["--cluster-id", "c1", "--region", "cn-north-1"],
+            "standard AWS partition",
+        ),
+        (
+            vec![
+                "--cluster-id",
+                "c1",
+                "--region",
+                "us-east-1",
+                "--network-policy",
+                "/also/does/not/exist",
+            ],
+            "--network-policy cannot be used with wa-review --live",
+        ),
+        (
+            vec![
+                "--cluster-id",
+                "c1",
+                "--region",
+                "us-east-1",
+                "--now",
+                "invalid",
+            ],
+            "--now must",
+        ),
+    ] {
+        let mut args = vec![
+            "documentdb",
+            "wa-review",
+            "--live",
+            "--analysis-data",
+            "/does/not/exist",
+            "--output",
+            "reports",
+        ];
+        args.extend(extra);
+        let out = run_hostile(&args, &dir, &fake);
+        let stderr = String::from_utf8(out.stderr).unwrap();
+        assert_eq!(out.status.code(), Some(2), "{args:?}: {stderr}");
+        assert!(out.stdout.is_empty(), "{args:?}");
+        assert!(stderr.contains(expected), "{args:?}: {stderr}");
+        assert!(!stderr.contains("/does/not/exist"), "{stderr}");
+        assert!(!dir.join("reports").exists());
+    }
+    assert_eq!(network.accepted(), 0);
+    assert!(provider_never_ran(&dir));
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
@@ -914,7 +1128,6 @@ fn credential_arguments_are_rejected_without_echo() {
 /// argument list stands for the carrier file.
 #[cfg(feature = "docgraph-live")]
 fn carrier_rows(c: &str) -> Vec<(Vec<&str>, i32, &'static str)> {
-    const UNAVAILABLE: &str = "live docgraph adapters are not available";
     let endpoint = "db.cluster-abc.us-east-1.neptune.amazonaws.com";
     let table: [(&'static str, i32, &'static str); 8] = [
         (
@@ -938,9 +1151,11 @@ fn carrier_rows(c: &str) -> Vec<(Vec<&str>, i32, &'static str)> {
             "--confirm-create",
         ),
         (
-            "documentdb wa-review --live --cluster-id c1 --region us-east-1 --analysis-data @",
+            // Data cannot supply the required argv region (AWS_REGION is
+            // also present). Success routing is tested with injected seams.
+            "documentdb wa-review --live --cluster-id c1 --analysis-data @",
             2,
-            UNAVAILABLE,
+            "arguments are required: --region",
         ),
         // A collection capture manifest has no live mode at all.
         (
@@ -1053,4 +1268,28 @@ fn live_memory_refuses_policy_region_and_input_failures_before_clients() {
     assert_eq!(network.accepted(), 0);
     assert!(provider_never_ran(&dir));
     std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn review_production_wiring_is_bounded_and_uses_one_roots_set() {
+    let source = include_str!("../src/docgraph/live_review.rs");
+    let body = source
+        .parse::<proc_macro2::TokenStream>()
+        .unwrap()
+        .to_string();
+    let compact: String = body.chars().filter(|c| !c.is_whitespace()).collect();
+    for required in [
+        "ValidatedRoots::from_process()",
+        "SdkTransport::new(&runtime,&roots)",
+        "ProviderHttp::validated_bounded(&roots)",
+        "GuardedCredentials::new(&runtime,region,None,http)",
+        "letsleeper=ThreadSleeper;",
+        "letjitter=FullJitter::new();",
+    ] {
+        assert!(
+            compact.contains(required),
+            "missing production wiring: {required}"
+        );
+    }
+    assert_eq!(compact.matches("ValidatedRoots::from_process()").count(), 1);
 }

@@ -1984,6 +1984,10 @@ at no cost to the user, but any spend or data upload stays an operator decision.
 - D1-D4: router facts in section 7.1 (flag placement, strict values, usage errors exit 2, `toolkit
   launch` alone).
 - D5: state moved from argv to stdin; 32-byte state, base64url (R-CB-SPAWN, R-CB-STATE).
+  This retains 256 bits of entropy and permits a leading `-` because the Rust helper's argv
+  contains only `launch auth-callback`; its JSON stdin carries the state. The process-level
+  `leading_hyphen_state_survives_helper_invocation_and_callback` regression exercises that route
+  and the callback query, rather than the legacy `--state` argument described in section 2.2.
 - D6: callback accepts only `/`, checks `Host`, ignores wrong-state requests including `error`, never
   reflects `error_description`, extra security headers (R-CB-REQ, R-CB-PAGE).
 - D7: `auth-wait` never signals; specific timeout/exit messages instead of the generic one

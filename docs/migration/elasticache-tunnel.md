@@ -46,7 +46,7 @@ to 200 characters (`...`), then escape of control, bidirectional and invisible
 characters (`safe_path`). The order matters: a credential that crosses the
 bound is still recognized, and an escape never grows past the cut.
 
-No cache client or server string is ever printed, recorded or put in an error
+Cache client diagnostic strings are never printed, recorded or put in an error
 (PM ruling for #5004, #5005 and #5007, which replaced the by-value scrubber of
 #4986; scrubbing every encoding of a secret out of free text is an arms race).
 A client-init, auth, `PING` or connection failure is a `CacheErrorKind`, a
@@ -55,14 +55,21 @@ closed set (`authentication_failed`, `connection_refused`,
 first-party text only (`authentication failed`, `connection refused`,
 `TLS handshake failed`, `timed out`, `host name lookup failed`, `client error
 (details withheld)`). The TLS hint follows the kind and `--no-tls`, never any
-text. The only server text printed is `engine version` and `mode`, through
-`SecretGate` in `tunnel/clean.rs`: the version must match
-`^[0-9A-Za-z][0-9A-Za-z.+-]{0,31}$`, the mode must be `standalone`, `cluster`
-or `sentinel`, and neither may contain the supplied password or the active
-password or IAM token as a substring; otherwise `unknown` is printed. The
-containment check is one exact-value pass with capped input: a value over
-1 KiB is refused unread (`unknown`), and a secret longer than the value cannot
-occur in it. The encoding enumeration of the former scrubber is gone.
+text. `SecretGate` in `tunnel/clean.rs` withholds both server fields as
+`unknown` whenever a nonempty supplied password or active password/IAM token
+exists. This includes a supplied password superseded by IAM. An allowlist
+cannot distinguish a version from an encoded credential: `marmalade+742`
+(form-urlencoded for `marmalade 742`), base64 and hex can all pass the version
+pattern without holding the raw secret (#4986, #5004).
+
+Without credentials, the version must match
+`^[0-9A-Za-z][0-9A-Za-z.+-]{0,31}$` and the mode must be `standalone`, `cluster`
+or `sentinel`; otherwise `unknown` is printed. The gate stores only whether
+credentials exist, copying and scanning no credential bytes. With credentials
+it inspects no server bytes; without them it inspects at most 32 version
+bytes or compares three fixed mode names. No encoding enumeration or exact
+secret matching remains (#5005, #5007). INFO is still consumed, so withholding
+metadata preserves replay accounting, PING, connection status and close.
 
 No command writes a file: the scripts only print, so there is no output to
 write privately or atomically (the `write_private` helper of `dynamodb_deploy`
@@ -194,8 +201,10 @@ and the durations; none starts a process.
     `redis-py` exception text (`Client init FAILED: {e}`, `PING FAILED:
     Authentication error -- {e}`, and so on) and the raw `redis_version` and
     `redis_mode`. Rust prints a fixed text per error kind, with the same
-    headings, hints and exit status, and a server version or mode only through
-    the allowlist and secret gate (`unknown` otherwise). A recording names the
+    headings, hints and exit status. Authenticated runs withhold server version
+    and mode as `unknown`; unauthenticated values pass a short allowlist.
+    This intentionally sacrifices authenticated metadata to prevent arbitrary
+    encoded credential echoes (#4986, #5004). A recording names the
     kind (`init_error: "timeout"`, `ping_error: {"kind": "tls_handshake_failed"}`)
     and holds no client text. The live client of #4982 maps its errors to the
     kinds; text it cannot map is `other`.

@@ -31,6 +31,64 @@ fn invalid_stdin_fails_silently_before_binding() {
 
 #[cfg(all(unix, not(feature = "aws-sdk")))]
 #[test]
+fn leading_hyphen_state_survives_helper_invocation_and_callback() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let home =
+        std::env::temp_dir().join(format!("callback-hyphen-{}-{unique}", std::process::id()));
+    std::fs::create_dir(&home).unwrap();
+    let deadline = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        + 10;
+    let state = "-abcdefghijklmnopqrstuvwxyz0123456789_ABCDEF";
+    let mut child = Command::new(env!("CARGO_BIN_EXE_toolkit"))
+        .args(["launch", "auth-callback"])
+        .env("HOME", &home)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let input = format!(
+        r#"{{"client_id":"c","client_secret":"s","client_expires_at":1,"scopes":["launch:access"],"code_verifier":"v","state":"{state}","deadline":{deadline}}}"#
+    );
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(input.as_bytes())
+        .unwrap();
+    let mut line = String::new();
+    BufReader::new(child.stdout.take().unwrap())
+        .read_line(&mut line)
+        .unwrap();
+    let port: u16 = line.trim().parse().unwrap();
+    let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .unwrap();
+    write!(
+        stream,
+        "GET /?state={state}&error=access_denied HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\r\n"
+    )
+    .unwrap();
+    let mut response = String::new();
+    stream.read_to_string(&mut response).unwrap();
+    assert!(response.starts_with("HTTP/1.1 400"));
+    assert!(!child.wait().unwrap().success());
+    let record =
+        std::fs::read_to_string(home.join(format!(".launch-with-aws/pending/{}.json", child.id())))
+            .unwrap();
+    assert!(record.contains("access_denied"));
+    std::fs::remove_dir_all(home).unwrap();
+}
+
+#[cfg(all(unix, not(feature = "aws-sdk")))]
+#[test]
 #[allow(clippy::too_many_lines)]
 fn helper_announces_loopback_and_retains_transport_failure() {
     let unique = SystemTime::now()
@@ -422,6 +480,100 @@ fn helper_closes_stdout_after_port_while_still_listening() {
     assert!(result.expect("stdout remained open").unwrap().is_empty());
 }
 
+#[cfg(all(target_os = "linux", feature = "aws-sdk"))]
+fn net5_run(
+    command: &mut Command,
+    limit: std::time::Duration,
+) -> Result<std::process::Output, String> {
+    use nix::sys::signal::{killpg, Signal};
+    use nix::unistd::Pid;
+    use std::io::Read;
+    use std::os::unix::process::CommandExt;
+    use std::time::Instant;
+
+    let mut child = command
+        .process_group(0)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("could not start command: {error}"))?;
+    let group = Pid::from_raw(i32::try_from(child.id()).unwrap());
+    let mut stdout = child.stdout.take().unwrap();
+    let mut stderr = child.stderr.take().unwrap();
+    let out = std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        stdout.read_to_end(&mut bytes).map(|_| bytes)
+    });
+    let err = std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        stderr.read_to_end(&mut bytes).map(|_| bytes)
+    });
+    let deadline = Instant::now() + limit;
+    let (status, timed_out) = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break (Some(status), false),
+            Ok(None) if Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            Ok(None) => {
+                let _ = killpg(group, Signal::SIGKILL);
+                break (child.wait().ok(), true);
+            }
+            Err(error) => {
+                let _ = killpg(group, Signal::SIGKILL);
+                let _ = child.wait();
+                return Err(format!("wait failed: {error}"));
+            }
+        }
+    };
+    // Also close pipes held by any descendants left after the leader exited.
+    let _ = killpg(group, Signal::SIGKILL);
+    let stdout = out
+        .join()
+        .map_err(|_| "stdout reader panicked")?
+        .map_err(|e| e.to_string())?;
+    let stderr = err
+        .join()
+        .map_err(|_| "stderr reader panicked")?
+        .map_err(|e| e.to_string())?;
+    if timed_out {
+        return Err(format!("timeout after {} seconds", limit.as_secs()));
+    }
+    Ok(std::process::Output {
+        status: status.ok_or("could not reap child")?,
+        stdout,
+        stderr,
+    })
+}
+
+#[cfg(all(target_os = "linux", feature = "aws-sdk"))]
+fn net5_capability(name: &str, command: &mut Command) -> Result<(), String> {
+    let output = net5_run(command, std::time::Duration::from_secs(10))
+        .map_err(|error| format!("NET-5 capability {name} unavailable: {error}"))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "NET-5 capability {name} unavailable: {} {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ))
+    }
+}
+
+#[cfg(all(target_os = "linux", feature = "aws-sdk"))]
+#[test]
+fn net5_probe_reports_named_missing_capability() {
+    let error = net5_capability("ip", &mut Command::new("/nonexistent/net5-ip")).unwrap_err();
+    assert!(error.contains("NET-5 capability ip unavailable"), "{error}");
+    let error = net5_run(
+        Command::new("sleep").arg("10"),
+        std::time::Duration::from_millis(100),
+    )
+    .unwrap_err();
+    assert!(error.contains("timeout"), "{error}");
+}
+
 // A private network and mount namespace make the fixed production hostname
 // resolve only to this test's loopback TLS server, without changing host DNS.
 #[cfg(all(target_os = "linux", feature = "aws-sdk"))]
@@ -437,17 +589,54 @@ fn shipped_binary_exchange_publishes_session() {
 
     const CHILD: &str = "RSI_CALLBACK_NET5_NAMESPACE";
     if std::env::var_os(CHILD).is_none() {
-        let output = Command::new("unshare")
-            .args(["--user", "--map-root-user", "--mount", "--net"])
-            .arg(std::env::current_exe().unwrap())
-            .args([
-                "--exact",
-                "shipped_binary_exchange_publishes_session",
-                "--nocapture",
-            ])
-            .env(CHILD, "1")
-            .output()
-            .unwrap();
+        for (name, command) in [
+            (
+                "unshare userns",
+                &mut Command::new("unshare").args(["--user", "--map-root-user", "true"])
+                    as &mut Command,
+            ),
+            ("mount", &mut Command::new("mount").arg("--version")),
+            ("ip", &mut Command::new("ip").arg("-Version")),
+            (
+                "mount namespace",
+                &mut Command::new("unshare").args([
+                    "--user",
+                    "--map-root-user",
+                    "--mount",
+                    "mount",
+                    "--make-rprivate",
+                    "/",
+                ]),
+            ),
+            (
+                "network namespace",
+                &mut Command::new("unshare").args([
+                    "--user",
+                    "--map-root-user",
+                    "--net",
+                    "ip",
+                    "link",
+                    "set",
+                    "lo",
+                    "up",
+                ]),
+            ),
+        ] {
+            net5_capability(name, command).unwrap_or_else(|error| panic!("{error}"));
+        }
+        let output = net5_run(
+            Command::new("unshare")
+                .args(["--user", "--map-root-user", "--mount", "--net"])
+                .arg(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "shipped_binary_exchange_publishes_session",
+                    "--nocapture",
+                ])
+                .env(CHILD, "1"),
+            Duration::from_secs(60),
+        )
+        .unwrap_or_else(|error| panic!("NET-5 namespace test {error}"));
         assert!(
             output.status.success(),
             "namespace test failed: {} {}",

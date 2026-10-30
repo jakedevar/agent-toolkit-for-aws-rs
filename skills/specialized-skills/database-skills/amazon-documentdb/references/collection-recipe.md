@@ -132,9 +132,15 @@ other field, such as `wiredTiger`, must be removed from the pasted reply.
 
 ## Normalize, then review
 
+The review selects `--live` for AWS infrastructure checks (requires a
+`docgraph-live` release build). The normalized collection statistics are
+offline input and do not choose that mode. For offline replay, replace
+`--live` with `--recorded <supplied-aws-recording.json>`; supply a real AWS
+recording. A missing mode fails before any report is written.
+
 ```text
 toolkit documentdb normalize-capture --capture docdb-capture/capture.json --output docdb-capture/analysis.json
-toolkit documentdb wa-review --cluster-id ID --region REGION --analysis-data docdb-capture/analysis.json
+toolkit documentdb wa-review --live --cluster-id ID --region REGION --analysis-data docdb-capture/analysis.json
 ```
 
 Refusals print `capture refused (<class>): <fixed sentence>` and exit 1:

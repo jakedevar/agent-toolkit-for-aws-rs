@@ -3,6 +3,7 @@
 # being present in the invoking environment.
 .PHONY: build fmt fmt-patch clippy test test-scripts clippy-sdk test-sdk clippy-live plugin-binaries plugin-binaries-check openclaw-node-test openclaw-npm-cache
 .PHONY: ai-models-sdk ai-models-test clippy-ai-models
+.PHONY: agents-pay-test agents-pay-test-sdk agents-pay-roots
 
 build:
 	cargo build --workspace --locked
@@ -10,6 +11,7 @@ build:
 ai-models-sdk:
 	cargo test -p toolkit-cli --features ai-models-live --locked --lib ai_models::
 	cargo test -p toolkit-cli --features ai-models-live --locked --test ai_models
+	cargo test -p toolkit-aws --features sdk --locked --lib sdk::service_bridge::
 
 ai-models-test:
 	cargo test -p toolkit-cli --locked --lib ai_models::
@@ -45,6 +47,7 @@ test-sdk:
 	cargo test -p toolkit-cli --features aws-sdk --locked --lib asm_exec
 	cargo test -p toolkit-cli --features aws-sdk --locked --lib mcp_proxy
 	cargo test -p toolkit-cli --features aws-sdk --locked --test mcp_proxy_cli
+	cargo test -p toolkit-cli --features aws-sdk --locked --test launch_callback net5_probe_reports_named_missing_capability
 	cargo test -p toolkit-cli --features aws-sdk --locked --test launch_callback shipped_binary_exchange_publishes_session
 	cargo test -p toolkit-cli --features aws-sdk --locked --test agents_pay_ac3 --test agents_pay_wiring --test agents_pay_gate
 
@@ -53,6 +56,22 @@ test-sdk:
 # every test build with that feature; T-AC3-MAKE pins this recipe).
 clippy-live:
 	cargo clippy -p toolkit-cli --features agents-pay-live --lib --bins --locked -- -D warnings
+
+# Offline x402 contracts in both supported verification configurations.
+agents-pay-test:
+	cargo test -p toolkit-cli --locked --lib agents_pay::
+	cargo test -p toolkit-cli --locked --test 'agents_pay_*'
+
+agents-pay-test-sdk:
+	cargo test -p toolkit-cli --features aws-sdk --locked --lib agents_pay::
+	cargo test -p toolkit-cli --features aws-sdk --locked --test 'agents_pay_*'
+	cargo test -p toolkit-aws --features sdk --locked --lib sdk::roots_payment::
+	cargo test -p toolkit-aws --features sdk --locked --test payment_roots
+	cargo test -p toolkit-aws --features sdk --locked --lib sdk::tests::guarded_dns_refuses_answers_returned_after_deadline -- --exact
+
+agents-pay-roots:
+	cargo test -p toolkit-aws --features sdk --locked --offline --test payment_roots
+	cargo test -p toolkit-aws --features sdk --locked --offline --lib sdk::roots_payment::
 
 docgraph-spike:
 	cargo test -p toolkit-cli --features docgraph-live --locked --test docgraph_bridge_spike service_orchestrators_use_only_the_injected_connector -- --exact
@@ -128,6 +147,11 @@ plugin-binaries:
 
 plugin-binaries-check:
 	cargo run --locked --package plugin-stage -- check
+
+# Check the model/graph plugin feature combination without staging.
+# Payment release features use the existing lint-only clippy-live exception (G1).
+toolkit-plugin-check:
+	cargo check -p toolkit-cli --bin toolkit --features ai-models-live,docgraph-live --locked --offline
 
 # Shell-level self-test of scripts/at-commit-test.sh (#4865): the runner the
 # daemon invokes for AgentSubmitJob test jobs with params.at_commit.

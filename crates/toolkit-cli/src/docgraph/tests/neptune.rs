@@ -516,24 +516,24 @@ fn nothing_is_sent_without_a_recording() {
 }
 
 #[test]
-fn the_command_guards_the_wipe_and_never_leaks_an_endpoint() {
-    let ran = run(&["neptune", "seed"]);
-    assert_eq!(ran.status, 1);
-    assert_eq!(ran.stdout, "Connecting to Neptune at localhost:8182...\n");
-    assert!(
-        ran.stderr.contains("Refusing to wipe the graph"),
-        "{}",
-        ran.stderr
-    );
-    assert!(ran.stderr.contains("--confirm-wipe"));
-
-    let ran = run(&["neptune", "seed", "--confirm-wipe"]);
-    assert_eq!(ran.status, 1);
-    assert!(
-        ran.stderr.contains("no live Gremlin client"),
-        "{}",
-        ran.stderr
-    );
+fn the_command_requires_a_mode_and_never_leaks_an_endpoint() {
+    for args in [
+        vec!["neptune", "seed"],
+        vec!["neptune", "seed", "--confirm-wipe"],
+    ] {
+        let ran = run(&args);
+        assert_eq!(ran.status, 1);
+        assert!(ran.stdout.is_empty());
+        assert!(
+            ran.stderr.contains(if cfg!(feature = "docgraph-live") {
+                "live data requires explicit --live"
+            } else {
+                "built without docgraph-live"
+            }),
+            "{}",
+            ran.stderr
+        );
+    }
 
     let ran = run(&["neptune", "seed", "--endpoint", "a b"]);
     assert_eq!(ran.status, 2);

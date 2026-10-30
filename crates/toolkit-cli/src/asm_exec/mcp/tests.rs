@@ -285,6 +285,18 @@ fn the_endpoint_is_validated_once_and_before_anything_is_sent() {
     assert!(rig.transport.requests().is_empty());
 }
 
+/// T-AC3-REACH (#5099): `ASM_EXEC_MCP_ENDPOINT` cannot name the payments API.
+#[test]
+fn the_agentcore_payments_api_is_refused_before_anything_is_signed_or_sent() {
+    let rig = Rig::new(handshake());
+    let backend =
+        rig.backend("https://bedrock-agentcore.us-east-1.amazonaws.com/payments/processPayment");
+    let cause = backend.resolve("n", "AWSCURRENT", None).unwrap_err();
+    assert!(cause.contains("AgentCore payments API"), "{cause}");
+    assert!(rig.transport.requests().is_empty());
+    assert_eq!(rig.signer.signed(), 0);
+}
+
 #[test]
 fn rejections_status_codes_and_transport_faults_have_distinct_causes() {
     let rejected =

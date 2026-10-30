@@ -35,7 +35,7 @@ impl TargetError {
         match self {
             Self::NotAllowed => {
                 "the endpoint must be an https URL of an AWS host (*.api.aws or *.amazonaws.com) \
-                 with no userinfo, query or fragment"
+                 with no userinfo, query or fragment, and not the AgentCore payments API"
             }
             Self::NotPublic => "the endpoint host does not resolve to public addresses only",
         }
@@ -225,6 +225,20 @@ mod tests {
             assert_eq!(error, TargetError::NotAllowed, "{url}");
             assert!(!error.to_string().contains("CANARY"));
             assert!(!error.to_string().contains("example"));
+        }
+    }
+
+    /// T-AC3-REACH (#5099): the proxy's `--header` and JSON-RPC frames must
+    /// never reach the payments API through a signed request.
+    #[test]
+    fn the_agentcore_payments_api_is_not_an_mcp_target() {
+        for url in [
+            "https://bedrock-agentcore.us-east-1.amazonaws.com/payments/processPayment",
+            "https://bedrock-agentcore.us-east-1.amazonaws.com/%70ayments/createPaymentInstrument",
+        ] {
+            let error = McpTarget::parse(url).expect_err(url);
+            assert_eq!(error, TargetError::NotAllowed, "{url}");
+            assert!(error.message().contains("AgentCore payments API"), "{url}");
         }
     }
 
