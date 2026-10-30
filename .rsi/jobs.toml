@@ -7,6 +7,24 @@
 # path (Issue #4373 AC4).
 version = 1
 
+[recipes.ai-models-sdk]
+runner = "make"
+target = "ai-models-sdk"
+timeout_minutes = 20
+cpu_quota_percent = 200
+
+[recipes.ai-models-test]
+runner = "make"
+target = "ai-models-test"
+timeout_minutes = 20
+cpu_quota_percent = 200
+
+[recipes.clippy-ai-models]
+runner = "make"
+target = "clippy-ai-models"
+timeout_minutes = 20
+cpu_quota_percent = 200
+
 [recipes.docgraph-spike]
 runner = "make"
 target = "docgraph-spike"
@@ -123,6 +141,12 @@ target = "docgraph-database-admission"
 timeout_minutes = 20
 cpu_quota_percent = 200
 
+[recipes.docgraph-review-client]
+runner = "make"
+target = "docgraph-review-client"
+timeout_minutes = 30
+cpu_quota_percent = 200
+
 [recipes.docgraph-live-suite]
 runner = "make"
 target = "docgraph-live-suite"
@@ -144,6 +168,12 @@ cpu_quota_percent = 200
 [recipes.docgraph-dns-cap]
 runner = "make"
 target = "docgraph-dns-cap"
+timeout_minutes = 20
+cpu_quota_percent = 200
+
+[recipes.docgraph-service-dns]
+runner = "make"
+target = "docgraph-service-dns"
 timeout_minutes = 20
 cpu_quota_percent = 200
 
@@ -184,5 +214,23 @@ cpu_quota_percent = 200
 [recipes.clippy-gremlin]
 runner = "make"
 target = "clippy-gremlin"
+timeout_minutes = 20
+cpu_quota_percent = 200
+
+[recipes.docgraph-memory]
+runner = "make"
+target = "docgraph-memory"
+timeout_minutes = 20
+cpu_quota_percent = 200
+
+[recipes.docgraph-memory-sync]
+runner = "make"
+target = "docgraph-memory-sync"
+timeout_minutes = 20
+cpu_quota_percent = 200
+
+[recipes.docgraph-scoped-prime]
+runner = "make"
+target = "docgraph-scoped-prime"
 timeout_minutes = 20
 cpu_quota_percent = 200

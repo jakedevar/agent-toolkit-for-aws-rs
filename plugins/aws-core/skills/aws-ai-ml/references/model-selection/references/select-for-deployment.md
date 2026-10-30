@@ -5,7 +5,7 @@ Select a base model to deploy by filtering the catalog against the user's `use_c
 ## Prerequisites
 
 - A `use_case_spec.md` file exists with a **Deployment Constraints** section. If not, activate the `use-case-specification` skill first.
-- This toolkit build has no live AWS client. Commands that query AWS require `--recorded FILE` with recorded responses; do not present recorded data as a live account query. `filter` works on a local models file, and `search` with a snapshot can fall back to local filtering.
+- The shipped toolkit build lacks the `ai-models-live` feature and has no live AWS client. Commands that query AWS require `--recorded FILE` with recorded responses; do not present recorded data as a live account query. `filter` works on a local models file, and `search` with a snapshot can fall back to local filtering.
 
 ## Step 1: Discover Available Filter Values
 

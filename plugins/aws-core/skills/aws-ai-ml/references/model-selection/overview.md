@@ -11,7 +11,7 @@ Guides the user through selecting a base model based on their use case.
 
 ## Prerequisites
 
-This toolkit build has no live AWS client. Commands requiring AWS responses need `--recorded FILE`; they cannot query a real account until the live client is available. Identify recorded data as such.
+The shipped toolkit build lacks the `ai-models-live` feature and has no live AWS client. Commands requiring AWS responses need `--recorded FILE`; they cannot query a real account unless a toolkit build enables that feature. Identify recorded data as such.
 
 ---
 

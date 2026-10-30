@@ -1360,7 +1360,307 @@ the fix, `the_releasing_stream_drops_its_inner_stream_on_every_terminal_read`
 | #5465 | `4e9a4a29-3486-474c-988e-b16535d0bdef`: "idle: the read returned Failed(.. stalled ..) with the socket still open"; "stream cap: the read returned TooLarge with the socket still open" (33 passed, 2 failed) | `be0e45aa-b245-4a41-b49d-5eb009458202` (`sdk::database` 36 passed, 0 failed) |
 
 
+#### S2: AWS review client (#5489)
+
+`toolkit_cli::docgraph::live` (feature `docgraph-live`) adds
+`LiveAwsClient`, the R-DG-04 implementation of the review's `AwsClient` seam
+for exactly the ten operations of the table above (`OPERATIONS`). Any other
+pair, any request member the field map does not cover, or a member of the
+wrong type fails with a fixed `InvalidConfig` before anything is encoded,
+signed or sent. `--live` is still refused at the CLI: this slice adds the
+client, not its routing, which waits for the exact-source security review.
+
+**Bridge (spike criteria 1-2, T-DG-04e).** The pinned service crates encode
+the typed input (Query, AWS JSON, RPC-v2 CBOR) and decode the response; they
+never sign, resolve credentials, retry or open a socket. Each client is built
+per attempt with `noAuth` preferred, no credentials provider, an identity
+cache that refuses any AWS credential identity, SDK retries, timeouts and
+stalled-stream protection disabled, and one HTTP client: the in-process
+bridge connector. The SDK future is polled on the caller's thread with no
+async runtime: the connector parks the generated request and returns
+`Pending`, the driver runs the synchronous toolkit path and fills the
+response slot, and polling resumes. Nothing is nested in another runtime,
+and an SDK wait on anything but the bridge fails closed. The toolkit path:
+
+1. the generated URL must equal the operation's own standard-partition
+   endpoint (`https://{rds|monitoring|ec2|secretsmanager}.{region}.amazonaws.com`
+   plus the modeled path), the method POST and the body buffered; otherwise
+   refused;
+2. any SDK-prepared signature header (`authorization`, `x-amz-date`,
+   `x-amz-security-token`, `x-amz-content-sha256`) means `noAuth` was not
+   selected: refused (fail closed);
+3. the generated framing headers (`FRAMING_HEADERS`, including the
+   `content-length` every operation generates) are removed, all other
+   headers and the final body bytes kept unchanged;
+4. the toolkit signer signs with the operation's scope (`rds`, `monitoring`,
+   `ec2`, `secretsmanager`) and credentials bounded by the operation
+   deadline (`DeadlineSigner`; production: `GuardedCredentials::until`);
+5. the toolkit `StreamingTransport` sends exactly the signed request under
+   the same deadline and a 16 MiB response cap, regenerating authority and
+   framing from the unchanged URL and body;
+6. any response carrying a document type declaration is refused explicitly
+   as `InvalidResponse`, for every operation and HTTP status (repair #5544).
+   A 2xx with an empty body, or a Query/XML 2xx that is not one
+   well-formed XML document rooted at the operation's `{Operation}Response`
+   (repair #5521, below), is also `InvalidResponse`; everything else, non-2xx
+   included, goes to the modeled decoder.
+
+**One retry owner (T-DG-04c).** `RetryPolicy::default()` (three retries,
+four sends, full jitter, 20 s cap) wraps whole attempts; each attempt
+encodes and signs afresh. The backoff never sleeps past the operation
+deadline (60 s from the start of the call, covering credentials, signing,
+DNS, connect, TLS, every attempt, backoff and body reads), and an attempt
+that would start after it fails `Timeout(Deadline)` without sending. Errors:
+a service error keeps only its HTTP status and sanitized code (message and
+request id discarded) and is retried only when throttling or transient;
+transport and credential failures keep their toolkit classes; a decode
+failure is a non-retried `InvalidResponse`.
+
+Decisions (engineering, recorded for review):
+
+- The SDK's Query and JSON decoders report an undecodable 2xx as an
+  unhandled *service* error with status 200; such an error is classified
+  as `InvalidResponse`, never a service verdict (found by T-DG-04b).
+- aws-smithy-xml stops silently at the end of input and reads only the
+  elements it looks for, so a document cut at an element boundary, a
+  mismatched close, a missing inner close or a second root could decode as
+  a success. A closing-root suffix check was not enough (#5516 review,
+  BLOCKER #5521). The bridge therefore requires the whole body to parse as
+  one well-formed document (`well_formed_xml`, below).
+- The client is given its service-plane transport by reference. Live wiring
+  (#5507) must pass `SdkTransport::for_public_service`, never
+  `SdkTransport::new`: the ordinary public transport resolves DNS
+  synchronously and cannot meet the operation deadline (#5522, below).
+- The field map does not emit instance-level `IsClusterWriter`: the
+  DocumentDB model's `DBInstance` has no such member, exactly as boto3
+  returned none to `wa_review.py`, so the writer-only check (REL9) is
+  skipped on live data as it was in Python. Recorded fixtures may still
+  carry it. Deriving the writer from `DBClusterMembers` is a product change
+  left to a follow-up.
+- Regions outside the standard partition (`cn-`, `us-gov-`, `us-iso*`,
+  `eu-isoe-`) are refused up front; the bridge's exact-URL check would
+  refuse their endpoints anyway.
+- The client takes its signer, transport, sleeper and jitter by reference,
+  so the CLI wiring (follow-up) supplies the guarded credentials, the
+  R-ROOTS bounded service-plane `SdkTransport::for_public_service`,
+  `ThreadSleeper` and `FullJitter`.
+
+**S2 field map (SDK output to seam).** Only members the checks read; an
+absent value is omitted, never `null`; list order is kept; `0` and `false`
+stay distinct from absent.
+
+| Operation | Seam members emitted |
+|---|---|
+| DescribeDBClusters | `DBClusters[]`: `BackupRetentionPeriod`, `DeletionProtection`, `EngineVersion`, `DBClusterParameterGroup`, `VpcSecurityGroups[].VpcSecurityGroupId`, `StorageEncrypted`, `EnabledCloudwatchLogsExports[]`, `DBSubnetGroup`, `PreferredMaintenanceWindow`, `DBClusterArn`, `StorageType` |
+| DescribeDBInstances | `DBInstances[]`: `DBInstanceIdentifier`, `DBInstanceClass`, `AvailabilityZone` |
+| DescribeEvents | `Events[]`: `Message`, `EventCategories[]`; `Marker` |
+| DescribeDBClusterParameters | `Parameters[]`: `ParameterName`, `ParameterValue` |
+| DescribeDBSubnetGroups | `DBSubnetGroups[].Subnets[].SubnetAvailabilityZone.Name` |
+| ListTagsForResource | `TagList[]`: `Key`, `Value` |
+| GetMetricStatistics | `Datapoints[]`: `SampleCount`, `Average`, `Sum`, `Minimum`, `Maximum` (finite only) |
+| DescribeAlarms | `MetricAlarms[].AlarmName` |
+| DescribeSecurityGroups | `SecurityGroups[].IpPermissions[]`: `IpRanges[].CidrIp`, `Ipv6Ranges[].CidrIpv6` |
+| ListSecrets | `SecretList[]`: `Name`, `Description`; `NextToken` |
+
+Request members accepted: exactly those the checks build (for example
+`Filters[{Name, Values[]}]`, `Dimensions[{Name, Value}]`, ISO `StartTime`/
+`EndTime`, integer `Period`, `Marker`, `NextToken`). Secrets Manager is
+`ListSecrets` only; `GetSecretValue`, `BatchGetSecretValue` and
+`DescribeSecret` are refused before any request is built (T-DG-04d).
+
+**Dependency audit (spike criterion 3).** Original S2 and repair 1 changed
+no manifest or lockfile. Repair 2 (#5544) adds an optional direct
+`xmlparser = "=0.13.6"` dependency to toolkit-cli's `docgraph-live` feature
+and its toolkit-cli dependency edge in Cargo.lock. This is the already
+locked tokenizer used by roxmltree and aws-smithy-xml; it adds no package
+or version to the lockfile and no default-build dependency.
+The four service crates, `aws-credential-types`, `aws-smithy-runtime-api`
+and `aws-smithy-types` are the existing optional `docgraph-live` pins, so
+no TLS, root, crypto or connector crate is added and no SDK HTTP connector
+is used (the bridge is the only HTTP client the SDK is given).
+
+**Tests (`docgraph::tests::live`, recipe `docgraph-review-client`).**
+
+| T-case | Test(s) |
+|---|---|
+| 04a | `t_dg_04a_all_ten_encodings_reach_the_injected_transport_signed` (URL, method, content type, exact final body bytes incl. RPC-v2 CBOR, `x-amz-target`, signing scope and signed header set, sent == signed, no framing, one shared deadline, 16 MiB cap); `t_dg_04a_unknown_pairs_and_unmapped_request_members_fail_before_the_transport` |
+| 04b | `t_dg_04b_a_live_review_equals_the_seam_fixture_review` (whole review over the wire equals the seam fixture review, call by call and check by check); `..._zero_and_false_stay_distinct_from_absent`; `..._pagination_tokens_pass_through_one_page_per_call`; `..._truncation_wrong_types_and_service_errors_never_succeed` (XML, JSON, CBOR; message canary never kept) |
+| 04c | `t_dg_04c_transient_failures_recover_or_exhaust_at_four_sends` (throttling, 5xx, connect, read timeout, CBOR throttling; four fresh signatures; sleeps 2/4/8 s); `..._denial_malformed_and_credential_failures_send_once_or_never`; `..._the_operation_deadline_stops_retries` |
+| 04d | `t_dg_04d_a_live_review_only_lists_secret_metadata`; `..._repeated_tokens_and_the_page_cap_still_fail_the_check` |
+| 04e | `t_dg_04e_generated_framing_is_removed_and_the_url_and_body_kept` (real SDK-generated requests); `..._the_bridge_refuses_sdk_signing_streaming_bodies_and_foreign_urls`; `..._no_sdk_credential_identity_is_ever_accepted`; `..._only_toolkit_signing_and_retries_run_for_every_operation` |
+
+Red at `521a92b1` (tests only): job `825fac9c-f92a-4e32-b990-c8b71780a1d5`
+fails to compile (`unresolved import crate::docgraph::live`). Existing
+review/error/recorded goldens are unchanged and still run under both
+feature sets (`docgraph-live-suite`, scoped_test).
+
+**#5484 (re-review #5482 follow-up).** `sdk::database::tests` gains
+`a_bounded_body_releases_its_socket_on_every_terminal_failure` (idle,
+operation deadline, byte limit, connection cut mid-body) and
+`a_bounded_body_releases_its_socket_at_its_end`: they take the connector's
+response body directly (no `SdkStream`, no `ReleasingStream`), read the
+client socket's drop counter right after the terminal poll, before the body
+is dropped or the runtime driven again, and check that a later poll repeats
+a failure, never a clean end. With `self.driver.release()` removed from
+`BoundedBody::end` only, job `d965d330-5ce7-4c25-96af-e929036c646c` fails
+("idle: the body poll failed (.. stalled ..) with the socket still open";
+37 passed, 1 failed); with it restored, job
+`d643b659-e2cf-4cbe-aae4-db3ebb0d8ce9` passes (38 passed). Public, payment
+and offline fixtures are unchanged.
+
+#### S2 repair 1: review #5516 blockers (#5521, #5522)
+
+Exact-source review #5516 of `817eb1ee` returned CHANGES_REQUESTED with two
+BLOCKERs. Both are repaired here and the reviewer's probes are now
+permanent tests.
+
+**#5521: whole-document XML validation.** The closing-root suffix check
+admitted malformed documents that the SDK decoder then read as success:
+a mismatched close, a second root, or a missing inner close, each still
+ending in `</{Operation}Response>`. `well_formed_xml` (in `live.rs`) now
+requires every successful Query/XML body to meet all of these:
+
+- valid UTF-8;
+- one well-formed XML document: matched nesting, a single root, only
+  comments, processing instructions and whitespace outside the root, and
+  declared namespace prefixes;
+- no document type declaration (completed by repair 2's explicit token
+  check below; repair 1's parser-default assumption was incomplete);
+- a root element whose local name is the operation's `{Operation}Response`,
+  in any namespace.
+
+Anything else is a non-retried `InvalidResponse` after one send.
+
+- **Parser:** `roxmltree` 0.14.1 with its default options. Those options
+  refuse internal-subset DTDs but accept no-subset declarations (#5544);
+  the explicit token check in repair 2 completes the refusal. It is
+  already a direct toolkit-cli dependency, used by the payment
+  plane, and is built on `xmlparser` 0.13.6, the same tokenizer the SDK's
+  `aws-smithy-xml` 0.64.0 uses. Repair 1 changed no manifest or lockfile.
+- **Open elements at end of input:** roxmltree 0.14.1 refuses a mismatched
+  close, but it accepts end of input while elements are still open. The
+  first fix commit, `63e9edb5`, missed this: job
+  `dca1ed93-0346-40ae-9e23-8d181c083b52` failed the existing truncation
+  case 1, where the body is cut after `</DBCluster>` and decoded with
+  `BackupRetentionPeriod` 7. `element_closed` now also requires every
+  element to be closed.
+  - roxmltree spans an open element up to the end of its start tag, and a
+    start tag cannot contain `<`: xmlparser refuses it even in attribute
+    values.
+  - So a closed element's span ends with `/>` or contains `</`.
+  - DocumentDB and EC2 cases cut at an element boundary pin this.
+- **Decoding:** the parser only validates. The SDK decoder still reads the
+  unchanged bytes, so a document that passes decodes exactly as before.
+- **Valid forms the tests pin as decoding unchanged:** the XML declaration,
+  default `xmlns` namespaces, `ResponseMetadata`, comments and processing
+  instructions inside or after the root, and empty lists in both the
+  self-closing and the open/close form.
+
+**#5522: a bounded public service-plane transport.**
+`SdkTransport::new`/`with_resolver` resolve DNS synchronously inside the
+connector poll, so a stuck lookup held the caller past the operation
+deadline. The reviewer's probe returned after 401 ms against a 30 ms
+deadline. The fix is a separate construction, `SdkTransport::for_public_service`
+(`crates/toolkit-aws/src/sdk/service.rs`):
+
+1. The URL and header guards are unchanged.
+2. The lookup runs on S1's process-wide `LookupGate` (`sdk::lookup`, shared
+   with the database and bounded provider planes): it runs on a detached
+   thread and is awaited asynchronously, so the deadline drops the wait.
+3. The answers pass the same public-address admission
+   (`guarded_addresses`). A failed or empty lookup, or any non-public
+   answer, is refused before a dial; mixed answers are refused, never
+   filtered.
+4. The actual-peer check is unchanged.
+
+The residual is the same one the database plane accepts: the blocked
+`getaddrinfo` thread runs until the system resolver returns. While it does,
+every new lookup on the process gate fails closed at once with
+`ABANDONED_LOOKUP_REFUSAL`, so at most one abandoned lookup is outstanding
+per process.
+
+`SdkTransport::new`, `with_resolver` and `with_connector`, the payment
+transports and their tests are unchanged. CLI routing stays refused (#5507),
+and that wiring must use this constructor.
+
+| Blocker | Tests | Red (`ff114353`, tests plus a skeleton delegating to the ordinary composition) |
+|---|---|---|
+| #5521 | `docgraph::tests::live::t_dg_04b_malformed_xml_with_a_closing_root_never_succeeds` (DocumentDB and EC2: mismatched close, second root, missing inner close, crossed closes, trailing text, DTD, undeclared prefix, unclosed item, cut at an element boundary, root never closed); `t_dg_04b_valid_empty_namespaced_and_commented_xml_decodes_unchanged` | `122b243e-0a23-47ca-8263-4bc9cd2f08db`: both fail ("docdb mismatched close: malformed XML became a success … BackupRetentionPeriod 7"; a trailing comment was refused); the other 15 S2 tests pass |
+| #5522 | `sdk::service::tests::a_blocked_service_lookup_returns_control_at_the_operation_deadline`; `abandoned_service_lookups_are_capped_at_one_and_fail_closed`; `the_service_transport_keeps_the_public_and_private_endpoint_guards`; `the_production_service_transport_queues_on_the_process_wide_gate` (recipe `docgraph-service-dns`) | `ad59b164-5a65-4e34-874e-a88498a1bb86`: the deadline and cap tests fail ("held the caller past its deadline: 5.0013s" against a 100 ms deadline); the guard and process-gate tests pass |
+
+
+#### S2 repair 2: explicit document type refusal (#5544)
+
+Re-review #5516 found that roxmltree's default DTD refusal did not cover
+`xmlparser::Token::EmptyDtd`: plain, SYSTEM and PUBLIC declarations without
+an internal subset still decoded as successful review data. The bridge now
+checks the pinned tokenizer's structural stream before any modeled decoder,
+refusing both `DtdStart` and `EmptyDtd` explicitly as a non-retried
+`InvalidResponse` after exactly one send. This applies to all ten operations
+and every HTTP status, including non-2xx service-error bodies. No DTD URL is
+resolved or fetched. Comments, CDATA and processing instructions are distinct
+tokens: their text is never searched for markup. Non-XML bodies continue to
+the same operation validation/decoder as before; valid bytes are unchanged.
+
+Five separate permanent tests cover the review's DocumentDB plain/SYSTEM/
+PUBLIC and EC2 plain/SYSTEM no-subset probes. The all-operation matrix adds
+empty and populated internal subsets, prolog declaration/comment handling,
+and HTTP 200/400/429/500, asserting `InvalidResponse`, non-retryability,
+exactly one send and no backoff. Existing malformed nesting, partial,
+multiple-root and valid-response equality tests remain. The equality tests
+also cover DOCTYPE-looking text in comments and CDATA for both services.
+
+Red source: tests-only `54697ae9af9e6d5a49dea5ad6f118cd3e9423055`, based on
+merge `9001128661f3783d2ad90f84c7ec91459fb9968c` (repair-1 `87f1c3fa` plus
+rolling `680cfa08c47689e854a2a8c27d6c65bd0a8ae99d`). Daemon job
+`4c7d5e13-1e8a-4a8d-84bb-5af9fdfbf3b8` ran 23 S2 tests: all five required
+probes decoded as success and the status matrix failed on a 400 service
+error; the other 17 tests passed, including valid comment/CDATA equality.
+The final green and gate job IDs are recorded in the #5489 handoff.
+
+The merge keeps both feature-gated modules (`live` for S2 and `live_seed`
+for S3), all S3 Gremlin CLI wiring, and both migration-document sections.
+The accepted #5522 DNS construction and guards are untouched by repair 2.
+The review CLI still refuses `--live`; no live AWS run is authorized here.
+
 #### S3 Gremlin adapter (#5515; R-DG-05, R-DG-07 limits)
+
+**Security follow-up #5547 (review #5542).** The caller establishes the
+connection operation deadline before credential resolution and passes that
+same deadline to `GremlinConnection::connect_live`. The adapter caps it by
+the configured operation budget and invocation deadline before signing,
+checks exhaustion before and after signing, and carries it through DNS,
+connect, upgrade, the first statement's I/O and close. Each later statement
+starts its own operation budget; close is capped by that last operation,
+the invocation and the two-second close budget. An exhausted pre-send
+budget performs no signing, resolution or dial.
+
+Every post-send failure includes the unknown-outcome warning, including
+GraphSON/protocol failures, error statuses and size limits. Decoder failures
+use `AwsError::OutcomeUnknown` to retain their fixed classification, status
+and error code while refusing automatic retry; no server text is forwarded.
+The shared error's two payment classifiers delegate to the wrapped cause.
+The API intentionally adds an explicit operation-deadline argument to
+`connect_live`; its live seed caller supplies the credential deadline.
+
+Offline regression evidence: daemon job `d9097438-e177-4435-b7e4-b3947182f1ae`
+fails the signing-budget, foreign-id outcome and cumulative-byte outcome
+contracts before the fix; `27d8b447-2503-4f42-8ab7-b3a939f3d9ad` passes all
+21 Gremlin and 36 database tests after it. A blocked-write close fixture
+also covers shorter invocation and operation deadlines and synchronous
+release. It kills the review's surviving close mutation (close budget
+replaced by invocation deadline) in
+`eb4227d6-9413-400d-b0d5-858030483bce`: the mutated close takes four seconds,
+exceeding the fixture's three-second ceiling.
+
+Failure assertions discard unexpected successes without formatting their
+results, and frame/depth/result/copy limits are pinned to numeric literals.
+Doubling the copy cap is killed in
+`faf408de-ceca-4416-a52a-23be1c39b941`; the complete log is 2,508 bytes,
+including the fixed assertion `16 MiB of copies: unexpectedly succeeded`,
+instead of printing the roughly 20 MiB of returned copies seen in #5542.
+No P3 item from #5547 is deferred. Final committed-source gate receipts and
+publication are recorded in the Issue handoff.
 
 **Dependency decision.** `tokio-tungstenite` `=0.29.0` with default features
 off and only `handshake` enabled. It is optional, behind a new toolkit-aws
@@ -1573,3 +1873,116 @@ requests include `operation` and `table` for deterministic matching. A dry run
 of `retrieve` prints the initial vector search only because later requests
 require response IDs; replay executes the expansions. The dry-run and replay
 commands cannot perform live writes or destructive consolidation.
+
+## S4 memory live dispatch (#5557; R-DG-06)
+
+The optional `docgraph-live` build now routes `neptune memory --live` through
+`docgraph::live_memory` and the integrated item-1 `MemoryClient`, `plan`,
+`retrieve` and `execute` helpers. Replay and dry run keep their original plans,
+request shapes and result handling. The S3 statement above that memory stays
+unavailable describes its delivery point; S4 supplies that adapter.
+
+The existing argv-only operation consent table runs before all input/policy
+reads. `query` requires both write/delete confirmation, creation requires
+create confirmation, consolidation requires delete confirmation, and other
+writes require write confirmation. Graph queries additionally require
+`--network-policy FILE`. Analytics requires exactly
+`g-<10 lowercase alphanumeric characters>.<region>.neptune-graph.amazonaws.com`
+on 443; Gremlin requires the existing Neptune host capability on 8182.
+The region must match the policy. Creation and DynamoDB accept no network
+policy and use their fixed public regional AWS service endpoints. A missing
+backend, mixed backend plan, mismatched target or unsupported value refuses
+before any call; every initial request is validated before live assembly.
+Response-dependent retrieval expansions are validated on submission.
+
+**Wire/dependency decision.** Use generated request serializers, with
+`aws-sdk-neptunegraph =1.116.0` and `aws-sdk-dynamodb =1.134.0`, both optional,
+`default-features=false`, enabled only by `docgraph-live`. No service crate
+gets a network connector: the SDK sends into an immediate capture/error
+connector and toolkit later signs/sends those final bytes outside the codec
+runtime. The SDK config chooses `noAuth`, disables retries/timeouts and has
+no credential source. Test-only provider/signer traps exercise the same config;
+config assertions check one attempt and no identity cache. Framing headers are
+removed before signing; semantic headers and final body bytes are preserved.
+No response is decoded by an SDK retry path.
+
+Analytics uses modeled `ExecuteQuery`, signed as `neptune-graph`, POST
+`/queries`. The model maps planner `queryString` to wire `query`, preserves
+`OPEN_CYPHER` and typed parameters, and supplies the graphIdentifier header.
+Its modeled host prefix prepends the graph ID, so the SDK endpoint override
+is the region/service suffix; the captured final URL must equal the policy's
+complete graph endpoint. Creation is modeled `CreateGraph` at the distinct
+control-plane `/graphs` endpoint, normalized to `{"id":"g-..."}`. It requires
+secure defaults, vector dimension, memory capacity and the item-1 tags; it
+never provisions a graph to repair a query.
+
+DynamoDB uses modeled `PutItem`/`Query` and the standard
+`DynamoDB_20120810` target headers, signed as `dynamodb`. AttributeValue
+conversion occurs only in the adapter. Integer timestamps/TTLs retain their
+full i64 precision, query direction/limit are preserved, and the shared
+executor returns the final list in chronological order. Supported values are
+strings, i64 integers, booleans, null, lists and maps. Floats, decimal/out-of-i64
+numeric responses, binary/set/unknown types and invalid AttributeValue shapes
+refuse. The initial message schema also validates its documented string fields.
+This is a deliberate safe default: fractional DynamoDB message attributes need
+a separate precision contract before live admission; replay is unchanged.
+
+**Boundaries and failure behavior.** A new narrowly scoped
+`SdkTransport::for_docgraph_service` reuses S1's database connector for the
+public `dynamodb` and `neptune-graph` control-plane hosts, 443 only, no private
+ranges. Other services/partitions refuse. The original database policy parser,
+public transport, provider and payment planes are unchanged. The same fresh
+DNS, every-answer admission, connected-peer-before-any-byte check, explicit
+roots, bounded async connect and synchronous terminal socket release apply.
+It inherits S1's documented bounded abandoned-system-lookup residual.
+
+Each HTTP operation resolves required credentials via
+`GuardedCredentials::resolve_required_until` before encoding the server timeout,
+then toolkit SigV4 signs those exact bytes with an ephemeral one-request
+provider. Gremlin reuses S3's signed upgrade/GraphSON adapter and the stricter
+#5547 operation deadline argument. There is one attempt for every backend,
+including nominal reads and arbitrary query. Any failed submitted request,
+malformed/truncated payload or ambiguous response reports a fixed unknown
+outcome and stops subsequent steps. A spent dispatcher cannot send again;
+there is no compensation, rollback claim, retry or implicit provisioning.
+
+The invocation starts one 15-minute deadline before input parsing; each
+operation gets at most 60 seconds including credentials/encoding/signing and
+transport. The server query timeout is at most 55 seconds and at least one
+second shorter than the remaining budget at encoding. Its fit is checked
+again after signing, before send. Responses have a 16 MiB cap, depth 64,
+100,000 top-level results and a 1,000,000 JSON-node parse cap. Input JSON is
+also bounded to 16 MiB, depth 64 and 1,000,000 nodes. S3 frame/depth/bulk/close
+limits remain enforced. Fixed errors never echo query, bindings, paths,
+credentials, SDK/driver errors or service payloads.
+
+**Dependency audit.** Compared with the allocated base, Cargo.lock adds one
+package: NeptuneGraph 1.116.0 (Apache-2.0, MSRV 1.94.1, 401,760-byte crate
+archive). DynamoDB 1.134.0 was already locked; it becomes a direct optional
+CLI dependency. NeptuneGraph uses already-locked Smithy/runtime dependencies;
+no new TLS, root or crypto package is added. The model crates have no enabled
+features; the shared `aws-sdk`/S3 `gremlin` features retain their reviewed
+rustls/aws-lc stack. The daemon `docgraph-memory-sync` recipe records the
+resolved feature closure. Default builds remain SDK-free.
+
+**Offline evidence.** At 66ce53c4, red job
+`555d3ded-539c-4c75-9c7e-04e7e108f2dc` had four dispatch failures. At 188c0ccd,
+red job `7bfa3082-a6fc-4255-8e21-f3939772a40e` had nine dispatch/wire failures.
+The tests cover T-DG-06a Analytics protocol/typed parameters/scope and malformed
+responses; 06b secure creation, all ordered ingestion, retrieval expansion,
+hybrid and consolidation parity with replay; 06c DynamoDB precision/order and
+unsupported types; 06d whole-plan refusal, terminal failure, argv consent and
+policy/region refusal before clients. Boundary tests cover bytes, depth,
+result counts, server/client timeout fit and expired deadlines. The final
+committed-source job receipts are published in the #5557 handoff. No live AWS,
+real credentials or Python were used; operator live acceptance and exact-source
+cross-family review remain required, and S6 owns callers/help/retirement.
+
+S4 verification note: the first scoped run (`c43638df`) found missing
+`recorded-shape` annotations for strict live wire conversions/configuration;
+these are now documented at each boundary without relaxing the contract. It
+also reproduced #5455: the unrelated secret-safety-hook protocol binary held
+compiled Cargo paths into a deleted baseline worktree. The daemon-only
+`docgraph-scoped-prime` recipe cleans/rebuilds that package and runs its
+unchanged tests before scoped verification; no hook, test or harness policy
+is modified. The final handoff records the superseding receipts.

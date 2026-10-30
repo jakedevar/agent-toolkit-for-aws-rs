@@ -2231,7 +2231,7 @@ fn filesystem_bearing_consumers() -> BTreeSet<(String, String)> {
 /// file name or a directory name. A file that is not about a listed command
 /// (`elasticache`, `relational`, `ai-data`, `cloudwatch region`) is
 /// there for the flag name only.
-const AUDITED_FILESYSTEM_CONSUMERS: [(&str, &str); 30] = [
+const AUDITED_FILESYSTEM_CONSUMERS: [(&str, &str); 31] = [
     ("startup/model_path.rs", "--workload"),
     ("bedrock_agent.rs", "--agent-id"),
     ("bedrock_agent.rs", "--agent-version"),
@@ -2273,6 +2273,7 @@ const AUDITED_FILESYSTEM_CONSUMERS: [(&str, &str); 30] = [
     // (resolve_region, matched to the policy region), never to a path; the file
     // the module opens is the --network-policy value, read whole and parsed.
     ("docgraph/live_seed.rs", "--region"),
+    ("docgraph/live_memory/production.rs", "--region"),
 ];
 
 /// A `LITERAL_DASH` flag that shares a source file with filesystem code must be

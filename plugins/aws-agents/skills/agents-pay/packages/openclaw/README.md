@@ -69,11 +69,11 @@ Required configuration:
   (e.g. `"100000"` = 0.10 USDC at 6 decimals). This is the PER-PAYMENT ceiling;
   it is not a substitute for the session budget, which caps cumulative spend.
 - Optional `returnBody` (boolean, default unset/false). When true,
-  `get_paid_content` returns the actual paid response body (capped at 10 KiB,
+  `get_paid_content` returns the actual paid response body (capped at 10,240 UTF-16 code units,
   marked `untrusted: true`) instead of metadata only. Leave this unset unless
   you have deliberately decided to accept the risk: unsanitized paid content
   may contain prompt injection aimed at the agent. See "Content isolation" in
-  [`references/security-model.md`](skills/agents-pay/references/security-model.md) for the
+  [`references/security-model.md`](../../references/security-model.md) (in the source tree; in the packaged plugin, see `skills/agents-pay/references/security-model.md`) for the
   full tradeoff. This setting is separate from the `return_body` policy for
   `toolkit agents-pay fetch`.
 

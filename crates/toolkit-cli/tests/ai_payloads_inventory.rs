@@ -287,7 +287,11 @@ fn ap_inv_03_other_slices_are_untouched() {
         // ai-models (#4384) is retired; every other slice stays pending.
         let ported = matches!(row["issue"].as_u64(), Some(4410 | 4411));
         let expected = if ported {
-            "ported"
+            if root().join(path).exists() {
+                "ported"
+            } else {
+                "retired"
+            }
         } else if row["issue"].as_u64() == Some(4384) {
             "retired"
         } else {

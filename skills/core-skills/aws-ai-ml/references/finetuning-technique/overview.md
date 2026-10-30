@@ -9,7 +9,7 @@ Guides the user through selecting a fine-tuning technique based on their use cas
 - User wants to change their finetuning technique
 - Technique needs to be validated against a selected model
 
-This toolkit build has no live AWS client. `toolkit ai-models recipes` requires `--recorded FILE` and cannot query a real account until the live client is available. Identify recorded data as such.
+The shipped toolkit build lacks the `ai-models-live` feature and has no live AWS client. `toolkit ai-models recipes` requires `--recorded FILE` and cannot query a real account unless a toolkit build enables that feature. Identify recorded data as such.
 
 ## Prerequisites
 

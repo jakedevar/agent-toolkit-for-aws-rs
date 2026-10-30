@@ -17,7 +17,7 @@ There are no Python tests for these scripts. Every expectation in
 `ai_models/tests/` is derived by hand from the Python source (arithmetic and
 orderings are commented) and from the AWS API reference quoted below.
 
-## The client seam (no live AWS in this slice)
+## The client seam
 
 `client.rs` defines `SageMakerClient`: one `call(Operation, &Json request)`
 returning the response object or a `toolkit_aws::AwsError`. The six operations
@@ -25,7 +25,7 @@ are `ListHubContents`, `DescribeHubContent`, `Search` (`Resource=HubContent`),
 `DescribeEndpoint`, CloudWatch `GetMetricData` and Logs `FilterLogEvents`, each
 with the request the Python code passed as keyword arguments.
 
-- `NoLiveClient` (the build's client) sends nothing and reads no credential;
+- `NoLiveClient` (the default, SDK-free build's client) sends nothing and reads no credential;
   every call fails with `invalid client: this build has no live AWS client and
   sent nothing; replay recorded responses with --recorded FILE` (exit 1).
 - `RecordedClient` (`--recorded FILE`, module `recorded.rs`) replays
@@ -59,7 +59,34 @@ with the request the Python code passed as keyword arguments.
   `toolkit_aws::AwsError`, with `ServiceError` carrying the redacted code and
   message.
 
-Follow-up for the live binding: see "Follow-ups" below.
+Issue #4719 adds the third implementation, `live::LiveClient`, enabled with
+`cargo build -p toolkit-cli --features ai-models-live --locked`. The feature
+enables `toolkit-aws/sdk` and only these service SDKs: SageMaker 1.246.0,
+CloudWatch 1.138.0 (already used by docgraph), Logs 1.156.0. Service SDKs have
+default features disabled. Default builds gain no SDK dependencies.
+`--recorded FILE` always wins, including a missing/malformed file; it never
+constructs live clients or falls through to live AWS. Construction is lazy.
+Explicit REGION / `--region` passes through; recipes uses the shared region
+resolution (environment, then us-east-1).
+
+The shared `toolkit-aws::sdk::service_bridge::ServiceBridge` follows the docgraph S1
+experiment: generated SDKs serialize/deserialize with an injected HTTP client,
+`noAuth`, no identity cache and SDK retries/timeouts disabled. The toolkit's
+`ClientConfig`, `GuardedCredentials` with bounded provider HTTP and null stdin,
+`SigV4Signer`, `SdkTransport::for_public_service` with validated roots, gated
+public DNS and peer checks,
+and `run_with_retry` remain the sole foundations. Each operation has a
+60-second deadline across credentials, retries and streamed reads, and a
+16 MiB response cap. Credential/transport errors retain their typed classes;
+SDK service metadata enters the existing redacting `ServiceError`. Codec and
+construction errors use fixed text, never SDK source-chain text. Generated
+SDKs and blocking toolkit adapters use separate runtimes to avoid nesting.
+The shared endpoint resolver knows SageMaker's `api.sagemaker` control plane;
+its signing scope remains `sagemaker`.
+
+`check_search_support` checks the linked SDK's modeled `ResourceType` values
+for `HubContent` before Search; the existing visible fallback stays in charge.
+The pinned SDK also models `SearchRecord.HubContent`.
 
 ## Rust SDK / HTTP support (AC2), checked against primary documentation
 
@@ -78,11 +105,25 @@ Checked on 2026-10-27 against the AWS documentation:
 Consequences: the identifier checks in `hub.rs` (`1-63` characters, letters,
 digits and hyphens, optional Hub ARN) are the documented patterns, so a name
 the service would reject is refused before any request, and an endpoint name
-can never inject a log-group path. `GetMetricData` and `FilterLogEvents` belong
-to the CloudWatch and CloudWatch Logs SDKs (`aws-sdk-cloudwatch`,
-`aws-sdk-cloudwatchlogs`); the live binding must be checked against their
-documentation when it is written (not done here: nothing is sent in this
-slice).
+can never inject a log-group path.
+
+Additional primary documentation checked for #4719 on 2026-10-29:
+
+| Contract | Source / live test |
+| --- | --- |
+| GetMetricData takes MetricDataQueries (metric, dimensions, period, statistic), inclusive StartTime and exclusive EndTime. Results include Id, Values, Timestamps, StatusCode and optional NextToken. The adapter preserves the legacy one-page read and exposes Id/Values to diagnostics. | [API reference](https://docs.aws.amazon.com/AmazonCloudWatch/latest/APIReference/API_GetMetricData.html); `diagnostics_maps_endpoint_metrics_and_logs_without_extra_pages` |
+| FilterLogEvents uses logGroupName, startTime/endTime in epoch milliseconds and limit (1–10000); events include message/timestamp. An empty page may have a nextToken. The legacy one-page, limit-100 behavior remains deliberate. No unmask/filter/sort flag is added. | [API reference](https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_FilterLogEvents.html); same diagnostics test |
+| SageMaker uses api.sagemaker endpoints; CloudWatch uses monitoring. | [SageMaker endpoints](https://docs.aws.amazon.com/general/latest/gr/sagemaker.html), [CloudWatch endpoints](https://docs.aws.amazon.com/general/latest/gr/cw_region.html); endpoint and wire tests |
+
+The pinned CloudWatch SDK uses Smithy rpc-v2-cbor at
+`/service/GraniteServiceVersion20100801/operation/GetMetricData` (CBOR tag-1
+timestamps in seconds); SageMaker and Logs use AWS JSON 1.1. Verified against
+generated SDK operation serializers and independent offline wire fixtures.
+The test-only `minicbor` dependency (2.3.1, already in the SDK dependency tree)
+encodes/decodes the independent CBOR fixtures. `make ai-models-test` runs the
+unchanged default/offline assertions; `make ai-models-sdk` runs the feature's
+139 unit tests (including 12 new wire/selection/error contracts) and three
+recorded process tests, without AWS or real credentials.
 
 ## Parity table (Python behavior -> Rust)
 
@@ -116,10 +157,16 @@ slice).
    as a usage error (exit 2) where Python printed its usage line and exited 1.
    `collect_diagnostics` had no command line (it was imported); its parameters
    are the positionals ENDPOINT REGION and the options below.
-2. **No live client; `--recorded FILE` added.** Every AWS call goes through the
-   client seam; this build sends nothing. Without `--recorded` a call fails
+2. **Opt-in live client; `--recorded FILE` added.** Every AWS call goes through the
+   client seam; the default build sends nothing. Without `--recorded` a default-build call fails
    with exit 1, so the commands that need only a snapshot (`filter`, and
    `search` with `--snapshot-file`, which falls back visibly) work offline.
+   With `ai-models-live`, an unrecorded command uses AWS. NoLiveClient and
+   RecordedClient keep their contracts. Default-build tests run in that build;
+   recorded tests run in both. SDK response normalization applies only to live
+   responses (modeled absent/null lists become empty); strict raw JSON recording
+   validation is unchanged. The bounded credential/deadline/size policy above
+   replaces Python tracebacks and unbounded response buffering on the live path.
 3. **Error text.** Messages follow the shared `error: <message>` contract on
    stderr. AWS failures keep the Python wording (`AWS API call failed (CODE):
    MESSAGE`, `No AWS credentials found. Configure credentials via 'aws
@@ -181,8 +228,5 @@ positional words, not `action="append"` flags).
 
 ## Follow-ups
 
-- Live binding of `SageMakerClient` (`aws-sdk-sagemaker`, `aws-sdk-cloudwatch`,
-  `aws-sdk-cloudwatchlogs` behind the `toolkit-aws` `sdk` feature; pagination,
-  retry and redaction through `toolkit-aws`), including the HubContent Search
-  capability check.
+- #4719 supplies the opt-in live binding. No live AWS probes are test gates.
 - The six Python scripts and their skill callers were retired by #4720.

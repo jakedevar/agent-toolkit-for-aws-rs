@@ -40,7 +40,7 @@ fn failure(error: &AwsError) -> ToolkitError {
 
 /// The policy file, read with its size bound; neither its path nor its
 /// content is echoed.
-fn read_policy(path: &str) -> Result<DatabaseEndpoint, ToolkitError> {
+pub(super) fn read_policy(path: &str) -> Result<DatabaseEndpoint, ToolkitError> {
     let unreadable = || {
         ToolkitError::runtime(
             "docgraph_network_policy",
@@ -119,6 +119,7 @@ pub(super) fn run(invocation: &Invocation, out: &mut Output<'_>) -> Result<(), T
                 policy,
                 &signer,
                 &region,
+                deadline,
                 invocation_deadline,
             )
         })),

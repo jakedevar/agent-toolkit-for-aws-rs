@@ -25,6 +25,8 @@ use super::client::RecordedClient;
 use super::infra::run_infra_checks;
 
 mod capture;
+#[cfg(feature = "docgraph-live")]
+mod live;
 mod memory;
 mod neptune;
 mod redaction;

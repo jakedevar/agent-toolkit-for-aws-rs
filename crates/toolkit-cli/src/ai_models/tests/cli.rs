@@ -179,6 +179,7 @@ fn a_snapshot_without_any_region_is_refused_after_the_listing() {
 }
 
 #[test]
+#[cfg(not(feature = "ai-models-live"))]
 fn this_build_sends_nothing_without_a_recording() {
     let (status, out, err) = exec(&["ai-models", "list-models", "my-hub"]);
     assert_eq!((status, out.as_str()), (1, ""));
@@ -500,6 +501,7 @@ fn search_uses_the_recorded_response_and_the_snapshot_dates() {
 }
 
 #[test]
+#[cfg(not(feature = "ai-models-live"))]
 fn without_a_client_search_falls_back_visibly_to_the_snapshot() {
     let dir = TempDir::new("ai-models-search-fallback");
     let snapshot = snapshot_file(&dir);

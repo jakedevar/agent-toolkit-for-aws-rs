@@ -17,7 +17,8 @@
 //! this build. Every AWS or database interaction goes through a seam
 //! ([`client::AwsClient`], [`seed::GremlinSession`]) with a recorded
 //! implementation (`--recorded FILE`) and a "no live client" implementation.
-//! Live AWS and Gremlin bindings and the helper libraries
+//! The live AWS review client is `live` (feature `docgraph-live`, not yet
+//! routed from `--live`); the Gremlin binding and the helper libraries
 //! `graphrag_pipeline.py` and `agentic_memory.py` are follow-ups. The `--uri`
 //! database collection of `wa_review.py` is replaced by a user-run shell recipe and
 //! the offline `capture` normalizer (`toolkit documentdb normalize-capture`). Parity
@@ -49,6 +50,10 @@ mod checks;
 mod client;
 mod dbchecks;
 mod infra;
+#[cfg(feature = "docgraph-live")]
+pub mod live;
+#[cfg(feature = "docgraph-live")]
+mod live_memory;
 #[cfg(feature = "docgraph-live")]
 mod live_seed;
 pub mod memory;
@@ -527,6 +532,9 @@ pub fn memory_command(invocation: &Invocation, out: &mut Output<'_>) -> Result<(
                 ));
             }
         }
+        #[cfg(feature = "docgraph-live")]
+        return live_memory::run(invocation, out);
+        #[cfg(not(feature = "docgraph-live"))]
         return Err(unavailable_live());
     }
     let op = invocation

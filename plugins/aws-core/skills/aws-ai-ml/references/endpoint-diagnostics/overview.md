@@ -51,7 +51,7 @@ For this step, you need the **endpoint name** and **AWS region**:
 
 ### Step 2: Run diagnostics
 
-Run the registered command with the endpoint name and region. This build has no live AWS client; it requires `--recorded FILE` with recorded responses and cannot diagnose a real account until the live client is available. Identify recorded data as such.
+Run the registered command with the endpoint name and region. The shipped toolkit build lacks the `ai-models-live` feature and has no live AWS client; it requires `--recorded FILE` with recorded responses and cannot diagnose a real account unless a toolkit build enables that feature. Identify recorded data as such.
 
 ```bash
 toolkit ai-models endpoint-diagnostics my-endpoint us-east-1 --recorded <recording-file>

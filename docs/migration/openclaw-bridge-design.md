@@ -668,7 +668,7 @@ the declaration and the tool:
   `plugin-stage verify --complete` over all destinations (PB section 5).
 - **R-PKG-5.** `package.json` `files` includes `bin`. `npm pack` keeps the executable bit of files that have it.
 - **R-PKG-6.** `stage-skill.mjs` stages `SKILL.md` and `references/` only. The admin CLI is now
-  the binary, so the bundled skill needs no scripts. The canonical `scripts/*.py` stay in the source tree until the programme retirement step.
+  the binary, so the bundled skill needs no scripts. The canonical scripts were assessed in the programme retirement step (#5560); three remain pending a follow-up.
 - **R-PKG-7. No test builds the live binary.** plugin-stage tests use fixture declarations and
   probe packages only (PB section 2). A test asserts that the real declaration's `agents-pay-live`
   entry is never staged by a test target, and T-AC3-MAKE's scope is noted: `make plugin-binaries`
@@ -923,8 +923,8 @@ independent cross-family review at the exact SHA.
 | **B5** cutover docs | README.md, PUBLISHING.md (Rust pack guard/offline publisher tool, five-platform gate, 1.1.0 release note), references/openclaw-setup.md, OpenClaw SKILL.md/operator-guide.md parts (re-staged); token-upgrade reauthorization warning in canonical/staged SKILL and release notes; final-output/owned-Buffer safety limits; agents-pay.md and inventory rows → ported | README contract, X402 R-PORT, every_slice_documents_its_commands; text assertions for PM rulings and R-OC-FINAL safety claims | B4; X402 **S6** and **S7** (both edit SKILL.md/references; B5 changes only OpenClaw parts on top of S7) |
 
 The Python files `runtime/agentcore_bridge.py`, `test/test_agentcore_bridge.py` and
-`test/test_setup_openclaw.py` are deleted only by the programme retirement step (#4415 pattern)
-after B5 is verified, citing T-BR-* and T-S6-OC-*. From B4 on, no caller references them.
+`test/test_setup_openclaw.py` were retired in #5560 after B5 verification, citing
+T-BR-* and T-S6-OC-*. From B4 on, no caller references them.
 
 B1 can start once S1 and S4 are on rolling. B3 can start as soon as S5's feature name is fixed,
 and in parallel with B1 and B2. B4 waits for B2 and B3.

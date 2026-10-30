@@ -113,6 +113,8 @@ enum Far {
 enum Act {
     Write(Vec<u8>),
     Sleep(Duration),
+    /// Drop the far end at once (the client reads EOF mid-response).
+    Close,
 }
 
 /// The zero-byte recorder: every dial, every byte the connector writes.
@@ -325,6 +327,7 @@ async fn serve(far: Far, mut server: DuplexStream, received: Arc<Mutex<Vec<u8>>>
                 }
             }
             Act::Sleep(pause) => tokio::time::sleep(pause).await,
+            Act::Close => return,
         }
     }
     let mut rest = Vec::new();
@@ -1611,4 +1614,163 @@ fn the_releasing_stream_drops_its_inner_stream_on_every_terminal_read() {
     );
     assert_eq!(*narrowed.lock().expect("narrowed"), vec![4, 3]);
     assert_eq!(stream.next_chunk(), Err(StreamError::TooLarge));
+}
+
+#[test]
+fn bounded_docgraph_services_have_exact_regional_public_only_capabilities() {
+    for service in ["neptune-graph", "dynamodb"] {
+        let p = docgraph_service_endpoint(service, "us-east-1").unwrap();
+        assert_eq!(p.host(), format!("{service}.us-east-1.amazonaws.com"));
+        assert_eq!(p.port(), 443);
+        assert!(p.admits(ip("8.8.8.8")));
+        for address in [
+            "10.1.2.3",
+            "192.168.1.1",
+            "169.254.169.254",
+            "127.0.0.1",
+            "fd12:3456::1",
+            "fd00:ec2::254",
+        ] {
+            assert!(!p.admits(ip(address)));
+        }
+    }
+    for service in ["neptune", "sts", "http://evil", "dynamodb.evil", ""] {
+        assert!(docgraph_service_endpoint(service, "us-east-1").is_err());
+    }
+    for region in ["us-east-1.evil", "cn-north-1", "us-gov-west-1", ""] {
+        assert!(docgraph_service_endpoint("dynamodb", region).is_err());
+    }
+}
+
+// ---- #5484: BoundedBody alone releases its socket on every terminal poll ----
+//
+// These tests poll the connector's response body directly: no `SdkStream` and
+// no `ReleasingStream`, so only `BoundedBody`'s own release can drop the
+// socket. The client stream's drop counter is read right after the terminal
+// poll returns, before the body is dropped or the runtime is driven again.
+
+type RetainedBody = aws_smithy_types::byte_stream::ByteStream;
+
+/// The connector's response for `far`; `read` gets the retained body.
+fn with_retained_body<T>(
+    fixture: &Fixture,
+    far: Far,
+    bounds: DatabaseBounds,
+    read: impl FnOnce(&Recorder, &mut RetainedBody) -> T,
+) -> T {
+    let resolver = ScriptedResolver::new(vec![vec![ip(PRIVATE)]]);
+    let dialer = Recorder::new(far);
+    let transport = fixture.transport(bounds, resolver, Arc::clone(&dialer));
+    let connector = (transport.factory)(&Timeouts::default(), None);
+    let sdk_request = crate::sdk::to_sdk_request(&request(&db_url())).expect("request");
+    let response = fixture
+        .runtime
+        .block_on(connector.call(sdk_request))
+        .expect("response head");
+    let mut body = RetainedBody::new(response.into_body());
+    assert!(!dialer.released(), "the unread body owns its socket");
+    let out = read(&dialer, &mut body);
+    drop(body);
+    assert!(dialer.released(), "dropping the body left the socket open");
+    out
+}
+
+/// One poll of the body, driven to its result and no further.
+fn poll_body(
+    fixture: &Fixture,
+    body: &mut RetainedBody,
+) -> Option<Result<Bytes, aws_smithy_types::byte_stream::error::Error>> {
+    fixture.runtime.block_on(body.next())
+}
+
+/// Poll until the body fails; the socket must already be released when that
+/// poll returns, and a later poll repeats a failure, never a clean end.
+fn body_fails_and_releases(
+    fixture: &Fixture,
+    dialer: &Recorder,
+    body: &mut RetainedBody,
+    case: &str,
+) -> String {
+    let error = loop {
+        match poll_body(fixture, body) {
+            Some(Ok(_)) => {}
+            Some(Err(error)) => break error,
+            None => panic!("{case}: the body ended cleanly"),
+        }
+    };
+    let shown = aws_smithy_types::error::display::DisplayErrorContext(&error).to_string();
+    assert!(
+        dialer.released(),
+        "{case}: the body poll failed ({shown}) with the socket still open"
+    );
+    match poll_body(fixture, body) {
+        Some(Err(_)) => {}
+        other => panic!(
+            "{case}: a poll after the failure returned {:?}",
+            other.map(|r| r.map(|b| b.len()))
+        ),
+    }
+    shown
+}
+
+#[test]
+fn a_bounded_body_releases_its_socket_on_every_terminal_failure() {
+    let fixture = Fixture::new();
+    let shown = with_retained_body(
+        &fixture,
+        fixture.tls_far(stalled_body()),
+        quick(),
+        |d, b| body_fails_and_releases(&fixture, d, b, "idle"),
+    );
+    assert!(shown.contains("stalled"), "{shown}");
+    let bounds = DatabaseBounds {
+        idle: Duration::from_secs(10),
+        operation: Duration::from_millis(150),
+        ..quick()
+    };
+    let shown = with_retained_body(&fixture, fixture.tls_far(stalled_body()), bounds, |d, b| {
+        body_fails_and_releases(&fixture, d, b, "operation deadline")
+    });
+    assert!(shown.contains("operation deadline"), "{shown}");
+    let shown = with_retained_body(
+        &fixture,
+        fixture.tls_far(chunked_frame(128)),
+        quick(),
+        |d, b| body_fails_and_releases(&fixture, d, b, "byte limit"),
+    );
+    assert!(shown.contains("size limit"), "{shown}");
+    // The server closes the connection five bytes into a ten-byte body.
+    let cut = vec![
+        Act::Write(b"HTTP/1.1 200 OK\r\ncontent-length: 10\r\n\r\nabcde".to_vec()),
+        Act::Close,
+    ];
+    with_retained_body(&fixture, fixture.tls_far(cut), quick(), |d, b| {
+        body_fails_and_releases(&fixture, d, b, "connection error")
+    });
+}
+
+#[test]
+fn a_bounded_body_releases_its_socket_at_its_end() {
+    let fixture = Fixture::new();
+    // The server keeps the connection open after a complete body.
+    with_retained_body(
+        &fixture,
+        fixture.tls_far(vec![
+            sized_reply(10, 10),
+            Act::Sleep(Duration::from_secs(30)),
+        ]),
+        quick(),
+        |dialer, body| {
+            let mut read = Vec::new();
+            while let Some(chunk) = poll_body(&fixture, body) {
+                read.extend(chunk.expect("chunk"));
+            }
+            assert_eq!(read, vec![b'a'; 10]);
+            assert!(
+                dialer.released(),
+                "the end of the body left the socket open"
+            );
+            assert!(poll_body(&fixture, body).is_none(), "the end repeats");
+        },
+    );
 }

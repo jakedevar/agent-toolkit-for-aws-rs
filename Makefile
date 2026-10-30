@@ -2,9 +2,21 @@
 # build environment (CARGO_TARGET_DIR, RUSTC_WRAPPER/sccache); they rely on it
 # being present in the invoking environment.
 .PHONY: build fmt fmt-patch clippy test test-scripts clippy-sdk test-sdk clippy-live plugin-binaries plugin-binaries-check openclaw-node-test openclaw-npm-cache
+.PHONY: ai-models-sdk ai-models-test clippy-ai-models
 
 build:
 	cargo build --workspace --locked
+
+ai-models-sdk:
+	cargo test -p toolkit-cli --features ai-models-live --locked --lib ai_models::
+	cargo test -p toolkit-cli --features ai-models-live --locked --test ai_models
+
+ai-models-test:
+	cargo test -p toolkit-cli --locked --lib ai_models::
+	cargo test -p toolkit-cli --locked --test ai_models
+
+clippy-ai-models:
+	cargo clippy -p toolkit-cli --features ai-models-live --all-targets --locked -- -D warnings
 
 fmt:
 	cargo fmt --all -- --check
@@ -72,6 +84,9 @@ docgraph-database-peer:
 docgraph-database-admission:
 	cargo test -p toolkit-aws --features sdk --locked --lib sdk::database::tests::forbidden_or_mixed_answers_are_never_dialed -- --exact
 
+docgraph-review-client:
+	cargo test -p toolkit-cli --features docgraph-live --locked --lib docgraph::tests::live
+
 docgraph-live-suite:
 	cargo test -p toolkit-cli --locked --test docgraph_live
 	cargo test -p toolkit-cli --features docgraph-live --locked --test docgraph_live
@@ -87,6 +102,9 @@ docgraph-credential-process:
 docgraph-dns-cap:
 	cargo test -p toolkit-aws --features sdk --locked --lib sdk::lookup::
 	cargo test -p toolkit-aws --features sdk --locked --lib sdk::database::tests::an_abandoned_lookup_makes_the_next_request_fail_closed_without_a_dial -- --exact
+
+docgraph-service-dns:
+	cargo test -p toolkit-aws --features sdk --locked --lib sdk::service::
 
 docgraph-bounded:
 	cargo test -p toolkit-aws --features sdk --locked --lib sdk::source::tests::bounded_resolution_
@@ -146,3 +164,18 @@ docgraph-gremlin:
 
 clippy-gremlin:
 	cargo clippy -p toolkit-aws --features gremlin --all-targets --locked -- -D warnings
+
+# S4 ordered memory dispatch and wire contracts; every backend is injected.
+docgraph-memory:
+	cargo test -p toolkit-cli --features docgraph-live --locked --lib docgraph::live_memory::
+
+# Resolve the optional S4 model crate; no service endpoint is contacted.
+docgraph-memory-sync:
+	cargo metadata --format-version 1 --features docgraph-live --offline > /dev/null
+	cargo tree -p toolkit-cli --features docgraph-live --locked --offline -e features
+
+# #5455: discard only this package's stale compiled Cargo test paths before
+# scoped verification. Rebuild and run the unchanged security hook tests.
+docgraph-scoped-prime:
+	cargo clean -p secret-safety-hook
+	cargo test -p secret-safety-hook --locked

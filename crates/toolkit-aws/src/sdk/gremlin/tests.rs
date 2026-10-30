@@ -7,7 +7,7 @@
 use std::future::Future;
 use std::net::{IpAddr, SocketAddr};
 use std::pin::Pin;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 use std::time::{Duration, SystemTime};
@@ -176,6 +176,8 @@ struct Wire {
     dials: AtomicUsize,
     written: Arc<AtomicUsize>,
     dropped: Arc<AtomicUsize>,
+    block_writes: Arc<AtomicBool>,
+    blocked_writes: Arc<AtomicUsize>,
 }
 
 impl Wire {
@@ -205,6 +207,8 @@ struct Counting {
     inner: DuplexStream,
     written: Arc<AtomicUsize>,
     dropped: Arc<AtomicUsize>,
+    block_writes: Arc<AtomicBool>,
+    blocked_writes: Arc<AtomicUsize>,
 }
 
 impl Drop for Counting {
@@ -229,6 +233,10 @@ impl AsyncWrite for Counting {
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<std::io::Result<usize>> {
+        if self.block_writes.load(Ordering::SeqCst) {
+            self.blocked_writes.fetch_add(1, Ordering::SeqCst);
+            return Poll::Pending;
+        }
         let result = Pin::new(&mut self.inner).poll_write(cx, buf);
         if let Poll::Ready(Ok(count)) = result {
             self.written.fetch_add(count, Ordering::SeqCst);
@@ -259,6 +267,8 @@ impl Dialer for Wire {
             inner: client,
             written: Arc::clone(&self.written),
             dropped: Arc::clone(&self.dropped),
+            block_writes: Arc::clone(&self.block_writes),
+            blocked_writes: Arc::clone(&self.blocked_writes),
         };
         let peer = self.peer.unwrap_or(address);
         Box::pin(async move {
@@ -429,6 +439,8 @@ impl Fixture {
             dials: AtomicUsize::new(0),
             written: Arc::new(AtomicUsize::new(0)),
             dropped: Arc::new(AtomicUsize::new(0)),
+            block_writes: Arc::new(AtomicBool::new(false)),
+            blocked_writes: Arc::new(AtomicUsize::new(0)),
         })
     }
 
@@ -468,6 +480,7 @@ impl Fixture {
             signer,
             REGION,
             later(),
+            later(),
         )
     }
 }
@@ -488,7 +501,151 @@ fn text(error: &AwsError) -> String {
     error.to_string()
 }
 
+// Unlike Result::expect_err, this never formats a successful response. Guard
+// mutations can return megabytes of results; diagnostics must stay bounded.
+trait Refused {
+    fn expect_refused(self, context: &str) -> AwsError;
+}
+
+impl<T> Refused for Result<T, AwsError> {
+    fn expect_refused(self, context: &str) -> AwsError {
+        match self {
+            Err(error) => error,
+            Ok(_) => panic!("{context}: unexpectedly succeeded"),
+        }
+    }
+}
+
 // ---- T-DG-05a: the signed upgrade ----
+
+#[test]
+fn signing_consumes_the_operation_budget_and_exhaustion_stops_before_dns() {
+    struct SlowSigner(AtomicUsize);
+    impl Signer for SlowSigner {
+        fn sign(&self, request: &mut HttpRequest, scope: &SigningScope) -> Result<(), AwsError> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            std::thread::sleep(Duration::from_millis(150));
+            signer(clock_a).sign(request, scope)
+        }
+    }
+    for expired_at_start in [false, true] {
+        let fixture = Fixture::new();
+        let wire = fixture.wire(fixture.script(vec![]));
+        let bounds = DatabaseBounds {
+            operation: Duration::from_millis(50),
+            ..quick()
+        };
+        let (opener, resolver) = fixture.opener(policy(), bounds, "10.1.2.3", &wire);
+        let slow = SlowSigner(AtomicUsize::new(0));
+        let invocation = if expired_at_start {
+            std::time::Instant::now()
+        } else {
+            later()
+        };
+        let error = GremlinConnection::open(
+            &fixture.runtime,
+            &opener,
+            MAX_FRAME_BYTES,
+            &slow,
+            REGION,
+            invocation,
+            invocation,
+        )
+        .expect_refused("exhausted budget must refuse the upgrade");
+        assert!(
+            matches!(
+                error,
+                AwsError::Timeout {
+                    phase: TimeoutPhase::Deadline,
+                    ..
+                }
+            ),
+            "{error}"
+        );
+        assert_eq!(
+            slow.0.load(Ordering::SeqCst),
+            usize::from(!expired_at_start)
+        );
+        assert_eq!(
+            resolver.calls.load(Ordering::SeqCst),
+            0,
+            "DNS ran after budget exhaustion"
+        );
+        assert_eq!(wire.dials(), 0);
+        assert_eq!(wire.written(), 0);
+    }
+}
+
+#[test]
+fn the_caller_operation_deadline_is_not_renewed_by_connect_or_first_submit() {
+    let fixture = Fixture::new();
+    let wire = fixture.wire(fixture.script(vec![Reply::Silent]));
+    // Represents a budget already consumed in credential resolution.
+    let expired = std::time::Instant::now();
+    let (opener, resolver) = fixture.opener(policy(), quick(), "10.1.2.3", &wire);
+    let error = GremlinConnection::open(
+        &fixture.runtime,
+        &opener,
+        MAX_FRAME_BYTES,
+        &signer(clock_a),
+        REGION,
+        expired,
+        later(),
+    )
+    .expect_refused("the caller's exhausted operation is refused");
+    assert!(matches!(
+        error,
+        AwsError::Timeout {
+            phase: TimeoutPhase::Deadline,
+            ..
+        }
+    ));
+    assert_eq!(resolver.calls.load(Ordering::SeqCst), 0);
+    assert_eq!(wire.written(), 0);
+
+    let deadline = std::time::Instant::now() + Duration::from_millis(500);
+    let mut connection = GremlinConnection::open(
+        &fixture.runtime,
+        &opener,
+        MAX_FRAME_BYTES,
+        &signer(clock_a),
+        REGION,
+        deadline,
+        later(),
+    )
+    .expect("open within the budget");
+    let error = connection
+        .submit("g.V().drop()", None)
+        .expect_refused("first statement shares the deadline");
+    assert!(
+        std::time::Instant::now() < deadline + Duration::from_secs(1),
+        "submit renewed the budget"
+    );
+    assert_eq!(error.code(), "aws_timeout");
+    assert!(!error.is_retryable());
+    assert!(text(&error).contains("unknown"));
+    assert!(wire.released());
+    assert_eq!(wire.statements().len(), 1);
+}
+
+#[test]
+fn expired_invocation_refuses_the_next_statement_without_claiming_no_prior_send() {
+    let fixture = Fixture::new();
+    let wire = fixture.wire(fixture.script(vec![Reply::Batches(vec![ok("[]")])]));
+    let mut connection = fixture.connect(&wire, &signer(clock_a)).expect("open");
+    connection.submit("g.V().drop()", None).expect("first");
+    connection.invocation = Instant::now();
+    let error = connection
+        .submit("g.V().count()", None)
+        .expect_refused("expired invocation");
+    assert!(
+        text(&error).contains("before this statement was sent"),
+        "{error}"
+    );
+    assert_eq!(error.code(), "aws_timeout");
+    assert_eq!(wire.statements().len(), 1);
+    assert!(wire.released());
+}
 
 #[test]
 fn the_upgrade_is_signed_for_the_exact_authority_path_and_empty_body() {
@@ -568,7 +725,7 @@ fn a_refused_upgrade_sends_no_statement() {
     .with_clock(clock_a);
     let error = fixture
         .connect(&wire, &wrong)
-        .expect_err("a mismatched signature is refused");
+        .expect_refused("a mismatched signature is refused");
     let message = text(&error);
     assert!(message.contains("HTTP 403"), "{message}");
     assert!(message.contains("no statement was sent"), "{message}");
@@ -594,8 +751,9 @@ fn missing_credentials_or_a_mismatched_scope_send_nothing() {
         &unsigned,
         REGION,
         later(),
+        later(),
     )
-    .expect_err("no credentials, no upgrade");
+    .expect_refused("no credentials, no upgrade");
     assert!(matches!(error, AwsError::NoCredentials), "{error}");
     let error = GremlinConnection::open(
         &fixture.runtime,
@@ -604,8 +762,9 @@ fn missing_credentials_or_a_mismatched_scope_send_nothing() {
         &signer(clock_a),
         "us-west-2",
         later(),
+        later(),
     )
-    .expect_err("a region other than the policy's is refused");
+    .expect_refused("a region other than the policy's is refused");
     assert!(text(&error).contains("nothing was signed or sent"));
     let other_port = DatabaseEndpoint::new(HOST, 8183, REGION, &[]).expect("policy");
     let (opener, other) = fixture.opener(other_port, quick(), "10.1.2.3", &wire);
@@ -616,8 +775,9 @@ fn missing_credentials_or_a_mismatched_scope_send_nothing() {
         &signer(clock_a),
         REGION,
         later(),
+        later(),
     )
-    .expect_err("only port 8182 is the Gremlin port");
+    .expect_refused("only port 8182 is the Gremlin port");
     assert!(text(&error).contains("8182"));
     assert_eq!(resolver.calls.load(Ordering::SeqCst), 0);
     assert_eq!(other.calls.load(Ordering::SeqCst), 0);
@@ -636,8 +796,9 @@ fn a_forbidden_answer_or_peer_never_receives_the_signed_upgrade() {
         &signer(clock_a),
         REGION,
         later(),
+        later(),
     )
-    .expect_err("the metadata address is refused");
+    .expect_refused("the metadata address is refused");
     assert!(matches!(error, AwsError::InvalidConfig { field, .. } if field == "endpoint"));
     assert_eq!(wire.dials(), 0, "a forbidden answer was dialed");
 
@@ -650,10 +811,12 @@ fn a_forbidden_answer_or_peer_never_receives_the_signed_upgrade() {
         dials: AtomicUsize::new(0),
         written: Arc::new(AtomicUsize::new(0)),
         dropped: Arc::new(AtomicUsize::new(0)),
+        block_writes: Arc::new(AtomicBool::new(false)),
+        blocked_writes: Arc::new(AtomicUsize::new(0)),
     });
     let error = fixture
         .connect(&lying, &signer(clock_a))
-        .expect_err("a loopback peer is refused");
+        .expect_refused("a loopback peer is refused");
     assert!(matches!(error, AwsError::InvalidConfig { field, .. } if field == "endpoint"));
     assert_eq!(lying.dials(), 1);
     assert_eq!(lying.written(), 0, "bytes reached a forbidden peer");
@@ -684,7 +847,7 @@ fn untrusted_and_wrong_host_certificates_get_no_upgrade() {
         });
         let error = fixture
             .connect(&wire, &signer(clock_a))
-            .expect_err("the certificate is refused");
+            .expect_refused("the certificate is refused");
         assert!(
             text(&error).ends_with("the TLS connection to the database could not be established"),
             "{case}: {}",
@@ -793,7 +956,7 @@ fn partial_batches_are_collected_in_order_through_the_final_status() {
 #[test]
 fn foreign_ids_server_errors_and_invalid_types_fail_and_spend_the_connection() {
     let foreign = r#"{"requestId":"00000000-0000-4000-8000-000000000000","status":{"code":200},"result":{"data":[1]}}"#;
-    let cases: [(&str, Reply, &str); 4] = [
+    let cases = [
         (
             "foreign id",
             Reply::Batches(vec![foreign.to_string()]),
@@ -814,6 +977,29 @@ fn foreign_ids_server_errors_and_invalid_types_fail_and_spend_the_connection() {
             Reply::Batches(vec!["not json".to_string()]),
             "not valid JSON",
         ),
+        ("frame limit", Reply::Sized(1_048_577), "size limit"),
+        ("protocol", Reply::Raw(vec![0x83, 0]), "WebSocket protocol"),
+        ("dropped connection", Reply::Hangup, "connection failed"),
+        (
+            "server close",
+            Reply::Raw(vec![0x88, 0]),
+            "closed before the response completed",
+        ),
+        (
+            "idle timeout",
+            Reply::Silent,
+            "no Gremlin response arrived in time",
+        ),
+        (
+            "result count",
+            Reply::Batches(vec![ok(&format!("[{}]", traverser(100_001, "1")))]),
+            "100000",
+        ),
+        (
+            "depth",
+            Reply::Batches(vec![ok(&nested(65, "[", "]"))]),
+            "deeper than the limit",
+        ),
     ];
     for (case, reply, expected) in cases {
         let fixture = Fixture::new();
@@ -821,15 +1007,33 @@ fn foreign_ids_server_errors_and_invalid_types_fail_and_spend_the_connection() {
         let mut connection = fixture.connect(&wire, &signer(clock_a)).expect("open");
         let error = connection
             .submit("g.V().count()", None)
-            .expect_err("the response fails the statement");
+            .expect_refused(&format!("{case}: the response fails the statement"));
         let message = text(&error);
         assert!(message.contains(expected), "{case}: {message}");
+        assert_eq!(
+            error.code(),
+            match case {
+                "server error" => "aws_service_error",
+                "dropped connection" | "server close" => "aws_connect",
+                "idle timeout" => "aws_timeout",
+                _ => "aws_invalid_response",
+            },
+            "{case}"
+        );
+        assert!(
+            !error.is_retryable(),
+            "{case}: uncertain outcome must not enable retry"
+        );
+        assert!(
+            message.contains("whether the graph applied it is unknown"),
+            "{case}: {message}"
+        );
         assert!(!message.contains("canary"), "{case}: server text leaked");
         assert!(!connection.is_open(), "{case}");
         assert!(wire.released(), "{case}: the socket was kept");
         let error = connection
             .submit("g.V().count()", None)
-            .expect_err("a spent connection sends nothing");
+            .expect_refused("a spent connection sends nothing");
         assert!(text(&error).ends_with(SPENT), "{case}");
         assert_eq!(
             wire.statements().len(),
@@ -837,6 +1041,41 @@ fn foreign_ids_server_errors_and_invalid_types_fail_and_spend_the_connection() {
             "{case}: a later statement was sent"
         );
     }
+}
+
+#[test]
+fn cumulative_response_bytes_report_an_unknown_outcome_and_spend_the_socket() {
+    let fixture = Fixture::new();
+    let data = format!("[\"{}\"]", "a".repeat(200));
+    let wire =
+        fixture.wire(fixture.script(vec![Reply::Batches(vec![status(206, &data), ok(&data)])]));
+    let bounds = DatabaseBounds {
+        max_response_bytes: 512,
+        ..quick()
+    };
+    let (opener, _) = fixture.opener(policy(), bounds, "10.1.2.3", &wire);
+    let mut connection = GremlinConnection::open(
+        &fixture.runtime,
+        &opener,
+        MAX_FRAME_BYTES,
+        &signer(clock_a),
+        REGION,
+        later(),
+        later(),
+    )
+    .expect("open");
+    let error = connection
+        .submit("g.V().drop()", None)
+        .expect_refused("cumulative byte limit");
+    assert_eq!(error.code(), "aws_invalid_response");
+    assert!(text(&error).contains("limit of one operation"), "{error}");
+    assert!(
+        text(&error).contains("whether the graph applied it is unknown"),
+        "{error}"
+    );
+    assert!(!connection.is_open());
+    assert!(wire.released());
+    assert_eq!(wire.statements().len(), 1);
 }
 
 // ---- T-DG-05c: drop after send, one send, cleanup on every exit ----
@@ -853,11 +1092,11 @@ fn a_drop_after_the_statement_is_sent_is_one_send_no_retry_and_no_later_statemen
     connection.submit("g.V().drop()", None).expect("first");
     let error = connection
         .submit("g.addV('Person')", None)
-        .expect_err("the connection dropped");
+        .expect_refused("the connection dropped");
     assert!(text(&error).contains("unknown"), "{}", text(&error));
     let error = connection
         .submit("g.V().count()", None)
-        .expect_err("no later statement");
+        .expect_refused("no later statement");
     assert!(text(&error).ends_with(SPENT));
     assert_eq!(wire.statements().len(), 2, "one send each, no retry");
     assert_eq!(wire.dials(), 1, "no reconnect");
@@ -880,14 +1119,16 @@ fn a_silent_server_stops_at_the_idle_bound_with_an_unknown_outcome() {
         &signer(clock_a),
         REGION,
         later(),
+        later(),
     )
     .expect("open");
     let start = std::time::Instant::now();
     let error = connection
         .submit("g.V().count()", None)
-        .expect_err("no answer");
+        .expect_refused("no answer");
     assert!(start.elapsed() < Duration::from_secs(3));
-    assert!(matches!(error, AwsError::Timeout { .. }), "{error}");
+    assert_eq!(error.code(), "aws_timeout");
+    assert!(!error.is_retryable());
     assert!(text(&error).contains("unknown"));
     assert!(wire.released());
 }
@@ -903,12 +1144,48 @@ fn close_is_bounded_against_a_server_that_never_answers_it() {
     assert!(wire.released());
 }
 
+#[test]
+fn a_blocked_close_write_uses_the_close_budget_capped_by_the_invocation() {
+    for (remaining, operation_remaining) in [
+        (Duration::from_secs(4), Duration::from_secs(20)),
+        (Duration::from_millis(150), Duration::from_secs(20)),
+        (Duration::from_secs(4), Duration::from_millis(150)),
+    ] {
+        let fixture = Fixture::new();
+        let wire = fixture.wire(fixture.script(vec![]));
+        let mut connection = fixture.connect(&wire, &signer(clock_a)).expect("open");
+        connection.invocation = Instant::now() + remaining;
+        connection.operation_deadline = Instant::now() + operation_remaining;
+        wire.block_writes.store(true, Ordering::SeqCst);
+        let start = std::time::Instant::now();
+        connection.close();
+        let elapsed = start.elapsed();
+        let expected = remaining
+            .min(operation_remaining)
+            .min(Duration::from_secs(2));
+        assert!(
+            elapsed >= expected.saturating_sub(Duration::from_millis(10)),
+            "close returned before its blocked write timed out"
+        );
+        assert!(
+            elapsed < expected + Duration::from_secs(1),
+            "close took {elapsed:?}"
+        );
+        assert!(
+            wire.blocked_writes.load(Ordering::SeqCst) > 0,
+            "close never attempted its write"
+        );
+        assert!(wire.released(), "close timeout retained the socket");
+    }
+}
+
 // ---- T-DG-07b: frame, depth and bulk bounds at the boundary and one past ----
 
 #[test]
 fn a_frame_at_the_limit_is_read_and_one_byte_more_is_refused() {
+    assert_eq!(MAX_FRAME_BYTES, 1_048_576);
     let fixture = Fixture::new();
-    let wire = fixture.wire(fixture.script(vec![Reply::Sized(MAX_FRAME_BYTES)]));
+    let wire = fixture.wire(fixture.script(vec![Reply::Sized(1_048_576)]));
     let mut connection = fixture.connect(&wire, &signer(clock_a)).expect("open");
     let results = connection
         .submit("g.V().count()", None)
@@ -916,11 +1193,11 @@ fn a_frame_at_the_limit_is_read_and_one_byte_more_is_refused() {
     assert_eq!(results.len(), 1);
     connection.close();
 
-    let wire = fixture.wire(fixture.script(vec![Reply::Sized(MAX_FRAME_BYTES + 1)]));
+    let wire = fixture.wire(fixture.script(vec![Reply::Sized(1_048_577)]));
     let mut connection = fixture.connect(&wire, &signer(clock_a)).expect("open");
     let error = connection
         .submit("g.V().count()", None)
-        .expect_err("one byte more is refused");
+        .expect_refused("one byte more is refused");
     assert!(text(&error).contains("size limit"), "{}", text(&error));
     assert!(wire.released());
 }
@@ -935,7 +1212,7 @@ fn a_tiny_frame_declaring_a_huge_length_fails_at_its_header() {
     let start = std::time::Instant::now();
     let error = connection
         .submit("g.V().count()", None)
-        .expect_err("the declared length is refused");
+        .expect_refused("the declared length is refused");
     assert!(
         start.elapsed() < Duration::from_secs(2),
         "the client waited for the declared payload"
@@ -960,18 +1237,19 @@ fn nested(levels: usize, open: &str, close: &str) -> String {
 
 #[test]
 fn graphson_depth_is_admitted_at_64_and_refused_at_65() {
+    assert_eq!(MAX_DEPTH, 64);
     for (shape, open, close) in [
         ("plain lists", "[", "]"),
         ("typed lists", r#"{"@type":"g:List","@value":["#, "]}"),
         ("maps", r#"{"k":"#, "}"),
     ] {
-        let at_limit = decode(&nested(MAX_DEPTH, open, close));
+        let at_limit = decode(&nested(64, open, close));
         assert!(at_limit.is_ok(), "{shape}: depth 64 refused: {at_limit:?}");
-        let error = decode(&nested(MAX_DEPTH + 1, open, close)).expect_err("depth 65");
+        let error = decode(&nested(65, open, close)).expect_refused("depth 65");
         assert!(text(&error).contains("deeper than the limit"), "{shape}");
     }
     // Raw nesting far past anything decodable is refused before parsing.
-    let error = decode(&nested(10_000, "[", "]")).expect_err("deep raw JSON");
+    let error = decode(&nested(10_000, "[", "]")).expect_refused("deep raw JSON");
     assert!(text(&error).contains("deeper than the limit"));
 }
 
@@ -983,12 +1261,14 @@ fn traverser(bulk: i64, value: &str) -> String {
 
 #[test]
 fn bulk_expansion_is_admitted_at_100000_results_and_refused_at_100001() {
-    let limit = i64::try_from(MAX_RESULTS).expect("limit");
+    assert_eq!(MAX_RESULTS, 100_000);
+    assert_eq!(MAX_EXPANDED_BYTES, 16_777_216);
+    let limit = 100_000;
     assert_eq!(
         decode(&format!("[{}]", traverser(limit, "1")))
             .expect("exactly 100000")
             .len(),
-        MAX_RESULTS
+        100_000
     );
     for (case, data) in [
         ("one bulk past", format!("[{}]", traverser(limit + 1, "1"))),
@@ -999,7 +1279,7 @@ fn bulk_expansion_is_admitted_at_100000_results_and_refused_at_100001() {
         ),
     ] {
         let start = std::time::Instant::now();
-        let error = decode(&data).expect_err(case);
+        let error = decode(&data).expect_refused(case);
         assert!(text(&error).contains("100000"), "{case}: {}", text(&error));
         assert!(
             start.elapsed() < Duration::from_secs(1),
@@ -1022,11 +1302,12 @@ fn bulk_expansion_is_admitted_at_100000_results_and_refused_at_100001() {
     );
     let error = results
         .add_message(batch(200, 50_001).as_bytes(), "r")
-        .expect_err("the second batch passes the limit");
+        .expect_refused("the second batch passes the limit");
     assert!(text(&error).contains("100000"));
     // Bulk copies are bounded in bytes too, before any copy.
     let wide = format!("\"{}\"", "x".repeat(200));
-    let error = decode(&format!("[{}]", traverser(limit, &wide))).expect_err("16 MiB of copies");
+    let error =
+        decode(&format!("[{}]", traverser(limit, &wide))).expect_refused("16 MiB of copies");
     assert!(text(&error).contains("16 MiB"), "{}", text(&error));
 }
 
