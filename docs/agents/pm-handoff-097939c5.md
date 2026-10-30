@@ -1263,3 +1263,5 @@ Friction: #4727, Rsi #4694, Rsi #4704
   #5528 (D23 runtime strings) -> Codex terra high 3523c570, pinned on 693b82d6 (merges rolling before gates).
   Workers: 49f304c4 S2 re-review, b9694f8a S3 sec review, 34e9fa7b B4, 3523c570 #5528. Queue: 3067 #5526.
 - 01:10Z: #5526 x402 S7 LANDED (3067, landed_sha 693b82d666e53273d070c30eab1ed45e2f081d6b); auto-closed. Closed #5537 #5538. #5539 open (P3 remainder). OpenClaw B5 waits on B4 (34e9fa7b). Queue empty.
+- 01:12Z: OpenClaw B4 #5535 (34e9fa7b) DONE at 9954bc44287edfeec77db3ec9d8a347b608b90ae (node 70/70 a362ef04; red 873ae7fc 49 failed; scoped e5fef329 ok 9 pkgs; #5179 ruling: registerTools(api, deps) injection). Review #5548 -> Codex sol xhigh e59c98d6, pinned. On ACCEPT: check, enqueue issue 5535; close #5535 #5548 (+ #5164 #5179 #5163 if B4 handoff marks them done). Then file+launch OpenClaw B5 (OpenClaw parts of SKILL.md/references on top of S7; delete S7's OpenClaw exemption).
+  Workers: 49f304c4 S2 re-review, b9694f8a S3 sec review, 3523c570 #5528, e59c98d6 B4 review.
