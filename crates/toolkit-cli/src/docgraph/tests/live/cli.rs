@@ -213,6 +213,7 @@ fn t_5507_live_preflight_does_not_enter_the_adapter_factory() {
     let dir = TempDir::new("review-factory-preflight");
     for (key, value) in [
         ("--recorded", "/does/not/exist"),
+        ("--network-policy", "/does/not/exist"),
         ("--region", ""),
         ("--region", "invalid"),
         ("--region", "cn-north-1"),
@@ -238,6 +239,13 @@ fn t_5507_live_preflight_does_not_enter_the_adapter_factory() {
         assert!(got.stderr.is_empty());
         assert!(!dir.join("reports").exists());
     }
+    let mut args = invocation(&dir);
+    args.flags.extend(["--live".into(), "--dry-run".into()]);
+    let (result, got) = dispatch(&args, |_, _, _| panic!("preflight entered adapter"));
+    assert_eq!(result.unwrap_err().exit_code(), 2);
+    assert!(got.stdout.is_empty());
+    assert!(got.stderr.is_empty());
+    assert!(!dir.join("reports").exists());
 }
 
 #[test]

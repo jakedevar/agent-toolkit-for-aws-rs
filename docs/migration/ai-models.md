@@ -86,6 +86,25 @@ SDKs and blocking toolkit adapters use separate runtimes to avoid nesting.
 The shared endpoint resolver knows SageMaker's `api.sagemaker` control plane;
 its signing scope remains `sagemaker`.
 
+Issue #5582 pins the production send path with private credential and streaming
+transport injection: every attempt is signed for `sagemaker`, `monitoring` or
+`logs`, with authorization, date, session token and a signed
+`x-amz-content-sha256` body digest. Missing credentials fail before transport;
+oversized responses fail with fixed text. The shared bridge refuses SDK auth
+headers and any URI host differing from the resolved endpoint before calling
+the sender. An offline SDK client with static fixture credentials proves the
+SDK-auth refusal, and the retry test covers both zero and two toolkit retries.
+`ServiceBridge::with_sender` is available only under `cfg(test)` or the
+non-default `toolkit-aws/testing` feature, enabled solely by the CLI's dev
+dependency. Private injection adds no public production constructor.
+
+The `noAuth` preference remains an explicit configuration contract. Changing
+only that preference to `sigv4` is an equivalent mutation today: without an
+identity resolver, the generated SDK can fall back to `noAuth`. Authentication
+headers from an SDK that actually has credentials still fail closed at the
+bridge; preference alone is not the security boundary. This is the
+documentation-only disposition of review item 4.
+
 `check_search_support` checks the linked SDK's modeled `ResourceType` values
 for `HubContent` before Search; the existing visible fallback stays in charge.
 The pinned SDK also models `SearchRecord.HubContent`.

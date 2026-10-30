@@ -458,9 +458,13 @@ Tests for these rules (S1 and S5):
 
   Inside the crate, rustc's module privacy already stops the sibling modules (`flow`,
   `agentcore`, `proof`, `vault`, `admin`) from constructing or mutating `Approved`, because the
-  fields are private to `approved.rs` and `new` is restricted to `policy`. A `compile_fail`
-  doc-test cannot be placed inside a sibling module, and no `trybuild` crate is added. A `syn`
-  gate in `tests/agents_pay_gate.rs` therefore covers the in-crate side:
+  fields are private to `approved.rs` and `new` is restricted to `policy`.
+  `tests/agents_pay_privacy.rs` compiles the actual `approved.rs` source with offline data and
+  formatting stubs, a sibling inside `policy` and a spending sibling outside it. A positive
+  control compiles read-only access. Negative cases require the specific rustc privacy errors
+  for amount/token/entry mutation, struct construction and the constructor call outside
+  `policy`. No `trybuild` crate is added. A `syn` gate in `tests/agents_pay_gate.rs` additionally
+  covers the in-crate source shape:
   - `Approved::new` has exactly one call site crate-wide, in `policy::authorize`;
   - no `Approved {` struct literal exists outside `approved.rs`;
   - no `impl` block for `Approved` outside `approved.rs`, and none with a `&mut self` receiver;
@@ -560,17 +564,27 @@ client_token = sha256_hex(material.encode("utf-8"))      # toolkit_core::digest:
 - **Same token, different body.** `extra`, `maxTimeoutSeconds` and the entry's other members are
   sent in the body but are not part of the token, so a changed challenge can produce the same
   token with a different body. The service's response to that is **[unknown]**: AWS idempotency
-  convention is a `ConflictException` or `ValidationException`. Whatever it returns, it is a
-  post-authorization failure (T-ORDER-POST). The invocation ends with the `ClientError` text and
-  sends no proof.
+  convention is a `ConflictException` or `ValidationException`. An actual service error is a
+  post-authorization failure (T-ORDER-POST): the invocation ends with the `ClientError` text and
+  sends no proof. A successful response instead goes through the ordinary response and proof
+  checks. If it contains a stored proof matching the current approved recipient, amount and
+  validity window (and the required response echoes), the client accepts and sends it. The
+  stateless client cannot detect that a previous invocation sent different `extra` or timeout
+  bytes. T-RESTART-6 exercises both service errors and this successful-response boundary.
+  Operator gate 6c must establish the real mismatch contract before any deployment relies on
+  mismatch rejection; no such live-service result is established by the offline tests.
 - **R-TOK-NOFRESH. No fresh-token recovery.** `derive_client_token` is the only producer of a
   `clientToken` on the runtime path. Its material has no time, random value, attempt counter or
   error-dependent input. After a conflict, an unknown-outcome timeout, an expired idempotency
   record or any other error, the runtime **never** derives or mints another token, and never
   retries `ProcessPayment` with a changed body. A `ConflictException` is not retryable in the
-  `RetryPolicy` classification. The `syn` gate (T-ORDER-CTOR) also asserts that `getrandom` and
-  `Uuid`-style generators are not reachable from `flow.rs`, `policy` or `agentcore::process_payment`;
-  admin creates keep their own UUID4 tokens (section 6.1).
+  `RetryPolicy` classification. The source gates check for clock/randomness names in pure
+  policy/token construction and randomness names in `flow.rs`, `proof.rs` and the
+  `agentcore::process_payment` function bodies, alongside the private Approved-to-request
+  mapping. These are syntax checks, not a transitive call-graph proof. They permit the handle
+  vault's required 24 cryptographic random bytes: repeated browser preparations for identical
+  terms have distinct handles and identical `clientToken` and request-body bytes.
+  Admin creates keep their own UUID4 tokens (section 6.1).
 
 **T-RESTART (S5).** Each case is two invocations over one shared stateful fake. The fake service
 keeps an idempotency table `token → (body hash, proof)` and an authorization ledger, and the fake
@@ -584,7 +598,7 @@ count, the tokens recorded, the ledger totals and the outputs.
 | T-RESTART-3 | `ProcessPayment` times out after the service recorded it (lost AWS response) | same challenge | equal tokens; the stored proof is returned; 1 authorization |
 | T-RESTART-4 | authorized and paid | the merchant changes the amount (still under the cap) | **different** token; ledger: **2** authorizations. This pins L-TERMS so that it stays visible |
 | T-RESTART-5 | authorized and paid | the merchant changes `payTo` (another allowed recipient) | different token; 2 authorizations (L-TERMS) |
-| T-RESTART-6 | authorized | the merchant changes only `extra` or `maxTimeoutSeconds` | **equal** token, different body; the fake returns `ConflictException`; invocation 2 has exactly 1 call, no other token, 0 proof sends, `ClientError` text, exit 2 |
+| T-RESTART-6 | authorized | the merchant changes only `extra` or `maxTimeoutSeconds` | **equal** token, different body; invocation 2 has exactly 1 call and no other token. Fake `ConflictException` and `ValidationException`: 0 new proof sends, `ClientError` text, exit 2. Fake successful stored proof matching current terms: accepted, same signed payload in a v2 header carrying the current accepted entry, 1 service authorization in total. The fake header ledger does not establish on-chain settlement, and these scenarios do not establish the real service contract |
 | T-RESTART-7 | authorized | same challenge after the fake has expired the idempotency record | equal token (no fresh token); the fake issues a new proof; ledger: 2 authorizations. This pins that the boundary is the service's retention window, not the runtime |
 | T-RESTART-8 | `ConflictException` on the first call | — | 1 call; no second token within the invocation (R-TOK-NOFRESH) |
 
@@ -1325,7 +1339,9 @@ r1 replaces the custody model with the following.
     asserts that `default` and `aws-sdk` do not include `agents-pay-live`, and that no workspace
     member enables it through a dependency's `features`. Feature unification therefore cannot
     turn it on in a `make` or daemon run.
-  - **T-AC3-MAKE** asserts that no Makefile target passes `agents-pay-live`.
+  - **T-AC3-MAKE** rejects `agents-pay-live` in test/executing verification targets. The only
+    allowed feature-enabled recipe is `clippy-live`: `cargo clippy` with `--lib --bins`, no
+    test targets and no `--all-targets`. Positive and negative fixtures pin this exception.
   - T-AC3-INH and G4 run in both verification builds.
   - This covers the SDK library tests, `CARGO_BIN_EXE_toolkit` under `aws-sdk`, the admin
     creation routes and `agents-build setup-payment-user` / `setup-openclaw` alike.
@@ -1397,8 +1413,8 @@ an independent cross-family review at the exact SHA.
 | **S6** admin | `admin/`, `agents-build setup-payment-user` | AdminRecipientMode, test_resource_resolution (all asserts), test_setup_openclaw (`usd_to_atomic`, `build_openclaw_config`, `discover_deployed` with `--project-dir`, `format_duration`); T-TTY (order: TTY first even without credentials; `approve` exact; EOF D28; no `--yes`), **T-TTY-CI-1..5** (D33 for `create-instrument` and `setup-payment-user`), T-WRITE (atomic, modes, temporary file removed on failure), T-VAL (D29, `--budget` through `CapDecimal`), T-PREFLIGHT (secret-name scan), D27, **T-AC3-INH** (all admin and `agents-build` routes) | S2, S4, S5 (it reuses `Deps` and the G1a guards), P-ROOTS (r2 platform-only admin TLS) |
 | **S7** cutover docs | `SKILL.md` (both copies), `references/*.md`, `agents-build/references/payments.md` steps that run scripts, `docs/migration/agents-pay.md`, the portability test, inventory rows → `ported` | R-PORT test; `every_slice_documents_its_commands`; the SKILL text carries L-TERMS, the R-DNS residual, the payment-roots boundary (B3, B4) and the B1 import-API boundary | S5, S6; the Q2 and Q3 decisions |
 
-**Which slices wait on P-ROOTS: S5 only**, through `wiring.rs` and `live.rs`; S6 and S7 come
-after S5. S1, S2, S3, S4 and P-ROOTS can proceed in parallel once their own prerequisites
+**Which slices wait on P-ROOTS: S5 and S6**, for their payment TLS constructors; S7 comes
+after S5 and S6. S1, S2, S3, S4 and P-ROOTS can proceed in parallel once their own prerequisites
 land. P-ROOTS is owned by `toolkit-aws` and gets its own scoped test and its own review. It
 neither changes nor is required by #5017's or #4382's provider-root policy.
 
@@ -1525,9 +1541,14 @@ verification target (G1), a disposable account or manager, and budget `0.10`:
    - 6b. Re-run (5) after 10 minutes and after 60 minutes. Record whether the service still
      returns the stored proof for the same token. That gives a rough lower bound on the retention
      window, which is [unknown] in the model.
-   - 6c. If the sandbox merchant can vary `extra`, record the service's answer to the same token
-     with a different body: the expected `ConflictException` or `ValidationException`
-     (T-RESTART-6 assumption).
+   - 6c. **Required operator validation gate before relying on body-mismatch rejection.** With
+     an authorized sandbox merchant that can vary `extra` and `maxTimeoutSeconds`, record the
+     real service's same-token/different-body contract: `ConflictException`,
+     `ValidationException`, or a successful response, including echoed IDs and proof validity.
+     Do not infer rejection from AWS convention. If success returns a valid matching stored
+     proof, record that the stateless client accepts it; no fresh-token recovery is permitted.
+     If this gate cannot be run, the mismatch contract remains unknown. This document and the
+     offline tests do not authorize running it or establish a live result.
 7. `fetch <same URL> --purchase-id 2` → one more transfer.
 8. A URL priced above the cap → refused; CloudTrail shows **no** `ProcessPayment`.
 9. A v1 merchant, if one is available (`X-PAYMENT`, Q4).
@@ -1706,6 +1727,10 @@ A reviewer should be able to confirm each of the following from this document al
 | #5100 restart claim omits changed terms and body conflicts | P2 | Legacy token bytes kept; restart limitation documented; no fresh token after a conflict; two-invocation cases; a cross-challenge binding is out of scope | R-TOK (R-TOK-SCOPE, L-TERMS, R-TOK-NOFRESH), R-RETRY row, the S4/S5 rows, B2, live-run 6b/6c | T-RESTART-1..8 |
 | #5101 blocking-DNS residual | P2 | The residual is carried into the deadline contract, as #4382 did; no async-resolver prerequisite | R-NET (R-DNS, R-DNS-ADMIT), R-AWS-RETRY, D16, B3, the S3/S5 rows, S7 text | T-DNS-DL-1..5 |
 | #5102 T-ORDER phases and `Approved` | P2 | Pre- and post-authorization split; immutable private `Approved` consumed by value; the request only from `Approved` | R-SPEND-ORDER (rules 1-5, both test phases), R-SPEND table, section 7 G2, 8.1 `policy/`, the S1/S5 rows, checklist 1 | T-ORDER-CTOR, T-ORDER-PRE, T-ORDER-POST |
+| #5114 macOS environment-race rationale | P2 | The r2 environment-independent native loader removes the two-read race; first-party startup source gates remain | R-PROOTS macOS branch | `p_roots_startup_chain_crates_never_mutate_the_process_environment`, `p_roots_environment_gate_catches_a_mutator_a_snapshot_does_not`, `p_roots_world_builds_payment_roots_before_runtime_and_provider_roots` |
+| #5115 successful body-mismatch response | P2 | Service errors fail with no new proof send; a successful matching stored proof is accepted by the stateless client; actual service contract requires operator gate 6c | R-TOK-SCOPE, T-RESTART-6, live-run 6c | `t_restart_6_body_mismatch_service_contract_is_not_assumed` (Conflict, Validation, StoredProof × extra, timeout) |
+| #5116 browser randomness versus client token | P2 | Syntax gate described accurately; vault randomness allowed; identical purchase terms keep token/body bytes while handles differ | R-TOK-NOFRESH | `browser_handle_expires_and_handles_are_unique`, R-TOK-NOFRESH source fixtures |
+| #5117 lint-only live-feature exception | P3 | Executing verification targets reject the feature; only the library/binary clippy recipe is allowed | T-AC3-MAKE, Makefile `clippy-live` | `t_ac3_make_no_test_target_passes_the_live_feature`, `t_ac3_make_catches_a_test_target_with_the_feature` |
 | Accepted Q22 (#5091 ruling) | — | A TTY gate and `approve` on `create-instrument` and `setup-payment-user` | Section 0, section 7 (D33), the S6 row, D33, Q22, live-run step 14 | T-TTY-CI-1..5 |
 | Documented boundaries (PM) | — | The import API is not replaced by the CLI handle (#5103); cross-challenge exactly-once is not guaranteed | Section 12a (B1, B2), Q3 | T-RESTART-4/5/7 pin B2 |
 

@@ -11,6 +11,7 @@ build:
 ai-models-sdk:
 	cargo test -p toolkit-cli --features ai-models-live --locked --lib ai_models::
 	cargo test -p toolkit-cli --features ai-models-live --locked --test ai_models
+	cargo test -p toolkit-aws --features sdk --locked --lib sdk::service_bridge::
 
 ai-models-test:
 	cargo test -p toolkit-cli --locked --lib ai_models::
@@ -56,14 +57,17 @@ test-sdk:
 clippy-live:
 	cargo clippy -p toolkit-cli --features agents-pay-live --lib --bins --locked -- -D warnings
 
-# Offline x402 regression lanes; live constructors are excluded from tests.
+# Offline x402 contracts in both supported verification configurations.
 agents-pay-test:
-	cargo test -p toolkit-cli --locked --offline --lib agents_pay::
-	cargo test -p toolkit-cli --locked --offline --test 'agents_pay_*'
+	cargo test -p toolkit-cli --locked --lib agents_pay::
+	cargo test -p toolkit-cli --locked --test 'agents_pay_*'
 
 agents-pay-test-sdk:
-	cargo test -p toolkit-cli --features aws-sdk --locked --offline --test 'agents_pay_*'
-	cargo test -p toolkit-cli --features aws-sdk --locked --offline --lib agents_pay::
+	cargo test -p toolkit-cli --features aws-sdk --locked --lib agents_pay::
+	cargo test -p toolkit-cli --features aws-sdk --locked --test 'agents_pay_*'
+	cargo test -p toolkit-aws --features sdk --locked --lib sdk::roots_payment::
+	cargo test -p toolkit-aws --features sdk --locked --test payment_roots
+	cargo test -p toolkit-aws --features sdk --locked --lib sdk::tests::guarded_dns_refuses_answers_returned_after_deadline -- --exact
 
 agents-pay-roots:
 	cargo test -p toolkit-aws --features sdk --locked --offline --test payment_roots

@@ -16,8 +16,8 @@ use std::time::{Duration, Instant};
 use toolkit_aws::endpoint::HostResolver;
 use toolkit_aws::testing::{FakeChunk, FakeStreamingTransport};
 use toolkit_cli::agents_pay::agentcore::{
-    FakeOutcome, FakePaymentsApi, PaymentError, PaymentErrorClass, PaymentProof, PaymentsApi,
-    ProcessPaymentRequest,
+    FakeBodyMismatch, FakeOutcome, FakePaymentsApi, PaymentError, PaymentErrorClass, PaymentProof,
+    PaymentsApi, ProcessPaymentRequest,
 };
 use toolkit_cli::agents_pay::deps::fixtures::{FakeClock, FakeMerchant, TempConfigStore};
 use toolkit_cli::agents_pay::deps::Deps;
@@ -1056,6 +1056,53 @@ fn t_restart_6_same_token_different_body_conflicts_without_a_fresh_token() {
     }
 }
 
+// #5115: a stateless invocation cannot recognize a previous body's extra or
+// timeout. A matching successful proof passes the ordinary proof verifier.
+#[test]
+fn t_restart_6_body_mismatch_service_contract_is_not_assumed() {
+    for extra in [r#","extra":{"name":"USDC"}"#, r#","maxTimeoutSeconds":30"#] {
+        for behavior in [
+            FakeBodyMismatch::Conflict,
+            FakeBodyMismatch::Validation,
+            FakeBodyMismatch::StoredProof,
+        ] {
+            let world = World::with(
+                TempConfigStore::new("restart6-contract", &config()),
+                FakePaymentsApi::signing().with_body_mismatch(behavior),
+            );
+            let second = paid_then(&world, &challenge_with("100000", PAY_TO, extra));
+            let recorded = world.api.recorded_requests();
+            assert_eq!(recorded.len(), 2); // One logical call per invocation.
+            assert_eq!(recorded[0].token, GOLDEN);
+            assert_eq!(recorded[0].token, recorded[1].token);
+            assert_ne!(recorded[0].body, recorded[1].body);
+            assert_eq!(world.api.authorizations(), 1);
+            if behavior == FakeBodyMismatch::StoredProof {
+                assert_eq!(second.get("paid"), Some(&Json::Bool(true)), "{second:?}");
+                let headers = world.headers();
+                assert_eq!(headers.len(), 2);
+                let documents: Vec<Json> = headers
+                    .iter()
+                    .map(|(name, value)| {
+                        assert_eq!(name, "PAYMENT-SIGNATURE");
+                        let bytes = toolkit_core::encoding::base64_standard_decode(value).unwrap();
+                        json(std::str::from_utf8(&bytes).unwrap())
+                    })
+                    .collect();
+                assert_eq!(documents[0].get("payload"), documents[1].get("payload"));
+                assert_ne!(documents[0].get("accepted"), documents[1].get("accepted"));
+                // The header wraps current terms around the same signed proof.
+                // This fixture's header ledger does not model on-chain settlement.
+            } else {
+                assert_refused(&second, "ClientError during payment flow.");
+                assert_eq!(flow::exit_code(&second), 2);
+                assert_eq!(world.headers().len(), 1); // No second proof send.
+                assert_eq!(world.merchant.settlements(), 1);
+            }
+        }
+    }
+}
+
 #[test]
 fn t_restart_7_an_expired_idempotency_record_is_the_services_boundary() {
     let world = World::new("restart7");
@@ -1148,9 +1195,16 @@ fn browser_handle_expires_and_handles_are_unique() {
     world.merchant.respond(402, &[], &challenge());
     let vault = Vault::new();
     let first = flow::prepare_browser_payment(&world.deps(), &vault, URL, None);
-    let second = flow::prepare_browser_payment(&world.deps(), &vault, URL, Some("order-2"));
+    let second = flow::prepare_browser_payment(&world.deps(), &vault, URL, None);
     let (first, second) = (text(&first, "handle"), text(&second, "handle"));
     assert_ne!(first, second);
+    let recorded = world.api.recorded_requests();
+    assert_eq!(recorded.len(), 2);
+    assert_eq!(recorded[0].token, GOLDEN);
+    assert_eq!(recorded[0].token, recorded[1].token);
+    assert_eq!(recorded[0].body, recorded[1].body);
+    assert_eq!(world.api.authorizations(), 1);
+    assert!(world.headers().is_empty());
     let later = world.clock.now_instant() + Duration::from_secs(90);
     assert!(vault.attach(first, URL, later).is_err());
     assert!(vault.attach(second, URL, later).is_err());

@@ -151,8 +151,9 @@ pub(crate) const SLICE: crate::registry::Slice = crate::registry::Slice {
       [--confirm-write] [--confirm-delete] [--confirm-create] [--region R] [--network-policy FILE]
 ",
     description: r"  documentdb    DocumentDB Well-Architected review (#4395). wa-review runs the 41
-                infrastructure and database checks over recorded AWS responses
-                (--recorded) and a pre-collected analysis (--analysis-data) and
+                infrastructure checks over recorded AWS responses (--recorded)
+                or live AWS APIs (--live), and database checks over a
+                pre-collected analysis (--analysis-data), and
                 writes wa_review_results.json and wa_review_report.md.
                 normalize-capture turns a private, user-assembled mongo-shell
                 capture (docs: references/collection-recipe.md) into the
@@ -254,6 +255,11 @@ fn wa_review_with_live(
     run_live: impl FnOnce(&str, &str, i64) -> Result<checks::Findings, ToolkitError>,
 ) -> Result<(), ToolkitError> {
     let live = live_selected(invocation)?;
+    if live && invocation.value("--network-policy").is_some() {
+        return Err(usage(
+            "--network-policy cannot be used with wa-review --live",
+        ));
+    }
     let missing: Vec<&str> = ["--cluster-id", "--region"]
         .into_iter()
         .filter(|flag| required(invocation, flag).is_none())
