@@ -653,8 +653,8 @@ fn s7_text_import_api_boundary_b1_and_q3() {
         "SKILL.md",
         &skill,
         &[
-            "from x402_fetch import x402_fetch, payment_session_status, prepare_browser_payment, attach_browser_payment",
-            "has no Rust equivalent",
+            "`payment_session_status`, `prepare_browser_payment`, and `attach_browser_payment`",
+            "have no Rust import equivalent",
             "a handle cannot be redeemed after the process exits",
             "#5103",
         ],
@@ -1074,22 +1074,14 @@ fn s7_inventory_payments_policy_rows_track_retirement() {
     assert_eq!(rows.len(), 9, "the nine payments-policy rows");
     for row in rows {
         let path = row["path"].as_str().unwrap();
-        let expected = if ["agents_pay_admin.py", "x402_fetch.py", "x402_policy.py"]
-            .iter()
-            .any(|name| path.rsplit('/').next() == Some(*name))
-        {
-            "ported"
-        } else {
-            "retired"
-        };
-        assert_eq!(row["status"].as_str(), Some(expected), "{path}");
+        assert_eq!(row["status"].as_str(), Some("retired"), "{path}");
         let note = row["disposition_note"].as_str().unwrap_or("");
         assert!(
             note.len() >= 40 && note.contains("S7"),
             "{path}: note {note:?}"
         );
         assert!(
-            note.contains("Retired") || note.contains("Retained"),
+            note.contains("Retired"),
             "{path}: the note must record retirement: {note}"
         );
     }
@@ -1156,6 +1148,9 @@ fn retirement_5560_covered_python_files_are_absent() {
         "plugins/aws-agents/skills/agents-pay/packages/openclaw/runtime/agentcore_bridge.py",
         "plugins/aws-agents/skills/agents-pay/packages/openclaw/test/test_agentcore_bridge.py",
         "plugins/aws-agents/skills/agents-pay/packages/openclaw/test/test_setup_openclaw.py",
+        "plugins/aws-agents/skills/agents-pay/scripts/agents_pay_admin.py",
+        "plugins/aws-agents/skills/agents-pay/scripts/x402_fetch.py",
+        "plugins/aws-agents/skills/agents-pay/scripts/x402_policy.py",
         "plugins/aws-agents/skills/agents-pay/scripts/test_portability.py",
         "plugins/aws-agents/skills/agents-pay/scripts/test_resource_resolution.py",
         "plugins/aws-agents/skills/agents-pay/scripts/test_x402_policy.py",

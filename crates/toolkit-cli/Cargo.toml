@@ -18,7 +18,7 @@ default = []
 aws-sdk = ["toolkit-aws/sdk"]
 # Read-only SageMaker catalog/diagnostics binding; no service SDKs in defaults.
 ai-models-live = ["aws-sdk", "dep:aws-sdk-sagemaker", "dep:aws-sdk-cloudwatch", "dep:aws-sdk-cloudwatchlogs", "dep:aws-smithy-runtime-api", "dep:aws-smithy-types"]
-docgraph-live = ["aws-sdk", "toolkit-aws/gremlin", "dep:aws-sdk-docdb", "dep:aws-sdk-cloudwatch", "dep:aws-sdk-ec2", "dep:aws-sdk-secretsmanager", "dep:aws-credential-types", "dep:aws-runtime", "dep:aws-smithy-runtime-api", "dep:aws-smithy-types", "dep:tokio", "dep:xmlparser"]
+docgraph-live = ["aws-sdk", "toolkit-aws/gremlin", "dep:aws-sdk-docdb", "dep:aws-sdk-cloudwatch", "dep:aws-sdk-ec2", "dep:aws-sdk-secretsmanager", "dep:aws-credential-types", "dep:aws-runtime", "dep:aws-smithy-runtime-api", "dep:aws-smithy-types", "dep:tokio", "dep:aws-sdk-neptunegraph", "dep:aws-sdk-dynamodb", "dep:xmlparser"]
 # The live x402 payment constructors (#5352, design section 7 G1): real
 # config, credentials, DNS, payment TLS roots and transports. Only release
 # builds and the operator live run enable it; every test target refuses it
@@ -34,6 +34,9 @@ aws-sdk-cloudwatchlogs = { version = "=1.156.0", optional = true, default-featur
 aws-sdk-cloudwatch = { version = "=1.138.0", optional = true, default-features = false }
 aws-sdk-ec2 = { version = "=1.271.0", optional = true, default-features = false }
 aws-sdk-secretsmanager = { version = "=1.123.0", optional = true, default-features = false }
+# S4 modeled request serializers only: no SDK HTTP connector, auth, or retries.
+aws-sdk-neptunegraph = { version = "=1.116.0", optional = true, default-features = false }
+aws-sdk-dynamodb = { version = "=1.134.0", optional = true, default-features = false }
 aws-credential-types = { version = "=1.3.1", optional = true }
 aws-runtime = { version = "=1.10.2", optional = true, default-features = false }
 aws-smithy-runtime-api = { version = "=1.19.1", optional = true, features = ["client"] }

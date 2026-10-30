@@ -164,3 +164,18 @@ docgraph-gremlin:
 
 clippy-gremlin:
 	cargo clippy -p toolkit-aws --features gremlin --all-targets --locked -- -D warnings
+
+# S4 ordered memory dispatch and wire contracts; every backend is injected.
+docgraph-memory:
+	cargo test -p toolkit-cli --features docgraph-live --locked --lib docgraph::live_memory::
+
+# Resolve the optional S4 model crate; no service endpoint is contacted.
+docgraph-memory-sync:
+	cargo metadata --format-version 1 --features docgraph-live --offline > /dev/null
+	cargo tree -p toolkit-cli --features docgraph-live --locked --offline -e features
+
+# #5455: discard only this package's stale compiled Cargo test paths before
+# scoped verification. Rebuild and run the unchanged security hook tests.
+docgraph-scoped-prime:
+	cargo clean -p secret-safety-hook
+	cargo test -p secret-safety-hook --locked

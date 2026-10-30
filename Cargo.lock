@@ -362,6 +362,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "aws-sdk-neptunegraph"
+version = "1.116.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9988349f23035adab1613c2f506f4cc1dee729a61b9702a134e0e50cfdbe5323"
+dependencies = [
+ "arc-swap",
+ "aws-credential-types",
+ "aws-runtime",
+ "aws-smithy-async",
+ "aws-smithy-http",
+ "aws-smithy-json 0.65.0",
+ "aws-smithy-observability",
+ "aws-smithy-runtime",
+ "aws-smithy-runtime-api",
+ "aws-smithy-schema 1.1.0",
+ "aws-smithy-types",
+ "aws-types",
+ "bytes",
+ "fastrand",
+ "http 1.5.0",
+ "regex-lite",
+ "tracing",
+]
+
+[[package]]
 name = "aws-sdk-s3"
 version = "1.155.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3484,7 +3509,9 @@ dependencies = [
  "aws-sdk-cloudwatch",
  "aws-sdk-cloudwatchlogs",
  "aws-sdk-docdb",
+ "aws-sdk-dynamodb",
  "aws-sdk-ec2",
+ "aws-sdk-neptunegraph",
  "aws-sdk-sagemaker",
  "aws-sdk-secretsmanager",
  "aws-smithy-runtime-api",

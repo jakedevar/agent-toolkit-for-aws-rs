@@ -216,3 +216,21 @@ runner = "make"
 target = "clippy-gremlin"
 timeout_minutes = 20
 cpu_quota_percent = 200
+
+[recipes.docgraph-memory]
+runner = "make"
+target = "docgraph-memory"
+timeout_minutes = 20
+cpu_quota_percent = 200
+
+[recipes.docgraph-memory-sync]
+runner = "make"
+target = "docgraph-memory-sync"
+timeout_minutes = 20
+cpu_quota_percent = 200
+
+[recipes.docgraph-scoped-prime]
+runner = "make"
+target = "docgraph-scoped-prime"
+timeout_minutes = 20
+cpu_quota_percent = 200

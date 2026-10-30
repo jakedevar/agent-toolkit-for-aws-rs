@@ -1,6 +1,3 @@
-plugins/aws-agents/skills/agents-pay/scripts/agents_pay_admin.py
-plugins/aws-agents/skills/agents-pay/scripts/x402_fetch.py
-plugins/aws-agents/skills/agents-pay/scripts/x402_policy.py
 plugins/aws-core/com.anthropic.claude-code/hooks/secret-safety.py
 plugins/aws-core/skills/amazon-bedrock/scripts/fetch_bedrock_agent.py
 plugins/aws-core/skills/aws-ai-ml/references/dataset-evaluation/scripts/format_detector.py

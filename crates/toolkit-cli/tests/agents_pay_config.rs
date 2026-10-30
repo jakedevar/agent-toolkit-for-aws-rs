@@ -57,7 +57,7 @@ fn policy_file_and_directory_protections() {
     }
     fs::set_permissions(&f.0, fs::Permissions::from_mode(0o700)).unwrap();
     fs::remove_file(&p).unwrap();
-    assert!(load_config(&p).unwrap_err().contains("No payment config"));
+    assert_eq!(load_config(&p).unwrap_err(), format!("No payment config at {}. Payments are refused until an operator creates one (toolkit agents-pay admin init-config). This is intentional: there is no permissive default.", p.display()));
     symlink("missing", &p).unwrap();
     assert!(load_config(&p).unwrap_err().contains("symlink"));
 }
