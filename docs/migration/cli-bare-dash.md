@@ -332,3 +332,10 @@ router refuses a bare `-` and `--flag=-` for both value flags and a bare `-`
 positional; `create-launch` reads `./-` as a literal directory named `-`. No
 command reads stdin. With `documentdb normalize-capture` (#5327) also
 registered, global usage is 46570 bytes, FNV-1a `0xed8510a22d18f7eb`.
+
+The docgraph live seed (S3, #5515) adds no route or flag: `neptune seed` already
+lists `--region` and `--network-policy`. In `docgraph/live_seed.rs`, `--region`
+goes only to `network_policy::signing_region` (`resolve_region`, then equality
+with the policy region), never to a path, and is audited on that basis. The
+only file that module opens is the `--network-policy` value, read whole with
+its 16 KiB bound and parsed; its path is never echoed.
