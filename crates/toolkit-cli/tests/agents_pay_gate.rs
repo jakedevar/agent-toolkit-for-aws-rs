@@ -4563,6 +4563,18 @@ fn t_br_d32_catches_bridge_route_mutations() {
             ),
         ),
         (
+            "a third registry command preserves the pinned handlers",
+            sources_with(
+                ROUTE_FILE,
+                "handler: self::bridge::no_payment::bridge_command,\n        },",
+                |a| {
+                    format!(
+                        "{a}\n        crate::CommandSpec {{ ..crate::agents_pay::flow::SPEC }},"
+                    )
+                },
+            ),
+        ),
+        (
             "the default registry entry dispatches elsewhere",
             sources_with(
                 ROUTE_FILE,
