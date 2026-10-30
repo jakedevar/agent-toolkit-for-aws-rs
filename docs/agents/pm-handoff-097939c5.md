@@ -1380,3 +1380,4 @@ Friction: #4727, Rsi #4694, Rsi #4704
   Workers: ffcbc244 #5100, 0562a7d1 #5586, d81588ee #5591 (review of #5582), 21f43807 #5097. Queue: 3097 #5350, 3098 #5582, 3099 #5583.
 - 04:31Z: #5350 LANDED (3097, landed_sha bb708e4bbd7329f8af13384e752230610dfd752c); auto-closed. Landings since stopgap QA a82b0843: 1. Reported up (pm-b3952c1b-report-0430): landing, QA green, #5455 recurrence ids 33449b4b/ae688ce8/917a631e, Rsi #5588/#5590. Queue: 3098 #5582, 3099 #5583.
 - 04:33Z: #5582 LANDED (3098, landed_sha d72865a2d7a45e2bbc8f5fed8c92e755c81a28a9); auto-closed. Review #5591 (d81588ee) now post-land: BLOCKER -> fix forward/revert. Landings since stopgap QA: 2. Queue: 3099 #5583.
+- 04:35Z: #5583 LANDED (3099, landed_sha 467dd93468c82ec43d9bb035635f9c16017549cb); auto-closed. Landings since stopgap QA: 3. Queue empty. Workers: ffcbc244 #5100, 0562a7d1 #5586, d81588ee #5591, 21f43807 #5097.
