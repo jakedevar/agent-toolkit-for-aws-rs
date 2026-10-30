@@ -1076,7 +1076,7 @@ fn authorize_missing_resources_are_refused_after_the_policy_in_python_order() {
         assert_eq!(
             reason(got),
             format!(
-                "Missing payment resource '{key}'. Add it to the config (agents_pay_admin.py \
+                "Missing payment resource '{key}'. Add it to the config (toolkit agents-pay admin \
                  init-config) or set {env}. Provision resources with the trusted setup path first."
             )
         );

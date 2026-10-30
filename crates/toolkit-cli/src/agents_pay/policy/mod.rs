@@ -586,7 +586,7 @@ fn required_ids(resources: &Resources) -> Result<PaymentIds, PolicyError> {
             .ok_or_else(|| {
                 refused(format!(
                     "Missing payment resource '{key}'. Add it to the config \
-                     (agents_pay_admin.py init-config) or set {env}. Provision resources \
+                     (toolkit agents-pay admin init-config) or set {env}. Provision resources \
                      with the trusted setup path first."
                 ))
             })
