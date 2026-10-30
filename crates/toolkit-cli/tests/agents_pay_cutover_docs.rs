@@ -1074,7 +1074,14 @@ fn s7_inventory_payments_policy_rows_track_retirement() {
     assert_eq!(rows.len(), 9, "the nine payments-policy rows");
     for row in rows {
         let path = row["path"].as_str().unwrap();
-        let expected = if ["agents_pay_admin.py", "x402_fetch.py", "x402_policy.py"].iter().any(|name| path.ends_with(name)) { "ported" } else { "retired" };
+        let expected = if ["agents_pay_admin.py", "x402_fetch.py", "x402_policy.py"]
+            .iter()
+            .any(|name| path.ends_with(name))
+        {
+            "ported"
+        } else {
+            "retired"
+        };
         assert_eq!(row["status"].as_str(), Some(expected), "{path}");
         let note = row["disposition_note"].as_str().unwrap_or("");
         assert!(
@@ -1154,6 +1161,9 @@ fn retirement_5560_covered_python_files_are_absent() {
         "plugins/aws-agents/skills/agents-pay/scripts/test_x402_policy.py",
         "plugins/aws-agents/skills/agents-pay/scripts/x402_fetch_cli.py",
     ] {
-        assert!(!root.join(path).exists(), "retired file still exists: {path}");
+        assert!(
+            !root.join(path).exists(),
+            "retired file still exists: {path}"
+        );
     }
 }
