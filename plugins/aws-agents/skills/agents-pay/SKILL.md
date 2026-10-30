@@ -464,13 +464,24 @@ Install the published plugin, then follow this skill as normal:
 openclaw plugins install clawhub:@aws/aws-agents-pay
 ```
 
-**Choose one runtime path.** OpenClaw uses the TypeScript plugin and its
-`get_paid_content` tool. Other supported hosts use the Python implementation and
-its equivalent `x402_fetch` tool. Do not run both. The plugin package bundles the
-same skill, references, Python admin CLI, and tests for operator setup, but payment
-policy and merchant replay stay in TypeScript on OpenClaw. Only
-`GetPaymentSession` and `ProcessPayment` cross a bounded, no-shell bridge to
-boto3 in the package-local virtual environment.
+**Choose one runtime path.** OpenClaw uses its TypeScript plugin and
+`get_paid_content`; other hosts use `toolkit agents-pay fetch`. Do not enable
+both. Policy and merchant replay stay in TypeScript. The package stages this
+skill and its references; a human uses the bundled toolkit for administration.
+
+The fixed binary table selects the package's platform-specific Rust toolkit;
+unsupported platforms fail closed. The plugin uses a bounded, no-shell bridge.
+Rust builds the ProcessPayment payload from the selected offer. After a proof is
+obtained, the complete result's text and details pass through a Rust known-secret
+scrub after replay. A matching opt-in body is redacted; a metadata or error hit,
+invalid result, or failed check yields a fixed refusal. The scrub covers known
+secrets and supported encodings, not arbitrary transformations. The bridge zeros
+owned Buffers on success and failure; immutable strings and parsed objects cannot
+be reliably zeroized, so their references are dropped and the proof object cleared.
+
+Upgrading from 1.0.7 or earlier to 1.1.0 changes the idempotency token. A
+purchase retried across the upgrade may be authorized again, within the
+per-payment cap and session budget.
 
 Check what the plugin exposes to the model before trusting it. Two questions
 decide whether its runtime surface is safe:
@@ -481,14 +492,14 @@ decide whether its runtime surface is safe:
 | Can the model call something that **creates a payment session**? | No — session creation is human-only | Otherwise it mints fresh budget when one runs out, and per-session caps bound nothing |
 
 If either answer is wrong, do not use the plugin's tools for payment. Disable the
-plugin before switching to the Python `x402_fetch` path so only one payment
-implementation is active.
+plugin before switching to the `toolkit agents-pay fetch` path so only one
+payment implementation is active.
 
-Verify quickly:
+Inspect the registered tools with `openclaw plugins inspect aws-agents-pay`.
+The human runs preflight separately in their own terminal:
 
 ```bash
-openclaw plugins inspect aws-agents-pay           # list the registered tools
-python3 scripts/agents_pay_admin.py preflight      # fails if provider secrets are in the env
+~/.openclaw/extensions/aws-agents-pay/bin/toolkit agents-pay admin preflight
 ```
 
 ### Any other host

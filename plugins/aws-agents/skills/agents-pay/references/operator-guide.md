@@ -154,7 +154,10 @@ openclaw plugins inspect aws-agents-pay               # confirm what it register
 
 OpenClaw executes payments through the TypeScript plugin's `get_paid_content`
 tool. Other hosts use the equivalent `toolkit agents-pay fetch` command. Choose exactly one
-runtime path; enabling both would make policy enforcement path-dependent.
+runtime path; enabling both would make policy enforcement path-dependent. The
+production plugin uses a fixed platform binary and Rust builds the payment
+payload. After a proof, its final output check covers text and details; it
+returns a fixed refusal if the result cannot be checked.
 
 Two things to confirm before you trust the OpenClaw runtime:
 
