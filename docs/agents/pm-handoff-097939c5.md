@@ -1274,3 +1274,4 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 01:20Z: S3 security review #5542 (b9694f8a, Codex sol xhigh): ACCEPT at 291a5b7d; 11/12 guard mutations killed (close fixture survived); rand_chacha 0.9 ruled OK; P2/P3 in #5547 (signing time not charged to the op budget; post-send unknown-outcome diagnostics; close fixture; huge expect_err logs). Closed #5542. Check refused #5265 only -> ENQUEUED seq 3071 (99350ee7, issue 5515). S2 (re-review running) must merge rolling after S3 lands (both touch toolkit-aws features + docgraph-live).
   Queue: 3069 #5528, 3070 #5535 B4, 3071 #5515 S3.
   #5549 (B4 production-wiring test gap) -> Codex terra high 35c39aec, pinned 9954bc44. Workers: 49f304c4 S2 re-review, 516127c1 #5488, ec67ec2f B5, 35c39aec #5549.
+- 01:25Z: #5528 LANDED (3069, landed_sha c11fc57f0df8b9da892122b02fe1c19656061b5f); auto-closed. Queue: 3070 B4, 3071 S3.
