@@ -1242,3 +1242,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
   Workers: fe94684e docgraph S3, 6be15885 S2 review, 014458e4 x402 S7, #5509. Queue: 3060 #5158, 3061 #5514, 3063 #5360.
 - 00:05Z: S2 review #5516 (6be15885): CHANGES_REQUESTED at 817eb1ee. BLOCKERs #5521 (closing-root suffix admits malformed XML) and #5522 (public service DNS outlives the operation deadline; reuse S1's LookupGate as a separate service-plane construction). 15 guard mutations in its handoff. Friction #5524.
   PM agrees both are valid (the docgraph design requires one absolute deadline including DNS, unlike Launch's accepted residual). Repair 1 -> Claude Opus high (continue_from a0ab0de1). Then a narrow re-review on #5516 (Codex sol xhigh, pinned).
+- 00:23Z: #5158 LANDED (c3551d0b, landed_sha 7830b21b089109aac7ba4260cd4c57140ceb4cb3); auto-closed. Daemon node route live: recipe openclaw-node-test.
+  Filed OpenClaw B4 #5535 (folds #5164 #5179 #5163 and #5162's TS half; package 1.1.0; files+bin; python step removed) -> Claude Opus high, queued for a slot. Needs a cross-family review; then B5 after S7.
+  Queue: 3061 #5514, 3063 #5360.
