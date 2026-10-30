@@ -19,7 +19,7 @@ use std::time::Duration;
 use toolkit_aws::{AwsError, Secret, ServiceError};
 use toolkit_core::{Json, ToolkitError};
 
-use super::clean::{clean, SecretGate, GATE_MAX_BYTES};
+use super::clean::{clean, SecretGate};
 use super::connect::{self, is_private, ConnectArgs};
 use super::discover::{self, DiscoverArgs};
 use super::recorded::Recording;
@@ -1311,7 +1311,7 @@ fn test_connection_reports_ping_server_tls_and_success() {
         run.stdout,
         "Connecting to node.abc.0001.use1.cache.amazonaws.com:6379 (TLS, user=app) via mock-client ...\n\
          \x20 PING: OK (1.3 ms)\n\
-         \x20 Server: engine version 7.1.0, mode=standalone\n\
+         \x20 Server: engine version unknown, mode=unknown\n\
          \x20 TLS: enabled (in-transit encryption active)\n\
          \x20 Result: CONNECTION SUCCESSFUL\n"
     );
@@ -2173,7 +2173,9 @@ fn test_connection_replays_a_recorded_connection_without_the_password() {
         recording.path(),
     ]);
     assert_eq!((status, stderr.as_str()), (0, ""), "{stdout}");
-    assert!(stdout.contains("  PING: OK (2.0 ms)\n  Server: engine version 7.1.0, mode=cluster\n"));
+    assert!(
+        stdout.contains("  PING: OK (2.0 ms)\n  Server: engine version unknown, mode=unknown\n")
+    );
     assert!(!stdout.contains("hunter2-PASSWORD"));
 
     let (status, _, stderr) = exec(&[
@@ -2353,35 +2355,37 @@ fn an_injected_server_info_is_printed_through_the_gate_only() {
 // ----------------------------------------------- the SecretGate itself
 
 #[test]
-fn the_gate_refuses_a_value_holding_a_secret_and_fails_closed_above_the_cap() {
+fn the_gate_withholds_authenticated_metadata_without_scanning_secrets_or_values() {
     let gate = SecretGate::new(&["pre-rec", "recorded-token", ""]);
-    assert_eq!(gate.version("7.1.0"), "7.1.0");
+    assert_eq!(gate.version("7.1.0"), "unknown");
     // Overlapping exact values: either one anywhere in the value refuses it.
     assert_eq!(gate.version("pre-recorded-token"), "unknown");
     assert_eq!(gate.version("7-pre-rec"), "unknown");
     assert_eq!(gate.version("x-recorded-token"), "unknown");
-    assert_eq!(gate.mode("cluster"), "cluster");
+    assert_eq!(gate.mode("cluster"), "unknown");
 
     let self_overlap = SecretGate::new(&["ababababababa"]);
     assert_eq!(self_overlap.version("ababababababababa"), "unknown");
-    assert_eq!(self_overlap.version("abababababab"), "abababababab");
+    assert_eq!(self_overlap.version("abababababab"), "unknown");
 
-    // The gate is the secret check; the empty secret holds nothing.
+    // Empty passwords are not credentials; no-auth metadata is still useful.
     assert_eq!(SecretGate::new(&[""]).version("7.1.0"), "7.1.0");
 
-    // A secret as long as the cap or longer cannot be inside a value of at
-    // most 32 characters; a value over the cap is refused unread.
-    let long_secret = "a".repeat(GATE_MAX_BYTES + 1);
+    // Credential length and the number of possible renderings have no effect:
+    // construction checks only emptiness and stores one boolean.
+    let long_secret = "a".repeat(1025);
     assert_eq!(
         SecretGate::new(&[long_secret.as_str()]).version("aaaa"),
-        "aaaa"
+        "unknown"
     );
     let near_match = format!("{}b", "a".repeat(5000));
     let big_value = "a".repeat(1 << 20);
     let gate = SecretGate::new(&[near_match.as_str()]);
     assert_eq!(gate.version(&big_value), "unknown");
     assert_eq!(gate.mode(&big_value), "unknown");
-    assert!(big_value.len() > GATE_MAX_BYTES);
+    let no_auth = SecretGate::new(&[]);
+    assert_eq!(no_auth.version(&big_value), "unknown");
+    assert_eq!(no_auth.mode(&big_value), "unknown");
 }
 
 #[test]
@@ -2548,7 +2552,7 @@ fn a_recorded_cache_with_every_step_used_succeeds() {
     );
     assert_eq!((status, stderr.as_str()), (0, ""), "{stdout}");
     assert!(stdout.contains("IAM token generated"));
-    assert!(stdout.contains("Server: engine version 7.1, mode=cluster"));
+    assert!(stdout.contains("Server: engine version unknown, mode=unknown"));
 
     // Optional metadata may be absent: no server, no address.
     let file = write_recording(r#"{"cache":{"address":"54.1.2.3","ping_ms":1.0}}"#);
@@ -2699,10 +2703,10 @@ fn find_tunnel_hosts_a_replay_mismatch_on_a_later_ssm_page_stays_fatal() {
 
 // ------------------------- #5004 #5005 #5007: typed cache diagnostics (PM ruling)
 //
-// No cache client or server string reaches stdout, stderr or a recording. A
-// failure is a kind from a closed set with fixed first-party text; the version
-// and mode of the server are printed only when they match a strict allowlist
-// and hold no active secret.
+// Cache failures carry no client diagnostic string. A failure is a kind from
+// a closed set with fixed first-party text; the version
+// and mode of the server are printed only without credentials and when they
+// match a strict allowlist.
 
 const KINDS: [(&str, &str); 6] = [
     ("authentication_failed", "authentication failed"),
@@ -2866,6 +2870,132 @@ fn server_line(version: &str, mode: &str, extra: &[&str]) -> (u8, String, String
 }
 
 #[test]
+fn authenticated_server_metadata_never_echoes_allowlisted_credential_encodings() {
+    // Nearby #5004 inputs: these encodings pass the version allowlist and
+    // contain no literal occurrence of the password. No rendering enumeration
+    // can prove a server value is unrelated to a credential.
+    for (password, version) in [
+        ("marmalade 742", "marmalade+742"),
+        ("a b", "7a+b9"),
+        ("synthetic", "c3ludGhldGlj"), // base64, no padding needed
+        ("synthetic", "73796e746865746963"), // hexadecimal
+        ("7.1.0", "Ny4xLjA"),          // unpadded base64url
+        ("a a", "a+a+a"),              // overlapping encoded password occurrences
+        ("a a a", "a+a+a+a"),          // self-overlapping encoded occurrences
+    ] {
+        let (status, stdout, stderr) = server_line(version, "cluster", &["--password", password]);
+        assert_eq!((status, stderr.as_str()), (0, ""));
+        assert!(
+            !stdout.contains(version),
+            "encoded credential {version:?} leaked: {stdout}"
+        );
+        assert!(stdout.contains("Server: engine version unknown, mode=unknown\n"));
+        assert!(stdout.contains("Result: CONNECTION SUCCESSFUL"));
+    }
+}
+
+#[test]
+fn injected_iam_metadata_never_echoes_an_encoded_active_token() {
+    let mut cache = MockCache::healthy();
+    cache.iam = Some("synthetic");
+    cache.info = Some(ServerInfo {
+        version: "c3ludGhldGlj".to_string(),
+        mode: "cluster".to_string(),
+    });
+    let args = ConnectArgs {
+        password: None,
+        iam_auth: true,
+        iam_user: Some("u"),
+        cache_name: Some("c"),
+        ..connect_args("127.0.0.1")
+    };
+    let run = run_connect(&args, &mut cache);
+    assert!(run.result.is_ok());
+    assert_eq!(run.status, 0);
+    assert_no_secret(&run, &["synthetic", "c3ludGhldGlj"], "active IAM token");
+    assert_eq!(logged(&cache.log), ["ping", "info", "close"]);
+}
+
+#[test]
+fn a_supplied_password_still_withholds_metadata_after_iam_replaces_it() {
+    // The active token is empty in this injected client, so only the supplied
+    // credential can cause the gate to withhold this form-urlencoded echo.
+    let mut cache = MockCache::healthy();
+    cache.iam = Some("");
+    cache.info = Some(ServerInfo {
+        version: "supplied+password".to_string(),
+        mode: "cluster".to_string(),
+    });
+    let args = ConnectArgs {
+        password: Some("supplied password"),
+        iam_auth: true,
+        iam_user: Some("u"),
+        cache_name: Some("c"),
+        ..connect_args("127.0.0.1")
+    };
+    let run = run_connect(&args, &mut cache);
+    assert!(run.result.is_ok());
+    assert_eq!(run.status, 0);
+    assert_no_secret(
+        &run,
+        &["supplied password", "supplied+password"],
+        "supplied password",
+    );
+}
+
+#[test]
+fn reviewed_free_text_errors_and_overlap_inputs_are_refused_without_echoing() {
+    // The exact original #4986/#5004/#5007 reproductions, including the
+    // supplied-password/active-token overlap. They now fail recording parsing.
+    for (recording, extra, absent) in [
+        (
+            r#"{"cache":{"connect":{"init_error":"rejected synthetic-unlabelled"}}}"#,
+            vec!["--password", "synthetic-unlabelled"],
+            "synthetic-unlabelled",
+        ),
+        (
+            r#"{"cache":{"ping_error":{"kind":"other","message":"rejected synthetic-unlabelled"}}}"#,
+            vec!["--password", "synthetic-unlabelled"],
+            "synthetic-unlabelled",
+        ),
+        (
+            r#"{"cache":{"connect":{"init_error":"rejected marmalade+742%2Fsynthetic%2Bvalue"}}}"#,
+            vec!["--password", "marmalade 742/synthetic+value"],
+            "marmalade+742%2Fsynthetic%2Bvalue",
+        ),
+        (
+            r#"{"cache":{"ping_error":{"kind":"authentication","message":"rejected marmalade+742%2Fsynthetic%2Bvalue"}}}"#,
+            vec!["--password", "marmalade 742/synthetic+value"],
+            "marmalade+742%2Fsynthetic%2Bvalue",
+        ),
+        (
+            r#"{"cache":{"iam_token":true,"ping_error":{"kind":"other","message":"rejected pre-recorded-token"}}}"#,
+            vec![
+                "--iam-auth",
+                "--iam-user",
+                "u",
+                "--cache-name",
+                "c",
+                "--password",
+                "pre-rec",
+            ],
+            "orded-token",
+        ),
+        (
+            r#"{"cache":{"connect":{"init_error":"rejected ababababababababa"}}}"#,
+            vec!["--password", "ababababababa"],
+            "ababababababababa",
+        ),
+    ] {
+        let (status, stdout, stderr) = replay_connection(recording, &extra);
+        assert_eq!(status, 1);
+        assert!(stdout.is_empty(), "{stdout}");
+        assert!(!stderr.contains(absent), "{stderr}");
+        assert!(!stderr.contains("Client init FAILED") && !stderr.contains("PING FAILED"));
+    }
+}
+
+#[test]
 fn the_server_version_prints_only_when_it_matches_the_allowlist() {
     let longest = format!("7{}", "9".repeat(31));
     for version in [
@@ -2944,8 +3074,8 @@ fn the_server_mode_prints_only_a_known_mode() {
 }
 
 #[test]
-fn a_server_value_holding_an_active_secret_prints_as_unknown() {
-    // Each value passes the pattern and holds the secret as a substring.
+fn authenticated_server_values_including_overlaps_and_near_matches_are_withheld() {
+    // Each value passes the pattern, including overlaps and near matches.
     let long_a = "a".repeat(30);
     let long_secret = format!("{long_a}b");
     for (version, secret, why) in [
@@ -2967,22 +3097,14 @@ fn a_server_value_holding_an_active_secret_prints_as_unknown() {
     ] {
         let (status, stdout, stderr) = server_line(version, "standalone", &["--password", secret]);
         assert_eq!(status, 0, "{why}: {stderr}");
-        if why.contains("not held") {
-            // The secret is not inside the value: the value is printed.
-            assert!(
-                stdout.contains(&format!("engine version {version},")),
-                "{why}: {stdout}"
-            );
-        } else {
-            assert!(
-                stdout.contains(&format!("engine version {UNKNOWN},")),
-                "{why}: {stdout}"
-            );
-            assert!(
-                !stdout.contains(&format!("version {version}")),
-                "{why}: {stdout}"
-            );
-        }
+        assert!(
+            stdout.contains(&format!("engine version {UNKNOWN}, mode={UNKNOWN}")),
+            "{why}: {stdout}"
+        );
+        assert!(
+            !stdout.contains(&format!("version {version}")),
+            "{why}: {stdout}"
+        );
     }
 }
 
@@ -2995,7 +3117,7 @@ fn the_active_iam_token_is_a_secret_of_the_server_gate() {
     );
     assert_eq!(status, 0, "{stdout}{stderr}");
     assert!(
-        stdout.contains("engine version unknown, mode=cluster"),
+        stdout.contains("engine version unknown, mode=unknown"),
         "{stdout}"
     );
     assert!(!stdout.contains("recorded-token"), "{stdout}");
@@ -3003,9 +3125,7 @@ fn the_active_iam_token_is_a_secret_of_the_server_gate() {
 
 #[test]
 fn server_text_in_reviewed_encodings_never_shows_the_password() {
-    // #5004: form-urlencoded; #5007: overlapping and self-overlapping. A mere
-    // fragment of the password is no secret under the ruling (exact containment
-    // of the active value only), so it is not listed.
+    // #5004: form-urlencoded; #5007: overlapping and self-overlapping.
     let password = "marmalade zqx742qz/synthetic+value";
     for version in [
         "marmalade+zqx742qz%2Fsynthetic%2Bvalue",
@@ -3035,15 +3155,15 @@ fn server_text_in_reviewed_encodings_never_shows_the_password() {
 
 #[test]
 fn a_very_large_server_value_is_unknown_and_never_scanned_whole() {
-    // #5005: a long near-match input. The value is far beyond the cap, so it is
-    // refused before any scan; so is a secret beyond the cap.
+    // #5005: a long near-match input. With a credential the gate checks only
+    // its boolean state, without inspecting the server value.
     let value = "a".repeat(1_048_576);
     let secret = format!("{}b", "a".repeat(5000));
     let (status, stdout, stderr) = server_line(&value, "standalone", &["--password", &secret]);
     assert_eq!(status, 0, "{stderr}");
     assert!(
         stdout.contains(&format!(
-            "  Server: engine version {UNKNOWN}, mode=standalone\n"
+            "  Server: engine version {UNKNOWN}, mode={UNKNOWN}\n"
         )),
         "{}",
         &stdout[..stdout.len().min(300)]

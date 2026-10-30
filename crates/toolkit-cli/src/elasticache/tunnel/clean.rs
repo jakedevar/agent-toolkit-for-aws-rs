@@ -17,10 +17,6 @@ pub(super) fn clean(text: &str) -> String {
     safe_path(text)
 }
 
-/// Longest server value (or secret) the containment check looks at, in bytes.
-/// A longer value is refused before any scan (fail closed).
-pub(super) const GATE_MAX_BYTES: usize = 1024;
-
 /// Printed instead of a server value that fails the allowlist or the gate.
 pub(super) const UNKNOWN: &str = "unknown";
 
@@ -40,42 +36,29 @@ fn is_version(text: &str) -> bool {
 /// The gate for text a cache server reports (PM ruling for #5004, #5005 and
 /// #5007).
 ///
-/// No client or server string is echoed. A server value is printed only when
-/// it matches a strict allowlist *and* holds none of the active secrets
-/// (password, IAM token) as a substring; otherwise `unknown` is printed. The
-/// containment check is one exact-value pass, bounded: a value above
-/// [`GATE_MAX_BYTES`] is refused unread, and a secret longer than the value
-/// cannot occur in it, so no scan runs for it.
+/// With any supplied or active credential, server values are withheld. An
+/// allowlist cannot distinguish a version from an encoded credential: even
+/// form-urlencoded spaces (`a+b`), base64 and hex can pass it (#5004).
+/// Without credentials, only short allowlisted values are printed.
+///
+/// No credential is copied, encoded or scanned. Authenticated runs do not
+/// inspect the server value at all; unauthenticated runs inspect at most 32
+/// version bytes or compare against three fixed mode names (#5005).
 pub(super) struct SecretGate {
-    secrets: Vec<String>,
+    has_credentials: bool,
 }
 
 impl SecretGate {
     /// A gate for `secrets` (empty ones are ignored).
     pub(super) fn new(secrets: &[&str]) -> Self {
         Self {
-            secrets: secrets
-                .iter()
-                .filter(|secret| !secret.is_empty())
-                .map(|secret| (*secret).to_string())
-                .collect(),
+            has_credentials: secrets.iter().any(|secret| !secret.is_empty()),
         }
-    }
-
-    /// Whether `value` holds a secret, or is too long to be checked (fail
-    /// closed).
-    fn holds_secret(&self, value: &str) -> bool {
-        if value.len() > GATE_MAX_BYTES {
-            return true;
-        }
-        self.secrets
-            .iter()
-            .any(|secret| secret.len() <= value.len() && value.contains(secret.as_str()))
     }
 
     /// The engine version, or `unknown`.
     pub(super) fn version<'a>(&self, version: &'a str) -> &'a str {
-        if is_version(version) && !self.holds_secret(version) {
+        if !self.has_credentials && is_version(version) {
             version
         } else {
             UNKNOWN
@@ -84,7 +67,7 @@ impl SecretGate {
 
     /// The engine mode, or `unknown`.
     pub(super) fn mode<'a>(&self, mode: &'a str) -> &'a str {
-        if MODES.contains(&mode) && !self.holds_secret(mode) {
+        if !self.has_credentials && MODES.contains(&mode) {
             mode
         } else {
             UNKNOWN
