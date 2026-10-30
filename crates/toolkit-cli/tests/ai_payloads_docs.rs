@@ -121,12 +121,21 @@ fn root() -> PathBuf {
         .canonicalize()
         .unwrap()
 }
+/// Skill text names the staged dispatcher by its installed path (#5586);
+/// the contracts below govern the command, so the path prefix is dropped.
+fn without_dispatcher_path(text: String) -> String {
+    text.replace("\"${CLAUDE_PLUGIN_ROOT}/bin/toolkit\"", "toolkit")
+}
 fn page(rel: &str) -> String {
-    fs::read_to_string(root().join(REFS).join(rel)).unwrap_or_else(|e| panic!("{rel}: {e}"))
+    without_dispatcher_path(
+        fs::read_to_string(root().join(REFS).join(rel)).unwrap_or_else(|e| panic!("{rel}: {e}")),
+    )
 }
 fn mirror_page(rel: &str) -> String {
-    fs::read_to_string(root().join(MIRROR_REFS).join(rel))
-        .unwrap_or_else(|e| panic!("mirror {rel}: {e}"))
+    without_dispatcher_path(
+        fs::read_to_string(root().join(MIRROR_REFS).join(rel))
+            .unwrap_or_else(|e| panic!("mirror {rel}: {e}")),
+    )
 }
 fn render_pages() -> Vec<&'static str> {
     GUIDES

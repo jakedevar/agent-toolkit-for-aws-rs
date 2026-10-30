@@ -48,8 +48,20 @@ fn root() -> PathBuf {
         .unwrap()
 }
 
+/// Skill text names the staged dispatcher by its installed path (#5586);
+/// the contracts below govern the command, so the path prefix is dropped.
+fn without_dispatcher_path(text: String) -> String {
+    text.replace(
+        "\"${CLAUDE_PLUGIN_ROOT}/skills/agents-pay/packages/openclaw/bin/toolkit\"",
+        "toolkit",
+    )
+    .replace("\"${CLAUDE_PLUGIN_ROOT}/bin/toolkit\"", "toolkit")
+}
+
 fn read(rel: &str) -> String {
-    fs::read_to_string(root().join(rel)).unwrap_or_else(|e| panic!("{rel}: {e}"))
+    without_dispatcher_path(
+        fs::read_to_string(root().join(rel)).unwrap_or_else(|e| panic!("{rel}: {e}")),
+    )
 }
 
 /// One page of the skill: its repository-relative path and its text.
