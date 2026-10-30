@@ -1429,6 +1429,39 @@ pub(crate) fn generated_request(
 #[cfg(test)]
 mod exchange_regression {
     use super::*;
+    use std::cell::Cell;
+    use toolkit_aws::testing::FakeProvider;
+    use toolkit_aws::{NoJitter, ResponseStream, ThreadSleeper};
+
+    struct CountingSigner {
+        calls: Cell<usize>,
+        inner: SigV4Signer<FakeProvider>,
+    }
+
+    impl DeadlineSigner for CountingSigner {
+        fn sign_until(
+            &self,
+            request: &mut HttpRequest,
+            scope: &SigningScope,
+            _: Instant,
+        ) -> Result<(), AwsError> {
+            self.calls.set(self.calls.get() + 1);
+            self.inner.sign(request, scope)
+        }
+    }
+
+    struct CountingTransport(Cell<usize>);
+
+    impl StreamingTransport for CountingTransport {
+        fn open<'a>(
+            &'a self,
+            _: &HttpRequest,
+            _: &StreamLimits,
+        ) -> Result<Box<dyn ResponseStream + 'a>, AwsError> {
+            self.0.set(self.0.get() + 1);
+            Err(AwsError::connect("fixture transport"))
+        }
+    }
 
     #[test]
     fn second_request_is_refused_without_replacing_the_parked_request() {
@@ -1442,8 +1475,9 @@ mod exchange_regression {
             panic!("second connector call must be refused immediately");
         };
         let detail = format!("{error:?}");
-        assert!(detail.contains("the SDK made a second request in one attempt"));
-        assert!(!detail.contains("sensitive-second-fixture"));
+        let fixed =
+            ConnectorError::other("the SDK made a second request in one attempt".into(), None);
+        assert_eq!(detail, format!("{fixed:?}"));
         let parked = exchange
             .take_request()
             .expect("first request remains parked");
@@ -1454,6 +1488,47 @@ mod exchange_regression {
             SdkBody::from("fixture response"),
         )));
         assert!(matches!(first.as_mut().poll(&mut cx), Poll::Ready(Ok(_))));
+        assert!(exchange.take_request().is_none());
+
+        // Exercise the same connector through the real driver and bridge.
+        // Both calls occur before the first is served, as in the direct check.
+        let signer = CountingSigner {
+            calls: Cell::new(0),
+            inner: SigV4Signer::new(FakeProvider::with_keys(
+                "fixture",
+                "AKIDFIXTUREEXAMPLE",
+                "fixture-secret-key",
+            )),
+        };
+        let transport = CountingTransport(Cell::new(0));
+        let client =
+            LiveAwsClient::new("us-east-1", &transport, &signer, &ThreadSleeper, &NoJitter)
+                .unwrap();
+        let op = &OPERATIONS[0];
+        let exchange = Exchange::default();
+        let make_request = |body| {
+            let mut request = SdkHttpRequest::new(SdkBody::from(body));
+            request.set_method("POST").unwrap();
+            request.set_uri(op.url("us-east-1")).unwrap();
+            request
+        };
+        let future = async {
+            let first = exchange.call(make_request("first-fixture"));
+            let second = exchange.call(make_request("sensitive-second-fixture"));
+            let refusal = second.await;
+            let _ = first.await;
+            refusal
+        };
+        let refusal = drive(future, &exchange, |request| {
+            assert_eq!(request.body().bytes(), Some(b"first-fixture".as_slice()));
+            client.serve(op, &request, Instant::now() + Duration::from_secs(60))
+        })
+        .unwrap()
+        .expect_err("second request must be refused");
+        let detail = format!("{refusal:?}");
+        assert_eq!(detail, format!("{fixed:?}"));
+        assert_eq!(signer.calls.get(), 1);
+        assert_eq!(transport.0.get(), 1);
         assert!(exchange.take_request().is_none());
     }
 }
