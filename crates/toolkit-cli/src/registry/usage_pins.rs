@@ -49,7 +49,7 @@ const SLICE_PINS: &[Pin] = &[
     ("agents-pay", 1000, 1000, 1169, 0x8b86_fec8_c506_878d),
     ("agents-pay-admin", 1000, 1000, 1562, 0xdff6_6e77_9cee_0b4e),
     ("ai-data", 250, 250, 1158, 0x5f1c_538d_8b18_bb70),
-    ("ai-models", 260, 260, 1381, 0xf342_7975_5c92_6f4a),
+    ("ai-models", 260, 260, 1388, 0x01bd_19e3_0944_b2da),
     ("ai-payloads", 1000, 1000, 877, 0xe29c_45f1_2039_1183),
     ("asm-exec", 340, 330, 755, 0x8f0d_9c6a_280d_05e8),
     ("aurora", 240, 240, 1361, 0x7372_79c7_a841_5524),

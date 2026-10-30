@@ -2,9 +2,21 @@
 # build environment (CARGO_TARGET_DIR, RUSTC_WRAPPER/sccache); they rely on it
 # being present in the invoking environment.
 .PHONY: build fmt fmt-patch clippy test test-scripts clippy-sdk test-sdk clippy-live plugin-binaries plugin-binaries-check openclaw-node-test openclaw-npm-cache
+.PHONY: ai-models-sdk ai-models-test clippy-ai-models
 
 build:
 	cargo build --workspace --locked
+
+ai-models-sdk:
+	cargo test -p toolkit-cli --features ai-models-live --locked --lib ai_models::
+	cargo test -p toolkit-cli --features ai-models-live --locked --test ai_models
+
+ai-models-test:
+	cargo test -p toolkit-cli --locked --lib ai_models::
+	cargo test -p toolkit-cli --locked --test ai_models
+
+clippy-ai-models:
+	cargo clippy -p toolkit-cli --features ai-models-live --all-targets --locked -- -D warnings
 
 fmt:
 	cargo fmt --all -- --check

@@ -83,6 +83,7 @@ fn a_recorded_listing_prints_json_on_stdout_and_nothing_on_stderr() {
 }
 
 #[test]
+#[cfg(not(feature = "ai-models-live"))]
 fn the_default_build_sends_nothing_and_exits_one() {
     let scratch = Scratch::new("nolive");
     for args in [

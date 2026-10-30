@@ -91,6 +91,7 @@ pub mod roots_payment;
 #[cfg(test)]
 mod s3_tests;
 pub mod service;
+pub mod service_bridge;
 pub mod source;
 pub mod stdin;
 #[cfg(test)]
