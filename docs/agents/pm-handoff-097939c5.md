@@ -1321,3 +1321,4 @@ Friction: #4727, Rsi #4694, Rsi #4704
   Operator asked why OpenClaw must run: answered (live run L-OC-1..7 only gates publishing 1.1.0; port is complete without it; x402 CLI live payment covers the D-OC5 risk).
   Reported up 02:21Z: #5455 hitting every scoped run; harness:true filing unresolved.
   Workers: 60b47bef S4, c928148c #5560, f0ba73f7 S2 re-review 3, 669e7ef7 #4719. Queue: 3079 #5555.
+- 02:30Z: #5555 LANDED (3079, landed_sha 98d752346df595cf49e1419d9d5f7757ca101829) through the queue's clean gate, confirming the scoped reds were only #5455. Auto-closed; closed #5539. Queue empty.
