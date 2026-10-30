@@ -3,10 +3,10 @@ use crate::docgraph::live_memory::tests::{json,policy};
 use toolkit_aws::testing::{FakeChunk,FakeStreamingTransport,FakeSigner};
 use toolkit_aws::transport::{Method,FRAMING_HEADERS};
 fn query() -> Json { memory::query("g-abc123def4","RETURN $x",json(r#"{"x":[9007199254740993,true,null,"'雪",{"k":0.5}]}"#)).unwrap() }
-fn encoded() -> HttpRequest { encode(Route::Analytics,&query(),"us-east-1",Some(&policy(false)),Duration::from_secs(60)).unwrap() }
+fn encoded() -> HttpRequest { encode(Route::Analytics,&query(),"us-east-1",Some(&policy(false)),Duration::from_secs(4)).unwrap() }
 #[test]
 fn analytics_uses_modeled_query_wire_fields_endpoint_parameters_and_timeout() {
-    let request=encoded();
+    let request=encode(Route::Analytics,&query(),"us-east-1",Some(&policy(false)),Duration::from_secs(60)).unwrap();
     assert_eq!(request.method,Method::Post);
     assert_eq!(request.url,"https://g-abc123def4.us-east-1.neptune-graph.amazonaws.com:443/queries");
     assert_eq!(request.headers.get("graphidentifier"),Some("g-abc123def4"));

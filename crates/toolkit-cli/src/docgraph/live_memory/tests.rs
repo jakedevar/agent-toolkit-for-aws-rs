@@ -1,8 +1,8 @@
 //! T-DG-06b/d: dispatch existing plans and response-dependent expansions unchanged.
 use super::*;
 use toolkit_core::parse_json;
-pub(super) fn json(s: &str) -> Json { parse_json(s).unwrap() }
-pub(super) fn policy(gremlin: bool) -> DatabaseEndpoint {
+pub(in crate::docgraph::live_memory) fn json(s: &str) -> Json { parse_json(s).unwrap() }
+pub(in crate::docgraph::live_memory) fn policy(gremlin: bool) -> DatabaseEndpoint {
     DatabaseEndpoint::new(if gremlin { "db.us-east-1.neptune.amazonaws.com" } else { "g-abc123def4.us-east-1.neptune-graph.amazonaws.com" }, if gremlin {8182} else {443}, "us-east-1", &[]).unwrap()
 }
 #[derive(Default)]

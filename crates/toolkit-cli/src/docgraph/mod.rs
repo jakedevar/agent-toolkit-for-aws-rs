@@ -529,6 +529,9 @@ pub fn memory_command(invocation: &Invocation, out: &mut Output<'_>) -> Result<(
                 ));
             }
         }
+        #[cfg(feature = "docgraph-live")]
+        return live_memory::run(invocation, out);
+        #[cfg(not(feature = "docgraph-live"))]
         return Err(unavailable_live());
     }
     let op = invocation

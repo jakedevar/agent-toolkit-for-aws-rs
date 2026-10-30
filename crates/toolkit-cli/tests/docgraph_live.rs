@@ -288,8 +288,9 @@ fn live_seed_refuses_policy_mismatches_before_credentials_or_dns() {
 /// Identifiers only a live test would use: the production database transport
 /// and resolver. A test naming one, or the exact acceptance gate variable,
 /// must be `#[ignore]` and gated on the `docgraph-live` feature.
-const LIVE_IDENTS: [&str; 4] = [
+const LIVE_IDENTS: [&str; 5] = [
     "for_database",
+    "for_docgraph_service",
     "SystemDatabaseResolver",
     "TcpDialer",
     "connect_live",
