@@ -31,6 +31,64 @@ fn invalid_stdin_fails_silently_before_binding() {
 
 #[cfg(all(unix, not(feature = "aws-sdk")))]
 #[test]
+fn leading_hyphen_state_survives_helper_invocation_and_callback() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let home =
+        std::env::temp_dir().join(format!("callback-hyphen-{}-{unique}", std::process::id()));
+    std::fs::create_dir(&home).unwrap();
+    let deadline = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        + 10;
+    let state = "-abcdefghijklmnopqrstuvwxyz0123456789_ABCDEF";
+    let mut child = Command::new(env!("CARGO_BIN_EXE_toolkit"))
+        .args(["launch", "auth-callback"])
+        .env("HOME", &home)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let input = format!(
+        r#"{{"client_id":"c","client_secret":"s","client_expires_at":1,"scopes":["launch:access"],"code_verifier":"v","state":"{state}","deadline":{deadline}}}"#
+    );
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(input.as_bytes())
+        .unwrap();
+    let mut line = String::new();
+    BufReader::new(child.stdout.take().unwrap())
+        .read_line(&mut line)
+        .unwrap();
+    let port: u16 = line.trim().parse().unwrap();
+    let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .unwrap();
+    write!(
+        stream,
+        "GET /?state={state}&error=access_denied HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\r\n"
+    )
+    .unwrap();
+    let mut response = String::new();
+    stream.read_to_string(&mut response).unwrap();
+    assert!(response.starts_with("HTTP/1.1 400"));
+    assert!(!child.wait().unwrap().success());
+    let record =
+        std::fs::read_to_string(home.join(format!(".launch-with-aws/pending/{}.json", child.id())))
+            .unwrap();
+    assert!(record.contains("access_denied"));
+    std::fs::remove_dir_all(home).unwrap();
+}
+
+#[cfg(all(unix, not(feature = "aws-sdk")))]
+#[test]
 #[allow(clippy::too_many_lines)]
 fn helper_announces_loopback_and_retains_transport_failure() {
     let unique = SystemTime::now()
