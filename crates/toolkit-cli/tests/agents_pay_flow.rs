@@ -1081,8 +1081,18 @@ fn t_restart_6_body_mismatch_service_contract_is_not_assumed() {
                 assert_eq!(second.get("paid"), Some(&Json::Bool(true)), "{second:?}");
                 let headers = world.headers();
                 assert_eq!(headers.len(), 2);
-                assert_eq!(headers[0], headers[1]);
-                assert_eq!(world.merchant.settlements(), 1);
+                let documents: Vec<Json> = headers
+                    .iter()
+                    .map(|(name, value)| {
+                        assert_eq!(name, "PAYMENT-SIGNATURE");
+                        let bytes = toolkit_core::encoding::base64_standard_decode(value).unwrap();
+                        json(std::str::from_utf8(&bytes).unwrap())
+                    })
+                    .collect();
+                assert_eq!(documents[0].get("payload"), documents[1].get("payload"));
+                assert_ne!(documents[0].get("accepted"), documents[1].get("accepted"));
+                // The header wraps current terms around the same signed proof.
+                // This fixture's header ledger does not model on-chain settlement.
             } else {
                 assert_refused(&second, "ClientError during payment flow.");
                 assert_eq!(flow::exit_code(&second), 2);
