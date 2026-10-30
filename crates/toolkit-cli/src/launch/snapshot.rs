@@ -265,19 +265,36 @@ impl Network {
                 std::time::Instant::now() + Duration::from_secs(30),
             )
             .map_err(|error| LaunchError::Download(error.to_string()))?;
-        super::api::Client {
-            transport: &self.transport,
-            base,
-            region,
-            token: &token,
-            clock: &SystemClock,
-            sleeper: &ThreadSleeper,
-            jitter: &jitter,
-            policy: RetryPolicy::default(),
-        }
-        .download_url(launch_id, override_base)
-        .map_err(|error| LaunchError::Download(error.to_string()))
+        lookup_download_url(
+            &super::api::Client {
+                transport: &self.transport,
+                base,
+                region,
+                token: &token,
+                clock: &SystemClock,
+                sleeper: &ThreadSleeper,
+                jitter: &jitter,
+                policy: RetryPolicy::default(),
+            },
+            launch_id,
+            override_base,
+        )
     }
+}
+
+#[cfg(any(feature = "aws-sdk", test))]
+fn lookup_download_url(
+    client: &super::api::Client<'_>,
+    launch_id: &str,
+    override_base: bool,
+) -> Result<Option<String>, LaunchError> {
+    client.download_url(launch_id).map_err(|error| {
+        LaunchError::Download(super::api::command_error(
+            &error,
+            client.region,
+            override_base,
+        ))
+    })
 }
 
 #[cfg(test)]

@@ -328,11 +328,8 @@ fn dispatch(
         }
         "get-launch-download-url" => {
             let url = client
-                .download_url(id, override_base)
-                .map_err(|e| match e {
-                    ApiError::Lookup { .. } => e.to_string(),
-                    other => fail(&other),
-                })?
+                .download_url(id)
+                .map_err(|e| fail(&e))?
                 .ok_or(NO_DOWNLOAD_URL)?;
             Ok(Json::object(vec![("downloadUrl", Json::string(url))]))
         }

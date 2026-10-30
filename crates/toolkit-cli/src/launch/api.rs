@@ -90,11 +90,6 @@ pub(crate) enum ApiError {
         code: &'static str,
         operation: &'static str,
     },
-    Lookup {
-        status: u16,
-        code: &'static str,
-        hint: &'static str,
-    },
     PutStatus(u16),
     PutConnect,
     PutTimeout,
@@ -121,9 +116,6 @@ impl std::fmt::Display for ApiError {
                 operation,
             } => {
                 write!(f, "{operation} failed ({status}): {code}")
-            }
-            Self::Lookup { status, code, hint } => {
-                write!(f, "GET /api/launches/<id> failed ({status}): {code}{hint}")
             }
             Self::PutStatus(status) => write!(f, "PUT (presigned S3 upload) failed ({status})"),
             Self::PutConnect => f.write_str("Could not upload the archive: connect"),
@@ -178,17 +170,8 @@ pub(crate) fn validate_launch_id(id: &str) -> Result<(), ApiError> {
     }
 }
 impl Client<'_> {
-    pub fn download_url(&self, id: &str, override_base: bool) -> Result<Option<String>, ApiError> {
-        let result = self.call(ApiOperation::GetLaunch, id, &["download_url"], None).map_err(|error| match error {
-            ApiError::Status { status, code, .. } => {
-                let hint = if status == 401 { " Hint: the backend rejected the Bearer token. Ensure you signed in successfully." }
-                else if status == 404 && !override_base && self.region == "us-east-1" { " Hint: no launch with this ID exists in us-east-1. A launch exists only in the region it was created in; retry with --region set to that region (one of: us-east-1, eu-central-1)." }
-                else if status == 404 && !override_base && self.region == "eu-central-1" { " Hint: no launch with this ID exists in eu-central-1. A launch exists only in the region it was created in; retry with --region set to that region (one of: us-east-1, eu-central-1)." }
-                else { "" };
-                ApiError::Lookup { status, code, hint }
-            },
-            other => other,
-        })?;
+    pub fn download_url(&self, id: &str) -> Result<Option<String>, ApiError> {
+        let result = self.call(ApiOperation::GetLaunch, id, &["download_url"], None)?;
         let launch = toolkit_aws::recorded::optional_object(&result, "launch")
             .map_err(|_| ApiError::InvalidResponse)?
             .ok_or(ApiError::InvalidResponse)?;

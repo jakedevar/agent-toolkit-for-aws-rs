@@ -262,14 +262,6 @@ fn t_tok_6_debug_of_every_launch_error_and_secret_holder() {
                 operation: "GET /api/launches/<id>"
             }
         ),
-        format!(
-            "{:?}",
-            ApiError::Lookup {
-                status: 404,
-                code: "UnrecognizedError",
-                hint: ""
-            }
-        ),
         format!("{:?}", session(NOW)),
         format!(
             "{:?}",
