@@ -465,7 +465,7 @@ Using the `wallet_address` / `redirect_url` the Step 6 command printed in the de
 
 ### Step 8: Set env vars and test — developer sets the values, then the agent tests
 
-The developer copies the `export` lines the Step 6 command printed in their own terminal — it emits all of them (`PAYMENT_MANAGER_ARN`, `PAYMENT_INSTRUMENT_ID`, `PAYMENT_SESSION_ID`, `PAYMENT_USER_ID`, `AWS_REGION`) — into the environment the agent runs in. They are not pasted into chat, and the agent does not ask for them or re-run the Step 6 command to get them:
+The developer copies the `export` lines the Step 6 command printed in their own terminal — it emits all of them (`PAYMENT_MANAGER_ARN`, `PAYMENT_INSTRUMENT_ID`, `PAYMENT_SESSION_ID`, `PAYMENT_USER_ID`, `AWS_REGION`) — into the environment the agent is started from. They are not pasted into chat, and the agent does not ask for them or re-run the Step 6 command to get them:
 
 ```bash
 export PAYMENT_MANAGER_ARN=...      # all five printed by `toolkit agents-build setup-payment-user`
