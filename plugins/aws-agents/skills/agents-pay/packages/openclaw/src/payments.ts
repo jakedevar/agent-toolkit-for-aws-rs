@@ -1,5 +1,4 @@
-import { createHash } from "node:crypto";
-import { invokeAgentCoreBridge } from "./bridge.js";
+import { invokeAgentCoreBridge, type BridgeInvoker } from "./bridge.js";
 import { getConfig } from "./config.js";
 
 interface PaymentSession {
@@ -20,11 +19,13 @@ export interface SessionStatus {
   remaining_usd: number | null;
 }
 
-export async function getPaymentSessionStatus(): Promise<SessionStatus> {
+export async function getPaymentSessionStatus(
+  invoke: BridgeInvoker = invokeAgentCoreBridge,
+): Promise<SessionStatus> {
   const config = getConfig();
 
   try {
-    const response = await invokeAgentCoreBridge({
+    const response = await invoke({
       operation: "get_payment_session",
       region: config.region,
       payment_manager_arn: config.paymentManagerArn,
@@ -88,48 +89,28 @@ export async function getPaymentSessionStatus(): Promise<SessionStatus> {
   }
 }
 
-function stableResource(url: string): string {
-  const parsed = new URL(url);
-  return `${parsed.origin}${parsed.pathname || "/"}`;
-}
-
-/**
- * Build one stable token per logical purchase. Publisher-controlled fields such
- * as extra.nonce are deliberately excluded so a rotating challenge cannot turn
- * a retry into another payment.
- */
-export function deriveClientToken(
-  sessionId: string,
-  resourceUrl: string,
-  accepted: Record<string, unknown>,
-): string {
-  const material = [
-    sessionId,
-    stableResource(resourceUrl),
-    String(accepted.scheme ?? ""),
-    String(accepted.network ?? ""),
-    String(accepted.asset ?? "").toLowerCase(),
-    String(accepted.payTo ?? "").toLowerCase(),
-    String(accepted.amount ?? accepted.maxAmountRequired ?? ""),
-  ].join("\x1f");
-  return createHash("sha256").update(material).digest("hex");
-}
-
 export interface PaymentResult {
   signedPayload: Record<string, unknown>;
 }
 
+/**
+ * Ask the Rust bridge to authorize and pay the offer TS selected. Rust
+ * re-authorizes `accepted` against the same policy, builds the ProcessPayment
+ * payload and derives the idempotency token (R-TOK), so neither is sent.
+ */
 export async function processPayment(
   version: string,
   accepted: Record<string, unknown>,
+  resource: Record<string, unknown>,
   resourceUrl: string,
+  invoke: BridgeInvoker = invokeAgentCoreBridge,
 ): Promise<PaymentResult> {
   if (version !== "2") {
     throw new Error("Only x402 v2 payment challenges are supported");
   }
 
   const config = getConfig();
-  const response = await invokeAgentCoreBridge({
+  const response = await invoke({
     operation: "process_payment",
     region: config.region,
     payment_manager_arn: config.paymentManagerArn,
@@ -137,13 +118,18 @@ export async function processPayment(
     payment_instrument_id: config.paymentInstrumentId,
     user_id: config.userId,
     agent_name: "openclaw-aws-agents-pay",
-    client_token: deriveClientToken(
-      config.payment_session_id,
-      resourceUrl,
-      accepted,
-    ),
     version,
-    payload: accepted,
+    request_url: resourceUrl,
+    accepted,
+    resource,
+    policy: {
+      networkPreferences: config.networkPreferences,
+      allowedOrigins: config.allowedOrigins,
+      allowedRecipients: config.allowedRecipients,
+      allowAnyRecipient: config.allowAnyRecipient,
+      allowedAssetsByNetwork: config.allowedAssetsByNetwork,
+      maxPaymentAmountAtomic: config.maxPaymentAmountAtomic,
+    },
   });
 
   const paymentOutput = response.paymentOutput as
