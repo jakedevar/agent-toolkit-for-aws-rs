@@ -294,6 +294,11 @@ pub fn validate_endpoint(
     {
         return Err(reject("malformed path".to_string()));
     }
+    if is_payment_api(&host, tail) {
+        return Err(reject(
+            "the AgentCore payments API is reachable only through toolkit agents-pay".to_string(),
+        ));
+    }
     if policy.check_dns {
         public_addresses(&host, resolver).map_err(reject)?;
     }
@@ -301,6 +306,80 @@ pub fn validate_endpoint(
         host,
         port,
         path: tail.trim_end_matches('/').to_string(),
+    })
+}
+
+/// How many rounds of percent-decoding a path gets before it fails closed.
+const MAX_PATH_DECODE_ROUNDS: usize = 8;
+
+/// One round of percent-decoding; an invalid escape stays as written.
+fn percent_decoded(path: &[u8]) -> Vec<u8> {
+    let hex = |byte: u8| {
+        char::from(byte)
+            .to_digit(16)
+            .and_then(|d| u8::try_from(d).ok())
+    };
+    let mut out = Vec::with_capacity(path.len());
+    let mut index = 0;
+    while index < path.len() {
+        let escape = (path[index] == b'%')
+            .then(|| Some(hex(*path.get(index + 1)?)? * 16 + hex(*path.get(index + 2)?)?))
+            .flatten();
+        if let Some(byte) = escape {
+            out.push(byte);
+            index += 3;
+        } else {
+            out.push(path[index]);
+            index += 1;
+        }
+    }
+    out
+}
+
+/// Whether `host` and `path` name the `AgentCore` payments API (#5099,
+/// T-AC3-REACH). Only `agents_pay`'s own client may call it, and that client
+/// builds its URL from `Endpoint::for_service`, not from a configured value.
+///
+/// The host is any `bedrock-agentcore*` label under an allowed domain (data
+/// plane, FIPS, dual-stack, VPC endpoint). The path is decoded until stable and
+/// normalized, because the service may do the same; its **first** segment
+/// decides, so a runtime ARN merely containing `payments` stays reachable. A
+/// path that never settles fails closed.
+fn is_payment_api(host: &str, path: &str) -> bool {
+    if !host
+        .split('.')
+        .any(|label| label.starts_with("bedrock-agentcore"))
+    {
+        return false;
+    }
+    let mut decoded = path.as_bytes().to_vec();
+    let mut settled = false;
+    for _ in 0..MAX_PATH_DECODE_ROUNDS {
+        let next = percent_decoded(&decoded);
+        settled = next == decoded;
+        decoded = next;
+        if settled {
+            break;
+        }
+    }
+    if !settled {
+        return true;
+    }
+    let mut segments: Vec<&[u8]> = Vec::new();
+    for segment in decoded.split(|byte| matches!(byte, b'/' | b'\\')) {
+        match segment {
+            b"" | b"." => {}
+            b".." => {
+                segments.pop();
+            }
+            other => segments.push(other),
+        }
+    }
+    segments.first().is_some_and(|first| {
+        first
+            .split(|byte| *byte == b';')
+            .next()
+            .is_some_and(|name| name.eq_ignore_ascii_case(b"payments"))
     })
 }
 
@@ -541,6 +620,55 @@ mod tests {
 
     fn public_resolver() -> FixedResolver {
         FixedResolver::new().answer_any(&["52.1.2.3"])
+    }
+
+    /// T-AC3-REACH (#5099): the generic signed routes cannot name the
+    /// `AgentCore` payments API, however the path is spelled.
+    #[test]
+    fn the_agentcore_payments_api_is_never_a_configured_endpoint() {
+        let policy = EndpointPolicy::aws_public().without_dns_check();
+        let resolver = FixedResolver::new();
+        for url in [
+            "https://bedrock-agentcore.us-east-1.amazonaws.com/payments/processPayment",
+            "https://bedrock-agentcore.us-east-1.amazonaws.com/payments/createPaymentInstrument",
+            "https://bedrock-agentcore.us-east-1.amazonaws.com/payments/createPaymentSession",
+            "https://bedrock-agentcore.us-east-1.amazonaws.com/payments/getPaymentSession",
+            "https://bedrock-agentcore.us-east-1.amazonaws.com/payments",
+            "https://BEDROCK-AGENTCORE.us-east-1.amazonaws.com/PAYMENTS/processPayment",
+            "https://bedrock-agentcore.us-east-1.amazonaws.com:443/payments/processPayment",
+            "https://bedrock-agentcore-fips.us-east-1.amazonaws.com/payments/processPayment",
+            "https://bedrock-agentcore.us-east-1.api.aws/payments/processPayment",
+            "https://vpce-1a2b.bedrock-agentcore.us-east-1.vpce.amazonaws.com/payments/x",
+            "https://bedrock-agentcore.us-east-1.amazonaws.com//payments/processPayment",
+            "https://bedrock-agentcore.us-east-1.amazonaws.com/./payments/processPayment",
+            "https://bedrock-agentcore.us-east-1.amazonaws.com/%70ayments/processPayment",
+            "https://bedrock-agentcore.us-east-1.amazonaws.com/%2570ayments/processPayment",
+            "https://bedrock-agentcore.us-east-1.amazonaws.com/x/%2e%2e/payments/processPayment",
+            "https://bedrock-agentcore.us-east-1.amazonaws.com/x%2f..%2fpayments%2fprocessPayment",
+            "https://bedrock-agentcore.us-east-1.amazonaws.com/payments;v=1/processPayment",
+        ] {
+            let error = validate_endpoint(url, "e", &policy, &resolver).expect_err(url);
+            assert!(
+                error.to_string().contains("AgentCore payments API"),
+                "{url}: {error}"
+            );
+        }
+        for url in [
+            "https://aws-mcp.us-east-1.api.aws/mcp",
+            "https://bedrock-agentcore.us-east-1.amazonaws.com",
+            "https://bedrock-agentcore.us-east-1.amazonaws.com/mcp",
+            "https://gw-1.gateway.bedrock-agentcore.us-east-1.amazonaws.com/mcp",
+            // A runtime that merely has `payments` in its name stays reachable.
+            "https://bedrock-agentcore.us-east-1.amazonaws.com/runtimes/arn%3Aaws%3Abedrock-agentcore%3Aus-east-1%3A444455556666%3Aruntime%2Fpayments/invocations",
+            "https://bedrock-agentcore.us-east-1.amazonaws.com/paymentsish/x",
+            // Another service's own path is not the payments API.
+            "https://abc123.execute-api.us-east-1.amazonaws.com/payments/process",
+        ] {
+            assert!(
+                validate_endpoint(url, "e", &policy, &resolver).is_ok(),
+                "{url}"
+            );
+        }
     }
 
     fn validate(url: &str) -> Result<Endpoint, AwsError> {

@@ -99,6 +99,17 @@ failures because the transport cannot prove whether request bytes were sent.
 Duplicate Content-Length values now remain detectable at the shared response
 header boundary. Live network use still waits for the S1 integration gate.
 
+x402 review triage (#5097, #5098, #5099): the landed amount comparator already uses `E + 6`
+and its equivalent-spelling boundary tables record zero spending calls on over-cap entries.
+The separate `agents-pay-live` feature excludes live constructors from default and SDK test
+artifacts, and `validate_endpoint` refuses the `AgentCore` payments API for the generic signed
+routes (`mcp-proxy`, `asm-exec`). The platform-only TLS repair extends payment roots to credential HTTP and admin,
+and replaces macOS CA-variable presence checks with direct Security framework trust queries;
+that macOS branch is type-checked only and has not been run on a Mac.
+The r2 trust-plane contract and offline regression lanes are recorded in
+[the x402 design](x402-payments-design.md#r-tls-pay-trust-roots-on-the-payment-runtime-q15).
+Exact verification and integration status are published on #5097; this note is not a landing claim.
+
 ## JSON key order (#5394)
 
 `serde_json`'s `preserve_order` feature is enabled for workspace-wide builds (through `aws-config`'s `rustls` in the two skill crates) but not for per-package builds, so `serde_json::Value` object order, and any output built from it, depends on build scope. Output whose key order is observable must not rely on that: render it from `toolkit_core::Json` (insertion order) or sort explicitly. `toolkit-cli`'s schema engine hands the validator keys in sorted order and re-renders the crate's own sentences from the ordered document (tests in `spec/tests.rs`); `powertools-handler` and `s3-upload-processor` select `preserve_order` themselves and pin their output order in tests. `crates/toolkit-cli/src/launch/` still builds output with `serde_json::json!`; L5 (#5345) moves it to `toolkit_core::Json`.
