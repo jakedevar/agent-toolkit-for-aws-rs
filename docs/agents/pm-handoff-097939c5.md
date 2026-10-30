@@ -1251,3 +1251,4 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 00:29Z: x402 S7 #5526 (014458e4) DONE at cc3e66a029b8b906cfcfae07c82a5bf357fd8018 (25 doc tests, red 590efd63 15 failed -> green 5616e2a3; scoped cf6bdf15 ok 4737; OpenClaw parts byte-identical). Runtime D23 strings follow-up #5528.
   Review #5537 -> Codex sol high, pinned cc3e66a0, queued for a slot. On ACCEPT: check, enqueue issue 5526; close #5526 #5537. Then OpenClaw B5 (after B4).
   Slot queue (launch order): B4 #5535, #5509 merge, #5537 review. Running: fe94684e S3, the S2 repair.
+- 00:34Z: #5509 merge (e0e2d565) DONE at 121e5daf700436e8ec03600fc79dcb3dd3f37ccd (Makefile union verified; check ok 1d3bde7c, 5493). ENQUEUED (issue 5509). Kaizen fixed this seat: #5509 fmt-patch, #5478 flake. Open: #5536 #5510 #5488 #5476 #5265 (evidence added) #5518 #5519 #5524 #5528.
