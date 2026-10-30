@@ -88,7 +88,13 @@ fn openclaw_exempt(rel: &str, text: &str) -> String {
     if rel.ends_with(OPENCLAW_REFERENCE) {
         return String::new();
     }
-    let Some(start) = text.find(OPENCLAW_HEADING) else {
+    // Only the two `SKILL.md` copies carry the exempt subsection; a same-named
+    // heading in another page is ordinary content.
+    let Some(start) = rel
+        .ends_with("/SKILL.md")
+        .then(|| text.find(OPENCLAW_HEADING))
+        .flatten()
+    else {
         return text.to_owned();
     };
     let after = text[start..]

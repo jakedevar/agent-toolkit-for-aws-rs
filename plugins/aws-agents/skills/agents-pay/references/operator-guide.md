@@ -20,14 +20,14 @@ AgentCore Payments defines a four-role model. Follow the official guide:
 | Role | Purpose | Who uses it |
 |---|---|---|
 | **ControlPlaneRole** | Payment managers, connectors, credential providers | Administrator |
-| **ManagementRole** | Payment instruments and sessions. Carries an explicit `Deny` on `ProcessPayment` | **A human**, running this skill's admin CLI |
+| **ManagementRole** | Payment instruments and sessions. Carries an explicit `Deny` on `ProcessPayment` | **A human**, running this skill's `toolkit agents-pay admin` commands |
 | **ProcessPaymentRole** | Executes payments against an existing session. **No session writes** | **The agent runtime** |
 | **ResourceRetrievalRole** | Service role AgentCore assumes to retrieve credentials | `bedrock-agentcore.amazonaws.com` |
 
 ### The rule
 
 > **The agent must have neither the ManagementRole nor the ability to run
-> `scripts/agents_pay_admin.py`.**
+> `toolkit agents-pay admin`.**
 
 A human uses the **ManagementRole** to create the payment instrument and to
 authorize each spending session. The agent runs with the **ProcessPaymentRole**,
@@ -72,20 +72,18 @@ and on why the split exists at all:
 | Step | Command | Role |
 |---|---|---|
 | 1 | `agentcore add payment-manager` / `payment-connector` / `deploy` | ControlPlaneRole |
-| 2 | `agents_pay_admin.py init-config` | none — writes a local file |
-| 3 | `agents_pay_admin.py create-instrument` | **ManagementRole** |
-| 4 | `agents_pay_admin.py new-session` | **ManagementRole** |
-| 5 | agent calls `x402_fetch` | **ProcessPaymentRole** |
+| 2 | `toolkit agents-pay admin init-config` | none — writes a local file |
+| 3 | `toolkit agents-pay admin create-instrument` | **ManagementRole** |
+| 4 | `toolkit agents-pay admin new-session` | **ManagementRole** |
+| 5 | agent runs `toolkit agents-pay fetch` | **ProcessPaymentRole** |
 
 ---
 
 ## Quick start
 
 ```bash
-# 0. Prerequisites
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install -r requirements.txt
+# 0. Prerequisites: `toolkit` on PATH (a release build)
+toolkit help
 npm install -g @aws/agentcore
 
 # 1. Provision (ControlPlaneRole; only step that touches provider secrets)
@@ -94,12 +92,12 @@ agentcore add payment-connector                   # NO FLAGS — interactive wiz
 agentcore deploy
 
 # 2. Write the config with at least one approved payee
-python scripts/agents_pay_admin.py init-config \
+toolkit agents-pay admin init-config \
   --max-per-payment-usd 0.05 \
   --recipient 0xMerchantWalletAddress
 
 # 3. Create the wallet (ManagementRole) — payer identity comes from the config
-python scripts/agents_pay_admin.py create-instrument --email you@example.com
+toolkit agents-pay admin create-instrument --email you@example.com
 
 # 3a/3b. THE END USER now delegates in a browser and funds the wallet with USDC.
 #        Both belong to the wallet, and both must happen BEFORE step 4 —
@@ -107,10 +105,10 @@ python scripts/agents_pay_admin.py create-instrument --email you@example.com
 #        Step 3 prints the delegation URL and the wallet address.
 
 # 4. Authorize a budget (ManagementRole; interactive — you type "approve")
-python scripts/agents_pay_admin.py new-session --budget 1.00
+toolkit agents-pay admin new-session --budget 1.00
 
-# 5. Verify, then register the tool in your agent
-python scripts/agents_pay_admin.py preflight
+# 5. Verify, then let your agent run `toolkit agents-pay fetch`
+toolkit agents-pay admin preflight
 ```
 
 ### The interactive approval, concretely
@@ -119,7 +117,7 @@ Step 4 is an ordinary command that prompts. It is not a web console or a callbac
 you run it in your shell and type one word:
 
 ```text
-$ python3 scripts/agents_pay_admin.py new-session --budget 1.00
+$ toolkit agents-pay admin new-session --budget 1.00
 
 About to create a payment session:
   manager   : arn:aws:bedrock-agentcore:us-west-2:1234:payment-manager/pm-abc
@@ -147,7 +145,7 @@ Piping `approve` in does not work either.
 ### OpenClaw
 
 If the agent runs on OpenClaw, install the published plugin instead of wiring the
-Python functions by hand:
+`toolkit agents-pay fetch` command by hand:
 
 ```bash
 openclaw plugins install clawhub:@aws/aws-agents-pay
@@ -155,7 +153,7 @@ openclaw plugins inspect aws-agents-pay               # confirm what it register
 ```
 
 OpenClaw executes payments through the TypeScript plugin's `get_paid_content`
-tool. Other hosts use the equivalent Python `x402_fetch` tool. Choose exactly one
+tool. Other hosts use the equivalent `toolkit agents-pay fetch` command. Choose exactly one
 runtime path; enabling both would make policy enforcement path-dependent.
 
 Two things to confirm before you trust the OpenClaw runtime:
@@ -166,8 +164,8 @@ Two things to confirm before you trust the OpenClaw runtime:
 2. **No model-callable tool creates a payment session.** If the model can mint
    budget, the per-session cap bounds nothing.
 
-If either is wrong, disable the plugin before switching to the Python
-`x402_fetch` path.
+If either is wrong, disable the plugin before switching to the
+`toolkit agents-pay fetch` path.
 
 ### If you use the Strands plugin or LangGraph middleware instead
 
@@ -177,8 +175,8 @@ token, and `auto_session=True` requires `CreatePaymentSession` on the runtime ro
 which is the arrangement the IAM guide warns against.
 
 They are a reasonable choice for a prototype or an agent whose whole tool surface you
-own. For an agent spending your money against the open web, register `x402_fetch`
-instead. Either way, **do not enable both** — the model would choose which one settles
+own. For an agent spending your money against the open web, route payments through
+`toolkit agents-pay fetch` instead. Either way, **do not enable both** — the model would choose which one settles
 a given `402`, and the gate becomes advisory.
 
 See "The gate only covers what routes through it" in
@@ -186,21 +184,20 @@ See "The gate only covers what routes through it" in
 
 ### Registering the tools
 
-```python
-from strands import Agent, tool
-from x402_fetch import x402_fetch, payment_session_status
-agent = Agent(model=..., tools=[tool(x402_fetch), tool(payment_session_status)])
-```
+There is nothing to import. Expose `toolkit agents-pay fetch` and
+`toolkit agents-pay fetch --status` through your host's shell or tool mechanism, or
+wrap them in a tool that runs the command as a subprocess and returns its JSON. See
+"Known limits" in `SKILL.md` for the import API that no longer exists.
 
 ---
 
 ## What the agent can and cannot do
 
-| Capability | Function | Causes spending? | Can raise a limit? |
+| Capability | Command | Causes spending? | Can raise a limit? |
 |---|---|---|---|
-| Pay and fetch | `x402_fetch(url)` | Yes, within both ceilings | **No** |
-| Check remaining budget | `payment_session_status()` | No — read-only | **No** |
-| Pay for a browser navigation | `prepare_browser_payment(url)` | Yes, within both ceilings | **No** |
+| Pay and fetch | `toolkit agents-pay fetch URL` | Yes, within both ceilings | **No** |
+| Check remaining budget | `toolkit agents-pay fetch --status` | No — read-only | **No** |
+| Pay for a browser navigation | `toolkit agents-pay fetch --browser-handle URL` | Yes, within both ceilings | **No** |
 
 Out of reach entirely: session creation, infrastructure provisioning, provider
 credentials, and signed payment proofs.
@@ -321,19 +318,12 @@ Full threat model and enforcement table:
 | Path | Role |
 |---|---|
 | `SKILL.md` | The skill the agent loads |
-| `scripts/x402_policy.py` | The trusted decision point |
-| `scripts/x402_fetch.py` | Hardened fetch, settle, session status, browser handles |
-| `scripts/agents_pay_admin.py` | **Human-run** admin CLI — keep away from the agent |
-| `scripts/test_x402_policy.py` | Security regression tests |
-| `scripts/test_portability.py` | Cross-runtime portability check |
 | [`security-model.md`](security-model.md) | Threat model and enforcement table |
 | [`setup.md`](setup.md) | Full provisioning walkthrough and IAM policies |
 | [`troubleshooting.md`](troubleshooting.md) | Refusal and failure diagnosis |
 
-```bash
-python3 scripts/test_x402_policy.py      # security regression tests
-python3 scripts/test_portability.py      # cross-runtime checks
-```
+The payment code is the `toolkit` binary: `toolkit agents-pay fetch` for the agent and
+`toolkit agents-pay admin` for the human.
 
 ---
 
