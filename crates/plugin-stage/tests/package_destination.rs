@@ -302,6 +302,36 @@ fn t_pkg_decl_the_destination_must_be_a_real_npm_package_ignoring_bin() {
             }),
             "bin/",
         ),
+        // #5514 P3: a wildcard negation re-includes bin/ without naming it, and
+        // verify-package must stay git-free, so any negation is refused.
+        (
+            ".gitignore re-includes directories with !*/",
+            Box::new(|f: &Fixture| {
+                fs::write(f.package().join(".gitignore"), "bin/\n!*/\n").expect("w");
+            }),
+            "bin/",
+        ),
+        (
+            ".gitignore re-includes everything with !*",
+            Box::new(|f: &Fixture| {
+                fs::write(f.package().join(".gitignore"), "bin/\n!*\n").expect("w");
+            }),
+            "bin/",
+        ),
+        (
+            ".gitignore re-includes by glob with !b*",
+            Box::new(|f: &Fixture| {
+                fs::write(f.package().join(".gitignore"), "bin/\n!/b?n\n").expect("w");
+            }),
+            "bin/",
+        ),
+        (
+            ".gitignore negation before the bin/ line is refused too",
+            Box::new(|f: &Fixture| {
+                fs::write(f.package().join(".gitignore"), "!*/\nbin/\n").expect("w");
+            }),
+            "bin/",
+        ),
         (
             "missing directory",
             Box::new(|f: &Fixture| fs::remove_dir_all(f.package()).expect("rm")),
@@ -959,6 +989,67 @@ fn t_pkg_pack_usage_errors_and_hostile_arguments() {
             .any(|line| line.starts_with("plugin-stage: forged")),
         "{text:?}"
     );
+}
+
+/// #5514 P2: caller-derived text in every usage diagnostic is escaped onto one
+/// line, so no argv value can forge a `plugin-stage:` line or drive the terminal.
+#[test]
+fn t_pkg_pack_usage_diagnostics_escape_caller_text_onto_one_line() {
+    let fixture = Fixture::staged();
+    let path = empty_path(&fixture);
+    let forged = "\nplugin-stage: forged OK\u{1b}[2J\u{202e}\r";
+    let long = "y".repeat(5000);
+    let bad_flag = format!("--bad{forged}");
+    let bad_command = format!("cmd{forged}");
+    let bad_positional = format!("pos{forged}");
+    let long_flag = format!("--{long}");
+    let cases: Vec<(&str, Vec<&str>)> = vec![
+        ("unknown flag", vec!["check", bad_flag.as_str()]),
+        (
+            "unknown flag on verify-package",
+            vec![
+                "verify-package",
+                "--package-root",
+                ".",
+                "--complete",
+                bad_flag.as_str(),
+            ],
+        ),
+        ("unknown command", vec![bad_command.as_str()]),
+        (
+            "unexpected argument",
+            vec!["check", bad_positional.as_str()],
+        ),
+        ("overlong unknown flag", vec!["check", long_flag.as_str()]),
+    ];
+    for (label, args) in cases {
+        let output = plugin_stage(&fixture.package(), &args, Some(&path));
+        assert_eq!(
+            output.status.code(),
+            Some(2),
+            "{label}: {}",
+            stderr(&output)
+        );
+        let text = stderr(&output);
+        assert!(
+            !text
+                .chars()
+                .any(|c| (c.is_control() && c != '\n') || c == '\u{202e}'),
+            "{label}: raw control characters in {text:?}"
+        );
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(
+            lines.len(),
+            2,
+            "{label}: the message must be one line plus the usage line: {text:?}"
+        );
+        assert!(lines[0].starts_with("plugin-stage: "), "{label}: {text:?}");
+        assert!(
+            lines[1].starts_with("usage: plugin-stage"),
+            "{label}: {text:?}"
+        );
+        assert!(!text.contains(&long), "{label}: unbounded echo");
+    }
 }
 
 // ----------------------------------------------------------------- T-PKG-INV

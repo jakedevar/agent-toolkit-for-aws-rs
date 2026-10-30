@@ -72,7 +72,9 @@ fn parse_args(raw: &[String]) -> Result<Args, String> {
             "--package-root" => {
                 args.package_root = Some(PathBuf::from(value("--package-root")?));
             }
-            other if other.starts_with('-') => return Err(format!("unknown option {other}")),
+            other if other.starts_with('-') => {
+                return Err(format!("unknown option {}", quote_untrusted(other)))
+            }
             other => args.positional.push(other.to_string()),
         }
     }
@@ -277,7 +279,7 @@ fn run_launcher(ctx: &Context, args: &Args) -> ExitCode {
 }
 
 fn usage(message: &str) -> ExitCode {
-    eprintln!("plugin-stage: {message}\n{USAGE}");
+    eprintln!("plugin-stage: {}\n{USAGE}", neutralize_line(message));
     ExitCode::from(2)
 }
 
@@ -291,10 +293,16 @@ fn main() -> ExitCode {
         args.command.as_str(),
         "check" | "verify" | "plan" | "stage" | "launcher" | "verify-package"
     ) {
-        return usage(&format!("unknown command {:?}", args.command));
+        return usage(&format!(
+            "unknown command {}",
+            quote_untrusted(&args.command)
+        ));
     }
     if args.command != "launcher" && !args.positional.is_empty() {
-        return usage(&format!("unexpected argument {:?}", args.positional[0]));
+        return usage(&format!(
+            "unexpected argument {}",
+            quote_untrusted(&args.positional[0])
+        ));
     }
     if args.command == "verify-package" {
         if args.package_root.is_none() {
