@@ -5,15 +5,15 @@
 //! code passed as keyword arguments, handed to a [`SageMakerClient`] that
 //! answers with the response as JSON or a [`toolkit_aws::AwsError`].
 //!
-//! - [`NoLiveClient`] is the client of this build: nothing is sent and no
+//! - [`NoLiveClient`] is the SDK-free build's client: nothing is sent and no
 //!   credential is read; every call fails with a configuration error.
 //! - [`super::recorded::RecordedClient`] replays recorded responses from a JSON
 //!   document (`--recorded FILE`): see that module for the document and its
 //!   validation. It is how the commands run offline, deterministically and
 //!   without paid calls.
 //!
-//! A live binding (the `aws-sdk-sagemaker` client behind `toolkit-aws`'s `sdk`
-//! feature) is a follow-up; see `docs/migration/ai-models.md`.
+//! Feature `ai-models-live` supplies a third implementation using the service
+//! SDKs over toolkit-aws's `sdk` foundations; see `docs/migration/ai-models.md`.
 
 use toolkit_aws::AwsError;
 use toolkit_core::Json;
@@ -79,6 +79,7 @@ pub(super) trait SageMakerClient {
 }
 
 /// The client of this build: nothing is sent.
+#[cfg_attr(feature = "ai-models-live", allow(dead_code))]
 pub(super) struct NoLiveClient;
 
 impl SageMakerClient for NoLiveClient {

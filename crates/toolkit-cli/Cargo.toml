@@ -16,6 +16,8 @@ default = []
 # the `asm exec` MCP fallback (#4582) and the MCP proxy. Off by default so the
 # ordinary build compiles no AWS SDK crate.
 aws-sdk = ["toolkit-aws/sdk"]
+# Read-only SageMaker catalog/diagnostics binding; no service SDKs in defaults.
+ai-models-live = ["aws-sdk", "dep:aws-sdk-sagemaker", "dep:aws-sdk-cloudwatch", "dep:aws-sdk-cloudwatchlogs", "dep:aws-smithy-runtime-api", "dep:aws-smithy-types"]
 docgraph-live = ["aws-sdk", "toolkit-aws/gremlin", "dep:aws-sdk-docdb", "dep:aws-sdk-cloudwatch", "dep:aws-sdk-ec2", "dep:aws-sdk-secretsmanager", "dep:aws-credential-types", "dep:aws-runtime", "dep:aws-smithy-runtime-api", "dep:aws-smithy-types", "dep:tokio"]
 # The live x402 payment constructors (#5352, design section 7 G1): real
 # config, credentials, DNS, payment TLS roots and transports. Only release
@@ -27,6 +29,8 @@ agents-pay-live = ["aws-sdk"]
 toolkit-aws = { path = "../toolkit-aws" }
 toolkit-core = { path = "../toolkit-core" }
 aws-sdk-docdb = { version = "=1.126.0", optional = true, default-features = false }
+aws-sdk-sagemaker = { version = "=1.246.0", optional = true, default-features = false }
+aws-sdk-cloudwatchlogs = { version = "=1.156.0", optional = true, default-features = false }
 aws-sdk-cloudwatch = { version = "=1.138.0", optional = true, default-features = false }
 aws-sdk-ec2 = { version = "=1.271.0", optional = true, default-features = false }
 aws-sdk-secretsmanager = { version = "=1.123.0", optional = true, default-features = false }
@@ -57,6 +61,7 @@ nix = { version = "=0.29.0", default-features = false, features = ["user"] }
 # The recorded-response contract (`tests/recorded_contract.rs`, #4751) reads
 # the slices' syntax tree; span locations give it the line of each finding.
 [dev-dependencies]
+minicbor = { version = "=2.3.1", features = ["std"] }
 proc-macro2 = { version = "1", default-features = false, features = ["span-locations"] }
 syn = { version = "2", default-features = false, features = ["full", "parsing", "printing", "visit"] }
 rcgen = { version = "=0.14.10", default-features = false, features = ["aws_lc_rs", "pem"] }

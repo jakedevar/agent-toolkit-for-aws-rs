@@ -116,7 +116,8 @@ impl Endpoint {
 
     /// The conventional endpoint `https://<service>.<region>.amazonaws.com`
     /// (`.amazonaws.com.cn` in `cn-` regions) for services whose endpoint
-    /// prefix equals the service label.
+    /// prefix equals the service label, plus `SageMaker`'s `api.sagemaker`
+    /// control plane (its signing service remains `sagemaker`).
     ///
     /// # Errors
     /// `InvalidConfig` when `service` is not a DNS label or `region` is not an
@@ -139,8 +140,13 @@ impl Endpoint {
         } else {
             "amazonaws.com"
         };
+        let prefix = if service == "sagemaker" {
+            "api.sagemaker"
+        } else {
+            service
+        };
         Ok(Self {
-            host: format!("{service}.{region}.{dns_suffix}"),
+            host: format!("{prefix}.{region}.{dns_suffix}"),
             port: None,
             path: String::new(),
         })
@@ -548,6 +554,26 @@ mod tests {
 
     fn reason(url: &str) -> String {
         validate(url).expect_err(url).to_string()
+    }
+
+    #[test]
+    fn sagemaker_control_plane_endpoint_keeps_the_signing_service_separate() {
+        for (region, expected) in [
+            ("us-west-2", "https://api.sagemaker.us-west-2.amazonaws.com"),
+            (
+                "cn-north-1",
+                "https://api.sagemaker.cn-north-1.amazonaws.com.cn",
+            ),
+            (
+                "us-gov-west-1",
+                "https://api.sagemaker.us-gov-west-1.amazonaws.com",
+            ),
+        ] {
+            assert_eq!(
+                Endpoint::for_service("sagemaker", region).unwrap().url(),
+                expected
+            );
+        }
     }
 
     #[test]

@@ -1094,11 +1094,13 @@ toolkit ai-models endpoint-diagnostics ENDPOINT REGION [--minutes N | --start TS
   unknown model is an error), `endpoint-diagnostics` the endpoint status, the
   last `--minutes` (default 5) or `--start`/`--end` window of metrics and up to
   100 log events of the trailing 15 minutes. `--now` pins the clock.
-- **No live AWS client is bound.** Without `--recorded FILE` every call fails
+- **Live AWS is opt-in:** build with `--features ai-models-live` to query real
+  accounts through toolkit-aws's guarded SDK foundations. Default builds send
+  nothing; without `--recorded FILE` every call in those builds fails
   with exit 1 (`invalid client: this build has no live AWS client and sent
   nothing`); `--recorded` replays recorded responses (`{"calls": {"Operation":
   [{"request": {...}, "response": {...}} | {"error": {...}}]}}`), checking each
-  recorded request.
+  recorded request. Recorded mode always takes precedence in live builds too.
 
 Parity table, the client seam, the AWS documentation checked for the Rust
 SDK/HTTP surface and every intentional change:

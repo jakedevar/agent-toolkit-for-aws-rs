@@ -13,8 +13,8 @@
 //! | `finetuning-technique/scripts/get_recipes.py` | `ai-models recipes` |
 //! | `endpoint-diagnostics/scripts/collect_diagnostics.py` | `ai-models endpoint-diagnostics` |
 //!
-//! - [`client`]: the AWS seam. This build binds no live client: the default is
-//!   [`client::NoLiveClient`], which sends nothing; `--recorded FILE` replays
+//! - [`client`]: the AWS seam. SDK-free builds use [`client::NoLiveClient`];
+//!   feature `ai-models-live` binds the shared SDK adapter. `--recorded FILE` replays
 //!   recorded responses deterministically ([`recorded::RecordedClient`]).
 //! - [`normalize`], [`filter`], [`snapshot`], [`search`], [`hub`],
 //!   [`diagnostics`]: the ported logic, one module per concern.
@@ -129,8 +129,8 @@ pub(crate) const SLICE: crate::registry::Slice = crate::registry::Slice {
                 only) with a visible ListHubContents fallback, model-names lists
                 the fine-tunable models, recipes the fine-tuning techniques of
                 one model, endpoint-diagnostics the status, metrics and recent
-                logs of an endpoint. This build has no live AWS client and sends
-                nothing: --recorded FILE replays recorded responses. See
+                logs of an endpoint. Feature ai-models-live enables live AWS;
+                SDK-free builds send nothing. --recorded FILE replays offline. See
                 docs/migration/ai-models.md.
 ",
     exit_notes: "",
@@ -142,7 +142,12 @@ pub(crate) const SLICE: crate::registry::Slice = crate::registry::Slice {
 #[cfg(test)]
 mod tests;
 
-use client::{NoLiveClient, SageMakerClient};
+#[cfg(feature = "ai-models-live")]
+mod live;
+
+#[cfg(not(feature = "ai-models-live"))]
+use client::NoLiveClient;
+use client::SageMakerClient;
 use diagnostics::TimeRange;
 use filter::{add_constraint, constraints_json, filter_models, Constraints, VALID_KEYS};
 use hub::{shown, validate_content_name, validate_hub_name, ModelsError};
@@ -218,11 +223,13 @@ fn search_failure(error: &SearchAdapterError) -> ToolkitError {
     runtime("ai_models_search", error.message().to_string())
 }
 
-/// The client of the run: recorded responses with `--recorded FILE`, else the
-/// build's [`NoLiveClient`].
-fn open_client(invocation: &Invocation) -> Result<Box<dyn SageMakerClient>, ToolkitError> {
-    let Some(path) = invocation.value("--recorded") else {
-        return Ok(Box::new(NoLiveClient));
+/// Recorded always takes precedence, including a recording that fails to load.
+fn select_client(
+    recorded: Option<&str>,
+    live: impl FnOnce() -> Box<dyn SageMakerClient>,
+) -> Result<Box<dyn SageMakerClient>, ToolkitError> {
+    let Some(path) = recorded else {
+        return Ok(live());
     };
     let document = read_json_document(Path::new(path))
         .map_err(|reason| runtime("ai_models_recorded", reason))?;
@@ -234,6 +241,24 @@ fn open_client(invocation: &Invocation) -> Result<Box<dyn SageMakerClient>, Tool
                 format!("the recorded input is invalid: {reason}"),
             )
         })
+}
+
+fn open_client(
+    invocation: &Invocation,
+    region: Option<&str>,
+) -> Result<Box<dyn SageMakerClient>, ToolkitError> {
+    #[cfg(not(feature = "ai-models-live"))]
+    let _ = region;
+    select_client(invocation.value("--recorded"), || {
+        #[cfg(feature = "ai-models-live")]
+        {
+            Box::new(live::LiveClient::new(region))
+        }
+        #[cfg(not(feature = "ai-models-live"))]
+        {
+            Box::new(NoLiveClient)
+        }
+    })
 }
 
 fn print_json(output: &mut Output<'_>, value: &Json) -> Result<(), ToolkitError> {
@@ -320,7 +345,7 @@ pub fn list_models_command(
     if let Some(region) = region_argument {
         check_region(region)?;
     }
-    let mut client = open_client(invocation)?;
+    let mut client = open_client(invocation, region_argument)?;
     let models = hub::get_deployable_models(client.as_mut(), hub).map_err(models_failure)?;
 
     let mut snapshot: Option<Json> = None;
@@ -486,7 +511,7 @@ pub fn search_command(
              continue using ListHubContents",
         ));
     }
-    let mut client = open_client(invocation)?;
+    let mut client = open_client(invocation, region)?;
     let (catalog, source): (Vec<Json>, &str) =
         if let Some(path) = invocation.value("--snapshot-file") {
             let loaded = snapshot::load_catalog_snapshot(Path::new(path), Some(hub), region)
@@ -555,7 +580,7 @@ pub fn model_names_command(
     if let Some(region) = invocation.positional(1) {
         check_region(region)?;
     }
-    let mut client = open_client(invocation)?;
+    let mut client = open_client(invocation, invocation.positional(1))?;
     let names = hub::customization_model_names(client.as_mut(), hub).map_err(models_failure)?;
     print_json(output, &names)
 }
@@ -578,7 +603,7 @@ pub fn recipes_command(
     };
     validate_content_name(model).map_err(usage)?;
     check_hub(hub)?;
-    let mut client = open_client(invocation)?;
+    let mut client = open_client(invocation, None)?;
     let techniques =
         hub::finetuning_techniques(client.as_mut(), hub, model).map_err(models_failure)?;
     print_json(output, &techniques)
@@ -632,7 +657,7 @@ pub fn endpoint_diagnostics_command(
         }),
     };
     let now = clock(invocation)?;
-    let mut client = open_client(invocation)?;
+    let mut client = open_client(invocation, Some(region))?;
     let result = diagnostics::collect_endpoint_diagnostics(client.as_mut(), endpoint, range, now)
         .map_err(|error| match error {
         ModelsError::Data(message) if message.starts_with("invalid endpoint name") => {
