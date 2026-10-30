@@ -164,14 +164,14 @@ the **directory-management** skill to set one up.
 
 ### Markdown Header
 
-The notebook begins with a markdown cell whose only content is the title `# Deploy a JumpStart Foundation Model to SageMaker`. It is Cell 0 of the template, and `toolkit ai-payloads render` writes it.
+The notebook begins with a markdown cell whose only content is the title `# Deploy a JumpStart Foundation Model to SageMaker`. It is Cell 0 of the template, and `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" ai-payloads render` writes it.
 
 ### Cells
 
-`toolkit ai-payloads render` builds the notebook from `../code_templates/deploy-jumpstart-sagemaker.py`, one cell per `# Cell N:` marker; do not assemble the cells by hand. Render it with the values file described under Placeholders:
+`"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" ai-payloads render` builds the notebook from `../code_templates/deploy-jumpstart-sagemaker.py`, one cell per `# Cell N:` marker; do not assemble the cells by hand. Render it with the values file described under Placeholders:
 
 ```bash
-toolkit ai-payloads render <skill-dir>/references/model-deployment/code_templates/deploy-jumpstart-sagemaker.py --mode notebook --project-dir <project-dir> --values <scratch-dir>/values.json
+"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" ai-payloads render <skill-dir>/references/model-deployment/code_templates/deploy-jumpstart-sagemaker.py --mode notebook --project-dir <project-dir> --values <scratch-dir>/values.json
 ```
 
 (`<skill-dir>` is the directory that holds this skill's `references/`; the output rules and the append step are in `../references/code_output_guide.md`.) The cells are:

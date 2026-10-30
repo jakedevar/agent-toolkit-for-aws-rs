@@ -259,12 +259,41 @@ fn t_pkg_decl_package_root_paths_are_refused() {
 fn t_pkg_decl_subprocess_is_the_role_of_package_destinations() {
     let plugin_subprocess =
         ENTRY.replace("\"package_root\": \"pkgs/demo\"", "\"plugin\": \"demo\"");
-    let error = parse(&[&plugin_subprocess]).expect_err("plugin subprocess");
-    assert!(error.contains("subprocess"), "{error}");
+    let declaration = parse(&[ENTRY, &plugin_subprocess]).expect("plugin skill subprocess");
+    let binary = declaration
+        .binary("demo", "toolkit")
+        .expect("plugin binary");
+    assert_eq!(binary.role, Role::Subprocess);
+    assert!(launcher_snippet(binary).unwrap_err().contains("subprocess"));
+    assert_eq!(declaration.package_binaries(ROOT).count(), 1);
     for role in ["mcp-server", "hook"] {
         let entry = ENTRY.replace("\"subprocess\"", &format!("\"{role}\""));
         let error = parse(&[&entry]).expect_err(role);
         assert!(error.contains("subprocess"), "{role}: {error}");
+    }
+}
+
+#[test]
+fn plugin_skill_subprocess_cannot_be_registered_as_a_hook_or_mcp_server() {
+    let entry = ENTRY.replace("\"package_root\": \"pkgs/demo\"", "\"plugin\": \"demo\"");
+    let declaration = parse(&[&entry]).unwrap();
+    for (name, text) in [
+        (
+            "hooks.json",
+            r#"{"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/bin/toolkit"}]}]}}"#,
+        ),
+        (
+            ".mcp.json",
+            r#"{"mcpServers":{"toolkit":{"command":"${CLAUDE_PLUGIN_ROOT}/bin/toolkit","args":[]}}}"#,
+        ),
+    ] {
+        let dir = temp_dir("skill-subprocess-launcher");
+        write(&dir.join("plugins/demo").join(name), text);
+        let report = check_launchers(&dir, &dir.join("plugins"), &declaration);
+        assert!(
+            !report.problems.is_empty(),
+            "{name} must reject subprocess registrations"
+        );
     }
 }
 
@@ -1089,6 +1118,10 @@ fn t_pkg_inv_the_launcher_contract_is_identical_with_and_without_packages() {
     };
     assert_eq!(names(&a, &with), names(&b, &without));
     for binary in &without.binaries {
+        if binary.role == Role::Subprocess {
+            assert!(launcher_snippet(binary).unwrap_err().contains("subprocess"));
+            continue;
+        }
         assert_eq!(
             launcher_snippet(binary).expect("plugin launcher"),
             launcher_snippet(
@@ -1118,8 +1151,12 @@ fn t_pkg_nolive_no_test_target_stages_the_real_declaration() {
         .iter()
         .filter(|binary| binary.features.iter().any(|f| f == "agents-pay-live"))
         .collect();
-    assert_eq!(live.len(), 1, "{live:#?}");
-    assert!(matches!(live[0].destination, Destination::PackageRoot(_)));
+    assert_eq!(live.len(), 2, "{live:#?}");
+    assert!(live.iter().any(|entry| matches!(&entry.destination,
+        Destination::Plugin(plugin) if plugin == "aws-agents")));
+    assert!(live.iter().any(|entry| matches!(&entry.destination,
+        Destination::PackageRoot(package) if package ==
+            "plugins/aws-agents/skills/agents-pay/packages/openclaw")));
 
     // Build-capable entry points never appear in a test source.
     let forbidden = [

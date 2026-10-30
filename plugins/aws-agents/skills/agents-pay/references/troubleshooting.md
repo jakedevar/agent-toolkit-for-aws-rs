@@ -1,6 +1,9 @@
 # agents-pay troubleshooting
 
-Every command below is a `toolkit` command; `toolkit` must be on `PATH`.
+Every command below selects the plugin release payment dispatcher explicitly.
+Resolve the absolute plugin root first (see setup.md). If it or the dispatcher
+is missing, stop and install the full aws-agents plugin release or standalone
+OpenClaw package; never search PATH for a replacement.
 
 Two different situations, and it matters which one you are in:
 
@@ -8,7 +11,7 @@ Two different situations, and it matters which one you are in:
   policy (deliberately) or accept the refusal.
 - **A failure** — something is misconfigured or broken. Fix the wiring.
 
-`toolkit agents-pay fetch` never raises into the agent loop; it prints JSON. `refused: true`
+`"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay fetch` never raises into the agent loop; it prints JSON. `refused: true`
 means a policy decision, not a bug.
 
 > **For agents reading this:** a refusal is not an obstacle to route around. Do
@@ -29,7 +32,7 @@ curl -sD - https://<host>/<path> -o /dev/null \
   | awk '/^payment-required:/{print $2}' | base64 -d | jq .
 
 # 2. What does the policy allow?
-toolkit agents-pay admin show-config
+"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay admin show-config
 ```
 
 Compare, in this order:
@@ -48,11 +51,11 @@ arithmetic, not a bug.
 
 Compare the printed challenge with the printed policy field by field. The refusal
 is deliberately uniform, so the comparison is the diagnosis; running
-`toolkit agents-pay fetch` again changes nothing and never pays while the policy
+`"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay fetch` again changes nothing and never pays while the policy
 refuses.
 
 Then widen the policy only if the merchant's values are genuinely expected.
-Re-run `toolkit agents-pay admin init-config --force` with the corrected allowlists — never hand-edit
+Re-run `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay admin init-config --force` with the corrected allowlists — never hand-edit
 mode or ownership.
 
 ### "Origin ... is not in the configured allowed_origins"
@@ -78,7 +81,7 @@ valid payment target from this agent.
 There is no permissive default — payments are refused until a policy exists:
 
 ```bash
-toolkit agents-pay admin init-config \
+"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay admin init-config \
   --max-per-payment-usd 0.05 \
   --recipient 0xMerchantWalletAddress
 ```
@@ -98,7 +101,7 @@ investigate before "fixing" it — something wrote it as another user.
 ### "Payment policy allows no recipients" / recipient modes are mutually exclusive
 
 An empty allowlist denies everything. Absent keys deny rather than allow; there
-is no implicit wildcard. Re-run `toolkit agents-pay admin init-config` with at least one `--recipient`,
+is no implicit wildcard. Re-run `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay admin init-config` with at least one `--recipient`,
 or deliberately use `--allow-any-recipient` instead. Never combine the two
 modes. Add `--origin` only when you want to pin the merchant host set.
 
@@ -106,10 +109,10 @@ modes. Add `--origin` only when you want to pin the merchant host set.
 
 ### "PAYMENT_MANAGER_ARN is not set" (or INSTRUMENT/SESSION/USER)
 
-Runtime identifiers are missing. Run `toolkit agents-pay admin preflight` to see which:
+Runtime identifiers are missing. Run `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay admin preflight` to see which:
 
 ```bash
-toolkit agents-pay admin preflight
+"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay admin preflight
 ```
 
 Manager ARN and connector ID come from
@@ -117,11 +120,11 @@ Manager ARN and connector ID come from
 
 ### "This toolkit build has no payment support"
 
-The `toolkit` binary was built without the payment feature, so every `toolkit agents-pay` command prints this refusal and exits `2` before it reads anything. Install a release build of `toolkit`; there is nothing to configure.
+The `toolkit` binary was built without the payment feature, so every `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay` command prints this refusal and exits `2` before it reads anything. Install a release build of `toolkit`; there is nothing to configure.
 
 ### "Missing payment resource '...'"
 
-The config and the environment both lack one resource identifier. The refusal reads: "Add it to the config (toolkit agents-pay admin init-config) or set <ENV>. Provision resources with the trusted setup path first." Run `toolkit agents-pay admin init-config` or export the named variable in the human's terminal.
+The config and the environment both lack one resource identifier. The refusal reads: "Add it to the config ("${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay admin init-config) or set <ENV>. Provision resources with the trusted setup path first." Run `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay admin init-config` or export the named variable in the human's terminal.
 
 ### "Response exceeded N bytes"
 
@@ -175,7 +178,7 @@ another origin. Point the agent at the final URL instead.
 
 ### A payment went through that the policy should have refused
 
-Almost always: something other than `toolkit agents-pay fetch` settled it. The gate is only in the
+Almost always: something other than `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay fetch` settled it. The gate is only in the
 path for calls that route through this skill's tool.
 
 Check whether a framework-native integration is active:
@@ -186,7 +189,7 @@ grep -rn 'AgentCorePaymentsPlugin\|AgentCorePaymentsMiddleware\|payments.integra
 
 If either is registered, payment happens inside the framework and
 the toolkit policy is never consulted — no ceiling, no origin check, no derived token.
-Remove it and route payments through `toolkit agents-pay fetch`, or accept that the controls do not apply. Running
+Remove it and route payments through `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay fetch`, or accept that the controls do not apply. Running
 both means the model picks which one settles a given `402`.
 
 Also confirm the runtime role really lacks session-write permission, since
@@ -257,9 +260,9 @@ happens.
 ## Health check
 
 ```bash
-toolkit agents-pay admin show-config      # 0600, owned by you
-toolkit agents-pay admin preflight        # wiring + no stray secrets
-toolkit agents-pay fetch --status         # the session is usable
+"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay admin show-config      # 0600, owned by you
+"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay admin preflight        # wiring + no stray secrets
+"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay fetch --status         # the session is usable
 aws iam get-role-policy --role-name <RuntimeRole> --policy-name <P> \
   | grep -c CreatePaymentSession                     # must be 0
 ```

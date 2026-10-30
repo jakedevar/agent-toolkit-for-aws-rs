@@ -970,6 +970,8 @@ const BASELINES: &[Baseline] = &[
             "{dir}/out/wa-review.txt",
             "--now",
             "2026-01-31T12:00:00Z",
+            "--recorded",
+            "{dir}/wa-recorded.json",
         ],
         reaches: "Infrastructure: ",
     },
@@ -1132,6 +1134,7 @@ const BASELINE_FILES: &[(&str, &str)] = &[
     {"pattern_id": "PutOrder", "phase": "measure", "calls": 18, "throttles": 0, "errors": 0, "error_codes": {}, "cancellation_reason_codes": {}}],
   "mode": "quick", "key_sampling": "uniform", "items_per_partition": 1}}}]}"#,
     ),
+    ("wa-recorded.json", r#"{"calls": []}"#),
     ("mp-config.json", r#"{"SUBSCRIBERS_TABLE": "subs"}"#),
     (
         "mp-handler.json",

@@ -193,6 +193,23 @@ fn t_5507_recorded_and_no_live_paths_never_construct_the_live_adapter() {
             ));
         }
         let baseline = cli(&args);
+        if !recorded {
+            assert_eq!(baseline.status, 1);
+            assert!(baseline
+                .stderr
+                .contains("live data requires explicit --live"));
+            assert!(!dir.join("reports").exists());
+            let (result, got) = dispatch(&args, |_, _, _| {
+                panic!("missing mode cannot construct an adapter")
+            });
+            let error = result.unwrap_err();
+            assert!(error
+                .message()
+                .contains("live data requires explicit --live"));
+            assert_eq!(got.status, baseline.status);
+            assert_eq!(got.stdout, baseline.stdout);
+            continue;
+        }
         assert_eq!(baseline.status, 0, "{}", baseline.stderr);
         let baseline_reports = reports(&dir);
         fs::remove_dir_all(dir.join("reports")).unwrap();
@@ -204,7 +221,7 @@ fn t_5507_recorded_and_no_live_paths_never_construct_the_live_adapter() {
         assert_eq!(got.stdout, baseline.stdout);
         assert_eq!(got.stderr, baseline.stderr);
         assert_eq!(reports(&dir), baseline_reports);
-        assert_eq!(got.stderr.contains("no live AWS client"), !recorded);
+        assert!(got.stderr.is_empty());
     }
 }
 

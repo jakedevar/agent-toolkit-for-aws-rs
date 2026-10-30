@@ -226,10 +226,10 @@ Read `../references/code_output_guide.md` for output format rules.
 
 If a project directory already exists (from earlier in the workflow), use it. Otherwise, load the **directory-management** reference to set one up.
 
-Render `code_templates/llmaaj_evaluator.py` with `toolkit ai-payloads render`; do not write the cells by hand. Put the collected values in the values file under `values`, with the placeholder names written without brackets (`toolkit ai-payloads templates --root <skill-dir>` lists them), then run:
+Render `code_templates/llmaaj_evaluator.py` with `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" ai-payloads render`; do not write the cells by hand. Put the collected values in the values file under `values`, with the placeholder names written without brackets (`"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" ai-payloads templates --root <skill-dir>` lists them), then run:
 
 ```bash
-toolkit ai-payloads render <skill-dir>/references/model-evaluation/code_templates/llmaaj_evaluator.py --mode notebook --project-dir <project-dir> --values <scratch-dir>/values.json
+"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" ai-payloads render <skill-dir>/references/model-evaluation/code_templates/llmaaj_evaluator.py --mode notebook --project-dir <project-dir> --values <scratch-dir>/values.json
 ```
 
 Use `--mode script` for a script. `<skill-dir>` is the directory that holds this skill's `references/`. `METRICS_LIST` (the `BUILTIN_METRICS` list) must be a JSON array of strings, e.g. `["Faithfulness", "Correctness"]`. `CUSTOM_METRICS` stays `None` unless the user created custom metrics: then uncomment the line that loads `custom_metrics.json` in the rendered file (a `manual:` edit point).

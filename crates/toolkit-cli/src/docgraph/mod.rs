@@ -141,16 +141,17 @@ pub(crate) const SLICE: crate::registry::Slice = crate::registry::Slice {
         NEPTUNE_SEED,
         NEPTUNE_MEMORY,
     ],
-    synopsis: r"  toolkit documentdb wa-review --cluster-id ID --region R [--recorded FILE | --live]
+    synopsis: r"  toolkit documentdb wa-review --cluster-id ID --region R (--recorded FILE | --live)
       [--analysis-data FILE] [--output DIR] [--now TS] [--network-policy FILE]
   toolkit documentdb normalize-capture --capture FILE --output FILE
   toolkit neptune validate-input [KEY=VALUE...]
-  toolkit neptune seed [--confirm-wipe] [--endpoint HOST] [--recorded FILE | --dry-run | --live]
+  toolkit neptune seed [--confirm-wipe] [--endpoint HOST] (--recorded FILE | --dry-run | --live)
       [--region R] [--network-policy FILE]
-  toolkit neptune memory --operation OP --input FILE [--recorded FILE | --dry-run | --live]
+  toolkit neptune memory --operation OP --input FILE (--recorded FILE | --dry-run | --live)
       [--confirm-write] [--confirm-delete] [--confirm-create] [--region R] [--network-policy FILE]
 ",
-    description: r"  documentdb    DocumentDB Well-Architected review (#4395). wa-review runs the 41
+    description: r"  documentdb    DocumentDB Well-Architected review (#4395). wa-review requires
+                explicit --live or --recorded FILE, and runs the 41 checks:
                 infrastructure checks over recorded AWS responses (--recorded)
                 or live AWS APIs (--live), and database checks over a
                 pre-collected analysis (--analysis-data), and
@@ -163,9 +164,11 @@ pub(crate) const SLICE: crate::registry::Slice = crate::registry::Slice {
                 validate-input checks identifiers before a write call; seed
                 wipes and seeds the test graphs only with --confirm-wipe (or
                 NEPTUNE_SEED_CONFIRM_WIPE=1), replays --recorded responses or
-                prints the statements with --dry-run: this build has no
-                Gremlin or AWS client; --live is reserved and currently refused.
-                memory prints or replays GraphRAG and agent-memory requests.
+                prints the statements with --dry-run. Explicit --live selects
+                the opt-in docgraph-live AWS/Gremlin adapters and requires
+                applicable consent; builds without the feature fail loudly.
+                seed and memory require --live, --recorded FILE or --dry-run.
+                memory prints, replays or sends GraphRAG and agent-memory requests.
                 See docs/migration/docgraph.md.
 ",
     exit_notes: "",
@@ -214,7 +217,9 @@ fn live_selected(invocation: &Invocation) -> Result<bool, ToolkitError> {
         return Ok(false);
     }
     if !cfg!(feature = "docgraph-live") {
-        return Err(usage("--live requires the docgraph-live feature"));
+        return Err(usage(
+            "built without docgraph-live; --live requires the docgraph-live feature",
+        ));
     }
     if invocation.has_flag("--dry-run") || invocation.value("--recorded").is_some() {
         return Err(usage(
@@ -226,7 +231,22 @@ fn live_selected(invocation: &Invocation) -> Result<bool, ToolkitError> {
 
 #[cfg(not(feature = "docgraph-live"))]
 fn unavailable_live() -> ToolkitError {
-    usage("live docgraph adapters are not available in this build")
+    usage("built without docgraph-live; live docgraph adapters are not available")
+}
+
+/// A missing recording never selects a replay or a report of skipped checks.
+fn require_offline_mode(invocation: &Invocation) -> Result<(), ToolkitError> {
+    if invocation.value("--recorded").is_some() || invocation.has_flag("--dry-run") {
+        return Ok(());
+    }
+    Err(ToolkitError::runtime(
+        "docgraph_live_required",
+        if cfg!(feature = "docgraph-live") {
+            "live data requires explicit --live; use --recorded FILE for offline replay"
+        } else {
+            "built without docgraph-live; install a live-enabled build and select --live, or use explicit --recorded FILE for offline replay"
+        },
+    ))
 }
 
 /// Handler of `toolkit documentdb wa-review`.
@@ -291,6 +311,9 @@ fn wa_review_with_live(
             .epoch_seconds(),
     };
     let output_dir = invocation.value("--output").unwrap_or(".");
+    if !live {
+        require_offline_mode(invocation)?;
+    }
 
     out.line(&format!(
         "Running Well-Architected Review for {cluster_id} in {region}..."
@@ -467,6 +490,7 @@ pub fn seed_command(invocation: &Invocation, out: &mut Output<'_>) -> Result<(),
             "--endpoint must be a host name of letters, digits, dots and hyphens",
         ));
     }
+    require_offline_mode(invocation)?;
     let confirmed = invocation.has_flag("--confirm-wipe")
         || ProcessEnv.var("NEPTUNE_SEED_CONFIRM_WIPE").as_deref() == Some("1");
     let mut replay: Option<RecordedSession> = None;
@@ -586,6 +610,7 @@ pub fn memory_command(invocation: &Invocation, out: &mut Output<'_>) -> Result<(
     let input_path = invocation
         .value("--input")
         .ok_or_else(|| usage("--input is required"))?;
+    require_offline_mode(invocation)?;
     let input =
         read_document(input_path).map_err(|e| ToolkitError::runtime("docgraph_memory", e))?;
     let requests = memory::plan(op, &input).map_err(usage)?;
