@@ -1946,6 +1946,17 @@ malformed/truncated payload or ambiguous response reports a fixed unknown
 outcome and stops subsequent steps. A spent dispatcher cannot send again;
 there is no compensation, rollback claim, retry or implicit provisioning.
 
+S4 follow-up #5576 makes failure diagnostics plan-aware: after any successful
+step, every subsequent failure (including admission, deadline, credentials or
+signing before the next send) reports that the plan may be partially applied
+with unknown outcome. It never says that nothing was sent. Before any success,
+the original pre-send diagnostic remains available. A failed dispatcher stays
+terminal. Offline regression tests deliberately reject a changed graph target
+on a response-dependent expansion, pin the DynamoDB Query body actually sent
+against the validated plan (including descending order, limit, condition and
+typed expression values), and refuse SDK endpoint/path deviations through the
+captured-URL check. The #5576 handoff records mutation red/green evidence.
+
 The invocation starts one 15-minute deadline before input parsing; each
 operation gets at most 60 seconds including credentials/encoding/signing and
 transport. The server query timeout is at most 55 seconds and at least one
