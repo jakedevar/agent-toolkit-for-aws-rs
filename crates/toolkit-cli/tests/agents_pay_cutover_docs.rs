@@ -1076,7 +1076,7 @@ fn s7_inventory_payments_policy_rows_track_retirement() {
         let path = row["path"].as_str().unwrap();
         let expected = if ["agents_pay_admin.py", "x402_fetch.py", "x402_policy.py"]
             .iter()
-            .any(|name| path.ends_with(name))
+            .any(|name| path.rsplit('/').next() == Some(*name))
         {
             "ported"
         } else {
