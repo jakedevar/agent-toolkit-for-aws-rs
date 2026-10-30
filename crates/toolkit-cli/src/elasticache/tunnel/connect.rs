@@ -153,10 +153,10 @@ fn connection_succeeds(
     out: &mut Output<'_>,
 ) -> Result<bool, ToolkitError> {
     check_dns(args.host, env, out)?;
-    // No client or server string is printed. A failure is a typed kind with
-    // fixed text; the server's version and mode pass an allowlist and a check
-    // that they hold neither the supplied password nor the active password or
-    // IAM token (#5004, #5005, #5007).
+    // Client diagnostics use a typed kind with fixed text. Server metadata is
+    // withheld whenever a supplied password or active password/IAM token
+    // exists. Without credentials it passes a short
+    // allowlist (#5004, #5005, #5007).
     let gate = SecretGate::new(&[
         args.password.unwrap_or_default(),
         password.as_ref().map_or("", Secret::expose),
