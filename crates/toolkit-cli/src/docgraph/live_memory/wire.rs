@@ -2,7 +2,7 @@
 //! credentials, signing or retry owner and never receive a network connector.
 //! After encoding returns, toolkit signs the captured final bytes and sends
 //! them once outside the SDK runtime. Response bodies stay bounded/streamed.
-use super::*;
+use super::{admit, graph_id, object, only, text, DatabaseEndpoint, Duration, Instant, Json, Route, INVALID, UNKNOWN};
 use aws_sdk_dynamodb::types::AttributeValue;
 use aws_smithy_runtime_api::client::auth::AuthSchemeId;
 use aws_smithy_runtime_api::client::http::{
@@ -44,7 +44,7 @@ pub(super) fn document(value: &Json) -> Result<Document, String> {
                 .map(|(k, v)| Ok((k.clone(), document(v)?)))
                 .collect::<Result<_, String>>()?,
         ),
-        _ => return Err(INVALID.into()),
+        Json::Float(_) => return Err(INVALID.into()),
     })
 }
 fn attribute(value: &Json) -> Result<AttributeValue, String> {
@@ -260,7 +260,8 @@ pub(super) fn encode(
                 .ok_or(INVALID)?;
                 let client = aws_sdk_neptunegraph::Client::from_conf(config!(
                     aws_sdk_neptunegraph,
-                    format!("https://{}:443", p.host())
+                    // The model prepends graphIdentifier as a host label.
+                    format!("https://{}.neptune-graph.amazonaws.com:443", p.region())
                 ));
                 let parameters = request
                     .get("parameters")
@@ -351,8 +352,15 @@ pub(super) fn encode(
         .lock()
         .map_err(|_| INVALID)?
         .take()
-        .ok_or_else(|| INVALID.into());
-    captured
+        .ok_or(INVALID)?;
+    let expected = match route {
+        Route::Analytics => format!("https://{}:443/queries", policy.ok_or(INVALID)?.host()),
+        Route::Create => format!("https://neptune-graph.{region}.amazonaws.com/graphs"),
+        Route::Dynamo => format!("https://dynamodb.{region}.amazonaws.com/"),
+        Route::Gremlin => return Err(INVALID.into()),
+    };
+    if captured.url != expected {return Err(INVALID.into());}
+    Ok(captured)
 }
 fn decode_attribute(value: &Json) -> Result<Json, String> {
     let fields = object(value)?;

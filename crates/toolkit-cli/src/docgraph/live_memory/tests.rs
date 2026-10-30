@@ -132,12 +132,11 @@ fn ordered_retrieve_expansions_and_hybrid_results_equal_recorded_execution() {
         result
     );
     assert_eq!(replay.unused(), 0);
-    let mut spy = Spy::default();
-    spy.responses = [
+    let mut spy = Spy { responses: [
         Ok(json(r#"{"results":[{"name":"graph"}]}"#)),
         Ok(json(r#"{"results":[{"name":"vector"}]}"#)),
     ]
-    .into();
+    .into(), ..Spy::default() };
     assert_eq!(
         run(&mut spy, "hybrid-recall", &input, Some(&policy(false))).unwrap(),
         json(r#"{"graph_recall":[{"name":"graph"}],"semantic_recall":[{"name":"vector"}]}"#)
@@ -175,8 +174,7 @@ fn consolidation_and_multistep_writes_stop_on_the_first_uncertain_failure() {
         ),
     ] {
         let plan = memory::plan(op, &input).unwrap();
-        let mut spy = Spy::default();
-        spy.responses = [Ok(json(r#"{"results":[]}"#)), Err("unknown outcome".into())].into();
+        let mut spy = Spy { responses: [Ok(json(r#"{"results":[]}"#)), Err("unknown outcome".into())].into(), ..Spy::default() };
         assert!(run(&mut spy, op, &input, Some(&policy(false)))
             .unwrap_err()
             .contains("unknown outcome"));

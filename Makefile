@@ -153,5 +153,5 @@ docgraph-memory:
 
 # Resolve the optional S4 model crate; no service endpoint is contacted.
 docgraph-memory-sync:
-	cargo metadata --format-version 1 > /dev/null
-	cargo tree -p toolkit-cli --features docgraph-live --locked --offline -e features > /dev/null
+	cargo metadata --format-version 1 --features docgraph-live --offline > /dev/null
+	cargo tree -p toolkit-cli --features docgraph-live --locked --offline -e features
