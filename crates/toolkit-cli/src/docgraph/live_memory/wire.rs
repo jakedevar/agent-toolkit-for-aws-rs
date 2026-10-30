@@ -409,8 +409,8 @@ pub(super) fn normalize(route: Route, bytes: &[u8]) -> Result<Json, String> {
     match route {
         Route::Analytics => {
             // A missing results member is not a successful live query payload.
-            // recorded-shape: live Analytics requires an actual bounded results list; missing, null and other shapes fail.
             match value.get("results") {
+                // recorded-shape: required live Analytics results list; missing, null and other shapes fail.
                 Some(Json::Array(a)) if a.len() <= 100_000 => Ok(value),
                 _ => Err(INVALID.into()),
             }
@@ -422,8 +422,8 @@ pub(super) fn normalize(route: Route, bytes: &[u8]) -> Result<Json, String> {
             }
             Ok(Json::object(vec![("id", Json::string(id))]))
         }
-        // recorded-shape: a live Query requires Items (checked in exchange); only a bounded typed list is accepted when present.
         Route::Dynamo => match value.get("Items") {
+            // recorded-shape: bounded typed live Items list; all present non-list values fail and Query absence fails in exchange.
             Some(Json::Array(items)) if items.len() <= 100_000 => Ok(Json::object(vec![(
                 "Items",
                 Json::Array(
