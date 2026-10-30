@@ -362,7 +362,7 @@ mod production_contract {
         let binary = toolkit_cli(&declaration);
         let dir = common::temp_dir("fake-cargo-lint");
         let program = dir.join("cargo");
-        let script = format!(
+        let script = String::from(
             "#!/bin/sh\ncase \"$*\" in\n  *--all-features*) printf 'toolkit-cli v0.1.0 (/w) []\\n' ;;\n  *) printf 'toolkit-cli v0.1.0 (/w) []\\ntoolkit-aws v0.1.0 (/w) [sdk]\\n' ;;\nesac\n"
         );
         common::write(&program, &script);
