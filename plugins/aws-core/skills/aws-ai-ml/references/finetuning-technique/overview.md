@@ -9,7 +9,7 @@ Guides the user through selecting a fine-tuning technique based on their use cas
 - User wants to change their finetuning technique
 - Technique needs to be validated against a selected model
 
-The shipped toolkit build lacks the `ai-models-live` feature and has no live AWS client. `toolkit ai-models recipes` requires `--recorded FILE` and cannot query a real account unless a toolkit build enables that feature. Identify recorded data as such.
+The aws-core plugin ships toolkit with `ai-models-live` enabled. `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" ai-models recipes` queries the configured AWS account and region. For offline replay, add `--recorded FILE` and identify the results as recorded data. SDK-free development builds require recorded responses for this command.
 
 ## Prerequisites
 
@@ -26,7 +26,7 @@ Present the recommendation and reasoning to the user. Ask if they'd like to go w
 
 ### Step 2: Validate Technique Availability
 
-1. Once the user confirms a technique, retrieve the finetuning techniques available for the selected model by running: `toolkit ai-models recipes <model-name> <hub-name>`
+1. Once the user confirms a technique, retrieve the finetuning techniques available for the selected model by running: `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" ai-models recipes <model-name> <hub-name>`
    - This script filters to SFT, DPO, RLVR, and RLAIF, which have validated workflows in this skill. The model may support additional techniques (e.g. CPT, MTRL, PPO) that are not returned by this script.
 2. If the chosen technique is available for the model, proceed to Step 3.
 3. If the chosen technique is not available for the model, explain that the selected model does not support it on SageMaker and offer to go back to model-selection to pick a different model that supports the chosen technique. If the technique is one the model may support but is not returned by this script (e.g. CPT, MTRL, PPO), explain that this skill does not have a validated workflow for it and offer to help using general knowledge.
