@@ -5,7 +5,8 @@ use aws_smithy_types::{retry::RetryConfig, timeout::TimeoutConfig, DateTime};
 use std::collections::BTreeMap;
 #[cfg(test)]
 use std::sync::Arc;
-use toolkit_aws::{sdk::service::ServiceBridge, AwsError};
+use toolkit_aws::{sdk::service_bridge::ServiceBridge, AwsError};
+use toolkit_aws::recorded::{optional_object, optional_object_list, optional_text as optional_string, MemberError};
 use toolkit_core::Json;
 #[cfg(test)]
 type TestSender = Arc<
@@ -70,6 +71,7 @@ impl LiveClient {
     }
 }
 // Same injected-connector/noAuth contract proved by docgraph's SDK spike.
+// recorded-shape: this macro only constructs typed SDK configuration; it reads no JSON, recording or response members.
 macro_rules! sdk_client {
     ($sdk:ident, $bridge:expr) => {
         $sdk::Client::from_conf(
@@ -111,17 +113,8 @@ fn text<'a>(value: &'a Json, key: &str) -> Result<&'a str, AwsError> {
         .and_then(Json::as_str)
         .ok_or_else(|| AwsError::invalid_config("request", format!("{key} must be a string")))
 }
-fn optional_string<'a>(value: &'a Json, key: &str) -> Result<Option<&'a str>, AwsError> {
-    toolkit_aws::recorded::optional_text(value, key)
-        .map_err(|error| AwsError::invalid_config("request", error.to_string()))
-}
-fn optional_object<'a>(value: &'a Json, key: &str) -> Result<Option<&'a Json>, AwsError> {
-    toolkit_aws::recorded::optional_object(value, key)
-        .map_err(|error| AwsError::invalid_config("request", error.to_string()))
-}
-fn optional_object_list<'a>(value: &'a Json, key: &str) -> Result<&'a [Json], AwsError> {
-    toolkit_aws::recorded::optional_object_list(value, key)
-        .map_err(|error| AwsError::invalid_config("request", error.to_string()))
+fn request_shape(error: MemberError) -> AwsError {
+    AwsError::invalid_config("request", error.to_string())
 }
 fn integer(value: &Json, key: &str) -> Result<i64, AwsError> {
     match value.get(key) {
@@ -151,7 +144,7 @@ fn token(members: &mut Vec<(&str, Json)>, value: Option<&str>) {
     }
 }
 fn filters(value: &Json) -> Result<Vec<aws_sdk_sagemaker::types::Filter>, AwsError> {
-    optional_object_list(value, "Filters")?
+    optional_object_list(value, "Filters").map_err(request_shape)?
         .iter()
         .map(|filter| {
             Ok(aws_sdk_sagemaker::types::Filter::builder()
@@ -159,7 +152,7 @@ fn filters(value: &Json) -> Result<Vec<aws_sdk_sagemaker::types::Filter>, AwsErr
                 .operator(aws_sdk_sagemaker::types::Operator::from(text(
                     filter, "Operator",
                 )?))
-                .set_value(optional_string(filter, "Value")?.map(str::to_string))
+                .set_value(optional_string(filter, "Value").map_err(request_shape)?.map(str::to_string))
                 .build())
         })
         .collect()
@@ -174,7 +167,7 @@ fn expression(
             "SearchExpression is too deep",
         ));
     }
-    let nested = optional_object_list(value, "NestedFilters")?
+    let nested = optional_object_list(value, "NestedFilters").map_err(request_shape)?
         .iter()
         .map(|nested| {
             Ok(aws_sdk_sagemaker::types::NestedFilters::builder()
@@ -183,17 +176,17 @@ fn expression(
                 .build())
         })
         .collect::<Result<Vec<_>, AwsError>>()?;
-    let sub = optional_object_list(value, "SubExpressions")?
+    let sub = optional_object_list(value, "SubExpressions").map_err(request_shape)?
         .iter()
         .map(|sub| expression(sub, depth + 1))
         .collect::<Result<Vec<_>, _>>()?;
     Ok(aws_sdk_sagemaker::types::SearchExpression::builder()
         .set_operator(
-            optional_string(value, "Operator")?
+            optional_string(value, "Operator").map_err(request_shape)?
                 .map(aws_sdk_sagemaker::types::BooleanOperator::from),
         )
         .set_filters(
-            (!optional_object_list(value, "Filters")?.is_empty())
+            (!optional_object_list(value, "Filters").map_err(request_shape)?.is_empty())
                 .then(|| filters(value))
                 .transpose()?,
         )
@@ -218,7 +211,7 @@ fn sagemaker(
                     "HubContentType",
                 )?))
                 .max_results(int32(request, "MaxResults")?)
-                .set_next_token(optional_string(request, "NextToken")?.map(str::to_string));
+                .set_next_token(optional_string(request, "NextToken").map_err(request_shape)?.map(str::to_string));
             let output = bridge.run(|| call.clone().send())?;
             let items = output
                 .hub_content_summaries()
@@ -261,7 +254,7 @@ fn sagemaker(
             ]))
         }
         Operation::Search => {
-            let search = optional_object(request, "SearchExpression")?.ok_or_else(|| {
+            let search = optional_object(request, "SearchExpression").map_err(request_shape)?.ok_or_else(|| {
                 AwsError::invalid_config("request", "SearchExpression is required")
             })?;
             let call = sdk
@@ -276,7 +269,7 @@ fn sagemaker(
                     request,
                     "SortOrder",
                 )?))
-                .set_next_token(optional_string(request, "NextToken")?.map(str::to_string));
+                .set_next_token(optional_string(request, "NextToken").map_err(request_shape)?.map(str::to_string));
             let output = bridge.run(|| call.clone().send())?;
             let results = output
                 .results()
@@ -354,14 +347,14 @@ fn metric_queries(
     request: &Json,
 ) -> Result<Vec<aws_sdk_cloudwatch::types::MetricDataQuery>, AwsError> {
     use aws_sdk_cloudwatch::types::{Dimension, Metric, MetricDataQuery, MetricStat};
-    optional_object_list(request, "MetricDataQueries")?
+    optional_object_list(request, "MetricDataQueries").map_err(request_shape)?
         .iter()
         .map(|query| {
-            let stat = optional_object(query, "MetricStat")?
+            let stat = optional_object(query, "MetricStat").map_err(request_shape)?
                 .ok_or_else(|| AwsError::invalid_config("request", "MetricStat is required"))?;
-            let metric = optional_object(stat, "Metric")?
+            let metric = optional_object(stat, "Metric").map_err(request_shape)?
                 .ok_or_else(|| AwsError::invalid_config("request", "Metric is required"))?;
-            let dimensions = optional_object_list(metric, "Dimensions")?
+            let dimensions = optional_object_list(metric, "Dimensions").map_err(request_shape)?
                 .iter()
                 .map(|dimension| {
                     Ok(Dimension::builder()
