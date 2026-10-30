@@ -480,6 +480,16 @@ R-PORT now covers the OpenClaw subsection and setup reference as well.
 
 ## Retirement (#5560)
 
+Post-cutover triage (#5100) adds offline coverage for same-token/different-body
+service conflicts, validation errors and successful matching stored proofs. The
+last case is accepted by the stateless client; the real service mismatch contract
+still requires the operator validation gate in design step 6c. Repeated browser
+preparations for identical terms keep token/body bytes while generating distinct
+handles. The macOS roots loader's stable-environment assumption remains an open
+design decision (#5114); the edition-2024 enforcement claim has been removed.
+Run `make agents-pay-test` and `make agents-pay-test-sdk` for these offline
+contracts. Live payments are not part of either target.
+
 The OpenClaw bridge and its two Python tests, and all nine x402 inventory artifacts,
 are retired after the Rust replacements and cutover. The remaining admin, fetch,
 and policy scripts were retired in #5563.
