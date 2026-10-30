@@ -124,8 +124,9 @@ ServiceBridge security regression coverage (#5582) is implemented with offline
 signing, SDK-auth refusal, retry ownership, response-cap and endpoint-host tests;
 see [ai-models.md](ai-models.md). The unsigned wire-test constructor is gated by
 the non-default `testing` feature, and an offline `plugin-stage` check (#5592)
-rejects that feature in every shipped normal feature graph (features are
-additive, so a deliberate manual opt-in remains possible). The `exchange`
+rejects that feature in the exact normal feature graph of every staged build
+under the build's own network policy, with an offline drift lint in tests
+(features are additive, so a deliberate manual opt-in remains possible). The `exchange`
 authority boundary (#5593) is documented in [ai-models.md](ai-models.md).
 Exact-SHA verification and independent review remain the delivery gates
 recorded on the Issue.

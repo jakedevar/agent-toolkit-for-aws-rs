@@ -83,6 +83,19 @@ impl HttpConnector for Connector {
     }
 }
 
+/// The effective port of an HTTPS authority: 443 when no port is written, the
+/// written port when it is canonical decimal in `1..=65535`, and `None` for a
+/// present port that is empty, non-decimal, out of range or not canonical
+/// (leading zeros, sign). `http::uri::Authority::port` discards parse errors,
+/// so `port_u16().unwrap_or(443)` would read such a port as the default.
+fn effective_port(authority: &str) -> Option<u16> {
+    let Some((_, port)) = authority.rsplit_once(':') else {
+        return Some(443);
+    };
+    let value: u16 = port.parse().ok()?;
+    (value != 0 && value.to_string() == port).then_some(value)
+}
+
 fn exchange(state: &State, request: &SdkRequest) -> Result<SdkResponse, AwsError> {
     let deadline = *state
         .deadline
@@ -103,15 +116,16 @@ fn exchange(state: &State, request: &SdkRequest) -> Result<SdkResponse, AwsError
             "service request host differs from the resolved endpoint",
         ));
     }
-    // Rest of the HTTPS authority: https scheme, no userinfo, no empty `:`
-    // port, and the effective port (443 when implicit) equals the endpoint's.
+    // Rest of the HTTPS authority: https scheme, no userinfo, a well-formed
+    // port when one is written, and the effective port (443 when implicit)
+    // equals the endpoint's.
     // `Uri::host()` strips userinfo and port, so the host check alone binds
     // neither.
     let authority = uri.authority().map_or("", http::uri::Authority::as_str);
     if uri.scheme_str() != Some("https")
         || authority.contains('@')
         || authority.ends_with(':')
-        || uri.port_u16().unwrap_or(443) != state.endpoint_port
+        || effective_port(authority) != Some(state.endpoint_port)
     {
         return Err(AwsError::invalid_config(
             "endpoint",
@@ -693,6 +707,50 @@ mod tests {
             run(&mut bridge, &request).unwrap();
         }
         assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn exchange_refuses_a_present_but_malformed_or_out_of_range_port() {
+        // `http::uri::Authority::port` discards parse errors, so
+        // `port_u16().unwrap_or(443)` would read a present-but-invalid port as
+        // the implicit default. Each of these must be refused with the typed,
+        // non-echoing authority error before any sender call.
+        use std::sync::atomic::Ordering;
+        let (mut bridge, calls) = counting_bridge("sagemaker");
+        let mut request = request(&bridge);
+        let mut exercised = 0;
+        for port in [
+            "65536", "99999", "443443", "0", "00443", "0443", "+443", "4_43",
+        ] {
+            let url = format!("https://{SAGEMAKER_HOST}:{port}/");
+            // The SDK request type may itself refuse an unparseable URI; only
+            // the URIs it accepts reach `exchange`.
+            if request.set_uri(url.clone()).is_err() {
+                continue;
+            }
+            exercised += 1;
+            let error = run(&mut bridge, &request).unwrap_err();
+            assert_eq!(error, refused(AUTHORITY_REFUSED), "{url}");
+            assert!(
+                !format!("{error:?} {error}").contains(port),
+                "{url} must not be echoed"
+            );
+            assert_eq!(
+                calls.load(Ordering::SeqCst),
+                0,
+                "{url} must not reach sender"
+            );
+        }
+        assert!(
+            exercised >= 3,
+            "only {exercised} malformed ports reached exchange"
+        );
+        // The explicit canonical default port is still the same destination.
+        request
+            .set_uri(format!("https://{SAGEMAKER_HOST}:443/"))
+            .unwrap();
+        run(&mut bridge, &request).unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 
     #[test]

@@ -117,8 +117,17 @@ before the sender, signer or transport sees it:
 - Both refusals are typed `InvalidConfig("endpoint")`, never echo the URL, and
   happen before any credential load or connector call. An explicit `:443` on
   a default-port endpoint is the same effective destination and is accepted.
-  The generated SDK emits `https://<host>/`, so valid request bytes are
-  unchanged.
+  With the default per-service authorities the generated SDK emits
+  `https://<host>/...` with no port or userinfo (monitoring's RPC path is not
+  `/`), so valid request bytes are unchanged. An endpoint override keeps its
+  configured port and base path in the request; such a request is accepted
+  when its effective port equals the endpoint's, and `exchange` forwards the
+  URI unchanged.
+- A port that is written but empty, non-decimal, out of range, zero or not
+  canonical (leading zeros or a sign) is refused with the same typed,
+  non-echoing authority error. `http::uri::Authority::port` discards port parse
+  errors, so `port_u16().unwrap_or(443)` would read such a port as the
+  implicit default (#5605); `exchange` parses the written port itself.
 - Defense in depth: `SdkTransport::admit` still refuses userinfo and non-https
   URLs and applies the public-address guard if a caller bypasses `exchange`.
 
@@ -132,16 +141,18 @@ connector) and asserts zero credential loads and zero connector calls.
 Cargo features are additive, so the repository cannot promise that no build
 anywhere can enable `toolkit-aws/testing`: `cargo build --features
 toolkit-aws/testing` is a deliberate opt-in and exposes the unsigned
-`with_sender`. The guarantee is narrower and enforced offline:
+`with_sender`. The guarantee is narrower and enforced by `plugin-stage`:
 
-- `plugin-stage` tests (`tests/feature_graph.rs`) run `cargo tree --offline
-  --locked --target all -e no-dev` for every binary in
-  `packaging/plugin-binaries.json`, with its declared features and again with
-  `--all-features`, and fail if `toolkit-aws` enables `testing`. `-e no-dev`
-  is the graph a release build sees, so the CLI's own dev-dependency is not
-  part of it.
-- `plugin-stage stage` runs the same check before each cargo build and
-  refuses to compile a binary whose normal graph enables the feature.
+- `plugin-stage stage` runs `cargo tree --locked -e no-dev` for the exact graph
+  of each build (package, declared features, the build's target triple) before
+  compiling, and refuses a binary whose normal graph enables the feature.
+  It adds no `--offline` of its own, so it follows the build's network policy
+  (a cold registry cache the build can fill is not an error); a graph that
+  cannot be resolved or validated refuses staging. `-e no-dev` is the graph a
+  release build sees, so the CLI's own dev-dependency is not part of it.
+- The `plugin-stage` tests (`tests/feature_graph.rs`) also run an explicitly
+  offline drift lint over every binary in `packaging/plugin-binaries.json`
+  (`--target all`, declared features and `--all-features`).
 - Negative coverage uses the real workspace graph with an explicit
   `toolkit-aws/testing` opt-in (no fixture crate). Library consumers outside
   this workspace remain responsible for not enabling it.
