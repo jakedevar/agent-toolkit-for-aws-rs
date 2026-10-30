@@ -298,7 +298,7 @@ pub fn require_resource(
                 "region" => "AWS_REGION".to_owned(),
                 _ => key.to_uppercase(),
             };
-            Err(format!("Missing payment resource '{key}'. Add it to the config (agents_pay_admin.py init-config) or set {name}. Provision resources with the trusted setup path first."))
+            Err(format!("Missing payment resource '{key}'. Add it to the config (toolkit agents-pay admin init-config) or set {name}. Provision resources with the trusted setup path first."))
         }
     }
 }

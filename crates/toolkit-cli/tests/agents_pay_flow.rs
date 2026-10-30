@@ -277,7 +277,7 @@ fn t_order_pre_configuration_and_resource_refusals_make_zero_requests() {
     for (resources, reason) in [
         (
             r#","payment_instrument_id":"""#,
-            "Missing payment resource 'payment_instrument_id'. Add it to the config (agents_pay_admin.py init-config) or set PAYMENT_INSTRUMENT_ID. Provision resources with the trusted setup path first.",
+            "Missing payment resource 'payment_instrument_id'. Add it to the config (toolkit agents-pay admin init-config) or set PAYMENT_INSTRUMENT_ID. Provision resources with the trusted setup path first.",
         ),
         (
             r#","user_id":["x"]"#,

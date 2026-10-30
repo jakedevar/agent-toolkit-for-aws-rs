@@ -462,9 +462,8 @@ The SKILL text ("Known limits") and `troubleshooting.md` state:
 
 ### Recorded departures
 
-- **D23 in runtime text.** The two runtime strings that quote the
-  missing-resource refusal still read `agents_pay_admin.py init-config`
-  (`agents_pay/config.rs`, `agents_pay/policy/mod.rs`). Changing them is a
-  runtime change, which S7's fence forbids, so the documents quote the new
-  command (`toolkit agents-pay admin init-config`) and the string rename is a
-  separate follow-up.
+- **D23 runtime text.** The missing-resource refusal in both
+  `agents_pay/config.rs` and `agents_pay/policy/mod.rs` now names
+  `toolkit agents-pay admin init-config` in place of
+  `agents_pay_admin.py init-config`. This intentionally changes the refusal
+  text to match the S7 documents; the remaining behavior is unchanged.
