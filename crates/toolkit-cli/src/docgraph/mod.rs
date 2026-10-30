@@ -223,6 +223,7 @@ fn live_selected(invocation: &Invocation) -> Result<bool, ToolkitError> {
     Ok(true)
 }
 
+#[cfg(not(feature = "docgraph-live"))]
 fn unavailable_live() -> ToolkitError {
     usage("live docgraph adapters are not available in this build")
 }
