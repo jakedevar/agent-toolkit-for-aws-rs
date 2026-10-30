@@ -17,14 +17,17 @@
 //!   rejected.
 //! - Parser work is linear in the input: duplicate keys are found through a
 //!   hash index (default `RandomState`, so keys cannot be chosen to collide)
+//!   with cached key digests so table growth never rehashes string bytes,
 //!   while members keep insertion order. Parsing and writing are synchronous
 //!   and never yield; [`parse_json_with_limits`] adds a node cap, and
 //!   [`parse_json`] keeps its depth limit and has no node cap.
 //! - Non-finite floats cannot be written in JSON; the writers emit `null` for
 //!   them, like `JSON.stringify`.
 
-use std::collections::HashSet;
+use std::cell::Cell;
+use std::collections::{hash_map::RandomState, HashSet};
 use std::fmt::Write as _;
+use std::hash::{BuildHasher, Hash, Hasher};
 
 use crate::error::ParseError;
 use crate::skills::SkillEntry;
@@ -270,6 +273,8 @@ pub struct JsonParseStats {
     /// comparison in the linear scan of a small object and one per index
     /// insertion. At most about `n + 36` for `n` keys, not `n(n-1)/2`.
     pub key_probes: u64,
+    /// Bytes fed to the duplicate-key hashers, including table growth.
+    pub key_bytes_hashed: u64,
     /// Nodes seen (see [`JsonLimits::max_nodes`]).
     pub nodes: usize,
 }
@@ -278,8 +283,8 @@ pub struct JsonParseStats {
 ///
 /// Behaves exactly like [`parse_json`] apart from the limits. Parser work is
 /// linear in the input: object keys are checked for duplicates through a hash
-/// index (expected constant time per key) while the members stay in
-/// insertion order.
+/// index (expected constant time per key), with cached digests to keep table
+/// growth independent of key lengths, while members stay in insertion order.
 ///
 /// # Errors
 ///
@@ -297,6 +302,7 @@ pub fn parse_json_with_stats(input: &str) -> (Result<Json, ParseError>, JsonPars
 }
 
 fn parse_with(input: &str, limits: &JsonLimits) -> (Result<Json, ParseError>, JsonParseStats) {
+    let key_bytes_hashed = Cell::new(0);
     let mut parser = Parser {
         src: input,
         bytes: input.as_bytes(),
@@ -304,10 +310,12 @@ fn parse_with(input: &str, limits: &JsonLimits) -> (Result<Json, ParseError>, Js
         limits: *limits,
         nodes: 0,
         key_probes: 0,
+        key_bytes_hashed: &key_bytes_hashed,
     };
     let result = parser.document();
     let stats = JsonParseStats {
         key_probes: parser.key_probes,
+        key_bytes_hashed: key_bytes_hashed.get(),
         nodes: parser.nodes,
     };
     (result, stats)
@@ -317,6 +325,64 @@ fn parse_with(input: &str, limits: &JsonLimits) -> (Result<Json, ParseError>, Js
 /// past it builds the hash index. The scan costs at most 28 comparisons.
 const LINEAR_SCAN_MEMBERS: usize = 8;
 
+/// Count the actual bytes consumed by hashing, including rehashes performed
+/// internally when the table grows. Counting insertions alone misses that work.
+struct CountingState<'a> {
+    inner: RandomState,
+    bytes: &'a Cell<u64>,
+}
+
+impl<'a> BuildHasher for CountingState<'a> {
+    type Hasher = CountingHasher<'a>;
+
+    fn build_hasher(&self) -> Self::Hasher {
+        CountingHasher {
+            inner: self.inner.build_hasher(),
+            bytes: self.bytes,
+        }
+    }
+}
+
+struct CountingHasher<'a> {
+    inner: std::collections::hash_map::DefaultHasher,
+    bytes: &'a Cell<u64>,
+}
+
+impl Hasher for CountingHasher<'_> {
+    fn finish(&self) -> u64 {
+        self.inner.finish()
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        self.bytes.set(self.bytes.get() + bytes.len() as u64);
+        self.inner.write(bytes);
+    }
+}
+
+/// Hash the decoded text once with the object's random key. Table growth then
+/// rehashes only a fixed-size digest, never a long early key's bytes again.
+/// Text equality still resolves digest collisions without losing members.
+#[derive(PartialEq, Eq)]
+struct IndexedKey {
+    digest: u64,
+    text: String,
+}
+
+impl IndexedKey {
+    fn new(text: String, state: &CountingState<'_>) -> Self {
+        Self {
+            digest: state.hash_one(text.as_str()),
+            text,
+        }
+    }
+}
+
+impl Hash for IndexedKey {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.digest.hash(state);
+    }
+}
+
 struct Parser<'a> {
     src: &'a str,
     bytes: &'a [u8],
@@ -324,9 +390,10 @@ struct Parser<'a> {
     limits: JsonLimits,
     nodes: usize,
     key_probes: u64,
+    key_bytes_hashed: &'a Cell<u64>,
 }
 
-impl Parser<'_> {
+impl<'a> Parser<'a> {
     fn error(&self, message: &str) -> ParseError {
         let end = self.pos.min(self.src.len());
         let mut line = 1;
@@ -430,7 +497,7 @@ impl Parser<'_> {
         // Built when the object outgrows the linear scan. `HashSet` uses the
         // default `RandomState` (keyed SipHash with per-process random keys),
         // so an adversary cannot precompute colliding keys.
-        let mut index: Option<HashSet<String>> = None;
+        let mut index: Option<HashSet<IndexedKey, CountingState<'a>>> = None;
         loop {
             self.skip_whitespace();
             if self.peek() != Some(b'"') {
@@ -469,7 +536,7 @@ impl Parser<'_> {
     /// otherwise.
     fn is_duplicate_key(
         &mut self,
-        index: &mut Option<HashSet<String>>,
+        index: &mut Option<HashSet<IndexedKey, CountingState<'a>>>,
         pairs: &[(String, Json)],
         key: &str,
     ) -> bool {
@@ -483,15 +550,21 @@ impl Parser<'_> {
             return false;
         }
         let set = index.get_or_insert_with(|| {
-            let mut set = HashSet::with_capacity(pairs.len() * 2);
+            let mut set = HashSet::with_capacity_and_hasher(
+                pairs.len() * 2,
+                CountingState {
+                    inner: RandomState::new(),
+                    bytes: self.key_bytes_hashed,
+                },
+            );
             for (existing, _) in pairs {
                 self.key_probes += 1;
-                set.insert(existing.clone());
+                set.insert(IndexedKey::new(existing.clone(), set.hasher()));
             }
             set
         });
         self.key_probes += 1;
-        !set.insert(key.to_string())
+        !set.insert(IndexedKey::new(key.to_string(), set.hasher()))
     }
 
     fn array(&mut self, depth: usize) -> Result<Json, ParseError> {
@@ -660,6 +733,22 @@ impl Parser<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cached_key_digest_collisions_still_compare_the_decoded_text() {
+        let mut keys = HashSet::new();
+        for text in ["first", "second"] {
+            assert!(keys.insert(IndexedKey {
+                digest: 42,
+                text: text.to_string(),
+            }));
+        }
+        assert!(!keys.insert(IndexedKey {
+            digest: 42,
+            text: "first".to_string(),
+        }));
+        assert_eq!(keys.len(), 2);
+    }
 
     fn entry(name: &str, description: &str, path: &str) -> SkillEntry {
         SkillEntry {

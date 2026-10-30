@@ -292,4 +292,4 @@ mod cost_tests;
 #[cfg(test)]
 mod iterate_tests;
 #[cfg(test)]
-mod test_support;
+pub(crate) mod test_support;

@@ -1162,6 +1162,9 @@ becomes slice **S0**:
   `Json::Object` keeps insertion order, and the duplicate-key error and its position are
   unchanged. An object of at most 8 members may keep the linear scan, which is bounded by a
   constant.
+  Each indexed key caches its keyed digest: otherwise table growth repeatedly hashes an
+  early long key, costing O(key bytes × log(member count)) even with linear insert counts.
+  Growth hashes fixed-size digests; full decoded text equality still resolves collisions.
 - **Limits entry point.** S0 adds `parse_json_with_limits(input, &JsonLimits { max_depth,
   max_nodes })`. `parse_json` keeps its current limits, so its other callers are unaffected apart
   from the faster check.
@@ -1182,6 +1185,10 @@ becomes slice **S0**:
 - **Probe count.** A test-visible `parse_json_with_stats` counts key comparisons and index
   probes. An object of n = 20,000 distinct short keys (about 200 KiB) must parse with at most 2n
   probes. The old loop needs about 2×10^8 comparisons.
+- **Hash bytes.** The same stats count every byte passed to the hashers, including internal
+  table growth. A 32 KiB key at positions 0, 7, 8 or 15 followed by short keys, up to 2,048
+  total, must cost at most three times the input bytes in hash work. An escaped duplicate
+  of the long key is still refused. This catches work hidden by counting insertions alone.
 - **Behaviour kept:** a duplicate placed last is still rejected at the same error position, and
   key order is preserved.
 - **Node cap:** with an injected `max_nodes`, the boundary value is accepted and boundary+1 is

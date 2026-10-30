@@ -74,7 +74,21 @@ fn create_temp(dir: &Path, name: &str, mode: u32) -> io::Result<(fs::File, PathB
 /// not a regular file, or when the temporary file cannot be written or
 /// renamed. A failed write removes its own temporary file and leaves an
 /// existing destination untouched.
+///
+/// Publication replaces the final directory entry without opening it. A link
+/// swapped in after the initial check is replaced, never followed. Ancestor
+/// directories must remain trusted and stable during publication.
 pub(crate) fn write_private(path: &Path, contents: &str, mode: u32) -> Result<(), ToolkitError> {
+    write_private_with(path, mode, |file| file.write_all(contents.as_bytes()))
+}
+
+/// Inject only the staging write; validation, sync, cleanup and publication
+/// are shared so failure tests exercise the production publication path.
+fn write_private_with(
+    path: &Path,
+    mode: u32,
+    write: impl FnOnce(&mut fs::File) -> io::Result<()>,
+) -> Result<(), ToolkitError> {
     match fs::symlink_metadata(path) {
         Ok(metadata) if metadata.file_type().is_symlink() => {
             return Err(failure(path, "symbolic links are not followed"));
@@ -96,8 +110,7 @@ pub(crate) fn write_private(path: &Path, contents: &str, mode: u32) -> Result<()
     };
     let (mut file, temp) =
         create_temp(dir, name, mode).map_err(|error| failure(path, &error.to_string()))?;
-    let written = file
-        .write_all(contents.as_bytes())
+    let written = write(&mut file)
         .and_then(|()| file.flush())
         .and_then(|()| restrict(&file, mode))
         .and_then(|()| file.sync_all());
@@ -120,4 +133,87 @@ fn restrict(file: &fs::File, mode: u32) -> io::Result<()> {
 #[cfg(not(unix))]
 fn restrict(_file: &fs::File, _mode: u32) -> io::Result<()> {
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::dynamodb::test_support::TempDir;
+
+    #[test]
+    fn partial_staging_failure_preserves_existing_content_and_cleans_the_temp() {
+        for existing in [false, true] {
+            let root = TempDir::new("atomic-partial-failure");
+            let path = root.join("report.md");
+            if existing {
+                fs::write(&path, "complete old report").unwrap();
+            }
+            let error = write_private_with(&path, PRIVATE_FILE, |file| {
+                file.write_all(b"partial new report")?;
+                if existing {
+                    assert_eq!(fs::read_to_string(&path).unwrap(), "complete old report");
+                } else {
+                    assert!(!path.exists());
+                }
+                Err(io::Error::other("injected staging failure"))
+            })
+            .expect_err("partial staging must not publish");
+            assert!(error.to_string().contains("injected staging failure"));
+            if existing {
+                assert_eq!(fs::read_to_string(&path).unwrap(), "complete old report");
+            } else {
+                assert!(!path.exists());
+            }
+            assert_eq!(fs::read_dir(&*root).unwrap().count(), usize::from(existing));
+        }
+    }
+
+    #[test]
+    fn readers_see_complete_old_content_until_complete_new_content_is_published() {
+        use std::io::Read;
+
+        let root = TempDir::new("atomic-visibility");
+        let path = root.join("report.md");
+        let old = "complete old report".repeat(512);
+        let new = "complete new report".repeat(1_024);
+        fs::write(&path, &old).unwrap();
+        let mut old_reader = fs::File::open(&path).unwrap();
+        write_private_with(&path, PRIVATE_FILE, |file| {
+            for chunk in new.as_bytes().chunks(256) {
+                file.write_all(chunk)?;
+                // Inspect each partial staging state deterministically.
+                assert_eq!(fs::read_to_string(&path).unwrap(), old);
+            }
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), new);
+        let mut held = String::new();
+        old_reader.read_to_string(&mut held).unwrap();
+        assert_eq!(held, old);
+        assert_eq!(fs::read_dir(&*root).unwrap().count(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_destination_link_swapped_in_during_staging_is_never_followed() {
+        let root = TempDir::new("atomic-link-swap");
+        let path = root.join("report.md");
+        let target = root.join("target");
+        fs::write(&path, "old report").unwrap();
+        fs::write(&target, "KEEP").unwrap();
+        write_private_with(&path, PRIVATE_FILE, |file| {
+            file.write_all(b"new report")?;
+            fs::remove_file(&path)?;
+            std::os::unix::fs::symlink(&target, &path)
+        })
+        .unwrap();
+        assert_eq!(fs::read_to_string(&target).unwrap(), "KEEP");
+        assert_eq!(fs::read_to_string(&path).unwrap(), "new report");
+        assert!(!fs::symlink_metadata(&path)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert_eq!(fs::read_dir(&*root).unwrap().count(), 2);
+    }
 }
