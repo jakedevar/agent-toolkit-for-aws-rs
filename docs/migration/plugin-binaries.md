@@ -316,6 +316,16 @@ hook template that runs a plugin file (`plugin-file`, the python shapes) trusts 
 file's content: a reviewed plugin script could itself call `bin/`, which is a
 source-review matter.
 
+### Feature-graph gate (#5592)
+
+`plugin-stage::feature_graph` runs `cargo tree --offline --locked --target all -e no-dev`
+for each declared binary (declared `features`, then `--all-features`) and rejects
+`toolkit-aws/testing`, the feature that exposes the unsigned `ServiceBridge::with_sender`.
+`plugin-stage stage` runs it before each cargo build, and
+`crates/plugin-stage/tests/feature_graph.rs` runs it over the committed declaration.
+Cargo features are additive: a hand-run `cargo build --features toolkit-aws/testing`
+is a deliberate opt-in this gate does not prevent. See [ai-models.md](ai-models.md).
+
 ## 5. Checksums and provenance
 
 `plugin-stage stage` writes `bin/manifest.json`:

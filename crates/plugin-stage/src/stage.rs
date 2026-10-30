@@ -723,8 +723,15 @@ pub fn source_provenance(root: &Path, rustc: &str) -> Result<Provenance, String>
 ///
 /// # Errors
 ///
-/// When cargo cannot start, fails, or leaves no output file.
+/// When the feature graph enables a forbidden feature, cargo cannot start,
+/// fails, or leaves no output file.
 pub fn build(root: &Path, step: &BuildStep, target_dir: &Path) -> Result<Built, String> {
+    // #5592: never compile a shipped binary whose normal graph enables an
+    // unsigned test-injection feature.
+    let graph = crate::feature_graph::check_binary(root, &step.binary)?;
+    if !graph.violations.is_empty() {
+        return Err(graph.violations.join("; "));
+    }
     eprintln!("plugin-stage: building {}", step.display());
     let status = Command::new("cargo")
         .args(step.cargo_args())

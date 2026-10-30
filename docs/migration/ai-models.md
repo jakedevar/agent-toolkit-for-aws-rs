@@ -95,8 +95,56 @@ headers and any URI host differing from the resolved endpoint before calling
 the sender. An offline SDK client with static fixture credentials proves the
 SDK-auth refusal, and the retry test covers both zero and two toolkit retries.
 `ServiceBridge::with_sender` is available only under `cfg(test)` or the
-non-default `toolkit-aws/testing` feature, enabled solely by the CLI's dev
-dependency. Private injection adds no public production constructor.
+non-default `toolkit-aws/testing` feature, which only the CLI's
+dev-dependency enables. Private injection adds no public production
+constructor.
+
+### Destination authority boundary (#5593)
+
+`exchange` binds each SDK request to the resolved `ClientConfig` endpoint
+before the sender, signer or transport sees it:
+
+- Host: byte-for-byte equality with `ClientConfig::endpoint().host()`. There is
+  no normalization, so an uppercase host or a trailing-dot host is a different
+  string and is refused (`service request host differs from the resolved
+  endpoint`).
+- Rest of the HTTPS authority: the scheme must be `https`, the authority must
+  carry no userinfo and no empty `:` port, and the effective port (443 when
+  implicit, via `Uri::port_u16`) must equal the endpoint's effective port.
+  `http::Uri::host()` strips userinfo and port, so the host check alone binds
+  neither. Violations fail with `service request authority differs from the
+  resolved endpoint`.
+- Both refusals are typed `InvalidConfig("endpoint")`, never echo the URL, and
+  happen before any credential load or connector call. An explicit `:443` on
+  a default-port endpoint is the same effective destination and is accepted.
+  The generated SDK emits `https://<host>/`, so valid request bytes are
+  unchanged.
+- Defense in depth: `SdkTransport::admit` still refuses userinfo and non-https
+  URLs and applies the public-address guard if a caller bypasses `exchange`.
+
+Offline tests drive real URIs through `exchange` for uppercase host, trailing
+dot, userinfo, non-default port, empty port and `http`; one uses the production
+foundations (`with_foundations` over an `SdkTransport` with a counting
+connector) and asserts zero credential loads and zero connector calls.
+
+### Shipped builds and the `testing` feature (#5592)
+
+Cargo features are additive, so the repository cannot promise that no build
+anywhere can enable `toolkit-aws/testing`: `cargo build --features
+toolkit-aws/testing` is a deliberate opt-in and exposes the unsigned
+`with_sender`. The guarantee is narrower and enforced offline:
+
+- `plugin-stage` tests (`tests/feature_graph.rs`) run `cargo tree --offline
+  --locked --target all -e no-dev` for every binary in
+  `packaging/plugin-binaries.json`, with its declared features and again with
+  `--all-features`, and fail if `toolkit-aws` enables `testing`. `-e no-dev`
+  is the graph a release build sees, so the CLI's own dev-dependency is not
+  part of it.
+- `plugin-stage stage` runs the same check before each cargo build and
+  refuses to compile a binary whose normal graph enables the feature.
+- Negative coverage uses the real workspace graph with an explicit
+  `toolkit-aws/testing` opt-in (no fixture crate). Library consumers outside
+  this workspace remain responsible for not enabling it.
 
 The `noAuth` preference remains an explicit configuration contract. Changing
 only that preference to `sigv4` is an equivalent mutation today: without an
