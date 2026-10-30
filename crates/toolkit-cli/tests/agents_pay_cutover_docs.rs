@@ -23,7 +23,7 @@
 //! Text obligations: `s7_text_*` (L-TERMS, the R-DNS residual, B1, B3, B4, Q21,
 //! Q2, Q3, D23), `s7_inventory_*` and `s7_migration_doc_*`.
 //!
-//! The OpenClaw parts belong to OpenClaw B5, which edits them on top of this
+//! The `OpenClaw` parts belong to `OpenClaw` B5, which edits them on top of this
 //! slice: the `### OpenClaw` subsection of `SKILL.md` and
 //! `references/openclaw-setup.md` are exempt from the content rules below
 //! (`openclaw_exempt`). B5 deletes that exemption when it rewrites them.
@@ -83,7 +83,7 @@ fn pay_pages() -> Vec<Page> {
         .collect()
 }
 
-/// The pages whose content rules apply, with the OpenClaw parts removed.
+/// The pages whose content rules apply, with the `OpenClaw` parts removed.
 fn openclaw_exempt(rel: &str, text: &str) -> String {
     if rel.ends_with(OPENCLAW_REFERENCE) {
         return String::new();
@@ -103,7 +103,7 @@ fn openclaw_exempt(rel: &str, text: &str) -> String {
     format!("{}{}", &text[..start], &text[after..])
 }
 
-/// Every page the content rules cover: the skill pages minus the OpenClaw
+/// Every page the content rules cover: the skill pages minus the `OpenClaw`
 /// parts, plus the `agents-build` payments reference.
 fn governed_pages() -> Vec<Page> {
     let mut pages: Vec<Page> = pay_pages()
