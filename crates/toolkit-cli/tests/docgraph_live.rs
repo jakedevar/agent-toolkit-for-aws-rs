@@ -395,11 +395,18 @@ const LIVE_IDENTS: [&str; 6] = [
     "run_live_review",
 ];
 
-fn live_tokens(stream: proc_macro2::TokenStream, gate: &str) -> bool {
+fn live_tokens(stream: proc_macro2::TokenStream, gate: &str, literals: &mut Vec<String>) -> bool {
     stream.into_iter().any(|tree| match tree {
-        proc_macro2::TokenTree::Group(group) => live_tokens(group.stream(), gate),
+        proc_macro2::TokenTree::Group(group) => live_tokens(group.stream(), gate, literals),
         proc_macro2::TokenTree::Ident(ident) => LIVE_IDENTS.iter().any(|live| ident == live),
-        proc_macro2::TokenTree::Literal(literal) => literal.to_string() == format!("\"{gate}\""),
+        proc_macro2::TokenTree::Literal(literal) => {
+            if let Ok(value) = syn::parse_str::<syn::LitStr>(&literal.to_string()) {
+                literals.push(value.value());
+                value.value() == gate
+            } else {
+                false
+            }
+        }
         proc_macro2::TokenTree::Punct(_) => false,
     })
 }
@@ -409,6 +416,7 @@ fn live_tokens(stream: proc_macro2::TokenStream, gate: &str) -> bool {
 struct BodyScan<'g> {
     gate: &'g str,
     live: bool,
+    literals: Vec<String>,
 }
 
 impl<'ast> syn::visit::Visit<'ast> for BodyScan<'_> {
@@ -418,10 +426,11 @@ impl<'ast> syn::visit::Visit<'ast> for BodyScan<'_> {
 
     fn visit_lit_str(&mut self, literal: &'ast syn::LitStr) {
         self.live |= literal.value() == self.gate;
+        self.literals.push(literal.value());
     }
 
     fn visit_macro(&mut self, mac: &'ast syn::Macro) {
-        self.live |= live_tokens(mac.tokens.clone(), self.gate);
+        self.live |= live_tokens(mac.tokens.clone(), self.gate, &mut self.literals);
         syn::visit::visit_macro(self, mac);
     }
 }
@@ -447,8 +456,34 @@ impl<'ast> syn::visit::Visit<'ast> for Inventory {
             let mut scan = BodyScan {
                 gate: &self.gate,
                 live: false,
+                literals: Vec::new(),
             };
             syn::visit::Visit::visit_block(&mut scan, &item.block);
+            let has = |value: &str| scan.literals.iter().any(|s| s == value);
+            let review_argv = has("wa-review")
+                && has("--live")
+                && has("--cluster-id")
+                && has("--region")
+                && scan.literals.iter().any(|s| {
+                    let parts: Vec<_> = s.split('-').collect();
+                    parts.len() >= 3
+                        && parts
+                            .last()
+                            .is_some_and(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))
+                });
+            // Audited subprocess safety tests: the first and third use incomplete
+            // live review argv; the preflight test has a complete row which is
+            // refused for --network-policy before any environment or network use.
+            // Identifier-based live entry detection is never exempted.
+            let audited_argv = self.file.ends_with("toolkit-cli/tests/docgraph_live.rs")
+                && [
+                    "ordinary_and_live_shaped_runs_never_reach_the_network",
+                    "live_review_argv_preflight_precedes_environment_files_and_network",
+                    "credential_arguments_are_rejected_without_echo",
+                ]
+                .iter()
+                .any(|name| item.sig.ident == *name);
+            scan.live |= review_argv && !audited_argv;
             if scan.live {
                 self.live += 1;
                 let ignored = item.attrs.iter().any(|attr| attr.path().is_ident("ignore"));
@@ -531,6 +566,7 @@ fn the_inventory_rule_flags_an_unignored_live_test() {
         "#[test] fn unguarded() {{ let _ = std::env::var(\"{gate}\"); }}\n\
          #[test] fn transport() {{ SdkTransport::for_database(); }}\n\
          #[test] fn review() {{ run_live_review(); }}\n\
+         #[test] fn argv() {{ run(&[\"documentdb\", \"wa-review\", \"--live\", \"--cluster-id\", \"c1\", \"--region\", \"us-east-1\"]); }}\n\
          #[test] #[ignore] #[cfg(feature = \"docgraph-live\")] fn gated() {{ SystemDatabaseResolver; }}\n\
          #[test] fn ordinary() {{ SdkTransport::for_database_with_resolver(); }}"
     );
@@ -542,14 +578,15 @@ fn the_inventory_rule_flags_an_unignored_live_test() {
         offenders: Vec::new(),
     };
     syn::visit::Visit::visit_file(&mut inventory, &syn::parse_file(&source).unwrap());
-    assert_eq!(inventory.tests, 5);
-    assert_eq!(inventory.live, 4);
+    assert_eq!(inventory.tests, 6);
+    assert_eq!(inventory.live, 5);
     assert_eq!(
         inventory.offenders,
         vec![
             "fixture::unguarded".to_string(),
             "fixture::transport".to_string(),
-            "fixture::review".to_string()
+            "fixture::review".to_string(),
+            "fixture::argv".to_string()
         ]
     );
 }
@@ -783,6 +820,17 @@ fn live_review_argv_preflight_precedes_environment_files_and_network() {
                 "c1",
                 "--region",
                 "us-east-1",
+                "--network-policy",
+                "/also/does/not/exist",
+            ],
+            "--network-policy cannot be used with wa-review --live",
+        ),
+        (
+            vec![
+                "--cluster-id",
+                "c1",
+                "--region",
+                "us-east-1",
                 "--now",
                 "invalid",
             ],
@@ -795,8 +843,6 @@ fn live_review_argv_preflight_precedes_environment_files_and_network() {
             "--live",
             "--analysis-data",
             "/does/not/exist",
-            "--network-policy",
-            "/also/does/not/exist",
             "--output",
             "reports",
         ];
@@ -1222,4 +1268,28 @@ fn live_memory_refuses_policy_region_and_input_failures_before_clients() {
     assert_eq!(network.accepted(), 0);
     assert!(provider_never_ran(&dir));
     std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn review_production_wiring_is_bounded_and_uses_one_roots_set() {
+    let source = include_str!("../src/docgraph/live_review.rs");
+    let body = source
+        .parse::<proc_macro2::TokenStream>()
+        .unwrap()
+        .to_string();
+    let compact: String = body.chars().filter(|c| !c.is_whitespace()).collect();
+    for required in [
+        "ValidatedRoots::from_process()",
+        "SdkTransport::new(&runtime,&roots)",
+        "ProviderHttp::validated_bounded(&roots)",
+        "GuardedCredentials::new(&runtime,region,None,http)",
+        "letsleeper=ThreadSleeper;",
+        "letjitter=FullJitter::new();",
+    ] {
+        assert!(
+            compact.contains(required),
+            "missing production wiring: {required}"
+        );
+    }
+    assert_eq!(compact.matches("ValidatedRoots::from_process()").count(), 1);
 }

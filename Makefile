@@ -10,6 +10,7 @@ build:
 ai-models-sdk:
 	cargo test -p toolkit-cli --features ai-models-live --locked --lib ai_models::
 	cargo test -p toolkit-cli --features ai-models-live --locked --test ai_models
+	cargo test -p toolkit-aws --features sdk --locked --lib sdk::service_bridge::
 
 ai-models-test:
 	cargo test -p toolkit-cli --locked --lib ai_models::
@@ -45,6 +46,7 @@ test-sdk:
 	cargo test -p toolkit-cli --features aws-sdk --locked --lib asm_exec
 	cargo test -p toolkit-cli --features aws-sdk --locked --lib mcp_proxy
 	cargo test -p toolkit-cli --features aws-sdk --locked --test mcp_proxy_cli
+	cargo test -p toolkit-cli --features aws-sdk --locked --test launch_callback net5_probe_reports_named_missing_capability
 	cargo test -p toolkit-cli --features aws-sdk --locked --test launch_callback shipped_binary_exchange_publishes_session
 	cargo test -p toolkit-cli --features aws-sdk --locked --test agents_pay_ac3 --test agents_pay_wiring --test agents_pay_gate
 

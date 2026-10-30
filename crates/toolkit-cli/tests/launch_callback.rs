@@ -480,6 +480,100 @@ fn helper_closes_stdout_after_port_while_still_listening() {
     assert!(result.expect("stdout remained open").unwrap().is_empty());
 }
 
+#[cfg(all(target_os = "linux", feature = "aws-sdk"))]
+fn net5_run(
+    command: &mut Command,
+    limit: std::time::Duration,
+) -> Result<std::process::Output, String> {
+    use nix::sys::signal::{killpg, Signal};
+    use nix::unistd::Pid;
+    use std::io::Read;
+    use std::os::unix::process::CommandExt;
+    use std::time::Instant;
+
+    let mut child = command
+        .process_group(0)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("could not start command: {error}"))?;
+    let group = Pid::from_raw(i32::try_from(child.id()).unwrap());
+    let mut stdout = child.stdout.take().unwrap();
+    let mut stderr = child.stderr.take().unwrap();
+    let out = std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        stdout.read_to_end(&mut bytes).map(|_| bytes)
+    });
+    let err = std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        stderr.read_to_end(&mut bytes).map(|_| bytes)
+    });
+    let deadline = Instant::now() + limit;
+    let (status, timed_out) = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break (Some(status), false),
+            Ok(None) if Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            Ok(None) => {
+                let _ = killpg(group, Signal::SIGKILL);
+                break (child.wait().ok(), true);
+            }
+            Err(error) => {
+                let _ = killpg(group, Signal::SIGKILL);
+                let _ = child.wait();
+                return Err(format!("wait failed: {error}"));
+            }
+        }
+    };
+    // Also close pipes held by any descendants left after the leader exited.
+    let _ = killpg(group, Signal::SIGKILL);
+    let stdout = out
+        .join()
+        .map_err(|_| "stdout reader panicked")?
+        .map_err(|e| e.to_string())?;
+    let stderr = err
+        .join()
+        .map_err(|_| "stderr reader panicked")?
+        .map_err(|e| e.to_string())?;
+    if timed_out {
+        return Err(format!("timeout after {} seconds", limit.as_secs()));
+    }
+    Ok(std::process::Output {
+        status: status.ok_or("could not reap child")?,
+        stdout,
+        stderr,
+    })
+}
+
+#[cfg(all(target_os = "linux", feature = "aws-sdk"))]
+fn net5_capability(name: &str, command: &mut Command) -> Result<(), String> {
+    let output = net5_run(command, std::time::Duration::from_secs(10))
+        .map_err(|error| format!("NET-5 capability {name} unavailable: {error}"))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "NET-5 capability {name} unavailable: {} {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ))
+    }
+}
+
+#[cfg(all(target_os = "linux", feature = "aws-sdk"))]
+#[test]
+fn net5_probe_reports_named_missing_capability() {
+    let error = net5_capability("ip", &mut Command::new("/nonexistent/net5-ip")).unwrap_err();
+    assert!(error.contains("NET-5 capability ip unavailable"), "{error}");
+    let error = net5_run(
+        Command::new("sleep").arg("10"),
+        std::time::Duration::from_millis(100),
+    )
+    .unwrap_err();
+    assert!(error.contains("timeout"), "{error}");
+}
+
 // A private network and mount namespace make the fixed production hostname
 // resolve only to this test's loopback TLS server, without changing host DNS.
 #[cfg(all(target_os = "linux", feature = "aws-sdk"))]
@@ -495,17 +589,54 @@ fn shipped_binary_exchange_publishes_session() {
 
     const CHILD: &str = "RSI_CALLBACK_NET5_NAMESPACE";
     if std::env::var_os(CHILD).is_none() {
-        let output = Command::new("unshare")
-            .args(["--user", "--map-root-user", "--mount", "--net"])
-            .arg(std::env::current_exe().unwrap())
-            .args([
-                "--exact",
-                "shipped_binary_exchange_publishes_session",
-                "--nocapture",
-            ])
-            .env(CHILD, "1")
-            .output()
-            .unwrap();
+        for (name, command) in [
+            (
+                "unshare userns",
+                &mut Command::new("unshare").args(["--user", "--map-root-user", "true"])
+                    as &mut Command,
+            ),
+            ("mount", &mut Command::new("mount").arg("--version")),
+            ("ip", &mut Command::new("ip").arg("-Version")),
+            (
+                "mount namespace",
+                &mut Command::new("unshare").args([
+                    "--user",
+                    "--map-root-user",
+                    "--mount",
+                    "mount",
+                    "--make-rprivate",
+                    "/",
+                ]),
+            ),
+            (
+                "network namespace",
+                &mut Command::new("unshare").args([
+                    "--user",
+                    "--map-root-user",
+                    "--net",
+                    "ip",
+                    "link",
+                    "set",
+                    "lo",
+                    "up",
+                ]),
+            ),
+        ] {
+            net5_capability(name, command).unwrap_or_else(|error| panic!("{error}"));
+        }
+        let output = net5_run(
+            Command::new("unshare")
+                .args(["--user", "--map-root-user", "--mount", "--net"])
+                .arg(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "shipped_binary_exchange_publishes_session",
+                    "--nocapture",
+                ])
+                .env(CHILD, "1"),
+            Duration::from_secs(60),
+        )
+        .unwrap_or_else(|error| panic!("NET-5 namespace test {error}"));
         assert!(
             output.status.success(),
             "namespace test failed: {} {}",
