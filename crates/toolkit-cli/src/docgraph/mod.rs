@@ -53,6 +53,8 @@ mod infra;
 #[cfg(feature = "docgraph-live")]
 pub mod live;
 #[cfg(feature = "docgraph-live")]
+mod live_memory;
+#[cfg(feature = "docgraph-live")]
 mod live_seed;
 pub mod memory;
 mod neptune_input;
@@ -530,6 +532,9 @@ pub fn memory_command(invocation: &Invocation, out: &mut Output<'_>) -> Result<(
                 ));
             }
         }
+        #[cfg(feature = "docgraph-live")]
+        return live_memory::run(invocation, out);
+        #[cfg(not(feature = "docgraph-live"))]
         return Err(unavailable_live());
     }
     let op = invocation
