@@ -266,6 +266,7 @@ impl SdkCredentialsProvider {
 pub struct SigV4Signer<P> {
     credentials: P,
     clock: fn() -> SystemTime,
+    payload_checksum: bool,
 }
 
 impl<P: CredentialsProvider> SigV4Signer<P> {
@@ -275,6 +276,7 @@ impl<P: CredentialsProvider> SigV4Signer<P> {
         Self {
             credentials,
             clock: SystemTime::now,
+            payload_checksum: false,
         }
     }
 
@@ -282,6 +284,12 @@ impl<P: CredentialsProvider> SigV4Signer<P> {
     #[must_use]
     pub fn with_clock(mut self, clock: fn() -> SystemTime) -> Self {
         self.clock = clock;
+        self
+    }
+
+    // ServiceBridge exposes the signed body digest on every service attempt.
+    pub(crate) fn with_payload_checksum(mut self) -> Self {
+        self.payload_checksum = true;
         self
     }
 }
@@ -320,12 +328,17 @@ impl<P: CredentialsProvider> Signer for SigV4Signer<P> {
         )
         .into();
         let headers = {
+            let mut settings = SigningSettings::default();
+            if self.payload_checksum {
+                settings.payload_checksum_kind =
+                    aws_sigv4::http_request::PayloadChecksumKind::XAmzSha256;
+            }
             let params: aws_sigv4::http_request::SigningParams<'_> = v4::SigningParams::builder()
                 .identity(&identity)
                 .region(&scope.region)
                 .name(&scope.service)
                 .time(now)
-                .settings(SigningSettings::default())
+                .settings(settings)
                 .build()
                 .map_err(|_| signing_error("signing parameters"))?
                 .into();

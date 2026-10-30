@@ -27,9 +27,9 @@ use super::{
 };
 use crate::error::TimeoutPhase;
 use crate::{
-    AwsError, ClientConfig, ClientSettings, EndpointPolicy, FullJitter, HttpRequest, HttpResponse,
-    Method, ProcessEnv, ServiceError, Signer, Sleeper, StreamError, StreamLimits,
-    StreamingTransport, SystemResolver, FRAMING_HEADERS,
+    AwsError, ClientConfig, ClientSettings, CredentialsProvider, EndpointPolicy, FullJitter,
+    HttpRequest, HttpResponse, Method, ProcessEnv, ServiceError, Signer, Sleeper, StreamError,
+    StreamLimits, StreamingTransport, SystemResolver, FRAMING_HEADERS,
 };
 
 /// One logical AWS operation's budget, including credentials and retries.
@@ -41,6 +41,7 @@ type Sender = dyn Fn(HttpRequest, Instant) -> Result<HttpResponse, AwsError> + S
 
 struct State {
     sender: Box<Sender>,
+    endpoint_host: String,
     deadline: Mutex<Instant>,
     error: Mutex<Option<AwsError>>,
 }
@@ -87,6 +88,16 @@ fn exchange(state: &State, request: &SdkRequest) -> Result<SdkResponse, AwsError
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     if Instant::now() >= deadline {
         return Err(deadline_error());
+    }
+    let uri: http::Uri = request
+        .uri()
+        .parse()
+        .map_err(|_| AwsError::invalid_config("endpoint", "invalid service request URI"))?;
+    if uri.host() != Some(state.endpoint_host.as_str()) {
+        return Err(AwsError::invalid_config(
+            "endpoint",
+            "service request host differs from the resolved endpoint",
+        ));
     }
     let body = request
         .body()
@@ -175,11 +186,27 @@ impl ServiceBridge {
             provider,
         )
         .with_null_stdin(true);
+        Self::with_foundations(
+            config,
+            move |deadline| credentials.until(deadline).load(),
+            transport,
+        )
+    }
+
+    // Both production and offline tests use this exact signing/buffering path.
+    // Injection stays private: production callers can only construct `new`.
+    fn with_foundations(
+        config: ClientConfig,
+        credentials: impl Fn(Instant) -> Result<crate::Credentials, AwsError> + Send + Sync + 'static,
+        transport: impl StreamingTransport + Send + Sync + 'static,
+    ) -> Result<Self, AwsError> {
         let scope = config.signing_scope();
         let timeouts = *config.timeouts();
-        Self::with_sender(config, move |mut request, deadline| {
+        Self::from_sender(config, move |mut request, deadline| {
             request.timeouts = timeouts;
-            SigV4Signer::new(credentials.until(deadline)).sign(&mut request, &scope)?;
+            SigV4Signer::new(AttemptCredentials(&credentials, deadline))
+                .with_payload_checksum()
+                .sign(&mut request, &scope)?;
             let limits = StreamLimits::new(BODY_CAP, 64 * 1024)?.with_deadline(deadline);
             let mut stream = transport.open(&request, &limits)?;
             let mut response = HttpResponse {
@@ -194,18 +221,29 @@ impl ServiceBridge {
         })
     }
 
-    /// Inject the transport for deterministic, credential-free wire tests.
+    /// Inject an unsigned sender for offline wire tests only.
     ///
     /// # Errors
     /// An async runtime could not be created.
+    #[cfg(any(test, feature = "testing"))]
+    #[doc(hidden)]
     pub fn with_sender(
         config: ClientConfig,
         sender: impl Fn(HttpRequest, Instant) -> Result<HttpResponse, AwsError> + Send + Sync + 'static,
     ) -> Result<Self, AwsError> {
+        Self::from_sender(config, sender)
+    }
+
+    fn from_sender(
+        config: ClientConfig,
+        sender: impl Fn(HttpRequest, Instant) -> Result<HttpResponse, AwsError> + Send + Sync + 'static,
+    ) -> Result<Self, AwsError> {
+        let endpoint_host = config.endpoint().host().to_string();
         Ok(Self {
             runtime: SdkRuntime::new()?,
             config,
             state: Arc::new(State {
+                endpoint_host,
                 sender: Box::new(sender),
                 deadline: Mutex::new(Instant::now()),
                 error: Mutex::new(None),
@@ -294,6 +332,19 @@ impl ServiceBridge {
     }
 }
 
+struct AttemptCredentials<'a, F>(&'a F, Instant);
+impl<F: Fn(Instant) -> Result<crate::Credentials, AwsError>> CredentialsProvider
+    for AttemptCredentials<'_, F>
+{
+    fn name(&self) -> &'static str {
+        "service-attempt"
+    }
+
+    fn load(&self) -> Result<crate::Credentials, AwsError> {
+        (self.0)(self.1)
+    }
+}
+
 struct Until(Instant);
 impl Sleeper for Until {
     fn sleep(&self, delay: Duration) {
@@ -316,6 +367,232 @@ fn stream_error(error: StreamError) -> AwsError {
         }
         StreamError::TooLarge => {
             AwsError::invalid_response("the service response exceeded its size limit")
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testing::{FakeChunk, FakeStreamingTransport, FixedResolver};
+    use crate::{Headers, MapEnv, ResponseStream, RetryMode, RetryPolicy};
+    use aws_smithy_types::error::ErrorMetadata;
+    use sha2::{Digest, Sha256};
+
+    struct Transport(Arc<FakeStreamingTransport>);
+    impl StreamingTransport for Transport {
+        fn open<'a>(
+            &'a self,
+            request: &HttpRequest,
+            limits: &StreamLimits,
+        ) -> Result<Box<dyn ResponseStream + 'a>, AwsError> {
+            self.0.open(request, limits)
+        }
+    }
+
+    fn config(service: &str) -> ClientConfig {
+        ClientConfig::resolve(
+            service,
+            &ClientSettings {
+                region: Some("us-west-2"),
+                retry: RetryPolicy::new(
+                    2,
+                    RetryMode::Standard,
+                    Duration::from_millis(1),
+                    Duration::from_millis(1),
+                )
+                .unwrap(),
+                ..ClientSettings::default()
+            },
+            &EndpointPolicy::aws_public(),
+            &MapEnv::new(),
+            &FixedResolver::new(),
+        )
+        .unwrap()
+    }
+
+    fn request(bridge: &ServiceBridge) -> SdkRequest {
+        let mut request = SdkRequest::new(SdkBody::from("{}"));
+        request.set_method("POST").unwrap();
+        request.set_uri(bridge.config().endpoint().url()).unwrap();
+        request
+    }
+
+    // Exercise the real bridge retry/connector boundary with a minimal codec.
+    fn run(bridge: &mut ServiceBridge, request: &SdkRequest) -> Result<(), AwsError> {
+        let state = bridge.state.clone();
+        bridge.run(|| async {
+            let response = exchange(&state, request).map_err(|error| {
+                *state.error.lock().unwrap() = Some(error);
+                SdkError::<ErrorMetadata, SdkResponse>::construction_failure(std::io::Error::other(
+                    "offline fixture",
+                ))
+            })?;
+            if response.status().as_u16() == 503 {
+                Err(SdkError::service_error(
+                    ErrorMetadata::builder().code("ServiceUnavailable").build(),
+                    response,
+                ))
+            } else {
+                Ok(())
+            }
+        })
+    }
+
+    #[test]
+    fn production_signing_path_signs_every_attempt_for_each_service() {
+        for service in ["sagemaker", "monitoring", "logs"] {
+            let transport = Arc::new(
+                FakeStreamingTransport::new()
+                    .respond(503, &[], vec![])
+                    .respond(503, &[], vec![])
+                    .respond(200, &[], vec![]),
+            );
+            let deadlines = Arc::new(Mutex::new(Vec::new()));
+            let captured = deadlines.clone();
+            let mut bridge = ServiceBridge::with_foundations(
+                config(service),
+                move |deadline| {
+                    captured.lock().unwrap().push(deadline);
+                    crate::Credentials::new(
+                        "OFFLINEKEY",
+                        "offline-secret",
+                        Some("offline-token"),
+                        None,
+                    )
+                },
+                Transport(transport.clone()),
+            )
+            .unwrap();
+            let request = request(&bridge);
+            run(&mut bridge, &request).unwrap();
+            let requests = transport.requests();
+            assert_eq!(requests.len(), 3);
+            let deadlines = deadlines.lock().unwrap();
+            assert_eq!(deadlines.len(), 3, "load credentials on every attempt");
+            for (index, request) in requests.iter().enumerate() {
+                let date = request.headers.get("x-amz-date").expect("signed date");
+                assert_eq!(date.len(), 16);
+                let auth = request
+                    .headers
+                    .get("authorization")
+                    .expect("signed authorization");
+                assert!(auth.starts_with("AWS4-HMAC-SHA256 "));
+                assert!(auth.contains(&format!(
+                    "Credential=OFFLINEKEY/{}/us-west-2/{service}/aws4_request",
+                    &date[..8]
+                )));
+                assert!(auth.contains("Signature="));
+                assert_eq!(
+                    request.headers.get("x-amz-security-token"),
+                    Some("offline-token")
+                );
+                assert_eq!(
+                    request.headers.get("x-amz-content-sha256"),
+                    Some(format!("{:x}", Sha256::digest(b"{}")).as_str())
+                );
+                let limits = transport.open_limits()[index];
+                assert_eq!(limits.max_body_bytes(), BODY_CAP);
+                assert_eq!(limits.max_chunk_bytes(), 64 * 1024);
+                assert_eq!(limits.deadline(), Some(deadlines[index]));
+                assert_eq!(deadlines[index], deadlines[0], "one operation budget");
+                assert_eq!(request.timeouts, *bridge.config().timeouts());
+            }
+        }
+    }
+
+    #[test]
+    fn production_signing_path_refuses_missing_credentials_before_transport() {
+        let transport = Arc::new(FakeStreamingTransport::new());
+        let mut bridge = ServiceBridge::with_foundations(
+            config("sagemaker"),
+            |_| Err(AwsError::NoCredentials),
+            Transport(transport.clone()),
+        )
+        .unwrap();
+        let request = request(&bridge);
+        assert_eq!(run(&mut bridge, &request), Err(AwsError::NoCredentials));
+        assert!(transport.requests().is_empty());
+    }
+
+    #[test]
+    fn production_signing_path_caps_response_without_echoing_body() {
+        let frame = FakeChunk::data(&vec![b'x'; 64 * 1024]);
+        let mut frames = vec![frame; 256];
+        frames.push(FakeChunk::data(b"oversized-body-secret"));
+        let transport = Arc::new(FakeStreamingTransport::new().respond(200, &[], frames));
+        let mut bridge = ServiceBridge::with_foundations(
+            config("logs"),
+            |_| crate::Credentials::new("OFFLINEKEY", "offline-secret", None, None),
+            Transport(transport.clone()),
+        )
+        .unwrap();
+        let request = request(&bridge);
+        let error = run(&mut bridge, &request).unwrap_err();
+        assert_eq!(
+            error,
+            AwsError::invalid_response("the service response exceeded its size limit")
+        );
+        assert!(!format!("{error:?} {error}").contains("oversized-body-secret"));
+        assert_eq!(transport.requests().len(), 1);
+    }
+
+    #[test]
+    fn exchange_refuses_changed_uri_host_before_sender() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let calls = Arc::new(AtomicUsize::new(0));
+        let captured = calls.clone();
+        let mut bridge = ServiceBridge::with_sender(config("sagemaker"), move |_, _| {
+            captured.fetch_add(1, Ordering::SeqCst);
+            Ok(HttpResponse {
+                status: 200,
+                headers: Headers::new(),
+                body: vec![],
+            })
+        })
+        .unwrap();
+        let mut request = request(&bridge);
+        run(&mut bridge, &request).unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        for host in [
+            "prefix.api.sagemaker.us-west-2.amazonaws.com",
+            "logs.us-west-2.amazonaws.com",
+            "unexpected.example",
+        ] {
+            request.set_uri(format!("https://{host}/")).unwrap();
+            let error = run(&mut bridge, &request).unwrap_err();
+            assert_eq!(
+                error,
+                AwsError::invalid_config(
+                    "endpoint",
+                    "service request host differs from the resolved endpoint"
+                )
+            );
+            assert!(!error.to_string().contains(host));
+            assert_eq!(
+                calls.load(Ordering::SeqCst),
+                1,
+                "changed host must not reach sender"
+            );
+        }
+    }
+
+    #[test]
+    fn exchange_refuses_each_sdk_auth_header_before_sender() {
+        let mut bridge = ServiceBridge::with_sender(config("sagemaker"), |_, _| {
+            panic!("unsigned sender must not run")
+        })
+        .unwrap();
+        for header in ["authorization", "x-amz-security-token", "x-amz-date"] {
+            let mut request = request(&bridge);
+            request.headers_mut().insert(header, "offline-sensitive");
+            assert_eq!(
+                run(&mut bridge, &request),
+                Err(AwsError::invalid_config(
+                    "sdk",
+                    "service SDK authentication must be disabled"
+                ))
+            );
         }
     }
 }

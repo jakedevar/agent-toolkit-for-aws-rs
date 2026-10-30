@@ -483,20 +483,75 @@ fn malformed_sdk_response_fails_closed_without_echoing_payload() {
 fn toolkit_retry_policy_is_the_only_retry_owner() {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
+    for retries_enabled in [false, true] {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let counter = calls.clone();
+        let retry = toolkit_aws::RetryPolicy::new(
+            2,
+            toolkit_aws::RetryMode::Standard,
+            Duration::from_millis(1),
+            Duration::from_millis(1),
+        )
+        .unwrap();
+        let config = toolkit_aws::ClientConfig::resolve(
+            "sagemaker",
+            &toolkit_aws::ClientSettings {
+                region: Some("us-west-2"),
+                retry: if retries_enabled {
+                    retry
+                } else {
+                    toolkit_aws::RetryPolicy::none()
+                },
+                ..toolkit_aws::ClientSettings::default()
+            },
+            &toolkit_aws::EndpointPolicy::aws_public(),
+            &toolkit_aws::MapEnv::new(),
+            &toolkit_aws::testing::FixedResolver::new(),
+        )
+        .unwrap();
+        let mut bridge = ServiceBridge::with_sender(config, move |_, _| {
+            let attempt = counter.fetch_add(1, Ordering::SeqCst);
+            Ok(HttpResponse {
+                status: if attempt < 2 { 503 } else { 200 },
+                headers: Headers::new(),
+                body: if attempt < 2 {
+                    br#"{"__type":"ServiceUnavailable","message":"busy"}"#.to_vec()
+                } else {
+                    b"{}".to_vec()
+                },
+            })
+        })
+        .unwrap();
+        let sdk = sdk_client!(aws_sdk_sagemaker, bridge);
+        let call = sdk.describe_endpoint().endpoint_name("e");
+        let result = bridge.run(|| call.clone().send());
+        if retries_enabled {
+            result.unwrap();
+        } else {
+            let error = result.unwrap_err();
+            assert!(
+                matches!(error, AwsError::Service(ref error) if error.status() == 503),
+                "{error:?}"
+            );
+        }
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            if retries_enabled { 3 } else { 1 },
+            "only the toolkit policy may retry"
+        );
+    }
+}
+
+#[test]
+fn sdk_sigv4_authentication_is_refused_before_sender() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
     let calls = Arc::new(AtomicUsize::new(0));
-    let counter = calls.clone();
-    let retry = toolkit_aws::RetryPolicy::new(
-        2,
-        toolkit_aws::RetryMode::Standard,
-        Duration::from_millis(1),
-        Duration::from_millis(1),
-    )
-    .unwrap();
+    let captured = calls.clone();
     let config = toolkit_aws::ClientConfig::resolve(
         "sagemaker",
         &toolkit_aws::ClientSettings {
             region: Some("us-west-2"),
-            retry,
+            retry: toolkit_aws::RetryPolicy::none(),
             ..toolkit_aws::ClientSettings::default()
         },
         &toolkit_aws::EndpointPolicy::aws_public(),
@@ -505,26 +560,40 @@ fn toolkit_retry_policy_is_the_only_retry_owner() {
     )
     .unwrap();
     let mut bridge = ServiceBridge::with_sender(config, move |_, _| {
-        let attempt = counter.fetch_add(1, Ordering::SeqCst);
+        captured.fetch_add(1, Ordering::SeqCst);
         Ok(HttpResponse {
-            status: if attempt < 2 { 503 } else { 200 },
+            status: 200,
             headers: Headers::new(),
-            body: if attempt < 2 {
-                br#"{"__type":"ServiceUnavailable","message":"busy"}"#.to_vec()
-            } else {
-                b"{}".to_vec()
-            },
+            body: b"{}".to_vec(),
         })
     })
     .unwrap();
-    let sdk = sdk_client!(aws_sdk_sagemaker, bridge);
-    let call = sdk.describe_endpoint().endpoint_name("e");
-    bridge.run(|| call.clone().send()).unwrap();
-    assert_eq!(
-        calls.load(Ordering::SeqCst),
-        3,
-        "two toolkit retries, no SDK retries"
+    let sdk = aws_sdk_sagemaker::Client::from_conf(
+        aws_sdk_sagemaker::Config::builder()
+            .behavior_version_latest()
+            .region(aws_sdk_sagemaker::config::Region::new("us-west-2"))
+            .endpoint_url(bridge.config().endpoint().url())
+            .http_client(bridge.http_client())
+            .identity_cache(aws_sdk_sagemaker::config::IdentityCache::no_cache())
+            .credentials_provider(aws_sdk_sagemaker::config::Credentials::new(
+                "OFFLINEKEY",
+                "offline-secret",
+                Some("offline-token".to_string()),
+                None,
+                "offline-fixture",
+            ))
+            .auth_scheme_preference([AuthSchemeId::new("sigv4")])
+            .retry_config(RetryConfig::disabled())
+            .timeout_config(TimeoutConfig::disabled())
+            .build(),
     );
+    let call = sdk.describe_endpoint().endpoint_name("e");
+    let error = bridge.run(|| call.clone().send()).unwrap_err();
+    assert_eq!(
+        error,
+        AwsError::invalid_config("sdk", "service SDK authentication must be disabled")
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
 }
 
 #[test]
