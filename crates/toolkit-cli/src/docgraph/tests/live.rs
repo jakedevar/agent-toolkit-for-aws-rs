@@ -1402,7 +1402,10 @@ fn t_dg_04b_valid_empty_namespaced_and_commented_xml_decodes_unchanged() {
     let inner = "<DescribeDBClustersResult><DBClusters><DBCluster><BackupRetentionPeriod>7</BackupRetentionPeriod></DBCluster></DBClusters></DescribeDBClustersResult>";
     let same_cluster = [
         namespaced(inner),
-        format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n{}\n", namespaced(inner)),
+        format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n{}\n",
+            namespaced(inner)
+        ),
         format!("{ONE_CLUSTER}<!-- served by fixture -->"),
         format!("{ONE_CLUSTER}\n<!-- trailing -->\n<?fixture done?>\n"),
         ONE_CLUSTER.replace("<DBCluster>", "<DBCluster><!-- inner -->\n  "),
@@ -1419,7 +1422,9 @@ fn t_dg_04b_valid_empty_namespaced_and_commented_xml_decodes_unchanged() {
     assert_eq!(
         result(
             describe_cluster,
-            &namespaced("<DescribeDBClustersResult><DBClusters></DBClusters></DescribeDBClustersResult>"),
+            &namespaced(
+                "<DescribeDBClustersResult><DBClusters></DBClusters></DescribeDBClustersResult>"
+            ),
         ),
         empty
     );
@@ -1439,7 +1444,10 @@ fn t_dg_04b_valid_empty_namespaced_and_commented_xml_decodes_unchanged() {
     };
     assert_eq!(
         result(describe_groups, &no_groups("<securityGroupInfo/>")),
-        result(describe_groups, &no_groups("<securityGroupInfo></securityGroupInfo>"))
+        result(
+            describe_groups,
+            &no_groups("<securityGroupInfo></securityGroupInfo>")
+        )
     );
 }
 
