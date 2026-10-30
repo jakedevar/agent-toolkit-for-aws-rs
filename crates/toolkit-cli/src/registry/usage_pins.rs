@@ -59,7 +59,7 @@ const SLICE_PINS: &[Pin] = &[
     ("bedrock-resolve", 320, 320, 1639, 0x1a97_5e17_bd8a_74bf),
     ("cloudwatch-api", 300, 300, 2276, 0xc323_55fa_f75f_4211),
     ("cloudwatch-domain", 290, 290, 1120, 0x9d27_7127_6d15_3fe8),
-    ("docgraph", 1000, 1000, 1806, 0x8c35_d6f6_0c6a_b109),
+    ("docgraph", 1000, 1000, 1858, 0xed6e_2887_fb37_398f),
     ("dynamodb", 220, 220, 610, 0x706f_2bf7_8c4e_bad8),
     ("dynamodb-bench", 1000, 1000, 732, 0x8f36_c2e7_5cfe_58fe),
     ("dynamodb-deploy", 230, 230, 725, 0x820a_1ac1_e8c8_dd42),
