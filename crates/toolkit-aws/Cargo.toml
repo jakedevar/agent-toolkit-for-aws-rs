@@ -9,7 +9,10 @@ description = "Shared AWS/API client boundaries for the Agent Toolkit Rust CLI (
 [features]
 # The default build is SDK-free and offline: no AWS SDK crate is compiled.
 default = []
-# Explicit offline test support; never enabled by a production dependency.
+# Explicit offline test support (gates the unsigned `ServiceBridge::with_sender`).
+# Cargo features are additive, so this is an opt-in convention, not a lock:
+# plugin-stage's `feature_graph` check fails if any shipped binary's normal
+# graph enables it (#5592).
 testing = []
 # AWS SDK for Rust binding of CredentialsProvider, Signer and Transport (#4463).
 # Every crate below is justified in docs/migration/aws-core-contracts.md
