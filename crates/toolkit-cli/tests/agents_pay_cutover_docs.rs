@@ -1138,3 +1138,21 @@ fn s7_migration_doc_records_the_cutover() {
         ],
     );
 }
+
+#[test]
+fn retirement_5560_covered_python_files_are_absent() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    for path in [
+        "plugins/aws-agents/skills/agents-build/scripts/process_payment_tool.py",
+        "plugins/aws-agents/skills/agents-build/scripts/setup_payment_user.py",
+        "plugins/aws-agents/skills/agents-pay/packages/openclaw/runtime/agentcore_bridge.py",
+        "plugins/aws-agents/skills/agents-pay/packages/openclaw/test/test_agentcore_bridge.py",
+        "plugins/aws-agents/skills/agents-pay/packages/openclaw/test/test_setup_openclaw.py",
+        "plugins/aws-agents/skills/agents-pay/scripts/test_portability.py",
+        "plugins/aws-agents/skills/agents-pay/scripts/test_resource_resolution.py",
+        "plugins/aws-agents/skills/agents-pay/scripts/test_x402_policy.py",
+        "plugins/aws-agents/skills/agents-pay/scripts/x402_fetch_cli.py",
+    ] {
+        assert!(!root.join(path).exists(), "retired file still exists: {path}");
+    }
+}
