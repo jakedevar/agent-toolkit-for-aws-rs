@@ -48,6 +48,23 @@ secrets and the other workflows are unchanged. `startup-advisor.yml` still
 runs `mise -C plugins/aws-startup-advisor run ci`; its vendored-parity task now
 calls the Rust command.
 
+## `fmt-patch`: an applicable rustfmt result (#5509)
+
+`make fmt` (daemon recipe `fmt`) only checks, and prints rustfmt's own
+`Diff in FILE:LINE:` hunks, which cannot be applied. Workers that may not run
+cargo locally submit the daemon recipe `fmt-patch` (`make fmt-patch`,
+`scripts/fmt-patch.sh`) instead. It copies the worktree (tracked and untracked,
+non-ignored files, as on disk) to a `mktemp` scratch directory, runs
+`cargo fmt --all` there and prints `git diff` of that copy as a standard
+unified patch between the lines `===== BEGIN FMT-PATCH =====` and
+`===== END FMT-PATCH =====` in the job log. It never writes the caller's
+worktree and leaves `CARGO_TARGET_DIR` and `RUSTC_WRAPPER` untouched. It exits
+0 when there is nothing to format (empty patch between the markers) and
+nonzero only on a real failure (for example rustfmt cannot parse a file).
+Copy the lines between the markers to a file and run `git apply FILE`, then
+commit; `fmt` should then pass. `scripts/fmt-patch.selftest.sh` (run by
+`make test-scripts`) covers it with a fake `cargo`.
+
 ## No Python in the root recipes
 
 The root `mise.toml` no longer installs `python` or `uv` and no task in it, or
