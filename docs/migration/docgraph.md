@@ -1362,6 +1362,43 @@ the fix, `the_releasing_stream_drops_its_inner_stream_on_every_terminal_read`
 
 #### S3 Gremlin adapter (#5515; R-DG-05, R-DG-07 limits)
 
+**Security follow-up #5547 (review #5542).** The caller establishes the
+connection operation deadline before credential resolution and passes that
+same deadline to `GremlinConnection::connect_live`. The adapter caps it by
+the configured operation budget and invocation deadline before signing,
+checks exhaustion before and after signing, and carries it through DNS,
+connect, upgrade, the first statement's I/O and close. Each later statement
+starts its own operation budget; close is capped by that last operation,
+the invocation and the two-second close budget. An exhausted pre-send
+budget performs no signing, resolution or dial.
+
+Every post-send failure includes the unknown-outcome warning, including
+GraphSON/protocol failures, error statuses and size limits. Decoder failures
+use `AwsError::OutcomeUnknown` to retain their fixed classification, status
+and error code while refusing automatic retry; no server text is forwarded.
+The shared error's two payment classifiers delegate to the wrapped cause.
+The API intentionally adds an explicit operation-deadline argument to
+`connect_live`; its live seed caller supplies the credential deadline.
+
+Offline regression evidence: daemon job `d9097438-e177-4435-b7e4-b3947182f1ae`
+fails the signing-budget, foreign-id outcome and cumulative-byte outcome
+contracts before the fix; `27d8b447-2503-4f42-8ab7-b3a939f3d9ad` passes all
+21 Gremlin and 36 database tests after it. A blocked-write close fixture
+also covers shorter invocation and operation deadlines and synchronous
+release. It kills the review's surviving close mutation (close budget
+replaced by invocation deadline) in
+`eb4227d6-9413-400d-b0d5-858030483bce`: the mutated close takes four seconds,
+exceeding the fixture's three-second ceiling.
+
+Failure assertions discard unexpected successes without formatting their
+results, and frame/depth/result/copy limits are pinned to numeric literals.
+Doubling the copy cap is killed in
+`faf408de-ceca-4416-a52a-23be1c39b941`; the complete log is 2,508 bytes,
+including the fixed assertion `16 MiB of copies: unexpectedly succeeded`,
+instead of printing the roughly 20 MiB of returned copies seen in #5542.
+No P3 item from #5547 is deferred. Final committed-source gate receipts and
+publication are recorded in the Issue handoff.
+
 **Dependency decision.** `tokio-tungstenite` `=0.29.0` with default features
 off and only `handshake` enabled. It is optional, behind a new toolkit-aws
 feature `gremlin` (`sdk` plus the WebSocket crate). Only toolkit-cli
