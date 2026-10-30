@@ -1247,3 +1247,4 @@ Friction: #4727, Rsi #4694, Rsi #4704
   Queue: 3061 #5514, 3063 #5360.
 - 00:27Z: #5514 LANDED (9916d8cd, landed_sha 818a0fc1050c0f432906cc2a906ea0bd93d7a512); auto-closed. Queue: 3063 #5360.
 - 00:27Z: #5509 (934b9457) DONE at e6efa2075f90fa745f3c93ac208de13a8d49f07b (fmt-patch recipe + test-scripts recipe; scratch copy only; scoped e030bef5 ok). PM ACCEPTED it, but it conflicts with #5158 in the Makefile (based on 76cef490). Merge-only continuation queued (Sonnet medium, continue_from 934b9457) -> check -> enqueue issue 5509. Friction #5536 (fmt-patch takes a build slot and a 24 GiB reservation).
+- 00:30Z: #5360 LANDED (903ce533, landed_sha d6a33cf098badbf89efdb5e23df8ff81621910f8); auto-closed. Per-slice usage pins now on rolling. Queue empty.
