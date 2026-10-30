@@ -1288,3 +1288,7 @@ Friction: #4727, Rsi #4694, Rsi #4704
   Workers: ec67ec2f B5, ae38f668 #5547, 3a9b6f7a S2 repair 2, e74c52ad #5331. Queue: 3072 #5488 (may have landed), 3073 #5549.
 - 01:33Z: #5488 LANDED (3072, landed_sha 921aa719719982c1cb4c533880b5a562cd537fcf); auto-closed. Queue: 3073 #5549.
 - 01:37Z: #5549 LANDED (3073, landed_sha 22feaa27d5344c7ab5e884f36ace4a77afeb006f); auto-closed. Queue empty.
+- 01:44Z: #5331 (e74c52ad) DONE at 0d9b3ad7891c104552e2b8912150d5929640444d (one sdk.rs test + aws-core-contracts.md + design line; red cdecc716; scoped 29c0f03d ok). PM verified diff. Check ok -> ENQUEUED seq 3074 (db541415, issue 5331). Friction #5552 cancelled as dup of #5393.
+  #5313 (Launch auth-wait report closure test) -> Codex terra high 2e81a666.
+  Reported up 01:38Z (pm-4c8bc93d-report-0138).
+  Workers: ec67ec2f B5, ae38f668 #5547, 3a9b6f7a S2 repair 2, 2e81a666 #5313. Queue: 3074 #5331.
