@@ -46,6 +46,44 @@ fn callback_rejects_duplicate_parameters_and_invalid_code() {
     );
 }
 
+/// T-CB code cap (#5504): a 4096-byte code is accepted and a 4097-byte code is
+/// refused, both inside the 8 KiB head cap so only the code rule decides.
+#[test]
+fn t_cb_code_length_boundary_4096_accepted_4097_refused() {
+    for length in [4096, 4097] {
+        let head = request(&format!("state=secret&code={}", "c".repeat(length)));
+        assert!(head.len() < super::MAX_HEAD, "head {} bytes", head.len());
+        let outcome = parse_request(&head, 1234, "secret");
+        if length == 4096 {
+            assert!(outcome == Outcome::Code("c".repeat(4096)), "4096 accepted");
+        } else {
+            assert!(outcome == Outcome::InvalidCode, "4097 refused");
+        }
+    }
+}
+
+/// T-TOK-6 (#5504): a genuine `parse_request` success never shows the
+/// authorization code through `Debug`, alone or nested.
+#[test]
+fn t_tok_6_outcome_debug_redacts_the_authorization_code() {
+    let code = "FAKE-L7-AUTH-CODE-0001";
+    let outcome = parse_request(
+        &request(&format!("state=secret&code={code}")),
+        1234,
+        "secret",
+    );
+    assert!(matches!(&outcome, Outcome::Code(c) if c == code));
+    let shown = format!("{outcome:?} {:?} {outcome:#?}", Some(&outcome));
+    assert!(!shown.contains(code), "Outcome Debug reveals the code");
+    assert!(shown.contains("Code(\"<redacted>\")"), "{shown}");
+    assert_eq!(format!("{:?}", Outcome::Ignore(400)), "Ignore(400)");
+    assert_eq!(
+        format!("{:?}", Outcome::Denied("access_denied".into())),
+        "Denied(\"access_denied\")"
+    );
+    assert_eq!(format!("{:?}", Outcome::InvalidCode), "InvalidCode");
+}
+
 #[test]
 fn request_head_rules() {
     for head in [

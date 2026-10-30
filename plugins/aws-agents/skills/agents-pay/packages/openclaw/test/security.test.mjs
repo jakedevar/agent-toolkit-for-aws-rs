@@ -1,5 +1,15 @@
 import assert from "node:assert/strict";
-import { access, readFile, readdir } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
+import {
+  access,
+  chmod,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  writeFile,
+} from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -352,6 +362,87 @@ test("manifest supports setup before enforcing complete payment config", async (
   assert.equal(amount.default, undefined);
   assert.equal(amount.pattern, "^[1-9][0-9]*$");
 });
+
+// T-JS-PKG (#4411 B3, minimal caller only): prepack runs the shared Rust
+// pack guard first, and its failure or absence stops packing. Verifier
+// algorithms and filesystem negatives live in Rust (T-PKG-PACK).
+const PACK_GUARD = "plugin-stage verify-package --package-root . --complete";
+
+test("prepack runs the Rust pack guard before build and stage", async () => {
+  const packageJson = JSON.parse(
+    await readFile(new URL("../package.json", import.meta.url), "utf8"),
+  );
+  const prepack = packageJson.scripts.prepack;
+  assert.equal(
+    prepack,
+    `${PACK_GUARD} && npm run build && npm run stage-skill`,
+  );
+  assert.equal(prepack.split(" && ")[0], PACK_GUARD);
+  assert.doesNotMatch(prepack, /\|\||;|\bcargo\b|python|--allow|\bnode\b/);
+  assert.equal(packageJson.scripts.preinstall, undefined);
+  assert.equal(packageJson.scripts.install, undefined);
+  assert.equal(packageJson.scripts.postinstall, undefined);
+});
+
+test(
+  "a failing or missing pack guard stops prepack",
+  { skip: process.platform === "win32" },
+  async () => {
+    const packageJson = JSON.parse(
+      await readFile(new URL("../package.json", import.meta.url), "utf8"),
+    );
+    const prepack = packageJson.scripts.prepack;
+    const tools = await mkdtemp(path.join(tmpdir(), "openclaw-prepack-"));
+    const marker = path.join(tools, "npm-calls");
+    const tool = async (name, body) => {
+      await writeFile(path.join(tools, name), `#!/bin/sh\n${body}\n`);
+      await chmod(path.join(tools, name), 0o755);
+    };
+    const run = () =>
+      spawnSync("/bin/sh", ["-c", prepack], {
+        cwd: tools,
+        env: { PATH: tools, MARKER: marker },
+        encoding: "utf8",
+      });
+    const npmCalls = async () => {
+      try {
+        return (await readFile(marker, "utf8")).trim().split("\n");
+      } catch (error) {
+        if (error.code === "ENOENT") return [];
+        throw error;
+      }
+    };
+    try {
+      await tool("npm", 'echo "$*" >> "$MARKER"');
+
+      // Missing tool: the shell cannot find plugin-stage.
+      let result = run();
+      assert.notEqual(result.status, 0);
+      assert.deepEqual(await npmCalls(), []);
+
+      // A refusing guard: its exit status propagates, nothing else runs.
+      await tool(
+        "plugin-stage",
+        'echo "$*" > "$MARKER.guard"; exit 3',
+      );
+      result = run();
+      assert.equal(result.status, 3);
+      assert.deepEqual(await npmCalls(), []);
+      assert.equal(
+        (await readFile(`${marker}.guard`, "utf8")).trim(),
+        "verify-package --package-root . --complete",
+      );
+
+      // A passing guard: build and stage run after it, in order.
+      await tool("plugin-stage", "exit 0");
+      result = run();
+      assert.equal(result.status, 0);
+      assert.deepEqual(await npmCalls(), ["run build", "run stage-skill"]);
+    } finally {
+      await rm(tools, { recursive: true, force: true });
+    }
+  },
+);
 
 test("public package and runtime identities stay aligned", async () => {
   const [manifest, packageJson, readme] = await Promise.all([

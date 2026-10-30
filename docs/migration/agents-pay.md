@@ -200,3 +200,194 @@ check can close it.
 - R-SEC: the route refuses credential flags by name
   (`reject_credential_arguments`); the router already refuses every unknown
   flag.
+
+## Admin commands (S6, #5462)
+
+```
+toolkit agents-pay admin init-config (--recipient ADDR ... | --allow-any-recipient)
+                         [--max-per-payment-usd USD] [--network CAIP2]
+                         [--origin URL ...] [--region R] [--user-id ID]
+                         [--path FILE] [--force]
+toolkit agents-pay admin show-config [--path FILE]
+toolkit agents-pay admin create-instrument --email EMAIL [--user-id ID]
+                         [--network-family ETHEREUM|SOLANA] [--manager-arn ARN]
+                         [--connector-id ID] [--region R] [--path FILE]
+toolkit agents-pay admin new-session --budget USD [--expiry-minutes N]
+                         [--user-id ID] [--manager-arn ARN] [--region R] [--path FILE]
+toolkit agents-pay admin preflight [--path FILE]
+toolkit agents-pay admin setup-openclaw [--path FILE] [--project-dir DIR]
+toolkit agents-build setup-payment-user --user-id ID --email EMAIL [--budget USD]
+                         [--expiry-minutes N] [--network ETHEREUM|SOLANA]
+                         [--manager-arn ARN] [--connector-id ID] [--region R]
+```
+
+They replace `agents_pay_admin.py` and `agents-build/scripts/setup_payment_user.py`,
+keeping their flags, texts and resolution chains (R-RES-ADM). A human runs
+them, never the agent. Code: `crates/toolkit-cli/src/agents_pay/admin/`.
+
+- **D32.** In a build without `agents-pay-live` every one of these routes is
+  `self::no_payment::admin_command` (`agents_pay/admin/no_payment.rs`, pinned
+  token for token by `tests/agents_pay_gate.rs` like the fetch route): it
+  prints `This toolkit build has no payment support; install a release build
+  of toolkit.` on stderr and exits 1 before any file, variable, credential,
+  deployed state or terminal is read. Both admin tables (`SLICE`,
+  `agents-pay-admin`, and `BUILD_SLICE`, `agents-build`) live in
+  `admin/mod.rs`, so one file holds every admin registry entry.
+  `tests/agents_pay_ac3.rs` runs every route in process and as the built
+  binary under the hostile environment (T-AC3-INH).
+- **G1b.** Each route takes its world from one `admin::AdminDeps` (env, file
+  system, terminal, admin client, randomness). `admin::fixtures` are harmless:
+  `TempAdminFs` refuses and records any path outside its temporary root, and
+  `FakeAdmin` accepts only the fixture account. The live world
+  (`live::AdminWorld`) uses the S1 provider roots for the `AgentCore` admin
+  plane, STS and credential HTTP (admin keeps R-ROOTS), and G3 refuses a
+  fixture manager before anything is created.
+- **The creating gate (D28, D33).** `create-instrument`, `new-session`,
+  `setup-openclaw` and `setup-payment-user` check the terminal first, before
+  any argument, credential or service check; a headless caller always gets the
+  same refusal and exit 1. The live registry handlers go through
+  `admin::run_process`, which makes that check before it builds the process
+  world (`live::AdminWorld::for_process`: roots, SDK runtime, transports), so
+  a headless caller gets the refusal even with broken trust roots (#5475;
+  pinned by the `t_tty_5475_*` tests with a counting world factory). Then the
+  arguments (D29), the STS check, the
+  resolution and a summary (values through `shown_value`). The line typed at
+  `Type 'approve' to continue: ` must be exactly `approve` (only the line
+  terminator is removed: `approve ` with a trailing space aborts, which Python's
+  `strip()` accepted). EOF aborts (D28). One approval covers the instrument and
+  the optional session of `setup-payment-user`; the wizard keeps its per-step
+  prompts. No route declares a `yes`, `force`, `non-interactive` or `assume`
+  flag.
+- **D29.** `--budget` must be a positive decimal (`CapDecimal`, no float) and
+  `--expiry-minutes` and the wizard expiry must be in 15..=480, checked before
+  any call or prompt. The budget sent to `CreatePaymentSession` is the
+  fixed-point rendering of the parsed value (`1e1` is sent as `10`; `1.00`
+  stays `1.00`). D30: the wizard prompt reads `(15-480; 480 = 8 hours)`.
+- **D31.** A failed admin call prints `<Operation> failed: <code>` on stderr
+  and exits 1, the code from the R-AWS-CODE allowlist or the R-ERR class name;
+  the STS check prints the legacy credentials text with that code in place of
+  the exception message. A call that succeeded but could not be recorded in
+  the config prints the created id with the write failure.
+- **R-ADM-WRITE.** `admin::write::atomic_write_0600`: final directory created
+  at 0700 and `fchmod`ed through an `O_NOFOLLOW` descriptor (a symlinked
+  directory is refused), a `.config-<16 hex>.tmp` created `O_EXCL` at 0600,
+  written and synced, `renameat` over the target, `fchmod 0600`; the temporary
+  file is removed on any failure (T-WRITE).
+- **D27.** `setup-payment-user` keeps its single candidate
+  (`agentcore/.cli/deployed-state.json`) but reads it with the shared parser,
+  so the 0.26.x dict layout works.
+- `preflight` loads the policy through the runtime's checked opener, reports
+  the `PAYMENT_*` variables and the deploy-record hint, and fails on any
+  variable whose upper-cased name contains `CDP_API_KEY_SECRET`,
+  `WALLET_SECRET`, `APP_SECRET` or `AUTHORIZATION_PRIVATE_KEY` (names only,
+  never values; T-PREFLIGHT). The SDK line reads `AgentCore payments client
+  built in`.
+
+### S6 decisions
+
+- Admin texts name the Rust commands (`toolkit agents-pay admin init-config`,
+  `toolkit agents-pay admin new-session ...`) where Python named the script
+  (D23 applied to the admin plane).
+- `create-instrument` and `setup-payment-user` check the network family
+  (`ETHEREUM` or `SOLANA`) before any call; Python passed it to the service.
+  `setup-payment-user` runs the STS check too (D33 order).
+- Required arguments (`--email`, `--budget`, `--user-id`) and `type=int`
+  values are argparse-style usage errors (exit 2), checked after the terminal
+  gate on the creating routes, so a headless caller sees the same refusal
+  whatever the arguments.
+- A region-less admin client (`create-instrument`, `new-session` and the
+  wizard's STS check with nothing configured) uses `AWS_REGION`,
+  `AWS_DEFAULT_REGION`, the profile region, then `us-east-1`.
+- An unreadable or oversized (over 1 MiB) admin config reads as the empty
+  skeleton, like invalid JSON; a `resources` or `policy` member that is not
+  an object is replaced by `{}` when the config is next written (Python
+  raised there).
+- Deployed-state values that are not strings read as absent.
+
+## `toolkit agents-pay bridge` (OpenClaw B2, #5443)
+
+Trusted plugin glue for the OpenClaw package, not for agents
+([openclaw-bridge-design.md](openclaw-bridge-design.md) rev 2, sections 4
+and 5.1). It replaces `runtime/agentcore_bridge.py` with the same pipe
+contract: one JSON request on stdin (at most 131072 bytes; at most 131073
+are read), one JSON line on stdout, nothing on stderr. It takes no flag and
+no positional; extra argv is a router usage error (exit 2), and the router
+refuses every credential flag by name.
+
+| Request | Result | Exit |
+| --- | --- | --- |
+| invalid (framing, keys, field rules, policy profile, any pre-authorization refusal, G3) | `{"ok":false,"error":"invalid bridge request"}` | 2 |
+| `get_payment_session` | `{"ok":true,"result":{"paymentSession":{..}}}` in model order | 0 |
+| `process_payment` | `{"ok":true,"result":{"paymentOutput":{"cryptoX402":{"payload":..}}}}` | 0 |
+| any failure after authorization, R-BR-PARAM, the frame cap, an R-BR-SCRUB hit, a panic | `{"ok":false,"error":"AgentCore request failed"}` | 1 |
+| a valid service request in a build without `agents-pay-live` | `{"ok":false,"error":"payment support unavailable"}` | 1 |
+| `sanitize_output` | the candidate unchanged, redacted, or the fixed refusal | 0 (1 over the frame cap) |
+
+**Route.** `agents_pay::bridge::serve_frame` is the pure pipe: the bounded
+read and B1's validation, then `sanitize_output` answered by the pure final
+scrub (`bridge/output_scrub.rs`), then any valid service request handed to
+the build's one service. In a build without the live feature the registry
+entry is `bridge/no_payment.rs`, whose only service returns the
+`UNAVAILABLE_FRAME` literal; `tests/agents_pay_gate.rs` pins that file token
+for token, its declaration, its registry entry (bound to the compiled
+`SLICE`, now two `CommandSpec` literals) and the names it resolves, exactly
+as for `fetch`. The live entry `bridge::live_command` is pinned too: it
+builds the process world only inside its service closure, after the pure
+route. The pure route names no world, constructor or payment step
+(`t_oc_final_route_*`, `t_br_d32_*`).
+
+**Spending (R-BR-ONE).** `process_payment` maps the request's `policy` with
+`policy::openclaw::from_openclaw`, assembles the one-entry challenge
+`{"x402Version":2,"accepts":[accepted],"resource":resource}` and calls
+`flow::prove`, the post-probe half that `fetch` and `--browser-handle` now
+share: deadline admission around `policy::authorize`, the caller's region,
+one `agentcore::process_payment`, then `proof::check` (R-PP-VERIFY without
+the wait). The region is the request's (assumption A2: the AgentCore client
+is opened per call with a region, no S4 change was needed). `proof::verify`
+is `check` plus the wait, so `fetch` still waits for `validAfter`; the
+bridge never sleeps (A3). The verified payload reaches stdout only through
+`VerifiedProof::into_trusted_glue`, called once, in `bridge::render`. Gates:
+the bridge names no `Approved`, `ProcessPaymentRequest`, `process_payment`
+or token producer; `prove` is the only caller of `agentcore::process_payment`;
+`live.rs` keeps its three public items.
+
+**Errors and deadline.** A refusal of the gate, the deadline before
+authorization, or a connector that refuses to open (G3 in a live build) is
+exit 2 with zero `ProcessPayment` calls; anything after it is exit 1 with at
+most one logical call. The deadline is 25 s of the injected clock from the
+start of the handler.
+
+**R-BR-SCRUB.** The rendered success document is checked with R-SCRUB's
+matcher (`safe_text::KnownSecrets`) against the session id's secret part,
+the proof's header value and its signature. The session id is exempt only
+as `paymentSessionId`, the proof only at its payload path. A hit is exit 1.
+
+**R-OC-FINAL (`sanitize_output`).** The registry entries are matched with
+`safe_text::FinalSecrets`, the D-OC19 form of the shared matcher: a whole
+secret from 8 bytes, or 32 contiguous bytes of one, ignoring ASCII case,
+literally and through one decoding layer each of JSON string escapes,
+percent escapes and base64 (standard or URL-safe, all four alignments),
+under the same 2^26-step work bound. A hit only in the top-level string
+`details.body` is redacted span by span, `redacted: true` is appended and
+the text becomes the compact rendering of the new details. Any other hit, a
+`redacted` member already present beside a body hit, a hit left after
+rendering (tree, text and the complete encoded frame are checked again) or
+an exhausted budget gives the fixed refusal
+`{"paid":false,"reason":"Payment flow failed safely without exposing provider or proof details","refused":true}`
+in both channels. A clean candidate is returned unchanged, text bytes
+included.
+
+### B2 decisions
+
+- A registry entry under 8 bytes is a malformed registry: exit 2. An empty
+  registry checks nothing.
+- The refusal's member order is B1's shared fixture order (`paid`,
+  `reason`, `refused`), so TS and Rust compare text bytes against one file.
+- R-BR-SCRUB learns the session id without its public `payment-session-`
+  head, as `fetch` does. AWS credentials never reach the bridge; they stay
+  in the signer.
+- The silent panic hook is installed by the registry entries only (`serve`);
+  in-process tests use `serve_quiet`, so a test failure keeps its message.
+  `serve_frame` catches every panic as exit 1 in both.
+- T-AC3-INH for this route runs only as a child (`tests/agents_pay_bridge.rs`):
+  an in-process `toolkit_cli::run` would read the test runner's own stdin.

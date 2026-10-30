@@ -10,9 +10,11 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 
-use toolkit_core::{parse_json, sha256_hex, Json};
+use toolkit_core::{parse_json, quote_untrusted, sha256_hex, Json};
 
-use crate::declaration::{object, reject_unknown, required_str, Declaration};
+use crate::declaration::{
+    check_package_root, object, reject_unknown, required_str, Declaration, Destination,
+};
 use crate::launcher::{dispatcher_script, display};
 use crate::platform::Platform;
 use crate::{BIN_DIR, MANIFEST_FILE};
@@ -51,11 +53,11 @@ pub struct StagedDispatcher {
     pub sha256: String,
 }
 
-/// The staging manifest of one plugin.
+/// The staging manifest of one destination.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StagingManifest {
-    /// Plugin directory name.
-    pub plugin: String,
+    /// The destination it was staged into (`plugin` or `package_root`).
+    pub destination: Destination,
     /// 40-hex commit the binaries were built from.
     pub source_commit: String,
     /// Whether the checkout differed from that commit at build time (a
@@ -114,7 +116,10 @@ impl StagingManifest {
                 "generated_by",
                 Json::string("plugin-stage (#4487); generated, do not edit"),
             ),
-            ("plugin", Json::string(&self.plugin)),
+            match &self.destination {
+                Destination::Plugin(plugin) => ("plugin", Json::string(plugin)),
+                Destination::PackageRoot(root) => ("package_root", Json::string(root)),
+            },
             ("source_commit", Json::string(&self.source_commit)),
             ("source_dirty", Json::Bool(self.source_dirty)),
             ("rustc", Json::string(&self.rustc)),
@@ -140,6 +145,7 @@ impl StagingManifest {
                 "schema",
                 "generated_by",
                 "plugin",
+                "package_root",
                 "source_commit",
                 "source_dirty",
                 "rustc",
@@ -176,8 +182,19 @@ impl StagingManifest {
                 .collect::<Result<Vec<_>, _>>()?,
             _ => return Err("manifest: `dispatchers` must be an array".to_string()),
         };
+        let destination = match (root.get("plugin"), root.get("package_root")) {
+            (Some(_), None) => {
+                Destination::Plugin(required_str(&root, "plugin", "manifest")?.to_string())
+            }
+            (None, Some(_)) => Destination::PackageRoot(
+                required_str(&root, "package_root", "manifest")?.to_string(),
+            ),
+            _ => {
+                return Err("manifest: needs exactly one of `plugin` or `package_root`".to_string())
+            }
+        };
         Ok(Self {
-            plugin: required_str(&root, "plugin", "manifest")?.to_string(),
+            destination,
             source_commit: source_commit.to_string(),
             source_dirty: *source_dirty,
             rustc: required_str(&root, "rustc", "manifest")?.to_string(),
@@ -247,15 +264,18 @@ fn parse_dispatcher(value: &Json) -> Result<StagedDispatcher, String> {
     })
 }
 
-/// Verifies every staged plugin `bin/` directory under `plugins_root`.
+/// Verifies every staged destination: each plugin `bin/` directory under
+/// `plugins_root` and each declared package destination's `bin/`.
 ///
-/// Always: each `bin/` directory belongs to a plugin that declares binaries,
-/// has a manifest, lists only declared binaries and platforms at their
-/// layout paths, and every listed file exists, is a regular executable file
-/// and matches its size and sha256; every dispatcher is the generated script;
-/// no unlisted file exists. With `complete` (the release gate), every
-/// declared binary is staged for every declared platform from a clean tree.
-/// Returns the problems found; empty means the staged tree is consistent.
+/// Always: each plugin `bin/` directory belongs to a plugin that declares
+/// binaries; each package destination passes [`check_package_root`]; each
+/// staged `bin/` has a manifest naming its destination, lists only declared
+/// binaries and platforms at their layout paths, and every listed file
+/// exists, is a regular executable file and matches its size and sha256;
+/// every dispatcher is the generated script; no unlisted file exists. With
+/// `complete` (the release gate), every declared binary is staged for every
+/// declared platform from a clean tree. Returns the problems found; empty
+/// means the staged tree is consistent.
 #[must_use]
 pub fn verify_staged(
     repo_root: &Path,
@@ -277,79 +297,194 @@ pub fn verify_staged(
             }
         }
     }
-    for plugin in plugins {
-        let plugin_dir = plugins_root.join(&plugin);
-        let bin_dir = plugin_dir.join(BIN_DIR);
-        let shown = display(repo_root, &bin_dir);
-        match staged_bin_dir(repo_root, &plugin_dir) {
-            Ok(true) => {}
-            Ok(false) => {
-                if complete {
-                    problems.push(format!("{shown}: not staged"));
-                }
-                continue;
-            }
-            Err(problem) => {
-                problems.push(problem);
-                continue;
-            }
-        }
-        if declaration.plugin_binaries(&plugin).next().is_none() {
-            problems.push(format!(
-                "{shown}: plugin {plugin} declares no binaries in {}, so it may not have a bin/ directory",
-                crate::DECLARATION_PATH
-            ));
-            continue;
-        }
-        let manifest_path = bin_dir.join(MANIFEST_FILE);
-        let parsed = read_regular(&manifest_path)
-            .map_err(|err| {
-                if err == MISSING {
-                    format!(
-                        "{shown}: has no {MANIFEST_FILE}; staged files must come from plugin-stage"
-                    )
-                } else {
-                    format!("{shown}/{MANIFEST_FILE}: {err}")
-                }
-            })
-            .and_then(|bytes| {
-                let text = String::from_utf8(bytes)
-                    .map_err(|_| format!("{shown}/{MANIFEST_FILE}: is not UTF-8"))?;
-                StagingManifest::parse(&text)
-                    .map_err(|err| format!("{shown}/{MANIFEST_FILE}: {err}"))
-            });
-        let manifest = match parsed {
-            Ok(manifest) => manifest,
-            Err(problem) => {
-                problems.push(problem);
-                continue;
-            }
-        };
-        let checker = PluginCheck {
-            plugin: &plugin,
-            bin_dir: &bin_dir,
-            shown: &shown,
+    let destinations = plugins.into_iter().map(Destination::Plugin).chain(
+        declaration
+            .package_roots()
+            .into_iter()
+            .map(|root| Destination::PackageRoot(root.to_string())),
+    );
+    for destination in destinations {
+        verify_destination(
+            repo_root,
+            plugins_root,
             declaration,
-        };
-        checker.run(&manifest, complete, &mut problems);
+            &destination,
+            complete,
+            &mut problems,
+        );
     }
     problems
 }
 
-struct PluginCheck<'a> {
-    plugin: &'a str,
+/// The npm pack guard (R-PKG-4, `plugin-stage verify-package`): resolves
+/// `package_dir` to exactly one declared package destination and runs the
+/// same per-destination verifier as [`verify_staged`] on it alone. It reads
+/// files only: no git, Cargo or network. An undeclared or unresolvable
+/// directory fails closed.
+#[must_use]
+pub fn verify_package(
+    repo_root: &Path,
+    declaration: &Declaration,
+    package_dir: &Path,
+    complete: bool,
+) -> Vec<String> {
+    let shown = quote_untrusted(&package_dir.to_string_lossy());
+    let Ok(wanted) = fs::canonicalize(package_dir) else {
+        return vec![format!(
+            "--package-root {shown}: cannot be resolved to a directory"
+        )];
+    };
+    let found = declaration
+        .package_roots()
+        .into_iter()
+        .find(|root| fs::canonicalize(repo_root.join(root)).is_ok_and(|dir| dir == wanted));
+    let Some(root) = found else {
+        return vec![format!(
+            "--package-root {shown}: is not a declared package destination in {} of {}; packing is refused",
+            crate::DECLARATION_PATH,
+            quote_untrusted(&repo_root.to_string_lossy())
+        )];
+    };
+    let mut problems = Vec::new();
+    verify_destination(
+        repo_root,
+        &repo_root.join("plugins"),
+        declaration,
+        &Destination::PackageRoot(root.to_string()),
+        complete,
+        &mut problems,
+    );
+    problems
+}
+
+/// `check` (R-PKG-2): no file under a package destination's `bin/` may be
+/// tracked by git (package destinations ship as tarballs and are never
+/// force-added). Runs `git ls-files` in `repo_root` only when the
+/// declaration has package destinations; a failing git fails closed.
+#[must_use]
+pub fn tracked_package_files(repo_root: &Path, declaration: &Declaration) -> Vec<String> {
+    let roots = declaration.package_roots();
+    if roots.is_empty() {
+        return Vec::new();
+    }
+    let output = std::process::Command::new("git")
+        .arg("ls-files")
+        .arg("-z")
+        .arg("--")
+        .args(roots.iter().map(|root| format!("{root}/{BIN_DIR}")))
+        .current_dir(repo_root)
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .output();
+    match output {
+        Ok(output) if output.status.success() => output
+            .stdout
+            .split(|byte| *byte == 0)
+            .filter(|path| !path.is_empty())
+            .map(|path| {
+                format!(
+                    "{}: is tracked by git; a package destination's bin/ is generated and never committed (git rm --cached it)",
+                    quote_untrusted(&String::from_utf8_lossy(path))
+                )
+            })
+            .collect(),
+        _ => vec![format!(
+            "cannot run `git ls-files` in {} to prove no package destination bin/ file is tracked",
+            quote_untrusted(&repo_root.to_string_lossy())
+        )],
+    }
+}
+
+/// Verifies one destination's `bin/` (shared by [`verify_staged`] and
+/// [`verify_package`], so the pack guard and the release gate cannot drift).
+fn verify_destination(
+    repo_root: &Path,
+    plugins_root: &Path,
+    declaration: &Declaration,
+    destination: &Destination,
+    complete: bool,
+    problems: &mut Vec<String>,
+) {
+    if let Destination::PackageRoot(root) = destination {
+        let root_problems = check_package_root(repo_root, root);
+        if !root_problems.is_empty() {
+            problems.extend(root_problems);
+            return;
+        }
+    }
+    let dest_dir = destination.dir(repo_root, plugins_root);
+    let bin_dir = dest_dir.join(BIN_DIR);
+    let shown = display(repo_root, &bin_dir);
+    match staged_bin_dir(repo_root, &dest_dir) {
+        Ok(true) => {}
+        Ok(false) => {
+            if complete {
+                problems.push(format!("{shown}: not staged"));
+            }
+            return;
+        }
+        Err(problem) => {
+            problems.push(problem);
+            return;
+        }
+    }
+    if declaration
+        .destination_binaries(destination)
+        .next()
+        .is_none()
+    {
+        problems.push(format!(
+            "{shown}: {} declares no binaries in {}, so it may not have a bin/ directory",
+            destination.label(),
+            crate::DECLARATION_PATH
+        ));
+        return;
+    }
+    let manifest_path = bin_dir.join(MANIFEST_FILE);
+    let parsed = read_regular(&manifest_path)
+        .map_err(|err| {
+            if err == MISSING {
+                format!("{shown}: has no {MANIFEST_FILE}; staged files must come from plugin-stage")
+            } else {
+                format!("{shown}/{MANIFEST_FILE}: {err}")
+            }
+        })
+        .and_then(|bytes| {
+            let text = String::from_utf8(bytes)
+                .map_err(|_| format!("{shown}/{MANIFEST_FILE}: is not UTF-8"))?;
+            StagingManifest::parse(&text).map_err(|err| format!("{shown}/{MANIFEST_FILE}: {err}"))
+        });
+    let manifest = match parsed {
+        Ok(manifest) => manifest,
+        Err(problem) => {
+            problems.push(problem);
+            return;
+        }
+    };
+    let checker = DestinationCheck {
+        destination,
+        bin_dir: &bin_dir,
+        shown: &shown,
+        declaration,
+    };
+    checker.run(&manifest, complete, problems);
+}
+
+struct DestinationCheck<'a> {
+    destination: &'a Destination,
     bin_dir: &'a Path,
     shown: &'a str,
     declaration: &'a Declaration,
 }
 
-impl PluginCheck<'_> {
+impl DestinationCheck<'_> {
     fn run(&self, manifest: &StagingManifest, complete: bool, problems: &mut Vec<String>) {
         let shown = self.shown;
-        if manifest.plugin != self.plugin {
+        if manifest.destination != *self.destination {
             problems.push(format!(
-                "{shown}/{MANIFEST_FILE}: names plugin {:?}, expected {:?}",
-                manifest.plugin, self.plugin
+                "{shown}/{MANIFEST_FILE}: names {}, expected {}",
+                manifest.destination.label(),
+                self.destination.label()
             ));
         }
         let mut listed: BTreeSet<String> = BTreeSet::from([MANIFEST_FILE.to_string()]);
@@ -405,7 +540,7 @@ impl PluginCheck<'_> {
                     "{shown}/{MANIFEST_FILE}: staged from a dirty tree; a release needs a clean commit"
                 ));
             }
-            for binary in self.declaration.plugin_binaries(self.plugin) {
+            for binary in self.declaration.destination_binaries(self.destination) {
                 for spec in &self.declaration.platforms {
                     if !staged.contains(&(binary.name.clone(), spec.platform)) {
                         problems.push(format!(
@@ -424,10 +559,15 @@ impl PluginCheck<'_> {
         label: &str,
         problems: &mut Vec<String>,
     ) {
-        let Some(spec) = self.declaration.binary(self.plugin, &binary.name) else {
+        let Some(spec) = self
+            .declaration
+            .destination_binaries(self.destination)
+            .find(|spec| spec.name == binary.name)
+        else {
             problems.push(format!(
-                "{label}: binary {} is not declared for plugin {}",
-                binary.name, self.plugin
+                "{label}: binary {} is not declared for {}",
+                quote_untrusted(&binary.name),
+                self.destination.label()
             ));
             return;
         };
@@ -597,7 +737,7 @@ mod tests {
 
     fn sample() -> StagingManifest {
         StagingManifest {
-            plugin: "aws-core".to_string(),
+            destination: Destination::Plugin("aws-core".to_string()),
             source_commit: "0123456789abcdef0123456789abcdef01234567".to_string(),
             source_dirty: false,
             rustc: "rustc 1.94.1".to_string(),

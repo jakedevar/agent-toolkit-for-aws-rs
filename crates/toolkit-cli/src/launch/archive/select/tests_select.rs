@@ -403,6 +403,8 @@ fn t_ar_sel_7_non_utf8_names_are_refused() {
 #[test]
 fn t_ar_sel_8_order_is_deterministic_by_name_bytes() {
     let tree = Scratch::new("sel8");
+    // `B` beside `b` is a case pair: Upload keeps Python parity and accepts it
+    // (decision 1; #5504 PM ruling), so the ordering fixture keeps it.
     for name in ["b", "a.txt", "a/x", "B", "a-b", "\u{e9}", "_u", "0"] {
         tree.write(name, name.as_bytes());
     }
@@ -423,6 +425,9 @@ fn t_ar_sel_8_order_is_deterministic_by_name_bytes() {
     );
     let second = build(tree.path()).expect("build");
     assert_eq!(first.bytes, second.bytes, "byte-identical rebuild");
+    // Explicit parity: the case pair `B`/`b` is built, not refused.
+    let listed = names(&first);
+    assert!(listed.contains(&"app/B".to_string()) && listed.contains(&"app/b".to_string()));
 }
 
 #[test]
@@ -523,6 +528,34 @@ fn t_ar_open_2_file_swapped_for_a_same_sized_outside_symlink() {
     let error = result.map(|_| ()).expect_err("refused");
     assert_eq!(error, changed("a.txt"));
     assert!(!error.message().contains("SECRT"));
+}
+
+/// R-AR-OPEN `open_file_at` identity (#5504): a different regular inode of the
+/// same size under the walked name is refused. The old inode stays alive
+/// (renamed away, not unlinked) so its number cannot be reused by the new file.
+#[test]
+fn t_ar_open_2b_same_sized_regular_file_with_another_inode_is_refused() {
+    let tree = tree();
+    let keep_alive = Scratch::new("open2b-old-inode");
+    let target = tree.join("a.txt");
+    let old = keep_alive.join("a.txt-original");
+    let hook = SwapHook::at_open("a.txt", move || {
+        fs::rename(&target, &old).expect("move the original inode away");
+        fs::write(&target, b"SECRT").expect("same-sized regular replacement");
+        assert_eq!(
+            fs::metadata(&target).expect("stat").len(),
+            5,
+            "same size as alpha"
+        );
+    });
+    let result = build_with(tree.path().to_str().expect("utf-8"), &hook, None);
+    let error = result.map(|_| ()).expect_err("refused");
+    assert_eq!(error, changed("a.txt"));
+    assert!(!error.message().contains("SECRT"));
+    assert_eq!(
+        fs::read(keep_alive.join("a.txt-original")).expect("old inode kept"),
+        b"alpha"
+    );
 }
 
 #[test]

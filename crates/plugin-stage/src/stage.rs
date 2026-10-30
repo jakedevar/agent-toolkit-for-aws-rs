@@ -13,7 +13,7 @@ use std::process::{Command, Stdio};
 
 use toolkit_core::{parse_json, sha256_hex, Json};
 
-use crate::declaration::{BinarySpec, Declaration, PlatformSpec};
+use crate::declaration::{BinarySpec, Declaration, Destination, PlatformSpec};
 use crate::launcher::dispatcher_script;
 use crate::manifest::{
     read_regular, staged_bin_dir, StagedBinary, StagedDispatcher, StagingManifest,
@@ -125,7 +125,7 @@ impl BuildStep {
     pub fn display(&self) -> String {
         format!(
             "{}/{} [{}]: cargo {}",
-            self.binary.plugin,
+            self.binary.destination.key(),
             self.binary.name,
             self.platform.platform,
             self.cargo_args().join(" ")
@@ -210,13 +210,11 @@ pub fn plan(
         binaries.extend(declaration.binaries.iter());
     } else {
         for selector in only {
-            let found = selector
-                .split_once('/')
-                .and_then(|(plugin, name)| declaration.binary(plugin, name));
-            match found {
+            match declaration.select(selector) {
                 Some(binary) => binaries.push(binary),
                 None => problems.push(format!(
-                    "--only {selector}: no such PLUGIN/NAME in {}",
+                    "--only {}: no such PLUGIN/NAME or PACKAGE_ROOT/NAME in {}",
+                    toolkit_core::escape_untrusted(selector, 120),
                     crate::DECLARATION_PATH
                 )),
             }
@@ -229,11 +227,11 @@ pub fn plan(
         match probe.workspace_bins.get(&binary.package) {
             None => problems.push(format!(
                 "{}/{}: package {} is not a member of this workspace (consumer {}); land it first or select other binaries with --only",
-                binary.plugin, binary.name, binary.package, binary.consumer
+                binary.destination.key(), binary.name, binary.package, binary.consumer
             )),
             Some(bins) if !bins.contains(&binary.bin) => problems.push(format!(
                 "{}/{}: package {} has no bin target {}",
-                binary.plugin, binary.name, binary.package, binary.bin
+                binary.destination.key(), binary.name, binary.package, binary.bin
             )),
             Some(_) => {}
         }
@@ -340,20 +338,29 @@ pub fn check_merge(
     provenance: &Provenance,
     clean: bool,
 ) -> Result<(), String> {
-    existing_entries(plugins_root, plugin, provenance, clean).map(|_| ())
+    check_merge_at(&plugins_root.join(plugin), provenance, clean)
+}
+
+/// [`check_merge`] for any destination directory `dest_dir` (the parent of
+/// its `bin/`: a plugin directory or a package destination).
+///
+/// # Errors
+///
+/// As [`check_merge`].
+pub fn check_merge_at(dest_dir: &Path, provenance: &Provenance, clean: bool) -> Result<(), String> {
+    existing_entries(dest_dir, provenance, clean).map(|_| ())
 }
 
 /// Refuses to stage through a symlink (#5023), with or without `--clean`:
-/// the plugin directory, `bin/` and every entry of `bin/` and of its
+/// the destination directory, `bin/` and every entry of `bin/` and of its
 /// platform directories must be real. Returns whether `bin/` exists.
-fn check_layout(plugins_root: &Path, plugin: &str) -> Result<bool, String> {
-    let plugin_dir = plugins_root.join(plugin);
-    let staged = staged_bin_dir(Path::new(""), &plugin_dir)
+fn check_layout(dest_dir: &Path) -> Result<bool, String> {
+    let staged = staged_bin_dir(Path::new(""), dest_dir)
         .map_err(|err| format!("{err}; refusing to stage through it"))?;
     if !staged {
         return Ok(false);
     }
-    let bin_dir = plugin_dir.join(BIN_DIR);
+    let bin_dir = dest_dir.join(BIN_DIR);
     let mut pending = vec![bin_dir.clone()];
     while let Some(dir) = pending.pop() {
         let entries = fs::read_dir(&dir)
@@ -378,13 +385,12 @@ fn check_layout(plugins_root: &Path, plugin: &str) -> Result<bool, String> {
 }
 
 fn existing_entries(
-    plugins_root: &Path,
-    plugin: &str,
+    dest_dir: &Path,
     provenance: &Provenance,
     clean: bool,
 ) -> Result<Vec<StagedBinary>, String> {
-    let bin_dir = plugins_root.join(plugin).join(BIN_DIR);
-    if !check_layout(plugins_root, plugin)? || clean {
+    let bin_dir = dest_dir.join(BIN_DIR);
+    if !check_layout(dest_dir)? || clean {
         return Ok(Vec::new());
     }
     let remedy = "rerun with --clean to replace it";
@@ -433,15 +439,39 @@ pub fn install(
     provenance: &Provenance,
     clean: bool,
 ) -> Result<StagingManifest, String> {
-    let plugin_dir = plugins_root.join(plugin);
+    install_at(
+        &plugins_root.join(plugin),
+        &Destination::Plugin(plugin.to_string()),
+        built,
+        provenance,
+        clean,
+    )
+}
+
+/// [`install`] for any destination: installs into `dest_dir/bin/` (the
+/// plugin directory or the package destination). Every built step must
+/// belong to `destination`, and the manifest names it.
+///
+/// # Errors
+///
+/// As [`install`].
+pub fn install_at(
+    dest_dir: &Path,
+    destination: &Destination,
+    built: &[Built],
+    provenance: &Provenance,
+    clean: bool,
+) -> Result<StagingManifest, String> {
+    let plugin_dir = dest_dir;
     if !plugin_dir.is_dir() {
         return Err(format!(
-            "{}: plugin directory does not exist",
-            plugin_dir.display()
+            "{}: {} directory does not exist",
+            plugin_dir.display(),
+            destination.label()
         ));
     }
     let mut entries: BTreeMap<(String, Platform), StagedBinary> =
-        existing_entries(plugins_root, plugin, provenance, clean)?
+        existing_entries(dest_dir, provenance, clean)?
             .into_iter()
             .map(|binary| ((binary.name.clone(), binary.platform), binary))
             .collect();
@@ -452,11 +482,11 @@ pub fn install(
     }
     for item in built {
         let step = &item.step;
-        if step.binary.plugin != plugin {
+        if step.binary.destination != *destination {
             return Err(format!(
-                "{}: built for plugin {}",
+                "{}: built for {}",
                 item.file.display(),
-                step.binary.plugin
+                step.binary.destination.label()
             ));
         }
         let bytes = fs::read(&item.file)
@@ -491,7 +521,7 @@ pub fn install(
         });
     }
     let manifest = StagingManifest {
-        plugin: plugin.to_string(),
+        destination: destination.clone(),
         source_commit: provenance.source_commit.clone(),
         source_dirty: provenance.source_dirty,
         rustc: provenance.rustc.clone(),

@@ -2231,7 +2231,7 @@ fn filesystem_bearing_consumers() -> BTreeSet<(String, String)> {
 /// file name or a directory name. A file that is not about a listed command
 /// (`elasticache`, `relational`, `ai-data`, `cloudwatch region`) is
 /// there for the flag name only.
-const AUDITED_FILESYSTEM_CONSUMERS: [(&str, &str); 27] = [
+const AUDITED_FILESYSTEM_CONSUMERS: [(&str, &str); 29] = [
     ("startup/model_path.rs", "--workload"),
     ("bedrock_agent.rs", "--agent-id"),
     ("bedrock_agent.rs", "--agent-version"),
@@ -2265,6 +2265,10 @@ const AUDITED_FILESYSTEM_CONSUMERS: [(&str, &str); 27] = [
     // list-launches region selection only, never to a path.
     ("launch/commands.rs", "--region"),
     ("launch/snapshot.rs", "--region"),
+    // Flag name only (#5462): no agents-pay admin or agents-build command has a
+    // LITERAL_DASH entry; --region is an endpoint key and a config value.
+    ("agents_pay/admin/mod.rs", "--region"),
+    ("agents_pay/admin/setup_payment_user.rs", "--region"),
 ];
 
 /// A `LITERAL_DASH` flag that shares a source file with filesystem code must be
@@ -2425,7 +2429,8 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
 /// telemetry (#4398), then mcp-proxy (#5079) and ai-payloads (#5143).
 /// The S2b render synopsis is included as well (#5223), the launch
 /// `download-snapshot` and `apply-snapshot` routes (#5317), the L5 API and
-/// offline launch routes (#5345), and the agents-pay fetch route (#5352).
+/// offline launch routes (#5345), the agents-pay fetch route (#5352), and the
+/// agents-pay admin and agents-build setup-payment-user routes (#5462).
 /// A deliberate usage change updates the pin in the same
 /// commit and says so in the Issue; an incidental one fails here.
 // Neptune memory (#4886) deliberately adds its synopsis and description, and
@@ -2435,8 +2440,10 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
 // are not yet available.
 // The L5 launch routes (#5345) add theirs.
 // `agents-pay fetch` (#5352) deliberately adds its synopsis and description.
-const USAGE_BASE_LEN: usize = 47548;
-const USAGE_BASE_FNV1A64: u64 = 0x355f_5278_556d_532a;
+// The x402 S6 admin routes (#5462) deliberately add their synopses and descriptions.
+// `agents-pay bridge` (OpenClaw B2, #5443) deliberately adds its synopsis and description.
+const USAGE_BASE_LEN: usize = 50144;
+const USAGE_BASE_FNV1A64: u64 = 0xa9b9_0f60_c4eb_fdee;
 
 #[test]
 fn the_global_usage_text_is_byte_identical_to_the_base() {

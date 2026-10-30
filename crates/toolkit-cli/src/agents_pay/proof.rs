@@ -102,8 +102,27 @@ fn amount_text(value: Option<&Json>) -> Option<String> {
 ///
 /// # Errors
 /// [`ProofError`]; the proof is dropped unsent.
-// recorded-shape: the signed authorization is checked field by field and refused otherwise.
 pub fn verify(authorized: Authorized, clock: &dyn PayClock) -> Result<VerifiedProof, ProofError> {
+    let (proof, wait) = check(authorized, clock)?;
+    if !wait.is_zero() {
+        clock.sleep(wait);
+    }
+    Ok(proof)
+}
+
+/// [`verify`] without the wait (`OpenClaw` assumption A3): the checked
+/// proof, and how long the caller must wait before it is valid (zero when
+/// `validAfter` has passed). The window rule is the same: a wait over 15 s,
+/// or a proof that expires before the wait ends, is refused. The bridge
+/// never sleeps; its trusted glue waits.
+///
+/// # Errors
+/// [`ProofError`]; the proof is dropped unsent.
+// recorded-shape: the signed authorization is checked field by field and refused otherwise.
+pub fn check(
+    authorized: Authorized,
+    clock: &dyn PayClock,
+) -> Result<(VerifiedProof, Duration), ProofError> {
     let parts = authorized.into_parts();
     let payload = parts.proof.payload();
     let Some(authorization @ Json::Object(_)) = payload.get("authorization") else {
@@ -127,19 +146,23 @@ pub fn verify(authorized: Authorized, clock: &dyn PayClock) -> Result<VerifiedPr
     if valid_before <= now {
         return Err(ProofError::Mismatch);
     }
+    let mut wait = Duration::ZERO;
     if valid_after > now {
-        let wait = valid_after.saturating_add(1).saturating_sub(now);
-        if wait > MAX_WAIT_SECONDS || valid_before <= now.saturating_add(wait) {
+        let seconds = valid_after.saturating_add(1).saturating_sub(now);
+        if seconds > MAX_WAIT_SECONDS || valid_before <= now.saturating_add(seconds) {
             return Err(ProofError::OutsideWindow);
         }
-        clock.sleep(Duration::from_secs(wait.unsigned_abs()));
+        wait = Duration::from_secs(seconds.unsigned_abs());
     }
-    Ok(VerifiedProof {
-        payload: payload.clone(),
-        entry: parts.entry,
-        resource: parts.resource,
-        version: parts.version,
-    })
+    Ok((
+        VerifiedProof {
+            payload: payload.clone(),
+            entry: parts.entry,
+            resource: parts.resource,
+            version: parts.version,
+        },
+        wait,
+    ))
 }
 
 impl VerifiedProof {
@@ -182,5 +205,34 @@ impl VerifiedProof {
     #[must_use]
     pub(in crate::agents_pay) fn signature(&self) -> Option<&str> {
         self.payload.get("signature").and_then(Json::as_str)
+    }
+
+    /// The verified signed payload for trusted glue (`OpenClaw` design 3.4,
+    /// R-BR-ONE-4): its one consumer is `bridge::render`, which writes it
+    /// into the one designated stdout field. Consuming the proof means an
+    /// unverified one can never reach the pipe.
+    #[must_use]
+    pub(in crate::agents_pay) fn into_trusted_glue(self) -> GlueProof {
+        GlueProof(toolkit_aws::redact::Secret::new(
+            self.payload.to_compact_string(),
+        ))
+    }
+}
+
+/// A verified signed payload on its way to the bridge pipe, held as a
+/// secret with a redacted `Debug`.
+pub struct GlueProof(toolkit_aws::redact::Secret);
+
+impl std::fmt::Debug for GlueProof {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("GlueProof([REDACTED])")
+    }
+}
+
+impl GlueProof {
+    /// The signed document, for `bridge::render` only.
+    #[must_use]
+    pub(in crate::agents_pay) fn signed_document(&self) -> Json {
+        toolkit_core::parse_json(self.0.expose()).unwrap_or(Json::Null)
     }
 }
