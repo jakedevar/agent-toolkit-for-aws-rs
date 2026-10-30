@@ -728,7 +728,7 @@ fn submit(count: usize, calls: &[String], product: bool) -> Submitted {
     Submitted {
         pending,
         outcomes,
-        log: log.lines().to_vec(),
+        log: log.lines(),
         sent: client.sent().to_vec(),
         unused: client.unconsumed(),
     }

@@ -132,7 +132,7 @@ pub(super) fn run_with(
     };
     Ran {
         result,
-        log: log.lines().to_vec(),
+        log: log.lines(),
         sent: client.sent().to_vec(),
         unused: client.unconsumed(),
     }
