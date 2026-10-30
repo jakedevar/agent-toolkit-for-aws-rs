@@ -1425,3 +1425,35 @@ pub(crate) fn generated_request(
     )?;
     captured.ok_or_else(|| AwsError::invalid_config("request", "the SDK generated no request"))
 }
+
+#[cfg(test)]
+mod exchange_regression {
+    use super::*;
+
+    #[test]
+    fn second_request_is_refused_without_replacing_the_parked_request() {
+        let exchange = Exchange::default();
+        let request = |body| SdkHttpRequest::new(SdkBody::from(body));
+        let mut first = pin!(exchange.call(request("first-fixture")));
+        let mut second = pin!(exchange.call(request("sensitive-second-fixture")));
+        let mut cx = Context::from_waker(Waker::noop());
+        assert!(first.as_mut().poll(&mut cx).is_pending());
+        let Poll::Ready(Err(error)) = second.as_mut().poll(&mut cx) else {
+            panic!("second connector call must be refused immediately");
+        };
+        let detail = format!("{error:?}");
+        assert!(detail.contains("the SDK made a second request in one attempt"));
+        assert!(!detail.contains("sensitive-second-fixture"));
+        let parked = exchange
+            .take_request()
+            .expect("first request remains parked");
+        assert_eq!(parked.body().bytes(), Some(b"first-fixture".as_slice()));
+        assert!(exchange.take_request().is_none());
+        exchange.answer(Ok(SdkHttpResponse::new(
+            StatusCode::try_from(200).unwrap(),
+            SdkBody::from("fixture response"),
+        )));
+        assert!(matches!(first.as_mut().poll(&mut cx), Poll::Ready(Ok(_))));
+        assert!(exchange.take_request().is_none());
+    }
+}
