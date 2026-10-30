@@ -2231,7 +2231,7 @@ fn filesystem_bearing_consumers() -> BTreeSet<(String, String)> {
 /// file name or a directory name. A file that is not about a listed command
 /// (`elasticache`, `relational`, `ai-data`, `cloudwatch region`) is
 /// there for the flag name only.
-const AUDITED_FILESYSTEM_CONSUMERS: [(&str, &str); 27] = [
+const AUDITED_FILESYSTEM_CONSUMERS: [(&str, &str); 29] = [
     ("startup/model_path.rs", "--workload"),
     ("bedrock_agent.rs", "--agent-id"),
     ("bedrock_agent.rs", "--agent-version"),
@@ -2265,6 +2265,10 @@ const AUDITED_FILESYSTEM_CONSUMERS: [(&str, &str); 27] = [
     // list-launches region selection only, never to a path.
     ("launch/commands.rs", "--region"),
     ("launch/snapshot.rs", "--region"),
+    // Flag name only (#5462): no agents-pay admin or agents-build command has a
+    // LITERAL_DASH entry; --region is an endpoint key and a config value.
+    ("agents_pay/admin/mod.rs", "--region"),
+    ("agents_pay/admin/setup_payment_user.rs", "--region"),
 ];
 
 /// A `LITERAL_DASH` flag that shares a source file with filesystem code must be
@@ -2405,50 +2409,10 @@ fn bedrock_resolve_identity_compares_literal_dash_ids() {
     }
 }
 
-/// 64-bit FNV-1a, for pinning text without a dependency.
-fn fnv1a64(bytes: &[u8]) -> u64 {
-    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-    for byte in bytes {
-        hash ^= u64::from(*byte);
-        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
-    }
-    hash
-}
-
-/// The global usage text is printed for every command's `--help` and appended to
-/// every usage error, so one slice's description edit changes the help bytes of
-/// every other command (#4936). Its length and FNV-1a hash are pinned to the
-/// text at the round-19 integration head (#5015): the f597a058 text (35200
-/// bytes, `0xa95b_3df5_10f4_8191`) plus the synopsis and description of the
-/// six slices registered since, bedrock-probes (#4404), docgraph (#4395),
-/// dynamodb-bench (#4390), elasticache-tunnel (#4393), marketplace (#4396) and
-/// telemetry (#4398), then mcp-proxy (#5079) and ai-payloads (#5143).
-/// The S2b render synopsis is included as well (#5223), the launch
-/// `download-snapshot` and `apply-snapshot` routes (#5317), the L5 API and
-/// offline launch routes (#5345), and the agents-pay fetch route (#5352).
-/// A deliberate usage change updates the pin in the same
-/// commit and says so in the Issue; an incidental one fails here.
-// Neptune memory (#4886) deliberately adds its synopsis and description, and
-// the launch snapshot routes (#5317) theirs.
-// `documentdb normalize-capture` (#5327) deliberately adds its synopsis and description.
-// Docgraph live preflight flags (#5366) are advertised even though adapters
-// are not yet available.
-// The L5 launch routes (#5345) add theirs.
-// `agents-pay fetch` (#5352) deliberately adds its synopsis and description.
-const USAGE_BASE_LEN: usize = 47548;
-const USAGE_BASE_FNV1A64: u64 = 0x355f_5278_556d_532a;
-
-#[test]
-fn the_global_usage_text_is_byte_identical_to_the_base() {
-    let bytes = toolkit_cli::USAGE.as_bytes();
-    assert_eq!(
-        (bytes.len(), fnv1a64(bytes)),
-        (USAGE_BASE_LEN, USAGE_BASE_FNV1A64),
-        "the global usage text changed; len={} fnv1a64={:#018x}",
-        bytes.len(),
-        fnv1a64(bytes)
-    );
-}
+// The global usage text is pinned per slice in
+// `crates/toolkit-cli/src/registry/usage_pins.rs` (#5360), not here: one line per
+// slice, so slices added in parallel do not conflict and a red run prints the
+// replacement lines. This file only checks that the help prints that text.
 
 /// Every command's `--help` prints exactly the pinned global usage text, and so
 /// does the usage text of every usage error.

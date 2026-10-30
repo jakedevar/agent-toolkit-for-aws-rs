@@ -28,6 +28,38 @@ npm audit --audit-level=moderate
 The committed lockfile pins the complete dependency graph. OpenClaw is an
 optional peer because the package is loaded by an existing OpenClaw host.
 
+## Pack guard: prepare the publisher tool before going offline
+
+`npm pack` runs `prepack`, whose first step is the Rust pack guard
+`plugin-stage verify-package --package-root . --complete`. It checks that
+this directory is the package destination declared in
+`packaging/plugin-binaries.json` of the enclosing release checkout and that
+its staged `bin/` matches `bin/manifest.json` exactly (all five platforms,
+the dispatcher, sizes, sha256, modes, layout, target, features including
+`agents-pay-live`, a clean source commit, no unlisted or symlinked file). It
+is the same verifier as `plugin-stage verify --complete`. The guard
+downloads, builds and runs nothing else; if it fails, or `plugin-stage` is
+not on `PATH`, packing stops. Never skip or replace it.
+
+`plugin-stage` is publisher tooling only. It is not shipped in the package,
+and customers need no Cargo, Python or install hook. Prepare it while still
+online, from the pinned, reviewed release commit:
+
+```bash
+git -C <release-checkout> rev-parse HEAD        # record: tool source SHA
+cargo build --release --locked --package plugin-stage \
+  --manifest-path <release-checkout>/Cargo.toml
+install -m 0755 <release-checkout>/target/release/plugin-stage <publisher-tools>/
+shasum -a 256 <publisher-tools>/plugin-stage   # record: tool checksum
+export PATH="<publisher-tools>:$PATH"
+```
+
+Record the tool source SHA and checksum in the release evidence. Stage the
+binaries from the same clean release commit (`plugin-stage stage --platform
+all`, then `plugin-stage verify --complete` from the checkout root) before
+packing. Packing outside that prepared release checkout is unsupported and
+fails closed.
+
 ## Validate and pack
 
 Use the pinned ClawHub CLI release:

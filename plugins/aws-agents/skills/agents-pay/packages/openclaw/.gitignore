@@ -3,3 +3,4 @@ dist/
 reports/
 skills/
 *.tgz
+bin/

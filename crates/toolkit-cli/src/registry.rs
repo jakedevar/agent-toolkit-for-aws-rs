@@ -72,7 +72,9 @@ pub(crate) struct Slice {
 /// Every slice, one per line, ascending by [`Slice::name`]. Add a slice by
 /// inserting one line at its alphabetical place.
 pub(crate) const SLICES: &[Slice] = &[
+    crate::agents_pay::admin::BUILD_SLICE,
     crate::agents_pay::SLICE,
+    crate::agents_pay::admin::SLICE,
     crate::ai_data::SLICE,
     crate::ai_models::SLICE,
     crate::ai_payloads::SLICE,
@@ -396,6 +398,11 @@ const fn usage_text() -> &'static str {
 /// assembled from the shared text and the help of every slice in [`SLICES`].
 pub const USAGE: &str = usage_text();
 
+// The usage text is pinned per slice, one line per slice (#5360); the re-pin
+// procedure is in that file's header.
+#[cfg(test)]
+mod usage_pins;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -553,7 +560,12 @@ mod tests {
     /// The route paths of the old `COMMANDS` table (commit ce0eaf6a, before the
     /// registry), in table order: the public order of [`COMMANDS`]. The routes of
     /// slices added after the registry follow at the end, ordered by slice name.
-    const LEGACY_COMMAND_ORDER: [&str; 118] = [
+    ///
+    /// A slice that adds a route inserts its lines at its alphabetical place
+    /// in the tail. It is a slice, not an array, so no length is edited (#5360);
+    /// `the_public_route_order_is_pinned` prints the position of the first route
+    /// that differs.
+    const LEGACY_COMMAND_ORDER: &[&str] = &[
         "skills list",
         "manifests validate",
         "spec validate",
@@ -633,8 +645,18 @@ mod tests {
         "timestream-influxdb validate-input",
         "timestream-influxdb instance-types",
         // Slices added after the registry (NEW_RANK), by slice name.
+        // agents-build (#4410, slice S6 #5462):
+        "agents-build setup-payment-user",
         // agents-pay (#4410, slice S5 #5352):
         "agents-pay fetch",
+        "agents-pay bridge",
+        // agents-pay-admin (#4410, slice S6 #5462):
+        "agents-pay admin init-config",
+        "agents-pay admin show-config",
+        "agents-pay admin create-instrument",
+        "agents-pay admin new-session",
+        "agents-pay admin preflight",
+        "agents-pay admin setup-openclaw",
         // ai-payloads (#4386, slice S1 #5143):
         "ai-payloads reward sample",
         "ai-payloads reward check",
@@ -690,10 +712,16 @@ mod tests {
     fn the_public_route_order_is_pinned() {
         let order: Vec<String> = COMMANDS.iter().map(|spec| spec.path.join(" ")).collect();
         assert!(order.len() >= LEGACY_COMMAND_ORDER.len());
+        let first_difference = order
+            .iter()
+            .zip(LEGACY_COMMAND_ORDER)
+            .position(|(actual, pinned)| actual != pinned);
         assert_eq!(
-            order[..LEGACY_COMMAND_ORDER.len()],
+            &order[..LEGACY_COMMAND_ORDER.len()],
             LEGACY_COMMAND_ORDER,
-            "COMMANDS must keep the legacy routing order; routes of new slices follow it"
+            "COMMANDS must keep the legacy routing order; routes of new slices follow it \
+             (first difference at index {first_difference:?}: insert or fix that line of \
+             LEGACY_COMMAND_ORDER, no length to edit)"
         );
     }
 

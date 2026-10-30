@@ -623,6 +623,74 @@ mod tests {
         assert!(sleeper.sleeps().is_empty());
     }
 
+    /// T-OIDC single use (#5504): with retries enabled, a code exchange that
+    /// receives an HTTP 503 makes exactly one request, never sleeps and fails;
+    /// the queued success is never consumed.
+    #[test]
+    fn code_exchange_503_with_default_retries_makes_exactly_one_request() {
+        let fake = FakeStreamingTransport::new()
+            .respond(503, &[], vec![])
+            .respond(
+                200,
+                &[],
+                vec![response(
+                    r#"{"accessToken":"FAKE-L7-ACCESS","refreshToken":"FAKE-L7-REFRESH"}"#,
+                )],
+            );
+        let sleeper = RecordingSleeper::new();
+        let policy = RetryPolicy::default();
+        assert!(policy.total_attempts() > 1, "retries are enabled");
+        let oidc = Oidc {
+            transport: &fake,
+            clock: &SystemClock,
+            sleeper: &sleeper,
+            jitter: &NoJitter,
+            policy,
+        };
+        let client = Client {
+            id: "id".into(),
+            secret: Secret::new("FAKE-L7-CLIENT"),
+            expires_at: 100,
+            scopes: vec![],
+        };
+        let error = oidc
+            .exchange(
+                &client,
+                &Secret::new("FAKE-L7-CODE"),
+                &Secret::new("FAKE-L7-VERIFIER"),
+                "http://127.0.0.1",
+                0,
+                Instant::now() + Duration::from_secs(30),
+            )
+            .expect_err("a single-use code is not retried");
+        assert!(
+            matches!(error, OidcError::Service { status: 503, .. }),
+            "{error:?}"
+        );
+        assert_eq!(fake.requests().len(), 1);
+        assert!(sleeper.sleeps().is_empty());
+        // Control: the same 503-then-success script is retried by register.
+        let fake = FakeStreamingTransport::new()
+            .respond(503, &[], vec![])
+            .respond(
+                200,
+                &[],
+                vec![response(r#"{"clientId":"id","clientSecret":"s"}"#)],
+            );
+        let oidc = Oidc {
+            transport: &fake,
+            ..oidc
+        };
+        oidc.register(
+            "https://view.awsapps.com/start",
+            &[],
+            0,
+            Instant::now() + Duration::from_secs(30),
+        )
+        .expect("register retries the 503");
+        assert_eq!(fake.requests().len(), 2);
+    }
+
     #[test]
     fn aws_endpoint_overrides_in_injected_environment_do_not_change_oidc_target() {
         let env = toolkit_aws::env::MapEnv::new()

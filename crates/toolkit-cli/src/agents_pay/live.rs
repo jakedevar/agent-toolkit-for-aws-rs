@@ -234,3 +234,218 @@ impl PaymentsConnector for World {
         }))
     }
 }
+
+// ------------------------------------------------------- admin (x402 S6)
+
+/// The process environment of the admin routes.
+struct LiveAdminEnv;
+
+impl super::admin::AdminEnv for LiveAdminEnv {
+    fn var(&self, name: &str) -> Option<String> {
+        std::env::var(name).ok()
+    }
+    fn names(&self) -> Vec<String> {
+        std::env::vars_os()
+            .filter_map(|(name, _)| name.into_string().ok())
+            .collect()
+    }
+}
+
+/// The real file system: relative paths are relative to the process
+/// working directory, the account home comes from the OS account database.
+struct LiveAdminFs;
+
+impl super::admin::AdminFs for LiveAdminFs {
+    fn cwd(&self) -> std::path::PathBuf {
+        std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
+    }
+    fn account_home(&self) -> Option<std::path::PathBuf> {
+        nix::unistd::User::from_uid(nix::unistd::Uid::current())
+            .ok()
+            .flatten()
+            .map(|user| user.dir)
+            .filter(|dir| dir.is_absolute())
+    }
+    fn exists(&self, path: &std::path::Path) -> bool {
+        path.exists()
+    }
+    fn is_dir(&self, path: &std::path::Path) -> bool {
+        path.is_dir()
+    }
+    fn read(&self, path: &std::path::Path) -> Option<String> {
+        super::admin::deployed::read_bounded(path)
+    }
+    fn lstat(&self, path: &std::path::Path) -> Option<super::admin::FileMeta> {
+        super::admin::fixtures::lstat(path)
+    }
+    fn uid(&self) -> u32 {
+        super::admin::fixtures::current_uid()
+    }
+    fn write_config(&self, path: &std::path::Path, content: &str) -> Result<(), String> {
+        super::admin::write::atomic_write_0600(path, content)
+            .map_err(|_| super::admin::write_failure(path))
+    }
+    fn load_runtime_policy(&self, path: &std::path::Path) -> Result<Json, String> {
+        super::config::load_config(path)
+    }
+}
+
+/// The controlling terminal on stdin: the admin routes' TTY gate (#5475)
+/// and their prompts.
+pub struct LiveTerminal;
+
+impl super::admin::Terminal for LiveTerminal {
+    fn is_tty(&self) -> bool {
+        std::io::IsTerminal::is_terminal(&std::io::stdin())
+    }
+    fn read_line(&self) -> Option<String> {
+        use std::io::Read;
+        let mut stdin = std::io::stdin().lock();
+        let mut bytes = Vec::new();
+        let mut byte = [0u8; 1];
+        loop {
+            match stdin.read(&mut byte) {
+                Ok(0) if bytes.is_empty() => return None,
+                Ok(0) => break,
+                Ok(_) if byte[0] == b'\n' => break,
+                Ok(_) => {
+                    if bytes.len() < 4096 {
+                        bytes.push(byte[0]);
+                    }
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(_) => return None,
+            }
+        }
+        if bytes.last() == Some(&b'\r') {
+            bytes.pop();
+        }
+        Some(String::from_utf8_lossy(&bytes).into_owned())
+    }
+}
+
+/// The OS random source.
+struct LiveRandom;
+
+impl super::admin::AdminRandom for LiveRandom {
+    fn fill(&self, buf: &mut [u8]) -> Result<(), super::admin::NoRandomness> {
+        getrandom::fill(buf).map_err(|_| super::admin::NoRandomness)
+    }
+}
+
+/// One opened admin client: S1 roots (design: admin keeps R-ROOTS), a
+/// signer over the guarded chain and the region.
+struct LiveAdminApi<'w> {
+    transport: &'w SdkTransport,
+    signer: SigV4Signer<Guarded>,
+    region: String,
+}
+
+impl LiveAdminApi<'_> {
+    fn client(&self) -> Result<PaymentClient<'_>, PaymentError> {
+        PaymentClient::new(&self.region, self.transport, &self.signer)
+            .map_err(|_| PaymentError::Transport(PaymentErrorClass::RuntimeError))
+    }
+}
+
+impl super::admin::AdminApi for LiveAdminApi<'_> {
+    fn sts_check(&self) -> Result<(), PaymentError> {
+        self.client()?.sts_check()
+    }
+    fn create_instrument(
+        &self,
+        manager: &str,
+        user: &str,
+        connector: &str,
+        network: &str,
+        email: &str,
+        token: &str,
+    ) -> Result<Json, PaymentError> {
+        self.client()?
+            .create_instrument(manager, user, connector, network, email, token)
+    }
+    fn create_session(
+        &self,
+        manager: &str,
+        user: &str,
+        budget: &str,
+        expiry: i64,
+        token: &str,
+    ) -> Result<Json, PaymentError> {
+        self.client()?
+            .create_session(manager, user, budget, expiry, token)
+    }
+}
+
+/// The live admin world: the S1 provider roots for the `AgentCore` admin
+/// plane, STS and credential HTTP (R-TLS-PAY: admin keeps R-ROOTS).
+pub struct AdminWorld {
+    runtime: SdkRuntime,
+    transport: SdkTransport,
+    provider: ProviderHttp,
+}
+
+impl AdminWorld {
+    /// Build the live admin world. `admin::run_process` calls it only after
+    /// a creating route's TTY gate (#5475).
+    ///
+    /// # Errors
+    /// [`Unavailable`] with the fixed R-ROOTS text, or a generic text when
+    /// the runtime cannot start.
+    pub fn for_process() -> Result<Self, Unavailable> {
+        let roots =
+            ValidatedRoots::from_process().map_err(|failure| Unavailable(failure.message()))?;
+        let generic = |_| Unavailable("RuntimeError during payment administration.".to_owned());
+        let runtime = SdkRuntime::new().map_err(generic)?;
+        let transport = SdkTransport::new(&runtime, &roots).map_err(generic)?;
+        let provider = ProviderHttp::validated(&roots).map_err(generic)?;
+        Ok(Self {
+            runtime,
+            transport,
+            provider,
+        })
+    }
+}
+
+impl super::admin::AdminWorldSource for AdminWorld {
+    fn deps(&self) -> super::admin::AdminDeps<'_> {
+        super::admin::AdminDeps {
+            env: &LiveAdminEnv,
+            fs: &LiveAdminFs,
+            terminal: &LiveTerminal,
+            api: self,
+            random: &LiveRandom,
+        }
+    }
+}
+
+impl super::admin::AdminConnector for AdminWorld {
+    fn open<'s>(
+        &'s self,
+        region: Option<&str>,
+    ) -> Result<Box<dyn super::admin::AdminApi + 's>, String> {
+        let env = |name: &str| std::env::var(name).ok().filter(|v| !v.is_empty());
+        let region = region
+            .map(str::to_owned)
+            .or_else(|| env("AWS_REGION"))
+            .or_else(|| env("AWS_DEFAULT_REGION"))
+            .or_else(|| {
+                let selected = SelectedProfile::resolve(None, &ProcessEnv);
+                toolkit_aws::sdk::profile::profile_region(&ProcessEnv, &selected)
+            })
+            .unwrap_or_else(|| "us-east-1".to_owned());
+        let credentials =
+            GuardedCredentials::new(&self.runtime, &region, None, self.provider.clone());
+        Ok(Box::new(LiveAdminApi {
+            transport: &self.transport,
+            signer: SigV4Signer::new(Guarded(credentials)),
+            region,
+        }))
+    }
+    fn check_manager(&self, manager: &str) -> Result<(), String> {
+        if is_test_identity(Some(manager), None) {
+            return Err(TEST_FIXTURE_REFUSAL.to_owned());
+        }
+        Ok(())
+    }
+}
