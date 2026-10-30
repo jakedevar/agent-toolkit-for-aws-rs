@@ -96,11 +96,11 @@ AgentSubmitJob `{"kind":"test","params":{"recipe":"openclaw-node-test"}}`).
    loopback, down) it runs `npm ci --offline --ignore-scripts`, then
    `npm test`. If the namespace cannot be created it exits 4 rather than run
    with network.
-4. `python` and `python3` on `PATH` are shims that exit 127. Until #4411 B4
-   removes the `python3 -m unittest` step from the package `test` script, that
-   one `&&` step is skipped and the skip is logged. The other steps
-   (`npm run build`, `npm run stage-skill`, `node --test test/*.test.mjs`) run
-   as written. A script that names no Python runs as `npm test` itself.
+4. `python` and `python3` on `PATH` are shims that exit 127. Since #4411 B4
+   the package `test` script names no Python (`npm run build`, `npm run
+   stage-skill`, `node --test test/*.test.mjs`), so it runs as `npm test`
+   itself. The runner still skips, and logs, a `python3 -m unittest` `&&` step
+   in an older script; its self-test keeps that case.
 
 The recipe first runs `scripts/openclaw-node-test.selftest.sh`, which uses a
 throwaway package and cache. It checks the fail-closed cases (missing cache,

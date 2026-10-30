@@ -14,7 +14,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { deriveClientToken } from "../dist/payments.js";
+import * as payments from "../dist/payments.js";
 import { parseBridgeResponse } from "../dist/bridge.js";
 import { normalizeConfig } from "../dist/config.js";
 import { buildPaidContentResult, MAX_RETURNED_BODY_BYTES } from "../dist/index.js";
@@ -253,32 +253,12 @@ test("SSRF guard refuses non-HTTPS and non-public destinations", () => {
   assert.doesNotThrow(() => assertPublicAddress("2606:4700:4700::1111"));
 });
 
-test("stable idempotency excludes rotating publisher nonce", () => {
-  const accepted1 = structuredClone(fixture.challenge.accepts[1]);
-  const accepted2 = structuredClone(accepted1);
-  accepted2.extra.nonce = "publisher-nonce-2";
-  const token1 = deriveClientToken(
-    "session-example",
-    fixture.requestUrl,
-    accepted1,
-  );
-  const token2 = deriveClientToken(
-    "session-example",
-    fixture.requestUrl,
-    accepted2,
-  );
-  assert.equal(token1, token2);
-  assert.notEqual(
-    token1,
-    deriveClientToken("session-example", fixture.requestUrl, {
-      ...accepted1,
-      amount: "1001",
-    }),
-  );
-  assert.notEqual(
-    token1,
-    deriveClientToken("another-session", fixture.requestUrl, accepted1),
-  );
+test("the TS client token is gone: Rust R-TOK derives it (D-OC15, T-BR-TOK)", () => {
+  assert.equal(payments.deriveClientToken, undefined);
+  assert.deepEqual(Object.keys(payments).sort(), [
+    "getPaymentSessionStatus",
+    "processPayment",
+  ]);
 });
 
 test("AgentCore bridge accepts only a successful object response", () => {
@@ -455,28 +435,47 @@ test("public package and runtime identities stay aligned", async () => {
     readFile(new URL("../README.md", import.meta.url), "utf8"),
   ]);
   assert.equal(packageJson.name, "@aws/aws-agents-pay");
-  assert.equal(packageJson.version, "1.0.7");
+  assert.equal(packageJson.version, "1.1.0");
   assert.equal(manifest.id, "aws-agents-pay");
   assert.equal(manifest.name, "AWS Agents Pay");
   assert.deepEqual(manifest.skills, ["skills/agents-pay"]);
   assert.ok(packageJson.files.includes("skills"));
-  assert.ok(packageJson.files.includes("runtime/agentcore_bridge.py"));
+  assert.ok(packageJson.files.includes("bin"));
+  assert.ok(!packageJson.files.includes("runtime/agentcore_bridge.py"));
+  assert.ok(!packageJson.files.some((entry) => entry.includes("runtime")));
+  assert.equal(packageJson.bin, undefined);
   assert.equal(packageJson.dependencies["@aws-sdk/client-bedrock-agentcore"], undefined);
   assert.match(readme, /clawhub:\@aws\/aws-agents-pay/);
   assert.doesNotMatch(readme, /clawhub:\@aws%2Faws-agents-pay/);
   assert.doesNotMatch(readme, /accepts an empty install-time config/);
 });
 
+// T-JS-PKG (#4411 B4, R-TS-5, OQ9): 1.1.0 in both identities, and npm test
+// runs no Python.
+test("package-lock identity and the test script need no Python", async () => {
+  const [packageJson, packageLock] = await Promise.all(
+    ["../package.json", "../package-lock.json"].map((name) =>
+      readFile(new URL(name, import.meta.url), "utf8").then(JSON.parse),
+    ),
+  );
+  assert.equal(packageLock.name, "@aws/aws-agents-pay");
+  assert.equal(packageLock.version, "1.1.0");
+  assert.equal(packageLock.packages[""].name, "@aws/aws-agents-pay");
+  assert.equal(packageLock.packages[""].version, "1.1.0");
+  assert.equal(
+    packageJson.scripts.test,
+    "npm run build && npm run stage-skill && node --test test/*.test.mjs",
+  );
+  for (const script of Object.values(packageJson.scripts)) {
+    assert.doesNotMatch(script, /python|unittest|\.venv|pip /i);
+  }
+});
+
 test("bundled skill is exact and excludes nested packages", async () => {
   const packageRoot = fileURLToPath(new URL("../", import.meta.url));
   const canonicalRoot = path.resolve(packageRoot, "../..");
   const bundledRoot = path.join(packageRoot, "skills", "agents-pay");
-  const includedEntries = [
-    "SKILL.md",
-    "requirements.txt",
-    "references",
-    "scripts",
-  ];
+  const includedEntries = ["SKILL.md", "references"];
 
   const expectedFiles = [];
   for (const entry of includedEntries) {
@@ -506,10 +505,12 @@ test("bundled skill is exact and excludes nested packages", async () => {
     );
   }
   await assert.rejects(access(path.join(bundledRoot, "packages")));
-  assert.match(
-    await readFile(path.join(bundledRoot, "requirements.txt"), "utf8"),
-    /^bedrock-agentcore==1\.19\.0$/m,
-  );
+  // The admin CLI is the shipped binary: no Python, pins or scripts (R-PKG-6).
+  await assert.rejects(access(path.join(bundledRoot, "requirements.txt")));
+  await assert.rejects(access(path.join(bundledRoot, "scripts")));
+  for (const relativePath of await relativeFiles(bundledRoot)) {
+    assert.doesNotMatch(relativePath, /\.py[cw]?$/);
+  }
 });
 
 test("runtime dependency graph excludes Bowser", async () => {

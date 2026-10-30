@@ -137,6 +137,63 @@ fn t_br_err_bin_sanitize_output_runs_without_payment_support() {
     }
 }
 
+/// `OpenClaw` B4 (#4411, R-OC-FINAL): `tool-cases.json` holds the exact
+/// `sanitize_output` requests the TypeScript paid tool builds (the JS suite
+/// asserts it builds them byte for byte) and the frame for each. The real
+/// binary must answer each with exactly that frame, so the JS tests that
+/// replay these frames never stand in for a matcher of their own.
+#[test]
+fn t_oc_final_tool_cases_answer_with_the_pinned_frames() {
+    use toolkit_core::Json;
+    let text = fs::read_to_string(contract("final-output/tool-cases.json")).unwrap();
+    let fixture = toolkit_core::parse_json(&text).unwrap();
+    let Some(Json::Array(cases)) = fixture.get("cases") else {
+        panic!("cases")
+    };
+    let mut outcomes = BTreeMap::new();
+    for case in cases {
+        let name = case.get("name").and_then(Json::as_str).unwrap();
+        let outcome = case.get("outcome").and_then(Json::as_str).unwrap();
+        let request = case.get("request").unwrap();
+        let frame = case.get("frame").and_then(Json::as_str).unwrap();
+        let out = piped(request.to_compact_string().as_bytes());
+        assert_eq!(out.status.code(), Some(0), "{name}: {out:?}");
+        assert!(out.stderr.is_empty(), "{name}");
+        assert_eq!(String::from_utf8_lossy(&out.stdout), frame, "{name}");
+
+        let Some(Json::Array(secrets)) = request.get("secrets") else {
+            panic!("{name}: secrets")
+        };
+        assert_eq!(secrets.len(), 3, "{name}");
+        for secret in secrets {
+            let secret = secret.as_str().unwrap();
+            assert!(
+                !frame.contains(secret),
+                "{name}: a secret reached the frame"
+            );
+        }
+        let document = toolkit_core::parse_json(frame.trim_end()).unwrap();
+        let result = document.get("result").unwrap();
+        let details = result.get("details").unwrap();
+        match outcome {
+            "clean" => assert_eq!(Some(result), request.get("candidate"), "{name}"),
+            "redact" => {
+                assert_eq!(details.get("redacted"), Some(&Json::Bool(true)), "{name}");
+                assert_eq!(details.get("paid"), Some(&Json::Bool(true)), "{name}");
+            }
+            "refuse" => assert_eq!(
+                details.to_compact_string(),
+                r#"{"paid":false,"reason":"Payment flow failed safely without exposing provider or proof details","refused":true}"#,
+                "{name}"
+            ),
+            other => panic!("{name}: outcome {other}"),
+        }
+        *outcomes.entry(outcome.to_owned()).or_insert(0) += 1;
+    }
+    let counts: Vec<(&str, i32)> = outcomes.iter().map(|(k, v)| (k.as_str(), *v)).collect();
+    assert_eq!(counts, [("clean", 4), ("redact", 2), ("refuse", 2)]);
+}
+
 #[test]
 fn t_br_err_bin_argv_is_refused_by_the_router() {
     for extra in ["positional", "--payload", "--profile"] {
