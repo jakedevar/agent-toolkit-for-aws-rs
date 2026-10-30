@@ -1,14 +1,5 @@
-plugins/aws-agents/skills/agents-build/scripts/process_payment_tool.py
-plugins/aws-agents/skills/agents-build/scripts/setup_payment_user.py
-plugins/aws-agents/skills/agents-pay/packages/openclaw/runtime/agentcore_bridge.py
-plugins/aws-agents/skills/agents-pay/packages/openclaw/test/test_agentcore_bridge.py
-plugins/aws-agents/skills/agents-pay/packages/openclaw/test/test_setup_openclaw.py
 plugins/aws-agents/skills/agents-pay/scripts/agents_pay_admin.py
-plugins/aws-agents/skills/agents-pay/scripts/test_portability.py
-plugins/aws-agents/skills/agents-pay/scripts/test_resource_resolution.py
-plugins/aws-agents/skills/agents-pay/scripts/test_x402_policy.py
 plugins/aws-agents/skills/agents-pay/scripts/x402_fetch.py
-plugins/aws-agents/skills/agents-pay/scripts/x402_fetch_cli.py
 plugins/aws-agents/skills/agents-pay/scripts/x402_policy.py
 plugins/aws-core/com.anthropic.claude-code/hooks/secret-safety.py
 plugins/aws-core/skills/amazon-bedrock/scripts/fetch_bedrock_agent.py

@@ -1038,7 +1038,7 @@ fn b5_openclaw_cutover_contract() {
 }
 
 #[test]
-fn b5_openclaw_inventory_is_ported() {
+fn b5_openclaw_inventory_is_retired() {
     let inv = inventory();
     let rows: Vec<&Value> = inv["files"]
         .as_array()
@@ -1048,7 +1048,7 @@ fn b5_openclaw_inventory_is_ported() {
         .collect();
     assert_eq!(rows.len(), 3);
     for row in rows {
-        assert_eq!(row["status"].as_str(), Some("ported"), "{}", row["path"]);
+        assert_eq!(row["status"].as_str(), Some("retired"), "{}", row["path"]);
         assert!(row["disposition_note"]
             .as_str()
             .unwrap_or("")
@@ -1063,7 +1063,7 @@ fn inventory() -> Value {
 }
 
 #[test]
-fn s7_inventory_payments_policy_rows_are_ported() {
+fn s7_inventory_payments_policy_rows_track_retirement() {
     let inv = inventory();
     let rows: Vec<&Value> = inv["files"]
         .as_array()
@@ -1074,15 +1074,16 @@ fn s7_inventory_payments_policy_rows_are_ported() {
     assert_eq!(rows.len(), 9, "the nine payments-policy rows");
     for row in rows {
         let path = row["path"].as_str().unwrap();
-        assert_eq!(row["status"].as_str(), Some("ported"), "{path}");
+        let expected = if ["agents_pay_admin.py", "x402_fetch.py", "x402_policy.py"].iter().any(|name| path.ends_with(name)) { "ported" } else { "retired" };
+        assert_eq!(row["status"].as_str(), Some(expected), "{path}");
         let note = row["disposition_note"].as_str().unwrap_or("");
         assert!(
             note.len() >= 40 && note.contains("S7"),
             "{path}: note {note:?}"
         );
         assert!(
-            note.contains("retirement"),
-            "{path}: the note must leave removal to the programme retirement step: {note}"
+            note.contains("Retired") || note.contains("Retained"),
+            "{path}: the note must record retirement: {note}"
         );
     }
 }
@@ -1113,7 +1114,7 @@ fn b5_inventory_bridge_rows_keep_their_classification() {
         assert!(row["disposition_note"]
             .as_str()
             .unwrap_or("")
-            .contains("retirement"));
+            .contains("Retired"));
     }
 }
 
