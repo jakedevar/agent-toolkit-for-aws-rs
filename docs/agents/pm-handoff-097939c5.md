@@ -1308,3 +1308,4 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 01:58Z: #5547 security review #5554 (c74a672e, Claude Opus): ACCEPT at 80911f0c, 6/6 re-run mutations killed; P2/P3 -> #5558. Closed #5554. #5265 mismatch only -> ENQUEUED seq 3077 (92012545, issue 5547). S2 repair 2 must merge rolling after this lands (docgraph overlap).
   Kaizen #5559 (reviewer mutation runs serialize: no dirty-tree snapshot per submit), related to #5510 #5543. Harness filing refused twice this hour (agent_create_issue_harness_project_unresolved: #5551, #5559): report to GM in the next report up.
   Workers: 3a9b6f7a S2 repair 2, ef1ae215 #5555, 60b47bef S4. Free slot -> #5560 waits for #5555. Queue: 3076 #5313, 3077 #5547.
+  #4720 (retire six ai-models Python scripts; skill text -> toolkit ai-models) -> Codex terra high c6c496f3. PM verifies the deletions-plus-docs delta. Workers: 3a9b6f7a S2 repair 2, ef1ae215 #5555, 60b47bef S4, c6c496f3 #4720.
