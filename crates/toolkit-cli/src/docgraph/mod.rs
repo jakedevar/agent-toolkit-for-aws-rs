@@ -213,7 +213,9 @@ fn live_selected(invocation: &Invocation) -> Result<bool, ToolkitError> {
         return Ok(false);
     }
     if !cfg!(feature = "docgraph-live") {
-        return Err(usage("--live requires the docgraph-live feature"));
+        return Err(usage(
+            "built without docgraph-live; --live requires the docgraph-live feature",
+        ));
     }
     if invocation.has_flag("--dry-run") || invocation.value("--recorded").is_some() {
         return Err(usage(
@@ -225,7 +227,22 @@ fn live_selected(invocation: &Invocation) -> Result<bool, ToolkitError> {
 
 #[cfg(not(feature = "docgraph-live"))]
 fn unavailable_live() -> ToolkitError {
-    usage("live docgraph adapters are not available in this build")
+    usage("built without docgraph-live; live docgraph adapters are not available")
+}
+
+/// A missing recording never selects a replay or a report of skipped checks.
+fn require_offline_mode(invocation: &Invocation) -> Result<(), ToolkitError> {
+    if invocation.value("--recorded").is_some() || invocation.has_flag("--dry-run") {
+        return Ok(());
+    }
+    Err(ToolkitError::runtime(
+        "docgraph_live_required",
+        if cfg!(feature = "docgraph-live") {
+            "live data requires explicit --live; use --recorded FILE for offline replay"
+        } else {
+            "built without docgraph-live; install a live-enabled build and select --live, or use explicit --recorded FILE for offline replay"
+        },
+    ))
 }
 
 /// Handler of `toolkit documentdb wa-review`.
@@ -285,6 +302,9 @@ fn wa_review_with_live(
             .epoch_seconds(),
     };
     let output_dir = invocation.value("--output").unwrap_or(".");
+    if !live {
+        require_offline_mode(invocation)?;
+    }
 
     out.line(&format!(
         "Running Well-Architected Review for {cluster_id} in {region}..."
@@ -461,6 +481,7 @@ pub fn seed_command(invocation: &Invocation, out: &mut Output<'_>) -> Result<(),
             "--endpoint must be a host name of letters, digits, dots and hyphens",
         ));
     }
+    require_offline_mode(invocation)?;
     let confirmed = invocation.has_flag("--confirm-wipe")
         || ProcessEnv.var("NEPTUNE_SEED_CONFIRM_WIPE").as_deref() == Some("1");
     let mut replay: Option<RecordedSession> = None;
@@ -580,6 +601,7 @@ pub fn memory_command(invocation: &Invocation, out: &mut Output<'_>) -> Result<(
     let input_path = invocation
         .value("--input")
         .ok_or_else(|| usage("--input is required"))?;
+    require_offline_mode(invocation)?;
     let input =
         read_document(input_path).map_err(|e| ToolkitError::runtime("docgraph_memory", e))?;
     let requests = memory::plan(op, &input).map_err(usage)?;

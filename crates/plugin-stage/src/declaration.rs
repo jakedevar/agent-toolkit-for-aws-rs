@@ -85,8 +85,8 @@ pub enum Role {
     McpServer,
     /// Any other (non-guarding) hook command.
     Hook,
-    /// Spawned by code inside a package destination, never by a launcher
-    /// string (R-PKG-2): `plugin-stage launcher` refuses it.
+    /// Invoked by package code or a plugin skill, never by a launcher
+    /// registration (R-PKG-2, #5586): `plugin-stage launcher` refuses it.
     Subprocess,
 }
 
@@ -385,20 +385,17 @@ fn parse_destination(value: &Json) -> Result<Destination, String> {
 }
 
 /// R-PKG-2: a package destination has no launcher files, so its binaries
-/// are spawned by code; a plugin binary always has a launcher role.
+/// are spawned by code. A plugin may also ship a skill subprocess (#5586);
+/// that role still cannot be registered as a hook or an MCP server.
 fn check_role_destination(
     label: &str,
     destination: &Destination,
     role: &Role,
 ) -> Result<(), String> {
     match (destination, role) {
-        (Destination::PackageRoot(_), Role::Subprocess)
-        | (Destination::Plugin(_), Role::GuardHook { .. } | Role::McpServer | Role::Hook) => Ok(()),
+        (Destination::PackageRoot(_), Role::Subprocess) | (Destination::Plugin(_), _) => Ok(()),
         (Destination::PackageRoot(_), _) => Err(format!(
             "{label}: a package_root binary must have role subprocess (code spawns it; no launcher can reach a package bin/)"
-        )),
-        (Destination::Plugin(_), Role::Subprocess) => Err(format!(
-            "{label}: role subprocess is only valid for a package_root destination"
         )),
     }
 }

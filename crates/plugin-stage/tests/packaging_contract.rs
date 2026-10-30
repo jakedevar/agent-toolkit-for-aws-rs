@@ -18,6 +18,30 @@ fn repo_declaration() -> Declaration {
 }
 
 #[test]
+fn skill_plugins_ship_toolkit_with_the_two_live_features() {
+    let declaration = repo_declaration();
+    for plugin in ["aws-core", "aws-agents", "aws-startup-advisor"] {
+        let binary = declaration
+            .binary(plugin, "toolkit")
+            .unwrap_or_else(|| panic!("{plugin} must stage toolkit"));
+        assert_eq!(binary.package, "toolkit-cli");
+        assert_eq!(binary.bin, "toolkit");
+        assert_eq!(binary.features, ["ai-models-live", "docgraph-live"]);
+        assert_eq!(binary.role, plugin_stage::Role::Subprocess);
+    }
+    // The separately distributed payment package retains its live payment build.
+    let payment = declaration
+        .binaries
+        .iter()
+        .find(|binary| {
+            matches!(&binary.destination, plugin_stage::Destination::PackageRoot(root)
+            if root == "plugins/aws-agents/skills/agents-pay/packages/openclaw")
+        })
+        .expect("OpenClaw payment package");
+    assert_eq!(payment.features, ["agents-pay-live"]);
+}
+
+#[test]
 fn every_repository_launcher_resolves_to_a_declared_binary() {
     let root = repo_root();
     let report = check_launchers(&root, &root.join("plugins"), &repo_declaration());
@@ -365,6 +389,9 @@ fn the_fail_open_secret_safety_registration_fails_the_contract() {
     let declaration = repo_declaration();
     let dir = temp_dir("failopen");
     let plugins = dir.join("plugins");
+    for plugin in declaration.plugins() {
+        std::fs::create_dir_all(plugins.join(plugin)).unwrap();
+    }
     let deny_reason = match &declaration
         .binary("aws-core", "secret-safety")
         .expect("declared")

@@ -13,6 +13,14 @@ every such binary. It serves the secret-safety PreToolUse hook (`secret-safety-h
 crate, bin `secret-safety`, #4412) now. Later it serves the `toolkit` binary that the
 #4413 MCP proxy cutover uses.
 
+The #5586 GM ruling adds a subprocess `toolkit` dispatcher to `aws-core`,
+`aws-agents` and `aws-startup-advisor`, each built with exactly
+`["ai-models-live", "docgraph-live"]` on every declared platform. The default
+CLI and shared AWS crate features remain empty and SDK-free. The separately
+distributed OpenClaw package retains its existing `agents-pay-live` build;
+payment commands use that package's dispatcher. See
+[the invocation inventory and default-build guard](shipped-toolkit.md).
+
 Each plugin is installed into its own cache directory, and a plugin cannot reach a
 sibling plugin's files. So a binary that two plugins need is staged into both. The
 size cost is: binary size, times five platforms, times the plugins that ship it.

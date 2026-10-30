@@ -172,7 +172,48 @@ fn live_selection_is_unavailable_without_feature() {
         let (status, stdout, stderr) = run(args);
         assert_eq!(status, 2);
         assert!(stdout.is_empty());
-        assert!(stderr.contains("--live requires the docgraph-live feature"));
+        assert!(stderr.contains("built without docgraph-live"), "{stderr}");
+    }
+}
+
+#[test]
+#[cfg(not(feature = "docgraph-live"))]
+fn review_without_recording_fails_before_writing_reports() {
+    let (status, stdout, stderr) = run(&[
+        "documentdb",
+        "wa-review",
+        "--cluster-id",
+        "example",
+        "--region",
+        "us-east-1",
+        "--output",
+        "/does/not/exist",
+    ]);
+    assert_eq!(status, 1, "{stderr}");
+    assert!(stdout.is_empty(), "{stdout}");
+    assert!(stderr.contains("built without docgraph-live"), "{stderr}");
+    assert!(!stderr.contains("/does/not/exist"), "{stderr}");
+}
+
+#[test]
+#[cfg(not(feature = "docgraph-live"))]
+fn neptune_without_recording_fails_before_input_or_network() {
+    for args in [
+        &["neptune", "seed", "--confirm-wipe"][..],
+        &[
+            "neptune",
+            "memory",
+            "--operation",
+            "retrieve",
+            "--input",
+            "/does/not/exist",
+        ][..],
+    ] {
+        let (status, stdout, stderr) = run(args);
+        assert_eq!(status, 1, "{stderr}");
+        assert!(stdout.is_empty(), "{stdout}");
+        assert!(stderr.contains("built without docgraph-live"), "{stderr}");
+        assert!(!stderr.contains("/does/not/exist"), "{stderr}");
     }
 }
 

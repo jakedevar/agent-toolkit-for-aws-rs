@@ -125,7 +125,7 @@ def transform_dataset(df: pd.DataFrame) -> pd.DataFrame:
 
 The `<project-dir>` is the project directory established by the directory-management reference (e.g., `dpo-to-rlvr-conversion`).
 
-Write the function to `<project-dir>/scripts/transform_fn.py` on disk in both modes, for testing and for Step 9: `toolkit ai-payloads render` reads that file and never writes it. In notebook mode the render adds the `%%writefile` cell for it, so do not add one yourself.
+Write the function to `<project-dir>/scripts/transform_fn.py` on disk in both modes, for testing and for Step 9: `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" ai-payloads render` reads that file and never writes it. In notebook mode the render adds the `%%writefile` cell for it, so do not add one yourself.
 
 Continue iterating with the user's feedback — update the code in place on each revision rather than showing code inline.
 
@@ -156,7 +156,7 @@ If no project directory exists, load the **directory-management** reference to s
 - `references/code_output_guide.md` (output format rules and the render command)
 - `code_templates/transformation.py` (cell structure and skeleton code)
 
-The template uses `# Cell N: Label` markers — each marker starts a new section. Cell 2 (Transformation Function) is the module from Step 7; all other cells follow the template skeleton. Do not assemble them by hand: `toolkit ai-payloads render` renders the template.
+The template uses `# Cell N: Label` markers — each marker starts a new section. Cell 2 (Transformation Function) is the module from Step 7; all other cells follow the template skeleton. Do not assemble them by hand: `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" ai-payloads render` renders the template.
 
 1. Write the values file outside the project directory with the input and output locations (Step 5 and Step 6). The names have no brackets:
 
@@ -167,7 +167,7 @@ The template uses `# Cell N: Label` markers — each marker starts a new section
 2. Render it, passing the Step 7 module as Cell 2 (`--mode script` for a script):
 
    ```bash
-   toolkit ai-payloads render <skill-dir>/references/dataset-transformation/code_templates/transformation.py --mode notebook --project-dir <project-dir> --values <scratch-dir>/values.json --cell 2=<project-dir>/scripts/transform_fn.py
+   "${CLAUDE_PLUGIN_ROOT}/bin/toolkit" ai-payloads render <skill-dir>/references/dataset-transformation/code_templates/transformation.py --mode notebook --project-dir <project-dir> --values <scratch-dir>/values.json --cell 2=<project-dir>/scripts/transform_fn.py
    ```
 
    - The `--cell 2` file must be exactly `<project-dir>/scripts/transform_fn.py`, it must define `transform_dataset(`, and it must already exist; otherwise the command refuses and writes nothing.

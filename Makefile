@@ -129,6 +129,10 @@ plugin-binaries:
 plugin-binaries-check:
 	cargo run --locked --package plugin-stage -- check
 
+# Verify the exact feature combination declared for plugin-root toolkit bins.
+toolkit-plugin-check:
+	cargo check -p toolkit-cli --bin toolkit --features ai-models-live,docgraph-live --locked --offline
+
 # Shell-level self-test of scripts/at-commit-test.sh (#4865): the runner the
 # daemon invokes for AgentSubmitJob test jobs with params.at_commit.
 test-scripts:

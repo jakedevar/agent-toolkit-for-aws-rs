@@ -29,7 +29,9 @@ with the request the Python code passed as keyword arguments.
 
 - `NoLiveClient` (the default, SDK-free build's client) sends nothing and reads no credential;
   every call fails with `invalid client: this build has no live AWS client and
-  sent nothing; replay recorded responses with --recorded FILE` (exit 1).
+  sent nothing: built without ai-models-live; replay recorded responses with
+  --recorded FILE` (exit 1). The staged plugin build enables `ai-models-live`;
+  see [shipped toolkit](shipped-toolkit.md).
 - `RecordedClient` (`--recorded FILE`, module `recorded.rs`) replays
   `{"calls": {"<Operation>": [{"request": {...}?, "response": {...}} |
   {"request": {...}?, "error": {"kind": "service"|"no_credentials"|"connect",

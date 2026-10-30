@@ -994,7 +994,7 @@ fn the_command_writes_both_files_and_prints_the_script_summary() {
 }
 
 #[test]
-fn without_a_recording_the_run_fails_closed_but_still_writes_the_report() {
+fn without_a_recording_the_run_fails_before_writing_the_report() {
     let dir = TempDir::new("nolive");
     let out_text = dir.join("out").to_string_lossy().into_owned();
     let ran = run(&[
@@ -1009,17 +1009,14 @@ fn without_a_recording_the_run_fails_closed_but_still_writes_the_report() {
         "--now",
         NOW,
     ]);
-    assert_eq!(ran.status, 0, "{}", ran.stderr);
-    assert!(ran.stderr.contains("no live AWS client"));
-    assert!(ran.stdout.contains("  Infrastructure: 1 checks completed"));
-    assert!(ran
-        .stdout
-        .contains("  Skipping database-level checks (no --uri or --analysis-data)"));
-    assert!(ran
-        .stdout
-        .contains("  Total: 1 checks -- 0 pass, 0 warn, 1 fail, 0 info"));
-    let results = std::fs::read_to_string(dir.join("out/wa_review_results.json")).expect("results");
-    assert!(results.contains("Cannot describe cluster: aws_connect"));
+    assert_eq!(ran.status, 1, "{}", ran.stderr);
+    assert!(ran.stdout.is_empty());
+    assert!(ran.stderr.contains(if cfg!(feature = "docgraph-live") {
+        "live data requires explicit --live"
+    } else {
+        "built without docgraph-live"
+    }));
+    assert!(!dir.join("out").exists());
 }
 
 #[test]

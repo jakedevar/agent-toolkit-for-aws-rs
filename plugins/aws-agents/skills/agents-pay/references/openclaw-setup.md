@@ -55,7 +55,7 @@ On Windows outside Git Bash or MSYS, use `bin\toolkit.exe` in place of
 
 ## Quick Setup (Recommended)
 
-After deploying the AgentCore project, the human runs `toolkit agents-pay admin setup-openclaw` in their own terminal using the bundled dispatcher. The interactive wizard creates the payment instrument and session, then generates the OpenClaw configuration:
+After deploying the AgentCore project, the human runs `"${CLAUDE_PLUGIN_ROOT}/skills/agents-pay/packages/openclaw/bin/toolkit" agents-pay admin setup-openclaw` in their own terminal using the bundled dispatcher. The interactive wizard creates the payment instrument and session, then generates the OpenClaw configuration:
 
 ```bash
 cd ~/.openclaw/extensions/aws-agents-pay
@@ -141,7 +141,7 @@ USDC with 6 decimals), and no default is supplied.
 
 OpenClaw executes payments through this TypeScript plugin using
 `get_paid_content`. Policy validation, SSRF controls and merchant replay stay
-in TypeScript. Other hosts use `toolkit agents-pay fetch`; enable only one path.
+in TypeScript. Other hosts use `"${CLAUDE_PLUGIN_ROOT}/skills/agents-pay/packages/openclaw/bin/toolkit" agents-pay fetch`; enable only one path.
 
 The fixed binary table selects the package's platform-specific Rust toolkit;
 unsupported platforms fail closed. The plugin uses a bounded, no-shell bridge.

@@ -86,7 +86,7 @@ impl SageMakerClient for NoLiveClient {
     fn call(&mut self, _operation: Operation, _request: &Json) -> Result<Json, AwsError> {
         Err(AwsError::invalid_config(
             "client",
-            "this build has no live AWS client and sent nothing; replay recorded responses \
+            "this build has no live AWS client and sent nothing: built without ai-models-live; replay recorded responses \
              with --recorded FILE",
         ))
     }

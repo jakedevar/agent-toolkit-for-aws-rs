@@ -5,10 +5,16 @@ wiring. See the tool inventory in SKILL.md for what the agent can call.
 
 ## 0. Install
 
-`toolkit` must be on `PATH` (a release build of the toolkit; a build without payment support refuses every payment command).
+Use the bundled payment dispatcher at
+`"${CLAUDE_PLUGIN_ROOT}/skills/agents-pay/packages/openclaw/bin/toolkit"`.
+The host supplies `CLAUDE_PLUGIN_ROOT` as the installed plugin directory; use
+that absolute directory on other hosts. This package build enables
+`agents-pay-live`; the plugin-root toolkit enables the model and graph
+features and cannot execute payments. In an installed OpenClaw extension,
+run `./bin/toolkit` from the extension directory instead.
 
 ```bash
-toolkit help
+"${CLAUDE_PLUGIN_ROOT}/skills/agents-pay/packages/openclaw/bin/toolkit" help
 npm install -g @aws/agentcore
 agentcore --version
 ```
@@ -119,10 +125,10 @@ This separation keeps payment management and execution in different trusted role
 | Step | Command | Role |
 |---|---|---|
 | 1 | `agentcore add payment-manager` / `payment-connector` / `deploy` | **ControlPlaneRole** |
-| 2 | `toolkit agents-pay admin init-config` | none — writes a local file only |
-| 3 | `toolkit agents-pay admin create-instrument` | **ManagementRole** |
-| 4 | `toolkit agents-pay admin new-session` | **ManagementRole** |
-| 6 | the agent running `toolkit agents-pay fetch` | **ProcessPaymentRole** |
+| 2 | `"${CLAUDE_PLUGIN_ROOT}/skills/agents-pay/packages/openclaw/bin/toolkit" agents-pay admin init-config` | none — writes a local file only |
+| 3 | `"${CLAUDE_PLUGIN_ROOT}/skills/agents-pay/packages/openclaw/bin/toolkit" agents-pay admin create-instrument` | **ManagementRole** |
+| 4 | `"${CLAUDE_PLUGIN_ROOT}/skills/agents-pay/packages/openclaw/bin/toolkit" agents-pay admin new-session` | **ManagementRole** |
+| 6 | the agent running `"${CLAUDE_PLUGIN_ROOT}/skills/agents-pay/packages/openclaw/bin/toolkit" agents-pay fetch` | **ProcessPaymentRole** |
 
 ### ManagementRole — for the human running the admin CLI
 
@@ -218,7 +224,7 @@ guide for the full base and per-connector permissions.
 ## 6. Write the payment policy
 
 ```bash
-toolkit agents-pay admin init-config \
+"${CLAUDE_PLUGIN_ROOT}/skills/agents-pay/packages/openclaw/bin/toolkit" agents-pay admin init-config \
   --max-per-payment-usd 0.05 \
   --network eip155:84532 \
   --recipient 0xMerchantWalletAddress
@@ -251,7 +257,7 @@ One wallet for this installation. The payer identity is read from the config, wh
 invent or keep in sync:
 
 ```bash
-toolkit agents-pay admin create-instrument --email you@example.com
+"${CLAUDE_PLUGIN_ROOT}/skills/agents-pay/packages/openclaw/bin/toolkit" agents-pay admin create-instrument --email you@example.com
 ```
 
 The manager ARN and connector ID are read from `agentcore/.cli/deployed-state.json`
@@ -289,13 +295,13 @@ plausibly spend: wallet balance is the backstop if every other control fails.
 ## 9. Approve a session and run preflight
 
 ```bash
-toolkit agents-pay admin new-session --budget 1.00 --expiry-minutes 60
+"${CLAUDE_PLUGIN_ROOT}/skills/agents-pay/packages/openclaw/bin/toolkit" agents-pay admin new-session --budget 1.00 --expiry-minutes 60
 
 export PAYMENT_MANAGER_ARN=...   PAYMENT_INSTRUMENT_ID=...
 export PAYMENT_SESSION_ID=...    PAYMENT_USER_ID=alice
 export AWS_REGION=us-west-2
 
-toolkit agents-pay admin preflight
+"${CLAUDE_PLUGIN_ROOT}/skills/agents-pay/packages/openclaw/bin/toolkit" agents-pay admin preflight
 ```
 
 Keep sessions short (≤60 minutes) and budgets small. When the budget is spent, a
