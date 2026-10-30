@@ -1,7 +1,7 @@
 # agents-pay security model
 
 The threat model, and how each control is enforced. Read this before changing
-anything in `scripts/` — several behaviors that look over-cautious are load-bearing.
+anything in the toolkit's `agents-pay` code — several behaviors that look over-cautious are load-bearing.
 
 ## Scope: this is the run-time skill
 
@@ -33,13 +33,13 @@ way to end up with none of these controls while believing you have them.
 
 Strands and LangGraph ship AgentCore Payments integrations (`AgentCorePaymentsPlugin`,
 `AgentCorePaymentsMiddleware`) that intercept `402` from **any** tool call and settle
-it. They are genuinely more convenient than registering `x402_fetch`. They also sit
+it. They are genuinely more convenient than running `toolkit agents-pay fetch`. They also sit
 entirely outside this skill: payment happens inside the framework's own wrapper, so
-`x402_policy.py` is never consulted.
+the toolkit policy is never consulted.
 
 What that costs, concretely:
 
-| Control | Via `x402_fetch` | Via native plugin / middleware |
+| Control | Via `toolkit agents-pay fetch` | Via native plugin / middleware |
 |---|---|---|
 | Per-payment ceiling | enforced | **absent** |
 | Origin allowlist and SSRF vetting | enforced | **absent** |
@@ -52,9 +52,9 @@ An agent that can mint a session can replace a spent budget with a larger one, s
 the per-session cap stops bounding anything.
 
 **Do not run both paths in one process.** If the native integration is active *and*
-`x402_fetch` is registered, the model chooses which one settles a given `402`, so the
+`toolkit agents-pay fetch` is available, the model chooses which one settles a given `402`, so the
 gate becomes advisory. Pick one. For an agent spending an operator's money against the
-open web, pick `x402_fetch`; if the native path is used anyway, at minimum pass an
+open web, pick `toolkit agents-pay fetch`; if the native path is used anyway, at minimum pass an
 explicit `payment_session_id` so budget still comes from a human.
 
 ## Trust boundaries
@@ -62,10 +62,10 @@ explicit `payment_session_id` so budget still comes from a human.
 | Component | Trusted? | Holds credentials? | Who runs it |
 |---|---|---|---|
 | Operator at a terminal | Yes — the root of authority | Yes (via the CLI wizard) | Human |
-| `agents_pay_admin.py` | Yes | Only transiently, from the human | Human |
+| `toolkit agents-pay admin` | Yes | Only transiently, from the human | Human |
 | `~/.agents-pay/config.json` | Yes — the authorization record | No | Written by human, read by runtime |
-| `x402_policy.py` | Yes — the decision point | No | In-process, runtime |
-| `x402_fetch.py` | Yes — transport | No (proof is transient) | In-process, runtime |
+| The policy code in `toolkit` | Yes — the decision point | No | In-process, runtime |
+| The fetch and settle code in `toolkit` | Yes — transport | No (proof is transient) | In-process, runtime |
 | The model / agent loop | **No** | No | — |
 | Publisher HTTP response | **No** — hostile input | No | — |
 
@@ -79,7 +79,7 @@ process, container, OS account, or IAM boundary.
 Two design rules apply throughout this skill:
 
 1. **A control that a model can decline is not a control.** Every limit in this
-   skill is evaluated in Python before signing on the sanctioned runtime path.
+   skill is evaluated in the `toolkit` binary before signing on the sanctioned runtime path.
 2. **Documentation must not claim a guarantee the code does not enforce.** Every
    claim below names the function that implements it, so the two cannot drift
    silently.
@@ -88,18 +88,21 @@ Two design rules apply throughout this skill:
 
 | Capability | Here | Security property |
 |---|---|---|
-| `get_paid_content` | `x402_fetch(url)` — agent tool | Same capability, now behind the policy gate |
-| `get_payment_session_status` | `payment_session_status()` — agent tool | Unchanged in spirit: read-only, cannot mint budget |
-| Browser payment | `prepare_browser_payment(url)` + `attach_browser_payment(handle, url)` | The model receives an opaque single-use handle; trusted glue redeems it |
-| Create a payment session | `agents_pay_admin.py new-session` — human at a TTY | A runtime that can mint sessions has no cumulative bound |
-| Provision infrastructure | `agentcore` CLI wizard + `agents_pay_admin.py init-config` | Provider secrets never enter tool parameters, and setup does not exist at runtime |
+| `get_paid_content` | `toolkit agents-pay fetch URL` — agent command | Same capability, now behind the policy gate |
+| Session status | `toolkit agents-pay fetch --status` — agent command | Read-only, cannot mint budget |
+| Browser payment | `toolkit agents-pay fetch --browser-handle URL` — agent command | The model receives an opaque handle bound to one origin and path; a handle cannot be redeemed after the process exits (no Rust equivalent of the Python import API, follow-up #5103) |
+| Create a payment session | `toolkit agents-pay admin new-session` — human at a TTY | A runtime that can mint sessions has no cumulative bound |
+| Provision infrastructure | `agentcore` CLI wizard + `toolkit agents-pay admin init-config` | Provider secrets never enter tool parameters, and setup does not exist at runtime |
 
 The browser flow is worth stating plainly, because it is the one case where a
 proof must reach a caller: the model receives a handle, never proof bytes. The
 handle is single-use, expires in 90 seconds, and is bound to one origin and path,
 so a handle lifted from a transcript cannot be redeemed for another resource or
-redeemed twice. `attach_browser_payment` returns the real header and is therefore
-for trusted glue, not for the model's tool set.
+redeemed twice. The Python redeem call (`attach_browser_payment`) has no Rust
+equivalent: the handle `toolkit agents-pay fetch --browser-handle` prints cannot
+be redeemed after the process exits, so a browser-navigation flow needs a
+long-lived trusted host (follow-up #5103). Nothing in the model's tool set may
+return the real header.
 
 ## Security controls and enforcement
 
@@ -107,15 +110,15 @@ for trusted glue, not for the model's tool set.
 |---|---|
 | Challenge validation | Strict schema, configured scheme and network, exact asset contract, explicit recipient mode, canonical positive amount under `max_per_payment_usd`, and resource/origin checks are enforced before signing. Conflicting `amount` and `maxAmountRequired` aliases are refused; the signer receives one version-canonical amount field. The normal mode requires `payTo` in `allowed_recipients`; the explicit `allow_any_recipient: true` mode delegates beneficiary choice to the publisher. |
 | Secret handling | No script accepts a secret argument. Provider credentials go only to the `agentcore` CLI wizard; signing happens inside AgentCore Payments. `preflight` rejects credential-shaped environment variables. |
-| Network protection | `assert_public_https_url()` and `assert_public_ip()` require HTTPS and reject loopback, RFC1918, link-local, metadata, multicast, reserved, unspecified, CGNAT, and v4-mapped forms. `_PinnedResolverTransport` connects to the vetted address; redirects are refused and bodies are capped. |
+| Network protection | The network admission check requires HTTPS and reject loopback, RFC1918, link-local, metadata, multicast, reserved, unspecified, CGNAT, and v4-mapped forms. The connection goes to the vetted address; redirects are refused and bodies are capped. |
 | Content isolation | Paid bodies are withheld from model-visible output by default. The runtime returns status, content type, byte count, and SHA-256 hash. An operator may opt in to body return by setting `return_body: true` in the config file (OS-account-bound, 0600); when enabled, content is capped at 10 KiB and marked `untrusted: true`. Authorisation never reads content. The OpenClaw plugin (`get_paid_content`) mirrors this: an optional `returnBody: true` plugin-config field (default unset/false, same behaviour as today) opts a single installation in to the same capped, `untrusted`-marked body return — set per operator, not model-controllable. |
-| Idempotency | `derive_client_token()` hashes session, origin, path, network, asset, recipient, and amount. It excludes a publisher nonce so retries reuse the same authorisation. |
-| Role separation | Session creation exists only in `agents_pay_admin.py new-session`, which refuses without a TTY and has no `--yes` flag. The human uses **ManagementRole** and the agent uses **ProcessPaymentRole** with no session writes. |
-| Proof isolation | `x402_fetch` holds the proof locally for one request. The browser path returns an opaque single-use handle bound to one origin and path, and output carries a redacted receipt only. |
+| Idempotency | The client token hashes session, origin, path, network, asset, recipient, and amount. It excludes a publisher nonce so retries reuse the same authorisation. |
+| Role separation | Session creation exists only in `toolkit agents-pay admin new-session`, which refuses without a TTY and has no `--yes` flag. The human uses **ManagementRole** and the agent uses **ProcessPaymentRole** with no session writes. |
+| Proof isolation | `toolkit agents-pay fetch` holds the proof locally for one request. The browser path returns an opaque handle bound to one origin and path, which cannot be redeemed after the process exits, and output carries a redacted receipt only. |
 | Runtime surface | No provisioning or session-creation tool exists in the runtime path. |
-| Reproducible installation | Runtime dependencies and version floors are documented; tests are stdlib-only. Operators requiring full reproducibility should install from a hashed lockfile. |
-| Local configuration | `_atomic_write_0600()` creates a `0700` directory and `0600` file. `load_config()` checks ownership, type, symlinks, and writable parents. Runtime path resolution uses the OS account and ignores `HOME`, `AGENTS_PAY_CONFIG`, and `X402_POLICY_FILE`; file resource values win over environment fallbacks. |
-| Documentation checks | This table names enforcing code; `test_x402_policy.py` asserts behaviour; `preflight` checks deployed state. |
+| Reproducible installation | The payment code is the `toolkit` binary, built from a locked dependency graph. Operators requiring full reproducibility should verify the binary they install through their release process. |
+| Local configuration | The config writer creates a `0700` directory and `0600` file atomically. Loading checks ownership, type, symlinks, and writable parents. Runtime path resolution uses the OS account and ignores `HOME`, `AGENTS_PAY_CONFIG`, and `X402_POLICY_FILE`; file resource values win over environment fallbacks. |
+| Documentation checks | This table names enforcing code; the toolkit's regression tests assert behaviour; `preflight` checks deployed state. |
 
 ### Limits of the controls
 
@@ -124,10 +127,10 @@ for trusted glue, not for the model's tool set.
   sessions. It is not a *service-side* cumulative ceiling across sessions — that
   requires support in AgentCore Payments, outside a skill's reach. An operator who
   approves ten sessions has authorized ten budgets.
-- **Dependency pinning.** A skill folder cannot ship a Python lockfile that the
-  host environment will honor. Operators wanting reproducibility should install
-  from a `requirements.txt` with hashes, or `pip install --require-hashes`. The
-  skill states floors; it cannot enforce the resolution.
+- **Dependency pinning.** The payment code is the `toolkit` binary, built from a locked dependency graph, so there is no skill-side resolution to pin. Verify the binary you install through your release process.
+- **Changed offers (L-TERMS).** Idempotency holds while the merchant's terms stay the same. A retry that meets a different amount or another allowed recipient derives a different token and may be authorized again, still within the per-payment cap, the recipient allowlist and the session budget. Exactly-once purchasing across changed challenges is not provided.
+- **Blocking DNS.** A stalled DNS lookup can exceed X402_TIMEOUT_SECONDS; no connection, authorization or proof send starts after the deadline.
+- **Platform certificate store only.** The payment runtime ignores `SSL_CERT_FILE`, `SSL_CERT_DIR` and `AWS_CA_BUNDLE`, so TLS-inspecting proxies break it; on macOS it refuses while `SSL_CERT_FILE` or `SSL_CERT_DIR` is set.
 - **DNS rebinding.** IP pinning closes the common TOCTOU window by
   dialing the vetted address. A network-level egress allowlist remains the
   stronger control for a payment-capable agent, and is recommended, not replaced.
@@ -229,7 +232,7 @@ holds in the account:
 | **ProcessPaymentRole** — the agent | `ProcessPayment`, Get instrument/balance/session | Any session **write** |
 
 **The agent must have neither the ManagementRole nor the ability to run
-`agents_pay_admin.py`.** If it has both, it can mint a fresh budget whenever it
+`toolkit agents-pay admin`.** If it has both, it can mint a fresh budget whenever it
 exhausts one and the per-session cap bounds nothing.
 
 The TTY requirement on `new-session` is defence in depth, not the boundary. An
@@ -258,24 +261,23 @@ Both are silent: the returned receipt reflects the approved entry, not what was
 signed. A test that asserts only on the gate's return value can pass while the
 exploit still works.
 
-The fix is structural: `x402_policy` rejects conflicting amount aliases and builds
-a version-canonical vetted entry. `x402_fetch` reserializes that single entry into
+The fix is structural: the policy code rejects conflicting amount aliases and builds
+a version-canonical vetted entry. The fetch code reserializes that single entry into
 a fresh minimal challenge (`{"x402Version": ..., "accepts": [vetted]}`) and passes
-only that, with a synthetic `content-type` header. `SignerInputTests` asserts on
+only that, with a synthetic `content-type` header. The toolkit's signer-input tests assert on
 the object handed to the signer, not only the gate's return value.
 
-**Rule for anyone changing `scripts/`:** the signer must receive data that
+**Rule for anyone changing the payment code:** the signer must receive data that
 trusted code constructed, never data a publisher supplied.
 
 ## Verification
 
 ```bash
-python3 scripts/test_x402_policy.py                 # all must pass
-python3 scripts/agents_pay_admin.py show-config      # confirm 0600 + contents
-python3 scripts/agents_pay_admin.py preflight        # wiring + secret exposure
+toolkit agents-pay admin show-config      # confirm 0600 + contents
+toolkit agents-pay admin preflight        # wiring + secret exposure
 ```
 
-The reproducible evidence is: the test suite passing, a `show-config` transcript,
+The reproducible evidence is: the toolkit's regression tests passing, a `show-config` transcript,
 and a refusal captured against a live endpoint whose recipient is deliberately
 absent from the allowlist.
 

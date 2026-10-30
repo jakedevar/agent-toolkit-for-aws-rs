@@ -3,7 +3,7 @@
 Port of `plugins/aws-agents/skills/agents-pay` (#4410). The design, with every
 requirement and test ID used here, is
 [x402-payments-design.md](x402-payments-design.md). S7 completes this page and
-the skill cutover. This section records slice S5 (#5352).
+the skill cutover; the Cutover (S7) section at the end records it. The next section records slice S5 (#5352).
 
 ## `toolkit agents-pay fetch`
 
@@ -391,3 +391,80 @@ included.
   `serve_frame` catches every panic as exit 1 in both.
 - T-AC3-INH for this route runs only as a child (`tests/agents_pay_bridge.rs`):
   an in-process `toolkit_cli::run` would read the test runner's own stdin.
+
+## Cutover (S7, #5526)
+
+Slice S7 moves every caller of the Python payment scripts to the Rust commands
+and ports the document checks. It changes documents, one test crate and the
+inventory only: no runtime code, no Python, and no Python file is deleted (the
+programme retirement step removes the `.py` files after S7 is verified).
+
+### What changed
+
+- **Both `SKILL.md` copies** (`agents-pay/SKILL.md` and the tracked
+  `packages/openclaw/skills/agents-pay/SKILL.md`) are byte-identical and now
+  direct the agent to `toolkit agents-pay fetch` and the human to
+  `toolkit agents-pay admin init-config|show-config|create-instrument|new-session|preflight`.
+  `toolkit` must be on `PATH` (Q21, the programme staging decision). The
+  `### OpenClaw` subsection is untouched; OpenClaw B5 edits it, and
+  `references/openclaw-setup.md`, on top of this slice.
+- **`references/`** (`operator-guide.md`, `security-model.md`, `setup.md`,
+  `troubleshooting.md`) no longer mention `scripts/*.py`, a virtual
+  environment, `requirements.txt` or `pip`.
+- **`agents-build/references/payments.md`** (Q2): the copyable
+  `process_payment_tool.py` template is replaced by a reference snippet that
+  runs `toolkit agents-pay fetch` through a subprocess, so the policy gate
+  stays in the path. The Strands and LangGraph native options are kept. Step 6
+  runs `toolkit agents-build setup-payment-user`; because that command needs a
+  typed `approve` at a terminal (D33), the page now says the developer runs it,
+  not the agent.
+  The opening execution model of the page (#5538) lists Step 6 beside Steps 3b
+  and 7 as a developer stop, and Step 8 has the developer set the printed
+  values; no step lets the agent run `setup-payment-user` or type `approve`.
+- **`python-inventory.json`**: the nine `payments-policy` (#4410) rows are
+  `ported`, each with a `disposition_note` that leaves removal to the
+  retirement step. The `payments-bridge` (#4411) rows are untouched.
+
+### Documented limits
+
+The SKILL text ("Known limits") and `troubleshooting.md` state:
+
+- **L-TERMS**: idempotency holds while the merchant's terms stay the same; a
+  changed amount under the cap or another allowed recipient can be authorized
+  twice, within the cap, the allowlist and the session budget (boundary B2).
+- **R-DNS residual (B3, D16)**: "a stalled DNS lookup can exceed
+  X402_TIMEOUT_SECONDS"; no connection, authorization or proof send starts
+  after the deadline.
+- **Payment roots (B4, D34)**: platform certificate store only; the payment
+  runtime ignores `SSL_CERT_FILE`, `SSL_CERT_DIR` and `AWS_CA_BUNDLE`;
+  TLS-inspecting proxies break it; on macOS it refuses while `SSL_CERT_FILE` or
+  `SSL_CERT_DIR` is set.
+- **B1 and Q3**: the Python import API has no Rust equivalent; a
+  `--browser-handle` handle cannot be redeemed after the process exits
+  (follow-up #5103).
+- **B5**: IAM is the outer boundary.
+
+### Tests
+
+`crates/toolkit-cli/tests/agents_pay_cutover_docs.rs`:
+
+- R-PORT, the Rust port of `test_portability.py` over both `SKILL.md` copies
+  and `references/`: frontmatter (`s7_port_frontmatter_*`), identical copies,
+  no render-time execution, no `../` escapes, links resolve in a temporary copy
+  that holds only `SKILL.md` and `references/`. It replaces "the scripts run
+  from the copy" with `s7_port_every_documented_command_is_a_registered_route`
+  (each `toolkit` line names a registered route and its own flags),
+  `s7_port_no_script_path_remains` and `s7_port_no_python_command_remains`. The
+  OpenClaw subsection and `openclaw-setup.md` are exempt until B5.
+- `s7_text_*`: L-TERMS, the R-DNS residual, B1, B4, B5, Q21, Q2, D23.
+- `s7_inventory_*` and `s7_migration_doc_*`.
+- `every_slice_documents_its_commands` (`registry.rs`) keeps checking this page.
+
+### Recorded departures
+
+- **D23 in runtime text.** The two runtime strings that quote the
+  missing-resource refusal still read `agents_pay_admin.py init-config`
+  (`agents_pay/config.rs`, `agents_pay/policy/mod.rs`). Changing them is a
+  runtime change, which S7's fence forbids, so the documents quote the new
+  command (`toolkit agents-pay admin init-config`) and the string rename is a
+  separate follow-up.
