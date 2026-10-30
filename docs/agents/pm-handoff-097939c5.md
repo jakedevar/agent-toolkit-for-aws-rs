@@ -1283,3 +1283,6 @@ Friction: #4727, Rsi #4694, Rsi #4704
 - 01:31Z: S2 re-review #5516 (49f304c4): CHANGES_REQUESTED at 87f1c3fa. #5522 DNS ACCEPTED; 12/12 guard mutations caught. BLOCKER #5544: roxmltree 0.14 passes no-subset DOCTYPE (Token::EmptyDtd) -> plain/SYSTEM/PUBLIC DTD bodies decode as success. Valid; #5521 not fully fixed.
   Repair 2 -> Codex sol xhigh 3a9b6f7a (continue_from bd94072b): merge rolling (S3 conflict in docgraph/mod.rs) + explicit structural DTD refusal + #5544 regressions. Then a re-review by Claude Opus (Codex-authored repair; cross-family). On ACCEPT: check, enqueue issue 5489; close #5489 #5516 #5521 #5522 #5544 #5484.
   Workers: ec67ec2f B5, 35c39aec #5549, ae38f668 #5547, 3a9b6f7a S2 repair 2. Queue: 3072 #5488.
+- 01:32Z: #5549 (35c39aec) DONE at 905e117bc190fdcfae666a1251b77a81c685bb9f (host-entry.test.mjs, 55 lines, tests only; mutation red ac395c2f, node green 15ea0bd2 72/72, scoped 1e18da89 ok). PM verified diff. #5265 mismatch only -> ENQUEUED seq 3073 (cea3f300, issue 5549).
+  #5331 (UnexpectedEof divergence entry + pin) -> Codex terra high e74c52ad.
+  Workers: ec67ec2f B5, ae38f668 #5547, 3a9b6f7a S2 repair 2, e74c52ad #5331. Queue: 3072 #5488 (may have landed), 3073 #5549.
