@@ -35,7 +35,7 @@ Do NOT use this skill for:
 
 Everything else — Steps 0–3a, **4 (deploy) and 5 (wire)** — you run automatically, without asking permission for each.
 
-After the developer confirms 3b, ask them for the **user id** and **email** for the first wallet (the Step 6 command needs them), run 4 and 5, then hand the Step 6 command to the developer and wait. After they confirm Step 6, present Step 7 and wait again. After they confirm 7, the developer sets the values their terminal printed in the agent's environment (Step 8) and you run the test. Do not stop after every step, and never stand in for the developer at one of the three stops.
+After the developer confirms 3b, ask them for the **user id** and **email** for the first wallet (the Step 6 command needs them), run 4 and 5, then hand the Step 6 command to the developer and wait. After they confirm Step 6, present Step 7 and wait again. After they confirm 7, the developer sets the values their terminal printed in the agent's environment (Step 8) and you then test the agent. Do not stop after every step, and never stand in for the developer at one of the three stops.
 
 ### Step 0: Install / verify the AgentCore CLI
 
