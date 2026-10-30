@@ -472,13 +472,17 @@ fn spellings(text: &str) -> [String; 4] {
     ]
 }
 
-/// One learned piece of a command-line credential, in one spelling without its
-/// backslashes: hidden wherever at least its first `min_bytes` bytes appear
-/// (backslashes aside), and as far as the output keeps matching it.
+/// One learned credential piece: match without backslashes unless that view
+/// would be empty (#5620), in which case retain the exact spelling. Hidden
+/// wherever at least its first `min_bytes` bytes appear, as far as matching
+/// continues.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct Fragment {
     text: String,
     min_bytes: usize,
+    /// An all-backslash piece has no normalized spelling. Match its original
+    /// bytes instead, including overlapping occurrences in escaped echoes.
+    exact: bool,
 }
 
 /// What replaces one matched span of a diagnostic.
@@ -613,7 +617,7 @@ impl CallerText {
                         .strip_prefix(label.as_str())
                         .and_then(|rest| rest.chars().next())
                         .map_or(whole.len(), |first| label.len() + first.len_utf8());
-                    self.add(whole, min_bytes);
+                    self.add(whole, min_bytes, false);
                 }
             }
         }
@@ -622,16 +626,22 @@ impl CallerText {
     fn learn_piece(&mut self, piece: &str) {
         for spelling in spellings(piece) {
             let text = without_backslashes(&spelling);
+            let exact = text.is_empty() && !spelling.is_empty();
+            let text = if exact { spelling } else { text };
             let min_bytes = text
                 .char_indices()
                 .nth(MIN_PARTIAL_CHARS)
                 .map_or(text.len(), |(at, _)| at);
-            self.add(text, min_bytes);
+            self.add(text, min_bytes, exact);
         }
     }
 
-    fn add(&mut self, text: String, min_bytes: usize) {
-        let fragment = Fragment { text, min_bytes };
+    fn add(&mut self, text: String, min_bytes: usize, exact: bool) {
+        let fragment = Fragment {
+            text,
+            min_bytes,
+            exact,
+        };
         // A set, not a scan of the list: many credential arguments must not
         // cost quadratic work to learn (#5012).
         if fragment.min_bytes > 0 && self.learned.insert(fragment.clone()) {
@@ -644,7 +654,8 @@ impl CallerText {
     /// search), each fragment is pre-checked by a linear search for its
     /// anchor and then matched by [`prefix_matches`] in at most
     /// `2 * (fragment + 1 + text)` steps, after one pass that removes the
-    /// text's backslashes.
+    /// text's backslashes. Exact fragments use the original text, whose length
+    /// is the same upper bound, under the same work and span limits (#5620).
     fn work_bound(&self, len: usize) -> usize {
         let known: usize = self
             .shown
@@ -695,16 +706,21 @@ impl CallerText {
         }
         let view = BackslashFree::new(text);
         for fragment in &self.fragments {
-            tick(view.text.len());
-            if !view.text.contains(&fragment.text[..fragment.min_bytes]) {
+            let matched = if fragment.exact { text } else { &view.text };
+            tick(matched.len());
+            if !matched.contains(&fragment.text[..fragment.min_bytes]) {
                 continue;
             }
             let mut current: Option<(usize, usize)> = None;
             let mut flush = |span: (usize, usize)| {
-                let (start, end) = view.original(span.0, span.1);
+                let (start, end) = if fragment.exact {
+                    span
+                } else {
+                    view.original(span.0, span.1)
+                };
                 spans.push((start, end, Replacement::Hidden));
             };
-            prefix_matches(&fragment.text, &view.text, |at, len| {
+            prefix_matches(&fragment.text, matched, |at, len| {
                 if len < fragment.min_bytes {
                     return;
                 }
@@ -1897,6 +1913,65 @@ mod tests {
                 assert!(work <= bound, "{n}: {work} steps exceed {bound}");
             }
         }
+    }
+
+    /// #5620: exact matching survives an empty normalized view, including
+    /// renderers that double backslashes repeatedly. Separator-only pieces
+    /// and mixed pieces must also retain their whole spelling.
+    #[test]
+    fn empty_normalized_credentials_and_separator_pieces_are_not_lost() {
+        for secret in [
+            "\\",
+            "\\\\",
+            "\\\\\\",
+            "\\\\\\\\",
+            "\\\\\\\\\\\\\\\\\\",
+            ":",
+            ",",
+            ";",
+            "@",
+            "\\:\\",
+            "\\Q\\",
+        ] {
+            // Comma/semicolon terminate an unquoted labelled value in the
+            // shared redactor's grammar; quote them to supply a credential.
+            let labelled = if matches!(secret, "," | ";") {
+                format!("password=\"{secret}\"")
+            } else {
+                format!("password={secret}")
+            };
+            let known = caller(&["x", &labelled]);
+            for depth in 0..5 {
+                let echo = secret.replace('\\', &"\\".repeat(1 << depth));
+                let message = format!("invalid '{echo}'");
+                let shown = known.diagnostic(&message);
+                assert!(
+                    !shown.contains(&echo),
+                    "{secret:?} at depth {depth}: {shown}"
+                );
+                let _scope = known.enter_run();
+                assert!(!redacted_value(&echo).contains(&echo), "value {secret:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn exact_backslash_matching_is_linear_and_budgeted() {
+        let secret = "\\".repeat(60_000);
+        let known = caller(&["x", &format!("password={secret}")]);
+        let echo = "\\".repeat(120_000);
+        let (shown, work) = counted(&known, &echo);
+        assert_eq!(shown, REDACTED);
+        assert!(work < 2_000_000, "{work} matcher steps");
+        assert!(work <= known.work_bound(echo.len()));
+        let many: Vec<String> = (1..=64)
+            .map(|n| format!("password={}", "\\".repeat(n)))
+            .collect();
+        let known = CallerText::from_args(&many);
+        let long = "x".repeat(250_000);
+        assert!(known.work_bound(long.len()) > MAX_MATCH_WORK);
+        assert_eq!(known.diagnostic(&long), REDACTED);
+        assert_eq!(known.hide_pieces(&long), REDACTED);
     }
 
     /// Short pieces match everywhere, so the spans of one diagnostic could

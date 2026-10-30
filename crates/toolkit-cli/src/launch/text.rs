@@ -96,6 +96,6 @@ pub fn error_text(message: &str) -> String {
 
 /// Write [`error_text`] to the diagnostic stream and set exit status 1.
 pub fn fail(output: &mut crate::Output<'_>, message: &str) {
-    output.diagnostic(&error_text(message));
+    output.json_diagnostic(message, error_text);
     output.set_exit_status(1);
 }

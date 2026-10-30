@@ -767,54 +767,88 @@ pub(super) fn deprovisioning_licenses(
 /// serialized; the line stays one parseable JSON object.
 pub(super) fn emf_metric(
     ctx: &mut Ctx<'_>,
-    name: &str,
+    name: &'static str,
     value: i64,
     reason: Option<&str>,
     exception: Option<&str>,
 ) {
-    let product = Json::string(safe_text(ctx.product_code()));
-    let mode = Json::string(safe_text(&ctx.metering_mode()));
-    let (dimensions, mut fields): (Vec<&str>, Vec<(&str, Json)>) = match (name, reason, exception) {
-        ("UsageRecordRejected", Some(reason), _) if !reason.is_empty() => (
-            vec!["Reason", "MeteringMode", "ProductCode"],
-            vec![
-                ("Reason", Json::string(safe_text(reason))),
-                ("ProductCode", product),
-                ("MeteringMode", mode),
-            ],
-        ),
-        ("BatchMeterUsageException", _, Some(exception)) if !exception.is_empty() => (
-            vec!["Exception", "MeteringMode", "ProductCode"],
-            vec![
-                ("Exception", Json::string(safe_text(exception))),
-                ("ProductCode", product),
-                ("MeteringMode", mode),
-            ],
-        ),
-        _ => (vec!["ProductCode"], vec![("ProductCode", product)]),
-    };
-    fields.push((name, Json::Int(value)));
-    let metrics = Json::object(vec![
-        ("Name", Json::string(name)),
-        ("Unit", Json::string("Count")),
-    ]);
-    let directive = Json::object(vec![
-        ("Namespace", Json::string(safe_text(ctx.metric_namespace()))),
-        (
-            "Dimensions",
-            Json::Array(vec![Json::Array(
-                dimensions.into_iter().map(Json::string).collect(),
-            )]),
-        ),
-        ("Metrics", Json::Array(vec![metrics])),
-    ]);
-    let aws = Json::object(vec![
-        ("Timestamp", Json::Int(epoch(ctx.now) * 1000)),
-        ("CloudWatchMetrics", Json::Array(vec![directive])),
-    ]);
-    let mut members = vec![("_aws", aws)];
-    members.extend(fields);
-    ctx.log.metric(dumps(&Json::object(members), false));
+    ctx.log.metric(EmfMetric {
+        timestamp: epoch(ctx.now) * 1000,
+        name,
+        value,
+        product: ctx.product_code().to_string(),
+        mode: ctx.metering_mode(),
+        namespace: ctx.metric_namespace().to_string(),
+        reason: reason.map(str::to_string),
+        exception: exception.map(str::to_string),
+    });
+}
+
+/// Schema-owned EMF record. Only product, mode, namespace, reason and
+/// exception are caller/service text. Metric names come from handler literals.
+#[derive(Debug)]
+pub(super) struct EmfMetric {
+    timestamp: i64,
+    name: &'static str,
+    value: i64,
+    product: String,
+    mode: String,
+    namespace: String,
+    reason: Option<String>,
+    exception: Option<String>,
+}
+
+impl EmfMetric {
+    /// Mask caller fields in full before bounding/escaping and serialization.
+    /// Neither the selected dimensions nor any other schema literal is masked.
+    pub(super) fn render(&self, mask: &dyn Fn(&str) -> String) -> String {
+        let caller = |text: &str| Json::string(safe_text(&mask(text)));
+        let product = caller(&self.product);
+        let mode = caller(&self.mode);
+        let name = self.name;
+        let (dimensions, mut fields): (Vec<&str>, Vec<(&str, Json)>) =
+            match (name, self.reason.as_deref(), self.exception.as_deref()) {
+                ("UsageRecordRejected", Some(reason), _) if !reason.is_empty() => (
+                    vec!["Reason", "MeteringMode", "ProductCode"],
+                    vec![
+                        ("Reason", caller(reason)),
+                        ("ProductCode", product),
+                        ("MeteringMode", mode),
+                    ],
+                ),
+                ("BatchMeterUsageException", _, Some(exception)) if !exception.is_empty() => (
+                    vec!["Exception", "MeteringMode", "ProductCode"],
+                    vec![
+                        ("Exception", caller(exception)),
+                        ("ProductCode", product),
+                        ("MeteringMode", mode),
+                    ],
+                ),
+                _ => (vec!["ProductCode"], vec![("ProductCode", product)]),
+            };
+        fields.push((name, Json::Int(self.value)));
+        let metrics = Json::object(vec![
+            ("Name", Json::string(name)),
+            ("Unit", Json::string("Count")),
+        ]);
+        let directive = Json::object(vec![
+            ("Namespace", caller(&self.namespace)),
+            (
+                "Dimensions",
+                Json::Array(vec![Json::Array(
+                    dimensions.into_iter().map(Json::string).collect(),
+                )]),
+            ),
+            ("Metrics", Json::Array(vec![metrics])),
+        ]);
+        let aws = Json::object(vec![
+            ("Timestamp", Json::Int(self.timestamp)),
+            ("CloudWatchMetrics", Json::Array(vec![directive])),
+        ]);
+        let mut members = vec![("_aws", aws)];
+        members.extend(fields);
+        dumps(&Json::object(members), false)
+    }
 }
 
 // ---- bounded writes ----------------------------------------------------------

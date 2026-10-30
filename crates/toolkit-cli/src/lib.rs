@@ -177,11 +177,39 @@ impl<'a> Output<'a> {
     /// The rendered text is otherwise treated like [`Output::diagnostic`]: a
     /// registered known value refuses it and unsafe characters are escaped.
     pub(crate) fn json_diagnostic(&mut self, message: &str, render: impl Fn(&str) -> String) {
-        let document = render(&self.caller.message_value(message));
+        let _ = self.json_diagnostic_delivered(message, render);
+    }
+
+    /// Delivery-aware form for auth-wait: a failed stderr write must retain
+    /// the final pending record, including when a live-secret refusal fires.
+    pub(crate) fn json_diagnostic_delivered(
+        &mut self,
+        message: &str,
+        render: impl Fn(&str) -> String,
+    ) -> bool {
+        self.schema_diagnostic_delivered(|mask| render(&mask(message)))
+    }
+
+    /// Renders a schema-owned record, masking only the caller fields selected
+    /// by its renderer. Fixed keys, enums and numbers never enter the text
+    /// matcher. The completed document still passes the live-secret refusal
+    /// and terminal-safety controls, as for a single-message JSON diagnostic.
+    pub(crate) fn schema_diagnostic(
+        &mut self,
+        render: impl FnOnce(&dyn Fn(&str) -> String) -> String,
+    ) {
+        let _ = self.schema_diagnostic_delivered(render);
+    }
+
+    fn schema_diagnostic_delivered(
+        &mut self,
+        render: impl FnOnce(&dyn Fn(&str) -> String) -> String,
+    ) -> bool {
+        let document = render(&|value| self.caller.message_value(value).into_owned());
         if self.carries_known(&document) {
-            let _ = self.diagnostic_delivered(&document);
+            self.diagnostic_delivered(&document)
         } else {
-            let _ = self.write_diagnostic(&toolkit_core::neutralize_text(&document));
+            self.write_diagnostic(&toolkit_core::neutralize_text(&document))
         }
     }
 

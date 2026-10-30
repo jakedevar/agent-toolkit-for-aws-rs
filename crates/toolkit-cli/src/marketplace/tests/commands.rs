@@ -180,6 +180,143 @@ fn emf_diagnostics_on_stderr_never_echo_caller_text() {
     assert!(cli.stderr.contains("UsageRecordRejected"));
 }
 
+/// #5621: collision probes use a real recorded handler invocation. The same
+/// learned piece also occurs as bare caller data, so bypassing all masking
+/// cannot satisfy this contract.
+fn emf_collision(secret: &str) {
+    let config = TempFile::new(
+        "config",
+        &format!(
+            r#"{{"SUBSCRIBERS_TABLE":"s","PRODUCT_CODE":"{secret}","METRIC_NAMESPACE":"{secret}","USAGE_TABLE":"u","AGGREGATED_USAGE_TABLE":"a"}}"#
+        ),
+    );
+    let row = format!(
+        r#"{{"licenseArn":"{LICENSE}","customerAWSAccountId_dimension_timestamp":"{ACCOUNT}#D#2026-01-30T12:00:01","meteringPending":"x"}}"#
+    );
+    let mut calls = vec![
+        query(&format!(
+            r#"{{"Items":[{{"licenseArn":"{LICENSE}","customerAWSAccountId":"{ACCOUNT}","dimension":"D"}}]}}"#
+        )),
+        query(&format!(r#"{{"Items":[{row}]}}"#)),
+        update(),
+    ];
+    calls.extend((0..6).map(|_| query(r#"{"Items":[]}"#)));
+    let recording = TempFile::new("rec", &format!(r#"{{"calls":[{}]}}"#, calls.join(",")));
+    let event = TempFile::new("event", r#"{"mode":"ageout","shard":3}"#);
+    let cli = toolkit(&[
+        "marketplace",
+        "handler",
+        "discoverer",
+        "--config",
+        &format!("token={secret}"),
+        "--config",
+        &config.path(),
+        "--event",
+        &event.path(),
+        "--recorded",
+        &recording.path(),
+        "--now",
+        PINNED,
+    ]);
+    assert_eq!(cli.status, 0, "{}", cli.stderr);
+    assert_eq!(
+        j(&cli.stdout).to_compact_string(),
+        r#"{"shard":3,"expired":1}"#
+    );
+    let metrics: Vec<_> = cli
+        .stderr
+        .lines()
+        .filter(|line| line.starts_with('{'))
+        .collect();
+    assert_eq!(metrics.len(), 1, "{}", cli.stderr);
+    let metric = parse_json(metrics[0])
+        .unwrap_or_else(|error| panic!("{secret}: {error:?}: {}", metrics[0]));
+    assert_eq!(metric.get("UsageAggregationExpired"), Some(&Json::Int(1)));
+    assert_eq!(
+        metric.get("ProductCode").and_then(Json::as_str),
+        Some("[REDACTED]")
+    );
+    let aws = metric.get("_aws").expect("fixed _aws key");
+    assert_eq!(aws.get("Timestamp"), Some(&Json::Int(1_769_862_600_000)));
+    let Json::Array(directives) = aws.get("CloudWatchMetrics").expect("directives") else {
+        panic!("array")
+    };
+    let directive = &directives[0];
+    assert_eq!(
+        directive.get("Namespace").and_then(Json::as_str),
+        Some("[REDACTED]")
+    );
+    assert_eq!(
+        directive.get("Dimensions"),
+        Some(&j(r#"[["ProductCode"]]"#))
+    );
+    assert_eq!(
+        directive.get("Metrics"),
+        Some(&j(r#"[{"Name":"UsageAggregationExpired","Unit":"Count"}]"#))
+    );
+}
+
+#[test]
+fn emf_timestamp_collision_preserves_schema_and_masks_caller_fields() {
+    emf_collision("6");
+}
+
+#[test]
+fn emf_counter_collision_preserves_schema_and_masks_caller_fields() {
+    emf_collision("1");
+}
+
+#[test]
+fn emf_key_collisions_preserve_schema_and_mask_caller_fields() {
+    for secret in ["_aws", "ProductCode", "Count", "UsageAggregationExpired"] {
+        emf_collision(secret);
+    }
+    metric_sink_retains_refusal_and_terminal_controls();
+}
+
+fn metric_sink_retains_refusal_and_terminal_controls() {
+    let mut log = Logger::default();
+    let config = Config::from_pairs(&[
+        ("PRODUCT_CODE", "FAKE_LIVE_METRIC_SECRET"),
+        ("METRIC_NAMESPACE", "metrics\u{1b}[31m\u{202e}"),
+    ]);
+    let mut client = RecordedClient::from_document(&j(r#"{"calls":[]}"#)).expect("recording");
+    super::super::core::emf_metric(
+        &mut Ctx {
+            client: &mut client,
+            config: &config,
+            log: &mut log,
+            now: at(PINNED),
+        },
+        "UsageAggregationExpired",
+        1,
+        None,
+        None,
+    );
+    let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
+    let mut output = crate::Output::with_diagnostics(&mut stdout, &mut stderr);
+    output.set_untrusted(&["token=_aws".to_string()]);
+    super::super::emit_log(&mut output, &log);
+    assert!(!stderr.contains(&0x1b));
+    let document = std::str::from_utf8(&stderr).expect("UTF-8");
+    assert!(!document.contains('\u{202e}'));
+    assert!(j(document).get("_aws").is_some());
+    assert!(stdout.is_empty());
+
+    let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
+    let mut output = crate::Output::with_diagnostics(&mut stdout, &mut stderr);
+    output.refuse_known(
+        vec!["FAKE_LIVE_METRIC_SECRET".to_string()],
+        "refused".to_string(),
+    );
+    for _ in 0..2 {
+        super::super::emit_log(&mut output, &log);
+    }
+    assert_eq!(output.exit_status(), 1);
+    assert_eq!(stderr, b"refused\n");
+    assert!(stdout.is_empty());
+}
+
 #[test]
 fn without_a_recording_nothing_is_sent_and_the_run_fails() {
     let config = TempFile::new("config", r#"{"SUBSCRIBERS_TABLE": "subs"}"#);

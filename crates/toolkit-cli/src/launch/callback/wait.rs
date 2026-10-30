@@ -101,7 +101,7 @@ pub(super) fn report_failure(
     output: &mut Output<'_>,
     message: &str,
 ) -> (Option<Result<(), ToolkitError>>, bool) {
-    let delivered = output.diagnostic_delivered(&crate::launch::text::error_text(message));
+    let delivered = output.json_diagnostic_delivered(message, crate::launch::text::error_text);
     output.set_exit_status(1);
     (Some(Ok(())), delivered)
 }

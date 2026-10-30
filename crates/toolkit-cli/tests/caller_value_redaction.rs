@@ -496,3 +496,78 @@ fn the_reported_overlap_input_finishes_and_hides_the_credential() {
         assert!(run.stderr.contains("[REDACTED]"), "{:.300}", run.stderr);
     }
 }
+
+/// #5620: normalization must retain credentials made only of backslashes.
+#[test]
+fn backslash_only_credentials_are_hidden_on_stdout_in_both_orders() {
+    for count in [1, 2, 3, 4, 9] {
+        let bare = "\\".repeat(count);
+        let labelled = format!("password={bare}");
+        for values in [
+            [labelled.as_str(), bare.as_str()],
+            [bare.as_str(), labelled.as_str()],
+        ] {
+            let run = toolkit(&[
+                "elasticache",
+                "preflight",
+                "--host",
+                values[0],
+                "--host",
+                values[1],
+                "--json",
+            ]);
+            let json = parse_json(&run.stdout).expect("preflight JSON");
+            let host = member(&json, &["info", "host"]).as_str().expect("host");
+            assert!(!host.contains('\\'), "{count}: {host}");
+            assert!(host.contains("[REDACTED]"), "{host}");
+            assert_eq!(member(&json, &["info", "port"]), &Json::Int(6379));
+        }
+    }
+}
+
+#[test]
+fn backslash_only_credentials_are_hidden_on_stderr_in_both_orders() {
+    for count in [1, 2, 3, 4, 9] {
+        let bare = "\\".repeat(count);
+        let labelled = format!("password={bare}");
+        for values in [
+            [labelled.as_str(), bare.as_str()],
+            [bare.as_str(), labelled.as_str()],
+        ] {
+            let run = toolkit(&[
+                "msk",
+                "size",
+                "--avg-data-in-mbs",
+                values[0],
+                "--avg-data-in-mbs",
+                values[1],
+            ]);
+            let error = run.stderr.lines().next().expect("diagnostic");
+            assert!(!error.contains('\\'), "{count}: {error}");
+            assert!(error.contains("[REDACTED]"), "{error}");
+        }
+    }
+}
+
+/// The #5621 class audit found Launch's error writer also masked JSON syntax.
+#[test]
+fn launch_json_errors_keep_their_key_and_mask_the_message() {
+    for secret in ["error", "e"] {
+        let labelled = format!("token={secret}");
+        for values in [[labelled.as_str(), secret], [secret, labelled.as_str()]] {
+            let run = toolkit(&[
+                "launch",
+                "resolve-region",
+                "--region",
+                values[0],
+                "--region",
+                values[1],
+            ]);
+            assert!(run.stdout.is_empty(), "{}", run.stdout);
+            let json = parse_json(run.stderr.trim()).expect("Launch error JSON");
+            let message = member(&json, &["error"]).as_str().expect("error message");
+            assert!(message.contains("[REDACTED]"), "{message}");
+            assert!(!message.contains(secret), "{message}");
+        }
+    }
+}

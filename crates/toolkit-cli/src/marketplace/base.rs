@@ -8,6 +8,7 @@ use toolkit_aws::{redact_text, AwsError};
 use toolkit_core::{escape_untrusted, neutralize_line, Json};
 
 use super::client::AwsClient;
+use super::core::EmfMetric;
 use crate::cloudwatch::timefmt::UtcTime;
 
 /// Characters of caller text a diagnostic shows.
@@ -71,13 +72,22 @@ impl fmt::Display for Failure {
 /// lines and EMF metric lines, written to the diagnostics stream.
 #[derive(Debug, Default)]
 pub(super) struct Logger {
-    lines: Vec<String>,
+    records: Vec<LogRecord>,
+}
+
+/// Preserve a metric's schema and caller fields until the output sink can
+/// mask those fields. A serialized metric must never use the text log path.
+#[derive(Debug)]
+pub(super) enum LogRecord {
+    Text(String),
+    Metric(EmfMetric),
 }
 
 impl Logger {
     fn push(&mut self, level: &str, text: &str) {
         let safe = neutralize_line(&redact_text(text)).into_owned();
-        self.lines.push(format!("{level} {safe}"));
+        self.records
+            .push(LogRecord::Text(format!("{level} {safe}")));
     }
 
     pub(super) fn info(&mut self, text: &str) {
@@ -92,13 +102,24 @@ impl Logger {
         self.push("ERROR", text);
     }
 
-    /// An EMF metric line (a JSON text built by the slice).
-    pub(super) fn metric(&mut self, line: String) {
-        self.lines.push(line);
+    /// An EMF record, still carrying typed values and separate caller fields.
+    pub(super) fn metric(&mut self, metric: EmfMetric) {
+        self.records.push(LogRecord::Metric(metric));
     }
 
-    pub(super) fn lines(&self) -> &[String] {
-        &self.lines
+    pub(super) fn records(&self) -> &[LogRecord] {
+        &self.records
+    }
+
+    #[cfg(test)]
+    pub(super) fn lines(&self) -> Vec<String> {
+        self.records
+            .iter()
+            .map(|record| match record {
+                LogRecord::Text(line) => line.clone(),
+                LogRecord::Metric(metric) => metric.render(&str::to_string),
+            })
+            .collect()
     }
 }
 

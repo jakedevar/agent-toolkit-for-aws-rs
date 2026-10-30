@@ -225,8 +225,11 @@ fn unused_steps(client: Option<&RecordedClient>) -> Result<(), ToolkitError> {
 }
 
 fn emit_log(out: &mut Output<'_>, log: &Logger) {
-    for line in log.lines() {
-        out.diagnostic(line);
+    for record in log.records() {
+        match record {
+            base::LogRecord::Text(line) => out.diagnostic(line),
+            base::LogRecord::Metric(metric) => out.schema_diagnostic(|mask| metric.render(mask)),
+        }
     }
 }
 

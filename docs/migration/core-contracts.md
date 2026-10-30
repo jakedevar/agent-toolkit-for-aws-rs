@@ -128,7 +128,12 @@ hide what another argument of the same run taught, so a flag repeated with the
 bare credential (`--host token=S --host S`) is not an ordinary value; a typed or
 fixed field never passes through them and is never rewritten. `msk sim`'s
 `{"error": ...}` on stderr masks its message before it is rendered, for the same
-reason. A path named by a
+reason. Launch errors and auth-wait use that same schema-aware sink; auth-wait
+also retains its delivery result for pending-record custody (#5626).
+Marketplace logs retain typed EMF records until the sink masks only product,
+namespace, mode, reason and exception. The timestamp, counter, dimensions, keys
+and metric names never enter the text matcher (#5621). These structured sinks
+still enforce known-live-secret refusal and terminal escaping. A path named by a
 shared `toolkit-core` file-contract error (`PathError`, `SkillsError`, plugin
 sync and vendored errors) is shown through the rendering `toolkit-cli`
 registers once with `toolkit_core::set_path_display` (`shown_value`): the core
@@ -144,6 +149,10 @@ found against the original text before any is replaced, and overlapping matches
 are hidden as one, so one redaction cannot consume the prefix another needs
 (#4978). Backslashes are ignored while matching, so a renderer's escaping
 (`\'`, `\"`, a doubled `\\`) cannot change a credential's spelling (#4979). A
+piece made only of backslashes retains an exact-spelling match path alongside
+the normalized matcher, under the same work/span budget (#5620). The complete
+piece is learned before separator splitting, so separator-only credentials and
+mixed pieces remain represented even when splitting gives empty parts. A
 piece is hidden whatever its length, labelled or not (#4980): one to three
 characters match as a plain substring, so a run that passes such a credential
 may see ordinary letters of its diagnostics hidden. Never leaking wins over a

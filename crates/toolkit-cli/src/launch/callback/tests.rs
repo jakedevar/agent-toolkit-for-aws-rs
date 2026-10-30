@@ -751,6 +751,42 @@ fn failed_report_preserves_final_record_for_retry() {
     assert!(path.exists());
 }
 
+/// Auth-wait has its own delivery-aware JSON error writer, sharing the
+/// schema collision risk with Launch's ordinary error writer (#5621 class).
+#[cfg(unix)]
+#[test]
+fn failure_report_masks_only_its_message_and_retains_output_controls() {
+    let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
+    let mut output = crate::Output::with_diagnostics(&mut stdout, &mut stderr);
+    output.set_untrusted(&["token=error".to_string()]);
+    let (result, delivered) = super::wait::report_failure(&mut output, "error \u{1b}[31m\u{202e}");
+    assert!(result.unwrap().is_ok());
+    assert!(delivered);
+    assert_eq!(output.exit_status(), 1);
+    let document = toolkit_core::parse_json(std::str::from_utf8(&stderr).unwrap()).expect("JSON");
+    let message = document
+        .get("error")
+        .and_then(toolkit_core::Json::as_str)
+        .expect("fixed key");
+    assert!(message.contains("[REDACTED]"));
+    assert!(!message.contains("error"));
+    assert!(!stderr.contains(&0x1b));
+    assert!(stdout.is_empty());
+
+    // A live secret still refuses the whole record, once, rather than taking
+    // the schema path around the sink's refusal/delivery bookkeeping.
+    let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
+    let mut output = crate::Output::with_diagnostics(&mut stdout, &mut stderr);
+    output.refuse_known(vec!["FAKE_LIVE_SECRET".to_string()], "refused".to_string());
+    for _ in 0..2 {
+        let (_, delivered) = super::wait::report_failure(&mut output, "FAKE_LIVE_SECRET");
+        assert!(delivered);
+    }
+    assert_eq!(output.exit_status(), 1);
+    assert_eq!(stderr, b"refused\n");
+    assert!(stdout.is_empty());
+}
+
 #[cfg(unix)]
 #[test]
 fn broken_stdout_preserves_authenticated_record_for_retry() {

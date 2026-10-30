@@ -520,7 +520,7 @@ fn license_arns_follow_the_script_regex() {
     }
 }
 
-fn emf(name: &str, reason: Option<&str>, exception: Option<&str>) -> String {
+fn emf(name: &'static str, reason: Option<&str>, exception: Option<&str>) -> String {
     let mut log = Logger::default();
     let mut client = RecordedClient::from_document(&j(r#"{"calls": []}"#)).expect("recording");
     let config = Config::from_pairs(&[("PRODUCT_CODE", "prod123"), ("METERING_MODE", " Dry-Run ")]);
@@ -613,7 +613,7 @@ pub(super) fn assert_clean_emf(line: &str) -> Json {
 
 fn emf_with(
     pairs: &[(&str, &str)],
-    name: &str,
+    name: &'static str,
     reason: Option<&str>,
     exception: Option<&str>,
 ) -> String {
