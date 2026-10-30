@@ -45,7 +45,11 @@ export function finalCase(name) {
 }
 
 // A sanitize bridge whose fake child runs `behave(child)`.
-export function childBridge(behave, { binary = PRESENT_BINARY, limits = bridge.BRIDGE_LIMITS } = {}) {
+// `binary` may be given as undefined (an unsupported platform), so it is read
+// by presence, not with a destructuring default.
+export function childBridge(behave, options = {}) {
+  const binary = Object.hasOwn(options, "binary") ? options.binary : PRESENT_BINARY;
+  const limits = options.limits ?? bridge.BRIDGE_LIMITS;
   const spawner = fakeSpawner(behave);
   const invoke = (request) =>
     bridge.runBridge(binary, bridge.BRIDGE_ARGS, request, limits, { spawn: spawner.spawn });

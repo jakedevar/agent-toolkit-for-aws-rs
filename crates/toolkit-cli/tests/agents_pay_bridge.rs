@@ -167,7 +167,10 @@ fn t_oc_final_tool_cases_answer_with_the_pinned_frames() {
         assert_eq!(secrets.len(), 3, "{name}");
         for secret in secrets {
             let secret = secret.as_str().unwrap();
-            assert!(!frame.contains(secret), "{name}: a secret reached the frame");
+            assert!(
+                !frame.contains(secret),
+                "{name}: a secret reached the frame"
+            );
         }
         let document = toolkit_core::parse_json(frame.trim_end()).unwrap();
         let result = document.get("result").unwrap();

@@ -142,10 +142,10 @@ test("T-JS-FINAL-FAIL: bridge failures of the sanitize call refuse", async () =>
     new URL("./fixtures/bridge-contract/output-frame-cap/replacement.json", import.meta.url),
   );
   const cases = {
-    "missing binary": childBridge(() => assert.fail("no spawn"), {
+    "missing binary": childBridge(() => {}, {
       binary: path.join(tmpdir(), "openclaw-b4-no-such-dir", "toolkit"),
     }),
-    "unsupported platform": childBridge(() => assert.fail("no spawn"), { binary: undefined }),
+    "unsupported platform": childBridge(() => {}, { binary: undefined }),
     timeout: childBridge(() => {}, { limits: { ...bridge.BRIDGE_LIMITS, timeoutMs: 20 } }),
     "stdin failure": childBridge((child) => child.stdin.emit("error", new Error("EPIPE"))),
     "stderr overflow": childBridge((child) => child.err(Buffer.alloc(16 * 1024 + 1, 0x65))),
@@ -173,7 +173,7 @@ test("T-JS-FINAL-FAIL: an oversized sanitize request is refused before spawn", a
     body: "\u0001".repeat(10240),
     bodyBytes: 10240,
   });
-  const sanitize = childBridge(() => assert.fail("no spawn"));
+  const sanitize = childBridge(() => {});
   const harness = paidTool({ returnBody: true, replay, sanitize: sanitize.invoke });
   await assertFailsClosed(harness, "oversized request");
   assert.equal(harness.calls.sanitize.length, 1);

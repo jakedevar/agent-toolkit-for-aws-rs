@@ -98,10 +98,10 @@ test("T-JS-BR-1: a success frame parses; spawn is the fixed binary with no shell
   assert.equal(call.options.windowsHide, true);
   assert.deepEqual(call.options.stdio, ["pipe", "pipe", "pipe"]);
   assert.equal(path.resolve(call.options.cwd), path.resolve(packageRoot));
+  // Exactly the inherited environment: the bridge adds no variable (the old
+  // PYTHON* additions are gone) and removes none.
   assert.deepEqual(call.options.env, { ...process.env });
-  for (const key of Object.keys(call.options.env)) {
-    assert.doesNotMatch(key, /^PYTHON/);
-  }
+  assert.notEqual(call.options.env, process.env);
   assert.deepEqual(run.child.written, [JSON.stringify(SESSION_REQUEST)]);
 
   run.child.out(Buffer.from(SESSION_OUTPUT));

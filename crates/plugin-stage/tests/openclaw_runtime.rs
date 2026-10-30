@@ -59,7 +59,9 @@ fn bridge_table(source: &str) -> BTreeMap<String, String> {
     let mut lines = source
         .lines()
         .skip_while(|line| !line.contains("const BRIDGE_BINARIES"));
-    let header = lines.next().expect("BRIDGE_BINARIES table in src/bridge.ts");
+    let header = lines
+        .next()
+        .expect("BRIDGE_BINARIES table in src/bridge.ts");
     assert!(header.trim_end().ends_with('{'), "{header}");
     let mut table = BTreeMap::new();
     for line in lines {
@@ -141,7 +143,10 @@ fn t_pkg_layout_bridge_table_equals_the_staged_layout_and_dispatcher() {
         if platform.is_windows() {
             assert_eq!(staged, format!("{name}.exe"));
         } else {
-            assert_eq!(staged, format!("{}-{}/{name}", platform.os(), platform.arch()));
+            assert_eq!(
+                staged,
+                format!("{}-{}/{name}", platform.os(), platform.arch())
+            );
         }
     }
 }
@@ -171,9 +176,8 @@ fn t_pkg_ts_runtime_names_no_python_and_spawns_one_fixed_argv() {
         }
     }
 
-    let count = |needle: &str| -> usize {
-        sources.values().map(|t| t.matches(needle).count()).sum()
-    };
+    let count =
+        |needle: &str| -> usize { sources.values().map(|t| t.matches(needle).count()).sum() };
     let bridge = &sources["bridge.ts"];
     assert_eq!(count("spawn("), 1, "exactly one spawn call");
     assert!(bridge.contains("spawn("), "the spawn call is in bridge.ts");
@@ -181,7 +185,14 @@ fn t_pkg_ts_runtime_names_no_python_and_spawns_one_fixed_argv() {
     assert_eq!(count("shell: true"), 0);
     assert_eq!(count("[\"agents-pay\", \"bridge\"]"), 1);
     assert!(bridge.contains("[\"agents-pay\", \"bridge\"]"));
-    for forbidden in ["exec(", "execFile(", "execSync(", "spawnSync(", "fork(", "uname"] {
+    for forbidden in [
+        "exec(",
+        "execFile(",
+        "execSync(",
+        "spawnSync(",
+        "fork(",
+        "uname",
+    ] {
         assert_eq!(count(forbidden), 0, "{forbidden}");
     }
     for (name, text) in &sources {
@@ -201,7 +212,10 @@ fn t_pkg_ts_package_identity_is_1_1_0_and_ships_bin() {
     let lock = toolkit_core::parse_json(&package_file("package-lock.json")).expect("lock");
     assert_eq!(version(&package), Some("1.1.0"));
     assert_eq!(version(&lock), Some("1.1.0"));
-    let root = lock.get("packages").and_then(|p| p.get("")).expect("lock root");
+    let root = lock
+        .get("packages")
+        .and_then(|p| p.get(""))
+        .expect("lock root");
     assert_eq!(version(root), Some("1.1.0"));
     let Some(Json::Array(files)) = package.get("files") else {
         panic!("files")
