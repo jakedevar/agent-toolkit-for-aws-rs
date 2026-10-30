@@ -1407,6 +1407,63 @@ fn t_dg_04b_malformed_xml_with_a_closing_root_never_succeeds() {
     }
 }
 
+/// Every real DOCTYPE form is refused; each required no-subset case has its
+/// own test so the red run records all five failures (#5544).
+fn assert_dtd_refused(call: Call, root: &str, declaration: &str, body: &str) {
+    let body = format!("<!DOCTYPE {root}{declaration}>{body}");
+    let (result, sends) = answered_once(call, &body);
+    assert_eq!(sends, 1, "DTD responses must send exactly once");
+    let error = result.expect_err("a document type declaration decoded as success");
+    assert!(matches!(error, AwsError::InvalidResponse { .. }), "{error:?}");
+    assert!(!error.is_retryable(), "{error:?}");
+}
+
+#[test]
+fn t_dg_04b_docdb_plain_dtd_is_invalid() {
+    assert_dtd_refused(describe_cluster, "DescribeDBClustersResponse", "", ONE_CLUSTER);
+}
+
+#[test]
+fn t_dg_04b_docdb_system_dtd_is_invalid() {
+    assert_dtd_refused(describe_cluster, "DescribeDBClustersResponse", r#" SYSTEM "https://invalid.example/fixture.dtd""#, ONE_CLUSTER);
+}
+
+#[test]
+fn t_dg_04b_docdb_public_dtd_is_invalid() {
+    assert_dtd_refused(describe_cluster, "DescribeDBClustersResponse", r#" PUBLIC "fixture" "https://invalid.example/fixture.dtd""#, ONE_CLUSTER);
+}
+
+#[test]
+fn t_dg_04b_ec2_plain_dtd_is_invalid() {
+    assert_dtd_refused(describe_groups, "DescribeSecurityGroupsResponse", "", GROUPS_XML);
+}
+
+#[test]
+fn t_dg_04b_ec2_system_dtd_is_invalid() {
+    assert_dtd_refused(describe_groups, "DescribeSecurityGroupsResponse", r#" SYSTEM "https://invalid.example/fixture.dtd""#, GROUPS_XML);
+}
+
+#[test]
+fn t_dg_04b_every_operation_refuses_dtd_at_every_status() {
+    // Check all ten operation codecs, including the JSON/CBOR ones, and
+    // non-2xx replies: a DTD must never reach the SDK's service-error path.
+    for (service, operation, request, ..) in encodings() {
+        for declaration in ["", r#" SYSTEM "https://invalid.example/fixture.dtd""#, r#" PUBLIC "fixture" "https://invalid.example/fixture.dtd""#, " []", " [<!ENTITY seven \"7\">]"] {
+            for status in [200, 400, 429, 500] {
+                let body = format!("<?xml version=\"1.0\"?>\n<!-- fixture -->\n<!DOCTYPE {operation}Response{declaration}><{operation}Response/>");
+                let transport = Wire::new(|_, _| Ok((status, vec![], body.as_bytes().to_vec())));
+                let signer = ToolkitSigner::new();
+                let sleeper = RecordingSleeper::new();
+                let error = client(&transport, &signer, &sleeper).call(service, operation, &json(&request)).expect_err("DTD response succeeded");
+                assert!(matches!(error, AwsError::InvalidResponse { .. }), "{operation} {status} {declaration}: {error:?}");
+                assert!(!error.is_retryable(), "{operation} {status} {declaration}");
+                assert_eq!(transport.sends(), 1, "{operation} {status} {declaration}");
+                assert!(sleeper.sleeps().is_empty(), "DTD must not back off");
+            }
+        }
+    }
+}
+
 #[test]
 fn t_dg_04b_valid_empty_namespaced_and_commented_xml_decodes_unchanged() {
     let namespaced = |inner: &str| {
@@ -1432,6 +1489,9 @@ fn t_dg_04b_valid_empty_namespaced_and_commented_xml_decodes_unchanged() {
         format!("{ONE_CLUSTER}\n<!-- trailing -->\n<?fixture done?>\n"),
         ONE_CLUSTER.replace("<DBCluster>", "<DBCluster><!-- inner -->\n  "),
         ONE_CLUSTER.replace("<DBCluster>", "<DBCluster note=\"a/b\">"),
+        format!("<!-- <!DOCTYPE DescribeDBClustersResponse> -->{ONE_CLUSTER}"),
+        format!("{ONE_CLUSTER}<!-- <!DOCTYPE DescribeDBClustersResponse SYSTEM \"fixture.dtd\"> -->"),
+        ONE_CLUSTER.replace("<DBCluster>", "<DBCluster><Ignored><![CDATA[<!DOCTYPE DescribeDBClustersResponse PUBLIC \"fixture\" \"fixture.dtd\">]]></Ignored>"),
     ];
     for body in &same_cluster {
         assert_eq!(result(describe_cluster, body), plain, "{body}");
@@ -1457,6 +1517,8 @@ fn t_dg_04b_valid_empty_namespaced_and_commented_xml_decodes_unchanged() {
     for body in [
         format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n{GROUPS_XML}"),
         format!("{GROUPS_XML}<!-- served by fixture -->\n"),
+        format!("<!-- <!DOCTYPE DescribeSecurityGroupsResponse> -->{GROUPS_XML}"),
+        GROUPS_XML.replace("<requestId>req-1</requestId>", "<requestId><![CDATA[<!DOCTYPE DescribeSecurityGroupsResponse SYSTEM \"fixture.dtd\">]]></requestId>"),
     ] {
         assert_eq!(result(describe_groups, &body), groups, "{body}");
     }
