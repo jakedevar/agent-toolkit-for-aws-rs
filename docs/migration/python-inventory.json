@@ -61,8 +61,8 @@
       "slice": "payments-policy",
       "issue": 4410,
       "classification": "toolkit-helper",
-      "status": "ported",
-      "disposition_note": "Ported to `toolkit agents-pay admin` init-config, show-config, create-instrument, new-session and preflight (S6); setup-openclaw is covered by the same slice. The cutover docs (S7, #5526) now direct every caller to the Rust command. Retained in #5560: existing runtime or retained legacy references require a follow-up."
+      "status": "retired",
+      "disposition_note": "Ported to `toolkit agents-pay admin` init-config, show-config, create-instrument, new-session and preflight (S6); setup-openclaw is covered by the same slice. The cutover docs (S7, #5526) now direct every caller to the Rust command. Retired in #5563 after refusal text correction and cutover verification."
     },
     {
       "path": "plugins/aws-agents/skills/agents-pay/scripts/test_portability.py",
@@ -101,8 +101,8 @@
       "slice": "payments-policy",
       "issue": 4410,
       "classification": "toolkit-helper",
-      "status": "ported",
-      "disposition_note": "Ported to `toolkit agents-pay fetch` (S3, S4, S5). The cutover docs (S7, #5526) now direct every caller to the Rust command. Retained in #5560: existing runtime or retained legacy references require a follow-up."
+      "status": "retired",
+      "disposition_note": "Ported to `toolkit agents-pay fetch` (S3, S4, S5). The cutover docs (S7, #5526) now direct every caller to the Rust command. Retired in #5563 after cutover verification."
     },
     {
       "path": "plugins/aws-agents/skills/agents-pay/scripts/x402_fetch_cli.py",
@@ -121,8 +121,8 @@
       "slice": "payments-policy",
       "issue": 4410,
       "classification": "toolkit-helper",
-      "status": "ported",
-      "disposition_note": "Ported to the Rust policy, amount, challenge and config modules (S1, S2). The cutover docs (S7, #5526) now direct every caller to the Rust command. Retained in #5560: existing runtime or retained legacy references require a follow-up."
+      "status": "retired",
+      "disposition_note": "Ported to the Rust policy, amount, challenge and config modules (S1, S2). The cutover docs (S7, #5526) now direct every caller to the Rust command. Retired in #5563 after cutover verification."
     },
     {
       "path": "plugins/aws-core/com.anthropic.claude-code/hooks/secret-safety.py",

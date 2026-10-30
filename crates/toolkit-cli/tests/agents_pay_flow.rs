@@ -1203,7 +1203,7 @@ fn status_reports_the_session_from_the_model_members() {
         assert_eq!(text(&out, "status"), status);
         assert_eq!(
             text(&out, "next_step"),
-            "An operator must run: agents_pay_admin.py new-session (requires a human at a terminal). The agent cannot mint budget."
+            "An operator must run: toolkit agents-pay admin new-session (requires a human at a terminal). The agent cannot mint budget."
         );
         assert_eq!(flow::status_exit_code(&out), 2);
     }
@@ -1218,7 +1218,7 @@ fn status_without_a_session_or_with_a_failure_is_unusable() {
     let out = flow::status(&world.deps());
     assert_eq!(
         flow::render(&out),
-        r#"{"usable": false, "reason": "No payment session is configured.", "next_step": "An operator must run: agents_pay_admin.py new-session (requires a human at a terminal)."}"#
+        r#"{"usable": false, "reason": "No payment session is configured.", "next_step": "An operator must run: toolkit agents-pay admin new-session (requires a human at a terminal)."}"#
     );
     assert_eq!(world.api.session_calls(), 0);
     assert_eq!(world.api.opens(), 0);

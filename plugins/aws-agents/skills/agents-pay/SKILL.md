@@ -444,8 +444,7 @@ These are documented product limits, not defects to work around.
   bundle option, so TLS-inspecting proxies break the payment runtime. On macOS the
   payment runtime refuses while SSL_CERT_FILE or SSL_CERT_DIR is set; unset them for
   the payment command.
-- **No Python import API.** `from x402_fetch import x402_fetch, payment_session_status, prepare_browser_payment, attach_browser_payment`
-  has no Rust equivalent. The command line replaces the agent-facing calls, but a
+- **No Python import API.** The former Python payment functions have no Rust import equivalent. The command line replaces the agent-facing calls, but a
   handle cannot be redeemed after the process exits; the long-lived trusted API for
   browser glue is the follow-up #5103.
 - **IAM is the outer boundary.** A caller that holds the ProcessPaymentRole

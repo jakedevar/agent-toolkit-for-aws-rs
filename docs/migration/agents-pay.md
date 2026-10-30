@@ -480,8 +480,10 @@ R-PORT now covers the OpenClaw subsection and setup reference as well.
 
 ## Retirement (#5560)
 
-The OpenClaw bridge and its two Python tests, and six x402 Python artifacts,
-are retired after the Rust replacements and cutover. Three x402 artifacts remain
-ported: the legacy admin script is named by current Rust refusal text; the retained
-admin and fetch scripts depend on the legacy policy module, which names the fetch
-module. Correcting the runtime messages changes a contract and needs a follow-up.
+The OpenClaw bridge and its two Python tests, and all nine x402 inventory artifacts,
+are retired after the Rust replacements and cutover. The remaining admin, fetch,
+and policy scripts were retired in #5563.
+
+The no-config refusal now names `toolkit agents-pay admin init-config`; both
+session refusals now name `toolkit agents-pay admin new-session`. This intentionally
+changes their output while preserving the human-at-a-terminal requirement.
