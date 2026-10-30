@@ -991,7 +991,6 @@ fn credential_arguments_are_rejected_without_echo() {
 /// argument list stands for the carrier file.
 #[cfg(feature = "docgraph-live")]
 fn carrier_rows(c: &str) -> Vec<(Vec<&str>, i32, &'static str)> {
-    const UNAVAILABLE: &str = "live docgraph adapters are not available";
     let endpoint = "db.cluster-abc.us-east-1.neptune.amazonaws.com";
     let table: [(&'static str, i32, &'static str); 8] = [
         (
