@@ -4,9 +4,10 @@
 //! `secretsmanager`). Here every call is one [`Service`] and `PascalCase` API
 //! operation with the request the script built, handed to an [`AwsClient`].
 //! The command wires either [`RecordedClient`] (`--recorded FILE`) or
-//! [`NoLiveClient`], which sends nothing and reads no credentials. A live
-//! client behind the `toolkit-aws` transport is a follow-up
-//! (`docs/migration/docgraph.md`).
+//! [`NoLiveClient`], which sends nothing and reads no credentials. The live
+//! client over the `toolkit-aws` signer and transport is `docgraph::live`
+//! (feature `docgraph-live`, S2 #5489); the command does not route `--live`
+//! to it yet (`docs/migration/docgraph.md`).
 //!
 //! # Recorded file
 //!

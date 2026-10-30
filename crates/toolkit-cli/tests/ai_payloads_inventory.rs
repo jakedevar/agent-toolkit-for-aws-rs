@@ -286,7 +286,15 @@ fn ap_inv_03_other_slices_are_untouched() {
         // Payment policy S7 (#4410) and OpenClaw B5 (#4411) are ported;
         // every other slice stays pending.
         let ported = matches!(row["issue"].as_u64(), Some(4410 | 4411));
-        let expected = if ported { "ported" } else { "pending" };
+        let expected = if ported {
+            if root().join(path).exists() {
+                "ported"
+            } else {
+                "retired"
+            }
+        } else {
+            "pending"
+        };
         assert_eq!(str_of(row, "status"), expected, "{path}");
         for key in ["disposition", "disposition_note", "language_contract"] {
             if ported && key == "disposition_note" {

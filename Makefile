@@ -84,6 +84,9 @@ docgraph-database-peer:
 docgraph-database-admission:
 	cargo test -p toolkit-aws --features sdk --locked --lib sdk::database::tests::forbidden_or_mixed_answers_are_never_dialed -- --exact
 
+docgraph-review-client:
+	cargo test -p toolkit-cli --features docgraph-live --locked --lib docgraph::tests::live
+
 docgraph-live-suite:
 	cargo test -p toolkit-cli --locked --test docgraph_live
 	cargo test -p toolkit-cli --features docgraph-live --locked --test docgraph_live
@@ -99,6 +102,9 @@ docgraph-credential-process:
 docgraph-dns-cap:
 	cargo test -p toolkit-aws --features sdk --locked --lib sdk::lookup::
 	cargo test -p toolkit-aws --features sdk --locked --lib sdk::database::tests::an_abandoned_lookup_makes_the_next_request_fail_closed_without_a_dial -- --exact
+
+docgraph-service-dns:
+	cargo test -p toolkit-aws --features sdk --locked --lib sdk::service::
 
 docgraph-bounded:
 	cargo test -p toolkit-aws --features sdk --locked --lib sdk::source::tests::bounded_resolution_

@@ -475,5 +475,13 @@ describe the fixed Rust bridge, human-run administration and bounded final-outpu
 check. The 1.1.0 upgrade changes the token: a retry spanning the upgrade may
 be authorized again within the per-payment cap and session budget. The pack
 guard uses the shared Rust verifier and requires all five staged platforms.
-The three #4411 inventory rows are ported; legacy files remain for retirement.
+The three #4411 inventory rows are retired in #5560 after B5 verification.
 R-PORT now covers the OpenClaw subsection and setup reference as well.
+
+## Retirement (#5560)
+
+The OpenClaw bridge and its two Python tests, and six x402 Python artifacts,
+are retired after the Rust replacements and cutover. Three x402 artifacts remain
+ported: the legacy admin script is named by current Rust refusal text; the retained
+admin and fetch scripts depend on the legacy policy module, which names the fetch
+module. Correcting the runtime messages changes a contract and needs a follow-up.

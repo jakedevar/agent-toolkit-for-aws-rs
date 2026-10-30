@@ -3508,6 +3508,7 @@ dependencies = [
  "toolkit-core",
  "toolkit-msk",
  "unicode-normalization",
+ "xmlparser",
 ]
 
 [[package]]

@@ -71,11 +71,12 @@ constructs live clients or falls through to live AWS. Construction is lazy.
 Explicit REGION / `--region` passes through; recipes uses the shared region
 resolution (environment, then us-east-1).
 
-The shared `toolkit-aws::sdk::service::ServiceBridge` follows the docgraph S1
+The shared `toolkit-aws::sdk::service_bridge::ServiceBridge` follows the docgraph S1
 experiment: generated SDKs serialize/deserialize with an injected HTTP client,
 `noAuth`, no identity cache and SDK retries/timeouts disabled. The toolkit's
 `ClientConfig`, `GuardedCredentials` with bounded provider HTTP and null stdin,
-`SigV4Signer`, `SdkTransport` with validated roots/public DNS and peer checks,
+`SigV4Signer`, `SdkTransport::for_public_service` with validated roots, gated
+public DNS and peer checks,
 and `run_with_retry` remain the sole foundations. Each operation has a
 60-second deadline across credentials, retries and streamed reads, and a
 16 MiB response cap. Credential/transport errors retain their typed classes;

@@ -166,7 +166,7 @@ impl ServiceBridge {
             AwsError::invalid_config("tls_roots", "the TLS trust roots could not be loaded")
         })?;
         let transport_runtime = SdkRuntime::new()?;
-        let transport = SdkTransport::new(&transport_runtime, &roots)?;
+        let transport = SdkTransport::for_public_service(&transport_runtime, &roots)?;
         let provider = ProviderHttp::validated_bounded(&roots)?;
         let credentials = GuardedCredentials::new(
             &transport_runtime,

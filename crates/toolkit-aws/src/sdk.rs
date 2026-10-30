@@ -90,6 +90,7 @@ pub mod roots;
 pub mod roots_payment;
 #[cfg(test)]
 mod s3_tests;
+pub mod service;
 pub mod service_bridge;
 pub mod source;
 pub mod stdin;
@@ -801,8 +802,11 @@ impl ResponseStream for SdkStream {
 }
 
 impl StreamingTransport for SdkTransport {
-    /// The blocking system DNS lookup cannot be cancelled, so opening may
-    /// overrun the deadline by one lookup (R-DNS).
+    /// On the ordinary constructors the blocking system DNS lookup cannot be
+    /// cancelled, so opening may overrun the deadline by one lookup (R-DNS).
+    /// [`SdkTransport::for_public_service`] and the database transport
+    /// resolve behind the process-wide lookup gate instead, so the deadline
+    /// returns control during a stuck lookup (#5522).
     fn open<'a>(
         &'a self,
         request: &HttpRequest,
