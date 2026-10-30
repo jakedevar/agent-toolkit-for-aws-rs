@@ -168,10 +168,10 @@ impl Operation {
         }
     }
 
-    /// Query/XML responses are complete only when the root element closes.
-    fn xml_root_end(&self) -> Option<String> {
+    /// The root element a Query/XML response must have (`{Op}Response`).
+    fn xml_root(&self) -> Option<String> {
         matches!(self.service, Service::Docdb | Service::Ec2)
-            .then(|| format!("</{}Response>", self.name))
+            .then(|| format!("{}Response", self.name))
     }
 }
 
@@ -346,10 +346,10 @@ impl<'a> LiveAwsClient<'a> {
                     "the service returned an empty successful response",
                 ));
             }
-            if let Some(end) = op.xml_root_end() {
-                if !body.trim_ascii_end().ends_with(end.as_bytes()) {
+            if let Some(root) = op.xml_root() {
+                if !well_formed_xml(&body, &root) {
                     return Err(AwsError::invalid_response(
-                        "the service returned an incomplete XML response",
+                        "the service returned a malformed XML response",
                     ));
                 }
             }
@@ -397,6 +397,27 @@ impl Sleeper for DeadlineSleeper<'_> {
         let remaining = self.deadline.saturating_duration_since(Instant::now());
         self.inner.sleep(duration.min(remaining));
     }
+}
+
+/// Whole-document validation of a successful Query/XML response (#5521).
+///
+/// The pinned SDK decoder reads only the elements it looks for: it does not
+/// check that closes match their opens, that there is one root, or that
+/// nothing follows it. So the body must first parse as one well-formed XML
+/// document (UTF-8; matched nesting; a single root; only comments, processing
+/// instructions and whitespace around it; declared namespace prefixes; no
+/// document type declaration) whose root element is the operation's own
+/// `{Op}Response`, in any namespace. The parser is `roxmltree` (already a
+/// toolkit-cli dependency, over the same `xmlparser` 0.13.6 tokenizer as the
+/// SDK's `aws-smithy-xml`), with its default options, which refuse a DTD.
+/// It only validates: the SDK decoder still reads the unchanged bytes, so a
+/// valid document decodes exactly as before.
+fn well_formed_xml(body: &[u8], root: &str) -> bool {
+    let Ok(text) = std::str::from_utf8(body) else {
+        return false;
+    };
+    roxmltree::Document::parse(text)
+        .is_ok_and(|document| document.root_element().tag_name().name() == root)
 }
 
 fn stream_error(error: StreamError) -> AwsError {

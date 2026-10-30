@@ -250,7 +250,11 @@ fn the_service_transport_keeps_the_public_and_private_endpoint_guards() {
             assert!(!error.to_string().contains("secret-resolver-detail"));
             assert!(!format!("{error:?}").contains("secret-resolver-detail"));
         }
-        assert_eq!(calls.load(Ordering::SeqCst), 2, "{shows}: one lookup per request");
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            2,
+            "{shows}: one lookup per request"
+        );
         assert_never_dialed(&listener);
     }
 
@@ -283,7 +287,11 @@ fn the_service_transport_keeps_the_public_and_private_endpoint_guards() {
         Instant::now() + Duration::from_secs(10),
     );
     assert_eq!(error.code(), "aws_invalid_config", "{error:?}");
-    assert_eq!(calls.load(Ordering::SeqCst), 0, "no lookup for a refused URL");
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        0,
+        "no lookup for a refused URL"
+    );
     assert_never_dialed(&listener);
     assert!(transport.roots().is_some());
 }

@@ -1398,9 +1398,10 @@ and an SDK wait on anything but the bridge fails closed. The toolkit path:
 5. the toolkit `StreamingTransport` sends exactly the signed request under
    the same deadline and a 16 MiB response cap, regenerating authority and
    framing from the unchanged URL and body;
-6. a 2xx with an empty body, or a Query/XML 2xx whose root element does not
-   close, is `InvalidResponse`; everything else, non-2xx included, goes to
-   the modeled decoder.
+6. a 2xx with an empty body, or a Query/XML 2xx that is not one
+   well-formed XML document rooted at the operation's `{Operation}Response`
+   (repair #5521, below), is `InvalidResponse`; everything else, non-2xx
+   included, goes to the modeled decoder.
 
 **One retry owner (T-DG-04c).** `RetryPolicy::default()` (three retries,
 four sends, full jitter, 20 s cap) wraps whole attempts; each attempt
@@ -1418,9 +1419,16 @@ Decisions (engineering, recorded for review):
 - The SDK's Query and JSON decoders report an undecodable 2xx as an
   unhandled *service* error with status 200; such an error is classified
   as `InvalidResponse`, never a service verdict (found by T-DG-04b).
-- aws-smithy-xml stops silently at the end of input, so an XML document cut
-  at an element boundary could decode as a partial success; the bridge
-  therefore requires the `{Operation}Response` root to close.
+- aws-smithy-xml stops silently at the end of input and reads only the
+  elements it looks for, so a document cut at an element boundary, a
+  mismatched close, a missing inner close or a second root could decode as
+  a success. A closing-root suffix check was not enough (#5516 review,
+  BLOCKER #5521). The bridge therefore requires the whole body to parse as
+  one well-formed document (`well_formed_xml`, below).
+- The client is given its service-plane transport by reference. Live wiring
+  (#5507) must pass `SdkTransport::for_public_service`, never
+  `SdkTransport::new`: the ordinary public transport resolves DNS
+  synchronously and cannot meet the operation deadline (#5522, below).
 - The field map does not emit instance-level `IsClusterWriter`: the
   DocumentDB model's `DBInstance` has no such member, exactly as boto3
   returned none to `wa_review.py`, so the writer-only check (REL9) is
@@ -1432,7 +1440,8 @@ Decisions (engineering, recorded for review):
   refuse their endpoints anyway.
 - The client takes its signer, transport, sleeper and jitter by reference,
   so the CLI wiring (follow-up) supplies the guarded credentials, the
-  R-ROOTS public `SdkTransport`, `ThreadSleeper` and `FullJitter`.
+  R-ROOTS bounded service-plane `SdkTransport::for_public_service`,
+  `ThreadSleeper` and `FullJitter`.
 
 **S2 field map (SDK output to seam).** Only members the checks read; an
 absent value is omitted, never `null`; list order is kept; `0` and `false`
@@ -1492,6 +1501,71 @@ a failure, never a clean end. With `self.driver.release()` removed from
 37 passed, 1 failed); with it restored, job
 `d643b659-e2cf-4cbe-aae4-db3ebb0d8ce9` passes (38 passed). Public, payment
 and offline fixtures are unchanged.
+
+#### S2 repair 1: review #5516 blockers (#5521, #5522)
+
+Exact-source review #5516 of `817eb1ee` returned CHANGES_REQUESTED with two
+BLOCKERs. Both are repaired here and the reviewer's probes are now
+permanent tests.
+
+**#5521: whole-document XML validation.** The closing-root suffix check
+admitted malformed documents that the SDK decoder then read as success:
+a mismatched close, a second root, or a missing inner close, each still
+ending in `</{Operation}Response>`. `well_formed_xml` (in `live.rs`) now
+requires every successful Query/XML body to meet all of these:
+
+- valid UTF-8;
+- one well-formed XML document: matched nesting, a single root, only
+  comments, processing instructions and whitespace outside the root, and
+  declared namespace prefixes;
+- no document type declaration;
+- a root element whose local name is the operation's `{Operation}Response`,
+  in any namespace.
+
+Anything else is a non-retried `InvalidResponse` after one send.
+
+- **Parser:** `roxmltree` 0.14.1 with its default options, which refuse a
+  DTD. It is already a direct toolkit-cli dependency, used by the payment
+  plane, and is built on `xmlparser` 0.13.6, the same tokenizer the SDK's
+  `aws-smithy-xml` 0.64.0 uses. The manifests and lockfile are unchanged.
+- **Decoding:** the parser only validates. The SDK decoder still reads the
+  unchanged bytes, so a document that passes decodes exactly as before.
+- **Valid forms the tests pin as decoding unchanged:** the XML declaration,
+  default `xmlns` namespaces, `ResponseMetadata`, comments and processing
+  instructions inside or after the root, and empty lists in both the
+  self-closing and the open/close form.
+
+**#5522: a bounded public service-plane transport.**
+`SdkTransport::new`/`with_resolver` resolve DNS synchronously inside the
+connector poll, so a stuck lookup held the caller past the operation
+deadline. The reviewer's probe returned after 401 ms against a 30 ms
+deadline. The fix is a separate construction, `SdkTransport::for_public_service`
+(`crates/toolkit-aws/src/sdk/service.rs`):
+
+1. The URL and header guards are unchanged.
+2. The lookup runs on S1's process-wide `LookupGate` (`sdk::lookup`, shared
+   with the database and bounded provider planes): it runs on a detached
+   thread and is awaited asynchronously, so the deadline drops the wait.
+3. The answers pass the same public-address admission
+   (`guarded_addresses`). A failed or empty lookup, or any non-public
+   answer, is refused before a dial; mixed answers are refused, never
+   filtered.
+4. The actual-peer check is unchanged.
+
+The residual is the same one the database plane accepts: the blocked
+`getaddrinfo` thread runs until the system resolver returns. While it does,
+every new lookup on the process gate fails closed at once with
+`ABANDONED_LOOKUP_REFUSAL`, so at most one abandoned lookup is outstanding
+per process.
+
+`SdkTransport::new`, `with_resolver` and `with_connector`, the payment
+transports and their tests are unchanged. CLI routing stays refused (#5507),
+and that wiring must use this constructor.
+
+| Blocker | Tests | Red (`ff114353`, tests plus a skeleton delegating to the ordinary composition) |
+|---|---|---|
+| #5521 | `docgraph::tests::live::t_dg_04b_malformed_xml_with_a_closing_root_never_succeeds` (DocumentDB and EC2: mismatched close, second root, missing inner close, crossed closes, trailing text, DTD, undeclared prefix, unclosed item); `t_dg_04b_valid_empty_namespaced_and_commented_xml_decodes_unchanged` | `122b243e-0a23-47ca-8263-4bc9cd2f08db`: both fail ("docdb mismatched close: malformed XML became a success … BackupRetentionPeriod 7"; a trailing comment was refused); the other 15 S2 tests pass |
+| #5522 | `sdk::service::tests::a_blocked_service_lookup_returns_control_at_the_operation_deadline`; `abandoned_service_lookups_are_capped_at_one_and_fail_closed`; `the_service_transport_keeps_the_public_and_private_endpoint_guards`; `the_production_service_transport_queues_on_the_process_wide_gate` (recipe `docgraph-service-dns`) | `ad59b164-5a65-4e34-874e-a88498a1bb86`: the deadline and cap tests fail ("held the caller past its deadline: 5.0013s" against a 100 ms deadline); the guard and process-gate tests pass |
 
 
 
