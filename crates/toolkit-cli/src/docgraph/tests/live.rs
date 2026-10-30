@@ -1275,6 +1275,174 @@ fn t_dg_04b_truncation_wrong_types_and_service_errors_never_succeed() {
     }
 }
 
+// ---- T-DG-04b: whole-document XML validation (#5521) ----
+
+/// One DocumentDB cluster, the smallest complete response.
+const ONE_CLUSTER: &str = "<DescribeDBClustersResponse><DescribeDBClustersResult><DBClusters><DBCluster><BackupRetentionPeriod>7</BackupRetentionPeriod></DBCluster></DBClusters></DescribeDBClustersResult></DescribeDBClustersResponse>";
+
+fn describe_groups(live: &mut LiveAwsClient<'_>) -> Result<Json, AwsError> {
+    live.call(
+        Service::Ec2,
+        "DescribeSecurityGroups",
+        &json(r#"{"GroupIds": ["sg-0abc"]}"#),
+    )
+}
+
+type Call = fn(&mut LiveAwsClient<'_>) -> Result<Json, AwsError>;
+
+/// One call answered by one 200 XML `body`; the result and the send count.
+fn answered_once(call: Call, body: &str) -> (Result<Json, AwsError>, usize) {
+    let reply = RefCell::new(Some(xml(body)));
+    let transport = Wire::new(|_: &HttpRequest, _| reply.borrow_mut().take().expect("one send"));
+    let signer = ToolkitSigner::new();
+    let sleeper = RecordingSleeper::new();
+    let result = call(&mut client(&transport, &signer, &sleeper));
+    (result, transport.sends())
+}
+
+#[test]
+fn t_dg_04b_malformed_xml_with_a_closing_root_never_succeeds() {
+    // Each body still ends with the operation's own closing root tag, which
+    // the pinned SDK decoder does not check the rest of the document against.
+    let ec2 = GROUPS_XML;
+    let cases: Vec<(&str, Call, String)> = vec![
+        (
+            "docdb mismatched close",
+            describe_cluster,
+            ONE_CLUSTER.replace("</DBCluster>", "</NotDBCluster>"),
+        ),
+        (
+            "docdb second root",
+            describe_cluster,
+            format!("{ONE_CLUSTER}<DescribeDBClustersResponse></DescribeDBClustersResponse>"),
+        ),
+        (
+            "docdb missing inner close",
+            describe_cluster,
+            ONE_CLUSTER.replace("</DescribeDBClustersResult>", ""),
+        ),
+        (
+            "docdb crossed closes",
+            describe_cluster,
+            ONE_CLUSTER.replace("</DBCluster></DBClusters>", "</DBClusters></DBCluster>"),
+        ),
+        (
+            "docdb text after the root",
+            describe_cluster,
+            format!("{ONE_CLUSTER}trailing</DescribeDBClustersResponse>"),
+        ),
+        (
+            "docdb document type declaration",
+            describe_cluster,
+            format!("<!DOCTYPE DescribeDBClustersResponse [<!ENTITY seven \"7\">]>{ONE_CLUSTER}"),
+        ),
+        (
+            "docdb undeclared prefix",
+            describe_cluster,
+            ONE_CLUSTER
+                .replace("<DBCluster>", "<x:DBCluster>")
+                .replace("</DBCluster>", "</x:DBCluster>"),
+        ),
+        (
+            "ec2 mismatched close",
+            describe_groups,
+            ec2.replacen("</groupId>", "</groupName>", 1),
+        ),
+        (
+            "ec2 second root",
+            describe_groups,
+            format!("{ec2}<DescribeSecurityGroupsResponse/>"),
+        ),
+        (
+            "ec2 missing inner close",
+            describe_groups,
+            ec2.replace("</securityGroupInfo>", ""),
+        ),
+        (
+            "ec2 unclosed item",
+            describe_groups,
+            ec2.replacen("</item>", "", 1),
+        ),
+        (
+            "ec2 second root of another name",
+            describe_groups,
+            format!("{ec2}<Unrelated></DescribeSecurityGroupsResponse>"),
+        ),
+    ];
+    for (label, call, body) in cases {
+        assert!(
+            body.trim_end().ends_with("Response>") || body.ends_with("/>"),
+            "{label}: the fixture keeps a closing root"
+        );
+        let (result, sends) = answered_once(call, &body);
+        let error = result.expect_err(&format!("{label}: malformed XML became a success"));
+        assert!(
+            matches!(error, AwsError::InvalidResponse { .. }),
+            "{label}: {error:?}"
+        );
+        assert!(!error.is_retryable(), "{label}");
+        assert_eq!(sends, 1, "{label}: malformed responses are not retried");
+    }
+}
+
+#[test]
+fn t_dg_04b_valid_empty_namespaced_and_commented_xml_decodes_unchanged() {
+    let namespaced = |inner: &str| {
+        format!(
+            r#"<DescribeDBClustersResponse xmlns="http://rds.amazonaws.com/doc/2014-10-31/">{inner}<ResponseMetadata><RequestId>req-1</RequestId></ResponseMetadata></DescribeDBClustersResponse>"#
+        )
+    };
+    let result = |call: Call, body: &str| {
+        let (result, sends) = answered_once(call, body);
+        assert_eq!(sends, 1);
+        result.unwrap_or_else(|error| panic!("a valid document was refused: {error:?}\n{body}"))
+    };
+
+    let plain = result(describe_cluster, ONE_CLUSTER);
+    let inner = "<DescribeDBClustersResult><DBClusters><DBCluster><BackupRetentionPeriod>7</BackupRetentionPeriod></DBCluster></DBClusters></DescribeDBClustersResult>";
+    let same_cluster = [
+        namespaced(inner),
+        format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n{}\n", namespaced(inner)),
+        format!("{ONE_CLUSTER}<!-- served by fixture -->"),
+        format!("{ONE_CLUSTER}\n<!-- trailing -->\n<?fixture done?>\n"),
+        ONE_CLUSTER.replace("<DBCluster>", "<DBCluster><!-- inner -->\n  "),
+    ];
+    for body in &same_cluster {
+        assert_eq!(result(describe_cluster, body), plain, "{body}");
+    }
+
+    // Empty lists: self-closing and open/close forms decode alike.
+    let empty = result(
+        describe_cluster,
+        &namespaced("<DescribeDBClustersResult><DBClusters/></DescribeDBClustersResult>"),
+    );
+    assert_eq!(
+        result(
+            describe_cluster,
+            &namespaced("<DescribeDBClustersResult><DBClusters></DBClusters></DescribeDBClustersResult>"),
+        ),
+        empty
+    );
+    assert_ne!(empty, plain);
+
+    let groups = result(describe_groups, GROUPS_XML);
+    for body in [
+        format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n{GROUPS_XML}"),
+        format!("{GROUPS_XML}<!-- served by fixture -->\n"),
+    ] {
+        assert_eq!(result(describe_groups, &body), groups, "{body}");
+    }
+    let no_groups = |info: &str| {
+        format!(
+            r#"<DescribeSecurityGroupsResponse xmlns="http://ec2.amazonaws.com/doc/2016-11-15/"><requestId>req-1</requestId>{info}</DescribeSecurityGroupsResponse>"#
+        )
+    };
+    assert_eq!(
+        result(describe_groups, &no_groups("<securityGroupInfo/>")),
+        result(describe_groups, &no_groups("<securityGroupInfo></securityGroupInfo>"))
+    );
+}
+
 // ---- T-DG-04c: one retry owner, four sends ----
 
 fn describe_cluster(live: &mut LiveAwsClient<'_>) -> Result<Json, AwsError> {

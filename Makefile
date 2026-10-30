@@ -85,6 +85,9 @@ docgraph-dns-cap:
 	cargo test -p toolkit-aws --features sdk --locked --lib sdk::lookup::
 	cargo test -p toolkit-aws --features sdk --locked --lib sdk::database::tests::an_abandoned_lookup_makes_the_next_request_fail_closed_without_a_dial -- --exact
 
+docgraph-service-dns:
+	cargo test -p toolkit-aws --features sdk --locked --lib sdk::service::
+
 docgraph-bounded:
 	cargo test -p toolkit-aws --features sdk --locked --lib sdk::source::tests::bounded_resolution_
 	cargo test -p toolkit-aws --features sdk --locked --lib sdk::source::tests::a_stalled_provider
