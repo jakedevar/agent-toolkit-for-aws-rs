@@ -14,7 +14,7 @@ static NEXT_OUTPUT: AtomicUsize = AtomicUsize::new(0);
 fn compile_sibling(body: &str) -> std::process::Output {
     let approved = include_str!("../src/agents_pay/policy/approved.rs");
     let source = format!(
-        r#"
+        r"
         #![allow(dead_code)]
         extern crate self as toolkit_core;
         pub struct Json;
@@ -30,7 +30,7 @@ fn compile_sibling(body: &str) -> std::process::Output {
             // A spending sibling outside policy cannot invoke the constructor.
             mod flow {{ {body} }}
         }}
-        "#
+        "
     );
     // Keep compiler artifacts next to this test binary in the daemon's stamped
     // target. rustc needs a writable output directory even for metadata only.
