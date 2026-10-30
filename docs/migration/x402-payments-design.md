@@ -458,9 +458,13 @@ Tests for these rules (S1 and S5):
 
   Inside the crate, rustc's module privacy already stops the sibling modules (`flow`,
   `agentcore`, `proof`, `vault`, `admin`) from constructing or mutating `Approved`, because the
-  fields are private to `approved.rs` and `new` is restricted to `policy`. A `compile_fail`
-  doc-test cannot be placed inside a sibling module, and no `trybuild` crate is added. A `syn`
-  gate in `tests/agents_pay_gate.rs` therefore covers the in-crate side:
+  fields are private to `approved.rs` and `new` is restricted to `policy`.
+  `tests/agents_pay_privacy.rs` compiles the actual `approved.rs` source with offline data and
+  formatting stubs, a sibling inside `policy` and a spending sibling outside it. A positive
+  control compiles read-only access. Negative cases require the specific rustc privacy errors
+  for amount/token/entry mutation, struct construction and the constructor call outside
+  `policy`. No `trybuild` crate is added. A `syn` gate in `tests/agents_pay_gate.rs` additionally
+  covers the in-crate source shape:
   - `Approved::new` has exactly one call site crate-wide, in `policy::authorize`;
   - no `Approved {` struct literal exists outside `approved.rs`;
   - no `impl` block for `Approved` outside `approved.rs`, and none with a `&mut self` receiver;
