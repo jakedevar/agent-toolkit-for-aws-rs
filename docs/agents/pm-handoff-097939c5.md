@@ -1316,3 +1316,8 @@ Friction: #4727, Rsi #4694, Rsi #4704
   Workers: 3a9b6f7a S2 repair 2, 60b47bef S4, c6c496f3 #4720, c928148c #5560. Queue: 3079 #5555.
 - 02:11Z: S2 repair 2 (3a9b6f7a, Codex sol) DONE at 8e119395f392200d59d8956fcc60b0a3a1d6382d (merge 90011286 keeps S2+S3 wiring; #5544 structural DTD refusal; red 4c7d5e13 5 failures; scoped 379152e7 ok 5533). Friction #5556, #5455. Re-review 3 on #5516 -> Claude Opus high f0ba73f7, pinned (DTD variants + merge parents + no other change). On ACCEPT: check, enqueue issue 5489; close #5489 #5516 #5521 #5522 #5544 #5484.
   Workers: 60b47bef S4, c6c496f3 #4720, c928148c #5560, f0ba73f7 S2 re-review. Queue: 3079 #5555.
+- 02:21Z: #4720 (c6c496f3) DONE at 731d27d28a6ab967aea0a3e9564d6e57a31a2a8d (12 deletions, skill text -> toolkit ai-models, inventory, retirement test; red 9cf7bea0 green dba28eda). Scoped red = #5455 only. HELD, NOT enqueued: Rust ai-models has only NoLiveClient + --recorded, so retiring the Python now would drop live SageMaker queries from the aws-ai-ml skill. #4720 depends on the live binding #4719 (note on #4720). After #4719 lands: merge rolling into 731d27d2, drop the no-live caveat from the skill text, rerun scoped, enqueue.
+  #4719 (live SageMaker/CloudWatch/Logs client) -> Codex sol xhigh 669e7ef7. Needs a Claude Opus security review (credential/network).
+  Operator asked why OpenClaw must run: answered (live run L-OC-1..7 only gates publishing 1.1.0; port is complete without it; x402 CLI live payment covers the D-OC5 risk).
+  Reported up 02:21Z: #5455 hitting every scoped run; harness:true filing unresolved.
+  Workers: 60b47bef S4, c928148c #5560, f0ba73f7 S2 re-review 3, 669e7ef7 #4719. Queue: 3079 #5555.
