@@ -157,10 +157,7 @@ fn flattened_skill_preflight_refuses_without_trying_path() {
     let fixture = temp_dir("flattened-payment-skill");
     let marker = fixture.join("wrong-toolkit-ran");
     let wrong = fixture.join("toolkit");
-    write(
-        &wrong,
-        &format!("#!/bin/sh\ntouch '{}'\n", marker.display()),
-    );
+    write(&wrong, &format!("#!/bin/sh\n : > '{}'\n", marker.display()));
     use std::os::unix::fs::PermissionsExt;
     fs::set_permissions(&wrong, fs::Permissions::from_mode(0o755)).unwrap();
     for page in [
@@ -175,9 +172,9 @@ fn flattened_skill_preflight_refuses_without_trying_path() {
             .split("```")
             .next()
             .unwrap();
-        for root in [None, Some(fixture.as_path())] {
+        for root in [None, Some(&*fixture)] {
             let mut command = std::process::Command::new("/bin/sh");
-            command.env_clear().env("PATH", fixture.as_path());
+            command.env_clear().env("PATH", &*fixture);
             if let Some(root) = root {
                 command.env("CLAUDE_PLUGIN_ROOT", root);
             }

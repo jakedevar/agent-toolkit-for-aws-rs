@@ -50,8 +50,9 @@ G1 and G1a guard verification/test artifacts, not release destinations.
 T-PKG-NOLIVE previously also pinned the single package destination; it now
 pins both declared payment destinations while retaining its ban on staging
 from tests or verification targets. Only `make plugin-binaries` stages the
-live entries. `toolkit-plugin-check` checks binaries only; `clippy-live`
-lints libraries/binaries only. No test enables `agents-pay-live`.
+live entries. `toolkit-plugin-check` checks only the model/graph binary;
+the existing `clippy-live` exception lints payment libraries/binaries only.
+No new verification target enables `agents-pay-live`, and no test enables it.
 
 `default_build.rs` pins the ordinary toolkit CLI's empty default feature
 list and its complete default normal/build feature tree for all targets.
