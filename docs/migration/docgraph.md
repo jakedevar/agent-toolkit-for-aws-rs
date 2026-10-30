@@ -1528,6 +1528,18 @@ Anything else is a non-retried `InvalidResponse` after one send.
   DTD. It is already a direct toolkit-cli dependency, used by the payment
   plane, and is built on `xmlparser` 0.13.6, the same tokenizer the SDK's
   `aws-smithy-xml` 0.64.0 uses. The manifests and lockfile are unchanged.
+- **Open elements at end of input:** roxmltree 0.14.1 refuses a mismatched
+  close, but it accepts end of input while elements are still open. The
+  first fix commit, `63e9edb5`, missed this: job
+  `dca1ed93-0346-40ae-9e23-8d181c083b52` failed the existing truncation
+  case 1, where the body is cut after `</DBCluster>` and decoded with
+  `BackupRetentionPeriod` 7. `element_closed` now also requires every
+  element to be closed.
+  - roxmltree spans an open element up to the end of its start tag, and a
+    start tag cannot contain `<`: xmlparser refuses it even in attribute
+    values.
+  - So a closed element's span ends with `/>` or contains `</`.
+  - DocumentDB and EC2 cases cut at an element boundary pin this.
 - **Decoding:** the parser only validates. The SDK decoder still reads the
   unchanged bytes, so a document that passes decodes exactly as before.
 - **Valid forms the tests pin as decoding unchanged:** the XML declaration,
@@ -1564,7 +1576,7 @@ and that wiring must use this constructor.
 
 | Blocker | Tests | Red (`ff114353`, tests plus a skeleton delegating to the ordinary composition) |
 |---|---|---|
-| #5521 | `docgraph::tests::live::t_dg_04b_malformed_xml_with_a_closing_root_never_succeeds` (DocumentDB and EC2: mismatched close, second root, missing inner close, crossed closes, trailing text, DTD, undeclared prefix, unclosed item); `t_dg_04b_valid_empty_namespaced_and_commented_xml_decodes_unchanged` | `122b243e-0a23-47ca-8263-4bc9cd2f08db`: both fail ("docdb mismatched close: malformed XML became a success … BackupRetentionPeriod 7"; a trailing comment was refused); the other 15 S2 tests pass |
+| #5521 | `docgraph::tests::live::t_dg_04b_malformed_xml_with_a_closing_root_never_succeeds` (DocumentDB and EC2: mismatched close, second root, missing inner close, crossed closes, trailing text, DTD, undeclared prefix, unclosed item, cut at an element boundary, root never closed); `t_dg_04b_valid_empty_namespaced_and_commented_xml_decodes_unchanged` | `122b243e-0a23-47ca-8263-4bc9cd2f08db`: both fail ("docdb mismatched close: malformed XML became a success … BackupRetentionPeriod 7"; a trailing comment was refused); the other 15 S2 tests pass |
 | #5522 | `sdk::service::tests::a_blocked_service_lookup_returns_control_at_the_operation_deadline`; `abandoned_service_lookups_are_capped_at_one_and_fail_closed`; `the_service_transport_keeps_the_public_and_private_endpoint_guards`; `the_production_service_transport_queues_on_the_process_wide_gate` (recipe `docgraph-service-dns`) | `ad59b164-5a65-4e34-874e-a88498a1bb86`: the deadline and cap tests fail ("held the caller past its deadline: 5.0013s" against a 100 ms deadline); the guard and process-gate tests pass |
 
 

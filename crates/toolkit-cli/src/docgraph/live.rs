@@ -410,14 +410,35 @@ impl Sleeper for DeadlineSleeper<'_> {
 /// `{Op}Response`, in any namespace. The parser is `roxmltree` (already a
 /// toolkit-cli dependency, over the same `xmlparser` 0.13.6 tokenizer as the
 /// SDK's `aws-smithy-xml`), with its default options, which refuse a DTD.
+///
+/// roxmltree 0.14.1 itself accepts end of input while elements are still
+/// open (it refuses only a mismatched close), so every element must also be
+/// closed: see [`element_closed`]. With closes matched, that is the same as
+/// the root closing.
+///
 /// It only validates: the SDK decoder still reads the unchanged bytes, so a
 /// valid document decodes exactly as before.
 fn well_formed_xml(body: &[u8], root: &str) -> bool {
     let Ok(text) = std::str::from_utf8(body) else {
         return false;
     };
-    roxmltree::Document::parse(text)
-        .is_ok_and(|document| document.root_element().tag_name().name() == root)
+    let Ok(document) = roxmltree::Document::parse(text) else {
+        return false;
+    };
+    document.root_element().tag_name().name() == root
+        && document
+            .descendants()
+            .filter(roxmltree::Node::is_element)
+            .all(|element| element_closed(text, element))
+}
+
+/// Whether `element` was closed. roxmltree spans an element from its start
+/// tag to its close tag, or to the end of its start tag while unclosed. A
+/// start tag cannot contain `<` (not even in an attribute value), so the span
+/// of a closed element ends with `/>` (empty) or contains `</` (its close).
+fn element_closed(text: &str, element: roxmltree::Node<'_, '_>) -> bool {
+    text.get(element.range())
+        .is_some_and(|markup| markup.ends_with("/>") || markup.contains("</"))
 }
 
 fn stream_error(error: StreamError) -> AwsError {

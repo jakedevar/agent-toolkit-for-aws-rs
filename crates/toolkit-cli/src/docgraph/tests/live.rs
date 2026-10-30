@@ -1302,8 +1302,10 @@ fn answered_once(call: Call, body: &str) -> (Result<Json, AwsError>, usize) {
 
 #[test]
 fn t_dg_04b_malformed_xml_with_a_closing_root_never_succeeds() {
-    // Each body still ends with the operation's own closing root tag, which
-    // the pinned SDK decoder does not check the rest of the document against.
+    // Most bodies still end with the operation's own closing root tag, which
+    // the pinned SDK decoder does not check the rest of the document against;
+    // the last ones are cut where every token is complete but elements are
+    // still open (the SDK decoder and roxmltree 0.14.1 both accept that).
     let ec2 = GROUPS_XML;
     let cases: Vec<(&str, Call, String)> = vec![
         (
@@ -1368,12 +1370,32 @@ fn t_dg_04b_malformed_xml_with_a_closing_root_never_succeeds() {
             describe_groups,
             format!("{ec2}<Unrelated></DescribeSecurityGroupsResponse>"),
         ),
+        (
+            "docdb cut at an element boundary",
+            describe_cluster,
+            ONE_CLUSTER.replace("</DescribeDBClustersResponse>", ""),
+        ),
+        (
+            "docdb root never closed",
+            describe_cluster,
+            r#"<DescribeDBClustersResponse xmlns="http://rds.amazonaws.com/doc/2014-10-31/">"#
+                .to_string(),
+        ),
+        (
+            "ec2 cut at an element boundary",
+            describe_groups,
+            ec2.replace("</DescribeSecurityGroupsResponse>", ""),
+        ),
+        (
+            "ec2 cut inside the group list",
+            describe_groups,
+            ec2.split("<ipPermissions>")
+                .next()
+                .expect("prefix")
+                .to_string(),
+        ),
     ];
     for (label, call, body) in cases {
-        assert!(
-            body.trim_end().ends_with("Response>") || body.ends_with("/>"),
-            "{label}: the fixture keeps a closing root"
-        );
         let (result, sends) = answered_once(call, &body);
         let error = result.expect_err(&format!("{label}: malformed XML became a success"));
         assert!(
@@ -1409,6 +1431,7 @@ fn t_dg_04b_valid_empty_namespaced_and_commented_xml_decodes_unchanged() {
         format!("{ONE_CLUSTER}<!-- served by fixture -->"),
         format!("{ONE_CLUSTER}\n<!-- trailing -->\n<?fixture done?>\n"),
         ONE_CLUSTER.replace("<DBCluster>", "<DBCluster><!-- inner -->\n  "),
+        ONE_CLUSTER.replace("<DBCluster>", "<DBCluster note=\"a/b\">"),
     ];
     for body in &same_cluster {
         assert_eq!(result(describe_cluster, body), plain, "{body}");
