@@ -231,7 +231,7 @@ fn config_shapes_and_required_resources() {
     assert_eq!(resolve_resource(&cfg, "user_id", &none).unwrap(), None);
     let empty = |_: &str| Some(String::new());
     for (key, name) in [("user_id", "PAYMENT_USER_ID"), ("custom_key", "CUSTOM_KEY")] {
-        let expected = format!("Missing payment resource '{key}'. Add it to the config (agents_pay_admin.py init-config) or set {name}. Provision resources with the trusted setup path first.");
+        let expected = format!("Missing payment resource '{key}'. Add it to the config (toolkit agents-pay admin init-config) or set {name}. Provision resources with the trusted setup path first.");
         assert_eq!(require_resource(&cfg, key, &none).unwrap_err(), expected);
         assert_eq!(require_resource(&cfg, key, &empty).unwrap_err(), expected);
     }
