@@ -1800,9 +1800,10 @@ Only then does `live_review::run_live_review` construct `SdkRuntime`, one
 `GuardedCredentials::until(deadline)` through S2's `DeadlineSigner`
 implementation. The reviewed service allowlist, endpoint admission, codecs,
 bounded responses, operation deadline and sole toolkit retry owner are reused.
-No dependency or lockfile change is needed. `--network-policy` remains the
-database-plane policy option; it cannot redirect the review's public AWS
-endpoints. Private/VPC review API endpoints remain unsupported.
+No dependency or lockfile change is needed. `wa-review --live` refuses
+`--network-policy` with a usage error before environment, credentials, or
+network access: review does not connect to a database, so that policy would
+otherwise be ignored. Private/VPC review API endpoints remain unsupported.
 
 The existing analysis/report path also serves live infrastructure plus
 `--analysis-data`; private reports retain create-new/0600 custody. Adapter
@@ -1822,14 +1823,17 @@ Offline evidence inventory:
 - `docgraph_live::live_review_argv_preflight_precedes_environment_files_and_network`
   runs only invalid/missing argv under hostile AWS configuration and asserts
   usage status, no input reads/reports and zero provider/socket activity.
-  The carrier row also omits argv region; a valid live review is exercised
-  exclusively through injected seams, never the production constructor.
-- T-DG-09a recognizes `run_live_review` as a production live entry and its
-  inventory fixture proves an unignored test naming it is rejected. No new
+  The carrier row also omits argv region; a review that passes preflight is
+  exercised exclusively through injected seams, never the production constructor.
+- T-DG-09a recognizes `run_live_review` and complete live review argv as live
+  entries. An offline source pin verifies the production constructor's bounded
+  provider, transport, roots, credentials, sleeper and jitter wiring. No new
   ignored/live acceptance test is introduced. Existing replay goldens remain.
+  The inventory explicitly registers three audited subprocess safety tests:
+  two use incomplete review argv, and the preflight test's complete row is
+  refused for `--network-policy` before environment or network access.
 
-The help fragments and usage pins are unchanged to preserve no-live usage
-bytes. The synopsis already lists `--live`; S6 owns the broader help/caller
+The help text describes recorded and live review. S6 owns the broader help/caller
 refresh, including the historical Neptune description noted above. Default
 tests never run live AWS. T-DG-09b remains an unperformed operator gate;
 routing and offline verification do not claim live acceptance or retirement.
