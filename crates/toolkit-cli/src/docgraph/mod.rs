@@ -49,6 +49,8 @@ mod checks;
 mod client;
 mod dbchecks;
 mod infra;
+#[cfg(feature = "docgraph-live")]
+mod live_seed;
 pub mod memory;
 mod neptune_input;
 #[cfg(feature = "docgraph-live")]
@@ -395,6 +397,10 @@ pub fn seed_command(invocation: &Invocation, out: &mut Output<'_>) -> Result<(),
         if invocation.value("--endpoint").is_none() {
             return Err(usage("--endpoint is required with --live"));
         }
+        // Only now, after argv consent, may the policy file be read (S3).
+        #[cfg(feature = "docgraph-live")]
+        return live_seed::run(invocation, out);
+        #[cfg(not(feature = "docgraph-live"))]
         return Err(unavailable_live());
     }
     let recorded = invocation.value("--recorded");

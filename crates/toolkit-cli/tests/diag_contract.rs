@@ -2231,7 +2231,7 @@ fn filesystem_bearing_consumers() -> BTreeSet<(String, String)> {
 /// file name or a directory name. A file that is not about a listed command
 /// (`elasticache`, `relational`, `ai-data`, `cloudwatch region`) is
 /// there for the flag name only.
-const AUDITED_FILESYSTEM_CONSUMERS: [(&str, &str); 29] = [
+const AUDITED_FILESYSTEM_CONSUMERS: [(&str, &str); 30] = [
     ("startup/model_path.rs", "--workload"),
     ("bedrock_agent.rs", "--agent-id"),
     ("bedrock_agent.rs", "--agent-version"),
@@ -2269,6 +2269,10 @@ const AUDITED_FILESYSTEM_CONSUMERS: [(&str, &str); 29] = [
     // LITERAL_DASH entry; --region is an endpoint key and a config value.
     ("agents_pay/admin/mod.rs", "--region"),
     ("agents_pay/admin/setup_payment_user.rs", "--region"),
+    // docgraph live S3 (#5515): --region goes only to network_policy::signing_region
+    // (resolve_region, matched to the policy region), never to a path; the file
+    // the module opens is the --network-policy value, read whole and parsed.
+    ("docgraph/live_seed.rs", "--region"),
 ];
 
 /// A `LITERAL_DASH` flag that shares a source file with filesystem code must be
