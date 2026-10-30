@@ -1252,3 +1252,4 @@ Friction: #4727, Rsi #4694, Rsi #4704
   Review #5537 -> Codex sol high, pinned cc3e66a0, queued for a slot. On ACCEPT: check, enqueue issue 5526; close #5526 #5537. Then OpenClaw B5 (after B4).
   Slot queue (launch order): B4 #5535, #5509 merge, #5537 review. Running: fe94684e S3, the S2 repair.
 - 00:34Z: #5509 merge (e0e2d565) DONE at 121e5daf700436e8ec03600fc79dcb3dd3f37ccd (Makefile union verified; check ok 1d3bde7c, 5493). ENQUEUED (issue 5509). Kaizen fixed this seat: #5509 fmt-patch, #5478 flake. Open: #5536 #5510 #5488 #5476 #5265 (evidence added) #5518 #5519 #5524 #5528.
+- 00:45Z: #5509 LANDED (3f231c96, landed_sha 97b6727af068340ac4f001c3a694704ee59cdf19); auto-closed. New worker briefs: tell workers to run recipe fmt-patch and git apply the patch printed between the markers, instead of hand-applying fmt diffs. Queue empty.
