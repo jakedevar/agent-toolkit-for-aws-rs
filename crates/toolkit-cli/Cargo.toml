@@ -16,7 +16,7 @@ default = []
 # the `asm exec` MCP fallback (#4582) and the MCP proxy. Off by default so the
 # ordinary build compiles no AWS SDK crate.
 aws-sdk = ["toolkit-aws/sdk"]
-docgraph-live = ["aws-sdk", "toolkit-aws/gremlin", "dep:aws-sdk-docdb", "dep:aws-sdk-cloudwatch", "dep:aws-sdk-ec2", "dep:aws-sdk-secretsmanager", "dep:aws-credential-types", "dep:aws-runtime", "dep:aws-smithy-runtime-api", "dep:aws-smithy-types", "dep:tokio", "dep:aws-sdk-neptunegraph", "dep:aws-sdk-dynamodb"]
+docgraph-live = ["aws-sdk", "toolkit-aws/gremlin", "dep:aws-sdk-docdb", "dep:aws-sdk-cloudwatch", "dep:aws-sdk-ec2", "dep:aws-sdk-secretsmanager", "dep:aws-credential-types", "dep:aws-runtime", "dep:aws-smithy-runtime-api", "dep:aws-smithy-types", "dep:tokio", "dep:aws-sdk-neptunegraph", "dep:aws-sdk-dynamodb", "dep:xmlparser"]
 # The live x402 payment constructors (#5352, design section 7 G1): real
 # config, credentials, DNS, payment TLS roots and transports. Only release
 # builds and the operator live run enable it; every test target refuses it
@@ -44,6 +44,9 @@ unicode-normalization = { version = "0.1", default-features = false, features = 
 serde_json = { version = "1", default-features = false, features = ["std"] }
 time = { version = "=0.3.55", features = ["parsing"] }
 roxmltree = "=0.14.1"
+# Use the same already-locked tokenizer as roxmltree and aws-smithy-xml to
+# refuse both DTD token forms explicitly in the review bridge (#5544).
+xmlparser = { version = "=0.13.6", optional = true }
 toolkit-msk = { path = "../toolkit-msk" }
 # Launch with AWS (#4382, L0-L2 #5085): the OS CSPRNG for temporary names and
 # (from L3) PKCE, and raw deflate for the strict ZIP container (Q2).

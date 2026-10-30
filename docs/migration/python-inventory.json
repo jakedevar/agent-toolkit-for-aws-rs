@@ -11,8 +11,8 @@
       "slice": "payments-policy",
       "issue": 4410,
       "classification": "toolkit-helper",
-      "status": "ported",
-      "disposition_note": "Replaced, not ported (Q2): agents-build/references/payments.md now carries a reference snippet that runs `toolkit agents-pay fetch` through a subprocess, so no payment code is copied into a user project. The cutover docs (S7, #5526) now direct every caller to the Rust command. The Python file stays in the tree until the programme retirement step removes it; not counted as removed."
+      "status": "retired",
+      "disposition_note": "Replaced, not ported (Q2): agents-build/references/payments.md now carries a reference snippet that runs `toolkit agents-pay fetch` through a subprocess, so no payment code is copied into a user project. The cutover docs (S7, #5526) now direct every caller to the Rust command. Retired in #5560 after cutover verification."
     },
     {
       "path": "plugins/aws-agents/skills/agents-build/scripts/setup_payment_user.py",
@@ -21,8 +21,8 @@
       "slice": "payments-policy",
       "issue": 4410,
       "classification": "toolkit-helper",
-      "status": "ported",
-      "disposition_note": "Ported to `toolkit agents-build setup-payment-user` (S6). The cutover docs (S7, #5526) now direct every caller to the Rust command. The Python file stays in the tree until the programme retirement step removes it; not counted as removed."
+      "status": "retired",
+      "disposition_note": "Ported to `toolkit agents-build setup-payment-user` (S6). The cutover docs (S7, #5526) now direct every caller to the Rust command. Retired in #5560 after cutover verification."
     },
     {
       "path": "plugins/aws-agents/skills/agents-pay/packages/openclaw/runtime/agentcore_bridge.py",
@@ -31,8 +31,8 @@
       "slice": "payments-bridge",
       "issue": 4411,
       "classification": "toolkit-helper",
-      "status": "ported",
-      "disposition_note": "Ported by OpenClaw B1-B5 to the Rust bridge, admin commands and contract tests; B5 updates callers and documentation. The legacy file remains until the programme retirement step."
+      "status": "retired",
+      "disposition_note": "Ported by OpenClaw B1-B5 to the Rust bridge, admin commands and contract tests; B5 updates callers and documentation. Retired in #5560 after cutover verification."
     },
     {
       "path": "plugins/aws-agents/skills/agents-pay/packages/openclaw/test/test_agentcore_bridge.py",
@@ -41,8 +41,8 @@
       "slice": "payments-bridge",
       "issue": 4411,
       "classification": "test-or-diagnostic",
-      "status": "ported",
-      "disposition_note": "Ported by OpenClaw B1-B5 to the Rust bridge, admin commands and contract tests; B5 updates callers and documentation. The legacy file remains until the programme retirement step."
+      "status": "retired",
+      "disposition_note": "Ported by OpenClaw B1-B5 to the Rust bridge, admin commands and contract tests; B5 updates callers and documentation. Retired in #5560 after cutover verification."
     },
     {
       "path": "plugins/aws-agents/skills/agents-pay/packages/openclaw/test/test_setup_openclaw.py",
@@ -51,8 +51,8 @@
       "slice": "payments-bridge",
       "issue": 4411,
       "classification": "test-or-diagnostic",
-      "status": "ported",
-      "disposition_note": "Ported by OpenClaw B1-B5 to the Rust bridge, admin commands and contract tests; B5 updates callers and documentation. The legacy file remains until the programme retirement step."
+      "status": "retired",
+      "disposition_note": "Ported by OpenClaw B1-B5 to the Rust bridge, admin commands and contract tests; B5 updates callers and documentation. Retired in #5560 after cutover verification."
     },
     {
       "path": "plugins/aws-agents/skills/agents-pay/scripts/agents_pay_admin.py",
@@ -62,7 +62,7 @@
       "issue": 4410,
       "classification": "toolkit-helper",
       "status": "ported",
-      "disposition_note": "Ported to `toolkit agents-pay admin` init-config, show-config, create-instrument, new-session and preflight (S6); setup-openclaw is covered by the same slice. The cutover docs (S7, #5526) now direct every caller to the Rust command. The Python file stays in the tree until the programme retirement step removes it; not counted as removed."
+      "disposition_note": "Ported to `toolkit agents-pay admin` init-config, show-config, create-instrument, new-session and preflight (S6); setup-openclaw is covered by the same slice. The cutover docs (S7, #5526) now direct every caller to the Rust command. Retained in #5560: existing runtime or retained legacy references require a follow-up."
     },
     {
       "path": "plugins/aws-agents/skills/agents-pay/scripts/test_portability.py",
@@ -71,8 +71,8 @@
       "slice": "payments-policy",
       "issue": 4410,
       "classification": "test-or-diagnostic",
-      "status": "ported",
-      "disposition_note": "Ported to the Rust test crate `tests/agents_pay_cutover_docs.rs` (R-PORT). The cutover docs (S7, #5526) now direct every caller to the Rust command. The Python file stays in the tree until the programme retirement step removes it; not counted as removed."
+      "status": "retired",
+      "disposition_note": "Ported to the Rust test crate `tests/agents_pay_cutover_docs.rs` (R-PORT). The cutover docs (S7, #5526) now direct every caller to the Rust command. Retired in #5560 after cutover verification."
     },
     {
       "path": "plugins/aws-agents/skills/agents-pay/scripts/test_resource_resolution.py",
@@ -81,8 +81,8 @@
       "slice": "payments-policy",
       "issue": 4410,
       "classification": "test-or-diagnostic",
-      "status": "ported",
-      "disposition_note": "Ported to Rust tests in the S2 and S6 slices. The cutover docs (S7, #5526) now direct every caller to the Rust command. The Python file stays in the tree until the programme retirement step removes it; not counted as removed."
+      "status": "retired",
+      "disposition_note": "Ported to Rust tests in the S2 and S6 slices. The cutover docs (S7, #5526) now direct every caller to the Rust command. Retired in #5560 after cutover verification."
     },
     {
       "path": "plugins/aws-agents/skills/agents-pay/scripts/test_x402_policy.py",
@@ -91,8 +91,8 @@
       "slice": "payments-policy",
       "issue": 4410,
       "classification": "test-or-diagnostic",
-      "status": "ported",
-      "disposition_note": "Ported to Rust tests in the S1 slice. The cutover docs (S7, #5526) now direct every caller to the Rust command. The Python file stays in the tree until the programme retirement step removes it; not counted as removed."
+      "status": "retired",
+      "disposition_note": "Ported to Rust tests in the S1 slice. The cutover docs (S7, #5526) now direct every caller to the Rust command. Retired in #5560 after cutover verification."
     },
     {
       "path": "plugins/aws-agents/skills/agents-pay/scripts/x402_fetch.py",
@@ -102,7 +102,7 @@
       "issue": 4410,
       "classification": "toolkit-helper",
       "status": "ported",
-      "disposition_note": "Ported to `toolkit agents-pay fetch` (S3, S4, S5). The cutover docs (S7, #5526) now direct every caller to the Rust command. The Python file stays in the tree until the programme retirement step removes it; not counted as removed."
+      "disposition_note": "Ported to `toolkit agents-pay fetch` (S3, S4, S5). The cutover docs (S7, #5526) now direct every caller to the Rust command. Retained in #5560: existing runtime or retained legacy references require a follow-up."
     },
     {
       "path": "plugins/aws-agents/skills/agents-pay/scripts/x402_fetch_cli.py",
@@ -111,8 +111,8 @@
       "slice": "payments-policy",
       "issue": 4410,
       "classification": "toolkit-helper",
-      "status": "ported",
-      "disposition_note": "Ported to `toolkit agents-pay fetch` (S5). The cutover docs (S7, #5526) now direct every caller to the Rust command. The Python file stays in the tree until the programme retirement step removes it; not counted as removed."
+      "status": "retired",
+      "disposition_note": "Ported to `toolkit agents-pay fetch` (S5). The cutover docs (S7, #5526) now direct every caller to the Rust command. Retired in #5560 after cutover verification."
     },
     {
       "path": "plugins/aws-agents/skills/agents-pay/scripts/x402_policy.py",
@@ -122,7 +122,7 @@
       "issue": 4410,
       "classification": "toolkit-helper",
       "status": "ported",
-      "disposition_note": "Ported to the Rust policy, amount, challenge and config modules (S1, S2). The cutover docs (S7, #5526) now direct every caller to the Rust command. The Python file stays in the tree until the programme retirement step removes it; not counted as removed."
+      "disposition_note": "Ported to the Rust policy, amount, challenge and config modules (S1, S2). The cutover docs (S7, #5526) now direct every caller to the Rust command. Retained in #5560: existing runtime or retained legacy references require a follow-up."
     },
     {
       "path": "plugins/aws-core/com.anthropic.claude-code/hooks/secret-safety.py",
