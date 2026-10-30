@@ -1,6 +1,6 @@
-use crate::docgraph::memory;
 use super::*;
 use crate::docgraph::live_memory::tests::{json, policy};
+use crate::docgraph::memory;
 use toolkit_aws::testing::{FakeChunk, FakeSigner, FakeStreamingTransport};
 use toolkit_aws::transport::{Method, FRAMING_HEADERS};
 fn query() -> Json {
@@ -84,7 +84,10 @@ fn secure_creation_is_a_distinct_modeled_control_plane_request() {
         request.url,
         "https://neptune-graph.us-east-1.amazonaws.com/graphs"
     );
-    assert_eq!(serde_json::from_slice::<serde_json::Value>(&request.body).unwrap(), serde_json::from_str::<serde_json::Value>(&planned.to_compact_string()).unwrap());
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&request.body).unwrap(),
+        serde_json::from_str::<serde_json::Value>(&planned.to_compact_string()).unwrap()
+    );
     assert_eq!(
         normalize(
             Route::Create,
@@ -357,27 +360,79 @@ fn a_query_timeout_that_no_longer_fits_refuses_before_send() {
 
 #[test]
 fn response_depth_and_result_counts_fail_at_boundary_plus_one() {
-    for depth in [62,63] {
-        let source=format!(r#"{{"results":[{}null{}]}}"#,"[".repeat(depth),"]".repeat(depth));
-        assert_eq!(normalize(Route::Analytics,source.as_bytes()).is_ok(),depth==62);
+    for depth in [62, 63] {
+        let source = format!(
+            r#"{{"results":[{}null{}]}}"#,
+            "[".repeat(depth),
+            "]".repeat(depth)
+        );
+        assert_eq!(
+            normalize(Route::Analytics, source.as_bytes()).is_ok(),
+            depth == 62
+        );
     }
-    for count in [100_000,100_001] {
-        let source=Json::object(vec![("results",Json::Array(vec![Json::Int(0);count]))]).to_compact_string();
-        assert_eq!(normalize(Route::Analytics,source.as_bytes()).is_ok(),count==100_000);
+    for count in [100_000, 100_001] {
+        let source = Json::object(vec![("results", Json::Array(vec![Json::Int(0); count]))])
+            .to_compact_string();
+        assert_eq!(
+            normalize(Route::Analytics, source.as_bytes()).is_ok(),
+            count == 100_000
+        );
     }
 }
 #[test]
 fn signed_and_sent_bytes_are_the_final_modeled_bytes_for_every_http_route() {
-    let plans=[(Route::Analytics,query(),Some(policy(false))),(Route::Create,memory::create_graph("example",32,1536,"model",true),None),(Route::Dynamo,memory::plan("recent-messages",&json(r#"{"session_id":"s","limit":2}"#)).unwrap().remove(0),None)];
-    for (route,plan,p) in plans {
-        let wire=encode(route,&plan,"us-east-1",p.as_ref(),Duration::from_secs(4)).unwrap();
-        let original=wire.clone();
-        let response=if route==Route::Create {br#"{"id":"g-abc123def4"}"#.as_slice()} else if route==Route::Dynamo {br#"{"Items":[]}"#} else {br#"{"results":[]}"#};
-        let transport=FakeStreamingTransport::new().respond(if route==Route::Create {201} else {200},&[],vec![FakeChunk::data(response)]);
-        exchange(&transport,&FakeSigner::new(),route,wire,"us-east-1",Instant::now()+Duration::from_secs(5)).unwrap();
-        let sent=&transport.requests()[0];
-        assert_eq!(sent.body,original.body);
-        assert_eq!(sent.url,original.url);
-        for (k,v) in original.headers.entries() {assert_eq!(sent.headers.get(k),Some(v));}
+    let plans = [
+        (Route::Analytics, query(), Some(policy(false))),
+        (
+            Route::Create,
+            memory::create_graph("example", 32, 1536, "model", true),
+            None,
+        ),
+        (
+            Route::Dynamo,
+            memory::plan("recent-messages", &json(r#"{"session_id":"s","limit":2}"#))
+                .unwrap()
+                .remove(0),
+            None,
+        ),
+    ];
+    for (route, plan, p) in plans {
+        let wire = encode(
+            route,
+            &plan,
+            "us-east-1",
+            p.as_ref(),
+            Duration::from_secs(4),
+        )
+        .unwrap();
+        let original = wire.clone();
+        let response: &[u8] = if route == Route::Create {
+            br#"{"id":"g-abc123def4"}"#.as_slice()
+        } else if route == Route::Dynamo {
+            br#"{"Items":[]}"#
+        } else {
+            br#"{"results":[]}"#
+        };
+        let transport = FakeStreamingTransport::new().respond(
+            if route == Route::Create { 201 } else { 200 },
+            &[],
+            vec![FakeChunk::data(response)],
+        );
+        exchange(
+            &transport,
+            &FakeSigner::new(),
+            route,
+            wire,
+            "us-east-1",
+            Instant::now() + Duration::from_secs(5),
+        )
+        .unwrap();
+        let sent = &transport.requests()[0];
+        assert_eq!(sent.body, original.body);
+        assert_eq!(sent.url, original.url);
+        for (k, v) in original.headers.entries() {
+            assert_eq!(sent.headers.get(k), Some(v));
+        }
     }
 }

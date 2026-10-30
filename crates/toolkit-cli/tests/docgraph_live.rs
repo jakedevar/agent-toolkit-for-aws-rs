@@ -958,8 +958,10 @@ fn carrier_rows(c: &str) -> Vec<(Vec<&str>, i32, &'static str)> {
         (
             "neptune memory --live --operation consolidate --confirm-write --confirm-delete \
              --input @ --network-policy @",
-            2,
-            UNAVAILABLE,
+            1,
+            // S4 reads input only after argv consent. A capture/manifest is
+            // not operation input and cannot confer graph/consent authority.
+            "missing graph_id",
         ),
     ];
     table

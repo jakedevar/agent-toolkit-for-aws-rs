@@ -2,7 +2,10 @@
 //! credentials, signing or retry owner and never receive a network connector.
 //! After encoding returns, toolkit signs the captured final bytes and sends
 //! them once outside the SDK runtime. Response bodies stay bounded/streamed.
-use super::{admit, graph_id, object, only, text, DatabaseEndpoint, Duration, Instant, Json, Route, INVALID, UNKNOWN};
+use super::{
+    admit, graph_id, object, only, text, DatabaseEndpoint, Duration, Instant, Json, Route, INVALID,
+    UNKNOWN,
+};
 use aws_sdk_dynamodb::types::AttributeValue;
 use aws_smithy_runtime_api::client::auth::AuthSchemeId;
 use aws_smithy_runtime_api::client::http::{
@@ -359,7 +362,9 @@ pub(super) fn encode(
         Route::Dynamo => format!("https://dynamodb.{region}.amazonaws.com/"),
         Route::Gremlin => return Err(INVALID.into()),
     };
-    if captured.url != expected {return Err(INVALID.into());}
+    if captured.url != expected {
+        return Err(INVALID.into());
+    }
     Ok(captured)
 }
 fn decode_attribute(value: &Json) -> Result<Json, String> {
@@ -500,6 +505,9 @@ pub(super) fn exchange(
         && wire.headers.get("x-amz-target") == Some("DynamoDB_20120810.Query")
         && result.get("Items").is_none()
     {
+        return Err(UNKNOWN.into());
+    }
+    if Instant::now() >= deadline {
         return Err(UNKNOWN.into());
     }
     Ok(result)
