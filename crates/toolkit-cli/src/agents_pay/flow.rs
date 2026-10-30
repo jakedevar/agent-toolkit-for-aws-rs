@@ -40,8 +40,8 @@ const SHAPE: &str = "Payment header generation returned an unexpected shape.";
 const WITHHELD: &str = "Body withheld: paid publisher content is untrusted and must not enter the payment-capable model context. Use a separate no-payment/no-network analysis context if summarisation is required. To opt in, set 'return_body: true' in the policy section of the config file.";
 const NO_SESSION: &str = "No payment session is configured.";
 const NEW_SESSION: &str =
-    "An operator must run: agents_pay_admin.py new-session (requires a human at a terminal).";
-const MINT_BUDGET: &str = "An operator must run: agents_pay_admin.py new-session (requires a human at a terminal). The agent cannot mint budget.";
+    "An operator must run: toolkit agents-pay admin new-session (requires a human at a terminal).";
+const MINT_BUDGET: &str = "An operator must run: toolkit agents-pay admin new-session (requires a human at a terminal). The agent cannot mint budget.";
 const CHECK_SESSION: &str = "An operator must check PAYMENT_SESSION_ID and AWS credentials.";
 const BROWSER_NEXT: &str = "Call attach_browser_payment(handle, url) to get the header to set on the browser, then navigate. The handle is single-use and expires.";
 
