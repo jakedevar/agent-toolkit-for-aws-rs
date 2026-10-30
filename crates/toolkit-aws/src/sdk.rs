@@ -1816,6 +1816,14 @@ mod tests {
     }
 
     #[test]
+    fn unexpected_eof_in_body_is_non_retryable_protocol_error() {
+        let source = std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "truncated body");
+        let error = body_error(&source.into());
+        assert!(matches!(error, AwsError::Protocol), "{error:?}");
+        assert!(!error.is_retryable());
+    }
+
+    #[test]
     fn connector_failures_become_redacted_boundary_errors() {
         let connector = FakeConnector::new(vec![
             Err(Fail::ConnectTimeout),

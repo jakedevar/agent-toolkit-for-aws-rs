@@ -12,6 +12,10 @@ OpenClaw package. The published artifact also contains the canonical
 - Setup discoverability improvements: `1.0.5`
 - AgentCore CLI 0.26.x compat and flag clarity: `1.0.6`
 - Clean-install onboarding and generated-config safety: `1.0.7`
+- `1.1.0`: Rust bridge and shared idempotency token. A purchase started on
+  1.0.7 or earlier and retried across the upgrade may be authorized again,
+  within the per-payment cap and session budget. Sessions, instruments and
+  configuration remain in place.
 
 Do not publish until the package has passed the checks below and the publisher
 has given explicit approval.
@@ -54,6 +58,7 @@ shasum -a 256 <publisher-tools>/plugin-stage   # record: tool checksum
 export PATH="<publisher-tools>:$PATH"
 ```
 
+All five platforms must build and stage; there is no reduced-platform release.
 Record the tool source SHA and checksum in the release evidence. Stage the
 binaries from the same clean release commit (`plugin-stage stage --platform
 all`, then `plugin-stage verify --complete` from the checkout root) before
@@ -102,7 +107,7 @@ Run this before requesting publication approval:
 npx --yes clawhub@0.23.1 package publish . \
   --family code-plugin \
   --name @aws/aws-agents-pay \
-  --version 1.0.7 \
+  --version 1.1.0 \
   --tags latest \
   --source-repo aws/agent-toolkit-for-aws \
   --source-commit <release-commit-sha> \
@@ -124,8 +129,9 @@ only:
 3. Refuse unapproved recipient, value, asset, scheme, network, origin, SSRF,
    and redirect cases before `ProcessPayment`; separately verify explicit
    `allowAnyRecipient` mode retains every non-recipient control.
-4. Confirm signed proofs and paid response bodies never appear in tool output or
-   gateway logs.
+4. Confirm the default withholds paid bodies and known proof echoes are handled
+   by the final-output check in both tool channels. With `returnBody` enabled,
+   the body is untrusted; check that logs do not expose signed proofs.
 5. Complete one approved Base Sepolia payment.
 6. Roll back to the prior plugin and configuration.
 

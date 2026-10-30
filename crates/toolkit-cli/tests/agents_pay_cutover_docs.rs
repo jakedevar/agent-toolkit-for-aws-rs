@@ -23,10 +23,7 @@
 //! Text obligations: `s7_text_*` (L-TERMS, the R-DNS residual, B1, B3, B4, Q21,
 //! Q2, Q3, D23), `s7_inventory_*` and `s7_migration_doc_*`.
 //!
-//! The `OpenClaw` parts belong to `OpenClaw` B5, which edits them on top of this
-//! slice: the `### OpenClaw` subsection of `SKILL.md` and
-//! `references/openclaw-setup.md` are exempt from the content rules below
-//! (`openclaw_exempt`). B5 deletes that exemption when it rewrites them.
+//! `OpenClaw` B5 brings both the subsection and setup reference under R-PORT.
 #[cfg(feature = "agents-pay-live")]
 compile_error!("agents-pay-live is never built for tests (AC3)");
 
@@ -83,36 +80,9 @@ fn pay_pages() -> Vec<Page> {
         .collect()
 }
 
-/// The pages whose content rules apply, with the `OpenClaw` parts removed.
-fn openclaw_exempt(rel: &str, text: &str) -> String {
-    if rel.ends_with(OPENCLAW_REFERENCE) {
-        return String::new();
-    }
-    // Only the two `SKILL.md` copies carry the exempt subsection; a same-named
-    // heading in another page is ordinary content.
-    let Some(start) = rel
-        .ends_with("/SKILL.md")
-        .then(|| text.find(OPENCLAW_HEADING))
-        .flatten()
-    else {
-        return text.to_owned();
-    };
-    let after = text[start..]
-        .find(AFTER_OPENCLAW_HEADING)
-        .map_or(text.len(), |at| start + at);
-    format!("{}{}", &text[..start], &text[after..])
-}
-
-/// Every page the content rules cover: the skill pages minus the `OpenClaw`
-/// parts, plus the `agents-build` payments reference.
+/// All skill pages and the agents-build payments reference are governed.
 fn governed_pages() -> Vec<Page> {
-    let mut pages: Vec<Page> = pay_pages()
-        .into_iter()
-        .map(|page| Page {
-            text: openclaw_exempt(&page.rel, &page.text),
-            rel: page.rel,
-        })
-        .collect();
+    let mut pages = pay_pages();
     pages.push(Page {
         rel: PAYMENTS_REFERENCE.to_owned(),
         text: read(PAYMENTS_REFERENCE),
@@ -353,7 +323,7 @@ struct Documented {
 fn command_words(line: &str) -> Vec<String> {
     let mut words = Vec::new();
     for word in line.split_whitespace() {
-        if word.starts_with('#') || matches!(word, "|" | ">" | ">>" | "&&" | ";" | "<") {
+        if word.starts_with('#') || matches!(word, "|" | ">" | ">>" | "&&" | ";" | "<" | "->") {
             break;
         }
         words.push(word.to_owned());
@@ -362,7 +332,10 @@ fn command_words(line: &str) -> Vec<String> {
 }
 
 fn is_shell_fence(info: &str) -> bool {
-    matches!(info.trim(), "" | "bash" | "sh" | "shell" | "console")
+    matches!(
+        info.trim(),
+        "" | "bash" | "sh" | "shell" | "console" | "text"
+    )
 }
 
 /// Every `toolkit …` line in a shell fence, joined across `\` continuations,
@@ -392,14 +365,34 @@ fn documented_commands(page: &Page) -> Vec<Documented> {
                 if continued {
                     continue;
                 }
-                let words = command_words(&pending);
+                for part in pending.split("  ").filter(|part| !part.trim().is_empty()) {
+                    let words = command_words(part);
+                    if words
+                        .first()
+                        .is_some_and(|word| word.rsplit('/').next() == Some("toolkit"))
+                    {
+                        found.push(Documented {
+                            rel: page.rel.clone(),
+                            words,
+                            inline: false,
+                        });
+                    }
+                }
                 pending.clear();
-                if words.first().map(String::as_str) == Some("toolkit") {
-                    found.push(Documented {
-                        rel: page.rel.clone(),
-                        words,
-                        inline: false,
-                    });
+            }
+            Some(info) if info.trim() == "python" => {
+                if let Some(start) = trimmed.find("[\"toolkit\"") {
+                    if let Some(end) = trimmed[start..].find(']') {
+                        let words = trimmed[start + 1..start + end]
+                            .split(',')
+                            .map(|word| word.trim().trim_matches('"').to_owned())
+                            .collect();
+                        found.push(Documented {
+                            rel: page.rel.clone(),
+                            words,
+                            inline: false,
+                        });
+                    }
                 }
             }
             Some(_) => {}
@@ -408,7 +401,12 @@ fn documented_commands(page: &Page) -> Vec<Documented> {
                 parts.next();
                 for (at, span) in parts.enumerate() {
                     // Odd positions after the first split are code spans.
-                    if at % 2 == 0 && span.starts_with("toolkit ") {
+                    if at % 2 == 0
+                        && span
+                            .split_whitespace()
+                            .next()
+                            .is_some_and(|word| word.rsplit('/').next() == Some("toolkit"))
+                    {
                         found.push(Documented {
                             rel: page.rel.clone(),
                             words: command_words(span),
@@ -431,34 +429,28 @@ fn command_error(doc: &Documented) -> Option<String> {
     {
         return None;
     }
-    let spec = toolkit_cli::COMMANDS
-        .iter()
-        .filter(|spec| words.len() >= spec.path.len() && words[..spec.path.len()] == *spec.path)
-        .max_by_key(|spec| spec.path.len());
-    let Some(spec) = spec else {
-        // A span may name only the start of a route (`toolkit agents-pay admin`).
-        let prefix = doc.inline
-            && toolkit_cli::COMMANDS.iter().any(|spec| {
-                spec.path.len() >= words.len() && spec.path[..words.len()] == words[..]
-            });
-        return (!prefix).then(|| format!("{}: `{}` is not a route", doc.rel, words.join(" ")));
-    };
-    for word in &words[spec.path.len()..] {
-        if let Some(flag) = word.strip_prefix("--") {
-            let name = format!("--{}", flag.split('=').next().unwrap_or(""));
-            let known = spec.flags.contains(&name.as_str())
-                || spec.value_flags.contains(&name.as_str())
-                || spec.repeatable_flags.contains(&name.as_str());
-            if !known {
-                return Some(format!(
-                    "{}: `{name}` is not a flag of `{}`",
-                    doc.rel,
-                    spec.path.join(" ")
-                ));
-            }
-        }
+    if doc.inline
+        && toolkit_cli::COMMANDS
+            .iter()
+            .any(|spec| words.len() < spec.path.len() && spec.path[..words.len()] == words[..])
+    {
+        return None;
     }
-    None
+    let mut args: Vec<String> = words.iter().map(|word| (*word).to_owned()).collect();
+    if doc.inline
+        && toolkit_cli::COMMANDS.iter().any(|spec| {
+            words.len() > spec.path.len()
+                && words[..spec.path.len()] == *spec.path
+                && words.last().is_some_and(|word| {
+                    spec.value_flags.contains(word) || spec.repeatable_flags.contains(word)
+                })
+        })
+    {
+        args.push("VALUE".to_owned());
+    }
+    toolkit_cli::route(toolkit_cli::COMMANDS, &args)
+        .err()
+        .map(|_| format!("{}: invalid command `{}`", doc.rel, words.join(" ")))
 }
 
 #[test]
@@ -502,11 +494,21 @@ fn s7_port_command_check_rejects_seeded_errors() {
     let bad_route = page("```bash\ntoolkit agents-pay admin bogus\n```\n");
     let good = page("```bash\ntoolkit agents-pay admin init-config \\\n  --recipient 0xabc\n```\n");
     let inline = page("Run `toolkit agents-pay admin` first.\n");
+    let bad_path = page("```bash\n./bin/toolkit agents-pay admin new-session --bogus-flag\n```\n");
+    let extra = page("```text\ntoolkit agents-pay admin preflight extra\n```\n");
+    let short = page("```sh\ntoolkit agents-pay admin preflight -z\n```\n");
+    let missing = page("```sh\ntoolkit agents-pay admin init-config --recipient\n```\n");
+    let argv = page("```python\n[\"toolkit\", \"agents-pay\", \"fetch\", url]\n```\n");
     for (seed, bad) in [
         (&bad_flag, true),
         (&bad_route, true),
         (&good, false),
         (&inline, false),
+        (&bad_path, true),
+        (&extra, true),
+        (&short, true),
+        (&missing, true),
+        (&argv, false),
     ] {
         let docs = documented_commands(seed);
         assert_eq!(docs.len(), 1, "{}", seed.text);
@@ -753,12 +755,26 @@ const AGENT_RUN_PHRASES: &[&str] = &[
 /// to the agent.
 fn agent_run_setup_paragraphs(text: &str) -> Vec<String> {
     text.split("\n\n")
+        .flat_map(|paragraph| {
+            if paragraph.trim_start().starts_with('|') {
+                paragraph.lines().collect::<Vec<_>>()
+            } else {
+                vec![paragraph]
+            }
+        })
         .map(flat)
         .filter(|paragraph| {
             let lower = paragraph.to_ascii_lowercase();
-            ["setup-payment-user", "step 6", "instrument/session"]
-                .iter()
-                .any(|needle| lower.contains(needle))
+            [
+                "setup-payment-user",
+                "step 6",
+                "instrument/session",
+                "setup-openclaw",
+                "agents-pay admin",
+                "preflight",
+            ]
+            .iter()
+            .any(|needle| lower.contains(needle))
                 && AGENT_RUN_PHRASES
                     .iter()
                     .any(|phrase| lower.contains(phrase))
@@ -852,7 +868,13 @@ fn s7_human_only_opening_check_rejects_the_old_opening() {
 
 #[test]
 fn s7_human_only_no_page_hands_the_setup_step_to_the_agent() {
-    for page in governed_pages() {
+    let mut pages = governed_pages();
+    let rel = format!("{SKILL_DIR}/packages/openclaw/README.md");
+    pages.push(Page {
+        text: read(&rel),
+        rel,
+    });
+    for page in pages {
         let bad = agent_run_setup_paragraphs(&page.text);
         assert!(bad.is_empty(), "{}: {bad:#?}", page.rel);
     }
@@ -862,6 +884,16 @@ fn s7_human_only_no_page_hands_the_setup_step_to_the_agent() {
 fn s7_human_only_scan_rejects_seeded_agent_run_text() {
     let seeded = "Everything else, 6 (instrument/session), you run automatically.\n\nThe agent runs setup-payment-user for the user.\n";
     assert_eq!(agent_run_setup_paragraphs(seeded).len(), 2);
+    for command in [
+        "setup-openclaw",
+        "agents-pay admin init-config",
+        "preflight",
+    ] {
+        assert_eq!(
+            agent_run_setup_paragraphs(&format!("The agent runs {command} for the user.")).len(),
+            1
+        );
+    }
     let fine = "The agent cannot run setup-payment-user headless; the developer does.\n";
     assert!(agent_run_setup_paragraphs(fine).is_empty());
 }
@@ -897,30 +929,131 @@ fn s7_human_only_step6_and_step8_route_through_the_developer() {
 
 // ------------------------------------------------------- OpenClaw parts
 
+fn safety_claims_are_bounded(text: &str) -> bool {
+    let lower = flat(text).to_ascii_lowercase();
+    !["all secrets are zeroized", "erased from memory"]
+        .iter()
+        .any(|claim| lower.contains(claim))
+}
+
 #[test]
-fn s7_openclaw_subsection_and_setup_page_are_left_for_b5() {
+fn b5_safety_check_rejects_stronger_claims_beside_allowed_text() {
+    for claim in ["all secrets are zeroized", "erased from memory"] {
+        assert!(!safety_claims_are_bounded(&format!(
+            "owned Buffers are zeroed; {claim}"
+        )));
+    }
+}
+
+#[test]
+fn b5_openclaw_cutover_contract() {
     let skill = skill_text();
-    let start = skill
-        .find(OPENCLAW_HEADING)
-        .expect("the OpenClaw subsection");
-    let end = skill
-        .find(AFTER_OPENCLAW_HEADING)
-        .expect("the next subsection");
-    let section = &skill[start..end];
+    let section =
+        &skill[skill.find(OPENCLAW_HEADING).unwrap()..skill.find(AFTER_OPENCLAW_HEADING).unwrap()];
+    let setup = read(&format!("{SKILL_DIR}/references/{OPENCLAW_REFERENCE}"));
+    let operator = read(&format!("{SKILL_DIR}/references/operator-guide.md"));
+    let package = format!("{SKILL_DIR}/packages/openclaw");
+    let readme = read(&format!("{package}/README.md"));
+    let publishing = read(&format!("{package}/PUBLISHING.md"));
+    for (name, text) in [
+        ("skill", section),
+        ("setup", setup.as_str()),
+        ("README", readme.as_str()),
+    ] {
+        assert_mentions(
+            name,
+            text,
+            &[
+                "fixed",
+                "Rust",
+                "owned Buffers",
+                "immutable strings",
+                "fixed refusal",
+            ],
+        );
+    }
+    for (name, text) in [
+        ("skill", section),
+        ("setup", setup.as_str()),
+        ("README", readme.as_str()),
+    ] {
+        assert!(
+            safety_claims_are_bounded(text),
+            "{name} makes an over-strong safety claim"
+        );
+    }
+    for (name, text) in [("skill", section), ("release notes", publishing.as_str())] {
+        assert_mentions(
+            name,
+            text,
+            &[
+                "1.1.0",
+                "authorized again",
+                "per-payment cap",
+                "session budget",
+            ],
+        );
+    }
     assert_mentions(
-        "SKILL.md OpenClaw subsection",
-        section,
+        "setup",
+        &setup,
         &[
-            "openclaw plugins install clawhub:@aws/aws-agents-pay",
-            "**Choose one runtime path.**",
-            "openclaw plugins inspect aws-agents-pay",
+            "toolkit agents-pay admin setup-openclaw",
+            "get_paid_content",
+            "returnBody",
         ],
     );
-    assert!(root()
-        .join(SKILL_DIR)
-        .join("references")
-        .join(OPENCLAW_REFERENCE)
-        .is_file());
+    assert_mentions(
+        "operator",
+        &operator,
+        &["toolkit agents-pay fetch", "get_paid_content"],
+    );
+    assert_mentions(
+        "publishing",
+        &publishing,
+        &[
+            "plugin-stage verify-package --package-root . --complete",
+            "five platforms",
+            "offline",
+            "1.1.0",
+        ],
+    );
+    assert_mentions(
+        "README",
+        &readme,
+        &[
+            "registerTools",
+            "production",
+            "content",
+            "details",
+            "guides the human through setup in a separate terminal",
+        ],
+    );
+    for (name, text) in [("README", &readme), ("setup", &setup), ("skill", &skill)] {
+        assert!(
+            !text.contains("package-local Python"),
+            "{name} still claims a Python runtime"
+        );
+    }
+}
+
+#[test]
+fn b5_openclaw_inventory_is_ported() {
+    let inv = inventory();
+    let rows: Vec<&Value> = inv["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|row| row["issue"].as_u64() == Some(4411))
+        .collect();
+    assert_eq!(rows.len(), 3);
+    for row in rows {
+        assert_eq!(row["status"].as_str(), Some("ported"), "{}", row["path"]);
+        assert!(row["disposition_note"]
+            .as_str()
+            .unwrap_or("")
+            .contains("B5"));
+    }
 }
 
 // ------------------------------------------------------------ inventory
@@ -955,17 +1088,32 @@ fn s7_inventory_payments_policy_rows_are_ported() {
 }
 
 #[test]
-fn s7_inventory_bridge_rows_stay_with_their_owner() {
+fn b5_inventory_bridge_rows_keep_their_classification() {
     let inv = inventory();
-    for row in inv["files"].as_array().unwrap() {
-        if row["issue"].as_u64() == Some(4411) {
-            assert_eq!(
-                row["status"].as_str(),
-                Some("pending"),
-                "{}: #4411 owns this row",
-                row["path"]
-            );
-        }
+    let rows: Vec<&Value> = inv["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|row| row["issue"].as_u64() == Some(4411))
+        .collect();
+    assert_eq!(rows.len(), 3);
+    assert_eq!(
+        rows.iter()
+            .filter(|row| row["classification"] == "toolkit-helper")
+            .count(),
+        1
+    );
+    assert_eq!(
+        rows.iter()
+            .filter(|row| row["classification"] == "test-or-diagnostic")
+            .count(),
+        2
+    );
+    for row in rows {
+        assert!(row["disposition_note"]
+            .as_str()
+            .unwrap_or("")
+            .contains("retirement"));
     }
 }
 

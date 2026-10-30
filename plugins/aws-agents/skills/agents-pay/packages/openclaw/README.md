@@ -5,7 +5,7 @@ through AWS AgentCore Payments. It exposes two runtime tools:
 
 - `get_payment_session_status` checks an operator-provisioned session.
 - `get_paid_content` pays an approved HTTPS resource and returns response
-  metadata and a SHA-256 body digest, never the signed proof or paid body.
+  metadata and a SHA-256 body digest; the body is withheld by default.
 
 Install from ClawHub:
 
@@ -20,9 +20,9 @@ activation. The fastest path is to ask your agent to walk you through it:
 
 > Ask OpenClaw: "help me set up the agents-pay skill"
 
-This drives the bundled skill's interactive setup wizard end-to-end — it
-prompts for AWS credentials, network, recipients, and spend limits, then
-provisions the payment instrument and session for you.
+The skill guides the human through setup in a separate terminal, including
+network, recipients, spend limits, instrument and session approval. Never put
+credentials or setup output in the conversation.
 
 If you'd rather run it yourself, or want to see the raw steps first, open
 [`skills/agents-pay/SKILL.md`](skills/agents-pay/SKILL.md) directly (there is
@@ -39,11 +39,18 @@ The plugin accepts an unconfigured installation state so OpenClaw can load the
 bundled skill before setup. The payment tools validate the complete trusted
 configuration when invoked and fail closed while it is absent or incomplete.
 
-The plugin keeps policy validation and paid HTTP replay in TypeScript. It uses
-the package-local Python virtual environment created during setup for only
-`GetPaymentSession` and `ProcessPayment`, through a fixed helper path with no
-shell. This preserves the standard boto3 AWS credential chain without adding
-the JavaScript AgentCore SDK to the runtime dependency graph.
+The plugin keeps policy validation and paid HTTP replay in TypeScript. Its
+production entry calls registerTools with fixed production dependencies.
+
+The fixed binary table selects the package's platform-specific Rust toolkit;
+unsupported platforms fail closed. The plugin uses a bounded, no-shell bridge.
+Rust builds the ProcessPayment payload from the selected offer. After a proof is
+obtained, the complete result's text and details pass through a Rust known-secret
+scrub after replay. A matching opt-in body is redacted; a metadata or error hit,
+invalid result, or failed check yields a fixed refusal. The scrub covers known
+secrets and supported encodings, not arbitrary transformations. The bridge zeros
+owned Buffers on success and failure; immutable strings and parsed objects cannot
+be reliably zeroized, so their references are dropped and the proof object cleared.
 
 The runtime requires an existing payment manager, instrument, user, and session.
 It cannot provision payment infrastructure or create replacement sessions.
@@ -62,14 +69,13 @@ Required configuration:
   (e.g. `"100000"` = 0.10 USDC at 6 decimals). This is the PER-PAYMENT ceiling;
   it is not a substitute for the session budget, which caps cumulative spend.
 - Optional `returnBody` (boolean, default unset/false). When true,
-  `get_paid_content` returns the actual paid response body (capped at 10 KiB,
+  `get_paid_content` returns the actual paid response body (capped at 10,240 UTF-16 code units,
   marked `untrusted: true`) instead of metadata only. Leave this unset unless
   you have deliberately decided to accept the risk: unsanitized paid content
   may contain prompt injection aimed at the agent. See "Content isolation" in
-  [`references/security-model.md`](../../references/security-model.md) for the
-  full tradeoff. This is a separate, TypeScript-runtime-only setting from the
-  Python `x402_fetch.py` path's `return_body` policy field — set both if you
-  run both runtimes and want consistent behavior.
+  [`references/security-model.md`](../../references/security-model.md) (in the source tree; in the packaged plugin, see `skills/agents-pay/references/security-model.md`) for the
+  full tradeoff. This setting is separate from the `return_body` policy for
+  `toolkit agents-pay fetch`.
 
 The manifest accepts either an unconfigured installation or the complete
 configuration listed above. Partial payment configuration is rejected. Both
