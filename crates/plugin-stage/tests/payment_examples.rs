@@ -154,11 +154,12 @@ fn payment_plugin_dispatcher_is_in_the_plugin_release_layout() {
 #[cfg(unix)]
 #[test]
 fn flattened_skill_preflight_refuses_without_trying_path() {
+    use std::os::unix::fs::PermissionsExt;
+
     let fixture = temp_dir("flattened-payment-skill");
     let marker = fixture.join("wrong-toolkit-ran");
     let wrong = fixture.join("toolkit");
     write(&wrong, &format!("#!/bin/sh\n : > '{}'\n", marker.display()));
-    use std::os::unix::fs::PermissionsExt;
     fs::set_permissions(&wrong, fs::Permissions::from_mode(0o755)).unwrap();
     for page in [
         "plugins/aws-agents/skills/agents-pay/SKILL.md",
