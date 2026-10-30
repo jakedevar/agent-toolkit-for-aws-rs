@@ -40,12 +40,15 @@ in any argument or file) and normalize them offline, following
 
 ```bash
 toolkit documentdb normalize-capture --capture <private-capture.json> --output <analysis.json>
-toolkit documentdb wa-review --cluster-id <cluster-id> --region <region> --analysis-data <analysis.json> --output artifacts/<cluster-id>/
+toolkit documentdb wa-review --live --cluster-id <cluster-id> --region <region> --analysis-data <analysis.json> --output artifacts/<cluster-id>/
 ```
 
 The collection costs one set of read-only commands per collection. Without
-`--analysis-data` only the infrastructure checks run. The Python script above remains
-until the live bindings land (#4886).
+`--analysis-data` only the infrastructure checks run. Select `--live` explicitly
+for AWS infrastructure checks using a release build with `docgraph-live`. The collection statistics remain offline input;
+`--analysis-data` does not select an AWS mode. For offline infrastructure
+replay, replace `--live` with `--recorded <supplied-aws-recording.json>`.
+Without either mode, review fails before reading statistics or writing reports.
 
 ### Step 2: Read the results
 

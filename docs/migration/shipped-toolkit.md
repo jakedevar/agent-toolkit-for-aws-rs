@@ -1,9 +1,10 @@
 # Shipped toolkit for skills (#5586)
 
 The GM ruling on #5586 stages the CLI into each plugin whose skills invoke
-it. `packaging/plugin-binaries.json` is the build authority. Each new
-plugin-root entry enables exactly `ai-models-live` and `docgraph-live` and
-uses the existing five-platform matrix. Generated binaries, dispatchers and
+it. `packaging/plugin-binaries.json` is the build authority. The PM repair
+ruling assigns aws-agents exactly `agents-pay-live`; aws-core and
+aws-startup-advisor retain exactly `ai-models-live` and `docgraph-live`.
+Every entry uses the existing five-platform matrix. Generated binaries, dispatchers and
 manifests remain uncommitted release artifacts.
 
 Plugin-stage now accepts `subprocess` at plugin roots for skill invocations;
@@ -19,7 +20,7 @@ products. The invocation roots are:
 | Plugin | Skill commands | Dispatcher |
 | --- | --- | --- |
 | `aws-core` | `aws-ai-ml` references: `ai-payloads`; future `ai-models` callers in #4720 | `${CLAUDE_PLUGIN_ROOT}/bin/toolkit` |
-| `aws-agents` | `agents-build setup-payment-user`, `agents-pay` setup/admin/fetch | `${CLAUDE_PLUGIN_ROOT}/skills/agents-pay/packages/openclaw/bin/toolkit` |
+| `aws-agents` | `agents-build setup-payment-user`, `agents-pay` setup/admin/fetch | `${CLAUDE_PLUGIN_ROOT}/bin/toolkit` |
 | `aws-startup-advisor` | shared model-lifecycle reference and its vendored copies: `startup model-staleness`; README: `startup skill-refs` | `${CLAUDE_PLUGIN_ROOT}/bin/toolkit` |
 
 `aws-data-analytics` and `aws-agents-for-devsecops` have no toolkit CLI
@@ -28,17 +29,29 @@ text and package names are not invocations. Canonical `aws-ai-ml` content
 is mirrored with `toolkit sync plugin-skills`; startup references use
 `toolkit sync vendored`.
 
-The host substitutes `CLAUDE_PLUGIN_ROOT` with the installed plugin root;
-other hosts use that absolute directory. Dispatchers select the platform
-binary; skill text never names a platform-specific directory or relies on
-PATH. OpenClaw's independently installed extension uses `./bin/toolkit`.
+The repository documents `CLAUDE_PLUGIN_ROOT` in hook/MCP configuration;
+expansion in skill text is only assumed, not verified. Resolve it to the
+absolute installed plugin directory before execution, or substitute that
+directory explicitly. No command relies on PATH. A flattened skill-only
+copy lacks the dispatcher: stop with an instruction to install the full
+aws-agents plugin release or standalone OpenClaw package and supply its
+absolute dispatcher path. OpenClaw separately ships via npm and uses its
+fixed package-relative binary table (`./bin/toolkit` in its directory).
 
-Compatibility decision: keep the existing OpenClaw package entry's
-`["agents-pay-live"]` feature list. The new plugin-root binary has exactly
-the two features in the ruling and therefore cannot perform payments.
-Payment examples, including `agents-build setup-payment-user`, explicitly
-use the payment package dispatcher. Neither payment consent nor credentials
-or spend controls change.
+Inventory check: all aws-agents toolkit invocations are `agents-pay` or
+`agents-build setup-payment-user`, both payment routes. No aws-agents skill
+or reference calls an ai-models or docgraph route, so a feature union is
+unnecessary. Both payment entries retain exactly `["agents-pay-live"]`.
+The plugin-root dispatcher is part of the existing operator-gated plugin
+git release layout; the npm package destination is not added to that tree.
+Neither payment consent nor credentials or spend controls change.
+
+G1 and G1a guard verification/test artifacts, not release destinations.
+T-PKG-NOLIVE previously also pinned the single package destination; it now
+pins both declared payment destinations while retaining its ban on staging
+from tests or verification targets. Only `make plugin-binaries` stages the
+live entries. `toolkit-plugin-check` checks binaries only; `clippy-live`
+lints libraries/binaries only. No test enables `agents-pay-live`.
 
 `default_build.rs` pins the ordinary toolkit CLI's empty default feature
 list and its complete default normal/build feature tree for all targets.
@@ -61,3 +74,7 @@ contracts and never select the live adapter.
 #4720 remains separate: its six legacy scripts and callers are not retired
 here. It can continue after this packaging change lands on rolling. No
 public release is performed by this slice.
+
+A release that includes the aws-agents plugin binaries ships a payment-capable
+`toolkit` (`agents-pay-live`), a real-money surface. The operator must approve
+that payment-capable binary by name; a general release approval does not cover it.

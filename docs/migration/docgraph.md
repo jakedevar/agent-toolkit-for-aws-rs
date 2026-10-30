@@ -12,10 +12,10 @@ landed on `origin/rolling` (`b8204e9d`).
 
 | Command | Replaces |
 | --- | --- |
-| `toolkit documentdb wa-review --cluster-id ID --region R [--recorded FILE] [--analysis-data FILE] [--output DIR] [--now TS]` | `amazon-documentdb/scripts/wa_review.py` |
+| `toolkit documentdb wa-review --cluster-id ID --region R (--live \| --recorded FILE) [--analysis-data FILE] [--output DIR] [--now TS]` | `amazon-documentdb/scripts/wa_review.py` |
 | `toolkit documentdb normalize-capture --capture FILE --output FILE` | the `--uri` collection of `amazon-documentdb/scripts/wa_review.py` (user-run shell recipe + offline normalizer, #5327) |
 | `toolkit neptune validate-input [KEY=VALUE...]` | `amazon-neptune/scripts/input_validator.py` |
-| `toolkit neptune seed [--confirm-wipe] [--endpoint HOST] [--recorded FILE \| --dry-run]` | `amazon-neptune/scripts/seed_test_data.py` |
+| `toolkit neptune seed [--confirm-wipe] [--endpoint HOST] (--live \| --recorded FILE \| --dry-run)` | `amazon-neptune/scripts/seed_test_data.py` |
 | `neptune_test_env.cfn.json` (declarative, no command) | `amazon-neptune/scripts/cdk_test_env.py` |
 
 Each command is one registration line in `lib.rs` (`docgraph::WA_REVIEW`,
@@ -91,11 +91,14 @@ name or value of the file.
 
 ## Intentional changes from the Python
 
-1. **Offline only.** No live AWS client or Gremlin driver exists in this build
-   (as for `bedrock-agent`, `ai-models`, `elasticache`). Without `--recorded`,
-   `wa-review` reports `Cannot describe cluster: aws_connect` (a fail check, exit
-   0 like the script) and a stderr note; `seed` fails with `no live Gremlin
-   client` after the wipe guard. Live bindings are the follow-up.
+1. **Explicit mode required (#5586, #5613).** Review, seed and memory
+   require `--live`, `--recorded FILE`, or an allowed `--dry-run`; no mode
+   fails before work. Live adapters require the opt-in `docgraph-live`
+   release build and applicable consent. Without that feature `--live`
+   fails loudly. `--analysis-data` is offline collection statistics, not
+   an AWS infrastructure mode. Offline review needs a supplied AWS
+   recording; the CLI never invents one. This supersedes the original
+   success-with-failed-infrastructure-check report.
 2. **`--uri`, `--tls-ca-file`, `--tls-allow-invalid-certs` are not accepted.** They
    belong to the `pymongo` collection of `collStats`/`$indexStats`; a
    secret-bearing option that does nothing would only mislead. Use

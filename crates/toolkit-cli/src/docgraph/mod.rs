@@ -141,16 +141,17 @@ pub(crate) const SLICE: crate::registry::Slice = crate::registry::Slice {
         NEPTUNE_SEED,
         NEPTUNE_MEMORY,
     ],
-    synopsis: r"  toolkit documentdb wa-review --cluster-id ID --region R [--recorded FILE | --live]
+    synopsis: r"  toolkit documentdb wa-review --cluster-id ID --region R (--recorded FILE | --live)
       [--analysis-data FILE] [--output DIR] [--now TS] [--network-policy FILE]
   toolkit documentdb normalize-capture --capture FILE --output FILE
   toolkit neptune validate-input [KEY=VALUE...]
-  toolkit neptune seed [--confirm-wipe] [--endpoint HOST] [--recorded FILE | --dry-run | --live]
+  toolkit neptune seed [--confirm-wipe] [--endpoint HOST] (--recorded FILE | --dry-run | --live)
       [--region R] [--network-policy FILE]
-  toolkit neptune memory --operation OP --input FILE [--recorded FILE | --dry-run | --live]
+  toolkit neptune memory --operation OP --input FILE (--recorded FILE | --dry-run | --live)
       [--confirm-write] [--confirm-delete] [--confirm-create] [--region R] [--network-policy FILE]
 ",
-    description: r"  documentdb    DocumentDB Well-Architected review (#4395). wa-review runs the 41
+    description: r"  documentdb    DocumentDB Well-Architected review (#4395). wa-review requires
+                explicit --live or --recorded FILE, and runs the 41 checks:
                 infrastructure checks over recorded AWS responses (--recorded)
                 or live AWS APIs (--live), and database checks over a
                 pre-collected analysis (--analysis-data), and
@@ -163,9 +164,11 @@ pub(crate) const SLICE: crate::registry::Slice = crate::registry::Slice {
                 validate-input checks identifiers before a write call; seed
                 wipes and seeds the test graphs only with --confirm-wipe (or
                 NEPTUNE_SEED_CONFIRM_WIPE=1), replays --recorded responses or
-                prints the statements with --dry-run: this build has no
-                Gremlin or AWS client; --live is reserved and currently refused.
-                memory prints or replays GraphRAG and agent-memory requests.
+                prints the statements with --dry-run. Explicit --live selects
+                the opt-in docgraph-live AWS/Gremlin adapters and requires
+                applicable consent; builds without the feature fail loudly.
+                seed and memory require --live, --recorded FILE or --dry-run.
+                memory prints, replays or sends GraphRAG and agent-memory requests.
                 See docs/migration/docgraph.md.
 ",
     exit_notes: "",

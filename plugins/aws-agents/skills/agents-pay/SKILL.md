@@ -24,14 +24,20 @@ metadata:
 
 # pay
 
-Use the bundled payment dispatcher
-`"${CLAUDE_PLUGIN_ROOT}/skills/agents-pay/packages/openclaw/bin/toolkit"`.
-The host supplies `CLAUDE_PLUGIN_ROOT` as the installed plugin directory;
-use that absolute directory on other hosts. In an installed OpenClaw
-extension use `./bin/toolkit` from the extension directory. This payment
-package enables `agents-pay-live`; the plugin-root toolkit enables model
-and graph features. Human approval and payment policy requirements below
-apply to every invocation.
+Use the plugin release payment dispatcher
+`"${CLAUDE_PLUGIN_ROOT}/bin/toolkit"`, built with `agents-pay-live`.
+Resolve `CLAUDE_PLUGIN_ROOT` to the absolute installed aws-agents plugin directory
+before running a command. The repository documents this variable in hook/MCP
+configuration; expansion in skill text is only assumed, not verified. If the host
+does not supply it, substitute the absolute plugin directory explicitly.
+For a standalone OpenClaw npm install, use `./bin/toolkit` from the installed
+extension directory; that package separately ships its payment build.
+Human approval and payment policy requirements below apply to every invocation.
+
+A flattened skill-only copy does not include the plugin dispatcher. If the root
+is unset or `bin/toolkit` is missing, stop with: "Payment dispatcher unavailable;
+install the full aws-agents plugin release or the standalone OpenClaw package,
+then supply its absolute dispatcher path." Never try a toolkit from PATH.
 
 Let an agent pay for x402-protected content without letting the agent — or
 anything it reads — decide who gets paid, how much, or how often.
@@ -113,7 +119,7 @@ guide:
 - The **agent** runs with the **ProcessPaymentRole**, which can execute a payment
   against an already-approved session but **cannot create one**.
 
-If the agent gets both — or gets shell access to `"${CLAUDE_PLUGIN_ROOT}/skills/agents-pay/packages/openclaw/bin/toolkit" agents-pay admin`
+If the agent gets both — or gets shell access to `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay admin`
 while holding the ManagementRole — it can mint itself a fresh budget whenever it
 exhausts one, and the per-session cap stops bounding anything. AWS says it
 plainly: *"Do not include PaymentSession write permissions ... and ProcessPayment
@@ -142,14 +148,14 @@ path** (the agent). They share resource identifiers and nothing else.
 ```
 ADMIN PATH — human only, holds credentials
   agentcore add payment-manager / payment-connector   (provider secrets via CLI wizard)
-  "${CLAUDE_PLUGIN_ROOT}/skills/agents-pay/packages/openclaw/bin/toolkit" agents-pay admin init-config               -> ~/.agents-pay/config.json (0600)
-  "${CLAUDE_PLUGIN_ROOT}/skills/agents-pay/packages/openclaw/bin/toolkit" agents-pay admin new-session               -> budget-bounded session, typed approval
+  "${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay admin init-config               -> ~/.agents-pay/config.json (0600)
+  "${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay admin new-session               -> budget-bounded session, typed approval
         |
         |  passes ONLY: PAYMENT_MANAGER_ARN, PAYMENT_INSTRUMENT_ID,
         |               PAYMENT_SESSION_ID, PAYMENT_USER_ID
         v
 RUNTIME PATH — spend only; never create
-  "${CLAUDE_PLUGIN_ROOT}/skills/agents-pay/packages/openclaw/bin/toolkit" agents-pay fetch URL           "${CLAUDE_PLUGIN_ROOT}/skills/agents-pay/packages/openclaw/bin/toolkit" agents-pay fetch --status   [read-only]
+  "${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay fetch URL           "${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay fetch --status   [read-only]
         |-- load policy, vet destination      (refuse before any network I/O)
         |-- GET, no redirects, pinned IP, bounded body
         |-- parse 402 challenge strictly
@@ -157,7 +163,7 @@ RUNTIME PATH — spend only; never create
         |-- settle, attach proof, discard it  (proof never returned)
         `-- return metadata + body hash; paid body withheld
 
-  "${CLAUDE_PLUGIN_ROOT}/skills/agents-pay/packages/openclaw/bin/toolkit" agents-pay fetch --browser-handle URL   -> opaque handle, no proof
+  "${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay fetch --browser-handle URL   -> opaque handle, no proof
 ```
 
 The agent cannot create a session, cannot provision infrastructure, cannot read
@@ -170,11 +176,11 @@ Match by role — your runtime may prefix or rename these.
 
 | Role | Command | Who calls it | Model-visible? |
 |---|---|---|---|
-| Pay and fetch content | `"${CLAUDE_PLUGIN_ROOT}/skills/agents-pay/packages/openclaw/bin/toolkit" agents-pay fetch URL` | Agent | Yes — the main tool |
-| Check session usability | `"${CLAUDE_PLUGIN_ROOT}/skills/agents-pay/packages/openclaw/bin/toolkit" agents-pay fetch --status` | Agent | Yes — read-only, cannot mint budget |
-| Pay for a browser navigation | `"${CLAUDE_PLUGIN_ROOT}/skills/agents-pay/packages/openclaw/bin/toolkit" agents-pay fetch --browser-handle URL` | Agent | Yes — returns an **opaque handle**, never the proof |
-| Create a payment session | `"${CLAUDE_PLUGIN_ROOT}/skills/agents-pay/packages/openclaw/bin/toolkit" agents-pay admin new-session` | **Human at a TTY** | No |
-| Provision infrastructure | `agentcore` CLI + `"${CLAUDE_PLUGIN_ROOT}/skills/agents-pay/packages/openclaw/bin/toolkit" agents-pay admin` | **Human** | No |
+| Pay and fetch content | `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay fetch URL` | Agent | Yes — the main tool |
+| Check session usability | `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay fetch --status` | Agent | Yes — read-only, cannot mint budget |
+| Pay for a browser navigation | `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay fetch --browser-handle URL` | Agent | Yes — returns an **opaque handle**, never the proof |
+| Create a payment session | `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay admin new-session` | **Human at a TTY** | No |
+| Provision infrastructure | `agentcore` CLI + `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay admin` | **Human** | No |
 
 The split is the design. An agent can spend an approved, bounded session and ask
 whether it still has budget. It cannot create budget, provision resources, or
@@ -187,7 +193,7 @@ navigation — but it must not reach the model. The command pays, keeps the proo
 inside its own process, and prints an opaque handle plus a redacted receipt:
 
 ```bash
-"${CLAUDE_PLUGIN_ROOT}/skills/agents-pay/packages/openclaw/bin/toolkit" agents-pay fetch --browser-handle https://merchant.example/paid
+"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay fetch --browser-handle https://merchant.example/paid
 # {"paid": true, "handle": "x402h_...", "expires_in_seconds": 90, "receipt": {...}}
 ```
 
@@ -217,17 +223,21 @@ skill's files (`../other-skill/...`) can silently break.
 
 ### Step 0: Prerequisites
 
-`toolkit` must be on `PATH` (the toolkit installer puts it there). Verify it and
+Resolve and check the payment dispatcher as described above, then verify it and
 the AgentCore CLI:
 
 ```bash
-"${CLAUDE_PLUGIN_ROOT}/skills/agents-pay/packages/openclaw/bin/toolkit" help
+if [ -z "${CLAUDE_PLUGIN_ROOT:-}" ] || [ ! -x "${CLAUDE_PLUGIN_ROOT}/bin/toolkit" ]; then
+  printf '%s\n' "Payment dispatcher unavailable; install the full aws-agents plugin release and set its absolute root, or supply the standalone OpenClaw package dispatcher." >&2
+  exit 1
+fi
+"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" help
 agentcore --version
 ```
 
 A `toolkit` build without payment support refuses every payment command:
-`"${CLAUDE_PLUGIN_ROOT}/skills/agents-pay/packages/openclaw/bin/toolkit" agents-pay fetch` answers with a refusal document on stdout and exit 2,
-while every `"${CLAUDE_PLUGIN_ROOT}/skills/agents-pay/packages/openclaw/bin/toolkit" agents-pay admin` command and `toolkit agents-build
+`"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay fetch` answers with a refusal document on stdout and exit 2,
+while every `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay admin` command and `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-build
 setup-payment-user` prints one plain line on stderr and exits 1. Install a
 release build.
 
@@ -260,7 +270,7 @@ agent must never read that file.**
 Until this file exists, every payment is refused. There is no permissive default.
 
 ```bash
-"${CLAUDE_PLUGIN_ROOT}/skills/agents-pay/packages/openclaw/bin/toolkit" agents-pay admin init-config \
+"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay admin init-config \
   --max-per-payment-usd 0.05 \
   --network eip155:84532 \
   --recipient 0xMerchantWalletAddress
@@ -289,13 +299,13 @@ pins these policy keys (use hyphens for the corresponding CLI flags, e.g.
 
 A missing recipient mode denies. Setting both recipient modes is invalid. There
 is no implicit wildcard. USDC contracts come from a pinned table in the admin
-command, so a look-alike contract cannot be pasted in. `"${CLAUDE_PLUGIN_ROOT}/skills/agents-pay/packages/openclaw/bin/toolkit" agents-pay admin
+command, so a look-alike contract cannot be pasted in. `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay admin
 show-config` prints the file back.
 
 ### Step 3: Create a per-user instrument — human runs this
 
 ```bash
-"${CLAUDE_PLUGIN_ROOT}/skills/agents-pay/packages/openclaw/bin/toolkit" agents-pay admin create-instrument --email you@example.com
+"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay admin create-instrument --email you@example.com
 ```
 
 The manager ARN and connector ID are read from `agentcore/.cli/deployed-state.json`
@@ -310,7 +320,7 @@ runtime. Delegation and funding are then done by the **end user** — see
 ### Step 4: Approve a budget-bounded session — human runs this
 
 ```bash
-"${CLAUDE_PLUGIN_ROOT}/skills/agents-pay/packages/openclaw/bin/toolkit" agents-pay admin new-session --budget 1.00 --expiry-minutes 60
+"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay admin new-session --budget 1.00 --expiry-minutes 60
 ```
 
 This prints the parameters and requires typing `approve` **at a TTY**. That typed
@@ -335,7 +345,7 @@ values or command output into chat. For OpenClaw, follow
 export PAYMENT_MANAGER_ARN=...   PAYMENT_INSTRUMENT_ID=...
 export PAYMENT_SESSION_ID=...    PAYMENT_USER_ID=alice
 export AWS_REGION=us-west-2
-"${CLAUDE_PLUGIN_ROOT}/skills/agents-pay/packages/openclaw/bin/toolkit" agents-pay admin preflight
+"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay admin preflight
 ```
 
 After the user confirms that local wiring is complete, the agent may call only
@@ -348,7 +358,7 @@ The consumers of this skill — Claude Code, Codex, Cursor, Kiro, OpenClaw — a
 commands and read files. So the interface is a command, not a framework binding:
 
 ```bash
-"${CLAUDE_PLUGIN_ROOT}/skills/agents-pay/packages/openclaw/bin/toolkit" agents-pay fetch https://merchant.example/paid
+"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay fetch https://merchant.example/paid
 ```
 
 That prints one JSON document — response metadata, body hash, and a redacted
@@ -378,7 +388,7 @@ If the attempts are exhausted the result says so explicitly, including that no d
 charge occurred.
 
 If your harness *does* have a structured tool system (an MCP server, a plugin API),
-wrap the same command: run `"${CLAUDE_PLUGIN_ROOT}/skills/agents-pay/packages/openclaw/bin/toolkit" agents-pay fetch` as a subprocess and return
+wrap the same command: run `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay fetch` as a subprocess and return
 its JSON. The policy gate stays in the path because it is the command itself.
 
 Keep any glue that handles a payment header out of the model's reach.
@@ -394,9 +404,9 @@ Keep any glue that handles a payment header out of the model's reach.
 ### Step 6: Verify the controls, then test
 
 ```bash
-"${CLAUDE_PLUGIN_ROOT}/skills/agents-pay/packages/openclaw/bin/toolkit" agents-pay admin show-config
-"${CLAUDE_PLUGIN_ROOT}/skills/agents-pay/packages/openclaw/bin/toolkit" agents-pay admin preflight
-"${CLAUDE_PLUGIN_ROOT}/skills/agents-pay/packages/openclaw/bin/toolkit" agents-pay fetch --status
+"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay admin show-config
+"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay admin preflight
+"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay fetch --status
 ```
 
 The security regression tests ship with the toolkit's own source and run in its
@@ -406,7 +416,7 @@ or signature.
 
 ## Handling refusals
 
-A refusal is the design working. `"${CLAUDE_PLUGIN_ROOT}/skills/agents-pay/packages/openclaw/bin/toolkit" agents-pay fetch` prints
+A refusal is the design working. `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay fetch` prints
 `{"refused": true, "reason": "..."}`; it never raises into the agent loop.
 
 **If a payment is refused, do not attempt to work around it.** Do not fetch the
@@ -475,7 +485,7 @@ openclaw plugins install clawhub:@aws/aws-agents-pay
 ```
 
 **Choose one runtime path.** OpenClaw uses its TypeScript plugin and
-`get_paid_content`; other hosts use `"${CLAUDE_PLUGIN_ROOT}/skills/agents-pay/packages/openclaw/bin/toolkit" agents-pay fetch`. Do not enable
+`get_paid_content`; other hosts use `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay fetch`. Do not enable
 both. Policy and merchant replay stay in TypeScript. The package stages this
 skill and its references; a human uses the bundled toolkit for administration.
 
@@ -502,7 +512,7 @@ decide whether its runtime surface is safe:
 | Can the model call something that **creates a payment session**? | No — session creation is human-only | Otherwise it mints fresh budget when one runs out, and per-session caps bound nothing |
 
 If either answer is wrong, do not use the plugin's tools for payment. Disable the
-plugin before switching to the `"${CLAUDE_PLUGIN_ROOT}/skills/agents-pay/packages/openclaw/bin/toolkit" agents-pay fetch` path so only one
+plugin before switching to the `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay fetch` path so only one
 payment implementation is active.
 
 Inspect the registered tools with `openclaw plugins inspect aws-agents-pay`.
@@ -514,9 +524,9 @@ The human runs preflight separately in their own terminal:
 
 ### Any other host
 
-Run `"${CLAUDE_PLUGIN_ROOT}/skills/agents-pay/packages/openclaw/bin/toolkit" agents-pay fetch` and `"${CLAUDE_PLUGIN_ROOT}/skills/agents-pay/packages/openclaw/bin/toolkit" agents-pay fetch --status` through the
+Run `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay fetch` and `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay fetch --status` through the
 host's own shell or tool mechanism. Do not hand the model a way to run
-`"${CLAUDE_PLUGIN_ROOT}/skills/agents-pay/packages/openclaw/bin/toolkit" agents-pay admin`, and keep anything that handles a payment header out of
+`"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay admin`, and keep anything that handles a payment header out of
 the model's tool set.
 
 ## How the policy is honored across platforms
@@ -529,7 +539,7 @@ SKILL.md and complies". It is that the sanctioned payment command loads the poli
 before it reaches the signer:
 
 ```
-any harness  ->  shell  ->  "${CLAUDE_PLUGIN_ROOT}/skills/agents-pay/packages/openclaw/bin/toolkit" agents-pay fetch  ->  policy file load
+any harness  ->  shell  ->  "${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay fetch  ->  policy file load
                                                           -> checks, or a refusal
                                                           -> only then a signature
 ```
@@ -595,4 +605,4 @@ one runtime executes at render time before the model sees the content.
 - Retrying one logical purchase reuses one derived idempotency token — no double charge
   while the merchant's terms are unchanged (see L-TERMS under "Known limits")
 - Only HTTPS, publicly routable destinations are fetched; redirects are not followed
-- `"${CLAUDE_PLUGIN_ROOT}/skills/agents-pay/packages/openclaw/bin/toolkit" agents-pay admin preflight` passes
+- `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay admin preflight` passes

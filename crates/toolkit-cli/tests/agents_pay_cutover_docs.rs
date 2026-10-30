@@ -683,12 +683,16 @@ fn s7_text_iam_is_the_outer_boundary_b5() {
 }
 
 #[test]
-fn s7_text_toolkit_on_path_q21() {
+fn s7_text_explicit_payment_dispatcher_q21() {
     let skill = skill_text();
     assert_mentions(
         "SKILL.md",
         &skill,
-        &["`toolkit` must be on `PATH`", "toolkit help"],
+        &[
+            "Payment dispatcher unavailable",
+            "Never try a toolkit from PATH",
+            "toolkit help",
+        ],
     );
 }
 

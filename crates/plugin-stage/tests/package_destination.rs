@@ -1151,8 +1151,12 @@ fn t_pkg_nolive_no_test_target_stages_the_real_declaration() {
         .iter()
         .filter(|binary| binary.features.iter().any(|f| f == "agents-pay-live"))
         .collect();
-    assert_eq!(live.len(), 1, "{live:#?}");
-    assert!(matches!(live[0].destination, Destination::PackageRoot(_)));
+    assert_eq!(live.len(), 2, "{live:#?}");
+    assert!(live.iter().any(|entry| matches!(&entry.destination,
+        Destination::Plugin(plugin) if plugin == "aws-agents")));
+    assert!(live.iter().any(|entry| matches!(&entry.destination,
+        Destination::PackageRoot(package) if package ==
+            "plugins/aws-agents/skills/agents-pay/packages/openclaw")));
 
     // Build-capable entry points never appear in a test source.
     let forbidden = [

@@ -1,15 +1,19 @@
 # payments
 
-Run the commands below with the staged payment package dispatcher under
-the installed `CLAUDE_PLUGIN_ROOT`. It enables `agents-pay-live`, including
-`agents-build setup-payment-user`; the plugin-root toolkit enables model
-and graph features. Other hosts use the absolute installed plugin root.
+Run the commands below with the plugin release dispatcher
+`"${CLAUDE_PLUGIN_ROOT}/bin/toolkit"`. Its build enables `agents-pay-live`,
+including `agents-build setup-payment-user`. Resolve the absolute installed
+aws-agents plugin root first. Expansion of the variable in skill text is
+only assumed, not verified; substitute the absolute directory on other hosts.
+If the dispatcher is absent (including flattened skill-only installs), stop
+and install the full plugin release or standalone OpenClaw package. Never
+search PATH for a replacement.
 
 Add AgentCore Payments to your agent — the managed service that lets your agent pay for x402- and MPP-protected APIs, MCP tools, and web content via microtransactions (Coinbase CDP, Stripe Privy).
 
 AgentCore Payments is **protocol-agnostic**: it supports both **x402** (Coinbase/Cloudflare's HTTP-native stablecoin micropayment protocol) and **MPP** (the Machine Payments Protocol from Stripe and Tempo). Both are exercised through the same `ProcessPayment` API and the same manager/connector/instrument/session resources — the service detects which protocol a merchant speaks from its `402 Payment Required` response and mints the matching payment proof. You do not pick a protocol up front; you provision payments once and the agent can pay either kind of merchant. See **How x402 Payment Works** and **MPP (Machine Payments Protocol)** below for the two wire flows.
 
-The control-plane resources (payment manager, connector, credential provider) are provisioned with the AgentCore **CLI**. The per-user data-plane resources (instrument, session) are created with the AgentCore **SDK** (through `"${CLAUDE_PLUGIN_ROOT}/skills/agents-pay/packages/openclaw/bin/toolkit" agents-build setup-payment-user`). Payments can be wired into the agent in two ways: (1) a **framework-native integration** for Strands (plugin) or LangGraph (middleware) that handles 402 detection, payment signing, and retry transparently — no custom tool code needed, or (2) a **framework-agnostic payment command** (`"${CLAUDE_PLUGIN_ROOT}/skills/agents-pay/packages/openclaw/bin/toolkit" agents-pay fetch`, run from your own tool through a subprocess so the policy gate stays in the path) for any other framework (OpenAI Agents SDK, CrewAI, etc.) or when you need full manual control.
+The control-plane resources (payment manager, connector, credential provider) are provisioned with the AgentCore **CLI**. The per-user data-plane resources (instrument, session) are created with the AgentCore **SDK** (through `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-build setup-payment-user`). Payments can be wired into the agent in two ways: (1) a **framework-native integration** for Strands (plugin) or LangGraph (middleware) that handles 402 detection, payment signing, and retry transparently — no custom tool code needed, or (2) a **framework-agnostic payment command** (`"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay fetch`, run from your own tool through a subprocess so the policy gate stays in the path) for any other framework (OpenAI Agents SDK, CrewAI, etc.) or when you need full manual control.
 
 ## When to use
 
@@ -35,7 +39,7 @@ Do NOT use this skill for:
 **Execution model — minimize human stops, but never take a human-only step.** Run the steps yourself, in order, without pausing between them, except at the **three** points that require the developer. Pause at each and resume once the developer confirms:
 
 - **Step 3b (connector credentials)** — for **Coinbase QuickCreate** (recommended) the developer authorizes through Coinbase in the browser — no secrets; for **Manual** (Coinbase or Stripe) the developer runs the connector command with their secrets. Present the path, then wait for them to confirm the connector is `READY`.
-- **Step 6 (instrument/session)** — the developer runs `"${CLAUDE_PLUGIN_ROOT}/skills/agents-pay/packages/openclaw/bin/toolkit" agents-build setup-payment-user` in their own terminal and types `approve` there. You never run it, never feed it the `approve`, and never ask for its output to be pasted into chat. Hand over the exact command with the user id and email, then wait for them to confirm it finished.
+- **Step 6 (instrument/session)** — the developer runs `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-build setup-payment-user` in their own terminal and types `approve` there. You never run it, never feed it the `approve`, and never ask for its output to be pasted into chat. Hand over the exact command with the user id and email, then wait for them to confirm it finished.
 - **Step 7 (delegation + funding)** — the developer authorizes the wallet and funds it (browser + faucet). Surface the instructions, then wait.
 
 Everything else — Steps 0–3a, **4 (deploy) and 5 (wire)** — you run automatically, without asking permission for each.
@@ -305,42 +309,47 @@ The middleware wraps ALL tool calls, detects 402 from any response format (no `P
 
 #### Step 5b: Framework-agnostic payment command (any framework) — agent runs
 
-Payments are wired by running the toolkit's payment command from the agent's own tool, not by copying payment code into the project — so the same wiring works in any framework and the policy gate stays in the path. The command is `"${CLAUDE_PLUGIN_ROOT}/skills/agents-pay/packages/openclaw/bin/toolkit" agents-pay fetch` (`toolkit` must be on `PATH`). On a `402` it validates the challenge against the operator's policy file, authorizes the payment through AgentCore with one derived idempotency token, replays the paid request, and prints one JSON document (response metadata, body hash and a redacted receipt; never the proof). Exit code `0` means paid or no payment needed, `2` means refused or unconfigured, `1` means an unexpected failure. It reads its identifiers from the environment variables set in Step 8 (`PAYMENT_MANAGER_ARN`, `PAYMENT_INSTRUMENT_ID`, `PAYMENT_SESSION_ID`, `PAYMENT_USER_ID`, `AWS_REGION`) or from the operator's `~/.agents-pay/config.json`, and takes its limits from that policy file, never from the agent. See the `agents-pay` skill for the policy, the session budget and the known limits (L-TERMS: a merchant that changes its offer between retries can be authorized twice, within the cap and the budget).
+Payments are wired by running the toolkit's payment command from the agent's own tool, not by copying payment code into the project — so the same wiring works in any framework and the policy gate stays in the path. The command is `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay fetch`. On a `402` it validates the challenge against the operator's policy file, authorizes the payment through AgentCore with one derived idempotency token, replays the paid request, and prints one JSON document (response metadata, body hash and a redacted receipt; never the proof). Exit code `0` means paid or no payment needed, `2` means refused or unconfigured, `1` means an unexpected failure. It reads its identifiers from the environment variables set in Step 8 (`PAYMENT_MANAGER_ARN`, `PAYMENT_INSTRUMENT_ID`, `PAYMENT_SESSION_ID`, `PAYMENT_USER_ID`, `AWS_REGION`) or from the operator's `~/.agents-pay/config.json`, and takes its limits from that policy file, never from the agent. See the `agents-pay` skill for the policy, the session budget and the known limits (L-TERMS: a merchant that changes its offer between retries can be authorized twice, within the cap and the budget).
 
-Reference snippet: a tool in your own agent that calls the command through a subprocess and returns its JSON to the model. The policy gate stays in the path because the tool runs the command and nothing else.
+Reference snippet: the caller's own agent supplies the absolute payment dispatcher path from the installed aws-agents plugin release (`${CLAUDE_PLUGIN_ROOT}/bin/toolkit` after resolving the plugin root), or the standalone OpenClaw package. A flattened skill copy has no dispatcher: stop and install one of those full distributions; never search PATH. The tool calls the command through a subprocess and returns its JSON to the model. The policy gate stays in the path because the tool runs the command and nothing else. The Rust caller uses Tokio process/time support and serde_json.
 
-```python
-# Reference snippet — a subprocess call; there is no payment code in the project.
-import json
-import subprocess
-
-def pay_fetch(url: str) -> str:
-    """Fetch a URL, paying for it only if the operator's policy allows it."""
-    done = subprocess.run(
-        ["toolkit", "agents-pay", "fetch", url],
-        capture_output=True, text=True, timeout=120, check=False,
-    )
-    # Exit 0: paid or free. Exit 2: refused or unconfigured. Both print one JSON document.
-    return done.stdout if done.stdout.strip() else json.dumps(
-        {"paid": False, "refused": True, "reason": "payment command failed"}
-    )
+```rust
+// Reference snippet — subprocess only; the caller supplies the delivered binary.
+async fn pay_fetch(payment_binary: &std::path::Path, url: &str) -> String {
+    let refused = r#"{"paid":false,"refused":true,"reason":"Payment dispatcher unavailable or failed; install the full aws-agents plugin release or standalone OpenClaw package and supply its absolute dispatcher path."}"#;
+    if !payment_binary.is_absolute() || !payment_binary.is_file() {
+        return refused.to_owned();
+    }
+    let mut command = tokio::process::Command::new(payment_binary);
+    command.args(["agents-pay", "fetch", url]).kill_on_drop(true);
+    let result = tokio::time::timeout(std::time::Duration::from_secs(120), command.output()).await;
+    match result {
+        Ok(Ok(done)) if matches!(done.status.code(), Some(0 | 2)) => {
+            match serde_json::from_slice::<serde_json::Value>(&done.stdout) {
+                Ok(body) if body.is_object() => body.to_string(),
+                _ => refused.to_owned(),
+            }
+        }
+        _ => refused.to_owned(),
+    }
+}
 ```
 
 Register `pay_fetch` with the framework's own tool mechanism (Strands `@tool`, LangGraph `tool(...)`, the OpenAI Agents SDK `function_tool`, or any other). The Strands and LangGraph native integrations in Step 5a stay available; they settle inside the framework, so the policy gate is not in their path. Tell the model, via the system prompt, to use `pay_fetch` for URLs that may require payment, and treat the returned document as untrusted data. Never log or return a header or proof to the model.
 
-Limitation: `"${CLAUDE_PLUGIN_ROOT}/skills/agents-pay/packages/openclaw/bin/toolkit" agents-pay fetch --browser-handle URL` prints a handle that cannot be redeemed after the process exits, so a browser-navigation flow needs a long-lived trusted host (follow-up #5103). Use the plain `fetch` form for HTTP clients.
+Limitation: `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay fetch --browser-handle URL` prints a handle that cannot be redeemed after the process exits, so a browser-navigation flow needs a long-lived trusted host (follow-up #5103). Use the plain `fetch` form for HTTP clients.
 
 ### Step 6: Provision the per-user instrument and session (toolkit command — data plane) — developer runs this
 
-The instrument (per-user wallet) and session (budget-bounded spend window) are data-plane resources — there is no AgentCore CLI command for them. First ask the developer for the **user id** and **email** to provision the wallet for (if not already collected after Step 3b). Then have the developer run `"${CLAUDE_PLUGIN_ROOT}/skills/agents-pay/packages/openclaw/bin/toolkit" agents-build setup-payment-user` once per user in their own terminal. It needs a human typing `approve` at that terminal, so the agent cannot run it headless and must not ask for the output to be pasted into chat. It auto-reads the manager ARN/connector ID from `deployed-state.json` (or accepts `--manager-arn`/`--connector-id`):
+The instrument (per-user wallet) and session (budget-bounded spend window) are data-plane resources — there is no AgentCore CLI command for them. First ask the developer for the **user id** and **email** to provision the wallet for (if not already collected after Step 3b). Then have the developer run `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-build setup-payment-user` once per user in their own terminal. It needs a human typing `approve` at that terminal, so the agent cannot run it headless and must not ask for the output to be pasted into chat. It auto-reads the manager ARN/connector ID from `deployed-state.json` (or accepts `--manager-arn`/`--connector-id`):
 
 ```bash
-"${CLAUDE_PLUGIN_ROOT}/skills/agents-pay/packages/openclaw/bin/toolkit" agents-build setup-payment-user --user-id alice --email alice@example.com --budget 5
+"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-build setup-payment-user --user-id alice --email alice@example.com --budget 5
 ```
 
 It creates the instrument (with the email in `linkedAccounts`) and a budget-bounded session, then prints the `export` lines for `PAYMENT_INSTRUMENT_ID` / `PAYMENT_SESSION_ID` / `PAYMENT_USER_ID` (used in Step 8), plus the `wallet_address` and `redirect_url` (used in Step 7). The command is the canonical data-plane path — do not hand-write the SDK calls.
 
-**LangGraph with `auto_session=True`**: If you used Step 5a with LangGraph and set `auto_session=True`, you only need the instrument from this step — skip the session creation. The middleware creates a session automatically on the first 402. You still need to run `"${CLAUDE_PLUGIN_ROOT}/skills/agents-pay/packages/openclaw/bin/toolkit" agents-build setup-payment-user` for the instrument (do NOT use the --budget flag as that will create a session).
+**LangGraph with `auto_session=True`**: If you used Step 5a with LangGraph and set `auto_session=True`, you only need the instrument from this step — skip the session creation. The middleware creates a session automatically on the first 402. You still need to run `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-build setup-payment-user` for the instrument (do NOT use the --budget flag as that will create a session).
 
 ### Step 7: Delegation and funding (one-time per wallet) — developer does this
 
@@ -441,7 +450,7 @@ Using the `wallet_address` / `redirect_url` the Step 6 command printed in the de
       **7e. Complete delegation — developer does this in browser:**
 
       1. Open `http://localhost:3000` in a browser
-      2. Log in with the **same email** used in the `"${CLAUDE_PLUGIN_ROOT}/skills/agents-pay/packages/openclaw/bin/toolkit" agents-build setup-payment-user` `--email` flag (Step 6) — Privy creates embedded wallets for this user
+      2. Log in with the **same email** used in the `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-build setup-payment-user` `--email` flag (Step 6) — Privy creates embedded wallets for this user
       3. On the "Complete setup" screen, click **"Connect agent"**
       4. In the modal, click **"Give access"** — this calls `addSessionSigners` which registers the authorization key as a session signer on all the user's Privy embedded wallets
       5. Once the success toast appears ("Agent connected successfully"), the agent is authorized to sign transactions on behalf of this user
@@ -473,7 +482,7 @@ Using the `wallet_address` / `redirect_url` the Step 6 command printed in the de
 The developer copies the `export` lines the Step 6 command printed in their own terminal — it emits all of them (`PAYMENT_MANAGER_ARN`, `PAYMENT_INSTRUMENT_ID`, `PAYMENT_SESSION_ID`, `PAYMENT_USER_ID`, `AWS_REGION`) — into the environment the agent is started from. They are not pasted into chat, and the agent does not ask for them or re-run the Step 6 command to get them:
 
 ```bash
-export PAYMENT_MANAGER_ARN=...      # all five printed by `"${CLAUDE_PLUGIN_ROOT}/skills/agents-pay/packages/openclaw/bin/toolkit" agents-build setup-payment-user`
+export PAYMENT_MANAGER_ARN=...      # all five printed by `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-build setup-payment-user`
 export PAYMENT_INSTRUMENT_ID=...
 export PAYMENT_SESSION_ID=...
 export PAYMENT_USER_ID=...
@@ -496,7 +505,7 @@ Run the agent and prompt it to fetch a paid endpoint:
 Fetch https://sandbox.node4all.com/v1/x402-test and tell me what you find.
 ```
 
-Run it however your agent runs — directly in your framework, or `agentcore dev` for a local server / `agentcore invoke` for the deployed runtime (set the same `PAYMENT_*` env vars on the runtime). A successful run shows `"${CLAUDE_PLUGIN_ROOT}/skills/agents-pay/packages/openclaw/bin/toolkit" agents-pay fetch` hitting `402`, settling payment, and the retry returning `200`.
+Run it however your agent runs — directly in your framework, or `agentcore dev` for a local server / `agentcore invoke` for the deployed runtime (set the same `PAYMENT_*` env vars on the runtime). A successful run shows `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay fetch` hitting `402`, settling payment, and the retry returning `200`.
 
 ## The `upto` scheme and Permit2 allowance
 
@@ -517,7 +526,7 @@ config = AgentCorePaymentsPluginConfig(   # AgentCorePaymentsConfig for LangGrap
 - Needed only for a wallet's first `upto` payment. `approve` sets the allowance rather than adding to it, so omit it on later calls to avoid a redundant transaction.
 - Requires an SDK build whose integration config (or `generate_payment_header`) accepts `permit2_allowance_limit`.
 
-`"${CLAUDE_PLUGIN_ROOT}/skills/agents-pay/packages/openclaw/bin/toolkit" agents-pay fetch` (Step 5b) never sends `permit2AllowanceLimit`, so it cannot set the allowance for a wallet's first `upto` payment; set it through the framework-native integration (Step 5a) first.
+`"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay fetch` (Step 5b) never sends `permit2AllowanceLimit`, so it cannot set the allowance for a wallet's first `upto` payment; set it through the framework-native integration (Step 5a) first.
 
 ## Debugging payments
 
@@ -530,7 +539,7 @@ config = AgentCorePaymentsPluginConfig(   # AgentCorePaymentsConfig for LangGrap
 **Agent sees 402 but does not pay:**
 
 1. Verify `PAYMENT_MANAGER_ARN` env var is set and not None
-2. Check that the agent is calling the `pay_fetch` tool that runs `"${CLAUDE_PLUGIN_ROOT}/skills/agents-pay/packages/openclaw/bin/toolkit" agents-pay fetch` (not a generic `http_request`)
+2. Check that the agent is calling the `pay_fetch` tool that runs `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay fetch` (not a generic `http_request`)
 3. Verify the x402 challenge is present in either the response body (`x402Version` + `accepts` fields) or the `payment-required` header
 
 **ProcessPayment fails with "Failed to obtain resource payment token":**
@@ -706,7 +715,7 @@ config = AgentCorePaymentsPluginConfig(   # AgentCorePaymentsConfig for LangGrap
 - **"Missing server configuration" from /api/check-signers**: One or more env vars (`NEXT_PUBLIC_PRIVY_APP_ID`, `PRIVY_APP_SECRET`, `NEXT_PUBLIC_PRIVY_SIGNER_ID`) are not set in the frontend's `.env.local`. Map them from the `*_STRIPE_PRIVY_APP_ID` / `*_STRIPE_PRIVY_APP_SECRET` / `*_STRIPE_PRIVY_AUTHORIZATION_ID` keys in `agentcore/.env.local` (Step 7b). Two things make a straight file copy fail: the frontend uses different key names, and the connector's keys are namespaced `AGENTCORE_CREDENTIAL_<MANAGER>_<CONNECTOR>_STRIPE_PRIVY_*` — so grep the suffix, not the bare name. `cut -d= -f1` on the frontend's `.env.local` shows which keys actually landed.
 - **Login fails or no wallets appear**: The Privy app may not have embedded wallets enabled. In Privy Dashboard > Wallet Infrastructure, ensure embedded wallets are configured for the relevant chains (Ethereum/Solana).
 - **"Give access" succeeds but payments still fail with "Wallet policy denied"**: The `NEXT_PUBLIC_PRIVY_SIGNER_ID` in the frontend doesn't match the Authorization ID used in the payment connector (Step 3b). Re-derive it from the `*_STRIPE_PRIVY_AUTHORIZATION_ID` key in `agentcore/.env.local` rather than retyping it from the dashboard.
-- **User logged in with wrong email**: The email must match the one passed to `"${CLAUDE_PLUGIN_ROOT}/skills/agents-pay/packages/openclaw/bin/toolkit" agents-build setup-payment-user --email`. If mismatched, the instrument points to a different Privy user's wallets. Log out, log back in with the correct email.
+- **User logged in with wrong email**: The email must match the one passed to `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-build setup-payment-user --email`. If mismatched, the instrument points to a different Privy user's wallets. Log out, log back in with the correct email.
 - **Port conflict**: If the agent's own server is on port 3000, the frontend auto-selects another port. Check the terminal output for the actual URL — and allowlist that port (Step 7d), otherwise login fails.
 
 **None of the errors above match what you are seeing?**
@@ -719,17 +728,17 @@ config = AgentCorePaymentsPluginConfig(   # AgentCorePaymentsConfig for LangGrap
 - **Credential rotation**: Rotate payment provider credentials periodically. Recreate the credential provider with updated values.
 - **Budget/spend limits**: Use Payment Session `expiryTimeInMinutes` and per-session budget controls to prevent runaway payments.
 - **Audit logging**: Verify CloudTrail is logging all `bedrock-agentcore` API calls, especially `ProcessPayment`. For production, set up a CloudWatch alarm for failed payment attempts as a potential abuse indicator.
-- **SSRF mitigation**: `"${CLAUDE_PLUGIN_ROOT}/skills/agents-pay/packages/openclaw/bin/toolkit" agents-pay fetch` enforces HTTPS-only and blocks private IP ranges to prevent fetching internal endpoints.
+- **SSRF mitigation**: `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay fetch` enforces HTTPS-only and blocks private IP ranges to prevent fetching internal endpoints.
 - **Least privilege**: The IAM service role should only have the minimum permissions required (token-vault, workload-identity, secrets access).
 - **Session expiry**: Keep payment sessions short-lived (60 minutes or less). Create fresh sessions per user interaction rather than reusing long-lived ones.
-- **Encryption in transit**: All payment requests must use HTTPS. `"${CLAUDE_PLUGIN_ROOT}/skills/agents-pay/packages/openclaw/bin/toolkit" agents-pay fetch` rejects non-HTTPS URLs.
+- **Encryption in transit**: All payment requests must use HTTPS. `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay fetch` rejects non-HTTPS URLs.
 
 For comprehensive security guidance, see the [AgentCore Security documentation](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/security.html).
 
 ## How x402 Payment Works (End-to-End)
 
 ```
-Agent runs: "${CLAUDE_PLUGIN_ROOT}/skills/agents-pay/packages/openclaw/bin/toolkit" agents-pay fetch https://paid-api.example.com/data
+Agent runs: "${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay fetch https://paid-api.example.com/data
   │
   ├─ 1. HTTP GET → 402 Payment Required
   │     Body: {"x402Version": 1, "accepts": [{"scheme": "exact", "network": "base-sepolia", ...}]}
@@ -879,7 +888,7 @@ For testing, start with **Base Sepolia** (network: `ETHEREUM`, chain: `BASE_SEPO
 - Data plane (instrument, session) is created via the SDK script, not hand-written code
 - If the project is Strands or LangGraph, the native integration (Step 5a) is offered first as the simpler path
 - The generic tool path (Step 5b) is used only for other frameworks or when the developer explicitly wants manual control
-- Payments are wired via the framework-native integration (Step 5a) or the framework-agnostic `"${CLAUDE_PLUGIN_ROOT}/skills/agents-pay/packages/openclaw/bin/toolkit" agents-pay fetch` command (Step 5b)
+- Payments are wired via the framework-native integration (Step 5a) or the framework-agnostic `"${CLAUDE_PLUGIN_ROOT}/bin/toolkit" agents-pay fetch` command (Step 5b)
 - Both x402 and MPP merchants are payable through the same manager/connector/instrument/session and the same `ProcessPayment` API — no protocol is chosen up front
 - Tempo/MPP endpoints are paid on a **StripePrivy** connector (Coinbase-managed instruments cannot pay Tempo), funded with the network's canonical stablecoin (pathUSD on Moderato via the Tempo faucet) — not the x402 Base Sepolia + Circle path
 - For MPP, the raw `WWW-Authenticate: Payment` header is forwarded verbatim (one per call) and the returned `paymentCredential` is attached as `Authorization: Payment <token>` unchanged

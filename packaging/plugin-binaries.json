@@ -23,7 +23,7 @@
       "name": "toolkit",
       "package": "toolkit-cli",
       "bin": "toolkit",
-      "features": ["ai-models-live", "docgraph-live"],
+      "features": ["agents-pay-live"],
       "role": "subprocess",
       "consumer": "#5586"
     },

@@ -18,7 +18,7 @@ fn repo_declaration() -> Declaration {
 }
 
 #[test]
-fn skill_plugins_ship_toolkit_with_the_two_live_features() {
+fn skill_plugins_ship_toolkit_with_the_required_live_features() {
     let declaration = repo_declaration();
     for plugin in ["aws-core", "aws-agents", "aws-startup-advisor"] {
         let binary = declaration
@@ -26,7 +26,12 @@ fn skill_plugins_ship_toolkit_with_the_two_live_features() {
             .unwrap_or_else(|| panic!("{plugin} must stage toolkit"));
         assert_eq!(binary.package, "toolkit-cli");
         assert_eq!(binary.bin, "toolkit");
-        assert_eq!(binary.features, ["ai-models-live", "docgraph-live"]);
+        let expected = if plugin == "aws-agents" {
+            vec!["agents-pay-live"]
+        } else {
+            vec!["ai-models-live", "docgraph-live"]
+        };
+        assert_eq!(binary.features, expected);
         assert_eq!(binary.role, plugin_stage::Role::Subprocess);
     }
     // The separately distributed payment package retains its live payment build.
