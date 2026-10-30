@@ -146,3 +146,7 @@ docgraph-gremlin:
 
 clippy-gremlin:
 	cargo clippy -p toolkit-aws --features gremlin --all-targets --locked -- -D warnings
+
+# S4 ordered memory dispatch and wire contracts; every backend is injected.
+docgraph-memory:
+	cargo test -p toolkit-cli --features docgraph-live --locked --lib docgraph::live_memory::
