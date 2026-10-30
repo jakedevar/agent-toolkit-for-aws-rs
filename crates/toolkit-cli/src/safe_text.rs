@@ -1964,7 +1964,7 @@ mod tests {
         assert_eq!(shown, REDACTED);
         assert!(work < 2_000_000, "{work} matcher steps");
         assert!(work <= known.work_bound(echo.len()));
-        let many: Vec<String> = (1..=64)
+        let many: Vec<String> = (1..=128)
             .map(|n| format!("password={}", "\\".repeat(n)))
             .collect();
         let known = CallerText::from_args(&many);
