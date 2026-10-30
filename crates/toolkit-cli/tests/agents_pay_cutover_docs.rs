@@ -1003,10 +1003,23 @@ fn b5_inventory_bridge_rows_keep_their_classification() {
         .filter(|row| row["issue"].as_u64() == Some(4411))
         .collect();
     assert_eq!(rows.len(), 3);
-    assert_eq!(rows.iter().filter(|row| row["classification"] == "toolkit-helper").count(), 1);
-    assert_eq!(rows.iter().filter(|row| row["classification"] == "test-or-diagnostic").count(), 2);
+    assert_eq!(
+        rows.iter()
+            .filter(|row| row["classification"] == "toolkit-helper")
+            .count(),
+        1
+    );
+    assert_eq!(
+        rows.iter()
+            .filter(|row| row["classification"] == "test-or-diagnostic")
+            .count(),
+        2
+    );
     for row in rows {
-        assert!(row["disposition_note"].as_str().unwrap_or("").contains("retirement"));
+        assert!(row["disposition_note"]
+            .as_str()
+            .unwrap_or("")
+            .contains("retirement"));
     }
 }
 
