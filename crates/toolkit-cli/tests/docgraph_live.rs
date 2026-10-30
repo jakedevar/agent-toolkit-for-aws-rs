@@ -47,6 +47,8 @@ fn live_wipe_ignores_ambient_confirmation() {
         "neptune",
         "seed",
         "--live",
+        "--endpoint",
+        SEED_HOST,
         "--network-policy",
         "/does/not/exist",
     ]);
@@ -168,6 +170,54 @@ fn live_selection_is_unavailable_without_feature() {
 }
 
 // ---- T-DG-05c/d (S3, #5515): live seed consent, then the policy, then the network ----
+
+#[test]
+#[cfg(feature = "docgraph-live")]
+fn live_seed_requires_standard_endpoint_before_side_effects() {
+    let network = ForbiddenNetwork::start();
+    let fake = format!("127.0.0.1:{}", network.port);
+    let dir = std::env::temp_dir().join(format!("docgraph-01b-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    for endpoint in [
+        None,
+        Some("localhost"),
+        Some("127.0.0.1"),
+        Some("example.com"),
+        Some("db.us-east-1.neptune-graph.amazonaws.com"),
+        Some("db.us-east-1.neptune.amazonaws.com:8182"),
+        Some("DB.us-east-1.neptune.amazonaws.com"),
+        Some("db.invalid.neptune.amazonaws.com"),
+    ] {
+        for confirm in [false, true] {
+            let mut args = vec![
+                "neptune",
+                "seed",
+                "--live",
+                "--network-policy",
+                "/does/not/exist",
+            ];
+            if confirm {
+                args.push("--confirm-wipe");
+            }
+            if let Some(host) = endpoint {
+                args.extend(["--endpoint", host]);
+            }
+            let out = run_hostile(&args, &dir, &fake);
+            let stderr = String::from_utf8(out.stderr).unwrap();
+            assert_eq!(
+                out.status.code(),
+                Some(2),
+                "{endpoint:?}, {confirm}: {stderr}"
+            );
+            assert!(out.stdout.is_empty());
+            assert!(stderr.contains("--endpoint"), "{stderr}");
+            assert!(!stderr.contains("/does/not/exist"));
+        }
+    }
+    assert_eq!(network.accepted(), 0);
+    assert!(provider_never_ran(&dir));
+    std::fs::remove_dir_all(&dir).unwrap();
+}
 
 #[cfg(feature = "docgraph-live")]
 const SEED_HOST: &str = "db.cluster-abc.us-east-1.neptune.amazonaws.com";
