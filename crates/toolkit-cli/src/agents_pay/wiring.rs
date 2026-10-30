@@ -2,13 +2,12 @@
 //!
 //! The merchant plane and the `AgentCore` data plane both carry the proof,
 //! so both trust exactly the environment-independent [`PaymentRoots`]
-//! (one allocation, T-PROOTS-USE). Credential-provider HTTP keeps the S1
-//! provider roots. These helpers build values only: no I/O, no credentials.
+//! (one allocation, T-PROOTS-USE). Credential-provider HTTP shares those
+//! roots too. These helpers build values only: no I/O, no credentials.
 
 use std::sync::Arc;
 
 use toolkit_aws::endpoint::HostResolver;
-use toolkit_aws::sdk::roots::ValidatedRoots;
 use toolkit_aws::sdk::roots_payment::PaymentRoots;
 use toolkit_aws::sdk::source::ProviderHttp;
 use toolkit_aws::sdk::{SdkRuntime, SdkTransport};
@@ -20,7 +19,7 @@ pub struct PaymentPlanes {
     pub merchant: SdkTransport,
     /// `ProcessPayment` and `GetPaymentSession`: payment roots.
     pub agentcore: SdkTransport,
-    /// Credential-provider HTTP (STS, SSO, IMDS, ECS): S1 provider roots.
+    /// Credential-provider HTTP (STS, SSO, IMDS, ECS): payment platform roots.
     pub provider: ProviderHttp,
 }
 
@@ -32,13 +31,12 @@ impl PaymentPlanes {
     pub fn build(
         runtime: &SdkRuntime,
         payment: &PaymentRoots,
-        provider: &ValidatedRoots,
         resolver: Arc<dyn HostResolver + Send + Sync>,
     ) -> Result<Self, AwsError> {
         Ok(Self {
             merchant: merchant_transport(runtime, payment, resolver)?,
             agentcore: agentcore_transport(runtime, payment)?,
-            provider: ProviderHttp::validated(provider)?,
+            provider: ProviderHttp::validated(payment.roots())?,
         })
     }
 }

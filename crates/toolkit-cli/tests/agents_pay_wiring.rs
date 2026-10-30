@@ -1,7 +1,7 @@
 //! T-PROOTS-USE (x402 S5 #5352, design R-TLS-PAY "Which roots each plane
 //! uses"): the merchant and `AgentCore` data-plane transports trust the very
-//! `PaymentRoots` allocation the wiring was given, and provider HTTP trusts
-//! the S1 provider roots. Roots come from injected loaders over a checked-in
+//! `PaymentRoots` allocation the wiring was given, including provider HTTP.
+//! Roots come from injected loaders over a checked-in
 //! test certificate; nothing is opened or sent (G4).
 #![cfg(feature = "aws-sdk")]
 #[cfg(feature = "agents-pay-live")]
@@ -10,9 +10,7 @@ compile_error!("agents-pay-live is never built for tests (AC3)");
 use std::path::Path;
 use std::sync::Arc;
 
-use toolkit_aws::sdk::roots::{
-    validate_roots, LoadedCerts, RootEnv, RootLoader, RootPlatform, ValidatedRoots,
-};
+use toolkit_aws::sdk::roots::{LoadedCerts, RootEnv};
 use toolkit_aws::sdk::roots_payment::{
     validate_payment_roots, PaymentRootLoader, PaymentRootPlatform, PaymentRoots,
 };
@@ -53,22 +51,6 @@ impl PaymentRootLoader for TableLoader {
     }
 }
 
-struct ProviderLoader;
-impl RootLoader for ProviderLoader {
-    fn load_file(&self, _path: &Path) -> LoadedCerts {
-        test_root()
-    }
-    fn load_dir(&self, _path: &Path) -> LoadedCerts {
-        LoadedCerts::default()
-    }
-    fn load_native(&self) -> LoadedCerts {
-        test_root()
-    }
-    fn load_probe(&self) -> LoadedCerts {
-        test_root()
-    }
-}
-
 fn payment_roots() -> PaymentRoots {
     validate_payment_roots(
         &RootEnv::default(),
@@ -78,32 +60,51 @@ fn payment_roots() -> PaymentRoots {
     .expect("payment roots")
 }
 
-fn provider_roots() -> ValidatedRoots {
-    validate_roots(
-        &RootEnv {
-            file: Some("/fixture/provider.pem".into()),
-            dir: None,
-        },
-        &ProviderLoader,
-        RootPlatform::current(),
-    )
-    .expect("provider roots")
-}
-
 #[test]
-fn t_proots_use_proof_planes_share_the_payment_roots_and_providers_keep_s1_roots() {
+fn t_proots_use_every_payment_plane_shares_platform_roots() {
     let runtime = SdkRuntime::new().unwrap();
     let payment = payment_roots();
-    let provider = provider_roots();
     let planes =
-        wiring::PaymentPlanes::build(&runtime, &payment, &provider, Arc::new(PublicResolver))
-            .unwrap();
+        wiring::PaymentPlanes::build(&runtime, &payment, Arc::new(PublicResolver)).unwrap();
     let merchant = planes.merchant.roots().expect("merchant roots");
     let agentcore = planes.agentcore.roots().expect("agentcore roots");
     assert!(merchant.same_allocation(payment.roots()));
     assert!(agentcore.same_allocation(payment.roots()));
     let provider_plane = planes.provider.roots().expect("provider roots");
-    assert!(provider_plane.same_allocation(&provider));
-    assert!(!provider_plane.same_allocation(payment.roots()));
-    assert!(!merchant.same_allocation(&provider));
+    assert!(provider_plane.same_allocation(payment.roots()));
+}
+
+#[test]
+fn live_fetch_and_admin_constructors_only_load_platform_payment_roots() {
+    use syn::visit::Visit;
+    struct Constructors(usize);
+    impl<'ast> Visit<'ast> for Constructors {
+        fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
+            if let syn::Expr::Path(path) = call.func.as_ref() {
+                let names: Vec<_> = path
+                    .path
+                    .segments
+                    .iter()
+                    .map(|s| s.ident.to_string())
+                    .collect();
+                assert!(
+                    !names
+                        .iter()
+                        .any(|s| s == "ValidatedRoots" || s == "RootEnv"),
+                    "live payment constructor accepts environment roots: {names:?}"
+                );
+                if names == ["PaymentRoots", "from_process"] {
+                    self.0 += 1;
+                }
+            }
+            syn::visit::visit_expr_call(self, call);
+        }
+    }
+    let source = syn::parse_file(include_str!("../src/agents_pay/live.rs")).unwrap();
+    let mut constructors = Constructors(0);
+    constructors.visit_file(&source);
+    assert_eq!(
+        constructors.0, 2,
+        "fetch and admin must each load payment roots"
+    );
 }

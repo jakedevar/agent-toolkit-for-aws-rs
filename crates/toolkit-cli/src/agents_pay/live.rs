@@ -4,7 +4,7 @@
 //! build enables (G1, G5; the G1a guards refuse it in every test target).
 //! It builds the real pieces: the config opener on the OS-account home, the
 //! process environment, `SystemResolver`, `PaymentRoots::from_process()`
-//! for the proof-bearing planes, S1 provider roots for credential HTTP, the
+//! for every payment plane, including credential HTTP and administration, the
 //! guarded credential chain, `SigV4` and the system clock. G3 refuses test
 //! identities before any service is contacted.
 #![cfg(feature = "agents-pay-live")]
@@ -13,7 +13,6 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
 use toolkit_aws::endpoint::HostResolver;
-use toolkit_aws::sdk::roots::ValidatedRoots;
 use toolkit_aws::sdk::roots_payment::PaymentRoots;
 use toolkit_aws::sdk::source::{GuardedCredentials, ProviderHttp, RequestCredentials};
 use toolkit_aws::sdk::{SdkRuntime, SdkTransport, SigV4Signer};
@@ -160,22 +159,18 @@ pub struct World {
 }
 
 impl World {
-    /// Build the live world: payment roots for the proof-bearing planes,
-    /// provider roots for credential HTTP.
+    /// Build the live world with shared platform roots for every HTTP plane.
     ///
     /// # Errors
-    /// [`Unavailable`] with the fixed R-PROOTS or R-ROOTS text, or the
-    /// generic text when the runtime cannot start.
+    /// [`Unavailable`] with the fixed R-PROOTS text, or the generic text when
+    /// the runtime cannot start.
     pub fn for_process() -> Result<Self, Unavailable> {
         let payment = PaymentRoots::from_process()
             .map_err(|failure| Unavailable(failure.message().to_owned()))?;
-        let provider =
-            ValidatedRoots::from_process().map_err(|failure| Unavailable(failure.message()))?;
         let generic = |_| Unavailable("RuntimeError during payment flow.".to_owned());
         let runtime = SdkRuntime::new().map_err(generic)?;
         let resolver: Arc<dyn HostResolver + Send + Sync> = Arc::new(SystemResolver);
-        let planes =
-            PaymentPlanes::build(&runtime, &payment, &provider, resolver).map_err(generic)?;
+        let planes = PaymentPlanes::build(&runtime, &payment, resolver).map_err(generic)?;
         Ok(Self {
             runtime,
             agentcore: planes.agentcore,
@@ -333,8 +328,8 @@ impl super::admin::AdminRandom for LiveRandom {
     }
 }
 
-/// One opened admin client: S1 roots (design: admin keeps R-ROOTS), a
-/// signer over the guarded chain and the region.
+/// One opened admin client: platform payment roots (R-TLS-PAY r2), a signer
+/// over the guarded chain and the region.
 struct LiveAdminApi<'w> {
     transport: &'w SdkTransport,
     signer: SigV4Signer<Guarded>,
@@ -377,8 +372,8 @@ impl super::admin::AdminApi for LiveAdminApi<'_> {
     }
 }
 
-/// The live admin world: the S1 provider roots for the `AgentCore` admin
-/// plane, STS and credential HTTP (R-TLS-PAY: admin keeps R-ROOTS).
+/// The live admin world: platform payment roots for the `AgentCore` admin
+/// plane, STS and credential HTTP.
 pub struct AdminWorld {
     runtime: SdkRuntime,
     transport: SdkTransport,
@@ -390,15 +385,15 @@ impl AdminWorld {
     /// a creating route's TTY gate (#5475).
     ///
     /// # Errors
-    /// [`Unavailable`] with the fixed R-ROOTS text, or a generic text when
+    /// [`Unavailable`] with the fixed R-PROOTS text, or a generic text when
     /// the runtime cannot start.
     pub fn for_process() -> Result<Self, Unavailable> {
-        let roots =
-            ValidatedRoots::from_process().map_err(|failure| Unavailable(failure.message()))?;
+        let roots = PaymentRoots::from_process()
+            .map_err(|failure| Unavailable(failure.message().to_owned()))?;
         let generic = |_| Unavailable("RuntimeError during payment administration.".to_owned());
         let runtime = SdkRuntime::new().map_err(generic)?;
-        let transport = SdkTransport::new(&runtime, &roots).map_err(generic)?;
-        let provider = ProviderHttp::validated(&roots).map_err(generic)?;
+        let transport = SdkTransport::new(&runtime, roots.roots()).map_err(generic)?;
+        let provider = ProviderHttp::validated(roots.roots()).map_err(generic)?;
         Ok(Self {
             runtime,
             transport,

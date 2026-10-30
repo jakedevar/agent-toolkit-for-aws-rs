@@ -1724,6 +1724,123 @@ fn r_tok_nofresh_catches_a_fresh_token_source() {
     assert!(nofresh_findings(&seeded(&[("agents_pay/vault.rs", vault)])).is_empty());
 }
 
+// ---------------------------------- P-ROOTS environment stability (#5114)
+//
+// The macOS payment-roots path reads `SSL_CERT_*` for presence and the native
+// loader may read them again. The edition does not stop `std::env::set_var`
+// (the workspace is edition 2021), so the stable-environment assumption is
+// checked from source: no first-party crate that the live `fetch` startup
+// path links names an environment mutator, and `World::for_process` builds
+// the payment roots first. Dependency internals and an embedding host remain
+// documented assumptions, not something this gate can prove.
+
+const ENV_MUTATORS: &[&str] = &[
+    "set_var",
+    "remove_var",
+    "setenv",
+    "putenv",
+    "unsetenv",
+    "clearenv",
+];
+
+fn env_mutation_findings(sources: &[Source]) -> Vec<String> {
+    let mut found = Vec::new();
+    for source in sources {
+        let Ok(stream) = tokens(&source.text) else {
+            found.push(format!("{}: does not tokenize", source.path));
+            continue;
+        };
+        let mut words = Vec::new();
+        idents(stream, &mut words);
+        for word in words {
+            if ENV_MUTATORS.contains(&word.as_str()) {
+                found.push(format!("{}: names {word}", source.path));
+            }
+        }
+    }
+    found
+}
+
+fn startup_chain_sources() -> Vec<Source> {
+    let mut out = Vec::new();
+    for name in ["toolkit-cli", "toolkit-core", "toolkit-aws"] {
+        let root = manifest_dir().join("..").join(name).join("src");
+        let mut files = Vec::new();
+        collect(&root, &root, &mut files);
+        for file in files {
+            out.push(Source {
+                path: format!("{name}/{}", file.path),
+                text: file.text,
+            });
+        }
+    }
+    out
+}
+
+#[test]
+fn p_roots_startup_chain_crates_never_mutate_the_process_environment() {
+    let sources = startup_chain_sources();
+    for name in [
+        "toolkit-cli/main.rs",
+        "toolkit-core/lib.rs",
+        "toolkit-aws/lib.rs",
+    ] {
+        assert!(sources.iter().any(|s| s.path == name), "{name} not scanned");
+    }
+    let found = env_mutation_findings(&sources);
+    assert!(found.is_empty(), "{found:#?}");
+}
+
+#[test]
+fn p_roots_environment_gate_catches_a_mutator_a_snapshot_does_not() {
+    // A snapshot-only implementation passes a fixed `RootEnv` and so cannot
+    // see a mutator elsewhere in the process; this gate can.
+    for bad in [
+        "fn go() { std::env::set_var(\"SSL_CERT_FILE\", \"x\"); }",
+        "fn go() { use std::env::remove_var; remove_var(\"SSL_CERT_DIR\"); }",
+        "fn go() { let _ = r#set_var; }",
+        "fn go() { unsafe { libc::setenv(c.as_ptr(), c.as_ptr(), 1) }; }",
+    ] {
+        assert!(
+            !env_mutation_findings(&seeded(&[("toolkit-cli/x.rs", bad)])).is_empty(),
+            "{bad}"
+        );
+    }
+    // Names in comments, strings and docs are not calls.
+    let quiet = "/// never set_var\nfn go() { let _ = \"remove_var\"; } // set_var";
+    assert!(env_mutation_findings(&seeded(&[("toolkit-cli/x.rs", quiet)])).is_empty());
+}
+
+fn for_process_order(text: &str) -> Vec<String> {
+    let mut words = Vec::new();
+    fn_bodies(tokens(text).expect("tokenizes"), "for_process", &mut words);
+    words
+        .into_iter()
+        .filter(|w| matches!(w.as_str(), "PaymentRoots" | "ValidatedRoots" | "SdkRuntime"))
+        .collect()
+}
+
+#[test]
+fn p_roots_world_builds_payment_roots_before_runtime_and_provider_roots() {
+    let live = fs::read_to_string(manifest_dir().join("src/agents_pay/live.rs")).unwrap();
+    let order = for_process_order(&live);
+    assert_eq!(
+        order.first().map(String::as_str),
+        Some("PaymentRoots"),
+        "{order:?}"
+    );
+    assert_eq!(
+        order,
+        ["PaymentRoots", "SdkRuntime", "PaymentRoots", "SdkRuntime"],
+        "both payment worlds must load payment roots before starting their runtimes"
+    );
+    let swapped = "impl W { fn for_process() { let a = SdkRuntime::new(); let b = PaymentRoots::from_process(); } }";
+    assert_ne!(
+        for_process_order(swapped).first().map(String::as_str),
+        Some("PaymentRoots")
+    );
+}
+
 // ------------ D32 structural refusal (#5376, #5390, #5391, #5400, AC3)
 //
 // A build without the live feature never parses argv, builds `Deps` or
