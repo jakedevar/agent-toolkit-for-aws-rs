@@ -1246,3 +1246,4 @@ Friction: #4727, Rsi #4694, Rsi #4704
   Filed OpenClaw B4 #5535 (folds #5164 #5179 #5163 and #5162's TS half; package 1.1.0; files+bin; python step removed) -> Claude Opus high, queued for a slot. Needs a cross-family review; then B5 after S7.
   Queue: 3061 #5514, 3063 #5360.
 - 00:27Z: #5514 LANDED (9916d8cd, landed_sha 818a0fc1050c0f432906cc2a906ea0bd93d7a512); auto-closed. Queue: 3063 #5360.
+- 00:27Z: #5509 (934b9457) DONE at e6efa2075f90fa745f3c93ac208de13a8d49f07b (fmt-patch recipe + test-scripts recipe; scratch copy only; scoped e030bef5 ok). PM ACCEPTED it, but it conflicts with #5158 in the Makefile (based on 76cef490). Merge-only continuation queued (Sonnet medium, continue_from 934b9457) -> check -> enqueue issue 5509. Friction #5536 (fmt-patch takes a build slot and a 24 GiB reservation).
