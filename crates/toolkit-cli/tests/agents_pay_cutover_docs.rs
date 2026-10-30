@@ -653,8 +653,8 @@ fn s7_text_import_api_boundary_b1_and_q3() {
         "SKILL.md",
         &skill,
         &[
-            "from x402_fetch import x402_fetch, payment_session_status, prepare_browser_payment, attach_browser_payment",
-            "has no Rust equivalent",
+            "`payment_session_status`, `prepare_browser_payment`, and `attach_browser_payment`",
+            "have no Rust import equivalent",
             "a handle cannot be redeemed after the process exits",
             "#5103",
         ],
