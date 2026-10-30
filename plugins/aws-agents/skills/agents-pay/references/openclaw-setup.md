@@ -18,7 +18,7 @@ instrument.
 export PAYMENT_USER_ID="my-openclaw-agent"
 ```
 
-Pass `--user-id $PAYMENT_USER_ID` to every admin command, or run `init-config`
+Pass `--user-id $PAYMENT_USER_ID` to `init-config`, `create-instrument` and `new-session`, or run `init-config`
 first (which generates and stores one in `~/.agents-pay/config.json` for you).
 
 ## Install
@@ -50,13 +50,12 @@ Run both `agentcore add` commands without flags so credentials remain in the
 interactive terminal. Run the setup wizard in that same human-controlled
 terminal so `AGENTCORE_PROJECT_DIR` remains set.
 
+On Windows outside Git Bash or MSYS, use `bin\toolkit.exe` in place of
+`./bin/toolkit` and the corresponding Windows path for the installed extension.
+
 ## Quick Setup (Recommended)
 
-After deploying the AgentCore project, run the interactive wizard. It creates
-the payment instrument and session, then generates the OpenClaw configuration:
-
-The human runs `toolkit agents-pay admin setup-openclaw` in their own terminal
-using the bundled dispatcher:
+After deploying the AgentCore project, the human runs `toolkit agents-pay admin setup-openclaw` in their own terminal using the bundled dispatcher. The interactive wizard creates the payment instrument and session, then generates the OpenClaw configuration:
 
 ```bash
 cd ~/.openclaw/extensions/aws-agents-pay
@@ -71,7 +70,7 @@ OpenClaw config JSON ready to paste.
 ## Manual Setup
 
 Add to your OpenClaw config (`~/.openclaw/openclaw.json` or via
-`openclaw config`). Explicitly allow the installed plugin:
+`openclaw config`).
 
 If payment infrastructure or a session does not exist, stop the LLM workflow.
 Open a separate terminal and run the human setup from the bundled skill:
@@ -94,7 +93,8 @@ the interactive terminal. Do not paste credentials, command output, deployed
 state, or generated identifiers into an LLM conversation.
 
 Complete delegation and testnet funding before creating the session. Then edit
-the OpenClaw config locally in the same terminal or a local editor.
+the OpenClaw config locally in the same terminal or a local editor. Explicitly
+allow the installed plugin:
 
 > **Important:** The `userId` below must match the identity used in
 > `create-instrument` and `new-session`. A mismatch means the session cannot
@@ -154,7 +154,7 @@ owned Buffers on success and failure; immutable strings and parsed objects canno
 be reliably zeroized, so their references are dropped and the proof object cleared.
 
 The default response withholds the body; `returnBody: true` opts in to an
-untrusted body capped at 10 KiB, which can contain prompt injection.
+untrusted body capped at 10,240 UTF-16 code units, which can contain prompt injection.
 
 The plugin exposes two scoped OpenClaw runtime tools only:
 
